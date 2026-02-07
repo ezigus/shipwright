@@ -1,0 +1,17 @@
+{
+  "name": "refactor",
+  "description": "Refactoring with one agent for changes and one for consumers/tests",
+  "agents": [
+    {
+      "name": "refactor",
+      "role": "Refactor target code, update interfaces, improve structure",
+      "focus": "src/"
+    },
+    {
+      "name": "consumers",
+      "role": "Update all consumers, imports, tests that reference refactored code",
+      "focus": "*.test.*, apps/, src/"
+    }
+  ],
+  "layout": "even-horizontal"
+}

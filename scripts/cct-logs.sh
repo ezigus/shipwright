@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  cct-logs.sh — View and search agent pane logs                          ║
+# ║                                                                          ║
+# ║  Captures tmux pane scrollback and provides log browsing/search.        ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+set -euo pipefail
+
+# ─── Colors ──────────────────────────────────────────────────────────────────
+CYAN='\033[38;2;0;212;255m'
+PURPLE='\033[38;2;124;58;237m'
+BLUE='\033[38;2;0;102;255m'
+GREEN='\033[38;2;74;222;128m'
+YELLOW='\033[38;2;250;204;21m'
+RED='\033[38;2;248;113;113m'
+DIM='\033[2m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+info()    { echo -e "${CYAN}${BOLD}▸${RESET} $*"; }
+success() { echo -e "${GREEN}${BOLD}✓${RESET} $*"; }
+warn()    { echo -e "${YELLOW}${BOLD}⚠${RESET} $*"; }
+error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
+
+LOGS_DIR="$HOME/.claude-teams/logs"
+
+show_usage() {
+    echo -e "${CYAN}${BOLD}cct logs${RESET} — View agent pane logs"
+    echo ""
+    echo -e "${BOLD}USAGE${RESET}"
+    echo -e "  ${CYAN}cct logs${RESET}                              List available log directories"
+    echo -e "  ${CYAN}cct logs${RESET} <team>                       Show logs for a team (captures live)"
+    echo -e "  ${CYAN}cct logs${RESET} <team> ${DIM}--pane <agent>${RESET}         Show specific agent's log"
+    echo -e "  ${CYAN}cct logs${RESET} <team> ${DIM}--follow${RESET}              Tail logs in real-time"
+    echo -e "  ${CYAN}cct logs${RESET} <team> ${DIM}--grep <pattern>${RESET}      Search logs for a pattern"
+    echo -e "  ${CYAN}cct logs${RESET} ${DIM}--capture${RESET}                    Capture all team pane scrollback now"
+    echo ""
+    echo -e "${BOLD}OPTIONS${RESET}"
+    echo -e "  ${DIM}--pane <name>${RESET}     Filter to a specific agent pane by title"
+    echo -e "  ${DIM}--follow, -f${RESET}      Tail the most recent log file"
+    echo -e "  ${DIM}--grep <pat>${RESET}      Search across log files with a pattern"
+    echo -e "  ${DIM}--capture${RESET}         Capture current scrollback from all team panes"
+    echo ""
+}
+
+# ─── Capture scrollback from all claude-* windows ────────────────────────────
+capture_logs() {
+    local timestamp
+    timestamp="$(date +%Y%m%d-%H%M%S)"
+    local captured=0
+
+    while IFS='|' read -r session_window window_name pane_id pane_title; do
+        [[ -z "$window_name" ]] && continue
+        echo "$window_name" | grep -qi "claude" || continue
+
+        # Sanitize names for filesystem
+        local safe_window safe_title
+        safe_window="$(echo "$window_name" | tr '/' '-')"
+        safe_title="$(echo "${pane_title:-pane-$pane_id}" | tr '/' '-')"
+
+        local log_dir="${LOGS_DIR}/${safe_window}"
+        mkdir -p "$log_dir"
+
+        local log_file="${log_dir}/${safe_title}-${timestamp}.log"
+        tmux capture-pane -t "$pane_id" -pS - > "$log_file" 2>/dev/null || continue
+        captured=$((captured + 1))
+    done < <(tmux list-panes -a -F '#{session_name}:#{window_index}|#{window_name}|#{pane_id}|#{pane_title}' 2>/dev/null || true)
+
+    if [[ $captured -gt 0 ]]; then
+        success "Captured ${captured} pane(s) to ${LOGS_DIR}/"
+    else
+        warn "No Claude team panes found to capture"
+    fi
+}
+
+# ─── List available logs ────────────────────────────────────────────────────
+list_logs() {
+    echo ""
+    echo -e "${CYAN}${BOLD}  Agent Logs${RESET}"
+    echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
+    echo ""
+
+    if [[ ! -d "$LOGS_DIR" ]]; then
+        echo -e "  ${DIM}No logs directory yet.${RESET}"
+        echo -e "  ${DIM}Capture logs with: ${CYAN}cct logs --capture${RESET}"
+        echo ""
+        return
+    fi
+
+    local has_logs=false
+    while IFS= read -r team_dir; do
+        [[ -z "$team_dir" ]] && continue
+        has_logs=true
+        local team_name
+        team_name="$(basename "$team_dir")"
+        local file_count
+        file_count="$(find "$team_dir" -name '*.log' -type f 2>/dev/null | wc -l | tr -d ' ')"
+        local latest=""
+        latest="$(find "$team_dir" -name '*.log' -type f -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1)"
+        local latest_time=""
+        if [[ -n "$latest" ]]; then
+            latest_time="$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$latest" 2>/dev/null || stat --format='%y' "$latest" 2>/dev/null | cut -d. -f1)"
+        fi
+
+        echo -e "  ${BLUE}●${RESET} ${BOLD}${team_name}${RESET}  ${DIM}${file_count} logs${RESET}"
+        if [[ -n "$latest_time" ]]; then
+            echo -e "    ${DIM}└─ latest: ${latest_time}${RESET}"
+        fi
+    done < <(find "$LOGS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+
+    if ! $has_logs; then
+        echo -e "  ${DIM}No log directories found.${RESET}"
+        echo -e "  ${DIM}Capture logs with: ${CYAN}cct logs --capture${RESET}"
+    fi
+    echo ""
+}
+
+# ─── Show logs for a team ────────────────────────────────────────────────────
+show_team_logs() {
+    local team="$1"
+    local pane_filter="${2:-}"
+    local grep_pattern="${3:-}"
+    local follow="${4:-false}"
+
+    # Try exact match first, then prefix match on claude-*
+    local team_dir="${LOGS_DIR}/${team}"
+    if [[ ! -d "$team_dir" ]]; then
+        team_dir="${LOGS_DIR}/claude-${team}"
+    fi
+
+    if [[ ! -d "$team_dir" ]]; then
+        # Capture live first if no logs exist
+        info "No saved logs for '${team}'. Capturing live scrollback..."
+        capture_logs
+
+        # Re-check
+        team_dir="${LOGS_DIR}/${team}"
+        [[ ! -d "$team_dir" ]] && team_dir="${LOGS_DIR}/claude-${team}"
+        if [[ ! -d "$team_dir" ]]; then
+            error "No team panes matching '${team}' found"
+            exit 1
+        fi
+    fi
+
+    local team_name
+    team_name="$(basename "$team_dir")"
+
+    echo ""
+    echo -e "${CYAN}${BOLD}  Logs — ${team_name}${RESET}"
+    echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
+    echo ""
+
+    # Build file list, optionally filtered by pane
+    local log_files=()
+    while IFS= read -r f; do
+        [[ -z "$f" ]] && continue
+        if [[ -n "$pane_filter" ]]; then
+            local base
+            base="$(basename "$f")"
+            echo "$base" | grep -qi "$pane_filter" || continue
+        fi
+        log_files+=("$f")
+    done < <(find "$team_dir" -name '*.log' -type f -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null)
+
+    if [[ ${#log_files[@]} -eq 0 ]]; then
+        if [[ -n "$pane_filter" ]]; then
+            warn "No logs matching pane '${pane_filter}' in ${team_name}"
+        else
+            warn "No log files in ${team_name}"
+        fi
+        return
+    fi
+
+    # --follow: tail the most recent file
+    if [[ "$follow" == "true" ]]; then
+        local latest="${log_files[0]}"
+        info "Tailing: $(basename "$latest")"
+        echo -e "${DIM}  (Ctrl+C to stop)${RESET}"
+        echo ""
+        tail -f "$latest"
+        return
+    fi
+
+    # --grep: search across all files
+    if [[ -n "$grep_pattern" ]]; then
+        info "Searching for '${grep_pattern}' in ${#log_files[@]} log file(s)..."
+        echo ""
+        local found=false
+        for f in "${log_files[@]}"; do
+            local matches
+            matches="$(grep -n --color=always "$grep_pattern" "$f" 2>/dev/null || true)"
+            if [[ -n "$matches" ]]; then
+                found=true
+                echo -e "  ${BLUE}──${RESET} ${BOLD}$(basename "$f")${RESET}"
+                echo "$matches" | while IFS= read -r line; do
+                    echo -e "    ${line}"
+                done
+                echo ""
+            fi
+        done
+        if ! $found; then
+            warn "No matches for '${grep_pattern}'"
+        fi
+        return
+    fi
+
+    # Default: list files then show the most recent
+    info "${#log_files[@]} log file(s):"
+    for f in "${log_files[@]}"; do
+        local size
+        size="$(wc -l < "$f" | tr -d ' ')"
+        echo -e "  ${DIM}•${RESET} $(basename "$f")  ${DIM}(${size} lines)${RESET}"
+    done
+
+    echo ""
+    local latest="${log_files[0]}"
+    info "Most recent: ${BOLD}$(basename "$latest")${RESET}"
+    echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+    cat "$latest"
+}
+
+# ─── Parse Arguments ─────────────────────────────────────────────────────────
+TEAM=""
+PANE=""
+GREP_PATTERN=""
+FOLLOW=false
+DO_CAPTURE=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help|-h)
+            show_usage
+            exit 0
+            ;;
+        --capture)
+            DO_CAPTURE=true
+            shift
+            ;;
+        --pane)
+            PANE="${2:-}"
+            [[ -z "$PANE" ]] && { error "--pane requires an agent name"; exit 1; }
+            shift 2
+            ;;
+        --follow|-f)
+            FOLLOW=true
+            shift
+            ;;
+        --grep)
+            GREP_PATTERN="${2:-}"
+            [[ -z "$GREP_PATTERN" ]] && { error "--grep requires a pattern"; exit 1; }
+            shift 2
+            ;;
+        -*)
+            error "Unknown option: $1"
+            show_usage
+            exit 1
+            ;;
+        *)
+            TEAM="$1"
+            shift
+            ;;
+    esac
+done
+
+# ─── Dispatch ────────────────────────────────────────────────────────────────
+if $DO_CAPTURE; then
+    capture_logs
+elif [[ -z "$TEAM" ]]; then
+    list_logs
+else
+    show_team_logs "$TEAM" "$PANE" "$GREP_PATTERN" "$FOLLOW"
+fi

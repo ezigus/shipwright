@@ -12,10 +12,17 @@
 #   2. chmod +x ~/.claude/hooks/task-completed.sh
 #   3. Add to ~/.claude/settings.json:
 #      "hooks": {
-#        "task-completed": {
-#          "command": "~/.claude/hooks/task-completed.sh",
-#          "timeout": 60000
-#        }
+#        "TaskCompleted": [
+#          {
+#            "hooks": [
+#              {
+#                "type": "command",
+#                "command": "~/.claude/hooks/task-completed.sh",
+#                "timeout": 60
+#              }
+#            ]
+#          }
+#        ]
 #      }
 #
 # Exit codes:
@@ -24,6 +31,13 @@
 # ═══════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
+
+# Read hook input (JSON on stdin) — contains session_id, cwd, etc.
+INPUT=$(cat)
+HOOK_CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)
+if [[ -n "$HOOK_CWD" ]]; then
+  cd "$HOOK_CWD"
+fi
 
 FAILED=0
 

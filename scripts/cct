@@ -5,7 +5,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
@@ -57,7 +57,12 @@ show_help() {
     echo -e "${BOLD}COMMANDS${RESET}"
     echo -e "  ${CYAN}session${RESET} [name]       Create a new tmux window for a Claude team"
     echo -e "  ${CYAN}status${RESET}               Show dashboard of running teams and agents"
+    echo -e "  ${CYAN}ps${RESET}                    Show running agent processes and status"
+    echo -e "  ${CYAN}logs${RESET} [team] [opts]    View and search agent pane logs"
+    echo -e "  ${CYAN}templates${RESET} [list|show]  Manage team composition templates"
+    echo -e "  ${CYAN}doctor${RESET}                Validate your setup and check for issues"
     echo -e "  ${CYAN}cleanup${RESET} [--force]     Clean up orphaned team sessions"
+    echo -e "  ${CYAN}upgrade${RESET} [--apply]     Check for updates from the repo (dry-run by default)"
     echo -e "  ${CYAN}help${RESET}                  Show this help message"
     echo -e "  ${CYAN}version${RESET}               Show version"
     echo ""
@@ -69,8 +74,14 @@ show_help() {
     echo -e "  ${DIM}cct session refactor${RESET}      # New window named 'claude-refactor'"
     echo -e "  ${DIM}cct session${RESET}               # New window with timestamp name"
     echo -e "  ${DIM}cct status${RESET}                # See all active teams"
+    echo -e "  ${DIM}cct ps${RESET}                    # Show agent processes"
+    echo -e "  ${DIM}cct logs myteam${RESET}           # View logs for a team"
+    echo -e "  ${DIM}cct logs myteam --follow${RESET}  # Tail agent logs"
+    echo -e "  ${DIM}cct doctor${RESET}                # Check setup health"
     echo -e "  ${DIM}cct cleanup${RESET}               # Dry-run: show what would be cleaned"
     echo -e "  ${DIM}cct cleanup --force${RESET}       # Actually kill orphaned sessions"
+    echo -e "  ${DIM}cct upgrade${RESET}               # Check what's changed since install"
+    echo -e "  ${DIM}cct upgrade --apply${RESET}       # Apply available updates"
     echo ""
     echo -e "${DIM}Docs: https://github.com/sethford/claude-code-teams-tmux${RESET}"
 }
@@ -91,9 +102,25 @@ main() {
             check_tmux
             exec "$SCRIPT_DIR/cct-status.sh" "$@"
             ;;
+        ps)
+            check_tmux
+            exec "$SCRIPT_DIR/cct-ps.sh" "$@"
+            ;;
+        logs)
+            exec "$SCRIPT_DIR/cct-logs.sh" "$@"
+            ;;
+        templates)
+            exec "$SCRIPT_DIR/cct-templates.sh" "$@"
+            ;;
+        doctor)
+            exec "$SCRIPT_DIR/cct-doctor.sh" "$@"
+            ;;
         cleanup)
             check_tmux
             exec "$SCRIPT_DIR/cct-cleanup.sh" "$@"
+            ;;
+        upgrade)
+            exec "$SCRIPT_DIR/cct-upgrade.sh" "$@"
             ;;
         help|--help|-h)
             show_help

@@ -45,9 +45,12 @@ claude-code-teams-tmux/
 │   ├── tmux.conf                    # Full tmux config with premium dark theme
 │   └── claude-teams-overlay.conf    # Agent-aware pane styling & team keybindings
 ├── claude-code/
-│   ├── settings.json.template       # Claude Code settings with teams enabled
+│   ├── settings.json.template       # Claude Code settings with teams + hooks
 │   └── hooks/
-│       └── teammate-idle.sh         # Quality gate: block idle if typecheck fails
+│       ├── teammate-idle.sh         # Quality gate: typecheck before idle
+│       ├── task-completed.sh        # Quality gate: lint+test before done
+│       ├── notify-idle.sh           # Desktop notification on idle (NEW)
+│       └── pre-compact-save.sh      # Save context before compaction (NEW)
 ├── scripts/
 │   └── cct                          # CLI for managing team sessions
 ├── docs/
@@ -61,14 +64,19 @@ claude-code-teams-tmux/
 
 Dark blue-gray background (`#1a1a2e`) with cyan accents (`#00d4ff`). The status bar shows your session name, current window, user/host, time, and date. Active pane borders light up in cyan. Agent names display in pane border headers so you always know which agent is in which pane.
 
-### Claude Code Settings Template
+### Claude Code Settings + Hooks
 
 Pre-configured `settings.json.template` with:
 - Agent teams enabled (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`)
-- Auto-detects tmux — agents get split panes automatically
-- Haiku model for cheap subagent lookups
+- Five production-ready hooks wired in:
+  - **TeammateIdle** — typecheck gate (blocks idle until errors fixed)
+  - **TaskCompleted** — lint + test gate (blocks completion until quality passes)
+  - **Notification** — desktop alerts when agents need attention
+  - **PreCompact** — saves git context before compaction
+  - **PostToolUse** — auto-formats files after edits
+- Haiku subagent model for cheap lookups
 - Auto-compact at 70% to prevent context overflow
-- Recommended plugins and environment variables
+- Recommended plugins for development workflows
 
 ### Quality Gate Hooks
 
@@ -225,6 +233,9 @@ The prefix key is `Ctrl-a` (remapped from the default `Ctrl-b`).
 | `prefix + Alt-t` | Toggle team sync mode |
 | `prefix + Alt-l` | Cycle through pane layouts |
 | `prefix + Alt-s` | Capture pane contents to file |
+| `prefix + M-c` | Capture current pane to log file |
+| `prefix + M-a` | Capture ALL panes in window |
+| `prefix + M-s` | Save full scrollback to file |
 
 ### Copy Mode (vi-style)
 
@@ -279,16 +290,32 @@ See [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md) for tracked bugs with workaroun
 | Agents fall back to in-process mode | Not in a real tmux session (#23572) | Launch Claude inside tmux |
 | Context window overflow | Too many tasks per agent | Keep tasks focused (5-6 per agent) |
 | Panes don't show agent names | Pane titles not set | Use `cct session` which sets titles automatically |
+| White/bright pane backgrounds | New panes not inheriting theme | Fixed! Overlay forces dark theme via `set-hook after-split-window` |
 
 ## Plugins (TPM)
 
-The tmux config uses [TPM](https://github.com/tmux-plugins/tpm) for plugin management. Included plugins:
+The tmux config uses [TPM](https://github.com/tmux-plugins/tpm) for plugin management. Install after setup: `prefix + I` (capital I).
 
-- **tmux-sensible** — Sensible defaults
-- **tmux-resurrect** — Save/restore sessions across restarts
-- **tmux-continuum** — Automatic session saving
+### tmux Plugins (Best-in-Class)
 
-Install plugins after setup: `prefix + I` (capital I).
+| Plugin | Key | What it does |
+|--------|-----|--------------|
+| **tmux-fingers** | `prefix + F` | Vimium-style copy hints — highlight and copy URLs, paths, hashes from any pane |
+| **tmux-fzf-url** | `prefix + u` | Fuzzy-find and open any URL visible in the current pane |
+| **tmux-fzf** | `F5` | Fuzzy finder for sessions, windows, and panes — jump to any agent by name |
+| **extrakto** | `prefix + tab` | Extract and copy any text from pane output (paths, IDs, errors) |
+| **tmux-resurrect** | auto | Save and restore sessions across restarts |
+| **tmux-continuum** | auto | Automatic continuous session saving |
+| **tmux-sensible** | — | Sensible defaults everyone agrees on |
+
+## Sources & Inspiration
+
+- [Awesome tmux](https://github.com/rothgar/awesome-tmux) — Curated list of tmux resources
+- [Claude Code Agent Teams](https://addyosmani.com/blog/claude-code-agent-teams/) — Addy Osmani's guide to team patterns
+- [Claude Code Hooks Guide](https://code.claude.com/docs/en/hooks-guide) — Official hooks documentation
+- [Everything Claude Code](https://github.com/affaan-m/everything-claude-code) — Comprehensive config collection
+- [Claude Code Hooks Mastery](https://github.com/disler/claude-code-hooks-mastery) — Hook patterns and examples
+- [tmux issue #23615](https://github.com/anthropics/claude-code/issues/23615) — Agent pane spawning discussion
 
 ## License
 

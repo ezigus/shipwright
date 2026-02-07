@@ -4,6 +4,46 @@ Patterns and tricks for getting the most out of Claude Code Agent Teams with tmu
 
 ---
 
+## Team Patterns That Actually Work
+
+Based on [Addy Osmani's research](https://addyosmani.com/blog/claude-code-agent-teams/) and community experience:
+
+### When Teams Add Value
+- **Competing hypotheses** — Multiple agents investigating different theories for a bug
+- **Parallel review** — Security, performance, and test coverage by dedicated reviewers
+- **Cross-layer features** — Frontend, backend, and tests developed simultaneously
+
+### When to Stay Single-Agent
+- Sequential, tightly-coupled work where each step depends on the last
+- Simple bugs or single-file changes
+- Tasks where coordination overhead exceeds the parallel benefit
+
+### The Task Sizing Sweet Spot
+Too small and coordination overhead dominates. Too large and agents work too long without check-ins. Aim for **5-6 focused tasks per agent** with clear deliverables.
+
+### Specification Quality = Output Quality
+Detailed spawn prompts with technical constraints, acceptance criteria, and domain context produce dramatically better results. Don't just say "fix the tests" — say "fix the auth tests in src/auth/__tests__/, ensuring all edge cases for expired tokens are covered, using the existing MockAuthProvider pattern."
+
+---
+
+## Hook Patterns for Teams
+
+### Quality Gates (Most Valuable)
+- **TeammateIdle** — Run typecheck before letting agents idle. Catches errors early.
+- **TaskCompleted** — Run lint + related tests before allowing task completion.
+- **Stop** — Verify all work is complete before Claude stops responding.
+
+### Observability
+- **Notification** — Desktop alerts so you can work on other things.
+- **PostToolUse** on `Bash` — Log all commands agents run to a file.
+- **SubagentStart/SubagentStop** — Track when agents spawn and finish.
+
+### Context Preservation
+- **PreCompact** — Save git status, recent commits, and project reminders before compaction.
+- **SessionStart** on `compact` — Re-inject critical context after compaction.
+
+---
+
 ## Team Size & Structure
 
 ### Keep teams small
@@ -217,3 +257,75 @@ cct cleanup --force   # Actually kills orphaned sessions
 | `CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES` | — | Show tool use summaries in output |
 | `CLAUDE_CODE_TST_NAMES_IN_MESSAGES` | — | Show teammate names in messages |
 | `CLAUDE_CODE_EAGER_FLUSH` | — | Flush output eagerly (reduces perceived latency) |
+
+---
+
+## Wave-Style Iteration
+
+For complex, multi-step tasks, use **wave patterns** — iterative cycles of parallel agent work followed by synthesis. See the full pattern guides in [docs/patterns/](patterns/).
+
+### The Wave Cycle
+
+Each wave follows four steps:
+
+1. **Assess** — Read agent outputs from the previous wave. What succeeded? What failed?
+2. **Decompose** — What work remains? What can run in parallel?
+3. **Spawn** — Launch agents in separate tmux panes for each independent task
+4. **Synthesize** — Gather results, update the state file, plan the next wave
+
+Repeat until done. Set a reasonable wave limit (5-10 for most tasks).
+
+### File-Based State
+
+Track progress through a markdown state file instead of keeping everything in agent memory. This survives compactions, context resets, and lets any agent pick up where others left off.
+
+**State file:** `.claude/team-state.local.md`
+
+```markdown
+---
+wave: 2
+status: in_progress
+goal: "Build user auth with JWT"
+started_at: 2026-02-07T10:00:00Z
+---
+
+## Completed
+- [x] Scanned existing auth patterns
+- [x] Built User model
+
+## In Progress
+- [ ] JWT route handlers
+- [ ] React login components
+
+## Blocked
+- Integration tests blocked on route completion
+```
+
+**Agent outputs:** `.claude/team-outputs/*.md`
+
+Each agent writes findings/results to a file in this directory. The team lead reads all outputs between waves.
+
+**Add to `.gitignore`:**
+```
+.claude/team-state.local.md
+.claude/team-outputs/
+```
+
+### When to Use Waves vs. Single-Pass Teams
+
+| Situation | Approach |
+|-----------|----------|
+| Independent tasks with clear file ownership | Single-pass team — spawn agents, collect results |
+| Tasks that require iteration (tests must pass, errors must be fixed) | Wave pattern — iterate until completion criteria met |
+| Exploratory work that builds on previous findings | Wave pattern — each wave goes deeper based on last wave's results |
+| Simple parallel review (code quality + security + tests) | Single-pass team — each reviewer works independently |
+
+### Quick Reference: Five Wave Patterns
+
+| Pattern | Waves | Agents | Best For |
+|---------|-------|--------|----------|
+| [Feature Implementation](patterns/feature-implementation.md) | 3-4 | 2-3 | Multi-component features |
+| [Research & Exploration](patterns/research-exploration.md) | 2-3 | 2-3 | Understanding codebases |
+| [Test Generation](patterns/test-generation.md) | 3-4+ | 2-3 | Coverage campaigns |
+| [Refactoring](patterns/refactoring.md) | 3-4 | 2 | Large-scale transformations |
+| [Bug Hunt](patterns/bug-hunt.md) | 3-4 | 2-3 | Complex, elusive bugs |

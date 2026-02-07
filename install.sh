@@ -241,10 +241,43 @@ if ask "Install cct CLI to $BIN_DIR?"; then
     "mkdir -p '$BIN_DIR'"
 
   if [[ -f "$SCRIPT_DIR/scripts/cct" ]]; then
+    # Install router + all subcommand scripts
     run "Install cct → $BIN_DIR/cct" \
       "cp '$SCRIPT_DIR/scripts/cct' '$BIN_DIR/cct' && chmod +x '$BIN_DIR/cct'"
-    success "Installed cct CLI"
     INSTALLED+=("cct")
+
+    for sub in cct-session.sh cct-status.sh cct-cleanup.sh cct-upgrade.sh cct-doctor.sh cct-logs.sh cct-ps.sh cct-templates.sh; do
+      if [[ -f "$SCRIPT_DIR/scripts/$sub" ]]; then
+        run "Install $sub → $BIN_DIR/$sub" \
+          "cp '$SCRIPT_DIR/scripts/$sub' '$BIN_DIR/$sub' && chmod +x '$BIN_DIR/$sub'"
+        INSTALLED+=("$sub")
+      fi
+    done
+
+    # Install terminal adapters
+    if [[ -d "$SCRIPT_DIR/scripts/adapters" ]]; then
+      run "Create $BIN_DIR/adapters directory" \
+        "mkdir -p '$BIN_DIR/adapters'"
+      for adapter in "$SCRIPT_DIR"/scripts/adapters/*.sh; do
+        local_name="$(basename "$adapter")"
+        run "Install adapter $local_name" \
+          "cp '$adapter' '$BIN_DIR/adapters/$local_name' && chmod +x '$BIN_DIR/adapters/$local_name'"
+      done
+    fi
+
+    # Install team templates
+    if [[ -d "$SCRIPT_DIR/tmux/templates" ]]; then
+      run "Create ~/.claude-teams/templates directory" \
+        "mkdir -p '$HOME/.claude-teams/templates'"
+      for tpl in "$SCRIPT_DIR"/tmux/templates/*.json; do
+        local_name="$(basename "$tpl")"
+        run "Install template $local_name" \
+          "cp '$tpl' '$HOME/.claude-teams/templates/$local_name'"
+      done
+      INSTALLED+=("templates")
+    fi
+
+    success "Installed cct CLI (router + subcommands + adapters + templates)"
   else
     warn "scripts/cct not found — skipping (may not be built yet)"
   fi
@@ -268,20 +301,19 @@ header "Quality gate hooks"
 if ask "Install quality gate hooks to ~/.claude/hooks/?"; then
   run "Create ~/.claude/hooks/ directory" \
     "mkdir -p '$HOME/.claude/hooks'"
-  run "Install teammate-idle.sh hook" \
-    "cp '$SCRIPT_DIR/claude-code/hooks/teammate-idle.sh' '$HOME/.claude/hooks/teammate-idle.sh' && chmod +x '$HOME/.claude/hooks/teammate-idle.sh'"
-  success "Installed teammate-idle.sh hook"
-  INSTALLED+=("teammate-idle.sh")
+
+  for hook in teammate-idle.sh task-completed.sh notify-idle.sh pre-compact-save.sh; do
+    if [[ -f "$SCRIPT_DIR/claude-code/hooks/$hook" ]]; then
+      run "Install $hook hook" \
+        "cp '$SCRIPT_DIR/claude-code/hooks/$hook' '$HOME/.claude/hooks/$hook' && chmod +x '$HOME/.claude/hooks/$hook'"
+      INSTALLED+=("$hook")
+    fi
+  done
+
+  success "Installed hooks to ~/.claude/hooks/"
 
   echo ""
-  info "Wire up hooks in ~/.claude/settings.json:"
-  echo ""
-  echo -e "  ${DIM}\"hooks\": {"
-  echo -e "    \"teammate-idle\": {"
-  echo -e "      \"command\": \"~/.claude/hooks/teammate-idle.sh\","
-  echo -e "      \"timeout\": 30000"
-  echo -e "    }"
-  echo -e "  }${RESET}"
+  info "Wire up hooks in ~/.claude/settings.json (see settings.json.template for examples)"
   echo ""
 fi
 
@@ -300,6 +332,110 @@ else
     INSTALLED+=("TPM")
     info "Press prefix + I inside tmux to install plugins"
   fi
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# UPGRADE MANIFEST
+# ═════════════════════════════════════════════════════════════════════════════
+if [[ ${#INSTALLED[@]} -gt 0 ]] && ! $DRY_RUN; then
+  header "Upgrade manifest"
+
+  MANIFEST_DIR="$HOME/.claude-teams"
+  MANIFEST="$MANIFEST_DIR/manifest.json"
+  mkdir -p "$MANIFEST_DIR"
+
+  # Checksum helper (macOS md5 vs linux md5sum)
+  _cksum() {
+    if command -v md5 &>/dev/null; then
+      md5 -q "$1" 2>/dev/null
+    else
+      md5sum "$1" 2>/dev/null | awk '{print $1}'
+    fi
+  }
+
+  # Build file entries — only for files that actually got installed
+  BIN_DIR="$HOME/.local/bin"
+  MANIFEST_ENTRIES=""
+  _add_entry() {
+    local key="$1" src="$2" dest="$3" protected="${4:-false}" executable="${5:-false}"
+    [[ -f "$dest" ]] || return 0
+    local cksum
+    cksum="$(_cksum "$dest")"
+    if [[ -n "$MANIFEST_ENTRIES" ]]; then MANIFEST_ENTRIES+=","; fi
+    MANIFEST_ENTRIES+="$(printf '\n    "%s": {\n' "$key")"
+    if [[ -n "$src" ]]; then
+      MANIFEST_ENTRIES+="$(printf '      "src": "%s",\n' "$src")"
+    fi
+    MANIFEST_ENTRIES+="$(printf '      "dest": "%s",\n' "$dest")"
+    MANIFEST_ENTRIES+="$(printf '      "checksum": "%s",\n' "$cksum")"
+    MANIFEST_ENTRIES+="$(printf '      "protected": %s,\n' "$protected")"
+    MANIFEST_ENTRIES+="$(printf '      "executable": %s\n' "$executable")"
+    MANIFEST_ENTRIES+="$(printf '    }')"
+  }
+
+  # Check each installed item and add to manifest
+  for item in "${INSTALLED[@]}"; do
+    case "$item" in
+      "tmux.conf")
+        _add_entry "tmux.conf" "tmux/tmux.conf" "$HOME/.tmux.conf" false false ;;
+      "claude-teams-overlay.conf")
+        _add_entry "claude-teams-overlay.conf" "tmux/claude-teams-overlay.conf" "$HOME/.tmux/claude-teams-overlay.conf" false false ;;
+      "settings.json")
+        _add_entry "settings.json" "" "$HOME/.claude/settings.json" true false ;;
+      "settings.json.template"*)
+        _add_entry "settings.json.template" "claude-code/settings.json.template" "$HOME/.claude/settings.json.template" false false ;;
+      "cct")
+        _add_entry "cct" "scripts/cct" "$BIN_DIR/cct" false true ;;
+      "cct-session.sh")
+        _add_entry "cct-session.sh" "scripts/cct-session.sh" "$BIN_DIR/cct-session.sh" false true ;;
+      "cct-status.sh")
+        _add_entry "cct-status.sh" "scripts/cct-status.sh" "$BIN_DIR/cct-status.sh" false true ;;
+      "cct-cleanup.sh")
+        _add_entry "cct-cleanup.sh" "scripts/cct-cleanup.sh" "$BIN_DIR/cct-cleanup.sh" false true ;;
+      "cct-upgrade.sh")
+        _add_entry "cct-upgrade.sh" "scripts/cct-upgrade.sh" "$BIN_DIR/cct-upgrade.sh" false true ;;
+      "cct-doctor.sh")
+        _add_entry "cct-doctor.sh" "scripts/cct-doctor.sh" "$BIN_DIR/cct-doctor.sh" false true ;;
+      "cct-logs.sh")
+        _add_entry "cct-logs.sh" "scripts/cct-logs.sh" "$BIN_DIR/cct-logs.sh" false true ;;
+      "cct-ps.sh")
+        _add_entry "cct-ps.sh" "scripts/cct-ps.sh" "$BIN_DIR/cct-ps.sh" false true ;;
+      "cct-templates.sh")
+        _add_entry "cct-templates.sh" "scripts/cct-templates.sh" "$BIN_DIR/cct-templates.sh" false true ;;
+
+      "teammate-idle.sh")
+        _add_entry "teammate-idle.sh" "claude-code/hooks/teammate-idle.sh" "$HOME/.claude/hooks/teammate-idle.sh" false true ;;
+      "task-completed.sh")
+        _add_entry "task-completed.sh" "claude-code/hooks/task-completed.sh" "$HOME/.claude/hooks/task-completed.sh" false true ;;
+      "notify-idle.sh")
+        _add_entry "notify-idle.sh" "claude-code/hooks/notify-idle.sh" "$HOME/.claude/hooks/notify-idle.sh" false true ;;
+      "pre-compact-save.sh")
+        _add_entry "pre-compact-save.sh" "claude-code/hooks/pre-compact-save.sh" "$HOME/.claude/hooks/pre-compact-save.sh" false true ;;
+      "templates")
+        # Add individual template entries
+        for tpl_file in "$HOME/.claude-teams/templates"/*.json; do
+          [[ -f "$tpl_file" ]] || continue
+          local_name="$(basename "$tpl_file")"
+          _add_entry "$local_name" "tmux/templates/$local_name" "$tpl_file" false false
+        done
+        ;;
+    esac
+  done
+
+  # Write the manifest
+  cat > "$MANIFEST" <<MANIFEST_EOF
+{
+  "schema": 1,
+  "version": "1.1.0",
+  "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "repo_path": "$SCRIPT_DIR",
+  "files": {$MANIFEST_ENTRIES
+  }
+}
+MANIFEST_EOF
+
+  success "Upgrade manifest written to $MANIFEST"
+  info "Future updates: ${DIM}git pull && cct upgrade --apply${RESET}"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════

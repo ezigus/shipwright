@@ -135,6 +135,26 @@ If only one pane is listed while agents are active, the fallback occurred.
 
 ---
 
+## White/Bright Pane Backgrounds on Agent Spawn
+
+**Severity:** Medium — cosmetic but distracting
+
+**Problem:** When Claude Code spawns agent panes via tmux, new panes sometimes inherit the terminal's default background (often white/bright) instead of the tmux dark theme.
+
+**Root Cause:** tmux's `window-style` applies at the window level but newly spawned panes from external processes (like Claude Code) don't always inherit it.
+
+**Fix:** The `claude-teams-overlay.conf` now uses `set-hook` to force the dark theme on every new pane:
+
+```conf
+set-hook -g after-split-window "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
+set-hook -g after-new-window "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
+set-hook -g after-select-pane "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
+```
+
+**Status:** ✅ Resolved in v1.1.0
+
+---
+
 ## TPM plugins not loading
 
 **Severity:** Low — cosmetic

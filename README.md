@@ -4,6 +4,10 @@
 
 [![v1.3.0](https://img.shields.io/badge/version-1.3.0-00d4ff?style=flat-square)](https://github.com/sethdford/claude-code-teams-tmux/releases) ![tmux dark theme with cyan accents](https://img.shields.io/badge/theme-dark%20blue--gray%20%2B%20cyan-00d4ff?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
+<p align="center">
+  <img src="demo/hero.gif" alt="cct CLI demo — version, help, templates, doctor" width="800" />
+</p>
+
 ## What's This?
 
 Claude Code's **agent teams** feature lets you spawn multiple AI agents that work in parallel on different parts of a task — one on backend, one on frontend, one writing tests, etc. When you run Claude Code inside tmux, each agent gets its own pane so you can watch them all work simultaneously.
@@ -383,6 +387,26 @@ The tmux config uses [TPM](https://github.com/tmux-plugins/tpm) for plugin manag
 | **tmux-resurrect** | auto | Save and restore sessions across restarts |
 | **tmux-continuum** | auto | Automatic continuous session saving |
 | **tmux-sensible** | — | Sensible defaults everyone agrees on |
+
+## Demo
+
+The hero GIF above shows the CLI in action. For the full walkthrough (setup, templates, loop, layouts):
+
+<details>
+<summary>Full demo (click to expand)</summary>
+
+<p align="center">
+  <img src="demo/full-demo.gif" alt="Full demo — setup, doctor, templates, loop, layouts" width="900" />
+</p>
+
+</details>
+
+Re-record the demos yourself:
+
+```bash
+vhs demo/hero.tape       # Short hero GIF
+vhs demo/full-demo.tape  # Full walkthrough
+```
 
 ## Sources & Inspiration
 

@@ -1,41 +1,25 @@
 <!-- LinkedIn Post — copy-paste ready -->
 
-**Open-sourced my tmux setup for running Claude Code Agent Teams — 12 templates covering the full SDLC**
+**I got tired of watching Claude Code agents stomp on each other's files, so I built a tmux setup to fix it.**
 
-I've been using Claude Code's agent teams feature to run 2-3 AI agents in parallel — one on backend, one on frontend, one writing tests — all visible in tmux split panes.
+Here's what kept happening: I'd tell Claude Code to spin up a team — backend agent, frontend agent, test agent — and they'd all cram into one terminal. No visibility into who's doing what. Agents editing the same files. Context windows blowing up because I gave one agent too many tasks.
 
-After months of tuning, I open-sourced the whole setup: claude-code-teams-tmux
+So I started building a tmux wrapper around it. Split panes so I can see each agent working. Templates so I don't have to explain the team composition every time. Quality gates so agents can't say "I'm done" when there are TypeScript errors.
 
-What it includes:
+It's called `cct` (Claude Code Teams) and I just open-sourced it.
 
-- 12 team templates covering the full software lifecycle:
-  - Build: feature-dev, full-stack
-  - Quality: code-review, security-audit, testing
-  - Maintenance: bug-fix, refactor, migration
-  - Planning: architecture, exploration
-  - Operations: devops, documentation
-- `cct` CLI to manage team sessions, autonomous loops, and setup
-- Quality gate hooks that block agents until code passes typecheck/lint/tests
-- `cct loop` for autonomous multi-iteration development
-- Layout presets that give the leader pane 65% of screen space
-- One-command setup: `cct init`
-
-The most useful part is the continuous loop. You give it a goal and a test command:
+The thing I use the most is `cct loop`:
 
     cct loop "Build user auth with JWT" --test-cmd "npm test" --audit
 
-It runs Claude Code in a loop, verifying each iteration passes tests, with optional self-audit and quality gates. Walk away and come back to working code.
+It runs Claude in a loop — build, test, self-review, repeat — until the tests pass. I've walked away from my desk and come back to working features. Not always, but often enough that it changed how I work.
 
-Templates let you scaffold a team in seconds:
+There are 12 team templates covering most of what I do day to day — feature dev, bug fixes, security audits, migrations, code review, testing, architecture planning. Each one assigns agents to different files so they don't conflict.
 
-    cct session my-pr --template security-audit
+The whole thing is bash + jq. No Python, no frameworks, nothing fancy.
 
-This creates a tmux window with 4 panes: leader (65% width) + code-analysis + dependencies + config-review agents.
+If you're running Claude Code agent teams and fighting the same problems I was, check it out: https://github.com/sethdford/claude-code-teams-tmux
 
-Built with pure bash + jq. No Python, no Node runtime dependencies beyond what Claude Code already needs.
+What's working (and not working) for you with multi-agent AI dev? Genuinely curious.
 
-Check it out: https://github.com/sethdford/claude-code-teams-tmux
-
-What SDLC workflows are you running with multi-agent AI? Would love to hear what patterns work for you.
-
-#ClaudeCode #AIEngineering #tmux #DeveloperTools #OpenSource #AgentTeams #Anthropic #SoftwareEngineering #SDLC
+#ClaudeCode #AIEngineering #DeveloperTools #OpenSource

@@ -19,7 +19,7 @@ Set Theme { "name": "cct", "black": "#1a1a2e", "red": "#f87171", "green": "#4ade
 Sleep 500ms
 Type "# === Claude Code Teams + tmux ==="
 Enter
-Type "# Multi-agent AI development with visual split-pane sessions"
+Type "# 12 team templates covering the full SDLC"
 Enter
 Enter
 Sleep 1s
@@ -48,18 +48,22 @@ Sleep 5s
 
 # === Section 4: Templates ===
 Enter
-Type "# --- Team Templates ---"
+Type "# --- Team Templates (12 covering full SDLC) ---"
 Enter
 Sleep 500ms
 Type "cct templates list"
 Enter
-Sleep 3s
+Sleep 7s
 
-Type "cct templates show feature-dev"
+Type "cct templates show security-audit"
 Enter
 Sleep 3s
 
-Type "cct templates show code-review"
+Type "cct templates show bug-fix"
+Enter
+Sleep 3s
+
+Type "cct templates show feature-dev"
 Enter
 Sleep 3s
 

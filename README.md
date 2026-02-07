@@ -5,7 +5,7 @@
 [![v1.4.0](https://img.shields.io/badge/version-1.4.0-00d4ff?style=flat-square)](https://github.com/sethdford/claude-code-teams-tmux/releases) ![tmux dark theme with cyan accents](https://img.shields.io/badge/theme-dark%20blue--gray%20%2B%20cyan-00d4ff?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 <p align="center">
-  <img src="https://vhs.charm.sh/vhs-3MRxhgRAOQQyRtj3kal6uF.gif" alt="cct CLI demo — version, help, templates, doctor" width="800" />
+  <img src="https://vhs.charm.sh/vhs-sJ34YHLfLxXLMpJgjqvy2.gif" alt="cct CLI demo — version, help, 12 templates, doctor" width="800" />
 </p>
 
 ## What's This?
@@ -478,7 +478,7 @@ The hero GIF above shows the CLI in action. For the full walkthrough (setup, tem
 <summary>Full demo (click to expand)</summary>
 
 <p align="center">
-  <img src="https://vhs.charm.sh/vhs-6UFJGCYhZN0zMSg2CTsnys.gif" alt="Full demo — setup, doctor, templates, loop, layouts" width="900" />
+  <img src="https://vhs.charm.sh/vhs-3w7KifJzCC9zLxzCfzdsp3.gif" alt="Full demo — setup, doctor, 12 templates, loop, layouts" width="900" />
 </p>
 
 </details>

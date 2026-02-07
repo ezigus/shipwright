@@ -9,6 +9,7 @@ After months of tuning, I open-sourced the whole setup: claude-code-teams-tmux
 What it does:
 
 - Premium dark tmux theme with agent names in pane borders
+- 12 team templates covering the full SDLC (feature-dev, testing, security-audit, bug-fix, migration, devops, and more)
 - `cct` CLI to manage team sessions from templates
 - Quality gate hooks that block agents until code passes typecheck/lint/tests
 - `cct loop` for autonomous multi-iteration development (agent works until a goal is achieved)

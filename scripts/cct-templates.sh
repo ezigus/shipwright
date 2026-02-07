@@ -103,11 +103,13 @@ cmd_list() {
             [[ -f "$file" ]] || continue
             found=1
 
-            local name description agent_count layout source
+            local name description agent_count layout layout_style display_layout source
             name="$(json_field "$file" "name")"
             description="$(json_field "$file" "description")"
             agent_count="$(json_agent_count "$file")"
             layout="$(json_field "$file" "layout")"
+            layout_style="$(json_field "$file" "layout_style")"
+            display_layout="${layout_style:-$layout}"
 
             # Tag user-created vs built-in
             if [[ "$dir" == "$USER_TEMPLATES_DIR" ]]; then
@@ -116,7 +118,7 @@ cmd_list() {
                 source="${DIM}built-in${RESET}"
             fi
 
-            echo -e "  ${CYAN}${BOLD}${name}${RESET}  ${DIM}(${agent_count} agents, ${layout})${RESET}  [${source}]"
+            echo -e "  ${CYAN}${BOLD}${name}${RESET}  ${DIM}(${agent_count} agents, ${display_layout})${RESET}  [${source}]"
             echo -e "    ${description}"
             echo ""
         done
@@ -162,15 +164,21 @@ cmd_show() {
         exit 1
     fi
 
-    local description layout
+    local description layout layout_style main_pane_pct
     description="$(json_field "$file" "description")"
     layout="$(json_field "$file" "layout")"
+    layout_style="$(json_field "$file" "layout_style")"
+    main_pane_pct="$(json_field "$file" "main_pane_percent")"
 
     echo ""
     echo -e "  ${CYAN}${BOLD}Template: ${name}${RESET}"
     echo -e "  ${DIM}─────────────────────────────────────────────${RESET}"
     echo -e "  ${description}"
-    echo -e "  Layout: ${BOLD}${layout}${RESET}"
+    if [[ -n "$layout_style" ]]; then
+        echo -e "  Layout: ${BOLD}${layout_style}${RESET} ${DIM}(leader pane ${main_pane_pct:-65}%)${RESET}"
+    else
+        echo -e "  Layout: ${BOLD}${layout}${RESET}"
+    fi
     echo ""
     echo -e "  ${BOLD}Agents:${RESET}"
 

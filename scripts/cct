@@ -5,7 +5,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.3.0"
+VERSION="1.4.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
@@ -98,7 +98,7 @@ show_help() {
     echo -e "  ${DIM}cct upgrade${RESET}               # Check what's changed since install"
     echo -e "  ${DIM}cct upgrade --apply${RESET}       # Apply available updates"
     echo ""
-    echo -e "${DIM}Docs: https://github.com/sethford/claude-code-teams-tmux${RESET}"
+    echo -e "${DIM}Docs: https://github.com/sethdford/claude-code-teams-tmux${RESET}"
 }
 
 # ─── Command Router ──────────────────────────────────────────────────────────

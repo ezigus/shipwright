@@ -2,7 +2,7 @@
 
 > Production-ready tmux setup for running Claude Code Agent Teams — multi-agent AI development with visual split-pane sessions, quality gates, and autonomous loops.
 
-[![v1.3.0](https://img.shields.io/badge/version-1.3.0-00d4ff?style=flat-square)](https://github.com/sethdford/claude-code-teams-tmux/releases) ![tmux dark theme with cyan accents](https://img.shields.io/badge/theme-dark%20blue--gray%20%2B%20cyan-00d4ff?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
+[![v1.4.0](https://img.shields.io/badge/version-1.4.0-00d4ff?style=flat-square)](https://github.com/sethdford/claude-code-teams-tmux/releases) ![tmux dark theme with cyan accents](https://img.shields.io/badge/theme-dark%20blue--gray%20%2B%20cyan-00d4ff?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 <p align="center">
   <img src="https://vhs.charm.sh/vhs-3MRxhgRAOQQyRtj3kal6uF.gif" alt="cct CLI demo — version, help, templates, doctor" width="800" />
@@ -66,10 +66,18 @@ claude-code-teams-tmux/
 ├── tmux/
 │   ├── tmux.conf                    # Full tmux config with premium dark theme
 │   ├── claude-teams-overlay.conf    # Agent-aware pane styling, color hooks & keybindings
-│   └── templates/                   # Team composition templates
+│   └── templates/                   # 12 team composition templates (full SDLC)
 │       ├── feature-dev.json         #   Backend + frontend + tests (3 agents)
+│       ├── full-stack.json          #   API + database + UI (3 agents)
+│       ├── bug-fix.json             #   Reproducer + fixer + verifier (3 agents)
 │       ├── code-review.json         #   Quality + security + coverage (3 agents)
+│       ├── security-audit.json      #   Code + deps + config (3 agents)
+│       ├── testing.json             #   Unit + integration + e2e (3 agents)
+│       ├── migration.json           #   Schema + adapter + rollback (3 agents)
 │       ├── refactor.json            #   Refactor + consumers (2 agents)
+│       ├── documentation.json       #   API docs + guides (2 agents)
+│       ├── devops.json              #   Pipeline + infrastructure (2 agents)
+│       ├── architecture.json        #   Researcher + spec writer (2 agents)
 │       └── exploration.json         #   Explorer + synthesizer (2 agents)
 ├── claude-code/
 │   ├── settings.json.template       # Claude Code settings with teams + hooks
@@ -328,19 +336,29 @@ The prefix key is `Ctrl-a` (remapped from the default `Ctrl-b`).
 
 ## Team Patterns
 
-### Feature Development (2-3 agents)
+12 templates covering the full SDLC and PDLC. Use `cct templates list` to browse, `cct templates show <name>` for details.
 
-Assign each agent to a different layer to avoid file conflicts:
+### Build Phase
+
+#### Feature Development (`feature-dev`) — 3 agents
 
 | Agent | Focus | Example files |
 |-------|-------|---------------|
 | **backend** | API routes, services, data layer | `src/api/`, `src/services/` |
 | **frontend** | UI components, state, styling | `apps/web/src/` |
-| **tests** | Unit tests, integration tests | `src/tests/`, `*.test.ts` |
+| **tests** | Unit tests, integration tests | `*.test.ts` |
 
-### Code Review (2-3 agents)
+#### Full-Stack (`full-stack`) — 3 agents
 
-Run parallel review passes for thorough coverage:
+| Agent | Focus | Example files |
+|-------|-------|---------------|
+| **api** | REST/GraphQL endpoints, middleware, auth | `src/api/`, `src/routes/` |
+| **database** | Schema, migrations, queries, models | `migrations/`, `prisma/` |
+| **ui** | Pages, components, forms, styling | `apps/web/`, `src/components/` |
+
+### Quality Phase
+
+#### Code Review (`code-review`) — 3 agents
 
 | Agent | Focus | What it checks |
 |-------|-------|----------------|
@@ -348,14 +366,78 @@ Run parallel review passes for thorough coverage:
 | **security** | Error handling, injection, auth | OWASP top 10, silent failures |
 | **test-coverage** | Test completeness, edge cases | Missing tests, weak assertions |
 
-### Refactoring (2 agents)
+#### Security Audit (`security-audit`) — 3 agents
 
-Split the work so one agent never touches the other's files:
+| Agent | Focus | What it checks |
+|-------|-------|----------------|
+| **code-analysis** | SAST: injection, auth, XSS, CSRF | Source code vulnerabilities |
+| **dependencies** | CVEs, outdated packages, licenses | Supply chain risks |
+| **config-review** | Secrets, CORS, CSP, env config | Infrastructure security |
+
+#### Comprehensive Testing (`testing`) — 3 agents
+
+| Agent | Focus | What it covers |
+|-------|-------|----------------|
+| **unit-tests** | Functions, classes, modules | Isolated unit tests |
+| **integration-tests** | API endpoints, service interactions | Cross-component tests |
+| **e2e-tests** | User flows, UI interactions | Full system tests |
+
+### Maintenance Phase
+
+#### Bug Fix (`bug-fix`) — 3 agents
+
+| Agent | Focus | What it does |
+|-------|-------|--------------|
+| **reproducer** | Write failing test, trace root cause | Proves the bug exists |
+| **fixer** | Fix source code, handle edge cases | Implements the fix |
+| **verifier** | Regression check, review changes | Ensures nothing else breaks |
+
+#### Refactoring (`refactor`) — 2 agents
 
 | Agent | Focus | What it does |
 |-------|-------|--------------|
 | **refactor** | Source code changes | Rename, restructure, extract |
 | **consumers** | Tests and dependents | Update imports, fix tests, verify |
+
+#### Migration (`migration`) — 3 agents
+
+| Agent | Focus | What it does |
+|-------|-------|--------------|
+| **schema** | Migration scripts, data transforms | Write the migration |
+| **adapter** | Update app code, queries, models | Adapt to new schema |
+| **rollback** | Rollback scripts, backward compat | Verify safe reversal |
+
+### Planning Phase
+
+#### Architecture (`architecture`) — 2 agents
+
+| Agent | Focus | What it does |
+|-------|-------|--------------|
+| **researcher** | Analyze code, trace deps, evaluate trade-offs | Deep codebase analysis |
+| **spec-writer** | ADRs, design docs, interface contracts | Write technical specs |
+
+#### Exploration (`exploration`) — 2 agents
+
+| Agent | Focus | What it does |
+|-------|-------|--------------|
+| **explorer** | Deep-dive code, trace execution paths | Map the codebase |
+| **synthesizer** | Summarize findings, document patterns | Distill insights |
+
+### Operations Phase
+
+#### DevOps (`devops`) — 2 agents
+
+| Agent | Focus | What it does |
+|-------|-------|--------------|
+| **pipeline** | CI/CD workflows, build, deploy | GitHub Actions, Jenkins, etc. |
+| **infrastructure** | Docker, Terraform, K8s, env config | Infrastructure as code |
+
+#### Documentation (`documentation`) — 2 agents
+
+| Agent | Focus | What it does |
+|-------|-------|--------------|
+| **api-docs** | API reference, OpenAPI spec, examples | Endpoint documentation |
+| **guides** | Tutorials, README, architecture docs | User-facing docs |
 
 ## Troubleshooting
 

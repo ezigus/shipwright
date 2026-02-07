@@ -111,6 +111,6 @@ Enter
 Enter
 Type "# github.com/sethdford/claude-code-teams-tmux"
 Enter
-Type "# MIT License | v1.3.0"
+Type "# MIT License | v1.4.0"
 Enter
 Sleep 3s

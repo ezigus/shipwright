@@ -69,7 +69,7 @@ find_repo() {
     # 4. Check manifest for stored repo_path
     if [[ -f "$MANIFEST" ]]; then
         local stored
-        stored="$(python3 -c "import json,sys; print(json.load(sys.stdin).get('repo_path',''))" < "$MANIFEST" 2>/dev/null || true)"
+        stored="$(jq -r '.repo_path // ""' "$MANIFEST" 2>/dev/null || true)"
         if [[ -n "$stored" && -d "$stored" ]]; then
             echo "$stored"
             return
@@ -108,6 +108,7 @@ FILES=(
     "cct-templates.sh|scripts/cct-templates.sh|$BIN_DIR/cct-templates.sh|false|true"
     "cct-loop.sh|scripts/cct-loop.sh|$BIN_DIR/cct-loop.sh|false|true"
     "cct-worktree.sh|scripts/cct-worktree.sh|$BIN_DIR/cct-worktree.sh|false|true"
+    "cct-init.sh|scripts/cct-init.sh|$BIN_DIR/cct-init.sh|false|true"
     "teammate-idle.sh|claude-code/hooks/teammate-idle.sh|$HOME/.claude/hooks/teammate-idle.sh|false|true"
     "task-completed.sh|claude-code/hooks/task-completed.sh|$HOME/.claude/hooks/task-completed.sh|false|true"
     "notify-idle.sh|claude-code/hooks/notify-idle.sh|$HOME/.claude/hooks/notify-idle.sh|false|true"
@@ -116,6 +117,7 @@ FILES=(
     "code-review.json|tmux/templates/code-review.json|$HOME/.claude-teams/templates/code-review.json|false|false"
     "refactor.json|tmux/templates/refactor.json|$HOME/.claude-teams/templates/refactor.json|false|false"
     "exploration.json|tmux/templates/exploration.json|$HOME/.claude-teams/templates/exploration.json|false|false"
+    "definition-of-done.example.md|docs/definition-of-done.example.md|$HOME/.claude-teams/templates/definition-of-done.example.md|false|false"
 )
 
 # ─── Checksum helper ──────────────────────────────────────────────────────
@@ -135,13 +137,7 @@ read_manifest_checksum() {
         echo ""
         return
     fi
-    python3 -c "
-import json, sys
-m = json.load(sys.stdin)
-files = m.get('files', {})
-entry = files.get('$key', {})
-print(entry.get('checksum', ''))
-" < "$MANIFEST" 2>/dev/null || echo ""
+    jq -r ".files[\"$key\"].checksum // \"\"" "$MANIFEST" 2>/dev/null || echo ""
 }
 
 write_manifest() {
@@ -206,7 +202,7 @@ bootstrap_manifest() {
 
 # ─── Main logic ────────────────────────────────────────────────────────────
 echo ""
-echo -e "${CYAN}${BOLD}cct${RESET} ${DIM}v1.2.0${RESET} — ${BOLD}$(if $APPLY; then echo "Applying Upgrade"; else echo "Upgrade Check"; fi)${RESET}"
+echo -e "${CYAN}${BOLD}cct${RESET} ${DIM}v1.3.0${RESET} — ${BOLD}$(if $APPLY; then echo "Applying Upgrade"; else echo "Upgrade Check"; fi)${RESET}"
 echo -e "${CYAN}═══════════════════════════════════════════════${RESET}"
 echo ""
 echo -e "Comparing installed files against repo at:"

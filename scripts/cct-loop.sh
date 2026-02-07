@@ -39,7 +39,16 @@ MAX_TURNS=""
 RESUME=false
 VERBOSE=false
 MAX_ITERATIONS_EXPLICIT=false
-VERSION="1.2.0"
+VERSION="1.3.0"
+
+# ─── Audit & Quality Gate Defaults ───────────────────────────────────────────
+AUDIT_ENABLED=false
+AUDIT_AGENT_ENABLED=false
+DOD_FILE=""
+QUALITY_GATES_ENABLED=false
+AUDIT_RESULT=""
+COMPLETION_REJECTED=false
+QUALITY_GATE_PASSED=true
 
 # ─── Parse Arguments ──────────────────────────────────────────────────────────
 show_help() {
@@ -60,16 +69,24 @@ show_help() {
     echo -e "  ${CYAN}--verbose${RESET}                 Show full Claude output (default: summary)"
     echo -e "  ${CYAN}--help${RESET}                    Show this help"
     echo ""
+    echo -e "${BOLD}AUDIT & QUALITY${RESET}"
+    echo -e "  ${CYAN}--audit${RESET}                   Inject self-audit checklist into agent prompt"
+    echo -e "  ${CYAN}--audit-agent${RESET}             Run separate auditor agent (haiku) after each iteration"
+    echo -e "  ${CYAN}--quality-gates${RESET}           Enable automated quality gates before accepting completion"
+    echo -e "  ${CYAN}--definition-of-done${RESET} FILE DoD checklist file — evaluated by AI against git diff"
+    echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo -e "  ${DIM}cct loop \"Build user auth with JWT\"${RESET}"
     echo -e "  ${DIM}cct loop \"Add payment processing\" --test-cmd \"npm test\" --max-iterations 30${RESET}"
     echo -e "  ${DIM}cct loop \"Refactor the database layer\" --agents 3 --model sonnet${RESET}"
     echo -e "  ${DIM}cct loop \"Fix all lint errors\" --skip-permissions --verbose${RESET}"
+    echo -e "  ${DIM}cct loop \"Add auth\" --audit --audit-agent --quality-gates${RESET}"
+    echo -e "  ${DIM}cct loop \"Ship feature\" --quality-gates --definition-of-done dod.md${RESET}"
     echo ""
     echo -e "${BOLD}CIRCUIT BREAKER${RESET}"
     echo -e "  The loop automatically stops if:"
     echo -e "  ${DIM}• 3 consecutive iterations with < 5 lines changed${RESET}"
-    echo -e "  ${DIM}• Claude outputs LOOP_COMPLETE${RESET}"
+    echo -e "  ${DIM}• Claude outputs LOOP_COMPLETE (validated by quality gates if enabled)${RESET}"
     echo -e "  ${DIM}• Max iterations reached${RESET}"
     echo -e "  ${DIM}• Ctrl-C (graceful shutdown with summary)${RESET}"
     echo ""
@@ -116,6 +133,15 @@ while [[ $# -gt 0 ]]; do
         --max-turns=*) MAX_TURNS="${1#--max-turns=}"; shift ;;
         --resume) RESUME=true; shift ;;
         --verbose) VERBOSE=true; shift ;;
+        --audit) AUDIT_ENABLED=true; shift ;;
+        --audit-agent) AUDIT_AGENT_ENABLED=true; shift ;;
+        --definition-of-done)
+            DOD_FILE="${2:-}"
+            [[ -z "$DOD_FILE" ]] && { error "Missing value for --definition-of-done"; exit 1; }
+            shift 2
+            ;;
+        --definition-of-done=*) DOD_FILE="${1#--definition-of-done=}"; shift ;;
+        --quality-gates) QUALITY_GATES_ENABLED=true; shift ;;
         --help|-h)
             show_help
             exit 0
@@ -260,6 +286,10 @@ resume_state() {
                 agents:*)        AGENTS="$(echo "${line#agents:}" | tr -d ' ')" ;;
                 consecutive_failures:*) CONSECUTIVE_FAILURES="$(echo "${line#consecutive_failures:}" | tr -d ' ')" ;;
                 total_commits:*) TOTAL_COMMITS="$(echo "${line#total_commits:}" | tr -d ' ')" ;;
+                audit_enabled:*)         AUDIT_ENABLED="$(echo "${line#audit_enabled:}" | tr -d ' ')" ;;
+                audit_agent_enabled:*)   AUDIT_AGENT_ENABLED="$(echo "${line#audit_agent_enabled:}" | tr -d ' ')" ;;
+                quality_gates_enabled:*) QUALITY_GATES_ENABLED="$(echo "${line#quality_gates_enabled:}" | tr -d ' ')" ;;
+                dod_file:*)              DOD_FILE="$(echo "${line#dod_file:}" | sed 's/^ *"//;s/" *$//')" ;;
             esac
         fi
     done < "$STATE_FILE"
@@ -311,6 +341,10 @@ started_at: $(now_iso)
 last_iteration_at: $(now_iso)
 consecutive_failures: $CONSECUTIVE_FAILURES
 total_commits: $TOTAL_COMMITS
+audit_enabled: $AUDIT_ENABLED
+audit_agent_enabled: $AUDIT_AGENT_ENABLED
+quality_gates_enabled: $QUALITY_GATES_ENABLED
+dod_file: "$DOD_FILE"
 ---
 
 ## Log
@@ -414,6 +448,204 @@ run_test_gate() {
     fi
 }
 
+# ─── Audit Agent ─────────────────────────────────────────────────────────────
+
+run_audit_agent() {
+    if ! $AUDIT_AGENT_ENABLED; then
+        return
+    fi
+
+    local log_file="$LOG_DIR/iteration-${ITERATION}.log"
+    local audit_log="$LOG_DIR/audit-iter-${ITERATION}.log"
+
+    # Gather context: tail of implementer output + git diff
+    local impl_tail
+    impl_tail="$(tail -100 "$log_file" 2>/dev/null || echo "(no output)")"
+    local diff_stat
+    diff_stat="$(git -C "$PROJECT_ROOT" diff --stat HEAD~1 2>/dev/null || echo "(no changes)")"
+
+    local audit_prompt
+    read -r -d '' audit_prompt <<AUDIT_PROMPT || true
+You are an independent code auditor reviewing an autonomous coding agent.
+
+## Goal the agent was working toward
+${GOAL}
+
+## Agent Output (last 100 lines)
+${impl_tail}
+
+## Changes Made (git diff --stat)
+${diff_stat}
+
+## Your Task
+Critically review the work:
+1. Did the agent make meaningful progress toward the goal?
+2. Are there obvious bugs, logic errors, or security issues?
+3. Did the agent leave incomplete work (TODOs, placeholder code)?
+4. Are there any regressions or broken patterns?
+5. Is the code quality acceptable?
+
+If the work is acceptable and moves toward the goal, output exactly: AUDIT_PASS
+Otherwise, list the specific issues that need fixing.
+AUDIT_PROMPT
+
+    echo -e "  ${PURPLE}▸${RESET} Running audit agent..."
+
+    # Build flags with haiku model override for fast/cheap audit
+    local audit_flags=()
+    audit_flags+=("--model" "haiku")
+    if $SKIP_PERMISSIONS; then
+        audit_flags+=("--dangerously-skip-permissions")
+    fi
+
+    local exit_code=0
+    claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>&1 || exit_code=$?
+
+    if grep -q "AUDIT_PASS" "$audit_log" 2>/dev/null; then
+        AUDIT_RESULT="pass"
+        echo -e "  ${GREEN}✓${RESET} Audit: passed"
+    else
+        AUDIT_RESULT="$(grep -v '^$' "$audit_log" | tail -20 | head -10 2>/dev/null || echo "Audit returned no output")"
+        echo -e "  ${YELLOW}⚠${RESET} Audit: issues found"
+    fi
+}
+
+# ─── Quality Gates ───────────────────────────────────────────────────────────
+
+run_quality_gates() {
+    if ! $QUALITY_GATES_ENABLED; then
+        QUALITY_GATE_PASSED=true
+        return
+    fi
+
+    QUALITY_GATE_PASSED=true
+    local gate_failures=()
+
+    echo -e "  ${PURPLE}▸${RESET} Running quality gates..."
+
+    # Gate 1: Tests pass (if TEST_CMD set)
+    if [[ -n "$TEST_CMD" ]] && [[ "$TEST_PASSED" == "false" ]]; then
+        gate_failures+=("tests failing")
+    fi
+
+    # Gate 2: No uncommitted changes
+    if ! git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null || \
+       ! git -C "$PROJECT_ROOT" diff --cached --quiet 2>/dev/null; then
+        gate_failures+=("uncommitted changes present")
+    fi
+
+    # Gate 3: No TODO/FIXME/HACK/XXX in new code
+    local todo_count
+    todo_count="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null | grep -cE '^\+.*(TODO|FIXME|HACK|XXX)' || echo 0)"
+    if [[ "${todo_count:-0}" -gt 0 ]]; then
+        gate_failures+=("${todo_count} TODO/FIXME/HACK/XXX markers in new code")
+    fi
+
+    # Gate 4: Definition of Done (if DOD_FILE set)
+    if [[ -n "$DOD_FILE" ]]; then
+        if ! check_definition_of_done; then
+            gate_failures+=("definition of done not satisfied")
+        fi
+    fi
+
+    if [[ ${#gate_failures[@]} -gt 0 ]]; then
+        QUALITY_GATE_PASSED=false
+        local failures_str
+        failures_str="$(printf ', %s' "${gate_failures[@]}")"
+        failures_str="${failures_str:2}"  # trim leading ", "
+        echo -e "  ${RED}✗${RESET} Quality gates: FAILED (${failures_str})"
+    else
+        echo -e "  ${GREEN}✓${RESET} Quality gates: all passed"
+    fi
+}
+
+check_definition_of_done() {
+    if [[ ! -f "$DOD_FILE" ]]; then
+        warn "Definition of done file not found: $DOD_FILE"
+        return 1
+    fi
+
+    local dod_content
+    dod_content="$(cat "$DOD_FILE")"
+    local diff_content
+    diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null || echo "(no diff)")"
+
+    local dod_prompt
+    read -r -d '' dod_prompt <<DOD_PROMPT || true
+You are evaluating whether code changes satisfy a Definition of Done checklist.
+
+## Definition of Done
+${dod_content}
+
+## Changes Made (git diff)
+${diff_content}
+
+## Your Task
+For each item in the Definition of Done, determine if the changes satisfy it.
+If ALL items are satisfied, output exactly: DOD_PASS
+Otherwise, list which items are NOT satisfied and why.
+DOD_PROMPT
+
+    local dod_log="$LOG_DIR/dod-iter-${ITERATION}.log"
+    local dod_flags=()
+    dod_flags+=("--model" "haiku")
+    if $SKIP_PERMISSIONS; then
+        dod_flags+=("--dangerously-skip-permissions")
+    fi
+
+    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>&1 || true
+
+    if grep -q "DOD_PASS" "$dod_log" 2>/dev/null; then
+        echo -e "  ${GREEN}✓${RESET} Definition of Done: satisfied"
+        return 0
+    else
+        echo -e "  ${YELLOW}⚠${RESET} Definition of Done: not satisfied"
+        return 1
+    fi
+}
+
+# ─── Guarded Completion ──────────────────────────────────────────────────────
+
+guard_completion() {
+    local log_file="$LOG_DIR/iteration-${ITERATION}.log"
+
+    # Check if LOOP_COMPLETE is in the log
+    if ! grep -q "LOOP_COMPLETE" "$log_file" 2>/dev/null; then
+        return 1  # No completion claim
+    fi
+
+    echo -e "  ${CYAN}▸${RESET} LOOP_COMPLETE detected — validating..."
+
+    local rejection_reasons=()
+
+    # Check quality gates
+    if ! $QUALITY_GATE_PASSED; then
+        rejection_reasons+=("quality gates failed")
+    fi
+
+    # Check audit agent
+    if $AUDIT_AGENT_ENABLED && [[ "$AUDIT_RESULT" != "pass" ]]; then
+        rejection_reasons+=("audit agent found issues")
+    fi
+
+    # Check tests
+    if [[ -n "$TEST_CMD" ]] && [[ "$TEST_PASSED" == "false" ]]; then
+        rejection_reasons+=("tests failing")
+    fi
+
+    if [[ ${#rejection_reasons[@]} -gt 0 ]]; then
+        local reasons_str
+        reasons_str="$(printf ', %s' "${rejection_reasons[@]}")"
+        reasons_str="${reasons_str:2}"
+        echo -e "  ${RED}✗${RESET} Completion REJECTED: ${reasons_str}"
+        COMPLETION_REJECTED=true
+        return 1
+    fi
+
+    echo -e "  ${GREEN}${BOLD}✓ LOOP_COMPLETE accepted — all gates passed!${RESET}"
+    return 0
+}
+
 # ─── Prompt Composition ──────────────────────────────────────────────────────
 
 compose_prompt() {
@@ -439,6 +671,14 @@ compose_prompt() {
 $TEST_OUTPUT"
     fi
 
+    # Build audit sections (captured before heredoc to avoid nested heredoc issues)
+    local audit_section
+    audit_section="$(compose_audit_section)"
+    local audit_feedback_section
+    audit_feedback_section="$(compose_audit_feedback_section)"
+    local rejection_notice_section
+    rejection_notice_section="$(compose_rejection_notice_section)"
+
     cat <<PROMPT
 You are an autonomous coding agent on iteration ${ITERATION}/${MAX_ITERATIONS} of a continuous loop.
 
@@ -462,6 +702,12 @@ ${test_section}
 5. Commit your work with a descriptive message
 6. When the goal is FULLY achieved, output exactly: LOOP_COMPLETE
 
+${audit_section}
+
+${audit_feedback_section}
+
+${rejection_notice_section}
+
 ## Rules
 - Focus on ONE task per iteration — do it well
 - Always commit with descriptive messages
@@ -469,6 +715,50 @@ ${test_section}
 - If stuck on the same issue for 2+ iterations, try a different approach
 - Do NOT output LOOP_COMPLETE unless the goal is genuinely achieved
 PROMPT
+}
+
+compose_audit_section() {
+    if ! $AUDIT_ENABLED; then
+        return
+    fi
+    cat <<'AUDIT_SECTION'
+## Self-Audit Checklist
+Before declaring LOOP_COMPLETE, critically evaluate your own work:
+1. Does the implementation FULLY satisfy the goal, not just partially?
+2. Are there any edge cases you haven't handled?
+3. Did you leave any TODO, FIXME, HACK, or XXX comments in new code?
+4. Are all new functions/modules tested (if a test command exists)?
+5. Would a code reviewer approve this, or would they request changes?
+6. Is the code clean, well-structured, and following project conventions?
+
+If ANY answer is "no", do NOT output LOOP_COMPLETE. Instead, fix the issues first.
+AUDIT_SECTION
+}
+
+compose_audit_feedback_section() {
+    if [[ -z "$AUDIT_RESULT" ]] || [[ "$AUDIT_RESULT" == "pass" ]]; then
+        return
+    fi
+    cat <<AUDIT_FEEDBACK
+## Audit Feedback (Previous Iteration)
+An independent audit of your last iteration found these issues:
+${AUDIT_RESULT}
+
+Address ALL audit findings before proceeding with new work.
+AUDIT_FEEDBACK
+}
+
+compose_rejection_notice_section() {
+    if ! $COMPLETION_REJECTED; then
+        return
+    fi
+    COMPLETION_REJECTED=false
+    cat <<'REJECTION'
+## ⚠ Completion Rejected
+Your previous LOOP_COMPLETE was REJECTED because quality gates did not pass.
+Review the audit feedback and test results above, fix the issues, then try again.
+Do NOT output LOOP_COMPLETE until all quality checks pass.
+REJECTION
 }
 
 compose_worker_prompt() {
@@ -564,6 +854,9 @@ show_banner() {
     fi
     if $SKIP_PERMISSIONS; then
         echo -e "  ${YELLOW}${BOLD}⚠${RESET}  ${YELLOW}--dangerously-skip-permissions enabled${RESET}"
+    fi
+    if $AUDIT_ENABLED || $AUDIT_AGENT_ENABLED || $QUALITY_GATES_ENABLED; then
+        echo -e "  ${BOLD}Audit:${RESET} ${AUDIT_ENABLED:+self-audit }${AUDIT_AGENT_ENABLED:+audit-agent }${QUALITY_GATES_ENABLED:+quality-gates}${DIM}${DOD_FILE:+ | DoD: $DOD_FILE}${RESET}"
     fi
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
@@ -816,14 +1109,9 @@ WORKEREOF
     sed -i '' "s|__TEST_CMD__|${TEST_CMD}|g" "$worker_script"
     sed -i '' "s|__CLAUDE_FLAGS__|${claude_flags}|g" "$worker_script"
     # Goal needs special handling for sed (may contain special chars)
-    python3 -c "
-import sys
-with open('$worker_script', 'r') as f:
-    content = f.read()
-content = content.replace('__GOAL__', '''$GOAL''')
-with open('$worker_script', 'w') as f:
-    f.write(content)
-"
+    # Use awk for safe string replacement without python
+    awk -v goal="$GOAL" '{gsub(/__GOAL__/, goal); print}' "$worker_script" > "${worker_script}.tmp" \
+        && mv "${worker_script}.tmp" "$worker_script"
     chmod +x "$worker_script"
     echo "$worker_script"
 }
@@ -859,8 +1147,9 @@ launch_multi_agent() {
         tmux send-keys -t "$MULTI_WINDOW_NAME" "bash '$worker_script'" Enter
     done
 
-    # Tile the layout
-    tmux select-layout -t "$MULTI_WINDOW_NAME" tiled 2>/dev/null || true
+    # Layout: monitor pane on top (35%), worker agents tile below
+    tmux select-layout -t "$MULTI_WINDOW_NAME" main-vertical 2>/dev/null || true
+    tmux resize-pane -t "$MULTI_WINDOW_NAME.0" -y 35% 2>/dev/null || true
 
     # In the monitor pane, tail all agent logs
     tmux select-pane -t "$MULTI_WINDOW_NAME.0"
@@ -957,15 +1246,6 @@ run_single_agent_loop() {
 
         local log_file="$LOG_DIR/iteration-${ITERATION}.log"
 
-        # Check completion
-        if check_completion "$log_file"; then
-            success "LOOP_COMPLETE detected!"
-            STATUS="complete"
-            write_state
-            show_summary
-            return 0
-        fi
-
         # Auto-commit if Claude didn't
         local commits_before
         commits_before="$(git_commit_count)"
@@ -990,6 +1270,20 @@ run_single_agent_loop() {
             else
                 echo -e "  ${RED}✗${RESET} Tests: failed"
             fi
+        fi
+
+        # Audit agent (reviews implementer's work)
+        run_audit_agent
+
+        # Quality gates (automated checks)
+        run_quality_gates
+
+        # Guarded completion (replaces naive grep check)
+        if guard_completion; then
+            STATUS="complete"
+            write_state
+            show_summary
+            return 0
         fi
 
         # Check progress (circuit breaker)

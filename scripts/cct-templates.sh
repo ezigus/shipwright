@@ -54,19 +54,13 @@ find_template() {
     return 1
 }
 
-# ─── JSON Parsing (portable, no jq required) ────────────────────────────────
+# ─── JSON Parsing (jq preferred, grep fallback) ──────────────────────────────
 
 # Extract a top-level string field from JSON
 json_field() {
     local file="$1" field="$2"
-    # Use python3 if available (more reliable), fall back to grep
-    if command -v python3 &>/dev/null; then
-        python3 -c "
-import json, sys
-with open('$file') as f:
-    data = json.load(f)
-print(data.get('$field', ''))
-" 2>/dev/null
+    if command -v jq &>/dev/null; then
+        jq -r ".${field} // \"\"" "$file" 2>/dev/null
     else
         grep -o "\"${field}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$file" | head -1 | sed 's/.*: *"//;s/"$//'
     fi
@@ -75,13 +69,8 @@ print(data.get('$field', ''))
 # Extract agent count from JSON
 json_agent_count() {
     local file="$1"
-    if command -v python3 &>/dev/null; then
-        python3 -c "
-import json
-with open('$file') as f:
-    data = json.load(f)
-print(len(data.get('agents', [])))
-" 2>/dev/null
+    if command -v jq &>/dev/null; then
+        jq -r '.agents // [] | length' "$file" 2>/dev/null
     else
         grep -c '"name"' "$file" 2>/dev/null | head -1
     fi
@@ -90,17 +79,11 @@ print(len(data.get('agents', [])))
 # Print agent details from a template
 print_agents() {
     local file="$1"
-    if command -v python3 &>/dev/null; then
-        python3 -c "
-import json
-with open('$file') as f:
-    data = json.load(f)
-for agent in data.get('agents', []):
-    name = agent.get('name', '?')
-    role = agent.get('role', '')
-    focus = agent.get('focus', '')
-    print(f'{name}|{role}|{focus}')
-" 2>/dev/null
+    if command -v jq &>/dev/null; then
+        jq -r '.agents // [] | .[] | "\(.name // "?")|\(.role // "")|\(.focus // "")"' "$file" 2>/dev/null
+    else
+        # Best-effort grep fallback for simple cases
+        grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' "$file" | sed 's/.*"name"[[:space:]]*:[[:space:]]*"//;s/"$//'
     fi
 }
 

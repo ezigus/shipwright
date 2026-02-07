@@ -5,7 +5,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
@@ -65,6 +65,7 @@ show_help() {
     echo -e "  ${CYAN}upgrade${RESET} [--apply]     Check for updates from the repo (dry-run by default)"
     echo -e "  ${CYAN}loop${RESET} \"goal\" [opts]    ${BOLD}Continuous agent loop${RESET} — run until goal is achieved"
     echo -e "  ${CYAN}worktree${RESET} <cmd>         Manage git worktrees for agent isolation"
+    echo -e "  ${CYAN}init${RESET}                  ${BOLD}Quick tmux setup${RESET} — one command, no prompts"
     echo -e "  ${CYAN}help${RESET}                  Show this help message"
     echo -e "  ${CYAN}version${RESET}               Show version"
     echo ""
@@ -73,6 +74,12 @@ show_help() {
     echo -e "  ${DIM}cct loop \"Fix bugs\" --max-iterations 10 --model sonnet${RESET}"
     echo -e "  ${DIM}cct loop \"Build API\" --agents 3 --skip-permissions${RESET}"
     echo -e "  ${DIM}cct loop --resume${RESET}                   # Resume interrupted loop"
+    echo ""
+    echo -e "${BOLD}AUDIT & QUALITY${RESET}  ${DIM}(loop guardrails)${RESET}"
+    echo -e "  ${DIM}cct loop \"goal\" --audit${RESET}                     # Self-reflection each iteration"
+    echo -e "  ${DIM}cct loop \"goal\" --audit-agent${RESET}               # Separate auditor reviews work"
+    echo -e "  ${DIM}cct loop \"goal\" --quality-gates${RESET}             # Automated quality checks"
+    echo -e "  ${DIM}cct loop \"goal\" --definition-of-done dod.md${RESET} # Custom completion checklist"
     echo ""
     echo -e "${BOLD}TMUX KEYBINDINGS${RESET}  ${DIM}(with the bundled tmux.conf)${RESET}"
     echo -e "  ${PURPLE}prefix + T${RESET}           Launch a team session  (runs ${DIM}cct session${RESET})"
@@ -135,6 +142,9 @@ main() {
             ;;
         worktree)
             exec "$SCRIPT_DIR/cct-worktree.sh" "$@"
+            ;;
+        init)
+            exec "$SCRIPT_DIR/cct-init.sh" "$@"
             ;;
         help|--help|-h)
             show_help

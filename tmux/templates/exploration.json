@@ -13,5 +13,7 @@
       "focus": "docs/, README.md, *.md"
     }
   ],
-  "layout": "even-horizontal"
+  "layout": "even-horizontal",
+  "layout_style": "main-vertical",
+  "main_pane_percent": 60
 }

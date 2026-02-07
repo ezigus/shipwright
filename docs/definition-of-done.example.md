@@ -1,0 +1,16 @@
+# Definition of Done
+
+Use this template with `cct loop --definition-of-done <file>` to enforce completion criteria.
+Copy and customize for your project.
+
+## Checklist
+
+- [ ] All specified functionality is implemented
+- [ ] Unit tests exist for new code
+- [ ] All tests pass
+- [ ] No TODO/FIXME markers in new code
+- [ ] Public functions have docstrings/comments
+- [ ] README reflects current state
+- [ ] No hardcoded values that should be configurable
+- [ ] Error handling covers likely failure modes
+- [ ] Code follows existing patterns in the codebase

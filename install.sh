@@ -246,7 +246,7 @@ if ask "Install cct CLI to $BIN_DIR?"; then
       "cp '$SCRIPT_DIR/scripts/cct' '$BIN_DIR/cct' && chmod +x '$BIN_DIR/cct'"
     INSTALLED+=("cct")
 
-    for sub in cct-session.sh cct-status.sh cct-cleanup.sh cct-upgrade.sh cct-doctor.sh cct-logs.sh cct-ps.sh cct-templates.sh cct-loop.sh cct-worktree.sh; do
+    for sub in cct-session.sh cct-status.sh cct-cleanup.sh cct-upgrade.sh cct-doctor.sh cct-logs.sh cct-ps.sh cct-templates.sh cct-loop.sh cct-worktree.sh cct-init.sh; do
       if [[ -f "$SCRIPT_DIR/scripts/$sub" ]]; then
         run "Install $sub → $BIN_DIR/$sub" \
           "cp '$SCRIPT_DIR/scripts/$sub' '$BIN_DIR/$sub' && chmod +x '$BIN_DIR/$sub'"
@@ -275,6 +275,13 @@ if ask "Install cct CLI to $BIN_DIR?"; then
           "cp '$tpl' '$HOME/.claude-teams/templates/$local_name'"
       done
       INSTALLED+=("templates")
+    fi
+
+    # Install definition-of-done template
+    if [[ -f "$SCRIPT_DIR/docs/definition-of-done.example.md" ]]; then
+      run "Install definition-of-done template" \
+        "cp '$SCRIPT_DIR/docs/definition-of-done.example.md' '$HOME/.claude-teams/templates/definition-of-done.example.md'"
+      INSTALLED+=("definition-of-done.example.md")
     fi
 
     success "Installed cct CLI (router + subcommands + adapters + templates)"
@@ -406,6 +413,8 @@ if [[ ${#INSTALLED[@]} -gt 0 ]] && ! $DRY_RUN; then
         _add_entry "cct-loop.sh" "scripts/cct-loop.sh" "$BIN_DIR/cct-loop.sh" false true ;;
       "cct-worktree.sh")
         _add_entry "cct-worktree.sh" "scripts/cct-worktree.sh" "$BIN_DIR/cct-worktree.sh" false true ;;
+      "cct-init.sh")
+        _add_entry "cct-init.sh" "scripts/cct-init.sh" "$BIN_DIR/cct-init.sh" false true ;;
 
       "teammate-idle.sh")
         _add_entry "teammate-idle.sh" "claude-code/hooks/teammate-idle.sh" "$HOME/.claude/hooks/teammate-idle.sh" false true ;;
@@ -423,6 +432,8 @@ if [[ ${#INSTALLED[@]} -gt 0 ]] && ! $DRY_RUN; then
           _add_entry "$local_name" "tmux/templates/$local_name" "$tpl_file" false false
         done
         ;;
+      "definition-of-done.example.md")
+        _add_entry "definition-of-done.example.md" "docs/definition-of-done.example.md" "$HOME/.claude-teams/templates/definition-of-done.example.md" false false ;;
     esac
   done
 

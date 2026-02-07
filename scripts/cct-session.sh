@@ -80,6 +80,8 @@ WINDOW_NAME="claude-${TEAM_NAME}"
 
 TEMPLATE_FILE=""
 TEMPLATE_LAYOUT=""
+TEMPLATE_LAYOUT_STYLE=""
+TEMPLATE_MAIN_PANE_PERCENT=""
 TEMPLATE_DESC=""
 TEMPLATE_AGENTS=()  # Populated as "name|role|focus" entries
 
@@ -102,31 +104,32 @@ if [[ -n "$TEMPLATE_NAME" ]]; then
 
     info "Loading template: ${PURPLE}${BOLD}${TEMPLATE_NAME}${RESET}"
 
-    # Parse template with python3 (available on macOS)
-    if command -v python3 &>/dev/null; then
-        TEMPLATE_DESC="$(python3 -c "
-import json
-with open('$TEMPLATE_FILE') as f:
-    data = json.load(f)
-print(data.get('description', ''))
-")"
-        TEMPLATE_LAYOUT="$(python3 -c "
-import json
-with open('$TEMPLATE_FILE') as f:
-    data = json.load(f)
-print(data.get('layout', 'tiled'))
-")"
-        while IFS= read -r line; do
-            [[ -n "$line" ]] && TEMPLATE_AGENTS+=("$line")
-        done < <(python3 -c "
-import json
-with open('$TEMPLATE_FILE') as f:
-    data = json.load(f)
-for a in data.get('agents', []):
-    print(a['name'] + '|' + a.get('role','') + '|' + a.get('focus',''))
-")
+    # Parse template — single jq call extracts all fields + agents in one pass
+    if command -v jq &>/dev/null; then
+        # Single jq call: outputs metadata lines then agent lines
+        # Format: META<tab>field<tab>value for metadata, AGENT<tab>name|role|focus for agents
+        while IFS=$'\t' read -r tag key value; do
+            case "$tag" in
+                META)
+                    case "$key" in
+                        description)       TEMPLATE_DESC="$value" ;;
+                        layout)            TEMPLATE_LAYOUT="$value" ;;
+                        layout_style)      TEMPLATE_LAYOUT_STYLE="$value" ;;
+                        main_pane_percent) TEMPLATE_MAIN_PANE_PERCENT="$value" ;;
+                    esac
+                    ;;
+                AGENT) [[ -n "$key" ]] && TEMPLATE_AGENTS+=("$key") ;;
+            esac
+        done < <(jq -r '
+            "META\tdescription\t\(.description // "")",
+            "META\tlayout\t\(.layout // "tiled")",
+            "META\tlayout_style\t\(.layout_style // "")",
+            "META\tmain_pane_percent\t\(.main_pane_percent // "")",
+            (.agents // [] | .[] | "AGENT\t\(.name)|\(.role // "")|\(.focus // "")\t")
+        ' "$TEMPLATE_FILE")
     else
-        error "python3 is required for template parsing."
+        error "jq is required for template parsing."
+        echo -e "  ${DIM}brew install jq${RESET}"
         exit 1
     fi
 
@@ -195,8 +198,21 @@ if [[ "$TERMINAL_ADAPTER" == "tmux" && ! -f "$ADAPTER_FILE" ]]; then
             tmux send-keys -t "$WINDOW_NAME" "clear" Enter
         done
 
-        # Apply the layout from the template
-        tmux select-layout -t "$WINDOW_NAME" "${TEMPLATE_LAYOUT:-tiled}" 2>/dev/null || true
+        # Apply the layout from the template (layout_style takes precedence over layout)
+        if [[ -n "$TEMPLATE_LAYOUT_STYLE" ]]; then
+            tmux select-layout -t "$WINDOW_NAME" "$TEMPLATE_LAYOUT_STYLE" 2>/dev/null || \
+                tmux select-layout -t "$WINDOW_NAME" "${TEMPLATE_LAYOUT:-tiled}" 2>/dev/null || true
+        else
+            tmux select-layout -t "$WINDOW_NAME" "${TEMPLATE_LAYOUT:-tiled}" 2>/dev/null || true
+        fi
+
+        # Resize leader pane to desired percentage
+        if [[ -n "$TEMPLATE_MAIN_PANE_PERCENT" && -n "$TEMPLATE_LAYOUT_STYLE" ]]; then
+            case "$TEMPLATE_LAYOUT_STYLE" in
+                main-horizontal) tmux resize-pane -t "$WINDOW_NAME.0" -x "${TEMPLATE_MAIN_PANE_PERCENT}%" 2>/dev/null ;;
+                main-vertical)   tmux resize-pane -t "$WINDOW_NAME.0" -y "${TEMPLATE_MAIN_PANE_PERCENT}%" 2>/dev/null ;;
+            esac
+        fi
 
         # Select the first pane (leader)
         tmux select-pane -t "$WINDOW_NAME.0"

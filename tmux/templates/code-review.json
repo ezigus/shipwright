@@ -18,5 +18,7 @@
       "focus": "*.test.*, __tests__/, *.spec.*"
     }
   ],
-  "layout": "tiled"
+  "layout": "tiled",
+  "layout_style": "main-horizontal",
+  "main_pane_percent": 65
 }

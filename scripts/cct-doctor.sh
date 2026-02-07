@@ -60,6 +60,15 @@ else
     echo -e "    ${DIM}sudo apt install tmux  (Ubuntu/Debian)${RESET}"
 fi
 
+# jq
+if command -v jq &>/dev/null; then
+    check_pass "jq $(jq --version 2>&1 | tr -d 'jq-')"
+else
+    check_fail "jq not installed — required for template parsing"
+    echo -e "    ${DIM}brew install jq${RESET}  (macOS)"
+    echo -e "    ${DIM}sudo apt install jq${RESET}  (Ubuntu/Debian)"
+fi
+
 # Claude Code CLI
 if command -v claude &>/dev/null; then
     check_pass "Claude Code CLI found"
@@ -189,7 +198,55 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 4. Orphaned Sessions
+# 4. Pane Display
+# ═════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${PURPLE}${BOLD}  PANE DISPLAY${RESET}"
+echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+
+# Check overlay file exists
+if [[ -f "$HOME/.tmux/claude-teams-overlay.conf" ]]; then
+    # Check for set-hook color enforcement
+    if grep -q "set-hook.*after-split-window" "$HOME/.tmux/claude-teams-overlay.conf" 2>/dev/null; then
+        check_pass "Overlay has color hooks (set-hook)"
+    else
+        check_warn "Overlay missing color hooks — new panes may flash white"
+        echo -e "    ${DIM}Run: cct upgrade --apply  or  cct init${RESET}"
+    fi
+else
+    check_fail "Overlay not found — pane display features unavailable"
+fi
+
+# Check if set-hook commands are active in tmux
+if [[ -n "${TMUX:-}" ]]; then
+    if tmux show-hooks -g 2>/dev/null | grep -q "after-split-window"; then
+        check_pass "set-hook commands active in tmux"
+    else
+        check_warn "set-hook commands not active — reload config: prefix + r"
+    fi
+
+    # Check default-terminal
+    TMUX_TERM="$(tmux show-option -gv default-terminal 2>/dev/null || echo "unknown")"
+    if [[ "$TMUX_TERM" == *"256color"* ]]; then
+        check_pass "default-terminal: $TMUX_TERM"
+    else
+        check_warn "default-terminal: $TMUX_TERM — 256color variant recommended"
+        echo -e "    ${DIM}set -g default-terminal 'tmux-256color'${RESET}"
+    fi
+
+    # Check pane border includes cyan accent
+    BORDER_FMT="$(tmux show-option -gv pane-border-format 2>/dev/null || echo "")"
+    if echo "$BORDER_FMT" | grep -q "#00d4ff"; then
+        check_pass "Pane border format includes cyan accent"
+    else
+        check_warn "Pane border format missing cyan accent — overlay may not be loaded"
+    fi
+else
+    info "Not in tmux session — skipping runtime display checks"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 5. Orphaned Sessions
 # ═════════════════════════════════════════════════════════════════════════════
 echo ""
 echo -e "${PURPLE}${BOLD}  ORPHAN CHECK${RESET}"
@@ -214,7 +271,7 @@ if [[ $orphaned_teams -eq 0 ]]; then
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 5. Terminal Compatibility
+# 6. Terminal Compatibility
 # ═════════════════════════════════════════════════════════════════════════════
 echo ""
 echo -e "${PURPLE}${BOLD}  TERMINAL${RESET}"

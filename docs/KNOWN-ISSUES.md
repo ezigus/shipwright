@@ -143,15 +143,17 @@ If only one pane is listed while agents are active, the fallback occurred.
 
 **Root Cause:** tmux's `window-style` applies at the window level but newly spawned panes from external processes (like Claude Code) don't always inherit it.
 
-**Fix:** The `claude-teams-overlay.conf` now uses `set-hook` to force the dark theme on every new pane:
+**Fix:** As of v1.3.0, `claude-teams-overlay.conf` uses `set-hook` to force the dark theme on every new pane:
 
 ```conf
 set-hook -g after-split-window "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
-set-hook -g after-new-window "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
-set-hook -g after-select-pane "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
+set-hook -g after-new-window   "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
+set-hook -g after-new-session  "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
 ```
 
-**Status:** ✅ Resolved in v1.1.0
+Run `cct init` or `cct upgrade --apply` to get the updated overlay with these hooks.
+
+**Status:** ✅ Resolved in v1.3.0
 
 ---
 

@@ -1,20 +1,28 @@
 # Claude Code Teams + tmux
 
-> Run Claude Code Agent Teams with split-pane tmux sessions for visual multi-agent development.
+> Production-ready tmux setup for running Claude Code Agent Teams — multi-agent AI development with visual split-pane sessions, quality gates, and autonomous loops.
+
+[![v1.3.0](https://img.shields.io/badge/version-1.3.0-00d4ff?style=flat-square)](https://github.com/sethdford/claude-code-teams-tmux/releases) ![tmux dark theme with cyan accents](https://img.shields.io/badge/theme-dark%20blue--gray%20%2B%20cyan-00d4ff?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 ## What's This?
 
 Claude Code's **agent teams** feature lets you spawn multiple AI agents that work in parallel on different parts of a task — one on backend, one on frontend, one writing tests, etc. When you run Claude Code inside tmux, each agent gets its own pane so you can watch them all work simultaneously.
 
-This repo packages a complete setup: a premium dark tmux theme, Claude Code settings tuned for teams, quality gate hooks, and a `cct` CLI for managing team sessions.
+This repo packages a complete setup:
 
-![tmux dark theme with cyan accents](https://img.shields.io/badge/theme-dark%20blue--gray%20%2B%20cyan-00d4ff?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
+- **Premium dark tmux theme** with agent-aware pane borders
+- **`cct` CLI** for managing team sessions, templates, and autonomous loops
+- **Quality gate hooks** that block agents until code passes checks
+- **Continuous agent loop** (`cct loop`) for autonomous multi-iteration development
+- **Layout presets** that give the leader pane 60-65% of screen space
+- **One-command setup** via `cct init`
 
 ## Prerequisites
 
 | Requirement | Version | Notes |
 |-------------|---------|-------|
 | **tmux** | 3.2+ (tested on 3.6a) | `brew install tmux` on macOS |
+| **jq** | any | `brew install jq` — JSON parsing for templates |
 | **Claude Code CLI** | latest | `npm install -g @anthropic-ai/claude-code` |
 | **Node.js** | 20+ | For hooks |
 | **Git** | any | For installation |
@@ -24,8 +32,18 @@ This repo packages a complete setup: a premium dark tmux theme, Claude Code sett
 
 ## Quick Start
 
+**Option A: One-command setup (just tmux config, no prompts)**
+
 ```bash
-git clone https://github.com/sethford/claude-code-teams-tmux.git
+git clone https://github.com/sethdford/claude-code-teams-tmux.git
+cd claude-code-teams-tmux
+./scripts/cct-init.sh
+```
+
+**Option B: Full interactive install (tmux + settings + hooks + CLI)**
+
+```bash
+git clone https://github.com/sethdford/claude-code-teams-tmux.git
 cd claude-code-teams-tmux
 ./install.sh
 ```
@@ -43,19 +61,29 @@ claude
 claude-code-teams-tmux/
 ├── tmux/
 │   ├── tmux.conf                    # Full tmux config with premium dark theme
-│   └── claude-teams-overlay.conf    # Agent-aware pane styling & team keybindings
+│   ├── claude-teams-overlay.conf    # Agent-aware pane styling, color hooks & keybindings
+│   └── templates/                   # Team composition templates
+│       ├── feature-dev.json         #   Backend + frontend + tests (3 agents)
+│       ├── code-review.json         #   Quality + security + coverage (3 agents)
+│       ├── refactor.json            #   Refactor + consumers (2 agents)
+│       └── exploration.json         #   Explorer + synthesizer (2 agents)
 ├── claude-code/
 │   ├── settings.json.template       # Claude Code settings with teams + hooks
 │   └── hooks/
 │       ├── teammate-idle.sh         # Quality gate: typecheck before idle
 │       ├── task-completed.sh        # Quality gate: lint+test before done
-│       ├── notify-idle.sh           # Desktop notification on idle (NEW)
-│       └── pre-compact-save.sh      # Save context before compaction (NEW)
+│       ├── notify-idle.sh           # Desktop notification on idle
+│       └── pre-compact-save.sh      # Save context before compaction
 ├── scripts/
-│   └── cct                          # CLI for managing team sessions
+│   ├── cct                          # CLI router (session, loop, doctor, init, ...)
+│   ├── cct-init.sh                  # One-command tmux setup (no prompts)
+│   ├── cct-session.sh               # Create team sessions from templates
+│   ├── cct-loop.sh                  # Continuous autonomous agent loop
+│   ├── cct-doctor.sh                # Validate setup and diagnose issues
+│   └── ...                          # status, ps, logs, cleanup, upgrade, worktree
 ├── docs/
 │   ├── KNOWN-ISSUES.md              # Tracked bugs with workarounds
-│   └── TIPS.md                      # Power user tips
+│   └── TIPS.md                      # Power user tips & wave patterns
 ├── install.sh                       # Interactive installer
 └── LICENSE                          # MIT
 ```
@@ -84,13 +112,31 @@ The `teammate-idle.sh` hook runs `pnpm typecheck` (or `npx tsc --noEmit`) when a
 
 ### `cct` CLI
 
-A shell script for managing team sessions:
+A full-featured CLI for managing team sessions, autonomous loops, and setup:
 
 ```bash
-cct session my-feature    # Create a team session with agent panes
-cct status                # Show team dashboard
-cct cleanup               # Dry-run: show orphaned sessions
-cct cleanup --force       # Kill orphaned sessions
+# Setup & diagnostics
+cct init                              # One-command tmux setup (no prompts)
+cct doctor                            # Validate setup, check color hooks, etc.
+cct upgrade --apply                   # Pull latest and apply updates
+
+# Team sessions
+cct session my-feature                # Create a team session
+cct session my-feature -t feature-dev # Use a template (3 agents, leader pane 65%)
+cct status                            # Show team dashboard
+cct ps                                # Show running agent processes
+cct logs myteam --follow              # Tail agent logs
+
+# Continuous loop (autonomous agent operation)
+cct loop "Build auth" --test-cmd "npm test"
+cct loop "Fix bugs" --agents 3 --audit --quality-gates
+cct loop --resume                     # Resume interrupted loop
+
+# Maintenance
+cct cleanup                           # Dry-run: show orphaned sessions
+cct cleanup --force                   # Kill orphaned sessions
+cct worktree create my-branch         # Git worktree for agent isolation
+cct templates list                    # Browse team templates
 ```
 
 ## Usage
@@ -101,15 +147,48 @@ cct cleanup --force       # Kill orphaned sessions
 # Start tmux (if not already in a session)
 tmux new -s dev
 
-# Option 1: Use cct CLI
+# Option 1: Use a template — leader gets 65% of the screen
+cct session my-feature --template feature-dev
+
+# Option 2: Bare session — then ask Claude to create a team
 cct session my-feature
 
-# Option 2: Use tmux keybinding
+# Option 3: tmux keybinding
 # Press Ctrl-a then T to launch a team session
 
-# Option 3: Just start Claude Code — it handles teams automatically
+# Option 4: Just start Claude Code — it handles teams automatically
 claude
 ```
+
+### Continuous Agent Loop
+
+Run Claude Code autonomously in a loop until a goal is achieved:
+
+```bash
+# Basic loop with test verification
+cct loop "Build user authentication with JWT" --test-cmd "npm test"
+
+# Multi-agent with audit and quality gates
+cct loop "Refactor the API layer" --agents 3 --audit --quality-gates
+
+# With a definition of done
+cct loop "Build checkout flow" --definition-of-done requirements.md
+
+# Resume an interrupted loop
+cct loop --resume
+```
+
+The loop supports self-audit (agent reflects on its own work), audit agents (separate reviewer), and quality gates (automated checks between iterations).
+
+### Layout Presets
+
+Switch between pane arrangements with keybindings:
+
+| Key | Layout | Description |
+|-----|--------|-------------|
+| `prefix + M-1` | main-horizontal | Leader 65% left, agents stacked right |
+| `prefix + M-2` | main-vertical | Leader 60% top, agents tiled bottom |
+| `prefix + M-3` | tiled | Equal sizes |
 
 ### Monitoring Teams
 
@@ -120,14 +199,10 @@ cct status
 # Or use the tmux keybinding: Ctrl-a then Ctrl-t
 ```
 
-### Cleaning Up
+### Health Check
 
 ```bash
-# Preview what would be cleaned up
-cct cleanup
-
-# Actually kill orphaned sessions and panes
-cct cleanup --force
+cct doctor    # Checks: tmux, jq, overlay hooks, color config, orphaned sessions
 ```
 
 ## Configuration
@@ -230,12 +305,13 @@ The prefix key is `Ctrl-a` (remapped from the default `Ctrl-b`).
 | `prefix + g` | Display pane numbers (pick by index) |
 | `prefix + G` | Toggle zoom on current pane |
 | `prefix + S` | Toggle synchronized panes (type in all at once) |
-| `prefix + Alt-t` | Toggle team sync mode |
-| `prefix + Alt-l` | Cycle through pane layouts |
-| `prefix + Alt-s` | Capture pane contents to file |
-| `prefix + M-c` | Capture current pane to log file |
+| `prefix + M-t` | Toggle team sync mode |
+| `prefix + M-l` | Cycle through pane layouts |
+| `prefix + M-1` | Layout: main-horizontal (leader 65% left) |
+| `prefix + M-2` | Layout: main-vertical (leader 60% top) |
+| `prefix + M-3` | Layout: tiled (equal sizes) |
+| `prefix + M-s` | Capture current pane scrollback to file |
 | `prefix + M-a` | Capture ALL panes in window |
-| `prefix + M-s` | Save full scrollback to file |
 
 ### Copy Mode (vi-style)
 

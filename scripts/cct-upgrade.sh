@@ -106,6 +106,8 @@ FILES=(
     "cct-logs.sh|scripts/cct-logs.sh|$BIN_DIR/cct-logs.sh|false|true"
     "cct-ps.sh|scripts/cct-ps.sh|$BIN_DIR/cct-ps.sh|false|true"
     "cct-templates.sh|scripts/cct-templates.sh|$BIN_DIR/cct-templates.sh|false|true"
+    "cct-loop.sh|scripts/cct-loop.sh|$BIN_DIR/cct-loop.sh|false|true"
+    "cct-worktree.sh|scripts/cct-worktree.sh|$BIN_DIR/cct-worktree.sh|false|true"
     "teammate-idle.sh|claude-code/hooks/teammate-idle.sh|$HOME/.claude/hooks/teammate-idle.sh|false|true"
     "task-completed.sh|claude-code/hooks/task-completed.sh|$HOME/.claude/hooks/task-completed.sh|false|true"
     "notify-idle.sh|claude-code/hooks/notify-idle.sh|$HOME/.claude/hooks/notify-idle.sh|false|true"
@@ -204,7 +206,7 @@ bootstrap_manifest() {
 
 # ─── Main logic ────────────────────────────────────────────────────────────
 echo ""
-echo -e "${CYAN}${BOLD}cct${RESET} ${DIM}v1.1.0${RESET} — ${BOLD}$(if $APPLY; then echo "Applying Upgrade"; else echo "Upgrade Check"; fi)${RESET}"
+echo -e "${CYAN}${BOLD}cct${RESET} ${DIM}v1.2.0${RESET} — ${BOLD}$(if $APPLY; then echo "Applying Upgrade"; else echo "Upgrade Check"; fi)${RESET}"
 echo -e "${CYAN}═══════════════════════════════════════════════${RESET}"
 echo ""
 echo -e "Comparing installed files against repo at:"

@@ -5,7 +5,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
@@ -63,8 +63,16 @@ show_help() {
     echo -e "  ${CYAN}doctor${RESET}                Validate your setup and check for issues"
     echo -e "  ${CYAN}cleanup${RESET} [--force]     Clean up orphaned team sessions"
     echo -e "  ${CYAN}upgrade${RESET} [--apply]     Check for updates from the repo (dry-run by default)"
+    echo -e "  ${CYAN}loop${RESET} \"goal\" [opts]    ${BOLD}Continuous agent loop${RESET} — run until goal is achieved"
+    echo -e "  ${CYAN}worktree${RESET} <cmd>         Manage git worktrees for agent isolation"
     echo -e "  ${CYAN}help${RESET}                  Show this help message"
     echo -e "  ${CYAN}version${RESET}               Show version"
+    echo ""
+    echo -e "${BOLD}CONTINUOUS LOOP${RESET}  ${DIM}(autonomous agent operation)${RESET}"
+    echo -e "  ${DIM}cct loop \"Build auth\" --test-cmd \"npm test\"${RESET}"
+    echo -e "  ${DIM}cct loop \"Fix bugs\" --max-iterations 10 --model sonnet${RESET}"
+    echo -e "  ${DIM}cct loop \"Build API\" --agents 3 --skip-permissions${RESET}"
+    echo -e "  ${DIM}cct loop --resume${RESET}                   # Resume interrupted loop"
     echo ""
     echo -e "${BOLD}TMUX KEYBINDINGS${RESET}  ${DIM}(with the bundled tmux.conf)${RESET}"
     echo -e "  ${PURPLE}prefix + T${RESET}           Launch a team session  (runs ${DIM}cct session${RESET})"
@@ -121,6 +129,12 @@ main() {
             ;;
         upgrade)
             exec "$SCRIPT_DIR/cct-upgrade.sh" "$@"
+            ;;
+        loop)
+            exec "$SCRIPT_DIR/cct-loop.sh" "$@"
+            ;;
+        worktree)
+            exec "$SCRIPT_DIR/cct-worktree.sh" "$@"
             ;;
         help|--help|-h)
             show_help

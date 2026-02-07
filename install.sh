@@ -246,7 +246,7 @@ if ask "Install cct CLI to $BIN_DIR?"; then
       "cp '$SCRIPT_DIR/scripts/cct' '$BIN_DIR/cct' && chmod +x '$BIN_DIR/cct'"
     INSTALLED+=("cct")
 
-    for sub in cct-session.sh cct-status.sh cct-cleanup.sh cct-upgrade.sh cct-doctor.sh cct-logs.sh cct-ps.sh cct-templates.sh; do
+    for sub in cct-session.sh cct-status.sh cct-cleanup.sh cct-upgrade.sh cct-doctor.sh cct-logs.sh cct-ps.sh cct-templates.sh cct-loop.sh cct-worktree.sh; do
       if [[ -f "$SCRIPT_DIR/scripts/$sub" ]]; then
         run "Install $sub → $BIN_DIR/$sub" \
           "cp '$SCRIPT_DIR/scripts/$sub' '$BIN_DIR/$sub' && chmod +x '$BIN_DIR/$sub'"
@@ -402,6 +402,10 @@ if [[ ${#INSTALLED[@]} -gt 0 ]] && ! $DRY_RUN; then
         _add_entry "cct-ps.sh" "scripts/cct-ps.sh" "$BIN_DIR/cct-ps.sh" false true ;;
       "cct-templates.sh")
         _add_entry "cct-templates.sh" "scripts/cct-templates.sh" "$BIN_DIR/cct-templates.sh" false true ;;
+      "cct-loop.sh")
+        _add_entry "cct-loop.sh" "scripts/cct-loop.sh" "$BIN_DIR/cct-loop.sh" false true ;;
+      "cct-worktree.sh")
+        _add_entry "cct-worktree.sh" "scripts/cct-worktree.sh" "$BIN_DIR/cct-worktree.sh" false true ;;
 
       "teammate-idle.sh")
         _add_entry "teammate-idle.sh" "claude-code/hooks/teammate-idle.sh" "$HOME/.claude/hooks/teammate-idle.sh" false true ;;

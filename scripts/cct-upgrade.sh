@@ -107,8 +107,12 @@ FILES=(
     "cct-ps.sh|scripts/cct-ps.sh|$BIN_DIR/cct-ps.sh|false|true"
     "cct-templates.sh|scripts/cct-templates.sh|$BIN_DIR/cct-templates.sh|false|true"
     "cct-loop.sh|scripts/cct-loop.sh|$BIN_DIR/cct-loop.sh|false|true"
+    "cct-pipeline.sh|scripts/cct-pipeline.sh|$BIN_DIR/cct-pipeline.sh|false|true"
+    "cct-pipeline-test.sh|scripts/cct-pipeline-test.sh|$BIN_DIR/cct-pipeline-test.sh|false|true"
     "cct-worktree.sh|scripts/cct-worktree.sh|$BIN_DIR/cct-worktree.sh|false|true"
     "cct-init.sh|scripts/cct-init.sh|$BIN_DIR/cct-init.sh|false|true"
+    "cct-prep.sh|scripts/cct-prep.sh|$BIN_DIR/cct-prep.sh|false|true"
+    "cct-daemon.sh|scripts/cct-daemon.sh|$BIN_DIR/cct-daemon.sh|false|true"
     "teammate-idle.sh|claude-code/hooks/teammate-idle.sh|$HOME/.claude/hooks/teammate-idle.sh|false|true"
     "task-completed.sh|claude-code/hooks/task-completed.sh|$HOME/.claude/hooks/task-completed.sh|false|true"
     "notify-idle.sh|claude-code/hooks/notify-idle.sh|$HOME/.claude/hooks/notify-idle.sh|false|true"
@@ -118,6 +122,11 @@ FILES=(
     "refactor.json|tmux/templates/refactor.json|$HOME/.claude-teams/templates/refactor.json|false|false"
     "exploration.json|tmux/templates/exploration.json|$HOME/.claude-teams/templates/exploration.json|false|false"
     "definition-of-done.example.md|docs/definition-of-done.example.md|$HOME/.claude-teams/templates/definition-of-done.example.md|false|false"
+    "pipeline-standard.json|templates/pipelines/standard.json|$HOME/.claude-teams/pipelines/standard.json|false|false"
+    "pipeline-fast.json|templates/pipelines/fast.json|$HOME/.claude-teams/pipelines/fast.json|false|false"
+    "pipeline-full.json|templates/pipelines/full.json|$HOME/.claude-teams/pipelines/full.json|false|false"
+    "pipeline-hotfix.json|templates/pipelines/hotfix.json|$HOME/.claude-teams/pipelines/hotfix.json|false|false"
+    "pipeline-autonomous.json|templates/pipelines/autonomous.json|$HOME/.claude-teams/pipelines/autonomous.json|false|false"
 )
 
 # ─── Checksum helper ──────────────────────────────────────────────────────

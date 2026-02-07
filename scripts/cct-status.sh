@@ -75,7 +75,8 @@ if [[ -d "$TEAMS_DIR" ]]; then
         config_file="${team_dir}/config.json"
         if [[ -f "$config_file" ]]; then
             # Count members from JSON (look for "name" keys in members array)
-            member_count=$(grep -c '"name"' "$config_file" 2>/dev/null || echo "0")
+            member_count=$(grep -c '"name"' "$config_file" 2>/dev/null || true)
+            member_count="${member_count:-0}"
             # Extract member names
             member_names=$(grep '"name"' "$config_file" 2>/dev/null | sed 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' | tr '\n' ', ' | sed 's/,$//' | sed 's/,/, /g')
 

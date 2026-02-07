@@ -536,7 +536,8 @@ run_quality_gates() {
 
     # Gate 3: No TODO/FIXME/HACK/XXX in new code
     local todo_count
-    todo_count="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null | grep -cE '^\+.*(TODO|FIXME|HACK|XXX)' || echo 0)"
+    todo_count="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null | grep -cE '^\+.*(TODO|FIXME|HACK|XXX)' || true)"
+    todo_count="${todo_count:-0}"
     if [[ "${todo_count:-0}" -gt 0 ]]; then
         gate_failures+=("${todo_count} TODO/FIXME/HACK/XXX markers in new code")
     fi

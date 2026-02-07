@@ -246,7 +246,7 @@ if ask "Install cct CLI to $BIN_DIR?"; then
       "cp '$SCRIPT_DIR/scripts/cct' '$BIN_DIR/cct' && chmod +x '$BIN_DIR/cct'"
     INSTALLED+=("cct")
 
-    for sub in cct-session.sh cct-status.sh cct-cleanup.sh cct-upgrade.sh cct-doctor.sh cct-logs.sh cct-ps.sh cct-templates.sh cct-loop.sh cct-worktree.sh cct-init.sh; do
+    for sub in cct-session.sh cct-status.sh cct-cleanup.sh cct-upgrade.sh cct-doctor.sh cct-logs.sh cct-ps.sh cct-templates.sh cct-loop.sh cct-pipeline.sh cct-pipeline-test.sh cct-worktree.sh cct-init.sh cct-prep.sh cct-daemon.sh; do
       if [[ -f "$SCRIPT_DIR/scripts/$sub" ]]; then
         run "Install $sub → $BIN_DIR/$sub" \
           "cp '$SCRIPT_DIR/scripts/$sub' '$BIN_DIR/$sub' && chmod +x '$BIN_DIR/$sub'"
@@ -275,6 +275,18 @@ if ask "Install cct CLI to $BIN_DIR?"; then
           "cp '$tpl' '$HOME/.claude-teams/templates/$local_name'"
       done
       INSTALLED+=("templates")
+    fi
+
+    # Install pipeline templates
+    if [[ -d "$SCRIPT_DIR/templates/pipelines" ]]; then
+      run "Create ~/.claude-teams/pipelines directory" \
+        "mkdir -p '$HOME/.claude-teams/pipelines'"
+      for ptpl in "$SCRIPT_DIR"/templates/pipelines/*.json; do
+        local_name="$(basename "$ptpl")"
+        run "Install pipeline template $local_name" \
+          "cp '$ptpl' '$HOME/.claude-teams/pipelines/$local_name'"
+      done
+      INSTALLED+=("pipeline-templates")
     fi
 
     # Install definition-of-done template
@@ -415,6 +427,10 @@ if [[ ${#INSTALLED[@]} -gt 0 ]] && ! $DRY_RUN; then
         _add_entry "cct-worktree.sh" "scripts/cct-worktree.sh" "$BIN_DIR/cct-worktree.sh" false true ;;
       "cct-init.sh")
         _add_entry "cct-init.sh" "scripts/cct-init.sh" "$BIN_DIR/cct-init.sh" false true ;;
+      "cct-prep.sh")
+        _add_entry "cct-prep.sh" "scripts/cct-prep.sh" "$BIN_DIR/cct-prep.sh" false true ;;
+      "cct-daemon.sh")
+        _add_entry "cct-daemon.sh" "scripts/cct-daemon.sh" "$BIN_DIR/cct-daemon.sh" false true ;;
 
       "teammate-idle.sh")
         _add_entry "teammate-idle.sh" "claude-code/hooks/teammate-idle.sh" "$HOME/.claude/hooks/teammate-idle.sh" false true ;;

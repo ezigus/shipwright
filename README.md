@@ -2,7 +2,7 @@
 
 > Production-ready tmux setup for running Claude Code Agent Teams — multi-agent AI development with visual split-pane sessions, quality gates, and autonomous loops.
 
-[![v1.4.0](https://img.shields.io/badge/version-1.4.0-00d4ff?style=flat-square)](https://github.com/sethdford/claude-code-teams-tmux/releases) ![tmux dark theme with cyan accents](https://img.shields.io/badge/theme-dark%20blue--gray%20%2B%20cyan-00d4ff?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
+[![v1.5.0](https://img.shields.io/badge/version-1.5.0-00d4ff?style=flat-square)](https://github.com/sethdford/claude-code-teams-tmux/releases) ![tmux dark theme with cyan accents](https://img.shields.io/badge/theme-dark%20blue--gray%20%2B%20cyan-00d4ff?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 <p align="center">
   <img src="https://vhs.charm.sh/vhs-sJ34YHLfLxXLMpJgjqvy2.gif" alt="cct CLI demo — version, help, 12 templates, doctor" width="800" />
@@ -18,6 +18,7 @@ This repo packages a complete setup:
 - **`cct` CLI** for managing team sessions, templates, and autonomous loops
 - **Quality gate hooks** that block agents until code passes checks
 - **Continuous agent loop** (`cct loop`) for autonomous multi-iteration development
+- **Delivery pipeline** (`cct pipeline`) for full idea-to-PR automation
 - **Layout presets** that give the leader pane 60-65% of screen space
 - **One-command setup** via `cct init`
 
@@ -79,6 +80,12 @@ claude-code-teams-tmux/
 │       ├── devops.json              #   Pipeline + infrastructure (2 agents)
 │       ├── architecture.json        #   Researcher + spec writer (2 agents)
 │       └── exploration.json         #   Explorer + synthesizer (2 agents)
+├── templates/
+│   └── pipelines/                   # 4 delivery pipeline templates
+│       ├── standard.json            #   Feature pipeline (plan + review gates)
+│       ├── fast.json                #   Quick fixes (all auto, no gates)
+│       ├── full.json                #   Full deployment (all 8 stages)
+│       └── hotfix.json              #   Urgent fixes (all auto, minimal)
 ├── claude-code/
 │   ├── settings.json.template       # Claude Code settings with teams + hooks
 │   └── hooks/
@@ -91,6 +98,7 @@ claude-code-teams-tmux/
 │   ├── cct-init.sh                  # One-command tmux setup (no prompts)
 │   ├── cct-session.sh               # Create team sessions from templates
 │   ├── cct-loop.sh                  # Continuous autonomous agent loop
+│   ├── cct-pipeline.sh              # Full delivery pipeline (idea → PR)
 │   ├── cct-doctor.sh                # Validate setup and diagnose issues
 │   └── ...                          # status, ps, logs, cleanup, upgrade, worktree
 ├── docs/
@@ -144,6 +152,13 @@ cct loop "Build auth" --test-cmd "npm test"
 cct loop "Fix bugs" --agents 3 --audit --quality-gates
 cct loop --resume                     # Resume interrupted loop
 
+# Delivery pipeline (idea → PR)
+cct pipeline start --goal "Add auth" --pipeline standard
+cct pipeline start --issue 42 --skip-gates
+cct pipeline resume                   # Continue from last stage
+cct pipeline status                   # Progress dashboard
+cct pipeline list                     # Browse pipeline templates
+
 # Maintenance
 cct cleanup                           # Dry-run: show orphaned sessions
 cct cleanup --force                   # Kill orphaned sessions
@@ -191,6 +206,52 @@ cct loop --resume
 ```
 
 The loop supports self-audit (agent reflects on its own work), audit agents (separate reviewer), and quality gates (automated checks between iterations).
+
+### Delivery Pipeline
+
+Chain the full SDLC into a single command — from issue intake to PR creation with full GitHub integration, self-healing builds, and zero-config auto-detection:
+
+```bash
+# Start from a GitHub issue (fully autonomous)
+cct pipeline start --issue 123 --skip-gates
+
+# Start from a goal
+cct pipeline start --goal "Add JWT authentication"
+
+# Hotfix with custom test command
+cct pipeline start --issue 456 --pipeline hotfix --test-cmd "pytest"
+
+# Full deployment pipeline with 3 agents
+cct pipeline start --goal "Build payment flow" --pipeline full --agents 3
+
+# Resume / monitor / abort
+cct pipeline resume
+cct pipeline status
+cct pipeline abort
+
+# Browse available pipelines
+cct pipeline list
+cct pipeline show standard
+```
+
+**Pipeline stages:** `intake → plan → build → test → review → pr → deploy → validate`
+
+Each stage can be enabled/disabled and gated (auto-proceed or pause for approval). The build stage delegates to `cct loop` for autonomous multi-iteration development.
+
+**Self-healing:** When tests fail after a build, the pipeline automatically captures the error output and re-enters the build loop with that context — just like a human developer reading test failures and fixing them. Configurable retry cycles with `--self-heal N`.
+
+**GitHub integration:** Auto-fetches issue metadata, self-assigns, posts progress comments, creates PRs with labels/milestone/reviewers propagated from the issue, and closes the issue on completion.
+
+**Auto-detection:** Test command (9+ project types), branch prefix from task type, reviewers from CODEOWNERS or git history, project language and framework.
+
+**Notifications:** Slack webhook (`--slack-webhook <url>`) or custom webhook (`CCT_WEBHOOK_URL` env var) for pipeline events.
+
+| Template | Stages | Gates | Use Case |
+|----------|--------|-------|----------|
+| `standard` | intake → plan → build → test → review → PR | approve: plan, review, pr | Normal feature work |
+| `fast` | intake → build → test → PR | all auto | Quick fixes |
+| `full` | all 8 stages | approve: plan, review, pr, deploy | Production deployment |
+| `hotfix` | intake → build → test → PR | all auto | Urgent production fixes |
 
 ### Layout Presets
 

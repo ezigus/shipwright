@@ -5,7 +5,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.4.0"
+VERSION="1.5.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
@@ -64,7 +64,10 @@ show_help() {
     echo -e "  ${CYAN}cleanup${RESET} [--force]     Clean up orphaned team sessions"
     echo -e "  ${CYAN}upgrade${RESET} [--apply]     Check for updates from the repo (dry-run by default)"
     echo -e "  ${CYAN}loop${RESET} \"goal\" [opts]    ${BOLD}Continuous agent loop${RESET} — run until goal is achieved"
+    echo -e "  ${CYAN}pipeline${RESET} <cmd>         ${BOLD}Full delivery pipeline${RESET} — idea to production"
     echo -e "  ${CYAN}worktree${RESET} <cmd>         Manage git worktrees for agent isolation"
+    echo -e "  ${CYAN}prep${RESET} [options]         ${BOLD}Repo preparation${RESET} — generate .claude/ configs for agents"
+    echo -e "  ${CYAN}daemon${RESET} <cmd>           ${BOLD}Issue watcher${RESET} — auto-process GitHub issues"
     echo -e "  ${CYAN}init${RESET}                  ${BOLD}Quick tmux setup${RESET} — one command, no prompts"
     echo -e "  ${CYAN}help${RESET}                  Show this help message"
     echo -e "  ${CYAN}version${RESET}               Show version"
@@ -74,6 +77,24 @@ show_help() {
     echo -e "  ${DIM}cct loop \"Fix bugs\" --max-iterations 10 --model sonnet${RESET}"
     echo -e "  ${DIM}cct loop \"Build API\" --agents 3 --skip-permissions${RESET}"
     echo -e "  ${DIM}cct loop --resume${RESET}                   # Resume interrupted loop"
+    echo ""
+    echo -e "${BOLD}DELIVERY PIPELINE${RESET}  ${DIM}(idea to production)${RESET}"
+    echo -e "  ${DIM}cct pipeline start --goal \"Add auth\" --pipeline standard${RESET}"
+    echo -e "  ${DIM}cct pipeline start --issue 123 --skip-gates${RESET}"
+    echo -e "  ${DIM}cct pipeline resume${RESET}               # Resume from last stage"
+    echo -e "  ${DIM}cct pipeline status${RESET}                # Show progress dashboard"
+    echo ""
+    echo -e "${BOLD}AUTONOMOUS DAEMON${RESET}  ${DIM}(watch GitHub, auto-deliver)${RESET}"
+    echo -e "  ${DIM}cct daemon start${RESET}                  # Start issue watcher (foreground)"
+    echo -e "  ${DIM}cct daemon start --detach${RESET}         # Start in background tmux session"
+    echo -e "  ${DIM}cct daemon status${RESET}                 # Show active pipelines and queue"
+    echo -e "  ${DIM}cct daemon metrics${RESET}                # DORA/DX metrics dashboard"
+    echo -e "  ${DIM}cct daemon stop${RESET}                   # Graceful shutdown"
+    echo ""
+    echo -e "${BOLD}REPO PREPARATION${RESET}  ${DIM}(prep repo for agents)${RESET}"
+    echo -e "  ${DIM}cct prep${RESET}                          # Analyze repo, generate .claude/ configs"
+    echo -e "  ${DIM}cct prep --check${RESET}                  # Audit existing prep quality"
+    echo -e "  ${DIM}cct prep --with-claude${RESET}            # Deep analysis using Claude Code"
     echo ""
     echo -e "${BOLD}AUDIT & QUALITY${RESET}  ${DIM}(loop guardrails)${RESET}"
     echo -e "  ${DIM}cct loop \"goal\" --audit${RESET}                     # Self-reflection each iteration"
@@ -140,8 +161,17 @@ main() {
         loop)
             exec "$SCRIPT_DIR/cct-loop.sh" "$@"
             ;;
+        pipeline)
+            exec "$SCRIPT_DIR/cct-pipeline.sh" "$@"
+            ;;
         worktree)
             exec "$SCRIPT_DIR/cct-worktree.sh" "$@"
+            ;;
+        prep)
+            exec "$SCRIPT_DIR/cct-prep.sh" "$@"
+            ;;
+        daemon)
+            exec "$SCRIPT_DIR/cct-daemon.sh" "$@"
             ;;
         init)
             exec "$SCRIPT_DIR/cct-init.sh" "$@"

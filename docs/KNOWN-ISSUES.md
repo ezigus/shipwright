@@ -172,3 +172,28 @@ git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
 ```
 
 **Status:** Expected behavior — TPM requires a one-time plugin install step.
+
+---
+
+## Orphaned tmux panes after teammate shutdown
+
+**Severity:** Medium — cosmetic but annoying
+
+**Problem:** When Claude Code teammates shut down (via `shutdown_request` → `shutdown_response`), the Claude process exits but the tmux pane remains open with an idle shell. There is no Claude Code hook event for teammate shutdown — the available hooks (`TeammateIdle`, `TaskCompleted`, `Notification`, `Stop`, etc.) do not fire on agent exit.
+
+**Symptoms:**
+- After a team finishes work, panes remain with idle shell prompts
+- `cct ps` shows panes as "idle" with increasing idle time
+- `~/.claude/teams/` and `~/.claude/tasks/` directories accumulate
+
+**Fix:** Use the pane reaper:
+
+```bash
+cct reaper              # One-shot: clean dead panes now
+cct reaper --watch      # Background: auto-clean every 5s
+cct reaper --dry-run    # Preview what would be reaped
+```
+
+Or use the tmux keybinding: `prefix + R` for a quick one-shot cleanup.
+
+**Status:** Resolved in v1.6.0

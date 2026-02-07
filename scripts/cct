@@ -5,7 +5,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.5.0"
+VERSION="1.5.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
@@ -62,6 +62,7 @@ show_help() {
     echo -e "  ${CYAN}templates${RESET} [list|show]  Manage team composition templates"
     echo -e "  ${CYAN}doctor${RESET}                Validate your setup and check for issues"
     echo -e "  ${CYAN}cleanup${RESET} [--force]     Clean up orphaned team sessions"
+    echo -e "  ${CYAN}reaper${RESET} [--watch]       Automatic pane cleanup when agents exit"
     echo -e "  ${CYAN}upgrade${RESET} [--apply]     Check for updates from the repo (dry-run by default)"
     echo -e "  ${CYAN}loop${RESET} \"goal\" [opts]    ${BOLD}Continuous agent loop${RESET} — run until goal is achieved"
     echo -e "  ${CYAN}pipeline${RESET} <cmd>         ${BOLD}Full delivery pipeline${RESET} — idea to production"
@@ -95,6 +96,11 @@ show_help() {
     echo -e "  ${DIM}cct prep${RESET}                          # Analyze repo, generate .claude/ configs"
     echo -e "  ${DIM}cct prep --check${RESET}                  # Audit existing prep quality"
     echo -e "  ${DIM}cct prep --with-claude${RESET}            # Deep analysis using Claude Code"
+    echo ""
+    echo -e "${BOLD}TEST SUITES${RESET}  ${DIM}(validate cct components)${RESET}"
+    echo -e "  ${DIM}cct daemon test${RESET}                   # Run daemon test suite"
+    echo -e "  ${DIM}cct prep test${RESET}                     # Run prep test suite"
+    echo -e "  ${DIM}cct pipeline test${RESET}                 # Run pipeline test suite"
     echo ""
     echo -e "${BOLD}AUDIT & QUALITY${RESET}  ${DIM}(loop guardrails)${RESET}"
     echo -e "  ${DIM}cct loop \"goal\" --audit${RESET}                     # Self-reflection each iteration"
@@ -154,6 +160,10 @@ main() {
         cleanup)
             check_tmux
             exec "$SCRIPT_DIR/cct-cleanup.sh" "$@"
+            ;;
+        reaper)
+            check_tmux
+            exec "$SCRIPT_DIR/cct-reaper.sh" "$@"
             ;;
         upgrade)
             exec "$SCRIPT_DIR/cct-upgrade.sh" "$@"

@@ -1,33 +1,38 @@
 <!-- LinkedIn Post — copy-paste ready -->
 
-**I gave Claude Code a team of AI agents and a tmux session. Things got interesting.**
+**I built an autonomous dev team out of AI agents. It watches GitHub, picks up issues, and ships PRs — while I sleep.**
 
-Picture this: three AI agents working in parallel — one building an API, one wiring up the UI, one writing tests — each in their own tmux pane, all visible on one screen. You can literally watch them think.
+Picture this: you label a GitHub issue "ready-to-build." A daemon picks it up, triages it, selects the right pipeline, and spins up Claude Code agents in isolated git worktrees. They plan, build, test, review, and open a PR. If it fails, it retries with a smarter model. If it keeps failing, it remembers why for next time.
 
-That's what Claude Code agent teams look like when you give them proper tooling.
+That's Shipwright v1.7.0. I open-sourced the full stack.
 
-I open-sourced the setup I've been refining: **Shipwright**. It's a CLI + tmux config that turns multi-agent AI development from chaotic to organized.
+Here's what it does now:
 
-The highlight reel:
+**Delivery pipeline** — `shipwright pipeline start --issue 42` chains intake, plan, design, build, test, review, and PR into a single command. Self-healing builds: when tests fail, it captures the error and re-enters the build loop automatically.
 
-🔁 `shipwright loop` — Give it a goal, a test command, and walk away. It runs Claude in a build-test-review loop until everything passes. Autonomous coding that actually verifies its own work.
+**Autonomous daemon** — `shipwright daemon start` watches your repo for labeled issues and processes them through the pipeline. Priority lanes let hotfixes jump the queue. Adaptive template selection picks the right pipeline based on issue complexity.
 
-📋 12 team templates — Feature dev, bug fixes, security audits, migrations, code review, architecture planning. Each template assigns agents to separate files so they don't step on each other.
+**Fleet operations** — `shipwright fleet start` orchestrates daemons across multiple repos from a single config. One command, entire org.
 
-🚦 Quality gates — Agents can't mark work as "done" until typecheck, lint, and tests pass. No more "it works on my machine" from your AI teammates.
+**Bulk fix** — `shipwright fix "Update lodash" --repos ~/api,~/web,~/mobile` applies the same fix across repos in parallel.
 
-📐 Layout presets — Leader pane gets 65% of the screen. Because the agent running the show deserves the biggest monitor.
+**Persistent memory** — Every pipeline run teaches the system. Failure patterns, root cause analysis, codebase conventions — all injected into future builds so agents don't repeat mistakes.
 
-My favorite workflow so far:
+**Cost intelligence** — Token tracking, daily budgets, model routing. The cost-aware pipeline template uses haiku for simple stages, sonnet for builds, opus only when needed.
 
-    shipwright loop "Build user auth with JWT" --test-cmd "npm test" --audit
+**DORA metrics** — Lead time, deploy frequency, change failure rate, MTTR. The daemon can self-optimize its own parameters based on these metrics.
 
-Walk away. Get coffee. Come back to a working feature with passing tests. (Okay, sometimes you come back to a very confident agent that's still arguing with TypeScript. But that's part of the fun.)
+**Deploy adapters** — Vercel, Fly.io, Railway, Docker. `shipwright init --deploy` detects your platform and wires up staging, production, rollback, and health checks.
+
+Plus: 12 team templates, quality gate hooks, continuous loop, layout presets, and a premium dark tmux theme.
+
+My favorite workflow: label issues, go to sleep, wake up to PRs.
 
 Pure bash + jq. No heavy dependencies.
 
-Check it out → https://github.com/sethdford/shipwright
+Check it out: https://github.com/sethdford/shipwright
+Docs: https://sethdford.github.io/shipwright
 
-What's your multi-agent AI workflow look like? Drop your setup in the comments — I'm always looking for new patterns to steal. 😄
+What does your autonomous development setup look like?
 
-#ClaudeCode #AIEngineering #DeveloperTools #OpenSource #Anthropic
+#ClaudeCode #AIEngineering #DeveloperTools #OpenSource #Anthropic #DevOps #DORA

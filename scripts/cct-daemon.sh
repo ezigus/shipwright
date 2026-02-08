@@ -69,6 +69,42 @@ emit_event() {
     echo "{\"ts\":\"$(now_iso)\",\"ts_epoch\":$(now_epoch),\"type\":\"${event_type}\"${json_fields}}" >> "$EVENTS_FILE"
 }
 
+# ─── GitHub API Retry with Backoff ────────────────────────────────────────
+# Retries gh commands up to 3 times with exponential backoff (1s, 3s, 9s).
+# Detects rate-limit (403/429) and transient errors. Returns the gh exit code.
+gh_retry() {
+    local max_retries=3
+    local backoff=1
+    local attempt=0
+    local exit_code=0
+
+    while [[ $attempt -lt $max_retries ]]; do
+        attempt=$((attempt + 1))
+        # Run the gh command; capture exit code
+        if output=$("$@" 2>&1); then
+            echo "$output"
+            return 0
+        fi
+        exit_code=$?
+
+        # Check for rate-limit or server error indicators
+        if echo "$output" | grep -qiE "rate limit|403|429|502|503"; then
+            daemon_log WARN "gh_retry: rate limit / server error on attempt ${attempt}/${max_retries} — backoff ${backoff}s"
+        else
+            daemon_log WARN "gh_retry: transient error on attempt ${attempt}/${max_retries} (exit ${exit_code}) — backoff ${backoff}s"
+        fi
+
+        if [[ $attempt -lt $max_retries ]]; then
+            sleep "$backoff"
+            backoff=$((backoff * 3))
+        fi
+    done
+
+    # Return last output and exit code after exhausting retries
+    echo "$output"
+    return "$exit_code"
+}
+
 # ─── Defaults ───────────────────────────────────────────────────────────────
 DAEMON_DIR="$HOME/.claude-teams"
 PID_FILE="$DAEMON_DIR/daemon.pid"
@@ -287,6 +323,14 @@ load_config() {
     # self-optimization
     SELF_OPTIMIZE=$(jq -r '.self_optimize // false' "$config_file")
     OPTIMIZE_INTERVAL=$(jq -r '.optimize_interval // 10' "$config_file")
+
+    # gh_retry: enable retry wrapper on critical GitHub API calls
+    GH_RETRY_ENABLED=$(jq -r '.gh_retry // true' "$config_file")
+
+    # stale state reaper: clean old worktrees, artifacts, state entries
+    STALE_REAPER_ENABLED=$(jq -r '.stale_reaper // true' "$config_file")
+    STALE_REAPER_INTERVAL=$(jq -r '.stale_reaper_interval // 10' "$config_file")
+    STALE_REAPER_AGE_DAYS=$(jq -r '.stale_reaper_age_days // 7' "$config_file")
 
     # priority lane settings
     PRIORITY_LANE=$(jq -r '.priority_lane // false' "$config_file")
@@ -1780,9 +1824,15 @@ daemon_poll_issues() {
 
     local issues_json
 
+    # Select gh command wrapper: gh_retry for critical poll calls when enabled
+    local gh_cmd="gh"
+    if [[ "${GH_RETRY_ENABLED:-true}" == "true" ]]; then
+        gh_cmd="gh_retry gh"
+    fi
+
     if [[ "$WATCH_MODE" == "org" && -n "$ORG" ]]; then
         # Org-wide mode: search issues across all org repos
-        issues_json=$(gh search issues \
+        issues_json=$($gh_cmd search issues \
             --label "$WATCH_LABEL" \
             --owner "$ORG" \
             --state open \
@@ -1809,7 +1859,7 @@ daemon_poll_issues() {
         fi
     else
         # Standard single-repo mode
-        issues_json=$(gh issue list \
+        issues_json=$($gh_cmd issue list \
             --label "$WATCH_LABEL" \
             --state open \
             --json number,title,labels,body,createdAt \
@@ -2119,7 +2169,7 @@ daemon_self_optimize() {
         daemon_log WARN "Self-optimize: high MTTR $(format_duration "$mttr") — consider enabling auto-rollback"
     fi
 
-    # Write adjustments to state
+    # Write adjustments to state and persist to config
     if [[ ${#adjustments[@]} -gt 0 ]]; then
         local adj_str
         adj_str=$(printf '%s; ' "${adjustments[@]}")
@@ -2132,10 +2182,112 @@ daemon_self_optimize() {
             "$STATE_FILE")
         atomic_write_state "$tmp_state"
 
+        # ── Persist adjustments to daemon-config.json (survives restart) ──
+        local config_file="${CONFIG_PATH:-.claude/daemon-config.json}"
+        if [[ -f "$config_file" ]]; then
+            local tmp_config
+            tmp_config=$(jq \
+                --argjson max_parallel "$MAX_PARALLEL" \
+                --argjson poll_interval "$POLL_INTERVAL" \
+                --arg template "$PIPELINE_TEMPLATE" \
+                --arg auto_template "${AUTO_TEMPLATE:-false}" \
+                --arg ts "$(now_iso)" \
+                --arg adj "$adj_str" \
+                '.max_parallel = $max_parallel |
+                 .poll_interval = $poll_interval |
+                 .pipeline_template = $template |
+                 .auto_template = ($auto_template == "true") |
+                 .last_optimization = {timestamp: $ts, adjustments: $adj}' \
+                "$config_file")
+            # Atomic write: tmp file + mv
+            local tmp_cfg_file="${config_file}.tmp.$$"
+            echo "$tmp_config" > "$tmp_cfg_file"
+            mv "$tmp_cfg_file" "$config_file"
+            daemon_log INFO "Self-optimize: persisted adjustments to ${config_file}"
+        fi
+
         emit_event "daemon.optimize" "adjustments=${adj_str}" "cfr=$cfr" "cycle_time=$cycle_time_median" "deploy_freq=$deploy_freq" "mttr=$mttr"
         daemon_log SUCCESS "Self-optimization applied ${#adjustments[@]} adjustment(s)"
     else
         daemon_log INFO "Self-optimization: all metrics within thresholds"
+    fi
+}
+
+# ─── Stale State Reaper ──────────────────────────────────────────────────────
+# Cleans old worktrees, pipeline artifacts, and completed state entries.
+# Called every N poll cycles (configurable via stale_reaper_interval).
+
+daemon_cleanup_stale() {
+    if [[ "${STALE_REAPER_ENABLED:-true}" != "true" ]]; then
+        return
+    fi
+
+    daemon_log INFO "Running stale state reaper"
+    local cleaned=0
+    local age_days="${STALE_REAPER_AGE_DAYS:-7}"
+    local age_secs=$((age_days * 86400))
+    local now_e
+    now_e=$(now_epoch)
+
+    # ── 1. Clean old git worktrees ──
+    if command -v git &>/dev/null; then
+        while IFS= read -r line; do
+            local wt_path
+            wt_path=$(echo "$line" | awk '{print $1}')
+            # Only clean daemon-created worktrees
+            [[ "$wt_path" == *"daemon-issue-"* ]] || continue
+            # Check worktree age via directory mtime
+            local mtime
+            mtime=$(stat -f '%m' "$wt_path" 2>/dev/null || stat -c '%Y' "$wt_path" 2>/dev/null || echo "0")
+            if [[ $((now_e - mtime)) -gt $age_secs ]]; then
+                daemon_log INFO "Removing stale worktree: ${wt_path}"
+                git worktree remove "$wt_path" --force 2>/dev/null || true
+                cleaned=$((cleaned + 1))
+            fi
+        done < <(git worktree list --porcelain 2>/dev/null | grep '^worktree ' | sed 's/^worktree //')
+    fi
+
+    # ── 2. Clean old pipeline artifacts ──
+    local artifacts_dir=".claude/pipeline-artifacts"
+    if [[ -d "$artifacts_dir" ]]; then
+        while IFS= read -r artifact_dir; do
+            [[ -d "$artifact_dir" ]] || continue
+            local mtime
+            mtime=$(stat -f '%m' "$artifact_dir" 2>/dev/null || stat -c '%Y' "$artifact_dir" 2>/dev/null || echo "0")
+            if [[ $((now_e - mtime)) -gt $age_secs ]]; then
+                daemon_log INFO "Removing stale artifact: ${artifact_dir}"
+                rm -rf "$artifact_dir"
+                cleaned=$((cleaned + 1))
+            fi
+        done < <(find "$artifacts_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+    fi
+
+    # ── 3. Prune completed/failed state entries older than age_days ──
+    if [[ -f "$STATE_FILE" ]]; then
+        local cutoff_iso
+        cutoff_iso=$(epoch_to_iso $((now_e - age_secs)))
+        local before_count after_count
+        before_count=$(jq '.completed | length' "$STATE_FILE" 2>/dev/null || echo 0)
+        local tmp_state
+        tmp_state=$(jq --arg cutoff "$cutoff_iso" \
+            '.completed = [.completed[] | select(.completed_at > $cutoff)]' \
+            "$STATE_FILE" 2>/dev/null) || true
+        if [[ -n "$tmp_state" ]]; then
+            atomic_write_state "$tmp_state"
+            after_count=$(jq '.completed | length' "$STATE_FILE" 2>/dev/null || echo 0)
+            local pruned=$((before_count - after_count))
+            if [[ "$pruned" -gt 0 ]]; then
+                daemon_log INFO "Pruned ${pruned} old completed state entries"
+                cleaned=$((cleaned + pruned))
+            fi
+        fi
+    fi
+
+    if [[ "$cleaned" -gt 0 ]]; then
+        emit_event "daemon.cleanup" "cleaned=$cleaned" "age_days=$age_days"
+        daemon_log SUCCESS "Stale reaper cleaned ${cleaned} item(s)"
+    else
+        daemon_log INFO "Stale reaper: nothing to clean"
     fi
 }
 
@@ -2161,6 +2313,11 @@ daemon_poll_loop() {
         # Self-optimize every N cycles (default: 10)
         if [[ $((POLL_CYCLE_COUNT % ${OPTIMIZE_INTERVAL:-10})) -eq 0 ]]; then
             daemon_self_optimize
+        fi
+
+        # Stale state reaper every N cycles (default: 10)
+        if [[ $((POLL_CYCLE_COUNT % ${STALE_REAPER_INTERVAL:-10})) -eq 0 ]]; then
+            daemon_cleanup_stale
         fi
 
         # Proactive patrol during quiet periods

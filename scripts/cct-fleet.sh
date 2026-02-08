@@ -168,7 +168,7 @@ load_fleet_config() {
         exit 1
     fi
 
-    info "Loading fleet config: ${DIM}${config_file}${RESET}"
+    info "Loading fleet config: ${DIM}${config_file}${RESET}" >&2
 
     # Validate JSON
     if ! jq empty "$config_file" 2>/dev/null; then

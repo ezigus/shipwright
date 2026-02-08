@@ -156,7 +156,9 @@ parse_args() {
         while IFS= read -r line; do
             line="${line%%#*}"    # strip comments
             line="${line// /}"    # strip whitespace
-            [[ -n "$line" ]] && REPOS+=("$line")
+            if [[ -n "$line" ]]; then
+                REPOS+=("$line")
+            fi
         done < "$REPOS_FROM"
     fi
 }

@@ -95,6 +95,7 @@ LABELS=""
 BASE_BRANCH="main"
 NO_GITHUB=false
 DRY_RUN=false
+IGNORE_BUDGET=false
 PR_NUMBER=""
 
 # GitHub metadata (populated during intake)
@@ -145,6 +146,7 @@ show_help() {
     echo -e "  ${DIM}--reviewers \"a,b\"${RESET}        Request PR reviewers (auto-detected if omitted)"
     echo -e "  ${DIM}--labels \"a,b\"${RESET}            Add labels to PR (inherited from issue if omitted)"
     echo -e "  ${DIM}--no-github${RESET}               Disable GitHub integration"
+    echo -e "  ${DIM}--ignore-budget${RESET}           Skip budget enforcement checks"
     echo -e "  ${DIM}--dry-run${RESET}                 Show what would happen without executing"
     echo -e "  ${DIM}--slack-webhook <url>${RESET}     Send notifications to Slack"
     echo -e "  ${DIM}--self-heal <n>${RESET}            Build→test retry cycles on failure (default: 2)"
@@ -216,6 +218,7 @@ parse_args() {
             --reviewers)   REVIEWERS="$2"; shift 2 ;;
             --labels)      LABELS="$2"; shift 2 ;;
             --no-github)   NO_GITHUB=true; shift ;;
+            --ignore-budget) IGNORE_BUDGET=true; shift ;;
             --dry-run)     DRY_RUN=true; shift ;;
             --slack-webhook) SLACK_WEBHOOK="$2"; shift 2 ;;
             --self-heal)   BUILD_TEST_RETRIES="${2:-3}"; shift 2 ;;
@@ -1891,13 +1894,23 @@ stage_merge() {
         return 0
     fi
 
-    local merge_method wait_ci_timeout auto_delete_branch
+    local merge_method wait_ci_timeout auto_delete_branch auto_merge auto_approve merge_strategy
     merge_method=$(jq -r --arg id "merge" '(.stages[] | select(.id == $id) | .config.merge_method) // "squash"' "$PIPELINE_CONFIG" 2>/dev/null) || true
     [[ -z "$merge_method" || "$merge_method" == "null" ]] && merge_method="squash"
     wait_ci_timeout=$(jq -r --arg id "merge" '(.stages[] | select(.id == $id) | .config.wait_ci_timeout_s) // 600' "$PIPELINE_CONFIG" 2>/dev/null) || true
     [[ -z "$wait_ci_timeout" || "$wait_ci_timeout" == "null" ]] && wait_ci_timeout=600
     auto_delete_branch=$(jq -r --arg id "merge" '(.stages[] | select(.id == $id) | .config.auto_delete_branch) // "true"' "$PIPELINE_CONFIG" 2>/dev/null) || true
     [[ -z "$auto_delete_branch" || "$auto_delete_branch" == "null" ]] && auto_delete_branch="true"
+    auto_merge=$(jq -r --arg id "merge" '(.stages[] | select(.id == $id) | .config.auto_merge) // false' "$PIPELINE_CONFIG" 2>/dev/null) || true
+    [[ -z "$auto_merge" || "$auto_merge" == "null" ]] && auto_merge="false"
+    auto_approve=$(jq -r --arg id "merge" '(.stages[] | select(.id == $id) | .config.auto_approve) // false' "$PIPELINE_CONFIG" 2>/dev/null) || true
+    [[ -z "$auto_approve" || "$auto_approve" == "null" ]] && auto_approve="false"
+    merge_strategy=$(jq -r --arg id "merge" '(.stages[] | select(.id == $id) | .config.merge_strategy) // ""' "$PIPELINE_CONFIG" 2>/dev/null) || true
+    [[ -z "$merge_strategy" || "$merge_strategy" == "null" ]] && merge_strategy=""
+    # merge_strategy overrides merge_method if set (squash/merge/rebase)
+    if [[ -n "$merge_strategy" ]]; then
+        merge_method="$merge_strategy"
+    fi
 
     # Find PR for current branch
     local pr_number
@@ -1939,21 +1952,49 @@ stage_merge() {
         warn "CI check timeout (${wait_ci_timeout}s) — proceeding with merge anyway"
     fi
 
+    # Auto-approve if configured (for branch protection requiring reviews)
+    if [[ "$auto_approve" == "true" ]]; then
+        info "Auto-approving PR #${pr_number}..."
+        gh pr review "$pr_number" --approve 2>/dev/null || warn "Auto-approve failed (may need different permissions)"
+    fi
+
     # Merge the PR
-    info "Merging PR #${pr_number} (method: ${merge_method})..."
-    local merge_args=("pr" "merge" "$pr_number" "--${merge_method}")
-    if [[ "$auto_delete_branch" == "true" ]]; then
-        merge_args+=("--delete-branch")
+    if [[ "$auto_merge" == "true" ]]; then
+        info "Enabling auto-merge for PR #${pr_number} (strategy: ${merge_method})..."
+        local auto_merge_args=("pr" "merge" "$pr_number" "--auto" "--${merge_method}")
+        if [[ "$auto_delete_branch" == "true" ]]; then
+            auto_merge_args+=("--delete-branch")
+        fi
+
+        if gh "${auto_merge_args[@]}" 2>/dev/null; then
+            success "Auto-merge enabled for PR #${pr_number} (strategy: ${merge_method})"
+            emit_event "merge.auto_enabled" \
+                "issue=${ISSUE_NUMBER:-0}" \
+                "pr=$pr_number" \
+                "strategy=$merge_method"
+        else
+            warn "Auto-merge not available — falling back to direct merge"
+            # Fall through to direct merge below
+            auto_merge="false"
+        fi
     fi
 
-    if gh "${merge_args[@]}" 2>/dev/null; then
-        success "PR #${pr_number} merged successfully"
-    else
-        error "Failed to merge PR #${pr_number}"
-        return 1
+    if [[ "$auto_merge" != "true" ]]; then
+        info "Merging PR #${pr_number} (method: ${merge_method})..."
+        local merge_args=("pr" "merge" "$pr_number" "--${merge_method}")
+        if [[ "$auto_delete_branch" == "true" ]]; then
+            merge_args+=("--delete-branch")
+        fi
+
+        if gh "${merge_args[@]}" 2>/dev/null; then
+            success "PR #${pr_number} merged successfully"
+        else
+            error "Failed to merge PR #${pr_number}"
+            return 1
+        fi
     fi
 
-    log_stage "merge" "PR #${pr_number} merged (method: ${merge_method})"
+    log_stage "merge" "PR #${pr_number} merged (strategy: ${merge_method}, auto_merge: ${auto_merge})"
 }
 
 stage_deploy() {
@@ -2230,6 +2271,34 @@ stage_monitor() {
                 if eval "$rollback_cmd" >> "$report_file" 2>&1; then
                     success "Rollback executed"
                     echo "Rollback: ✅ success" >> "$report_file"
+
+                    # Post-rollback smoke test verification
+                    local smoke_cmd
+                    smoke_cmd=$(jq -r --arg id "validate" '(.stages[] | select(.id == $id) | .config.smoke_cmd) // ""' "$PIPELINE_CONFIG" 2>/dev/null) || true
+                    [[ "$smoke_cmd" == "null" ]] && smoke_cmd=""
+
+                    if [[ -n "$smoke_cmd" ]]; then
+                        info "Verifying rollback with smoke tests..."
+                        if eval "$smoke_cmd" > "$ARTIFACTS_DIR/rollback-smoke.log" 2>&1; then
+                            success "Rollback verified — smoke tests pass"
+                            echo "Rollback verification: ✅ smoke tests pass" >> "$report_file"
+                            emit_event "monitor.rollback_verified" \
+                                "issue=${ISSUE_NUMBER:-0}" \
+                                "status=pass"
+                        else
+                            error "Rollback verification FAILED — smoke tests still failing"
+                            echo "Rollback verification: ❌ smoke tests FAILED — manual intervention required" >> "$report_file"
+                            emit_event "monitor.rollback_verified" \
+                                "issue=${ISSUE_NUMBER:-0}" \
+                                "status=fail"
+                            if [[ -n "$ISSUE_NUMBER" ]]; then
+                                gh_comment_issue "$ISSUE_NUMBER" "🚨 **Rollback executed but verification failed** — smoke tests still failing after rollback. Manual intervention required.
+
+Smoke command: \`${smoke_cmd}\`
+Log: see \`pipeline-artifacts/rollback-smoke.log\`" 2>/dev/null || true
+                            fi
+                        fi
+                    fi
                 else
                     error "Rollback failed!"
                     echo "Rollback: ❌ failed" >> "$report_file"
@@ -3241,6 +3310,19 @@ run_pipeline() {
             if [[ "$answer" =~ ^[Nn] ]]; then
                 update_status "paused" "$id"
                 info "Pipeline paused at ${BOLD}$id${RESET}. Resume with: ${DIM}shipwright pipeline resume${RESET}"
+                return 0
+            fi
+        fi
+
+        # Budget enforcement check (skip with --ignore-budget)
+        if [[ "$IGNORE_BUDGET" != "true" ]] && [[ -x "$SCRIPT_DIR/cct-cost.sh" ]]; then
+            local budget_rc=0
+            bash "$SCRIPT_DIR/cct-cost.sh" check-budget 2>/dev/null || budget_rc=$?
+            if [[ "$budget_rc" -eq 2 ]]; then
+                warn "Daily budget exceeded — pausing pipeline before stage ${BOLD}$id${RESET}"
+                warn "Resume with --ignore-budget to override, or wait until tomorrow"
+                emit_event "pipeline.budget_paused" "issue=${ISSUE_NUMBER:-0}" "stage=$id"
+                update_status "paused" "$id"
                 return 0
             fi
         fi

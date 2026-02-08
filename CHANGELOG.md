@@ -9,6 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+---
+
+## [1.7.0] — 2026-02-08
+
+**Superhuman Scale.**
+
+Scale from 2 concurrent pipelines to 8+ with resource-aware auto-scaling, cross-repo fleet worker distribution, and parallel-safe worktree isolation. First npm publish.
+
 ### Added
 
 - **Auto-scaling daemon**: `daemon_auto_scale()` dynamically adjusts worker count based on CPU cores (75% cap), available memory, remaining budget, and queue depth — cross-platform (macOS + Linux)
@@ -16,6 +24,27 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Pipeline `--worktree` flag**: `shipwright pipeline start --issue 42 --worktree` runs in an isolated git worktree for parallel-safe ad-hoc pipelines
 - **Cost `remaining-budget`**: `shipwright cost remaining-budget` returns remaining daily budget as a number (consumed by auto-scaler)
 - **Fleet config reload**: daemons pick up fleet-assigned worker counts via `daemon_reload_config()` and a flag file signal
+- **CLAUDE.md auto-install**: npm postinstall now installs Shipwright agent instructions to `~/.claude/CLAUDE.md` (idempotent — appends if file exists, creates if not)
+
+### Fixed
+
+- **npm symlink resolution**: CLI router now follows symlinks so all 19 subcommands resolve correctly when installed via `npm install -g`
+- **Version sync**: All 12 scripts + package.json aligned at v1.7.0
+- **npm package hygiene**: Excluded test scripts and dev tools from published package — 72 files, 192KB (down from 82 files, 229KB)
+- **vm_stat parsing** (macOS): Fixed page size extraction from `(page size of 16384 bytes)` format, added inactive + purgeable pages for accurate available memory
+- **Bash 3.2 compatibility**: Replaced associative arrays (`local -A`) in fleet rebalancer with indexed arrays for macOS default bash
+- **Fleet/auto-scale race condition**: Introduced `FLEET_MAX_PARALLEL` ceiling so auto-scale respects fleet-assigned worker limits
+- **Worker over-allocation**: Added budget correction loop in fleet rebalancer when rounding exceeds total
+- **Trap chaining**: Pipeline worktree cleanup now chains with existing exit handler instead of overwriting it
+- **Worktree cleanup**: Stores `ORIGINAL_REPO_DIR` before `cd` instead of fragile `git worktree list` parsing
+- **Numeric validation**: Added regex validation for load average, queue depth, budget values, and cost calculations
+- **Poll loop ordering**: Moved `POLL_CYCLE_COUNT` increment before all modulo checks for consistent timing
+- **Rebalancer shutdown**: Added flag file for clean loop exit when fleet stops
+
+### Changed
+
+- `npm test` now runs all 6 test suites (pipeline, daemon, prep, fleet, fix, memory) — 90 tests total
+- CLAUDE.md.shipwright template updated with auto-scale config, fleet worker pool, `--worktree` usage, daemon config reference table
 
 ---
 
@@ -161,6 +190,7 @@ This release turns Shipwright from a team session manager into a full autonomous
 
 ---
 
+[1.7.0]: https://github.com/sethdford/shipwright/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/sethdford/shipwright/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/sethdford/shipwright/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/sethdford/shipwright/compare/v1.4.0...v1.5.0

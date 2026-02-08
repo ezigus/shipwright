@@ -8,8 +8,15 @@
   },
   "files": [
     "scripts/",
+    "!scripts/*-test.sh",
+    "!scripts/build-release.sh",
+    "!scripts/update-version.sh",
+    "!scripts/install-remote.sh",
+    "!scripts/install-completions.sh",
     "templates/",
-    "tmux/",
+    "tmux/templates/",
+    "tmux/tmux.conf",
+    "tmux/claude-teams-overlay.conf",
     "claude-code/",
     "completions/",
     "docs/",
@@ -18,7 +25,7 @@
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
-    "test": "bash scripts/cct-pipeline-test.sh && bash scripts/cct-daemon-test.sh && bash scripts/cct-prep-test.sh"
+    "test": "bash scripts/cct-pipeline-test.sh && bash scripts/cct-daemon-test.sh && bash scripts/cct-prep-test.sh && bash scripts/cct-fleet-test.sh && bash scripts/cct-fix-test.sh && bash scripts/cct-memory-test.sh"
   },
   "keywords": [
     "claude",

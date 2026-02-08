@@ -4,7 +4,7 @@
 // ║  Copies templates and migrates legacy config directories                ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 
-import { existsSync, mkdirSync, cpSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, cpSync, readFileSync, writeFileSync, appendFileSync } from "fs";
 import { join } from "path";
 
 const HOME = process.env.HOME || process.env.USERPROFILE;
@@ -52,12 +52,29 @@ try {
     success("Installed settings template");
   }
 
+  // Install CLAUDE.md agent instructions → ~/.claude/CLAUDE.md (idempotent)
+  const claudeMdSrc = join(PKG_DIR, "claude-code", "CLAUDE.md.shipwright");
+  const claudeMdDest = join(CLAUDE_DIR, "CLAUDE.md");
+  if (existsSync(claudeMdSrc)) {
+    ensureDir(CLAUDE_DIR);
+    if (existsSync(claudeMdDest)) {
+      const existing = readFileSync(claudeMdDest, "utf8");
+      if (!existing.includes("Shipwright")) {
+        appendFileSync(claudeMdDest, "\n---\n\n" + readFileSync(claudeMdSrc, "utf8"));
+        success("Appended Shipwright instructions to ~/.claude/CLAUDE.md");
+      } else {
+        success("~/.claude/CLAUDE.md already contains Shipwright instructions");
+      }
+    } else {
+      cpSync(claudeMdSrc, claudeMdDest);
+      success("Installed ~/.claude/CLAUDE.md");
+    }
+  }
+
   // Migrate ~/.claude-teams/ → ~/.shipwright/ (non-destructive)
   if (existsSync(LEGACY_DIR) && !existsSync(join(SHIPWRIGHT_DIR, ".migrated"))) {
     info("Migrating legacy ~/.claude-teams/ config...");
     copyDir(LEGACY_DIR, SHIPWRIGHT_DIR);
-    // Write migration marker so we don't re-copy on every install
-    const { writeFileSync } = await import("fs");
     writeFileSync(join(SHIPWRIGHT_DIR, ".migrated"), new Date().toISOString());
     success("Migrated legacy config (originals preserved)");
   }

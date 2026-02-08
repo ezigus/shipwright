@@ -6,7 +6,15 @@
 set -euo pipefail
 
 VERSION="1.7.0"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Resolve symlinks (required for npm global install where bin/ symlinks to node_modules/)
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+    DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 
 # ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
 CYAN='\033[38;2;0;212;255m'     # #00d4ff — primary accent

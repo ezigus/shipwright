@@ -146,6 +146,7 @@ MAX_WORKERS=8
 MIN_WORKERS=1
 WORKER_MEM_GB=4
 EST_COST_PER_JOB=5.0
+FLEET_MAX_PARALLEL=""
 
 # Patrol defaults (overridden by daemon-config.json or env)
 PATROL_INTERVAL="${PATROL_INTERVAL:-3600}"
@@ -2107,9 +2108,15 @@ daemon_auto_scale() {
 
     # ── Load average check (back off if system is stressed) ──
     local load_avg
-    load_avg=$(uptime | awk -F'load averages?: ' '{print $2}' | awk -F'[, ]+' '{print $1}')
-    local load_ratio
-    load_ratio=$(awk -v load="$load_avg" -v cores="$cpu_cores" 'BEGIN { printf "%.0f", (load / cores) * 100 }')
+    load_avg=$(uptime | awk -F'load averages?: ' '{print $2}' | awk -F'[, ]+' '{print $1}' 2>/dev/null || echo "0")
+    # Validate numeric
+    if [[ ! "$load_avg" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+        load_avg="0"
+    fi
+    local load_ratio=0
+    if [[ "$cpu_cores" -gt 0 ]]; then
+        load_ratio=$(awk -v load="$load_avg" -v cores="$cpu_cores" 'BEGIN { printf "%.0f", (load / cores) * 100 }')
+    fi
     if [[ "$load_ratio" -gt 90 ]]; then
         # System under heavy load — scale down to min
         max_by_cpu="$MIN_WORKERS"
@@ -2119,13 +2126,22 @@ daemon_auto_scale() {
     # ── Available memory ──
     local avail_mem_gb=8
     if [[ "$(uname -s)" == "Darwin" ]]; then
-        local page_size free_pages
-        page_size=$(vm_stat | awk '/page size/ {print $NF}' | tr -d '.')
-        free_pages=$(vm_stat | awk '/Pages free/ {print $NF}' | tr -d '.')
-        local speculative_pages
-        speculative_pages=$(vm_stat | awk '/Pages speculative/ {print $NF}' | tr -d '.')
-        if [[ -n "$page_size" && -n "$free_pages" ]]; then
-            local free_bytes=$(( (${free_pages:-0} + ${speculative_pages:-0}) * ${page_size:-4096} ))
+        local page_size free_pages inactive_pages purgeable_pages speculative_pages
+        # Page size is in format: "(page size of 16384 bytes)"
+        page_size=$(vm_stat | awk '/page size of/ {for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) print $i}')
+        page_size="${page_size:-16384}"
+        free_pages=$(vm_stat | awk '/^Pages free:/ {gsub(/\./, "", $NF); print $NF}')
+        free_pages="${free_pages:-0}"
+        speculative_pages=$(vm_stat | awk '/^Pages speculative:/ {gsub(/\./, "", $NF); print $NF}')
+        speculative_pages="${speculative_pages:-0}"
+        inactive_pages=$(vm_stat | awk '/^Pages inactive:/ {gsub(/\./, "", $NF); print $NF}')
+        inactive_pages="${inactive_pages:-0}"
+        purgeable_pages=$(vm_stat | awk '/^Pages purgeable:/ {gsub(/\./, "", $NF); print $NF}')
+        purgeable_pages="${purgeable_pages:-0}"
+        # Available ≈ free + speculative + inactive + purgeable
+        local avail_pages=$(( free_pages + speculative_pages + inactive_pages + purgeable_pages ))
+        if [[ "$avail_pages" -gt 0 && "$page_size" -gt 0 ]]; then
+            local free_bytes=$(( avail_pages * page_size ))
             avail_mem_gb=$(( free_bytes / 1073741824 ))
         fi
     else
@@ -2153,7 +2169,11 @@ daemon_auto_scale() {
     # ── Queue depth (don't over-provision) ──
     local queue_depth active_count
     queue_depth=$(jq -r '.queued | length' "$STATE_FILE" 2>/dev/null || echo 0)
+    queue_depth="${queue_depth:-0}"
+    [[ ! "$queue_depth" =~ ^[0-9]+$ ]] && queue_depth=0
     active_count=$(get_active_count)
+    active_count="${active_count:-0}"
+    [[ ! "$active_count" =~ ^[0-9]+$ ]] && active_count=0
     local max_by_queue=$(( queue_depth + active_count ))
     [[ "$max_by_queue" -lt 1 ]] && max_by_queue=1
 
@@ -2163,6 +2183,11 @@ daemon_auto_scale() {
     [[ "$max_by_budget" -lt "$computed" ]] && computed="$max_by_budget"
     [[ "$max_by_queue" -lt "$computed" ]] && computed="$max_by_queue"
     [[ "$MAX_WORKERS" -lt "$computed" ]] && computed="$MAX_WORKERS"
+
+    # Respect fleet-assigned ceiling if set
+    if [[ -n "${FLEET_MAX_PARALLEL:-}" && "$FLEET_MAX_PARALLEL" -lt "$computed" ]]; then
+        computed="$FLEET_MAX_PARALLEL"
+    fi
 
     # Clamp to min_workers
     [[ "$computed" -lt "$MIN_WORKERS" ]] && computed="$MIN_WORKERS"
@@ -2199,8 +2224,9 @@ daemon_reload_config() {
         new_max=$(jq -r '.max_parallel // empty' "$fleet_config" 2>/dev/null || true)
         if [[ -n "$new_max" && "$new_max" != "null" ]]; then
             local prev="$MAX_PARALLEL"
+            FLEET_MAX_PARALLEL="$new_max"
             MAX_PARALLEL="$new_max"
-            daemon_log INFO "Fleet reload: max_parallel ${prev} → ${MAX_PARALLEL}"
+            daemon_log INFO "Fleet reload: max_parallel ${prev} → ${MAX_PARALLEL} (fleet ceiling: ${FLEET_MAX_PARALLEL})"
             emit_event "daemon.fleet_reload" "from=$prev" "to=$MAX_PARALLEL"
         fi
     fi
@@ -2443,19 +2469,21 @@ daemon_poll_loop() {
         daemon_reap_completed
         daemon_health_check
 
+        # Increment cycle counter (must be before all modulo checks)
+        POLL_CYCLE_COUNT=$((POLL_CYCLE_COUNT + 1))
+
         # Fleet config reload every 3 cycles
-        if [[ $((POLL_CYCLE_COUNT % 3)) -eq 0 ]] && [[ "$POLL_CYCLE_COUNT" -gt 0 ]]; then
+        if [[ $((POLL_CYCLE_COUNT % 3)) -eq 0 ]]; then
             daemon_reload_config
         fi
 
         # Check degradation every 5 poll cycles
-        POLL_CYCLE_COUNT=$((POLL_CYCLE_COUNT + 1))
         if [[ $((POLL_CYCLE_COUNT % 5)) -eq 0 ]]; then
             daemon_check_degradation
         fi
 
         # Auto-scale every N cycles (default: 5)
-        if [[ $((POLL_CYCLE_COUNT % ${AUTO_SCALE_INTERVAL:-5})) -eq 0 ]] && [[ "$POLL_CYCLE_COUNT" -gt 0 ]]; then
+        if [[ $((POLL_CYCLE_COUNT % ${AUTO_SCALE_INTERVAL:-5})) -eq 0 ]]; then
             daemon_auto_scale
         fi
 

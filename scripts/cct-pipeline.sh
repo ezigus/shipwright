@@ -100,6 +100,7 @@ PR_NUMBER=""
 AUTO_WORKTREE=false
 WORKTREE_NAME=""
 CLEANUP_WORKTREE=false
+ORIGINAL_REPO_DIR=""
 
 # GitHub metadata (populated during intake)
 ISSUE_LABELS=""
@@ -226,7 +227,7 @@ parse_args() {
             --labels)      LABELS="$2"; shift 2 ;;
             --no-github)   NO_GITHUB=true; shift ;;
             --ignore-budget) IGNORE_BUDGET=true; shift ;;
-            --worktree=*) AUTO_WORKTREE=true; WORKTREE_NAME="${1#--worktree=}"; shift ;;
+            --worktree=*) AUTO_WORKTREE=true; WORKTREE_NAME="${1#--worktree=}"; WORKTREE_NAME="${WORKTREE_NAME//[^a-zA-Z0-9_-]/}"; if [[ -z "$WORKTREE_NAME" ]]; then error "Invalid worktree name (alphanumeric, hyphens, underscores only)"; exit 1; fi; shift ;;
             --worktree)   AUTO_WORKTREE=true; shift ;;
             --dry-run)     DRY_RUN=true; shift ;;
             --slack-webhook) SLACK_WEBHOOK="$2"; shift 2 ;;
@@ -3435,7 +3436,8 @@ pipeline_setup_worktree() {
     # Create worktree with new branch from current HEAD
     git worktree add -b "$branch_name" "$worktree_path" HEAD
 
-    # cd into the worktree so setup_dirs() picks it up as PROJECT_ROOT
+    # Store original dir for cleanup, then cd into worktree
+    ORIGINAL_REPO_DIR="$(pwd)"
     cd "$worktree_path"
     CLEANUP_WORKTREE=true
 
@@ -3448,12 +3450,10 @@ pipeline_cleanup_worktree() {
     fi
 
     local worktree_path
-    worktree_path=$(pwd)
-    local original_dir
-    original_dir=$(git -C "$worktree_path" worktree list | head -1 | awk '{print $1}')
+    worktree_path="$(pwd)"
 
-    if [[ -n "$original_dir" && "$original_dir" != "$worktree_path" ]]; then
-        cd "$original_dir"
+    if [[ -n "${ORIGINAL_REPO_DIR:-}" && "$worktree_path" != "$ORIGINAL_REPO_DIR" ]]; then
+        cd "$ORIGINAL_REPO_DIR" 2>/dev/null || cd /
         info "Cleaning up worktree: ${DIM}${worktree_path}${RESET}"
         git worktree remove --force "$worktree_path" 2>/dev/null || true
     fi
@@ -3479,8 +3479,9 @@ pipeline_start() {
         pipeline_setup_worktree
     fi
 
-    # Register worktree cleanup on exit
+    # Register worktree cleanup on exit (chain with existing cleanup)
     if [[ "$CLEANUP_WORKTREE" == "true" ]]; then
+        trap 'pipeline_cleanup_worktree; cleanup_on_exit' SIGINT SIGTERM
         trap 'pipeline_cleanup_worktree' EXIT
     fi
 

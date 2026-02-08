@@ -232,6 +232,15 @@ cost_remaining_budget() {
         '[.entries[] | select(.ts_epoch >= $cutoff) | .cost_usd] | add // 0' \
         "$COST_FILE" 2>/dev/null || echo "0")
 
+    # Validate numeric values
+    if [[ ! "$today_spent" =~ ^-?[0-9]+\.?[0-9]*$ ]]; then
+        today_spent="0"
+    fi
+    if [[ ! "$budget_usd" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+        echo "unlimited"
+        return 0
+    fi
+
     # Calculate remaining
     local remaining
     remaining=$(awk -v budget="$budget_usd" -v spent="$today_spent" 'BEGIN { printf "%.2f", budget - spent }')

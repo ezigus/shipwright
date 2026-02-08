@@ -206,10 +206,14 @@ fleet_rebalance() {
     local total_workers
     total_workers=$(jq -r '.worker_pool.total_workers // 12' "$config_file")
 
+    local shutdown_flag="$HOME/.claude-teams/fleet-rebalancer.shutdown"
+    rm -f "$shutdown_flag"
+
     while true; do
         sleep "$interval"
 
-        if [[ ! -f "$FLEET_STATE" ]]; then
+        # Check for shutdown signal or missing state
+        if [[ -f "$shutdown_flag" ]] || [[ ! -f "$FLEET_STATE" ]]; then
             break
         fi
 
@@ -219,29 +223,35 @@ fleet_rebalance() {
             continue
         fi
 
-        # Collect demand per repo
-        local -A demands
+        # Collect demand per repo using indexed arrays (bash 3.2 compatible)
+        local repo_list=()
+        local demand_list=()
         local total_demand=0
         local repo_count=0
 
         while IFS= read -r repo_name; do
             local repo_path
-            repo_path=$(jq -r --arg r "$repo_name" '.repos[$r].path' "$FLEET_STATE")
+            repo_path=$(jq -r --arg r "$repo_name" '.repos[$r].path' "$FLEET_STATE" 2>/dev/null || true)
+            [[ -z "$repo_path" || "$repo_path" == "null" ]] && continue
 
-            # Read daemon state — try repo-specific first, fall back to shared
+            # Read daemon state — try repo-local state first
+            local active=0 queued=0
             local daemon_state="$repo_path/.claude-teams/daemon-state.json"
             if [[ ! -f "$daemon_state" ]]; then
+                # Fall back to shared state, filtered by repo
                 daemon_state="$HOME/.claude-teams/daemon-state.json"
             fi
-
-            local active=0 queued=0
             if [[ -f "$daemon_state" ]]; then
-                active=$(jq -r '.active_jobs | length' "$daemon_state" 2>/dev/null || echo 0)
-                queued=$(jq -r '.queued | length' "$daemon_state" 2>/dev/null || echo 0)
+                active=$(jq -r '.active_jobs | length // 0' "$daemon_state" 2>/dev/null || echo 0)
+                queued=$(jq -r '.queued | length // 0' "$daemon_state" 2>/dev/null || echo 0)
+                # Validate numeric
+                [[ ! "$active" =~ ^[0-9]+$ ]] && active=0
+                [[ ! "$queued" =~ ^[0-9]+$ ]] && queued=0
             fi
 
             local demand=$((active + queued))
-            demands[$repo_name]=$demand
+            repo_list+=("$repo_name")
+            demand_list+=("$demand")
             total_demand=$((total_demand + demand))
             repo_count=$((repo_count + 1))
         done <<< "$repo_names"
@@ -250,23 +260,52 @@ fleet_rebalance() {
             continue
         fi
 
-        # Distribute workers proportionally
-        local reload_needed=false
-        while IFS= read -r repo_name; do
-            local repo_path
-            repo_path=$(jq -r --arg r "$repo_name" '.repos[$r].path' "$FLEET_STATE")
+        # Distribute workers proportionally with budget enforcement
+        local allocated_total=0
+        local alloc_list=()
 
+        local i
+        for i in $(seq 0 $((repo_count - 1))); do
             local new_max
             if [[ "$total_demand" -eq 0 ]]; then
                 new_max=$(( total_workers / repo_count ))
             else
-                local repo_demand="${demands[$repo_name]:-0}"
+                local repo_demand="${demand_list[$i]}"
                 new_max=$(awk -v d="$repo_demand" -v td="$total_demand" -v tw="$total_workers" \
                     'BEGIN { v = (d / td) * tw; if (v < 1) v = 1; printf "%.0f", v }')
             fi
             [[ "$new_max" -lt 1 ]] && new_max=1
+            alloc_list+=("$new_max")
+            allocated_total=$((allocated_total + new_max))
+        done
 
-            # Write updated config to fleet-managed daemon config
+        # Budget correction: if we over-allocated, reduce the largest allocations
+        while [[ "$allocated_total" -gt "$total_workers" ]]; do
+            local max_idx=0
+            local max_val="${alloc_list[0]}"
+            for i in $(seq 1 $((repo_count - 1))); do
+                if [[ "${alloc_list[$i]}" -gt "$max_val" ]]; then
+                    max_val="${alloc_list[$i]}"
+                    max_idx=$i
+                fi
+            done
+            # Don't reduce below 1
+            if [[ "${alloc_list[$max_idx]}" -le 1 ]]; then
+                break
+            fi
+            alloc_list[$max_idx]=$(( ${alloc_list[$max_idx]} - 1 ))
+            allocated_total=$((allocated_total - 1))
+        done
+
+        # Write updated configs
+        local reload_needed=false
+        for i in $(seq 0 $((repo_count - 1))); do
+            local repo_name="${repo_list[$i]}"
+            local new_max="${alloc_list[$i]}"
+            local repo_path
+            repo_path=$(jq -r --arg r "$repo_name" '.repos[$r].path' "$FLEET_STATE" 2>/dev/null || true)
+            [[ -z "$repo_path" || "$repo_path" == "null" ]] && continue
+
             local fleet_config="$repo_path/.claude/.fleet-daemon-config.json"
             if [[ -f "$fleet_config" ]]; then
                 local tmp_cfg="${fleet_config}.tmp.$$"
@@ -274,7 +313,7 @@ fleet_rebalance() {
                     && mv "$tmp_cfg" "$fleet_config"
                 reload_needed=true
             fi
-        done <<< "$repo_names"
+        done
 
         # Signal daemons to reload
         if [[ "$reload_needed" == "true" ]]; then
@@ -282,7 +321,8 @@ fleet_rebalance() {
             emit_event "fleet.rebalance" \
                 "total_workers=$total_workers" \
                 "total_demand=$total_demand" \
-                "repo_count=$repo_count"
+                "repo_count=$repo_count" \
+                "allocated=$allocated_total"
         fi
     done
 }
@@ -471,6 +511,9 @@ fleet_stop() {
         return 0
     fi
 
+    # Signal rebalancer to stop
+    touch "$HOME/.claude-teams/fleet-rebalancer.shutdown"
+
     # Kill rebalancer if running
     local rebalancer_pid
     rebalancer_pid=$(jq -r '.rebalancer_pid // empty' "$FLEET_STATE" 2>/dev/null || true)
@@ -480,8 +523,9 @@ fleet_stop() {
         success "Stopped worker pool rebalancer (PID: ${rebalancer_pid})"
     fi
 
-    # Clean up reload flag
+    # Clean up flags
     rm -f "$HOME/.claude-teams/fleet-reload.flag"
+    rm -f "$HOME/.claude-teams/fleet-rebalancer.shutdown"
 
     local stopped=0
     while IFS= read -r repo_name; do

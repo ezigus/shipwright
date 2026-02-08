@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct fix — Bulk Fix Across Multiple Repos                              ║
+# ║  shipwright fix — Bulk Fix Across Multiple Repos                              ║
 # ║  Clone a goal across repos · Run pipelines in parallel · Collect PRs    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.6.0"
+VERSION="1.7.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────

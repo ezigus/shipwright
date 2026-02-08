@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct pipeline test — E2E validation invoking the REAL pipeline          ║
+# ║  shipwright pipeline test — E2E validation invoking the REAL pipeline          ║
 # ║  Every test runs cct-pipeline.sh as a subprocess · No logic reimpl.     ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail

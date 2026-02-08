@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct daemon — Autonomous GitHub Issue Watcher                          ║
+# ║  shipwright daemon — Autonomous GitHub Issue Watcher                          ║
 # ║  Polls for labeled issues · Spawns pipelines · Manages worktrees      ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.5.1"
+VERSION="1.7.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 

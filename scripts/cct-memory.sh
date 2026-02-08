@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct memory — Persistent Learning & Context System                     ║
+# ║  shipwright memory — Persistent Learning & Context System                     ║
 # ║  Captures learnings · Injects context · Searches memory · Tracks metrics║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.6.0"
+VERSION="1.7.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct memory+cost test — Unit tests for memory system & cost tracking   ║
+# ║  shipwright memory+cost test — Unit tests for memory system & cost tracking   ║
 # ║  Self-contained mock environment · No external dependencies            ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail

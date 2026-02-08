@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct cost — Token Usage & Cost Intelligence                            ║
+# ║  shipwright cost — Token Usage & Cost Intelligence                            ║
 # ║  Tracks spending · Enforces budgets · Stage breakdowns · Trend analysis ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.6.0"
+VERSION="1.7.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 

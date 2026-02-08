@@ -3,7 +3,7 @@
 # ║  cct-templates.sh — Browse and inspect team templates                   ║
 # ║                                                                          ║
 # ║  Templates define reusable agent team configurations (roles, layout,    ║
-# ║  focus areas) that cct session --template can use to scaffold teams.    ║
+# ║  focus areas) that shipwright session --template can use to scaffold teams.    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 

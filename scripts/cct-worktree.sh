@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct worktree — Git worktree management for multi-agent isolation       ║
+# ║  shipwright worktree — Git worktree management for multi-agent isolation       ║
 # ║                                                                          ║
 # ║  Each agent gets its own worktree so parallel agents don't clobber       ║
 # ║  each other's files. Worktrees live in .worktrees/ relative to root.    ║

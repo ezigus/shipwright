@@ -2,7 +2,7 @@
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  vercel-deploy.sh — Deploy adapter for Vercel                           ║
 # ║                                                                          ║
-# ║  Sourced by cct init --deploy to generate platform-specific commands.   ║
+# ║  Sourced by shipwright init --deploy to generate platform-specific commands.   ║
 # ║  Exports: staging_cmd, production_cmd, rollback_cmd, detect_platform    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 

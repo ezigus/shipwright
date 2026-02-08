@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct init — One-command tmux setup + optional deploy configuration      ║
+# ║  shipwright init — One-command tmux setup + optional deploy configuration      ║
 # ║                                                                          ║
 # ║  Installs tmux config, overlay, and templates. No interactive prompts,  ║
 # ║  no hooks, no Claude Code settings — just tmux config.                  ║

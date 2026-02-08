@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct prep — Repository Preparation for Agent Teams                      ║
+# ║  shipwright prep — Repository Preparation for Agent Teams                      ║
 # ║  Analyze repos · Generate configs · Equip autonomous agents            ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.5.1"
+VERSION="1.7.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Handle subcommands ───────────────────────────────────────────────────────

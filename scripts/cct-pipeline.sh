@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct pipeline — Autonomous Feature Delivery (Idea → Production)        ║
+# ║  shipwright pipeline — Autonomous Feature Delivery (Idea → Production)        ║
 # ║  Full GitHub integration · Auto-detection · Task tracking · Metrics    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.5.1"
+VERSION="1.7.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 

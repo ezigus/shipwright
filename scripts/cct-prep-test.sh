@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct prep test — Validate repo preparation                             ║
+# ║  shipwright prep test — Validate repo preparation                             ║
 # ║  Every test runs cct-prep.sh as a subprocess · No logic reimpl.        ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct fleet — Multi-Repo Daemon Orchestrator                            ║
+# ║  shipwright fleet — Multi-Repo Daemon Orchestrator                            ║
 # ║  Spawns daemons across repos · Fleet dashboard · Aggregate metrics     ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.6.0"
+VERSION="1.7.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 

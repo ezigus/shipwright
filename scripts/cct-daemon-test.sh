@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct daemon test — Unit tests for daemon metrics, health, alerting      ║
+# ║  shipwright daemon test — Unit tests for daemon metrics, health, alerting      ║
 # ║  Creates synthetic events · Sources daemon functions · Validates output  ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail

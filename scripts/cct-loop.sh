@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  cct loop — Continuous agent loop harness for Claude Code               ║
+# ║  shipwright loop — Continuous agent loop harness for Claude Code               ║
 # ║                                                                         ║
 # ║  Runs Claude Code in a headless loop until a goal is achieved.          ║
 # ║  Supports single-agent and multi-agent (parallel worktree) modes.       ║
@@ -39,7 +39,7 @@ MAX_TURNS=""
 RESUME=false
 VERBOSE=false
 MAX_ITERATIONS_EXPLICIT=false
-VERSION="1.3.0"
+VERSION="1.7.0"
 
 # ─── Audit & Quality Gate Defaults ───────────────────────────────────────────
 AUDIT_ENABLED=false

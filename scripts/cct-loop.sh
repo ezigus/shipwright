@@ -39,7 +39,7 @@ MAX_TURNS=""
 RESUME=false
 VERBOSE=false
 MAX_ITERATIONS_EXPLICIT=false
-VERSION="1.7.0"
+VERSION="1.7.1"
 
 # ─── Audit & Quality Gate Defaults ───────────────────────────────────────────
 AUDIT_ENABLED=false

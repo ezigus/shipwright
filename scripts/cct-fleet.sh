@@ -196,6 +196,97 @@ session_name_for_repo() {
     echo "shipwright-fleet-${basename}"
 }
 
+# ─── Worker Pool Rebalancer ───────────────────────────────────────────────
+# Runs in background, redistributes MAX_PARALLEL across repos based on demand
+
+fleet_rebalance() {
+    local config_file="$1"
+    local interval
+    interval=$(jq -r '.worker_pool.rebalance_interval_seconds // 120' "$config_file")
+    local total_workers
+    total_workers=$(jq -r '.worker_pool.total_workers // 12' "$config_file")
+
+    while true; do
+        sleep "$interval"
+
+        if [[ ! -f "$FLEET_STATE" ]]; then
+            break
+        fi
+
+        local repo_names
+        repo_names=$(jq -r '.repos | keys[]' "$FLEET_STATE" 2>/dev/null || true)
+        if [[ -z "$repo_names" ]]; then
+            continue
+        fi
+
+        # Collect demand per repo
+        local -A demands
+        local total_demand=0
+        local repo_count=0
+
+        while IFS= read -r repo_name; do
+            local repo_path
+            repo_path=$(jq -r --arg r "$repo_name" '.repos[$r].path' "$FLEET_STATE")
+
+            # Read daemon state — try repo-specific first, fall back to shared
+            local daemon_state="$repo_path/.claude-teams/daemon-state.json"
+            if [[ ! -f "$daemon_state" ]]; then
+                daemon_state="$HOME/.claude-teams/daemon-state.json"
+            fi
+
+            local active=0 queued=0
+            if [[ -f "$daemon_state" ]]; then
+                active=$(jq -r '.active_jobs | length' "$daemon_state" 2>/dev/null || echo 0)
+                queued=$(jq -r '.queued | length' "$daemon_state" 2>/dev/null || echo 0)
+            fi
+
+            local demand=$((active + queued))
+            demands[$repo_name]=$demand
+            total_demand=$((total_demand + demand))
+            repo_count=$((repo_count + 1))
+        done <<< "$repo_names"
+
+        if [[ "$repo_count" -eq 0 ]]; then
+            continue
+        fi
+
+        # Distribute workers proportionally
+        local reload_needed=false
+        while IFS= read -r repo_name; do
+            local repo_path
+            repo_path=$(jq -r --arg r "$repo_name" '.repos[$r].path' "$FLEET_STATE")
+
+            local new_max
+            if [[ "$total_demand" -eq 0 ]]; then
+                new_max=$(( total_workers / repo_count ))
+            else
+                local repo_demand="${demands[$repo_name]:-0}"
+                new_max=$(awk -v d="$repo_demand" -v td="$total_demand" -v tw="$total_workers" \
+                    'BEGIN { v = (d / td) * tw; if (v < 1) v = 1; printf "%.0f", v }')
+            fi
+            [[ "$new_max" -lt 1 ]] && new_max=1
+
+            # Write updated config to fleet-managed daemon config
+            local fleet_config="$repo_path/.claude/.fleet-daemon-config.json"
+            if [[ -f "$fleet_config" ]]; then
+                local tmp_cfg="${fleet_config}.tmp.$$"
+                jq --argjson mp "$new_max" '.max_parallel = $mp' "$fleet_config" > "$tmp_cfg" \
+                    && mv "$tmp_cfg" "$fleet_config"
+                reload_needed=true
+            fi
+        done <<< "$repo_names"
+
+        # Signal daemons to reload
+        if [[ "$reload_needed" == "true" ]]; then
+            touch "$HOME/.claude-teams/fleet-reload.flag"
+            emit_event "fleet.rebalance" \
+                "total_workers=$total_workers" \
+                "total_demand=$total_demand" \
+                "repo_count=$repo_count"
+        fi
+    done
+}
+
 # ─── Fleet Start ────────────────────────────────────────────────────────────
 
 fleet_start() {
@@ -329,6 +420,23 @@ fleet_start() {
     # Atomic write of fleet state
     mv "$fleet_state_tmp" "$FLEET_STATE"
 
+    # Start worker pool rebalancer if enabled
+    local pool_enabled
+    pool_enabled=$(jq -r '.worker_pool.enabled // false' "$config_file")
+    if [[ "$pool_enabled" == "true" ]]; then
+        local pool_total
+        pool_total=$(jq -r '.worker_pool.total_workers // 12' "$config_file")
+        fleet_rebalance "$config_file" &
+        local rebalancer_pid=$!
+
+        # Record rebalancer PID in fleet state
+        local tmp_rs="${FLEET_STATE}.tmp.$$"
+        jq --argjson pid "$rebalancer_pid" '.rebalancer_pid = $pid' "$FLEET_STATE" > "$tmp_rs" \
+            && mv "$tmp_rs" "$FLEET_STATE"
+
+        success "Worker pool: ${CYAN}${pool_total} total workers${RESET} (rebalancer PID: ${rebalancer_pid})"
+    fi
+
     echo ""
     echo -e "${PURPLE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo -e "  Fleet: ${GREEN}${started} started${RESET}"
@@ -362,6 +470,18 @@ fleet_stop() {
         rm -f "$FLEET_STATE"
         return 0
     fi
+
+    # Kill rebalancer if running
+    local rebalancer_pid
+    rebalancer_pid=$(jq -r '.rebalancer_pid // empty' "$FLEET_STATE" 2>/dev/null || true)
+    if [[ -n "$rebalancer_pid" ]]; then
+        kill "$rebalancer_pid" 2>/dev/null || true
+        wait "$rebalancer_pid" 2>/dev/null || true
+        success "Stopped worker pool rebalancer (PID: ${rebalancer_pid})"
+    fi
+
+    # Clean up reload flag
+    rm -f "$HOME/.claude-teams/fleet-reload.flag"
 
     local stopped=0
     while IFS= read -r repo_name; do
@@ -425,6 +545,21 @@ fleet_status() {
     if [[ -z "$repo_names" ]]; then
         warn "Fleet state is empty"
         return 0
+    fi
+
+    # Show worker pool info if enabled
+    local pool_enabled="false"
+    local config_file_path="${CONFIG_PATH:-.claude/fleet-config.json}"
+    if [[ -f "$config_file_path" ]]; then
+        pool_enabled=$(jq -r '.worker_pool.enabled // false' "$config_file_path" 2>/dev/null || echo "false")
+    fi
+
+    if [[ "$pool_enabled" == "true" ]]; then
+        local pool_total rebalancer_pid
+        pool_total=$(jq -r '.worker_pool.total_workers // 12' "$config_file_path" 2>/dev/null || echo "12")
+        rebalancer_pid=$(jq -r '.rebalancer_pid // "N/A"' "$FLEET_STATE" 2>/dev/null || echo "N/A")
+        echo -e "  ${BOLD}Worker Pool:${RESET} ${CYAN}${pool_total} total workers${RESET}  ${DIM}rebalancer PID: ${rebalancer_pid}${RESET}"
+        echo ""
     fi
 
     # Header
@@ -671,7 +806,12 @@ fleet_init() {
             max_parallel: 2,
             model: "opus"
         },
-        shared_events: true
+        shared_events: true,
+        worker_pool: {
+            enabled: false,
+            total_workers: 12,
+            rebalance_interval_seconds: 120
+        }
     }' > "$config_file"
 
     success "Generated fleet config: ${config_file}"

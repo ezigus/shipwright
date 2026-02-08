@@ -139,6 +139,14 @@ WATCH_MODE="repo"
 ORG=""
 REPO_FILTER=""
 
+# Auto-scaling defaults
+AUTO_SCALE=false
+AUTO_SCALE_INTERVAL=5
+MAX_WORKERS=8
+MIN_WORKERS=1
+WORKER_MEM_GB=4
+EST_COST_PER_JOB=5.0
+
 # Patrol defaults (overridden by daemon-config.json or env)
 PATROL_INTERVAL="${PATROL_INTERVAL:-3600}"
 PATROL_MAX_ISSUES="${PATROL_MAX_ISSUES:-5}"
@@ -343,6 +351,14 @@ load_config() {
     if [[ "$ORG" == "null" ]]; then ORG=""; fi
     REPO_FILTER=$(jq -r '.repo_filter // ""' "$config_file")
     if [[ "$REPO_FILTER" == "null" ]]; then REPO_FILTER=""; fi
+
+    # auto-scaling
+    AUTO_SCALE=$(jq -r '.auto_scale // false' "$config_file")
+    AUTO_SCALE_INTERVAL=$(jq -r '.auto_scale_interval // 5' "$config_file")
+    MAX_WORKERS=$(jq -r '.max_workers // 8' "$config_file")
+    MIN_WORKERS=$(jq -r '.min_workers // 1' "$config_file")
+    WORKER_MEM_GB=$(jq -r '.worker_mem_gb // 4' "$config_file")
+    EST_COST_PER_JOB=$(jq -r '.estimated_cost_per_job_usd // 5.0' "$config_file")
 
     success "Config loaded"
 }
@@ -2069,6 +2085,129 @@ daemon_check_degradation() {
     fi
 }
 
+# ─── Auto-Scaling ─────────────────────────────────────────────────────────
+# Dynamically adjusts MAX_PARALLEL based on CPU, memory, budget, and queue depth
+
+daemon_auto_scale() {
+    if [[ "${AUTO_SCALE:-false}" != "true" ]]; then
+        return
+    fi
+
+    local prev_max="$MAX_PARALLEL"
+
+    # ── CPU cores ──
+    local cpu_cores=2
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        cpu_cores=$(sysctl -n hw.ncpu 2>/dev/null || echo 2)
+    else
+        cpu_cores=$(nproc 2>/dev/null || echo 2)
+    fi
+    local max_by_cpu=$(( (cpu_cores * 3) / 4 ))  # 75% utilization cap
+    [[ "$max_by_cpu" -lt 1 ]] && max_by_cpu=1
+
+    # ── Load average check (back off if system is stressed) ──
+    local load_avg
+    load_avg=$(uptime | awk -F'load averages?: ' '{print $2}' | awk -F'[, ]+' '{print $1}')
+    local load_ratio
+    load_ratio=$(awk -v load="$load_avg" -v cores="$cpu_cores" 'BEGIN { printf "%.0f", (load / cores) * 100 }')
+    if [[ "$load_ratio" -gt 90 ]]; then
+        # System under heavy load — scale down to min
+        max_by_cpu="$MIN_WORKERS"
+        daemon_log WARN "Auto-scale: high load (${load_avg}/${cpu_cores} cores) — constraining to ${max_by_cpu}"
+    fi
+
+    # ── Available memory ──
+    local avail_mem_gb=8
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        local page_size free_pages
+        page_size=$(vm_stat | awk '/page size/ {print $NF}' | tr -d '.')
+        free_pages=$(vm_stat | awk '/Pages free/ {print $NF}' | tr -d '.')
+        local speculative_pages
+        speculative_pages=$(vm_stat | awk '/Pages speculative/ {print $NF}' | tr -d '.')
+        if [[ -n "$page_size" && -n "$free_pages" ]]; then
+            local free_bytes=$(( (${free_pages:-0} + ${speculative_pages:-0}) * ${page_size:-4096} ))
+            avail_mem_gb=$(( free_bytes / 1073741824 ))
+        fi
+    else
+        local avail_kb
+        avail_kb=$(awk '/MemAvailable/ {print $2}' /proc/meminfo 2>/dev/null || echo "8388608")
+        avail_mem_gb=$(( avail_kb / 1048576 ))
+    fi
+    [[ "$avail_mem_gb" -lt 1 ]] && avail_mem_gb=1
+    local max_by_mem=$(( avail_mem_gb / WORKER_MEM_GB ))
+    [[ "$max_by_mem" -lt 1 ]] && max_by_mem=1
+
+    # ── Budget remaining ──
+    local max_by_budget="$MAX_WORKERS"
+    local remaining_usd
+    remaining_usd=$("$SCRIPT_DIR/cct-cost.sh" remaining-budget 2>/dev/null || echo "unlimited")
+    if [[ "$remaining_usd" != "unlimited" && -n "$remaining_usd" ]]; then
+        if awk -v r="$remaining_usd" -v c="$EST_COST_PER_JOB" 'BEGIN { exit !(r > 0 && c > 0) }'; then
+            max_by_budget=$(awk -v r="$remaining_usd" -v c="$EST_COST_PER_JOB" 'BEGIN { printf "%.0f", r / c }')
+            [[ "$max_by_budget" -lt 0 ]] && max_by_budget=0
+        else
+            max_by_budget=0
+        fi
+    fi
+
+    # ── Queue depth (don't over-provision) ──
+    local queue_depth active_count
+    queue_depth=$(jq -r '.queued | length' "$STATE_FILE" 2>/dev/null || echo 0)
+    active_count=$(get_active_count)
+    local max_by_queue=$(( queue_depth + active_count ))
+    [[ "$max_by_queue" -lt 1 ]] && max_by_queue=1
+
+    # ── Compute final value ──
+    local computed="$max_by_cpu"
+    [[ "$max_by_mem" -lt "$computed" ]] && computed="$max_by_mem"
+    [[ "$max_by_budget" -lt "$computed" ]] && computed="$max_by_budget"
+    [[ "$max_by_queue" -lt "$computed" ]] && computed="$max_by_queue"
+    [[ "$MAX_WORKERS" -lt "$computed" ]] && computed="$MAX_WORKERS"
+
+    # Clamp to min_workers
+    [[ "$computed" -lt "$MIN_WORKERS" ]] && computed="$MIN_WORKERS"
+
+    MAX_PARALLEL="$computed"
+
+    if [[ "$MAX_PARALLEL" -ne "$prev_max" ]]; then
+        daemon_log INFO "Auto-scale: ${prev_max} → ${MAX_PARALLEL} (cpu=${max_by_cpu} mem=${max_by_mem} budget=${max_by_budget} queue=${max_by_queue})"
+        emit_event "daemon.scale" \
+            "from=$prev_max" \
+            "to=$MAX_PARALLEL" \
+            "max_by_cpu=$max_by_cpu" \
+            "max_by_mem=$max_by_mem" \
+            "max_by_budget=$max_by_budget" \
+            "max_by_queue=$max_by_queue" \
+            "cpu_cores=$cpu_cores" \
+            "avail_mem_gb=$avail_mem_gb" \
+            "remaining_usd=$remaining_usd"
+    fi
+}
+
+# ─── Fleet Config Reload ──────────────────────────────────────────────────
+# Checks for fleet-reload.flag and reloads MAX_PARALLEL from fleet-managed config
+
+daemon_reload_config() {
+    local reload_flag="$HOME/.claude-teams/fleet-reload.flag"
+    if [[ ! -f "$reload_flag" ]]; then
+        return
+    fi
+
+    local fleet_config=".claude/.fleet-daemon-config.json"
+    if [[ -f "$fleet_config" ]]; then
+        local new_max
+        new_max=$(jq -r '.max_parallel // empty' "$fleet_config" 2>/dev/null || true)
+        if [[ -n "$new_max" && "$new_max" != "null" ]]; then
+            local prev="$MAX_PARALLEL"
+            MAX_PARALLEL="$new_max"
+            daemon_log INFO "Fleet reload: max_parallel ${prev} → ${MAX_PARALLEL}"
+            emit_event "daemon.fleet_reload" "from=$prev" "to=$MAX_PARALLEL"
+        fi
+    fi
+
+    rm -f "$reload_flag"
+}
+
 # ─── Self-Optimizing Metrics Loop ──────────────────────────────────────────
 
 daemon_self_optimize() {
@@ -2304,10 +2443,20 @@ daemon_poll_loop() {
         daemon_reap_completed
         daemon_health_check
 
+        # Fleet config reload every 3 cycles
+        if [[ $((POLL_CYCLE_COUNT % 3)) -eq 0 ]] && [[ "$POLL_CYCLE_COUNT" -gt 0 ]]; then
+            daemon_reload_config
+        fi
+
         # Check degradation every 5 poll cycles
         POLL_CYCLE_COUNT=$((POLL_CYCLE_COUNT + 1))
         if [[ $((POLL_CYCLE_COUNT % 5)) -eq 0 ]]; then
             daemon_check_degradation
+        fi
+
+        # Auto-scale every N cycles (default: 5)
+        if [[ $((POLL_CYCLE_COUNT % ${AUTO_SCALE_INTERVAL:-5})) -eq 0 ]] && [[ "$POLL_CYCLE_COUNT" -gt 0 ]]; then
+            daemon_auto_scale
         fi
 
         # Self-optimize every N cycles (default: 10)
@@ -2658,7 +2807,13 @@ daemon_init() {
   "priority_lane_max": 1,
   "watch_mode": "repo",
   "org": null,
-  "repo_filter": null
+  "repo_filter": null,
+  "auto_scale": false,
+  "auto_scale_interval": 5,
+  "max_workers": 8,
+  "min_workers": 1,
+  "worker_mem_gb": 4,
+  "estimated_cost_per_job_usd": 5.0
 }
 CONFIGEOF
 

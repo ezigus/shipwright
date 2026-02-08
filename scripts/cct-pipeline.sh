@@ -97,6 +97,9 @@ NO_GITHUB=false
 DRY_RUN=false
 IGNORE_BUDGET=false
 PR_NUMBER=""
+AUTO_WORKTREE=false
+WORKTREE_NAME=""
+CLEANUP_WORKTREE=false
 
 # GitHub metadata (populated during intake)
 ISSUE_LABELS=""
@@ -147,6 +150,7 @@ show_help() {
     echo -e "  ${DIM}--labels \"a,b\"${RESET}            Add labels to PR (inherited from issue if omitted)"
     echo -e "  ${DIM}--no-github${RESET}               Disable GitHub integration"
     echo -e "  ${DIM}--ignore-budget${RESET}           Skip budget enforcement checks"
+    echo -e "  ${DIM}--worktree [=name]${RESET}         Run in isolated git worktree (parallel-safe)"
     echo -e "  ${DIM}--dry-run${RESET}                 Show what would happen without executing"
     echo -e "  ${DIM}--slack-webhook <url>${RESET}     Send notifications to Slack"
     echo -e "  ${DIM}--self-heal <n>${RESET}            Build→test retry cycles on failure (default: 2)"
@@ -192,6 +196,9 @@ show_help() {
     echo -e "  ${DIM}# Full deployment pipeline with 3 agents${RESET}"
     echo -e "  ${DIM}shipwright pipeline start --goal \"Build payment flow\" --pipeline full --agents 3${RESET}"
     echo ""
+    echo -e "  ${DIM}# Parallel pipeline in isolated worktree${RESET}"
+    echo -e "  ${DIM}shipwright pipeline start --issue 42 --worktree${RESET}"
+    echo ""
     echo -e "  ${DIM}# Resume / monitor / abort${RESET}"
     echo -e "  ${DIM}shipwright pipeline resume${RESET}"
     echo -e "  ${DIM}shipwright pipeline status${RESET}"
@@ -219,6 +226,8 @@ parse_args() {
             --labels)      LABELS="$2"; shift 2 ;;
             --no-github)   NO_GITHUB=true; shift ;;
             --ignore-budget) IGNORE_BUDGET=true; shift ;;
+            --worktree=*) AUTO_WORKTREE=true; WORKTREE_NAME="${1#--worktree=}"; shift ;;
+            --worktree)   AUTO_WORKTREE=true; shift ;;
             --dry-run)     DRY_RUN=true; shift ;;
             --slack-webhook) SLACK_WEBHOOK="$2"; shift 2 ;;
             --self-heal)   BUILD_TEST_RETRIES="${2:-3}"; shift 2 ;;
@@ -3390,6 +3399,66 @@ run_pipeline() {
     fi
 }
 
+# ─── Worktree Isolation ───────────────────────────────────────────────────
+# Creates a git worktree for parallel-safe pipeline execution
+
+pipeline_setup_worktree() {
+    local worktree_base=".worktrees"
+    local name="${WORKTREE_NAME}"
+
+    # Auto-generate name from issue number or timestamp
+    if [[ -z "$name" ]]; then
+        if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+            name="pipeline-issue-${ISSUE_NUMBER}"
+        else
+            name="pipeline-$(date +%s)"
+        fi
+    fi
+
+    local worktree_path="${worktree_base}/${name}"
+    local branch_name="pipeline/${name}"
+
+    info "Setting up worktree: ${DIM}${worktree_path}${RESET}"
+
+    # Ensure worktree base exists
+    mkdir -p "$worktree_base"
+
+    # Remove stale worktree if it exists
+    if [[ -d "$worktree_path" ]]; then
+        warn "Worktree already exists — removing: ${worktree_path}"
+        git worktree remove --force "$worktree_path" 2>/dev/null || rm -rf "$worktree_path"
+    fi
+
+    # Delete stale branch if it exists
+    git branch -D "$branch_name" 2>/dev/null || true
+
+    # Create worktree with new branch from current HEAD
+    git worktree add -b "$branch_name" "$worktree_path" HEAD
+
+    # cd into the worktree so setup_dirs() picks it up as PROJECT_ROOT
+    cd "$worktree_path"
+    CLEANUP_WORKTREE=true
+
+    success "Worktree ready: ${CYAN}${worktree_path}${RESET} (branch: ${branch_name})"
+}
+
+pipeline_cleanup_worktree() {
+    if [[ "${CLEANUP_WORKTREE:-false}" != "true" ]]; then
+        return
+    fi
+
+    local worktree_path
+    worktree_path=$(pwd)
+    local original_dir
+    original_dir=$(git -C "$worktree_path" worktree list | head -1 | awk '{print $1}')
+
+    if [[ -n "$original_dir" && "$original_dir" != "$worktree_path" ]]; then
+        cd "$original_dir"
+        info "Cleaning up worktree: ${DIM}${worktree_path}${RESET}"
+        git worktree remove --force "$worktree_path" 2>/dev/null || true
+    fi
+}
+
 # ─── Subcommands ────────────────────────────────────────────────────────────
 
 pipeline_start() {
@@ -3403,6 +3472,16 @@ pipeline_start() {
     if ! command -v jq &>/dev/null; then
         error "jq is required. Install it: brew install jq"
         exit 1
+    fi
+
+    # Set up worktree isolation if requested
+    if [[ "$AUTO_WORKTREE" == "true" ]]; then
+        pipeline_setup_worktree
+    fi
+
+    # Register worktree cleanup on exit
+    if [[ "$CLEANUP_WORKTREE" == "true" ]]; then
+        trap 'pipeline_cleanup_worktree' EXIT
     fi
 
     setup_dirs

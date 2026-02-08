@@ -205,6 +205,40 @@ cost_check_budget() {
     return 0
 }
 
+# cost_remaining_budget
+# Returns remaining daily budget as a plain number (for daemon auto-scale consumption)
+# Outputs "unlimited" if budget is not enabled
+
+cost_remaining_budget() {
+    ensure_cost_dir
+
+    local budget_enabled budget_usd
+    budget_enabled=$(jq -r '.enabled' "$BUDGET_FILE" 2>/dev/null || echo "false")
+    budget_usd=$(jq -r '.daily_budget_usd' "$BUDGET_FILE" 2>/dev/null || echo "0")
+
+    if [[ "$budget_enabled" != "true" || "$budget_usd" == "0" ]]; then
+        echo "unlimited"
+        return 0
+    fi
+
+    # Calculate today's spending (same pattern as cost_check_budget)
+    local today_start
+    today_start=$(date -u +"%Y-%m-%dT00:00:00Z")
+    local today_epoch
+    today_epoch=$(date -u -jf "%Y-%m-%dT%H:%M:%SZ" "$today_start" +%s 2>/dev/null || date -u -d "$today_start" +%s 2>/dev/null || echo "0")
+
+    local today_spent
+    today_spent=$(jq --argjson cutoff "$today_epoch" \
+        '[.entries[] | select(.ts_epoch >= $cutoff) | .cost_usd] | add // 0' \
+        "$COST_FILE" 2>/dev/null || echo "0")
+
+    # Calculate remaining
+    local remaining
+    remaining=$(awk -v budget="$budget_usd" -v spent="$today_spent" 'BEGIN { printf "%.2f", budget - spent }')
+
+    echo "$remaining"
+}
+
 # ─── Dashboard ─────────────────────────────────────────────────────────────
 
 cost_dashboard() {
@@ -528,6 +562,9 @@ case "$SUBCOMMAND" in
     calculate)
         cost_calculate "$@"
         echo ""
+        ;;
+    remaining-budget)
+        cost_remaining_budget
         ;;
     check-budget)
         cost_check_budget "$@"

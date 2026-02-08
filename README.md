@@ -318,6 +318,9 @@ shipwright pipeline start --issue 456 --pipeline hotfix --test-cmd "pytest"
 # Full deployment pipeline with 3 agents
 shipwright pipeline start --goal "Build payment flow" --pipeline full --agents 3
 
+# Parallel pipeline in isolated worktree (safe to run multiple concurrently)
+shipwright pipeline start --issue 42 --worktree
+
 # Cost-aware pipeline with budget limits
 shipwright pipeline start --goal "Add feature" --pipeline cost-aware
 
@@ -436,7 +439,12 @@ shipwright fleet stop
     "max_parallel": 2,
     "model": "opus"
   },
-  "shared_events": true
+  "shared_events": true,
+  "worker_pool": {
+    "enabled": false,
+    "total_workers": 12,
+    "rebalance_interval_seconds": 120
+  }
 }
 ```
 
@@ -671,6 +679,12 @@ The daemon is configured via `.claude/daemon-config.json`:
   "max_retries": 2,
   "retry_escalation": true,
   "self_optimize": false,
+  "auto_scale": false,
+  "auto_scale_interval": 5,
+  "max_workers": 8,
+  "min_workers": 1,
+  "worker_mem_gb": 4,
+  "estimated_cost_per_job_usd": 5.0,
   "watch_mode": "repo",
   "org": ""
 }

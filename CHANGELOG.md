@@ -7,6 +7,18 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Auto-scaling daemon**: `daemon_auto_scale()` dynamically adjusts worker count based on CPU cores (75% cap), available memory, remaining budget, and queue depth — cross-platform (macOS + Linux)
+- **Fleet worker pool**: `worker_pool` config in fleet enables demand-based distribution of a total worker budget across repos, with a background rebalancer loop
+- **Pipeline `--worktree` flag**: `shipwright pipeline start --issue 42 --worktree` runs in an isolated git worktree for parallel-safe ad-hoc pipelines
+- **Cost `remaining-budget`**: `shipwright cost remaining-budget` returns remaining daily budget as a number (consumed by auto-scaler)
+- **Fleet config reload**: daemons pick up fleet-assigned worker counts via `daemon_reload_config()` and a flag file signal
+
+---
+
 ## [1.6.0] — 2026-02-07
 
 **The Shipwright Launch.**

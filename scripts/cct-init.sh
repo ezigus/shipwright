@@ -30,6 +30,7 @@ error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
 # ─── Flag parsing ───────────────────────────────────────────────────────────
 DEPLOY_SETUP=false
 DEPLOY_PLATFORM=""
+SKIP_CLAUDE_MD=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -42,12 +43,17 @@ while [[ $# -gt 0 ]]; do
             [[ -z "$DEPLOY_PLATFORM" ]] && { error "Missing value for --platform"; exit 1; }
             shift 2
             ;;
+        --no-claude-md)
+            SKIP_CLAUDE_MD=true
+            shift
+            ;;
         --help|-h)
-            echo "Usage: shipwright init [--deploy] [--platform vercel|fly|railway|docker]"
+            echo "Usage: shipwright init [--deploy] [--platform vercel|fly|railway|docker] [--no-claude-md]"
             echo ""
             echo "Options:"
             echo "  --deploy             Detect deploy platform and generate deployed.json"
             echo "  --platform PLATFORM  Skip detection, use specified platform"
+            echo "  --no-claude-md       Skip creating .claude/CLAUDE.md"
             echo "  --help, -h           Show this help"
             exit 0
             ;;
@@ -83,6 +89,32 @@ for tpl in "$REPO_DIR"/tmux/templates/*.json; do
     cp "$tpl" "$HOME/.claude-teams/templates/$(basename "$tpl")"
 done
 success "Installed templates → ~/.claude-teams/templates/"
+
+# ─── CLAUDE.md — Agent instructions ──────────────────────────────────────────
+CLAUDE_MD_SRC="$REPO_DIR/claude-code/CLAUDE.md.shipwright"
+CLAUDE_MD_DST=".claude/CLAUDE.md"
+
+if [[ "$SKIP_CLAUDE_MD" == "false" && -f "$CLAUDE_MD_SRC" ]]; then
+    if [[ -f "$CLAUDE_MD_DST" ]]; then
+        # Check if it already contains Shipwright instructions
+        if grep -q "Shipwright" "$CLAUDE_MD_DST" 2>/dev/null; then
+            info "CLAUDE.md already contains Shipwright instructions — skipping"
+        else
+            # Append Shipwright section to existing CLAUDE.md
+            {
+                echo ""
+                echo "---"
+                echo ""
+                cat "$CLAUDE_MD_SRC"
+            } >> "$CLAUDE_MD_DST"
+            success "Appended Shipwright instructions to ${CLAUDE_MD_DST}"
+        fi
+    else
+        mkdir -p ".claude"
+        cp "$CLAUDE_MD_SRC" "$CLAUDE_MD_DST"
+        success "Created ${CLAUDE_MD_DST} with Shipwright agent instructions"
+    fi
+fi
 
 # ─── Reload tmux if inside a session ──────────────────────────────────────────
 if [[ -n "${TMUX:-}" ]]; then

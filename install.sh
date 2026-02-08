@@ -92,8 +92,33 @@ if command -v tmux &>/dev/null; then
     warn "tmux $TMUX_VERSION (3.2+ recommended)"
   fi
 else
-  error "tmux not found — install with: brew install tmux"
-  PREREQ_OK=false
+  warn "tmux not found"
+  if ask "Install tmux now?"; then
+    if [[ "$(uname)" == "Darwin" ]]; then
+      if command -v brew &>/dev/null; then
+        run "Install tmux via Homebrew" "brew install tmux"
+        success "Installed tmux"
+      else
+        error "Homebrew not found — install tmux manually: brew install tmux"
+        PREREQ_OK=false
+      fi
+    elif command -v apt-get &>/dev/null; then
+      run "Install tmux via apt" "sudo apt-get install -y tmux"
+      success "Installed tmux"
+    elif command -v dnf &>/dev/null; then
+      run "Install tmux via dnf" "sudo dnf install -y tmux"
+      success "Installed tmux"
+    elif command -v pacman &>/dev/null; then
+      run "Install tmux via pacman" "sudo pacman -S --noconfirm tmux"
+      success "Installed tmux"
+    else
+      error "Could not detect package manager — install tmux manually"
+      PREREQ_OK=false
+    fi
+  else
+    error "tmux is required — install with: brew install tmux"
+    PREREQ_OK=false
+  fi
 fi
 
 # Claude Code CLI
@@ -230,6 +255,48 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
+# CLAUDE.md — AGENT INSTRUCTIONS
+# ═════════════════════════════════════════════════════════════════════════════
+header "Agent instructions (CLAUDE.md)"
+
+CLAUDE_MD_SRC="$SCRIPT_DIR/claude-code/CLAUDE.md.shipwright"
+GLOBAL_CLAUDE_MD="$HOME/.claude/CLAUDE.md"
+
+if [[ -f "$CLAUDE_MD_SRC" ]]; then
+  if [[ -f "$GLOBAL_CLAUDE_MD" ]] && grep -q "Shipwright" "$GLOBAL_CLAUDE_MD" 2>/dev/null; then
+    success "~/.claude/CLAUDE.md already contains Shipwright instructions"
+  elif [[ -f "$GLOBAL_CLAUDE_MD" ]]; then
+    info "Found existing ~/.claude/CLAUDE.md"
+    echo ""
+    echo -e "  ${BOLD}1)${RESET} Append Shipwright section ${DIM}(keeps your existing instructions)${RESET}"
+    echo -e "  ${BOLD}2)${RESET} Skip"
+    echo ""
+    echo -en "${PURPLE}?${RESET} Choose [1/2]: "
+    read -r claude_md_choice
+    case "$claude_md_choice" in
+      1)
+        run "Append Shipwright instructions to ~/.claude/CLAUDE.md" \
+          "{ echo ''; echo '---'; echo ''; cat '$CLAUDE_MD_SRC'; } >> '$GLOBAL_CLAUDE_MD'"
+        success "Appended Shipwright instructions to ~/.claude/CLAUDE.md"
+        INSTALLED+=("CLAUDE.md (appended)")
+        ;;
+      *) info "Skipping CLAUDE.md" ;;
+    esac
+  else
+    if ask "Install Shipwright agent instructions to ~/.claude/CLAUDE.md?"; then
+      run "Create ~/.claude/ directory" \
+        "mkdir -p '$HOME/.claude'"
+      run "Install CLAUDE.md" \
+        "cp '$CLAUDE_MD_SRC' '$GLOBAL_CLAUDE_MD'"
+      success "Installed ~/.claude/CLAUDE.md"
+      INSTALLED+=("CLAUDE.md")
+    fi
+  fi
+else
+  warn "CLAUDE.md template not found — skipping"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
 # SHIPWRIGHT CLI SCRIPTS
 # ═════════════════════════════════════════════════════════════════════════════
 header "Shipwright CLI"
@@ -254,7 +321,7 @@ if ask "Install Shipwright CLI to $BIN_DIR?"; then
     INSTALLED+=("shipwright (symlink)")
     INSTALLED+=("sw (symlink)")
 
-    for sub in cct-session.sh cct-status.sh cct-cleanup.sh cct-upgrade.sh cct-doctor.sh cct-logs.sh cct-ps.sh cct-templates.sh cct-loop.sh cct-pipeline.sh cct-pipeline-test.sh cct-worktree.sh cct-init.sh cct-prep.sh cct-prep-test.sh cct-daemon.sh cct-daemon-test.sh cct-reaper.sh cct-memory.sh cct-memory-test.sh cct-cost.sh; do
+    for sub in cct-session.sh cct-status.sh cct-cleanup.sh cct-upgrade.sh cct-doctor.sh cct-logs.sh cct-ps.sh cct-templates.sh cct-loop.sh cct-pipeline.sh cct-pipeline-test.sh cct-worktree.sh cct-init.sh cct-prep.sh cct-prep-test.sh cct-daemon.sh cct-daemon-test.sh cct-reaper.sh cct-memory.sh cct-memory-test.sh cct-cost.sh cct-fleet.sh cct-fleet-test.sh cct-fix.sh cct-fix-test.sh; do
       if [[ -f "$SCRIPT_DIR/scripts/$sub" ]]; then
         run "Install $sub → $BIN_DIR/$sub" \
           "cp '$SCRIPT_DIR/scripts/$sub' '$BIN_DIR/$sub' && chmod +x '$BIN_DIR/$sub'"
@@ -470,6 +537,8 @@ if [[ ${#INSTALLED[@]} -gt 0 ]] && ! $DRY_RUN; then
         ;;
       "definition-of-done.example.md")
         _add_entry "definition-of-done.example.md" "docs/definition-of-done.example.md" "$HOME/.claude-teams/templates/definition-of-done.example.md" false false ;;
+      "CLAUDE.md"|"CLAUDE.md (appended)")
+        _add_entry "CLAUDE.md" "claude-code/CLAUDE.md.shipwright" "$HOME/.claude/CLAUDE.md" true false ;;
     esac
   done
 

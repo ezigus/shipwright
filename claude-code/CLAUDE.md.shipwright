@@ -1,0 +1,56 @@
+# Shipwright — Agent Instructions
+
+This project uses [Shipwright](https://github.com/sethdford/shipwright) for autonomous Claude Code agent teams.
+
+## Commands
+
+| Command | Purpose |
+|---------|---------|
+| `shipwright pipeline start --issue <N>` | Run full delivery pipeline for an issue |
+| `shipwright session <name> --template <tpl>` | Create a team session with agent panes |
+| `shipwright daemon start` | Watch repo for labeled issues, auto-process |
+| `shipwright fleet start` | Orchestrate daemons across multiple repos |
+| `shipwright fix "<goal>" --repos <paths>` | Apply the same fix across repos in parallel |
+| `shipwright prep` | Analyze repo and generate preparation report |
+| `shipwright loop` | Continuous improvement loop |
+| `shipwright status` | Show team dashboard |
+| `shipwright cost` | Token usage and budget tracking |
+| `shipwright memory list` | View captured failure patterns |
+
+## Pipeline Stages
+
+```
+intake → plan → design → build → test → review → compound_quality → pr → deploy → validate → monitor
+```
+
+## tmux Conventions
+
+- Team windows are named `claude-<team-name>` (get the lambda icon in the status bar)
+- Pane titles: `<team>-<role>` (visible in pane borders)
+- Set pane title: `printf '\033]2;agent-name\033\\'`
+- Prefix key: **Ctrl-a**
+- Layouts: `prefix + M-1` (horizontal), `M-2` (vertical), `M-3` (tiled)
+- Zoom: `prefix + G` (toggle focus on one pane)
+- Capture output: `prefix + M-s` (current pane), `prefix + M-a` (all panes)
+
+## Team Patterns
+
+- Assign each agent **different files** to avoid merge conflicts
+- Use `shipwright worktree` for file isolation between agents
+- Keep tasks self-contained (5-6 focused tasks per agent)
+- Use the task list for coordination, not direct messaging
+
+## Memory System
+
+Failure patterns are automatically captured after each pipeline run and injected into future builds. Agents receive relevant context from previous runs — fixes, root causes, and codebase conventions — so they don't repeat mistakes.
+
+## Pipeline Templates
+
+| Template | Use Case |
+|----------|----------|
+| `fast` | Simple changes (score >= 70) — skip review |
+| `standard` | Medium complexity — full pipeline |
+| `full` | Complex changes — extra review cycles |
+| `hotfix` | Urgent fixes — minimal stages |
+| `autonomous` | Daemon-driven — all stages enabled |
+| `cost-aware` | Budget-conscious — model routing by stage |

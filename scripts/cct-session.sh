@@ -175,6 +175,9 @@ if [[ "$TERMINAL_ADAPTER" == "tmux" && ! -f "$ADAPTER_FILE" ]]; then
     # Create a new window (not split-window — avoids race condition #23615)
     tmux new-window -n "$WINDOW_NAME" -c "#{pane_current_path}"
 
+    # Force dark theme on the new pane (belt-and-suspenders with overlay hooks)
+    tmux select-pane -t "$WINDOW_NAME" -P 'bg=#1a1a2e,fg=#e4e4e7'
+
     # Set the pane title so the overlay shows the team name
     tmux send-keys -t "$WINDOW_NAME" "printf '\\033]2;${TEAM_NAME}-lead\\033\\\\'" Enter
 
@@ -191,6 +194,9 @@ if [[ "$TERMINAL_ADAPTER" == "tmux" && ! -f "$ADAPTER_FILE" ]]; then
             # Split the window to create a new pane
             tmux split-window -t "$WINDOW_NAME" -c "#{pane_current_path}"
             sleep 0.1
+
+            # Force dark theme on agent pane
+            tmux select-pane -t "$WINDOW_NAME" -P 'bg=#1a1a2e,fg=#e4e4e7'
 
             # Set the pane title to the agent name
             tmux send-keys -t "$WINDOW_NAME" "printf '\\033]2;${TEAM_NAME}-${aname}\\033\\\\'" Enter

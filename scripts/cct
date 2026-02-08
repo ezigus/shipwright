@@ -82,6 +82,7 @@ show_help() {
     echo -e "  ${CYAN}fleet${RESET} <cmd>           ${BOLD}Multi-repo fleet${RESET} — orchestrate daemons across repos"
     echo -e "  ${CYAN}fix${RESET} \"goal\" [opts]     ${BOLD}Bulk fix${RESET} — apply a fix across multiple repos"
     echo -e "  ${CYAN}init${RESET}                  ${BOLD}Quick tmux setup${RESET} — one command, no prompts"
+    echo -e "  ${CYAN}setup${RESET}                 ${BOLD}Guided setup${RESET} — prerequisites, init, doctor, quick start"
     echo -e "  ${CYAN}help${RESET}                  Show this help message"
     echo -e "  ${CYAN}version${RESET}               Show version"
     echo ""
@@ -223,6 +224,9 @@ main() {
             ;;
         init)
             exec "$SCRIPT_DIR/cct-init.sh" "$@"
+            ;;
+        setup)
+            exec "$SCRIPT_DIR/cct-setup.sh" "$@"
             ;;
         help|--help|-h)
             show_help

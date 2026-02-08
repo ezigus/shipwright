@@ -111,6 +111,7 @@ FILES=(
     "cct-pipeline-test.sh|scripts/cct-pipeline-test.sh|$BIN_DIR/cct-pipeline-test.sh|false|true"
     "cct-worktree.sh|scripts/cct-worktree.sh|$BIN_DIR/cct-worktree.sh|false|true"
     "cct-init.sh|scripts/cct-init.sh|$BIN_DIR/cct-init.sh|false|true"
+    "cct-setup.sh|scripts/cct-setup.sh|$BIN_DIR/cct-setup.sh|false|true"
     "cct-prep.sh|scripts/cct-prep.sh|$BIN_DIR/cct-prep.sh|false|true"
     "cct-daemon.sh|scripts/cct-daemon.sh|$BIN_DIR/cct-daemon.sh|false|true"
     "cct-daemon-test.sh|scripts/cct-daemon-test.sh|$BIN_DIR/cct-daemon-test.sh|false|true"

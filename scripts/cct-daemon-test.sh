@@ -672,7 +672,7 @@ main() {
 
     echo ""
     echo -e "${PURPLE}${BOLD}╔═══════════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${PURPLE}${BOLD}║  cct daemon test — Unit Tests (Synthetic Events + Functions)      ║${RESET}"
+    echo -e "${PURPLE}${BOLD}║  shipwright daemon test — Unit Tests (Synthetic Events)           ║${RESET}"
     echo -e "${PURPLE}${BOLD}╚═══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
 

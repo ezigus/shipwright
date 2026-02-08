@@ -230,13 +230,13 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# CCT CLI SCRIPTS
+# SHIPWRIGHT CLI SCRIPTS
 # ═════════════════════════════════════════════════════════════════════════════
-header "cct CLI"
+header "Shipwright CLI"
 
 BIN_DIR="$HOME/.local/bin"
 
-if ask "Install cct CLI to $BIN_DIR?"; then
+if ask "Install Shipwright CLI to $BIN_DIR?"; then
   run "Create $BIN_DIR directory" \
     "mkdir -p '$BIN_DIR'"
 
@@ -312,7 +312,7 @@ if ask "Install cct CLI to $BIN_DIR?"; then
       INSTALLED+=("definition-of-done.example.md")
     fi
 
-    success "Installed cct CLI (router + subcommands + adapters + templates)"
+    success "Installed Shipwright CLI (router + subcommands + adapters + templates)"
   else
     warn "scripts/cct not found — skipping (may not be built yet)"
   fi
@@ -486,7 +486,7 @@ if [[ ${#INSTALLED[@]} -gt 0 ]] && ! $DRY_RUN; then
 MANIFEST_EOF
 
   success "Upgrade manifest written to $MANIFEST"
-  info "Future updates: ${DIM}git pull && cct upgrade --apply${RESET}"
+  info "Future updates: ${DIM}git pull && shipwright upgrade --apply${RESET}"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════

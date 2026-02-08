@@ -1,12 +1,12 @@
 # Pattern: Audit Loop
 
-Add self-reflection and quality gates to the continuous agent loop (`cct loop`) to prevent premature completion, catch regressions, and enforce project-specific standards.
+Add self-reflection and quality gates to the continuous agent loop (`shipwright loop`) to prevent premature completion, catch regressions, and enforce project-specific standards.
 
 ---
 
 ## When to Use
 
-- Running `cct loop` on tasks where **correctness matters more than speed** (production features, refactors, data migrations)
+- Running `shipwright loop` on tasks where **correctness matters more than speed** (production features, refactors, data migrations)
 - The agent keeps declaring LOOP_COMPLETE **before the work is actually done**
 - You want **automated quality checks** (tests, linting, type-checking) between iterations
 - Your project has a **Definition of Done** that goes beyond "code compiles"
@@ -26,7 +26,7 @@ The agent pauses after each iteration to review its own work before deciding whe
 **Best for:** Solo agent work where you want a sanity check without the overhead of a second agent.
 
 ```bash
-cct loop "Build user auth with JWT" --audit --test-cmd "npm test"
+shipwright loop "Build user auth with JWT" --audit --test-cmd "npm test"
 ```
 
 ### `--audit-agent` (Separate Auditor)
@@ -38,7 +38,7 @@ Spawns a dedicated auditor agent that reviews the work agent's output each itera
 **Best for:** Complex features, production code, or tasks where you've seen the agent cut corners.
 
 ```bash
-cct loop "Refactor auth to use refresh tokens" --audit-agent --model sonnet
+shipwright loop "Refactor auth to use refresh tokens" --audit-agent --model sonnet
 ```
 
 ### `--quality-gates` (Automated Checks)
@@ -50,7 +50,7 @@ Runs your test command, linter, or type-checker between iterations. The loop onl
 **Best for:** Projects with existing CI checks you want to enforce locally.
 
 ```bash
-cct loop "Add pagination to API" --quality-gates --test-cmd "npm test && npm run lint"
+shipwright loop "Add pagination to API" --quality-gates --test-cmd "npm test && npm run lint"
 ```
 
 ### Combining Modes
@@ -58,7 +58,7 @@ cct loop "Add pagination to API" --quality-gates --test-cmd "npm test && npm run
 Modes stack. The most rigorous setup combines all three:
 
 ```bash
-cct loop "Build payment integration" \
+shipwright loop "Build payment integration" \
   --audit-agent \
   --quality-gates \
   --test-cmd "npm test" \
@@ -74,7 +74,7 @@ A good DoD file is the single most effective way to prevent premature LOOP_COMPL
 ### Template
 
 ```bash
-cp ~/.claude-teams/templates/definition-of-done.example.md my-dod.md
+cp ~/.shipwright/templates/definition-of-done.example.md my-dod.md
 ```
 
 ### Tips
@@ -121,17 +121,17 @@ The most common failure mode is the agent declaring victory too early. Counterme
 
 ```bash
 # Quick audit for a small task
-cct loop "Fix the N+1 query in user list" --audit --test-cmd "pytest tests/test_users.py"
+shipwright loop "Fix the N+1 query in user list" --audit --test-cmd "pytest tests/test_users.py"
 
 # Rigorous audit for production feature
-cct loop "Add RBAC to the API" --audit-agent --quality-gates \
+shipwright loop "Add RBAC to the API" --audit-agent --quality-gates \
   --test-cmd "npm test" --definition-of-done rbac-dod.md
 
 # Cost-conscious: quality gates only, no extra agent
-cct loop "Migrate DB schema" --quality-gates --test-cmd "npm run db:test"
+shipwright loop "Migrate DB schema" --quality-gates --test-cmd "npm run db:test"
 
 # Maximum rigor: all checks enabled
-cct loop "PCI compliance updates" --audit-agent --quality-gates \
+shipwright loop "PCI compliance updates" --audit-agent --quality-gates \
   --test-cmd "npm test && npm run lint && npm run typecheck" \
   --definition-of-done pci-dod.md --max-iterations 15
 ```

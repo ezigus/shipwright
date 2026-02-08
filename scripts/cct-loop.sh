@@ -52,10 +52,10 @@ QUALITY_GATE_PASSED=true
 
 # ─── Parse Arguments ──────────────────────────────────────────────────────────
 show_help() {
-    echo -e "${CYAN}${BOLD}cct${RESET} ${DIM}v${VERSION}${RESET} — ${BOLD}Continuous Loop${RESET}"
+    echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${VERSION}${RESET} — ${BOLD}Continuous Loop${RESET}"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
-    echo -e "  ${CYAN}cct loop${RESET} \"<goal>\" [options]"
+    echo -e "  ${CYAN}shipwright loop${RESET} \"<goal>\" [options]"
     echo ""
     echo -e "${BOLD}OPTIONS${RESET}"
     echo -e "  ${CYAN}--max-iterations${RESET} N       Max loop iterations (default: 20)"
@@ -76,12 +76,12 @@ show_help() {
     echo -e "  ${CYAN}--definition-of-done${RESET} FILE DoD checklist file — evaluated by AI against git diff"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
-    echo -e "  ${DIM}cct loop \"Build user auth with JWT\"${RESET}"
-    echo -e "  ${DIM}cct loop \"Add payment processing\" --test-cmd \"npm test\" --max-iterations 30${RESET}"
-    echo -e "  ${DIM}cct loop \"Refactor the database layer\" --agents 3 --model sonnet${RESET}"
-    echo -e "  ${DIM}cct loop \"Fix all lint errors\" --skip-permissions --verbose${RESET}"
-    echo -e "  ${DIM}cct loop \"Add auth\" --audit --audit-agent --quality-gates${RESET}"
-    echo -e "  ${DIM}cct loop \"Ship feature\" --quality-gates --definition-of-done dod.md${RESET}"
+    echo -e "  ${DIM}shipwright loop \"Build user auth with JWT\"${RESET}"
+    echo -e "  ${DIM}shipwright loop \"Add payment processing\" --test-cmd \"npm test\" --max-iterations 30${RESET}"
+    echo -e "  ${DIM}shipwright loop \"Refactor the database layer\" --agents 3 --model sonnet${RESET}"
+    echo -e "  ${DIM}shipwright loop \"Fix all lint errors\" --skip-permissions --verbose${RESET}"
+    echo -e "  ${DIM}shipwright loop \"Add auth\" --audit --audit-agent --quality-gates${RESET}"
+    echo -e "  ${DIM}shipwright loop \"Ship feature\" --quality-gates --definition-of-done dod.md${RESET}"
     echo ""
     echo -e "${BOLD}CIRCUIT BREAKER${RESET}"
     echo -e "  The loop automatically stops if:"
@@ -93,7 +93,7 @@ show_help() {
     echo -e "${BOLD}STATE & LOGS${RESET}"
     echo -e "  ${DIM}State file:  .claude/loop-state.md${RESET}"
     echo -e "  ${DIM}Logs dir:    .claude/loop-logs/${RESET}"
-    echo -e "  ${DIM}Resume:      cct loop --resume${RESET}"
+    echo -e "  ${DIM}Resume:      shipwright loop --resume${RESET}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -173,10 +173,10 @@ fi
 # ─── Validate Inputs ─────────────────────────────────────────────────────────
 
 if ! $RESUME && [[ -z "$GOAL" ]]; then
-    error "Missing goal. Usage: cct loop \"<goal>\" [options]"
+    error "Missing goal. Usage: shipwright loop \"<goal>\" [options]"
     echo ""
-    echo -e "  ${DIM}cct loop \"Build user auth with JWT\"${RESET}"
-    echo -e "  ${DIM}cct loop --resume${RESET}"
+    echo -e "  ${DIM}shipwright loop \"Build user auth with JWT\"${RESET}"
+    echo -e "  ${DIM}shipwright loop --resume${RESET}"
     exit 1
 fi
 
@@ -255,7 +255,7 @@ initialize_state() {
 resume_state() {
     if [[ ! -f "$STATE_FILE" ]]; then
         error "No state file found at $STATE_FILE"
-        echo -e "  Start a new loop instead: ${DIM}cct loop \"<goal>\"${RESET}"
+        echo -e "  Start a new loop instead: ${DIM}shipwright loop \"<goal>\"${RESET}"
         exit 1
     fi
 
@@ -320,7 +320,7 @@ resume_state() {
     # If we hit max iterations before, warn user to extend
     if [[ "$ITERATION" -ge "$MAX_ITERATIONS" ]] && ! $MAX_ITERATIONS_EXPLICIT; then
         warn "Previous run stopped at iteration $ITERATION/$MAX_ITERATIONS."
-        echo -e "  Extend with: ${DIM}cct loop --resume --max-iterations $(( MAX_ITERATIONS + 10 ))${RESET}"
+        echo -e "  Extend with: ${DIM}shipwright loop --resume --max-iterations $(( MAX_ITERATIONS + 10 ))${RESET}"
         exit 0
     fi
 
@@ -845,7 +845,7 @@ extract_summary() {
 
 show_banner() {
     echo ""
-    echo -e "${CYAN}${BOLD}cct${RESET} ${DIM}v${VERSION}${RESET} — ${BOLD}Continuous Loop${RESET}"
+    echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${VERSION}${RESET} — ${BOLD}Continuous Loop${RESET}"
     echo -e "${CYAN}═══════════════════════════════════════════════${RESET}"
     echo ""
     echo -e "  ${BOLD}Goal:${RESET}  $GOAL"

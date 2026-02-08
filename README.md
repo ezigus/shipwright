@@ -1,8 +1,8 @@
 # Shipwright
 
-> Orchestrate autonomous Claude Code agent teams — delivery pipeline, DORA metrics, and repo preparation.
+> Orchestrate autonomous Claude Code agent teams — delivery pipeline, fleet operations, DORA metrics, persistent memory, cost intelligence, and repo preparation.
 
-[![v1.6.0](https://img.shields.io/badge/version-1.6.0-00d4ff?style=flat-square)](https://github.com/sethdford/shipwright/releases) ![tmux dark theme with cyan accents](https://img.shields.io/badge/theme-dark%20blue--gray%20%2B%20cyan-00d4ff?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
+[![v1.7.0](https://img.shields.io/badge/version-1.7.0-00d4ff?style=flat-square)](https://github.com/sethdford/shipwright/releases) ![tmux dark theme with cyan accents](https://img.shields.io/badge/theme-dark%20blue--gray%20%2B%20cyan-00d4ff?style=flat-square) ![MIT License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 <p align="center">
   <img src="https://vhs.charm.sh/vhs-sJ34YHLfLxXLMpJgjqvy2.gif" alt="Shipwright CLI demo — version, help, 12 templates, doctor" width="800" />
@@ -49,8 +49,13 @@ Shipwright packages a complete setup:
 - **Continuous agent loop** (`shipwright loop`) for autonomous multi-iteration development
 - **Delivery pipeline** (`shipwright pipeline`) for full idea-to-PR automation
 - **Autonomous daemon** (`shipwright daemon`) for GitHub issue watching and auto-delivery
+- **Fleet operations** (`shipwright fleet`) for multi-repo daemon orchestration
+- **Bulk fix** (`shipwright fix`) for applying the same fix across multiple repos
+- **Persistent memory** (`shipwright memory`) for cross-pipeline learning and context injection
+- **Cost intelligence** (`shipwright cost`) for token tracking, budgets, and model routing
 - **DORA metrics** (`shipwright daemon metrics`) for engineering performance tracking
 - **Repo preparation** (`shipwright prep`) for generating agent-ready `.claude/` configs
+- **Deploy adapters** for Vercel, Fly.io, Railway, and Docker
 - **Layout presets** that give the leader pane 60-65% of screen space
 - **One-command setup** via `shipwright init`
 
@@ -74,7 +79,7 @@ Shipwright packages a complete setup:
 ```bash
 git clone https://github.com/sethdford/shipwright.git
 cd shipwright
-./scripts/cct-init.sh
+shipwright init
 ```
 
 **Option B: Full interactive install (tmux + settings + hooks + CLI)**
@@ -113,12 +118,15 @@ shipwright/
 │       ├── architecture.json        #   Researcher + spec writer (2 agents)
 │       └── exploration.json         #   Explorer + synthesizer (2 agents)
 ├── templates/
-│   └── pipelines/                   # 5 delivery pipeline templates
+│   └── pipelines/                   # 8 delivery pipeline templates
 │       ├── standard.json            #   Feature pipeline (plan + review gates)
 │       ├── fast.json                #   Quick fixes (all auto, no gates)
-│       ├── full.json                #   Full deployment (all 8 stages)
+│       ├── full.json                #   Full deployment (all stages)
 │       ├── hotfix.json              #   Urgent fixes (all auto, minimal)
-│       └── autonomous.json          #   Daemon-driven (fully autonomous)
+│       ├── autonomous.json          #   Daemon-driven (fully autonomous)
+│       ├── enterprise.json          #   Maximum safety (all gates on approve, auto-rollback)
+│       ├── cost-aware.json          #   Budget limits, model routing (haiku→sonnet→opus)
+│       └── deployed.json            #   Full autonomous + deploy + validate + monitor
 ├── completions/                     # Shell tab completions
 │   ├── shipwright.bash              #   Bash completions
 │   ├── _shipwright                  #   Zsh completions
@@ -137,9 +145,18 @@ shipwright/
 │   ├── cct-loop.sh                  # Continuous autonomous agent loop
 │   ├── cct-pipeline.sh              # Full delivery pipeline (idea → PR)
 │   ├── cct-daemon.sh                # Autonomous issue watcher + metrics
+│   ├── cct-fleet.sh                 # Multi-repo daemon orchestrator
+│   ├── cct-fix.sh                   # Bulk fix across repos
+│   ├── cct-memory.sh                # Persistent learning & context system
+│   ├── cct-cost.sh                  # Token usage & cost intelligence
 │   ├── cct-prep.sh                  # Repo preparation tool
 │   ├── cct-doctor.sh                # Validate setup and diagnose issues
 │   ├── install-completions.sh       # Shell completion installer
+│   ├── adapters/                    # Deploy platform adapters
+│   │   ├── vercel-deploy.sh         #   Vercel deploy adapter
+│   │   ├── fly-deploy.sh            #   Fly.io deploy adapter
+│   │   ├── railway-deploy.sh        #   Railway deploy adapter
+│   │   └── docker-deploy.sh         #   Docker deploy adapter
 │   └── ...                          # status, ps, logs, cleanup, upgrade, worktree, reaper
 ├── docs/
 │   ├── KNOWN-ISSUES.md              # Tracked bugs with workarounds
@@ -177,6 +194,7 @@ A full-featured CLI for managing team sessions, autonomous loops, and setup. All
 ```bash
 # Setup & diagnostics
 shipwright init                              # One-command tmux setup (no prompts)
+shipwright init --deploy                     # Setup with deploy platform configuration
 shipwright doctor                            # Validate setup, check color hooks, etc.
 shipwright upgrade --apply                   # Pull latest and apply updates
 
@@ -202,7 +220,33 @@ sw pipeline status                           # Progress dashboard
 shipwright daemon start                      # Start issue watcher (foreground)
 shipwright daemon start --detach             # Start in background tmux session
 shipwright daemon metrics                    # DORA/DX metrics dashboard
+shipwright daemon triage                     # Show issue triage scores
+shipwright daemon patrol                     # Proactive codebase patrol
 shipwright daemon stop                       # Graceful shutdown
+
+# Fleet operations (multi-repo orchestration)
+shipwright fleet init                        # Generate fleet-config.json
+shipwright fleet start                       # Start daemons for all configured repos
+shipwright fleet status                      # Fleet-wide dashboard
+shipwright fleet metrics --period 30         # Aggregate DORA metrics across repos
+shipwright fleet stop                        # Stop all fleet daemons
+
+# Bulk fix (apply same fix across repos)
+shipwright fix "Update lodash to 4.17.21" --repos ~/api,~/web,~/mobile
+shipwright fix "Bump Node to 22" --repos-from repos.txt --pipeline hotfix
+shipwright fix --status                      # Show running fix sessions
+
+# Persistent memory
+shipwright memory show                       # Display memory for current repo
+shipwright memory show --global              # Cross-repo learnings
+shipwright memory search "auth"              # Search memory
+shipwright memory stats                      # Memory size, age, hit rate
+
+# Cost intelligence
+shipwright cost show                         # 7-day cost summary
+shipwright cost show --period 30 --by-stage  # 30-day breakdown by stage
+shipwright cost budget set 50.00             # Set daily budget ($50/day)
+shipwright cost budget show                  # Check current budget
 
 # Repo preparation
 shipwright prep                              # Analyze repo, generate .claude/ configs
@@ -274,6 +318,12 @@ shipwright pipeline start --issue 456 --pipeline hotfix --test-cmd "pytest"
 # Full deployment pipeline with 3 agents
 shipwright pipeline start --goal "Build payment flow" --pipeline full --agents 3
 
+# Cost-aware pipeline with budget limits
+shipwright pipeline start --goal "Add feature" --pipeline cost-aware
+
+# Enterprise pipeline with all safety gates
+shipwright pipeline start --issue 789 --pipeline enterprise
+
 # Resume / monitor / abort
 shipwright pipeline resume
 sw pipeline status
@@ -284,7 +334,7 @@ sw pipeline list
 sw pipeline show standard
 ```
 
-**Pipeline stages:** `intake → plan → build → test → review → pr → deploy → validate`
+**Pipeline stages:** `intake → plan → design → build → test → review → compound_quality → pr → merge → deploy → validate → monitor`
 
 Each stage can be enabled/disabled and gated (auto-proceed or pause for approval). The build stage delegates to `shipwright loop` for autonomous multi-iteration development.
 
@@ -294,15 +344,18 @@ Each stage can be enabled/disabled and gated (auto-proceed or pause for approval
 
 **Auto-detection:** Test command (9+ project types), branch prefix from task type, reviewers from CODEOWNERS or git history, project language and framework.
 
-**Notifications:** Slack webhook (`--slack-webhook <url>`) or custom webhook (`CCT_WEBHOOK_URL` env var) for pipeline events.
+**Notifications:** Slack webhook (`--slack-webhook <url>`) or custom webhook (`SHIPWRIGHT_WEBHOOK_URL` env var, with `CCT_WEBHOOK_URL` fallback) for pipeline events.
 
 | Template | Stages | Gates | Use Case |
 |----------|--------|-------|----------|
 | `standard` | intake → plan → build → test → review → PR | approve: plan, review, pr | Normal feature work |
 | `fast` | intake → build → test → PR | all auto | Quick fixes |
-| `full` | all 8 stages | approve: plan, review, pr, deploy | Production deployment |
+| `full` | all stages | approve: plan, review, pr, deploy | Production deployment |
 | `hotfix` | intake → build → test → PR | all auto | Urgent production fixes |
 | `autonomous` | all stages | all auto | Daemon-driven delivery |
+| `enterprise` | all stages | all approve, auto-rollback | Maximum safety pipelines |
+| `cost-aware` | all stages | all auto, budget checks | Budget-limited delivery |
+| `deployed` | all stages + deploy + validate + monitor | approve: deploy | Full deploy + monitoring |
 
 ### Autonomous Daemon
 
@@ -321,9 +374,170 @@ shipwright daemon status
 # DORA metrics dashboard (lead time, deploy freq, MTTR, change failure rate)
 shipwright daemon metrics
 
+# Issue triage scores
+shipwright daemon triage
+
+# Proactive codebase patrol
+shipwright daemon patrol
+shipwright daemon patrol --dry-run
+
 # Graceful shutdown
 shipwright daemon stop
 ```
+
+#### Intelligence Features
+
+The daemon includes an intelligence layer that makes it smarter over time:
+
+**Adaptive Templates** — Automatically selects the best pipeline template based on issue labels and past performance. Configure a `template_map` in `daemon-config.json` to map labels to templates, or let the daemon learn from history.
+
+**Auto-Retry with Escalation** — When a pipeline fails, the daemon automatically retries with an escalation strategy (e.g., switching from `sonnet` to `opus`). Configurable via `max_retries` and `retry_escalation`.
+
+**Self-Optimizing Metrics** — The daemon periodically analyzes its own performance and adjusts parameters (poll interval, model selection, parallel slots) to optimize throughput and cost. Enable with `"self_optimize": true`.
+
+**Priority Lanes** — Issues labeled `hotfix`, `incident`, `p0`, or `urgent` bypass the normal queue and get processed immediately in a dedicated slot. Configurable labels and max priority slots.
+
+**Org-Wide Mode** — Watch issues across an entire GitHub organization instead of a single repo. Set `"watch_mode": "org"` and `"org": "your-org"` in the config. Filter repos with a regex pattern.
+
+**Proactive Patrol** — The daemon can periodically scan the codebase for issues (security vulnerabilities, outdated deps, code smells) and create issues automatically. Run `shipwright daemon patrol` for manual scans.
+
+### Fleet Operations
+
+Orchestrate daemons across multiple repositories from a single config:
+
+```bash
+# Generate fleet configuration
+shipwright fleet init
+
+# Start daemons for all configured repos
+shipwright fleet start
+
+# Fleet-wide dashboard
+shipwright fleet status
+
+# Aggregate DORA metrics across all repos
+shipwright fleet metrics --period 30
+
+# Stop all fleet daemons
+shipwright fleet stop
+```
+
+**Fleet configuration** (`.claude/fleet-config.json`):
+
+```json
+{
+  "repos": [
+    { "path": "/path/to/api", "template": "autonomous", "max_parallel": 2 },
+    { "path": "/path/to/web", "template": "standard" }
+  ],
+  "defaults": {
+    "watch_label": "ready-to-build",
+    "pipeline_template": "autonomous",
+    "max_parallel": 2,
+    "model": "opus"
+  },
+  "shared_events": true
+}
+```
+
+### Bulk Fix
+
+Apply the same fix across multiple repositories in parallel:
+
+```bash
+# Fix a dependency across repos
+shipwright fix "Update lodash to 4.17.21" --repos ~/api,~/web,~/mobile
+
+# Security fix with fast pipeline
+shipwright fix "Fix SQL injection in auth" --repos ~/api --pipeline fast
+
+# Bulk upgrade from a repos file
+shipwright fix "Bump Node to 22" --repos-from repos.txt --pipeline hotfix
+
+# Dry run to preview
+shipwright fix "Migrate to ESM" --repos ~/api,~/web --dry-run
+
+# Check running fix sessions
+shipwright fix --status
+```
+
+Options: `--max-parallel N` (default 3), `--branch-prefix` (default `fix/`), `--pipeline` (default `fast`), `--model`, `--dry-run`.
+
+### Persistent Memory
+
+Shipwright learns from every pipeline run and injects context into future builds:
+
+```bash
+# View repo memory (patterns, failures, decisions, metrics)
+shipwright memory show
+
+# View cross-repo learnings
+shipwright memory show --global
+
+# Search memory
+shipwright memory search "auth"
+
+# Memory statistics (size, age, hit rate)
+shipwright memory stats
+
+# Export/import memory
+shipwright memory export > backup.json
+shipwright memory import backup.json
+```
+
+**Pipeline integration** — Memory is captured automatically after each pipeline:
+- **Patterns**: Codebase conventions, test patterns, build configs
+- **Failures**: Root cause analysis of test/build failures
+- **Decisions**: Design decisions and their rationale
+- **Metrics**: Performance baselines (test duration, build time)
+
+Context is injected into pipeline stages automatically, so the agent starts each build with knowledge of past mistakes and repo conventions.
+
+### Cost Intelligence
+
+Track token usage, enforce budgets, and optimize model selection:
+
+```bash
+# 7-day cost summary
+shipwright cost show
+
+# 30-day breakdown by pipeline stage
+shipwright cost show --period 30 --by-stage
+
+# Breakdown by issue
+shipwright cost show --by-issue
+
+# Set and check daily budget
+shipwright cost budget set 50.00
+shipwright cost budget show
+
+# Estimate cost before running
+shipwright cost calculate 50000 10000 opus
+```
+
+**Model pricing:**
+
+| Model | Input | Output |
+|-------|-------|--------|
+| Opus | $15.00 / 1M tokens | $75.00 / 1M tokens |
+| Sonnet | $3.00 / 1M tokens | $15.00 / 1M tokens |
+| Haiku | $0.25 / 1M tokens | $1.25 / 1M tokens |
+
+Use the `cost-aware` pipeline template for automatic budget checking and model routing (haiku for simple stages, sonnet for builds, opus only when needed).
+
+### Deploy Adapters
+
+Deploy to your platform of choice with the `deployed` pipeline template:
+
+```bash
+# Setup deploy configuration
+shipwright init --deploy
+
+# Run a full deploy pipeline
+shipwright pipeline start --issue 123 --pipeline deployed
+```
+
+Adapters are available for **Vercel**, **Fly.io**, **Railway**, and **Docker**. Each adapter handles staging deploys, production promotion, smoke tests, health checks, and rollback.
 
 ### Repo Preparation
 
@@ -437,6 +651,29 @@ cp completions/_shipwright ~/.zfunc/_shipwright && compinit
 
 # Or manually install (fish)
 cp completions/shipwright.fish ~/.config/fish/completions/
+```
+
+### Daemon Configuration
+
+The daemon is configured via `.claude/daemon-config.json`:
+
+```json
+{
+  "watch_label": "ready-to-build",
+  "poll_interval": 60,
+  "max_parallel": 2,
+  "pipeline_template": "autonomous",
+  "base_branch": "main",
+  "priority_lane": true,
+  "priority_lane_labels": "hotfix,incident,p0,urgent",
+  "priority_lane_max": 1,
+  "auto_template": true,
+  "max_retries": 2,
+  "retry_escalation": true,
+  "self_optimize": false,
+  "watch_mode": "repo",
+  "org": ""
+}
 ```
 
 ## tmux Keybindings

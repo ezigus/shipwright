@@ -218,7 +218,7 @@ bootstrap_manifest() {
 
 # ─── Main logic ────────────────────────────────────────────────────────────
 echo ""
-echo -e "${CYAN}${BOLD}cct${RESET} ${DIM}v1.3.0${RESET} — ${BOLD}$(if $APPLY; then echo "Applying Upgrade"; else echo "Upgrade Check"; fi)${RESET}"
+echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v1.3.0${RESET} — ${BOLD}$(if $APPLY; then echo "Applying Upgrade"; else echo "Upgrade Check"; fi)${RESET}"
 echo -e "${CYAN}═══════════════════════════════════════════════${RESET}"
 echo ""
 echo -e "Comparing installed files against repo at:"
@@ -337,7 +337,7 @@ fi
 if ! $APPLY; then
     if [[ $total_actionable -gt 0 ]]; then
         echo -e "Run with ${BOLD}--apply${RESET} to upgrade:"
-        echo -e "  ${DIM}cct upgrade --apply${RESET}"
+        echo -e "  ${DIM}shipwright upgrade --apply${RESET}"
         echo ""
     fi
     if [[ ${#CONFLICTS[@]} -gt 0 ]]; then
@@ -404,7 +404,7 @@ success "Manifest updated: $MANIFEST"
 # Self-upgrade warning
 if $CCT_SELF_UPGRADED; then
     echo ""
-    echo -e "${YELLOW}${BOLD}⚠${RESET}  The cct CLI itself was upgraded."
+    echo -e "${YELLOW}${BOLD}⚠${RESET}  The Shipwright CLI itself was upgraded."
     echo -e "   Your current command completed, but re-run to use the new version."
 fi
 echo ""

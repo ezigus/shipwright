@@ -55,7 +55,7 @@ This release turns Shipwright from a team session manager into a full autonomous
 - **Compound quality stage**: Pipeline build stage now runs iterative quality cycles — lint, typecheck, test, and self-heal in a loop until the code is clean or the retry budget is exhausted
 - **DORA metrics dashboard** (`shipwright daemon metrics`): Deployment frequency, cycle time, change failure rate, and mean time to recovery — graded against Google's Elite/High/Medium/Low thresholds
 - **DX metrics**: First-pass quality rate, self-heal efficiency, and autonomy score alongside DORA
-- **Event logging**: All pipeline and daemon events written to `~/.claude-teams/events.jsonl` for metrics, auditing, and debugging
+- **Event logging**: All pipeline and daemon events written to `~/.shipwright/events.jsonl` for metrics, auditing, and debugging
 - **Autonomous pipeline template**: New `autonomous.json` pipeline — all stages auto-approved, designed for daemon-driven delivery
 - **Daemon test suite**: `shipwright daemon test` — comprehensive validation of daemon startup, polling, pipeline spawning, and metrics calculation
 - **Prep test suite**: `shipwright prep test` — validation of repo analysis, config generation, and Claude integration
@@ -120,7 +120,7 @@ This release turns Shipwright from a team session manager into a full autonomous
 - **`shipwright logs`**: View and search agent pane output with `--follow` mode
 - **`shipwright ps`**: Show running agent processes with status indicators
 - **`shipwright templates`**: Browse and inspect team composition templates
-- **Upgrade manifest**: `~/.claude-teams/manifest.json` tracks installed files for safe upgrades
+- **Upgrade manifest**: `~/.shipwright/manifest.json` tracks installed files for safe upgrades
 
 ### Fixed
 
@@ -135,9 +135,9 @@ This release turns Shipwright from a team session manager into a full autonomous
 ### Added
 
 - Premium dark tmux theme with cyan accent (`#00d4ff`), agent-aware pane borders
-- `cct session` for creating team windows from templates
-- `cct status` dashboard for monitoring active teams
-- `cct cleanup` for orphaned session management
+- `shipwright session` for creating team windows from templates
+- `shipwright status` dashboard for monitoring active teams
+- `shipwright cleanup` for orphaned session management
 - 4 team templates: feature-dev, full-stack, code-review, refactor
 - Quality gate hooks: teammate-idle (typecheck), task-completed (lint + test)
 - Notification hooks: desktop alerts on agent idle

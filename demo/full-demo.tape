@@ -1,10 +1,10 @@
-# Claude Code Teams + tmux — Full Demo
+# Shipwright — Full Demo
 # Records a comprehensive walkthrough of all features
 # Run: vhs demo/full-demo.tape
 
 Output demo/full-demo.gif
 
-Require cct
+Require shipwright
 Require tmux
 Require jq
 
@@ -17,14 +17,14 @@ Set Theme { "name": "cct", "black": "#1a1a2e", "red": "#f87171", "green": "#4ade
 
 # === Section 1: Overview ===
 Sleep 500ms
-Type "# === Claude Code Teams + tmux ==="
+Type "# === Shipwright ==="
 Enter
 Type "# 12 team templates covering the full SDLC"
 Enter
 Enter
 Sleep 1s
 
-Type "cct version"
+Type "shipwright version"
 Enter
 Sleep 1.5s
 
@@ -33,7 +33,7 @@ Enter
 Type "# --- Quick Setup (one command, no prompts) ---"
 Enter
 Sleep 500ms
-Type "# cct init  <-- installs tmux config + overlay + templates"
+Type "# shipwright init  <-- installs tmux config + overlay + templates"
 Enter
 Sleep 2s
 
@@ -42,7 +42,7 @@ Enter
 Type "# --- Health Check ---"
 Enter
 Sleep 500ms
-Type "cct doctor"
+Type "shipwright doctor"
 Enter
 Sleep 5s
 
@@ -51,19 +51,19 @@ Enter
 Type "# --- Team Templates (12 covering full SDLC) ---"
 Enter
 Sleep 500ms
-Type "cct templates list"
+Type "shipwright templates list"
 Enter
 Sleep 7s
 
-Type "cct templates show security-audit"
+Type "shipwright templates show security-audit"
 Enter
 Sleep 3s
 
-Type "cct templates show bug-fix"
+Type "shipwright templates show bug-fix"
 Enter
 Sleep 3s
 
-Type "cct templates show feature-dev"
+Type "shipwright templates show feature-dev"
 Enter
 Sleep 3s
 
@@ -72,7 +72,7 @@ Enter
 Type "# --- Full CLI ---"
 Enter
 Sleep 500ms
-Type "cct help"
+Type "shipwright help"
 Enter
 Sleep 4s
 
@@ -83,17 +83,17 @@ Enter
 Sleep 500ms
 Type "# Autonomous development with test verification and audit:"
 Enter
-Type '# cct loop "Build user auth" --test-cmd "npm test" --audit'
+Type '# shipwright loop "Build user auth" --test-cmd "npm test" --audit'
 Enter
 Sleep 2s
 Type "# Multi-agent with quality gates:"
 Enter
-Type '# cct loop "Refactor API" --agents 3 --quality-gates'
+Type '# shipwright loop "Refactor API" --agents 3 --quality-gates'
 Enter
 Sleep 2s
 Type "# Resume an interrupted session:"
 Enter
-Type "# cct loop --resume"
+Type "# shipwright loop --resume"
 Enter
 Sleep 2s
 

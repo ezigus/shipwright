@@ -53,7 +53,7 @@ done < <(tmux list-windows -a -F '#{session_name}:#{window_index}|#{window_name}
 
 if ! $HAS_CLAUDE_WINDOWS; then
     echo -e "  ${DIM}No Claude team windows found.${RESET}"
-    echo -e "  ${DIM}Start one with: ${CYAN}cct session <name>${RESET}"
+    echo -e "  ${DIM}Start one with: ${CYAN}shipwright session <name>${RESET}"
 fi
 
 # ─── 2. Team Configurations ─────────────────────────────────────────────────
@@ -162,8 +162,8 @@ fi
 echo ""
 echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 if $HAS_CLAUDE_WINDOWS || $HAS_TEAMS || $HAS_TASKS; then
-    echo -e "  ${DIM}Clean up:${RESET} ${CYAN}cct cleanup${RESET}  ${DIM}|${RESET}  ${DIM}New session:${RESET} ${CYAN}cct session <name>${RESET}"
+    echo -e "  ${DIM}Clean up:${RESET} ${CYAN}shipwright cleanup${RESET}  ${DIM}|${RESET}  ${DIM}New session:${RESET} ${CYAN}shipwright session <name>${RESET}"
 else
-    echo -e "  ${DIM}No active teams. Start one:${RESET} ${CYAN}cct session <name>${RESET}"
+    echo -e "  ${DIM}No active teams. Start one:${RESET} ${CYAN}shipwright session <name>${RESET}"
 fi
 echo ""

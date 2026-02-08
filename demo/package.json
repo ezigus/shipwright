@@ -1,14 +1,14 @@
 {
-  "name": "cct-demo-api",
+  "name": "shipwright-demo-api",
   "version": "1.0.0",
-  "description": "Demo REST API with intentional bugs for cct pipeline validation",
+  "description": "Demo REST API with intentional bugs for shipwright pipeline validation",
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
     "test": "jest --coverage --forceExit",
     "test:watch": "jest --watch"
   },
-  "keywords": ["demo", "cct", "pipeline"],
+  "keywords": ["demo", "shipwright", "pipeline"],
   "author": "",
   "license": "MIT",
   "dependencies": {

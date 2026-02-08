@@ -177,7 +177,7 @@ fi
 # Check cct subcommands are installed alongside the router
 if command -v cct &>/dev/null; then
     CCT_DIR="$(dirname "$(command -v cct)")"
-    check_pass "cct router found at ${CCT_DIR}/cct"
+    check_pass "shipwright router found at ${CCT_DIR}/cct"
 
     missing_subs=()
     for sub in cct-session.sh cct-status.sh cct-cleanup.sh; do
@@ -190,10 +190,10 @@ if command -v cct &>/dev/null; then
         check_pass "All core subcommands installed"
     else
         check_warn "Missing subcommands: ${missing_subs[*]}"
-        echo -e "    ${DIM}Re-run install.sh or cct upgrade --apply${RESET}"
+        echo -e "    ${DIM}Re-run install.sh or shipwright upgrade --apply${RESET}"
     fi
 else
-    check_fail "cct command not found in PATH"
+    check_fail "shipwright command not found in PATH"
     echo -e "    ${DIM}Re-run install.sh to install the CLI${RESET}"
 fi
 
@@ -211,7 +211,7 @@ if [[ -f "$HOME/.tmux/claude-teams-overlay.conf" ]]; then
         check_pass "Overlay has color hooks (set-hook)"
     else
         check_warn "Overlay missing color hooks — new panes may flash white"
-        echo -e "    ${DIM}Run: cct upgrade --apply  or  cct init${RESET}"
+        echo -e "    ${DIM}Run: shipwright upgrade --apply  or  shipwright init${RESET}"
     fi
 else
     check_fail "Overlay not found — pane display features unavailable"
@@ -319,7 +319,7 @@ echo -e "  ${GREEN}${BOLD}${PASS}${RESET} passed  ${YELLOW}${BOLD}${WARN}${RESET
 echo ""
 
 if [[ $FAIL -gt 0 ]]; then
-    error "Some checks failed. Fix the issues above and re-run ${CYAN}cct doctor${RESET}"
+    error "Some checks failed. Fix the issues above and re-run ${CYAN}shipwright doctor${RESET}"
 elif [[ $WARN -gt 0 ]]; then
     warn "Setup mostly OK, but there are warnings above"
 else

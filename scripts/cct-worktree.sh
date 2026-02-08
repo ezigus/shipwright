@@ -197,7 +197,7 @@ worktree_merge_all() {
 
         worktree_merge "$name" || {
             error "Stopping merge-all due to conflict in $name"
-            echo -e "  ${DIM}Resolve the conflict, then re-run: cct worktree merge-all${RESET}"
+            echo -e "  ${DIM}Resolve the conflict, then re-run: shipwright worktree merge-all${RESET}"
             return 1
         }
         ((count++))
@@ -293,10 +293,10 @@ worktree_status() {
 
 worktree_help() {
     echo ""
-    echo -e "${CYAN}${BOLD}cct worktree${RESET} — Git worktree management for multi-agent isolation"
+    echo -e "${CYAN}${BOLD}shipwright worktree${RESET} — Git worktree management for multi-agent isolation"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
-    echo -e "  cct worktree <command> [options]"
+    echo -e "  shipwright worktree <command> [options]"
     echo ""
     echo -e "${BOLD}COMMANDS${RESET}"
     echo -e "  ${GREEN}create${RESET} <name> [--branch <branch>]   Create a worktree for an agent"
@@ -311,10 +311,10 @@ worktree_help() {
     echo -e "  ${GREEN}help${RESET}                                  Show this help"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
-    echo -e "  ${DIM}cct worktree create agent-1${RESET}            # Create worktree on branch loop/agent-1"
-    echo -e "  ${DIM}cct worktree create agent-1 --branch feat${RESET}  # Custom branch name"
-    echo -e "  ${DIM}cct worktree merge-all${RESET}                 # Merge all agent work back to main"
-    echo -e "  ${DIM}cct worktree cleanup${RESET}                   # Remove all worktrees when done"
+    echo -e "  ${DIM}shipwright worktree create agent-1${RESET}            # Create worktree on branch loop/agent-1"
+    echo -e "  ${DIM}shipwright worktree create agent-1 --branch feat${RESET}  # Custom branch name"
+    echo -e "  ${DIM}shipwright worktree merge-all${RESET}                 # Merge all agent work back to main"
+    echo -e "  ${DIM}shipwright worktree cleanup${RESET}                   # Remove all worktrees when done"
     echo ""
     echo -e "${BOLD}DIRECTORY STRUCTURE${RESET}"
     echo -e "  ${DIM}project-root/${RESET}"
@@ -334,7 +334,7 @@ shift || true
 case "$COMMAND" in
     create)
         if [[ $# -lt 1 ]]; then
-            error "Usage: cct worktree create <name> [--branch <branch>]"
+            error "Usage: shipwright worktree create <name> [--branch <branch>]"
             exit 1
         fi
         NAME="$1"
@@ -363,7 +363,7 @@ case "$COMMAND" in
         ;;
     sync)
         if [[ $# -lt 1 ]]; then
-            error "Usage: cct worktree sync <name>"
+            error "Usage: shipwright worktree sync <name>"
             exit 1
         fi
         worktree_sync "$1"
@@ -373,7 +373,7 @@ case "$COMMAND" in
         ;;
     merge)
         if [[ $# -lt 1 ]]; then
-            error "Usage: cct worktree merge <name>"
+            error "Usage: shipwright worktree merge <name>"
             exit 1
         fi
         worktree_merge "$1"
@@ -383,7 +383,7 @@ case "$COMMAND" in
         ;;
     remove)
         if [[ $# -lt 1 ]]; then
-            error "Usage: cct worktree remove <name>"
+            error "Usage: shipwright worktree remove <name>"
             exit 1
         fi
         worktree_remove "$1"
@@ -399,7 +399,7 @@ case "$COMMAND" in
         ;;
     *)
         error "Unknown command: $COMMAND"
-        echo -e "  ${DIM}Run 'cct worktree help' for usage.${RESET}"
+        echo -e "  ${DIM}Run 'shipwright worktree help' for usage.${RESET}"
         exit 1
         ;;
 esac

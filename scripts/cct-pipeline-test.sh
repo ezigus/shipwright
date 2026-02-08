@@ -795,7 +795,7 @@ main() {
 
     echo ""
     echo -e "${PURPLE}${BOLD}╔═══════════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${PURPLE}${BOLD}║  cct pipeline test — E2E Validation (Real Pipeline Subprocess)   ║${RESET}"
+    echo -e "${PURPLE}${BOLD}║  shipwright pipeline test — E2E Validation (Real Subprocess)     ║${RESET}"
     echo -e "${PURPLE}${BOLD}╚═══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
 

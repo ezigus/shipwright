@@ -235,6 +235,106 @@ memory_capture_failure() {
     emit_event "memory.failure" "stage=${stage}" "pattern=${pattern:0:80}"
 }
 
+# memory_analyze_failure <log_file> <stage>
+# Uses Claude to analyze a pipeline failure and fill in root_cause/fix/category.
+memory_analyze_failure() {
+    local log_file="${1:-}"
+    local stage="${2:-unknown}"
+
+    if [[ -z "$log_file" ]]; then
+        warn "No log file specified for failure analysis"
+        return 1
+    fi
+
+    # Gather log context — use the specific log file if it exists,
+    # otherwise glob for any logs in the artifacts directory
+    local log_tail=""
+    if [[ -f "$log_file" ]]; then
+        log_tail=$(tail -200 "$log_file" 2>/dev/null || true)
+    else
+        # Try to find stage-specific logs in the same directory
+        local log_dir
+        log_dir=$(dirname "$log_file" 2>/dev/null || echo ".")
+        log_tail=$(tail -200 "$log_dir"/*.log 2>/dev/null || true)
+    fi
+
+    if [[ -z "$log_tail" ]]; then
+        warn "No log content found for analysis"
+        return 1
+    fi
+
+    ensure_memory_dir
+    local mem_dir
+    mem_dir="$(repo_memory_dir)"
+    local failures_file="$mem_dir/failures.json"
+
+    # Check that failures.json has at least one entry
+    local entry_count
+    entry_count=$(jq '.failures | length' "$failures_file" 2>/dev/null || echo "0")
+    if [[ "$entry_count" -eq 0 ]]; then
+        warn "No failure entries to analyze"
+        return 0
+    fi
+
+    local last_pattern
+    last_pattern=$(jq -r '.failures[-1].pattern // ""' "$failures_file" 2>/dev/null)
+
+    info "Analyzing failure in ${CYAN}${stage}${RESET} stage..."
+
+    # Build the analysis prompt
+    local prompt
+    prompt="Analyze this pipeline failure. The stage was: ${stage}.
+The error pattern is: ${last_pattern}
+
+Log output (last 200 lines):
+${log_tail}
+
+Return ONLY a JSON object with exactly these fields:
+{\"root_cause\": \"one-line root cause\", \"fix\": \"one-line fix suggestion\", \"category\": \"one of: test_failure, build_error, lint_error, timeout, dependency, flaky, config\"}
+
+Return JSON only, no markdown fences, no explanation."
+
+    # Call Claude for analysis
+    local analysis
+    analysis=$(claude -p "$prompt" --model sonnet 2>/dev/null) || {
+        warn "Claude analysis failed"
+        return 1
+    }
+
+    # Extract JSON — strip markdown fences if present
+    analysis=$(echo "$analysis" | sed 's/^```json//; s/^```//; s/```$//' | tr -d '\n')
+
+    # Parse the fields
+    local root_cause fix category
+    root_cause=$(echo "$analysis" | jq -r '.root_cause // ""' 2>/dev/null) || root_cause=""
+    fix=$(echo "$analysis" | jq -r '.fix // ""' 2>/dev/null) || fix=""
+    category=$(echo "$analysis" | jq -r '.category // "unknown"' 2>/dev/null) || category="unknown"
+
+    if [[ -z "$root_cause" || "$root_cause" == "null" ]]; then
+        warn "Could not parse analysis response"
+        return 1
+    fi
+
+    # Validate category against allowed values
+    case "$category" in
+        test_failure|build_error|lint_error|timeout|dependency|flaky|config) ;;
+        *) category="unknown" ;;
+    esac
+
+    # Update the most recent failure entry with root_cause, fix, category
+    local tmp_file
+    tmp_file=$(mktemp)
+    jq --arg rc "$root_cause" \
+       --arg fix "$fix" \
+       --arg cat "$category" \
+       '.failures[-1].root_cause = $rc | .failures[-1].fix = $fix | .failures[-1].category = $cat' \
+       "$failures_file" > "$tmp_file" && mv "$tmp_file" "$failures_file"
+
+    emit_event "memory.analyze" "stage=${stage}" "category=${category}"
+
+    success "Failure analyzed: ${PURPLE}[${category}]${RESET} ${root_cause}"
+}
+
 # memory_capture_pattern <pattern_type> <pattern_data_json>
 # Records codebase patterns (project type, framework, conventions).
 memory_capture_pattern() {
@@ -447,6 +547,16 @@ memory_inject_context() {
             fi
 
             echo ""
+            echo "## Known Fixes"
+            if [[ -f "$mem_dir/failures.json" ]]; then
+                jq -r '.failures[] | select(.root_cause != "" and .fix != "" and .stage == "build") |
+                    "- [\(.category // "unknown")] \(.root_cause)\n  Fix: \(.fix)"' \
+                    "$mem_dir/failures.json" 2>/dev/null || echo "- No analyzed fixes yet."
+            else
+                echo "- No analyzed fixes yet."
+            fi
+
+            echo ""
             echo "## Code Conventions"
             if [[ -f "$mem_dir/patterns.json" ]]; then
                 local import_style
@@ -466,6 +576,16 @@ memory_inject_context() {
                     "- \(.pattern) (seen \(.seen_count)x)" +
                     if .fix != "" then "\n  Fix: \(.fix)" else "" end' \
                     "$mem_dir/failures.json" 2>/dev/null || echo "- No test failures recorded."
+            fi
+
+            echo ""
+            echo "## Known Fixes"
+            if [[ -f "$mem_dir/failures.json" ]]; then
+                jq -r '.failures[] | select(.root_cause != "" and .fix != "" and .stage == "test") |
+                    "- [\(.category // "unknown")] \(.root_cause)\n  Fix: \(.fix)"' \
+                    "$mem_dir/failures.json" 2>/dev/null || echo "- No analyzed fixes yet."
+            else
+                echo "- No analyzed fixes yet."
             fi
 
             echo ""
@@ -942,10 +1062,10 @@ memory_stats() {
 # ─── Help ──────────────────────────────────────────────────────────────────
 
 show_help() {
-    echo -e "${CYAN}${BOLD}cct memory${RESET} ${DIM}v${VERSION}${RESET} — Persistent Learning & Context System"
+    echo -e "${CYAN}${BOLD}shipwright memory${RESET} ${DIM}v${VERSION}${RESET} — Persistent Learning & Context System"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
-    echo -e "  ${CYAN}cct memory${RESET} <command> [options]"
+    echo -e "  ${CYAN}shipwright memory${RESET} <command> [options]"
     echo ""
     echo -e "${BOLD}COMMANDS${RESET}"
     echo -e "  ${CYAN}show${RESET}               Display memory for current repo"
@@ -962,15 +1082,16 @@ show_help() {
     echo -e "  ${CYAN}pattern${RESET} <type> [data]           Record a codebase pattern"
     echo -e "  ${CYAN}metric${RESET} <name> <value>           Update a performance baseline"
     echo -e "  ${CYAN}decision${RESET} <type> <summary>       Record a design decision"
+    echo -e "  ${CYAN}analyze-failure${RESET} <log> <stage>    Analyze failure root cause via AI"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
-    echo -e "  ${DIM}cct memory show${RESET}                            # View repo memory"
-    echo -e "  ${DIM}cct memory show --global${RESET}                   # View cross-repo learnings"
-    echo -e "  ${DIM}cct memory search \"auth\"${RESET}                   # Find auth-related memories"
-    echo -e "  ${DIM}cct memory export > backup.json${RESET}            # Export memory"
-    echo -e "  ${DIM}cct memory import backup.json${RESET}              # Import memory"
-    echo -e "  ${DIM}cct memory capture .claude/pipeline-state.md .claude/pipeline-artifacts${RESET}"
-    echo -e "  ${DIM}cct memory inject build${RESET}                    # Get context for build stage"
+    echo -e "  ${DIM}shipwright memory show${RESET}                            # View repo memory"
+    echo -e "  ${DIM}shipwright memory show --global${RESET}                   # View cross-repo learnings"
+    echo -e "  ${DIM}shipwright memory search \"auth\"${RESET}                   # Find auth-related memories"
+    echo -e "  ${DIM}shipwright memory export > backup.json${RESET}            # Export memory"
+    echo -e "  ${DIM}shipwright memory import backup.json${RESET}              # Import memory"
+    echo -e "  ${DIM}shipwright memory capture .claude/pipeline-state.md .claude/pipeline-artifacts${RESET}"
+    echo -e "  ${DIM}shipwright memory inject build${RESET}                    # Get context for build stage"
 }
 
 # ─── Command Router ─────────────────────────────────────────────────────────
@@ -1011,6 +1132,9 @@ case "$SUBCOMMAND" in
         ;;
     decision)
         memory_capture_decision "$@"
+        ;;
+    analyze-failure)
+        memory_analyze_failure "$@"
         ;;
     help|--help|-h)
         show_help

@@ -79,14 +79,14 @@ Each agent writes its results to a markdown file in this directory. The team lea
 
 ## Quick Start
 
-Pick a pattern, then use `cct` to set up the team:
+Pick a pattern, then use `shipwright` (alias: `cct`, `sw`) to set up the team:
 
 ```bash
 # Start a tmux session
 tmux new -s my-feature
 
 # Create a 3-agent team
-cct session my-feature
+shipwright session my-feature
 
 # In the team lead pane, describe the work using a wave pattern
 # The team lead decomposes into waves and assigns tasks

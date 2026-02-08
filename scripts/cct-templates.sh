@@ -133,8 +133,8 @@ cmd_list() {
         return 1
     fi
 
-    echo -e "  ${DIM}Usage: cct session my-feature --template <name>${RESET}"
-    echo -e "  ${DIM}Details: cct templates show <name>${RESET}"
+    echo -e "  ${DIM}Usage: shipwright session my-feature --template <name>${RESET}"
+    echo -e "  ${DIM}Details: shipwright templates show <name>${RESET}"
     echo ""
 }
 
@@ -142,7 +142,7 @@ cmd_show() {
     local name="${1:-}"
     if [[ -z "$name" ]]; then
         error "Template name required."
-        echo -e "  Usage: ${DIM}cct templates show <name>${RESET}"
+        echo -e "  Usage: ${DIM}shipwright templates show <name>${RESET}"
         exit 1
     fi
 
@@ -190,17 +190,17 @@ cmd_show() {
         echo ""
     done < <(print_agents "$file")
 
-    echo -e "  ${DIM}Use: cct session my-feature --template ${name}${RESET}"
+    echo -e "  ${DIM}Use: shipwright session my-feature --template ${name}${RESET}"
     echo ""
 }
 
 show_help() {
     echo ""
-    echo -e "${CYAN}${BOLD}  cct templates${RESET} — Browse and inspect team templates"
+    echo -e "${CYAN}${BOLD}  shipwright templates${RESET} — Browse and inspect team templates"
     echo ""
     echo -e "  ${BOLD}USAGE${RESET}"
-    echo -e "    ${CYAN}cct templates${RESET} list              List available templates"
-    echo -e "    ${CYAN}cct templates${RESET} show <name>       Show template details"
+    echo -e "    ${CYAN}shipwright templates${RESET} list              List available templates"
+    echo -e "    ${CYAN}shipwright templates${RESET} show <name>       Show template details"
     echo ""
     echo -e "  ${BOLD}TEMPLATE LOCATIONS${RESET}"
     echo -e "    ${DIM}~/.claude-teams/templates/${RESET}        Custom templates ${DIM}(takes priority)${RESET}"

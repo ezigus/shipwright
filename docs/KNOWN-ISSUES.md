@@ -15,7 +15,7 @@ Tracked bugs and limitations in Claude Code Agent Teams + tmux integration, with
 - Panes start with garbled or partial commands
 - Some panes sit empty while others received duplicate input
 
-**Workaround:** The `cct` CLI uses `new-window` instead of `split-window` for spawning agent panes, then arranges them with `select-layout tiled` after all panes are created. This avoids the race because each `new-window` creates an isolated context.
+**Workaround:** The `shipwright` CLI uses `new-window` instead of `split-window` for spawning agent panes, then arranges them with `select-layout tiled` after all panes are created. This avoids the race because each `new-window` creates an isolated context.
 
 If spawning panes manually, add a small delay between operations:
 
@@ -27,7 +27,7 @@ tmux send-keys -t "$session" "claude" Enter
 
 **Root cause:** This is a fundamental tmux limitation, not a Claude Code bug. tmux's command queue doesn't guarantee ordering between window operations and key delivery.
 
-**Status:** Open — no upstream fix expected. The `cct` workaround is reliable.
+**Status:** Open — no upstream fix expected. The `shipwright` workaround is reliable.
 
 ---
 
@@ -151,7 +151,7 @@ set-hook -g after-new-window   "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
 set-hook -g after-new-session  "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
 ```
 
-Run `cct init` or `cct upgrade --apply` to get the updated overlay with these hooks.
+Run `shipwright init` or `shipwright upgrade --apply` to get the updated overlay with these hooks.
 
 **Status:** ✅ Resolved in v1.3.0
 
@@ -183,15 +183,15 @@ git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
 
 **Symptoms:**
 - After a team finishes work, panes remain with idle shell prompts
-- `cct ps` shows panes as "idle" with increasing idle time
+- `shipwright ps` shows panes as "idle" with increasing idle time
 - `~/.claude/teams/` and `~/.claude/tasks/` directories accumulate
 
 **Fix:** Use the pane reaper:
 
 ```bash
-cct reaper              # One-shot: clean dead panes now
-cct reaper --watch      # Background: auto-clean every 5s
-cct reaper --dry-run    # Preview what would be reaped
+shipwright reaper              # One-shot: clean dead panes now
+shipwright reaper --watch      # Background: auto-clean every 5s
+shipwright reaper --dry-run    # Preview what would be reaped
 ```
 
 Or use the tmux keybinding: `prefix + R` for a quick one-shot cleanup.

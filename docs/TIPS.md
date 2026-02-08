@@ -124,10 +124,10 @@ This compacts the conversation when it hits 70% of the context window (default i
 
 ### Watch all agents at once
 
-Use `cct status` to see a dashboard of running team sessions:
+Use `shipwright status` (alias: `cct`, `sw`) to see a dashboard of running team sessions:
 
 ```bash
-cct status
+shipwright status
 ```
 
 Or press `prefix + Ctrl-t` in tmux to show the dashboard inline.
@@ -238,8 +238,8 @@ tmux attach -t my-feature
 After a team finishes, clean up leftover tmux sessions and panes:
 
 ```bash
-cct cleanup           # Dry-run: shows what would be killed
-cct cleanup --force   # Actually kills orphaned sessions
+shipwright cleanup           # Dry-run: shows what would be killed
+shipwright cleanup --force   # Actually kills orphaned sessions
 ```
 
 ---

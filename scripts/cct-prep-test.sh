@@ -572,7 +572,7 @@ main() {
 
     echo ""
     echo -e "${PURPLE}${BOLD}╔═══════════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${PURPLE}${BOLD}║  cct prep test — Validation Suite (Real Prep Subprocess)          ║${RESET}"
+    echo -e "${PURPLE}${BOLD}║  shipwright prep test — Validation Suite (Real Subprocess)        ║${RESET}"
     echo -e "${PURPLE}${BOLD}╚═══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
 

@@ -464,7 +464,7 @@ budget_show() {
         echo -e "    Today:    \$${today_spent} / \$${budget_usd}"
     else
         echo -e "    Status:   ${DIM}not configured${RESET}"
-        echo -e "    ${DIM}Set with: cct cost budget set <amount>${RESET}"
+        echo -e "    ${DIM}Set with: shipwright cost budget set <amount>${RESET}"
     fi
     echo ""
 }
@@ -472,10 +472,10 @@ budget_show() {
 # ─── Help ──────────────────────────────────────────────────────────────────
 
 show_help() {
-    echo -e "${CYAN}${BOLD}cct cost${RESET} ${DIM}v${VERSION}${RESET} — Token Usage & Cost Intelligence"
+    echo -e "${CYAN}${BOLD}shipwright cost${RESET} ${DIM}v${VERSION}${RESET} — Token Usage & Cost Intelligence"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
-    echo -e "  ${CYAN}cct cost${RESET} <command> [options]"
+    echo -e "  ${CYAN}shipwright cost${RESET} <command> [options]"
     echo ""
     echo -e "${BOLD}COMMANDS${RESET}"
     echo -e "  ${CYAN}show${RESET}                          Show cost summary for current period"
@@ -497,11 +497,11 @@ show_help() {
     echo -e "  haiku    \$0.25 / \$1.25 per 1M tokens (in/out)"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
-    echo -e "  ${DIM}cct cost show${RESET}                              # 7-day cost summary"
-    echo -e "  ${DIM}cct cost show --period 30 --by-stage${RESET}       # 30-day breakdown by stage"
-    echo -e "  ${DIM}cct cost budget set 50.00${RESET}                  # Set \$50/day limit"
-    echo -e "  ${DIM}cct cost budget show${RESET}                       # Check current budget"
-    echo -e "  ${DIM}cct cost calculate 50000 10000 opus${RESET}        # Estimate cost"
+    echo -e "  ${DIM}shipwright cost show${RESET}                              # 7-day cost summary"
+    echo -e "  ${DIM}shipwright cost show --period 30 --by-stage${RESET}       # 30-day breakdown by stage"
+    echo -e "  ${DIM}shipwright cost budget set 50.00${RESET}                  # Set \$50/day limit"
+    echo -e "  ${DIM}shipwright cost budget show${RESET}                       # Check current budget"
+    echo -e "  ${DIM}shipwright cost calculate 50000 10000 opus${RESET}        # Estimate cost"
 }
 
 # ─── Command Router ─────────────────────────────────────────────────────────

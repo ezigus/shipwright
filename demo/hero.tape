@@ -1,10 +1,10 @@
-# Claude Code Teams + tmux — Hero Demo
+# Shipwright — Hero Demo
 # Records a short GIF showing the core experience
 # Run: vhs demo/hero.tape
 
 Output demo/hero.gif
 
-Require cct
+Require shipwright
 Require tmux
 Require jq
 
@@ -17,7 +17,7 @@ Set Theme { "name": "cct", "black": "#1a1a2e", "red": "#f87171", "green": "#4ade
 
 # Title card
 Sleep 500ms
-Type "# Claude Code Teams + tmux"
+Type "# Shipwright"
 Enter
 Type "# 12 team templates covering the full SDLC"
 Enter
@@ -25,27 +25,27 @@ Enter
 Sleep 1s
 
 # Show version
-Type "cct version"
+Type "shipwright version"
 Enter
 Sleep 1.5s
 
 # Show help (overview of all commands)
-Type "cct help"
+Type "shipwright help"
 Enter
 Sleep 4s
 
 # List templates (12 templates now)
-Type "cct templates list"
+Type "shipwright templates list"
 Enter
 Sleep 6s
 
 # Show a template — security-audit to highlight new ones
-Type "cct templates show security-audit"
+Type "shipwright templates show security-audit"
 Enter
 Sleep 3s
 
 # Doctor check
-Type "cct doctor"
+Type "shipwright doctor"
 Enter
 Sleep 4s
 

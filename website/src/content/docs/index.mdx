@@ -60,16 +60,16 @@ import { Card, CardGrid, Tabs, TabItem } from '@astrojs/starlight/components';
 
 ```bash
 # Start a team session with the feature-dev template
-cct session my-feature --template feature-dev
+shipwright session my-feature --template feature-dev
 
 # Run a full delivery pipeline from a GitHub issue
-cct pipeline start --issue 42
+shipwright pipeline start --issue 42
 
 # Autonomous development loop with quality gates
-cct loop "Build auth" --test-cmd "npm test" --audit
+shipwright loop "Build auth" --test-cmd "npm test" --audit
 
 # Start the daemon for hands-free issue processing
-cct daemon start
+shipwright daemon start
 ```
 
 ## Why Shipwright?

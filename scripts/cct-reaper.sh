@@ -7,9 +7,9 @@
 # ║  team/task directories when no panes remain.                            ║
 # ║                                                                          ║
 # ║  Modes:                                                                  ║
-# ║    cct reaper              One-shot scan, reap, exit                    ║
-# ║    cct reaper --watch      Continuous loop (default: 5s interval)       ║
-# ║    cct reaper --dry-run    Preview what would be reaped                 ║
+# ║    shipwright reaper              One-shot scan, reap, exit              ║
+# ║    shipwright reaper --watch      Continuous loop (default: 5s)         ║
+# ║    shipwright reaper --dry-run    Preview what would be reaped          ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -39,13 +39,13 @@ PID_FILE="${HOME}/.cct-reaper.pid"
 
 # ─── Parse Args ────────────────────────────────────────────────────────────
 show_help() {
-    echo -e "${CYAN}${BOLD}cct reaper${RESET} — Automatic pane cleanup when agents exit"
+    echo -e "${CYAN}${BOLD}shipwright reaper${RESET} — Automatic pane cleanup when agents exit"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
-    echo -e "  cct reaper                     ${DIM}# One-shot: scan, reap, exit${RESET}"
-    echo -e "  cct reaper --watch             ${DIM}# Continuous loop (5s interval)${RESET}"
-    echo -e "  cct reaper --dry-run           ${DIM}# Preview what would be reaped${RESET}"
-    echo -e "  cct reaper --dry-run --verbose ${DIM}# Show all panes and their status${RESET}"
+    echo -e "  shipwright reaper                     ${DIM}# One-shot: scan, reap, exit${RESET}"
+    echo -e "  shipwright reaper --watch             ${DIM}# Continuous loop (5s interval)${RESET}"
+    echo -e "  shipwright reaper --dry-run           ${DIM}# Preview what would be reaped${RESET}"
+    echo -e "  shipwright reaper --dry-run --verbose ${DIM}# Show all panes and their status${RESET}"
     echo ""
     echo -e "${BOLD}OPTIONS${RESET}"
     echo -e "  --watch              Run continuously instead of one-shot"
@@ -64,8 +64,8 @@ show_help() {
     echo -e "  ${DIM}5. All checks passed             → REAP (agent exited)${RESET}"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
-    echo -e "  ${DIM}cct reaper --watch --interval 10 --grace-period 30${RESET}"
-    echo -e "  ${DIM}cct reaper --watch --log-file ~/.cct-reaper.log &${RESET}"
+    echo -e "  ${DIM}shipwright reaper --watch --interval 10 --grace-period 30${RESET}"
+    echo -e "  ${DIM}shipwright reaper --watch --log-file ~/.cct-reaper.log &${RESET}"
 }
 
 while [[ $# -gt 0 ]]; do

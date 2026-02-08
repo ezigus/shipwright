@@ -5,7 +5,7 @@ description: Chain the full SDLC into a single command — from issue intake to 
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-The delivery pipeline (`cct pipeline`) automates the entire software development lifecycle. Start from a GitHub issue or a goal description and Shipwright handles planning, building, testing, reviewing, and PR creation.
+The delivery pipeline (`shipwright pipeline`) automates the entire software development lifecycle. Start from a GitHub issue or a goal description and Shipwright handles planning, building, testing, reviewing, and PR creation.
 
 ## Pipeline Stages
 
@@ -19,7 +19,7 @@ Each stage can be enabled/disabled and gated (auto-proceed or pause for approval
 |-------|-------------|
 | **intake** | Fetch issue metadata from GitHub, or parse the goal description |
 | **plan** | Claude generates an implementation plan |
-| **build** | Delegates to `cct loop` for autonomous multi-iteration development |
+| **build** | Delegates to `shipwright loop` for autonomous multi-iteration development |
 | **test** | Run the test suite and collect results |
 | **review** | Claude reviews the changes for quality and correctness |
 | **compound_quality** | Self-healing cycle — if tests fail, re-enter build with error context |
@@ -33,17 +33,17 @@ Each stage can be enabled/disabled and gated (auto-proceed or pause for approval
   <TabItem label="From a GitHub Issue">
     ```bash
     # Fully autonomous — fetches issue, plans, builds, creates PR
-    cct pipeline start --issue 123 --skip-gates
+    shipwright pipeline start --issue 123 --skip-gates
     ```
   </TabItem>
   <TabItem label="From a Goal">
     ```bash
-    cct pipeline start --goal "Add JWT authentication"
+    shipwright pipeline start --goal "Add JWT authentication"
     ```
   </TabItem>
   <TabItem label="Hotfix">
     ```bash
-    cct pipeline start --issue 456 --pipeline hotfix --test-cmd "pytest"
+    shipwright pipeline start --issue 456 --pipeline hotfix --test-cmd "pytest"
     ```
   </TabItem>
 </Tabs>
@@ -61,8 +61,8 @@ Each stage can be enabled/disabled and gated (auto-proceed or pause for approval
 Browse templates:
 
 ```bash
-cct pipeline list        # List all templates
-cct pipeline show standard  # View template details
+shipwright pipeline list        # List all templates
+shipwright pipeline show standard  # View template details
 ```
 
 ## Self-Healing Builds
@@ -71,7 +71,7 @@ When tests fail after a build, the pipeline automatically captures the error out
 
 ```bash
 # Allow up to 3 self-healing cycles
-cct pipeline start --goal "Build payment flow" --self-heal 3
+shipwright pipeline start --goal "Build payment flow" --self-heal 3
 ```
 
 The compound quality stage orchestrates this: it runs tests, and if they fail, feeds the failure output back to the build agent as context for the next iteration.
@@ -99,13 +99,13 @@ Shipwright automatically detects your project configuration:
 
 ```bash
 # Resume a pipeline from where it left off
-cct pipeline resume
+shipwright pipeline resume
 
 # Check pipeline progress
-cct pipeline status
+shipwright pipeline status
 
 # Abort a running pipeline
-cct pipeline abort
+shipwright pipeline abort
 ```
 
 ## Notifications
@@ -114,11 +114,11 @@ Get notified about pipeline events via webhooks:
 
 ```bash
 # Slack webhook
-cct pipeline start --goal "Add auth" --slack-webhook https://hooks.slack.com/...
+shipwright pipeline start --goal "Add auth" --slack-webhook https://hooks.slack.com/...
 
 # Custom webhook (via environment variable)
-export CCT_WEBHOOK_URL=https://your-webhook.example.com
-cct pipeline start --goal "Add auth"
+export SHIPWRIGHT_WEBHOOK_URL=https://your-webhook.example.com
+shipwright pipeline start --goal "Add auth"
 ```
 
 ## Pipeline State

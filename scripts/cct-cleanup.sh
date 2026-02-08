@@ -29,11 +29,11 @@ for arg in "$@"; do
     case "$arg" in
         --force|-f) FORCE=true ;;
         --help|-h)
-            echo -e "${CYAN}${BOLD}cct cleanup${RESET} — Clean up orphaned Claude team sessions"
+            echo -e "${CYAN}${BOLD}shipwright cleanup${RESET} — Clean up orphaned Claude team sessions"
             echo ""
             echo -e "${BOLD}USAGE${RESET}"
-            echo -e "  cct cleanup            ${DIM}# Dry-run: show what would be cleaned${RESET}"
-            echo -e "  cct cleanup --force    ${DIM}# Actually kill sessions and remove files${RESET}"
+            echo -e "  shipwright cleanup            ${DIM}# Dry-run: show what would be cleaned${RESET}"
+            echo -e "  shipwright cleanup --force    ${DIM}# Actually kill sessions and remove files${RESET}"
             exit 0
             ;;
         *)
@@ -164,7 +164,7 @@ if $FORCE; then
 else
     if [[ $TOTAL_FOUND -gt 0 ]]; then
         warn "Found ${TOTAL_FOUND} items to clean. Run with ${BOLD}--force${RESET} to remove them:"
-        echo -e "  ${DIM}cct cleanup --force${RESET}"
+        echo -e "  ${DIM}shipwright cleanup --force${RESET}"
     else
         success "Everything is clean. No orphaned sessions found."
     fi

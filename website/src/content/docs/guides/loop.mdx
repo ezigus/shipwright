@@ -5,22 +5,22 @@ description: Run Claude Code autonomously in a loop until a goal is achieved, wi
 
 import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-The continuous loop (`cct loop`) runs Claude Code autonomously, iterating until a goal is achieved. Each iteration, the agent works toward the goal, optionally runs quality checks, and decides whether to continue or declare completion.
+The continuous loop (`shipwright loop`) runs Claude Code autonomously, iterating until a goal is achieved. Each iteration, the agent works toward the goal, optionally runs quality checks, and decides whether to continue or declare completion.
 
 ## Quick Start
 
 ```bash
 # Basic loop with test verification
-cct loop "Build user authentication with JWT" --test-cmd "npm test"
+shipwright loop "Build user authentication with JWT" --test-cmd "npm test"
 
 # Multi-agent with audit and quality gates
-cct loop "Refactor the API layer" --agents 3 --audit --quality-gates
+shipwright loop "Refactor the API layer" --agents 3 --audit --quality-gates
 
 # With a definition of done
-cct loop "Build checkout flow" --definition-of-done requirements.md
+shipwright loop "Build checkout flow" --definition-of-done requirements.md
 
 # Resume an interrupted loop
-cct loop --resume
+shipwright loop --resume
 ```
 
 ## Audit Modes
@@ -35,7 +35,7 @@ The agent pauses after each iteration to review its own work before deciding whe
 - **Best for:** Solo agent work where you want a sanity check
 
 ```bash
-cct loop "Fix the N+1 query in user list" --audit --test-cmd "npm test"
+shipwright loop "Fix the N+1 query in user list" --audit --test-cmd "npm test"
 ```
 
 ### Audit Agent (`--audit-agent`)
@@ -46,7 +46,7 @@ Spawns a dedicated auditor that reviews the work agent's output each iteration. 
 - **Best for:** Production code, complex features
 
 ```bash
-cct loop "Refactor auth to use refresh tokens" --audit-agent
+shipwright loop "Refactor auth to use refresh tokens" --audit-agent
 ```
 
 ### Quality Gates (`--quality-gates`)
@@ -57,7 +57,7 @@ Runs your test command between iterations. The loop only advances if gates pass.
 - **Best for:** Projects with existing CI checks
 
 ```bash
-cct loop "Add pagination to API" --quality-gates --test-cmd "npm test && npm run lint"
+shipwright loop "Add pagination to API" --quality-gates --test-cmd "npm test && npm run lint"
 ```
 
 ### Maximum Rigor
@@ -65,7 +65,7 @@ cct loop "Add pagination to API" --quality-gates --test-cmd "npm test && npm run
 Combine all three for the most thorough workflow:
 
 ```bash
-cct loop "Build payment integration" \
+shipwright loop "Build payment integration" \
   --audit-agent \
   --quality-gates \
   --test-cmd "npm test" \

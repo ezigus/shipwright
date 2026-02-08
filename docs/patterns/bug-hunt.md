@@ -142,11 +142,11 @@ mostly after browser has been idle for 10+ minutes. Session refresh should be tr
 
 ---
 
-## Example cct Commands
+## Example Commands
 
 ```bash
 # Create a 3-agent bug hunt team
-cct session bug-hunt-401
+shipwright session bug-hunt-401
 
 # Watch all three investigators work in parallel panes
 # Each pane shows a different hypothesis being tested
@@ -155,7 +155,7 @@ cct session bug-hunt-401
 # Use prefix + Alt-s to capture pane output for later review
 
 # Monitor
-cct status
+shipwright status
 ```
 
 ---

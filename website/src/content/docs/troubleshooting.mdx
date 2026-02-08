@@ -8,11 +8,11 @@ description: Known issues and solutions for common Shipwright problems.
 | Problem | Cause | Fix |
 |---------|-------|-----|
 | Agents spawn in-process instead of tmux panes | Not inside a tmux session | Start tmux first: `tmux new -s dev` |
-| Garbled pane output with 4+ agents | tmux `send-keys` race condition | Use `cct session` (uses `new-window` instead of `split-window`) |
+| Garbled pane output with 4+ agents | tmux `send-keys` race condition | Use `shipwright session` (uses `new-window` instead of `split-window`) |
 | Agents fall back to in-process mode | tmux not detected | Run inside a real tmux session (`echo $TMUX` should show a path) |
 | Context window overflow | Too many tasks per agent | Keep tasks focused (5-6 per agent) |
-| Panes don't show agent names | Pane titles not set | Use `cct session` which sets titles automatically |
-| White/bright pane backgrounds | New panes not inheriting theme | Run `cct init` or `cct upgrade --apply` |
+| Panes don't show agent names | Pane titles not set | Use `shipwright session` which sets titles automatically |
+| White/bright pane backgrounds | New panes not inheriting theme | Run `shipwright init` or `shipwright upgrade --apply` |
 
 ## tmux `send-keys` Race Condition
 
@@ -25,7 +25,7 @@ When Claude Code spawns 4+ agent panes simultaneously using `split-window` + `se
 - Panes start with garbled or partial commands
 - Some panes sit empty while others received duplicate input
 
-**Fix:** The `cct` CLI uses `new-window` instead of `split-window` for spawning, which avoids the race. If spawning panes manually, add a small delay:
+**Fix:** The `shipwright` CLI uses `new-window` instead of `split-window` for spawning, which avoids the race. If spawning panes manually, add a small delay:
 
 ```bash
 tmux split-window -t "$session" -h
@@ -85,9 +85,9 @@ When teammates shut down, the Claude process exits but the tmux pane remains ope
 **Fix:** Use the pane reaper:
 
 ```bash
-cct reaper              # One-shot cleanup
-cct reaper --watch      # Background auto-cleanup every 5s
-cct reaper --dry-run    # Preview what would be reaped
+shipwright reaper              # One-shot cleanup
+shipwright reaper --watch      # Background auto-cleanup every 5s
+shipwright reaper --dry-run    # Preview what would be reaped
 ```
 
 Or press `prefix + R` for a quick cleanup.
@@ -106,6 +106,6 @@ git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
 
 ## Getting Help
 
-- Run `cct doctor` to diagnose common setup issues
+- Run `shipwright doctor` to diagnose common setup issues
 - Check the [FAQ](/faq/) for common questions
 - [Open an issue](https://github.com/sethdford/shipwright/issues) on GitHub

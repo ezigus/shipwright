@@ -1,92 +1,92 @@
 ---
 title: CLI Reference
-description: Complete reference for every cct command, subcommand, and flag.
+description: Complete reference for every shipwright command, subcommand, and flag.
 ---
 
-The `cct` CLI is the main entry point for Shipwright. It routes to specialized scripts for each subcommand.
+The `shipwright` CLI is the main entry point for Shipwright. It routes to specialized scripts for each subcommand.
 
 ## Setup & Diagnostics
 
-### `cct init`
+### `shipwright init`
 
 One-command tmux setup with no prompts. Installs the tmux configuration, overlay, and color hooks.
 
 ```bash
-cct init
+shipwright init
 ```
 
-### `cct doctor`
+### `shipwright doctor`
 
 Validate your setup and diagnose common issues.
 
 ```bash
-cct doctor
+shipwright doctor
 ```
 
 Checks: tmux version, jq availability, overlay hooks, color configuration, orphaned sessions.
 
-### `cct upgrade`
+### `shipwright upgrade`
 
 Check for and apply updates.
 
 ```bash
-cct upgrade            # Check for updates
-cct upgrade --apply    # Pull latest and apply
+shipwright upgrade            # Check for updates
+shipwright upgrade --apply    # Pull latest and apply
 ```
 
 ## Team Sessions
 
-### `cct session`
+### `shipwright session`
 
 Create a team session with optional template.
 
 ```bash
-cct session <name>                          # Bare session
-cct session <name> --template <template>    # With template
-cct session <name> -t feature-dev           # Short flag
+shipwright session <name>                          # Bare session
+shipwright session <name> --template <template>    # With template
+shipwright session <name> -t feature-dev           # Short flag
 ```
 
 **Flags:**
 
 | Flag | Description |
 |------|-------------|
-| `--template`, `-t` | Team template name (see `cct templates list`) |
+| `--template`, `-t` | Team template name (see `shipwright templates list`) |
 
-### `cct status`
+### `shipwright status`
 
 Show the team dashboard with all active sessions.
 
 ```bash
-cct status
+shipwright status
 ```
 
 Also available via tmux keybinding: `Ctrl-a` then `Ctrl-t`.
 
-### `cct ps`
+### `shipwright ps`
 
 Show running agent processes across all sessions.
 
 ```bash
-cct ps
+shipwright ps
 ```
 
-### `cct logs`
+### `shipwright logs`
 
 Tail agent logs for a session.
 
 ```bash
-cct logs <session>              # Show recent logs
-cct logs <session> --follow     # Tail continuously
+shipwright logs <session>              # Show recent logs
+shipwright logs <session> --follow     # Tail continuously
 ```
 
 ## Continuous Loop
 
-### `cct loop`
+### `shipwright loop`
 
 Run Claude Code autonomously until a goal is achieved.
 
 ```bash
-cct loop "<goal>" [flags]
+shipwright loop "<goal>" [flags]
 ```
 
 **Flags:**
@@ -106,22 +106,22 @@ cct loop "<goal>" [flags]
 **Examples:**
 
 ```bash
-cct loop "Build user auth with JWT" --test-cmd "npm test"
-cct loop "Refactor API" --agents 3 --audit --quality-gates
-cct loop "Build checkout" --definition-of-done requirements.md
-cct loop --resume
+shipwright loop "Build user auth with JWT" --test-cmd "npm test"
+shipwright loop "Refactor API" --agents 3 --audit --quality-gates
+shipwright loop "Build checkout" --definition-of-done requirements.md
+shipwright loop --resume
 ```
 
 See [Continuous Loop guide](/guides/loop/) for details.
 
 ## Delivery Pipeline
 
-### `cct pipeline start`
+### `shipwright pipeline start`
 
 Start a new delivery pipeline.
 
 ```bash
-cct pipeline start [flags]
+shipwright pipeline start [flags]
 ```
 
 **Flags:**
@@ -137,62 +137,72 @@ cct pipeline start [flags]
 | `--skip-gates` | Auto-approve all gates |
 | `--slack-webhook <url>` | Slack notification webhook |
 
-### `cct pipeline resume`
+### `shipwright pipeline resume`
 
 Resume a pipeline from where it left off.
 
 ```bash
-cct pipeline resume
+shipwright pipeline resume
 ```
 
-### `cct pipeline status`
+### `shipwright pipeline status`
 
 Show pipeline progress dashboard.
 
 ```bash
-cct pipeline status
+shipwright pipeline status
 ```
 
-### `cct pipeline abort`
+### `shipwright pipeline abort`
 
 Abort a running pipeline.
 
 ```bash
-cct pipeline abort
+shipwright pipeline abort
 ```
 
-### `cct pipeline list`
+### `shipwright pipeline list`
 
 Browse available pipeline templates.
 
 ```bash
-cct pipeline list
+shipwright pipeline list
 ```
 
-### `cct pipeline show`
+### `shipwright pipeline show`
 
 View details of a pipeline template.
 
 ```bash
-cct pipeline show <template>
+shipwright pipeline show <template>
 ```
 
 See [Delivery Pipeline guide](/guides/pipeline/) for details.
 
 ## Daemon
 
-### `cct daemon`
+### `shipwright daemon`
 
-Background daemon for autonomous issue processing.
+Background daemon for autonomous issue processing with intelligent triage, adaptive templates, and self-optimizing metrics.
 
 | Subcommand | Description |
 |------------|-------------|
-| `cct daemon init` | Initialize daemon configuration |
-| `cct daemon start` | Start background daemon |
-| `cct daemon stop` | Stop daemon |
-| `cct daemon status` | Show daemon status |
-| `cct daemon metrics` | DORA metrics dashboard |
-| `cct daemon logs` | View daemon logs |
+| `shipwright daemon init` | Initialize daemon configuration |
+| `shipwright daemon start` | Start background daemon |
+| `shipwright daemon stop` | Stop daemon |
+| `shipwright daemon status` | Show daemon status and active pipelines |
+| `shipwright daemon metrics` | DORA/DX metrics dashboard |
+| `shipwright daemon logs` | View daemon logs |
+| `shipwright daemon triage` | Show issue triage scores and priority |
+| `shipwright daemon patrol` | Run proactive codebase patrol |
+
+**Start flags:**
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--config <path>` | Path to daemon-config.json | `.claude/daemon-config.json` |
+| `--detach`, `-d` | Run in a detached tmux session | off |
+| `--no-github` | Disable GitHub API calls (dry-run mode) | off |
 
 **Metrics flags:**
 
@@ -201,16 +211,200 @@ Background daemon for autonomous issue processing.
 | `--period <days>` | Reporting period | 7 |
 | `--json` | JSON output | off |
 
+**Patrol flags:**
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--once` | Run patrol once and exit | off |
+| `--dry-run` | Show findings without creating issues | off |
+
+**Examples:**
+
+```bash
+shipwright daemon init                           # Generate config file
+shipwright daemon start                          # Start watching in foreground
+shipwright daemon start --detach                 # Start in background tmux session
+shipwright daemon start --config my-config.json  # Custom config
+shipwright daemon status                         # Show active jobs and queue
+shipwright daemon stop                           # Graceful shutdown
+shipwright daemon logs --follow                  # Tail the daemon log
+shipwright daemon metrics                        # DORA + DX metrics (last 7 days)
+shipwright daemon metrics --period 30            # Last 30 days
+shipwright daemon metrics --json                 # JSON output for dashboards
+shipwright daemon triage                         # Show issue triage scores
+shipwright daemon patrol                         # Run proactive codebase patrol
+shipwright daemon patrol --dry-run               # Show what patrol would find
+```
+
 See [Autonomous Daemon guide](/guides/daemon/) for details.
+
+## Fleet Operations
+
+### `shipwright fleet`
+
+Multi-repo daemon orchestrator. Spawn daemons across repositories, view a fleet-wide dashboard, and aggregate DORA metrics.
+
+| Subcommand | Description |
+|------------|-------------|
+| `shipwright fleet init` | Generate fleet-config.json (auto-detects sibling repos) |
+| `shipwright fleet start` | Start daemons for all configured repos |
+| `shipwright fleet stop` | Stop all fleet daemons |
+| `shipwright fleet status` | Show fleet dashboard (per-repo status) |
+| `shipwright fleet metrics` | Aggregate DORA metrics across repos |
+
+**Flags:**
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--config <path>` | Path to fleet-config.json | `.claude/fleet-config.json` |
+| `--period <days>` | Reporting period for metrics | 7 |
+| `--json` | JSON output for metrics | off |
+
+**Examples:**
+
+```bash
+shipwright fleet init                            # Generate config
+shipwright fleet start                           # Start all daemons
+shipwright fleet start --config my-fleet.json    # Custom config
+shipwright fleet status                          # Fleet dashboard
+shipwright fleet metrics --period 30             # 30-day aggregate
+shipwright fleet stop                            # Stop everything
+```
+
+See [Fleet Operations guide](/guides/fleet/) for details.
+
+## Bulk Fix
+
+### `shipwright fix`
+
+Apply the same goal across multiple repositories in parallel. Each repo gets its own branch and pipeline run.
+
+```bash
+shipwright fix "<goal>" [flags]
+```
+
+**Flags:**
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--repos <dir1,dir2,...>` | Comma-separated repo paths | — |
+| `--repos-from <file>` | Read repo paths from file (one per line) | — |
+| `--pipeline <template>` | Pipeline template | `fast` |
+| `--model <model>` | Claude model | auto |
+| `--max-parallel <n>` | Max concurrent pipelines | 3 |
+| `--branch-prefix <prefix>` | Branch name prefix | `fix/` |
+| `--dry-run` | Show what would happen without executing | off |
+| `--status` | Show running fix sessions | — |
+
+**Examples:**
+
+```bash
+shipwright fix "Update lodash to 4.17.21" --repos ~/api,~/web,~/mobile
+shipwright fix "Fix SQL injection in auth" --repos ~/api --pipeline fast
+shipwright fix "Bump Node to 22" --repos-from repos.txt --pipeline hotfix
+shipwright fix --status
+```
+
+See [Bulk Fix guide](/guides/fix/) for details.
+
+## Memory
+
+### `shipwright memory`
+
+Persistent learning and context system. Captures pipeline learnings, failure patterns, and design decisions per repository with cross-repo global memory.
+
+| Subcommand | Description |
+|------------|-------------|
+| `shipwright memory show` | Display memory for current repo |
+| `shipwright memory show --global` | Display cross-repo learnings |
+| `shipwright memory search <keyword>` | Search memory for a keyword |
+| `shipwright memory stats` | Show memory size, age, and hit rate |
+| `shipwright memory export` | Export memory as JSON |
+| `shipwright memory import <file>` | Import memory from JSON |
+| `shipwright memory forget --all` | Clear memory for current repo |
+
+**Pipeline integration commands** (called automatically by pipelines):
+
+| Subcommand | Description |
+|------------|-------------|
+| `shipwright memory capture <state> <artifacts>` | Capture pipeline learnings |
+| `shipwright memory inject <stage_id>` | Inject context for a pipeline stage |
+| `shipwright memory pattern <type> [data]` | Record a codebase pattern |
+| `shipwright memory metric <name> <value>` | Update a performance baseline |
+| `shipwright memory decision <type> <summary>` | Record a design decision |
+| `shipwright memory analyze-failure <log> <stage>` | Analyze failure root cause via AI |
+
+**Examples:**
+
+```bash
+shipwright memory show                                           # View repo memory
+shipwright memory show --global                                  # View cross-repo learnings
+shipwright memory search "auth"                                  # Find auth-related memories
+shipwright memory export > backup.json                           # Export memory
+shipwright memory import backup.json                             # Import memory
+shipwright memory capture .claude/pipeline-state.md .claude/pipeline-artifacts
+shipwright memory inject build                                   # Get context for build stage
+```
+
+See [Memory guide](/guides/memory/) for details.
+
+## Cost Intelligence
+
+### `shipwright cost`
+
+Token usage tracking, budget enforcement, and spending analysis.
+
+| Subcommand | Description |
+|------------|-------------|
+| `shipwright cost show` | Show cost summary for current period |
+| `shipwright cost budget set <amount>` | Set daily budget (USD) |
+| `shipwright cost budget show` | Show current budget and usage |
+
+**Show flags:**
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--period <days>` | Reporting period | 7 |
+| `--json` | JSON output | off |
+| `--by-stage` | Breakdown by pipeline stage | off |
+| `--by-issue` | Breakdown by issue | off |
+
+**Pipeline integration commands** (called automatically by pipelines):
+
+| Subcommand | Description |
+|------------|-------------|
+| `shipwright cost record <in> <out> <model> <stage> [issue]` | Record token usage |
+| `shipwright cost calculate <in> <out> <model>` | Calculate cost without recording |
+| `shipwright cost check-budget [estimated_usd]` | Check budget before starting |
+
+**Model pricing (USD per 1M tokens):**
+
+| Model | Input | Output |
+|-------|-------|--------|
+| opus | $15.00 | $75.00 |
+| sonnet | $3.00 | $15.00 |
+| haiku | $0.25 | $1.25 |
+
+**Examples:**
+
+```bash
+shipwright cost show                              # 7-day cost summary
+shipwright cost show --period 30 --by-stage       # 30-day breakdown by stage
+shipwright cost budget set 50.00                  # Set $50/day limit
+shipwright cost budget show                       # Check current budget
+shipwright cost calculate 50000 10000 opus        # Estimate cost
+```
+
+See [Cost Intelligence guide](/guides/cost/) for details.
 
 ## Repo Preparation
 
-### `cct prep`
+### `shipwright prep`
 
 Analyze and prepare a repository for agent teams.
 
 ```bash
-cct prep [flags]
+shipwright prep [flags]
 ```
 
 **Flags:**
@@ -227,42 +421,42 @@ See [Repo Preparation guide](/guides/prep/) for details.
 
 ## Maintenance
 
-### `cct cleanup`
+### `shipwright cleanup`
 
 Clean up orphaned tmux sessions and panes.
 
 ```bash
-cct cleanup              # Dry-run: show what would be cleaned
-cct cleanup --force      # Actually clean up
+shipwright cleanup              # Dry-run: show what would be cleaned
+shipwright cleanup --force      # Actually clean up
 ```
 
-### `cct reaper`
+### `shipwright reaper`
 
 Clean up dead tmux panes (panes where Claude has exited).
 
 ```bash
-cct reaper               # One-shot cleanup
-cct reaper --watch       # Background auto-cleanup every 5s
-cct reaper --dry-run     # Preview what would be reaped
+shipwright reaper               # One-shot cleanup
+shipwright reaper --watch       # Background auto-cleanup every 5s
+shipwright reaper --dry-run     # Preview what would be reaped
 ```
 
 Also available via tmux keybinding: `Ctrl-a` then `R`.
 
-### `cct worktree`
+### `shipwright worktree`
 
 Manage git worktrees for agent isolation.
 
 ```bash
-cct worktree create <branch>    # Create a worktree
-cct worktree list               # List worktrees
-cct worktree remove <branch>    # Remove a worktree
+shipwright worktree create <branch>    # Create a worktree
+shipwright worktree list               # List worktrees
+shipwright worktree remove <branch>    # Remove a worktree
 ```
 
-### `cct templates`
+### `shipwright templates`
 
 Browse team templates.
 
 ```bash
-cct templates list              # List all templates
-cct templates show <name>       # Show template details
+shipwright templates list              # List all templates
+shipwright templates show <name>       # Show template details
 ```

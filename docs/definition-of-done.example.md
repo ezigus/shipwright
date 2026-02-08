@@ -1,6 +1,6 @@
 # Definition of Done
 
-Use this template with `cct loop --definition-of-done <file>` to enforce completion criteria.
+Use this template with `shipwright loop --definition-of-done <file>` to enforce completion criteria.
 Copy and customize for your project.
 
 ## Checklist

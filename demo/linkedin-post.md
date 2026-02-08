@@ -6,11 +6,11 @@ Picture this: three AI agents working in parallel — one building an API, one w
 
 That's what Claude Code agent teams look like when you give them proper tooling.
 
-I open-sourced the setup I've been refining: `cct` (Claude Code Teams). It's a CLI + tmux config that turns multi-agent AI development from chaotic to organized.
+I open-sourced the setup I've been refining: **Shipwright**. It's a CLI + tmux config that turns multi-agent AI development from chaotic to organized.
 
 The highlight reel:
 
-🔁 `cct loop` — Give it a goal, a test command, and walk away. It runs Claude in a build-test-review loop until everything passes. Autonomous coding that actually verifies its own work.
+🔁 `shipwright loop` — Give it a goal, a test command, and walk away. It runs Claude in a build-test-review loop until everything passes. Autonomous coding that actually verifies its own work.
 
 📋 12 team templates — Feature dev, bug fixes, security audits, migrations, code review, architecture planning. Each template assigns agents to separate files so they don't step on each other.
 
@@ -20,7 +20,7 @@ The highlight reel:
 
 My favorite workflow so far:
 
-    cct loop "Build user auth with JWT" --test-cmd "npm test" --audit
+    shipwright loop "Build user auth with JWT" --test-cmd "npm test" --audit
 
 Walk away. Get coffee. Come back to a working feature with passing tests. (Okay, sometimes you come back to a very confident agent that's still arguing with TypeScript. But that's part of the fun.)
 

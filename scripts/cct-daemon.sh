@@ -93,6 +93,16 @@ ON_FAILURE_ADD_LABEL="pipeline/failed"
 ON_FAILURE_LOG_LINES=50
 SLACK_WEBHOOK=""
 
+# Priority lane defaults
+PRIORITY_LANE=false
+PRIORITY_LANE_LABELS="hotfix,incident,p0,urgent"
+PRIORITY_LANE_MAX=1
+
+# Org-wide daemon defaults
+WATCH_MODE="repo"
+ORG=""
+REPO_FILTER=""
+
 # Patrol defaults (overridden by daemon-config.json or env)
 PATROL_INTERVAL="${PATROL_INTERVAL:-3600}"
 PATROL_MAX_ISSUES="${PATROL_MAX_ISSUES:-5}"
@@ -150,10 +160,10 @@ done
 # ─── Help ───────────────────────────────────────────────────────────────────
 
 show_help() {
-    echo -e "${CYAN}${BOLD}cct daemon${RESET} ${DIM}v${VERSION}${RESET} — Autonomous GitHub Issue Watcher"
+    echo -e "${CYAN}${BOLD}shipwright daemon${RESET} ${DIM}v${VERSION}${RESET} — Autonomous GitHub Issue Watcher"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
-    echo -e "  ${CYAN}cct daemon${RESET} <command> [options]"
+    echo -e "  ${CYAN}shipwright daemon${RESET} <command> [options]"
     echo ""
     echo -e "${BOLD}COMMANDS${RESET}"
     echo -e "  ${CYAN}start${RESET}    [--config path] [--detach]   Start the issue watcher"
@@ -172,27 +182,37 @@ show_help() {
     echo -e "  ${CYAN}--no-github${RESET}       Disable GitHub API calls (dry-run mode)"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
-    echo -e "  ${DIM}cct daemon init${RESET}                        # Generate config file"
-    echo -e "  ${DIM}cct daemon start${RESET}                       # Start watching in foreground"
-    echo -e "  ${DIM}cct daemon start --detach${RESET}               # Start in background tmux session"
-    echo -e "  ${DIM}cct daemon start --config my-config.json${RESET} # Custom config"
-    echo -e "  ${DIM}cct daemon status${RESET}                      # Show active jobs and queue"
-    echo -e "  ${DIM}cct daemon stop${RESET}                        # Graceful shutdown"
-    echo -e "  ${DIM}cct daemon logs --follow${RESET}               # Tail the daemon log"
-    echo -e "  ${DIM}cct daemon metrics${RESET}                     # DORA + DX metrics (last 7 days)"
-    echo -e "  ${DIM}cct daemon metrics --period 30${RESET}         # Last 30 days"
-    echo -e "  ${DIM}cct daemon metrics --json${RESET}              # JSON output for dashboards"
-    echo -e "  ${DIM}cct daemon triage${RESET}                      # Show issue triage scores"
-    echo -e "  ${DIM}cct daemon patrol${RESET}                      # Run proactive codebase patrol"
-    echo -e "  ${DIM}cct daemon patrol --dry-run${RESET}            # Show what patrol would find"
-    echo -e "  ${DIM}cct daemon patrol --once${RESET}               # Run patrol once and exit"
+    echo -e "  ${DIM}shipwright daemon init${RESET}                        # Generate config file"
+    echo -e "  ${DIM}shipwright daemon start${RESET}                       # Start watching in foreground"
+    echo -e "  ${DIM}shipwright daemon start --detach${RESET}               # Start in background tmux session"
+    echo -e "  ${DIM}shipwright daemon start --config my-config.json${RESET} # Custom config"
+    echo -e "  ${DIM}shipwright daemon status${RESET}                      # Show active jobs and queue"
+    echo -e "  ${DIM}shipwright daemon stop${RESET}                        # Graceful shutdown"
+    echo -e "  ${DIM}shipwright daemon logs --follow${RESET}               # Tail the daemon log"
+    echo -e "  ${DIM}shipwright daemon metrics${RESET}                     # DORA + DX metrics (last 7 days)"
+    echo -e "  ${DIM}shipwright daemon metrics --period 30${RESET}         # Last 30 days"
+    echo -e "  ${DIM}shipwright daemon metrics --json${RESET}              # JSON output for dashboards"
+    echo -e "  ${DIM}shipwright daemon triage${RESET}                      # Show issue triage scores"
+    echo -e "  ${DIM}shipwright daemon patrol${RESET}                      # Run proactive codebase patrol"
+    echo -e "  ${DIM}shipwright daemon patrol --dry-run${RESET}            # Show what patrol would find"
+    echo -e "  ${DIM}shipwright daemon patrol --once${RESET}               # Run patrol once and exit"
     echo ""
     echo -e "${BOLD}CONFIG FILE${RESET}  ${DIM}(.claude/daemon-config.json)${RESET}"
-    echo -e "  ${DIM}watch_label${RESET}       GitHub label to watch for       ${DIM}(default: ready-to-build)${RESET}"
-    echo -e "  ${DIM}poll_interval${RESET}     Seconds between polls           ${DIM}(default: 60)${RESET}"
-    echo -e "  ${DIM}max_parallel${RESET}      Max concurrent pipeline jobs    ${DIM}(default: 2)${RESET}"
-    echo -e "  ${DIM}pipeline_template${RESET} Pipeline template to use        ${DIM}(default: autonomous)${RESET}"
-    echo -e "  ${DIM}base_branch${RESET}       Branch to create worktrees from ${DIM}(default: main)${RESET}"
+    echo -e "  ${DIM}watch_label${RESET}         GitHub label to watch for         ${DIM}(default: ready-to-build)${RESET}"
+    echo -e "  ${DIM}poll_interval${RESET}       Seconds between polls             ${DIM}(default: 60)${RESET}"
+    echo -e "  ${DIM}max_parallel${RESET}        Max concurrent pipeline jobs      ${DIM}(default: 2)${RESET}"
+    echo -e "  ${DIM}pipeline_template${RESET}   Pipeline template to use          ${DIM}(default: autonomous)${RESET}"
+    echo -e "  ${DIM}base_branch${RESET}         Branch to create worktrees from   ${DIM}(default: main)${RESET}"
+    echo ""
+    echo -e "  ${BOLD}Priority Lanes${RESET}"
+    echo -e "  ${DIM}priority_lane${RESET}        Enable priority bypass queue     ${DIM}(default: false)${RESET}"
+    echo -e "  ${DIM}priority_lane_labels${RESET} Labels that trigger priority     ${DIM}(default: hotfix,incident,p0,urgent)${RESET}"
+    echo -e "  ${DIM}priority_lane_max${RESET}    Max extra slots for priority     ${DIM}(default: 1)${RESET}"
+    echo ""
+    echo -e "  ${BOLD}Org-Wide Mode${RESET}"
+    echo -e "  ${DIM}watch_mode${RESET}          \"repo\" or \"org\"                    ${DIM}(default: repo)${RESET}"
+    echo -e "  ${DIM}org${RESET}                 GitHub org name                   ${DIM}(required for org mode)${RESET}"
+    echo -e "  ${DIM}repo_filter${RESET}         Regex filter for repo names       ${DIM}(e.g. \"api-.*|web-.*\")${RESET}"
     echo ""
     echo -e "${BOLD}HOW IT WORKS${RESET}"
     echo -e "  1. Polls GitHub for issues with the ${CYAN}${WATCH_LABEL}${RESET} label"
@@ -200,6 +220,8 @@ show_help() {
     echo -e "  3. On success: removes label, adds ${GREEN}pipeline/complete${RESET}, comments on issue"
     echo -e "  4. On failure: adds ${RED}pipeline/failed${RESET}, comments with log tail"
     echo -e "  5. Respects ${CYAN}max_parallel${RESET} limit — excess issues are queued"
+    echo -e "  6. Priority lane: ${CYAN}hotfix${RESET}/${CYAN}incident${RESET} issues bypass the queue"
+    echo -e "  7. Org mode: watches issues across all repos in a GitHub org"
     echo ""
     echo -e "${DIM}Docs: https://sethdford.github.io/shipwright  |  GitHub: https://github.com/sethdford/shipwright${RESET}"
 }
@@ -211,7 +233,7 @@ load_config() {
 
     if [[ ! -f "$config_file" ]]; then
         warn "Config not found at $config_file — using defaults"
-        warn "Run ${CYAN}cct daemon init${RESET} to generate a config file"
+        warn "Run ${CYAN}shipwright daemon init${RESET} to generate a config file"
         return 0
     fi
 
@@ -253,6 +275,30 @@ load_config() {
     PATROL_INTERVAL=$(jq -r '.patrol.interval // 3600' "$config_file")
     PATROL_MAX_ISSUES=$(jq -r '.patrol.max_issues // 5' "$config_file")
     PATROL_LABEL=$(jq -r '.patrol.label // "auto-patrol"' "$config_file")
+
+    # adaptive template selection
+    AUTO_TEMPLATE=$(jq -r '.auto_template // false' "$config_file")
+    TEMPLATE_MAP=$(jq -r '.template_map // "{}" | @json' "$config_file" 2>/dev/null || echo '"{}"')
+
+    # auto-retry with escalation
+    MAX_RETRIES=$(jq -r '.max_retries // 2' "$config_file")
+    RETRY_ESCALATION=$(jq -r '.retry_escalation // true' "$config_file")
+
+    # self-optimization
+    SELF_OPTIMIZE=$(jq -r '.self_optimize // false' "$config_file")
+    OPTIMIZE_INTERVAL=$(jq -r '.optimize_interval // 10' "$config_file")
+
+    # priority lane settings
+    PRIORITY_LANE=$(jq -r '.priority_lane // false' "$config_file")
+    PRIORITY_LANE_LABELS=$(jq -r '.priority_lane_labels // "hotfix,incident,p0,urgent"' "$config_file")
+    PRIORITY_LANE_MAX=$(jq -r '.priority_lane_max // 1' "$config_file")
+
+    # org-wide daemon mode
+    WATCH_MODE=$(jq -r '.watch_mode // "repo"' "$config_file")
+    ORG=$(jq -r '.org // ""' "$config_file")
+    if [[ "$ORG" == "null" ]]; then ORG=""; fi
+    REPO_FILTER=$(jq -r '.repo_filter // ""' "$config_file")
+    if [[ "$REPO_FILTER" == "null" ]]; then REPO_FILTER=""; fi
 
     success "Config loaded"
 }
@@ -311,15 +357,16 @@ notify() {
             -d "$payload" "$SLACK_WEBHOOK" >/dev/null 2>&1 || true
     fi
 
-    # Custom webhook (env var CCT_WEBHOOK_URL)
-    if [[ -n "${CCT_WEBHOOK_URL:-}" ]]; then
+    # Custom webhook (env var SHIPWRIGHT_WEBHOOK_URL, with CCT_WEBHOOK_URL fallback)
+    local _webhook_url="${SHIPWRIGHT_WEBHOOK_URL:-${CCT_WEBHOOK_URL:-}}"
+    if [[ -n "$_webhook_url" ]]; then
         local payload
         payload=$(jq -n \
             --arg title "$title" --arg message "$message" \
             --arg level "$level" \
             '{title:$title, message:$message, level:$level}')
         curl -sf -X POST -H 'Content-Type: application/json' \
-            -d "$payload" "$CCT_WEBHOOK_URL" >/dev/null 2>&1 || true
+            -d "$payload" "$_webhook_url" >/dev/null 2>&1 || true
     fi
 }
 
@@ -426,6 +473,7 @@ init_state() {
             --argjson interval "$POLL_INTERVAL" \
             --argjson max_parallel "$MAX_PARALLEL" \
             --arg label "$WATCH_LABEL" \
+            --arg watch_mode "$WATCH_MODE" \
             '{
                 version: 1,
                 pid: ($pid | tonumber),
@@ -434,11 +482,14 @@ init_state() {
                 config: {
                     poll_interval: $interval,
                     max_parallel: $max_parallel,
-                    watch_label: $label
+                    watch_label: $label,
+                    watch_mode: $watch_mode
                 },
                 active_jobs: [],
                 queued: [],
-                completed: []
+                completed: [],
+                retry_counts: {},
+                priority_lane_active: []
             }' > "$STATE_FILE"
     else
         # Update PID and start time in existing state
@@ -527,11 +578,82 @@ dequeue_next() {
     fi
 }
 
+# ─── Priority Lane Helpers ─────────────────────────────────────────────────
+
+is_priority_issue() {
+    local labels_csv="$1"
+    local IFS=','
+    local lane_labels
+    read -ra lane_labels <<< "$PRIORITY_LANE_LABELS"
+    for lane_label in "${lane_labels[@]}"; do
+        # Trim whitespace
+        lane_label="${lane_label## }"
+        lane_label="${lane_label%% }"
+        if [[ ",$labels_csv," == *",$lane_label,"* ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+get_priority_active_count() {
+    if [[ ! -f "$STATE_FILE" ]]; then
+        echo 0
+        return
+    fi
+    jq -r '.priority_lane_active // [] | length' "$STATE_FILE" 2>/dev/null || echo 0
+}
+
+track_priority_job() {
+    local issue_num="$1"
+    local tmp
+    tmp=$(jq --argjson num "$issue_num" \
+        '.priority_lane_active = ((.priority_lane_active // []) + [$num] | unique)' \
+        "$STATE_FILE")
+    atomic_write_state "$tmp"
+}
+
+untrack_priority_job() {
+    local issue_num="$1"
+    if [[ ! -f "$STATE_FILE" ]]; then
+        return
+    fi
+    local tmp
+    tmp=$(jq --argjson num "$issue_num" \
+        '.priority_lane_active = [(.priority_lane_active // [])[] | select(. != $num)]' \
+        "$STATE_FILE")
+    atomic_write_state "$tmp"
+}
+
+# ─── Org-Wide Repo Management ─────────────────────────────────────────────
+
+daemon_ensure_repo() {
+    local owner="$1" repo="$2"
+    local repo_dir="$DAEMON_DIR/repos/${owner}/${repo}"
+
+    if [[ -d "$repo_dir/.git" ]]; then
+        # Pull latest
+        (cd "$repo_dir" && git pull --ff-only 2>/dev/null) || {
+            daemon_log WARN "Failed to update ${owner}/${repo} — using existing clone"
+        }
+    else
+        mkdir -p "$DAEMON_DIR/repos/${owner}"
+        if ! git clone --depth=1 "https://github.com/${owner}/${repo}.git" "$repo_dir" 2>/dev/null; then
+            daemon_log ERROR "Failed to clone ${owner}/${repo}"
+            return 1
+        fi
+        daemon_log INFO "Cloned ${owner}/${repo} to ${repo_dir}"
+    fi
+
+    echo "$repo_dir"
+}
+
 # ─── Spawn Pipeline ─────────────────────────────────────────────────────────
 
 daemon_spawn_pipeline() {
     local issue_num="$1"
     local issue_title="${2:-}"
+    local repo_full_name="${3:-}"  # owner/repo (org mode only)
 
     daemon_log INFO "Spawning pipeline for issue #${issue_num}: ${issue_title}"
 
@@ -543,22 +665,39 @@ daemon_spawn_pipeline() {
         return 1
     fi
 
-    # Create worktree
-    local worktree_path="${WORKTREE_DIR}/daemon-issue-${issue_num}"
-    local branch_name="daemon/issue-${issue_num}"
+    local work_dir="" branch_name="daemon/issue-${issue_num}"
 
-    # Clean up stale worktree if it exists
-    if [[ -d "$worktree_path" ]]; then
-        git worktree remove "$worktree_path" --force 2>/dev/null || true
+    if [[ "$WATCH_MODE" == "org" && -n "$repo_full_name" ]]; then
+        # Org mode: use cloned repo directory
+        local owner="${repo_full_name%%/*}"
+        local repo="${repo_full_name##*/}"
+        work_dir=$(daemon_ensure_repo "$owner" "$repo") || return 1
+
+        # Create branch in the cloned repo
+        (
+            cd "$work_dir"
+            git checkout -B "$branch_name" "${BASE_BRANCH}" 2>/dev/null
+        ) || {
+            daemon_log ERROR "Failed to create branch in ${repo_full_name}"
+            return 1
+        }
+        daemon_log INFO "Org mode: working in ${work_dir} (${repo_full_name})"
+    else
+        # Standard mode: use git worktree
+        work_dir="${WORKTREE_DIR}/daemon-issue-${issue_num}"
+
+        # Clean up stale worktree if it exists
+        if [[ -d "$work_dir" ]]; then
+            git worktree remove "$work_dir" --force 2>/dev/null || true
+        fi
+        git branch -D "$branch_name" 2>/dev/null || true
+
+        if ! git worktree add "$work_dir" -b "$branch_name" "$BASE_BRANCH" 2>/dev/null; then
+            daemon_log ERROR "Failed to create worktree for issue #${issue_num}"
+            return 1
+        fi
+        daemon_log INFO "Worktree created at ${work_dir}"
     fi
-    git branch -D "$branch_name" 2>/dev/null || true
-
-    if ! git worktree add "$worktree_path" -b "$branch_name" "$BASE_BRANCH" 2>/dev/null; then
-        daemon_log ERROR "Failed to create worktree for issue #${issue_num}"
-        return 1
-    fi
-
-    daemon_log INFO "Worktree created at ${worktree_path}"
 
     # Build pipeline args
     local pipeline_args=("start" "--issue" "$issue_num" "--pipeline" "$PIPELINE_TEMPLATE")
@@ -572,22 +711,26 @@ daemon_spawn_pipeline() {
         pipeline_args+=("--no-github")
     fi
 
-    # Run pipeline in worktree (background)
+    # Run pipeline in work directory (background)
     (
-        cd "$worktree_path"
+        cd "$work_dir"
         "$SCRIPT_DIR/cct-pipeline.sh" "${pipeline_args[@]}"
     ) > "$LOG_DIR/issue-${issue_num}.log" 2>&1 &
     local pid=$!
 
     daemon_log INFO "Pipeline started for issue #${issue_num} (PID: ${pid})"
 
-    # Track the job
-    daemon_track_job "$issue_num" "$pid" "$worktree_path" "$issue_title"
-    emit_event "daemon.spawn" "issue=$issue_num" "pid=$pid"
+    # Track the job (include repo for org mode)
+    daemon_track_job "$issue_num" "$pid" "$work_dir" "$issue_title" "$repo_full_name"
+    emit_event "daemon.spawn" "issue=$issue_num" "pid=$pid" "repo=${repo_full_name:-local}"
 
     # Comment on the issue
     if [[ "$NO_GITHUB" != "true" ]]; then
-        gh issue comment "$issue_num" --body "## 🤖 Pipeline Started
+        local gh_args=()
+        if [[ -n "$repo_full_name" ]]; then
+            gh_args+=("--repo" "$repo_full_name")
+        fi
+        gh issue comment "$issue_num" "${gh_args[@]}" --body "## 🤖 Pipeline Started
 
 **Daemon** picked up this issue and started an autonomous pipeline.
 
@@ -595,6 +738,7 @@ daemon_spawn_pipeline() {
 |-------|-------|
 | Template | \`${PIPELINE_TEMPLATE}\` |
 | Branch | \`${branch_name}\` |
+| Repo | \`${repo_full_name:-local}\` |
 | Started | $(now_iso) |
 
 _Progress updates will be posted as the pipeline advances._" 2>/dev/null || true
@@ -604,7 +748,7 @@ _Progress updates will be posted as the pipeline advances._" 2>/dev/null || true
 # ─── Track Job ───────────────────────────────────────────────────────────────
 
 daemon_track_job() {
-    local issue_num="$1" pid="$2" worktree="$3" title="${4:-}"
+    local issue_num="$1" pid="$2" worktree="$3" title="${4:-}" repo="${5:-}"
     local tmp
     tmp=$(jq \
         --argjson num "$issue_num" \
@@ -612,12 +756,14 @@ daemon_track_job() {
         --arg wt "$worktree" \
         --arg title "$title" \
         --arg started "$(now_iso)" \
+        --arg repo "$repo" \
         '.active_jobs += [{
             issue: $num,
             pid: $pid,
             worktree: $wt,
             title: $title,
-            started_at: $started
+            started_at: $started,
+            repo: $repo
         }]' \
         "$STATE_FILE")
     atomic_write_state "$tmp"
@@ -675,19 +821,24 @@ daemon_reap_completed() {
             daemon_on_failure "$issue_num" "$exit_code" "$duration_str"
         fi
 
-        # Remove from active_jobs
+        # Remove from active_jobs and priority lane tracking
         local tmp
         tmp=$(jq --argjson num "$issue_num" \
             '.active_jobs = [.active_jobs[] | select(.issue != $num)]' \
             "$STATE_FILE")
         atomic_write_state "$tmp"
+        untrack_priority_job "$issue_num"
 
-        # Clean up worktree
-        if [[ -d "$worktree" ]]; then
+        # Clean up worktree (skip for org-mode clones — they persist)
+        local job_repo
+        job_repo=$(echo "$job" | jq -r '.repo // ""')
+        if [[ -z "$job_repo" ]] && [[ -d "$worktree" ]]; then
             git worktree remove "$worktree" --force 2>/dev/null || true
             daemon_log INFO "Cleaned worktree: $worktree"
+            git branch -D "daemon/issue-${issue_num}" 2>/dev/null || true
+        elif [[ -n "$job_repo" ]]; then
+            daemon_log INFO "Org-mode: preserving clone for ${job_repo}"
         fi
-        git branch -D "daemon/issue-${issue_num}" 2>/dev/null || true
 
         # Dequeue next issue if available
         local next_issue
@@ -775,6 +926,73 @@ daemon_on_failure() {
         "$STATE_FILE")
     atomic_write_state "$tmp"
 
+    # ── Auto-retry with strategy escalation ──
+    if [[ "${RETRY_ESCALATION:-true}" == "true" ]]; then
+        local retry_count
+        retry_count=$(jq -r --arg num "$issue_num" \
+            '.retry_counts[$num] // 0' "$STATE_FILE" 2>/dev/null || echo "0")
+
+        if [[ "$retry_count" -lt "${MAX_RETRIES:-2}" ]]; then
+            retry_count=$((retry_count + 1))
+
+            # Update retry count in state
+            local tmp_state
+            tmp_state=$(jq --arg num "$issue_num" --argjson count "$retry_count" \
+                '.retry_counts[$num] = $count' "$STATE_FILE")
+            atomic_write_state "$tmp_state"
+
+            daemon_log WARN "Auto-retry #${retry_count}/${MAX_RETRIES:-2} for issue #${issue_num}"
+            emit_event "daemon.retry" "issue=$issue_num" "retry=$retry_count" "max=${MAX_RETRIES:-2}"
+
+            # Build escalated pipeline args
+            local retry_template="$PIPELINE_TEMPLATE"
+            local retry_model="${MODEL:-opus}"
+            local extra_args=()
+
+            if [[ "$retry_count" -eq 1 ]]; then
+                # Retry 1: same template, upgrade model, more iterations
+                retry_model="opus"
+                extra_args+=("--max-iterations" "30")
+                daemon_log INFO "Escalation: model=opus, max_iterations=30"
+            elif [[ "$retry_count" -ge 2 ]]; then
+                # Retry 2: full template, compound quality max cycles
+                retry_template="full"
+                retry_model="opus"
+                extra_args+=("--max-iterations" "30" "--compound-cycles" "5")
+                daemon_log INFO "Escalation: template=full, compound_cycles=5"
+            fi
+
+            if [[ "$NO_GITHUB" != "true" ]]; then
+                gh issue comment "$issue_num" --body "## 🔄 Auto-Retry #${retry_count}
+
+Pipeline failed — retrying with escalated strategy.
+
+| Field | Value |
+|-------|-------|
+| Retry | ${retry_count} / ${MAX_RETRIES:-2} |
+| Template | \`${retry_template}\` |
+| Model | \`${retry_model}\` |
+| Started | $(now_iso) |
+
+_Escalation: $(if [[ "$retry_count" -eq 1 ]]; then echo "upgraded model + increased iterations"; else echo "full template + compound quality"; fi)_" 2>/dev/null || true
+            fi
+
+            # Re-spawn with escalated strategy
+            local orig_template="$PIPELINE_TEMPLATE"
+            local orig_model="$MODEL"
+            PIPELINE_TEMPLATE="$retry_template"
+            MODEL="$retry_model"
+            daemon_spawn_pipeline "$issue_num" "retry-${retry_count}"
+            PIPELINE_TEMPLATE="$orig_template"
+            MODEL="$orig_model"
+            return
+        fi
+
+        daemon_log WARN "Max retries (${MAX_RETRIES:-2}) exhausted for issue #${issue_num}"
+        emit_event "daemon.retry_exhausted" "issue=$issue_num" "retries=$retry_count"
+    fi
+
+    # ── No retry — report final failure ──
     if [[ "$NO_GITHUB" != "true" ]]; then
         # Add failure label
         gh issue edit "$issue_num" \
@@ -787,6 +1005,14 @@ daemon_on_failure() {
             log_tail=$(tail -"$ON_FAILURE_LOG_LINES" "$log_path" 2>/dev/null || true)
         fi
 
+        local retry_info=""
+        if [[ "${RETRY_ESCALATION:-true}" == "true" ]]; then
+            local final_count
+            final_count=$(jq -r --arg num "$issue_num" \
+                '.retry_counts[$num] // 0' "$STATE_FILE" 2>/dev/null || echo "0")
+            retry_info="| Retries | ${final_count} / ${MAX_RETRIES:-2} (exhausted) |"
+        fi
+
         gh issue comment "$issue_num" --body "## ❌ Pipeline Failed
 
 The autonomous pipeline encountered an error.
@@ -796,6 +1022,7 @@ The autonomous pipeline encountered an error.
 | Exit Code | ${exit_code} |
 | Duration | ${duration:-unknown} |
 | Failed At | $(now_iso) |
+${retry_info}
 
 <details>
 <summary>Last ${ON_FAILURE_LOG_LINES} lines of log</summary>
@@ -959,16 +1186,48 @@ triage_score_issue() {
 # Auto-select pipeline template based on issue labels
 select_pipeline_template() {
     local labels="$1"
-    if echo "$labels" | grep -qi "hotfix\|urgent\|p0"; then
+    local score="${2:-50}"
+
+    # When auto_template is disabled, use default pipeline template
+    if [[ "${AUTO_TEMPLATE:-false}" != "true" ]]; then
+        echo "$PIPELINE_TEMPLATE"
+        return
+    fi
+
+    # ── Label-based overrides (highest priority) ──
+    if echo "$labels" | grep -qi "hotfix\|incident"; then
         echo "hotfix"
-    elif echo "$labels" | grep -qi "bug"; then
+        return
+    fi
+    if echo "$labels" | grep -qi "security"; then
+        echo "enterprise"
+        return
+    fi
+
+    # ── Config-driven template_map overrides ──
+    local map="${TEMPLATE_MAP:-\"{}\"}"
+    # Unwrap double-encoded JSON if needed
+    local decoded_map
+    decoded_map=$(echo "$map" | jq -r 'if type == "string" then . else tostring end' 2>/dev/null || echo "{}")
+    if [[ "$decoded_map" != "{}" ]]; then
+        local matched
+        matched=$(echo "$decoded_map" | jq -r --arg labels "$labels" '
+            to_entries[] |
+            select($labels | test(.key; "i")) |
+            .value' 2>/dev/null | head -1)
+        if [[ -n "$matched" ]]; then
+            echo "$matched"
+            return
+        fi
+    fi
+
+    # ── Score-based selection ──
+    if [[ "$score" -ge 70 ]]; then
         echo "fast"
-    elif echo "$labels" | grep -qi "feature\|enhancement"; then
+    elif [[ "$score" -ge 40 ]]; then
         echo "standard"
-    elif echo "$labels" | grep -qi "security"; then
-        echo "full"
     else
-        echo "standard"
+        echo "full"
     fi
 }
 
@@ -1011,7 +1270,7 @@ daemon_triage_show() {
         title=$(echo "$issue" | jq -r '.title // "—"')
         labels_csv=$(echo "$issue" | jq -r '[.labels[].name] | join(", ")')
         score=$(triage_score_issue "$issue")
-        template=$(select_pipeline_template "$labels_csv")
+        template=$(select_pipeline_template "$labels_csv" "$score")
 
         scored_lines+=("${score}|${num}|${title}|${labels_csv}|${template}")
     done < <(echo "$issues_json" | jq -c '.[]')
@@ -1520,24 +1779,55 @@ daemon_poll_issues() {
     fi
 
     local issues_json
-    issues_json=$(gh issue list \
-        --label "$WATCH_LABEL" \
-        --state open \
-        --json number,title,labels,body,createdAt \
-        --limit 20 2>/dev/null) || {
-        # Handle rate limiting with exponential backoff
-        if [[ $BACKOFF_SECS -eq 0 ]]; then
-            BACKOFF_SECS=30
-        elif [[ $BACKOFF_SECS -lt 300 ]]; then
-            BACKOFF_SECS=$((BACKOFF_SECS * 2))
-            if [[ $BACKOFF_SECS -gt 300 ]]; then
-                BACKOFF_SECS=300
+
+    if [[ "$WATCH_MODE" == "org" && -n "$ORG" ]]; then
+        # Org-wide mode: search issues across all org repos
+        issues_json=$(gh search issues \
+            --label "$WATCH_LABEL" \
+            --owner "$ORG" \
+            --state open \
+            --json repository,number,title,labels,body,createdAt \
+            --limit 20 2>/dev/null) || {
+            # Handle rate limiting with exponential backoff
+            if [[ $BACKOFF_SECS -eq 0 ]]; then
+                BACKOFF_SECS=30
+            elif [[ $BACKOFF_SECS -lt 300 ]]; then
+                BACKOFF_SECS=$((BACKOFF_SECS * 2))
+                if [[ $BACKOFF_SECS -gt 300 ]]; then
+                    BACKOFF_SECS=300
+                fi
             fi
+            daemon_log WARN "GitHub API error (org search) — backing off ${BACKOFF_SECS}s"
+            sleep "$BACKOFF_SECS"
+            return
+        }
+
+        # Filter by repo_filter regex if set
+        if [[ -n "$REPO_FILTER" ]]; then
+            issues_json=$(echo "$issues_json" | jq -c --arg filter "$REPO_FILTER" \
+                '[.[] | select(.repository.nameWithOwner | test($filter))]')
         fi
-        daemon_log WARN "GitHub API error — backing off ${BACKOFF_SECS}s"
-        sleep "$BACKOFF_SECS"
-        return
-    }
+    else
+        # Standard single-repo mode
+        issues_json=$(gh issue list \
+            --label "$WATCH_LABEL" \
+            --state open \
+            --json number,title,labels,body,createdAt \
+            --limit 20 2>/dev/null) || {
+            # Handle rate limiting with exponential backoff
+            if [[ $BACKOFF_SECS -eq 0 ]]; then
+                BACKOFF_SECS=30
+            elif [[ $BACKOFF_SECS -lt 300 ]]; then
+                BACKOFF_SECS=$((BACKOFF_SECS * 2))
+                if [[ $BACKOFF_SECS -gt 300 ]]; then
+                    BACKOFF_SECS=300
+                fi
+            fi
+            daemon_log WARN "GitHub API error — backing off ${BACKOFF_SECS}s"
+            sleep "$BACKOFF_SECS"
+            return
+        }
+    fi
 
     # Reset backoff on success
     BACKOFF_SECS=0
@@ -1549,8 +1839,10 @@ daemon_poll_issues() {
         return
     fi
 
-    daemon_log INFO "Found ${issue_count} issue(s) with label '${WATCH_LABEL}'"
-    emit_event "daemon.poll" "issues_found=$issue_count" "active=$(get_active_count)"
+    local mode_label="repo"
+    [[ "$WATCH_MODE" == "org" ]] && mode_label="org:${ORG}"
+    daemon_log INFO "Found ${issue_count} issue(s) with label '${WATCH_LABEL}' (${mode_label})"
+    emit_event "daemon.poll" "issues_found=$issue_count" "active=$(get_active_count)" "mode=$WATCH_MODE"
 
     # Score each issue using intelligent triage and sort by descending score
     local scored_issues=()
@@ -1558,7 +1850,12 @@ daemon_poll_issues() {
         local num score
         num=$(echo "$issue" | jq -r '.number')
         score=$(triage_score_issue "$issue")
-        scored_issues+=("${score}|${num}")
+        # For org mode, include repo name in the scored entry
+        local repo_name=""
+        if [[ "$WATCH_MODE" == "org" ]]; then
+            repo_name=$(echo "$issue" | jq -r '.repository.nameWithOwner // ""')
+        fi
+        scored_issues+=("${score}|${num}|${repo_name}")
     done < <(echo "$issues_json" | jq -c '.[]')
 
     # Sort by score descending
@@ -1569,7 +1866,7 @@ daemon_poll_issues() {
     active_count=$(get_active_count)
 
     # Process each issue in triage order (process substitution keeps state in current shell)
-    while IFS='|' read -r score issue_num; do
+    while IFS='|' read -r score issue_num repo_name; do
         [[ -z "$issue_num" ]] && continue
 
         local issue_title labels_csv
@@ -1581,6 +1878,27 @@ daemon_poll_issues() {
             continue
         fi
 
+        # Priority lane: bypass queue for critical issues
+        if [[ "$PRIORITY_LANE" == "true" ]]; then
+            local priority_active
+            priority_active=$(get_priority_active_count)
+            if is_priority_issue "$labels_csv" && [[ "$priority_active" -lt "$PRIORITY_LANE_MAX" ]]; then
+                daemon_log WARN "PRIORITY LANE: issue #${issue_num} bypassing queue (${labels_csv})"
+                emit_event "daemon.priority_lane" "issue=$issue_num" "score=$score"
+
+                local template
+                template=$(select_pipeline_template "$labels_csv" "$score")
+                daemon_log INFO "Triage: issue #${issue_num} scored ${score}, template=${template} [PRIORITY]"
+
+                local orig_template="$PIPELINE_TEMPLATE"
+                PIPELINE_TEMPLATE="$template"
+                daemon_spawn_pipeline "$issue_num" "$issue_title" "$repo_name"
+                PIPELINE_TEMPLATE="$orig_template"
+                track_priority_job "$issue_num"
+                continue
+            fi
+        fi
+
         # Check capacity
         active_count=$(get_active_count)
         if [[ "$active_count" -ge "$MAX_PARALLEL" ]]; then
@@ -1588,15 +1906,15 @@ daemon_poll_issues() {
             continue
         fi
 
-        # Auto-select pipeline template based on labels
+        # Auto-select pipeline template based on labels + triage score
         local template
-        template=$(select_pipeline_template "$labels_csv")
+        template=$(select_pipeline_template "$labels_csv" "$score")
         daemon_log INFO "Triage: issue #${issue_num} scored ${score}, template=${template}"
 
         # Spawn pipeline (template selection applied via PIPELINE_TEMPLATE override)
         local orig_template="$PIPELINE_TEMPLATE"
         PIPELINE_TEMPLATE="$template"
-        daemon_spawn_pipeline "$issue_num" "$issue_title"
+        daemon_spawn_pipeline "$issue_num" "$issue_title" "$repo_name"
         PIPELINE_TEMPLATE="$orig_template"
     done <<< "$sorted_order"
 
@@ -1701,6 +2019,126 @@ daemon_check_degradation() {
     fi
 }
 
+# ─── Self-Optimizing Metrics Loop ──────────────────────────────────────────
+
+daemon_self_optimize() {
+    if [[ "${SELF_OPTIMIZE:-false}" != "true" ]]; then
+        return
+    fi
+
+    if [[ ! -f "$EVENTS_FILE" ]]; then
+        return
+    fi
+
+    daemon_log INFO "Running self-optimization check"
+
+    # Read DORA metrics from recent events (last 7 days)
+    local cutoff_epoch
+    cutoff_epoch=$(( $(now_epoch) - (7 * 86400) ))
+
+    local period_events
+    period_events=$(jq -c "select(.ts_epoch >= $cutoff_epoch)" "$EVENTS_FILE" 2>/dev/null || true)
+
+    if [[ -z "$period_events" ]]; then
+        daemon_log INFO "No recent events for optimization"
+        return
+    fi
+
+    local total_completed successes failures
+    total_completed=$(echo "$period_events" | jq -s '[.[] | select(.type == "pipeline.completed")] | length')
+    successes=$(echo "$period_events" | jq -s '[.[] | select(.type == "pipeline.completed" and .result == "success")] | length')
+    failures=$(echo "$period_events" | jq -s '[.[] | select(.type == "pipeline.completed" and .result == "failure")] | length')
+
+    # Change Failure Rate
+    local cfr=0
+    if [[ "$total_completed" -gt 0 ]]; then
+        cfr=$(echo "$failures $total_completed" | awk '{printf "%.0f", ($1 / $2) * 100}')
+    fi
+
+    # Cycle time (median, in seconds)
+    local cycle_time_median
+    cycle_time_median=$(echo "$period_events" | \
+        jq -s '[.[] | select(.type == "pipeline.completed" and .result == "success") | .duration_s // 0] | sort | if length > 0 then .[length/2 | floor] else 0 end')
+
+    # Deploy frequency (per week)
+    local deploy_freq
+    deploy_freq=$(echo "$successes" | awk '{printf "%.1f", $1 / 1}')  # Already 7 days
+
+    # MTTR
+    local mttr
+    mttr=$(echo "$period_events" | \
+        jq -s '
+            [.[] | select(.type == "pipeline.completed")] | sort_by(.ts_epoch // 0) |
+            [range(length) as $i |
+                if .[$i].result == "failure" then
+                    [.[$i+1:][] | select(.result == "success")][0] as $next |
+                    if $next and $next.ts_epoch and .[$i].ts_epoch then
+                        ($next.ts_epoch - .[$i].ts_epoch)
+                    else null end
+                else null end
+            ] | map(select(. != null)) |
+            if length > 0 then (add / length | floor) else 0 end
+        ')
+
+    local adjustments=()
+
+    # ── CFR > 20%: enable compound_quality, increase max_cycles ──
+    if [[ "$cfr" -gt 40 ]]; then
+        PIPELINE_TEMPLATE="full"
+        adjustments+=("template→full (CFR ${cfr}% > 40%)")
+        daemon_log WARN "Self-optimize: CFR ${cfr}% critical — switching to full template"
+    elif [[ "$cfr" -gt 20 ]]; then
+        adjustments+=("compound_quality enabled (CFR ${cfr}% > 20%)")
+        daemon_log WARN "Self-optimize: CFR ${cfr}% elevated — enabling compound quality"
+    fi
+
+    # ── Lead time > 4hrs: increase max_parallel, reduce poll_interval ──
+    if [[ "$cycle_time_median" -gt 14400 ]]; then
+        MAX_PARALLEL=$((MAX_PARALLEL + 1))
+        if [[ "$POLL_INTERVAL" -gt 30 ]]; then
+            POLL_INTERVAL=$((POLL_INTERVAL / 2))
+        fi
+        adjustments+=("max_parallel→${MAX_PARALLEL}, poll_interval→${POLL_INTERVAL}s (lead time > 4hrs)")
+        daemon_log WARN "Self-optimize: lead time $(format_duration "$cycle_time_median") — increasing parallelism"
+    elif [[ "$cycle_time_median" -gt 7200 ]]; then
+        # ── Lead time > 2hrs: enable auto_template for fast-pathing ──
+        AUTO_TEMPLATE="true"
+        adjustments+=("auto_template enabled (lead time > 2hrs)")
+        daemon_log INFO "Self-optimize: lead time $(format_duration "$cycle_time_median") — enabling adaptive templates"
+    fi
+
+    # ── Deploy freq < 1/day (< 7/week): enable merge stage ──
+    if [[ "$(echo "$deploy_freq < 7" | bc -l 2>/dev/null || echo 0)" == "1" ]]; then
+        adjustments+=("merge stage recommended (deploy freq ${deploy_freq}/week)")
+        daemon_log INFO "Self-optimize: low deploy frequency — consider enabling merge stage"
+    fi
+
+    # ── MTTR > 2hrs: enable auto_rollback ──
+    if [[ "$mttr" -gt 7200 ]]; then
+        adjustments+=("auto_rollback recommended (MTTR $(format_duration "$mttr"))")
+        daemon_log WARN "Self-optimize: high MTTR $(format_duration "$mttr") — consider enabling auto-rollback"
+    fi
+
+    # Write adjustments to state
+    if [[ ${#adjustments[@]} -gt 0 ]]; then
+        local adj_str
+        adj_str=$(printf '%s; ' "${adjustments[@]}")
+
+        local tmp_state
+        tmp_state=$(jq \
+            --arg adj "$adj_str" \
+            --arg ts "$(now_iso)" \
+            '.last_optimization = {timestamp: $ts, adjustments: $adj}' \
+            "$STATE_FILE")
+        atomic_write_state "$tmp_state"
+
+        emit_event "daemon.optimize" "adjustments=${adj_str}" "cfr=$cfr" "cycle_time=$cycle_time_median" "deploy_freq=$deploy_freq" "mttr=$mttr"
+        daemon_log SUCCESS "Self-optimization applied ${#adjustments[@]} adjustment(s)"
+    else
+        daemon_log INFO "Self-optimization: all metrics within thresholds"
+    fi
+}
+
 # ─── Poll Loop ───────────────────────────────────────────────────────────────
 
 POLL_CYCLE_COUNT=0
@@ -1718,6 +2156,11 @@ daemon_poll_loop() {
         POLL_CYCLE_COUNT=$((POLL_CYCLE_COUNT + 1))
         if [[ $((POLL_CYCLE_COUNT % 5)) -eq 0 ]]; then
             daemon_check_degradation
+        fi
+
+        # Self-optimize every N cycles (default: 10)
+        if [[ $((POLL_CYCLE_COUNT % ${OPTIMIZE_INTERVAL:-10})) -eq 0 ]]; then
+            daemon_self_optimize
         fi
 
         # Proactive patrol during quiet periods
@@ -1757,7 +2200,7 @@ cleanup_on_exit() {
 # ─── daemon start ───────────────────────────────────────────────────────────
 
 daemon_start() {
-    echo -e "${PURPLE}${BOLD}━━━ cct daemon v${VERSION} ━━━${RESET}"
+    echo -e "${PURPLE}${BOLD}━━━ shipwright daemon v${VERSION} ━━━${RESET}"
     echo ""
 
     # Acquire exclusive lock on PID file (prevents race between concurrent starts)
@@ -1768,7 +2211,7 @@ daemon_start() {
         existing_pid=$(cat "$PID_FILE" 2>/dev/null || true)
         if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
             error "Daemon already running (PID: ${existing_pid})"
-            info "Use ${CYAN}cct daemon stop${RESET} to stop it first"
+            info "Use ${CYAN}shipwright daemon stop${RESET} to stop it first"
             exit 1
         else
             warn "Stale PID file found — removing"
@@ -1811,7 +2254,7 @@ daemon_start() {
 
         success "Daemon started in tmux session ${CYAN}cct-daemon${RESET}"
         info "Attach with: ${DIM}tmux attach -t cct-daemon${RESET}"
-        info "View logs:   ${DIM}cct daemon logs --follow${RESET}"
+        info "View logs:   ${DIM}shipwright daemon logs --follow${RESET}"
         return 0
     fi
 
@@ -2043,14 +2486,29 @@ daemon_init() {
     "interval": 3600,
     "max_issues": 5,
     "label": "auto-patrol"
-  }
+  },
+  "auto_template": false,
+  "template_map": {
+    "hotfix|incident": "hotfix",
+    "security": "enterprise"
+  },
+  "max_retries": 2,
+  "retry_escalation": true,
+  "self_optimize": false,
+  "optimize_interval": 10,
+  "priority_lane": false,
+  "priority_lane_labels": "hotfix,incident,p0,urgent",
+  "priority_lane_max": 1,
+  "watch_mode": "repo",
+  "org": null,
+  "repo_filter": null
 }
 CONFIGEOF
 
     success "Generated config: ${config_file}"
     echo ""
     echo -e "${DIM}Edit this file to customize the daemon behavior, then run:${RESET}"
-    echo -e "  ${CYAN}cct daemon start${RESET}"
+    echo -e "  ${CYAN}shipwright daemon start${RESET}"
 }
 
 # ─── daemon logs ─────────────────────────────────────────────────────────────
@@ -2058,7 +2516,7 @@ CONFIGEOF
 daemon_logs() {
     if [[ ! -f "$LOG_FILE" ]]; then
         warn "No log file found at $LOG_FILE"
-        info "Start the daemon first with ${CYAN}cct daemon start${RESET}"
+        info "Start the daemon first with ${CYAN}shipwright daemon start${RESET}"
         return 0
     fi
 
@@ -2088,7 +2546,7 @@ daemon_metrics() {
 
     if [[ ! -f "$EVENTS_FILE" ]]; then
         error "No events file found at $EVENTS_FILE"
-        info "Events are generated when running ${CYAN}cct pipeline${RESET} or ${CYAN}cct daemon${RESET}"
+        info "Events are generated when running ${CYAN}shipwright pipeline${RESET} or ${CYAN}shipwright daemon${RESET}"
         exit 1
     fi
 

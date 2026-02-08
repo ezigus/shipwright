@@ -26,15 +26,15 @@ error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
 LOGS_DIR="$HOME/.claude-teams/logs"
 
 show_usage() {
-    echo -e "${CYAN}${BOLD}cct logs${RESET} — View agent pane logs"
+    echo -e "${CYAN}${BOLD}shipwright logs${RESET} — View agent pane logs"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
-    echo -e "  ${CYAN}cct logs${RESET}                              List available log directories"
-    echo -e "  ${CYAN}cct logs${RESET} <team>                       Show logs for a team (captures live)"
-    echo -e "  ${CYAN}cct logs${RESET} <team> ${DIM}--pane <agent>${RESET}         Show specific agent's log"
-    echo -e "  ${CYAN}cct logs${RESET} <team> ${DIM}--follow${RESET}              Tail logs in real-time"
-    echo -e "  ${CYAN}cct logs${RESET} <team> ${DIM}--grep <pattern>${RESET}      Search logs for a pattern"
-    echo -e "  ${CYAN}cct logs${RESET} ${DIM}--capture${RESET}                    Capture all team pane scrollback now"
+    echo -e "  ${CYAN}shipwright logs${RESET}                              List available log directories"
+    echo -e "  ${CYAN}shipwright logs${RESET} <team>                       Show logs for a team (captures live)"
+    echo -e "  ${CYAN}shipwright logs${RESET} <team> ${DIM}--pane <agent>${RESET}         Show specific agent's log"
+    echo -e "  ${CYAN}shipwright logs${RESET} <team> ${DIM}--follow${RESET}              Tail logs in real-time"
+    echo -e "  ${CYAN}shipwright logs${RESET} <team> ${DIM}--grep <pattern>${RESET}      Search logs for a pattern"
+    echo -e "  ${CYAN}shipwright logs${RESET} ${DIM}--capture${RESET}                    Capture all team pane scrollback now"
     echo ""
     echo -e "${BOLD}OPTIONS${RESET}"
     echo -e "  ${DIM}--pane <name>${RESET}     Filter to a specific agent pane by title"
@@ -83,7 +83,7 @@ list_logs() {
 
     if [[ ! -d "$LOGS_DIR" ]]; then
         echo -e "  ${DIM}No logs directory yet.${RESET}"
-        echo -e "  ${DIM}Capture logs with: ${CYAN}cct logs --capture${RESET}"
+        echo -e "  ${DIM}Capture logs with: ${CYAN}shipwright logs --capture${RESET}"
         echo ""
         return
     fi
@@ -111,7 +111,7 @@ list_logs() {
 
     if ! $has_logs; then
         echo -e "  ${DIM}No log directories found.${RESET}"
-        echo -e "  ${DIM}Capture logs with: ${CYAN}cct logs --capture${RESET}"
+        echo -e "  ${DIM}Capture logs with: ${CYAN}shipwright logs --capture${RESET}"
     fi
     echo ""
 }

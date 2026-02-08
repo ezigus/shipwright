@@ -46,19 +46,19 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --help|-h)
-            echo -e "${CYAN}${BOLD}cct session${RESET} — Create a new team session"
+            echo -e "${CYAN}${BOLD}shipwright session${RESET} — Create a new team session"
             echo ""
             echo -e "${BOLD}USAGE${RESET}"
-            echo -e "  cct session [name] [--template <name>] [--terminal <adapter>]"
+            echo -e "  shipwright session [name] [--template <name>] [--terminal <adapter>]"
             echo ""
             echo -e "${BOLD}OPTIONS${RESET}"
-            echo -e "  ${CYAN}--template, -t${RESET} <name>   Use a team template (see: cct templates list)"
+            echo -e "  ${CYAN}--template, -t${RESET} <name>   Use a team template (see: shipwright templates list)"
             echo -e "  ${CYAN}--terminal${RESET} <adapter>    Terminal adapter: tmux (default), iterm2, wezterm"
             echo ""
             echo -e "${BOLD}EXAMPLES${RESET}"
-            echo -e "  ${DIM}cct session refactor${RESET}"
-            echo -e "  ${DIM}cct session my-feature --template feature-dev${RESET}"
-            echo -e "  ${DIM}cct session my-feature --terminal iterm2${RESET}"
+            echo -e "  ${DIM}shipwright session refactor${RESET}"
+            echo -e "  ${DIM}shipwright session my-feature --template feature-dev${RESET}"
+            echo -e "  ${DIM}shipwright session my-feature --terminal iterm2${RESET}"
             exit 0
             ;;
         -*)
@@ -98,7 +98,7 @@ if [[ -n "$TEMPLATE_NAME" ]]; then
         TEMPLATE_FILE="$REPO_TEMPLATES_DIR/${TEMPLATE_NAME}.json"
     else
         error "Template '${TEMPLATE_NAME}' not found."
-        echo -e "  Run ${DIM}cct templates list${RESET} to see available templates."
+        echo -e "  Run ${DIM}shipwright templates list${RESET} to see available templates."
         exit 1
     fi
 

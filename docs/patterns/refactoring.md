@@ -140,11 +140,11 @@ Core modules (have dependents):
 
 ---
 
-## Example cct Commands
+## Example Commands
 
 ```bash
 # Create a 2-agent refactoring team
-cct session refactor-async
+shipwright session refactor-async
 
 # In the lead pane, describe the refactoring goal
 # Team lead assigns specific files to each agent per wave
@@ -153,10 +153,10 @@ cct session refactor-async
 #   pnpm test
 
 # Monitor agents in their panes
-cct status
+shipwright status
 
 # Clean up
-cct cleanup --force
+shipwright cleanup --force
 ```
 
 ---

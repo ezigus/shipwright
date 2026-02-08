@@ -3,19 +3,19 @@ title: Repo Preparation
 description: Prepare any repository for Claude Code agent teams with auto-generated configs, CLAUDE.md, and hooks.
 ---
 
-The prep command (`cct prep`) analyzes your repository and generates the configuration files needed for effective agent team development. It creates `.claude/` configs, a `CLAUDE.md` file, and quality gate hooks tailored to your project.
+The prep command (`shipwright prep`) analyzes your repository and generates the configuration files needed for effective agent team development. It creates `.claude/` configs, a `CLAUDE.md` file, and quality gate hooks tailored to your project.
 
 ## Quick Start
 
 ```bash
 # Analyze and prepare the current repo
-cct prep
+shipwright prep
 
 # Preview what would be generated (dry run)
-cct prep --dry-run
+shipwright prep --dry-run
 
 # Prepare a specific directory
-cct prep --path /path/to/project
+shipwright prep --path /path/to/project
 ```
 
 ## What It Generates
@@ -55,7 +55,7 @@ The generated configuration adapts to what it finds. A TypeScript/React project 
 
 ## Customization
 
-After running `cct prep`, review and customize the generated files:
+After running `shipwright prep`, review and customize the generated files:
 
 1. **Edit `.claude/CLAUDE.md`** — Add project-specific context that automated analysis might miss (domain terminology, architectural decisions, team conventions)
 2. **Tune hook scripts** — Adjust quality gate thresholds or add project-specific checks

@@ -136,7 +136,7 @@ done < <(tmux list-panes -a -F "$FORMAT" 2>/dev/null | sort -t'|' -k1,1 -k2,2 ||
 
 if ! $HAS_AGENTS; then
     echo -e "  ${DIM}No Claude team windows found.${RESET}"
-    echo -e "  ${DIM}Start one with: ${CYAN}cct session <name>${RESET}"
+    echo -e "  ${DIM}Start one with: ${CYAN}shipwright session <name>${RESET}"
 fi
 
 # ─── Summary ─────────────────────────────────────────────────────────────────

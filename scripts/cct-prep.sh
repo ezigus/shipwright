@@ -81,10 +81,10 @@ GENERATED_FILES=()
 # ─── Help ───────────────────────────────────────────────────────────────────
 
 show_help() {
-    echo -e "${CYAN}${BOLD}cct prep${RESET} ${DIM}v${VERSION}${RESET} — Prepare a repository for autonomous agent development"
+    echo -e "${CYAN}${BOLD}shipwright prep${RESET} ${DIM}v${VERSION}${RESET} — Prepare a repository for autonomous agent development"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
-    echo -e "  ${CYAN}cct prep${RESET} [options]"
+    echo -e "  ${CYAN}shipwright prep${RESET} [options]"
     echo ""
     echo -e "${BOLD}OPTIONS${RESET}"
     echo -e "  ${CYAN}--force${RESET}        Overwrite existing files"
@@ -94,11 +94,11 @@ show_help() {
     echo -e "  ${CYAN}--help, -h${RESET}     Show this help message"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
-    echo -e "  ${DIM}cct prep${RESET}                  # Full analysis + generation"
-    echo -e "  ${DIM}cct prep --check${RESET}           # Audit quality"
-    echo -e "  ${DIM}cct prep --update${RESET}          # Refresh without overwriting user edits"
-    echo -e "  ${DIM}cct prep --force${RESET}           # Regenerate everything"
-    echo -e "  ${DIM}cct prep --with-claude${RESET}     # Deep analysis with Claude"
+    echo -e "  ${DIM}shipwright prep${RESET}                  # Full analysis + generation"
+    echo -e "  ${DIM}shipwright prep --check${RESET}           # Audit quality"
+    echo -e "  ${DIM}shipwright prep --update${RESET}          # Refresh without overwriting user edits"
+    echo -e "  ${DIM}shipwright prep --force${RESET}           # Regenerate everything"
+    echo -e "  ${DIM}shipwright prep --with-claude${RESET}     # Deep analysis with Claude"
     echo ""
     echo -e "${BOLD}GENERATED FILES${RESET}"
     echo -e "  ${DIM}.claude/CLAUDE.md${RESET}                    Project context for Claude Code"
@@ -1277,7 +1277,7 @@ prep_check() {
             echo -e "    ${DIM}→ ${f}${RESET}"
         done
         echo ""
-        echo -e "  ${DIM}Run ${CYAN}cct prep${DIM} to generate missing files${RESET}"
+        echo -e "  ${DIM}Run ${CYAN}shipwright prep${DIM} to generate missing files${RESET}"
     fi
     echo ""
 }
@@ -1303,8 +1303,8 @@ prep_report() {
     echo ""
     echo -e "  ${DIM}Next steps:${RESET}"
     echo -e "    ${DIM}1. Review generated files and customize as needed${RESET}"
-    echo -e "    ${DIM}2. Run ${CYAN}cct prep --check${DIM} to audit quality${RESET}"
-    echo -e "    ${DIM}3. Content between auto markers can be refreshed with ${CYAN}cct prep --update${RESET}"
+    echo -e "    ${DIM}2. Run ${CYAN}shipwright prep --check${DIM} to audit quality${RESET}"
+    echo -e "    ${DIM}3. Content between auto markers can be refreshed with ${CYAN}shipwright prep --update${RESET}"
     echo ""
 }
 
@@ -1312,7 +1312,7 @@ prep_report() {
 
 main() {
     # Banner
-    echo -e "\n${CYAN}${BOLD}▸ cct prep${RESET} ${DIM}v${VERSION}${RESET}\n"
+    echo -e "\n${CYAN}${BOLD}▸ shipwright prep${RESET} ${DIM}v${VERSION}${RESET}\n"
 
     # Init
     prep_init

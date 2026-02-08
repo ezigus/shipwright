@@ -120,20 +120,20 @@ started_at: 2026-02-07T10:00:00Z
 
 ---
 
-## Example cct Commands
+## Example Commands
 
 ```bash
 # Create the team session with 3 panes
-cct session auth-feature
+shipwright session auth-feature
 
 # In the team lead pane, describe the feature goal and wave plan
 # The team lead spawns workers and tracks state in .claude/team-state.local.md
 
 # Monitor progress from any terminal
-cct status
+shipwright status
 
 # Clean up when done
-cct cleanup --force
+shipwright cleanup --force
 ```
 
 ---

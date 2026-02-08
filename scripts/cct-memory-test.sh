@@ -524,7 +524,7 @@ main() {
 
     echo ""
     echo -e "${PURPLE}${BOLD}╔═══════════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${PURPLE}${BOLD}║  cct memory+cost test — Unit Tests for Memory & Cost Systems     ║${RESET}"
+    echo -e "${PURPLE}${BOLD}║  shipwright memory+cost test — Unit Tests for Memory & Cost      ║${RESET}"
     echo -e "${PURPLE}${BOLD}╚═══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
 

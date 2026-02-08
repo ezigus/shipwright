@@ -108,11 +108,11 @@ started_at: 2026-02-07T09:00:00Z
 
 ---
 
-## Example cct Commands
+## Example Commands
 
 ```bash
 # Create a 2-agent exploration team
-cct session codebase-explore
+shipwright session codebase-explore
 
 # Agents run in parallel panes — you can watch both scanning at once
 # Team lead pane synthesizes results between waves

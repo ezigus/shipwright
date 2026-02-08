@@ -149,6 +149,246 @@ pnpm lint 2>&1 || {
 exit 0
 ```
 
+## Daemon Intelligence Configuration
+
+The daemon configuration file at `.claude/daemon-config.json` controls all daemon intelligence features. Generate it with `shipwright daemon init`.
+
+### Core Settings
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `watch_label` | `"ready-to-build"` | GitHub label to watch for |
+| `poll_interval` | `60` | Seconds between polls |
+| `max_parallel` | `2` | Maximum concurrent pipeline jobs |
+| `pipeline_template` | `"autonomous"` | Default pipeline template |
+| `base_branch` | `"main"` | Branch to create worktrees from |
+| `model` | `"opus"` | Default Claude model |
+| `skip_gates` | `true` | Auto-approve all gates |
+
+### Adaptive Template Selection
+
+Automatically selects the best pipeline template based on issue labels and triage score.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `auto_template` | `false` | Enable adaptive template selection |
+| `template_map` | `{}` | Regex-based template overrides (label pattern → template name) |
+
+When `auto_template` is enabled, template selection uses this priority:
+
+1. **Label overrides** — `hotfix`/`incident` → hotfix template, `security` → enterprise
+2. **`template_map` overrides** — regex patterns matched against issue labels
+3. **Score-based** — score ≥ 70 → `fast`, ≥ 40 → `standard`, below → `full`
+
+```json
+{
+  "auto_template": true,
+  "template_map": {
+    "hotfix|incident": "hotfix",
+    "security": "enterprise"
+  }
+}
+```
+
+### Auto-Retry with Escalation
+
+Automatically retries failed pipelines with optional model/template escalation.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `max_retries` | `2` | Maximum retry attempts per issue |
+| `retry_escalation` | `true` | Escalate model/template on retry |
+
+### Self-Optimizing Metrics
+
+Automatically tunes daemon parameters based on DORA metric thresholds.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `self_optimize` | `false` | Enable self-optimizing loop |
+| `optimize_interval` | `10` | Poll cycles between optimization checks |
+
+Self-optimization adjustments:
+- **CFR > 40%** — switches to `full` template
+- **CFR > 20%** — enables compound quality
+- **Lead time > 4hrs** — increases `max_parallel`, halves `poll_interval`
+- **Lead time > 2hrs** — enables `auto_template`
+- **Deploy freq < 1/day** — recommends merge stage
+- **MTTR > 2hrs** — recommends auto-rollback
+
+### Priority Lanes
+
+Allows critical issues to bypass the normal queue and get processed immediately.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `priority_lane` | `false` | Enable priority bypass queue |
+| `priority_lane_labels` | `"hotfix,incident,p0,urgent"` | Labels that trigger priority lane |
+| `priority_lane_max` | `1` | Maximum extra slots for priority issues |
+
+### Org-Wide Mode
+
+Watch issues across all repositories in a GitHub organization.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `watch_mode` | `"repo"` | `"repo"` for single repo, `"org"` for org-wide |
+| `org` | `null` | GitHub organization name (required for org mode) |
+| `repo_filter` | `null` | Regex filter for repository names (e.g. `"api-.*\|web-.*"`) |
+
+### Patrol Settings
+
+Proactive codebase scanning during quiet periods.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `patrol.interval` | `3600` | Seconds between patrol runs |
+| `patrol.max_issues` | `5` | Maximum issues to create per patrol |
+| `patrol.label` | `"auto-patrol"` | Label applied to patrol-created issues |
+
+### Degradation Alerting
+
+Monitors pipeline success rates and alerts on quality declines.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `alerts.degradation_window` | `5` | Number of recent pipelines to evaluate |
+| `alerts.cfr_threshold` | `30` | Change failure rate (%) that triggers alert |
+| `alerts.success_threshold` | `50` | Success rate (%) below which an alert fires |
+
+### Health Monitoring
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `health.stale_timeout_s` | `1800` | Seconds before a job is considered stale |
+
+### Lifecycle Hooks
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `on_success.remove_label` | `"ready-to-build"` | Label to remove on success |
+| `on_success.add_label` | `"pipeline/complete"` | Label to add on success |
+| `on_success.close_issue` | `false` | Close issue on success |
+| `on_failure.add_label` | `"pipeline/failed"` | Label to add on failure |
+| `on_failure.comment_log_lines` | `50` | Log lines to include in failure comment |
+
+### Notifications
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `notifications.slack_webhook` | `null` | Slack webhook URL for alerts |
+
+### Full Example
+
+```json
+{
+  "watch_label": "ready-to-build",
+  "poll_interval": 60,
+  "max_parallel": 2,
+  "pipeline_template": "autonomous",
+  "base_branch": "main",
+  "model": "opus",
+  "skip_gates": true,
+  "auto_template": true,
+  "template_map": {
+    "hotfix|incident": "hotfix",
+    "security": "enterprise"
+  },
+  "max_retries": 2,
+  "retry_escalation": true,
+  "self_optimize": true,
+  "optimize_interval": 10,
+  "priority_lane": true,
+  "priority_lane_labels": "hotfix,incident,p0,urgent",
+  "priority_lane_max": 1,
+  "watch_mode": "repo",
+  "org": null,
+  "repo_filter": null,
+  "patrol": {
+    "interval": 3600,
+    "max_issues": 5,
+    "label": "auto-patrol"
+  },
+  "alerts": {
+    "degradation_window": 5,
+    "cfr_threshold": 30,
+    "success_threshold": 50
+  },
+  "health": {
+    "stale_timeout_s": 1800
+  },
+  "on_success": {
+    "remove_label": "ready-to-build",
+    "add_label": "pipeline/complete",
+    "close_issue": false
+  },
+  "on_failure": {
+    "add_label": "pipeline/failed",
+    "comment_log_lines": 50
+  },
+  "notifications": {
+    "slack_webhook": null
+  }
+}
+```
+
+## Fleet Configuration
+
+The fleet configuration file at `.claude/fleet-config.json` manages multi-repo daemon orchestration. Generate it with `shipwright fleet init`.
+
+```json
+{
+  "repos": [
+    { "path": "/path/to/api", "template": "autonomous", "max_parallel": 2 },
+    { "path": "/path/to/web", "template": "standard" }
+  ],
+  "defaults": {
+    "watch_label": "ready-to-build",
+    "pipeline_template": "autonomous",
+    "max_parallel": 2,
+    "model": "opus"
+  },
+  "shared_events": true
+}
+```
+
+### Repo-Level Overrides
+
+Each entry in the `repos` array can override the fleet defaults:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `path` | — | **Required.** Absolute path to the repository |
+| `template` | `defaults.pipeline_template` | Pipeline template override |
+| `max_parallel` | `defaults.max_parallel` | Max concurrent pipelines for this repo |
+| `watch_label` | `defaults.watch_label` | Label override for this repo |
+| `model` | `defaults.model` | Model override for this repo |
+
+### Fleet Defaults
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `defaults.watch_label` | `"ready-to-build"` | Default issue label to watch |
+| `defaults.pipeline_template` | `"autonomous"` | Default pipeline template |
+| `defaults.max_parallel` | `2` | Default max concurrent pipelines |
+| `defaults.model` | `"opus"` | Default Claude model |
+| `shared_events` | `true` | Share events.jsonl across repos |
+
+## Deploy Configuration
+
+Deploy configuration is set up via `shipwright init --deploy` or by using the `deployed` pipeline template. Deploy adapters live in `scripts/adapters/`.
+
+Available deploy adapters:
+
+| Adapter | File | Description |
+|---------|------|-------------|
+| Vercel | `adapters/vercel-deploy.sh` | Vercel deployment |
+| Fly.io | `adapters/fly-deploy.sh` | Fly.io deployment |
+| Railway | `adapters/railway-deploy.sh` | Railway deployment |
+| Docker | `adapters/docker-deploy.sh` | Docker-based deployment |
+
+The `deployed` pipeline template uses placeholder commands (`__STAGING_CMD__`, `__PRODUCTION_CMD__`, `__ROLLBACK_CMD__`, `__SMOKE_CMD__`, `__HEALTH_URL__`) that are replaced during `shipwright init --deploy`.
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -157,7 +397,7 @@ exit 0
 | `CLAUDE_CODE_SUBAGENT_MODEL` | parent model | Model for subagent lookups (`"haiku"` recommended) |
 | `CLAUDE_CODE_AUTOCOMPACT_PCT_OVERRIDE` | `"80"` | Context compaction threshold (lower = more aggressive) |
 | `CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY` | `"3"` | Parallel tool calls per agent |
-| `CCT_WEBHOOK_URL` | — | Custom webhook URL for pipeline notifications |
+| `SHIPWRIGHT_WEBHOOK_URL` | — | Custom webhook URL for pipeline notifications |
 
 ## tmux Plugins (TPM)
 

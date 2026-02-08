@@ -134,11 +134,11 @@ started_at: 2026-02-07T14:00:00Z
 
 ---
 
-## Example cct Commands
+## Example Commands
 
 ```bash
 # Create a 3-agent test generation team
-cct session test-coverage
+shipwright session test-coverage
 
 # Between waves, run the test suite from the lead pane:
 #   pnpm test --coverage
@@ -147,7 +147,7 @@ cct session test-coverage
 # Use prefix + Ctrl-t for status dashboard
 
 # After all waves complete
-cct cleanup --force
+shipwright cleanup --force
 ```
 
 ---

@@ -7,6 +7,8 @@ This project uses [Shipwright](https://github.com/sethdford/shipwright) for auto
 | Command | Purpose |
 |---------|---------|
 | `shipwright pipeline start --issue <N>` | Run full delivery pipeline for an issue |
+| `shipwright pipeline start --issue <N> --worktree` | Pipeline in isolated git worktree (parallel-safe) |
+| `shipwright pipeline start --goal "..." --worktree=name` | Pipeline with named worktree |
 | `shipwright session <name> --template <tpl>` | Create a team session with agent panes |
 | `shipwright daemon start` | Watch repo for labeled issues, auto-process |
 | `shipwright fleet start` | Orchestrate daemons across multiple repos |
@@ -14,7 +16,9 @@ This project uses [Shipwright](https://github.com/sethdford/shipwright) for auto
 | `shipwright prep` | Analyze repo and generate preparation report |
 | `shipwright loop` | Continuous improvement loop |
 | `shipwright status` | Show team dashboard |
-| `shipwright cost` | Token usage and budget tracking |
+| `shipwright cost show` | Token usage and spending dashboard |
+| `shipwright cost budget set <amount>` | Set daily budget limit |
+| `shipwright cost remaining-budget` | Check remaining daily budget (used by auto-scaler) |
 | `shipwright memory list` | View captured failure patterns |
 
 ## Pipeline Stages
@@ -22,6 +26,56 @@ This project uses [Shipwright](https://github.com/sethdford/shipwright) for auto
 ```
 intake → plan → design → build → test → review → compound_quality → pr → deploy → validate → monitor
 ```
+
+## Parallel Pipelines
+
+Use `--worktree` to run multiple pipelines concurrently on the same repo:
+
+```bash
+# Each runs in its own git worktree — no conflicts
+shipwright pipeline start --issue 42 --worktree
+shipwright pipeline start --issue 43 --worktree
+shipwright pipeline start --goal "Refactor auth" --worktree=auth-refactor
+```
+
+The daemon uses worktrees automatically. Use `--worktree` for ad-hoc parallel runs.
+
+## Auto-Scaling (Daemon)
+
+The daemon can dynamically adjust worker count based on system resources:
+
+```json
+{
+  "auto_scale": true,
+  "auto_scale_interval": 5,
+  "max_workers": 8,
+  "min_workers": 1,
+  "worker_mem_gb": 4,
+  "estimated_cost_per_job_usd": 5.0
+}
+```
+
+Scaling factors (takes the minimum):
+- **CPU**: 75% of cores (e.g., 8-core → max 6 workers)
+- **Memory**: available GB / `worker_mem_gb`
+- **Budget**: remaining daily budget / `estimated_cost_per_job_usd`
+- **Queue**: current demand (active + queued issues)
+
+## Fleet Worker Pool
+
+Distribute a total worker budget across repos proportionally to demand:
+
+```json
+{
+  "worker_pool": {
+    "enabled": true,
+    "total_workers": 12,
+    "rebalance_interval_seconds": 120
+  }
+}
+```
+
+When enabled, the fleet rebalancer runs in the background and redistributes workers every N seconds. Repos with more queued issues get more workers. Each repo always gets at least 1 worker.
 
 ## tmux Conventions
 
@@ -36,7 +90,7 @@ intake → plan → design → build → test → review → compound_quality �
 ## Team Patterns
 
 - Assign each agent **different files** to avoid merge conflicts
-- Use `shipwright worktree` for file isolation between agents
+- Use `--worktree` for file isolation between agents
 - Keep tasks self-contained (5-6 focused tasks per agent)
 - Use the task list for coordination, not direct messaging
 
@@ -54,3 +108,18 @@ Failure patterns are automatically captured after each pipeline run and injected
 | `hotfix` | Urgent fixes — minimal stages |
 | `autonomous` | Daemon-driven — all stages enabled |
 | `cost-aware` | Budget-conscious — model routing by stage |
+
+## Daemon Configuration
+
+Generate with `shipwright daemon init`, then edit `.claude/daemon-config.json`:
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `max_parallel` | `2` | Static worker limit (overridden by auto_scale) |
+| `auto_scale` | `false` | Enable resource-aware dynamic scaling |
+| `max_workers` | `8` | Ceiling for auto-scaler |
+| `min_workers` | `1` | Floor for auto-scaler |
+| `self_optimize` | `false` | Auto-tune based on DORA metrics |
+| `auto_template` | `false` | Pick pipeline template by issue complexity |
+| `max_retries` | `2` | Retry failed pipelines with escalation |
+| `priority_lane` | `false` | Reserve a slot for urgent/hotfix issues |

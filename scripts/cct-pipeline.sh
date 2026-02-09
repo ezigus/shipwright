@@ -1879,16 +1879,23 @@ ${log_excerpt}
         return 1
     fi
 
-    # Coverage check
+    # Coverage check — only enforce when coverage data is actually detected
     local coverage=""
     if [[ "$coverage_min" -gt 0 ]] 2>/dev/null; then
-        coverage=$(grep -oE 'Statements\s*:\s*[0-9.]+' "$test_log" 2>/dev/null | grep -oE '[0-9.]+$' || \
-                   grep -oE 'All files\s*\|\s*[0-9.]+' "$test_log" 2>/dev/null | grep -oE '[0-9.]+$' || echo "0")
-        if awk -v cov="$coverage" -v min="$coverage_min" 'BEGIN{exit !(cov < min)}' 2>/dev/null; then
+        # Try to extract coverage from common formats (jest/istanbul/nyc)
+        coverage=$(grep -oE 'Statements\s*:\s*[0-9.]+' "$test_log" 2>/dev/null | grep -oE '[0-9.]+$' || true)
+        if [[ -z "$coverage" ]]; then
+            coverage=$(grep -oE 'All files\s*\|\s*[0-9.]+' "$test_log" 2>/dev/null | grep -oE '[0-9.]+$' || true)
+        fi
+        if [[ -z "$coverage" ]]; then
+            # No coverage data found — skip enforcement (project may not have coverage tooling)
+            info "No coverage data detected — skipping coverage check (min: ${coverage_min}%)"
+        elif awk -v cov="$coverage" -v min="$coverage_min" 'BEGIN{exit !(cov < min)}' 2>/dev/null; then
             warn "Coverage ${coverage}% below minimum ${coverage_min}%"
             return 1
+        else
+            info "Coverage: ${coverage}% (min: ${coverage_min}%)"
         fi
-        info "Coverage: ${coverage}% (min: ${coverage_min}%)"
     fi
 
     # Post test results to GitHub

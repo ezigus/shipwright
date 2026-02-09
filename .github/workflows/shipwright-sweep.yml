@@ -58,17 +58,18 @@ jobs:
             COMMENTS_WITH_DATES=$(gh issue view "$issue" --repo "$GITHUB_REPOSITORY" \
               --json comments --jq '.comments[] | "\(.createdAt)|\(.body)"' 2>/dev/null || echo "")
 
-            # ── Check 1: Active/queued runs ──
-            ACTIVE=$(gh run list --repo "$GITHUB_REPOSITORY" \
+            # ── Check 1: Active/queued runs for THIS issue ──
+            # Check by displayTitle which includes "#N" via run-name
+            ISSUE_ACTIVE=$(gh run list --repo "$GITHUB_REPOSITORY" \
               --workflow=shipwright-pipeline.yml --status in_progress \
-              --json databaseId --jq ".[].databaseId" 2>/dev/null || echo "")
+              --json displayTitle --jq "[.[] | select(.displayTitle | test(\"#${issue}( |$)\"))] | length" 2>/dev/null || echo "0")
 
-            QUEUED=$(gh run list --repo "$GITHUB_REPOSITORY" \
+            ISSUE_QUEUED=$(gh run list --repo "$GITHUB_REPOSITORY" \
               --workflow=shipwright-pipeline.yml --status queued \
-              --json databaseId --jq ".[].databaseId" 2>/dev/null || echo "")
+              --json displayTitle --jq "[.[] | select(.displayTitle | test(\"#${issue}( |$)\"))] | length" 2>/dev/null || echo "0")
 
-            if [[ -n "$ACTIVE" ]] || [[ -n "$QUEUED" ]]; then
-              echo "Issue #$issue: pipeline already running/queued — skipping"
+            if [[ "${ISSUE_ACTIVE:-0}" -gt 0 ]] || [[ "${ISSUE_QUEUED:-0}" -gt 0 ]]; then
+              echo "Issue #$issue: pipeline already running/queued for this issue — skipping"
               continue
             fi
 

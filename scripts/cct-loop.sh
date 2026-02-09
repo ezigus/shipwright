@@ -45,6 +45,12 @@ VERBOSE=false
 MAX_ITERATIONS_EXPLICIT=false
 VERSION="1.7.1"
 
+# ─── Flexible Iteration Defaults ────────────────────────────────────────────
+AUTO_EXTEND=true          # Auto-extend iterations when work is incomplete
+EXTENSION_SIZE=5          # Additional iterations per extension
+MAX_EXTENSIONS=3          # Max number of extensions (hard cap safety net)
+EXTENSION_COUNT=0         # Current number of extensions applied
+
 # ─── Audit & Quality Gate Defaults ───────────────────────────────────────────
 AUDIT_ENABLED=false
 AUDIT_AGENT_ENABLED=false
@@ -78,6 +84,9 @@ show_help() {
     echo -e "  ${CYAN}--audit-agent${RESET}             Run separate auditor agent (haiku) after each iteration"
     echo -e "  ${CYAN}--quality-gates${RESET}           Enable automated quality gates before accepting completion"
     echo -e "  ${CYAN}--definition-of-done${RESET} FILE DoD checklist file — evaluated by AI against git diff"
+    echo -e "  ${CYAN}--no-auto-extend${RESET}          Disable auto-extension when max iterations reached"
+    echo -e "  ${CYAN}--extension-size${RESET} N         Additional iterations per extension (default: 5)"
+    echo -e "  ${CYAN}--max-extensions${RESET} N         Max number of auto-extensions (default: 3)"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo -e "  ${DIM}shipwright loop \"Build user auth with JWT\"${RESET}"
@@ -87,11 +96,13 @@ show_help() {
     echo -e "  ${DIM}shipwright loop \"Add auth\" --audit --audit-agent --quality-gates${RESET}"
     echo -e "  ${DIM}shipwright loop \"Ship feature\" --quality-gates --definition-of-done dod.md${RESET}"
     echo ""
-    echo -e "${BOLD}CIRCUIT BREAKER${RESET}"
-    echo -e "  The loop automatically stops if:"
+    echo -e "${BOLD}COMPLETION & CIRCUIT BREAKER${RESET}"
+    echo -e "  The loop completes when:"
+    echo -e "  ${DIM}• Claude outputs LOOP_COMPLETE and all quality gates pass${RESET}"
+    echo -e "  ${DIM}• Max iterations reached (auto-extends if work is incomplete)${RESET}"
+    echo -e "  The loop stops (circuit breaker) if:"
     echo -e "  ${DIM}• 3 consecutive iterations with < 5 lines changed${RESET}"
-    echo -e "  ${DIM}• Claude outputs LOOP_COMPLETE (validated by quality gates if enabled)${RESET}"
-    echo -e "  ${DIM}• Max iterations reached${RESET}"
+    echo -e "  ${DIM}• Hard cap reached (max_iterations + max_extensions * extension_size)${RESET}"
     echo -e "  ${DIM}• Ctrl-C (graceful shutdown with summary)${RESET}"
     echo ""
     echo -e "${BOLD}STATE & LOGS${RESET}"
@@ -146,6 +157,19 @@ while [[ $# -gt 0 ]]; do
             ;;
         --definition-of-done=*) DOD_FILE="${1#--definition-of-done=}"; shift ;;
         --quality-gates) QUALITY_GATES_ENABLED=true; shift ;;
+        --no-auto-extend) AUTO_EXTEND=false; shift ;;
+        --extension-size)
+            EXTENSION_SIZE="${2:-}"
+            [[ -z "$EXTENSION_SIZE" ]] && { error "Missing value for --extension-size"; exit 1; }
+            shift 2
+            ;;
+        --extension-size=*) EXTENSION_SIZE="${1#--extension-size=}"; shift ;;
+        --max-extensions)
+            MAX_EXTENSIONS="${2:-}"
+            [[ -z "$MAX_EXTENSIONS" ]] && { error "Missing value for --max-extensions"; exit 1; }
+            shift 2
+            ;;
+        --max-extensions=*) MAX_EXTENSIONS="${1#--max-extensions=}"; shift ;;
         --help|-h)
             show_help
             exit 0
@@ -294,6 +318,9 @@ resume_state() {
                 audit_agent_enabled:*)   AUDIT_AGENT_ENABLED="$(echo "${line#audit_agent_enabled:}" | tr -d ' ')" ;;
                 quality_gates_enabled:*) QUALITY_GATES_ENABLED="$(echo "${line#quality_gates_enabled:}" | tr -d ' ')" ;;
                 dod_file:*)              DOD_FILE="$(echo "${line#dod_file:}" | sed 's/^ *"//;s/" *$//')" ;;
+                auto_extend:*)           AUTO_EXTEND="$(echo "${line#auto_extend:}" | tr -d ' ')" ;;
+                extension_count:*)       EXTENSION_COUNT="$(echo "${line#extension_count:}" | tr -d ' ')" ;;
+                max_extensions:*)        MAX_EXTENSIONS="$(echo "${line#max_extensions:}" | tr -d ' ')" ;;
             esac
         fi
     done < "$STATE_FILE"
@@ -349,6 +376,9 @@ audit_enabled: $AUDIT_ENABLED
 audit_agent_enabled: $AUDIT_AGENT_ENABLED
 quality_gates_enabled: $QUALITY_GATES_ENABLED
 dod_file: "$DOD_FILE"
+auto_extend: $AUTO_EXTEND
+extension_count: $EXTENSION_COUNT
+max_extensions: $MAX_EXTENSIONS
 ---
 
 ## Log
@@ -425,12 +455,53 @@ check_circuit_breaker() {
 }
 
 check_max_iterations() {
-    if [[ "$ITERATION" -gt "$MAX_ITERATIONS" ]]; then
+    if [[ "$ITERATION" -le "$MAX_ITERATIONS" ]]; then
+        return 0
+    fi
+
+    # Hit the cap — check if we should auto-extend
+    if ! $AUTO_EXTEND || [[ "$EXTENSION_COUNT" -ge "$MAX_EXTENSIONS" ]]; then
+        if [[ "$EXTENSION_COUNT" -ge "$MAX_EXTENSIONS" ]]; then
+            warn "Hard cap reached: ${EXTENSION_COUNT} extensions applied (max ${MAX_EXTENSIONS})."
+        fi
         warn "Max iterations ($MAX_ITERATIONS) reached."
         STATUS="max_iterations"
         return 1
     fi
-    return 0
+
+    # Checkpoint audit: is there meaningful progress worth extending for?
+    echo -e "\n  ${CYAN}${BOLD}▸ Checkpoint${RESET} — max iterations ($MAX_ITERATIONS) reached, evaluating progress..."
+
+    local should_extend=false
+    local extension_reason=""
+
+    # Check 1: recent meaningful progress (not stuck)
+    if [[ "${CONSECUTIVE_FAILURES:-0}" -lt 2 ]]; then
+        # Check 2: agent hasn't signaled completion (if it did, guard_completion handles it)
+        local last_log="$LOG_DIR/iteration-$(( ITERATION - 1 )).log"
+        if [[ -f "$last_log" ]] && ! grep -q "LOOP_COMPLETE" "$last_log" 2>/dev/null; then
+            should_extend=true
+            extension_reason="work in progress with recent progress"
+        fi
+    fi
+
+    # Check 3: if quality gates or tests are failing, extend to let agent fix them
+    if [[ "$TEST_PASSED" == "false" ]] || ! $QUALITY_GATE_PASSED; then
+        should_extend=true
+        extension_reason="quality gates or tests not yet passing"
+    fi
+
+    if $should_extend; then
+        EXTENSION_COUNT=$(( EXTENSION_COUNT + 1 ))
+        MAX_ITERATIONS=$(( MAX_ITERATIONS + EXTENSION_SIZE ))
+        echo -e "  ${GREEN}✓${RESET} Auto-extending: +${EXTENSION_SIZE} iterations (now ${MAX_ITERATIONS} max, extension ${EXTENSION_COUNT}/${MAX_EXTENSIONS})"
+        echo -e "  ${DIM}Reason: ${extension_reason}${RESET}"
+        return 0
+    fi
+
+    warn "Max iterations reached — no recent progress detected."
+    STATUS="max_iterations"
+    return 1
 }
 
 # ─── Test Gate ────────────────────────────────────────────────────────────────
@@ -853,7 +924,11 @@ show_banner() {
     echo -e "${CYAN}═══════════════════════════════════════════════${RESET}"
     echo ""
     echo -e "  ${BOLD}Goal:${RESET}  $GOAL"
-    echo -e "  ${BOLD}Model:${RESET} $MODEL ${DIM}|${RESET} ${BOLD}Max:${RESET} $MAX_ITERATIONS iterations ${DIM}|${RESET} ${BOLD}Test:${RESET} ${TEST_CMD:-"(none)"}"
+    local extend_info=""
+    if $AUTO_EXTEND; then
+        extend_info=" ${DIM}(auto-extend: +${EXTENSION_SIZE} x${MAX_EXTENSIONS})${RESET}"
+    fi
+    echo -e "  ${BOLD}Model:${RESET} $MODEL ${DIM}|${RESET} ${BOLD}Max:${RESET} $MAX_ITERATIONS iterations${extend_info} ${DIM}|${RESET} ${BOLD}Test:${RESET} ${TEST_CMD:-"(none)"}"
     if [[ "$AGENTS" -gt 1 ]]; then
         echo -e "  ${BOLD}Agents:${RESET} $AGENTS ${DIM}(parallel worktree mode)${RESET}"
     fi
@@ -902,7 +977,9 @@ show_summary() {
     echo ""
     echo -e "  ${BOLD}Goal:${RESET}        $GOAL"
     echo -e "  ${BOLD}Status:${RESET}      $status_display"
-    echo -e "  ${BOLD}Iterations:${RESET}  $ITERATION/$MAX_ITERATIONS"
+    local ext_suffix=""
+    [[ "$EXTENSION_COUNT" -gt 0 ]] && ext_suffix=" ${DIM}(${EXTENSION_COUNT} extensions)${RESET}"
+    echo -e "  ${BOLD}Iterations:${RESET}  $ITERATION/$MAX_ITERATIONS${ext_suffix}"
     echo -e "  ${BOLD}Duration:${RESET}    $(format_duration "$duration")"
     echo -e "  ${BOLD}Commits:${RESET}     $TOTAL_COMMITS"
     echo -e "  ${BOLD}Tests:${RESET}       $test_display"

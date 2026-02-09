@@ -395,7 +395,6 @@ if ask "Install Shipwright CLI to $BIN_DIR?"; then
         "mkdir -p '$BIN_DIR/lib'"
       for lib_file in "$SCRIPT_DIR"/scripts/lib/*.sh; do
         [[ -f "$lib_file" ]] || continue
-        local lib_name
         lib_name="$(basename "$lib_file")"
         run "Install lib/$lib_name → $BIN_DIR/lib/$lib_name" \
           "cp '$lib_file' '$BIN_DIR/lib/$lib_name' && chmod +x '$BIN_DIR/lib/$lib_name'"
@@ -405,7 +404,7 @@ if ask "Install Shipwright CLI to $BIN_DIR?"; then
 
     # Install dashboard
     if [[ -d "$SCRIPT_DIR/dashboard" ]]; then
-      local DASH_DEST="$HOME/.local/share/shipwright/dashboard"
+      DASH_DEST="$HOME/.local/share/shipwright/dashboard"
       run "Create dashboard directory" \
         "mkdir -p '$DASH_DEST'"
       for f in "$SCRIPT_DIR"/dashboard/*.ts; do

@@ -102,6 +102,8 @@ NO_GITHUB_LABEL=false
 CI_MODE=false
 DRY_RUN=false
 IGNORE_BUDGET=false
+COMPLETED_STAGES=""
+MAX_ITERATIONS_OVERRIDE=""
 PR_NUMBER=""
 AUTO_WORKTREE=false
 WORKTREE_NAME=""
@@ -163,6 +165,8 @@ show_help() {
     echo -e "  ${DIM}--dry-run${RESET}                 Show what would happen without executing"
     echo -e "  ${DIM}--slack-webhook <url>${RESET}     Send notifications to Slack"
     echo -e "  ${DIM}--self-heal <n>${RESET}            Build→test retry cycles on failure (default: 2)"
+    echo -e "  ${DIM}--max-iterations <n>${RESET}       Override max build loop iterations"
+    echo -e "  ${DIM}--completed-stages \"a,b\"${RESET}   Skip these stages (CI resume)"
     echo ""
     echo -e "${BOLD}STAGES${RESET}  ${DIM}(configurable per pipeline template)${RESET}"
     echo -e "  intake → plan → design → build → test → review → pr → deploy → validate → monitor"
@@ -225,7 +229,7 @@ parse_args() {
         case "$1" in
             --goal)        GOAL="$2"; shift 2 ;;
             --issue)       ISSUE_NUMBER="$2"; shift 2 ;;
-            --pipeline)    PIPELINE_NAME="$2"; shift 2 ;;
+            --pipeline|--template) PIPELINE_NAME="$2"; shift 2 ;;
             --test-cmd)    TEST_CMD="$2"; shift 2 ;;
             --model)       MODEL="$2"; shift 2 ;;
             --agents)      AGENTS="$2"; shift 2 ;;
@@ -237,6 +241,8 @@ parse_args() {
             --no-github-label) NO_GITHUB_LABEL=true; shift ;;
             --ci)          CI_MODE=true; SKIP_GATES=true; shift ;;
             --ignore-budget) IGNORE_BUDGET=true; shift ;;
+            --max-iterations) MAX_ITERATIONS_OVERRIDE="$2"; shift 2 ;;
+            --completed-stages) COMPLETED_STAGES="$2"; shift 2 ;;
             --worktree=*) AUTO_WORKTREE=true; WORKTREE_NAME="${1#--worktree=}"; WORKTREE_NAME="${WORKTREE_NAME//[^a-zA-Z0-9_-]/}"; if [[ -z "$WORKTREE_NAME" ]]; then error "Invalid worktree name (alphanumeric, hyphens, underscores only)"; exit 1; fi; shift ;;
             --worktree)   AUTO_WORKTREE=true; shift ;;
             --dry-run)     DRY_RUN=true; shift ;;
@@ -336,6 +342,34 @@ stop_heartbeat() {
     fi
 }
 
+# ─── CI Helpers ───────────────────────────────────────────────────────────
+
+ci_push_partial_work() {
+    [[ "${CI_MODE:-false}" != "true" ]] && return 0
+    [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
+
+    local branch="shipwright/issue-${ISSUE_NUMBER}"
+
+    # Only push if we have uncommitted changes
+    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+        git add -A 2>/dev/null || true
+        git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
+    fi
+
+    # Push branch (create if needed, force to overwrite previous WIP)
+    git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null || true
+}
+
+ci_post_stage_event() {
+    [[ "${CI_MODE:-false}" != "true" ]] && return 0
+    [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
+    [[ "${GH_AVAILABLE:-false}" != "true" ]] && return 0
+
+    local stage="$1" status="$2" elapsed="${3:-0s}"
+    local comment="<!-- SHIPWRIGHT-STAGE: ${stage}:${status}:${elapsed} -->"
+    gh issue comment "$ISSUE_NUMBER" --body "$comment" 2>/dev/null || true
+}
+
 # ─── Signal Handling ───────────────────────────────────────────────────────
 
 cleanup_on_exit() {
@@ -352,6 +386,9 @@ cleanup_on_exit() {
         echo ""
         warn "Pipeline interrupted — state saved."
         echo -e "  Resume: ${DIM}shipwright pipeline resume${RESET}"
+
+        # Push partial work in CI mode so retries can pick it up
+        ci_push_partial_work
     fi
 
     # Restore stashed changes
@@ -974,6 +1011,9 @@ mark_stage_complete() {
         stage_desc=$(get_stage_description "$stage_id")
         "$SCRIPT_DIR/cct-tracker.sh" notify "stage_complete" "$ISSUE_NUMBER" \
             "${stage_id}|${timing}|${stage_desc}" 2>/dev/null || true
+
+        # Post structured stage event for CI sweep/retry intelligence
+        ci_post_stage_event "$stage_id" "complete" "$timing"
     fi
 }
 
@@ -1002,6 +1042,9 @@ $(tail -5 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null || echo 'No log availabl
         error_context=$(tail -5 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null || echo "No log")
         "$SCRIPT_DIR/cct-tracker.sh" notify "stage_failed" "$ISSUE_NUMBER" \
             "${stage_id}|${error_context}" 2>/dev/null || true
+
+        # Post structured stage event for CI sweep/retry intelligence
+        ci_post_stage_event "$stage_id" "failed" "$timing"
     fi
 }
 
@@ -1647,6 +1690,8 @@ $(cat "$TASKS_FILE")"
     local max_iter
     max_iter=$(jq -r --arg id "build" '(.stages[] | select(.id == $id) | .config.max_iterations) // 20' "$PIPELINE_CONFIG" 2>/dev/null) || true
     [[ -z "$max_iter" || "$max_iter" == "null" ]] && max_iter=20
+    # CLI --max-iterations override (from CI strategy engine)
+    [[ -n "${MAX_ITERATIONS_OVERRIDE:-}" ]] && max_iter="$MAX_ITERATIONS_OVERRIDE"
 
     local agents="${AGENTS}"
     if [[ -z "$agents" ]]; then
@@ -3423,6 +3468,15 @@ run_pipeline() {
         if [[ "$stage_status" == "complete" ]]; then
             echo -e "  ${GREEN}✓ ${id}${RESET} ${DIM}— already complete${RESET}"
             completed=$((completed + 1))
+            continue
+        fi
+
+        # CI resume: skip stages marked as completed from previous run
+        if [[ -n "${COMPLETED_STAGES:-}" ]] && echo "$COMPLETED_STAGES" | tr ',' '\n' | grep -qx "$id"; then
+            echo -e "  ${GREEN}✓ ${id}${RESET} ${DIM}— skipped (CI resume)${RESET}"
+            set_stage_status "$id" "complete"
+            completed=$((completed + 1))
+            emit_event "stage.skipped" "issue=${ISSUE_NUMBER:-0}" "stage=$id" "reason=ci_resume"
             continue
         fi
 

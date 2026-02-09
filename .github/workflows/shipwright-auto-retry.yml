@@ -1,0 +1,224 @@
+name: Shipwright Auto-Retry
+
+# Automatically retries failed pipelines with escalating strategy
+on:
+  workflow_run:
+    workflows: ["Shipwright Pipeline"]
+    types: [completed]
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+
+jobs:
+  auto-retry:
+    if: github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Extract issue number from failed run
+        id: extract
+        run: |
+          RUN_ID="${{ github.event.workflow_run.id }}"
+          CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "conclusion=$CONCLUSION" >> "$GITHUB_OUTPUT"
+
+          echo "--- Auto-Retry: Analyzing failed run $RUN_ID ($CONCLUSION) ---"
+
+          # Get the run details to extract issue number from inputs or title
+          RUN_JSON=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json jobs,displayTitle 2>/dev/null || echo "{}")
+          DISPLAY_TITLE=$(echo "$RUN_JSON" | jq -r '.displayTitle // ""')
+
+          # Try to extract issue number from run inputs
+          # workflow_dispatch runs have inputs in the event payload
+          ISSUE_NUMBER=""
+
+          # Method 1: Parse from run's associated pull requests or title
+          # The display title often contains the issue number
+          if [[ -z "$ISSUE_NUMBER" ]]; then
+            ISSUE_NUMBER=$(echo "$DISPLAY_TITLE" | grep -oE '#[0-9]+' | head -1 | tr -d '#' || true)
+          fi
+
+          # Method 2: Check run logs for the issue number
+          if [[ -z "$ISSUE_NUMBER" ]]; then
+            # Download the run log and look for ISSUE_NUMBER
+            RUN_LOG=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --log 2>/dev/null | head -200 || echo "")
+            ISSUE_NUMBER=$(echo "$RUN_LOG" | grep -oE 'Issue: #[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+          fi
+
+          # Method 3: Look at recent shipwright-labeled issues with pipeline comments referencing this run
+          if [[ -z "$ISSUE_NUMBER" ]]; then
+            OPEN_ISSUES=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+              --label shipwright --state open --json number \
+              --jq '.[].number' 2>/dev/null || echo "")
+
+            for issue in $OPEN_ISSUES; do
+              HAS_RUN=$(gh issue view "$issue" --repo "$GITHUB_REPOSITORY" --json comments \
+                --jq "[.comments[] | select(.body | contains(\"$RUN_ID\"))] | length" 2>/dev/null || echo "0")
+              if [[ "$HAS_RUN" -gt 0 ]]; then
+                ISSUE_NUMBER="$issue"
+                break
+              fi
+            done
+          fi
+
+          if [[ -z "$ISSUE_NUMBER" ]]; then
+            echo "Could not determine issue number from run $RUN_ID — skipping retry"
+            echo "issue_number=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Found issue #$ISSUE_NUMBER for failed run $RUN_ID"
+
+      - name: Check retry count and determine strategy
+        if: steps.extract.outputs.issue_number != ''
+        id: strategy
+        run: |
+          ISSUE_NUMBER="${{ steps.extract.outputs.issue_number }}"
+          RUN_ID="${{ steps.extract.outputs.run_id }}"
+
+          # Read retry count from issue comments (hidden HTML marker)
+          COMMENTS=$(gh issue view "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json comments --jq '.comments[].body' 2>/dev/null || echo "")
+
+          RETRY_COUNT=$(echo "$COMMENTS" | grep -oE 'SHIPWRIGHT-RETRY: [0-9]+' | tail -1 | grep -oE '[0-9]+' || echo "0")
+          RETRY_COUNT="${RETRY_COUNT:-0}"
+
+          echo "Current retry count: $RETRY_COUNT"
+
+          # Extract last failed stage from result comment
+          LAST_STAGE=$(echo "$COMMENTS" | grep -oE 'SHIPWRIGHT-RESULT: [0-9]+:[a-z_]+' | tail -1 | cut -d: -f3 || echo "")
+
+          # Extract completed stages from stage event comments
+          COMPLETED_STAGES=$(echo "$COMMENTS" | grep -oE 'SHIPWRIGHT-STAGE: [a-z_]+:complete' | sed 's/SHIPWRIGHT-STAGE: //' | sed 's/:complete//' | tr '\n' ',' | sed 's/,$//' || echo "")
+
+          echo "Last failed stage: ${LAST_STAGE:-unknown}"
+          echo "Completed stages: ${COMPLETED_STAGES:-none}"
+
+          if [[ "$RETRY_COUNT" -ge 3 ]]; then
+            echo "Max retries (3) reached for issue #$ISSUE_NUMBER — giving up"
+            echo "should_retry=false" >> "$GITHUB_OUTPUT"
+            echo "retry_count=$RETRY_COUNT" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          NEXT_RETRY=$((RETRY_COUNT + 1))
+          echo "retry_count=$NEXT_RETRY" >> "$GITHUB_OUTPUT"
+          echo "should_retry=true" >> "$GITHUB_OUTPUT"
+          echo "last_stage=$LAST_STAGE" >> "$GITHUB_OUTPUT"
+          echo "completed_stages=$COMPLETED_STAGES" >> "$GITHUB_OUTPUT"
+
+          # Escalation table
+          case "$NEXT_RETRY" in
+            1)
+              # Retry 1: same config (transient failure recovery)
+              TEMPLATE="standard"
+              MAX_ITERATIONS="20"
+              ;;
+            2)
+              # Retry 2: upgrade template, increase iterations
+              TEMPLATE="full"
+              MAX_ITERATIONS="25"
+              ;;
+            3)
+              # Retry 3: full template, max iterations
+              TEMPLATE="full"
+              MAX_ITERATIONS="30"
+              ;;
+          esac
+
+          echo "template=$TEMPLATE" >> "$GITHUB_OUTPUT"
+          echo "max_iterations=$MAX_ITERATIONS" >> "$GITHUB_OUTPUT"
+
+          echo "--- Retry Strategy ---"
+          echo "Retry: $NEXT_RETRY/3"
+          echo "Template: $TEMPLATE"
+          echo "Max Iterations: $MAX_ITERATIONS"
+          echo "Resume from: ${COMPLETED_STAGES:-start}"
+
+      - name: Post retry comment
+        if: steps.strategy.outputs.should_retry == 'true'
+        run: |
+          ISSUE_NUMBER="${{ steps.extract.outputs.issue_number }}"
+          RETRY_COUNT="${{ steps.strategy.outputs.retry_count }}"
+          TEMPLATE="${{ steps.strategy.outputs.template }}"
+          MAX_ITERATIONS="${{ steps.strategy.outputs.max_iterations }}"
+          LAST_STAGE="${{ steps.strategy.outputs.last_stage }}"
+          COMPLETED_STAGES="${{ steps.strategy.outputs.completed_stages }}"
+          FAILED_RUN="${{ steps.extract.outputs.run_id }}"
+          CONCLUSION="${{ steps.extract.outputs.conclusion }}"
+
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$(cat <<EOF
+          🔄 **Shipwright Auto-Retry** (attempt ${RETRY_COUNT}/3)
+
+          Previous run ${CONCLUSION} at stage: \`${LAST_STAGE:-unknown}\`
+
+          | Field | Value |
+          |-------|-------|
+          | Retry | ${RETRY_COUNT}/3 |
+          | Template | \`${TEMPLATE}\` |
+          | Max Iterations | ${MAX_ITERATIONS} |
+          | Resume Stages | \`${COMPLETED_STAGES:-none}\` |
+          | Failed Run | [${FAILED_RUN}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${FAILED_RUN}) |
+
+          <!-- SHIPWRIGHT-RETRY: ${RETRY_COUNT} -->
+          <!-- SHIPWRIGHT-LAST-STAGE: ${LAST_STAGE} -->
+          <!-- SHIPWRIGHT-FAILED-RUN: ${FAILED_RUN} -->
+          EOF
+          )"
+
+      - name: Dispatch retry pipeline
+        if: steps.strategy.outputs.should_retry == 'true'
+        run: |
+          ISSUE_NUMBER="${{ steps.extract.outputs.issue_number }}"
+          TEMPLATE="${{ steps.strategy.outputs.template }}"
+          MAX_ITERATIONS="${{ steps.strategy.outputs.max_iterations }}"
+          COMPLETED_STAGES="${{ steps.strategy.outputs.completed_stages }}"
+
+          echo "Dispatching retry pipeline for issue #$ISSUE_NUMBER..."
+          gh workflow run shipwright-pipeline.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            -f issue_number="$ISSUE_NUMBER" \
+            -f template="$TEMPLATE" \
+            -f max_iterations="$MAX_ITERATIONS" \
+            -f completed_stages="$COMPLETED_STAGES" \
+            -f skip_triage=true 2>&1 || {
+              echo "Failed to dispatch retry — will be caught by next sweep"
+              exit 0
+            }
+
+          echo "Retry dispatched successfully"
+
+      - name: Mark issue as failed (max retries exhausted)
+        if: steps.strategy.outputs.should_retry == 'false' && steps.extract.outputs.issue_number != ''
+        run: |
+          ISSUE_NUMBER="${{ steps.extract.outputs.issue_number }}"
+          RETRY_COUNT="${{ steps.strategy.outputs.retry_count }}"
+
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$(cat <<EOF
+          ❌ **Shipwright Auto-Retry Exhausted**
+
+          All ${RETRY_COUNT} retry attempts have failed for this issue. Human intervention is needed.
+
+          ### What to check:
+          1. Review the [workflow runs](${{ github.server_url }}/${{ github.repository }}/actions/workflows/shipwright-pipeline.yml) for error patterns
+          2. Check if the issue requirements are achievable by the autonomous pipeline
+          3. Consider breaking the issue into smaller sub-issues
+
+          To retry manually:
+          \`\`\`
+          gh workflow run shipwright-pipeline.yml -f issue_number=$ISSUE_NUMBER -f template=full -f skip_triage=true
+          \`\`\`
+          EOF
+          )"
+
+          # Add failed label for visibility
+          gh issue edit "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --add-label "shipwright-failed" 2>/dev/null || true

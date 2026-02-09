@@ -26,6 +26,16 @@ on:
         required: false
         default: false
         type: boolean
+      max_iterations:
+        description: "Max build loop iterations (0 = auto from triage)"
+        required: false
+        default: "0"
+        type: string
+      completed_stages:
+        description: "Comma-separated stages to skip (for CI resume)"
+        required: false
+        default: ""
+        type: string
 
 # Only one pipeline per issue at a time
 concurrency:
@@ -39,7 +49,7 @@ permissions:
 
 jobs:
   # ────────────────────────────────────────────────────────────────────────────
-  # Stage 1: Triage — vet the issue against project mission and goals
+  # Stage 1: Triage — vet the issue and determine delivery strategy
   # ────────────────────────────────────────────────────────────────────────────
   triage:
     if: >
@@ -51,6 +61,9 @@ jobs:
       approved: ${{ steps.skip.outputs.approved || steps.triage.outputs.approved }}
       reason: ${{ steps.skip.outputs.reason || steps.triage.outputs.reason }}
       complexity: ${{ steps.skip.outputs.complexity || steps.triage.outputs.complexity }}
+      template: ${{ steps.skip.outputs.template || steps.strategy.outputs.template }}
+      max_iterations: ${{ steps.skip.outputs.max_iterations || steps.strategy.outputs.max_iterations }}
+      estimated_minutes: ${{ steps.skip.outputs.estimated_minutes || steps.strategy.outputs.estimated_minutes }}
 
     env:
       ISSUE_NUMBER: ${{ github.event.inputs.issue_number || github.event.issue.number }}
@@ -67,6 +80,9 @@ jobs:
           echo "approved=true" >> "$GITHUB_OUTPUT"
           echo "reason=Maintainer override — triage skipped" >> "$GITHUB_OUTPUT"
           echo "complexity=standard" >> "$GITHUB_OUTPUT"
+          echo "template=standard" >> "$GITHUB_OUTPUT"
+          echo "max_iterations=20" >> "$GITHUB_OUTPUT"
+          echo "estimated_minutes=90" >> "$GITHUB_OUTPUT"
 
       - name: Fetch issue details
         if: steps.skip.conclusion == 'skipped'
@@ -85,7 +101,7 @@ jobs:
           # Save body to file (too long for env var)
           echo "$BODY" > /tmp/issue-body.txt
 
-      - name: Vet issue alignment
+      - name: Vet issue alignment and determine strategy
         if: steps.skip.conclusion == 'skipped'
         id: triage
         run: |
@@ -94,13 +110,13 @@ jobs:
           AUTHOR="${{ steps.issue.outputs.author }}"
           BODY=$(cat /tmp/issue-body.txt 2>/dev/null || echo "")
 
-          # Build triage prompt
+          # Build triage prompt with strategy engine
           cat > /tmp/triage-prompt.txt <<'TRIAGE_EOF'
           You are the triage gate for the Shipwright open-source project.
 
           ## Shipwright Mission
           Shipwright orchestrates autonomous Claude Code agent teams. It provides:
-          - Delivery pipelines (issue → plan → build → test → review → PR)
+          - Delivery pipelines (issue -> plan -> build -> test -> review -> PR)
           - Daemon-driven issue processing with auto-scaling
           - Fleet management across multiple repos
           - Agent heartbeats, checkpoints, and fault tolerance
@@ -128,15 +144,19 @@ jobs:
           5. Duplicates existing functionality
           6. Is a support question (should be a Discussion, not Issue)
 
-          ## Complexity Rating
-          - fast: trivial fix, typo, config change (< 30 min agent work)
-          - standard: feature or bugfix touching 2-5 files (< 2 hours)
-          - full: significant feature or refactor (> 2 hours, multiple subsystems)
+          ## Complexity and Strategy
+          Evaluate the issue and recommend a delivery strategy:
+          - fast: trivial fix, typo, config change (< 30 min, ~5 iterations)
+          - standard: feature or bugfix touching 2-5 files (< 2 hours, ~15 iterations)
+          - full: significant feature or refactor (> 2 hours, multiple subsystems, ~25 iterations)
 
           ## Your Task
-          Evaluate the following issue. Respond with EXACTLY this format:
+          Evaluate the following issue. Respond with EXACTLY this format (one field per line):
           APPROVED: true|false
           COMPLEXITY: fast|standard|full
+          TEMPLATE: fast|standard|full
+          MAX_ITERATIONS: 5-30
+          ESTIMATED_MINUTES: 15-120
           REASON: one-sentence explanation
           TRIAGE_EOF
 
@@ -159,12 +179,15 @@ jobs:
             -H "content-type: application/json" \
             -d "$(jq -n --arg prompt "$PROMPT_TEXT" '{
               model: "claude-haiku-4-5-20251001",
-              max_tokens: 256,
+              max_tokens: 512,
               messages: [{role: "user", content: $prompt}]
             }')" \
             https://api.anthropic.com/v1/messages 2>/dev/null | \
             jq -r '.content[0].text // empty' 2>/dev/null || echo "APPROVED: true
           COMPLEXITY: standard
+          TEMPLATE: standard
+          MAX_ITERATIONS: 20
+          ESTIMATED_MINUTES: 90
           REASON: Triage API unavailable — defaulting to approved")
 
           # Parse response
@@ -185,6 +208,51 @@ jobs:
           echo "Approved: $APPROVED"
           echo "Complexity: $COMPLEXITY"
           echo "Reason: $REASON"
+
+      - name: Map strategy from triage
+        if: steps.skip.conclusion == 'skipped' && steps.triage.outputs.approved == 'true'
+        id: strategy
+        run: |
+          COMPLEXITY="${{ steps.triage.outputs.complexity }}"
+
+          # Strategy mapping — deterministic, not AI-dependent
+          case "$COMPLEXITY" in
+            fast)
+              TEMPLATE="fast"
+              MAX_ITERATIONS=10
+              ESTIMATED_MINUTES=45
+              ;;
+            full)
+              TEMPLATE="full"
+              MAX_ITERATIONS=30
+              ESTIMATED_MINUTES=120
+              ;;
+            *)
+              TEMPLATE="standard"
+              MAX_ITERATIONS=20
+              ESTIMATED_MINUTES=90
+              ;;
+          esac
+
+          # Allow workflow_dispatch overrides
+          INPUT_TEMPLATE="${{ github.event.inputs.template }}"
+          if [[ -n "$INPUT_TEMPLATE" && "$INPUT_TEMPLATE" != "autonomous" ]]; then
+            TEMPLATE="$INPUT_TEMPLATE"
+          fi
+
+          INPUT_ITERATIONS="${{ github.event.inputs.max_iterations }}"
+          if [[ -n "$INPUT_ITERATIONS" && "$INPUT_ITERATIONS" != "0" ]]; then
+            MAX_ITERATIONS="$INPUT_ITERATIONS"
+          fi
+
+          echo "template=$TEMPLATE" >> "$GITHUB_OUTPUT"
+          echo "max_iterations=$MAX_ITERATIONS" >> "$GITHUB_OUTPUT"
+          echo "estimated_minutes=$ESTIMATED_MINUTES" >> "$GITHUB_OUTPUT"
+
+          echo "--- Strategy ---"
+          echo "Template: $TEMPLATE"
+          echo "Max Iterations: $MAX_ITERATIONS"
+          echo "Estimated Minutes: $ESTIMATED_MINUTES"
 
       - name: Comment on rejected issue
         if: steps.triage.outputs.approved == 'false'
@@ -217,11 +285,13 @@ jobs:
     needs: triage
     if: needs.triage.outputs.approved == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: ${{ fromJSON(needs.triage.outputs.estimated_minutes || '120') }}
 
     env:
       ISSUE_NUMBER: ${{ github.event.inputs.issue_number || github.event.issue.number }}
-      TEMPLATE: ${{ needs.triage.outputs.complexity || github.event.inputs.template || 'autonomous' }}
+      TEMPLATE: ${{ needs.triage.outputs.template || github.event.inputs.template || 'autonomous' }}
+      MAX_ITERATIONS: ${{ needs.triage.outputs.max_iterations || '20' }}
+      COMPLETED_STAGES: ${{ github.event.inputs.completed_stages || '' }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       NO_COLOR: "1"
@@ -249,11 +319,25 @@ jobs:
         run: |
           npm link
 
+      - name: Check for partial work branch
+        run: |
+          BRANCH="shipwright/issue-${ISSUE_NUMBER}"
+          if git ls-remote --heads origin "$BRANCH" 2>/dev/null | grep -q "$BRANCH"; then
+            echo "Found partial work branch: $BRANCH — merging into workspace"
+            git fetch origin "$BRANCH" 2>/dev/null || true
+            git merge "origin/$BRANCH" --no-edit 2>/dev/null || {
+              echo "Merge conflict on partial branch — starting fresh"
+              git merge --abort 2>/dev/null || true
+            }
+          fi
+
       - name: Validate setup
         run: |
           echo "--- Environment ---"
           echo "Issue: #$ISSUE_NUMBER"
           echo "Template: $TEMPLATE"
+          echo "Max Iterations: $MAX_ITERATIONS"
+          echo "Completed Stages: ${COMPLETED_STAGES:-none}"
           echo "Triage: ${{ needs.triage.outputs.reason }}"
           echo "Runner: $(uname -s) $(uname -m)"
           echo ""
@@ -261,6 +345,11 @@ jobs:
 
       - name: Comment on issue — pipeline starting
         run: |
+          RESUME_NOTE=""
+          if [[ -n "$COMPLETED_STAGES" ]]; then
+            RESUME_NOTE="| Resume | Skipping: \`$COMPLETED_STAGES\` |"
+          fi
+
           gh issue comment "$ISSUE_NUMBER" --body "$(cat <<EOF
           ⚓ **Shipwright Pipeline Starting**
 
@@ -268,11 +357,14 @@ jobs:
           |-------|-------|
           | Template | \`$TEMPLATE\` |
           | Complexity | \`${{ needs.triage.outputs.complexity }}\` |
+          | Max Iterations | \`$MAX_ITERATIONS\` |
           | Triage | ${{ needs.triage.outputs.reason }} |
           | Runner | \`ubuntu-latest\` |
           | Workflow | [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+          ${RESUME_NOTE}
 
           The autonomous pipeline is processing this issue. Updates will be posted as stages complete.
+          <!-- SHIPWRIGHT-RUN-ID: ${{ github.run_id }} -->
           EOF
           )"
 
@@ -280,12 +372,25 @@ jobs:
         id: pipeline
         run: |
           set +e
-          shipwright pipeline start \
-            --issue "$ISSUE_NUMBER" \
-            --template "$TEMPLATE" \
-            --no-github-label \
-            --skip-gates \
-            --ci 2>&1 | tee /tmp/pipeline.log
+          PIPELINE_ARGS=(
+            --issue "$ISSUE_NUMBER"
+            --template "$TEMPLATE"
+            --no-github-label
+            --skip-gates
+            --ci
+          )
+
+          # Pass max iterations if set
+          if [[ "$MAX_ITERATIONS" != "0" && -n "$MAX_ITERATIONS" ]]; then
+            PIPELINE_ARGS+=(--max-iterations "$MAX_ITERATIONS")
+          fi
+
+          # Pass completed stages for resume
+          if [[ -n "$COMPLETED_STAGES" ]]; then
+            PIPELINE_ARGS+=(--completed-stages "$COMPLETED_STAGES")
+          fi
+
+          shipwright pipeline start "${PIPELINE_ARGS[@]}" 2>&1 | tee /tmp/pipeline.log
           PIPELINE_EXIT=$?
           echo "exit_code=$PIPELINE_EXIT" >> "$GITHUB_OUTPUT"
           exit $PIPELINE_EXIT
@@ -305,6 +410,12 @@ jobs:
             SUMMARY=$(head -30 ".claude/pipeline-state.md" 2>/dev/null || echo "")
           fi
 
+          # Extract last completed stage for retry intelligence
+          LAST_STAGE=""
+          if [[ -f ".claude/pipeline-state.md" ]]; then
+            LAST_STAGE=$(grep "current_stage:" ".claude/pipeline-state.md" 2>/dev/null | awk '{print $2}' || true)
+          fi
+
           gh issue comment "$ISSUE_NUMBER" --body "$(cat <<EOF
           $STATUS
 
@@ -317,8 +428,21 @@ jobs:
           </details>
 
           [View full run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          <!-- SHIPWRIGHT-RESULT: ${EXIT_CODE}:${LAST_STAGE}:${{ github.run_id }} -->
           EOF
           )"
+
+      - name: Push partial work on failure
+        if: failure()
+        run: |
+          BRANCH="shipwright/issue-${ISSUE_NUMBER}"
+          if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+            git add -A 2>/dev/null || true
+            git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
+          fi
+          # Push branch (force to overwrite previous WIP)
+          git push origin "HEAD:refs/heads/$BRANCH" --force 2>/dev/null || true
+          echo "Partial work pushed to branch: $BRANCH"
 
       - name: Upload pipeline artifacts
         if: always()

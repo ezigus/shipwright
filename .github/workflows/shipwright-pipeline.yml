@@ -285,8 +285,8 @@ jobs:
     needs: triage
     if: needs.triage.outputs.approved == 'true'
     runs-on: ubuntu-latest
-    # Dynamic timeout: estimated + 30 min buffer, capped at 180 (watchdog handles stuck detection)
-    timeout-minutes: ${{ fromJSON(needs.triage.outputs.estimated_minutes || '90') + 30 > 180 && 180 || fromJSON(needs.triage.outputs.estimated_minutes || '90') + 30 }}
+    # Generous timeout — watchdog handles stuck detection via heartbeat signals
+    timeout-minutes: 180
 
     env:
       ISSUE_NUMBER: ${{ github.event.inputs.issue_number || github.event.issue.number }}

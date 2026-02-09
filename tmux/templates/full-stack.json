@@ -1,6 +1,14 @@
 {
   "name": "full-stack",
   "description": "Full-stack development with API, database, and UI agents",
+  "keywords": [
+    "fullstack",
+    "full-stack",
+    "end-to-end",
+    "api",
+    "database",
+    "frontend"
+  ],
   "agents": [
     {
       "name": "api",

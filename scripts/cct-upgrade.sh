@@ -124,6 +124,7 @@ FILES=(
     "cct-fix.sh|scripts/cct-fix.sh|$BIN_DIR/cct-fix.sh|false|true"
     "cct-fix-test.sh|scripts/cct-fix-test.sh|$BIN_DIR/cct-fix-test.sh|false|true"
     "cct-reaper.sh|scripts/cct-reaper.sh|$BIN_DIR/cct-reaper.sh|false|true"
+    "cct-dashboard.sh|scripts/cct-dashboard.sh|$BIN_DIR/cct-dashboard.sh|false|true"
     "CLAUDE.md.shipwright|claude-code/CLAUDE.md.shipwright|$HOME/.claude/CLAUDE.md|true|false"
     "teammate-idle.sh|claude-code/hooks/teammate-idle.sh|$HOME/.claude/hooks/teammate-idle.sh|false|true"
     "task-completed.sh|claude-code/hooks/task-completed.sh|$HOME/.claude/hooks/task-completed.sh|false|true"

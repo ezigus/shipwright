@@ -361,6 +361,10 @@ load_config() {
     WORKER_MEM_GB=$(jq -r '.worker_mem_gb // 4' "$config_file")
     EST_COST_PER_JOB=$(jq -r '.estimated_cost_per_job_usd // 5.0' "$config_file")
 
+    # heartbeat + checkpoint recovery
+    HEALTH_HEARTBEAT_TIMEOUT=$(jq -r '.health.heartbeat_timeout_s // 120' "$config_file")
+    CHECKPOINT_ENABLED=$(jq -r '.health.checkpoint_enabled // true' "$config_file")
+
     success "Config loaded"
 }
 
@@ -429,6 +433,15 @@ notify() {
         curl -sf -X POST -H 'Content-Type: application/json' \
             -d "$payload" "$_webhook_url" >/dev/null 2>&1 || true
     fi
+}
+
+# ─── Linear Notification Helper ──────────────────────────────────────────
+# Calls cct-linear.sh notify to update linked Linear issues on pipeline events.
+# Silently skips if Linear is not configured.
+
+linear_notify() {
+    local event="$1" gh_issue="${2:-}" detail="${3:-}"
+    "$SCRIPT_DIR/cct-linear.sh" notify "$event" "$gh_issue" "$detail" 2>/dev/null || true
 }
 
 # ─── Pre-flight Checks ──────────────────────────────────────────────────────
@@ -550,7 +563,8 @@ init_state() {
                 queued: [],
                 completed: [],
                 retry_counts: {},
-                priority_lane_active: []
+                priority_lane_active: [],
+                titles: {}
             }' > "$STATE_FILE"
     else
         # Update PID and start time in existing state
@@ -686,6 +700,34 @@ untrack_priority_job() {
     atomic_write_state "$tmp"
 }
 
+# ─── Distributed Issue Claiming ───────────────────────────────────────────
+
+claim_issue() {
+    local issue_num="$1"
+    local machine_name="$2"
+
+    [[ "$NO_GITHUB" == "true" ]] && return 0  # No claiming in no-github mode
+
+    # Post claiming comment
+    local claim_body="<!-- shipwright-claim:${machine_name}:$(date -u +%s) -->"
+    gh issue comment "$issue_num" --body "$claim_body" 2>/dev/null || return 1
+
+    # Wait for other claims
+    sleep 2
+
+    # Check if we won (first claim wins)
+    local first_claimer
+    first_claimer=$(gh issue view "$issue_num" --json comments --jq \
+        '.comments[] | select(.body | contains("shipwright-claim:")) | .body' 2>/dev/null | \
+        head -1 | grep -oE 'shipwright-claim:[^:]+' | cut -d: -f2 || true)
+
+    if [[ "$first_claimer" == "$machine_name" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 # ─── Org-Wide Repo Management ─────────────────────────────────────────────
 
 daemon_ensure_repo() {
@@ -717,6 +759,16 @@ daemon_spawn_pipeline() {
     local repo_full_name="${3:-}"  # owner/repo (org mode only)
 
     daemon_log INFO "Spawning pipeline for issue #${issue_num}: ${issue_title}"
+
+    # Extract goal text from issue (title + first line of body)
+    local issue_goal="$issue_title"
+    if [[ "$NO_GITHUB" != "true" ]]; then
+        local issue_body_first
+        issue_body_first=$(gh issue view "$issue_num" --json body --jq '.body' 2>/dev/null | head -3 | tr '\n' ' ' | cut -c1-200 || true)
+        if [[ -n "$issue_body_first" ]]; then
+            issue_goal="${issue_title}: ${issue_body_first}"
+        fi
+    fi
 
     # Check disk space before spawning
     local free_space_kb
@@ -781,9 +833,10 @@ daemon_spawn_pipeline() {
 
     daemon_log INFO "Pipeline started for issue #${issue_num} (PID: ${pid})"
 
-    # Track the job (include repo for org mode)
-    daemon_track_job "$issue_num" "$pid" "$work_dir" "$issue_title" "$repo_full_name"
+    # Track the job (include repo and goal for org mode)
+    daemon_track_job "$issue_num" "$pid" "$work_dir" "$issue_title" "$repo_full_name" "$issue_goal"
     emit_event "daemon.spawn" "issue=$issue_num" "pid=$pid" "repo=${repo_full_name:-local}"
+    "$SCRIPT_DIR/cct-tracker.sh" notify "spawn" "$issue_num" 2>/dev/null || true
 
     # Comment on the issue
     if [[ "$NO_GITHUB" != "true" ]]; then
@@ -793,7 +846,7 @@ daemon_spawn_pipeline() {
         fi
         gh issue comment "$issue_num" ${gh_args[@]+"${gh_args[@]}"} --body "## 🤖 Pipeline Started
 
-**Daemon** picked up this issue and started an autonomous pipeline.
+**Delivering:** ${issue_title}
 
 | Field | Value |
 |-------|-------|
@@ -802,14 +855,14 @@ daemon_spawn_pipeline() {
 | Repo | \`${repo_full_name:-local}\` |
 | Started | $(now_iso) |
 
-_Progress updates will be posted as the pipeline advances._" 2>/dev/null || true
+_Progress updates will appear below as the pipeline advances through each stage._" 2>/dev/null || true
     fi
 }
 
 # ─── Track Job ───────────────────────────────────────────────────────────────
 
 daemon_track_job() {
-    local issue_num="$1" pid="$2" worktree="$3" title="${4:-}" repo="${5:-}"
+    local issue_num="$1" pid="$2" worktree="$3" title="${4:-}" repo="${5:-}" goal="${6:-}"
     local tmp
     tmp=$(jq \
         --argjson num "$issue_num" \
@@ -818,13 +871,15 @@ daemon_track_job() {
         --arg title "$title" \
         --arg started "$(now_iso)" \
         --arg repo "$repo" \
+        --arg goal "$goal" \
         '.active_jobs += [{
             issue: $num,
             pid: $pid,
             worktree: $wt,
             title: $title,
             started_at: $started,
-            repo: $repo
+            repo: $repo,
+            goal: $goal
         }]' \
         "$STATE_FILE")
     atomic_write_state "$tmp"
@@ -905,8 +960,11 @@ daemon_reap_completed() {
         local next_issue
         next_issue=$(dequeue_next)
         if [[ -n "$next_issue" ]]; then
-            daemon_log INFO "Dequeuing issue #${next_issue}"
-            daemon_spawn_pipeline "$next_issue"
+            # Look up cached title for the dequeued issue
+            local next_title
+            next_title=$(jq -r --arg n "$next_issue" '.titles[$n] // ""' "$STATE_FILE" 2>/dev/null || true)
+            daemon_log INFO "Dequeuing issue #${next_issue}: ${next_title}"
+            daemon_spawn_pipeline "$next_issue" "$next_title"
         fi
     done <<< "$jobs"
 }
@@ -960,6 +1018,7 @@ Check the associated PR for the implementation." 2>/dev/null || true
 
     notify "Pipeline Complete — Issue #${issue_num}" \
         "Duration: ${duration:-unknown}" "success"
+    "$SCRIPT_DIR/cct-tracker.sh" notify "completed" "$issue_num" 2>/dev/null || true
 }
 
 # ─── Failure Handler ────────────────────────────────────────────────────────
@@ -1004,6 +1063,24 @@ daemon_on_failure() {
 
             daemon_log WARN "Auto-retry #${retry_count}/${MAX_RETRIES:-2} for issue #${issue_num}"
             emit_event "daemon.retry" "issue=$issue_num" "retry=$retry_count" "max=${MAX_RETRIES:-2}"
+
+            # Check for checkpoint to enable resume-from-checkpoint
+            local checkpoint_args=()
+            if [[ "${CHECKPOINT_ENABLED:-true}" == "true" ]]; then
+                # Try to find worktree for this issue to check for checkpoints
+                local issue_worktree=".worktrees/daemon-issue-${issue_num}"
+                if [[ -d "$issue_worktree/.claude/pipeline-artifacts/checkpoints" ]]; then
+                    local latest_checkpoint=""
+                    for cp_file in "$issue_worktree/.claude/pipeline-artifacts/checkpoints"/*-checkpoint.json; do
+                        [[ -f "$cp_file" ]] && latest_checkpoint="$cp_file"
+                    done
+                    if [[ -n "$latest_checkpoint" ]]; then
+                        daemon_log INFO "Found checkpoint: $latest_checkpoint"
+                        emit_event "daemon.recovery" "issue=$issue_num" "checkpoint=$latest_checkpoint"
+                        checkpoint_args+=("--resume")
+                    fi
+                fi
+            fi
 
             # Build escalated pipeline args
             local retry_template="$PIPELINE_TEMPLATE"
@@ -1099,6 +1176,7 @@ _Re-add the \`${WATCH_LABEL}\` label to retry._" 2>/dev/null || true
 
     notify "Pipeline Failed — Issue #${issue_num}" \
         "Exit code: ${exit_code}, Duration: ${duration:-unknown}" "error"
+    "$SCRIPT_DIR/cct-tracker.sh" notify "failed" "$issue_num" "Exit code: ${exit_code}, Duration: ${duration:-unknown}" 2>/dev/null || true
 }
 
 # ─── Intelligent Triage ──────────────────────────────────────────────────────
@@ -1940,9 +2018,27 @@ daemon_poll_issues() {
         issue_title=$(echo "$issues_json" | jq -r --argjson n "$issue_num" '.[] | select(.number == $n) | .title')
         labels_csv=$(echo "$issues_json" | jq -r --argjson n "$issue_num" '.[] | select(.number == $n) | [.labels[].name] | join(",")')
 
+        # Cache title in state for dashboard visibility
+        if [[ -n "$issue_title" ]]; then
+            local tmp_titles
+            tmp_titles=$(jq --arg num "$issue_num" --arg title "$issue_title" \
+                '.titles[$num] = $title' "$STATE_FILE")
+            atomic_write_state "$tmp_titles"
+        fi
+
         # Skip if already inflight
         if daemon_is_inflight "$issue_num"; then
             continue
+        fi
+
+        # Distributed claim (skip if no machines registered)
+        if [[ -f "$HOME/.claude-teams/machines.json" ]]; then
+            local machine_name
+            machine_name=$(jq -r '.machines[] | select(.role == "primary") | .name' "$HOME/.claude-teams/machines.json" 2>/dev/null || hostname -s)
+            if ! claim_issue "$issue_num" "$machine_name"; then
+                daemon_log INFO "Issue #${issue_num} claimed by another machine — skipping"
+                continue
+            fi
         fi
 
         # Priority lane: bypass queue for critical issues
@@ -2017,6 +2113,45 @@ daemon_health_check() {
                 fi
             fi
         done < <(jq -c '.active_jobs[]' "$STATE_FILE" 2>/dev/null)
+
+        # Heartbeat-based stale detection (more responsive than process-age check)
+        local heartbeat_timeout="${HEALTH_HEARTBEAT_TIMEOUT:-120}"
+        local heartbeat_dir="$HOME/.claude-teams/heartbeats"
+        if [[ -d "$heartbeat_dir" ]]; then
+            while IFS= read -r job; do
+                local hb_pid hb_issue
+                hb_pid=$(echo "$job" | jq -r '.pid')
+                hb_issue=$(echo "$job" | jq -r '.issue')
+
+                # Look for heartbeat file matching this job
+                local hb_file=""
+                for f in "$heartbeat_dir"/*.json; do
+                    [[ ! -f "$f" ]] && continue
+                    local f_pid
+                    f_pid=$(jq -r '.pid // 0' "$f" 2>/dev/null || echo 0)
+                    if [[ "$f_pid" == "$hb_pid" ]]; then
+                        hb_file="$f"
+                        break
+                    fi
+                done
+
+                if [[ -n "$hb_file" ]]; then
+                    local hb_updated
+                    hb_updated=$(jq -r '.updated_at // ""' "$hb_file" 2>/dev/null || echo "")
+                    if [[ -n "$hb_updated" ]]; then
+                        local hb_epoch
+                        hb_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$hb_updated" +%s 2>/dev/null || date -d "$hb_updated" +%s 2>/dev/null || echo "0")
+                        local hb_age=$(( now_e - hb_epoch ))
+                        if [[ "$hb_age" -gt "$heartbeat_timeout" ]] && kill -0 "$hb_pid" 2>/dev/null; then
+                            daemon_log WARN "Heartbeat stale for issue #${hb_issue} (${hb_age}s, PID ${hb_pid})"
+                            emit_event "daemon.heartbeat_stale" "issue=$hb_issue" "age_s=$hb_age" "pid=$hb_pid"
+                            kill "$hb_pid" 2>/dev/null || true
+                            findings=$((findings + 1))
+                        fi
+                    fi
+                fi
+            done < <(jq -c '.active_jobs[]' "$STATE_FILE" 2>/dev/null || true)
+        fi
     fi
 
     # Disk space warning

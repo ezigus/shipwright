@@ -1,6 +1,15 @@
 {
   "name": "bug-fix",
   "description": "Bug fix with reproducer, fixer, and verifier agents",
+  "keywords": [
+    "bug",
+    "fix",
+    "error",
+    "crash",
+    "broken",
+    "failing",
+    "regression"
+  ],
   "agents": [
     {
       "name": "reproducer",

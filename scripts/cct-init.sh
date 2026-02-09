@@ -199,7 +199,10 @@ if [[ -f "$SETTINGS_FILE" ]]; then
         fi
     fi
 elif [[ -f "$SETTINGS_TEMPLATE" ]]; then
-    cp "$SETTINGS_TEMPLATE" "$SETTINGS_FILE"
+    # Strip JSONC comments (// lines) so jq can parse on subsequent runs
+    tmp=$(mktemp)
+    sed '/^[[:space:]]*\/\//d' "$SETTINGS_TEMPLATE" > "$tmp"
+    mv "$tmp" "$SETTINGS_FILE"
     success "Installed ~/.claude/settings.json (with agent teams enabled)"
 else
     # Create minimal settings.json with agent teams
@@ -235,6 +238,62 @@ if [[ -d "$HOOKS_SRC" ]]; then
         success "Installed ${hook_count} quality gate hooks → ~/.claude/hooks/"
     else
         info "Hooks already installed — skipping"
+    fi
+fi
+
+# ─── Wire Hooks into settings.json ──────────────────────────────────────────
+# Ensure each installed hook has a matching event config in settings.json
+if [[ -f "$SETTINGS_FILE" ]] && jq -e '.' "$SETTINGS_FILE" &>/dev/null; then
+    hooks_wired=0
+
+    # Ensure .hooks object exists
+    if ! jq -e '.hooks' "$SETTINGS_FILE" &>/dev/null; then
+        tmp=$(mktemp)
+        jq '.hooks = {}' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
+    fi
+
+    # TeammateIdle
+    if [[ -f "$CLAUDE_DIR/hooks/teammate-idle.sh" ]] && ! jq -e '.hooks.TeammateIdle' "$SETTINGS_FILE" &>/dev/null; then
+        tmp=$(mktemp)
+        jq '.hooks.TeammateIdle = [{"hooks": [{"type": "command", "command": "~/.claude/hooks/teammate-idle.sh", "timeout": 30, "statusMessage": "Running typecheck before idle..."}]}]' \
+            "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
+        hooks_wired=$((hooks_wired + 1))
+    fi
+
+    # TaskCompleted
+    if [[ -f "$CLAUDE_DIR/hooks/task-completed.sh" ]] && ! jq -e '.hooks.TaskCompleted' "$SETTINGS_FILE" &>/dev/null; then
+        tmp=$(mktemp)
+        jq '.hooks.TaskCompleted = [{"hooks": [{"type": "command", "command": "~/.claude/hooks/task-completed.sh", "timeout": 60, "statusMessage": "Running quality checks..."}]}]' \
+            "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
+        hooks_wired=$((hooks_wired + 1))
+    fi
+
+    # Notification
+    if [[ -f "$CLAUDE_DIR/hooks/notify-idle.sh" ]] && ! jq -e '.hooks.Notification' "$SETTINGS_FILE" &>/dev/null; then
+        tmp=$(mktemp)
+        jq '.hooks.Notification = [{"hooks": [{"type": "command", "command": "~/.claude/hooks/notify-idle.sh", "async": true}]}]' \
+            "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
+        hooks_wired=$((hooks_wired + 1))
+    fi
+
+    # PreCompact
+    if [[ -f "$CLAUDE_DIR/hooks/pre-compact-save.sh" ]] && ! jq -e '.hooks.PreCompact' "$SETTINGS_FILE" &>/dev/null; then
+        tmp=$(mktemp)
+        jq '.hooks.PreCompact = [{"matcher": "auto", "hooks": [{"type": "command", "command": "~/.claude/hooks/pre-compact-save.sh", "statusMessage": "Saving context before compaction..."}]}]' \
+            "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
+        hooks_wired=$((hooks_wired + 1))
+    fi
+
+    # SessionStart
+    if [[ -f "$CLAUDE_DIR/hooks/session-start.sh" ]] && ! jq -e '.hooks.SessionStart' "$SETTINGS_FILE" &>/dev/null; then
+        tmp=$(mktemp)
+        jq '.hooks.SessionStart = [{"hooks": [{"type": "command", "command": "~/.claude/hooks/session-start.sh", "timeout": 5}]}]' \
+            "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
+        hooks_wired=$((hooks_wired + 1))
+    fi
+
+    if [[ $hooks_wired -gt 0 ]]; then
+        success "Wired ${hooks_wired} hooks into settings.json"
     fi
 fi
 

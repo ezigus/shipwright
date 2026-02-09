@@ -1,6 +1,7 @@
 {
   "name": "testing",
   "description": "Comprehensive testing with unit, integration, and e2e agents",
+  "keywords": ["test", "coverage", "unit", "integration", "e2e", "spec"],
   "agents": [
     {
       "name": "unit-tests",

@@ -929,6 +929,16 @@ cleanup() {
 
     STATUS="interrupted"
     write_state
+
+    # Save checkpoint on interruption
+    "$SCRIPT_DIR/cct-checkpoint.sh" save \
+        --stage "build" \
+        --iteration "$ITERATION" \
+        --git-sha "$(git rev-parse HEAD 2>/dev/null || echo unknown)" 2>/dev/null || true
+
+    # Clear heartbeat
+    "$SCRIPT_DIR/cct-heartbeat.sh" clear "${PIPELINE_JOB_ID:-loop-$$}" 2>/dev/null || true
+
     show_summary
     exit 130
 }
@@ -1303,6 +1313,28 @@ run_single_agent_loop() {
 $summary
 "
         write_state
+
+        # Update heartbeat
+        "$SCRIPT_DIR/cct-heartbeat.sh" write "${PIPELINE_JOB_ID:-loop-$$}" \
+            --pid $$ \
+            --stage "build" \
+            --iteration "$ITERATION" \
+            --activity "Loop iteration $ITERATION" 2>/dev/null || true
+
+        # Human intervention: check for human message between iterations
+        local human_msg_file="$STATE_DIR/pipeline-artifacts/human-message.txt"
+        if [[ -f "$human_msg_file" ]]; then
+            local human_msg
+            human_msg="$(cat "$human_msg_file" 2>/dev/null || true)"
+            if [[ -n "$human_msg" ]]; then
+                echo -e "  ${PURPLE}${BOLD}💬 Human message:${RESET} $human_msg"
+                # Inject human message as additional context for next iteration
+                GOAL="${GOAL}
+
+HUMAN FEEDBACK (received after iteration $ITERATION): $human_msg"
+                rm -f "$human_msg_file"
+            fi
+        fi
 
         sleep 2
     done

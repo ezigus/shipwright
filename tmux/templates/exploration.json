@@ -1,6 +1,7 @@
 {
   "name": "exploration",
   "description": "Codebase exploration with one agent researching and one synthesizing",
+  "keywords": ["explore", "research", "investigate", "understand", "analyze"],
   "agents": [
     {
       "name": "explorer",

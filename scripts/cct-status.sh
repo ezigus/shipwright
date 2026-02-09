@@ -157,11 +157,364 @@ if ! $HAS_TASKS; then
     echo -e "  ${DIM}No task lists found.${RESET}"
 fi
 
+# ─── 4. Daemon Pipelines ──────────────────────────────────────────────────
+
+DAEMON_DIR="${HOME}/.claude-teams"
+STATE_FILE="${DAEMON_DIR}/daemon-state.json"
+PID_FILE="${DAEMON_DIR}/daemon.pid"
+EVENTS_FILE="${DAEMON_DIR}/events.jsonl"
+HAS_DAEMON=false
+
+if [[ -f "$STATE_FILE" ]]; then
+    # Check daemon process
+    daemon_pid=""
+    daemon_running=false
+    if [[ -f "$PID_FILE" ]]; then
+        daemon_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [[ -n "$daemon_pid" ]] && kill -0 "$daemon_pid" 2>/dev/null; then
+            daemon_running=true
+        fi
+    fi
+
+    active_count=$(jq -r '.active_jobs | length' "$STATE_FILE" 2>/dev/null || echo 0)
+    queue_count=$(jq -r '.queued | length' "$STATE_FILE" 2>/dev/null || echo 0)
+    completed_count=$(jq -r '.completed | length' "$STATE_FILE" 2>/dev/null || echo 0)
+
+    if $daemon_running || [[ "$active_count" -gt 0 ]] || [[ "$queue_count" -gt 0 ]] || [[ "$completed_count" -gt 0 ]]; then
+        HAS_DAEMON=true
+        echo ""
+        echo -e "${PURPLE}${BOLD}  DAEMON PIPELINES${RESET}  ${DIM}~/.claude-teams/${RESET}"
+        echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+
+        # ── Daemon Health ──
+        if $daemon_running; then
+            started_at=$(jq -r '.started_at // "unknown"' "$STATE_FILE" 2>/dev/null)
+            last_poll=$(jq -r '.last_poll // "never"' "$STATE_FILE" 2>/dev/null)
+            # Calculate uptime
+            uptime_str=""
+            if [[ "$started_at" != "unknown" && "$started_at" != "null" ]]; then
+                start_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$started_at" +%s 2>/dev/null || echo 0)
+                if [[ "$start_epoch" -gt 0 ]]; then
+                    now_e=$(date +%s)
+                    elapsed=$((now_e - start_epoch))
+                    if [[ "$elapsed" -ge 3600 ]]; then
+                        uptime_str=$(printf "%dh %dm" $((elapsed/3600)) $((elapsed%3600/60)))
+                    elif [[ "$elapsed" -ge 60 ]]; then
+                        uptime_str=$(printf "%dm %ds" $((elapsed/60)) $((elapsed%60)))
+                    else
+                        uptime_str=$(printf "%ds" "$elapsed")
+                    fi
+                fi
+            fi
+            echo -e "  ${GREEN}●${RESET} ${BOLD}Running${RESET}  ${DIM}PID:${daemon_pid}${RESET}  ${DIM}up:${uptime_str:-?}${RESET}  ${DIM}poll:${last_poll}${RESET}"
+        else
+            echo -e "  ${RED}●${RESET} ${BOLD}Stopped${RESET}"
+        fi
+
+        # ── Active Jobs ──
+        if [[ "$active_count" -gt 0 ]]; then
+            echo ""
+            echo -e "  ${BOLD}Active Jobs (${active_count})${RESET}"
+            while IFS= read -r job; do
+                [[ -z "$job" ]] && continue
+                a_issue=$(echo "$job" | jq -r '.issue')
+                a_title=$(echo "$job" | jq -r '.title // ""')
+                a_worktree=$(echo "$job" | jq -r '.worktree // ""')
+                a_started=$(echo "$job" | jq -r '.started_at // ""')
+                a_goal=$(echo "$job" | jq -r '.goal // ""')
+
+                # Look up title from title cache if empty
+                if [[ -z "$a_title" ]]; then
+                    a_title=$(jq -r --arg n "$a_issue" '.titles[$n] // ""' "$STATE_FILE" 2>/dev/null || true)
+                fi
+
+                # Time elapsed
+                age_str=""
+                if [[ -n "$a_started" && "$a_started" != "null" ]]; then
+                    s_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$a_started" +%s 2>/dev/null || echo 0)
+                    if [[ "$s_epoch" -gt 0 ]]; then
+                        now_e=$(date +%s)
+                        el=$((now_e - s_epoch))
+                        if [[ "$el" -ge 3600 ]]; then
+                            age_str=$(printf "%dh %dm" $((el/3600)) $((el%3600/60)))
+                        elif [[ "$el" -ge 60 ]]; then
+                            age_str=$(printf "%dm %ds" $((el/60)) $((el%60)))
+                        else
+                            age_str=$(printf "%ds" "$el")
+                        fi
+                    fi
+                fi
+
+                # Read enriched pipeline state from worktree
+                stage_str=""
+                stage_desc=""
+                stage_progress=""
+                goal_from_state=""
+                if [[ -n "$a_worktree" && -f "${a_worktree}/.claude/pipeline-state.md" ]]; then
+                    local ps_file="${a_worktree}/.claude/pipeline-state.md"
+                    stage_str=$(grep -E '^current_stage:' "$ps_file" 2>/dev/null | head -1 | sed 's/^current_stage:[[:space:]]*//' || true)
+                    stage_desc=$(grep -E '^current_stage_description:' "$ps_file" 2>/dev/null | head -1 | sed 's/^current_stage_description:[[:space:]]*"//;s/"$//' || true)
+                    stage_progress=$(grep -E '^stage_progress:' "$ps_file" 2>/dev/null | head -1 | sed 's/^stage_progress:[[:space:]]*"//;s/"$//' || true)
+                    goal_from_state=$(grep -E '^goal:' "$ps_file" 2>/dev/null | head -1 | sed 's/^goal:[[:space:]]*"//;s/"$//' || true)
+                fi
+
+                # Use goal from state file if not in daemon job data
+                local display_goal="${a_goal:-$goal_from_state}"
+
+                # Title line
+                echo -e "    ${CYAN}#${a_issue}${RESET}  ${BOLD}${a_title}${RESET}"
+
+                # Goal line (if different from title)
+                if [[ -n "$display_goal" && "$display_goal" != "$a_title" ]]; then
+                    echo -e "           ${DIM}Delivering: ${display_goal}${RESET}"
+                fi
+
+                # Stage + description line
+                if [[ -n "$stage_str" ]]; then
+                    local stage_icon="🔄"
+                    local stage_line="           ${stage_icon} ${BLUE}${stage_str}${RESET}"
+                    [[ -n "$stage_desc" ]] && stage_line="${stage_line} ${DIM}— ${stage_desc}${RESET}"
+                    echo -e "$stage_line"
+                fi
+
+                # Inline progress bar from stage_progress
+                if [[ -n "$stage_progress" ]]; then
+                    local progress_bar=""
+                    local entry=""
+                    # Parse space-separated "stage:status" pairs
+                    for entry in $stage_progress; do
+                        local s_name="${entry%%:*}"
+                        local s_stat="${entry#*:}"
+                        local s_icon=""
+                        case "$s_stat" in
+                            complete) s_icon="✅" ;;
+                            running)  s_icon="🔄" ;;
+                            failed)   s_icon="❌" ;;
+                            *)        s_icon="⬜" ;;
+                        esac
+                        if [[ -n "$progress_bar" ]]; then
+                            progress_bar="${progress_bar} → ${s_icon}${s_name}"
+                        else
+                            progress_bar="${s_icon}${s_name}"
+                        fi
+                    done
+                    echo -e "           ${DIM}${progress_bar}${RESET}"
+                fi
+
+                # Elapsed time
+                [[ -n "$age_str" ]] && echo -e "           ${DIM}Elapsed: ${age_str}${RESET}"
+            done < <(jq -c '.active_jobs[]' "$STATE_FILE" 2>/dev/null)
+        fi
+
+        # ── Queued Issues ──
+        if [[ "$queue_count" -gt 0 ]]; then
+            echo ""
+            echo -e "  ${BOLD}Queued (${queue_count})${RESET}"
+            while read -r q_num; do
+                [[ -z "$q_num" ]] && continue
+                q_title=$(jq -r --arg n "$q_num" '.titles[$n] // ""' "$STATE_FILE" 2>/dev/null || true)
+                title_display=""
+                [[ -n "$q_title" ]] && title_display="  ${q_title}"
+                echo -e "    ${YELLOW}#${q_num}${RESET}${title_display}"
+            done < <(jq -r '.queued[]' "$STATE_FILE" 2>/dev/null)
+        fi
+
+        # ── Recent Completions ──
+        if [[ "$completed_count" -gt 0 ]]; then
+            echo ""
+            echo -e "  ${BOLD}Recent Completions${RESET}"
+            while IFS=$'\t' read -r c_num c_result c_dur c_at; do
+                [[ -z "$c_num" ]] && continue
+                if [[ "$c_result" == "success" ]]; then
+                    c_icon="${GREEN}✓${RESET}"
+                else
+                    c_icon="${RED}✗${RESET}"
+                fi
+                echo -e "    ${c_icon} ${CYAN}#${c_num}${RESET}  ${c_result}  ${DIM}(${c_dur})${RESET}"
+            done < <(jq -r '.completed | reverse | .[:5][] | "\(.issue)\t\(.result)\t\(.duration // "—")\t\(.completed_at // "")"' "$STATE_FILE" 2>/dev/null)
+        fi
+
+        # ── Recent Activity (from events.jsonl) ──
+        if [[ -f "$EVENTS_FILE" ]]; then
+            # Get last 8 relevant events (spawns, stage changes, completions)
+            recent_events=$(tail -200 "$EVENTS_FILE" 2>/dev/null | \
+                grep -E '"type":"(daemon\.spawn|daemon\.reap|stage\.(started|completed)|daemon\.poll)"' 2>/dev/null | \
+                tail -8 || true)
+            if [[ -n "$recent_events" ]]; then
+                echo ""
+                echo -e "  ${BOLD}Recent Activity${RESET}"
+                while IFS= read -r evt; do
+                    [[ -z "$evt" ]] && continue
+                    evt_ts=$(echo "$evt" | jq -r '.ts // ""' 2>/dev/null)
+                    evt_type=$(echo "$evt" | jq -r '.type // ""' 2>/dev/null)
+                    evt_issue=$(echo "$evt" | jq -r '.issue // ""' 2>/dev/null)
+
+                    # Format timestamp as HH:MM
+                    evt_time=""
+                    if [[ -n "$evt_ts" && "$evt_ts" != "null" ]]; then
+                        evt_time=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$evt_ts" +"%H:%M" 2>/dev/null || echo "")
+                    fi
+
+                    case "$evt_type" in
+                        daemon.spawn)
+                            echo -e "    ${DIM}${evt_time}${RESET}  ${GREEN}↳${RESET} Spawned pipeline for #${evt_issue}"
+                            ;;
+                        daemon.reap)
+                            evt_result=$(echo "$evt" | jq -r '.result // ""' 2>/dev/null)
+                            evt_dur=$(echo "$evt" | jq -r '.duration_s // 0' 2>/dev/null)
+                            dur_display=""
+                            if [[ "$evt_dur" -gt 0 ]] 2>/dev/null; then
+                                if [[ "$evt_dur" -ge 3600 ]]; then
+                                    dur_display=$(printf " (%dh %dm)" $((evt_dur/3600)) $((evt_dur%3600/60)))
+                                elif [[ "$evt_dur" -ge 60 ]]; then
+                                    dur_display=$(printf " (%dm %ds)" $((evt_dur/60)) $((evt_dur%60)))
+                                else
+                                    dur_display=$(printf " (%ds)" "$evt_dur")
+                                fi
+                            fi
+                            if [[ "$evt_result" == "success" ]]; then
+                                echo -e "    ${DIM}${evt_time}${RESET}  ${GREEN}●${RESET} #${evt_issue} completed${dur_display}"
+                            else
+                                echo -e "    ${DIM}${evt_time}${RESET}  ${RED}●${RESET} #${evt_issue} failed${dur_display}"
+                            fi
+                            ;;
+                        stage.started)
+                            evt_stage=$(echo "$evt" | jq -r '.stage // ""' 2>/dev/null)
+                            echo -e "    ${DIM}${evt_time}${RESET}  ${BLUE}●${RESET} #${evt_issue} started ${evt_stage}"
+                            ;;
+                        stage.completed)
+                            evt_stage=$(echo "$evt" | jq -r '.stage // ""' 2>/dev/null)
+                            echo -e "    ${DIM}${evt_time}${RESET}  ${DIM}●${RESET} #${evt_issue} completed ${evt_stage}"
+                            ;;
+                        daemon.poll)
+                            evt_found=$(echo "$evt" | jq -r '.issues_found // 0' 2>/dev/null)
+                            echo -e "    ${DIM}${evt_time}  ⟳ Polled — ${evt_found} issue(s) found${RESET}"
+                            ;;
+                    esac
+                done <<< "$recent_events"
+            fi
+        fi
+    fi
+fi
+
+# ─── Issue Tracker ─────────────────────────────────────────────────────────
+
+TRACKER_CONFIG="${HOME}/.claude-teams/tracker-config.json"
+if [[ -f "$TRACKER_CONFIG" ]]; then
+    TRACKER_PROVIDER=$(jq -r '.provider // "none"' "$TRACKER_CONFIG" 2>/dev/null || echo "none")
+    if [[ "$TRACKER_PROVIDER" != "none" && -n "$TRACKER_PROVIDER" ]]; then
+        echo ""
+        echo -e "${PURPLE}${BOLD}  ISSUE TRACKER${RESET}"
+        echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+        case "$TRACKER_PROVIDER" in
+            linear)
+                echo -e "  ${GREEN}●${RESET} ${BOLD}Linear${RESET}  ${DIM}(run shipwright linear status for details)${RESET}"
+                ;;
+            jira)
+                JIRA_URL=$(jq -r '.jira.base_url // ""' "$TRACKER_CONFIG" 2>/dev/null || true)
+                echo -e "  ${GREEN}●${RESET} ${BOLD}Jira${RESET}  ${DIM}${JIRA_URL}${RESET}  ${DIM}(run shipwright jira status for details)${RESET}"
+                ;;
+        esac
+    fi
+fi
+
+# ─── Agent Heartbeats ──────────────────────────────────────────────────────
+
+HEARTBEAT_DIR="$HOME/.claude-teams/heartbeats"
+HAS_HEARTBEATS=false
+
+if [[ -d "$HEARTBEAT_DIR" ]]; then
+    hb_count=0
+    for hb_file in "${HEARTBEAT_DIR}"/*.json; do
+        [[ -f "$hb_file" ]] || continue
+        hb_count=$((hb_count + 1))
+    done
+
+    if [[ "$hb_count" -gt 0 ]]; then
+        HAS_HEARTBEATS=true
+        echo ""
+        echo -e "${PURPLE}${BOLD}  AGENT HEARTBEATS${RESET}  ${DIM}(${hb_count} active)${RESET}"
+        echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+
+        for hb_file in "${HEARTBEAT_DIR}"/*.json; do
+            [[ -f "$hb_file" ]] || continue
+            local_job_id="$(basename "$hb_file" .json)"
+            hb_pid=$(jq -r '.pid // ""' "$hb_file" 2>/dev/null || true)
+            hb_stage=$(jq -r '.stage // ""' "$hb_file" 2>/dev/null || true)
+            hb_issue=$(jq -r '.issue // ""' "$hb_file" 2>/dev/null || true)
+            hb_iter=$(jq -r '.iteration // ""' "$hb_file" 2>/dev/null || true)
+            hb_activity=$(jq -r '.last_activity // ""' "$hb_file" 2>/dev/null || true)
+            hb_updated=$(jq -r '.updated_at // ""' "$hb_file" 2>/dev/null || true)
+            hb_mem=$(jq -r '.memory_mb // 0' "$hb_file" 2>/dev/null || true)
+
+            # Check if process is still alive
+            hb_alive=false
+            if [[ -n "$hb_pid" && "$hb_pid" != "null" ]] && kill -0 "$hb_pid" 2>/dev/null; then
+                hb_alive=true
+            fi
+
+            # Calculate age
+            hb_age_str=""
+            if [[ -n "$hb_updated" && "$hb_updated" != "null" ]]; then
+                hb_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$hb_updated" +%s 2>/dev/null || echo 0)
+                if [[ "$hb_epoch" -gt 0 ]]; then
+                    now_e=$(date +%s)
+                    hb_age=$((now_e - hb_epoch))
+                    if [[ "$hb_age" -ge 120 ]]; then
+                        hb_age_str="${RED}${hb_age}s ago (STALE)${RESET}"
+                    else
+                        hb_age_str="${DIM}${hb_age}s ago${RESET}"
+                    fi
+                fi
+            fi
+
+            if $hb_alive; then
+                hb_icon="${GREEN}●${RESET}"
+            else
+                hb_icon="${RED}●${RESET}"
+            fi
+
+            echo -e "  ${hb_icon} ${BOLD}${local_job_id}${RESET}  ${DIM}pid:${hb_pid}${RESET}"
+            detail_line="    "
+            [[ -n "$hb_issue" && "$hb_issue" != "null" && "$hb_issue" != "0" ]] && detail_line+="${CYAN}#${hb_issue}${RESET}  "
+            [[ -n "$hb_stage" && "$hb_stage" != "null" ]] && detail_line+="${BLUE}${hb_stage}${RESET}  "
+            [[ -n "$hb_iter" && "$hb_iter" != "null" ]] && detail_line+="${DIM}iter:${hb_iter}${RESET}  "
+            [[ -n "$hb_age_str" ]] && detail_line+="${hb_age_str}  "
+            [[ "${hb_mem:-0}" -gt 0 ]] && detail_line+="${DIM}${hb_mem}MB${RESET}"
+            echo -e "$detail_line"
+            [[ -n "$hb_activity" && "$hb_activity" != "null" ]] && echo -e "    ${DIM}${hb_activity}${RESET}"
+        done
+    fi
+fi
+
+# ─── Remote Machines ──────────────────────────────────────────────────────
+
+MACHINES_FILE="$HOME/.claude-teams/machines.json"
+if [[ -f "$MACHINES_FILE" ]]; then
+    machine_count=$(jq '.machines | length' "$MACHINES_FILE" 2>/dev/null || echo 0)
+    if [[ "$machine_count" -gt 0 ]]; then
+        echo ""
+        echo -e "${PURPLE}${BOLD}  REMOTE MACHINES${RESET}  ${DIM}(${machine_count} registered)${RESET}"
+        echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+
+        while IFS= read -r machine; do
+            [[ -z "$machine" ]] && continue
+            m_name=$(echo "$machine" | jq -r '.name // ""')
+            m_host=$(echo "$machine" | jq -r '.host // ""')
+            m_cores=$(echo "$machine" | jq -r '.cores // "?"')
+            m_mem=$(echo "$machine" | jq -r '.memory_gb // "?"')
+            m_workers=$(echo "$machine" | jq -r '.max_workers // "?"')
+
+            echo -e "  ${BLUE}●${RESET} ${BOLD}${m_name}${RESET}  ${DIM}${m_host}${RESET}  ${DIM}cores:${m_cores} mem:${m_mem}GB workers:${m_workers}${RESET}"
+        done < <(jq -c '.machines[]' "$MACHINES_FILE" 2>/dev/null)
+    fi
+fi
+
 # ─── Footer ──────────────────────────────────────────────────────────────────
 
 echo ""
 echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
-if $HAS_CLAUDE_WINDOWS || $HAS_TEAMS || $HAS_TASKS; then
+if $HAS_CLAUDE_WINDOWS || $HAS_TEAMS || $HAS_TASKS || $HAS_DAEMON || ${HAS_HEARTBEATS:-false}; then
     echo -e "  ${DIM}Clean up:${RESET} ${CYAN}shipwright cleanup${RESET}  ${DIM}|${RESET}  ${DIM}New session:${RESET} ${CYAN}shipwright session <name>${RESET}"
 else
     echo -e "  ${DIM}No active teams. Start one:${RESET} ${CYAN}shipwright session <name>${RESET}"

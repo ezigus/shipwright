@@ -1,6 +1,7 @@
 {
   "name": "devops",
   "description": "DevOps with CI/CD pipeline and infrastructure agents",
+  "keywords": ["devops", "deploy", "ci", "cd", "infrastructure", "docker"],
   "agents": [
     {
       "name": "pipeline",

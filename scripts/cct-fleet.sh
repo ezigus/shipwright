@@ -327,6 +327,306 @@ fleet_rebalance() {
     done
 }
 
+# ─── Distributed Worker Rebalancer ───────────────────────────────────────
+# Extends fleet rebalancing across registered remote machines
+
+fleet_rebalance_distributed() {
+    local machines_file="$HOME/.claude-teams/machines.json"
+    [[ ! -f "$machines_file" ]] && return 0
+
+    local machine_count
+    machine_count=$(jq '.machines | length' "$machines_file" 2>/dev/null || echo 0)
+    [[ "$machine_count" -eq 0 ]] && return 0
+
+    local ssh_opts="-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+
+    # Collect demand and capacity from all machines
+    local machine_names=()
+    local machine_hosts=()
+    local machine_users=()
+    local machine_paths=()
+    local machine_max_workers=()
+    local machine_demands=()
+    local machine_actives=()
+    local total_demand=0
+    local total_capacity=0
+    local reachable_count=0
+
+    local i
+    for i in $(seq 0 $((machine_count - 1))); do
+        local name host ssh_user sw_path max_w
+        name=$(jq -r --argjson i "$i" '.machines[$i].name' "$machines_file")
+        host=$(jq -r --argjson i "$i" '.machines[$i].host' "$machines_file")
+        ssh_user=$(jq -r --argjson i "$i" '.machines[$i].ssh_user // ""' "$machines_file")
+        sw_path=$(jq -r --argjson i "$i" '.machines[$i].shipwright_path' "$machines_file")
+        max_w=$(jq -r --argjson i "$i" '.machines[$i].max_workers // 4' "$machines_file")
+
+        # Query machine for active/queued jobs
+        local query_cmd="active=0; queued=0; if [ -f \"\$HOME/.claude-teams/daemon-state.json\" ]; then active=\$(python3 -c \"import json; d=json.load(open('\$HOME/.claude-teams/daemon-state.json')); print(len(d.get('active_jobs',{})))\" 2>/dev/null || echo 0); queued=\$(python3 -c \"import json; d=json.load(open('\$HOME/.claude-teams/daemon-state.json')); print(len(d.get('queued',[])))\" 2>/dev/null || echo 0); fi; echo \"\${active}|\${queued}\""
+
+        local result=""
+        if [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "::1" ]]; then
+            result=$(eval "$query_cmd" 2>/dev/null || echo "0|0")
+        else
+            local target="$host"
+            if [[ -n "$ssh_user" && "$ssh_user" != "null" ]]; then
+                target="${ssh_user}@${host}"
+            fi
+            # shellcheck disable=SC2086
+            result=$(ssh $ssh_opts "$target" "$query_cmd" 2>/dev/null || echo "")
+        fi
+
+        if [[ -z "$result" ]]; then
+            # Machine unreachable — skip
+            continue
+        fi
+
+        local active_val queued_val
+        active_val=$(echo "$result" | cut -d'|' -f1)
+        queued_val=$(echo "$result" | cut -d'|' -f2)
+        [[ ! "$active_val" =~ ^[0-9]+$ ]] && active_val=0
+        [[ ! "$queued_val" =~ ^[0-9]+$ ]] && queued_val=0
+
+        local demand=$((active_val + queued_val))
+
+        machine_names+=("$name")
+        machine_hosts+=("$host")
+        machine_users+=("$ssh_user")
+        machine_paths+=("$sw_path")
+        machine_max_workers+=("$max_w")
+        machine_demands+=("$demand")
+        machine_actives+=("$active_val")
+        total_demand=$((total_demand + demand))
+        total_capacity=$((total_capacity + max_w))
+        reachable_count=$((reachable_count + 1))
+    done
+
+    [[ "$reachable_count" -eq 0 ]] && return 0
+
+    # Proportional allocation: distribute total capacity by demand
+    local alloc_list=()
+    local allocated_total=0
+
+    for i in $(seq 0 $((reachable_count - 1))); do
+        local new_max
+        local cap="${machine_max_workers[$i]}"
+        if [[ "$total_demand" -eq 0 ]]; then
+            # No demand anywhere — give each machine its max
+            new_max="$cap"
+        else
+            local d="${machine_demands[$i]}"
+            new_max=$(awk -v d="$d" -v td="$total_demand" -v cap="$cap" \
+                'BEGIN { v = (d / td) * cap; if (v < 1) v = 1; if (v > cap) v = cap; printf "%.0f", v }')
+        fi
+        [[ "$new_max" -lt 1 ]] && new_max=1
+        [[ "$new_max" -gt "$cap" ]] && new_max="$cap"
+        alloc_list+=("$new_max")
+        allocated_total=$((allocated_total + new_max))
+    done
+
+    # Write allocation to each machine's daemon config
+    for i in $(seq 0 $((reachable_count - 1))); do
+        local name="${machine_names[$i]}"
+        local host="${machine_hosts[$i]}"
+        local ssh_user="${machine_users[$i]}"
+        local sw_path="${machine_paths[$i]}"
+        local new_max="${alloc_list[$i]}"
+
+        local update_cmd="if [ -f '${sw_path}/.claude/daemon-config.json' ]; then tmp=\"${sw_path}/.claude/daemon-config.json.tmp.\$\$\"; jq --argjson mp ${new_max} '.max_parallel = \$mp' '${sw_path}/.claude/daemon-config.json' > \"\$tmp\" && mv \"\$tmp\" '${sw_path}/.claude/daemon-config.json'; fi"
+
+        if [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "::1" ]]; then
+            eval "$update_cmd" 2>/dev/null || true
+        else
+            local target="$host"
+            if [[ -n "$ssh_user" && "$ssh_user" != "null" ]]; then
+                target="${ssh_user}@${host}"
+            fi
+            # shellcheck disable=SC2086
+            ssh $ssh_opts "$target" "$update_cmd" 2>/dev/null || true
+        fi
+    done
+
+    emit_event "fleet.distributed_rebalance" \
+        "machines=$reachable_count" \
+        "total_workers=$allocated_total" \
+        "total_demand=$total_demand"
+}
+
+# ─── Machine Health Monitor ─────────────────────────────────────────────
+# Checks machine heartbeats and marks unreachable machines
+
+check_machine_health() {
+    local machines_file="$HOME/.claude-teams/machines.json"
+    [[ ! -f "$machines_file" ]] && return 0
+
+    local machine_count
+    machine_count=$(jq '.machines | length' "$machines_file" 2>/dev/null || echo 0)
+    [[ "$machine_count" -eq 0 ]] && return 0
+
+    local ssh_opts="-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+    local health_file="$HOME/.claude-teams/machine-health.json"
+    local now
+    now=$(date +%s)
+
+    # Initialize health file if needed
+    if [[ ! -f "$health_file" ]]; then
+        echo '{}' > "$health_file"
+    fi
+
+    local i
+    for i in $(seq 0 $((machine_count - 1))); do
+        local name host ssh_user
+        name=$(jq -r --argjson i "$i" '.machines[$i].name' "$machines_file")
+        host=$(jq -r --argjson i "$i" '.machines[$i].host' "$machines_file")
+        ssh_user=$(jq -r --argjson i "$i" '.machines[$i].ssh_user // ""' "$machines_file")
+
+        local status="online"
+        local hb_cmd="if [ -f \"\$HOME/.claude-teams/machine-heartbeat.json\" ]; then cat \"\$HOME/.claude-teams/machine-heartbeat.json\"; else echo '{\"ts_epoch\":0}'; fi"
+
+        local hb_result=""
+        if [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "::1" ]]; then
+            hb_result=$(eval "$hb_cmd" 2>/dev/null || echo '{"ts_epoch":0}')
+        else
+            local target="$host"
+            if [[ -n "$ssh_user" && "$ssh_user" != "null" ]]; then
+                target="${ssh_user}@${host}"
+            fi
+            # shellcheck disable=SC2086
+            hb_result=$(ssh $ssh_opts "$target" "$hb_cmd" 2>/dev/null || echo "")
+        fi
+
+        if [[ -z "$hb_result" ]]; then
+            status="offline"
+        else
+            local hb_epoch
+            hb_epoch=$(echo "$hb_result" | jq -r '.ts_epoch // 0' 2>/dev/null || echo 0)
+            [[ ! "$hb_epoch" =~ ^[0-9]+$ ]] && hb_epoch=0
+
+            local age=$((now - hb_epoch))
+            if [[ "$hb_epoch" -eq 0 ]]; then
+                # No heartbeat file yet — treat as degraded if not localhost
+                if [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "::1" ]]; then
+                    status="online"
+                else
+                    status="degraded"
+                fi
+            elif [[ "$age" -gt 120 ]]; then
+                status="offline"
+            elif [[ "$age" -gt 60 ]]; then
+                status="degraded"
+            fi
+        fi
+
+        # Update health file atomically
+        local tmp_health="${health_file}.tmp.$$"
+        jq --arg name "$name" --arg status "$status" --argjson ts "$now" \
+            '.[$name] = {status: $status, checked_at: $ts}' "$health_file" > "$tmp_health" \
+            && mv "$tmp_health" "$health_file"
+
+        if [[ "$status" == "offline" ]]; then
+            emit_event "fleet.machine_offline" "machine=$name" "host=$host"
+        fi
+    done
+}
+
+# ─── Cross-Machine Event Aggregation ───────────────────────────────────
+
+aggregate_remote_events() {
+    local machines_file="$HOME/.claude-teams/machines.json"
+    [[ ! -f "$machines_file" ]] && return 0
+
+    local machine_count
+    machine_count=$(jq '.machines | length' "$machines_file" 2>/dev/null || echo 0)
+    [[ "$machine_count" -eq 0 ]] && return 0
+
+    local ssh_opts="-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+    local offsets_file="$HOME/.claude-teams/remote-offsets.json"
+
+    # Initialize offsets file if needed
+    if [[ ! -f "$offsets_file" ]]; then
+        echo '{}' > "$offsets_file"
+    fi
+
+    local i
+    for i in $(seq 0 $((machine_count - 1))); do
+        local name host ssh_user
+        name=$(jq -r --argjson i "$i" '.machines[$i].name' "$machines_file")
+        host=$(jq -r --argjson i "$i" '.machines[$i].host' "$machines_file")
+        ssh_user=$(jq -r --argjson i "$i" '.machines[$i].ssh_user // ""' "$machines_file")
+
+        # Skip localhost — we already have local events
+        if [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "::1" ]]; then
+            continue
+        fi
+
+        # Get last offset for this machine
+        local last_offset
+        last_offset=$(jq -r --arg n "$name" '.[$n] // 0' "$offsets_file" 2>/dev/null || echo 0)
+        [[ ! "$last_offset" =~ ^[0-9]+$ ]] && last_offset=0
+
+        local target="$host"
+        if [[ -n "$ssh_user" && "$ssh_user" != "null" ]]; then
+            target="${ssh_user}@${host}"
+        fi
+
+        # Fetch new events from remote (tail from offset)
+        local next_line=$((last_offset + 1))
+        local fetch_cmd="tail -n +${next_line} \"\$HOME/.claude-teams/events.jsonl\" 2>/dev/null || true"
+        local new_events
+        # shellcheck disable=SC2086
+        new_events=$(ssh $ssh_opts "$target" "$fetch_cmd" 2>/dev/null || echo "")
+
+        if [[ -z "$new_events" ]]; then
+            continue
+        fi
+
+        # Count new lines
+        local new_lines
+        new_lines=$(echo "$new_events" | wc -l | tr -d ' ')
+
+        # Add machine= field to each event and append to local events
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            # Add machine field via jq
+            local enriched
+            enriched=$(echo "$line" | jq -c --arg m "$name" '. + {machine: $m}' 2>/dev/null || true)
+            if [[ -n "$enriched" ]]; then
+                echo "$enriched" >> "$EVENTS_FILE"
+            fi
+        done <<< "$new_events"
+
+        # Update offset
+        local new_offset=$((last_offset + new_lines))
+        local tmp_offsets="${offsets_file}.tmp.$$"
+        jq --arg n "$name" --argjson o "$new_offset" '.[$n] = $o' "$offsets_file" > "$tmp_offsets" \
+            && mv "$tmp_offsets" "$offsets_file"
+
+    done
+}
+
+# ─── Distributed Fleet Loop ────────────────────────────────────────────
+# Background loop that runs distributed rebalancing + health checks + event aggregation
+
+fleet_distributed_loop() {
+    local interval="${1:-30}"
+    local shutdown_flag="$HOME/.claude-teams/fleet-distributed.shutdown"
+    rm -f "$shutdown_flag"
+
+    while true; do
+        sleep "$interval"
+
+        # Check for shutdown signal
+        if [[ -f "$shutdown_flag" ]]; then
+            break
+        fi
+
+        # Run distributed tasks
+        check_machine_health 2>/dev/null || true
+        fleet_rebalance_distributed 2>/dev/null || true
+        aggregate_remote_events 2>/dev/null || true
+    done
+}
+
 # ─── Fleet Start ────────────────────────────────────────────────────────────
 
 fleet_start() {
@@ -477,6 +777,24 @@ fleet_start() {
         success "Worker pool: ${CYAN}${pool_total} total workers${RESET} (rebalancer PID: ${rebalancer_pid})"
     fi
 
+    # Start distributed worker loop if machines are registered
+    local machines_file="$HOME/.claude-teams/machines.json"
+    if [[ -f "$machines_file" ]]; then
+        local dist_machine_count
+        dist_machine_count=$(jq '.machines | length' "$machines_file" 2>/dev/null || echo 0)
+        if [[ "$dist_machine_count" -gt 0 ]]; then
+            fleet_distributed_loop 30 &
+            local dist_pid=$!
+
+            # Record distributed loop PID in fleet state
+            local tmp_dist="${FLEET_STATE}.tmp.$$"
+            jq --argjson pid "$dist_pid" '.distributed_loop_pid = $pid' "$FLEET_STATE" > "$tmp_dist" \
+                && mv "$tmp_dist" "$FLEET_STATE"
+
+            success "Distributed workers: ${CYAN}${dist_machine_count} machines${RESET} (loop PID: ${dist_pid})"
+        fi
+    fi
+
     echo ""
     echo -e "${PURPLE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
     echo -e "  Fleet: ${GREEN}${started} started${RESET}"
@@ -514,6 +832,9 @@ fleet_stop() {
     # Signal rebalancer to stop
     touch "$HOME/.claude-teams/fleet-rebalancer.shutdown"
 
+    # Signal distributed loop to stop
+    touch "$HOME/.claude-teams/fleet-distributed.shutdown"
+
     # Kill rebalancer if running
     local rebalancer_pid
     rebalancer_pid=$(jq -r '.rebalancer_pid // empty' "$FLEET_STATE" 2>/dev/null || true)
@@ -523,9 +844,19 @@ fleet_stop() {
         success "Stopped worker pool rebalancer (PID: ${rebalancer_pid})"
     fi
 
+    # Kill distributed loop if running
+    local dist_pid
+    dist_pid=$(jq -r '.distributed_loop_pid // empty' "$FLEET_STATE" 2>/dev/null || true)
+    if [[ -n "$dist_pid" ]]; then
+        kill "$dist_pid" 2>/dev/null || true
+        wait "$dist_pid" 2>/dev/null || true
+        success "Stopped distributed worker loop (PID: ${dist_pid})"
+    fi
+
     # Clean up flags
     rm -f "$HOME/.claude-teams/fleet-reload.flag"
     rm -f "$HOME/.claude-teams/fleet-rebalancer.shutdown"
+    rm -f "$HOME/.claude-teams/fleet-distributed.shutdown"
 
     local stopped=0
     while IFS= read -r repo_name; do
@@ -604,6 +935,23 @@ fleet_status() {
         rebalancer_pid=$(jq -r '.rebalancer_pid // "N/A"' "$FLEET_STATE" 2>/dev/null || echo "N/A")
         echo -e "  ${BOLD}Worker Pool:${RESET} ${CYAN}${pool_total} total workers${RESET}  ${DIM}rebalancer PID: ${rebalancer_pid}${RESET}"
         echo ""
+    fi
+
+    # Show distributed machine summary if available
+    local machines_file="$HOME/.claude-teams/machines.json"
+    if [[ -f "$machines_file" ]]; then
+        local dist_count
+        dist_count=$(jq '.machines | length' "$machines_file" 2>/dev/null || echo 0)
+        if [[ "$dist_count" -gt 0 ]]; then
+            local health_file="$HOME/.claude-teams/machine-health.json"
+            local m_online=0 m_offline=0
+            if [[ -f "$health_file" ]]; then
+                m_online=$(jq '[to_entries[] | select(.value.status == "online")] | length' "$health_file" 2>/dev/null || echo 0)
+                m_offline=$(jq '[to_entries[] | select(.value.status == "offline")] | length' "$health_file" 2>/dev/null || echo 0)
+            fi
+            echo -e "  ${BOLD}Machines:${RESET} ${dist_count} registered  ${GREEN}${m_online} online${RESET}  ${RED}${m_offline} offline${RESET}"
+            echo ""
+        fi
     fi
 
     # Header

@@ -1,6 +1,7 @@
 {
   "name": "migration",
   "description": "Data/schema migration with schema, code adaptation, and rollback agents",
+  "keywords": ["migrate", "upgrade", "port", "convert", "move"],
   "agents": [
     {
       "name": "schema",

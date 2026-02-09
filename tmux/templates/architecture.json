@@ -1,6 +1,7 @@
 {
   "name": "architecture",
   "description": "Architecture planning with research and specification agents",
+  "keywords": ["architecture", "design", "structure", "system", "diagram"],
   "agents": [
     {
       "name": "researcher",

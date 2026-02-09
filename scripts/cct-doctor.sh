@@ -169,6 +169,35 @@ else
     check_warn "No hooks directory at ~/.claude/hooks/"
 fi
 
+# Hook wiring validation — check hooks are configured in settings.json
+if [[ -d "$HOOKS_DIR" && -f "$HOME/.claude/settings.json" ]] && jq -e '.' "$HOME/.claude/settings.json" &>/dev/null; then
+    wired=0 unwired=0 hook_total_check=0
+    # Colon-separated pairs: filename:EventName (Bash 3.2 compatible)
+    for pair in \
+        "teammate-idle.sh:TeammateIdle" \
+        "task-completed.sh:TaskCompleted" \
+        "notify-idle.sh:Notification" \
+        "pre-compact-save.sh:PreCompact" \
+        "session-start.sh:SessionStart"; do
+        hfile="" hevent=""
+        IFS=':' read -r hfile hevent <<< "$pair"
+        # Only check hooks that are actually installed
+        [[ -f "$HOOKS_DIR/$hfile" ]] || continue
+        hook_total_check=$((hook_total_check + 1))
+        if jq -e ".hooks.${hevent}" "$HOME/.claude/settings.json" &>/dev/null; then
+            wired=$((wired + 1))
+        else
+            unwired=$((unwired + 1))
+            check_warn "Hook ${hfile} not wired to ${hevent} event in settings.json"
+        fi
+    done
+    if [[ $hook_total_check -gt 0 && $unwired -eq 0 ]]; then
+        check_pass "Hooks wired in settings.json: ${wired}/${hook_total_check}"
+    elif [[ $unwired -gt 0 ]]; then
+        echo -e "    ${DIM}Run: shipwright init  to wire hooks${RESET}"
+    fi
+fi
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 3. Agent Teams
 # ═════════════════════════════════════════════════════════════════════════════
@@ -521,6 +550,148 @@ if command -v tmux &>/dev/null && [[ -n "${TMUX:-}" ]]; then
         echo -e "    ${DIM}Fix: add to tmux.conf: bind -T root MouseDown1Status select-window -t =${RESET}"
         echo -e "    ${DIM}Or run: shipwright init${RESET}"
     fi
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 9. Issue Tracker
+# ═════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${PURPLE}${BOLD}  ISSUE TRACKER${RESET}"
+echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+
+TRACKER_CONFIG="${HOME}/.claude-teams/tracker-config.json"
+if [[ -f "$TRACKER_CONFIG" ]]; then
+    TRACKER_PROVIDER=$(jq -r '.provider // "none"' "$TRACKER_CONFIG" 2>/dev/null || echo "none")
+    if [[ "$TRACKER_PROVIDER" != "none" && -n "$TRACKER_PROVIDER" ]]; then
+        check_pass "Tracker provider: ${TRACKER_PROVIDER}"
+        # Validate provider-specific config
+        case "$TRACKER_PROVIDER" in
+            linear)
+                LINEAR_KEY=$(jq -r '.linear.api_key // empty' "$TRACKER_CONFIG" 2>/dev/null || true)
+                if [[ -n "$LINEAR_KEY" ]]; then
+                    check_pass "Linear API key: configured"
+                else
+                    check_warn "Linear API key: not set — set via shipwright tracker init or LINEAR_API_KEY env var"
+                fi
+                ;;
+            jira)
+                JIRA_URL=$(jq -r '.jira.base_url // empty' "$TRACKER_CONFIG" 2>/dev/null || true)
+                JIRA_TOKEN=$(jq -r '.jira.api_token // empty' "$TRACKER_CONFIG" 2>/dev/null || true)
+                if [[ -n "$JIRA_URL" && -n "$JIRA_TOKEN" ]]; then
+                    check_pass "Jira: configured (${JIRA_URL})"
+                else
+                    check_warn "Jira: incomplete config — run shipwright jira init"
+                fi
+                ;;
+        esac
+    else
+        info "  No tracker configured ${DIM}(optional — run shipwright tracker init)${RESET}"
+    fi
+else
+    info "  No tracker configured ${DIM}(optional — run shipwright tracker init)${RESET}"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 10. Agent Heartbeats & Checkpoints
+# ═════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${PURPLE}${BOLD}  HEARTBEATS & CHECKPOINTS${RESET}"
+echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+
+HEARTBEAT_DIR="$HOME/.claude-teams/heartbeats"
+if [[ -d "$HEARTBEAT_DIR" ]]; then
+    check_pass "Heartbeat directory: ${HEARTBEAT_DIR/#$HOME/\~}"
+    # Check permissions
+    if [[ -w "$HEARTBEAT_DIR" ]]; then
+        check_pass "Heartbeat directory: writable"
+    else
+        check_fail "Heartbeat directory: not writable"
+    fi
+
+    # Count active/stale heartbeats
+    hb_active=0
+    hb_stale=0
+    for hb_file in "${HEARTBEAT_DIR}"/*.json; do
+        [[ -f "$hb_file" ]] || continue
+        hb_updated=$(jq -r '.updated_at // ""' "$hb_file" 2>/dev/null || true)
+        if [[ -n "$hb_updated" && "$hb_updated" != "null" ]]; then
+            hb_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$hb_updated" +%s 2>/dev/null || echo 0)
+            if [[ "$hb_epoch" -gt 0 ]]; then
+                now_e=$(date +%s)
+                hb_age=$((now_e - hb_epoch))
+                if [[ "$hb_age" -ge 120 ]]; then
+                    hb_stale=$((hb_stale + 1))
+                else
+                    hb_active=$((hb_active + 1))
+                fi
+            fi
+        fi
+    done
+    if [[ $hb_active -gt 0 ]]; then
+        check_pass "Active heartbeats: ${hb_active}"
+    fi
+    if [[ $hb_stale -gt 0 ]]; then
+        check_warn "Stale heartbeats: ${hb_stale} (>120s old)"
+        echo -e "    ${DIM}Clean up with: shipwright heartbeat clear <job-id>${RESET}"
+    fi
+else
+    info "  No heartbeat directory ${DIM}(created automatically when agents run)${RESET}"
+fi
+
+# Checkpoint directory
+CHECKPOINT_DIR=".claude/pipeline-artifacts/checkpoints"
+if [[ -d "$CHECKPOINT_DIR" ]]; then
+    cp_count=0
+    for cp_file in "${CHECKPOINT_DIR}"/*-checkpoint.json; do
+        [[ -f "$cp_file" ]] || continue
+        cp_count=$((cp_count + 1))
+    done
+    if [[ $cp_count -gt 0 ]]; then
+        check_pass "Checkpoints: ${cp_count} saved"
+    else
+        check_pass "Checkpoint directory exists (no checkpoints saved)"
+    fi
+else
+    info "  No checkpoint directory ${DIM}(created on first checkpoint save)${RESET}"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 11. Remote Machines
+# ═════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${PURPLE}${BOLD}  REMOTE MACHINES${RESET}"
+echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+
+MACHINES_FILE="$HOME/.claude-teams/machines.json"
+if [[ -f "$MACHINES_FILE" ]]; then
+    machine_count=$(jq '.machines | length' "$MACHINES_FILE" 2>/dev/null || echo 0)
+    if [[ "$machine_count" -gt 0 ]]; then
+        check_pass "Registered machines: ${machine_count}"
+        # Check SSH connectivity (quick check, 5s timeout per machine)
+        if command -v ssh &>/dev/null; then
+            while IFS= read -r machine; do
+                [[ -z "$machine" ]] && continue
+                m_name=$(echo "$machine" | jq -r '.name // ""')
+                m_host=$(echo "$machine" | jq -r '.host // ""')
+                m_user=$(echo "$machine" | jq -r '.user // ""')
+                m_port=$(echo "$machine" | jq -r '.port // 22')
+
+                if [[ -n "$m_host" ]]; then
+                    ssh_target="${m_user:+${m_user}@}${m_host}"
+                    if ssh -o ConnectTimeout=5 -o BatchMode=yes -p "$m_port" "$ssh_target" true 2>/dev/null; then
+                        check_pass "SSH: ${m_name} (${ssh_target}) reachable"
+                    else
+                        check_warn "SSH: ${m_name} (${ssh_target}) unreachable"
+                        echo -e "    ${DIM}Check SSH key and connectivity: ssh -p ${m_port} ${ssh_target}${RESET}"
+                    fi
+                fi
+            done < <(jq -c '.machines[]' "$MACHINES_FILE" 2>/dev/null)
+        fi
+    else
+        info "  No machines registered ${DIM}(add with: shipwright remote add)${RESET}"
+    fi
+else
+    info "  No remote machines ${DIM}(optional — run shipwright remote add)${RESET}"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════

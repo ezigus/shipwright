@@ -1,6 +1,7 @@
 {
   "name": "feature-dev",
   "description": "Feature development with backend, frontend, and tests agents",
+  "keywords": ["feature", "implement", "build", "create", "add", "new"],
   "agents": [
     {
       "name": "backend",

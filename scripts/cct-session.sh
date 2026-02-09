@@ -33,6 +33,8 @@ TEAM_NAME=""
 TEMPLATE_NAME=""
 TERMINAL_ADAPTER=""
 AUTO_LAUNCH=true
+DRY_RUN=false
+SKIP_PERMISSIONS="auto"
 GOAL=""
 
 while [[ $# -gt 0 ]]; do
@@ -56,6 +58,18 @@ while [[ $# -gt 0 ]]; do
             AUTO_LAUNCH=false
             shift
             ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --skip-permissions)
+            SKIP_PERMISSIONS=true
+            shift
+            ;;
+        --no-skip-permissions)
+            SKIP_PERMISSIONS=false
+            shift
+            ;;
         --help|-h)
             echo -e "${CYAN}${BOLD}shipwright session${RESET} — Create and launch a team session"
             echo ""
@@ -67,6 +81,9 @@ while [[ $# -gt 0 ]]; do
             echo -e "  ${CYAN}--goal, -g${RESET} <text>       Goal for the team (what to build/fix/refactor)"
             echo -e "  ${CYAN}--terminal${RESET} <adapter>    Terminal adapter: tmux (default), iterm2, wezterm"
             echo -e "  ${CYAN}--no-launch${RESET}             Create window only, don't auto-launch Claude"
+            echo -e "  ${CYAN}--skip-permissions${RESET}     Pass --dangerously-skip-permissions (default with agents)"
+            echo -e "  ${CYAN}--no-skip-permissions${RESET}  Require permission prompts even with agents"
+            echo -e "  ${CYAN}--dry-run${RESET}              Print team prompt and launcher script, don't create anything"
             echo ""
             echo -e "${BOLD}EXAMPLES${RESET}"
             echo -e "  ${DIM}shipwright session auth-refactor -t feature-dev -g \"Refactor auth to use JWT\"${RESET}"
@@ -89,6 +106,56 @@ done
 
 TEAM_NAME="${TEAM_NAME:-team-$(date +%s)}"
 WINDOW_NAME="claude-${TEAM_NAME}"
+
+# ─── Template Suggestion ──────────────────────────────────────────────────────
+
+suggest_template() {
+    local goal="$1" templates_dir="$2"
+    local best="" best_score=0
+    [[ -d "$templates_dir" ]] || return 1
+
+    local goal_lower
+    goal_lower=$(echo "$goal" | tr '[:upper:]' '[:lower:]')
+
+    for tpl in "$templates_dir"/*.json; do
+        [[ -f "$tpl" ]] || continue
+        local name score=0
+        name=$(jq -r '.name // ""' "$tpl" 2>/dev/null) || continue
+
+        while IFS= read -r kw; do
+            [[ -z "$kw" ]] && continue
+            if echo "$goal_lower" | grep -qi "$kw"; then
+                score=$((score + 1))
+            fi
+        done < <(jq -r '(.keywords // []) | .[]' "$tpl" 2>/dev/null)
+
+        if [[ $score -gt $best_score ]]; then
+            best_score=$score
+            best="$name"
+        fi
+    done
+
+    [[ $best_score -gt 0 ]] && echo "$best"
+}
+
+# ─── Template Auto-Suggestion ────────────────────────────────────────────
+if [[ -z "$TEMPLATE_NAME" && -n "$GOAL" ]]; then
+    REPO_TPL_DIR="$(cd "$SCRIPT_DIR/../tmux/templates" 2>/dev/null && pwd)" || REPO_TPL_DIR=""
+    USER_TPL_DIR="${HOME}/.claude-teams/templates"
+    SUGGESTED=""
+
+    if [[ -d "$USER_TPL_DIR" ]]; then
+        SUGGESTED=$(suggest_template "$GOAL" "$USER_TPL_DIR") || true
+    fi
+    if [[ -z "$SUGGESTED" && -n "$REPO_TPL_DIR" ]]; then
+        SUGGESTED=$(suggest_template "$GOAL" "$REPO_TPL_DIR") || true
+    fi
+
+    if [[ -n "$SUGGESTED" ]]; then
+        info "Auto-suggesting template: ${PURPLE}${BOLD}${SUGGESTED}${RESET}"
+        TEMPLATE_NAME="$SUGGESTED"
+    fi
+fi
 
 # ─── Template Loading ───────────────────────────────────────────────────────
 
@@ -151,6 +218,16 @@ if [[ -n "$TEMPLATE_NAME" ]]; then
     echo -e "  ${DIM}Agents: ${#TEMPLATE_AGENTS[@]}  Layout: ${TEMPLATE_LAYOUT}${RESET}"
 fi
 
+# ─── Resolve Permissions ──────────────────────────────────────────────────
+# Default: skip permissions when agents are being spawned (autonomous teams)
+if [[ "$SKIP_PERMISSIONS" == "auto" ]]; then
+    if [[ ${#TEMPLATE_AGENTS[@]} -gt 0 || -n "$GOAL" ]]; then
+        SKIP_PERMISSIONS=true
+    else
+        SKIP_PERMISSIONS=false
+    fi
+fi
+
 # ─── Resolve Terminal Adapter ───────────────────────────────────────────────
 
 # Auto-detect if not specified
@@ -179,34 +256,115 @@ fi
 
 build_team_prompt() {
     local prompt=""
+    local project_dir
+    project_dir="$(tmux display-message -p '#{pane_current_path}' 2>/dev/null || pwd)"
+
+    local memory_context=""
+    if [[ -x "$SCRIPT_DIR/cct-memory.sh" ]]; then
+        memory_context=$(bash "$SCRIPT_DIR/cct-memory.sh" inject "build" 2>/dev/null) || true
+    fi
 
     if [[ ${#TEMPLATE_AGENTS[@]} -gt 0 ]]; then
-        prompt="Create a team called \"${TEAM_NAME}\" and spawn these agents as teammates using the Task tool with team_name=\"${TEAM_NAME}\":"
-        prompt+=$'\n'
+        if [[ -n "$GOAL" ]]; then
+            prompt="GOAL: ${GOAL}"
+            prompt+=$'\n\n'
+        fi
+
+        prompt+="You are the team lead for \"${TEAM_NAME}\". You are in: ${project_dir}"
+        prompt+=$'\n\n'"Follow these steps:"
+        prompt+=$'\n'"1. Call TeamCreate with team_name=\"${TEAM_NAME}\""
+        prompt+=$'\n'"2. Create tasks using TaskCreate for each agent's work"
+        prompt+=$'\n'"3. Spawn each agent using the Task tool with team_name=\"${TEAM_NAME}\" and the agent name below"
+        prompt+=$'\n'"4. Assign tasks using TaskUpdate with owner set to each agent's name"
+        prompt+=$'\n'"5. Coordinate work and monitor progress"
+        prompt+=$'\n\n'"Agents to spawn:"
 
         for agent_entry in "${TEMPLATE_AGENTS[@]}"; do
             IFS='|' read -r aname arole afocus <<< "$agent_entry"
-            prompt+=$'\n'"- Agent named \"${aname}\": ${arole}"
+            prompt+=$'\n'"- name=\"${aname}\": ${arole}"
             if [[ -n "$afocus" ]]; then
                 prompt+=". Focus on files: ${afocus}"
             fi
         done
 
         prompt+=$'\n\n'"Give each agent a detailed prompt describing their role and which files they own. Agents should work on DIFFERENT files to avoid merge conflicts."
-
-        if [[ -n "$GOAL" ]]; then
-            prompt+=$'\n\n'"The team goal is: ${GOAL}"
-        fi
     else
         # No template — simple team creation prompt
         if [[ -n "$GOAL" ]]; then
-            prompt="Create a team called \"${TEAM_NAME}\" to accomplish this goal: ${GOAL}"
-            prompt+=$'\n\n'"Decide the right number and types of agents, create tasks, and spawn them as teammates. Assign different files to each agent to avoid conflicts."
+            prompt="GOAL: ${GOAL}"
+            prompt+=$'\n\n'"You are the team lead for \"${TEAM_NAME}\". You are in: ${project_dir}"
+            prompt+=$'\n\n'"Follow these steps:"
+            prompt+=$'\n'"1. Call TeamCreate with team_name=\"${TEAM_NAME}\""
+            prompt+=$'\n'"2. Decide the right number and types of agents for this goal"
+            prompt+=$'\n'"3. Create tasks using TaskCreate, then spawn agents with the Task tool (team_name=\"${TEAM_NAME}\")"
+            prompt+=$'\n'"4. Assign tasks and coordinate work"
+            prompt+=$'\n\n'"Assign different files to each agent to avoid merge conflicts."
         fi
+    fi
+
+    if [[ -n "$prompt" ]]; then
+        if [[ -n "$memory_context" ]]; then
+            prompt+=$'\n\n'"Historical context (lessons from previous runs):"
+            prompt+=$'\n'"${memory_context}"
+        fi
+
+        prompt+=$'\n\n'"IMPORTANT: Read .claude/CLAUDE.md for project-specific conventions, patterns, and instructions."
     fi
 
     echo "$prompt"
 }
+
+# ─── Dry Run ────────────────────────────────────────────────────────────────
+
+if [[ "$DRY_RUN" == true ]]; then
+    TEAM_PROMPT="$(build_team_prompt)"
+    PROJECT_DIR="$(tmux display-message -p '#{pane_current_path}' 2>/dev/null || pwd)"
+    DRY_RUN_FLAGS=""
+    [[ "$SKIP_PERMISSIONS" == true ]] && DRY_RUN_FLAGS=" --dangerously-skip-permissions"
+
+    echo -e "${CYAN}${BOLD}═══ Team Prompt ═══${RESET}"
+    echo ""
+    if [[ -n "$TEAM_PROMPT" ]]; then
+        echo "$TEAM_PROMPT"
+    else
+        echo -e "${DIM}(empty — no template or goal specified)${RESET}"
+    fi
+
+    echo ""
+    echo -e "${CYAN}${BOLD}═══ Launcher Script ═══${RESET}"
+    echo ""
+    if [[ -n "$TEAM_PROMPT" ]]; then
+        cat << EOF
+#!/usr/bin/env bash
+# Auto-generated by shipwright session — safe to delete
+cd ${PROJECT_DIR} || exit 1
+printf '\\033]2;${TEAM_NAME}-lead\\033\\\\'
+PROMPT=\$(cat <prompt-file>)
+rm -f <prompt-file> "\$0"
+claude${DRY_RUN_FLAGS} "\$PROMPT"
+echo ""
+echo "Claude exited. Type 'claude' to restart, or 'exit' to close."
+exec "\$SHELL" -l
+EOF
+    else
+        cat << EOF
+#!/usr/bin/env bash
+cd ${PROJECT_DIR} || exit 1
+printf '\\033]2;${TEAM_NAME}-lead\\033\\\\'
+rm -f "\$0"
+claude${DRY_RUN_FLAGS}
+echo ""
+echo "Claude exited. Type 'claude' to restart, or 'exit' to close."
+exec "\$SHELL" -l
+EOF
+    fi
+
+    echo ""
+    echo -e "${DIM}Window name: ${WINDOW_NAME}${RESET}"
+    echo -e "${DIM}Terminal adapter: ${TERMINAL_ADAPTER}${RESET}"
+    echo -e "${DIM}Auto-launch: ${AUTO_LAUNCH}${RESET}"
+    exit 0
+fi
 
 # ─── Create Session ──────────────────────────────────────────────────────────
 
@@ -214,6 +372,11 @@ if [[ "$TERMINAL_ADAPTER" == "tmux" ]]; then
     # ─── tmux session creation ─────────────────────────────────────────────
     # Uses launcher script passed to `tmux new-window` as command argument
     # to eliminate the send-keys race condition (shell startup vs keystrokes).
+
+    # Secure temp directory — restrictive permissions for prompt/launcher files
+    SECURE_TMPDIR=$(mktemp -d) || { error "Cannot create temp dir"; exit 1; }
+    chmod 700 "$SECURE_TMPDIR"
+    trap 'rm -rf "$SECURE_TMPDIR"' EXIT
 
     # Check if a window with this name already exists
     if tmux list-windows -F '#W' 2>/dev/null | grep -qx "$WINDOW_NAME"; then
@@ -223,6 +386,9 @@ if [[ "$TERMINAL_ADAPTER" == "tmux" ]]; then
     fi
 
     info "Creating team session: ${CYAN}${BOLD}${TEAM_NAME}${RESET}"
+    if [[ "$SKIP_PERMISSIONS" == true ]]; then
+        warn "${YELLOW}--dangerously-skip-permissions enabled${RESET}"
+    fi
 
     # Resolve project directory (use current pane's path)
     PROJECT_DIR="$(tmux display-message -p '#{pane_current_path}' 2>/dev/null || pwd)"
@@ -233,12 +399,12 @@ if [[ "$TERMINAL_ADAPTER" == "tmux" ]]; then
         info "Launching Claude Code with team setup..."
 
         # Write prompt to a file (avoids all quoting/escaping issues)
-        PROMPT_FILE="/tmp/shipwright-prompt-${TEAM_NAME}.txt"
+        PROMPT_FILE="$SECURE_TMPDIR/prompt.txt"
         printf '%s' "$TEAM_PROMPT" > "$PROMPT_FILE"
 
         # Build launcher — quoted heredoc (no expansion), then sed for variables.
         # When claude exits, falls back to interactive shell so pane stays alive.
-        LAUNCHER="/tmp/shipwright-launch-${TEAM_NAME}.sh"
+        LAUNCHER="$SECURE_TMPDIR/launcher.sh"
         cat > "$LAUNCHER" << 'LAUNCHER_STATIC'
 #!/usr/bin/env bash
 # Auto-generated by shipwright session — safe to delete
@@ -246,12 +412,16 @@ cd __DIR__ || exit 1
 printf '\033]2;__TEAM__-lead\033\\'
 PROMPT=$(cat __PROMPT__)
 rm -f __PROMPT__ "$0"
-claude "$PROMPT"
+claude __CLAUDE_FLAGS__ "$PROMPT"
 echo ""
 echo "Claude exited. Type 'claude' to restart, or 'exit' to close."
 exec "$SHELL" -l
 LAUNCHER_STATIC
-        sed "s|__DIR__|${PROJECT_DIR}|g;s|__TEAM__|${TEAM_NAME}|g;s|__PROMPT__|${PROMPT_FILE}|g" \
+        CLAUDE_FLAGS=""
+        if [[ "$SKIP_PERMISSIONS" == true ]]; then
+            CLAUDE_FLAGS="--dangerously-skip-permissions"
+        fi
+        sed "s|__DIR__|${PROJECT_DIR}|g;s|__TEAM__|${TEAM_NAME}|g;s|__PROMPT__|${PROMPT_FILE}|g;s|__CLAUDE_FLAGS__|${CLAUDE_FLAGS}|g" \
             "$LAUNCHER" > "${LAUNCHER}.tmp" && mv "${LAUNCHER}.tmp" "$LAUNCHER"
         chmod +x "$LAUNCHER"
 
@@ -264,18 +434,22 @@ LAUNCHER_STATIC
         # No template and no goal — just launch claude interactively
         info "Launching Claude Code..."
 
-        LAUNCHER="/tmp/shipwright-launch-${TEAM_NAME}.sh"
+        LAUNCHER="$SECURE_TMPDIR/launcher.sh"
         cat > "$LAUNCHER" << 'LAUNCHER_STATIC'
 #!/usr/bin/env bash
 cd __DIR__ || exit 1
 printf '\033]2;__TEAM__-lead\033\\'
 rm -f "$0"
-claude
+claude __CLAUDE_FLAGS__
 echo ""
 echo "Claude exited. Type 'claude' to restart, or 'exit' to close."
 exec "$SHELL" -l
 LAUNCHER_STATIC
-        sed "s|__DIR__|${PROJECT_DIR}|g;s|__TEAM__|${TEAM_NAME}|g" \
+        CLAUDE_FLAGS=""
+        if [[ "$SKIP_PERMISSIONS" == true ]]; then
+            CLAUDE_FLAGS="--dangerously-skip-permissions"
+        fi
+        sed "s|__DIR__|${PROJECT_DIR}|g;s|__TEAM__|${TEAM_NAME}|g;s|__CLAUDE_FLAGS__|${CLAUDE_FLAGS}|g" \
             "$LAUNCHER" > "${LAUNCHER}.tmp" && mv "${LAUNCHER}.tmp" "$LAUNCHER"
         chmod +x "$LAUNCHER"
 

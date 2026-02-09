@@ -1,6 +1,7 @@
 {
   "name": "refactor",
   "description": "Refactoring with one agent for changes and one for consumers/tests",
+  "keywords": ["refactor", "cleanup", "simplify", "reorganize", "optimize"],
   "agents": [
     {
       "name": "refactor",

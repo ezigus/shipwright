@@ -99,6 +99,18 @@
           }
         ]
       }
+    ],
+    // Project context injection at session start
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/session-start.sh",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   },
 

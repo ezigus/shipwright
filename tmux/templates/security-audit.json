@@ -1,6 +1,14 @@
 {
   "name": "security-audit",
   "description": "Security audit with code analysis, dependency scanning, and config review agents",
+  "keywords": [
+    "security",
+    "vulnerability",
+    "xss",
+    "injection",
+    "auth",
+    "patch"
+  ],
   "agents": [
     {
       "name": "code-analysis",

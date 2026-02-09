@@ -1,6 +1,7 @@
 {
   "name": "documentation",
   "description": "Documentation with API docs and user guide agents",
+  "keywords": ["doc", "readme", "guide", "tutorial", "api doc"],
   "agents": [
     {
       "name": "api-docs",

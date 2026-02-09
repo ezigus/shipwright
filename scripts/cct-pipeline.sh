@@ -1671,6 +1671,7 @@ $(cat "$TASKS_FILE")"
     fi
 
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-build.log"
+    export PIPELINE_JOB_ID="${PIPELINE_NAME:-pipeline-$$}"
     cct loop "${loop_args[@]}" 2>"$_token_log" || {
         parse_claude_tokens "$_token_log"
         error "Build loop failed"

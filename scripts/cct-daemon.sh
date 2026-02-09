@@ -1068,7 +1068,7 @@ daemon_on_failure() {
             local checkpoint_args=()
             if [[ "${CHECKPOINT_ENABLED:-true}" == "true" ]]; then
                 # Try to find worktree for this issue to check for checkpoints
-                local issue_worktree=".worktrees/daemon-issue-${issue_num}"
+                local issue_worktree="${REPO_DIR}/.worktrees/daemon-issue-${issue_num}"
                 if [[ -d "$issue_worktree/.claude/pipeline-artifacts/checkpoints" ]]; then
                     local latest_checkpoint=""
                     for cp_file in "$issue_worktree/.claude/pipeline-artifacts/checkpoints"/*-checkpoint.json; do

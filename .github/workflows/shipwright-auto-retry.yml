@@ -192,7 +192,7 @@ jobs:
           LAST_STAGE=$(echo "$COMMENTS" | grep -oE 'SHIPWRIGHT-RESULT: [0-9]+:[a-z_]+' | tail -1 | cut -d: -f3 || echo "")
 
           # Extract completed stages from stage event comments
-          COMPLETED_STAGES=$(echo "$COMMENTS" | grep -oE 'SHIPWRIGHT-STAGE: [a-z_]+:complete' | sed 's/SHIPWRIGHT-STAGE: //' | sed 's/:complete//' | tr '\n' ',' | sed 's/,$//' || echo "")
+          COMPLETED_STAGES=$(echo "$COMMENTS" | grep -oE 'SHIPWRIGHT-STAGE: [a-z_]+:complete' | sed 's/SHIPWRIGHT-STAGE: //' | sed 's/:complete//' | sort -u | tr '\n' ',' | sed 's/,$//' || echo "")
 
           echo "Last failed stage: ${LAST_STAGE:-unknown}"
           echo "Completed stages: ${COMPLETED_STAGES:-none}"

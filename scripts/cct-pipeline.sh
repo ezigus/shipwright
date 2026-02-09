@@ -2015,6 +2015,8 @@ $(cat "$diff_file")" < /dev/null > "$review_file" 2>"${ARTIFACTS_DIR}/.claude-to
             info "Review found ${blocking_issues} critical/security issue(s) — compound_quality stage will handle"
         elif [[ "$is_fast" == "true" ]]; then
             warn "Review found ${blocking_issues} critical/security issue(s) — fast template, not blocking"
+        elif [[ "${SKIP_GATES:-false}" == "true" ]]; then
+            warn "Review found ${blocking_issues} critical/security issue(s) — skip-gates mode, not blocking"
         else
             error "Review found ${BOLD}${blocking_issues} critical/security issue(s)${RESET} — blocking pipeline"
             emit_event "review.blocked" \
@@ -3909,6 +3911,30 @@ pipeline_start() {
 
     load_pipeline_config
     initialize_state
+
+    # CI resume: restore branch + goal context when intake is skipped
+    if [[ -n "${COMPLETED_STAGES:-}" ]] && echo "$COMPLETED_STAGES" | tr ',' '\n' | grep -qx "intake"; then
+        # Intake was completed in a previous run — restore context
+        # The workflow merges the partial work branch, so code changes are on HEAD
+
+        # Restore GOAL from issue if not already set
+        if [[ -z "$GOAL" && -n "$ISSUE_NUMBER" ]]; then
+            GOAL=$(gh issue view "$ISSUE_NUMBER" --json title -q .title 2>/dev/null || echo "Issue #${ISSUE_NUMBER}")
+            info "CI resume: goal from issue — ${GOAL}"
+        fi
+
+        # Restore branch context
+        if [[ -z "$GIT_BRANCH" ]]; then
+            local ci_branch="ci/issue-${ISSUE_NUMBER}"
+            info "CI resume: creating branch ${ci_branch} from current HEAD"
+            git checkout -b "$ci_branch" 2>/dev/null || git checkout "$ci_branch" 2>/dev/null || true
+            GIT_BRANCH="$ci_branch"
+        elif [[ "$(git branch --show-current 2>/dev/null)" != "$GIT_BRANCH" ]]; then
+            info "CI resume: checking out branch ${GIT_BRANCH}"
+            git checkout -b "$GIT_BRANCH" 2>/dev/null || git checkout "$GIT_BRANCH" 2>/dev/null || true
+        fi
+        write_state 2>/dev/null || true
+    fi
 
     echo ""
     echo -e "${PURPLE}${BOLD}╔═══════════════════════════════════════════════════════════════════╗${RESET}"

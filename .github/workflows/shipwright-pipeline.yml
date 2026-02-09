@@ -1,5 +1,8 @@
 name: Shipwright Pipeline
 
+# Include issue number in run title so auto-retry and watchdog can find it
+run-name: "Shipwright Pipeline #${{ github.event.inputs.issue_number || github.event.issue.number || '?' }}"
+
 # Autonomous agents process labeled issues — Shipwright building itself
 on:
   issues:
@@ -173,22 +176,51 @@ jobs:
 
           # Call Anthropic API directly for triage (no CLI install needed)
           PROMPT_TEXT=$(cat /tmp/triage-prompt.txt)
-          RESPONSE=$(curl -s --max-time 30 \
-            -H "x-api-key: ${ANTHROPIC_API_KEY}" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "content-type: application/json" \
-            -d "$(jq -n --arg prompt "$PROMPT_TEXT" '{
-              model: "claude-haiku-4-5-20251001",
-              max_tokens: 512,
-              messages: [{role: "user", content: $prompt}]
-            }')" \
-            https://api.anthropic.com/v1/messages 2>/dev/null | \
-            jq -r '.content[0].text // empty' 2>/dev/null || echo "APPROVED: true
+
+          # Validate API key exists
+          if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+            echo "WARNING: ANTHROPIC_API_KEY not set — using defaults"
+            RESPONSE="APPROVED: true
           COMPLEXITY: standard
           TEMPLATE: standard
           MAX_ITERATIONS: 20
           ESTIMATED_MINUTES: 90
-          REASON: Triage API unavailable — defaulting to approved")
+          REASON: No API key configured — defaulting to approved"
+          else
+            # Build request body safely via temp file (avoids shell escaping issues)
+            jq -n --arg prompt "$PROMPT_TEXT" '{
+              model: "claude-haiku-4-5-20251001",
+              max_tokens: 512,
+              messages: [{role: "user", content: $prompt}]
+            }' > /tmp/triage-request.json
+
+            HTTP_CODE=$(curl -s -o /tmp/triage-response.json -w '%{http_code}' --max-time 30 \
+              -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "content-type: application/json" \
+              -d @/tmp/triage-request.json \
+              https://api.anthropic.com/v1/messages 2>/dev/null || echo "000")
+
+            echo "Triage API response: HTTP $HTTP_CODE"
+
+            if [[ "$HTTP_CODE" == "200" ]]; then
+              RESPONSE=$(jq -r '.content[0].text // empty' /tmp/triage-response.json 2>/dev/null || true)
+            else
+              echo "Triage API error (HTTP $HTTP_CODE):"
+              cat /tmp/triage-response.json 2>/dev/null | head -5 || true
+              RESPONSE=""
+            fi
+
+            # Fallback if response is empty
+            if [[ -z "$RESPONSE" ]]; then
+              RESPONSE="APPROVED: true
+          COMPLEXITY: standard
+          TEMPLATE: standard
+          MAX_ITERATIONS: 20
+          ESTIMATED_MINUTES: 90
+          REASON: Triage API returned HTTP ${HTTP_CODE} — defaulting to approved"
+            fi
+          fi
 
           # Parse response
           APPROVED=$(echo "$RESPONSE" | grep -i "^APPROVED:" | head -1 | awk '{print $2}' | tr '[:upper:]' '[:lower:]')
@@ -342,6 +374,18 @@ jobs:
           echo "Triage: ${{ needs.triage.outputs.reason }}"
           echo "Runner: $(uname -s) $(uname -m)"
           echo ""
+
+          # Verify CLAUDE.md is present for build agent context
+          if [[ -f ".claude/CLAUDE.md" ]]; then
+            echo "CLAUDE.md: present ($(wc -l < .claude/CLAUDE.md) lines)"
+          else
+            echo "WARNING: .claude/CLAUDE.md not found — build agent will lack project context"
+          fi
+
+          # Verify claude-code can find the project
+          echo "Working directory: $(pwd)"
+          echo "Git branch: $(git branch --show-current)"
+          echo ""
           shipwright doctor || true
 
       - name: Comment on issue — pipeline starting
@@ -372,7 +416,9 @@ jobs:
       - name: Run Shipwright pipeline
         id: pipeline
         run: |
-          set +e
+          set +e          # Don't abort on failure — we capture the exit code
+          set -o pipefail # CRITICAL: preserve pipeline exit code through | tee
+
           PIPELINE_ARGS=(
             --issue "$ISSUE_NUMBER"
             --template "$TEMPLATE"
@@ -399,13 +445,24 @@ jobs:
           HEARTBEAT_PID=$!
 
           shipwright pipeline start "${PIPELINE_ARGS[@]}" 2>&1 | tee /tmp/pipeline.log
-          PIPELINE_EXIT=$?
+          PIPELINE_EXIT=${PIPESTATUS[0]}  # Get exit code of pipeline, not tee
 
           # Stop heartbeat
           kill $HEARTBEAT_PID 2>/dev/null || true
           wait $HEARTBEAT_PID 2>/dev/null || true
 
           echo "exit_code=$PIPELINE_EXIT" >> "$GITHUB_OUTPUT"
+
+          # Double-check: if state file says failed but exit code is 0, override
+          if [[ "$PIPELINE_EXIT" -eq 0 && -f ".claude/pipeline-state.md" ]]; then
+            STATE_STATUS=$(grep "^status:" ".claude/pipeline-state.md" 2>/dev/null | awk '{print $2}' || true)
+            if [[ "$STATE_STATUS" == "failed" ]]; then
+              echo "WARNING: Pipeline exited 0 but state says failed — overriding to exit 1"
+              echo "exit_code=1" >> "$GITHUB_OUTPUT"
+              PIPELINE_EXIT=1
+            fi
+          fi
+
           exit $PIPELINE_EXIT
 
       - name: Comment on issue — pipeline result
@@ -415,8 +472,26 @@ jobs:
 
           # Extract current/failed stage from pipeline state
           LAST_STAGE=""
+          STATE_STATUS=""
           if [[ -f ".claude/pipeline-state.md" ]]; then
             LAST_STAGE=$(grep "current_stage:" ".claude/pipeline-state.md" 2>/dev/null | awk '{print $2}' || true)
+            STATE_STATUS=$(grep "^status:" ".claude/pipeline-state.md" 2>/dev/null | awk '{print $2}' || true)
+          fi
+
+          # Gatekeeper: state file is the source of truth
+          # If exit_code is empty/unreliable, use the state file
+          if [[ -z "$EXIT_CODE" ]]; then
+            if [[ "$STATE_STATUS" == "complete" ]]; then
+              EXIT_CODE="0"
+            else
+              EXIT_CODE="1"
+            fi
+          fi
+
+          # Double-check: never report success if state says failed
+          if [[ "$EXIT_CODE" == "0" && "$STATE_STATUS" == "failed" ]]; then
+            echo "GATEKEEPER: exit_code=0 but state=failed — overriding to failure"
+            EXIT_CODE="1"
           fi
 
           # Build stage timeline from SHIPWRIGHT-STAGE comments on the issue
@@ -527,3 +602,21 @@ jobs:
             .claude/pipeline-artifacts/
           retention-days: 30
           if-no-files-found: ignore
+
+      # Gatekeeper: ensure job fails if pipeline failed (triggers auto-retry)
+      - name: Propagate pipeline exit code
+        if: always()
+        run: |
+          EXIT_CODE="${{ steps.pipeline.outputs.exit_code }}"
+          if [[ -n "$EXIT_CODE" && "$EXIT_CODE" != "0" ]]; then
+            echo "Pipeline failed with exit code $EXIT_CODE — failing job to trigger auto-retry"
+            exit 1
+          fi
+          # Final check: state file says failed?
+          if [[ -f ".claude/pipeline-state.md" ]]; then
+            STATUS=$(grep "^status:" ".claude/pipeline-state.md" 2>/dev/null | awk '{print $2}' || true)
+            if [[ "$STATUS" == "failed" ]]; then
+              echo "GATEKEEPER: state file says failed — failing job"
+              exit 1
+            fi
+          fi

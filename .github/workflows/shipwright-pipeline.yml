@@ -83,7 +83,7 @@ jobs:
           echo "approved=true" >> "$GITHUB_OUTPUT"
           echo "reason=Maintainer override — triage skipped" >> "$GITHUB_OUTPUT"
           echo "complexity=standard" >> "$GITHUB_OUTPUT"
-          echo "template=standard" >> "$GITHUB_OUTPUT"
+          echo "template=autonomous" >> "$GITHUB_OUTPUT"
           echo "max_iterations=20" >> "$GITHUB_OUTPUT"
           echo "estimated_minutes=90" >> "$GITHUB_OUTPUT"
 
@@ -248,6 +248,8 @@ jobs:
           COMPLEXITY="${{ steps.triage.outputs.complexity }}"
 
           # Strategy mapping — deterministic, not AI-dependent
+          # Default to autonomous template for compound quality (adversarial review,
+          # negative testing, e2e validation, DoD audit)
           case "$COMPLEXITY" in
             fast)
               TEMPLATE="fast"
@@ -255,12 +257,12 @@ jobs:
               ESTIMATED_MINUTES=45
               ;;
             full)
-              TEMPLATE="full"
+              TEMPLATE="autonomous"
               MAX_ITERATIONS=30
               ESTIMATED_MINUTES=120
               ;;
             *)
-              TEMPLATE="standard"
+              TEMPLATE="autonomous"
               MAX_ITERATIONS=20
               ESTIMATED_MINUTES=90
               ;;

@@ -1945,8 +1945,8 @@ stage_review() {
 
     local review_model="${MODEL:-opus}"
 
-    claude --print --model "$review_model" --max-turns 25 \
-        "You are a senior code reviewer. Review this git diff thoroughly.
+    # Build review prompt with project context
+    local review_prompt="You are a senior code reviewer. Review this git diff thoroughly.
 
 For each issue found, use this format:
 - **[SEVERITY]** file:line — description
@@ -1959,14 +1959,49 @@ Focus on:
 3. Error handling gaps
 4. Performance issues
 5. Missing validation
+6. Project convention violations (see conventions below)
 
 Be specific. Reference exact file paths and line numbers. Only flag genuine issues.
+If no issues are found, write: \"Review clean — no issues found.\"
+"
 
-$(cat "$diff_file")" < /dev/null > "$review_file" 2>"${ARTIFACTS_DIR}/.claude-tokens-review.log" || true
+    # Inject project conventions if CLAUDE.md exists
+    local claudemd="$PROJECT_ROOT/.claude/CLAUDE.md"
+    if [[ -f "$claudemd" ]]; then
+        local conventions
+        conventions=$(grep -A2 'Common Pitfalls\|Shell Standards\|Bash 3.2' "$claudemd" 2>/dev/null | head -20 || true)
+        if [[ -n "$conventions" ]]; then
+            review_prompt+="
+## Project Conventions
+${conventions}
+"
+        fi
+    fi
+
+    # Inject Definition of Done if present
+    local dod_file="$PROJECT_ROOT/.claude/DEFINITION-OF-DONE.md"
+    if [[ -f "$dod_file" ]]; then
+        review_prompt+="
+## Definition of Done (verify these)
+$(cat "$dod_file")
+"
+    fi
+
+    review_prompt+="
+## Diff to Review
+$(cat "$diff_file")"
+
+    # Build claude args — add --dangerously-skip-permissions in CI
+    local review_args=(--print --model "$review_model" --max-turns 25)
+    if [[ "${CI_MODE:-false}" == "true" ]]; then
+        review_args+=(--dangerously-skip-permissions)
+    fi
+
+    claude "${review_args[@]}" "$review_prompt" < /dev/null > "$review_file" 2>"${ARTIFACTS_DIR}/.claude-tokens-review.log" || true
     parse_claude_tokens "${ARTIFACTS_DIR}/.claude-tokens-review.log"
 
     if [[ ! -s "$review_file" ]]; then
-        warn "Review produced no output"
+        warn "Review produced no output — check ${ARTIFACTS_DIR}/.claude-tokens-review.log for errors"
         return 0
     fi
 

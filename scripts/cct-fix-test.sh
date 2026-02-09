@@ -124,17 +124,17 @@ assert_equals() {
 
 assert_contains() {
     local haystack="$1" needle="$2" label="${3:-contains}"
-    if echo "$haystack" | grep -qE -- "$needle"; then
+    if printf '%s\n' "$haystack" | grep -qE -- "$needle" 2>/dev/null; then
         return 0
     fi
     echo -e "    ${RED}✗${RESET} Output missing pattern: $needle ($label)"
-    echo -e "    ${DIM}Got: $(echo "$haystack" | head -3)${RESET}"
+    echo -e "    ${DIM}Got: $(printf '%s\n' "$haystack" | head -3 2>/dev/null)${RESET}"
     return 1
 }
 
 assert_not_contains() {
     local haystack="$1" needle="$2" label="${3:-not contains}"
-    if ! echo "$haystack" | grep -qE -- "$needle"; then
+    if ! printf '%s\n' "$haystack" | grep -qE -- "$needle" 2>/dev/null; then
         return 0
     fi
     echo -e "    ${RED}✗${RESET} Output unexpectedly contains: $needle ($label)"

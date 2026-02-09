@@ -48,9 +48,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      approved: ${{ steps.triage.outputs.approved }}
-      reason: ${{ steps.triage.outputs.reason }}
-      complexity: ${{ steps.triage.outputs.complexity }}
+      approved: ${{ steps.skip.outputs.approved || steps.triage.outputs.approved }}
+      reason: ${{ steps.skip.outputs.reason || steps.triage.outputs.reason }}
+      complexity: ${{ steps.skip.outputs.complexity || steps.triage.outputs.complexity }}
 
     env:
       ISSUE_NUMBER: ${{ github.event.inputs.issue_number || github.event.issue.number }}

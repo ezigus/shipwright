@@ -79,7 +79,7 @@ LOOP_EOF
     create_mock_project
 
     # ── Bare repo for git push ────────────────────────────────────────────
-    git init --bare "$TEMP_DIR/remote.git" --quiet 2>/dev/null
+    git init --quiet --bare "$TEMP_DIR/remote.git" 2>/dev/null
 
     # ── Wire up git remotes ───────────────────────────────────────────────
     # Push URL → local bare repo (so git push works)
@@ -314,7 +314,7 @@ TST
 
     (
         cd "$TEMP_DIR/project"
-        git init --quiet
+        git init --quiet -b main
         git config user.email "test@test.com"
         git config user.name "Test User"
         git add -A
@@ -342,7 +342,7 @@ reset_test() {
     )
     # Reset the remote bare repo
     rm -rf "$TEMP_DIR/remote.git"
-    git init --bare "$TEMP_DIR/remote.git" --quiet 2>/dev/null
+    git init --quiet --bare "$TEMP_DIR/remote.git" 2>/dev/null
     (
         cd "$TEMP_DIR/project"
         git config remote.origin.pushurl "$TEMP_DIR/remote.git"

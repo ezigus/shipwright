@@ -341,6 +341,23 @@ jobs:
           git config user.name "shipwright[bot]"
           git config user.email "shipwright[bot]@users.noreply.github.com"
 
+      - name: Restore persistent state
+        run: |
+          mkdir -p ~/.shipwright/memory
+          if git fetch origin shipwright-data 2>/dev/null; then
+            echo "Restoring state from shipwright-data branch..."
+            for file in events.jsonl costs.json budget.json; do
+              git show "origin/shipwright-data:${file}" > ~/.shipwright/"${file}" 2>/dev/null || true
+            done
+            for file in $(git ls-tree -r --name-only origin/shipwright-data -- memory/ 2>/dev/null); do
+              mkdir -p ~/.shipwright/"$(dirname "$file")"
+              git show "origin/shipwright-data:${file}" > ~/.shipwright/"${file}" 2>/dev/null || true
+            done
+            echo "State restored successfully"
+          else
+            echo "No shipwright-data branch found — starting fresh"
+          fi
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -604,6 +621,36 @@ jobs:
             .claude/pipeline-artifacts/
           retention-days: 30
           if-no-files-found: ignore
+
+      - name: Persist state to shipwright-data branch
+        if: always()
+        run: |
+          SW_STATE_DIR=$(mktemp -d)
+          cd "$SW_STATE_DIR"
+          git init
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          if git fetch origin shipwright-data 2>/dev/null; then
+            git checkout -b shipwright-data origin/shipwright-data
+          else
+            git checkout --orphan shipwright-data
+            echo "# Shipwright Persistent State" > README.md
+          fi
+          cp ~/.shipwright/events.jsonl . 2>/dev/null || true
+          cp ~/.shipwright/costs.json . 2>/dev/null || true
+          cp ~/.shipwright/budget.json . 2>/dev/null || true
+          if [[ -d ~/.shipwright/memory ]]; then
+            cp -r ~/.shipwright/memory . 2>/dev/null || true
+          fi
+          git config user.name "shipwright[bot]"
+          git config user.email "shipwright[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet 2>/dev/null; then
+            echo "No state changes to persist"
+          else
+            git commit -m "chore: persist pipeline state [skip ci]"
+            git push origin shipwright-data 2>/dev/null || git push origin shipwright-data --force
+            echo "State persisted to shipwright-data branch"
+          fi
 
       # Gatekeeper: ensure job fails if pipeline failed (triggers auto-retry)
       - name: Propagate pipeline exit code

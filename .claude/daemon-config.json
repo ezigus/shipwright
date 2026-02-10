@@ -1,5 +1,5 @@
 {
-  "watch_label": "ready-to-build",
+  "watch_label": "shipwright",
   "poll_interval": 30,
   "max_parallel": 2,
   "pipeline_template": "autonomous",
@@ -7,9 +7,9 @@
   "model": "opus",
   "base_branch": "main",
   "on_success": {
-    "remove_label": "ready-to-build",
+    "remove_label": "shipwright",
     "add_label": "pipeline/complete",
-    "close_issue": false
+    "close_issue": true
   },
   "on_failure": {
     "add_label": "pipeline/failed",
@@ -31,7 +31,7 @@
     "interval": 3600,
     "max_issues": 5,
     "label": "auto-patrol",
-    "auto_watch": false,
+    "auto_watch": true,
     "checks": {
       "recurring_failures": { "enabled": true, "threshold": 3 },
       "dora_degradation": { "enabled": true },
@@ -39,7 +39,7 @@
       "retry_exhaustion": { "enabled": true, "threshold": 2 }
     }
   },
-  "auto_template": false,
+  "auto_template": true,
   "template_map": {
     "hotfix|incident": "hotfix",
     "security": "enterprise"

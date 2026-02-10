@@ -276,6 +276,15 @@ main() {
         predict)
             exec "$SCRIPT_DIR/sw-predictive.sh" "$@"
             ;;
+        adversarial)
+            exec "$SCRIPT_DIR/sw-adversarial.sh" "$@"
+            ;;
+        simulation)
+            exec "$SCRIPT_DIR/sw-developer-simulation.sh" "$@"
+            ;;
+        architecture)
+            exec "$SCRIPT_DIR/sw-architecture-enforcer.sh" "$@"
+            ;;
         help|--help|-h)
             show_help
             ;;

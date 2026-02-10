@@ -146,14 +146,14 @@ get_new_events() {
         # First sync — send last 20 events
         tail -n 20 "$EVENTS_FILE" 2>/dev/null | jq -s '.' 2>/dev/null || echo "[]"
     else
-        # Send events newer than last_ts
-        jq -c --arg ts "$last_ts" 'select(.timestamp > $ts)' "$EVENTS_FILE" 2>/dev/null | jq -s '.' 2>/dev/null || echo "[]"
+        # Send events newer than last_ts (events use "ts" field)
+        jq -c --arg ts "$last_ts" 'select(.ts > $ts)' "$EVENTS_FILE" 2>/dev/null | jq -s '.' 2>/dev/null || echo "[]"
     fi
 }
 
 get_latest_event_ts() {
     local events_json="$1"
-    echo "$events_json" | jq -r 'if length > 0 then .[-1].timestamp // "" else "" end' 2>/dev/null || echo ""
+    echo "$events_json" | jq -r 'if length > 0 then .[-1].ts // "" else "" end' 2>/dev/null || echo ""
 }
 
 # ─── Heartbeat loop ────────────────────────────────────────────────────────
@@ -171,6 +171,12 @@ run_heartbeat_loop() {
     local backoff=5
     local max_backoff=30
     local consecutive_failures=0
+
+    # Load invite token from team config if present (for auth)
+    local invite_token=""
+    if [[ -f "$TEAM_CONFIG" ]]; then
+        invite_token="$(jq -r '.invite_token // ""' "$TEAM_CONFIG" 2>/dev/null || true)"
+    fi
 
     # Trap for graceful shutdown
     trap 'send_disconnect "$dashboard_url" "$developer_id" "$machine_name"; exit 0' SIGTERM SIGINT
@@ -209,7 +215,8 @@ run_heartbeat_loop() {
             --argjson active_jobs "$active_jobs" \
             --argjson queued "$queued" \
             --argjson events "$events" \
-            --arg timestamp "$(now_iso)" \
+            --arg ts "$(now_iso)" \
+            --arg invite_token "$invite_token" \
             '{
                 developer_id: $developer_id,
                 machine_name: $machine_name,
@@ -220,8 +227,8 @@ run_heartbeat_loop() {
                 active_jobs: $active_jobs,
                 queued: $queued,
                 events: $events,
-                timestamp: $timestamp
-            }')"
+                ts: $ts
+            } + (if $invite_token != "" then {invite_token: $invite_token} else {} end)')"
 
         # Send heartbeat
         local http_code
@@ -440,25 +447,63 @@ cmd_status() {
 # ─── Join ───────────────────────────────────────────────────────────────────
 
 cmd_join() {
-    local token="${1:-}"
+    local token=""
+    local url_flag=""
+
+    # Parse args: supports both positional and flag styles
+    #   shipwright connect join <token>
+    #   shipwright connect join --url <url> --token <token>
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --token)  token="${2:-}"; shift 2 ;;
+            --token=*) token="${1#--token=}"; shift ;;
+            --url)    url_flag="${2:-}"; shift 2 ;;
+            --url=*)  url_flag="${1#--url=}"; shift ;;
+            --help|-h) show_help; return 0 ;;
+            -*)       warn "Unknown flag: $1"; shift ;;
+            *)
+                # Positional: if no token yet, treat as token
+                if [[ -z "$token" ]]; then
+                    token="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
 
     if [[ -z "$token" ]]; then
         error "Usage: shipwright connect join <token>"
+        echo -e "  ${DIM}Or: shipwright connect join --url <dashboard-url> --token <token>${RESET}"
         echo -e "  ${DIM}Get a token from the dashboard: Settings → Team → Invite${RESET}"
         return 1
     fi
 
     ensure_dir
 
-    info "Resolving join token..."
+    # Determine dashboard URL to verify against
+    local verify_url
+    verify_url="${url_flag:-$(resolve_dashboard_url "")}"
 
-    # Try to fetch join info from dashboard
+    info "Verifying invite token against ${BOLD}${verify_url}${RESET}..."
+
+    # Try invite token verification endpoint first
     local response
-    response="$(curl -s --max-time 10 "${DEFAULT_URL}/api/join/${token}" 2>/dev/null || true)"
+    response="$(curl -s --max-time 10 "${verify_url}/api/team/invite/${token}" 2>/dev/null || true)"
 
     if [[ -z "$response" ]]; then
-        error "Could not reach dashboard at ${DEFAULT_URL}"
+        error "Could not reach dashboard at ${verify_url}"
         echo -e "  ${DIM}Make sure the dashboard is running: shipwright dashboard start${RESET}"
+        return 1
+    fi
+
+    # Check if token is valid
+    local valid
+    valid="$(echo "$response" | jq -r '.valid // false' 2>/dev/null || echo "false")"
+
+    if [[ "$valid" != "true" ]]; then
+        local err_msg
+        err_msg="$(echo "$response" | jq -r '.error // "Unknown error"' 2>/dev/null || echo "Unknown error")"
+        error "Invalid invite token: ${err_msg}"
         return 1
     fi
 
@@ -468,8 +513,8 @@ cmd_join() {
     join_team="$(echo "$response" | jq -r '.team_name // empty' 2>/dev/null || true)"
 
     if [[ -z "$join_url" ]]; then
-        error "Invalid join token or dashboard response"
-        return 1
+        # Fallback: use the URL we verified against
+        join_url="$verify_url"
     fi
 
     local developer_id
@@ -486,12 +531,14 @@ cmd_join() {
         --arg team_name "${join_team:-}" \
         --arg developer_id "$developer_id" \
         --arg machine_name "$machine_name" \
+        --arg invite_token "$token" \
         --argjson auto_connect true \
         '{
             dashboard_url: $dashboard_url,
             team_name: $team_name,
             developer_id: $developer_id,
             machine_name: $machine_name,
+            invite_token: $invite_token,
             auto_connect: $auto_connect
         }' > "$tmp_config"
 

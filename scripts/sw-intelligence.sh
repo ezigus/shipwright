@@ -150,7 +150,7 @@ _intelligence_cache_set() {
 
 _intelligence_call_claude() {
     local prompt="$1"
-    local cache_key="$2"
+    local cache_key="${2:-}"
     local ttl="${3:-$DEFAULT_CACHE_TTL}"
 
     # Check cache first
@@ -168,31 +168,35 @@ _intelligence_call_claude() {
         return 1
     fi
 
-    # Call Claude
+    # Call Claude (--print mode returns raw text response)
     local response
-    if ! response=$(claude -p "$prompt" --output-format json 2>/dev/null); then
+    if ! response=$(claude -p "$prompt" 2>/dev/null); then
         error "Claude call failed"
         echo '{"error":"claude_call_failed"}'
         return 1
     fi
 
-    # Extract the text result from Claude's response
+    # Extract JSON from the response
     local result
-    result=$(echo "$response" | jq -r '.result // .content // .' 2>/dev/null || echo "$response")
-
-    # Try to parse as JSON — if the result is a JSON string inside the response, extract it
-    local parsed
-    if parsed=$(echo "$result" | jq '.' 2>/dev/null); then
-        result="$parsed"
+    # First try: raw response is valid JSON directly
+    if echo "$response" | jq '.' >/dev/null 2>&1; then
+        result=$(echo "$response" | jq '.')
     else
-        # Attempt to extract JSON from markdown code blocks
+        # Second try: extract JSON from markdown code blocks (```json ... ```)
         local extracted
-        extracted=$(echo "$result" | sed -n '/^```json/,/^```$/p' | sed '1d;$d' || true)
+        extracted=$(echo "$response" | sed -n '/^```/,/^```$/p' | sed '1d;$d' || true)
         if [[ -n "$extracted" ]] && echo "$extracted" | jq '.' >/dev/null 2>&1; then
             result="$extracted"
         else
-            # Wrap raw text in a JSON object
-            result=$(jq -n --arg text "$result" '{"raw_response": $text}')
+            # Third try: find first { to last } in response
+            local braced
+            braced=$(echo "$response" | sed -n '/{/,/}/p' || true)
+            if [[ -n "$braced" ]] && echo "$braced" | jq '.' >/dev/null 2>&1; then
+                result="$braced"
+            else
+                # Wrap raw text in a JSON object
+                result=$(jq -n --arg text "$response" '{"raw_response": $text}')
+            fi
         fi
     fi
 

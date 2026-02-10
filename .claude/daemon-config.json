@@ -72,12 +72,12 @@
   "intelligence": {
     "enabled": true,
     "cache_ttl_seconds": 3600,
-    "composer_enabled": false,
+    "composer_enabled": true,
     "optimization_enabled": true,
     "prediction_enabled": true,
-    "adversarial_enabled": false,
-    "simulation_enabled": false,
-    "architecture_enabled": false,
+    "adversarial_enabled": true,
+    "simulation_enabled": true,
+    "architecture_enabled": true,
     "ab_test_ratio": 0.1,
     "anomaly_threshold": 3.0
   }

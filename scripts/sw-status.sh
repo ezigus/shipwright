@@ -517,6 +517,82 @@ if [[ -f "$MACHINES_FILE" ]]; then
     fi
 fi
 
+# ─── Connected Developers ─────────────────────────────────────────────────
+
+# Check if curl and jq are available
+if command -v curl &>/dev/null && command -v jq &>/dev/null; then
+    # Read dashboard URL from config, fall back to default
+    TEAM_CONFIG="${HOME}/.shipwright/team-config.json"
+    DASHBOARD_URL=""
+    if [[ -f "$TEAM_CONFIG" ]]; then
+        DASHBOARD_URL=$(jq -r '.dashboard_url // ""' "$TEAM_CONFIG" 2>/dev/null || true)
+    fi
+    [[ -z "$DASHBOARD_URL" ]] && DASHBOARD_URL="http://localhost:8767"
+
+    # Try to reach the dashboard /api/team endpoint with 3s timeout
+    api_response=$(curl -s --max-time 3 "$DASHBOARD_URL/api/team" 2>/dev/null || true)
+
+    # Check if we got a valid response
+    if [[ -n "$api_response" ]] && echo "$api_response" | jq empty 2>/dev/null; then
+        echo ""
+        echo -e "${PURPLE}${BOLD}  CONNECTED DEVELOPERS${RESET}"
+        echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+
+        # Parse total_online count
+        total_online=$(echo "$api_response" | jq -r '.total_online // 0' 2>/dev/null)
+
+        # Parse developers array and display table
+        dev_count=$(echo "$api_response" | jq '.developers | length' 2>/dev/null || echo 0)
+        if [[ "$dev_count" -gt 0 ]]; then
+            while IFS= read -r developer; do
+                [[ -z "$developer" ]] && continue
+
+                dev_id=$(echo "$developer" | jq -r '.developer_id // "?"')
+                dev_machine=$(echo "$developer" | jq -r '.machine_name // "?"')
+                dev_status=$(echo "$developer" | jq -r '.status // "offline"')
+                active_jobs=$(echo "$developer" | jq '.active_jobs | length' 2>/dev/null || echo 0)
+                queued=$(echo "$developer" | jq '.queued | length' 2>/dev/null || echo 0)
+
+                # Status indicator and color
+                case "$dev_status" in
+                    online)
+                        status_icon="${GREEN}●${RESET}"
+                        status_label="${GREEN}online${RESET}"
+                        ;;
+                    idle)
+                        status_icon="${YELLOW}●${RESET}"
+                        status_label="${YELLOW}idle${RESET}"
+                        ;;
+                    offline|*)
+                        status_icon="${DIM}●${RESET}"
+                        status_label="${DIM}offline${RESET}"
+                        ;;
+                esac
+
+                echo -e "  ${status_icon} ${BOLD}${dev_id}${RESET}  ${DIM}${dev_machine}${RESET}  ${status_label}  ${DIM}active:${active_jobs} queued:${queued}${RESET}"
+            done < <(echo "$api_response" | jq -c '.developers[]' 2>/dev/null)
+
+            # Display total online count
+            echo -e "  ${DIM}────────────────────────────────────────────${RESET}"
+            echo -e "  ${DIM}Total online: ${GREEN}${total_online}${RESET}${DIM} / ${dev_count}${RESET}"
+        else
+            echo -e "  ${DIM}No developers connected${RESET}"
+        fi
+    else
+        # Dashboard not reachable — show dim message
+        echo ""
+        echo -e "${PURPLE}${BOLD}  CONNECTED DEVELOPERS${RESET}"
+        echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+        echo -e "  ${DIM}Dashboard not reachable (${DASHBOARD_URL})${RESET}"
+    fi
+elif [[ -f "$HOME/.shipwright/team-config.json" ]] || [[ -f "$HOME/.shipwright/daemon-state.json" ]]; then
+    # If we have shipwright config but curl/jq missing, show info
+    echo ""
+    echo -e "${PURPLE}${BOLD}  CONNECTED DEVELOPERS${RESET}"
+    echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+    echo -e "  ${DIM}curl or jq not available to check dashboard${RESET}"
+fi
+
 # ─── Footer ──────────────────────────────────────────────────────────────────
 
 echo ""

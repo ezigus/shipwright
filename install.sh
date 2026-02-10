@@ -764,6 +764,12 @@ echo -e "  ${DIM}2.${RESET} Install tmux plugins:  ${BOLD}prefix + I${RESET}"
 echo -e "  ${DIM}3.${RESET} Launch Shipwright:     ${BOLD}shipwright help${RESET}  ${DIM}(or: sw, cct)${RESET}"
 echo -e "  ${DIM}4.${RESET} Tab completions:       ${BOLD}shipwright completions install${RESET}"
 echo ""
+info "Team collaboration (optional):"
+echo -e "  ${DIM}•${RESET} Start dashboard:       ${BOLD}shipwright dashboard start${RESET}"
+echo -e "  ${DIM}•${RESET} Connect to team:       ${BOLD}shipwright connect start${RESET}"
+echo -e "  ${DIM}•${RESET} Join existing team:    ${BOLD}shipwright connect join --url <url> --token <token>${RESET}"
+echo -e "  ${DIM}•${RESET} Auto-start on boot:    ${BOLD}shipwright launchd install${RESET}  ${DIM}(macOS)${RESET}"
+echo ""
 
 if $DRY_RUN; then
   warn "This was a dry run — no changes were made"

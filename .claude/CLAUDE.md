@@ -45,6 +45,10 @@ Shipwright orchestrates autonomous Claude Code agent teams with delivery pipelin
 | `shipwright intelligence`                          | Run intelligence engine analysis                  |
 | `shipwright optimize`                              | Self-optimization based on DORA metrics           |
 | `shipwright predict`                               | Predictive risk assessment and anomaly detection  |
+| `shipwright connect start`                         | Sync local state to team dashboard                |
+| `shipwright connect join --token <t>`              | Join a team using an invite token                 |
+| `shipwright connect status`                        | Show connection status                            |
+| `shipwright launchd install`                       | Auto-start daemon + dashboard + connect on boot   |
 
 ## Pipeline Stages
 
@@ -128,6 +132,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-setup.sh`                 |   233 | Guided setup wizard                             |
 | `scripts/sw-adversarial.sh`           |   210 | Adversarial code review                         |
 | `scripts/sw-cleanup.sh`               |   172 | Orphaned session cleanup                        |
+| `scripts/sw-connect.sh`               |   573 | Multi-developer platform — team dashboard sync  |
+| `scripts/sw-launchd.sh`               |   294 | Process supervision — auto-start on boot        |
 | `scripts/sw-ps.sh`                    |   168 | Running agent process display                   |
 
 ### Issue Tracker Adapters
@@ -192,6 +198,12 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 - Optimization data: `~/.shipwright/optimization/`
 - Baselines: `~/.shipwright/baselines/`
 - Architecture models: `~/.shipwright/memory/<repo-hash>/architecture.json`
+- Team config: `~/.shipwright/team-config.json`
+- Developer registry: `~/.shipwright/developer-registry.json`
+- Team events: `~/.shipwright/team-events.jsonl`
+- Invite tokens: `~/.shipwright/invite-tokens.json`
+- Connect PID: `~/.shipwright/connect.pid`
+- Connect log: `~/.shipwright/connect.log`
 
 ## Intelligence Layer
 

@@ -317,11 +317,40 @@ function getTeamState(): TeamState {
   };
 }
 
-// Invite tokens (in-memory, separate from join-tokens)
+// Invite tokens (file-backed, separate from join-tokens)
+const INVITE_TOKENS_FILE = join(HOME, ".shipwright", "invite-tokens.json");
 const inviteTokens = new Map<
   string,
   { token: string; created_at: string; expires_at: string }
 >();
+
+function loadInviteTokens(): void {
+  try {
+    if (existsSync(INVITE_TOKENS_FILE)) {
+      const data = JSON.parse(readFileSync(INVITE_TOKENS_FILE, "utf-8"));
+      if (Array.isArray(data)) {
+        const now = Date.now();
+        for (const t of data) {
+          // Skip expired tokens on load
+          if (new Date(t.expires_at).getTime() > now) {
+            inviteTokens.set(t.token, t);
+          }
+        }
+      }
+    }
+  } catch {
+    /* start fresh */
+  }
+}
+
+function saveInviteTokens(): void {
+  const dir = join(HOME, ".shipwright");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const data = JSON.stringify(Array.from(inviteTokens.values()), null, 2);
+  const tmp = INVITE_TOKENS_FILE + ".tmp";
+  writeFileSync(tmp, data);
+  renameSync(tmp, INVITE_TOKENS_FILE);
+}
 
 // ─── Auth check ─────────────────────────────────────────────────────
 type AuthMode = "oauth" | "pat" | "none";
@@ -348,6 +377,7 @@ function isPublicRoute(pathname: string): boolean {
     pathname === "/api/team" ||
     pathname === "/api/team/activity" ||
     pathname === "/api/team/invite" ||
+    pathname.startsWith("/api/team/invite/") ||
     pathname === "/api/claim" ||
     pathname === "/api/claim/release" ||
     pathname === "/api/webhook/ci"
@@ -3734,6 +3764,48 @@ const server = Bun.serve({
     if (pathname === "/api/connect/heartbeat" && req.method === "POST") {
       try {
         const body = (await req.json()) as any;
+
+        // Optional auth: if invite tokens exist, require a valid one
+        if (inviteTokens.size > 0) {
+          const authToken =
+            body.invite_token ||
+            (req.headers.get("authorization") || "").replace("Bearer ", "");
+          if (authToken) {
+            const entry = inviteTokens.get(authToken);
+            if (!entry || new Date(entry.expires_at).getTime() < Date.now()) {
+              return new Response(
+                JSON.stringify({ error: "Invalid or expired invite token" }),
+                {
+                  status: 403,
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...CORS_HEADERS,
+                  },
+                },
+              );
+            }
+          }
+          // If no token provided but tokens exist, check if developer is already registered
+          else {
+            const existingKey = `${body.developer_id}@${body.machine_name}`;
+            if (!developerRegistry.has(existingKey)) {
+              return new Response(
+                JSON.stringify({
+                  error: "Invite token required for new developers",
+                  hint: "Run: shipwright connect join --url <dashboard> --token <token>",
+                }),
+                {
+                  status: 403,
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...CORS_HEADERS,
+                  },
+                },
+              );
+            }
+          }
+        }
+
         const key = `${body.developer_id}@${body.machine_name}`;
 
         developerRegistry.set(key, {
@@ -3895,6 +3967,16 @@ const server = Bun.serve({
           );
         }
 
+        // Ensure the claimed label exists (no-op if already created)
+        try {
+          execSync(
+            `gh label create "claimed:${machine}"${repoFlag} --color EDEDED --description "Claimed by ${machine}" --force`,
+            { timeout: 10000, stdio: ["pipe", "pipe", "pipe"] },
+          );
+        } catch {
+          /* label may already exist or gh label create not supported — fallback below */
+        }
+
         // Add claimed:<machine> label
         try {
           execSync(
@@ -4030,9 +4112,10 @@ const server = Bun.serve({
           created_at: now.toISOString(),
           expires_at: expires.toISOString(),
         });
+        saveInviteTokens();
 
         const dashboardUrl = `${url.protocol}//${url.host}`;
-        const command = `shipwright connect join ${dashboardUrl} --token ${token}`;
+        const command = `shipwright connect join --url ${dashboardUrl} --token ${token}`;
 
         return new Response(
           JSON.stringify({ token, command, expires_at: expires.toISOString() }),
@@ -4046,6 +4129,46 @@ const server = Bun.serve({
           headers: { "Content-Type": "application/json", ...CORS_HEADERS },
         });
       }
+    }
+
+    // GET /api/team/invite/<token> — Verify an invite token
+    if (pathname.startsWith("/api/team/invite/") && req.method === "GET") {
+      const token = pathname.split("/")[4] || "";
+      if (!token) {
+        return new Response(
+          JSON.stringify({ valid: false, error: "Missing token" }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+          },
+        );
+      }
+      const entry = inviteTokens.get(token);
+      if (!entry || new Date(entry.expires_at).getTime() < Date.now()) {
+        if (entry) {
+          inviteTokens.delete(token);
+          saveInviteTokens();
+        }
+        return new Response(
+          JSON.stringify({ valid: false, error: "Invalid or expired token" }),
+          {
+            status: 404,
+            headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+          },
+        );
+      }
+      const dashboardUrl = `${url.protocol}//${url.host}`;
+      return new Response(
+        JSON.stringify({
+          valid: true,
+          dashboard_url: dashboardUrl,
+          team_name: "shipwright",
+          expires_at: entry.expires_at,
+        }),
+        {
+          headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+        },
+      );
     }
 
     // Static files from public/
@@ -4078,6 +4201,7 @@ const server = Bun.serve({
 startEventsWatcher();
 loadSessions();
 loadDeveloperRegistry();
+loadInviteTokens();
 const pushInterval = setInterval(periodicPush, WS_PUSH_INTERVAL_MS);
 
 // Stale claim reaper — runs every 5 minutes
@@ -4122,10 +4246,31 @@ const staleClaimInterval = setInterval(
   5 * 60 * 1000,
 );
 
+// Invite token cleanup — runs every 15 minutes
+const inviteCleanupInterval = setInterval(
+  () => {
+    try {
+      const now = Date.now();
+      let removed = 0;
+      for (const [key, entry] of inviteTokens) {
+        if (new Date(entry.expires_at).getTime() < now) {
+          inviteTokens.delete(key);
+          removed++;
+        }
+      }
+      if (removed > 0) saveInviteTokens();
+    } catch {
+      /* cleanup errors are non-fatal */
+    }
+  },
+  15 * 60 * 1000,
+);
+
 // Graceful shutdown
 process.on("SIGINT", () => {
   clearInterval(pushInterval);
   clearInterval(staleClaimInterval);
+  clearInterval(inviteCleanupInterval);
   if (eventsWatcher) eventsWatcher.close();
   for (const ws of wsClients) {
     try {

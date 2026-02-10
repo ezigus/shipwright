@@ -192,7 +192,8 @@ dashboard_start_bg() {
         echo -e "  ${BOLD}PID:${RESET}  ${bg_pid}"
         echo -e "  ${BOLD}Log:${RESET}  ${DIM}${LOG_FILE}${RESET}"
         echo ""
-        info "Open in browser: ${DIM}shipwright dashboard open${RESET}"
+        info "Open in browser:  ${DIM}shipwright dashboard open${RESET}"
+        info "Connect agents:  ${DIM}shipwright connect start --url http://localhost:${port}${RESET}"
         info "Stop server:     ${DIM}shipwright dashboard stop${RESET}"
 
         emit_event "dashboard.started" \
@@ -229,6 +230,7 @@ dashboard_start_fg() {
 
     info "Starting dashboard server on port ${CYAN}${port}${RESET} ${DIM}(foreground)${RESET}"
     echo -e "  ${BOLD}URL:${RESET}  ${UNDERLINE}http://localhost:${port}${RESET}"
+    echo -e "  ${BOLD}Connect:${RESET} ${DIM}shipwright connect start --url http://localhost:${port}${RESET}"
     echo -e "  ${DIM}Press Ctrl-C to stop${RESET}"
     echo ""
 

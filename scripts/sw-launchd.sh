@@ -35,7 +35,9 @@ error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
 PLIST_DIR="$HOME/Library/LaunchAgents"
 DAEMON_PLIST="$PLIST_DIR/com.shipwright.daemon.plist"
 DASHBOARD_PLIST="$PLIST_DIR/com.shipwright.dashboard.plist"
+CONNECT_PLIST="$PLIST_DIR/com.shipwright.connect.plist"
 LOG_DIR="$HOME/.shipwright/logs"
+TEAM_CONFIG="$HOME/.shipwright/team-config.json"
 
 # ─── Check macOS ─────────────────────────────────────────────────────────────
 check_macos() {
@@ -177,6 +179,48 @@ EOF
     chmod 644 "$DASHBOARD_PLIST"
     success "Created dashboard plist: ${DASHBOARD_PLIST}"
 
+    # ─── Create Connect Plist (only if team-config.json exists) ────────────────
+    if [[ -f "$TEAM_CONFIG" ]]; then
+        cat > "$CONNECT_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.shipwright.connect</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${sw_bin}</string>
+        <string>connect</string>
+        <string>start</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>${REPO_DIR}</string>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>${LOG_DIR}/connect.log</string>
+    <key>StandardErrorPath</key>
+    <string>${LOG_DIR}/connect.err</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>\$HOME</string>
+    </dict>
+</dict>
+</plist>
+EOF
+
+        chmod 644 "$CONNECT_PLIST"
+        success "Created connect plist: ${CONNECT_PLIST}"
+    else
+        info "Skipping connect plist — ${TEAM_CONFIG} not found"
+    fi
+
     # ─── Load Services ─────────────────────────────────────────────────────────
     info "Loading launchd services..."
 
@@ -190,6 +234,14 @@ EOF
         success "Loaded dashboard service"
     else
         warn "Could not load dashboard service — it may already be loaded"
+    fi
+
+    if [[ -f "$CONNECT_PLIST" ]]; then
+        if launchctl load "$CONNECT_PLIST" 2>/dev/null; then
+            success "Loaded connect service"
+        else
+            warn "Could not load connect service — it may already be loaded"
+        fi
     fi
 
     echo ""
@@ -226,6 +278,17 @@ cmd_uninstall() {
         success "Removed dashboard plist"
     fi
 
+    # Unload connect
+    if [[ -f "$CONNECT_PLIST" ]]; then
+        if launchctl unload "$CONNECT_PLIST" 2>/dev/null; then
+            success "Unloaded connect service"
+        else
+            warn "Could not unload connect service — it may not be loaded"
+        fi
+        rm -f "$CONNECT_PLIST"
+        success "Removed connect plist"
+    fi
+
     echo ""
     success "Uninstalled all launchd agents"
 }
@@ -251,6 +314,13 @@ cmd_status() {
         echo -e "  ${GREEN}●${RESET} Dashboard service is ${GREEN}loaded${RESET}"
     else
         echo -e "  ${RED}○${RESET} Dashboard service is ${RED}not loaded${RESET}"
+    fi
+
+    # Check connect
+    if launchctl list | grep -q "com.shipwright.connect" 2>/dev/null; then
+        echo -e "  ${GREEN}●${RESET} Connect service is ${GREEN}loaded${RESET}"
+    else
+        echo -e "  ${RED}○${RESET} Connect service is ${RED}not loaded${RESET}"
     fi
 
     echo ""

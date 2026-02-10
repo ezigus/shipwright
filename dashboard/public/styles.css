@@ -4752,12 +4752,4 @@ select.form-input {
   font-size: 0.85rem;
 }
 
-@keyframes presence-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
+/* presence-pulse: used by pulse-dot keyframes on .presence-dot.online */

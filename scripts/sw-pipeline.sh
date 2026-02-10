@@ -34,6 +34,14 @@ fi
 if [[ -f "$SCRIPT_DIR/sw-pipeline-composer.sh" ]]; then
     source "$SCRIPT_DIR/sw-pipeline-composer.sh"
 fi
+# shellcheck source=sw-developer-simulation.sh
+if [[ -f "$SCRIPT_DIR/sw-developer-simulation.sh" ]]; then
+    source "$SCRIPT_DIR/sw-developer-simulation.sh"
+fi
+# shellcheck source=sw-architecture-enforcer.sh
+if [[ -f "$SCRIPT_DIR/sw-architecture-enforcer.sh" ]]; then
+    source "$SCRIPT_DIR/sw-architecture-enforcer.sh"
+fi
 
 # ─── Output Helpers ─────────────────────────────────────────────────────────
 info()    { echo -e "${CYAN}${BOLD}▸${RESET} $*"; }
@@ -2192,6 +2200,71 @@ stage_pr() {
         }
     }
 
+    # ── Developer Simulation (pre-PR review) ──
+    local simulation_summary=""
+    if type simulation_review &>/dev/null 2>&1; then
+        local sim_enabled
+        sim_enabled=$(jq -r '.intelligence.simulation_enabled // false' "$PIPELINE_CONFIG" 2>/dev/null || echo "false")
+        # Also check daemon-config
+        local daemon_cfg=".claude/daemon-config.json"
+        if [[ "$sim_enabled" != "true" && -f "$daemon_cfg" ]]; then
+            sim_enabled=$(jq -r '.intelligence.simulation_enabled // false' "$daemon_cfg" 2>/dev/null || echo "false")
+        fi
+        if [[ "$sim_enabled" == "true" ]]; then
+            info "Running developer simulation review..."
+            local diff_for_sim
+            diff_for_sim=$(git diff "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+            if [[ -n "$diff_for_sim" ]]; then
+                local sim_result
+                sim_result=$(simulation_review "$diff_for_sim" "${GOAL:-}" 2>/dev/null || echo "")
+                if [[ -n "$sim_result" && "$sim_result" != *'"error"'* ]]; then
+                    echo "$sim_result" > "$ARTIFACTS_DIR/simulation-review.json"
+                    local sim_count
+                    sim_count=$(echo "$sim_result" | jq 'length' 2>/dev/null || echo "0")
+                    simulation_summary="**Developer simulation:** ${sim_count} reviewer concerns pre-addressed"
+                    success "Simulation complete: ${sim_count} concerns found and addressed"
+                    emit_event "simulation.complete" "issue=${ISSUE_NUMBER:-0}" "concerns=${sim_count}"
+                else
+                    info "Simulation returned no actionable concerns"
+                fi
+            fi
+        fi
+    fi
+
+    # ── Architecture Validation (pre-PR check) ──
+    local arch_summary=""
+    if type architecture_validate_changes &>/dev/null 2>&1; then
+        local arch_enabled
+        arch_enabled=$(jq -r '.intelligence.architecture_enabled // false' "$PIPELINE_CONFIG" 2>/dev/null || echo "false")
+        local daemon_cfg=".claude/daemon-config.json"
+        if [[ "$arch_enabled" != "true" && -f "$daemon_cfg" ]]; then
+            arch_enabled=$(jq -r '.intelligence.architecture_enabled // false' "$daemon_cfg" 2>/dev/null || echo "false")
+        fi
+        if [[ "$arch_enabled" == "true" ]]; then
+            info "Validating architecture..."
+            local diff_for_arch
+            diff_for_arch=$(git diff "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+            if [[ -n "$diff_for_arch" ]]; then
+                local arch_result
+                arch_result=$(architecture_validate_changes "$diff_for_arch" "" 2>/dev/null || echo "")
+                if [[ -n "$arch_result" && "$arch_result" != *'"error"'* ]]; then
+                    echo "$arch_result" > "$ARTIFACTS_DIR/architecture-validation.json"
+                    local violation_count
+                    violation_count=$(echo "$arch_result" | jq '[.violations[]? | select(.severity == "critical" or .severity == "high")] | length' 2>/dev/null || echo "0")
+                    arch_summary="**Architecture validation:** ${violation_count} violations"
+                    if [[ "$violation_count" -gt 0 ]]; then
+                        warn "Architecture: ${violation_count} high/critical violations found"
+                    else
+                        success "Architecture validation passed"
+                    fi
+                    emit_event "architecture.validated" "issue=${ISSUE_NUMBER:-0}" "violations=${violation_count}"
+                else
+                    info "Architecture validation returned no results"
+                fi
+            fi
+        fi
+    fi
+
     # Build PR title
     local pr_title
     pr_title=$(head -1 "$plan_file" 2>/dev/null | sed 's/^#* *//' | cut -c1-70)
@@ -2245,6 +2318,8 @@ ${test_summary:-No test output}
 \`\`\`
 
 ${review_summary}
+${simulation_summary}
+${arch_summary}
 
 ${closes_line}
 

@@ -702,6 +702,77 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 12. Team Connectivity
+# ═════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${PURPLE}${BOLD}  TEAM CONNECTIVITY${RESET}"
+echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+
+# Check connect process
+CONNECT_PID_FILE="$HOME/.shipwright/connect.pid"
+if [[ -f "$CONNECT_PID_FILE" ]]; then
+    CONNECT_PID=$(cat "$CONNECT_PID_FILE" 2>/dev/null || echo "")
+    if [[ -n "$CONNECT_PID" ]]; then
+        if kill -0 "$CONNECT_PID" 2>/dev/null; then
+            check_pass "Connect process: running (PID ${CONNECT_PID})"
+        else
+            check_warn "Connect process: PID file exists but process not running"
+            echo -e "    ${DIM}Clean up with: rm ${CONNECT_PID_FILE}${RESET}"
+        fi
+    else
+        check_warn "Connect PID file exists but is empty"
+    fi
+else
+    info "  Team connect not configured ${DIM}(optional)${RESET}"
+fi
+
+# Check team config
+TEAM_CONFIG="$HOME/.shipwright/team-config.json"
+if [[ -f "$TEAM_CONFIG" ]]; then
+    if jq -e . "$TEAM_CONFIG" &>/dev/null; then
+        check_pass "Team config: valid JSON"
+
+        # Check dashboard_url field
+        DASHBOARD_URL=$(jq -r '.dashboard_url // empty' "$TEAM_CONFIG" 2>/dev/null || true)
+        if [[ -n "$DASHBOARD_URL" ]]; then
+            check_pass "Dashboard URL: configured"
+
+            # Try to reach dashboard with 3s timeout
+            if command -v curl &>/dev/null; then
+                if curl -s -m 3 "${DASHBOARD_URL}/api/health" &>/dev/null; then
+                    check_pass "Dashboard reachable: ${DASHBOARD_URL}"
+                else
+                    check_warn "Dashboard unreachable: ${DASHBOARD_URL}"
+                    echo -e "    ${DIM}Check if dashboard service is running or URL is correct${RESET}"
+                fi
+            else
+                info "  curl not found — skipping dashboard health check"
+            fi
+        else
+            check_warn "Team config: missing dashboard_url field"
+        fi
+    else
+        check_fail "Team config: invalid JSON"
+        echo -e "    ${DIM}Fix JSON syntax in ${TEAM_CONFIG}${RESET}"
+    fi
+else
+    info "  Team config not found ${DIM}(optional — run shipwright init)${RESET}"
+fi
+
+# Check developer registry
+DEVELOPER_REGISTRY="$HOME/.shipwright/developer-registry.json"
+if [[ -f "$DEVELOPER_REGISTRY" ]]; then
+    if jq -e . "$DEVELOPER_REGISTRY" &>/dev/null; then
+        check_pass "Developer registry: exists and valid"
+    else
+        check_fail "Developer registry: invalid JSON"
+        echo -e "    ${DIM}Fix JSON syntax in ${DEVELOPER_REGISTRY}${RESET}"
+    fi
+else
+    info "  Developer registry not found ${DIM}(optional)${RESET}"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Summary
 # ═════════════════════════════════════════════════════════════════════════════
 echo ""

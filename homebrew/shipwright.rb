@@ -34,9 +34,9 @@ class Shipwright < Formula
     (libexec/"scripts").children.each { |f| f.chmod 0755 if f.file? }
 
     # Create bin entries — all three names point to the same router
-    bin.install_symlink libexec/"cct" => "shipwright"
-    bin.install_symlink libexec/"cct" => "sw"
-    bin.install_symlink libexec/"cct" => "cct"
+    bin.install_symlink libexec/"sw" => "shipwright"
+    bin.install_symlink libexec/"sw" => "sw"
+    bin.install_symlink libexec/"sw" => "cct"
 
     # Install team templates
     (share/"shipwright/templates").install Dir["tmux/templates/*.json"]

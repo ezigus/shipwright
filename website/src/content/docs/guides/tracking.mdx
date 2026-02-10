@@ -18,11 +18,11 @@ Shipwright integrates with issue trackers to provide bidirectional sync between 
 Shipwright uses a **router pattern** for tracker integration:
 
 ```
-Pipeline → cct-tracker.sh (router) → cct-tracker-linear.sh
-                                   → cct-tracker-jira.sh
+Pipeline → sw-tracker.sh (router) → sw-tracker-linear.sh
+                                   → sw-tracker-jira.sh
 ```
 
-The router reads `~/.claude-teams/tracker-config.json` to determine which provider to use, then delegates to the provider-specific script.
+The router reads `~/.shipwright/tracker-config.json` to determine which provider to use, then delegates to the provider-specific script.
 
 ## Configuration
 
@@ -38,7 +38,7 @@ shipwright jira setup
 
 ### Configuration File
 
-The tracker configuration lives at `~/.claude-teams/tracker-config.json`:
+The tracker configuration lives at `~/.shipwright/tracker-config.json`:
 
 ```json
 {

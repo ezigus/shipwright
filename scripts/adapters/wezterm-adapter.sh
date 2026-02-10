@@ -4,7 +4,7 @@
 # ║                                                                          ║
 # ║  Uses `wezterm cli` to spawn panes/tabs with named titles and working   ║
 # ║  directories. Cross-platform.                                            ║
-# ║  Sourced by cct-session.sh — exports: spawn_agent, list_agents,         ║
+# ║  Sourced by sw-session.sh — exports: spawn_agent, list_agents,         ║
 # ║  kill_agent, focus_agent.                                                ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 

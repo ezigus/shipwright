@@ -26,37 +26,37 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y tmux jq
 
       - name: Run pipeline tests
-        run: bash scripts/cct-pipeline-test.sh
+        run: bash scripts/sw-pipeline-test.sh
 
       - name: Run daemon tests
-        run: bash scripts/cct-daemon-test.sh
+        run: bash scripts/sw-daemon-test.sh
 
       - name: Run prep tests
-        run: bash scripts/cct-prep-test.sh
+        run: bash scripts/sw-prep-test.sh
 
       - name: Run fleet tests
-        run: bash scripts/cct-fleet-test.sh
+        run: bash scripts/sw-fleet-test.sh
 
       - name: Run fix tests
-        run: bash scripts/cct-fix-test.sh
+        run: bash scripts/sw-fix-test.sh
 
       - name: Run memory tests
-        run: bash scripts/cct-memory-test.sh
+        run: bash scripts/sw-memory-test.sh
 
       - name: Run session tests
-        run: bash scripts/cct-session-test.sh
+        run: bash scripts/sw-session-test.sh
 
       - name: Run init tests
-        run: bash scripts/cct-init-test.sh
+        run: bash scripts/sw-init-test.sh
 
       - name: Run tracker tests
-        run: bash scripts/cct-tracker-test.sh
+        run: bash scripts/sw-tracker-test.sh
 
       - name: Run heartbeat tests
-        run: bash scripts/cct-heartbeat-test.sh
+        run: bash scripts/sw-heartbeat-test.sh
 
       - name: Run remote tests
-        run: bash scripts/cct-remote-test.sh
+        run: bash scripts/sw-remote-test.sh
 
   shellcheck:
     runs-on: ubuntu-latest
@@ -68,4 +68,4 @@ jobs:
 
       - name: Lint scripts
         run: |
-          shellcheck -x scripts/cct scripts/cct-*.sh install.sh || true
+          shellcheck -x scripts/sw scripts/sw-*.sh install.sh || true

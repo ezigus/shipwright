@@ -33,16 +33,16 @@ shipwright fix --status
 
 ## Options
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--repos <paths>` | *(required)* | Comma-separated repo paths |
-| `--repos-from <file>` | | Read repo paths from a file (one per line) |
-| `--pipeline <template>` | `fast` | Pipeline template to use |
-| `--model <model>` | auto | Claude model to use |
-| `--max-parallel <n>` | `3` | Max concurrent pipelines |
-| `--branch-prefix <prefix>` | `fix/` | Branch name prefix |
-| `--dry-run` | | Preview without executing |
-| `--status` | | Show running/completed fix sessions |
+| Flag                       | Default      | Description                                |
+| -------------------------- | ------------ | ------------------------------------------ |
+| `--repos <paths>`          | _(required)_ | Comma-separated repo paths                 |
+| `--repos-from <file>`      |              | Read repo paths from a file (one per line) |
+| `--pipeline <template>`    | `fast`       | Pipeline template to use                   |
+| `--model <model>`          | auto         | Claude model to use                        |
+| `--max-parallel <n>`       | `3`          | Max concurrent pipelines                   |
+| `--branch-prefix <prefix>` | `fix/`       | Branch name prefix                         |
+| `--dry-run`                |              | Preview without executing                  |
+| `--status`                 |              | Show running/completed fix sessions        |
 
 ## Repos File Format
 
@@ -74,7 +74,7 @@ After all pipelines complete, Shipwright prints a results table:
   Success: 2/3  |  Duration: 4m 8s (parallel)
 ```
 
-Logs for failed repos are saved to `~/.claude-teams/fix-<session>-logs/`.
+Logs for failed repos are saved to `~/.shipwright/fix-<session>-logs/`.
 
 ## Example Workflows
 
@@ -106,5 +106,5 @@ shipwright fix "Replace deprecated v1 auth endpoints with v2 OAuth flow" \
 
 - **Use `--dry-run` first** to verify repo paths and see the planned branches before committing.
 - **Choose the right pipeline** — `fast` skips gates for quick fixes; `hotfix` is optimized for urgent patches.
-- **Descriptive goals** — The more specific the goal, the better Claude performs. "Update lodash" is vague; "Update lodash to 4.17.21 and replace all _.get() calls with optional chaining" is actionable.
+- **Descriptive goals** — The more specific the goal, the better Claude performs. "Update lodash" is vague; "Update lodash to 4.17.21 and replace all \_.get() calls with optional chaining" is actionable.
 - **Check status later** — Run `shipwright fix --status` to review past fix sessions and their outcomes.

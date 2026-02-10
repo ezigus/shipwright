@@ -30,7 +30,14 @@
   "patrol": {
     "interval": 3600,
     "max_issues": 5,
-    "label": "auto-patrol"
+    "label": "auto-patrol",
+    "auto_watch": false,
+    "checks": {
+      "recurring_failures": { "enabled": true, "threshold": 3 },
+      "dora_degradation": { "enabled": true },
+      "untested_scripts": { "enabled": true },
+      "retry_exhaustion": { "enabled": true, "threshold": 2 }
+    }
   },
   "auto_template": false,
   "template_map": {

@@ -13,7 +13,7 @@ Shipwright is a CLI tool that orchestrates Claude Code agent teams in tmux. It p
 
 Claude Code has built-in agent teams support, but Shipwright adds the infrastructure around it:
 
-- **Team templates** — 12 pre-built compositions for common SDLC tasks
+- **Team templates** — 24 pre-built compositions for common SDLC tasks, plus 8 pipeline templates
 - **Quality gate hooks** — block agents until code passes checks
 - **Delivery pipeline** — full issue-to-PR automation with self-healing builds
 - **Autonomous daemon** — background issue processing with DORA metrics
@@ -79,6 +79,16 @@ Yes, but with reduced functionality. Without GitHub:
 - No auto-assignment or progress comments
 - PR creation step is skipped (or creates a local branch)
 
+## Cost & Memory
+
+### How does cost intelligence work?
+
+Shipwright tracks token usage for every pipeline stage and records it to `~/.shipwright/costs.json`. You can set a daily budget with `shipwright cost budget set <amount>`, and the daemon auto-scaler will factor remaining budget into its worker count decisions. Use `shipwright cost show --by-stage` to see where tokens are spent across the pipeline, or `--by-issue` to compare cost per issue. Model pricing is built in for Opus, Sonnet, and Haiku.
+
+### What is persistent memory?
+
+Persistent memory captures learnings from every pipeline run -- failure patterns, root causes, design decisions, and codebase conventions. When a future pipeline starts, relevant memories are injected into the agent's context so it avoids repeating past mistakes. Memory is stored per-repo with optional cross-repo global sharing. Use `shipwright memory show` to view captured knowledge and `shipwright memory search <keyword>` to find specific entries.
+
 ## Configuration
 
 ### How do I customize the tmux theme?
@@ -91,7 +101,7 @@ Edit the hex color values in `tmux/tmux.conf` and reload with `prefix + r`. The 
 
 ### Can I use my own tmux config?
 
-Yes. The installer can add Shipwright's config as a source overlay rather than replacing your existing config. The overlay (`claude-teams-overlay.conf`) only adds agent-aware pane styling, color hooks, and team keybindings.
+Yes. The installer can add Shipwright's config as a source overlay rather than replacing your existing config. The overlay (`shipwright-overlay.conf`) only adds agent-aware pane styling, color hooks, and team keybindings.
 
 ### How do I add custom hooks?
 

@@ -86,6 +86,19 @@ interface QueueItem {
   score: number;
 }
 
+interface DoraMetric {
+  value: number;
+  unit: string;
+  grade: "Elite" | "High" | "Medium" | "Low";
+}
+
+interface DoraGrades {
+  deploy_freq: DoraMetric;
+  lead_time: DoraMetric;
+  cfr: DoraMetric;
+  mttr: DoraMetric;
+}
+
 interface FleetState {
   timestamp: string;
   daemon: {
@@ -115,6 +128,7 @@ interface FleetState {
   agents: AgentInfo[];
   machines: MachineInfo[];
   cost: CostInfo;
+  dora: DoraGrades;
 }
 
 interface HealthResponse {
@@ -534,6 +548,7 @@ function getFleetState(): FleetState {
     agents: getAgents(),
     machines: getMachines(),
     cost: getCostInfo(),
+    dora: calculateDoraGrades(events, 7),
   };
 
   // Daemon state
@@ -831,9 +846,10 @@ interface MetricsHistory {
   total_failed: number;
   stage_durations: Record<string, number>;
   daily_counts: Array<{ date: string; completed: number; failed: number }>;
+  dora_grades: DoraGrades;
 }
 
-function getMetricsHistory(): MetricsHistory {
+function getMetricsHistory(doraPeriodDays: number = 7): MetricsHistory {
   const events = readEvents();
   const now = Math.floor(Date.now() / 1000);
 
@@ -902,6 +918,130 @@ function getMetricsHistory(): MetricsHistory {
     total_failed: failed,
     stage_durations: avgStageDurations,
     daily_counts,
+    dora_grades: calculateDoraGrades(events, doraPeriodDays),
+  };
+}
+
+// ─── DORA Grades ────────────────────────────────────────────────────
+function calculateDoraGrades(
+  events: DaemonEvent[],
+  periodDays: number,
+): DoraGrades {
+  const now = Math.floor(Date.now() / 1000);
+  const cutoff = now - periodDays * 86400;
+
+  // Filter to events within the period
+  const recent = events.filter((e) => (e.ts_epoch || 0) >= cutoff);
+
+  // --- Deployment Frequency ---
+  // Count successful completions in the period
+  let completedCount = 0;
+  for (const e of recent) {
+    if (e.type === "pipeline.completed" && e.result === "success") {
+      completedCount++;
+    }
+  }
+  const deploysPerDay =
+    periodDays > 0 ? Math.round((completedCount / periodDays) * 100) / 100 : 0;
+
+  let deployGrade: DoraMetric["grade"];
+  if (deploysPerDay >= 1) deployGrade = "Elite";
+  else if (deploysPerDay >= 1 / 7) deployGrade = "High";
+  else if (deploysPerDay >= 1 / 30) deployGrade = "Medium";
+  else deployGrade = "Low";
+
+  // --- Lead Time ---
+  // Average time from pipeline.started to pipeline.completed (success only)
+  const leadTimes: number[] = [];
+  const startEpochs: Record<number, number> = {};
+  for (const e of recent) {
+    if (e.type === "pipeline.started" && e.issue) {
+      startEpochs[e.issue] = e.ts_epoch || 0;
+    }
+    if (e.type === "pipeline.completed" && e.result === "success" && e.issue) {
+      const startEpoch = startEpochs[e.issue];
+      if (startEpoch && startEpoch > 0) {
+        const endEpoch = e.ts_epoch || 0;
+        if (endEpoch > startEpoch) {
+          leadTimes.push((endEpoch - startEpoch) / 3600); // hours
+        }
+      }
+    }
+  }
+  const avgLeadTime =
+    leadTimes.length > 0
+      ? Math.round(
+          (leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length) * 100,
+        ) / 100
+      : 0;
+
+  let leadGrade: DoraMetric["grade"];
+  if (leadTimes.length === 0) leadGrade = "Low";
+  else if (avgLeadTime < 1) leadGrade = "Elite";
+  else if (avgLeadTime < 24) leadGrade = "High";
+  else if (avgLeadTime < 168) leadGrade = "Medium";
+  else leadGrade = "Low";
+
+  // --- Change Failure Rate ---
+  let totalCompleted = 0;
+  let totalFailed = 0;
+  for (const e of recent) {
+    if (e.type === "pipeline.completed") {
+      if (e.result === "success") totalCompleted++;
+      else totalFailed++;
+    }
+  }
+  const total = totalCompleted + totalFailed;
+  const cfr = total > 0 ? Math.round((totalFailed / total) * 10000) / 100 : 0;
+
+  let cfrGrade: DoraMetric["grade"];
+  if (total === 0) cfrGrade = "Low";
+  else if (cfr < 5) cfrGrade = "Elite";
+  else if (cfr < 10) cfrGrade = "High";
+  else if (cfr < 15) cfrGrade = "Medium";
+  else cfrGrade = "Low";
+
+  // --- Mean Time to Recovery ---
+  // For each issue that failed, find time between failure and next success
+  const recoveryTimes: number[] = [];
+  // Track the most recent failure epoch per issue
+  const failureEpochs: Record<number, number> = {};
+  for (const e of recent) {
+    if (!e.issue) continue;
+    if (e.type === "pipeline.completed" && e.result !== "success") {
+      failureEpochs[e.issue] = e.ts_epoch || 0;
+    }
+    if (e.type === "pipeline.completed" && e.result === "success") {
+      const failEpoch = failureEpochs[e.issue];
+      if (failEpoch && failEpoch > 0) {
+        const recoverEpoch = e.ts_epoch || 0;
+        if (recoverEpoch > failEpoch) {
+          recoveryTimes.push((recoverEpoch - failEpoch) / 3600); // hours
+        }
+        delete failureEpochs[e.issue];
+      }
+    }
+  }
+  const avgMttr =
+    recoveryTimes.length > 0
+      ? Math.round(
+          (recoveryTimes.reduce((a, b) => a + b, 0) / recoveryTimes.length) *
+            100,
+        ) / 100
+      : 0;
+
+  let mttrGrade: DoraMetric["grade"];
+  if (recoveryTimes.length === 0) mttrGrade = "Elite";
+  else if (avgMttr < 1) mttrGrade = "Elite";
+  else if (avgMttr < 24) mttrGrade = "High";
+  else if (avgMttr < 168) mttrGrade = "Medium";
+  else mttrGrade = "Low";
+
+  return {
+    deploy_freq: { value: deploysPerDay, unit: "per day", grade: deployGrade },
+    lead_time: { value: avgLeadTime, unit: "hours", grade: leadGrade },
+    cfr: { value: cfr, unit: "%", grade: cfrGrade },
+    mttr: { value: avgMttr, unit: "hours", grade: mttrGrade },
   };
 }
 
@@ -1685,7 +1825,9 @@ const server = Bun.serve({
 
     // REST: historical metrics aggregated from events.jsonl
     if (pathname === "/api/metrics/history") {
-      return new Response(JSON.stringify(getMetricsHistory()), {
+      const period = parseInt(url.searchParams.get("period") || "7");
+      const doraPeriod = period > 0 && period <= 365 ? period : 7;
+      return new Response(JSON.stringify(getMetricsHistory(doraPeriod)), {
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
       });
     }

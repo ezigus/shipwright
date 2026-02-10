@@ -3,9 +3,9 @@
   "version": "1.7.1",
   "description": "Orchestrate autonomous Claude Code agent teams in tmux",
   "bin": {
-    "shipwright": "./scripts/cct",
-    "sw": "./scripts/cct",
-    "cct": "./scripts/cct"
+    "shipwright": "./scripts/sw",
+    "sw": "./scripts/sw",
+    "cct": "./scripts/sw"
   },
   "files": [
     "scripts/",
@@ -17,7 +17,7 @@
     "templates/",
     "tmux/templates/",
     "tmux/tmux.conf",
-    "tmux/claude-teams-overlay.conf",
+    "tmux/shipwright-overlay.conf",
     "dashboard/",
     "claude-code/",
     "completions/",
@@ -27,7 +27,7 @@
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
-    "test": "bash scripts/cct-pipeline-test.sh && bash scripts/cct-daemon-test.sh && bash scripts/cct-prep-test.sh && bash scripts/cct-fleet-test.sh && bash scripts/cct-fix-test.sh && bash scripts/cct-memory-test.sh && bash scripts/cct-session-test.sh && bash scripts/cct-init-test.sh && bash scripts/cct-tracker-test.sh && bash scripts/cct-heartbeat-test.sh && bash scripts/cct-remote-test.sh"
+    "test": "bash scripts/sw-pipeline-test.sh && bash scripts/sw-daemon-test.sh && bash scripts/sw-prep-test.sh && bash scripts/sw-fleet-test.sh && bash scripts/sw-fix-test.sh && bash scripts/sw-memory-test.sh && bash scripts/sw-session-test.sh && bash scripts/sw-init-test.sh && bash scripts/sw-tracker-test.sh && bash scripts/sw-heartbeat-test.sh && bash scripts/sw-remote-test.sh"
   },
   "keywords": [
     "claude",

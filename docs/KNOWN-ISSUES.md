@@ -11,6 +11,7 @@ Tracked bugs and limitations in Claude Code Agent Teams + tmux integration, with
 **Problem:** When Claude Code spawns 4+ agent panes simultaneously using `split-window` + `send-keys`, tmux can deliver keystrokes to the wrong pane. This happens because tmux processes `split-window` and `send-keys` asynchronously — the new pane may not be the active pane by the time `send-keys` fires.
 
 **Symptoms:**
+
 - Agent commands appear in the wrong pane
 - Panes start with garbled or partial commands
 - Some panes sit empty while others received duplicate input
@@ -38,6 +39,7 @@ tmux send-keys -t "$session" "claude" Enter
 **Problem:** Agent teams can silently fall back to in-process mode if tmux isn't detected properly. No error is shown — agents just spawn in the same process instead of separate panes.
 
 **Symptoms:**
+
 - You're inside tmux but agents don't get their own panes
 - All agent output appears in a single terminal
 - No tmux split-windows are created
@@ -68,25 +70,27 @@ If only one pane is listed while agents are active, the fallback occurred.
 **Severity:** Medium — affects users of these terminals
 
 **Problem:** Claude Code's tmux-based agent pane spawning does not work in:
+
 - **VS Code's integrated terminal** — VS Code's terminal emulator doesn't support the tmux control mode and pane management that Claude Code uses for agent teams.
 - **Ghostty** — As of current versions, Ghostty lacks the tmux integration hooks needed for split-pane agent spawning.
 
 **Symptoms:**
+
 - Agent teams silently fall back to in-process mode
 - No tmux split panes are created
 - Everything works, but you lose the visual multi-pane experience
 
 **Workaround:** Use a supported terminal emulator:
 
-| Terminal | Status | Notes |
-|----------|--------|-------|
-| **iTerm2** (macOS) | Supported | Recommended for macOS |
-| **Alacritty** | Supported | Fast, cross-platform |
-| **Kitty** | Supported | Feature-rich, cross-platform |
-| **WezTerm** | Supported | Cross-platform, GPU-accelerated |
-| **macOS Terminal.app** | Supported | Built-in, basic but works |
-| VS Code terminal | Not supported | Use an external terminal |
-| Ghostty | Not supported | May be supported in future versions |
+| Terminal               | Status        | Notes                               |
+| ---------------------- | ------------- | ----------------------------------- |
+| **iTerm2** (macOS)     | Supported     | Recommended for macOS               |
+| **Alacritty**          | Supported     | Fast, cross-platform                |
+| **Kitty**              | Supported     | Feature-rich, cross-platform        |
+| **WezTerm**            | Supported     | Cross-platform, GPU-accelerated     |
+| **macOS Terminal.app** | Supported     | Built-in, basic but works           |
+| VS Code terminal       | Not supported | Use an external terminal            |
+| Ghostty                | Not supported | May be supported in future versions |
 
 **Tip:** You can run tmux in an external terminal while keeping VS Code open for editing. Claude Code doesn't need to run inside VS Code to work with your project.
 
@@ -101,6 +105,7 @@ If only one pane is listed while agents are active, the fallback occurred.
 **Problem:** Each agent in a team uses its own context window. With 3+ agents running complex tasks, individual agents can hit context limits faster than expected, especially if tasks are too broad.
 
 **Symptoms:**
+
 - Agent output becomes less coherent toward the end of long tasks
 - Agents start losing track of earlier context
 - Auto-compact kicks in frequently
@@ -112,6 +117,7 @@ If only one pane is listed while agents are active, the fallback occurred.
 2. **Keep tasks focused.** 5-6 specific tasks per agent is the sweet spot. Avoid vague tasks like "improve the codebase."
 
 3. **Set aggressive auto-compact:**
+
    ```json
    {
      "env": {
@@ -121,6 +127,7 @@ If only one pane is listed while agents are active, the fallback occurred.
    ```
 
 4. **Use haiku for subagent lookups** to save context budget for the main agent:
+
    ```json
    {
      "env": {
@@ -143,7 +150,7 @@ If only one pane is listed while agents are active, the fallback occurred.
 
 **Root Cause:** tmux's `window-style` applies at the window level but newly spawned panes from external processes (like Claude Code) don't always inherit it.
 
-**Fix:** As of v1.3.0, `claude-teams-overlay.conf` uses `set-hook` to force the dark theme on every new pane:
+**Fix:** As of v1.3.0, `shipwright-overlay.conf` uses `set-hook` to force the dark theme on every new pane:
 
 ```conf
 set-hook -g after-split-window "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
@@ -182,6 +189,7 @@ git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
 **Problem:** When Claude Code teammates shut down (via `shutdown_request` → `shutdown_response`), the Claude process exits but the tmux pane remains open with an idle shell. There is no Claude Code hook event for teammate shutdown — the available hooks (`TeammateIdle`, `TaskCompleted`, `Notification`, `Stop`, etc.) do not fire on agent exit.
 
 **Symptoms:**
+
 - After a team finishes work, panes remain with idle shell prompts
 - `shipwright ps` shows panes as "idle" with increasing idle time
 - `~/.claude/teams/` and `~/.claude/tasks/` directories accumulate

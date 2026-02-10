@@ -4,7 +4,7 @@
 # ║                                                                          ║
 # ║  Uses AppleScript (osascript) to create iTerm2 tabs with named titles   ║
 # ║  and working directories. macOS only.                                    ║
-# ║  Sourced by cct-session.sh — exports: spawn_agent, list_agents,         ║
+# ║  Sourced by sw-session.sh — exports: spawn_agent, list_agents,         ║
 # ║  kill_agent, focus_agent.                                                ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 

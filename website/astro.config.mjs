@@ -32,8 +32,10 @@ export default defineConfig({
             { label: "Continuous Loop", link: "/guides/loop/" },
             { label: "Fleet Management", link: "/guides/fleet/" },
             { label: "Bulk Fix", link: "/guides/fix/" },
+            { label: "Cost Intelligence", link: "/guides/cost/" },
             { label: "Dashboard", link: "/guides/dashboard/" },
             { label: "Issue Tracking", link: "/guides/tracking/" },
+            { label: "Persistent Memory", link: "/guides/memory/" },
           ],
         },
         {

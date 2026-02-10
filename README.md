@@ -103,7 +103,7 @@ claude
 shipwright/
 ├── tmux/
 │   ├── tmux.conf                    # Full tmux config with premium dark theme
-│   ├── claude-teams-overlay.conf    # Agent-aware pane styling, color hooks & keybindings
+│   ├── shipwright-overlay.conf      # Agent-aware pane styling, color hooks & keybindings
 │   └── templates/                   # 24 team composition templates (full SDLC + PDLC)
 │       ├── feature-dev.json         #   Backend + frontend + tests (3 agents)
 │       ├── full-stack.json          #   API + database + UI (3 agents)
@@ -151,23 +151,23 @@ shipwright/
 │       ├── notify-idle.sh           # Desktop notification on idle
 │       └── pre-compact-save.sh      # Save context before compaction
 ├── scripts/
-│   ├── cct                          # CLI router (shipwright/sw/cct)
-│   ├── cct-init.sh                  # One-command tmux setup (no prompts)
-│   ├── cct-session.sh               # Create team sessions from templates
-│   ├── cct-loop.sh                  # Continuous autonomous agent loop
-│   ├── cct-pipeline.sh              # Full delivery pipeline (idea → PR)
-│   ├── cct-daemon.sh                # Autonomous issue watcher + metrics
-│   ├── cct-fleet.sh                 # Multi-repo daemon orchestrator
-│   ├── cct-fix.sh                   # Bulk fix across repos
-│   ├── cct-memory.sh                # Persistent learning & context system
-│   ├── cct-cost.sh                  # Token usage & cost intelligence
-│   ├── cct-prep.sh                  # Repo preparation tool
-│   ├── cct-doctor.sh                # Validate setup and diagnose issues
-│   ├── cct-heartbeat.sh             # Agent heartbeat writer/checker
-│   ├── cct-checkpoint.sh            # Pipeline checkpoint save/restore
-│   ├── cct-remote.sh                # Multi-machine registry + remote management
-│   ├── cct-tracker.sh               # Issue tracker router (Linear/Jira)
-│   ├── cct-dashboard.sh             # Dashboard server launcher
+│   ├── sw                           # CLI router (shipwright/sw/cct)
+│   ├── sw-init.sh                   # One-command tmux setup (no prompts)
+│   ├── sw-session.sh                # Create team sessions from templates
+│   ├── sw-loop.sh                   # Continuous autonomous agent loop
+│   ├── sw-pipeline.sh               # Full delivery pipeline (idea → PR)
+│   ├── sw-daemon.sh                 # Autonomous issue watcher + metrics
+│   ├── sw-fleet.sh                  # Multi-repo daemon orchestrator
+│   ├── sw-fix.sh                    # Bulk fix across repos
+│   ├── sw-memory.sh                 # Persistent learning & context system
+│   ├── sw-cost.sh                   # Token usage & cost intelligence
+│   ├── sw-prep.sh                   # Repo preparation tool
+│   ├── sw-doctor.sh                 # Validate setup and diagnose issues
+│   ├── sw-heartbeat.sh              # Agent heartbeat writer/checker
+│   ├── sw-checkpoint.sh             # Pipeline checkpoint save/restore
+│   ├── sw-remote.sh                 # Multi-machine registry + remote management
+│   ├── sw-tracker.sh                # Issue tracker router (Linear/Jira)
+│   ├── sw-dashboard.sh              # Dashboard server launcher
 │   ├── install-completions.sh       # Shell completion installer
 │   ├── adapters/                    # Deploy platform adapters
 │   │   ├── vercel-deploy.sh         #   Vercel deploy adapter
@@ -623,7 +623,7 @@ Monitor agent liveness with periodic heartbeat signals:
 shipwright heartbeat list
 ```
 
-Heartbeat data is stored in `~/.claude-teams/heartbeats/<job-id>.json`. The daemon uses heartbeats to detect stale jobs and take corrective action.
+Heartbeat data is stored in `~/.shipwright/heartbeats/<job-id>.json`. The daemon uses heartbeats to detect stale jobs and take corrective action.
 
 ### Pipeline Checkpoints
 
@@ -657,7 +657,7 @@ shipwright remote add worker1 --host 10.0.0.5
 shipwright remote status
 ```
 
-Machine registry is stored in `~/.claude-teams/machines.json`.
+Machine registry is stored in `~/.shipwright/machines.json`.
 
 ### Layout Presets
 

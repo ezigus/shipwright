@@ -34,9 +34,12 @@
   --card-hover-border: rgba(0, 212, 255, 0.2);
   --card-radius: 16px;
 
-  --font-display: "Instrument Serif", serif;
-  --font-body: "Plus Jakarta Sans", sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
+  --font-display: "Instrument Serif", Georgia, serif;
+  --font-body: "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", monospace;
+
+  --transition-fast: 0.15s ease;
+  --transition-base: 0.3s ease;
 }
 
 ::selection {
@@ -82,9 +85,14 @@ body::-webkit-scrollbar-thumb {
   height: 56px;
   padding: 0 24px;
   background: rgba(6, 10, 20, 0.85);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px) saturate(1.5);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
   border-bottom: 1px solid var(--card-border);
+  transition: border-color var(--transition-base);
+}
+
+.header:hover {
+  border-bottom-color: rgba(0, 212, 255, 0.15);
 }
 
 .header-left {
@@ -172,11 +180,14 @@ body::-webkit-scrollbar-thumb {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: border-color 0.2s;
+  transition:
+    border-color var(--transition-base),
+    box-shadow var(--transition-base);
 }
 
 .user-avatar:hover {
   border-color: var(--card-hover-border);
+  box-shadow: 0 0 12px var(--cyan-glow);
 }
 
 .user-avatar img {
@@ -197,6 +208,7 @@ body::-webkit-scrollbar-thumb {
   border-radius: 12px;
   padding: 8px 0;
   z-index: 200;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
 .user-dropdown.open {
@@ -219,8 +231,8 @@ body::-webkit-scrollbar-thumb {
   color: var(--text-secondary);
   text-decoration: none;
   transition:
-    color 0.15s,
-    background 0.15s;
+    color var(--transition-fast),
+    background var(--transition-fast);
 }
 
 .dropdown-link:hover {
@@ -237,8 +249,8 @@ body::-webkit-scrollbar-thumb {
   z-index: 99;
   height: 48px;
   background: rgba(6, 10, 20, 0.9);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px) saturate(1.5);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
   border-bottom: 1px solid var(--card-border);
 }
 
@@ -263,7 +275,7 @@ body::-webkit-scrollbar-thumb {
   color: var(--text-muted);
   cursor: pointer;
   position: relative;
-  transition: color 0.2s;
+  transition: color var(--transition-base);
   white-space: nowrap;
 }
 
@@ -333,8 +345,9 @@ body::-webkit-scrollbar-thumb {
   border-radius: var(--card-radius);
   padding: 1.5rem;
   transition:
-    border-color 0.2s,
-    transform 0.2s;
+    border-color var(--transition-base),
+    transform var(--transition-base),
+    box-shadow var(--transition-base);
   animation: card-enter 0.4s ease-out both;
 }
 
@@ -354,6 +367,7 @@ body::-webkit-scrollbar-thumb {
 .stat-card:hover {
   border-color: var(--card-hover-border);
   transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 212, 255, 0.06);
 }
 
 .stat-label {
@@ -368,9 +382,9 @@ body::-webkit-scrollbar-thumb {
 }
 
 .stat-value {
-  font-family: var(--font-body);
+  font-family: var(--font-display);
   font-size: 1.75rem;
-  font-weight: 700;
+  font-weight: 400;
   line-height: 1.2;
 }
 
@@ -385,7 +399,7 @@ body::-webkit-scrollbar-thumb {
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, #00d4ff, #7c3aed);
+  background: linear-gradient(135deg, var(--cyan), var(--purple));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -487,8 +501,9 @@ body::-webkit-scrollbar-thumb {
   padding: 1.25rem 1.5rem;
   margin-bottom: 12px;
   transition:
-    border-color 0.2s,
-    transform 0.2s;
+    border-color var(--transition-base),
+    transform var(--transition-base),
+    box-shadow var(--transition-base);
   animation: card-enter 0.4s ease-out both;
   cursor: pointer;
 }
@@ -496,6 +511,7 @@ body::-webkit-scrollbar-thumb {
 .pipeline-card:hover {
   border-color: var(--card-hover-border);
   transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 212, 255, 0.06);
 }
 
 .pipeline-header {
@@ -545,7 +561,7 @@ body::-webkit-scrollbar-thumb {
   border-radius: 4px;
   background: var(--ocean);
   color: var(--text-muted);
-  transition: all 0.3s ease;
+  transition: all var(--transition-base);
 }
 
 .stage-seg.done {
@@ -634,7 +650,7 @@ body::-webkit-scrollbar-thumb {
   gap: 16px;
   padding: 10px 16px;
   border-radius: 8px;
-  transition: background 0.15s;
+  transition: background var(--transition-fast);
 }
 
 .queue-row:nth-child(even) {
@@ -700,6 +716,16 @@ body::-webkit-scrollbar-thumb {
   align-items: center;
   gap: 12px;
   padding: 6px 0;
+  border-left: 2px solid transparent;
+  padding-left: 10px;
+  transition:
+    border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.activity-row:hover {
+  border-left-color: var(--cyan-glow);
+  background: rgba(0, 212, 255, 0.02);
 }
 
 .activity-ts {
@@ -769,6 +795,11 @@ body::-webkit-scrollbar-thumb {
   border: 1px solid var(--card-border);
   border-radius: var(--card-radius);
   padding: 1.25rem;
+  transition: border-color var(--transition-base);
+}
+
+.resources-panel:hover {
+  border-color: var(--card-hover-border);
 }
 
 .resource-row {
@@ -802,18 +833,18 @@ body::-webkit-scrollbar-thumb {
 .resource-bar-fill {
   height: 100%;
   border-radius: 4px;
-  background: var(--cyan);
+  background: linear-gradient(90deg, var(--cyan), var(--blue));
   width: 0%;
   transition:
     width 0.6s ease,
-    background-color 0.3s;
+    background-color var(--transition-base);
 }
 
 .resource-bar-fill.warning {
-  background: var(--amber);
+  background: linear-gradient(90deg, var(--amber), #e5a00d);
 }
 .resource-bar-fill.critical {
-  background: var(--rose);
+  background: linear-gradient(90deg, var(--rose), #d92d4a);
 }
 
 .resource-info {
@@ -873,12 +904,13 @@ body::-webkit-scrollbar-thumb {
   font-weight: 500;
   color: var(--text-muted);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-base);
 }
 
 .filter-chip:hover {
   color: var(--text-secondary);
   border-color: var(--card-hover-border);
+  background: rgba(0, 212, 255, 0.04);
 }
 
 .filter-chip.active {
@@ -900,7 +932,9 @@ body::-webkit-scrollbar-thumb {
   font-size: 0.75rem;
   color: var(--text-primary);
   width: 140px;
-  transition: border-color 0.2s;
+  transition:
+    border-color var(--transition-base),
+    box-shadow var(--transition-base);
 }
 
 .issue-filter-input::placeholder {
@@ -910,6 +944,39 @@ body::-webkit-scrollbar-thumb {
 .issue-filter-input:focus {
   outline: none;
   border-color: var(--cyan);
+  box-shadow: 0 0 12px var(--cyan-glow);
+}
+
+/* ── Segmented Control ────────────────────────── */
+.segmented-control {
+  display: inline-flex;
+  background: var(--ocean);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.segmented-control button {
+  background: none;
+  border: none;
+  padding: 6px 14px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.segmented-control button:hover {
+  color: var(--text-secondary);
+}
+
+.segmented-control button.active {
+  background: rgba(0, 212, 255, 0.12);
+  color: var(--cyan);
 }
 
 /* ── Pipeline Table (Pipelines tab) ───────────── */
@@ -939,7 +1006,11 @@ body::-webkit-scrollbar-thumb {
 
 .pipeline-table tbody tr {
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--transition-fast);
+}
+
+.pipeline-table tbody tr:nth-child(even) {
+  background: rgba(10, 22, 40, 0.3);
 }
 
 .pipeline-table tbody tr:hover {
@@ -1063,7 +1134,7 @@ body::-webkit-scrollbar-thumb {
   cursor: pointer;
   padding: 0 4px;
   line-height: 1;
-  transition: color 0.2s;
+  transition: color var(--transition-base);
 }
 
 .detail-panel-close:hover {
@@ -1108,6 +1179,7 @@ body::-webkit-scrollbar-thumb {
   background: var(--ocean);
   border: 2px solid var(--foam);
   z-index: 1;
+  transition: all var(--transition-base);
 }
 
 .stage-timeline-dot.done {
@@ -1198,6 +1270,7 @@ body::-webkit-scrollbar-thumb {
 .detail-meta-item a {
   color: var(--cyan);
   text-decoration: none;
+  transition: color var(--transition-fast);
 }
 
 .detail-meta-item a:hover {
@@ -1228,12 +1301,16 @@ body::-webkit-scrollbar-thumb {
   gap: 12px;
   padding: 8px 12px;
   border-radius: 8px;
-  transition: background 0.15s;
+  border-left: 2px solid transparent;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
   animation: card-enter 0.3s ease-out both;
 }
 
 .timeline-row:hover {
   background: rgba(0, 212, 255, 0.03);
+  border-left-color: var(--cyan-glow);
 }
 
 .timeline-ts {
@@ -1284,12 +1361,13 @@ body::-webkit-scrollbar-thumb {
   font-size: 0.75rem;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--transition-base);
 }
 
 .load-more-btn:hover {
   border-color: var(--card-hover-border);
   color: var(--text-primary);
+  box-shadow: 0 4px 16px rgba(0, 212, 255, 0.08);
 }
 
 .load-more-btn:disabled {
@@ -1316,6 +1394,14 @@ body::-webkit-scrollbar-thumb {
   border-radius: var(--card-radius);
   padding: 1.5rem;
   animation: card-enter 0.4s ease-out both;
+  transition:
+    border-color var(--transition-base),
+    box-shadow var(--transition-base);
+}
+
+.metric-card:hover {
+  border-color: var(--card-hover-border);
+  box-shadow: 0 4px 24px rgba(0, 212, 255, 0.06);
 }
 
 .metric-card-lg {
@@ -1338,9 +1424,9 @@ body::-webkit-scrollbar-thumb {
 }
 
 .metric-big-value {
-  font-family: var(--font-body);
+  font-family: var(--font-display);
   font-size: 2rem;
-  font-weight: 700;
+  font-weight: 400;
   line-height: 1.2;
   color: var(--text-primary);
 }
@@ -1353,7 +1439,7 @@ body::-webkit-scrollbar-thumb {
   margin-top: 4px;
 }
 
-/* Donut chart */
+/* Donut chart (CSS fallback) */
 .donut-wrap {
   display: flex;
   align-items: center;
@@ -1388,10 +1474,91 @@ body::-webkit-scrollbar-thumb {
 .donut-value {
   position: relative;
   z-index: 1;
-  font-family: var(--font-body);
+  font-family: var(--font-display);
   font-size: 1.5rem;
-  font-weight: 700;
+  font-weight: 400;
   color: var(--text-primary);
+}
+
+/* SVG Donut chart */
+.svg-donut {
+  display: block;
+  margin: 0 auto;
+}
+
+.svg-donut circle {
+  transition:
+    stroke-dasharray 0.6s ease,
+    stroke 0.3s ease;
+}
+
+.svg-donut .donut-track {
+  fill: none;
+  stroke: var(--ocean);
+}
+
+.svg-donut .donut-fill {
+  fill: none;
+  stroke-linecap: round;
+  transform-origin: center;
+  transform: rotate(-90deg);
+}
+
+.svg-donut .donut-fill-green {
+  stroke: var(--green);
+}
+.svg-donut .donut-fill-cyan {
+  stroke: var(--cyan);
+}
+.svg-donut .donut-fill-amber {
+  stroke: var(--amber);
+}
+.svg-donut .donut-fill-rose {
+  stroke: var(--rose);
+}
+
+.svg-donut text {
+  font-family: var(--font-display);
+  fill: var(--text-primary);
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+/* SVG Bar chart */
+.svg-bar-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.svg-bar-chart rect {
+  transition:
+    height var(--transition-base),
+    y var(--transition-base);
+  rx: 3;
+  ry: 3;
+}
+
+.svg-bar-chart .bar-completed {
+  fill: var(--green);
+}
+.svg-bar-chart .bar-failed {
+  fill: var(--rose);
+}
+.svg-bar-chart .bar-active {
+  fill: var(--cyan);
+}
+
+.svg-bar-chart text {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--text-muted);
+  text-anchor: middle;
+}
+
+.svg-bar-chart line.grid-line {
+  stroke: rgba(0, 212, 255, 0.06);
+  stroke-dasharray: 4 4;
 }
 
 /* Stage breakdown bars */
@@ -1431,19 +1598,19 @@ body::-webkit-scrollbar-thumb {
 }
 
 .stage-bar-fill-h.c-cyan {
-  background: var(--cyan);
+  background: linear-gradient(90deg, var(--cyan), rgba(0, 212, 255, 0.7));
 }
 .stage-bar-fill-h.c-blue {
-  background: var(--blue);
+  background: linear-gradient(90deg, var(--blue), rgba(0, 102, 255, 0.7));
 }
 .stage-bar-fill-h.c-purple {
-  background: var(--purple);
+  background: linear-gradient(90deg, var(--purple), rgba(124, 58, 237, 0.7));
 }
 .stage-bar-fill-h.c-green {
-  background: var(--green);
+  background: linear-gradient(90deg, var(--green), rgba(74, 222, 128, 0.7));
 }
 .stage-bar-fill-h.c-amber {
-  background: var(--amber);
+  background: linear-gradient(90deg, var(--amber), rgba(251, 191, 36, 0.7));
 }
 
 .stage-bar-value {
@@ -1484,20 +1651,20 @@ body::-webkit-scrollbar-thumb {
 
 .bar-seg {
   width: 100%;
-  border-radius: 2px 2px 0 0;
+  border-radius: 3px 3px 0 0;
   transition: height 0.4s ease;
   min-height: 0;
 }
 
 .bar-seg.completed {
-  background: var(--green);
+  background: linear-gradient(180deg, var(--green), rgba(74, 222, 128, 0.7));
 }
 .bar-seg.failed {
-  background: var(--rose);
+  background: linear-gradient(180deg, var(--rose), rgba(244, 63, 94, 0.7));
 }
 
 .bar-seg:first-child {
-  border-radius: 2px 2px 0 0;
+  border-radius: 3px 3px 0 0;
 }
 
 .bar-date {
@@ -1583,8 +1750,9 @@ body::-webkit-scrollbar-thumb {
   border-radius: var(--card-radius);
   padding: 1.25rem 1.5rem;
   transition:
-    border-color 0.2s,
-    transform 0.2s;
+    border-color var(--transition-base),
+    transform var(--transition-base),
+    box-shadow var(--transition-base);
   animation: card-enter 0.4s ease-out both;
   cursor: pointer;
 }
@@ -1592,6 +1760,7 @@ body::-webkit-scrollbar-thumb {
 .agent-card:hover {
   border-color: var(--card-hover-border);
   transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 212, 255, 0.06);
 }
 
 .agent-card-header {
@@ -1606,6 +1775,9 @@ body::-webkit-scrollbar-thumb {
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
+  transition:
+    background var(--transition-base),
+    box-shadow var(--transition-base);
 }
 
 .presence-dot.active {
@@ -1698,7 +1870,8 @@ body::-webkit-scrollbar-thumb {
 .agent-metric-fill {
   height: 100%;
   border-radius: 2px;
-  background: var(--cyan);
+  background: linear-gradient(90deg, var(--cyan), var(--blue));
+  transition: width 0.6s ease;
 }
 
 .agent-elapsed {
@@ -1725,7 +1898,7 @@ body::-webkit-scrollbar-thumb {
   font-weight: 500;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--transition-fast);
 }
 
 .agent-action-btn:hover {
@@ -1756,6 +1929,7 @@ body::-webkit-scrollbar-thumb {
   font-size: 0.75rem;
   color: var(--text-primary);
   cursor: pointer;
+  transition: border-color var(--transition-base);
 }
 
 .timeline-range-select:focus {
@@ -1815,7 +1989,7 @@ body::-webkit-scrollbar-thumb {
   align-items: center;
   height: 32px;
   border-radius: 6px;
-  transition: background 0.15s;
+  transition: background var(--transition-fast);
 }
 
 .gantt-row:hover {
@@ -1867,17 +2041,42 @@ body::-webkit-scrollbar-thumb {
   white-space: nowrap;
   padding: 0 4px;
   min-width: 2px;
+  transition: opacity var(--transition-fast);
+}
+
+.gantt-segment:hover {
+  opacity: 0.85;
 }
 
 .gantt-segment.done {
-  background: var(--green);
+  background: linear-gradient(90deg, var(--green), rgba(74, 222, 128, 0.8));
 }
 .gantt-segment.running {
-  background: var(--cyan);
+  background: linear-gradient(90deg, var(--cyan), rgba(0, 212, 255, 0.8));
   animation: stage-glow 2s ease-in-out infinite;
 }
 .gantt-segment.failed {
-  background: var(--rose);
+  background: linear-gradient(90deg, var(--rose), rgba(244, 63, 94, 0.8));
+}
+
+/* Timeline bar gradient (generic) */
+.timeline-bar-gradient {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.6s ease;
+}
+
+.timeline-bar-gradient.status-done {
+  background: linear-gradient(90deg, var(--green), rgba(74, 222, 128, 0.6));
+}
+.timeline-bar-gradient.status-active {
+  background: linear-gradient(90deg, var(--cyan), rgba(0, 212, 255, 0.6));
+}
+.timeline-bar-gradient.status-failed {
+  background: linear-gradient(90deg, var(--rose), rgba(244, 63, 94, 0.6));
+}
+.timeline-bar-gradient.status-queued {
+  background: linear-gradient(90deg, var(--amber), rgba(251, 191, 36, 0.6));
 }
 
 /* ── Machines Grid (Overview) ────────────────── */
@@ -1893,6 +2092,11 @@ body::-webkit-scrollbar-thumb {
   border-radius: var(--card-radius);
   padding: 1rem 1.25rem;
   animation: card-enter 0.4s ease-out both;
+  transition: border-color var(--transition-base);
+}
+
+.machine-card:hover {
+  border-color: var(--card-hover-border);
 }
 
 .machine-card-header {
@@ -1937,7 +2141,8 @@ body::-webkit-scrollbar-thumb {
   inset: 0;
   z-index: 300;
   background: rgba(6, 10, 20, 0.8);
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1950,6 +2155,9 @@ body::-webkit-scrollbar-thumb {
   width: 420px;
   max-width: 90vw;
   animation: card-enter 0.3s ease-out both;
+  box-shadow:
+    0 0 60px rgba(0, 212, 255, 0.06),
+    0 20px 60px rgba(0, 0, 0, 0.4);
 }
 
 .modal-header {
@@ -1974,6 +2182,7 @@ body::-webkit-scrollbar-thumb {
   color: var(--text-muted);
   cursor: pointer;
   line-height: 1;
+  transition: color var(--transition-base);
 }
 
 .modal-close:hover {
@@ -1994,11 +2203,15 @@ body::-webkit-scrollbar-thumb {
   font-size: 0.8rem;
   color: var(--text-primary);
   resize: vertical;
+  transition:
+    border-color var(--transition-base),
+    box-shadow var(--transition-base);
 }
 
 .modal-textarea:focus {
   outline: none;
   border-color: var(--cyan);
+  box-shadow: 0 0 12px var(--cyan-glow);
 }
 
 .modal-footer {
@@ -2016,7 +2229,7 @@ body::-webkit-scrollbar-thumb {
   font-size: 0.75rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--transition-fast);
 }
 
 .modal-btn-cancel {
@@ -2031,14 +2244,60 @@ body::-webkit-scrollbar-thumb {
 }
 
 .modal-btn-send {
-  background: var(--cyan);
+  background: linear-gradient(135deg, var(--cyan), var(--blue));
   border: none;
   color: var(--abyss);
   font-weight: 600;
 }
 
 .modal-btn-send:hover {
-  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
+}
+
+/* ── Buttons (matching landing page) ──────────── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.5rem;
+  background: linear-gradient(135deg, var(--cyan), var(--blue));
+  color: var(--abyss);
+  font-weight: 700;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition:
+    transform 0.2s,
+    box-shadow var(--transition-base);
+  letter-spacing: 0.02em;
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(0, 212, 255, 0.35);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.5rem;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(0, 212, 255, 0.3);
+  color: var(--cyan);
 }
 
 /* ── New Activity Badge Types ────────────────── */
@@ -2063,6 +2322,202 @@ body::-webkit-scrollbar-thumb {
   color: var(--purple);
 }
 
+/* ── SVG Pipeline Visualization ───────────────── */
+.pipeline-svg {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.stage-node {
+  cursor: pointer;
+  transition: filter var(--transition-base);
+}
+
+.stage-node:hover {
+  filter: brightness(1.2);
+}
+
+.stage-node rect,
+.stage-node circle {
+  transition:
+    fill var(--transition-base),
+    stroke var(--transition-base);
+}
+
+.stage-active rect,
+.stage-active circle {
+  fill: var(--cyan);
+  stroke: var(--cyan);
+  animation: stage-node-pulse 2s ease-in-out infinite;
+}
+
+.stage-complete rect,
+.stage-complete circle {
+  fill: var(--green);
+  stroke: var(--green);
+}
+
+.stage-pending rect,
+.stage-pending circle {
+  fill: var(--ocean);
+  stroke: var(--foam);
+}
+
+.stage-failed rect,
+.stage-failed circle {
+  fill: var(--rose);
+  stroke: var(--rose);
+}
+
+.stage-connector {
+  stroke: var(--foam);
+  stroke-width: 2;
+  fill: none;
+  transition: stroke var(--transition-base);
+}
+
+.stage-connector.done {
+  stroke: var(--green);
+}
+
+.stage-connector.active {
+  stroke: var(--cyan);
+  stroke-dasharray: 8 4;
+  animation: dash-flow 1s linear infinite;
+}
+
+@keyframes stage-node-pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 4px var(--cyan-glow));
+  }
+  50% {
+    filter: drop-shadow(0 0 12px rgba(0, 212, 255, 0.4));
+  }
+}
+
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -12;
+  }
+}
+
+.stage-node text {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--text-primary);
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
+
+/* ── DORA Grade Badges ────────────────────────── */
+.dora-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+.dora-badge-sm {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.dora-elite {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 212, 255, 0.2),
+    rgba(124, 58, 237, 0.2)
+  );
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  color: var(--cyan);
+  box-shadow: 0 0 16px rgba(0, 212, 255, 0.15);
+}
+
+.dora-high {
+  background: linear-gradient(
+    135deg,
+    rgba(74, 222, 128, 0.15),
+    rgba(0, 212, 255, 0.1)
+  );
+  border: 1px solid rgba(74, 222, 128, 0.25);
+  color: var(--green);
+}
+
+.dora-medium {
+  background: linear-gradient(
+    135deg,
+    rgba(251, 191, 36, 0.15),
+    rgba(0, 212, 255, 0.05)
+  );
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  color: var(--amber);
+}
+
+.dora-low {
+  background: linear-gradient(
+    135deg,
+    rgba(244, 63, 94, 0.15),
+    rgba(0, 0, 0, 0.1)
+  );
+  border: 1px solid rgba(244, 63, 94, 0.25);
+  color: var(--rose);
+}
+
+/* ── KPI Cards ────────────────────────────────── */
+.kpi-value {
+  font-family: var(--font-display);
+  font-size: 2.5rem;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--text-primary);
+}
+
+.kpi-value.gradient-text {
+  background: linear-gradient(135deg, var(--cyan), var(--purple));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.kpi-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 100px;
+}
+
+.kpi-trend.up {
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--green);
+}
+
+.kpi-trend.down {
+  background: rgba(244, 63, 94, 0.12);
+  color: var(--rose);
+}
+
+.kpi-trend.flat {
+  background: rgba(90, 109, 138, 0.12);
+  color: var(--text-muted);
+}
+
 /* ── Animations ───────────────────────────────── */
 @keyframes card-enter {
   from {
@@ -2075,6 +2530,7 @@ body::-webkit-scrollbar-thumb {
   }
 }
 
+/* ── Reduced Motion ───────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -2082,6 +2538,21 @@ body::-webkit-scrollbar-thumb {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .connection-dot.live,
+  .pulse-dot.operational,
+  .presence-dot.active {
+    animation: none;
+  }
+
+  .stage-seg.active,
+  .gantt-segment.running,
+  .stage-active rect,
+  .stage-active circle,
+  .stage-connector.active {
+    animation: none;
   }
 }
 
@@ -2136,5 +2607,15 @@ body::-webkit-scrollbar-thumb {
   .main {
     padding-left: 12px;
     padding-right: 12px;
+  }
+
+  .agents-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dora-badge {
+    width: 40px;
+    height: 40px;
+    font-size: 1.1rem;
   }
 }

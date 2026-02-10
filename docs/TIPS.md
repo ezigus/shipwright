@@ -9,36 +9,43 @@ Patterns and tricks for getting the most out of Claude Code Agent Teams with tmu
 Based on [Addy Osmani's research](https://addyosmani.com/blog/claude-code-agent-teams/) and community experience:
 
 ### When Teams Add Value
+
 - **Competing hypotheses** — Multiple agents investigating different theories for a bug
 - **Parallel review** — Security, performance, and test coverage by dedicated reviewers
 - **Cross-layer features** — Frontend, backend, and tests developed simultaneously
 
 ### When to Stay Single-Agent
+
 - Sequential, tightly-coupled work where each step depends on the last
 - Simple bugs or single-file changes
 - Tasks where coordination overhead exceeds the parallel benefit
 
 ### The Task Sizing Sweet Spot
+
 Too small and coordination overhead dominates. Too large and agents work too long without check-ins. Aim for **5-6 focused tasks per agent** with clear deliverables.
 
 ### Specification Quality = Output Quality
-Detailed spawn prompts with technical constraints, acceptance criteria, and domain context produce dramatically better results. Don't just say "fix the tests" — say "fix the auth tests in src/auth/__tests__/, ensuring all edge cases for expired tokens are covered, using the existing MockAuthProvider pattern."
+
+Detailed spawn prompts with technical constraints, acceptance criteria, and domain context produce dramatically better results. Don't just say "fix the tests" — say "fix the auth tests in src/auth/**tests**/, ensuring all edge cases for expired tokens are covered, using the existing MockAuthProvider pattern."
 
 ---
 
 ## Hook Patterns for Teams
 
 ### Quality Gates (Most Valuable)
+
 - **TeammateIdle** — Run typecheck before letting agents idle. Catches errors early.
 - **TaskCompleted** — Run lint + related tests before allowing task completion.
 - **Stop** — Verify all work is complete before Claude stops responding.
 
 ### Observability
+
 - **Notification** — Desktop alerts so you can work on other things.
 - **PostToolUse** on `Bash` — Log all commands agents run to a file.
 - **SubagentStart/SubagentStop** — Track when agents spawn and finish.
 
 ### Context Preservation
+
 - **PreCompact** — Save git status, recent commits, and project reminders before compaction.
 - **SessionStart** on `compact` — Re-inject critical context after compaction.
 
@@ -124,7 +131,7 @@ This compacts the conversation when it hits 70% of the context window (default i
 
 ### Watch all agents at once
 
-Use `shipwright status` (alias: `cct`, `sw`) to see a dashboard of running team sessions:
+Use `shipwright status` (alias: `sw`, `cct`) to see a dashboard of running team sessions:
 
 ```bash
 shipwright status
@@ -139,6 +146,7 @@ Press `prefix + G` to toggle zoom on the current pane. This makes one agent fill
 ### Synchronized input
 
 Press `prefix + Alt-t` to toggle synchronized panes. When enabled, anything you type goes to ALL panes simultaneously. Useful for:
+
 - Stopping all agents at once (`Ctrl-C` in all panes)
 - Running the same command in all agent directories
 
@@ -246,17 +254,17 @@ shipwright cleanup --force   # Actually kills orphaned sessions
 
 ## Environment Variables Reference
 
-| Variable | Default | What it does |
-|----------|---------|--------------|
-| `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` | — | **Required.** Enables agent teams feature |
-| `CLAUDE_CODE_SUBAGENT_MODEL` | (parent model) | Model for subagent lookups. Set to `"haiku"` to save money |
-| `CLAUDE_CODE_AUTOCOMPACT_PCT_OVERRIDE` | `"80"` | Context compaction threshold. Lower = more aggressive |
-| `CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY` | `"3"` | Parallel tool calls per agent. Higher = faster but more API usage |
-| `CLAUDE_CODE_GLOB_HIDDEN` | — | Include dotfiles in glob searches |
-| `CLAUDE_CODE_BASH_MAINTAIN_PROJECT_WORKING_DIR` | — | Keep bash cwd consistent across tool calls |
-| `CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES` | — | Show tool use summaries in output |
-| `CLAUDE_CODE_TST_NAMES_IN_MESSAGES` | — | Show teammate names in messages |
-| `CLAUDE_CODE_EAGER_FLUSH` | — | Flush output eagerly (reduces perceived latency) |
+| Variable                                        | Default        | What it does                                                      |
+| ----------------------------------------------- | -------------- | ----------------------------------------------------------------- |
+| `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`          | —              | **Required.** Enables agent teams feature                         |
+| `CLAUDE_CODE_SUBAGENT_MODEL`                    | (parent model) | Model for subagent lookups. Set to `"haiku"` to save money        |
+| `CLAUDE_CODE_AUTOCOMPACT_PCT_OVERRIDE`          | `"80"`         | Context compaction threshold. Lower = more aggressive             |
+| `CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY`          | `"3"`          | Parallel tool calls per agent. Higher = faster but more API usage |
+| `CLAUDE_CODE_GLOB_HIDDEN`                       | —              | Include dotfiles in glob searches                                 |
+| `CLAUDE_CODE_BASH_MAINTAIN_PROJECT_WORKING_DIR` | —              | Keep bash cwd consistent across tool calls                        |
+| `CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES`           | —              | Show tool use summaries in output                                 |
+| `CLAUDE_CODE_TST_NAMES_IN_MESSAGES`             | —              | Show teammate names in messages                                   |
+| `CLAUDE_CODE_EAGER_FLUSH`                       | —              | Flush output eagerly (reduces perceived latency)                  |
 
 ---
 
@@ -290,14 +298,17 @@ started_at: 2026-02-07T10:00:00Z
 ---
 
 ## Completed
+
 - [x] Scanned existing auth patterns
 - [x] Built User model
 
 ## In Progress
+
 - [ ] JWT route handlers
 - [ ] React login components
 
 ## Blocked
+
 - Integration tests blocked on route completion
 ```
 
@@ -306,6 +317,7 @@ started_at: 2026-02-07T10:00:00Z
 Each agent writes findings/results to a file in this directory. The team lead reads all outputs between waves.
 
 **Add to `.gitignore`:**
+
 ```
 .claude/team-state.local.md
 .claude/team-outputs/
@@ -313,19 +325,19 @@ Each agent writes findings/results to a file in this directory. The team lead re
 
 ### When to Use Waves vs. Single-Pass Teams
 
-| Situation | Approach |
-|-----------|----------|
-| Independent tasks with clear file ownership | Single-pass team — spawn agents, collect results |
-| Tasks that require iteration (tests must pass, errors must be fixed) | Wave pattern — iterate until completion criteria met |
-| Exploratory work that builds on previous findings | Wave pattern — each wave goes deeper based on last wave's results |
-| Simple parallel review (code quality + security + tests) | Single-pass team — each reviewer works independently |
+| Situation                                                            | Approach                                                          |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Independent tasks with clear file ownership                          | Single-pass team — spawn agents, collect results                  |
+| Tasks that require iteration (tests must pass, errors must be fixed) | Wave pattern — iterate until completion criteria met              |
+| Exploratory work that builds on previous findings                    | Wave pattern — each wave goes deeper based on last wave's results |
+| Simple parallel review (code quality + security + tests)             | Single-pass team — each reviewer works independently              |
 
 ### Quick Reference: Five Wave Patterns
 
-| Pattern | Waves | Agents | Best For |
-|---------|-------|--------|----------|
-| [Feature Implementation](patterns/feature-implementation.md) | 3-4 | 2-3 | Multi-component features |
-| [Research & Exploration](patterns/research-exploration.md) | 2-3 | 2-3 | Understanding codebases |
-| [Test Generation](patterns/test-generation.md) | 3-4+ | 2-3 | Coverage campaigns |
-| [Refactoring](patterns/refactoring.md) | 3-4 | 2 | Large-scale transformations |
-| [Bug Hunt](patterns/bug-hunt.md) | 3-4 | 2-3 | Complex, elusive bugs |
+| Pattern                                                      | Waves | Agents | Best For                    |
+| ------------------------------------------------------------ | ----- | ------ | --------------------------- |
+| [Feature Implementation](patterns/feature-implementation.md) | 3-4   | 2-3    | Multi-component features    |
+| [Research & Exploration](patterns/research-exploration.md)   | 2-3   | 2-3    | Understanding codebases     |
+| [Test Generation](patterns/test-generation.md)               | 3-4+  | 2-3    | Coverage campaigns          |
+| [Refactoring](patterns/refactoring.md)                       | 3-4   | 2      | Large-scale transformations |
+| [Bug Hunt](patterns/bug-hunt.md)                             | 3-4   | 2-3    | Complex, elusive bugs       |

@@ -409,13 +409,16 @@ shipwright prep [flags]
 
 **Flags:**
 
-| Flag             | Description                   |
-| ---------------- | ----------------------------- |
-| `--dry-run`      | Preview without writing files |
-| `--path <dir>`   | Target directory              |
-| `--force`        | Overwrite existing configs    |
-| `--no-hooks`     | Skip hook generation          |
-| `--no-claude-md` | Skip CLAUDE.md generation     |
+| Flag             | Description                              |
+| ---------------- | ---------------------------------------- |
+| `--dry-run`      | Preview without writing files            |
+| `--path <dir>`   | Target directory                         |
+| `--force`        | Overwrite existing configs               |
+| `--no-hooks`     | Skip hook generation                     |
+| `--no-claude-md` | Skip CLAUDE.md generation                |
+| `--check`        | Check repo readiness without writing     |
+| `--update`       | Update existing configs (preserve edits) |
+| `--with-claude`  | Run Claude analysis for smarter configs  |
 
 See [Repo Preparation guide](/guides/prep/) for details.
 
@@ -487,7 +490,7 @@ Agent liveness monitoring. Heartbeats are written automatically by pipeline agen
 | `shipwright heartbeat check <job-id>` | Check if a specific job is alive |
 | `shipwright heartbeat clear`          | Remove stale heartbeats          |
 
-Heartbeat files are stored at `~/.claude-teams/heartbeats/<job-id>.json`.
+Heartbeat files are stored at `~/.shipwright/heartbeats/<job-id>.json`.
 
 ## Checkpoints
 
@@ -525,7 +528,7 @@ Manage distributed worker machines for scaling pipeline execution across multipl
 | `--user <user>`     | SSH user                          | current user |
 | `--max-workers <n>` | Max concurrent workers            | 4            |
 
-Machine registry is stored at `~/.claude-teams/machines.json`.
+Machine registry is stored at `~/.shipwright/machines.json`.
 
 See [Advanced Features](/reference/advanced/) for details.
 
@@ -558,4 +561,4 @@ shipwright jira setup             # Configure Jira integration
 shipwright jira sync <issue>      # Sync issue status to Jira
 ```
 
-Configuration is stored at `~/.claude-teams/tracker-config.json`. See [Issue Tracking guide](/guides/tracking/) for setup instructions.
+Configuration is stored at `~/.shipwright/tracker-config.json`. See [Issue Tracking guide](/guides/tracking/) for setup instructions.

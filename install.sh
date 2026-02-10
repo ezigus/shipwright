@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║          Claude Code Teams + tmux — Interactive Installer                ║
+# ║              Shipwright — Interactive Installer                          ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -200,7 +200,7 @@ header "Creating directories"
 for dir in \
   "$HOME/.claude" \
   "$HOME/.claude/hooks" \
-  "$HOME/.claude-teams" \
+  "$HOME/.shipwright" \
   "$HOME/.shipwright" \
   "$HOME/.shipwright/templates" \
   "$HOME/.shipwright/pipelines"; do
@@ -255,24 +255,24 @@ if $INSTALL_FULL_TMUX; then
   # Also install the overlay to ~/.tmux/
   run "Create ~/.tmux/ directory" \
     "mkdir -p '$HOME/.tmux'"
-  run "Install overlay → ~/.tmux/claude-teams-overlay.conf" \
-    "cp '$SCRIPT_DIR/tmux/claude-teams-overlay.conf' '$HOME/.tmux/claude-teams-overlay.conf'"
+  run "Install overlay → ~/.tmux/shipwright-overlay.conf" \
+    "cp '$SCRIPT_DIR/tmux/shipwright-overlay.conf' '$HOME/.tmux/shipwright-overlay.conf'"
   success "Installed teams overlay"
-  INSTALLED+=("claude-teams-overlay.conf")
+  INSTALLED+=("shipwright-overlay.conf")
 fi
 
 if $INSTALL_OVERLAY_ONLY; then
   run "Create ~/.tmux/ directory" \
     "mkdir -p '$HOME/.tmux'"
-  run "Install overlay → ~/.tmux/claude-teams-overlay.conf" \
-    "cp '$SCRIPT_DIR/tmux/claude-teams-overlay.conf' '$HOME/.tmux/claude-teams-overlay.conf'"
+  run "Install overlay → ~/.tmux/shipwright-overlay.conf" \
+    "cp '$SCRIPT_DIR/tmux/shipwright-overlay.conf' '$HOME/.tmux/shipwright-overlay.conf'"
   success "Installed teams overlay"
-  INSTALLED+=("claude-teams-overlay.conf")
+  INSTALLED+=("shipwright-overlay.conf")
 
   echo ""
   info "Add this line to your ~/.tmux.conf to load the overlay:"
   echo ""
-  echo -e "  ${DIM}source-file -q ~/.tmux/claude-teams-overlay.conf${RESET}"
+  echo -e "  ${DIM}source-file -q ~/.tmux/shipwright-overlay.conf${RESET}"
   echo ""
 fi
 
@@ -367,21 +367,21 @@ if ask "Install Shipwright CLI to $BIN_DIR?"; then
   run "Create $BIN_DIR directory" \
     "mkdir -p '$BIN_DIR'"
 
-  if [[ -f "$SCRIPT_DIR/scripts/cct" ]]; then
+  if [[ -f "$SCRIPT_DIR/scripts/sw" ]]; then
     # Install router + all subcommand scripts
-    run "Install cct → $BIN_DIR/cct" \
-      "cp '$SCRIPT_DIR/scripts/cct' '$BIN_DIR/cct' && chmod +x '$BIN_DIR/cct'"
-    INSTALLED+=("cct")
+    run "Install sw → $BIN_DIR/sw" \
+      "cp '$SCRIPT_DIR/scripts/sw' '$BIN_DIR/sw' && chmod +x '$BIN_DIR/sw'"
+    INSTALLED+=("sw")
 
-    # Create shipwright and sw aliases
+    # Create shipwright and cct aliases
     run "Create shipwright symlink" \
-      "ln -sf '$BIN_DIR/cct' '$BIN_DIR/shipwright'"
-    run "Create sw symlink" \
-      "ln -sf '$BIN_DIR/cct' '$BIN_DIR/sw'"
+      "ln -sf '$BIN_DIR/sw' '$BIN_DIR/shipwright'"
+    run "Create cct symlink" \
+      "ln -sf '$BIN_DIR/sw' '$BIN_DIR/cct'"
     INSTALLED+=("shipwright (symlink)")
-    INSTALLED+=("sw (symlink)")
+    INSTALLED+=("cct (symlink)")
 
-    for sub in cct-session.sh cct-status.sh cct-cleanup.sh cct-upgrade.sh cct-doctor.sh cct-logs.sh cct-ps.sh cct-templates.sh cct-loop.sh cct-pipeline.sh cct-pipeline-test.sh cct-worktree.sh cct-init.sh cct-prep.sh cct-prep-test.sh cct-daemon.sh cct-daemon-test.sh cct-reaper.sh cct-memory.sh cct-memory-test.sh cct-cost.sh cct-fleet.sh cct-fleet-test.sh cct-fix.sh cct-fix-test.sh cct-dashboard.sh cct-tracker.sh cct-tracker-linear.sh cct-tracker-jira.sh cct-heartbeat.sh cct-checkpoint.sh cct-remote.sh cct-linear.sh cct-jira.sh; do
+    for sub in sw-session.sh sw-status.sh sw-cleanup.sh sw-upgrade.sh sw-doctor.sh sw-logs.sh sw-ps.sh sw-templates.sh sw-loop.sh sw-pipeline.sh sw-pipeline-test.sh sw-worktree.sh sw-init.sh sw-prep.sh sw-prep-test.sh sw-daemon.sh sw-daemon-test.sh sw-reaper.sh sw-memory.sh sw-memory-test.sh sw-cost.sh sw-fleet.sh sw-fleet-test.sh sw-fix.sh sw-fix-test.sh sw-dashboard.sh sw-tracker.sh sw-tracker-linear.sh sw-tracker-jira.sh sw-heartbeat.sh sw-checkpoint.sh sw-remote.sh sw-linear.sh sw-jira.sh; do
       if [[ -f "$SCRIPT_DIR/scripts/$sub" ]]; then
         run "Install $sub → $BIN_DIR/$sub" \
           "cp '$SCRIPT_DIR/scripts/$sub' '$BIN_DIR/$sub' && chmod +x '$BIN_DIR/$sub'"
@@ -439,20 +439,16 @@ if ask "Install Shipwright CLI to $BIN_DIR?"; then
 
     # Install team templates
     if [[ -d "$SCRIPT_DIR/tmux/templates" ]]; then
-      run "Create ~/.claude-teams/templates directory" \
-        "mkdir -p '$HOME/.claude-teams/templates'"
       run "Create ~/.shipwright/templates directory" \
         "mkdir -p '$HOME/.shipwright/templates'"
       for tpl in "$SCRIPT_DIR"/tmux/templates/*.json; do
         local_name="$(basename "$tpl")"
-        run "Install template $local_name" \
-          "cp '$tpl' '$HOME/.claude-teams/templates/$local_name'"
         run "Install template $local_name → ~/.shipwright/templates/" \
           "cp '$tpl' '$HOME/.shipwright/templates/$local_name'"
       done
       # Validate installed team templates
       if command -v jq &>/dev/null && ! $DRY_RUN; then
-        for tpl_file in "$HOME/.claude-teams/templates"/*.json; do
+        for tpl_file in "$HOME/.shipwright/templates"/*.json; do
           [[ -f "$tpl_file" ]] || continue
           if ! jq -e . "$tpl_file" >/dev/null 2>&1; then
             warn "Invalid JSON: $(basename "$tpl_file")"
@@ -464,20 +460,16 @@ if ask "Install Shipwright CLI to $BIN_DIR?"; then
 
     # Install pipeline templates
     if [[ -d "$SCRIPT_DIR/templates/pipelines" ]]; then
-      run "Create ~/.claude-teams/pipelines directory" \
-        "mkdir -p '$HOME/.claude-teams/pipelines'"
       run "Create ~/.shipwright/pipelines directory" \
         "mkdir -p '$HOME/.shipwright/pipelines'"
       for ptpl in "$SCRIPT_DIR"/templates/pipelines/*.json; do
         local_name="$(basename "$ptpl")"
-        run "Install pipeline template $local_name" \
-          "cp '$ptpl' '$HOME/.claude-teams/pipelines/$local_name'"
         run "Install pipeline template $local_name → ~/.shipwright/pipelines/" \
           "cp '$ptpl' '$HOME/.shipwright/pipelines/$local_name'"
       done
       # Validate installed pipeline templates
       if command -v jq &>/dev/null && ! $DRY_RUN; then
-        for ptpl_file in "$HOME/.claude-teams/pipelines"/*.json; do
+        for ptpl_file in "$HOME/.shipwright/pipelines"/*.json; do
           [[ -f "$ptpl_file" ]] || continue
           if ! jq -e . "$ptpl_file" >/dev/null 2>&1; then
             warn "Invalid JSON: $(basename "$ptpl_file")"
@@ -490,13 +482,13 @@ if ask "Install Shipwright CLI to $BIN_DIR?"; then
     # Install definition-of-done template
     if [[ -f "$SCRIPT_DIR/docs/definition-of-done.example.md" ]]; then
       run "Install definition-of-done template" \
-        "cp '$SCRIPT_DIR/docs/definition-of-done.example.md' '$HOME/.claude-teams/templates/definition-of-done.example.md'"
+        "cp '$SCRIPT_DIR/docs/definition-of-done.example.md' '$HOME/.shipwright/templates/definition-of-done.example.md'"
       INSTALLED+=("definition-of-done.example.md")
     fi
 
     success "Installed Shipwright CLI (router + subcommands + adapters + templates)"
   else
-    warn "scripts/cct not found — skipping (may not be built yet)"
+    warn "scripts/sw not found — skipping (may not be built yet)"
   fi
 
   # Check if ~/.local/bin is in PATH and fix if needed
@@ -585,7 +577,7 @@ fi
 if [[ ${#INSTALLED[@]} -gt 0 ]] && ! $DRY_RUN; then
   header "Upgrade manifest"
 
-  MANIFEST_DIR="$HOME/.claude-teams"
+  MANIFEST_DIR="$HOME/.shipwright"
   MANIFEST="$MANIFEST_DIR/manifest.json"
   mkdir -p "$MANIFEST_DIR"
 
@@ -623,74 +615,74 @@ if [[ ${#INSTALLED[@]} -gt 0 ]] && ! $DRY_RUN; then
     case "$item" in
       "tmux.conf")
         _add_entry "tmux.conf" "tmux/tmux.conf" "$HOME/.tmux.conf" false false ;;
-      "claude-teams-overlay.conf")
-        _add_entry "claude-teams-overlay.conf" "tmux/claude-teams-overlay.conf" "$HOME/.tmux/claude-teams-overlay.conf" false false ;;
+      "shipwright-overlay.conf")
+        _add_entry "shipwright-overlay.conf" "tmux/shipwright-overlay.conf" "$HOME/.tmux/shipwright-overlay.conf" false false ;;
       "settings.json")
         _add_entry "settings.json" "" "$HOME/.claude/settings.json" true false ;;
       "settings.json.template"*)
         _add_entry "settings.json.template" "claude-code/settings.json.template" "$HOME/.claude/settings.json.template" false false ;;
-      "cct")
-        _add_entry "cct" "scripts/cct" "$BIN_DIR/cct" false true ;;
+      "sw")
+        _add_entry "sw" "scripts/sw" "$BIN_DIR/sw" false true ;;
       "shipwright (symlink)")
         _add_entry "shipwright" "" "$BIN_DIR/shipwright" false true ;;
-      "sw (symlink)")
-        _add_entry "sw" "" "$BIN_DIR/sw" false true ;;
-      "cct-session.sh")
-        _add_entry "cct-session.sh" "scripts/cct-session.sh" "$BIN_DIR/cct-session.sh" false true ;;
-      "cct-status.sh")
-        _add_entry "cct-status.sh" "scripts/cct-status.sh" "$BIN_DIR/cct-status.sh" false true ;;
-      "cct-cleanup.sh")
-        _add_entry "cct-cleanup.sh" "scripts/cct-cleanup.sh" "$BIN_DIR/cct-cleanup.sh" false true ;;
-      "cct-upgrade.sh")
-        _add_entry "cct-upgrade.sh" "scripts/cct-upgrade.sh" "$BIN_DIR/cct-upgrade.sh" false true ;;
-      "cct-doctor.sh")
-        _add_entry "cct-doctor.sh" "scripts/cct-doctor.sh" "$BIN_DIR/cct-doctor.sh" false true ;;
-      "cct-logs.sh")
-        _add_entry "cct-logs.sh" "scripts/cct-logs.sh" "$BIN_DIR/cct-logs.sh" false true ;;
-      "cct-ps.sh")
-        _add_entry "cct-ps.sh" "scripts/cct-ps.sh" "$BIN_DIR/cct-ps.sh" false true ;;
-      "cct-templates.sh")
-        _add_entry "cct-templates.sh" "scripts/cct-templates.sh" "$BIN_DIR/cct-templates.sh" false true ;;
-      "cct-loop.sh")
-        _add_entry "cct-loop.sh" "scripts/cct-loop.sh" "$BIN_DIR/cct-loop.sh" false true ;;
-      "cct-worktree.sh")
-        _add_entry "cct-worktree.sh" "scripts/cct-worktree.sh" "$BIN_DIR/cct-worktree.sh" false true ;;
-      "cct-init.sh")
-        _add_entry "cct-init.sh" "scripts/cct-init.sh" "$BIN_DIR/cct-init.sh" false true ;;
-      "cct-prep.sh")
-        _add_entry "cct-prep.sh" "scripts/cct-prep.sh" "$BIN_DIR/cct-prep.sh" false true ;;
-      "cct-daemon.sh")
-        _add_entry "cct-daemon.sh" "scripts/cct-daemon.sh" "$BIN_DIR/cct-daemon.sh" false true ;;
-      "cct-dashboard.sh")
-        _add_entry "cct-dashboard.sh" "scripts/cct-dashboard.sh" "$BIN_DIR/cct-dashboard.sh" false true ;;
-      "cct-pipeline.sh")
-        _add_entry "cct-pipeline.sh" "scripts/cct-pipeline.sh" "$BIN_DIR/cct-pipeline.sh" false true ;;
-      "cct-reaper.sh")
-        _add_entry "cct-reaper.sh" "scripts/cct-reaper.sh" "$BIN_DIR/cct-reaper.sh" false true ;;
-      "cct-memory.sh")
-        _add_entry "cct-memory.sh" "scripts/cct-memory.sh" "$BIN_DIR/cct-memory.sh" false true ;;
-      "cct-cost.sh")
-        _add_entry "cct-cost.sh" "scripts/cct-cost.sh" "$BIN_DIR/cct-cost.sh" false true ;;
-      "cct-fleet.sh")
-        _add_entry "cct-fleet.sh" "scripts/cct-fleet.sh" "$BIN_DIR/cct-fleet.sh" false true ;;
-      "cct-fix.sh")
-        _add_entry "cct-fix.sh" "scripts/cct-fix.sh" "$BIN_DIR/cct-fix.sh" false true ;;
-      "cct-tracker.sh")
-        _add_entry "cct-tracker.sh" "scripts/cct-tracker.sh" "$BIN_DIR/cct-tracker.sh" false true ;;
-      "cct-tracker-linear.sh")
-        _add_entry "cct-tracker-linear.sh" "scripts/cct-tracker-linear.sh" "$BIN_DIR/cct-tracker-linear.sh" false true ;;
-      "cct-tracker-jira.sh")
-        _add_entry "cct-tracker-jira.sh" "scripts/cct-tracker-jira.sh" "$BIN_DIR/cct-tracker-jira.sh" false true ;;
-      "cct-heartbeat.sh")
-        _add_entry "cct-heartbeat.sh" "scripts/cct-heartbeat.sh" "$BIN_DIR/cct-heartbeat.sh" false true ;;
-      "cct-checkpoint.sh")
-        _add_entry "cct-checkpoint.sh" "scripts/cct-checkpoint.sh" "$BIN_DIR/cct-checkpoint.sh" false true ;;
-      "cct-remote.sh")
-        _add_entry "cct-remote.sh" "scripts/cct-remote.sh" "$BIN_DIR/cct-remote.sh" false true ;;
-      "cct-linear.sh")
-        _add_entry "cct-linear.sh" "scripts/cct-linear.sh" "$BIN_DIR/cct-linear.sh" false true ;;
-      "cct-jira.sh")
-        _add_entry "cct-jira.sh" "scripts/cct-jira.sh" "$BIN_DIR/cct-jira.sh" false true ;;
+      "cct (symlink)")
+        _add_entry "cct" "" "$BIN_DIR/cct" false true ;;
+      "sw-session.sh")
+        _add_entry "sw-session.sh" "scripts/sw-session.sh" "$BIN_DIR/sw-session.sh" false true ;;
+      "sw-status.sh")
+        _add_entry "sw-status.sh" "scripts/sw-status.sh" "$BIN_DIR/sw-status.sh" false true ;;
+      "sw-cleanup.sh")
+        _add_entry "sw-cleanup.sh" "scripts/sw-cleanup.sh" "$BIN_DIR/sw-cleanup.sh" false true ;;
+      "sw-upgrade.sh")
+        _add_entry "sw-upgrade.sh" "scripts/sw-upgrade.sh" "$BIN_DIR/sw-upgrade.sh" false true ;;
+      "sw-doctor.sh")
+        _add_entry "sw-doctor.sh" "scripts/sw-doctor.sh" "$BIN_DIR/sw-doctor.sh" false true ;;
+      "sw-logs.sh")
+        _add_entry "sw-logs.sh" "scripts/sw-logs.sh" "$BIN_DIR/sw-logs.sh" false true ;;
+      "sw-ps.sh")
+        _add_entry "sw-ps.sh" "scripts/sw-ps.sh" "$BIN_DIR/sw-ps.sh" false true ;;
+      "sw-templates.sh")
+        _add_entry "sw-templates.sh" "scripts/sw-templates.sh" "$BIN_DIR/sw-templates.sh" false true ;;
+      "sw-loop.sh")
+        _add_entry "sw-loop.sh" "scripts/sw-loop.sh" "$BIN_DIR/sw-loop.sh" false true ;;
+      "sw-worktree.sh")
+        _add_entry "sw-worktree.sh" "scripts/sw-worktree.sh" "$BIN_DIR/sw-worktree.sh" false true ;;
+      "sw-init.sh")
+        _add_entry "sw-init.sh" "scripts/sw-init.sh" "$BIN_DIR/sw-init.sh" false true ;;
+      "sw-prep.sh")
+        _add_entry "sw-prep.sh" "scripts/sw-prep.sh" "$BIN_DIR/sw-prep.sh" false true ;;
+      "sw-daemon.sh")
+        _add_entry "sw-daemon.sh" "scripts/sw-daemon.sh" "$BIN_DIR/sw-daemon.sh" false true ;;
+      "sw-dashboard.sh")
+        _add_entry "sw-dashboard.sh" "scripts/sw-dashboard.sh" "$BIN_DIR/sw-dashboard.sh" false true ;;
+      "sw-pipeline.sh")
+        _add_entry "sw-pipeline.sh" "scripts/sw-pipeline.sh" "$BIN_DIR/sw-pipeline.sh" false true ;;
+      "sw-reaper.sh")
+        _add_entry "sw-reaper.sh" "scripts/sw-reaper.sh" "$BIN_DIR/sw-reaper.sh" false true ;;
+      "sw-memory.sh")
+        _add_entry "sw-memory.sh" "scripts/sw-memory.sh" "$BIN_DIR/sw-memory.sh" false true ;;
+      "sw-cost.sh")
+        _add_entry "sw-cost.sh" "scripts/sw-cost.sh" "$BIN_DIR/sw-cost.sh" false true ;;
+      "sw-fleet.sh")
+        _add_entry "sw-fleet.sh" "scripts/sw-fleet.sh" "$BIN_DIR/sw-fleet.sh" false true ;;
+      "sw-fix.sh")
+        _add_entry "sw-fix.sh" "scripts/sw-fix.sh" "$BIN_DIR/sw-fix.sh" false true ;;
+      "sw-tracker.sh")
+        _add_entry "sw-tracker.sh" "scripts/sw-tracker.sh" "$BIN_DIR/sw-tracker.sh" false true ;;
+      "sw-tracker-linear.sh")
+        _add_entry "sw-tracker-linear.sh" "scripts/sw-tracker-linear.sh" "$BIN_DIR/sw-tracker-linear.sh" false true ;;
+      "sw-tracker-jira.sh")
+        _add_entry "sw-tracker-jira.sh" "scripts/sw-tracker-jira.sh" "$BIN_DIR/sw-tracker-jira.sh" false true ;;
+      "sw-heartbeat.sh")
+        _add_entry "sw-heartbeat.sh" "scripts/sw-heartbeat.sh" "$BIN_DIR/sw-heartbeat.sh" false true ;;
+      "sw-checkpoint.sh")
+        _add_entry "sw-checkpoint.sh" "scripts/sw-checkpoint.sh" "$BIN_DIR/sw-checkpoint.sh" false true ;;
+      "sw-remote.sh")
+        _add_entry "sw-remote.sh" "scripts/sw-remote.sh" "$BIN_DIR/sw-remote.sh" false true ;;
+      "sw-linear.sh")
+        _add_entry "sw-linear.sh" "scripts/sw-linear.sh" "$BIN_DIR/sw-linear.sh" false true ;;
+      "sw-jira.sh")
+        _add_entry "sw-jira.sh" "scripts/sw-jira.sh" "$BIN_DIR/sw-jira.sh" false true ;;
 
       "teammate-idle.sh")
         _add_entry "teammate-idle.sh" "claude-code/hooks/teammate-idle.sh" "$HOME/.claude/hooks/teammate-idle.sh" false true ;;
@@ -702,14 +694,14 @@ if [[ ${#INSTALLED[@]} -gt 0 ]] && ! $DRY_RUN; then
         _add_entry "pre-compact-save.sh" "claude-code/hooks/pre-compact-save.sh" "$HOME/.claude/hooks/pre-compact-save.sh" false true ;;
       "templates")
         # Add individual template entries
-        for tpl_file in "$HOME/.claude-teams/templates"/*.json; do
+        for tpl_file in "$HOME/.shipwright/templates"/*.json; do
           [[ -f "$tpl_file" ]] || continue
           local_name="$(basename "$tpl_file")"
           _add_entry "$local_name" "tmux/templates/$local_name" "$tpl_file" false false
         done
         ;;
       "definition-of-done.example.md")
-        _add_entry "definition-of-done.example.md" "docs/definition-of-done.example.md" "$HOME/.claude-teams/templates/definition-of-done.example.md" false false ;;
+        _add_entry "definition-of-done.example.md" "docs/definition-of-done.example.md" "$HOME/.shipwright/templates/definition-of-done.example.md" false false ;;
       "CLAUDE.md"|"CLAUDE.md (appended)")
         _add_entry "CLAUDE.md" "claude-code/CLAUDE.md.shipwright" "$HOME/.claude/CLAUDE.md" true false ;;
     esac

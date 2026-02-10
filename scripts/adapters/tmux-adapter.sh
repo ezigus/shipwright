@@ -3,7 +3,7 @@
 # ║  tmux-adapter.sh — Terminal adapter for tmux pane management            ║
 # ║                                                                          ║
 # ║  Default adapter. Creates tmux panes within a named window.             ║
-# ║  Sourced by cct-session.sh — exports: spawn_agent, list_agents,         ║
+# ║  Sourced by sw-session.sh — exports: spawn_agent, list_agents,         ║
 # ║  kill_agent, focus_agent.                                                ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 

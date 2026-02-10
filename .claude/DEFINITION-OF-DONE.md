@@ -31,14 +31,14 @@ Autonomous agents must verify all items before marking a task complete.
 - [ ] **CLAUDE.md Updated**: If behavior changes, update `/Users/sethford/Documents/shipwright/.claude/CLAUDE.md`
 - [ ] **Inline Comments**: Complex logic (jq filters, state machine transitions) has comments explaining intent
 - [ ] **Function Headers**: New functions include 1-2 line description of purpose
-- [ ] **CLI Help**: New commands registered in `scripts/cct` main() case statement with brief description
+- [ ] **CLI Help**: New commands registered in `scripts/sw` main() case statement with brief description
 
 ## No Regressions
 
 - [ ] **Existing Pipelines Work**: Test a full `shipwright pipeline start` flow succeeds
 - [ ] **Daemon Still Watches**: If daemon touched, verify `shipwright daemon start` still processes issues
 - [ ] **Config Backward Compatible**: No breaking changes to `.claude/pipeline-state.md` or `daemon-config.json` format
-- [ ] **Event Logging Intact**: `emit_event` calls still write to `~/.claude-teams/events.jsonl`
+- [ ] **Event Logging Intact**: `emit_event` calls still write to `~/.shipwright/events.jsonl`
 
 ## Security & Environment
 

@@ -84,42 +84,42 @@ The build stage delegates to `shipwright loop` for autonomous multi-iteration de
 
 All scripts are bash. Key files with approximate line counts:
 
-| File                        | Lines | Purpose                                         |
-| --------------------------- | ----- | ----------------------------------------------- |
-| `scripts/cct`               | ~240  | CLI router — dispatches subcommands via `exec`  |
-| `scripts/cct-pipeline.sh`   | ~3800 | Delivery pipeline + compound quality stage      |
-| `scripts/cct-daemon.sh`     | ~3200 | Autonomous issue watcher + metrics + auto-scale |
-| `scripts/cct-prep.sh`       | ~1350 | Repo preparation and config generation          |
-| `scripts/cct-loop.sh`       | ~1330 | Continuous autonomous agent loop                |
-| `scripts/cct-memory.sh`     | ~1150 | Persistent learning and context system          |
-| `scripts/cct-fleet.sh`      | ~900  | Multi-repo daemon orchestration                 |
-| `scripts/cct-cost.sh`       | ~590  | Token usage and cost intelligence               |
-| `scripts/cct-doctor.sh`     | ~500  | Setup validation and diagnostics                |
-| `scripts/cct-fix.sh`        | ~480  | Bulk fix across repos                           |
-| `scripts/cct-upgrade.sh`    | ~430  | Upgrade checker and applier                     |
-| `scripts/cct-init.sh`       | ~390  | One-command tmux setup                          |
-| `scripts/cct-session.sh`    | ~280  | Team session creation from templates            |
-| `scripts/cct-heartbeat.sh`  | ~290  | Agent heartbeat writer/checker                  |
-| `scripts/cct-checkpoint.sh` | ~300  | Pipeline checkpoint save/restore                |
-| `scripts/cct-remote.sh`     | ~500  | Multi-machine registry + remote management      |
-| `scripts/cct-tracker.sh`    | ~200  | Issue tracker router (Linear/Jira)              |
-| `scripts/cct-dashboard.sh`  | ~470  | Dashboard server launcher                       |
-| `dashboard/server.ts`       | ~1900 | Bun WebSocket dashboard server                  |
-| `dashboard/public/`         | —     | Dashboard frontend (HTML/CSS/JS)                |
-| `install.sh`                | ~720  | Interactive installer                           |
-| `templates/pipelines/`      | —     | 8 pipeline template JSON files                  |
-| `tmux/templates/`           | —     | 24 team composition JSON templates              |
+| File                       | Lines | Purpose                                         |
+| -------------------------- | ----- | ----------------------------------------------- |
+| `scripts/sw`               | ~240  | CLI router — dispatches subcommands via `exec`  |
+| `scripts/sw-pipeline.sh`   | ~3800 | Delivery pipeline + compound quality stage      |
+| `scripts/sw-daemon.sh`     | ~3200 | Autonomous issue watcher + metrics + auto-scale |
+| `scripts/sw-prep.sh`       | ~1350 | Repo preparation and config generation          |
+| `scripts/sw-loop.sh`       | ~1330 | Continuous autonomous agent loop                |
+| `scripts/sw-memory.sh`     | ~1150 | Persistent learning and context system          |
+| `scripts/sw-fleet.sh`      | ~900  | Multi-repo daemon orchestration                 |
+| `scripts/sw-cost.sh`       | ~590  | Token usage and cost intelligence               |
+| `scripts/sw-doctor.sh`     | ~500  | Setup validation and diagnostics                |
+| `scripts/sw-fix.sh`        | ~480  | Bulk fix across repos                           |
+| `scripts/sw-upgrade.sh`    | ~430  | Upgrade checker and applier                     |
+| `scripts/sw-init.sh`       | ~390  | One-command tmux setup                          |
+| `scripts/sw-session.sh`    | ~280  | Team session creation from templates            |
+| `scripts/sw-heartbeat.sh`  | ~290  | Agent heartbeat writer/checker                  |
+| `scripts/sw-checkpoint.sh` | ~300  | Pipeline checkpoint save/restore                |
+| `scripts/sw-remote.sh`     | ~500  | Multi-machine registry + remote management      |
+| `scripts/sw-tracker.sh`    | ~200  | Issue tracker router (Linear/Jira)              |
+| `scripts/sw-dashboard.sh`  | ~470  | Dashboard server launcher                       |
+| `dashboard/server.ts`      | ~1900 | Bun WebSocket dashboard server                  |
+| `dashboard/public/`        | —     | Dashboard frontend (HTML/CSS/JS)                |
+| `install.sh`               | ~720  | Interactive installer                           |
+| `templates/pipelines/`     | —     | 8 pipeline template JSON files                  |
+| `tmux/templates/`          | —     | 24 team composition JSON templates              |
 
 State and artifacts at runtime:
 
 - Pipeline state: `.claude/pipeline-state.md`
 - Pipeline artifacts: `.claude/pipeline-artifacts/`
-- Events log: `~/.claude-teams/events.jsonl` (JSONL for metrics)
+- Events log: `~/.shipwright/events.jsonl` (JSONL for metrics)
 - Daemon config: `.claude/daemon-config.json`
 - Fleet config: `.claude/fleet-config.json`
-- Heartbeats: `~/.claude-teams/heartbeats/<job-id>.json`
+- Heartbeats: `~/.shipwright/heartbeats/<job-id>.json`
 - Checkpoints: `.claude/pipeline-artifacts/checkpoints/`
-- Machine registry: `~/.claude-teams/machines.json`
+- Machine registry: `~/.shipwright/machines.json`
 - Cost data: `~/.shipwright/costs.json`, `~/.shipwright/budget.json`
 
 ## Development Guidelines
@@ -158,10 +158,10 @@ State and artifacts at runtime:
 
 ```bash
 # Run all pipeline tests (mock binaries, no real Claude/GitHub calls)
-./scripts/cct-pipeline-test.sh
+./scripts/sw-pipeline-test.sh
 
 # Run all test suites (pipeline, daemon, prep, fleet, fix, memory, session, init, tracker, heartbeat, remote)
 npm test
 ```
 
-The pipeline test harness (`scripts/cct-pipeline-test.sh`, ~870 lines) uses mock binaries to test pipeline flow without external dependencies.
+The pipeline test harness (`scripts/sw-pipeline-test.sh`, ~870 lines) uses mock binaries to test pipeline flow without external dependencies.

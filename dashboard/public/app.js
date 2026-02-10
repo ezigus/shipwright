@@ -40,39 +40,52 @@ const STAGE_COLORS = [
   "c-amber",
   "c-cyan",
 ];
+const STAGE_HEX = {
+  intake: "#00d4ff",
+  plan: "#0066ff",
+  design: "#7c3aed",
+  build: "#4ade80",
+  test: "#fbbf24",
+  review: "#00d4ff",
+  compound_quality: "#0066ff",
+  pr: "#7c3aed",
+  merge: "#4ade80",
+  deploy: "#fbbf24",
+  monitor: "#00d4ff",
+};
 
 // ── State ───────────────────────────────────────────────────────
-let currentData = null;
-let activeTab = "overview";
-let metricsCache = null;
-let pipelineDetail = null;
-let selectedPipelineIssue = null;
-let activityEvents = [];
-let activityOffset = 0;
-let activityHasMore = false;
-let activityFilter = "all";
-let activityIssueFilter = "";
-let pipelineFilter = "all";
-let firstRender = true;
+var currentData = null;
+var activeTab = "overview";
+var metricsCache = null;
+var pipelineDetail = null;
+var selectedPipelineIssue = null;
+var activityEvents = [];
+var activityOffset = 0;
+var activityHasMore = false;
+var activityFilter = "all";
+var activityIssueFilter = "";
+var pipelineFilter = "all";
+var firstRender = true;
 
 // ── WebSocket ───────────────────────────────────────────────────
-const wsUrl = `ws://${location.host}/ws`;
-let ws;
-let reconnectDelay = 1000;
-let connectedAt = null;
-let connectionTimer = null;
+var wsUrl = "ws://" + location.host + "/ws";
+var ws;
+var reconnectDelay = 1000;
+var connectedAt = null;
+var connectionTimer = null;
 
 function connect() {
   ws = new WebSocket(wsUrl);
 
-  ws.onopen = () => {
+  ws.onopen = function () {
     reconnectDelay = 1000;
     connectedAt = Date.now();
     updateConnectionStatus("LIVE");
     startConnectionTimer();
   };
 
-  ws.onclose = () => {
+  ws.onclose = function () {
     connectedAt = null;
     stopConnectionTimer();
     updateConnectionStatus("OFFLINE");
@@ -80,11 +93,11 @@ function connect() {
     reconnectDelay = Math.min(reconnectDelay * 2, 10000);
   };
 
-  ws.onerror = () => {};
+  ws.onerror = function () {};
 
-  ws.onmessage = (e) => {
+  ws.onmessage = function (e) {
     try {
-      const data = JSON.parse(e.data);
+      var data = JSON.parse(e.data);
       currentData = data;
       renderCostTicker(data);
       renderActiveTab();
@@ -98,12 +111,12 @@ function connect() {
 // ── Connection Timer ────────────────────────────────────────────
 function startConnectionTimer() {
   stopConnectionTimer();
-  connectionTimer = setInterval(() => {
+  connectionTimer = setInterval(function () {
     if (connectedAt) {
-      const elapsed = Math.floor((Date.now() - connectedAt) / 1000);
-      const h = String(Math.floor(elapsed / 3600)).padStart(2, "0");
-      const m = String(Math.floor((elapsed % 3600) / 60)).padStart(2, "0");
-      const s = String(elapsed % 60).padStart(2, "0");
+      var elapsed = Math.floor((Date.now() - connectedAt) / 1000);
+      var h = String(Math.floor(elapsed / 3600)).padStart(2, "0");
+      var m = String(Math.floor((elapsed % 3600) / 60)).padStart(2, "0");
+      var s = String(elapsed % 60).padStart(2, "0");
       document.getElementById("connection-text").textContent =
         "LIVE \u2014 " + h + ":" + m + ":" + s;
     }
@@ -118,8 +131,8 @@ function stopConnectionTimer() {
 }
 
 function updateConnectionStatus(status) {
-  const dot = document.getElementById("connection-dot");
-  const text = document.getElementById("connection-text");
+  var dot = document.getElementById("connection-dot");
+  var text = document.getElementById("connection-text");
   if (status === "LIVE") {
     dot.className = "connection-dot live";
     text.textContent = "LIVE \u2014 00:00:00";
@@ -140,10 +153,10 @@ function formatDuration(s) {
 
 function formatTime(iso) {
   if (!iso) return "\u2014";
-  const d = new Date(iso);
-  const h = String(d.getHours()).padStart(2, "0");
-  const m = String(d.getMinutes()).padStart(2, "0");
-  const s = String(d.getSeconds()).padStart(2, "0");
+  var d = new Date(iso);
+  var h = String(d.getHours()).padStart(2, "0");
+  var m = String(d.getMinutes()).padStart(2, "0");
+  var s = String(d.getSeconds()).padStart(2, "0");
   return h + ":" + m + ":" + s;
 }
 
@@ -184,8 +197,357 @@ function getTypeShort(typeRaw) {
   return parts[parts.length - 1];
 }
 
+// ── Animated Number Counter ─────────────────────────────────────
+function animateValue(el, start, end, duration, suffix) {
+  if (!el) return;
+  if (typeof suffix === "undefined") suffix = "";
+  var startTime = null;
+  var diff = end - start;
+
+  function step(timestamp) {
+    if (!startTime) startTime = timestamp;
+    var progress = Math.min((timestamp - startTime) / duration, 1);
+    var current = Math.floor(start + diff * progress);
+    el.textContent = fmtNum(current) + suffix;
+    if (progress < 1) {
+      requestAnimationFrame(step);
+    }
+  }
+
+  if (diff === 0) {
+    el.textContent = fmtNum(end) + suffix;
+    return;
+  }
+  requestAnimationFrame(step);
+}
+
+// ── SVG Pipeline Visualization ──────────────────────────────────
+function renderPipelineSVG(pipeline) {
+  var stagesDone = pipeline.stagesDone || [];
+  var currentStage = pipeline.stage || "";
+  var failed = pipeline.status === "failed";
+
+  var nodeSpacing = 80;
+  var nodeR = 14;
+  var svgWidth = STAGES.length * nodeSpacing + 40;
+  var svgHeight = 72;
+  var yCenter = 28;
+  var yLabel = 60;
+
+  var svg =
+    '<svg class="pipeline-svg" viewBox="0 0 ' +
+    svgWidth +
+    " " +
+    svgHeight +
+    '" width="100%" height="' +
+    svgHeight +
+    '" xmlns="http://www.w3.org/2000/svg">';
+
+  // Connecting lines
+  for (var i = 0; i < STAGES.length - 1; i++) {
+    var x1 = 20 + i * nodeSpacing + nodeR;
+    var x2 = 20 + (i + 1) * nodeSpacing - nodeR;
+    var isDone = stagesDone.indexOf(STAGES[i]) !== -1;
+    var lineColor = isDone ? "#4ade80" : "#1a3a6a";
+    var dashAttr = isDone ? "" : ' stroke-dasharray="4,3"';
+    svg +=
+      '<line x1="' +
+      x1 +
+      '" y1="' +
+      yCenter +
+      '" x2="' +
+      x2 +
+      '" y2="' +
+      yCenter +
+      '" stroke="' +
+      lineColor +
+      '" stroke-width="2"' +
+      dashAttr +
+      "/>";
+  }
+
+  // Stage nodes
+  for (var i = 0; i < STAGES.length; i++) {
+    var s = STAGES[i];
+    var cx = 20 + i * nodeSpacing;
+    var isDone = stagesDone.indexOf(s) !== -1;
+    var isActive = s === currentStage;
+    var isFailed = failed && isActive;
+
+    var fillColor = "#0d1f3c";
+    var strokeColor = "#1a3a6a";
+    var textColor = "#5a6d8a";
+    var extra = "";
+
+    if (isDone) {
+      fillColor = "#4ade80";
+      strokeColor = "#4ade80";
+      textColor = "#060a14";
+    } else if (isFailed) {
+      fillColor = "#f43f5e";
+      strokeColor = "#f43f5e";
+      textColor = "#fff";
+    } else if (isActive) {
+      fillColor = "#00d4ff";
+      strokeColor = "#00d4ff";
+      textColor = "#060a14";
+      extra = ' class="stage-node-active"';
+    }
+
+    // Glow filter for active
+    if (isActive && !isFailed) {
+      svg +=
+        '<circle cx="' +
+        cx +
+        '" cy="' +
+        yCenter +
+        '" r="' +
+        (nodeR + 4) +
+        '" fill="none" stroke="' +
+        strokeColor +
+        '" stroke-width="1" opacity="0.3"' +
+        extra +
+        ">" +
+        '<animate attributeName="r" values="' +
+        (nodeR + 2) +
+        ";" +
+        (nodeR + 6) +
+        ";" +
+        (nodeR + 2) +
+        '" dur="2s" repeatCount="indefinite"/>' +
+        '<animate attributeName="opacity" values="0.3;0.1;0.3" dur="2s" repeatCount="indefinite"/>' +
+        "</circle>";
+    }
+
+    svg +=
+      '<circle cx="' +
+      cx +
+      '" cy="' +
+      yCenter +
+      '" r="' +
+      nodeR +
+      '" fill="' +
+      fillColor +
+      '" stroke="' +
+      strokeColor +
+      '" stroke-width="2"/>';
+    svg +=
+      '<text x="' +
+      cx +
+      '" y="' +
+      (yCenter + 4) +
+      '" text-anchor="middle" fill="' +
+      textColor +
+      '" font-family="\'JetBrains Mono\', monospace" font-size="8" font-weight="600">' +
+      STAGE_SHORT[s] +
+      "</text>";
+    svg +=
+      '<text x="' +
+      cx +
+      '" y="' +
+      yLabel +
+      '" text-anchor="middle" fill="#5a6d8a" font-family="\'JetBrains Mono\', monospace" font-size="7">' +
+      escapeHtml(s === "compound_quality" ? "quality" : s) +
+      "</text>";
+  }
+
+  svg += "</svg>";
+  return svg;
+}
+
+// ── SVG Donut Chart ─────────────────────────────────────────────
+function renderSVGDonut(rate) {
+  var size = 120;
+  var strokeW = 12;
+  var r = (size - strokeW) / 2;
+  var c = Math.PI * 2 * r;
+  var pct = Math.max(0, Math.min(100, rate));
+  var offset = c - (pct / 100) * c;
+
+  var svg =
+    '<svg class="svg-donut" width="' +
+    size +
+    '" height="' +
+    size +
+    '" viewBox="0 0 ' +
+    size +
+    " " +
+    size +
+    '">';
+  svg +=
+    '<defs><linearGradient id="donut-grad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#00d4ff"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient></defs>';
+  // Background track
+  svg +=
+    '<circle cx="' +
+    size / 2 +
+    '" cy="' +
+    size / 2 +
+    '" r="' +
+    r +
+    '" fill="none" stroke="#0d1f3c" stroke-width="' +
+    strokeW +
+    '"/>';
+  // Foreground arc
+  svg +=
+    '<circle cx="' +
+    size / 2 +
+    '" cy="' +
+    size / 2 +
+    '" r="' +
+    r +
+    '" fill="none" stroke="url(#donut-grad)" stroke-width="' +
+    strokeW +
+    '" stroke-linecap="round" stroke-dasharray="' +
+    c +
+    '" stroke-dashoffset="' +
+    offset +
+    '" transform="rotate(-90 ' +
+    size / 2 +
+    " " +
+    size / 2 +
+    ')" style="transition: stroke-dashoffset 0.8s ease"/>';
+  // Center text
+  svg +=
+    '<text x="' +
+    size / 2 +
+    '" y="' +
+    (size / 2 + 8) +
+    '" text-anchor="middle" fill="#e8ecf4" font-family="\'Instrument Serif\', serif" font-size="24">' +
+    pct.toFixed(1) +
+    "%</text>";
+  svg += "</svg>";
+  return svg;
+}
+
+// ── SVG Bar Chart ───────────────────────────────────────────────
+function renderSVGBarChart(dailyCounts) {
+  if (!dailyCounts || dailyCounts.length === 0) return "";
+
+  var chartW = 700;
+  var chartH = 100;
+  var barGap = 4;
+  var barW = Math.max(
+    8,
+    (chartW - (dailyCounts.length - 1) * barGap) / dailyCounts.length,
+  );
+  var maxCount = 0;
+  for (var i = 0; i < dailyCounts.length; i++) {
+    var total = (dailyCounts[i].completed || 0) + (dailyCounts[i].failed || 0);
+    if (total > maxCount) maxCount = total;
+  }
+  if (maxCount === 0) maxCount = 1;
+
+  var svg =
+    '<svg class="svg-bar-chart" viewBox="0 0 ' +
+    chartW +
+    " " +
+    (chartH + 20) +
+    '" width="100%" height="' +
+    (chartH + 20) +
+    '">';
+
+  for (var i = 0; i < dailyCounts.length; i++) {
+    var day = dailyCounts[i];
+    var completed = day.completed || 0;
+    var failed = day.failed || 0;
+    var x = i * (barW + barGap);
+    var cH = (completed / maxCount) * chartH;
+    var fH = (failed / maxCount) * chartH;
+
+    if (cH > 0) {
+      svg +=
+        '<rect x="' +
+        x +
+        '" y="' +
+        (chartH - cH - fH) +
+        '" width="' +
+        barW +
+        '" height="' +
+        cH +
+        '" rx="3" fill="#4ade80" opacity="0.85"/>';
+    }
+    if (fH > 0) {
+      svg +=
+        '<rect x="' +
+        x +
+        '" y="' +
+        (chartH - fH) +
+        '" width="' +
+        barW +
+        '" height="' +
+        fH +
+        '" rx="3" fill="#f43f5e" opacity="0.85"/>';
+    }
+    if (cH === 0 && fH === 0) {
+      svg +=
+        '<rect x="' +
+        x +
+        '" y="' +
+        (chartH - 1) +
+        '" width="' +
+        barW +
+        '" height="1" fill="#0d1f3c"/>';
+    }
+
+    // Date label
+    var dateStr = day.date || "";
+    var parts = dateStr.split("-");
+    var label = parts.length >= 3 ? parts[1] + "/" + parts[2] : dateStr;
+    svg +=
+      '<text x="' +
+      (x + barW / 2) +
+      '" y="' +
+      (chartH + 14) +
+      '" text-anchor="middle" fill="#5a6d8a" font-family="\'JetBrains Mono\', monospace" font-size="8">' +
+      escapeHtml(label) +
+      "</text>";
+  }
+
+  svg += "</svg>";
+  return svg;
+}
+
+// ── DORA Grade Badges ───────────────────────────────────────────
+function renderDoraGrades(dora) {
+  if (!dora) return "";
+
+  var metrics = [
+    { key: "deploy_freq", label: "Deploy Frequency" },
+    { key: "lead_time", label: "Lead Time" },
+    { key: "cfr", label: "Change Failure Rate" },
+    { key: "mttr", label: "Mean Time to Recovery" },
+  ];
+
+  var html = '<div class="dora-grades-row">';
+  for (var i = 0; i < metrics.length; i++) {
+    var m = metrics[i];
+    var d = dora[m.key];
+    if (!d) continue;
+    var grade = (d.grade || "N/A").toLowerCase();
+    var gradeClass = "dora-" + grade;
+    html +=
+      '<div class="dora-grade-card">' +
+      '<span class="dora-grade-label">' +
+      escapeHtml(m.label) +
+      "</span>" +
+      '<span class="dora-badge ' +
+      gradeClass +
+      '">' +
+      escapeHtml(d.grade || "N/A") +
+      "</span>" +
+      '<span class="dora-grade-value">' +
+      (d.value != null ? d.value.toFixed(1) : "\u2014") +
+      " " +
+      escapeHtml(d.unit || "") +
+      "</span>" +
+      "</div>";
+  }
+  html += "</div>";
+  return html;
+}
+
 // ── User Menu ───────────────────────────────────────────────────
-let currentUser = null;
+var currentUser = null;
 
 function fetchUser() {
   fetch("/api/me")
@@ -376,8 +738,12 @@ function renderStats(data) {
 
   var active = data.pipelines ? data.pipelines.length : 0;
   var max = d.maxParallel || 0;
-  document.getElementById("stat-active").textContent =
-    fmtNum(active) + " / " + fmtNum(max);
+  var activeEl = document.getElementById("stat-active");
+  if (firstRender && active > 0) {
+    animateValue(activeEl, 0, active, 600, " / " + fmtNum(max));
+  } else {
+    activeEl.textContent = fmtNum(active) + " / " + fmtNum(max);
+  }
   var barPct = max > 0 ? Math.min((active / max) * 100, 100) : 0;
   document.getElementById("stat-active-bar").style.width = barPct + "%";
 
@@ -390,7 +756,12 @@ function renderStats(data) {
     queued === 1 ? "issue waiting" : "issues waiting";
 
   var completed = m.completed != null ? m.completed : 0;
-  document.getElementById("stat-completed").textContent = fmtNum(completed);
+  var completedEl = document.getElementById("stat-completed");
+  if (firstRender && completed > 0) {
+    animateValue(completedEl, 0, completed, 800, "");
+  } else {
+    completedEl.textContent = fmtNum(completed);
+  }
   var failed = m.failed != null ? m.failed : 0;
   var failedSub = document.getElementById("stat-failed-sub");
   failedSub.textContent = fmtNum(failed) + " failed";
@@ -416,17 +787,6 @@ function renderOverviewPipelines(data) {
   var html = "";
   for (var idx = 0; idx < data.pipelines.length; idx++) {
     var p = data.pipelines[idx];
-    var stagesDone = p.stagesDone || [];
-    var currentStage = p.stage || "";
-
-    var stageBar = "";
-    for (var si = 0; si < STAGES.length; si++) {
-      var s = STAGES[si];
-      var cls = "stage-seg";
-      if (stagesDone.indexOf(s) !== -1) cls += " done";
-      else if (s === currentStage) cls += " active";
-      stageBar += '<div class="' + cls + '">' + STAGE_SHORT[s] + "</div>";
-    }
 
     var maxIter = p.maxIterations || 20;
     var curIter = p.iteration || 0;
@@ -463,8 +823,8 @@ function renderOverviewPipelines(data) {
       formatDuration(p.elapsed_s) +
       "</span>" +
       "</div>" +
-      '<div class="stage-bar">' +
-      stageBar +
+      '<div class="pipeline-svg-wrap">' +
+      renderPipelineSVG(p) +
       "</div>" +
       '<div class="pipeline-iter">' +
       '<span class="pipeline-iter-label">Iteration ' +
@@ -826,6 +1186,18 @@ function renderPipelineDetail(detail) {
   var body = document.getElementById("detail-panel-body");
   var html = "";
 
+  // SVG pipeline visualization at top of detail
+  html +=
+    '<div class="pipeline-svg-wrap">' +
+    renderPipelineSVG({
+      stagesDone: (detail.stageHistory || []).map(function (h) {
+        return h.stage;
+      }),
+      stage: detail.stage,
+      status: "",
+    }) +
+    "</div>";
+
   // Stage timeline
   var history = detail.stageHistory || [];
   if (history.length > 0) {
@@ -1119,37 +1491,63 @@ function fetchMetrics() {
 }
 
 function renderMetrics(data) {
-  // Success rate donut
+  // Success rate — SVG donut
   var rate = data.success_rate != null ? data.success_rate : 0;
-  var donut = document.getElementById("metric-donut");
-  donut.style.setProperty("--pct", rate + "%");
-  document.getElementById("metric-success-rate").textContent =
-    rate.toFixed(1) + "%";
+  var donutWrap = document.getElementById("metric-donut-wrap");
+  if (donutWrap) {
+    donutWrap.innerHTML = renderSVGDonut(rate);
+  } else {
+    // Fallback: use the CSS donut
+    var donut = document.getElementById("metric-donut");
+    if (donut) {
+      donut.style.setProperty("--pct", rate + "%");
+      var rateEl = document.getElementById("metric-success-rate");
+      if (rateEl) rateEl.textContent = rate.toFixed(1) + "%";
+    }
+  }
 
   // Avg duration
-  document.getElementById("metric-avg-duration").textContent = formatDuration(
-    data.avg_duration_s,
-  );
+  var avgDurEl = document.getElementById("metric-avg-duration");
+  if (avgDurEl) {
+    avgDurEl.textContent = formatDuration(data.avg_duration_s);
+  }
 
   // Throughput
   var tp = data.throughput_per_hour != null ? data.throughput_per_hour : 0;
-  document.getElementById("metric-throughput").textContent = tp.toFixed(2);
+  var tpEl = document.getElementById("metric-throughput");
+  if (tpEl) tpEl.textContent = tp.toFixed(2);
 
   // Totals
   var totalCompleted = data.total_completed != null ? data.total_completed : 0;
   var totalFailed = data.total_failed != null ? data.total_failed : 0;
-  document.getElementById("metric-total-completed").textContent =
-    fmtNum(totalCompleted);
+  var tcEl = document.getElementById("metric-total-completed");
+  if (tcEl) {
+    if (firstRender && totalCompleted > 0) {
+      animateValue(tcEl, 0, totalCompleted, 800, "");
+    } else {
+      tcEl.textContent = fmtNum(totalCompleted);
+    }
+  }
   var failedEl = document.getElementById("metric-total-failed");
-  failedEl.textContent = fmtNum(totalFailed) + " failed";
-  failedEl.className = totalFailed > 0 ? "metric-sub" : "metric-sub";
-  failedEl.style.color = totalFailed > 0 ? "var(--rose)" : "";
+  if (failedEl) {
+    failedEl.textContent = fmtNum(totalFailed) + " failed";
+    failedEl.style.color = totalFailed > 0 ? "var(--rose)" : "";
+  }
 
-  // Stage duration breakdown
+  // Stage duration breakdown — SVG bars
   renderStageBreakdown(data.stage_durations || {});
 
-  // Daily chart
+  // Daily chart — SVG
   renderDailyChart(data.daily_counts || []);
+
+  // DORA grades
+  var doraContainer = document.getElementById("dora-grades-container");
+  if (doraContainer && data.dora_grades) {
+    doraContainer.innerHTML = renderDoraGrades(data.dora_grades);
+    doraContainer.style.display = "";
+  } else if (doraContainer) {
+    doraContainer.style.display = "none";
+  }
 }
 
 function renderStageBreakdown(stageDurations) {
@@ -1203,49 +1601,7 @@ function renderDailyChart(dailyCounts) {
     return;
   }
 
-  // Find max for scaling
-  var maxCount = 0;
-  for (var i = 0; i < dailyCounts.length; i++) {
-    var total = (dailyCounts[i].completed || 0) + (dailyCounts[i].failed || 0);
-    if (total > maxCount) maxCount = total;
-  }
-  if (maxCount === 0) maxCount = 1;
-
-  var chartHeight = 80; // pixels
-  var html = '<div class="bar-chart">';
-  for (var i = 0; i < dailyCounts.length; i++) {
-    var day = dailyCounts[i];
-    var completed = day.completed || 0;
-    var failed = day.failed || 0;
-    var cH = Math.round((completed / maxCount) * chartHeight);
-    var fH = Math.round((failed / maxCount) * chartHeight);
-
-    // Date label: MM/DD
-    var dateStr = day.date || "";
-    var parts = dateStr.split("-");
-    var label = parts.length >= 3 ? parts[1] + "/" + parts[2] : dateStr;
-
-    html +=
-      '<div class="bar-group">' +
-      '<div class="bar-stack">' +
-      (fH > 0
-        ? '<div class="bar-seg failed" style="height:' + fH + 'px"></div>'
-        : "") +
-      (cH > 0
-        ? '<div class="bar-seg completed" style="height:' + cH + 'px"></div>'
-        : "") +
-      (cH === 0 && fH === 0
-        ? '<div class="bar-seg" style="height:1px;background:var(--ocean)"></div>'
-        : "") +
-      "</div>" +
-      '<span class="bar-date">' +
-      escapeHtml(label) +
-      "</span>" +
-      "</div>";
-  }
-  html += "</div>";
-
-  container.innerHTML = html;
+  container.innerHTML = renderSVGBarChart(dailyCounts);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1258,7 +1614,12 @@ function renderAgentsTab(data) {
 
   if (agents.length === 0) {
     container.innerHTML =
-      '<div class="empty-state"><p>No active agents</p></div>';
+      '<div class="empty-state">' +
+      '<svg class="empty-icon" viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5">' +
+      '<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>' +
+      "</svg>" +
+      "<p>No active agents. Start a pipeline to see agents here.</p>" +
+      "</div>";
     return;
   }
 
@@ -1266,7 +1627,7 @@ function renderAgentsTab(data) {
   for (var i = 0; i < agents.length; i++) {
     var a = agents[i];
     var presenceClass = a.status || "dead";
-    var elapsed = a.elapsed_s ? formatDuration(a.elapsed_s) : "—";
+    var elapsed = a.elapsed_s ? formatDuration(a.elapsed_s) : "\u2014";
     var memPct =
       a.memory_mb > 0 ? Math.min((a.memory_mb / 2048) * 100, 100) : 0;
     var cpuPct = a.cpu_pct || 0;
@@ -1291,14 +1652,14 @@ function renderAgentsTab(data) {
       "</div>" +
       '<div class="agent-stage">' +
       '<span class="agent-stage-badge">' +
-      escapeHtml(a.stage || "—") +
+      escapeHtml(a.stage || "\u2014") +
       "</span>" +
       '<span class="agent-iteration">iter ' +
       (a.iteration || 0) +
       "</span>" +
       "</div>" +
       '<div class="agent-activity">' +
-      escapeHtml(a.activity || "—") +
+      escapeHtml(a.activity || "\u2014") +
       "</div>" +
       '<div class="agent-resources">' +
       '<div class="agent-res-row">' +
@@ -1458,7 +1819,7 @@ function renderTimelineTab(data) {
         widthPct.toFixed(2) +
         '%" title="' +
         escapeHtml(seg.stage) +
-        " — " +
+        " \u2014 " +
         segDuration +
         '">' +
         '<span class="gantt-seg-label">' +
@@ -1474,9 +1835,26 @@ function renderTimelineTab(data) {
 }
 
 function setupTimelineControls() {
+  // Support both select and segmented control
   var rangeEl = document.getElementById("timeline-range");
   if (rangeEl) {
     rangeEl.addEventListener("change", function () {
+      fetchTimeline();
+    });
+  }
+
+  // Segmented control buttons
+  var segBtns = document.querySelectorAll(".timeline-seg-btn");
+  for (var i = 0; i < segBtns.length; i++) {
+    segBtns[i].addEventListener("click", function () {
+      var val = this.getAttribute("data-value");
+      // Update hidden select
+      if (rangeEl) rangeEl.value = val;
+      // Update active state
+      var siblings = document.querySelectorAll(".timeline-seg-btn");
+      for (var j = 0; j < siblings.length; j++)
+        siblings[j].classList.remove("active");
+      this.classList.add("active");
       fetchTimeline();
     });
   }
@@ -1552,7 +1930,7 @@ function renderMachines(data) {
       "</span>" +
       "</div>" +
       '<div class="machine-host">' +
-      escapeHtml(m.host || "—") +
+      escapeHtml(m.host || "\u2014") +
       "</div>" +
       '<div class="machine-workers">' +
       '<span class="machine-workers-label">Workers:</span> ' +
@@ -1647,7 +2025,7 @@ function setupInterventionModal() {
 
 function truncate(str, maxLen) {
   if (!str) return "";
-  return str.length > maxLen ? str.substring(0, maxLen) + "…" : str;
+  return str.length > maxLen ? str.substring(0, maxLen) + "\u2026" : str;
 }
 
 function padZero(n) {

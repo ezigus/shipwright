@@ -27,9 +27,9 @@
 set -euo pipefail
 
 if [[ "$(uname)" == "Darwin" ]]; then
-  osascript -e 'display notification "An agent needs your attention" with title "Claude Code Teams" sound name "Ping"'
+  osascript -e 'display notification "An agent needs your attention" with title "Shipwright" sound name "Ping"'
 elif command -v notify-send &>/dev/null; then
-  notify-send "Claude Code Teams" "An agent needs your attention" --urgency=normal
+  notify-send "Shipwright" "An agent needs your attention" --urgency=normal
 fi
 
 exit 0

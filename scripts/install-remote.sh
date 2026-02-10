@@ -116,9 +116,9 @@ install() {
 
     # Create symlinks in bin dir
     mkdir -p "$INSTALL_DIR"
-    ln -sf "$INSTALL_LIB/scripts/cct" "$INSTALL_DIR/shipwright"
-    ln -sf "$INSTALL_LIB/scripts/cct" "$INSTALL_DIR/sw"
-    ln -sf "$INSTALL_LIB/scripts/cct" "$INSTALL_DIR/cct"
+    ln -sf "$INSTALL_LIB/scripts/sw" "$INSTALL_DIR/shipwright"
+    ln -sf "$INSTALL_LIB/scripts/sw" "$INSTALL_DIR/sw"
+    ln -sf "$INSTALL_LIB/scripts/sw" "$INSTALL_DIR/cct"
     success "Created symlinks: ${BOLD}shipwright${RESET}, ${BOLD}sw${RESET}, ${BOLD}cct${RESET}"
 
     # Install shell completions if available

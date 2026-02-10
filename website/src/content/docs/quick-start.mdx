@@ -3,17 +3,17 @@ title: Quick Start
 description: Install Shipwright and run your first agent team session in under 5 minutes.
 ---
 
-import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import { Tabs, TabItem, Steps } from "@astrojs/starlight/components";
 
 ## Prerequisites
 
-| Requirement | Version | Install |
-|-------------|---------|---------|
-| **tmux** | 3.2+ | `brew install tmux` |
-| **jq** | any | `brew install jq` |
-| **Claude Code CLI** | latest | `npm install -g @anthropic-ai/claude-code` |
-| **Node.js** | 20+ | For hooks |
-| **Git** | any | For installation |
+| Requirement         | Version | Install                                    |
+| ------------------- | ------- | ------------------------------------------ |
+| **tmux**            | 3.2+    | `brew install tmux`                        |
+| **jq**              | any     | `brew install jq`                          |
+| **Claude Code CLI** | latest  | `npm install -g @anthropic-ai/claude-code` |
+| **Node.js**         | 20+     | For hooks                                  |
+| **Git**             | any     | For installation                           |
 
 :::caution[Terminal Compatibility]
 Split-pane agent teams require a real terminal emulator. **VS Code's integrated terminal and Ghostty are not supported.** Use iTerm2, Alacritty, Kitty, or WezTerm. See [Troubleshooting](/troubleshooting/) for details.
@@ -30,6 +30,7 @@ Split-pane agent teams require a real terminal emulator. **VS Code's integrated 
     cd shipwright
     ./install.sh
     ```
+
   </TabItem>
   <TabItem label="Quick Setup (tmux only)">
     One-command setup with no prompts — installs just the tmux configuration:
@@ -37,8 +38,9 @@ Split-pane agent teams require a real terminal emulator. **VS Code's integrated 
     ```bash
     git clone https://github.com/sethdford/shipwright.git
     cd shipwright
-    ./scripts/cct-init.sh
+    ./scripts/sw-init.sh
     ```
+
   </TabItem>
 </Tabs>
 

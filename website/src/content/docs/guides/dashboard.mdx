@@ -71,13 +71,13 @@ Live DORA/DX metrics dashboard:
 
 The dashboard consists of:
 
-| Component      | Location                       | Purpose                                               |
-| -------------- | ------------------------------ | ----------------------------------------------------- |
-| **Server**     | `dashboard/server.ts`          | Bun WebSocket server, reads pipeline state and events |
-| **Frontend**   | `dashboard/public/`            | HTML/CSS/JS single-page application                   |
-| **Events**     | `~/.claude-teams/events.jsonl` | JSONL event stream consumed by the server             |
-| **State**      | `.claude/pipeline-state.md`    | Pipeline state file polled for updates                |
-| **Heartbeats** | `~/.claude-teams/heartbeats/`  | Agent liveness data                                   |
+| Component      | Location                     | Purpose                                               |
+| -------------- | ---------------------------- | ----------------------------------------------------- |
+| **Server**     | `dashboard/server.ts`        | Bun WebSocket server, reads pipeline state and events |
+| **Frontend**   | `dashboard/public/`          | HTML/CSS/JS single-page application                   |
+| **Events**     | `~/.shipwright/events.jsonl` | JSONL event stream consumed by the server             |
+| **State**      | `.claude/pipeline-state.md`  | Pipeline state file polled for updates                |
+| **Heartbeats** | `~/.shipwright/heartbeats/`  | Agent liveness data                                   |
 
 The server watches the events file and pipeline state for changes, pushing updates to connected clients via WebSocket.
 

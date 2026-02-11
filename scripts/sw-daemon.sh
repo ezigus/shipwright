@@ -84,8 +84,9 @@ emit_event() {
         if [[ "$val" =~ ^-?[0-9]+\.?[0-9]*$ ]]; then
             json_fields="${json_fields},\"${key}\":${val}"
         else
-            val="${val//\"/\\\"}"
-            json_fields="${json_fields},\"${key}\":\"${val}\""
+            local escaped_val
+            escaped_val=$(printf '%s' "$val" | jq -Rs '.' 2>/dev/null || printf '"%s"' "${val//\"/\\\"}")
+            json_fields="${json_fields},\"${key}\":${escaped_val}"
         fi
     done
     mkdir -p "${HOME}/.shipwright"
@@ -1021,8 +1022,16 @@ atomic_write_state() {
         daemon_log ERROR "Failed to create temp file for state write"
         return 1
     }
-    echo "$content" > "$tmp_file"
-    mv "$tmp_file" "$STATE_FILE"
+    echo "$content" > "$tmp_file" || {
+        daemon_log ERROR "Failed to write state to temp file"
+        rm -f "$tmp_file"
+        return 1
+    }
+    mv "$tmp_file" "$STATE_FILE" || {
+        daemon_log ERROR "Failed to move temp state file into place"
+        rm -f "$tmp_file"
+        return 1
+    }
 }
 
 # Locked read-modify-write: prevents TOCTOU race on state file.
@@ -1033,10 +1042,14 @@ locked_state_update() {
     shift
     local lock_file="${STATE_FILE}.lock"
     (
-        flock -w 5 200 2>/dev/null || true
+        if command -v flock &>/dev/null; then
+            flock -w 5 200 2>/dev/null || {
+                daemon_log WARN "locked_state_update: lock acquisition timed out — proceeding without lock"
+            }
+        fi
         local tmp
-        tmp=$(jq "$jq_expr" "$@" "$STATE_FILE" 2>/dev/null) || {
-            daemon_log ERROR "locked_state_update: jq failed on expression"
+        tmp=$(jq "$jq_expr" "$@" "$STATE_FILE" 2>&1) || {
+            daemon_log ERROR "locked_state_update: jq failed — $(echo "$tmp" | head -1)"
             return 1
         }
         atomic_write_state "$tmp"
@@ -1085,7 +1098,7 @@ init_state() {
 update_state_field() {
     local field="$1" value="$2"
     local tmp
-    tmp=$(jq --arg val "$value" ".${field} = \$val" "$STATE_FILE")
+    tmp=$(jq --arg field "$field" --arg val "$value" '.[$field] = $val' "$STATE_FILE")
     atomic_write_state "$tmp"
 }
 
@@ -1127,6 +1140,30 @@ get_active_count() {
         return
     fi
     jq -r '.active_jobs | length' "$STATE_FILE" 2>/dev/null || echo 0
+}
+
+# Race-safe active count: acquires state lock before reading.
+# Returns MAX_PARALLEL on lock timeout (safe fail — prevents over-spawning).
+locked_get_active_count() {
+    if [[ ! -f "$STATE_FILE" ]]; then
+        echo 0
+        return
+    fi
+    local lock_file="${STATE_FILE}.lock"
+    local count
+    count=$(
+        (
+            if command -v flock &>/dev/null; then
+                flock -w 5 200 2>/dev/null || {
+                    daemon_log WARN "locked_get_active_count: lock timeout — returning MAX_PARALLEL as safe default"
+                    echo "$MAX_PARALLEL"
+                    exit 0
+                }
+            fi
+            jq -r '.active_jobs | length' "$STATE_FILE" 2>/dev/null || echo "$MAX_PARALLEL"
+        ) 200>"$lock_file"
+    )
+    echo "${count:-0}"
 }
 
 # ─── Queue Management ───────────────────────────────────────────────────────
@@ -1480,10 +1517,9 @@ daemon_reap_completed() {
             fi
         fi
 
-        local started_at duration_str=""
+        local started_at duration_str="" start_epoch=0 end_epoch=0
         started_at=$(echo "$job" | jq -r '.started_at // empty')
         if [[ -n "$started_at" ]]; then
-            local start_epoch end_epoch
             # macOS date -j for parsing ISO dates (TZ=UTC to parse Z-suffix correctly)
             start_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$started_at" +%s 2>/dev/null || date -d "$started_at" +%s 2>/dev/null || echo "0")
             end_epoch=$(now_epoch)
@@ -3405,7 +3441,7 @@ daemon_poll_issues() {
     fi
 
     local active_count
-    active_count=$(get_active_count)
+    active_count=$(locked_get_active_count)
 
     # Process each issue in triage order (process substitution keeps state in current shell)
     while IFS='|' read -r score issue_num repo_name; do
@@ -3458,7 +3494,7 @@ daemon_poll_issues() {
         fi
 
         # Check capacity
-        active_count=$(get_active_count)
+        active_count=$(locked_get_active_count)
         if [[ "$active_count" -ge "$MAX_PARALLEL" ]]; then
             enqueue_issue "$issue_num"
             continue

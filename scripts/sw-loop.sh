@@ -638,7 +638,7 @@ run_test_gate() {
     fi
 
     local test_log="$LOG_DIR/tests-iter-${ITERATION}.log"
-    if eval "$TEST_CMD" > "$test_log" 2>&1; then
+    if bash -c "$TEST_CMD" > "$test_log" 2>&1; then
         TEST_PASSED=true
         TEST_OUTPUT="All tests passed."
     else

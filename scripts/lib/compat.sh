@@ -183,3 +183,18 @@ detect_test_framework() {
         echo ""
     fi
 }
+
+# ─── Cross-platform MD5 ──────────────────────────────────────────────────
+# Usage:
+#   compute_md5 --string "some text"   → md5 hash of string
+#   compute_md5 /path/to/file          → md5 hash of file
+compute_md5() {
+    if [[ "${1:-}" == "--string" ]]; then
+        shift
+        printf '%s' "$1" | md5 2>/dev/null || printf '%s' "$1" | md5sum 2>/dev/null | cut -d' ' -f1
+    else
+        # File mode
+        local file="$1"
+        md5 -q "$file" 2>/dev/null || md5sum "$file" 2>/dev/null | awk '{print $1}'
+    fi
+}

@@ -211,7 +211,7 @@ run_on_machine() {
     local cmd="$3"
 
     if is_localhost "$host"; then
-        eval "$cmd"
+        bash -c "$cmd"
     else
         local target="$host"
         if [[ -n "$ssh_user" && "$ssh_user" != "null" ]]; then

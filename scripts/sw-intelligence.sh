@@ -161,16 +161,7 @@ _intelligence_enabled() {
     fi
 }
 
-# ─── Cross-platform MD5 ─────────────────────────────────────────────────────
-
-_intelligence_md5() {
-    local input="${1:-}"
-    if [[ -z "$input" ]]; then
-        # Read from stdin (piped usage)
-        input=$(cat)
-    fi
-    echo -n "$input" | md5 2>/dev/null || echo -n "$input" | md5sum | cut -d' ' -f1
-}
+# MD5 hashing: uses compute_md5 from lib/compat.sh
 
 # ─── Cache Operations ───────────────────────────────────────────────────────
 
@@ -192,7 +183,7 @@ _intelligence_cache_get() {
     _intelligence_cache_init
 
     local hash
-    hash=$(_intelligence_md5 "$cache_key")
+    hash=$(compute_md5 --string "$cache_key")
 
     local entry
     entry=$(jq -r --arg h "$hash" '.entries[$h] // empty' "$INTELLIGENCE_CACHE" 2>/dev/null || true)
@@ -226,7 +217,7 @@ _intelligence_cache_set() {
     _intelligence_cache_init
 
     local hash
-    hash=$(_intelligence_md5 "$cache_key")
+    hash=$(compute_md5 --string "$cache_key")
     local now
     now=$(now_epoch)
 
@@ -338,7 +329,7 @@ Return JSON with exactly these fields:
 }"
 
     local cache_key
-    cache_key="analyze_issue_$(_intelligence_md5 "${title}${body}")"
+    cache_key="analyze_issue_$(compute_md5 --string "${title}${body}")"
 
     local result
     if result=$(_intelligence_call_claude "$prompt" "$cache_key"); then
@@ -404,7 +395,7 @@ Return ONLY a JSON object (no markdown):
 }"
 
     local cache_key
-    cache_key="compose_pipeline_$(_intelligence_md5 "${issue_analysis}${budget}")"
+    cache_key="compose_pipeline_$(compute_md5 --string "${issue_analysis}${budget}")"
 
     local result
     if result=$(_intelligence_call_claude "$prompt" "$cache_key"); then
@@ -458,7 +449,7 @@ Based on similar complexity (${complexity}/10) issues, estimate:
 }"
 
     local cache_key
-    cache_key="predict_cost_$(_intelligence_md5 "${issue_analysis}${historical_data}")"
+    cache_key="predict_cost_$(compute_md5 --string "${issue_analysis}${historical_data}")"
 
     local result
     if result=$(_intelligence_call_claude "$prompt" "$cache_key"); then
@@ -507,7 +498,7 @@ Return:
 }"
 
     local cache_key
-    cache_key="synthesize_$(_intelligence_md5 "$findings_json")"
+    cache_key="synthesize_$(compute_md5 --string "$findings_json")"
 
     local result
     if result=$(_intelligence_call_claude "$prompt" "$cache_key"); then
@@ -588,7 +579,7 @@ Return the top ${top_n} most relevant entries:
 }"
 
     local cache_key
-    cache_key="search_memory_$(_intelligence_md5 "${context}${memory_dir}")"
+    cache_key="search_memory_$(compute_md5 --string "${context}${memory_dir}")"
 
     local result
     if result=$(_intelligence_call_claude "$prompt" "$cache_key" 1800); then
@@ -645,7 +636,7 @@ Consider:
 Return JSON: {\"estimated_iterations\": <integer 1-50>}"
 
         local cache_key
-        cache_key="estimate_iterations_$(_intelligence_md5 "${issue_analysis}")"
+        cache_key="estimate_iterations_$(compute_md5 --string "${issue_analysis}")"
 
         local result
         if result=$(_intelligence_call_claude "$prompt" "$cache_key" 1800); then

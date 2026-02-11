@@ -82,11 +82,20 @@ describe('app', () => {
 });
 TSTEOF
 
-    # Create mock compat.sh (minimal)
+    # Create mock compat.sh (minimal — must include compute_md5 for predictive)
     mkdir -p "$TEMP_DIR/scripts/lib"
     cat > "$TEMP_DIR/scripts/lib/compat.sh" <<'COMPATEOF'
 #!/usr/bin/env bash
 # Mock compat
+compute_md5() {
+    if [[ "${1:-}" == "--string" ]]; then
+        shift
+        printf '%s' "$1" | md5 2>/dev/null || printf '%s' "$1" | md5sum 2>/dev/null | cut -d' ' -f1
+    else
+        local file="$1"
+        md5 -q "$file" 2>/dev/null || md5sum "$file" 2>/dev/null | awk '{print $1}'
+    fi
+}
 COMPATEOF
 
     export ORIG_HOME="$HOME"

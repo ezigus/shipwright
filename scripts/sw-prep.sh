@@ -779,7 +779,7 @@ prep_learn_patterns() {
     intelligence_available || return 0
 
     local repo_hash
-    repo_hash=$(echo "$PROJECT_ROOT" | md5 2>/dev/null || echo "$PROJECT_ROOT" | md5sum 2>/dev/null | awk '{print $1}' || echo "default")
+    repo_hash=$(compute_md5 --string "$PROJECT_ROOT" || echo "default")
 
     local baselines_dir="${HOME}/.shipwright/baselines/${repo_hash}"
     mkdir -p "$baselines_dir"
@@ -1366,7 +1366,7 @@ prep_generate_manifest() {
         fname="${entry%%|*}"
         flines="${entry##*|}"
         local checksum
-        checksum=$(md5 -q "$PROJECT_ROOT/$fname" 2>/dev/null || md5sum "$PROJECT_ROOT/$fname" 2>/dev/null | awk '{print $1}' || echo "unknown")
+        checksum=$(compute_md5 "$PROJECT_ROOT/$fname" || echo "unknown")
         if $first; then
             first=false
         else

@@ -73,7 +73,7 @@ ANOMALY_THRESHOLD="${ANOMALY_THRESHOLD:-$DEFAULT_ANOMALY_THRESHOLD}"
 _predictive_get_repo_hash() {
     local repo_root
     repo_root=$(git -C "$REPO_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")
-    echo -n "$repo_root" | md5 2>/dev/null || echo -n "$repo_root" | md5sum 2>/dev/null | cut -d' ' -f1
+    compute_md5 --string "$repo_root"
 }
 
 # _predictive_get_anomaly_threshold <metric_name>

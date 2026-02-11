@@ -45,11 +45,15 @@ setup_env() {
 # Mock curl with configurable responses
 # Usage: curl [options] <url>
 
-declare -A RESPONSES
-RESPONSES["http://localhost:8767/api/connect/heartbeat"]="200"
-RESPONSES["http://dashboard.test/api/connect/heartbeat"]="200"
-RESPONSES["http://unreachable/api/connect/heartbeat"]="000"
-RESPONSES["http://localhost:8767/api/connect/disconnect"]="204"
+get_mock_response() {
+    case "$1" in
+        "http://localhost:8767/api/connect/heartbeat") echo "200" ;;
+        "http://dashboard.test/api/connect/heartbeat") echo "200" ;;
+        "http://unreachable/api/connect/heartbeat") echo "000" ;;
+        "http://localhost:8767/api/connect/disconnect") echo "204" ;;
+        *) echo "404" ;;
+    esac
+}
 
 local url=""
 local method="GET"
@@ -72,7 +76,7 @@ done
 
 # For -w "%{http_code}" (only output HTTP code)
 if [[ "${WRITE_OUT_CODE:-}" == "true" ]]; then
-    echo "${RESPONSES["$url"]:-404}"
+    echo "$(get_mock_response "$url")"
     exit 0
 fi
 

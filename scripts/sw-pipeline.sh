@@ -2334,7 +2334,7 @@ stage_test() {
 
     info "Running tests: ${DIM}$test_cmd${RESET}"
     local test_exit=0
-    eval "$test_cmd" > "$test_log" 2>&1 || test_exit=$?
+    bash -c "$test_cmd" > "$test_log" 2>&1 || test_exit=$?
 
     if [[ "$test_exit" -eq 0 ]]; then
         success "Tests passed"
@@ -3230,7 +3230,7 @@ stage_deploy() {
 
     if [[ -n "$staging_cmd" ]]; then
         info "Deploying to staging..."
-        eval "$staging_cmd" > "$ARTIFACTS_DIR/deploy-staging.log" 2>&1 || {
+        bash -c "$staging_cmd" > "$ARTIFACTS_DIR/deploy-staging.log" 2>&1 || {
             error "Staging deploy failed"
             [[ -n "$ISSUE_NUMBER" ]] && gh_comment_issue "$ISSUE_NUMBER" "❌ Staging deploy failed"
             # Mark GitHub deployment as failed
@@ -3244,11 +3244,11 @@ stage_deploy() {
 
     if [[ -n "$prod_cmd" ]]; then
         info "Deploying to production..."
-        eval "$prod_cmd" > "$ARTIFACTS_DIR/deploy-prod.log" 2>&1 || {
+        bash -c "$prod_cmd" > "$ARTIFACTS_DIR/deploy-prod.log" 2>&1 || {
             error "Production deploy failed"
             if [[ -n "$rollback_cmd" ]]; then
                 warn "Rolling back..."
-                eval "$rollback_cmd" 2>&1 || error "Rollback also failed!"
+                bash -c "$rollback_cmd" 2>&1 || error "Rollback also failed!"
             fi
             [[ -n "$ISSUE_NUMBER" ]] && gh_comment_issue "$ISSUE_NUMBER" "❌ Production deploy failed — rollback ${rollback_cmd:+attempted}"
             # Mark GitHub deployment as failed
@@ -3291,7 +3291,7 @@ stage_validate() {
     # Smoke tests
     if [[ -n "$smoke_cmd" ]]; then
         info "Running smoke tests..."
-        eval "$smoke_cmd" > "$ARTIFACTS_DIR/smoke.log" 2>&1 || {
+        bash -c "$smoke_cmd" > "$ARTIFACTS_DIR/smoke.log" 2>&1 || {
             error "Smoke tests failed"
             if [[ -n "$ISSUE_NUMBER" ]]; then
                 gh issue create --title "Deploy validation failed: $GOAL" \
@@ -3467,7 +3467,7 @@ stage_monitor() {
         # Log command check
         if [[ -n "$log_cmd" ]]; then
             local log_output
-            log_output=$(eval "$log_cmd" 2>/dev/null || true)
+            log_output=$(bash -c "$log_cmd" 2>/dev/null || true)
             local error_count=0
             if [[ -n "$log_output" ]]; then
                 error_count=$(echo "$log_output" | grep -cE "$log_pattern" 2>/dev/null || true)
@@ -3508,7 +3508,7 @@ stage_monitor() {
                 echo "" >> "$report_file"
                 echo "## Rollback" >> "$report_file"
 
-                if eval "$rollback_cmd" >> "$report_file" 2>&1; then
+                if bash -c "$rollback_cmd" >> "$report_file" 2>&1; then
                     success "Rollback executed"
                     echo "Rollback: ✅ success" >> "$report_file"
 
@@ -3519,7 +3519,7 @@ stage_monitor() {
 
                     if [[ -n "$smoke_cmd" ]]; then
                         info "Verifying rollback with smoke tests..."
-                        if eval "$smoke_cmd" > "$ARTIFACTS_DIR/rollback-smoke.log" 2>&1; then
+                        if bash -c "$smoke_cmd" > "$ARTIFACTS_DIR/rollback-smoke.log" 2>&1; then
                             success "Rollback verified — smoke tests pass"
                             echo "Rollback verification: ✅ smoke tests pass" >> "$report_file"
                             emit_event "monitor.rollback_verified" \
@@ -4356,7 +4356,7 @@ run_e2e_validation() {
     fi
 
     info "Running E2E validation: $test_cmd"
-    if eval "$test_cmd" > "$ARTIFACTS_DIR/e2e-validation.log" 2>&1; then
+    if bash -c "$test_cmd" > "$ARTIFACTS_DIR/e2e-validation.log" 2>&1; then
         success "E2E validation passed"
         return 0
     else

@@ -490,7 +490,7 @@ fleet_rebalance_distributed() {
 
         local result=""
         if [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "::1" ]]; then
-            result=$(eval "$query_cmd" 2>/dev/null || echo "0|0")
+            result=$(bash -c "$query_cmd" 2>/dev/null || echo "0|0")
         else
             local target="$host"
             if [[ -n "$ssh_user" && "$ssh_user" != "null" ]]; then
@@ -559,7 +559,7 @@ fleet_rebalance_distributed() {
         local update_cmd="if [ -f '${sw_path}/.claude/daemon-config.json' ]; then tmp=\"${sw_path}/.claude/daemon-config.json.tmp.\$\$\"; jq --argjson mp ${new_max} '.max_parallel = \$mp' '${sw_path}/.claude/daemon-config.json' > \"\$tmp\" && mv \"\$tmp\" '${sw_path}/.claude/daemon-config.json'; fi"
 
         if [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "::1" ]]; then
-            eval "$update_cmd" 2>/dev/null || true
+            bash -c "$update_cmd" 2>/dev/null || true
         else
             local target="$host"
             if [[ -n "$ssh_user" && "$ssh_user" != "null" ]]; then
@@ -609,7 +609,7 @@ check_machine_health() {
 
         local hb_result=""
         if [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "::1" ]]; then
-            hb_result=$(eval "$hb_cmd" 2>/dev/null || echo '{"ts_epoch":0}')
+            hb_result=$(bash -c "$hb_cmd" 2>/dev/null || echo '{"ts_epoch":0}')
         else
             local target="$host"
             if [[ -n "$ssh_user" && "$ssh_user" != "null" ]]; then

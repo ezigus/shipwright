@@ -4197,7 +4197,7 @@ daemon_poll_loop() {
         # Sleep in 1s intervals so we can catch shutdown quickly
         local i=0
         while [[ $i -lt $effective_interval ]] && [[ ! -f "$SHUTDOWN_FLAG" ]]; do
-            sleep 1
+            sleep 1 || true  # Guard against signal interruption under set -e
             i=$((i + 1))
         done
     done
@@ -4208,7 +4208,9 @@ daemon_poll_loop() {
 # ─── Graceful Shutdown Handler ───────────────────────────────────────────────
 
 cleanup_on_exit() {
-    daemon_log INFO "Cleaning up..."
+    local exit_code=$?
+    local last_cmd="${BASH_COMMAND:-unknown}"
+    daemon_log INFO "Cleaning up... (exit_code=${exit_code}, last_command=${last_cmd})"
 
     # Kill all active pipeline child processes
     if [[ -f "$STATE_FILE" ]]; then
@@ -4327,9 +4329,14 @@ daemon_start() {
 
     # Trap signals for graceful shutdown
     trap cleanup_on_exit EXIT
-    trap 'touch "$SHUTDOWN_FLAG"' SIGINT SIGTERM
+    trap '{ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [WARN] SIGINT/SIGTERM received — initiating shutdown" >> "$LOG_FILE" 2>/dev/null; } || true; touch "$SHUTDOWN_FLAG"' SIGINT SIGTERM
     # Ignore SIGHUP — tmux sends this on attach/detach and we must survive it
     trap '' SIGHUP
+    # Ignore SIGPIPE — broken pipes in command substitutions must not kill the daemon
+    trap '' SIGPIPE
+
+    # Override global ERR trap to log to daemon log file (not stderr, which is lost when tmux dies)
+    trap '{ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [ERROR] ERR trap: line=$LINENO exit=$? cmd=$BASH_COMMAND" >> "$LOG_FILE" 2>/dev/null; } || true' ERR
 
     # Reap any orphaned jobs from previous runs
     daemon_reap_completed || daemon_log WARN "Failed to reap orphaned jobs — continuing"

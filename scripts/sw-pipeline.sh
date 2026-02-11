@@ -47,6 +47,14 @@ if [[ -f "$SCRIPT_DIR/sw-adversarial.sh" ]]; then
     source "$SCRIPT_DIR/sw-adversarial.sh"
 fi
 
+# ─── GitHub API Modules (optional) ─────────────────────────────────────────
+# shellcheck source=sw-github-graphql.sh
+[[ -f "$SCRIPT_DIR/sw-github-graphql.sh" ]] && source "$SCRIPT_DIR/sw-github-graphql.sh"
+# shellcheck source=sw-github-checks.sh
+[[ -f "$SCRIPT_DIR/sw-github-checks.sh" ]] && source "$SCRIPT_DIR/sw-github-checks.sh"
+# shellcheck source=sw-github-deploy.sh
+[[ -f "$SCRIPT_DIR/sw-github-deploy.sh" ]] && source "$SCRIPT_DIR/sw-github-deploy.sh"
+
 # ─── Output Helpers ─────────────────────────────────────────────────────────
 info()    { echo -e "${CYAN}${BOLD}▸${RESET} $*"; }
 success() { echo -e "${GREEN}${BOLD}✓${RESET} $*"; }
@@ -1180,6 +1188,11 @@ mark_stage_complete() {
         # Post structured stage event for CI sweep/retry intelligence
         ci_post_stage_event "$stage_id" "complete" "$timing"
     fi
+
+    # Update GitHub Check Run for this stage
+    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_stage_update &>/dev/null 2>&1; then
+        gh_checks_stage_update "$stage_id" "completed" "success" "Stage $stage_id: ${timing}" 2>/dev/null || true
+    fi
 }
 
 mark_stage_failed() {
@@ -1210,6 +1223,13 @@ $(tail -5 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null || echo 'No log availabl
 
         # Post structured stage event for CI sweep/retry intelligence
         ci_post_stage_event "$stage_id" "failed" "$timing"
+    fi
+
+    # Update GitHub Check Run for this stage
+    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_stage_update &>/dev/null 2>&1; then
+        local fail_summary
+        fail_summary=$(tail -3 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null | head -c 500 || echo "Stage $stage_id failed")
+        gh_checks_stage_update "$stage_id" "completed" "failure" "$fail_summary" 2>/dev/null || true
     fi
 }
 
@@ -2827,6 +2847,54 @@ EOF
     # Extract PR number
     PR_NUMBER=$(echo "$pr_url" | grep -oE '[0-9]+$' || true)
 
+    # ── Intelligent Reviewer Selection (GraphQL-enhanced) ──
+    if [[ "${NO_GITHUB:-false}" != "true" && -n "$PR_NUMBER" && -z "$reviewers" ]]; then
+        local reviewer_assigned=false
+
+        # Try CODEOWNERS-based routing via GraphQL API
+        if type gh_codeowners &>/dev/null 2>&1 && [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
+            local codeowners_json
+            codeowners_json=$(gh_codeowners "$REPO_OWNER" "$REPO_NAME" 2>/dev/null || echo "[]")
+            if [[ "$codeowners_json" != "[]" && -n "$codeowners_json" ]]; then
+                local changed_files
+                changed_files=$(git diff --name-only "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+                if [[ -n "$changed_files" ]]; then
+                    local co_reviewers
+                    co_reviewers=$(echo "$codeowners_json" | jq -r '.[].owners[]' 2>/dev/null | sort -u | head -3 || true)
+                    if [[ -n "$co_reviewers" ]]; then
+                        local rev
+                        while IFS= read -r rev; do
+                            rev="${rev#@}"
+                            [[ -n "$rev" ]] && gh pr edit "$PR_NUMBER" --add-reviewer "$rev" 2>/dev/null || true
+                        done <<< "$co_reviewers"
+                        info "Requested review from CODEOWNERS: $(echo "$co_reviewers" | tr '\n' ',' | sed 's/,$//')"
+                        reviewer_assigned=true
+                    fi
+                fi
+            fi
+        fi
+
+        # Fallback: contributor-based routing via GraphQL API
+        if [[ "$reviewer_assigned" != "true" ]] && type gh_contributors &>/dev/null 2>&1 && [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
+            local contributors_json
+            contributors_json=$(gh_contributors "$REPO_OWNER" "$REPO_NAME" 2>/dev/null || echo "[]")
+            local top_contributor
+            top_contributor=$(echo "$contributors_json" | jq -r '.[0].login // ""' 2>/dev/null || echo "")
+            local current_user
+            current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+            if [[ -n "$top_contributor" && "$top_contributor" != "$current_user" ]]; then
+                gh pr edit "$PR_NUMBER" --add-reviewer "$top_contributor" 2>/dev/null || true
+                info "Requested review from top contributor: $top_contributor"
+                reviewer_assigned=true
+            fi
+        fi
+
+        # Final fallback: auto-approve if no reviewers assigned
+        if [[ "$reviewer_assigned" != "true" ]]; then
+            gh pr review "$PR_NUMBER" --approve 2>/dev/null || warn "Could not auto-approve PR"
+        fi
+    fi
+
     # Update issue with PR link
     if [[ -n "$ISSUE_NUMBER" ]]; then
         gh_remove_label "$ISSUE_NUMBER" "pipeline/in-progress"
@@ -2856,6 +2924,38 @@ stage_merge() {
     if [[ "$NO_GITHUB" == "true" ]]; then
         info "Merge stage skipped (--no-github)"
         return 0
+    fi
+
+    # ── Branch Protection Check ──
+    if type gh_branch_protection &>/dev/null 2>&1 && [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
+        local protection_json
+        protection_json=$(gh_branch_protection "$REPO_OWNER" "$REPO_NAME" "${BASE_BRANCH:-main}" 2>/dev/null || echo '{"protected": false}')
+        local is_protected
+        is_protected=$(echo "$protection_json" | jq -r '.protected // false' 2>/dev/null || echo "false")
+        if [[ "$is_protected" == "true" ]]; then
+            local required_reviews
+            required_reviews=$(echo "$protection_json" | jq -r '.required_pull_request_reviews.required_approving_review_count // 0' 2>/dev/null || echo "0")
+            local required_checks
+            required_checks=$(echo "$protection_json" | jq -r '[.required_status_checks.contexts // [] | .[]] | length' 2>/dev/null || echo "0")
+
+            info "Branch protection: ${required_reviews} required review(s), ${required_checks} required check(s)"
+
+            if [[ "$required_reviews" -gt 0 ]]; then
+                # Check if PR has enough approvals
+                local prot_pr_number
+                prot_pr_number=$(gh pr list --head "$GIT_BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
+                if [[ -n "$prot_pr_number" ]]; then
+                    local approvals
+                    approvals=$(gh pr view "$prot_pr_number" --json reviews --jq '[.reviews[] | select(.state == "APPROVED")] | length' 2>/dev/null || echo "0")
+                    if [[ "$approvals" -lt "$required_reviews" ]]; then
+                        warn "PR has $approvals approval(s), needs $required_reviews — skipping auto-merge"
+                        info "PR is ready for manual merge after required reviews"
+                        emit_event "merge.blocked" "issue=${ISSUE_NUMBER:-0}" "reason=insufficient_reviews" "have=$approvals" "need=$required_reviews"
+                        return 0
+                    fi
+                fi
+            fi
+        fi
     fi
 
     local merge_method wait_ci_timeout auto_delete_branch auto_merge auto_approve merge_strategy
@@ -3026,6 +3126,16 @@ stage_deploy() {
         return 0
     fi
 
+    # Create GitHub deployment tracking
+    local gh_deploy_env="production"
+    [[ -n "$staging_cmd" && -z "$prod_cmd" ]] && gh_deploy_env="staging"
+    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_deploy_pipeline_start &>/dev/null 2>&1; then
+        if [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
+            gh_deploy_pipeline_start "$REPO_OWNER" "$REPO_NAME" "${GIT_BRANCH:-HEAD}" "$gh_deploy_env" 2>/dev/null || true
+            info "GitHub Deployment: tracking as $gh_deploy_env"
+        fi
+    fi
+
     # Post deploy start to GitHub
     if [[ -n "$ISSUE_NUMBER" ]]; then
         gh_comment_issue "$ISSUE_NUMBER" "🚀 **Deploy started**"
@@ -3036,6 +3146,10 @@ stage_deploy() {
         eval "$staging_cmd" > "$ARTIFACTS_DIR/deploy-staging.log" 2>&1 || {
             error "Staging deploy failed"
             [[ -n "$ISSUE_NUMBER" ]] && gh_comment_issue "$ISSUE_NUMBER" "❌ Staging deploy failed"
+            # Mark GitHub deployment as failed
+            if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_deploy_pipeline_complete &>/dev/null 2>&1; then
+                gh_deploy_pipeline_complete "$REPO_OWNER" "$REPO_NAME" "$gh_deploy_env" false "Staging deploy failed" 2>/dev/null || true
+            fi
             return 1
         }
         success "Staging deploy complete"
@@ -3050,6 +3164,10 @@ stage_deploy() {
                 eval "$rollback_cmd" 2>&1 || error "Rollback also failed!"
             fi
             [[ -n "$ISSUE_NUMBER" ]] && gh_comment_issue "$ISSUE_NUMBER" "❌ Production deploy failed — rollback ${rollback_cmd:+attempted}"
+            # Mark GitHub deployment as failed
+            if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_deploy_pipeline_complete &>/dev/null 2>&1; then
+                gh_deploy_pipeline_complete "$REPO_OWNER" "$REPO_NAME" "$gh_deploy_env" false "Production deploy failed" 2>/dev/null || true
+            fi
             return 1
         }
         success "Production deploy complete"
@@ -3058,6 +3176,13 @@ stage_deploy() {
     if [[ -n "$ISSUE_NUMBER" ]]; then
         gh_comment_issue "$ISSUE_NUMBER" "✅ **Deploy complete**"
         gh_add_labels "$ISSUE_NUMBER" "deployed"
+    fi
+
+    # Mark GitHub deployment as successful
+    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_deploy_pipeline_complete &>/dev/null 2>&1; then
+        if [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
+            gh_deploy_pipeline_complete "$REPO_OWNER" "$REPO_NAME" "$gh_deploy_env" true "" 2>/dev/null || true
+        fi
     fi
 
     log_stage "deploy" "Deploy complete"
@@ -5175,6 +5300,11 @@ run_pipeline() {
         stage_start_epoch=$(now_epoch)
         emit_event "stage.started" "issue=${ISSUE_NUMBER:-0}" "stage=$id"
 
+        # Mark GitHub Check Run as in-progress
+        if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_stage_update &>/dev/null 2>&1; then
+            gh_checks_stage_update "$id" "in_progress" "" "Stage $id started" 2>/dev/null || true
+        fi
+
         local stage_model_used="${CLAUDE_MODEL:-${MODEL:-opus}}"
         if run_stage_with_retry "$id"; then
             mark_stage_complete "$id"
@@ -5417,6 +5547,18 @@ pipeline_start() {
 
     # Start background heartbeat writer
     start_heartbeat
+
+    # Initialize GitHub Check Runs for all pipeline stages
+    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_pipeline_start &>/dev/null 2>&1; then
+        local head_sha
+        head_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+        if [[ -n "$head_sha" && -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
+            local stages_json
+            stages_json=$(jq -c '[.stages[] | select(.enabled == true) | .id]' "$PIPELINE_CONFIG" 2>/dev/null || echo '[]')
+            gh_checks_pipeline_start "$REPO_OWNER" "$REPO_NAME" "$head_sha" "$stages_json" 2>/dev/null || true
+            info "GitHub Checks: created check runs for pipeline stages"
+        fi
+    fi
 
     # Send start notification
     notify "Pipeline Started" "Goal: ${GOAL}\nPipeline: ${PIPELINE_NAME}" "info"

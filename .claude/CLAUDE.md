@@ -49,6 +49,10 @@ Shipwright orchestrates autonomous Claude Code agent teams with delivery pipelin
 | `shipwright connect join --token <t>`              | Join a team using an invite token                 |
 | `shipwright connect status`                        | Show connection status                            |
 | `shipwright launchd install`                       | Auto-start daemon + dashboard + connect on boot   |
+| `shipwright github context`                        | Show repo GitHub context (contributors, alerts)   |
+| `shipwright github security`                       | Show CodeQL + Dependabot security alerts          |
+| `shipwright checks list`                           | List GitHub Check runs for a commit               |
+| `shipwright deploys list`                          | List GitHub deployments by environment            |
 
 ## Pipeline Stages
 
@@ -136,6 +140,14 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh`               |   294 | Process supervision — auto-start on boot        |
 | `scripts/sw-ps.sh`                    |   168 | Running agent process display                   |
 
+### GitHub API Modules
+
+| File                           | Lines | Purpose                                        |
+| ------------------------------ | ----: | ---------------------------------------------- |
+| `scripts/sw-github-graphql.sh` |   630 | GraphQL client — code history, blame, security |
+| `scripts/sw-github-checks.sh`  |   340 | GitHub Checks API — native CI integration      |
+| `scripts/sw-github-deploy.sh`  |   350 | GitHub Deployments API — environment tracking  |
+
 ### Issue Tracker Adapters
 
 | File                           | Lines | Purpose                           |
@@ -171,6 +183,9 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-init-test.sh`              |   494 | Init tests                          |
 | `scripts/sw-tracker-test.sh`           |   476 | Tracker tests                       |
 | `scripts/sw-remote-test.sh`            |   404 | Remote management tests             |
+| `scripts/sw-github-graphql-test.sh`    |   530 | GitHub GraphQL client tests         |
+| `scripts/sw-github-checks-test.sh`     |   400 | GitHub Checks API tests             |
+| `scripts/sw-github-deploy-test.sh`     |   350 | GitHub Deployments API tests        |
 
 ### Dashboard & Infra
 
@@ -204,6 +219,29 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 - Invite tokens: `~/.shipwright/invite-tokens.json`
 - Connect PID: `~/.shipwright/connect.pid`
 - Connect log: `~/.shipwright/connect.log`
+- GitHub cache: `~/.shipwright/github-cache/` (TTL-based GraphQL/REST cache)
+- Check run IDs: `.claude/pipeline-artifacts/check-run-ids.json`
+- Deployment tracking: `.claude/pipeline-artifacts/deployment.json`
+
+## GitHub Integration
+
+The pipeline uses native GitHub APIs for CI integration, deployment tracking, and intelligent reviewer selection.
+
+### GitHub API Modules
+
+- **GraphQL Client** (`sw-github-graphql.sh`): Cached queries for file change frequency, blame data, contributors, similar issues, commit history, branch protection, CODEOWNERS, security alerts, Dependabot alerts, and Actions run history. All intelligence modules call through this layer.
+- **Checks API** (`sw-github-checks.sh`): Creates native GitHub Check Runs per pipeline stage (visible in PR timeline). Replaces comment-based stage tracking with first-class GitHub UI integration.
+- **Deployments API** (`sw-github-deploy.sh`): Tracks deployments per environment (staging/production). Enables rollback, deployment history, and environment state tracking.
+
+### Pipeline Integration
+
+- **Stage tracking**: Each pipeline stage creates/updates a GitHub Check Run (in addition to existing comment-based tracking)
+- **Deployment tracking**: Deploy stage creates GitHub Deployment objects with status updates
+- **Reviewer selection**: PR stage routes reviews to CODEOWNERS first, then top contributors, with auto-approve fallback
+- **Branch protection**: Merge stage checks required reviews and status checks before attempting auto-merge
+- **Intelligence enrichment**: All intelligence modules receive GitHub context (security alerts, contributor data, CI history, file churn)
+- **Patrol enhancement**: Security patrol enriched with CodeQL + Dependabot alert data
+- **Doctor checks**: Section 13 validates GitHub API access, scopes, GraphQL, and module installation
 
 ## Intelligence Layer
 
@@ -290,7 +328,7 @@ The daemon calls into the intelligence layer at spawn time. The `intelligence` a
 npm test
 ```
 
-The 16 test suites registered in `package.json`:
+The 20 test suites registered in `package.json`:
 
 1. `sw-pipeline-test.sh` — Pipeline flow
 2. `sw-daemon-test.sh` — Daemon lifecycle
@@ -308,5 +346,9 @@ The 16 test suites registered in `package.json`:
 14. `sw-self-optimize-test.sh` — Self-optimization
 15. `sw-predictive-test.sh` — Predictive intelligence
 16. `sw-frontier-test.sh` — Frontier capabilities (adversarial, simulation, architecture)
+17. `sw-connect-test.sh` — Connect/team platform
+18. `sw-github-graphql-test.sh` — GitHub GraphQL client
+19. `sw-github-checks-test.sh` — GitHub Checks API
+20. `sw-github-deploy-test.sh` — GitHub Deployments API
 
 Each test suite uses mock binaries in a temp directory, with PASS/FAIL counters, colored output, and ERR traps.

@@ -200,6 +200,52 @@ session_name_for_repo() {
     echo "shipwright-fleet-${basename}"
 }
 
+# ─── GitHub-Aware Repo Priority ──────────────────────────────────────────
+# Returns a priority score (default 50) for a repo based on GitHub data.
+# Used when intelligence.fleet_weighting is enabled.
+
+_fleet_repo_priority() {
+    local repo_path="$1"
+    local priority=50  # default neutral priority
+
+    type _gh_detect_repo &>/dev/null 2>&1 || { echo "$priority"; return 0; }
+
+    # Detect repo from the repo path (run in subshell to avoid cd side-effects)
+    local gh_priority
+    gh_priority=$(
+        cd "$repo_path" 2>/dev/null || exit 1
+        _gh_detect_repo 2>/dev/null || exit 1
+        local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
+        [[ -z "$owner" || -z "$repo" ]] && exit 1
+
+        local p=50
+
+        # Factor: security alerts (urgent work)
+        if type gh_security_alerts &>/dev/null 2>&1; then
+            local alerts
+            alerts=$(gh_security_alerts "$owner" "$repo" 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
+            if [[ "${alerts:-0}" -gt 5 ]]; then
+                p=$((p + 20))
+            elif [[ "${alerts:-0}" -gt 0 ]]; then
+                p=$((p + 10))
+            fi
+        fi
+
+        # Factor: contributor count (more contributors = more active = higher priority)
+        if type gh_contributors &>/dev/null 2>&1; then
+            local contribs
+            contribs=$(gh_contributors "$owner" "$repo" 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
+            if [[ "${contribs:-0}" -gt 10 ]]; then
+                p=$((p + 10))
+            fi
+        fi
+
+        echo "$p"
+    ) || echo "$priority"
+
+    echo "${gh_priority:-$priority}"
+}
+
 # ─── Worker Pool Rebalancer ───────────────────────────────────────────────
 # Runs in background, redistributes MAX_PARALLEL across repos based on demand
 
@@ -300,10 +346,17 @@ fleet_rebalance() {
                     urgency_factor=100
                 fi
 
-                # Weight = demand × (complexity / 50) × (urgency_factor / 100)
-                # complexity 50 = baseline, 100 = 2x weight, 25 = 0.5x weight
-                weight=$(awk -v d="$demand" -v c="$avg_complexity" -v u="$urgency_factor" \
-                    'BEGIN { w = d * (c / 50.0) * (u / 100.0); if (w < 1) w = 1; printf "%.0f", w }')
+                # GitHub priority factor (normalized: priority / 50, so 50 = 1.0x)
+                local gh_priority_factor=100  # 100 = 1.0x (neutral)
+                if [[ -n "$repo_path" && "$repo_path" != "null" ]]; then
+                    local gh_prio
+                    gh_prio=$(_fleet_repo_priority "$repo_path" 2>/dev/null || echo "50")
+                    [[ "$gh_prio" =~ ^[0-9]+$ ]] && gh_priority_factor=$((gh_prio * 2))
+                fi
+
+                # Weight = demand × (complexity / 50) × (urgency / 100) × (gh_priority / 100)
+                weight=$(awk -v d="$demand" -v c="$avg_complexity" -v u="$urgency_factor" -v g="$gh_priority_factor" \
+                    'BEGIN { w = d * (c / 50.0) * (u / 100.0) * (g / 100.0); if (w < 1) w = 1; printf "%.0f", w }')
             fi
 
             repo_list+=("$repo_name")

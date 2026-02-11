@@ -64,6 +64,28 @@ fi
 TEMPLATES_DIR="${REPO_DIR}/templates/pipelines"
 ARTIFACTS_DIR=".claude/pipeline-artifacts"
 
+# ─── GitHub CI History ─────────────────────────────────────────────────────
+
+_composer_github_ci_history() {
+    type _gh_detect_repo &>/dev/null 2>&1 || { echo "{}"; return 0; }
+    _gh_detect_repo 2>/dev/null || { echo "{}"; return 0; }
+
+    local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
+    [[ -z "$owner" || -z "$repo" ]] && { echo "{}"; return 0; }
+
+    if type gh_actions_runs &>/dev/null 2>&1; then
+        local runs
+        runs=$(gh_actions_runs "$owner" "$repo" "" 20 2>/dev/null || echo "[]")
+        local avg_duration p90_duration
+        avg_duration=$(echo "$runs" | jq '[.[] | .duration_seconds // 0] | if length > 0 then add / length | floor else 0 end' 2>/dev/null || echo "0")
+        p90_duration=$(echo "$runs" | jq '[.[] | .duration_seconds // 0] | sort | if length > 0 then .[length * 9 / 10 | floor] else 0 end' 2>/dev/null || echo "0")
+        jq -n --argjson avg "${avg_duration:-0}" --argjson p90 "${p90_duration:-0}" \
+            '{avg_ci_duration: $avg, p90_ci_duration: $p90}'
+    else
+        echo "{}"
+    fi
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PIPELINE COMPOSITION
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -79,6 +101,21 @@ composer_create_pipeline() {
     local output_file="${output_dir}/composed-pipeline.json"
 
     mkdir -p "$output_dir"
+
+    # Enrich with GitHub CI history if available
+    local ci_history
+    ci_history=$(_composer_github_ci_history 2>/dev/null || echo "{}")
+    local p90_timeout=0
+    p90_timeout=$(echo "$ci_history" | jq -r '.p90_ci_duration // 0' 2>/dev/null || echo "0")
+    if [[ "${p90_timeout:-0}" -gt 0 ]]; then
+        # Include CI history in repo context for the composer
+        if [[ -n "$repo_context" ]]; then
+            repo_context=$(echo "$repo_context" | jq --argjson ci "$ci_history" '. + {ci_history: $ci}' 2>/dev/null || echo "$repo_context")
+        else
+            repo_context="$ci_history"
+        fi
+        info "CI history: p90 duration=${p90_timeout}s — using for timeout tuning"
+    fi
 
     # Try intelligence-driven composition
     if [[ "$INTELLIGENCE_AVAILABLE" == "true" ]] && \

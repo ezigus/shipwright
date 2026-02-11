@@ -357,6 +357,9 @@ Return JSON with exactly these fields:
             "success_probability=$(echo "$result" | jq -r '.success_probability')" \
             "recommended_template=$(echo "$result" | jq -r '.recommended_template')"
 
+        # Enrich with GitHub data if available
+        result=$(intelligence_github_enrich "$result")
+
         echo "$result"
         return 0
     else
@@ -967,6 +970,110 @@ intelligence_validate_prediction() {
             accuracy: $accuracy,
             actual_success: $success
         }'
+}
+
+# ─── GitHub Enrichment ─────────────────────────────────────────────────────
+
+intelligence_github_enrich() {
+    local analysis_json="$1"
+
+    # Skip if GraphQL not available
+    type _gh_detect_repo &>/dev/null 2>&1 || { echo "$analysis_json"; return 0; }
+    _gh_detect_repo 2>/dev/null || { echo "$analysis_json"; return 0; }
+
+    local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
+    [[ -z "$owner" || -z "$repo" ]] && { echo "$analysis_json"; return 0; }
+
+    # Get repo context
+    local repo_context="{}"
+    if type gh_repo_context &>/dev/null 2>&1; then
+        repo_context=$(gh_repo_context "$owner" "$repo" 2>/dev/null || echo "{}")
+    fi
+
+    # Get security alerts count
+    local security_count=0
+    if type gh_security_alerts &>/dev/null 2>&1; then
+        local alerts
+        alerts=$(gh_security_alerts "$owner" "$repo" 2>/dev/null || echo "[]")
+        security_count=$(echo "$alerts" | jq 'length' 2>/dev/null || echo "0")
+    fi
+
+    # Get dependabot alerts count
+    local dependabot_count=0
+    if type gh_dependabot_alerts &>/dev/null 2>&1; then
+        local deps
+        deps=$(gh_dependabot_alerts "$owner" "$repo" 2>/dev/null || echo "[]")
+        dependabot_count=$(echo "$deps" | jq 'length' 2>/dev/null || echo "0")
+    fi
+
+    # Merge GitHub context into analysis
+    echo "$analysis_json" | jq --arg ctx "$repo_context" \
+        --argjson sec "${security_count:-0}" \
+        --argjson dep "${dependabot_count:-0}" \
+        '. + {
+            github_context: ($ctx | fromjson? // {}),
+            security_alert_count: $sec,
+            dependabot_alert_count: $dep
+        }' 2>/dev/null || echo "$analysis_json"
+}
+
+intelligence_file_risk_score() {
+    local file_path="$1"
+    local risk_score=0
+
+    type _gh_detect_repo &>/dev/null 2>&1 || { echo "0"; return 0; }
+    _gh_detect_repo 2>/dev/null || { echo "0"; return 0; }
+
+    local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
+    [[ -z "$owner" || -z "$repo" ]] && { echo "0"; return 0; }
+
+    # Factor 1: File churn (high change frequency = higher risk)
+    local changes=0
+    if type gh_file_change_frequency &>/dev/null 2>&1; then
+        changes=$(gh_file_change_frequency "$owner" "$repo" "$file_path" 30 2>/dev/null || echo "0")
+    fi
+    if [[ "${changes:-0}" -gt 20 ]]; then
+        risk_score=$((risk_score + 30))
+    elif [[ "${changes:-0}" -gt 10 ]]; then
+        risk_score=$((risk_score + 15))
+    elif [[ "${changes:-0}" -gt 5 ]]; then
+        risk_score=$((risk_score + 5))
+    fi
+
+    # Factor 2: Security alerts on this file
+    if type gh_security_alerts &>/dev/null 2>&1; then
+        local file_alerts
+        file_alerts=$(gh_security_alerts "$owner" "$repo" 2>/dev/null | \
+            jq --arg path "$file_path" '[.[] | select(.most_recent_instance.location.path == $path)] | length' 2>/dev/null || echo "0")
+        [[ "${file_alerts:-0}" -gt 0 ]] && risk_score=$((risk_score + 40))
+    fi
+
+    # Factor 3: Many contributors = higher coordination risk
+    if type gh_blame_data &>/dev/null 2>&1; then
+        local author_count
+        author_count=$(gh_blame_data "$owner" "$repo" "$file_path" 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
+        [[ "${author_count:-0}" -gt 5 ]] && risk_score=$((risk_score + 10))
+    fi
+
+    # Cap at 100
+    [[ "$risk_score" -gt 100 ]] && risk_score=100
+    echo "$risk_score"
+}
+
+intelligence_contributor_expertise() {
+    local file_path="$1"
+
+    type _gh_detect_repo &>/dev/null 2>&1 || { echo "[]"; return 0; }
+    _gh_detect_repo 2>/dev/null || { echo "[]"; return 0; }
+
+    local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
+    [[ -z "$owner" || -z "$repo" ]] && { echo "[]"; return 0; }
+
+    if type gh_blame_data &>/dev/null 2>&1; then
+        gh_blame_data "$owner" "$repo" "$file_path" 2>/dev/null || echo "[]"
+    else
+        echo "[]"
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -93,6 +93,9 @@ show_help() {
     echo -e "  ${CYAN}connect${RESET} <cmd>          ${BOLD}Team connect${RESET} — sync local state to team dashboard"
     echo -e "  ${CYAN}remote${RESET} <cmd>           ${BOLD}Remote machines${RESET} — register and manage distributed workers"
     echo -e "  ${CYAN}launchd${RESET} <cmd>          ${BOLD}Process supervision${RESET} — auto-start daemon + dashboard on boot"
+    echo -e "  ${CYAN}github${RESET}               ${BOLD}GitHub context${RESET} — repo metadata, security, blame"
+    echo -e "  ${CYAN}checks${RESET}               ${BOLD}GitHub checks${RESET} — CI check runs and status"
+    echo -e "  ${CYAN}deploys${RESET}              ${BOLD}Deployments${RESET} — deployment history and environments"
     echo -e "  ${CYAN}init${RESET}                  ${BOLD}Quick tmux setup${RESET} — one command, no prompts"
     echo -e "  ${CYAN}setup${RESET}                 ${BOLD}Guided setup${RESET} — prerequisites, init, doctor, quick start"
     echo -e "  ${CYAN}help${RESET}                  Show this help message"
@@ -135,6 +138,13 @@ show_help() {
     echo -e "  ${DIM}shipwright prep${RESET}                          # Analyze repo, generate .claude/ configs"
     echo -e "  ${DIM}shipwright prep --check${RESET}                  # Audit existing prep quality"
     echo -e "  ${DIM}shipwright prep --with-claude${RESET}            # Deep analysis using Claude Code"
+    echo ""
+    echo -e "${BOLD}GITHUB INTEGRATION${RESET}  ${DIM}(repo context, checks, deployments)${RESET}"
+    echo -e "  ${DIM}shipwright github context${RESET}              # Show repo GitHub context"
+    echo -e "  ${DIM}shipwright github security${RESET}             # Show security alerts"
+    echo -e "  ${DIM}shipwright github blame <path>${RESET}         # Show file ownership"
+    echo -e "  ${DIM}shipwright checks list${RESET}                 # Show check runs"
+    echo -e "  ${DIM}shipwright deploys list${RESET}                # Show deployment history"
     echo ""
     echo -e "${BOLD}TEST SUITES${RESET}  ${DIM}(validate shipwright components)${RESET}"
     echo -e "  ${DIM}shipwright daemon test${RESET}                   # Run daemon test suite"
@@ -284,6 +294,15 @@ main() {
             ;;
         architecture)
             exec "$SCRIPT_DIR/sw-architecture-enforcer.sh" "$@"
+            ;;
+        github|gh-context)
+            exec "$SCRIPT_DIR/sw-github-graphql.sh" "$@"
+            ;;
+        checks)
+            exec "$SCRIPT_DIR/sw-github-checks.sh" "$@"
+            ;;
+        deploys|deployments)
+            exec "$SCRIPT_DIR/sw-github-deploy.sh" "$@"
             ;;
         help|--help|-h)
             show_help

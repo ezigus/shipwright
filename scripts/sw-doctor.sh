@@ -773,6 +773,87 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 13. GitHub Integration
+# ═════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${PURPLE}${BOLD}  GITHUB INTEGRATION${RESET}"
+echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+
+if command -v gh &>/dev/null; then
+    if gh auth status &>/dev/null 2>&1; then
+        check_pass "gh CLI authenticated"
+
+        # Check required scopes
+        gh_scopes=""
+        gh_scopes=$(gh auth status 2>&1 | grep -i "token scopes" || echo "")
+        if [[ -n "$gh_scopes" ]]; then
+            if echo "$gh_scopes" | grep -qi "repo"; then
+                check_pass "Token has 'repo' scope"
+            else
+                check_warn "'repo' scope not detected — some features may not work"
+                echo -e "    ${DIM}Fix: gh auth refresh -s repo${RESET}"
+            fi
+            if echo "$gh_scopes" | grep -qi "read:org"; then
+                check_pass "Token has 'read:org' scope"
+            else
+                check_warn "'read:org' scope not detected — org data may be unavailable"
+                echo -e "    ${DIM}Fix: gh auth refresh -s read:org${RESET}"
+            fi
+        fi
+
+        # Check GraphQL endpoint
+        if gh api graphql -f query='{viewer{login}}' &>/dev/null 2>&1; then
+            check_pass "GraphQL API accessible"
+        else
+            check_warn "GraphQL API not accessible — intelligence enrichment will use fallbacks"
+        fi
+
+        # Check code scanning API
+        dr_repo_owner=""
+        dr_repo_name=""
+        dr_repo_owner=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+)/[^/]+(\.git)?$#\1#' || echo "")
+        dr_repo_name=$(git remote get-url origin 2>/dev/null | sed -E 's#.*/([^/]+)(\.git)?$#\1#' || echo "")
+        if [[ -n "$dr_repo_owner" && -n "$dr_repo_name" ]]; then
+            if gh api "repos/$dr_repo_owner/$dr_repo_name/code-scanning/alerts?per_page=1" &>/dev/null 2>&1; then
+                check_pass "Code scanning API accessible"
+            else
+                info "  Code scanning API not available ${DIM}(may need GitHub Advanced Security)${RESET}"
+            fi
+        fi
+
+        # Check CODEOWNERS file
+        if [[ -f "CODEOWNERS" || -f ".github/CODEOWNERS" || -f "docs/CODEOWNERS" ]]; then
+            check_pass "CODEOWNERS file found"
+        else
+            info "  No CODEOWNERS file ${DIM}(reviewer selection will use contributor data)${RESET}"
+        fi
+
+        # Check GitHub modules installed
+        _DOCTOR_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        if [[ -f "$_DOCTOR_SCRIPT_DIR/sw-github-graphql.sh" ]]; then
+            check_pass "GitHub GraphQL module installed"
+        else
+            info "  GitHub GraphQL module not found ${DIM}(scripts/sw-github-graphql.sh)${RESET}"
+        fi
+        if [[ -f "$_DOCTOR_SCRIPT_DIR/sw-github-checks.sh" ]]; then
+            check_pass "GitHub Checks module installed"
+        else
+            info "  GitHub Checks module not found ${DIM}(scripts/sw-github-checks.sh)${RESET}"
+        fi
+        if [[ -f "$_DOCTOR_SCRIPT_DIR/sw-github-deploy.sh" ]]; then
+            check_pass "GitHub Deploy module installed"
+        else
+            info "  GitHub Deploy module not found ${DIM}(scripts/sw-github-deploy.sh)${RESET}"
+        fi
+    else
+        check_warn "gh CLI not authenticated — run: ${DIM}gh auth login${RESET}"
+    fi
+else
+    check_warn "gh CLI not installed — GitHub integration disabled"
+    echo -e "    ${DIM}Install: brew install gh (macOS) or see https://cli.github.com${RESET}"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Summary
 # ═════════════════════════════════════════════════════════════════════════════
 echo ""

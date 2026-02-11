@@ -68,6 +68,28 @@ ensure_optimization_dir() {
     [[ -f "$ITERATION_MODEL_FILE" ]]  || echo '{}' > "$ITERATION_MODEL_FILE"
 }
 
+# ─── GitHub Metrics ──────────────────────────────────────────────────────
+
+_optimize_github_metrics() {
+    type _gh_detect_repo &>/dev/null 2>&1 || { echo "{}"; return 0; }
+    _gh_detect_repo 2>/dev/null || { echo "{}"; return 0; }
+
+    local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
+    [[ -z "$owner" || -z "$repo" ]] && { echo "{}"; return 0; }
+
+    if type gh_actions_runs &>/dev/null 2>&1; then
+        local runs
+        runs=$(gh_actions_runs "$owner" "$repo" "" 50 2>/dev/null || echo "[]")
+        local success_rate avg_duration
+        success_rate=$(echo "$runs" | jq '[.[] | select(.conclusion == "success")] | length as $s | ([length, 1] | max) as $t | ($s / $t * 100) | floor' 2>/dev/null || echo "0")
+        avg_duration=$(echo "$runs" | jq '[.[] | .duration_seconds // 0] | if length > 0 then add / length | floor else 0 end' 2>/dev/null || echo "0")
+        jq -n --argjson rate "${success_rate:-0}" --argjson dur "${avg_duration:-0}" \
+            '{ci_success_rate: $rate, ci_avg_duration_s: $dur}'
+    else
+        echo "{}"
+    fi
+}
+
 # ═════════════════════════════════════════════════════════════════════════════
 # OUTCOME ANALYSIS
 # ═════════════════════════════════════════════════════════════════════════════
@@ -153,6 +175,29 @@ optimize_analyze_outcome() {
     outcome_line=$(cat "$tmp_outcome")
     rm -f "$tmp_outcome"
     echo "$outcome_line" >> "$OUTCOMES_FILE"
+
+    # Record GitHub CI metrics alongside outcome
+    local gh_ci_metrics
+    gh_ci_metrics=$(_optimize_github_metrics 2>/dev/null || echo "{}")
+    local ci_success_rate ci_avg_dur
+    ci_success_rate=$(echo "$gh_ci_metrics" | jq -r '.ci_success_rate // 0' 2>/dev/null || echo "0")
+    ci_avg_dur=$(echo "$gh_ci_metrics" | jq -r '.ci_avg_duration_s // 0' 2>/dev/null || echo "0")
+    if [[ "${ci_success_rate:-0}" -gt 0 || "${ci_avg_dur:-0}" -gt 0 ]]; then
+        # Append CI metrics to the outcome line
+        local ci_record
+        ci_record=$(jq -c -n \
+            --arg ts "$(now_iso)" \
+            --arg issue "${issue_number:-unknown}" \
+            --argjson ci_rate "${ci_success_rate:-0}" \
+            --argjson ci_dur "${ci_avg_dur:-0}" \
+            '{ts: $ts, type: "ci_metrics", issue: $issue, ci_success_rate: $ci_rate, ci_avg_duration_s: $ci_dur}')
+        echo "$ci_record" >> "$OUTCOMES_FILE"
+
+        # Warn if CI success rate is dropping
+        if [[ "${ci_success_rate:-0}" -lt 70 && "${ci_success_rate:-0}" -gt 0 ]]; then
+            warn "CI success rate is ${ci_success_rate}% — consider template escalation"
+        fi
+    fi
 
     emit_event "optimize.outcome_analyzed" \
         "issue=${issue_number:-unknown}" \

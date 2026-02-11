@@ -35,6 +35,14 @@ RESET='\033[0m'
 # shellcheck source=sw-predictive.sh
 [[ -f "$SCRIPT_DIR/sw-predictive.sh" ]] && source "$SCRIPT_DIR/sw-predictive.sh"
 
+# ─── GitHub API Modules (optional) ────────────────────────────────────────
+# shellcheck source=sw-github-graphql.sh
+[[ -f "$SCRIPT_DIR/sw-github-graphql.sh" ]] && source "$SCRIPT_DIR/sw-github-graphql.sh"
+# shellcheck source=sw-github-checks.sh
+[[ -f "$SCRIPT_DIR/sw-github-checks.sh" ]] && source "$SCRIPT_DIR/sw-github-checks.sh"
+# shellcheck source=sw-github-deploy.sh
+[[ -f "$SCRIPT_DIR/sw-github-deploy.sh" ]] && source "$SCRIPT_DIR/sw-github-deploy.sh"
+
 # ─── Output Helpers ─────────────────────────────────────────────────────────
 info()    { echo -e "${CYAN}${BOLD}▸${RESET} $*"; }
 success() { echo -e "${GREEN}${BOLD}✓${RESET} $*"; }
@@ -112,6 +120,28 @@ rotate_event_log() {
     local heartbeat_dir="$HOME/.shipwright/heartbeats"
     if [[ -d "$heartbeat_dir" ]]; then
         find "$heartbeat_dir" -name "*.json" -mmin +1440 -delete 2>/dev/null || true
+    fi
+}
+
+# ─── GitHub Context (loaded once at startup) ──────────────────────────────
+DAEMON_GITHUB_CONTEXT=""
+
+daemon_github_context() {
+    # Skip if no GitHub
+    [[ "${NO_GITHUB:-false}" == "true" ]] && return 0
+    type gh_repo_context &>/dev/null 2>&1 || return 0
+    type _gh_detect_repo &>/dev/null 2>&1 || return 0
+
+    _gh_detect_repo 2>/dev/null || return 0
+    local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
+    [[ -z "$owner" || -z "$repo" ]] && return 0
+
+    local context
+    context=$(gh_repo_context "$owner" "$repo" 2>/dev/null || echo "{}")
+    if [[ -n "$context" && "$context" != "{}" ]]; then
+        daemon_log INFO "GitHub context loaded: $(echo "$context" | jq -r '.contributor_count // 0') contributors, $(echo "$context" | jq -r '.security_alert_count // 0') security alerts"
+        DAEMON_GITHUB_CONTEXT="$context"
+        export DAEMON_GITHUB_CONTEXT
     fi
 }
 
@@ -1980,7 +2010,28 @@ select_pipeline_template() {
         daemon_log INFO "Intelligence: using static template selection (composer disabled, enable with intelligence.composer_enabled=true)"
     fi
 
-    # ── Label-based overrides (highest priority) ──
+    # ── Branch protection escalation (highest priority) ──
+    if type gh_branch_protection &>/dev/null 2>&1 && [[ "${NO_GITHUB:-false}" != "true" ]]; then
+        if type _gh_detect_repo &>/dev/null 2>&1; then
+            _gh_detect_repo 2>/dev/null || true
+        fi
+        local gh_owner="${GH_OWNER:-}" gh_repo="${GH_REPO:-}"
+        if [[ -n "$gh_owner" && -n "$gh_repo" ]]; then
+            local protection
+            protection=$(gh_branch_protection "$gh_owner" "$gh_repo" "${BASE_BRANCH:-main}" 2>/dev/null || echo '{"protected": false}')
+            local strict_protection
+            strict_protection=$(echo "$protection" | jq -r '.enforce_admins.enabled // false' 2>/dev/null || echo "false")
+            local required_reviews
+            required_reviews=$(echo "$protection" | jq -r '.required_pull_request_reviews.required_approving_review_count // 0' 2>/dev/null || echo "0")
+            if [[ "$strict_protection" == "true" ]] || [[ "${required_reviews:-0}" -gt 1 ]]; then
+                daemon_log INFO "Branch has strict protection — escalating to enterprise template"
+                echo "enterprise"
+                return
+            fi
+        fi
+    fi
+
+    # ── Label-based overrides ──
     if echo "$labels" | grep -qi "hotfix\|incident"; then
         echo "hotfix"
         return
@@ -2199,6 +2250,39 @@ Auto-detected by \`shipwright daemon patrol\`." \
                 local vuln_count
                 vuln_count=$(echo "$cargo_json" | jq '.vulnerabilities.found' 2>/dev/null || echo "0")
                 findings=$((findings + ${vuln_count:-0}))
+            fi
+        fi
+
+        # Enrich with GitHub security alerts
+        if type gh_security_alerts &>/dev/null 2>&1 && [[ "${NO_GITHUB:-false}" != "true" ]]; then
+            if type _gh_detect_repo &>/dev/null 2>&1; then
+                _gh_detect_repo 2>/dev/null || true
+            fi
+            local gh_owner="${GH_OWNER:-}" gh_repo="${GH_REPO:-}"
+            if [[ -n "$gh_owner" && -n "$gh_repo" ]]; then
+                local gh_alerts
+                gh_alerts=$(gh_security_alerts "$gh_owner" "$gh_repo" 2>/dev/null || echo "[]")
+                local gh_alert_count
+                gh_alert_count=$(echo "$gh_alerts" | jq 'length' 2>/dev/null || echo "0")
+                if [[ "${gh_alert_count:-0}" -gt 0 ]]; then
+                    daemon_log WARN "Patrol: $gh_alert_count GitHub security alert(s) found"
+                    findings=$((findings + gh_alert_count))
+                fi
+            fi
+        fi
+
+        # Enrich with GitHub Dependabot alerts
+        if type gh_dependabot_alerts &>/dev/null 2>&1 && [[ "${NO_GITHUB:-false}" != "true" ]]; then
+            local gh_owner="${GH_OWNER:-}" gh_repo="${GH_REPO:-}"
+            if [[ -n "$gh_owner" && -n "$gh_repo" ]]; then
+                local dep_alerts
+                dep_alerts=$(gh_dependabot_alerts "$gh_owner" "$gh_repo" 2>/dev/null || echo "[]")
+                local dep_alert_count
+                dep_alert_count=$(echo "$dep_alerts" | jq 'length' 2>/dev/null || echo "0")
+                if [[ "${dep_alert_count:-0}" -gt 0 ]]; then
+                    daemon_log WARN "Patrol: $dep_alert_count Dependabot alert(s) found"
+                    findings=$((findings + dep_alert_count))
+                fi
             fi
         fi
 
@@ -4171,6 +4255,9 @@ daemon_start() {
 
     # Rotate event log on startup
     rotate_event_log
+
+    # Load GitHub context (repo metadata, security alerts, etc.)
+    daemon_github_context
 
     daemon_log INFO "Daemon started successfully"
     daemon_log INFO "Config: poll_interval=${POLL_INTERVAL}s, max_parallel=${MAX_PARALLEL}, label=${WATCH_LABEL}"

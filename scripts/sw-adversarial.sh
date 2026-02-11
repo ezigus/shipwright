@@ -69,6 +69,54 @@ _adversarial_enabled() {
     fi
 }
 
+# ─── GitHub Security Context ─────────────────────────────────────────────
+
+_adversarial_security_context() {
+    local diff_paths="$1"
+    local context=""
+
+    type _gh_detect_repo &>/dev/null 2>&1 || { echo ""; return 0; }
+    _gh_detect_repo 2>/dev/null || { echo ""; return 0; }
+
+    local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
+    [[ -z "$owner" || -z "$repo" ]] && { echo ""; return 0; }
+
+    # Get CodeQL alerts for changed files
+    if type gh_security_alerts &>/dev/null 2>&1; then
+        local alerts
+        alerts=$(gh_security_alerts "$owner" "$repo" 2>/dev/null || echo "[]")
+        local relevant_alerts
+        relevant_alerts=$(echo "$alerts" | jq -c --arg paths "$diff_paths" \
+            '[.[] | select(.most_recent_instance.location.path as $p | ($paths | split("\n") | any(. == $p)))]' 2>/dev/null || echo "[]")
+        local alert_count
+        alert_count=$(echo "$relevant_alerts" | jq 'length' 2>/dev/null || echo "0")
+        if [[ "${alert_count:-0}" -gt 0 ]]; then
+            local alert_summary
+            alert_summary=$(echo "$relevant_alerts" | jq -r '.[] | "- \(.rule.description // .rule.id): \(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line)"' 2>/dev/null || echo "")
+            context="EXISTING SECURITY ALERTS in changed files:
+${alert_summary}
+"
+        fi
+    fi
+
+    # Get Dependabot alerts
+    if type gh_dependabot_alerts &>/dev/null 2>&1; then
+        local dep_alerts
+        dep_alerts=$(gh_dependabot_alerts "$owner" "$repo" 2>/dev/null || echo "[]")
+        local dep_count
+        dep_count=$(echo "$dep_alerts" | jq 'length' 2>/dev/null || echo "0")
+        if [[ "${dep_count:-0}" -gt 0 ]]; then
+            local dep_summary
+            dep_summary=$(echo "$dep_alerts" | jq -r '.[0:5] | .[] | "- \(.security_advisory.summary // "unknown"): \(.dependency.package.name // "unknown") (\(.security_vulnerability.severity // "unknown"))"' 2>/dev/null || echo "")
+            context="${context}DEPENDENCY VULNERABILITIES:
+${dep_summary}
+"
+        fi
+    fi
+
+    echo "$context"
+}
+
 # ─── Adversarial Review ──────────────────────────────────────────────────
 
 adversarial_review() {
@@ -87,6 +135,19 @@ adversarial_review() {
     fi
 
     info "Running adversarial review..." >&2
+
+    # Inject GitHub security context if available
+    local security_context=""
+    local diff_paths
+    diff_paths=$(echo "$code_diff" | grep '^[+-][+-][+-] [ab]/' | sed 's|^[+-]\{3\} [ab]/||' | sort -u 2>/dev/null || true)
+    if [[ -n "$diff_paths" ]]; then
+        security_context=$(_adversarial_security_context "$diff_paths" 2>/dev/null || true)
+    fi
+    if [[ -n "$security_context" ]]; then
+        context="The following security alerts exist for files in this change. Pay special attention to these areas:
+${security_context}
+${context}"
+    fi
 
     local prompt
     prompt=$(jq -n --arg diff "$code_diff" --arg ctx "$context" '{

@@ -8,15 +8,30 @@
   },
   "stages": [
     { "id": "intake", "enabled": true, "gate": "auto", "config": {} },
-    { "id": "plan", "enabled": true, "gate": "auto", "config": { "model": "opus" } },
-    { "id": "design", "enabled": true, "gate": "auto", "config": { "model": "opus" } },
+    {
+      "id": "plan",
+      "enabled": true,
+      "gate": "auto",
+      "config": { "model": "opus" }
+    },
+    {
+      "id": "design",
+      "enabled": true,
+      "gate": "auto",
+      "config": { "model": "opus" }
+    },
     {
       "id": "build",
       "enabled": true,
       "gate": "auto",
       "config": { "max_iterations": 20, "audit": true, "quality_gates": true }
     },
-    { "id": "test", "enabled": true, "gate": "auto", "config": { "coverage_min": 80 } },
+    {
+      "id": "test",
+      "enabled": true,
+      "gate": "auto",
+      "config": { "coverage_min": 80 }
+    },
     { "id": "review", "enabled": true, "gate": "auto", "config": {} },
     {
       "id": "compound_quality",
@@ -30,7 +45,12 @@
         "max_cycles": 3
       }
     },
-    { "id": "pr", "enabled": true, "gate": "auto", "config": { "wait_ci": false } },
+    {
+      "id": "pr",
+      "enabled": true,
+      "gate": "auto",
+      "config": { "wait_ci": false }
+    },
     {
       "id": "merge",
       "enabled": true,
@@ -38,7 +58,9 @@
       "config": {
         "merge_method": "squash",
         "wait_ci_timeout_s": 600,
-        "auto_delete_branch": true
+        "auto_delete_branch": true,
+        "auto_merge": true,
+        "auto_approve": true
       }
     },
     {

@@ -54,6 +54,18 @@
       "config": { "wait_ci": false }
     },
     {
+      "id": "merge",
+      "enabled": true,
+      "gate": "approve",
+      "config": {
+        "merge_method": "squash",
+        "wait_ci_timeout_s": 600,
+        "auto_delete_branch": true,
+        "auto_merge": true,
+        "auto_approve": true
+      }
+    },
+    {
       "id": "deploy",
       "enabled": false,
       "gate": "approve",

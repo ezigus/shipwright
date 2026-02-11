@@ -601,7 +601,11 @@ preflight_checks() {
 # Atomic write: write to tmp file, then mv (prevents corruption on crash)
 atomic_write_state() {
     local content="$1"
-    local tmp_file="${STATE_FILE}.tmp.$$"
+    local tmp_file
+    tmp_file=$(mktemp "${STATE_FILE}.tmp.XXXXXX") || {
+        daemon_log ERROR "Failed to create temp file for state write"
+        return 1
+    }
     echo "$content" > "$tmp_file"
     mv "$tmp_file" "$STATE_FILE"
 }
@@ -915,6 +919,15 @@ daemon_spawn_pipeline() {
         # Standard mode: use git worktree
         work_dir="${WORKTREE_DIR}/daemon-issue-${issue_num}"
 
+        # Serialize worktree operations with a lock file
+        local lock_file="${WORKTREE_DIR}/.worktree.lock"
+        mkdir -p "$WORKTREE_DIR"
+        local lock_fd=8
+        eval "exec ${lock_fd}>\"$lock_file\""
+        if ! flock -w 30 "$lock_fd" 2>/dev/null; then
+            daemon_log WARN "Worktree lock held for 30s — proceeding without lock"
+        fi
+
         # Clean up stale worktree if it exists
         if [[ -d "$work_dir" ]]; then
             git worktree remove "$work_dir" --force 2>/dev/null || true
@@ -922,9 +935,11 @@ daemon_spawn_pipeline() {
         git branch -D "$branch_name" 2>/dev/null || true
 
         if ! git worktree add "$work_dir" -b "$branch_name" "$BASE_BRANCH" 2>/dev/null; then
+            eval "exec ${lock_fd}>&-"
             daemon_log ERROR "Failed to create worktree for issue #${issue_num}"
             return 1
         fi
+        eval "exec ${lock_fd}>&-"
         daemon_log INFO "Worktree created at ${work_dir}"
     fi
 
@@ -3365,6 +3380,36 @@ daemon_poll_loop() {
 
 cleanup_on_exit() {
     daemon_log INFO "Cleaning up..."
+
+    # Kill all active pipeline child processes
+    if [[ -f "$STATE_FILE" ]]; then
+        local child_pids
+        child_pids=$(jq -r '.active_jobs[].pid // empty' "$STATE_FILE" 2>/dev/null || true)
+        if [[ -n "$child_pids" ]]; then
+            local killed=0
+            while IFS= read -r cpid; do
+                [[ -z "$cpid" ]] && continue
+                if kill -0 "$cpid" 2>/dev/null; then
+                    daemon_log INFO "Killing pipeline process PID ${cpid}"
+                    kill "$cpid" 2>/dev/null || true
+                    killed=$((killed + 1))
+                fi
+            done <<< "$child_pids"
+            if [[ $killed -gt 0 ]]; then
+                daemon_log INFO "Sent SIGTERM to ${killed} pipeline process(es) — waiting 5s"
+                sleep 5
+                # Force-kill any that didn't exit
+                while IFS= read -r cpid; do
+                    [[ -z "$cpid" ]] && continue
+                    if kill -0 "$cpid" 2>/dev/null; then
+                        daemon_log WARN "Force-killing pipeline PID ${cpid}"
+                        kill -9 "$cpid" 2>/dev/null || true
+                    fi
+                done <<< "$child_pids"
+            fi
+        fi
+    fi
+
     rm -f "$PID_FILE" "$SHUTDOWN_FLAG"
     daemon_log INFO "Daemon stopped"
     emit_event "daemon.stopped" "pid=$$"
@@ -3436,8 +3481,10 @@ daemon_start() {
     # Foreground mode
     info "Starting daemon (PID: $$)"
 
-    # Write PID file
-    echo "$$" > "$PID_FILE"
+    # Write PID file atomically
+    local pid_tmp="${PID_FILE}.tmp.$$"
+    echo "$$" > "$pid_tmp"
+    mv "$pid_tmp" "$PID_FILE"
 
     # Remove stale shutdown flag
     rm -f "$SHUTDOWN_FLAG"
@@ -3448,9 +3495,14 @@ daemon_start() {
     # Trap signals for graceful shutdown
     trap cleanup_on_exit EXIT
     trap 'touch "$SHUTDOWN_FLAG"' SIGINT SIGTERM
+    # Ignore SIGHUP — tmux sends this on attach/detach and we must survive it
+    trap '' SIGHUP
 
     # Reap any orphaned jobs from previous runs
     daemon_reap_completed
+
+    # Clean up stale temp files from previous crashes
+    find "$(dirname "$STATE_FILE")" -name "*.tmp.*" -mmin +5 -delete 2>/dev/null || true
 
     # Rotate event log on startup
     rotate_event_log

@@ -1,13 +1,13 @@
 {
-  "watch_label": "ready-to-build",
-  "poll_interval": 60,
+  "watch_label": "shipwright",
+  "poll_interval": 30,
   "max_parallel": 4,
   "pipeline_template": "autonomous",
   "skip_gates": true,
-  "model": "sonnet",
+  "model": "opus",
   "base_branch": "main",
   "on_success": {
-    "remove_label": "ready-to-build",
+    "remove_label": "shipwright",
     "add_label": "pipeline/complete",
     "close_issue": true
   },

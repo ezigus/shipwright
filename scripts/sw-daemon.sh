@@ -2792,10 +2792,8 @@ daemon_poll_issues() {
 
         # Cache title in state for dashboard visibility
         if [[ -n "$issue_title" ]]; then
-            local tmp_titles
-            tmp_titles=$(jq --arg num "$issue_num" --arg title "$issue_title" \
-                '.titles[$num] = $title' "$STATE_FILE")
-            atomic_write_state "$tmp_titles"
+            locked_state_update --arg num "$issue_num" --arg title "$issue_title" \
+                '.titles[$num] = $title'
         fi
 
         # Skip if already inflight
@@ -3271,13 +3269,10 @@ daemon_self_optimize() {
         local adj_str
         adj_str=$(printf '%s; ' "${adjustments[@]}")
 
-        local tmp_state
-        tmp_state=$(jq \
+        locked_state_update \
             --arg adj "$adj_str" \
             --arg ts "$(now_iso)" \
-            '.last_optimization = {timestamp: $ts, adjustments: $adj}' \
-            "$STATE_FILE")
-        atomic_write_state "$tmp_state"
+            '.last_optimization = {timestamp: $ts, adjustments: $adj}'
 
         # ── Persist adjustments to daemon-config.json (survives restart) ──
         local config_file="${CONFIG_PATH:-.claude/daemon-config.json}"
@@ -3382,20 +3377,16 @@ daemon_cleanup_stale() {
     if [[ -f "$STATE_FILE" ]]; then
         local cutoff_iso
         cutoff_iso=$(epoch_to_iso $((now_e - age_secs)))
-        local before_count after_count
+        local before_count
         before_count=$(jq '.completed | length' "$STATE_FILE" 2>/dev/null || echo 0)
-        local tmp_state
-        tmp_state=$(jq --arg cutoff "$cutoff_iso" \
-            '.completed = [.completed[] | select(.completed_at > $cutoff)]' \
-            "$STATE_FILE" 2>/dev/null) || true
-        if [[ -n "$tmp_state" ]]; then
-            atomic_write_state "$tmp_state"
-            after_count=$(jq '.completed | length' "$STATE_FILE" 2>/dev/null || echo 0)
-            local pruned=$((before_count - after_count))
-            if [[ "$pruned" -gt 0 ]]; then
-                daemon_log INFO "Pruned ${pruned} old completed state entries"
-                cleaned=$((cleaned + pruned))
-            fi
+        locked_state_update --arg cutoff "$cutoff_iso" \
+            '.completed = [.completed[] | select(.completed_at > $cutoff)]' 2>/dev/null || true
+        local after_count
+        after_count=$(jq '.completed | length' "$STATE_FILE" 2>/dev/null || echo 0)
+        local pruned=$((before_count - after_count))
+        if [[ "$pruned" -gt 0 ]]; then
+            daemon_log INFO "Pruned ${pruned} old completed state entries"
+            cleaned=$((cleaned + pruned))
         fi
     fi
 
@@ -3412,9 +3403,7 @@ daemon_cleanup_stale() {
         done <<< "$retry_keys"
         if [[ ${#stale_keys[@]} -gt 0 ]]; then
             for sk in "${stale_keys[@]}"; do
-                local tmp_rc
-                tmp_rc=$(jq --arg k "$sk" 'del(.retry_counts[$k])' "$STATE_FILE" 2>/dev/null) || continue
-                atomic_write_state "$tmp_rc"
+                locked_state_update --arg k "$sk" 'del(.retry_counts[$k])' 2>/dev/null || continue
             done
             daemon_log INFO "Pruned ${#stale_keys[@]} stale retry count(s)"
             cleaned=$((cleaned + ${#stale_keys[@]}))

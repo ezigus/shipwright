@@ -2,7 +2,7 @@
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  sw upgrade — Detect and apply updates from the repo                   ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="1.7.1"
+VERSION="1.8.0"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -130,6 +130,47 @@ FILES=(
     "sw-fix-test.sh|scripts/sw-fix-test.sh|$BIN_DIR/sw-fix-test.sh|false|true"
     "sw-reaper.sh|scripts/sw-reaper.sh|$BIN_DIR/sw-reaper.sh|false|true"
     "sw-dashboard.sh|scripts/sw-dashboard.sh|$BIN_DIR/sw-dashboard.sh|false|true"
+    "sw-docs.sh|scripts/sw-docs.sh|$BIN_DIR/sw-docs.sh|false|true"
+    "sw-tmux.sh|scripts/sw-tmux.sh|$BIN_DIR/sw-tmux.sh|false|true"
+    "sw-connect.sh|scripts/sw-connect.sh|$BIN_DIR/sw-connect.sh|false|true"
+    "sw-tracker.sh|scripts/sw-tracker.sh|$BIN_DIR/sw-tracker.sh|false|true"
+    "sw-linear.sh|scripts/sw-linear.sh|$BIN_DIR/sw-linear.sh|false|true"
+    "sw-jira.sh|scripts/sw-jira.sh|$BIN_DIR/sw-jira.sh|false|true"
+    "sw-launchd.sh|scripts/sw-launchd.sh|$BIN_DIR/sw-launchd.sh|false|true"
+    "sw-checkpoint.sh|scripts/sw-checkpoint.sh|$BIN_DIR/sw-checkpoint.sh|false|true"
+    "sw-heartbeat.sh|scripts/sw-heartbeat.sh|$BIN_DIR/sw-heartbeat.sh|false|true"
+    "sw-intelligence.sh|scripts/sw-intelligence.sh|$BIN_DIR/sw-intelligence.sh|false|true"
+    "sw-pipeline-composer.sh|scripts/sw-pipeline-composer.sh|$BIN_DIR/sw-pipeline-composer.sh|false|true"
+    "sw-self-optimize.sh|scripts/sw-self-optimize.sh|$BIN_DIR/sw-self-optimize.sh|false|true"
+    "sw-predictive.sh|scripts/sw-predictive.sh|$BIN_DIR/sw-predictive.sh|false|true"
+    "sw-adversarial.sh|scripts/sw-adversarial.sh|$BIN_DIR/sw-adversarial.sh|false|true"
+    "sw-developer-simulation.sh|scripts/sw-developer-simulation.sh|$BIN_DIR/sw-developer-simulation.sh|false|true"
+    "sw-architecture-enforcer.sh|scripts/sw-architecture-enforcer.sh|$BIN_DIR/sw-architecture-enforcer.sh|false|true"
+    "sw-patrol-meta.sh|scripts/sw-patrol-meta.sh|$BIN_DIR/sw-patrol-meta.sh|false|true"
+    # GitHub API modules
+    "sw-github-graphql.sh|scripts/sw-github-graphql.sh|$BIN_DIR/sw-github-graphql.sh|false|true"
+    "sw-github-checks.sh|scripts/sw-github-checks.sh|$BIN_DIR/sw-github-checks.sh|false|true"
+    "sw-github-deploy.sh|scripts/sw-github-deploy.sh|$BIN_DIR/sw-github-deploy.sh|false|true"
+    # Tracker adapters
+    "sw-tracker-linear.sh|scripts/sw-tracker-linear.sh|$BIN_DIR/sw-tracker-linear.sh|false|true"
+    "sw-tracker-jira.sh|scripts/sw-tracker-jira.sh|$BIN_DIR/sw-tracker-jira.sh|false|true"
+    # Test suites
+    "sw-connect-test.sh|scripts/sw-connect-test.sh|$BIN_DIR/sw-connect-test.sh|false|true"
+    "sw-intelligence-test.sh|scripts/sw-intelligence-test.sh|$BIN_DIR/sw-intelligence-test.sh|false|true"
+    "sw-frontier-test.sh|scripts/sw-frontier-test.sh|$BIN_DIR/sw-frontier-test.sh|false|true"
+    "sw-self-optimize-test.sh|scripts/sw-self-optimize-test.sh|$BIN_DIR/sw-self-optimize-test.sh|false|true"
+    "sw-pipeline-composer-test.sh|scripts/sw-pipeline-composer-test.sh|$BIN_DIR/sw-pipeline-composer-test.sh|false|true"
+    "sw-predictive-test.sh|scripts/sw-predictive-test.sh|$BIN_DIR/sw-predictive-test.sh|false|true"
+    "sw-heartbeat-test.sh|scripts/sw-heartbeat-test.sh|$BIN_DIR/sw-heartbeat-test.sh|false|true"
+    "sw-github-graphql-test.sh|scripts/sw-github-graphql-test.sh|$BIN_DIR/sw-github-graphql-test.sh|false|true"
+    "sw-github-checks-test.sh|scripts/sw-github-checks-test.sh|$BIN_DIR/sw-github-checks-test.sh|false|true"
+    "sw-github-deploy-test.sh|scripts/sw-github-deploy-test.sh|$BIN_DIR/sw-github-deploy-test.sh|false|true"
+    "sw-tracker-test.sh|scripts/sw-tracker-test.sh|$BIN_DIR/sw-tracker-test.sh|false|true"
+    "sw-init-test.sh|scripts/sw-init-test.sh|$BIN_DIR/sw-init-test.sh|false|true"
+    "sw-session-test.sh|scripts/sw-session-test.sh|$BIN_DIR/sw-session-test.sh|false|true"
+    "sw-remote-test.sh|scripts/sw-remote-test.sh|$BIN_DIR/sw-remote-test.sh|false|true"
+    # Shared libraries
+    "compat.sh|scripts/lib/compat.sh|$BIN_DIR/lib/compat.sh|false|false"
     "CLAUDE.md.shipwright|claude-code/CLAUDE.md.shipwright|$HOME/.claude/CLAUDE.md|true|false"
     "teammate-idle.sh|claude-code/hooks/teammate-idle.sh|$HOME/.claude/hooks/teammate-idle.sh|false|true"
     "task-completed.sh|claude-code/hooks/task-completed.sh|$HOME/.claude/hooks/task-completed.sh|false|true"

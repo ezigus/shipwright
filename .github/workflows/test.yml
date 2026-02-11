@@ -73,6 +73,24 @@ jobs:
       - name: Run frontier tests
         run: bash scripts/sw-frontier-test.sh
 
+      - name: Run connect tests
+        run: bash scripts/sw-connect-test.sh
+
+      - name: Run GitHub GraphQL tests
+        run: bash scripts/sw-github-graphql-test.sh
+
+      - name: Run GitHub Checks tests
+        run: bash scripts/sw-github-checks-test.sh
+
+      - name: Run GitHub Deploy tests
+        run: bash scripts/sw-github-deploy-test.sh
+
+      - name: Run docs tests
+        run: bash scripts/sw-docs-test.sh
+
+      - name: Run tmux tests
+        run: bash scripts/sw-tmux-test.sh
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:

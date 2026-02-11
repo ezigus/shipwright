@@ -81,6 +81,22 @@ try {
     success("Installed settings template");
   }
 
+  // Install agent definitions → ~/.claude/agents/
+  const agentsSrc = join(PKG_DIR, ".claude", "agents");
+  const agentsDest = join(CLAUDE_DIR, "agents");
+  if (existsSync(agentsSrc)) {
+    copyDir(agentsSrc, agentsDest);
+    success("Installed agent definitions");
+  }
+
+  // Install repo hooks → ~/.claude/hooks/
+  const hooksSrc = join(PKG_DIR, ".claude", "hooks");
+  const hooksDest = join(CLAUDE_DIR, "hooks");
+  if (existsSync(hooksSrc)) {
+    copyDir(hooksSrc, hooksDest);
+    success("Installed hooks");
+  }
+
   // Install CLAUDE.md agent instructions → ~/.claude/CLAUDE.md (idempotent)
   const claudeMdSrc = join(PKG_DIR, "claude-code", "CLAUDE.md.shipwright");
   const claudeMdDest = join(CLAUDE_DIR, "CLAUDE.md");

@@ -5,7 +5,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="1.7.1"
+VERSION="1.8.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 

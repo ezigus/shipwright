@@ -694,7 +694,7 @@ test_now_iso_format() {
 # 24. Script has correct version
 # ──────────────────────────────────────────────────────────────────────────────
 test_script_version() {
-    if ! grep -q 'VERSION="1.7.1"' "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q 'VERSION="1.8.0"' "$TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} Script version not 1.7.1"
         return 1
     fi

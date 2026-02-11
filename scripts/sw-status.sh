@@ -258,7 +258,7 @@ if [[ -f "$STATE_FILE" ]]; then
                 stage_progress=""
                 goal_from_state=""
                 if [[ -n "$a_worktree" && -f "${a_worktree}/.claude/pipeline-state.md" ]]; then
-                    local ps_file="${a_worktree}/.claude/pipeline-state.md"
+                    ps_file="${a_worktree}/.claude/pipeline-state.md"
                     stage_str=$(grep -E '^current_stage:' "$ps_file" 2>/dev/null | head -1 | sed 's/^current_stage:[[:space:]]*//' || true)
                     stage_desc=$(grep -E '^current_stage_description:' "$ps_file" 2>/dev/null | head -1 | sed 's/^current_stage_description:[[:space:]]*"//;s/"$//' || true)
                     stage_progress=$(grep -E '^stage_progress:' "$ps_file" 2>/dev/null | head -1 | sed 's/^stage_progress:[[:space:]]*"//;s/"$//' || true)
@@ -266,7 +266,7 @@ if [[ -f "$STATE_FILE" ]]; then
                 fi
 
                 # Use goal from state file if not in daemon job data
-                local display_goal="${a_goal:-$goal_from_state}"
+                display_goal="${a_goal:-$goal_from_state}"
 
                 # Title line
                 echo -e "    ${CYAN}#${a_issue}${RESET}  ${BOLD}${a_title}${RESET}"
@@ -278,21 +278,21 @@ if [[ -f "$STATE_FILE" ]]; then
 
                 # Stage + description line
                 if [[ -n "$stage_str" ]]; then
-                    local stage_icon="🔄"
-                    local stage_line="           ${stage_icon} ${BLUE}${stage_str}${RESET}"
+                    stage_icon="🔄"
+                    stage_line="           ${stage_icon} ${BLUE}${stage_str}${RESET}"
                     [[ -n "$stage_desc" ]] && stage_line="${stage_line} ${DIM}— ${stage_desc}${RESET}"
                     echo -e "$stage_line"
                 fi
 
                 # Inline progress bar from stage_progress
                 if [[ -n "$stage_progress" ]]; then
-                    local progress_bar=""
-                    local entry=""
+                    progress_bar=""
+                    entry=""
                     # Parse space-separated "stage:status" pairs
                     for entry in $stage_progress; do
-                        local s_name="${entry%%:*}"
-                        local s_stat="${entry#*:}"
-                        local s_icon=""
+                        s_name="${entry%%:*}"
+                        s_stat="${entry#*:}"
+                        s_icon=""
                         case "$s_stat" in
                             complete) s_icon="✅" ;;
                             running)  s_icon="🔄" ;;

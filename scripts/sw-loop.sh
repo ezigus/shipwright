@@ -44,7 +44,7 @@ MAX_TURNS=""
 RESUME=false
 VERBOSE=false
 MAX_ITERATIONS_EXPLICIT=false
-VERSION="1.8.0"
+VERSION="1.8.1"
 
 # ─── Flexible Iteration Defaults ────────────────────────────────────────────
 AUTO_EXTEND=true          # Auto-extend iterations when work is incomplete

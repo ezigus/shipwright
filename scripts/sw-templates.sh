@@ -5,7 +5,7 @@
 # ║  Templates define reusable agent team configurations (roles, layout,    ║
 # ║  focus areas) that shipwright session --template can use to scaffold teams.    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="1.8.0"
+VERSION="1.8.1"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 

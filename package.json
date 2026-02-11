@@ -1,6 +1,6 @@
 {
   "name": "shipwright-cli",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Orchestrate autonomous Claude Code agent teams in tmux",
   "bin": {
     "shipwright": "./scripts/sw",

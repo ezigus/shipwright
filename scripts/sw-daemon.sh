@@ -683,7 +683,8 @@ learn_worker_memory() {
 
     while IFS= read -r job; do
         local pid
-        pid=$(echo "$job" | jq -r '.pid')
+        pid=$(echo "$job" | jq -r '.pid // empty')
+        [[ -z "$pid" || ! "$pid" =~ ^[0-9]+$ ]] && continue
         if kill -0 "$pid" 2>/dev/null; then
             local rss_kb
             rss_kb=$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ' || echo "0")
@@ -1486,9 +1487,13 @@ daemon_reap_completed() {
 
     while IFS= read -r job; do
         local issue_num pid worktree
-        issue_num=$(echo "$job" | jq -r '.issue')
-        pid=$(echo "$job" | jq -r '.pid')
-        worktree=$(echo "$job" | jq -r '.worktree')
+        issue_num=$(echo "$job" | jq -r '.issue // empty')
+        pid=$(echo "$job" | jq -r '.pid // empty')
+        worktree=$(echo "$job" | jq -r '.worktree // empty')
+
+        # Skip malformed entries (corrupted state file)
+        [[ -z "$issue_num" || ! "$issue_num" =~ ^[0-9]+$ ]] && continue
+        [[ -z "$pid" || ! "$pid" =~ ^[0-9]+$ ]] && continue
 
         # Check if process is still running
         if kill -0 "$pid" 2>/dev/null; then

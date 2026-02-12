@@ -3913,6 +3913,31 @@ daemon_poll_issues() {
         PIPELINE_TEMPLATE="$orig_template"
     done <<< "$sorted_order"
 
+    # ── Drain queue if we have capacity (prevents deadlock when queue is
+    #    populated but no active jobs exist to trigger dequeue) ──
+    local drain_active
+    drain_active=$(locked_get_active_count)
+    while [[ "$drain_active" -lt "$MAX_PARALLEL" ]]; do
+        local drain_issue
+        drain_issue=$(dequeue_next)
+        [[ -z "$drain_issue" ]] && break
+        local drain_title
+        drain_title=$(jq -r --arg n "$drain_issue" '.titles[$n] // ""' "$STATE_FILE" 2>/dev/null || true)
+
+        local drain_labels drain_score drain_template
+        drain_labels=$(echo "$issues_json" | jq -r --argjson n "$drain_issue" \
+            '.[] | select(.number == $n) | [.labels[].name] | join(",")' 2>/dev/null || echo "")
+        drain_score=$(echo "$sorted_order" | grep "|${drain_issue}|" | cut -d'|' -f1 || echo "50")
+        drain_template=$(select_pipeline_template "$drain_labels" "${drain_score:-50}")
+
+        daemon_log INFO "Draining queue: issue #${drain_issue}, template=${drain_template}"
+        local orig_template="$PIPELINE_TEMPLATE"
+        PIPELINE_TEMPLATE="$drain_template"
+        daemon_spawn_pipeline "$drain_issue" "$drain_title"
+        PIPELINE_TEMPLATE="$orig_template"
+        drain_active=$(locked_get_active_count)
+    done
+
     # Update last poll
     update_state_field "last_poll" "$(now_iso)"
 }

@@ -6,6 +6,11 @@
     "model": "opus",
     "agents": 1
   },
+  "intelligence": {
+    "adversarial_enabled": true,
+    "architecture_enabled": true,
+    "simulation_enabled": true
+  },
   "stages": [
     { "id": "intake", "enabled": true, "gate": "auto", "config": {} },
     {
@@ -42,7 +47,9 @@
         "negative": true,
         "e2e": true,
         "dod_audit": true,
-        "max_cycles": 3
+        "max_cycles": 3,
+        "audit_intensity": "auto",
+        "compound_quality_blocking": true
       }
     },
     {

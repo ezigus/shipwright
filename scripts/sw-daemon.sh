@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="1.9.0"
+VERSION="1.10.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -34,6 +34,8 @@ RESET='\033[0m'
 [[ -f "$SCRIPT_DIR/sw-self-optimize.sh" ]] && source "$SCRIPT_DIR/sw-self-optimize.sh"
 # shellcheck source=sw-predictive.sh
 [[ -f "$SCRIPT_DIR/sw-predictive.sh" ]] && source "$SCRIPT_DIR/sw-predictive.sh"
+# shellcheck source=sw-pipeline-vitals.sh
+[[ -f "$SCRIPT_DIR/sw-pipeline-vitals.sh" ]] && source "$SCRIPT_DIR/sw-pipeline-vitals.sh"
 
 # ─── GitHub API Modules (optional) ────────────────────────────────────────
 # shellcheck source=sw-github-graphql.sh
@@ -855,7 +857,56 @@ daemon_assess_progress() {
         if $npc == 0 then .last_progress_at = $ts else . end
         ' "$progress_file" > "$tmp_progress" 2>/dev/null && mv "$tmp_progress" "$progress_file"
 
-    # Determine verdict
+    # ── Vitals-based verdict (preferred over static thresholds) ──
+    if type pipeline_compute_vitals &>/dev/null 2>&1 && type pipeline_health_verdict &>/dev/null 2>&1; then
+        # Compute vitals using the worktree's pipeline state if available
+        local _worktree_state=""
+        local _worktree_artifacts=""
+        local _worktree_dir
+        _worktree_dir=$(jq -r --arg i "$issue_num" '.active_jobs[] | select(.issue == ($i | tonumber)) | .worktree // ""' "$STATE_FILE" 2>/dev/null || echo "")
+        if [[ -n "$_worktree_dir" && -d "$_worktree_dir/.claude" ]]; then
+            _worktree_state="$_worktree_dir/.claude/pipeline-state.md"
+            _worktree_artifacts="$_worktree_dir/.claude/pipeline-artifacts"
+        fi
+
+        local _vitals_json
+        _vitals_json=$(pipeline_compute_vitals "$_worktree_state" "$_worktree_artifacts" "$issue_num" 2>/dev/null) || true
+        if [[ -n "$_vitals_json" && "$_vitals_json" != "{}" ]]; then
+            local _health_verdict _health_score
+            _health_verdict=$(echo "$_vitals_json" | jq -r '.verdict // "continue"' 2>/dev/null || echo "continue")
+            _health_score=$(echo "$_vitals_json" | jq -r '.health_score // 50' 2>/dev/null || echo "50")
+
+            emit_event "pipeline.vitals_check" \
+                "issue=$issue_num" \
+                "health_score=$_health_score" \
+                "verdict=$_health_verdict" \
+                "no_progress=$no_progress_count" \
+                "repeated_errors=$repeated_errors"
+
+            # Map vitals verdict to daemon verdict
+            case "$_health_verdict" in
+                continue)
+                    echo "healthy"
+                    return
+                    ;;
+                warn)
+                    # Sluggish but not dead — equivalent to slowing
+                    echo "slowing"
+                    return
+                    ;;
+                intervene)
+                    echo "stalled"
+                    return
+                    ;;
+                abort)
+                    echo "stuck"
+                    return
+                    ;;
+            esac
+        fi
+    fi
+
+    # ── Fallback: static threshold verdict ──
     local warn_threshold="${PROGRESS_CHECKS_BEFORE_WARN:-3}"
     local kill_threshold="${PROGRESS_CHECKS_BEFORE_KILL:-6}"
 
@@ -1770,6 +1821,33 @@ daemon_reap_completed() {
             daemon_on_success "$issue_num" "$duration_str"
         else
             daemon_on_failure "$issue_num" "$exit_code" "$duration_str"
+
+            # Cancel any lingering in_progress GitHub Check Runs for failed job
+            if [[ "${NO_GITHUB:-false}" != "true" && -n "$worktree" ]]; then
+                local check_ids_file="${worktree}/.claude/pipeline-artifacts/check-run-ids.json"
+                if [[ -f "$check_ids_file" ]]; then
+                    daemon_log INFO "Cancelling in-progress check runs for issue #${issue_num}"
+                    local _stage
+                    while IFS= read -r _stage; do
+                        [[ -z "$_stage" ]] && continue
+                        # Direct API call since we're in daemon context
+                        local _run_id
+                        _run_id=$(jq -r --arg s "$_stage" '.[$s] // empty' "$check_ids_file" 2>/dev/null || true)
+                        if [[ -n "$_run_id" && "$_run_id" != "null" ]]; then
+                            local _detected
+                            _detected=$(git remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]\(.*\)\.git$|\1|' || true)
+                            if [[ -n "$_detected" ]]; then
+                                local _owner="${_detected%%/*}" _repo="${_detected##*/}"
+                                gh api "repos/${_owner}/${_repo}/check-runs/${_run_id}" \
+                                    --method PATCH \
+                                    --field status=completed \
+                                    --field conclusion=cancelled \
+                                    --silent 2>/dev/null || true
+                            fi
+                        fi
+                    done < <(jq -r 'keys[]' "$check_ids_file" 2>/dev/null || true)
+                fi
+            fi
         fi
 
         # Clean up progress tracking for this job
@@ -2014,9 +2092,19 @@ _Escalation: $(if [[ "$retry_count" -eq 1 ]]; then echo "upgraded model + increa
 
     # ── No retry — report final failure ──
     if [[ "$NO_GITHUB" != "true" ]]; then
-        # Add failure label
+        # Add failure label and remove watch label (prevent re-processing)
         gh issue edit "$issue_num" \
-            --add-label "$ON_FAILURE_ADD_LABEL" 2>/dev/null || true
+            --add-label "$ON_FAILURE_ADD_LABEL" \
+            --remove-label "$WATCH_LABEL" 2>/dev/null || true
+
+        # Close any draft PR created for this issue (cleanup abandoned work)
+        local draft_pr
+        draft_pr=$(gh pr list --head "daemon/issue-${issue_num}" --head "pipeline/pipeline-issue-${issue_num}" \
+            --json number,isDraft --jq '.[] | select(.isDraft == true) | .number' 2>/dev/null | head -1 || true)
+        if [[ -n "$draft_pr" ]]; then
+            gh pr close "$draft_pr" --delete-branch 2>/dev/null || true
+            daemon_log INFO "Closed draft PR #${draft_pr} for failed issue #${issue_num}"
+        fi
 
         # Comment with log tail
         local log_tail=""
@@ -2292,6 +2380,35 @@ select_pipeline_template() {
         daemon_log INFO "Intelligence: using static template selection (composer disabled, enable with intelligence.composer_enabled=true)"
     fi
 
+    # ── DORA-driven template escalation ──
+    if [[ -f "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" ]]; then
+        local _dora_events _dora_total _dora_failures _dora_cfr
+        _dora_events=$(tail -500 "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" \
+            | grep '"type":"pipeline.completed"' 2>/dev/null \
+            | tail -5 || true)
+        _dora_total=$(echo "$_dora_events" | grep -c '.' 2>/dev/null || echo "0")
+        _dora_total="${_dora_total:-0}"
+        if [[ "$_dora_total" -ge 3 ]]; then
+            _dora_failures=$(echo "$_dora_events" | grep -c '"result":"failure"' 2>/dev/null || true)
+            _dora_failures="${_dora_failures:-0}"
+            _dora_cfr=$(( _dora_failures * 100 / _dora_total ))
+            if [[ "$_dora_cfr" -gt 40 ]]; then
+                daemon_log INFO "DORA escalation: CFR ${_dora_cfr}% > 40% — forcing enterprise template"
+                emit_event "daemon.dora_escalation" \
+                    "cfr=$_dora_cfr" \
+                    "total=$_dora_total" \
+                    "failures=$_dora_failures" \
+                    "template=enterprise"
+                echo "enterprise"
+                return
+            fi
+            if [[ "$_dora_cfr" -lt 10 && "$score" -ge 60 ]]; then
+                daemon_log INFO "DORA: CFR ${_dora_cfr}% < 10% — fast template eligible"
+                # Fall through to allow other factors to also vote for fast
+            fi
+        fi
+    fi
+
     # ── Branch protection escalation (highest priority) ──
     if type gh_branch_protection &>/dev/null 2>&1 && [[ "${NO_GITHUB:-false}" != "true" ]]; then
         if type _gh_detect_repo &>/dev/null 2>&1; then
@@ -2337,6 +2454,44 @@ select_pipeline_template() {
         if [[ -n "$matched" ]]; then
             echo "$matched"
             return
+        fi
+    fi
+
+    # ── Quality memory-driven selection ──
+    local quality_scores_file="${HOME}/.shipwright/optimization/quality-scores.jsonl"
+    if [[ -f "$quality_scores_file" ]]; then
+        local repo_hash
+        repo_hash=$(cd "${REPO_DIR:-.}" && git rev-parse --show-toplevel 2>/dev/null | shasum -a 256 | cut -c1-16 || echo "unknown")
+        # Get last 5 quality scores for this repo
+        local recent_scores avg_quality has_critical
+        recent_scores=$(grep "\"repo\":\"$repo_hash\"" "$quality_scores_file" 2>/dev/null | tail -5 || true)
+        if [[ -n "$recent_scores" ]]; then
+            avg_quality=$(echo "$recent_scores" | jq -r '.quality_score // 70' 2>/dev/null | awk '{ sum += $1; count++ } END { if (count > 0) printf "%.0f", sum/count; else print 70 }')
+            has_critical=$(echo "$recent_scores" | jq -r '.findings.critical // 0' 2>/dev/null | awk '{ sum += $1 } END { print (sum > 0) ? "yes" : "no" }')
+
+            # Critical findings in recent history → force enterprise
+            if [[ "$has_critical" == "yes" ]]; then
+                daemon_log INFO "Quality memory: critical findings in recent runs — using enterprise template"
+                echo "enterprise"
+                return
+            fi
+
+            # Poor quality history → use full template
+            if [[ "${avg_quality:-70}" -lt 60 ]]; then
+                daemon_log INFO "Quality memory: avg score ${avg_quality}/100 in recent runs — using full template"
+                echo "full"
+                return
+            fi
+
+            # Excellent quality history → allow faster template
+            if [[ "${avg_quality:-70}" -gt 80 ]]; then
+                daemon_log INFO "Quality memory: avg score ${avg_quality}/100 in recent runs — eligible for fast template"
+                # Only upgrade if score also suggests fast
+                if [[ "$score" -ge 60 ]]; then
+                    echo "fast"
+                    return
+                fi
+            fi
         fi
     fi
 
@@ -4039,11 +4194,43 @@ daemon_auto_scale() {
     local max_by_queue=$(( queue_depth + active_count ))
     [[ "$max_by_queue" -lt 1 ]] && max_by_queue=1
 
+    # ── Vitals-driven scaling factor ──
+    local max_by_vitals="$MAX_WORKERS"
+    if type pipeline_compute_vitals &>/dev/null 2>&1 && [[ -f "$STATE_FILE" ]]; then
+        local _total_health=0 _health_count=0
+        while IFS= read -r _job; do
+            local _job_issue _job_worktree
+            _job_issue=$(echo "$_job" | jq -r '.issue // 0')
+            _job_worktree=$(echo "$_job" | jq -r '.worktree // ""')
+            if [[ -n "$_job_worktree" && -d "$_job_worktree/.claude" ]]; then
+                local _job_vitals _job_health
+                _job_vitals=$(pipeline_compute_vitals "$_job_worktree/.claude/pipeline-state.md" "$_job_worktree/.claude/pipeline-artifacts" "$_job_issue" 2>/dev/null) || true
+                if [[ -n "$_job_vitals" && "$_job_vitals" != "{}" ]]; then
+                    _job_health=$(echo "$_job_vitals" | jq -r '.health_score // 50' 2>/dev/null || echo "50")
+                    _total_health=$((_total_health + _job_health))
+                    _health_count=$((_health_count + 1))
+                fi
+            fi
+        done < <(jq -c '.active_jobs[]' "$STATE_FILE" 2>/dev/null || true)
+
+        if [[ "$_health_count" -gt 0 ]]; then
+            local _avg_health=$((_total_health / _health_count))
+            if [[ "$_avg_health" -lt 50 ]]; then
+                # Pipelines struggling — reduce workers to give each more resources
+                max_by_vitals=$(( MAX_WORKERS * _avg_health / 100 ))
+                [[ "$max_by_vitals" -lt "$MIN_WORKERS" ]] && max_by_vitals="$MIN_WORKERS"
+                daemon_log INFO "Auto-scale: vitals avg health ${_avg_health}% — capping at ${max_by_vitals} workers"
+            fi
+            # avg_health > 70: no reduction (full capacity available)
+        fi
+    fi
+
     # ── Compute final value ──
     local computed="$max_by_cpu"
     [[ "$max_by_mem" -lt "$computed" ]] && computed="$max_by_mem"
     [[ "$max_by_budget" -lt "$computed" ]] && computed="$max_by_budget"
     [[ "$max_by_queue" -lt "$computed" ]] && computed="$max_by_queue"
+    [[ "$max_by_vitals" -lt "$computed" ]] && computed="$max_by_vitals"
     [[ "$MAX_WORKERS" -lt "$computed" ]] && computed="$MAX_WORKERS"
 
     # Respect fleet-assigned ceiling if set
@@ -4302,7 +4489,19 @@ daemon_cleanup_stale() {
         done < <(git worktree list --porcelain 2>/dev/null | grep '^worktree ' | sed 's/^worktree //')
     fi
 
-    # ── 2. Clean old pipeline artifacts ──
+    # ── 2. Expire old checkpoints ──
+    if [[ -x "$SCRIPT_DIR/sw-checkpoint.sh" ]]; then
+        local expired_output
+        expired_output=$(bash "$SCRIPT_DIR/sw-checkpoint.sh" expire --hours "$((age_days * 24))" 2>/dev/null || true)
+        if [[ -n "$expired_output" ]] && echo "$expired_output" | grep -q "Expired"; then
+            local expired_count
+            expired_count=$(echo "$expired_output" | grep -c "Expired" || true)
+            cleaned=$((cleaned + ${expired_count:-0}))
+            daemon_log INFO "Expired ${expired_count:-0} old checkpoint(s)"
+        fi
+    fi
+
+    # ── 3. Clean old pipeline artifacts (subdirectories only) ──
     local artifacts_dir=".claude/pipeline-artifacts"
     if [[ -d "$artifacts_dir" ]]; then
         while IFS= read -r artifact_dir; do

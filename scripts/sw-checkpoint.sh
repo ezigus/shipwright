@@ -8,7 +8,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="1.9.0"
+VERSION="1.10.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
@@ -328,6 +328,78 @@ cmd_clear() {
     fi
 }
 
+# ─── Expire ──────────────────────────────────────────────────────────────────
+
+cmd_expire() {
+    local max_hours=24
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --hours)
+                max_hours="${2:-24}"
+                shift 2
+                ;;
+            --hours=*)
+                max_hours="${1#--hours=}"
+                shift
+                ;;
+            --help|-h)
+                show_help
+                return 0
+                ;;
+            *)
+                error "Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    if [[ ! -d "$CHECKPOINT_DIR" ]]; then
+        return 0
+    fi
+
+    local max_secs=$((max_hours * 3600))
+    local now_e
+    now_e=$(date +%s)
+    local expired=0
+
+    local file
+    for file in "${CHECKPOINT_DIR}"/*-checkpoint.json; do
+        [[ -f "$file" ]] || continue
+
+        # Check created_at from checkpoint JSON
+        local created_at
+        created_at=$(jq -r '.created_at // empty' "$file" 2>/dev/null || true)
+
+        if [[ -n "$created_at" ]]; then
+            # Parse ISO date to epoch
+            local file_epoch
+            file_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null \
+                || date -d "$created_at" +%s 2>/dev/null \
+                || echo "0")
+            if [[ "$file_epoch" -gt 0 && $((now_e - file_epoch)) -gt $max_secs ]]; then
+                local stage_name
+                stage_name=$(jq -r '.stage // "unknown"' "$file" 2>/dev/null || echo "unknown")
+                rm -f "$file"
+                expired=$((expired + 1))
+                info "Expired: ${stage_name} checkpoint (${max_hours}h+ old)"
+            fi
+        else
+            # Fallback: check file mtime
+            local mtime
+            mtime=$(stat -f '%m' "$file" 2>/dev/null || stat -c '%Y' "$file" 2>/dev/null || echo "0")
+            if [[ "$mtime" -gt 0 && $((now_e - mtime)) -gt $max_secs ]]; then
+                rm -f "$file"
+                expired=$((expired + 1))
+            fi
+        fi
+    done
+
+    if [[ "$expired" -gt 0 ]]; then
+        success "Expired ${expired} checkpoint(s) older than ${max_hours}h"
+    fi
+}
+
 # ─── Help ────────────────────────────────────────────────────────────────────
 
 show_help() {
@@ -341,6 +413,7 @@ show_help() {
     echo -e "  ${CYAN}restore${RESET}   Restore a checkpoint (prints JSON to stdout)"
     echo -e "  ${CYAN}list${RESET}      Show all available checkpoints"
     echo -e "  ${CYAN}clear${RESET}     Remove checkpoint(s)"
+    echo -e "  ${CYAN}expire${RESET}    Remove checkpoints older than N hours"
     echo ""
     echo -e "${BOLD}SAVE OPTIONS${RESET}"
     echo -e "  ${CYAN}--stage${RESET} <name>              Stage name (required)"
@@ -357,6 +430,9 @@ show_help() {
     echo -e "  ${CYAN}--stage${RESET} <name>              Stage to clear"
     echo -e "  ${CYAN}--all${RESET}                       Clear all checkpoints"
     echo ""
+    echo -e "${BOLD}EXPIRE OPTIONS${RESET}"
+    echo -e "  ${CYAN}--hours${RESET} <n>                 Max age in hours (default: 24)"
+    echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo -e "  ${DIM}shipwright checkpoint save --stage build --iteration 5${RESET}"
     echo -e "  ${DIM}shipwright checkpoint save --stage build --iteration 3 --tests-passing --files-modified \"src/auth.ts,src/middleware.ts\"${RESET}"
@@ -364,6 +440,7 @@ show_help() {
     echo -e "  ${DIM}shipwright checkpoint list${RESET}"
     echo -e "  ${DIM}shipwright checkpoint clear --stage build${RESET}"
     echo -e "  ${DIM}shipwright checkpoint clear --all${RESET}"
+    echo -e "  ${DIM}shipwright checkpoint expire --hours 48${RESET}"
 }
 
 # ─── Command Router ─────────────────────────────────────────────────────────
@@ -377,6 +454,7 @@ main() {
         restore)    cmd_restore "$@" ;;
         list)       cmd_list ;;
         clear)      cmd_clear "$@" ;;
+        expire)     cmd_expire "$@" ;;
         help|--help|-h) show_help ;;
         *)
             error "Unknown command: ${cmd}"

@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="1.9.0"
+VERSION="1.10.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -897,6 +897,58 @@ optimize_report() {
         "avg_cost=$avg_cost"
 
     success "Report complete"
+}
+
+# optimize_adjust_audit_intensity
+# Reads quality-scores.jsonl trends and adjusts intelligence feature flags
+# to increase audit intensity when quality is declining.
+optimize_adjust_audit_intensity() {
+    local quality_file="${HOME}/.shipwright/optimization/quality-scores.jsonl"
+    local daemon_config="${REPO_DIR:-.}/.claude/daemon-config.json"
+
+    [[ ! -f "$quality_file" ]] && return 0
+    [[ ! -f "$daemon_config" ]] && return 0
+
+    # Get last 10 quality scores
+    local recent_scores avg_quality trend
+    recent_scores=$(tail -10 "$quality_file" 2>/dev/null || true)
+    [[ -z "$recent_scores" ]] && return 0
+
+    avg_quality=$(echo "$recent_scores" | jq -r '.quality_score // 70' 2>/dev/null \
+        | awk '{ sum += $1; count++ } END { if (count > 0) printf "%.0f", sum/count; else print 70 }')
+    avg_quality="${avg_quality:-70}"
+
+    # Detect trend: compare first half vs second half
+    local first_half_avg second_half_avg
+    first_half_avg=$(echo "$recent_scores" | head -5 | jq -r '.quality_score // 70' 2>/dev/null \
+        | awk '{ sum += $1; count++ } END { if (count > 0) printf "%.0f", sum/count; else print 70 }')
+    second_half_avg=$(echo "$recent_scores" | tail -5 | jq -r '.quality_score // 70' 2>/dev/null \
+        | awk '{ sum += $1; count++ } END { if (count > 0) printf "%.0f", sum/count; else print 70 }')
+
+    if [[ "${second_half_avg:-70}" -lt "${first_half_avg:-70}" ]]; then
+        trend="declining"
+    else
+        trend="stable_or_improving"
+    fi
+
+    # Declining quality → enable more audits
+    if [[ "$trend" == "declining" || "${avg_quality:-70}" -lt 60 ]]; then
+        info "Quality trend: ${trend} (avg: ${avg_quality}) — increasing audit intensity"
+        local tmp_dc
+        tmp_dc=$(mktemp "${daemon_config}.tmp.XXXXXX")
+        jq '.intelligence.adversarial_enabled = true | .intelligence.architecture_enabled = true' \
+            "$daemon_config" > "$tmp_dc" 2>/dev/null && mv "$tmp_dc" "$daemon_config" || rm -f "$tmp_dc"
+        emit_event "optimize.audit_intensity" \
+            "avg_quality=$avg_quality" \
+            "trend=$trend" \
+            "action=increase"
+    elif [[ "${avg_quality:-70}" -gt 85 ]]; then
+        info "Quality trend: excellent (avg: ${avg_quality}) — maintaining standard audits"
+        emit_event "optimize.audit_intensity" \
+            "avg_quality=$avg_quality" \
+            "trend=$trend" \
+            "action=maintain"
+    fi
 }
 
 # ═════════════════════════════════════════════════════════════════════════════

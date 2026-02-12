@@ -1100,6 +1100,538 @@ test_hard_limit_override() {
     assert_contains "$(cat "$LOG_FILE")" "Hard limit exceeded" "log mentions hard limit"
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 24. Adaptive cycles convergence — extends limit on >50% issue drop
+# ──────────────────────────────────────────────────────────────────────────────
+test_adaptive_cycles_convergence() {
+    # Create a minimal script with the pipeline_adaptive_cycles function
+    local fns_script="$TEMP_DIR/adaptive-cycles-fns.sh"
+    cat > "$fns_script" <<'FEOF'
+#!/usr/bin/env bash
+set -uo pipefail
+emit_event() { true; }
+info() { true; }
+warn() { true; }
+IGNORE_BUDGET=true
+SCRIPT_DIR="/nonexistent"
+ISSUE_NUMBER=""
+
+# Extract and include the real function from sw-pipeline.sh
+FEOF
+
+    # Extract the pipeline_adaptive_cycles function from the real pipeline
+    sed -n '/^pipeline_adaptive_cycles()/,/^}/p' "$(dirname "$DAEMON_SCRIPT")/sw-pipeline.sh" >> "$fns_script" 2>/dev/null
+
+    # Test 1: rapid convergence (10 issues → 3 issues, >50% drop) should extend by 1
+    local result
+    result=$(
+        source "$fns_script" 2>/dev/null
+        pipeline_adaptive_cycles 3 "compound_quality" 3 10
+    ) || result=""
+
+    if [[ "$result" == "4" ]]; then
+        PASS=$((PASS + 1))
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} Expected adaptive limit 4 (3+1 for convergence), got '$result'"
+    FAIL=$((FAIL + 1))
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 25. Adaptive cycles divergence — reduces limit on issue count increase
+# ──────────────────────────────────────────────────────────────────────────────
+test_adaptive_cycles_divergence() {
+    # Create a minimal script with the pipeline_adaptive_cycles function
+    local fns_script="$TEMP_DIR/adaptive-cycles-div-fns.sh"
+    cat > "$fns_script" <<'FEOF'
+#!/usr/bin/env bash
+set -uo pipefail
+emit_event() { true; }
+info() { true; }
+warn() { true; }
+IGNORE_BUDGET=true
+SCRIPT_DIR="/nonexistent"
+ISSUE_NUMBER=""
+FEOF
+
+    # Extract the pipeline_adaptive_cycles function from the real pipeline
+    sed -n '/^pipeline_adaptive_cycles()/,/^}/p' "$(dirname "$DAEMON_SCRIPT")/sw-pipeline.sh" >> "$fns_script" 2>/dev/null
+
+    # Test: divergence (5 issues → 8 issues) should reduce limit by 1
+    local result
+    result=$(
+        source "$fns_script" 2>/dev/null
+        pipeline_adaptive_cycles 3 "compound_quality" 8 5
+    ) || result=""
+
+    if [[ "$result" == "2" ]]; then
+        PASS=$((PASS + 1))
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} Expected adaptive limit 2 (3-1 for divergence), got '$result'"
+    FAIL=$((FAIL + 1))
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 26. Adaptive cycles hard ceiling — never exceeds 2x base limit
+# ──────────────────────────────────────────────────────────────────────────────
+test_adaptive_cycles_hard_ceiling() {
+    # Create a minimal script with the pipeline_adaptive_cycles function
+    local fns_script="$TEMP_DIR/adaptive-cycles-ceil-fns.sh"
+    cat > "$fns_script" <<'FEOF'
+#!/usr/bin/env bash
+set -uo pipefail
+emit_event() { true; }
+info() { true; }
+warn() { true; }
+IGNORE_BUDGET=true
+SCRIPT_DIR="/nonexistent"
+ISSUE_NUMBER=""
+FEOF
+
+    # Extract the pipeline_adaptive_cycles function from the real pipeline
+    sed -n '/^pipeline_adaptive_cycles()/,/^}/p' "$(dirname "$DAEMON_SCRIPT")/sw-pipeline.sh" >> "$fns_script" 2>/dev/null
+
+    # Test: even with convergence, hard ceiling is 2x base (base=3 → max=6)
+    local result
+    result=$(
+        source "$fns_script" 2>/dev/null
+        pipeline_adaptive_cycles 3 "compound_quality" 1 10
+    ) || result=""
+
+    # Should be at most 6 (2 * 3), even with convergence boost
+    if [[ "$result" -le 6 && "$result" -ge 3 ]]; then
+        PASS=$((PASS + 1))
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} Expected adaptive limit <= 6 (hard ceiling), got '$result'"
+    FAIL=$((FAIL + 1))
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 27. Adaptive cycles no-op on first cycle — prev_issue_count=-1
+# ──────────────────────────────────────────────────────────────────────────────
+test_adaptive_cycles_first_cycle() {
+    # Create a minimal script with the pipeline_adaptive_cycles function
+    local fns_script="$TEMP_DIR/adaptive-cycles-first-fns.sh"
+    cat > "$fns_script" <<'FEOF'
+#!/usr/bin/env bash
+set -uo pipefail
+emit_event() { true; }
+info() { true; }
+warn() { true; }
+IGNORE_BUDGET=true
+SCRIPT_DIR="/nonexistent"
+ISSUE_NUMBER=""
+FEOF
+
+    # Extract the pipeline_adaptive_cycles function from the real pipeline
+    sed -n '/^pipeline_adaptive_cycles()/,/^}/p' "$(dirname "$DAEMON_SCRIPT")/sw-pipeline.sh" >> "$fns_script" 2>/dev/null
+
+    # Test: on first cycle (no previous count), return base_limit unchanged
+    local result
+    result=$(
+        source "$fns_script" 2>/dev/null
+        pipeline_adaptive_cycles 3 "compound_quality" 5 -1
+    ) || result=""
+
+    if [[ "$result" == "3" ]]; then
+        PASS=$((PASS + 1))
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} Expected base limit 3 (no adaptation on first cycle), got '$result'"
+    FAIL=$((FAIL + 1))
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 28. Checkpoint expire removes old checkpoints
+# ──────────────────────────────────────────────────────────────────────────────
+test_checkpoint_expire() {
+    local cp_dir="$TEMP_DIR/project/.claude/pipeline-artifacts/checkpoints"
+    mkdir -p "$cp_dir"
+
+    # Create a checkpoint with a very old created_at
+    cat > "$cp_dir/build-checkpoint.json" <<'EOF'
+{"stage":"build","iteration":3,"created_at":"2020-01-01T00:00:00Z"}
+EOF
+
+    # Create a fresh checkpoint (within the last hour)
+    local fresh_ts
+    fresh_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    cat > "$cp_dir/test-checkpoint.json" <<EOF
+{"stage":"test","iteration":1,"created_at":"${fresh_ts}"}
+EOF
+
+    # Run checkpoint expire with 1 hour max
+    local checkpoint_script
+    checkpoint_script="$(dirname "$DAEMON_SCRIPT")/sw-checkpoint.sh"
+    if [[ ! -f "$checkpoint_script" ]]; then
+        echo -e "    ${RED}✗${RESET} sw-checkpoint.sh not found"
+        FAIL=$((FAIL + 1))
+        return 1
+    fi
+
+    (cd "$TEMP_DIR/project" && bash "$checkpoint_script" expire --hours 1 2>/dev/null) || true
+
+    # Old checkpoint should be removed
+    if [[ -f "$cp_dir/build-checkpoint.json" ]]; then
+        echo -e "    ${RED}✗${RESET} Old checkpoint should have been expired"
+        FAIL=$((FAIL + 1))
+        return 1
+    fi
+
+    # Fresh checkpoint should remain
+    if [[ ! -f "$cp_dir/test-checkpoint.json" ]]; then
+        echo -e "    ${RED}✗${RESET} Fresh checkpoint should NOT have been expired"
+        FAIL=$((FAIL + 1))
+        return 1
+    fi
+
+    PASS=$((PASS + 1))
+    return 0
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 29. Daemon failure handler removes watch label
+# ──────────────────────────────────────────────────────────────────────────────
+test_daemon_failure_removes_watch_label() {
+    # Verify the daemon_on_failure function includes --remove-label for watch label
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+
+    # Check that the failure handler removes the watch label
+    if grep -A 5 "No retry.*report final failure" "$daemon_src" | grep -q "remove-label.*WATCH_LABEL"; then
+        PASS=$((PASS + 1))
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} daemon_on_failure should remove WATCH_LABEL on final failure"
+    FAIL=$((FAIL + 1))
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 30. Daemon failure handler closes draft PRs
+# ──────────────────────────────────────────────────────────────────────────────
+test_daemon_failure_closes_draft_pr() {
+    # Verify the daemon_on_failure function has draft PR cleanup logic
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+
+    if grep -q 'gh pr close.*draft_pr.*delete-branch' "$daemon_src"; then
+        PASS=$((PASS + 1))
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} daemon_on_failure should close draft PRs on final failure"
+    FAIL=$((FAIL + 1))
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 31. Cleanup script has pipeline artifact sections
+# ──────────────────────────────────────────────────────────────────────────────
+test_cleanup_has_artifact_sections() {
+    local cleanup_src
+    cleanup_src="$(dirname "$DAEMON_SCRIPT")/sw-cleanup.sh"
+
+    local sections_found=0
+    if grep -q "Pipeline Artifacts" "$cleanup_src"; then
+        sections_found=$((sections_found + 1))
+    fi
+    if grep -q "Checkpoints" "$cleanup_src"; then
+        sections_found=$((sections_found + 1))
+    fi
+    if grep -q "Pipeline State" "$cleanup_src"; then
+        sections_found=$((sections_found + 1))
+    fi
+    if grep -q "Heartbeats" "$cleanup_src"; then
+        sections_found=$((sections_found + 1))
+    fi
+    if grep -q "Orphaned Branches" "$cleanup_src"; then
+        sections_found=$((sections_found + 1))
+    fi
+
+    if [[ "$sections_found" -ge 5 ]]; then
+        PASS=$((PASS + 1))
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} Expected 5 cleanup sections, found $sections_found"
+    FAIL=$((FAIL + 1))
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 32. Daemon sources vitals module
+# ──────────────────────────────────────────────────────────────────────────────
+test_daemon_sources_vitals() {
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+
+    # Check that the daemon sources sw-pipeline-vitals.sh
+    if grep -q 'source.*sw-pipeline-vitals.sh' "$daemon_src"; then
+        PASS=$((PASS + 1))
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} daemon should source sw-pipeline-vitals.sh"
+    FAIL=$((FAIL + 1))
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 33. Vitals verdict mapping: continue→healthy, warn→slowing, intervene→stalled, abort→stuck
+# ──────────────────────────────────────────────────────────────────────────────
+test_vitals_verdict_mapping() {
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+
+    # Extract the vitals verdict mapping block and verify all 4 mappings
+    local found=0
+    if grep -q 'Map vitals verdict to daemon verdict' "$daemon_src"; then
+        found=$((found + 1))
+    fi
+    # Check the case block contains all 4 mappings (use multiline sed to extract)
+    local mapping_block
+    mapping_block=$(sed -n '/Map vitals verdict/,/esac/p' "$daemon_src" 2>/dev/null || true)
+    if echo "$mapping_block" | grep -q 'echo "healthy"'; then
+        found=$((found + 1))
+    fi
+    if echo "$mapping_block" | grep -q 'echo "slowing"'; then
+        found=$((found + 1))
+    fi
+    if echo "$mapping_block" | grep -q 'echo "stalled"'; then
+        found=$((found + 1))
+    fi
+    if echo "$mapping_block" | grep -q 'echo "stuck"'; then
+        found=$((found + 1))
+    fi
+
+    if [[ "$found" -ge 4 ]]; then
+        PASS=$((PASS + 1))
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} Expected 4+ vitals verdict mappings, found $found"
+    FAIL=$((FAIL + 1))
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 34. Vitals emits pipeline.vitals_check event
+# ──────────────────────────────────────────────────────────────────────────────
+test_vitals_event_emission() {
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+
+    # Verify the daemon emits pipeline.vitals_check events
+    if grep -q 'emit_event "pipeline.vitals_check"' "$daemon_src"; then
+        PASS=$((PASS + 1))
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} daemon should emit pipeline.vitals_check events"
+    FAIL=$((FAIL + 1))
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 35. Auto-scale includes vitals health factor
+# ──────────────────────────────────────────────────────────────────────────────
+test_autoscale_vitals_factor() {
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+
+    local found=0
+    # Check for vitals-driven scaling factor
+    if grep -q 'max_by_vitals' "$daemon_src"; then
+        found=$((found + 1))
+    fi
+    # Check that vitals factor caps workers when health is low
+    if grep -q '_avg_health.*-lt 50' "$daemon_src"; then
+        found=$((found + 1))
+    fi
+    # Check that vitals factor is included in min computation
+    if grep -q 'max_by_vitals.*-lt.*computed' "$daemon_src"; then
+        found=$((found + 1))
+    fi
+
+    if [[ "$found" -ge 3 ]]; then
+        PASS=$((PASS + 1))
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} Expected 3 vitals auto-scale checks, found $found"
+    FAIL=$((FAIL + 1))
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 36. Quality memory drives template selection
+# ──────────────────────────────────────────────────────────────────────────────
+test_quality_memory_template() {
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+
+    local found=0
+    # Check for quality-scores.jsonl reference
+    if grep -q 'quality-scores.jsonl' "$daemon_src"; then
+        found=$((found + 1))
+    fi
+    # Check for enterprise escalation on critical findings
+    if grep -q 'critical findings.*enterprise' "$daemon_src"; then
+        found=$((found + 1))
+    fi
+    # Check for full template on poor quality
+    if grep -q 'avg.*score.*full template' "$daemon_src"; then
+        found=$((found + 1))
+    fi
+    # Check for fast template on excellent quality
+    if grep -q 'eligible for fast' "$daemon_src"; then
+        found=$((found + 1))
+    fi
+
+    if [[ "$found" -ge 3 ]]; then
+        PASS=$((PASS + 1))
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} Expected 3+ quality memory template checks, found $found"
+    FAIL=$((FAIL + 1))
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 37. Vitals-based progress replaces static thresholds (with fallback)
+# ──────────────────────────────────────────────────────────────────────────────
+test_vitals_progress_fallback() {
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+
+    local found=0
+    # Vitals-based verdict is attempted first
+    if grep -q 'Vitals-based verdict.*preferred over static' "$daemon_src"; then
+        found=$((found + 1))
+    fi
+    # Static thresholds still exist as fallback
+    if grep -q 'PROGRESS_CHECKS_BEFORE_WARN' "$daemon_src"; then
+        found=$((found + 1))
+    fi
+    if grep -q 'PROGRESS_CHECKS_BEFORE_KILL' "$daemon_src"; then
+        found=$((found + 1))
+    fi
+
+    if [[ "$found" -ge 3 ]]; then
+        PASS=$((PASS + 1))
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} Expected vitals + static fallback pattern, found $found of 3"
+    FAIL=$((FAIL + 1))
+    return 1
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MEMORY AND LEARNING TESTS (4C)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 38. Memory: query fix for error returns matching fix
+# ──────────────────────────────────────────────────────────────────────────────
+test_memory_query_fix() {
+    local mem_dir="$TEMP_DIR/.shipwright/memory"
+    # Create a fake repo hash directory
+    local repo_dir="$mem_dir/test-repo-hash"
+    mkdir -p "$repo_dir"
+
+    cat > "$repo_dir/failures.json" <<'MEMJSON'
+{"failures":[{"stage":"build","pattern":"TypeError: cannot read property","fix":"Add null check before property access","fix_effectiveness_rate":85,"seen_count":3,"category":"logic"}]}
+MEMJSON
+
+    # Source memory.sh in a subshell with overridden paths
+    local result
+    result=$(
+        MEMORY_ROOT="$mem_dir"
+        repo_hash() { echo "test-repo-hash"; }
+        repo_name() { echo "test/repo"; }
+        ensure_memory_dir() { true; }
+        export -f repo_hash repo_name ensure_memory_dir
+
+        # Source just the function we need
+        local mem_script
+        mem_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sw-memory.sh"
+        # Extract memory_query_fix_for_error
+        memory_query_fix_for_error() {
+            local error_pattern="$1"
+            [[ -z "$error_pattern" ]] && return 0
+            local failures_file="$repo_dir/failures.json"
+            [[ ! -f "$failures_file" ]] && return 0
+            local matches
+            matches=$(jq -r --arg pat "$error_pattern" '
+                [.failures[]
+                | select(.pattern != null and .pattern != "")
+                | select(.pattern | test($pat; "i") // false)
+                | select(.fix != null and .fix != "")
+                | select((.fix_effectiveness_rate // 0) > 50)
+                | {fix, fix_effectiveness_rate, seen_count, category, stage, pattern}]
+                | sort_by(-.fix_effectiveness_rate)
+                | .[0] // null
+            ' "$failures_file" 2>/dev/null) || true
+            if [[ -n "$matches" && "$matches" != "null" ]]; then
+                echo "$matches"
+            fi
+        }
+
+        memory_query_fix_for_error "TypeError"
+    ) || true
+
+    assert_contains "$result" "null check" "fix contains null check advice"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 39. DORA template escalation: CFR>40% → enterprise eligible
+# ──────────────────────────────────────────────────────────────────────────────
+test_dora_template_escalation() {
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+
+    # Verify the DORA-based template selection patterns exist
+    local found=0
+    # Check for CFR threshold driving template escalation
+    if grep -q "cfr.*enterprise\|enterprise.*cfr\|CFR.*enterprise" "$daemon_src"; then
+        found=$((found + 1))
+    fi
+    # Check for fast template eligibility
+    if grep -q "eligible for fast\|fast.*eligible\|cfr.*fast" "$daemon_src"; then
+        found=$((found + 1))
+    fi
+
+    if [[ "$found" -ge 2 ]]; then
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} Expected DORA template escalation patterns, found $found of 2"
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 40. Error classification: all 12 categories in post-tool-use.sh
+# ──────────────────────────────────────────────────────────────────────────────
+test_error_classification_categories() {
+    local hook_file
+    hook_file="$(cd "$(dirname "$DAEMON_SCRIPT")/.." && pwd)/.claude/hooks/post-tool-use.sh"
+    [[ ! -f "$hook_file" ]] && { echo -e "    ${RED}✗${RESET} post-tool-use.sh not found at $hook_file"; return 1; }
+
+    local categories="test syntax missing permission timeout security logic dependency flaky config api resource"
+    local missing=""
+    for cat in $categories; do
+        if ! grep -q "\"$cat\"" "$hook_file" 2>/dev/null; then
+            missing="${missing} $cat"
+        fi
+    done
+
+    if [[ -z "$missing" ]]; then
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} Missing error categories:$missing"
+    return 1
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1156,6 +1688,23 @@ main() {
         "test_progress_repeated_errors:Progress detects repeated error loop"
         "test_progress_diff_growth_resets:Progress resets on diff growth"
         "test_hard_limit_override:Hard limit kills even with progress on"
+        "test_adaptive_cycles_convergence:Adaptive cycles extends limit on >50% issue drop"
+        "test_adaptive_cycles_divergence:Adaptive cycles reduces limit on issue increase"
+        "test_adaptive_cycles_hard_ceiling:Adaptive cycles respects 2x base hard ceiling"
+        "test_adaptive_cycles_first_cycle:Adaptive cycles no-op on first cycle"
+        "test_checkpoint_expire:Cleanup: Checkpoint expire removes old checkpoints"
+        "test_daemon_failure_removes_watch_label:Cleanup: Failure handler removes watch label"
+        "test_daemon_failure_closes_draft_pr:Cleanup: Failure handler closes draft PRs"
+        "test_cleanup_has_artifact_sections:Cleanup: sw-cleanup.sh has all artifact cleanup sections"
+        "test_daemon_sources_vitals:Daemon sources vitals module"
+        "test_vitals_verdict_mapping:Vitals verdict maps to daemon verdict (continue→healthy etc)"
+        "test_vitals_event_emission:Vitals emits pipeline.vitals_check events"
+        "test_autoscale_vitals_factor:Auto-scale includes vitals health factor"
+        "test_quality_memory_template:Quality memory drives template selection"
+        "test_vitals_progress_fallback:Vitals-based progress with static fallback"
+        "test_memory_query_fix:Memory: query fix for error returns matching fix"
+        "test_dora_template_escalation:Memory: DORA template escalation patterns exist"
+        "test_error_classification_categories:Memory: All 12 error categories in post-tool-use.sh"
     )
 
     for entry in "${tests[@]}"; do

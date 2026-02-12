@@ -6,6 +6,11 @@
     "model": "sonnet",
     "agents": 1
   },
+  "intelligence": {
+    "adversarial_enabled": true,
+    "architecture_enabled": true,
+    "simulation_enabled": true
+  },
   "stages": [
     {
       "id": "intake",
@@ -40,6 +45,20 @@
       "enabled": false,
       "gate": "auto",
       "config": {}
+    },
+    {
+      "id": "compound_quality",
+      "enabled": true,
+      "gate": "auto",
+      "config": {
+        "adversarial": true,
+        "negative": true,
+        "e2e": false,
+        "dod_audit": true,
+        "max_cycles": 1,
+        "audit_intensity": "auto",
+        "compound_quality_blocking": true
+      }
     },
     {
       "id": "pr",

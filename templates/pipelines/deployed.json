@@ -6,17 +6,37 @@
     "model": "opus",
     "agents": 1
   },
+  "intelligence": {
+    "adversarial_enabled": true,
+    "architecture_enabled": true,
+    "simulation_enabled": true
+  },
   "stages": [
     { "id": "intake", "enabled": true, "gate": "auto", "config": {} },
-    { "id": "plan", "enabled": true, "gate": "auto", "config": { "model": "opus" } },
-    { "id": "design", "enabled": true, "gate": "auto", "config": { "model": "opus" } },
+    {
+      "id": "plan",
+      "enabled": true,
+      "gate": "auto",
+      "config": { "model": "opus" }
+    },
+    {
+      "id": "design",
+      "enabled": true,
+      "gate": "auto",
+      "config": { "model": "opus" }
+    },
     {
       "id": "build",
       "enabled": true,
       "gate": "auto",
       "config": { "max_iterations": 20, "audit": true, "quality_gates": true }
     },
-    { "id": "test", "enabled": true, "gate": "auto", "config": { "coverage_min": 80 } },
+    {
+      "id": "test",
+      "enabled": true,
+      "gate": "auto",
+      "config": { "coverage_min": 80 }
+    },
     { "id": "review", "enabled": true, "gate": "auto", "config": {} },
     {
       "id": "compound_quality",
@@ -27,10 +47,17 @@
         "negative": true,
         "e2e": true,
         "dod_audit": true,
-        "max_cycles": 3
+        "max_cycles": 3,
+        "audit_intensity": "auto",
+        "compound_quality_blocking": true
       }
     },
-    { "id": "pr", "enabled": true, "gate": "auto", "config": { "wait_ci": false } },
+    {
+      "id": "pr",
+      "enabled": true,
+      "gate": "auto",
+      "config": { "wait_ci": false }
+    },
     {
       "id": "merge",
       "enabled": true,
@@ -48,7 +75,14 @@
       "config": {
         "staging_cmd": "__STAGING_CMD__",
         "production_cmd": "__PRODUCTION_CMD__",
-        "rollback_cmd": "__ROLLBACK_CMD__"
+        "rollback_cmd": "__ROLLBACK_CMD__",
+        "deploy_strategy": "direct",
+        "canary_cmd": "__CANARY_CMD__",
+        "promote_cmd": "__PROMOTE_CMD__",
+        "switch_cmd": "__SWITCH_CMD__",
+        "health_url": "__HEALTH_URL__",
+        "pre_deploy_ci_status": true,
+        "pre_deploy_min_coverage": 80
       }
     },
     {

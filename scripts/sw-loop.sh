@@ -44,7 +44,7 @@ MAX_TURNS=""
 RESUME=false
 VERBOSE=false
 MAX_ITERATIONS_EXPLICIT=false
-VERSION="1.9.0"
+VERSION="1.10.0"
 
 # ─── Flexible Iteration Defaults ────────────────────────────────────────────
 AUTO_EXTEND=true          # Auto-extend iterations when work is incomplete
@@ -568,6 +568,30 @@ check_completion() {
 }
 
 check_circuit_breaker() {
+    # Vitals-driven circuit breaker (preferred over static threshold)
+    if type pipeline_compute_vitals &>/dev/null 2>&1 && type pipeline_health_verdict &>/dev/null 2>&1; then
+        local _vitals_json _verdict
+        local _loop_state="${STATE_FILE:-}"
+        local _loop_artifacts="${ARTIFACTS_DIR:-}"
+        local _loop_issue="${ISSUE_NUMBER:-}"
+        _vitals_json=$(pipeline_compute_vitals "$_loop_state" "$_loop_artifacts" "$_loop_issue" 2>/dev/null) || true
+        if [[ -n "$_vitals_json" && "$_vitals_json" != "{}" ]]; then
+            _verdict=$(echo "$_vitals_json" | jq -r '.verdict // "continue"' 2>/dev/null || echo "continue")
+            if [[ "$_verdict" == "abort" ]]; then
+                local _health_score
+                _health_score=$(echo "$_vitals_json" | jq -r '.health_score // 0' 2>/dev/null || echo "0")
+                error "Vitals circuit breaker: health score ${_health_score}/100 — aborting (${CONSECUTIVE_FAILURES} stagnant iterations)"
+                STATUS="circuit_breaker"
+                return 1
+            fi
+            # Vitals say continue/warn/intervene — don't trip circuit breaker yet
+            if [[ "$_verdict" == "continue" || "$_verdict" == "warn" ]]; then
+                return 0
+            fi
+        fi
+    fi
+
+    # Fallback: static threshold circuit breaker
     if [[ "$CONSECUTIVE_FAILURES" -ge "$CIRCUIT_BREAKER_THRESHOLD" ]]; then
         error "Circuit breaker tripped: ${CIRCUIT_BREAKER_THRESHOLD} consecutive iterations with no meaningful progress."
         STATUS="circuit_breaker"

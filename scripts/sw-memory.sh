@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="1.9.0"
+VERSION="1.10.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -310,6 +310,59 @@ memory_record_fix_outcome() {
         "pattern=${pattern_match:0:60}" \
         "applied=${fix_applied}" \
         "resolved=${fix_resolved}"
+}
+
+# memory_query_fix_for_error <error_pattern>
+# Searches failure memory for known fixes matching the given error pattern.
+# Returns JSON with the best fix (highest effectiveness rate) or empty.
+memory_query_fix_for_error() {
+    local error_pattern="$1"
+    [[ -z "$error_pattern" ]] && return 0
+
+    ensure_memory_dir
+    local mem_dir
+    mem_dir="$(repo_memory_dir)"
+    local failures_file="$mem_dir/failures.json"
+
+    [[ ! -f "$failures_file" ]] && return 0
+
+    # Search for matching failures with successful fixes
+    local matches
+    matches=$(jq -r --arg pat "$error_pattern" '
+        [.failures[]
+        | select(.pattern != null and .pattern != "")
+        | select(.pattern | test($pat; "i") // false)
+        | select(.fix != null and .fix != "")
+        | select((.fix_effectiveness_rate // 0) > 50)
+        | {fix, fix_effectiveness_rate, seen_count, category, stage, pattern}]
+        | sort_by(-.fix_effectiveness_rate)
+        | .[0] // null
+    ' "$failures_file" 2>/dev/null) || true
+
+    if [[ -n "$matches" && "$matches" != "null" ]]; then
+        echo "$matches"
+    fi
+}
+
+# memory_closed_loop_inject <error_sig>
+# Combines error → memory → fix into injectable text for build retries.
+# Returns a one-line summary suitable for goal augmentation.
+memory_closed_loop_inject() {
+    local error_sig="$1"
+    [[ -z "$error_sig" ]] && return 0
+
+    local fix_json
+    fix_json=$(memory_query_fix_for_error "$error_sig") || true
+    [[ -z "$fix_json" || "$fix_json" == "null" ]] && return 0
+
+    local fix_text success_rate category
+    fix_text=$(echo "$fix_json" | jq -r '.fix // ""')
+    success_rate=$(echo "$fix_json" | jq -r '.fix_effectiveness_rate // 0')
+    category=$(echo "$fix_json" | jq -r '.category // "unknown"')
+
+    [[ -z "$fix_text" ]] && return 0
+
+    echo "[$category, ${success_rate}% success rate] $fix_text"
 }
 
 # memory_analyze_failure <log_file> <stage>
@@ -792,6 +845,29 @@ memory_inject_context() {
             fi
             ;;
     esac
+
+    # ── Cross-repo memory injection (global learnings) ──
+    if [[ -f "$GLOBAL_MEMORY" ]]; then
+        local global_patterns
+        global_patterns=$(jq -r --arg stage "$stage_id" '
+            .common_patterns // [] | .[] |
+            select(.category == $stage or .category == "general" or .category == null) |
+            .summary // .description // empty
+        ' "$GLOBAL_MEMORY" 2>/dev/null | head -5 || true)
+
+        local cross_repo_learnings
+        cross_repo_learnings=$(jq -r '
+            .cross_repo_learnings // [] | .[-5:][] |
+            "- [\(.repo // "unknown")] \(.type // "learning"): bugs=\(.bugs // 0), warnings=\(.warnings // 0)"
+        ' "$GLOBAL_MEMORY" 2>/dev/null | head -5 || true)
+
+        if [[ -n "$global_patterns" || -n "$cross_repo_learnings" ]]; then
+            echo ""
+            echo "## Cross-Repo Learnings (Global)"
+            [[ -n "$global_patterns" ]] && echo "$global_patterns"
+            [[ -n "$cross_repo_learnings" ]] && echo "$cross_repo_learnings"
+        fi
+    fi
 
     echo ""
     emit_event "memory.inject" "stage=${stage_id}"

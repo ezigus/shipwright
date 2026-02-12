@@ -19,11 +19,18 @@ if [[ "$tool_name" == "Bash" ]] && [[ "${exit_code:-0}" != "0" ]]; then
     # Classify error type
     error_type="unknown"
     case "$error_snippet" in
-        *"test"*|*"FAIL"*|*"assert"*) error_type="test" ;;
-        *"syntax"*|*"unexpected"*)     error_type="syntax" ;;
-        *"not found"*|*"No such"*)     error_type="missing" ;;
-        *"permission"*|*"denied"*)     error_type="permission" ;;
-        *"timeout"*|*"timed out"*)     error_type="timeout" ;;
+        *"test"*|*"FAIL"*|*"assert"*|*"expect"*)        error_type="test" ;;
+        *"syntax"*|*"unexpected"*|*"parse error"*)       error_type="syntax" ;;
+        *"not found"*|*"No such"*|*"ENOENT"*)            error_type="missing" ;;
+        *"permission"*|*"denied"*|*"EACCES"*)            error_type="permission" ;;
+        *"timeout"*|*"timed out"*|*"ETIMEDOUT"*)         error_type="timeout" ;;
+        *"injection"*|*"XSS"*|*"CSRF"*|*"CVE-"*)        error_type="security" ;;
+        *"TypeError"*|*"ReferenceError"*|*"null"*|*"undefined is not"*) error_type="logic" ;;
+        *"ERESOLVE"*|*"peer dep"*|*"version"*|*"incompatible"*) error_type="dependency" ;;
+        *"flaky"*|*"intermittent"*|*"race condition"*)   error_type="flaky" ;;
+        *"config"*|*"env"*|*"missing key"*|*"invalid option"*) error_type="config" ;;
+        *"ECONNREFUSED"*|*"503"*|*"502"*|*"rate limit"*) error_type="api" ;;
+        *"ENOMEM"*|*"disk full"*|*"quota"*)              error_type="resource" ;;
     esac
 
     # Append to JSONL log

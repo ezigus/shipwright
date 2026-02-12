@@ -159,17 +159,17 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | --- | ---: | --- |
 | `scripts/sw-adversarial.sh` | 274 | Adversarial Agent Code Review |
 | `scripts/sw-architecture-enforcer.sh` | 330 | Living Architecture Model & Enforcer |
-| `scripts/sw-checkpoint.sh` | 385 | Save and restore agent state mid-stage |
+| `scripts/sw-checkpoint.sh` | 390 | Save and restore agent state mid-stage |
 | `scripts/sw-cleanup.sh` | 174 | Clean up orphaned Claude team sessions |
 | `scripts/sw-connect.sh` | 619 | Sync local state to team dashboard |
-| `scripts/sw-cost.sh` | 919 | Token Usage & Cost Intelligence |
-| `scripts/sw-daemon.sh` | 4947 | Autonomous GitHub Issue Watcher |
+| `scripts/sw-cost.sh` | 924 | Token Usage & Cost Intelligence |
+| `scripts/sw-daemon.sh` | 4972 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 477 | Fleet Command Dashboard |
 | `scripts/sw-developer-simulation.sh` | 252 | Multi-Persona Developer Simulation |
 | `scripts/sw-docs.sh` | 635 | Documentation Keeper |
 | `scripts/sw-doctor.sh` | 907 | Validate Shipwright setup |
 | `scripts/sw-fix.sh` | 482 | Bulk Fix Across Multiple Repos |
-| `scripts/sw-fleet.sh` | 1376 | Multi-Repo Daemon Orchestrator |
+| `scripts/sw-fleet.sh` | 1380 | Multi-Repo Daemon Orchestrator |
 | `scripts/sw-heartbeat.sh` | 293 | File-based agent heartbeat protocol |
 | `scripts/sw-init.sh` | 522 | Complete setup for Shipwright + Shipwright |
 | `scripts/sw-intelligence.sh` | 1196 | AI-Powered Analysis & Decision Engine |
@@ -177,11 +177,11 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 364 | Process supervision on macOS |
 | `scripts/sw-linear.sh` | 648 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 343 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 1803 | Continuous agent loop harness for Claude Code |
-| `scripts/sw-memory.sh` | 1421 | Persistent Learning & Context System |
+| `scripts/sw-loop.sh` | 1822 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-memory.sh` | 1431 | Persistent Learning & Context System |
 | `scripts/sw-patrol-meta.sh` | 417 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 455 | Dynamic Pipeline Composition |
-| `scripts/sw-pipeline.sh` | 5979 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 5985 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-predictive.sh` | 820 | Predictive & Proactive Intelligence |
 | `scripts/sw-prep.sh` | 1642 | Repository Preparation for Agent Teams |
 | `scripts/sw-ps.sh` | 170 | Show running agent process status |
@@ -195,7 +195,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-tmux.sh` | 591 | tmux Health & Plugin Management |
 | `scripts/sw-tracker.sh` | 409 | Provider Router for Issue Tracker Integration |
 | `scripts/sw-upgrade.sh` | 479 | Detect and apply updates from the repo |
-| `scripts/sw-worktree.sh` | 407 | Git worktree management for multi-agent isolation |
+| `scripts/sw-worktree.sh` | 408 | Git worktree management for multi-agent isolation |
 | `scripts/sw` | 330 | CLI router — dispatches subcommands via exec |
 <!-- /AUTO:core-scripts -->
 

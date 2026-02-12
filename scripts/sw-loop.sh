@@ -224,6 +224,15 @@ if ! git rev-parse --is-inside-work-tree &>/dev/null 2>&1; then
     exit 1
 fi
 
+# ─── Timeout Detection ────────────────────────────────────────────────────────
+TIMEOUT_CMD=""
+if command -v timeout &>/dev/null; then
+    TIMEOUT_CMD="timeout"
+elif command -v gtimeout &>/dev/null; then
+    TIMEOUT_CMD="gtimeout"
+fi
+CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-1800}"  # 30 min default
+
 if [[ "$AGENTS" -gt 1 ]]; then
     if ! command -v tmux &>/dev/null; then
         error "tmux is required for multi-agent mode."
@@ -1220,10 +1229,20 @@ run_claude_iteration() {
 
     echo -e "\n${CYAN}${BOLD}▸${RESET} ${BOLD}Iteration ${ITERATION}/${MAX_ITERATIONS}${RESET} — Starting..."
 
-    # Run Claude headless
+    # Run Claude headless (with timeout + PID capture for signal handling)
     local exit_code=0
     # shellcheck disable=SC2086
-    claude -p "$prompt" $flags > "$log_file" 2>&1 || exit_code=$?
+    if [[ -n "$TIMEOUT_CMD" ]]; then
+        $TIMEOUT_CMD "$CLAUDE_TIMEOUT" claude -p "$prompt" $flags > "$log_file" 2>&1 &
+    else
+        claude -p "$prompt" $flags > "$log_file" 2>&1 &
+    fi
+    CHILD_PID=$!
+    wait "$CHILD_PID" 2>/dev/null || exit_code=$?
+    CHILD_PID=""
+    if [[ "$exit_code" -eq 124 ]]; then
+        warn "Claude CLI timed out after ${CLAUDE_TIMEOUT}s"
+    fi
 
     local iter_end
     iter_end="$(now_epoch)"
@@ -1669,8 +1688,8 @@ run_single_agent_loop() {
     while true; do
         # Pre-checks (before incrementing — ITERATION tracks completed count)
         check_circuit_breaker || break
+        check_max_iterations || break
         ITERATION=$(( ITERATION + 1 ))
-        check_max_iterations || { ITERATION=$(( ITERATION - 1 )); break; }
 
         # Run Claude
         local exit_code=0

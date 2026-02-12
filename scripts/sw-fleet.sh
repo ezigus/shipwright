@@ -892,13 +892,17 @@ fleet_start() {
         pool_total=$(jq -r '.worker_pool.total_workers // 12' "$config_file")
         fleet_rebalance "$config_file" &
         local rebalancer_pid=$!
+        sleep 1
+        if ! kill -0 "$rebalancer_pid" 2>/dev/null; then
+            fleet_log ERROR "Rebalancer process exited immediately (PID: $rebalancer_pid)"
+        else
+            # Record rebalancer PID in fleet state
+            local tmp_rs="${FLEET_STATE}.tmp.$$"
+            jq --argjson pid "$rebalancer_pid" '.rebalancer_pid = $pid' "$FLEET_STATE" > "$tmp_rs" \
+                && mv "$tmp_rs" "$FLEET_STATE"
 
-        # Record rebalancer PID in fleet state
-        local tmp_rs="${FLEET_STATE}.tmp.$$"
-        jq --argjson pid "$rebalancer_pid" '.rebalancer_pid = $pid' "$FLEET_STATE" > "$tmp_rs" \
-            && mv "$tmp_rs" "$FLEET_STATE"
-
-        success "Worker pool: ${CYAN}${pool_total} total workers${RESET} (rebalancer PID: ${rebalancer_pid})"
+            success "Worker pool: ${CYAN}${pool_total} total workers${RESET} (rebalancer PID: ${rebalancer_pid})"
+        fi
     fi
 
     # Start distributed worker loop if machines are registered

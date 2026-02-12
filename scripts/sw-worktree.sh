@@ -218,6 +218,7 @@ worktree_remove() {
         git worktree remove "$worktree_path" --force 2>/dev/null || {
             warn "Could not cleanly remove worktree $name, forcing..."
             rm -rf "$worktree_path"
+            git worktree prune 2>/dev/null || true
         }
     fi
 

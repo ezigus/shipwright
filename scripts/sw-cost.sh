@@ -155,27 +155,32 @@ cost_record() {
     local cost_usd
     cost_usd=$(cost_calculate "$input_tokens" "$output_tokens" "$model")
 
-    local tmp_file
-    tmp_file=$(mktemp)
-    jq --argjson input "$input_tokens" \
-       --argjson output "$output_tokens" \
-       --arg model "$model" \
-       --arg stage "$stage" \
-       --arg issue "$issue" \
-       --arg cost "$cost_usd" \
-       --arg ts "$(now_iso)" \
-       --argjson epoch "$(now_epoch)" \
-       '.entries += [{
-           input_tokens: $input,
-           output_tokens: $output,
-           model: $model,
-           stage: $stage,
-           issue: $issue,
-           cost_usd: ($cost | tonumber),
-           ts: $ts,
-           ts_epoch: $epoch
-       }] | .entries = (.entries | .[-1000:])' \
-       "$COST_FILE" > "$tmp_file" && mv "$tmp_file" "$COST_FILE"
+    (
+        if command -v flock &>/dev/null; then
+            flock -w 10 200 2>/dev/null || { warn "Cost lock timeout"; }
+        fi
+        local tmp_file
+        tmp_file=$(mktemp "${COST_FILE}.tmp.XXXXXX")
+        jq --argjson input "$input_tokens" \
+           --argjson output "$output_tokens" \
+           --arg model "$model" \
+           --arg stage "$stage" \
+           --arg issue "$issue" \
+           --arg cost "$cost_usd" \
+           --arg ts "$(now_iso)" \
+           --argjson epoch "$(now_epoch)" \
+           '.entries += [{
+               input_tokens: $input,
+               output_tokens: $output,
+               model: $model,
+               stage: $stage,
+               issue: $issue,
+               cost_usd: ($cost | tonumber),
+               ts: $ts,
+               ts_epoch: $epoch
+           }] | .entries = (.entries | .[-1000:])' \
+           "$COST_FILE" > "$tmp_file" && mv "$tmp_file" "$COST_FILE" || rm -f "$tmp_file"
+    ) 200>"${COST_FILE}.lock"
 
     emit_event "cost.record" \
         "input_tokens=${input_tokens}" \

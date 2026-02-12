@@ -1045,7 +1045,8 @@ locked_state_update() {
     (
         if command -v flock &>/dev/null; then
             flock -w 5 200 2>/dev/null || {
-                daemon_log WARN "locked_state_update: lock acquisition timed out — proceeding without lock"
+                daemon_log ERROR "locked_state_update: lock acquisition timed out — aborting"
+                return 1
             }
         fi
         local tmp
@@ -1053,13 +1054,17 @@ locked_state_update() {
             daemon_log ERROR "locked_state_update: jq failed — $(echo "$tmp" | head -1)"
             return 1
         }
-        atomic_write_state "$tmp"
+        atomic_write_state "$tmp" || {
+            daemon_log ERROR "locked_state_update: atomic_write_state failed"
+            return 1
+        }
     ) 200>"$lock_file"
 }
 
 init_state() {
     if [[ ! -f "$STATE_FILE" ]]; then
-        jq -n \
+        local init_json
+        init_json=$(jq -n \
             --arg pid "$$" \
             --arg started "$(now_iso)" \
             --argjson interval "$POLL_INTERVAL" \
@@ -1083,24 +1088,30 @@ init_state() {
                 retry_counts: {},
                 priority_lane_active: [],
                 titles: {}
-            }' > "$STATE_FILE"
+            }')
+        local lock_file="${STATE_FILE}.lock"
+        (
+            if command -v flock &>/dev/null; then
+                flock -w 5 200 2>/dev/null || {
+                    daemon_log ERROR "init_state: lock acquisition timed out"
+                    return 1
+                }
+            fi
+            atomic_write_state "$init_json"
+        ) 200>"$lock_file"
     else
         # Update PID and start time in existing state
-        local tmp
-        tmp=$(jq \
+        locked_state_update \
             --arg pid "$$" \
             --arg started "$(now_iso)" \
-            '.pid = ($pid | tonumber) | .started_at = $started' \
-            "$STATE_FILE")
-        atomic_write_state "$tmp"
+            '.pid = ($pid | tonumber) | .started_at = $started'
     fi
 }
 
 update_state_field() {
     local field="$1" value="$2"
-    local tmp
-    tmp=$(jq --arg field "$field" --arg val "$value" '.[$field] = $val' "$STATE_FILE")
-    atomic_write_state "$tmp"
+    locked_state_update --arg field "$field" --arg val "$value" \
+        '.[$field] = $val'
 }
 
 # ─── Inflight Check ─────────────────────────────────────────────────────────
@@ -1415,10 +1426,11 @@ daemon_spawn_pipeline() {
     fi
 
     # Run pipeline in work directory (background)
+    echo -e "\n\n===== Pipeline run $(date -u +%Y-%m-%dT%H:%M:%SZ) =====" >> "$LOG_DIR/issue-${issue_num}.log" 2>/dev/null || true
     (
         cd "$work_dir"
         "$SCRIPT_DIR/sw-pipeline.sh" "${pipeline_args[@]}"
-    ) > "$LOG_DIR/issue-${issue_num}.log" 2>&1 &
+    ) >> "$LOG_DIR/issue-${issue_num}.log" 2>&1 200>&- &
     local pid=$!
 
     daemon_log INFO "Pipeline started for issue #${issue_num} (PID: ${pid})"
@@ -1485,6 +1497,8 @@ daemon_reap_completed() {
         return
     fi
 
+    local _retry_spawned_for=""
+
     while IFS= read -r job; do
         local issue_num pid worktree
         issue_num=$(echo "$job" | jq -r '.issue // empty')
@@ -1550,25 +1564,35 @@ daemon_reap_completed() {
         reap_machine_name=$(jq -r '.machines[] | select(.role == "primary") | .name' "$HOME/.shipwright/machines.json" 2>/dev/null || hostname -s)
         release_claim "$issue_num" "$reap_machine_name"
 
-        # Remove from active_jobs and priority lane tracking (locked)
-        locked_state_update --argjson num "$issue_num" \
-            '.active_jobs = [.active_jobs[] | select(.issue != $num)]'
-        untrack_priority_job "$issue_num"
+        # Skip cleanup if a retry was just spawned for this issue
+        if [[ "$_retry_spawned_for" == "$issue_num" ]]; then
+            daemon_log INFO "Retry spawned for issue #${issue_num} — skipping worktree cleanup"
+        else
+            # Remove from active_jobs and priority lane tracking (locked)
+            locked_state_update --argjson num "$issue_num" \
+                '.active_jobs = [.active_jobs[] | select(.issue != $num)]'
+            untrack_priority_job "$issue_num"
 
-        # Clean up worktree (skip for org-mode clones — they persist)
-        local job_repo
-        job_repo=$(echo "$job" | jq -r '.repo // ""')
-        if [[ -z "$job_repo" ]] && [[ -d "$worktree" ]]; then
-            git worktree remove "$worktree" --force 2>/dev/null || true
-            daemon_log INFO "Cleaned worktree: $worktree"
-            git branch -D "daemon/issue-${issue_num}" 2>/dev/null || true
-        elif [[ -n "$job_repo" ]]; then
-            daemon_log INFO "Org-mode: preserving clone for ${job_repo}"
+            # Clean up worktree (skip for org-mode clones — they persist)
+            local job_repo
+            job_repo=$(echo "$job" | jq -r '.repo // ""')
+            if [[ -z "$job_repo" ]] && [[ -d "$worktree" ]]; then
+                git worktree remove "$worktree" --force 2>/dev/null || true
+                daemon_log INFO "Cleaned worktree: $worktree"
+                git branch -D "daemon/issue-${issue_num}" 2>/dev/null || true
+            elif [[ -n "$job_repo" ]]; then
+                daemon_log INFO "Org-mode: preserving clone for ${job_repo}"
+            fi
         fi
 
         # Dequeue next issue if available AND we have capacity
+        # NOTE: locked_get_active_count prevents TOCTOU race with the
+        # active_jobs removal above.  A tiny window remains between
+        # the count read and dequeue_next's own lock acquisition, but
+        # dequeue_next is itself locked, so the worst case is a
+        # missed dequeue that the next poll cycle will pick up.
         local current_active
-        current_active=$(get_active_count)
+        current_active=$(locked_get_active_count)
         if [[ "$current_active" -lt "$MAX_PARALLEL" ]]; then
             local next_issue
             next_issue=$(dequeue_next)
@@ -1762,6 +1786,7 @@ _Escalation: $(if [[ "$retry_count" -eq 1 ]]; then echo "upgraded model + increa
             PIPELINE_TEMPLATE="$retry_template"
             MODEL="$retry_model"
             daemon_spawn_pipeline "$issue_num" "retry-${retry_count}"
+            _retry_spawned_for="$issue_num"
             PIPELINE_TEMPLATE="$orig_template"
             MODEL="$orig_model"
             return

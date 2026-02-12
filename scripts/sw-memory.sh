@@ -216,30 +216,35 @@ memory_capture_failure() {
         '[.failures[]] | to_entries | map(select(.value.pattern == $pat)) | .[0].key // -1' \
         "$failures_file" 2>/dev/null || echo "-1")
 
-    local tmp_file
-    tmp_file=$(mktemp)
+    (
+        if command -v flock &>/dev/null; then
+            flock -w 10 200 2>/dev/null || { warn "Memory lock timeout"; }
+        fi
+        local tmp_file
+        tmp_file=$(mktemp "${failures_file}.tmp.XXXXXX")
 
-    if [[ "$existing_idx" != "-1" && "$existing_idx" != "null" ]]; then
-        # Update existing entry
-        jq --argjson idx "$existing_idx" \
-           --arg ts "$(now_iso)" \
-           '.failures[$idx].seen_count += 1 | .failures[$idx].last_seen = $ts' \
-           "$failures_file" > "$tmp_file" && mv "$tmp_file" "$failures_file"
-    else
-        # Add new failure entry
-        jq --arg stage "$stage" \
-           --arg pattern "$pattern" \
-           --arg ts "$(now_iso)" \
-           '.failures += [{
-               stage: $stage,
-               pattern: $pattern,
-               root_cause: "",
-               fix: "",
-               seen_count: 1,
-               last_seen: $ts
-           }] | .failures = (.failures | .[-100:])' \
-           "$failures_file" > "$tmp_file" && mv "$tmp_file" "$failures_file"
-    fi
+        if [[ "$existing_idx" != "-1" && "$existing_idx" != "null" ]]; then
+            # Update existing entry
+            jq --argjson idx "$existing_idx" \
+               --arg ts "$(now_iso)" \
+               '.failures[$idx].seen_count += 1 | .failures[$idx].last_seen = $ts' \
+               "$failures_file" > "$tmp_file" && mv "$tmp_file" "$failures_file" || rm -f "$tmp_file"
+        else
+            # Add new failure entry
+            jq --arg stage "$stage" \
+               --arg pattern "$pattern" \
+               --arg ts "$(now_iso)" \
+               '.failures += [{
+                   stage: $stage,
+                   pattern: $pattern,
+                   root_cause: "",
+                   fix: "",
+                   seen_count: 1,
+                   last_seen: $ts
+               }] | .failures = (.failures | .[-100:])' \
+               "$failures_file" > "$tmp_file" && mv "$tmp_file" "$failures_file" || rm -f "$tmp_file"
+        fi
+    ) 200>"${failures_file}.lock"
 
     emit_event "memory.failure" "stage=${stage}" "pattern=${pattern:0:80}"
 }
@@ -272,29 +277,34 @@ memory_record_fix_outcome() {
         return 1
     fi
 
-    local tmp_file
-    tmp_file=$(mktemp)
-
     # Update fix outcome tracking fields
     local applied_inc=0 resolved_inc=0
     [[ "$fix_applied" == "true" ]] && applied_inc=1
     [[ "$fix_resolved" == "true" ]] && resolved_inc=1
 
-    jq --argjson idx "$match_idx" \
-       --argjson app "$applied_inc" \
-       --argjson res "$resolved_inc" \
-       --arg ts "$(now_iso)" \
-       '.failures[$idx].times_fix_suggested = ((.failures[$idx].times_fix_suggested // 0) + 1) |
-        .failures[$idx].times_fix_applied = ((.failures[$idx].times_fix_applied // 0) + $app) |
-        .failures[$idx].times_fix_resolved = ((.failures[$idx].times_fix_resolved // 0) + $res) |
-        .failures[$idx].fix_effectiveness_rate = (
-            if ((.failures[$idx].times_fix_applied // 0) + $app) > 0 then
-                (((.failures[$idx].times_fix_resolved // 0) + $res) * 100 /
-                 ((.failures[$idx].times_fix_applied // 0) + $app))
-            else 0 end
-        ) |
-        .failures[$idx].last_outcome_at = $ts' \
-       "$failures_file" > "$tmp_file" && mv "$tmp_file" "$failures_file"
+    (
+        if command -v flock &>/dev/null; then
+            flock -w 10 200 2>/dev/null || { warn "Memory lock timeout"; }
+        fi
+        local tmp_file
+        tmp_file=$(mktemp "${failures_file}.tmp.XXXXXX")
+
+        jq --argjson idx "$match_idx" \
+           --argjson app "$applied_inc" \
+           --argjson res "$resolved_inc" \
+           --arg ts "$(now_iso)" \
+           '.failures[$idx].times_fix_suggested = ((.failures[$idx].times_fix_suggested // 0) + 1) |
+            .failures[$idx].times_fix_applied = ((.failures[$idx].times_fix_applied // 0) + $app) |
+            .failures[$idx].times_fix_resolved = ((.failures[$idx].times_fix_resolved // 0) + $res) |
+            .failures[$idx].fix_effectiveness_rate = (
+                if ((.failures[$idx].times_fix_applied // 0) + $app) > 0 then
+                    (((.failures[$idx].times_fix_resolved // 0) + $res) * 100 /
+                     ((.failures[$idx].times_fix_applied // 0) + $app))
+                else 0 end
+            ) |
+            .failures[$idx].last_outcome_at = $ts' \
+           "$failures_file" > "$tmp_file" && mv "$tmp_file" "$failures_file" || rm -f "$tmp_file"
+    ) 200>"${failures_file}.lock"
 
     emit_event "memory.fix_outcome" \
         "pattern=${pattern_match:0:60}" \

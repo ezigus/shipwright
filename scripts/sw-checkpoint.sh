@@ -200,6 +200,11 @@ cmd_restore() {
         return 1
     fi
 
+    if ! jq empty "$target" 2>/dev/null; then
+        warn "Corrupt checkpoint for stage: $(basename "$target")"
+        return 1
+    fi
+
     cat "$target"
     return 0
 }

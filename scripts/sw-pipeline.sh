@@ -164,6 +164,7 @@ AUTO_WORKTREE=false
 WORKTREE_NAME=""
 CLEANUP_WORKTREE=false
 ORIGINAL_REPO_DIR=""
+_cleanup_done=""
 
 # GitHub metadata (populated during intake)
 ISSUE_LABELS=""
@@ -346,7 +347,7 @@ find_pipeline_config() {
 
 load_pipeline_config() {
     # Check for intelligence-composed pipeline first
-    local composed_pipeline="${REPO_DIR}/.claude/pipeline-artifacts/composed-pipeline.json"
+    local composed_pipeline="${ARTIFACTS_DIR}/composed-pipeline.json"
     if [[ -f "$composed_pipeline" ]] && type composer_validate_pipeline &>/dev/null; then
         # Use composed pipeline if fresh (< 1 hour old)
         local composed_age=99999
@@ -450,6 +451,8 @@ ci_post_stage_event() {
 # ─── Signal Handling ───────────────────────────────────────────────────────
 
 cleanup_on_exit() {
+    [[ "${_cleanup_done:-}" == "true" ]] && return 0
+    _cleanup_done=true
     local exit_code=$?
 
     # Stop heartbeat writer
@@ -1257,6 +1260,7 @@ initialize_state() {
 }
 
 write_state() {
+    [[ -z "${STATE_FILE:-}" || -z "${ARTIFACTS_DIR:-}" ]] && return 0
     local stages_yaml=""
     while IFS=: read -r sid sstatus; do
         [[ -z "$sid" ]] && continue
@@ -1464,6 +1468,7 @@ show_stage_preview() {
 # ─── Stage Functions ────────────────────────────────────────────────────────
 
 stage_intake() {
+    CURRENT_STAGE_ID="intake"
     local project_lang
     project_lang=$(detect_project_lang)
     info "Project: ${BOLD}$project_lang${RESET}"
@@ -1561,6 +1566,7 @@ Test cmd: ${TEST_CMD:-none detected}"
 }
 
 stage_plan() {
+    CURRENT_STAGE_ID="plan"
     local plan_file="$ARTIFACTS_DIR/plan.md"
 
     if ! command -v claude &>/dev/null; then
@@ -5534,7 +5540,7 @@ pipeline_start() {
     # Register worktree cleanup on exit (chain with existing cleanup)
     if [[ "$CLEANUP_WORKTREE" == "true" ]]; then
         trap 'pipeline_cleanup_worktree; cleanup_on_exit' SIGINT SIGTERM
-        trap 'pipeline_cleanup_worktree' EXIT
+        trap 'pipeline_cleanup_worktree; cleanup_on_exit' EXIT
     fi
 
     setup_dirs
@@ -5642,7 +5648,7 @@ pipeline_start() {
         if [[ -n "$head_sha" && -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
             local stages_json
             stages_json=$(jq -c '[.stages[] | select(.enabled == true) | .id]' "$PIPELINE_CONFIG" 2>/dev/null || echo '[]')
-            gh_checks_pipeline_start "$REPO_OWNER" "$REPO_NAME" "$head_sha" "$stages_json" 2>/dev/null || true
+            gh_checks_pipeline_start "$REPO_OWNER" "$REPO_NAME" "$head_sha" "$stages_json" >/dev/null 2>/dev/null || true
             info "GitHub Checks: created check runs for pipeline stages"
         fi
     fi

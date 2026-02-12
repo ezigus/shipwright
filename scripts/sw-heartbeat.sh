@@ -152,7 +152,7 @@ cmd_write() {
             cpu_pct: ($cpu_pct | tonumber),
             last_activity: $last_activity,
             updated_at: $updated_at
-        }' > "$tmp_file"
+        }' > "$tmp_file" || { rm -f "$tmp_file"; return 1; }
 
     # Atomic write
     mv "$tmp_file" "${HEARTBEAT_DIR}/${job_id}.json"

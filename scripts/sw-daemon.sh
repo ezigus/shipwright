@@ -3784,10 +3784,10 @@ daemon_poll_issues() {
     local sorted_order
     if [[ "${PRIORITY_STRATEGY:-quick-wins-first}" == "complex-first" ]]; then
         # Complex-first: lower score (more complex) first
-        sorted_order=$(printf '%s\n' "${scored_issues[@]}" | sort -t'|' -k1 -n)
+        sorted_order=$(printf '%s\n' "${scored_issues[@]}" | sort -t'|' -k1 -n -k2 -n)
     else
         # Quick-wins-first (default): higher score (simpler) first
-        sorted_order=$(printf '%s\n' "${scored_issues[@]}" | sort -t'|' -k1 -rn)
+        sorted_order=$(printf '%s\n' "${scored_issues[@]}" | sort -t'|' -k1 -rn -k2 -n)
     fi
 
     # Dependency-aware reordering: move dependencies before dependents
@@ -3911,6 +3911,12 @@ daemon_poll_issues() {
         PIPELINE_TEMPLATE="$template"
         daemon_spawn_pipeline "$issue_num" "$issue_title" "$repo_name"
         PIPELINE_TEMPLATE="$orig_template"
+
+        # Stagger delay between spawns to avoid API contention
+        local stagger_delay="${SPAWN_STAGGER_SECONDS:-15}"
+        if [[ "$stagger_delay" -gt 0 ]]; then
+            sleep "$stagger_delay"
+        fi
     done <<< "$sorted_order"
 
     # ── Drain queue if we have capacity (prevents deadlock when queue is

@@ -38,6 +38,7 @@ MAX_ITERATIONS="${SW_MAX_ITERATIONS:-20}"
 TEST_CMD=""
 FAST_TEST_CMD=""
 FAST_TEST_INTERVAL=5
+TEST_LOG_FILE=""
 MODEL="${SW_MODEL:-opus}"
 AGENTS=1
 AGENT_ROLES=""
@@ -90,6 +91,7 @@ show_help() {
     echo -e "  ${CYAN}--skip-permissions${RESET}        Pass --dangerously-skip-permissions to Claude"
     echo -e "  ${CYAN}--max-turns${RESET} N             Max API turns per Claude session"
     echo -e "  ${CYAN}--resume${RESET}                  Resume from existing .claude/loop-state.md"
+    echo -e "  ${CYAN}--max-restarts${RESET} N          Max session restarts on exhaustion (default: 0)"
     echo -e "  ${CYAN}--verbose${RESET}                 Show full Claude output (default: summary)"
     echo -e "  ${CYAN}--help${RESET}                    Show this help"
     echo ""
@@ -98,7 +100,6 @@ show_help() {
     echo -e "  ${CYAN}--audit-agent${RESET}             Run separate auditor agent (haiku) after each iteration"
     echo -e "  ${CYAN}--quality-gates${RESET}           Enable automated quality gates before accepting completion"
     echo -e "  ${CYAN}--definition-of-done${RESET} FILE DoD checklist file — evaluated by AI against git diff"
-    echo -e "  ${CYAN}--max-restarts${RESET} N          Max session restarts on exhaustion (default: 0)"
     echo -e "  ${CYAN}--no-auto-extend${RESET}          Disable auto-extension when max iterations reached"
     echo -e "  ${CYAN}--extension-size${RESET} N         Additional iterations per extension (default: 5)"
     echo -e "  ${CYAN}--max-extensions${RESET} N         Max number of auto-extensions (default: 3)"
@@ -782,6 +783,7 @@ run_test_gate() {
     fi
 
     local test_log="$LOG_DIR/tests-iter-${ITERATION}.log"
+    TEST_LOG_FILE="$test_log"
     echo -e "  ${DIM}Running ${test_mode} tests...${RESET}"
     if bash -c "$active_test_cmd" > "$test_log" 2>&1; then
         TEST_PASSED=true
@@ -797,6 +799,7 @@ run_test_gate() {
                 TEST_OUTPUT="Fast tests failed but full tests passed (false positive in fast mode)."
             else
                 TEST_OUTPUT="$(tail -50 "$full_test_log")"
+                TEST_LOG_FILE="$full_test_log"
             fi
         fi
     fi
@@ -812,7 +815,7 @@ write_error_summary() {
         return
     fi
 
-    local test_log="$LOG_DIR/tests-iter-${ITERATION}.log"
+    local test_log="${TEST_LOG_FILE:-$LOG_DIR/tests-iter-${ITERATION}.log}"
     [[ ! -f "$test_log" ]] && return
 
     # Extract error lines (last 30 lines, grep for error patterns)
@@ -1408,7 +1411,6 @@ compose_worker_prompt() {
     if [[ -n "$AGENT_ROLES" ]]; then
         # Split comma-separated roles and get role for this agent
         local role=""
-        local idx=1
         local IFS_BAK="$IFS"
         IFS=',' read -ra _roles <<< "$AGENT_ROLES"
         IFS="$IFS_BAK"
@@ -2100,11 +2102,8 @@ HUMAN FEEDBACK (received after iteration $ITERATION): $human_msg"
 
 run_loop_with_restarts() {
     while true; do
-        run_single_agent_loop
-        local loop_exit=$?
-
-        # Write final progress for potential restart
-        write_progress
+        local loop_exit=0
+        run_single_agent_loop || loop_exit=$?
 
         # If completed successfully or no restarts configured, exit
         if [[ "$STATUS" == "complete" ]]; then

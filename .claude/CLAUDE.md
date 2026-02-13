@@ -10,9 +10,6 @@ Shipwright orchestrates autonomous Claude Code agent teams with delivery pipelin
 | `shipwright setup`                                 | Guided setup — prerequisites, init, doctor        |
 | `shipwright session <name> -t <template>`          | Create team session with agent panes              |
 | `shipwright loop "<goal>" --test-cmd "..."`        | Continuous autonomous agent loop                  |
-| `shipwright loop "..." --max-restarts N`           | Loop with session restart on exhaustion           |
-| `shipwright loop "..." --fast-test-cmd "cmd"`      | Loop with fast/full test alternation              |
-| `shipwright loop "..." --roles "b,r,t" --agents 3` | Multi-agent loop with role specialization         |
 | `shipwright pipeline start --issue <N>`            | Full delivery pipeline for an issue               |
 | `shipwright pipeline start --issue <N> --worktree` | Pipeline in isolated git worktree (parallel-safe) |
 | `shipwright pipeline start --goal "..."`           | Pipeline from a goal description                  |

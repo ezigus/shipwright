@@ -2082,7 +2082,7 @@ daemon_on_failure() {
                 progress_iter=$(grep -oE 'Iteration: [0-9]+' "$progress_file" 2>/dev/null | grep -oE '[0-9]+' || echo "0")
                 local progress_tests
                 progress_tests=$(grep -oE 'Tests passing: (true|false)' "$progress_file" 2>/dev/null | awk '{print $NF}' || echo "unknown")
-                if [[ "$progress_tests" == "false" ]] || [[ "$progress_tests" == "unknown" ]]; then
+                if [[ "${progress_iter:-0}" -gt 0 ]] && { [[ "$progress_tests" == "false" ]] || [[ "$progress_tests" == "unknown" ]]; }; then
                     failure_reason="context_exhaustion"
                     emit_event "daemon.context_exhaustion" "issue=$issue_num" "iterations=$progress_iter"
                     daemon_log WARN "Context exhaustion detected for issue #${issue_num} (iterations: ${progress_iter})"

@@ -10,6 +10,9 @@ Shipwright orchestrates autonomous Claude Code agent teams with delivery pipelin
 | `shipwright setup`                                 | Guided setup — prerequisites, init, doctor        |
 | `shipwright session <name> -t <template>`          | Create team session with agent panes              |
 | `shipwright loop "<goal>" --test-cmd "..."`        | Continuous autonomous agent loop                  |
+| `shipwright loop "..." --max-restarts N`           | Loop with session restart on exhaustion           |
+| `shipwright loop "..." --fast-test-cmd "cmd"`      | Loop with fast/full test alternation              |
+| `shipwright loop "..." --roles "b,r,t" --agents 3` | Multi-agent loop with role specialization         |
 | `shipwright pipeline start --issue <N>`            | Full delivery pipeline for an issue               |
 | `shipwright pipeline start --issue <N> --worktree` | Pipeline in isolated git worktree (parallel-safe) |
 | `shipwright pipeline start --goal "..."`           | Pipeline from a goal description                  |
@@ -64,6 +67,15 @@ intake → plan → design → build → test → review → compound_quality �
 ```
 
 The build stage delegates to `shipwright loop` for autonomous multi-iteration development. Self-healing: when tests fail, the pipeline re-enters the build loop with error context.
+
+### Build Loop Capabilities
+
+- **Session restart** (`--max-restarts N`): When the loop exhausts iterations without completing, it restarts with a fresh Claude session that reads progress from `progress.md`. Git state = resume point. Default 0 (off) for manual, 3 for daemon.
+- **Progress persistence**: `progress.md` written after each iteration with goal, iteration count, test status, recent commits, changed files. Fresh sessions orient from this file.
+- **Structured error feedback**: `error-summary.json` written after test failures with machine-readable error lines. Injected into the next iteration prompt as structured context.
+- **Fast test mode** (`--fast-test-cmd "cmd"`): Alternates between a fast subset test and the full suite. Full test runs on iteration 1, every N iterations (`--fast-test-interval`, default 5), and the final iteration.
+- **Agent roles** (`--roles "builder,reviewer,tester"`): In multi-agent mode, assigns specialization per agent. Built-in roles: `builder`, `reviewer`, `tester`, `optimizer`, `docs`, `security`.
+- **Context exhaustion detection**: When the daemon detects a build loop failed due to iteration exhaustion (not a code error), it tags the failure as `context_exhaustion` and boosts `--max-restarts` on retry.
 
 ## Pipeline Templates
 
@@ -299,6 +311,9 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 - Check run IDs: `.claude/pipeline-artifacts/check-run-ids.json`
 - Deployment tracking: `.claude/pipeline-artifacts/deployment.json`
 - Error log: `.claude/pipeline-artifacts/error-log.jsonl`
+- Loop progress: `.claude/loop-logs/progress.md`
+- Error summary: `.claude/loop-logs/error-summary.json`
+- Failure reason: `.claude/pipeline-artifacts/failure-reason.txt`
 <!-- /AUTO:runtime-state -->
 
 ## GitHub Integration

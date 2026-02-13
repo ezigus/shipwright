@@ -1632,6 +1632,42 @@ test_error_classification_categories() {
     return 1
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 41. Template weights selection — select_pipeline_template reads weights file
+# ──────────────────────────────────────────────────────────────────────────────
+test_template_weights_selection() {
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+
+    # Verify template-weights.json is read in select_pipeline_template
+    grep -q "template-weights.json" "$daemon_src" || \
+        { echo "Expected template-weights.json reference in daemon"; return 1; }
+
+    # Verify the jq filter queries .weights with sample_size >= 3
+    grep -q 'sample_size >= 3' "$daemon_src" || \
+        { echo "Expected sample_size >= 3 filter in template weights"; return 1; }
+
+    # Verify sort_by success_rate for best template selection
+    grep -q 'sort_by.*success_rate' "$daemon_src" || \
+        { echo "Expected sort_by success_rate in template weights"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 42. Auto-enable self_optimize when auto_template is true
+# ──────────────────────────────────────────────────────────────────────────────
+test_auto_enable_self_optimize() {
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+
+    # Verify the auto-enable logic exists in load_config
+    grep -q 'Auto-enabling self_optimize' "$daemon_src" || \
+        { echo "Expected auto-enable self_optimize log message"; return 1; }
+
+    # Verify the condition: auto_template true AND self_optimize false
+    grep -q 'AUTO_TEMPLATE.*true.*SELF_OPTIMIZE.*false\|auto_template.*self_optimize' "$daemon_src" || \
+        { echo "Expected AUTO_TEMPLATE/SELF_OPTIMIZE condition check"; return 1; }
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1705,6 +1741,8 @@ main() {
         "test_memory_query_fix:Memory: query fix for error returns matching fix"
         "test_dora_template_escalation:Memory: DORA template escalation patterns exist"
         "test_error_classification_categories:Memory: All 12 error categories in post-tool-use.sh"
+        "test_template_weights_selection:Daemon: Template weights selection reads weights file"
+        "test_auto_enable_self_optimize:Daemon: Auto-enable self_optimize when auto_template is true"
     )
 
     for entry in "${tests[@]}"; do

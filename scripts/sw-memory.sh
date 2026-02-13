@@ -312,6 +312,15 @@ memory_record_fix_outcome() {
         "resolved=${fix_resolved}"
 }
 
+# memory_track_fix <error_sig> <success_bool>
+# Convenience wrapper for memory_record_fix_outcome
+memory_track_fix() {
+    local error_sig="${1:-}"
+    local success="${2:-false}"
+    [[ -z "$error_sig" ]] && return 0
+    memory_record_fix_outcome "$error_sig" "true" "$success" 2>/dev/null || true
+}
+
 # memory_query_fix_for_error <error_pattern>
 # Searches failure memory for known fixes matching the given error pattern.
 # Returns JSON with the best fix (highest effectiveness rate) or empty.
@@ -333,7 +342,7 @@ memory_query_fix_for_error() {
         | select(.pattern != null and .pattern != "")
         | select(.pattern | test($pat; "i") // false)
         | select(.fix != null and .fix != "")
-        | select((.fix_effectiveness_rate // 0) > 50)
+        | select((.fix_effectiveness_rate // 0) > 30)
         | {fix, fix_effectiveness_rate, seen_count, category, stage, pattern}]
         | sort_by(-.fix_effectiveness_rate)
         | .[0] // null
@@ -363,6 +372,116 @@ memory_closed_loop_inject() {
     [[ -z "$fix_text" ]] && return 0
 
     echo "[$category, ${success_rate}% success rate] $fix_text"
+}
+
+memory_capture_failure_from_log() {
+    local artifacts_dir="${1:-}"
+    local error_log="${artifacts_dir}/error-log.jsonl"
+    [[ ! -f "$error_log" ]] && return 0
+
+    ensure_memory_dir
+    local mem_dir
+    mem_dir="$(repo_memory_dir)"
+    local failures_file="$mem_dir/failures.json"
+
+    # Read last 50 entries
+    local entries
+    entries=$(tail -50 "$error_log" 2>/dev/null) || return 0
+    [[ -z "$entries" ]] && return 0
+
+    local captured=0
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+
+        local err_type err_text
+        err_type=$(echo "$line" | jq -r '.type // "unknown"' 2>/dev/null) || continue
+        err_text=$(echo "$line" | jq -r '.error // ""' 2>/dev/null) || continue
+        [[ -z "$err_text" ]] && continue
+
+        # Deduplicate: skip if this exact pattern already exists in failures
+        local pattern_short
+        pattern_short=$(echo "$err_text" | head -1 | cut -c1-200)
+        local already_exists
+        already_exists=$(jq --arg pat "$pattern_short" \
+            '[.failures[] | select(.pattern == $pat)] | length' \
+            "$failures_file" 2>/dev/null || echo "0")
+        if [[ "${already_exists:-0}" -gt 0 ]]; then
+            continue
+        fi
+
+        # Feed into memory_capture_failure with the error type as stage
+        memory_capture_failure "$err_type" "$err_text" 2>/dev/null || true
+        captured=$((captured + 1))
+    done <<< "$entries"
+
+    if [[ "$captured" -gt 0 ]]; then
+        emit_event "memory.error_log_processed" "captured=$captured"
+    fi
+}
+
+# _memory_aggregate_global
+# Promotes high-frequency failure patterns to global.json for cross-repo learning
+_memory_aggregate_global() {
+    ensure_memory_dir
+    local mem_dir
+    mem_dir="$(repo_memory_dir)"
+    local failures_file="$mem_dir/failures.json"
+    [[ ! -f "$failures_file" ]] && return 0
+
+    local global_file="$GLOBAL_MEMORY"
+    [[ ! -f "$global_file" ]] && return 0
+
+    # Find patterns with seen_count >= 3
+    local frequent_patterns
+    frequent_patterns=$(jq -r '.failures[] | select(.seen_count >= 3) | .pattern' \
+        "$failures_file" 2>/dev/null) || return 0
+    [[ -z "$frequent_patterns" ]] && return 0
+
+    local promoted=0
+    while IFS= read -r pattern; do
+        [[ -z "$pattern" ]] && continue
+
+        # Check if already in global
+        local exists
+        exists=$(jq --arg p "$pattern" \
+            '[.common_patterns[] | select(.pattern == $p)] | length' \
+            "$global_file" 2>/dev/null || echo "0")
+        if [[ "${exists:-0}" -gt 0 ]]; then
+            continue
+        fi
+
+        # Add to global, cap at 100 entries
+        local tmp_global
+        tmp_global=$(mktemp "${global_file}.tmp.XXXXXX")
+        jq --arg p "$pattern" \
+           --arg ts "$(now_iso)" \
+           --arg cat "general" \
+           '.common_patterns += [{pattern: $p, promoted_at: $ts, category: $cat, source: "aggregate"}] |
+            .common_patterns = (.common_patterns | .[-100:])' \
+           "$global_file" > "$tmp_global" && mv "$tmp_global" "$global_file" || rm -f "$tmp_global"
+        promoted=$((promoted + 1))
+    done <<< "$frequent_patterns"
+
+    if [[ "$promoted" -gt 0 ]]; then
+        emit_event "memory.global_aggregated" "promoted=$promoted"
+    fi
+}
+
+# memory_finalize_pipeline <state_file> <artifacts_dir>
+# Single call that closes multiple feedback loops at pipeline completion
+memory_finalize_pipeline() {
+    local state_file="${1:-}"
+    local artifacts_dir="${2:-}"
+    [[ -z "$state_file" || ! -f "$state_file" ]] && return 0
+
+    # Step 1: Capture pipeline-level learnings
+    memory_capture_pipeline "$state_file" "$artifacts_dir" 2>/dev/null || true
+
+    # Step 2: Process error log into failures.json
+    memory_capture_failure_from_log "$artifacts_dir" 2>/dev/null || true
+
+    # Step 3: Aggregate high-frequency patterns to global memory
+    _memory_aggregate_global 2>/dev/null || true
 }
 
 # memory_analyze_failure <log_file> <stage>

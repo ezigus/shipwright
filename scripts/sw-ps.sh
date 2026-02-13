@@ -94,8 +94,9 @@ HAS_AGENTS=false
 CURRENT_WINDOW=""
 
 # Format strings for tmux:
-# window_name | pane_title | pane_pid | pane_current_command | pane_active | pane_idle | pane_dead | session:window.pane
-FORMAT='#{window_name}|#{pane_title}|#{pane_pid}|#{pane_current_command}|#{pane_active}|#{pane_idle}|#{pane_dead}|#{session_name}:#{window_index}.#{pane_index}'
+# window_name | pane_title | pane_pid | pane_current_command | pane_active | pane_idle | pane_dead | pane_id
+# Uses #{pane_id} instead of #{pane_index} — stable regardless of pane-base-index
+FORMAT='#{window_name}|#{pane_title}|#{pane_pid}|#{pane_current_command}|#{pane_active}|#{pane_idle}|#{pane_dead}|#{pane_id}'
 
 while IFS='|' read -r window_name pane_title pane_pid cmd pane_active pane_idle pane_dead pane_ref; do
     [[ -z "$window_name" ]] && continue

@@ -484,6 +484,12 @@ load_config() {
         DASHBOARD_URL="$cfg_dashboard_url"
     fi
 
+    # Auto-enable self_optimize when auto_template is on
+    if [[ "${AUTO_TEMPLATE:-false}" == "true" && "${SELF_OPTIMIZE:-false}" == "false" ]]; then
+        SELF_OPTIMIZE="true"
+        daemon_log INFO "Auto-enabling self_optimize (auto_template is true)"
+    fi
+
     success "Config loaded"
 }
 
@@ -1677,6 +1683,17 @@ daemon_spawn_pipeline() {
         daemon_log INFO "Worktree created at ${work_dir}"
     fi
 
+    # If template is "composed", copy the composed spec into the worktree
+    if [[ "$PIPELINE_TEMPLATE" == "composed" ]]; then
+        local _src_composed="${REPO_DIR:-.}/.claude/pipeline-artifacts/composed-pipeline.json"
+        if [[ -f "$_src_composed" ]]; then
+            local _dst_artifacts="${work_dir}/.claude/pipeline-artifacts"
+            mkdir -p "$_dst_artifacts"
+            cp "$_src_composed" "$_dst_artifacts/composed-pipeline.json" 2>/dev/null || true
+            daemon_log INFO "Copied composed pipeline spec to worktree"
+        fi
+    fi
+
     # Build pipeline args
     local pipeline_args=("start" "--issue" "$issue_num" "--pipeline" "$PIPELINE_TEMPLATE")
     if [[ "$SKIP_GATES" == "true" ]]; then
@@ -1848,6 +1865,14 @@ daemon_reap_completed() {
                     done < <(jq -r 'keys[]' "$check_ids_file" 2>/dev/null || true)
                 fi
             fi
+        fi
+
+        # Finalize memory (capture failure patterns for future runs)
+        if type memory_finalize_pipeline &>/dev/null 2>&1; then
+            local _job_state _job_artifacts
+            _job_state="${worktree:-.}/.claude/pipeline-state.md"
+            _job_artifacts="${worktree:-.}/.claude/pipeline-artifacts"
+            memory_finalize_pipeline "$_job_state" "$_job_artifacts" 2>/dev/null || true
         fi
 
         # Clean up progress tracking for this job
@@ -2406,6 +2431,37 @@ select_pipeline_template() {
                 daemon_log INFO "DORA: CFR ${_dora_cfr}% < 10% — fast template eligible"
                 # Fall through to allow other factors to also vote for fast
             fi
+
+            # ── DORA multi-factor ──
+            # Cycle time: if median > 120min, prefer faster templates
+            local _dora_cycle_time=0
+            _dora_cycle_time=$(echo "$_dora_events" | jq -r 'select(.duration_s) | .duration_s' 2>/dev/null \
+                | sort -n | awk '{ a[NR]=$1 } END { if (NR>0) print int(a[int(NR/2)+1]/60); else print 0 }' 2>/dev/null) || _dora_cycle_time=0
+            _dora_cycle_time="${_dora_cycle_time:-0}"
+            if [[ "${_dora_cycle_time:-0}" -gt 120 ]]; then
+                daemon_log INFO "DORA: cycle time ${_dora_cycle_time}min > 120 — preferring fast template"
+                if [[ "${score:-0}" -ge 60 ]]; then
+                    echo "fast"
+                    return
+                fi
+            fi
+
+            # Deploy frequency: if < 1/week, use cost-aware
+            local _dora_deploy_freq=0
+            local _dora_first_epoch _dora_last_epoch _dora_span_days
+            _dora_first_epoch=$(echo "$_dora_events" | head -1 | jq -r '.timestamp // empty' 2>/dev/null | xargs -I{} date -j -f "%Y-%m-%dT%H:%M:%SZ" {} +%s 2>/dev/null || echo "0")
+            _dora_last_epoch=$(echo "$_dora_events" | tail -1 | jq -r '.timestamp // empty' 2>/dev/null | xargs -I{} date -j -f "%Y-%m-%dT%H:%M:%SZ" {} +%s 2>/dev/null || echo "0")
+            if [[ "${_dora_first_epoch:-0}" -gt 0 && "${_dora_last_epoch:-0}" -gt 0 ]]; then
+                _dora_span_days=$(( (_dora_last_epoch - _dora_first_epoch) / 86400 ))
+                if [[ "${_dora_span_days:-0}" -gt 0 ]]; then
+                    _dora_deploy_freq=$(awk -v t="$_dora_total" -v d="$_dora_span_days" 'BEGIN { printf "%.1f", t * 7 / d }' 2>/dev/null) || _dora_deploy_freq=0
+                fi
+            fi
+            if [[ -n "${_dora_deploy_freq:-}" ]] && awk -v f="${_dora_deploy_freq:-0}" 'BEGIN{exit !(f > 0 && f < 1)}' 2>/dev/null; then
+                daemon_log INFO "DORA: deploy freq ${_dora_deploy_freq}/week — using cost-aware"
+                echo "cost-aware"
+                return
+            fi
         fi
     fi
 
@@ -2492,6 +2548,24 @@ select_pipeline_template() {
                     return
                 fi
             fi
+        fi
+    fi
+
+    # ── Learned template weights ──
+    local _tw_file="${HOME}/.shipwright/optimization/template-weights.json"
+    if [[ -f "$_tw_file" ]]; then
+        local _best_template _best_rate
+        _best_template=$(jq -r '
+            .weights // {} | to_entries
+            | map(select(.value.sample_size >= 3))
+            | sort_by(-.value.success_rate)
+            | .[0].key // ""
+        ' "$_tw_file" 2>/dev/null) || true
+        if [[ -n "${_best_template:-}" && "${_best_template:-}" != "null" && "${_best_template:-}" != "" ]]; then
+            _best_rate=$(jq -r --arg t "$_best_template" '.weights[$t].success_rate // 0' "$_tw_file" 2>/dev/null) || _best_rate=0
+            daemon_log INFO "Template weights: ${_best_template} (${_best_rate} success rate)"
+            echo "$_best_template"
+            return
         fi
     fi
 

@@ -99,7 +99,16 @@ _compute_momentum() {
     snapshots_count=$(jq '.snapshots | length' "$progress_file" 2>/dev/null || echo "0")
     snapshots_count=$(_safe_num "$snapshots_count")
 
-    if [[ "$snapshots_count" -lt 1 ]]; then
+    if [[ "$snapshots_count" -lt 2 ]]; then
+        # If we have 1 snapshot, check if stage advanced from intake
+        if [[ "$snapshots_count" -eq 1 ]]; then
+            local last_stage
+            last_stage=$(jq -r '.snapshots[-1].stage // ""' "$progress_file" 2>/dev/null || echo "")
+            if [[ -n "$last_stage" && "$last_stage" != "intake" && "$last_stage" != "unknown" ]]; then
+                echo "60"
+                return
+            fi
+        fi
         echo "50"
         return
     fi
@@ -948,6 +957,31 @@ vitals_dashboard() {
         echo -e "  ${RED}${BOLD}✗${RESET} ${RED}Budget trajectory: insufficient funds to continue${RESET}"
         echo ""
     fi
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# pipeline_check_health_gate
+# Returns 0 if health is above threshold, 1 if below
+# Args: [state_file] [artifacts_dir] [issue_number]
+# ═══════════════════════════════════════════════════════════════════════════
+pipeline_check_health_gate() {
+    local state_file="${1:-}"
+    local artifacts_dir="${2:-}"
+    local issue="${3:-}"
+    local threshold="${VITALS_GATE_THRESHOLD:-40}"
+
+    local vitals_json
+    vitals_json=$(pipeline_compute_vitals "$state_file" "$artifacts_dir" "$issue" 2>/dev/null) || return 0
+
+    local health
+    health=$(echo "$vitals_json" | jq -r '.health_score // 50' 2>/dev/null) || health=50
+    health=$(_safe_num "$health")
+
+    if [[ "$health" -lt "$threshold" ]]; then
+        warn "Health gate: score ${health} < threshold ${threshold}"
+        return 1
+    fi
+    return 0
 }
 
 # ─── Help ───────────────────────────────────────────────────────────────────

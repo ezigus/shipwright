@@ -316,8 +316,29 @@ optimize_tune_templates() {
             new_weights=$(echo "$new_weights" | jq --arg key "${tmpl}|${lbl}" --argjson w "$new_weight" '.[$key] = $w')
         done <<< "$combos"
 
+        # Build consumer-friendly format with per-template aggregates
+        local consumer_weights
+        consumer_weights=$(echo "$new_weights" | jq '
+            . as $raw |
+            # Extract unique template names
+            [keys[] | split("|")[0]] | unique | map(. as $tmpl |
+                {
+                    key: $tmpl,
+                    value: {
+                        success_rate: ([$raw | to_entries[] | select(.key | startswith($tmpl + "|")) | .value] | if length > 0 then (add / length) else 0 end),
+                        avg_duration_min: 0,
+                        sample_size: ([$raw | to_entries[] | select(.key | startswith($tmpl + "|"))] | length),
+                        raw_weights: ([$raw | to_entries[] | select(.key | startswith($tmpl + "|"))] | from_entries)
+                    }
+                }
+            ) | from_entries |
+            {weights: ., updated_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
+        ' 2>/dev/null || echo "$new_weights")
+
         # Atomic write
-        echo "$new_weights" > "$tmp_weights" && mv "$tmp_weights" "$TEMPLATE_WEIGHTS_FILE"
+        local tmp_cw
+        tmp_cw=$(mktemp "${TEMPLATE_WEIGHTS_FILE}.tmp.XXXXXX")
+        echo "$consumer_weights" > "$tmp_cw" && mv "$tmp_cw" "$TEMPLATE_WEIGHTS_FILE" || rm -f "$tmp_cw"
     fi
 
     rm -f "$tmp_stats" "$tmp_weights" 2>/dev/null || true
@@ -468,16 +489,23 @@ optimize_learn_iterations() {
     med_stats=$(calc_stats "$tmp_med")
     high_stats=$(calc_stats "$tmp_high")
 
-    # Build iteration model
+    # Build iteration model with predictions wrapper
     local tmp_model
-    tmp_model=$(mktemp)
+    tmp_model=$(mktemp "${ITERATION_MODEL_FILE}.tmp.XXXXXX")
     jq -n \
         --argjson low "$low_stats" \
         --argjson medium "$med_stats" \
         --argjson high "$high_stats" \
         --arg updated "$(now_iso)" \
-        '{low: $low, medium: $medium, high: $high, updated_at: $updated}' \
-        > "$tmp_model" && mv "$tmp_model" "$ITERATION_MODEL_FILE"
+        '{
+            predictions: {
+                low: {max_iterations: (if $low.mean > 0 then (($low.mean + $low.stddev) | floor | if . < 5 then 5 else . end) else 10 end), confidence: (if $low.samples >= 10 then 0.8 elif $low.samples >= 5 then 0.6 else 0.4 end), mean: $low.mean, stddev: $low.stddev, samples: $low.samples},
+                medium: {max_iterations: (if $medium.mean > 0 then (($medium.mean + $medium.stddev) | floor | if . < 10 then 10 else . end) else 20 end), confidence: (if $medium.samples >= 10 then 0.8 elif $medium.samples >= 5 then 0.6 else 0.4 end), mean: $medium.mean, stddev: $medium.stddev, samples: $medium.samples},
+                high: {max_iterations: (if $high.mean > 0 then (($high.mean + $high.stddev) | floor | if . < 15 then 15 else . end) else 30 end), confidence: (if $high.samples >= 10 then 0.8 elif $high.samples >= 5 then 0.6 else 0.4 end), mean: $high.mean, stddev: $high.stddev, samples: $high.samples}
+            },
+            updated_at: $updated
+        }' \
+        > "$tmp_model" && mv "$tmp_model" "$ITERATION_MODEL_FILE" || rm -f "$tmp_model"
 
     rm -f "$tmp_low" "$tmp_med" "$tmp_high" 2>/dev/null || true
 
@@ -606,10 +634,29 @@ optimize_route_models() {
         done <<< "$stages"
     fi
 
+    # Wrap in consumer-friendly format
+    local consumer_routing
+    consumer_routing=$(echo "$routing" | jq '{
+        routes: (. | to_entries | map({
+            key: .key,
+            value: {
+                model: .value.recommended,
+                confidence: (if .value.sonnet_samples + .value.opus_samples >= 10 then 0.9
+                    elif .value.sonnet_samples + .value.opus_samples >= 5 then 0.7
+                    else 0.5 end),
+                sonnet_rate: .value.sonnet_rate,
+                opus_rate: .value.opus_rate,
+                sonnet_samples: .value.sonnet_samples,
+                opus_samples: .value.opus_samples
+            }
+        }) | from_entries),
+        updated_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
+    }' 2>/dev/null || echo "$routing")
+
     # Atomic write
     local tmp_routing
-    tmp_routing=$(mktemp)
-    echo "$routing" > "$tmp_routing" && mv "$tmp_routing" "$MODEL_ROUTING_FILE"
+    tmp_routing=$(mktemp "${MODEL_ROUTING_FILE}.tmp.XXXXXX")
+    echo "$consumer_routing" > "$tmp_routing" && mv "$tmp_routing" "$MODEL_ROUTING_FILE" || rm -f "$tmp_routing"
 
     rm -f "$tmp_stage_stats" 2>/dev/null || true
 
@@ -779,6 +826,8 @@ optimize_full_analysis() {
     optimize_learn_iterations
     optimize_route_models
     optimize_evolve_memory
+    optimize_report >> "${OPTIMIZATION_DIR}/last-report.txt" 2>/dev/null || true
+    optimize_adjust_audit_intensity 2>/dev/null || true
 
     echo ""
     success "Full optimization analysis complete"

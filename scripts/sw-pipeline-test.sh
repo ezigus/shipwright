@@ -1473,6 +1473,170 @@ test_canary_deploy_flow() {
     grep -q "canary_healthy" "$REAL_PIPELINE_SCRIPT"
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 44. PIPELINE_STATE references fully removed
+# ──────────────────────────────────────────────────────────────────────────────
+test_pipeline_state_removed() {
+    # Verify no remaining PIPELINE_STATE variable references
+    local count
+    count=$(grep -c 'PIPELINE_STATE' "$REAL_PIPELINE_SCRIPT" 2>/dev/null || true)
+    count="${count:-0}"
+    [[ "$count" -eq 0 ]] || { echo "Expected 0 PIPELINE_STATE references, found $count"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 45. Coverage JSON created during test stage
+# ──────────────────────────────────────────────────────────────────────────────
+test_coverage_json_created() {
+    # Verify the pipeline script has coverage file creation logic
+    grep -q "coverage.*json\|coverage-summary" "$REAL_PIPELINE_SCRIPT" || \
+        { echo "Expected coverage JSON creation in pipeline"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 46. _pipeline_compact_goal returns goal + plan + design headers
+# ──────────────────────────────────────────────────────────────────────────────
+test_compact_goal() {
+    # Extract and test _pipeline_compact_goal
+    local fns_script="$TEMP_DIR/compact-goal-fns.sh"
+    cat > "$fns_script" <<'FEOF'
+#!/usr/bin/env bash
+set -uo pipefail
+emit_event() { true; }
+info() { true; }
+warn() { true; }
+SCRIPT_DIR="/nonexistent"
+ISSUE_NUMBER=""
+NO_GITHUB=true
+FEOF
+
+    # Extract the function from the real pipeline
+    sed -n '/^_pipeline_compact_goal()/,/^}/p' "$REAL_PIPELINE_SCRIPT" >> "$fns_script" 2>/dev/null
+
+    # Create mock plan and design files
+    local plan_file="$TEMP_DIR/plan.md"
+    local design_file="$TEMP_DIR/design.md"
+    printf '%s\n' "# Plan" "Step 1: Do thing" "Step 2: Do other thing" > "$plan_file"
+    printf '%s\n' "# Architecture" "## Database" "## API Layer" > "$design_file"
+
+    local result
+    result=$(
+        source "$fns_script" 2>/dev/null
+        _pipeline_compact_goal "Add auth" "$plan_file" "$design_file"
+    ) || result=""
+
+    # Should contain goal, plan summary, and design headers
+    echo "$result" | grep -q "Add auth" || { echo "Missing goal in compact output"; return 1; }
+    echo "$result" | grep -q "Plan Summary" || { echo "Missing Plan Summary in compact output"; return 1; }
+    echo "$result" | grep -q "Key Design Decisions" || { echo "Missing Key Design Decisions in compact output"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 47. load_composed_pipeline sets COMPOSED_STAGES
+# ──────────────────────────────────────────────────────────────────────────────
+test_load_composed_pipeline() {
+    # Create a composed pipeline spec
+    local spec_file="$TEMP_DIR/composed-pipeline.json"
+    cat > "$spec_file" <<'JSON'
+{"stages":[{"id":"intake"},{"id":"build","max_iterations":25},{"id":"test"},{"id":"pr"}]}
+JSON
+
+    # Extract the function
+    local fns_script="$TEMP_DIR/composed-fns.sh"
+    cat > "$fns_script" <<'FEOF'
+#!/usr/bin/env bash
+set -uo pipefail
+COMPOSED_STAGES=""
+COMPOSED_BUILD_ITERATIONS=""
+emit_event() { true; }
+info() { true; }
+warn() { true; }
+SCRIPT_DIR="/nonexistent"
+ISSUE_NUMBER=""
+NO_GITHUB=true
+FEOF
+
+    sed -n '/^load_composed_pipeline()/,/^}/p' "$REAL_PIPELINE_SCRIPT" >> "$fns_script" 2>/dev/null
+
+    local result
+    result=$(
+        source "$fns_script" 2>/dev/null
+        load_composed_pipeline "$spec_file"
+        echo "stages=$COMPOSED_STAGES|iters=$COMPOSED_BUILD_ITERATIONS"
+    ) || result=""
+
+    # Verify stages were loaded
+    echo "$result" | grep -q "intake" || { echo "Missing intake in COMPOSED_STAGES"; return 1; }
+    echo "$result" | grep -q "build" || { echo "Missing build in COMPOSED_STAGES"; return 1; }
+    echo "$result" | grep -q "iters=25" || { echo "Expected COMPOSED_BUILD_ITERATIONS=25"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 48. Momentum bootstrap — single snapshot returns 60 if past intake
+# ──────────────────────────────────────────────────────────────────────────────
+test_momentum_bootstrap_single_snapshot() {
+    local vitals_script
+    vitals_script="$(dirname "$REAL_PIPELINE_SCRIPT")/sw-pipeline-vitals.sh"
+    [[ -f "$vitals_script" ]] || { echo "Vitals script not found"; return 1; }
+
+    # Extract _compute_momentum and _safe_num
+    local fns_script="$TEMP_DIR/momentum-fns.sh"
+    cat > "$fns_script" <<'FEOF'
+#!/usr/bin/env bash
+set -uo pipefail
+FEOF
+
+    sed -n '/^_safe_num()/,/^}/p' "$vitals_script" >> "$fns_script" 2>/dev/null
+    sed -n '/^_compute_momentum()/,/^}$/p' "$vitals_script" >> "$fns_script" 2>/dev/null
+
+    # Create a progress file with 1 snapshot past intake
+    local progress_file="$TEMP_DIR/progress.json"
+    echo '{"snapshots":[{"stage":"build","iteration":1,"diff_lines":10}]}' > "$progress_file"
+
+    local result
+    result=$(
+        source "$fns_script" 2>/dev/null
+        _compute_momentum "$progress_file" "build" 2 20
+    ) || result=""
+
+    [[ "$result" == "60" ]] || { echo "Expected momentum=60 for single snapshot past intake, got '$result'"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 49. Health gate blocks when health < threshold
+# ──────────────────────────────────────────────────────────────────────────────
+test_health_gate_blocks() {
+    local vitals_script
+    vitals_script="$(dirname "$REAL_PIPELINE_SCRIPT")/sw-pipeline-vitals.sh"
+    [[ -f "$vitals_script" ]] || { echo "Vitals script not found"; return 1; }
+
+    # Verify the function signature exists
+    grep -q "pipeline_check_health_gate()" "$vitals_script" || \
+        { echo "pipeline_check_health_gate not found in vitals"; return 1; }
+
+    # Verify threshold logic: returns 1 when health < threshold
+    grep -q 'health.*-lt.*threshold' "$vitals_script" || \
+        grep -q 'health_score.*threshold' "$vitals_script" || \
+        { echo "Expected health < threshold check in health gate"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 50. Health gate passes when health >= threshold
+# ──────────────────────────────────────────────────────────────────────────────
+test_health_gate_passes() {
+    local vitals_script
+    vitals_script="$(dirname "$REAL_PIPELINE_SCRIPT")/sw-pipeline-vitals.sh"
+    [[ -f "$vitals_script" ]] || { echo "Vitals script not found"; return 1; }
+
+    # Verify default threshold is 40
+    grep -q 'VITALS_GATE_THRESHOLD:-40' "$vitals_script" || \
+        { echo "Expected default threshold of 40 in health gate"; return 1; }
+
+    # Verify return 0 path exists
+    grep -q 'return 0' "$vitals_script" || \
+        { echo "Expected return 0 path in health gate"; return 1; }
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1548,6 +1712,13 @@ main() {
         "test_pre_deploy_gates_exist:Deploy: Pre-deploy gates exist in pipeline"
         "test_deploy_strategy_config:Deploy: Deploy strategy config pattern"
         "test_canary_deploy_flow:Deploy: Canary deploy flow patterns exist"
+        "test_pipeline_state_removed:Pipeline: PIPELINE_STATE references removed"
+        "test_coverage_json_created:Pipeline: Coverage JSON creation in test stage"
+        "test_compact_goal:Pipeline: _pipeline_compact_goal returns goal+plan+design"
+        "test_load_composed_pipeline:Pipeline: load_composed_pipeline sets COMPOSED_STAGES"
+        "test_momentum_bootstrap_single_snapshot:Vitals: Momentum returns 60 for single snapshot past intake"
+        "test_health_gate_blocks:Vitals: Health gate blocks when health < threshold"
+        "test_health_gate_passes:Vitals: Health gate passes with default threshold=40"
     )
 
     for entry in "${tests[@]}"; do

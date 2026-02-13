@@ -219,6 +219,13 @@ if [[ -n "$TEMPLATE_NAME" ]]; then
         exit 1
     fi
 
+    # Validate template parsed correctly — if jq failed, TEMPLATE_AGENTS is empty
+    if [[ ${#TEMPLATE_AGENTS[@]} -eq 0 ]]; then
+        error "Template '${TEMPLATE_NAME}' parsed with no agents. Check template JSON."
+        echo -e "  ${DIM}File: ${TEMPLATE_FILE}${RESET}"
+        exit 1
+    fi
+
     echo -e "  ${DIM}${TEMPLATE_DESC}${RESET}"
     echo -e "  ${DIM}Agents: ${#TEMPLATE_AGENTS[@]}  Layout: ${TEMPLATE_LAYOUT}${RESET}"
 fi
@@ -426,14 +433,19 @@ LAUNCHER_STATIC
         if [[ "$SKIP_PERMISSIONS" == true ]]; then
             CLAUDE_FLAGS="--dangerously-skip-permissions"
         fi
-        sed "s|__DIR__|${PROJECT_DIR}|g;s|__TEAM__|${TEAM_NAME}|g;s|__PROMPT__|${PROMPT_FILE}|g;s|__CLAUDE_FLAGS__|${CLAUDE_FLAGS}|g" \
+        # Use awk for safe string replacement — sed breaks on & | \ in paths
+        awk -v dir="$PROJECT_DIR" -v team="$TEAM_NAME" -v prompt="$PROMPT_FILE" -v flags="$CLAUDE_FLAGS" \
+            '{gsub(/__DIR__/, dir); gsub(/__TEAM__/, team); gsub(/__PROMPT__/, prompt); gsub(/__CLAUDE_FLAGS__/, flags); print}' \
             "$LAUNCHER" > "${LAUNCHER}.tmp" && mv "${LAUNCHER}.tmp" "$LAUNCHER"
         chmod +x "$LAUNCHER"
 
         # Create window with command — no race condition!
         # bash --login loads PATH (needed for ~/.local/bin/claude)
-        tmux new-window -n "$WINDOW_NAME" -c "$PROJECT_DIR" \
-            "bash --login ${LAUNCHER}"
+        if ! tmux new-window -n "$WINDOW_NAME" -c "$PROJECT_DIR" \
+            "bash --login ${LAUNCHER}"; then
+            error "Failed to create tmux window '${WINDOW_NAME}'"
+            exit 1
+        fi
 
     elif [[ "$AUTO_LAUNCH" == true && -z "$TEAM_PROMPT" ]]; then
         # No template and no goal — just launch claude interactively
@@ -454,12 +466,17 @@ LAUNCHER_STATIC
         if [[ "$SKIP_PERMISSIONS" == true ]]; then
             CLAUDE_FLAGS="--dangerously-skip-permissions"
         fi
-        sed "s|__DIR__|${PROJECT_DIR}|g;s|__TEAM__|${TEAM_NAME}|g;s|__CLAUDE_FLAGS__|${CLAUDE_FLAGS}|g" \
+        # Use awk for safe string replacement — sed breaks on & | \ in paths
+        awk -v dir="$PROJECT_DIR" -v team="$TEAM_NAME" -v flags="$CLAUDE_FLAGS" \
+            '{gsub(/__DIR__/, dir); gsub(/__TEAM__/, team); gsub(/__CLAUDE_FLAGS__/, flags); print}' \
             "$LAUNCHER" > "${LAUNCHER}.tmp" && mv "${LAUNCHER}.tmp" "$LAUNCHER"
         chmod +x "$LAUNCHER"
 
-        tmux new-window -n "$WINDOW_NAME" -c "$PROJECT_DIR" \
-            "bash --login ${LAUNCHER}"
+        if ! tmux new-window -n "$WINDOW_NAME" -c "$PROJECT_DIR" \
+            "bash --login ${LAUNCHER}"; then
+            error "Failed to create tmux window '${WINDOW_NAME}'"
+            exit 1
+        fi
 
     else
         # --no-launch: create window with a regular shell
@@ -467,8 +484,13 @@ LAUNCHER_STATIC
         info "Window ready. Launch Claude manually: ${DIM}claude${RESET}"
     fi
 
-    # Apply dark theme (safe to run immediately — no race with pane content)
-    tmux select-pane -t "$WINDOW_NAME" -P 'bg=#1a1a2e,fg=#e4e4e7'
+    # Apply dark theme after a brief delay to ensure the shell has started.
+    # Without this, select-pane -P can race with shell initialization and
+    # the styling may not apply to the final pane state.
+    {
+        sleep 0.3
+        tmux select-pane -t "$WINDOW_NAME" -P 'bg=#1a1a2e,fg=#e4e4e7' 2>/dev/null || true
+    } &
 
 elif [[ -f "$ADAPTER_FILE" ]] && type -t spawn_agent &>/dev/null; then
     # ─── Non-tmux adapter session (iterm2, wezterm, etc.) ──────────────────

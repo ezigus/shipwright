@@ -103,6 +103,54 @@ format_duration() {
     fi
 }
 
+_pipeline_compact_goal() {
+    local goal="$1"
+    local plan_file="${2:-}"
+    local design_file="${3:-}"
+    local compact="$goal"
+
+    # Include plan summary (first 20 lines only)
+    if [[ -n "$plan_file" && -f "$plan_file" ]]; then
+        compact="${compact}
+
+## Plan Summary
+$(head -20 "$plan_file" 2>/dev/null || true)
+[... full plan in .claude/pipeline-artifacts/plan.md]"
+    fi
+
+    # Include design key decisions only (grep for headers)
+    if [[ -n "$design_file" && -f "$design_file" ]]; then
+        compact="${compact}
+
+## Key Design Decisions
+$(grep -E '^#{1,3} ' "$design_file" 2>/dev/null | head -10 || true)
+[... full design in .claude/pipeline-artifacts/design.md]"
+    fi
+
+    echo "$compact"
+}
+
+load_composed_pipeline() {
+    local spec_file="$1"
+    [[ ! -f "$spec_file" ]] && return 1
+
+    # Read enabled stages from composed spec
+    local composed_stages
+    composed_stages=$(jq -r '.stages // [] | .[] | .id' "$spec_file" 2>/dev/null) || return 1
+    [[ -z "$composed_stages" ]] && return 1
+
+    # Override enabled stages
+    COMPOSED_STAGES="$composed_stages"
+
+    # Override per-stage settings
+    local build_max
+    build_max=$(jq -r '.stages[] | select(.id=="build") | .max_iterations // ""' "$spec_file" 2>/dev/null) || true
+    [[ -n "$build_max" && "$build_max" != "null" ]] && COMPOSED_BUILD_ITERATIONS="$build_max"
+
+    emit_event "pipeline.composed_loaded" "stages=$(echo "$composed_stages" | wc -l | tr -d ' ')"
+    return 0
+}
+
 # ─── Structured Event Log ──────────────────────────────────────────────────
 # Appends JSON events to ~/.shipwright/events.jsonl for metrics/traceability
 
@@ -2134,22 +2182,9 @@ stage_build() {
         memory_context=$(bash "$SCRIPT_DIR/sw-memory.sh" inject "build" 2>/dev/null) || true
     fi
 
-    # Build enriched goal with full context
-    local enriched_goal="$GOAL"
-    if [[ -s "$plan_file" ]]; then
-        enriched_goal="$GOAL
-
-Implementation plan (follow this exactly):
-$(cat "$plan_file")"
-    fi
-
-    # Inject approved design document
-    if [[ -s "$design_file" ]]; then
-        enriched_goal="${enriched_goal}
-
-Follow the approved design document:
-$(cat "$design_file")"
-    fi
+    # Build enriched goal with compact context (avoids prompt bloat)
+    local enriched_goal
+    enriched_goal=$(_pipeline_compact_goal "$GOAL" "$plan_file" "$design_file")
 
     # Inject memory context
     if [[ -n "$memory_context" ]]; then
@@ -2412,6 +2447,16 @@ ${test_summary}
 \`\`\`
 </details>"
     fi
+
+    # Write coverage summary for pre-deploy gate
+    local _cov_pct=0
+    if [[ -f "$ARTIFACTS_DIR/test-results.log" ]]; then
+        _cov_pct=$(grep -oE '[0-9]+%' "$ARTIFACTS_DIR/test-results.log" 2>/dev/null | head -1 | tr -d '%' || true)
+        _cov_pct="${_cov_pct:-0}"
+    fi
+    local _cov_tmp
+    _cov_tmp=$(mktemp "${ARTIFACTS_DIR}/test-coverage.json.tmp.XXXXXX")
+    printf '{"coverage_pct":%d}' "${_cov_pct:-0}" > "$_cov_tmp" && mv "$_cov_tmp" "$ARTIFACTS_DIR/test-coverage.json" || rm -f "$_cov_tmp"
 
     log_stage "test" "Tests passed${coverage:+ (coverage: ${coverage}%)}"
 }
@@ -6438,7 +6483,12 @@ Focus on fixing the failing tests while keeping all passing tests working."
                 if type pipeline_emit_progress_snapshot &>/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
                     local _diff_count
                     _diff_count=$(git diff --stat HEAD~1 2>/dev/null | tail -1 | grep -oE '[0-9]+' | head -1) || true
-                    pipeline_emit_progress_snapshot "${ISSUE_NUMBER}" "${CURRENT_STAGE_ID:-build}" "${cycle:-0}" "${_diff_count:-0}" "" "" 2>/dev/null || true
+                    local _snap_files _snap_error
+                    _snap_files=$(git diff --stat HEAD~1 2>/dev/null | tail -1 | grep -oE '[0-9]+' | head -1 || true)
+                    _snap_files="${_snap_files:-0}"
+                    _snap_error=$(tail -1 "$ARTIFACTS_DIR/error-log.jsonl" 2>/dev/null | jq -r '.error // ""' 2>/dev/null || true)
+                    _snap_error="${_snap_error:-}"
+                    pipeline_emit_progress_snapshot "${ISSUE_NUMBER}" "${CURRENT_STAGE_ID:-build}" "${cycle:-0}" "${_diff_count:-0}" "${_snap_files}" "${_snap_error}" 2>/dev/null || true
                 fi
             else
                 mark_stage_failed "build"
@@ -6458,7 +6508,12 @@ Focus on fixing the failing tests while keeping all passing tests working."
                 if type pipeline_emit_progress_snapshot &>/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
                     local _diff_count
                     _diff_count=$(git diff --stat HEAD~1 2>/dev/null | tail -1 | grep -oE '[0-9]+' | head -1) || true
-                    pipeline_emit_progress_snapshot "${ISSUE_NUMBER}" "${CURRENT_STAGE_ID:-build}" "${cycle:-0}" "${_diff_count:-0}" "" "" 2>/dev/null || true
+                    local _snap_files _snap_error
+                    _snap_files=$(git diff --stat HEAD~1 2>/dev/null | tail -1 | grep -oE '[0-9]+' | head -1 || true)
+                    _snap_files="${_snap_files:-0}"
+                    _snap_error=$(tail -1 "$ARTIFACTS_DIR/error-log.jsonl" 2>/dev/null | jq -r '.error // ""' 2>/dev/null || true)
+                    _snap_error="${_snap_error:-}"
+                    pipeline_emit_progress_snapshot "${ISSUE_NUMBER}" "${CURRENT_STAGE_ID:-build}" "${cycle:-0}" "${_diff_count:-0}" "${_snap_files}" "${_snap_error}" 2>/dev/null || true
                 fi
             else
                 mark_stage_failed "build"
@@ -6484,7 +6539,12 @@ Focus on fixing the failing tests while keeping all passing tests working."
             if type pipeline_emit_progress_snapshot &>/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
                 local _diff_count
                 _diff_count=$(git diff --stat HEAD~1 2>/dev/null | tail -1 | grep -oE '[0-9]+' | head -1) || true
-                pipeline_emit_progress_snapshot "${ISSUE_NUMBER}" "${CURRENT_STAGE_ID:-test}" "${cycle:-0}" "${_diff_count:-0}" "" "" 2>/dev/null || true
+                local _snap_files _snap_error
+                _snap_files=$(git diff --stat HEAD~1 2>/dev/null | tail -1 | grep -oE '[0-9]+' | head -1 || true)
+                _snap_files="${_snap_files:-0}"
+                _snap_error=$(tail -1 "$ARTIFACTS_DIR/error-log.jsonl" 2>/dev/null | jq -r '.error // ""' 2>/dev/null || true)
+                _snap_error="${_snap_error:-}"
+                pipeline_emit_progress_snapshot "${ISSUE_NUMBER}" "${CURRENT_STAGE_ID:-test}" "${cycle:-0}" "${_diff_count:-0}" "${_snap_files}" "${_snap_error}" 2>/dev/null || true
             fi
             return 0  # Tests passed!
         fi
@@ -7247,6 +7307,10 @@ pipeline_start() {
     # Record pipeline outcome for model routing feedback loop
     if type optimize_analyze_outcome &>/dev/null 2>&1; then
         optimize_analyze_outcome "$STATE_FILE" 2>/dev/null || true
+    fi
+
+    if type memory_finalize_pipeline &>/dev/null 2>&1; then
+        memory_finalize_pipeline "$STATE_FILE" "$ARTIFACTS_DIR" 2>/dev/null || true
     fi
 
     # Emit cost event

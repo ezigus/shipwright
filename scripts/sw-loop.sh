@@ -266,6 +266,17 @@ select_adaptive_model() {
         echo "$default_model"
         return 0
     fi
+    # Read learned model routing
+    local _routing_file="${HOME}/.shipwright/optimization/model-routing.json"
+    if [[ -f "$_routing_file" ]] && command -v jq &>/dev/null; then
+        local _routed_model
+        _routed_model=$(jq -r --arg r "$role" '.routes[$r].model // ""' "$_routing_file" 2>/dev/null) || true
+        if [[ -n "${_routed_model:-}" && "${_routed_model:-}" != "null" ]]; then
+            echo "${_routed_model}"
+            return 0
+        fi
+    fi
+
     # Try intelligence-based recommendation
     if type intelligence_recommend_model &>/dev/null 2>&1; then
         local rec
@@ -315,6 +326,18 @@ apply_adaptive_budget() {
         [[ -n "$tuned_ext" && "$tuned_ext" != "null" ]] && EXTENSION_SIZE="$tuned_ext"
         [[ -n "$tuned_ext_count" && "$tuned_ext_count" != "null" ]] && MAX_EXTENSIONS="$tuned_ext_count"
         [[ -n "$tuned_cb" && "$tuned_cb" != "null" ]] && CIRCUIT_BREAKER_THRESHOLD="$tuned_cb"
+    fi
+
+    # Read learned iteration model
+    local _iter_model="${HOME}/.shipwright/optimization/iteration-model.json"
+    if [[ -f "$_iter_model" ]] && ! $MAX_ITERATIONS_EXPLICIT && command -v jq &>/dev/null; then
+        local _complexity="${ISSUE_COMPLEXITY:-${COMPLEXITY:-medium}}"
+        local _predicted_max
+        _predicted_max=$(jq -r --arg c "$_complexity" '.predictions[$c].max_iterations // ""' "$_iter_model" 2>/dev/null) || true
+        if [[ -n "${_predicted_max:-}" && "${_predicted_max:-}" != "null" && "${_predicted_max:-0}" -gt 0 ]]; then
+            MAX_ITERATIONS="${_predicted_max}"
+            info "Iteration model: ${_complexity} complexity → max ${_predicted_max} iterations"
+        fi
     fi
 
     # Try intelligence-based iteration estimate
@@ -1571,17 +1594,21 @@ done
 echo -e "\n${DIM}Agent ${AGENT_NUM} finished after ${ITERATION} iterations${RESET}"
 WORKEREOF
 
-    # Replace placeholders
+    # Replace placeholders — use awk for all values to avoid sed injection
+    # (sed breaks on & | \ in paths and test commands)
     sed_i "s|__AGENT_NUM__|${agent_num}|g" "$worker_script"
     sed_i "s|__TOTAL_AGENTS__|${total_agents}|g" "$worker_script"
-    sed_i "s|__WORK_DIR__|${wt_path}|g" "$worker_script"
-    sed_i "s|__LOG_DIR__|${LOG_DIR}|g" "$worker_script"
     sed_i "s|__MAX_ITERATIONS__|${MAX_ITERATIONS}|g" "$worker_script"
-    sed_i "s|__TEST_CMD__|${TEST_CMD}|g" "$worker_script"
-    sed_i "s|__CLAUDE_FLAGS__|${claude_flags}|g" "$worker_script"
-    # Goal needs special handling for sed (may contain special chars)
-    # Use awk for safe string replacement without python
-    awk -v goal="$GOAL" '{gsub(/__GOAL__/, goal); print}' "$worker_script" > "${worker_script}.tmp" \
+    # Paths and commands may contain sed-special chars — use awk
+    awk -v val="$wt_path" '{gsub(/__WORK_DIR__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
+        && mv "${worker_script}.tmp" "$worker_script"
+    awk -v val="$LOG_DIR" '{gsub(/__LOG_DIR__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
+        && mv "${worker_script}.tmp" "$worker_script"
+    awk -v val="$TEST_CMD" '{gsub(/__TEST_CMD__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
+        && mv "${worker_script}.tmp" "$worker_script"
+    awk -v val="$claude_flags" '{gsub(/__CLAUDE_FLAGS__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
+        && mv "${worker_script}.tmp" "$worker_script"
+    awk -v val="$GOAL" '{gsub(/__GOAL__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
         && mv "${worker_script}.tmp" "$worker_script"
     chmod +x "$worker_script"
     echo "$worker_script"
@@ -1601,10 +1628,14 @@ launch_multi_agent() {
     MULTI_WINDOW_NAME="sw-loop-$(date +%s)"
     tmux new-window -n "$MULTI_WINDOW_NAME" -c "$PROJECT_ROOT"
 
+    # Capture the first pane's ID (stable regardless of pane-base-index)
+    local monitor_pane_id
+    monitor_pane_id="$(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_id}' 2>/dev/null | head -1)"
+
     # First pane becomes monitor
-    tmux send-keys -t "$MULTI_WINDOW_NAME" "printf '\\033]2;loop-monitor\\033\\\\'" Enter
+    tmux send-keys -t "$monitor_pane_id" "printf '\\033]2;loop-monitor\\033\\\\'" Enter
     sleep 0.2
-    tmux send-keys -t "$MULTI_WINDOW_NAME" "clear && echo 'Loop Monitor — watching agent logs...'" Enter
+    tmux send-keys -t "$monitor_pane_id" "clear && echo 'Loop Monitor — watching agent logs...'" Enter
 
     # Create worker panes
     for i in $(seq 1 "$AGENTS"); do
@@ -1620,12 +1651,12 @@ launch_multi_agent() {
 
     # Layout: monitor pane on top (35%), worker agents tile below
     tmux select-layout -t "$MULTI_WINDOW_NAME" main-vertical 2>/dev/null || true
-    tmux resize-pane -t "$MULTI_WINDOW_NAME.0" -y 35% 2>/dev/null || true
+    tmux resize-pane -t "$monitor_pane_id" -y 35% 2>/dev/null || true
 
     # In the monitor pane, tail all agent logs
-    tmux select-pane -t "$MULTI_WINDOW_NAME.0"
+    tmux select-pane -t "$monitor_pane_id"
     sleep 0.5
-    tmux send-keys -t "$MULTI_WINDOW_NAME.0" "clear && tail -f $LOG_DIR/agent-*-iter-*.log 2>/dev/null || echo 'Waiting for agent logs...'" Enter
+    tmux send-keys -t "$monitor_pane_id" "clear && tail -f $LOG_DIR/agent-*-iter-*.log 2>/dev/null || echo 'Waiting for agent logs...'" Enter
 
     success "Launched $AGENTS worker agents in window: $MULTI_WINDOW_NAME"
     echo ""
@@ -1680,12 +1711,13 @@ wait_for_multi_completion() {
 
 cleanup_multi_agent() {
     if [[ -n "$MULTI_WINDOW_NAME" ]]; then
-        # Send Ctrl-C to all panes in the worker window
-        local pane_count
-        pane_count="$(tmux list-panes -t "$MULTI_WINDOW_NAME" 2>/dev/null | wc -l | tr -d ' ')"
-        for i in $(seq 0 $(( pane_count - 1 ))); do
-            tmux send-keys -t "$MULTI_WINDOW_NAME.$i" C-c 2>/dev/null || true
-        done
+        # Send Ctrl-C to all panes using stable pane IDs (not indices)
+        # Pane IDs (%0, %1, ...) are unaffected by pane-base-index setting
+        local pane_id
+        while IFS= read -r pane_id; do
+            [[ -z "$pane_id" ]] && continue
+            tmux send-keys -t "$pane_id" C-c 2>/dev/null || true
+        done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_id}' 2>/dev/null || true)
         sleep 1
         tmux kill-window -t "$MULTI_WINDOW_NAME" 2>/dev/null || true
     fi
@@ -1707,6 +1739,9 @@ run_single_agent_loop() {
     apply_adaptive_budget
     MODEL="$(select_adaptive_model "build" "$MODEL")"
 
+    # Track applied memory fix patterns for outcome recording
+    _applied_fix_pattern=""
+
     show_banner
 
     while true; do
@@ -1714,6 +1749,26 @@ run_single_agent_loop() {
         check_circuit_breaker || break
         check_max_iterations || break
         ITERATION=$(( ITERATION + 1 ))
+
+        # Try memory-based fix suggestion on retry after test failure
+        if [[ "${TEST_PASSED:-}" == "false" ]]; then
+            local _last_error=""
+            local _prev_log="$LOG_DIR/iteration-$(( ITERATION - 1 )).log"
+            if [[ -f "$_prev_log" ]]; then
+                _last_error=$(tail -20 "$_prev_log" 2>/dev/null | grep -iE '(error|fail|exception)' | head -1 || true)
+            fi
+            local _fix_suggestion=""
+            if type memory_closed_loop_inject &>/dev/null 2>&1 && [[ -n "${_last_error:-}" ]]; then
+                _fix_suggestion=$(memory_closed_loop_inject "$_last_error" 2>/dev/null) || true
+            fi
+            if [[ -n "${_fix_suggestion:-}" ]]; then
+                _applied_fix_pattern="${_last_error}"
+                GOAL="KNOWN FIX (from past success): ${_fix_suggestion}
+
+${GOAL}"
+                info "Memory fix injected: ${_fix_suggestion:0:80}"
+            fi
+        fi
 
         # Run Claude
         local exit_code=0
@@ -1763,6 +1818,18 @@ run_single_agent_loop() {
             else
                 echo -e "  ${RED}✗${RESET} Tests: failed"
             fi
+        fi
+
+        # Track fix outcome for memory effectiveness
+        if [[ -n "${_applied_fix_pattern:-}" ]]; then
+            if type memory_record_fix_outcome &>/dev/null 2>&1; then
+                if [[ "${TEST_PASSED:-}" == "true" ]]; then
+                    memory_record_fix_outcome "$_applied_fix_pattern" "true" "true" 2>/dev/null || true
+                else
+                    memory_record_fix_outcome "$_applied_fix_pattern" "true" "false" 2>/dev/null || true
+                fi
+            fi
+            _applied_fix_pattern=""
         fi
 
         # Audit agent (reviews implementer's work)

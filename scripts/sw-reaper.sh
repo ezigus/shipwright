@@ -111,8 +111,10 @@ release_pid_lock() {
 }
 
 # ─── tmux format string (reused from sw-ps.sh) ──────────────────────────
-# Fields: window_name | pane_title | pane_pid | pane_current_command | pane_active | pane_idle | pane_dead | session:window.pane
-FORMAT='#{window_name}|#{pane_title}|#{pane_pid}|#{pane_current_command}|#{pane_active}|#{pane_idle}|#{pane_dead}|#{session_name}:#{window_index}.#{pane_index}'
+# Fields: window_name | pane_title | pane_pid | pane_current_command | pane_active | pane_idle | pane_dead | pane_id
+# Uses #{pane_id} (%0, %1, ...) instead of #{pane_index} — IDs are stable
+# regardless of pane-base-index setting, preventing wrong-pane kills.
+FORMAT='#{window_name}|#{pane_title}|#{pane_pid}|#{pane_current_command}|#{pane_active}|#{pane_idle}|#{pane_dead}|#{pane_id}'
 
 # ─── Detection: should this pane be reaped? ───────────────────────────────
 # Returns 0 (reap) or 1 (skip), and sets REAP_REASON

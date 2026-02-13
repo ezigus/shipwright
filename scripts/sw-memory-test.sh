@@ -618,6 +618,164 @@ test_memory_get_dora_baseline() {
     )
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 18. Error log to failures — memory_capture_failure_from_log
+# ──────────────────────────────────────────────────────────────────────────────
+test_error_log_to_failures() {
+    (
+        cd "$TEMP_DIR/project"
+        source "$MEMORY_SCRIPT" > /dev/null 2>&1
+
+        ensure_memory_dir
+        local mem_dir
+        mem_dir="$(repo_memory_dir)"
+        local failures_file="$mem_dir/failures.json"
+
+        # Seed empty failures file
+        echo '{"failures":[]}' > "$failures_file"
+
+        # Create error-log.jsonl with 2 entries
+        local artifacts_dir="$TEMP_DIR/project/.claude/pipeline-artifacts"
+        mkdir -p "$artifacts_dir"
+        echo '{"type":"test","error":"TypeError: Cannot read property foo of undefined"}' > "$artifacts_dir/error-log.jsonl"
+        echo '{"type":"syntax","error":"SyntaxError: Unexpected token }"}' >> "$artifacts_dir/error-log.jsonl"
+
+        memory_capture_failure_from_log "$artifacts_dir"
+
+        # Verify failures were captured
+        local count
+        count=$(jq '.failures | length' "$failures_file" 2>/dev/null || echo "0")
+        [[ "$count" -ge 2 ]] || { echo "Expected >= 2 failures, got $count"; return 1; }
+    )
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 19. Fix outcome tracking — memory_record_fix_outcome
+# ──────────────────────────────────────────────────────────────────────────────
+test_fix_outcome_tracking() {
+    (
+        cd "$TEMP_DIR/project"
+        source "$MEMORY_SCRIPT" > /dev/null 2>&1
+
+        ensure_memory_dir
+        local mem_dir
+        mem_dir="$(repo_memory_dir)"
+        local failures_file="$mem_dir/failures.json"
+
+        # Seed failures with a pattern that has a fix
+        cat > "$failures_file" <<'JSON'
+{"failures":[{"pattern":"TypeError: Cannot read property","fix":"Add null check","stage":"test","category":"test","seen_count":1,"times_fix_applied":0,"times_fix_resolved":0}]}
+JSON
+
+        # Record a successful fix
+        memory_record_fix_outcome "TypeError: Cannot read property" "true" "true"
+
+        # Verify times_fix_applied and times_fix_resolved incremented
+        local applied resolved
+        applied=$(jq '.failures[0].times_fix_applied' "$failures_file" 2>/dev/null || echo "0")
+        resolved=$(jq '.failures[0].times_fix_resolved' "$failures_file" 2>/dev/null || echo "0")
+        [[ "$applied" == "1" ]] || { echo "Expected times_fix_applied=1, got $applied"; return 1; }
+        [[ "$resolved" == "1" ]] || { echo "Expected times_fix_resolved=1, got $resolved"; return 1; }
+    )
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 20. Closed-loop inject with effectiveness — memory_closed_loop_inject
+# ──────────────────────────────────────────────────────────────────────────────
+test_closed_loop_inject_with_effectiveness() {
+    (
+        cd "$TEMP_DIR/project"
+        source "$MEMORY_SCRIPT" > /dev/null 2>&1
+
+        ensure_memory_dir
+        local mem_dir
+        mem_dir="$(repo_memory_dir)"
+        local failures_file="$mem_dir/failures.json"
+
+        # Seed with a fix that has >30% effectiveness (threshold for query)
+        cat > "$failures_file" <<'JSON'
+{"failures":[{"pattern":"TypeError: Cannot read","fix":"Add null check before access","stage":"test","category":"test","seen_count":5,"fix_applied":10,"fix_resolved":5,"fix_effectiveness_rate":50}]}
+JSON
+
+        local result
+        result=$(memory_closed_loop_inject "TypeError: Cannot read" 2>/dev/null) || result=""
+
+        # Should return formatted string with category and success rate
+        [[ -n "$result" ]] || { echo "Expected non-empty inject result"; return 1; }
+        echo "$result" | grep -q "test" || { echo "Expected category 'test' in result: $result"; return 1; }
+        echo "$result" | grep -q "50%" || { echo "Expected '50%' in result: $result"; return 1; }
+        echo "$result" | grep -q "null check" || { echo "Expected fix text in result: $result"; return 1; }
+    )
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 21. Global memory aggregation — _memory_aggregate_global
+# ──────────────────────────────────────────────────────────────────────────────
+test_global_memory_aggregation() {
+    (
+        cd "$TEMP_DIR/project"
+        source "$MEMORY_SCRIPT" > /dev/null 2>&1
+
+        ensure_memory_dir
+        local mem_dir
+        mem_dir="$(repo_memory_dir)"
+        local failures_file="$mem_dir/failures.json"
+
+        # Seed with patterns that have seen_count >= 3 (promotion threshold)
+        cat > "$failures_file" <<'JSON'
+{"failures":[{"pattern":"Module not found: xyz","fix":"Install xyz","stage":"build","category":"dependency","seen_count":5},{"pattern":"Port already in use","fix":"Kill process","stage":"build","category":"config","seen_count":3},{"pattern":"Rare error once","fix":"Retry","stage":"test","category":"test","seen_count":1}]}
+JSON
+
+        # Create global memory file
+        local global_file="$GLOBAL_MEMORY"
+        mkdir -p "$(dirname "$global_file")"
+        echo '{"common_patterns":[]}' > "$global_file"
+
+        _memory_aggregate_global
+
+        # Verify: patterns with seen_count >= 3 should be promoted
+        local promoted_count
+        promoted_count=$(jq '.common_patterns | length' "$global_file" 2>/dev/null || echo "0")
+        [[ "$promoted_count" -eq 2 ]] || { echo "Expected 2 promoted patterns, got $promoted_count"; return 1; }
+    )
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 22. Memory finalize pipeline — memory_finalize_pipeline
+# ──────────────────────────────────────────────────────────────────────────────
+test_memory_finalize_pipeline() {
+    (
+        cd "$TEMP_DIR/project"
+        source "$MEMORY_SCRIPT" > /dev/null 2>&1
+
+        ensure_memory_dir
+        local mem_dir
+        mem_dir="$(repo_memory_dir)"
+        local failures_file="$mem_dir/failures.json"
+        echo '{"failures":[]}' > "$failures_file"
+
+        local state_file="$TEMP_DIR/project/.claude/pipeline-state.md"
+        local artifacts_dir="$TEMP_DIR/project/.claude/pipeline-artifacts"
+        mkdir -p "$artifacts_dir"
+
+        # Create error log for the from_log step
+        echo '{"type":"build","error":"ENOENT: no such file lib/missing.js"}' > "$artifacts_dir/error-log.jsonl"
+
+        # Create global memory file
+        local global_file="$GLOBAL_MEMORY"
+        mkdir -p "$(dirname "$global_file")"
+        echo '{"common_patterns":[]}' > "$global_file"
+
+        # Run the composite finalize function
+        memory_finalize_pipeline "$state_file" "$artifacts_dir"
+
+        # Verify error was captured from log
+        local fail_count
+        fail_count=$(jq '.failures | length' "$failures_file" 2>/dev/null || echo "0")
+        [[ "$fail_count" -ge 1 ]] || { echo "Expected >= 1 failure after finalize, got $fail_count"; return 1; }
+    )
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -671,6 +829,11 @@ main() {
         "test_memory_get_actionable_failures:Actionable failures threshold filtering"
         "test_memory_get_actionable_failures_empty:Actionable failures with no file returns []"
         "test_memory_get_dora_baseline:DORA baseline calculation from events"
+        "test_error_log_to_failures:Error log entries captured into failures.json"
+        "test_fix_outcome_tracking:Fix outcome tracking increments counters"
+        "test_closed_loop_inject_with_effectiveness:Closed-loop inject returns formatted fix"
+        "test_global_memory_aggregation:Global aggregation promotes frequent patterns"
+        "test_memory_finalize_pipeline:Finalize pipeline runs capture + aggregate"
     )
 
     for entry in "${tests[@]}"; do

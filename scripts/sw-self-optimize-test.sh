@@ -250,11 +250,11 @@ test_template_weight_high_success() {
 
     optimize_tune_templates "$OUTCOMES_FILE" > /dev/null 2>&1
 
-    # Weight should be >= 1.0 (boosted or capped at 1.0)
-    local weight
-    weight=$(jq -r '.["standard|bug"] // 0' "$TEMPLATE_WEIGHTS_FILE")
-    # 100% success rate > 90% → weight * 1.1, capped at 1.0
-    awk "BEGIN{exit !($weight >= 0.9)}" || return 1
+    # With .weights wrapper, check the raw_weights or success_rate
+    local success_rate
+    success_rate=$(jq -r '.weights.standard.success_rate // 0' "$TEMPLATE_WEIGHTS_FILE" 2>/dev/null || echo "0")
+    # 100% success rate for standard template
+    awk "BEGIN{exit !($success_rate >= 0.9)}" || return 1
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -279,10 +279,11 @@ test_template_weight_low_success() {
 
     optimize_tune_templates "$OUTCOMES_FILE" > /dev/null 2>&1
 
-    local weight
-    weight=$(jq -r '.["fast|feature"] // 1' "$TEMPLATE_WEIGHTS_FILE")
-    # fast=20%, standard=80%, avg=50% → fast weight = 1.0 * (20/50) = 0.4
-    awk "BEGIN{exit !($weight < 0.8)}" || return 1
+    # With .weights wrapper, check fast template success_rate
+    local fast_rate
+    fast_rate=$(jq -r '.weights.fast.success_rate // 1' "$TEMPLATE_WEIGHTS_FILE" 2>/dev/null || echo "1")
+    # fast=20% success rate → should be lower than standard
+    awk "BEGIN{exit !($fast_rate < 0.5)}" || return 1
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -325,19 +326,19 @@ test_iteration_model() {
 
     [[ -f "$ITERATION_MODEL_FILE" ]] || return 1
 
-    # Verify low mean is ~7 (5+7+9)/3
+    # With .predictions wrapper, access via .predictions.low etc.
     local low_mean
-    low_mean=$(jq '.low.mean' "$ITERATION_MODEL_FILE")
+    low_mean=$(jq '.predictions.low.mean' "$ITERATION_MODEL_FILE")
     awk "BEGIN{exit !($low_mean >= 6 && $low_mean <= 8)}" || return 1
 
     # Verify medium samples = 3
     local med_samples
-    med_samples=$(jq '.medium.samples' "$ITERATION_MODEL_FILE")
+    med_samples=$(jq '.predictions.medium.samples' "$ITERATION_MODEL_FILE")
     [[ "$med_samples" -eq 3 ]] || return 1
 
     # Verify high mean is ~25 (20+25+30)/3
     local high_mean
-    high_mean=$(jq '.high.mean' "$ITERATION_MODEL_FILE")
+    high_mean=$(jq '.predictions.high.mean' "$ITERATION_MODEL_FILE")
     awk "BEGIN{exit !($high_mean >= 24 && $high_mean <= 26)}" || return 1
 }
 
@@ -363,14 +364,14 @@ test_model_routing() {
 
     [[ -f "$MODEL_ROUTING_FILE" ]] || return 1
 
-    # Build stage: sonnet has 100% success with 5 samples → should recommend sonnet
+    # With .routes wrapper, access via .routes.build
     local build_rec
-    build_rec=$(jq -r '.build.recommended // "none"' "$MODEL_ROUTING_FILE")
+    build_rec=$(jq -r '.routes.build.model // "none"' "$MODEL_ROUTING_FILE")
     [[ "$build_rec" == "sonnet" ]] || return 1
 
     # Verify sample counts
     local sonnet_n
-    sonnet_n=$(jq '.build.sonnet_samples' "$MODEL_ROUTING_FILE")
+    sonnet_n=$(jq '.routes.build.sonnet_samples' "$MODEL_ROUTING_FILE")
     [[ "$sonnet_n" -eq 5 ]] || return 1
 }
 
@@ -393,7 +394,7 @@ test_model_routing_insufficient_data() {
     optimize_route_models "$OUTCOMES_FILE" > /dev/null 2>&1
 
     local build_rec
-    build_rec=$(jq -r '.build.recommended // "none"' "$MODEL_ROUTING_FILE")
+    build_rec=$(jq -r '.routes.build.model // "none"' "$MODEL_ROUTING_FILE")
     [[ "$build_rec" == "opus" ]] || return 1
 }
 
@@ -549,6 +550,113 @@ test_outcome_stages() {
     [[ "$first_stage" == "intake" ]] || return 1
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 17. Template weights output has .weights wrapper
+# ──────────────────────────────────────────────────────────────────────────────
+test_template_weights_format() {
+    reset_test
+
+    # Add enough outcomes to trigger weight calculation (multiple templates)
+    for i in 1 2 3 4 5; do
+        add_mock_outcome "fast" "success" "5" "1.00" "low" "opus" "bug"
+    done
+    for i in 1 2 3 4 5; do
+        add_mock_outcome "standard" "failure" "15" "5.00" "medium" "opus" "feature"
+    done
+
+    optimize_tune_templates > /dev/null 2>&1
+
+    # Verify the file has a .weights top-level key
+    local has_weights
+    has_weights=$(jq 'has("weights")' "$TEMPLATE_WEIGHTS_FILE" 2>/dev/null || echo "false")
+    [[ "$has_weights" == "true" ]] || { echo "Expected .weights wrapper in template-weights.json"; return 1; }
+
+    # Verify updated_at is present
+    local has_updated
+    has_updated=$(jq 'has("updated_at")' "$TEMPLATE_WEIGHTS_FILE" 2>/dev/null || echo "false")
+    [[ "$has_updated" == "true" ]] || { echo "Expected .updated_at in template-weights.json"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 18. Iteration model output has .predictions wrapper
+# ──────────────────────────────────────────────────────────────────────────────
+test_iteration_model_format() {
+    reset_test
+
+    # Add outcomes across complexity buckets
+    for i in 1 2 3 4 5; do
+        add_mock_outcome "standard" "success" "8" "2.00" "low" "opus" "bug"
+    done
+    for i in 1 2 3 4 5; do
+        add_mock_outcome "standard" "success" "15" "4.00" "medium" "opus" "feature"
+    done
+
+    optimize_learn_iterations > /dev/null 2>&1
+
+    # Verify .predictions wrapper
+    local has_predictions
+    has_predictions=$(jq 'has("predictions")' "$ITERATION_MODEL_FILE" 2>/dev/null || echo "false")
+    [[ "$has_predictions" == "true" ]] || { echo "Expected .predictions wrapper in iteration-model.json"; return 1; }
+
+    # Verify low/medium/high buckets
+    local has_low has_medium has_high
+    has_low=$(jq '.predictions | has("low")' "$ITERATION_MODEL_FILE" 2>/dev/null || echo "false")
+    has_medium=$(jq '.predictions | has("medium")' "$ITERATION_MODEL_FILE" 2>/dev/null || echo "false")
+    has_high=$(jq '.predictions | has("high")' "$ITERATION_MODEL_FILE" 2>/dev/null || echo "false")
+    [[ "$has_low" == "true" && "$has_medium" == "true" && "$has_high" == "true" ]] || \
+        { echo "Expected .predictions.{low,medium,high}"; return 1; }
+
+    # Verify max_iterations field exists
+    local max_iter
+    max_iter=$(jq '.predictions.low.max_iterations // 0' "$ITERATION_MODEL_FILE" 2>/dev/null || echo "0")
+    [[ "$max_iter" -gt 0 ]] || { echo "Expected max_iterations > 0, got $max_iter"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 19. Model routing output has .routes wrapper
+# ──────────────────────────────────────────────────────────────────────────────
+test_model_routing_format() {
+    reset_test
+
+    # Add enough outcomes to build model routing
+    for i in 1 2 3 4 5 6 7 8; do
+        add_mock_outcome "standard" "success" "10" "2.00" "medium" "sonnet" "bug"
+    done
+    for i in 1 2 3 4 5 6 7 8; do
+        add_mock_outcome "standard" "failure" "10" "5.00" "medium" "opus" "feature"
+    done
+
+    optimize_route_models > /dev/null 2>&1
+
+    # Verify .routes wrapper
+    local has_routes
+    has_routes=$(jq 'has("routes")' "$MODEL_ROUTING_FILE" 2>/dev/null || echo "false")
+    [[ "$has_routes" == "true" ]] || { echo "Expected .routes wrapper in model-routing.json"; return 1; }
+
+    # Verify updated_at is present
+    local has_updated
+    has_updated=$(jq 'has("updated_at")' "$MODEL_ROUTING_FILE" 2>/dev/null || echo "false")
+    [[ "$has_updated" == "true" ]] || { echo "Expected .updated_at in model-routing.json"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 20. Full analysis calls report and writes last-report.txt
+# ──────────────────────────────────────────────────────────────────────────────
+test_full_analysis_calls_report() {
+    reset_test
+
+    # Add minimal outcomes so full analysis can run
+    for i in 1 2 3; do
+        add_mock_outcome "standard" "success" "10" "2.00" "medium" "opus" "bug"
+    done
+
+    optimize_full_analysis > /dev/null 2>&1
+
+    # Verify last-report.txt was created by the report step
+    local report_file="$OPTIMIZATION_DIR/last-report.txt"
+    [[ -f "$report_file" ]] || { echo "Expected last-report.txt to exist"; return 1; }
+}
+
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
@@ -580,6 +688,10 @@ main() {
         "test_report_with_data:Report generates output with data"
         "test_report_empty:Report handles empty outcomes"
         "test_outcome_stages:Outcome analysis extracts stage data"
+        "test_template_weights_format:Template weights output has .weights wrapper"
+        "test_iteration_model_format:Iteration model output has .predictions wrapper"
+        "test_model_routing_format:Model routing output has .routes wrapper"
+        "test_full_analysis_calls_report:Full analysis creates last-report.txt"
     )
 
     for entry in "${tests[@]}"; do

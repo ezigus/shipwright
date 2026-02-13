@@ -91,6 +91,9 @@ jobs:
       - name: Run tmux tests
         run: bash scripts/sw-tmux-test.sh
 
+      - name: Run status tests
+        run: bash scripts/sw-status-test.sh
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:

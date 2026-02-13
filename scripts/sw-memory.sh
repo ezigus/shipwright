@@ -218,7 +218,7 @@ memory_capture_failure() {
 
     (
         if command -v flock &>/dev/null; then
-            flock -w 10 200 2>/dev/null || { warn "Memory lock timeout"; }
+            flock -w 10 200 2>/dev/null || { warn "Memory lock timeout"; return 1; }
         fi
         local tmp_file
         tmp_file=$(mktemp "${failures_file}.tmp.XXXXXX")
@@ -284,7 +284,7 @@ memory_record_fix_outcome() {
 
     (
         if command -v flock &>/dev/null; then
-            flock -w 10 200 2>/dev/null || { warn "Memory lock timeout"; }
+            flock -w 10 200 2>/dev/null || { warn "Memory lock timeout"; return 1; }
         fi
         local tmp_file
         tmp_file=$(mktemp "${failures_file}.tmp.XXXXXX")

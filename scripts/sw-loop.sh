@@ -565,32 +565,34 @@ resume_state() {
 
 write_state() {
     local tmp_state="${STATE_FILE}.tmp.$$"
-    cat > "$tmp_state" <<EOF
----
-goal: "$GOAL"
-iteration: $ITERATION
-max_iterations: $MAX_ITERATIONS
-status: $STATUS
-test_cmd: "$TEST_CMD"
-model: $MODEL
-agents: $AGENTS
-started_at: $(now_iso)
-last_iteration_at: $(now_iso)
-consecutive_failures: $CONSECUTIVE_FAILURES
-total_commits: $TOTAL_COMMITS
-audit_enabled: $AUDIT_ENABLED
-audit_agent_enabled: $AUDIT_AGENT_ENABLED
-quality_gates_enabled: $QUALITY_GATES_ENABLED
-dod_file: "$DOD_FILE"
-auto_extend: $AUTO_EXTEND
-extension_count: $EXTENSION_COUNT
-max_extensions: $MAX_EXTENSIONS
----
-
-## Log
-$LOG_ENTRIES
-EOF
-    mv "$tmp_state" "$STATE_FILE" 2>/dev/null || true
+    # Use printf instead of heredoc to avoid delimiter injection from GOAL
+    {
+        printf -- '---\n'
+        printf 'goal: "%s"\n' "$GOAL"
+        printf 'iteration: %s\n' "$ITERATION"
+        printf 'max_iterations: %s\n' "$MAX_ITERATIONS"
+        printf 'status: %s\n' "$STATUS"
+        printf 'test_cmd: "%s"\n' "$TEST_CMD"
+        printf 'model: %s\n' "$MODEL"
+        printf 'agents: %s\n' "$AGENTS"
+        printf 'started_at: %s\n' "$(now_iso)"
+        printf 'last_iteration_at: %s\n' "$(now_iso)"
+        printf 'consecutive_failures: %s\n' "$CONSECUTIVE_FAILURES"
+        printf 'total_commits: %s\n' "$TOTAL_COMMITS"
+        printf 'audit_enabled: %s\n' "$AUDIT_ENABLED"
+        printf 'audit_agent_enabled: %s\n' "$AUDIT_AGENT_ENABLED"
+        printf 'quality_gates_enabled: %s\n' "$QUALITY_GATES_ENABLED"
+        printf 'dod_file: "%s"\n' "$DOD_FILE"
+        printf 'auto_extend: %s\n' "$AUTO_EXTEND"
+        printf 'extension_count: %s\n' "$EXTENSION_COUNT"
+        printf 'max_extensions: %s\n' "$MAX_EXTENSIONS"
+        printf -- '---\n\n'
+        printf '## Log\n'
+        printf '%s\n' "$LOG_ENTRIES"
+    } > "$tmp_state"
+    if ! mv "$tmp_state" "$STATE_FILE" 2>/dev/null; then
+        warn "Failed to write state file: $STATE_FILE"
+    fi
 }
 
 write_progress() {

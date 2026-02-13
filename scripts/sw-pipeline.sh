@@ -1353,28 +1353,31 @@ write_state() {
         stage_progress=$(build_stage_progress)
     fi
 
-    cat > "$STATE_FILE" <<EOF
+    cat > "$STATE_FILE" <<'_SW_STATE_END_'
 ---
-pipeline: $PIPELINE_NAME
-goal: "$GOAL"
-status: $PIPELINE_STATUS
-issue: "${GITHUB_ISSUE:-}"
-branch: "${GIT_BRANCH:-}"
-template: "${TASK_TYPE:+$(template_for_type "$TASK_TYPE")}"
-current_stage: $CURRENT_STAGE
-current_stage_description: "${cur_stage_desc}"
-stage_progress: "${stage_progress}"
-started_at: ${STARTED_AT:-$(now_iso)}
-updated_at: $(now_iso)
-elapsed: ${total_dur:-0s}
-pr_number: ${PR_NUMBER:-}
-progress_comment_id: ${PROGRESS_COMMENT_ID:-}
-stages:
-${stages_yaml}---
-
-## Log
-$LOG_ENTRIES
-EOF
+_SW_STATE_END_
+    # Write state with printf to avoid heredoc delimiter injection
+    {
+        printf 'pipeline: %s\n' "$PIPELINE_NAME"
+        printf 'goal: "%s"\n' "$GOAL"
+        printf 'status: %s\n' "$PIPELINE_STATUS"
+        printf 'issue: "%s"\n' "${GITHUB_ISSUE:-}"
+        printf 'branch: "%s"\n' "${GIT_BRANCH:-}"
+        printf 'template: "%s"\n' "${TASK_TYPE:+$(template_for_type "$TASK_TYPE")}"
+        printf 'current_stage: %s\n' "$CURRENT_STAGE"
+        printf 'current_stage_description: "%s"\n' "${cur_stage_desc}"
+        printf 'stage_progress: "%s"\n' "${stage_progress}"
+        printf 'started_at: %s\n' "${STARTED_AT:-$(now_iso)}"
+        printf 'updated_at: %s\n' "$(now_iso)"
+        printf 'elapsed: %s\n' "${total_dur:-0s}"
+        printf 'pr_number: %s\n' "${PR_NUMBER:-}"
+        printf 'progress_comment_id: %s\n' "${PROGRESS_COMMENT_ID:-}"
+        printf 'stages:\n'
+        printf '%s' "${stages_yaml}"
+        printf -- '---\n\n'
+        printf '## Log\n'
+        printf '%s\n' "$LOG_ENTRIES"
+    } >> "$STATE_FILE"
 }
 
 resume_state() {

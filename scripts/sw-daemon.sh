@@ -127,7 +127,6 @@ rotate_event_log() {
 }
 
 # ─── GitHub Context (loaded once at startup) ──────────────────────────────
-DAEMON_GITHUB_CONTEXT=""
 
 daemon_github_context() {
     # Skip if no GitHub
@@ -143,8 +142,6 @@ daemon_github_context() {
     context=$(gh_repo_context "$owner" "$repo" 2>/dev/null || echo "{}")
     if [[ -n "$context" && "$context" != "{}" ]]; then
         daemon_log INFO "GitHub context loaded: $(echo "$context" | jq -r '.contributor_count // 0') contributors, $(echo "$context" | jq -r '.security_alert_count // 0') security alerts"
-        DAEMON_GITHUB_CONTEXT="$context"
-        export DAEMON_GITHUB_CONTEXT
     fi
 }
 
@@ -168,9 +165,9 @@ gh_retry() {
 
         # Check for rate-limit or server error indicators
         if echo "$output" | grep -qiE "rate limit|403|429|502|503"; then
-            daemon_log WARN "gh_retry: rate limit / server error on attempt ${attempt}/${max_retries} — backoff ${backoff}s"
+            daemon_log WARN "gh_retry: rate limit / server error on attempt ${attempt}/${max_retries} — backoff ${backoff}s" >&2
         else
-            daemon_log WARN "gh_retry: transient error on attempt ${attempt}/${max_retries} (exit ${exit_code}) — backoff ${backoff}s"
+            daemon_log WARN "gh_retry: transient error on attempt ${attempt}/${max_retries} (exit ${exit_code}) — backoff ${backoff}s" >&2
         fi
 
         if [[ $attempt -lt $max_retries ]]; then
@@ -1104,6 +1101,7 @@ extract_issue_dependencies() {
 }
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
+DAEMON_LOG_WRITE_COUNT=0
 
 daemon_log() {
     local level="$1"
@@ -1113,8 +1111,9 @@ daemon_log() {
     ts=$(now_iso)
     echo "[$ts] [$level] $msg" >> "$LOG_FILE"
 
-    # Rotate daemon.log if over 20MB (checked every ~100 writes)
-    if [[ $(( RANDOM % 100 )) -eq 0 ]] && [[ -f "$LOG_FILE" ]]; then
+    # Rotate daemon.log if over 20MB (checked every 100 writes)
+    DAEMON_LOG_WRITE_COUNT=$(( DAEMON_LOG_WRITE_COUNT + 1 ))
+    if [[ $(( DAEMON_LOG_WRITE_COUNT % 100 )) -eq 0 ]] && [[ -f "$LOG_FILE" ]]; then
         local log_size
         log_size=$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)
         if [[ "$log_size" -gt 20971520 ]]; then
@@ -1125,11 +1124,14 @@ daemon_log() {
         fi
     fi
 
-    # Also print to stdout
+    # Print to stderr (NOT stdout) to avoid corrupting command substitution captures.
+    # This is critical: functions like select_pipeline_template(), triage_score_issue(),
+    # gh_retry(), and locked_get_active_count() return values via echo/stdout and are
+    # called via $(). If daemon_log writes to stdout, the log text corrupts return values.
     case "$level" in
-        INFO)    info "$msg" ;;
-        SUCCESS) success "$msg" ;;
-        WARN)    warn "$msg" ;;
+        INFO)    info "$msg" >&2 ;;
+        SUCCESS) success "$msg" >&2 ;;
+        WARN)    warn "$msg" >&2 ;;
         ERROR)   error "$msg" ;;
     esac
 }
@@ -1195,7 +1197,10 @@ gh_record_failure() {
     GH_CONSECUTIVE_FAILURES=$((GH_CONSECUTIVE_FAILURES + 1))
     if [[ "$GH_CONSECUTIVE_FAILURES" -ge 3 ]]; then
         # Exponential backoff: 30s, 60s, 120s, 240s (capped at 5min)
-        local backoff_secs=$((30 * (1 << (GH_CONSECUTIVE_FAILURES - 3))))
+        # Cap shift to avoid integer overflow for large failure counts
+        local shift_amt=$(( GH_CONSECUTIVE_FAILURES - 3 ))
+        [[ "$shift_amt" -gt 4 ]] && shift_amt=4
+        local backoff_secs=$((30 * (1 << shift_amt)))
         [[ "$backoff_secs" -gt 300 ]] && backoff_secs=300
         GH_BACKOFF_UNTIL=$(( $(now_epoch) + backoff_secs ))
         daemon_log WARN "GitHub rate-limit circuit breaker: backing off ${backoff_secs}s after ${GH_CONSECUTIVE_FAILURES} failures"
@@ -1445,7 +1450,7 @@ locked_get_active_count() {
         (
             if command -v flock &>/dev/null; then
                 flock -w 5 200 2>/dev/null || {
-                    daemon_log WARN "locked_get_active_count: lock timeout — returning MAX_PARALLEL as safe default"
+                    daemon_log WARN "locked_get_active_count: lock timeout — returning MAX_PARALLEL as safe default" >&2
                     echo "$MAX_PARALLEL"
                     exit 0
                 }
@@ -3501,11 +3506,12 @@ Auto-detected by \`shipwright daemon patrol\` on $(now_iso)." \
             if [[ ! -f "$scripts_dir/sw-${name}-test.sh" ]]; then
                 # Count usage across other scripts
                 local usage_count
-                usage_count=$(grep -rl "sw-${name}" "$scripts_dir"/sw-*.sh 2>/dev/null | grep -cv "$basename" || true)
+                usage_count=$(grep -rl "sw-${name}" "$scripts_dir"/sw-*.sh 2>/dev/null | grep -cv "$basename" 2>/dev/null || echo "0")
                 usage_count=${usage_count:-0}
 
                 local line_count
-                line_count=$(wc -l < "$script" 2>/dev/null | tr -d ' ')
+                line_count=$(wc -l < "$script" 2>/dev/null | tr -d ' ' || echo "0")
+                line_count=${line_count:-0}
 
                 untested_entries="${untested_entries}${usage_count}|${basename}|${line_count}\n"
                 findings=$((findings + 1))
@@ -4227,8 +4233,11 @@ daemon_check_degradation() {
     local failures successes
     failures=$(echo "$recent" | jq '[.[] | select(.result == "failure")] | length')
     successes=$(echo "$recent" | jq '[.[] | select(.result == "success")] | length')
-    local cfr_pct=$(( failures * 100 / count ))
-    local success_pct=$(( successes * 100 / count ))
+    local cfr_pct=0 success_pct=0
+    if [[ "${count:-0}" -gt 0 ]]; then
+        cfr_pct=$(( failures * 100 / count ))
+        success_pct=$(( successes * 100 / count ))
+    fi
 
     local alerts=""
     if [[ "$cfr_pct" -gt "$cfr_threshold" ]]; then

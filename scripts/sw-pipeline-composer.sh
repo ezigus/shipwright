@@ -114,7 +114,7 @@ composer_create_pipeline() {
         else
             repo_context="$ci_history"
         fi
-        info "CI history: p90 duration=${p90_timeout}s — using for timeout tuning"
+        info "CI history: p90 duration=${p90_timeout}s — using for timeout tuning" >&2
     fi
 
     # Try intelligence-driven composition
@@ -122,7 +122,7 @@ composer_create_pipeline() {
        [[ -n "$issue_analysis" ]] && \
        type intelligence_compose_pipeline &>/dev/null; then
 
-        info "Composing pipeline with intelligence engine..."
+        info "Composing pipeline with intelligence engine..." >&2
 
         local composed=""
         composed=$(intelligence_compose_pipeline "$issue_analysis" "$repo_context" "$budget_json" 2>/dev/null) || true
@@ -138,7 +138,7 @@ composer_create_pipeline() {
 
                 local stage_count
                 stage_count=$(echo "$composed" | jq '.stages | length')
-                success "Composed pipeline: ${stage_count} stages"
+                success "Composed pipeline: ${stage_count} stages" >&2
 
                 emit_event "composer.created" \
                     "stages=${stage_count}" \
@@ -148,17 +148,17 @@ composer_create_pipeline() {
                 echo "$output_file"
                 return 0
             else
-                warn "Intelligence pipeline failed validation, falling back to template"
+                warn "Intelligence pipeline failed validation, falling back to template" >&2
             fi
         else
-            warn "Intelligence composition returned invalid JSON, falling back to template"
+            warn "Intelligence composition returned invalid JSON, falling back to template" >&2
         fi
     fi
 
     # Fallback: use static template
     local fallback_template="${TEMPLATES_DIR}/standard.json"
     if [[ -f "$fallback_template" ]]; then
-        info "Using fallback template: standard"
+        info "Using fallback template: standard" >&2
         local tmp_file
         tmp_file=$(mktemp "${output_file}.XXXXXX")
         cp "$fallback_template" "$tmp_file"
@@ -173,7 +173,7 @@ composer_create_pipeline() {
         return 0
     fi
 
-    error "No templates available for fallback"
+    error "No templates available for fallback" >&2
     return 1
 }
 

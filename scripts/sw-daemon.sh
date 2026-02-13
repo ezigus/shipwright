@@ -425,6 +425,10 @@ load_config() {
 
     # session restart + fast test passthrough
     MAX_RESTARTS_CFG=$(jq -r '.max_restarts // 3' "$config_file" 2>/dev/null || echo "3")
+    if ! [[ "$MAX_RESTARTS_CFG" =~ ^[0-9]+$ ]]; then
+        daemon_log WARN "Invalid max_restarts in config: $MAX_RESTARTS_CFG (using default: 3)"
+        MAX_RESTARTS_CFG="3"
+    fi
     FAST_TEST_CMD_CFG=$(jq -r '.fast_test_cmd // ""' "$config_file" 2>/dev/null || echo "")
 
     # self-optimization
@@ -2079,7 +2083,10 @@ daemon_on_failure() {
             local progress_file="${issue_worktree_path}/.claude/loop-logs/progress.md"
             if [[ -f "$progress_file" ]]; then
                 local progress_iter
-                progress_iter=$(grep -oE 'Iteration: [0-9]+' "$progress_file" 2>/dev/null | grep -oE '[0-9]+' || echo "0")
+                progress_iter=$(grep -oE 'Iteration: [0-9]+' "$progress_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || echo "0")
+                if ! [[ "${progress_iter:-0}" =~ ^[0-9]+$ ]]; then
+                    progress_iter="0"
+                fi
                 local progress_tests
                 progress_tests=$(grep -oE 'Tests passing: (true|false)' "$progress_file" 2>/dev/null | awk '{print $NF}' || echo "unknown")
                 if [[ "${progress_iter:-0}" -gt 0 ]] && { [[ "$progress_tests" == "false" ]] || [[ "$progress_tests" == "unknown" ]]; }; then
@@ -2110,6 +2117,10 @@ daemon_on_failure() {
             # Increase restarts on context exhaustion
             if [[ "$failure_reason" == "context_exhaustion" ]]; then
                 local boosted_restarts=$(( ${MAX_RESTARTS_CFG:-3} + retry_count ))
+                # Cap at sw-loop's hard limit of 5
+                if [[ "$boosted_restarts" -gt 5 ]]; then
+                    boosted_restarts=5
+                fi
                 extra_args+=("--max-restarts" "$boosted_restarts")
                 daemon_log INFO "Boosting max-restarts to $boosted_restarts (context exhaustion)"
             fi

@@ -360,7 +360,14 @@ parse_args() {
             --dry-run)     DRY_RUN=true; shift ;;
             --slack-webhook) SLACK_WEBHOOK="$2"; shift 2 ;;
             --self-heal)   BUILD_TEST_RETRIES="${2:-3}"; shift 2 ;;
-            --max-restarts) MAX_RESTARTS_OVERRIDE="$2"; shift 2 ;;
+            --max-restarts)
+                MAX_RESTARTS_OVERRIDE="$2"
+                if ! [[ "$MAX_RESTARTS_OVERRIDE" =~ ^[0-9]+$ ]]; then
+                    error "--max-restarts must be numeric (got: $MAX_RESTARTS_OVERRIDE)"
+                    exit 1
+                fi
+                shift 2 ;;
+
             --fast-test-cmd) FAST_TEST_CMD_OVERRIDE="$2"; shift 2 ;;
             --help|-h)     show_help; exit 0 ;;
             *)
@@ -2336,7 +2343,7 @@ Coverage baseline: ${coverage_baseline}% — do not decrease coverage."
         parse_claude_tokens "$_token_log"
 
         # Detect context exhaustion from progress file
-        local _progress_file=".claude/loop-logs/progress.md"
+        local _progress_file="${PWD}/.claude/loop-logs/progress.md"
         if [[ -f "$_progress_file" ]]; then
             local _prog_tests
             _prog_tests=$(grep -oE 'Tests passing: (true|false)' "$_progress_file" 2>/dev/null | awk '{print $NF}' || echo "unknown")
@@ -2344,6 +2351,7 @@ Coverage baseline: ${coverage_baseline}% — do not decrease coverage."
                 warn "Build loop exhausted with failing tests (context exhaustion)"
                 emit_event "pipeline.context_exhaustion" "issue=${ISSUE_NUMBER:-0}" "stage=build"
                 # Write flag for daemon retry logic
+                mkdir -p "$ARTIFACTS_DIR" 2>/dev/null || true
                 echo "context_exhaustion" > "$ARTIFACTS_DIR/failure-reason.txt" 2>/dev/null || true
             fi
         fi

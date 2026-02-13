@@ -34,6 +34,7 @@ error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
 
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 GOAL=""
+ORIGINAL_GOAL=""  # Preserved across restarts — GOAL gets appended to
 MAX_ITERATIONS="${SW_MAX_ITERATIONS:-20}"
 TEST_CMD=""
 FAST_TEST_CMD=""
@@ -243,6 +244,22 @@ if [[ -n "$AGENT_ROLES" ]] && [[ "$AGENTS" -le 1 ]]; then
     warn "--roles requires --agents > 1 (roles are ignored in single-agent mode)"
 fi
 
+# Warn if --max-restarts with --agents > 1 (not yet supported)
+if [[ "${MAX_RESTARTS:-0}" -gt 0 ]] && [[ "$AGENTS" -gt 1 ]]; then
+    warn "--max-restarts is ignored in multi-agent mode (restart support is single-agent only)"
+    MAX_RESTARTS=0
+fi
+
+# Validate numeric flags
+if ! [[ "$FAST_TEST_INTERVAL" =~ ^[1-9][0-9]*$ ]]; then
+    error "--fast-test-interval must be a positive integer (got: $FAST_TEST_INTERVAL)"
+    exit 1
+fi
+if ! [[ "$MAX_RESTARTS" =~ ^[0-9]+$ ]]; then
+    error "--max-restarts must be a non-negative integer (got: $MAX_RESTARTS)"
+    exit 1
+fi
+
 # ─── Validate Inputs ─────────────────────────────────────────────────────────
 
 if ! $RESUME && [[ -z "$GOAL" ]]; then
@@ -263,6 +280,9 @@ if ! git rev-parse --is-inside-work-tree &>/dev/null 2>&1; then
     error "Not inside a git repository. The loop requires git for progress tracking."
     exit 1
 fi
+
+# Preserve original goal before any appending (memory fixes, human feedback)
+ORIGINAL_GOAL="$GOAL"
 
 # ─── Timeout Detection ────────────────────────────────────────────────────────
 TIMEOUT_CMD=""
@@ -544,7 +564,8 @@ resume_state() {
 }
 
 write_state() {
-    cat > "$STATE_FILE" <<EOF
+    local tmp_state="${STATE_FILE}.tmp.$$"
+    cat > "$tmp_state" <<EOF
 ---
 goal: "$GOAL"
 iteration: $ITERATION
@@ -569,6 +590,7 @@ max_extensions: $MAX_EXTENSIONS
 ## Log
 $LOG_ENTRIES
 EOF
+    mv "$tmp_state" "$STATE_FILE" 2>/dev/null || true
 }
 
 write_progress() {
@@ -583,32 +605,24 @@ write_progress() {
         last_error=$(tail -10 "$prev_test_log" 2>/dev/null || true)
     fi
 
+    # Use printf to avoid heredoc delimiter injection from GOAL content
     local tmp_progress="${progress_file}.tmp.$$"
-    cat > "$tmp_progress" <<PROGRESS_EOF
-# Session Progress (Auto-Generated)
-
-## Goal
-${GOAL}
-
-## Status
-- Iteration: ${ITERATION}/${MAX_ITERATIONS}
-- Session restart: ${RESTART_COUNT}/${MAX_RESTARTS}
-- Tests passing: ${TEST_PASSED:-unknown}
-- Status: ${STATUS:-running}
-
-## Recent Commits
-${recent_commits}
-
-## Changed Files
-${changed_files}
-
-${last_error:+## Last Error
-$last_error
-}
-## Timestamp
-$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-PROGRESS_EOF
-    mv "$tmp_progress" "$progress_file"
+    {
+        printf '# Session Progress (Auto-Generated)\n\n'
+        printf '## Goal\n%s\n\n' "${GOAL}"
+        printf '## Status\n'
+        printf -- '- Iteration: %s/%s\n' "${ITERATION}" "${MAX_ITERATIONS}"
+        printf -- '- Session restart: %s/%s\n' "${RESTART_COUNT:-0}" "${MAX_RESTARTS:-0}"
+        printf -- '- Tests passing: %s\n' "${TEST_PASSED:-unknown}"
+        printf -- '- Status: %s\n\n' "${STATUS:-running}"
+        printf '## Recent Commits\n%s\n\n' "${recent_commits}"
+        printf '## Changed Files\n%s\n\n' "${changed_files}"
+        if [[ -n "$last_error" ]]; then
+            printf '## Last Error\n%s\n\n' "$last_error"
+        fi
+        printf '## Timestamp\n%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    } > "$tmp_progress" 2>/dev/null
+    mv "$tmp_progress" "$progress_file" 2>/dev/null || rm -f "$tmp_progress" 2>/dev/null
 }
 
 append_log_entry() {
@@ -790,7 +804,15 @@ run_test_gate() {
     local test_log="$LOG_DIR/tests-iter-${ITERATION}.log"
     TEST_LOG_FILE="$test_log"
     echo -e "  ${DIM}Running ${test_mode} tests...${RESET}"
-    if bash -c "$active_test_cmd" > "$test_log" 2>&1; then
+    # Wrap test command with timeout (5 min default) to prevent hanging
+    local test_timeout="${SW_TEST_TIMEOUT:-300}"
+    local test_wrapper="$active_test_cmd"
+    if command -v timeout &>/dev/null; then
+        test_wrapper="timeout ${test_timeout} bash -c $(printf '%q' "$active_test_cmd")"
+    elif command -v gtimeout &>/dev/null; then
+        test_wrapper="gtimeout ${test_timeout} bash -c $(printf '%q' "$active_test_cmd")"
+    fi
+    if bash -c "$test_wrapper" > "$test_log" 2>&1; then
         TEST_PASSED=true
         TEST_OUTPUT="All tests passed (${test_mode} mode)."
     else
@@ -821,21 +843,30 @@ write_error_summary() {
         error_count=$(echo "$error_lines_raw" | wc -l | tr -d ' ')
     fi
 
-    # Build JSON with jq for proper escaping
     local tmp_json="${error_json}.tmp.$$"
-    jq -n \
-        --argjson iteration "$ITERATION" \
-        --arg timestamp "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-        --argjson error_count "$error_count" \
-        --arg error_lines "$error_lines_raw" \
-        --arg test_cmd "$TEST_CMD" \
-        '{
-            iteration: $iteration,
-            timestamp: $timestamp,
-            error_count: $error_count,
-            error_lines: ($error_lines | split("\n") | map(select(length > 0))),
-            test_cmd: $test_cmd
-        }' > "$tmp_json" 2>/dev/null && mv "$tmp_json" "$error_json" || rm -f "$tmp_json" 2>/dev/null
+
+    # Build JSON with jq (preferred) or plain-text fallback
+    if command -v jq &>/dev/null; then
+        jq -n \
+            --argjson iteration "${ITERATION:-0}" \
+            --arg timestamp "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --argjson error_count "${error_count:-0}" \
+            --arg error_lines "$error_lines_raw" \
+            --arg test_cmd "${TEST_CMD:-}" \
+            '{
+                iteration: $iteration,
+                timestamp: $timestamp,
+                error_count: $error_count,
+                error_lines: ($error_lines | split("\n") | map(select(length > 0))),
+                test_cmd: $test_cmd
+            }' > "$tmp_json" 2>/dev/null && mv "$tmp_json" "$error_json" || rm -f "$tmp_json" 2>/dev/null
+    else
+        # Fallback: write plain-text error summary (still machine-parseable)
+        cat > "$tmp_json" <<ERRJSON
+{"iteration":${ITERATION:-0},"error_count":${error_count:-0},"error_lines":[],"test_cmd":"test"}
+ERRJSON
+        mv "$tmp_json" "$error_json" 2>/dev/null || rm -f "$tmp_json" 2>/dev/null
+    fi
 }
 
 # ─── Audit Agent ─────────────────────────────────────────────────────────────
@@ -1402,7 +1433,7 @@ compose_worker_prompt() {
 
     # Role-specific instructions
     local role_section=""
-    if [[ -n "$AGENT_ROLES" ]]; then
+    if [[ -n "$AGENT_ROLES" ]] && [[ "${agent_num:-0}" -ge 1 ]]; then
         # Split comma-separated roles and get role for this agent
         local role=""
         local IFS_BAK="$IFS"
@@ -1410,7 +1441,7 @@ compose_worker_prompt() {
         IFS="$IFS_BAK"
         if [[ "$agent_num" -le "${#_roles[@]}" ]]; then
             role="${_roles[$((agent_num - 1))]}"
-            # Trim whitespace
+            # Trim whitespace and skip empty roles (handles trailing comma)
             role="$(echo "$role" | tr -d ' ')"
         fi
 
@@ -2129,10 +2160,12 @@ run_loop_with_restarts() {
         fi
 
         RESTART_COUNT=$(( RESTART_COUNT + 1 ))
-        emit_event "loop.restart" "restart=$RESTART_COUNT" "max=$MAX_RESTARTS" "iteration=$ITERATION"
+        if type emit_event &>/dev/null 2>&1; then
+            emit_event "loop.restart" "restart=$RESTART_COUNT" "max=$MAX_RESTARTS" "iteration=$ITERATION"
+        fi
         info "Session restart ${RESTART_COUNT}/${MAX_RESTARTS} — resetting iteration counter"
 
-        # Reset iteration-level state for the new session
+        # Reset ALL iteration-level state for the new session
         # SESSION_RESTART tells run_single_agent_loop to skip init/resume
         SESSION_RESTART=true
         ITERATION=0
@@ -2140,13 +2173,21 @@ run_loop_with_restarts() {
         EXTENSION_COUNT=0
         STATUS="running"
         LOG_ENTRIES=""
+        TEST_PASSED=""
+        TEST_OUTPUT=""
+        TEST_LOG_FILE=""
+        # Reset GOAL to original — prevent unbounded growth from memory/human injections
+        GOAL="$ORIGINAL_GOAL"
 
-        # Rename old iteration logs so they don't get overwritten
+        # Archive old artifacts so they don't get overwritten or pollute new session
         local restart_archive="$LOG_DIR/restart-${RESTART_COUNT}"
         mkdir -p "$restart_archive"
         for old_log in "$LOG_DIR"/iteration-*.log "$LOG_DIR"/tests-iter-*.log; do
             [[ -f "$old_log" ]] && mv "$old_log" "$restart_archive/" 2>/dev/null || true
         done
+        # Archive progress.md and error-summary.json from previous session
+        [[ -f "$LOG_DIR/progress.md" ]] && cp "$LOG_DIR/progress.md" "$restart_archive/progress.md" 2>/dev/null || true
+        [[ -f "$LOG_DIR/error-summary.json" ]] && mv "$LOG_DIR/error-summary.json" "$restart_archive/" 2>/dev/null || true
 
         write_state
 

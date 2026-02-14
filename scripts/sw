@@ -91,6 +91,8 @@ show_help() {
     echo -e "  ${CYAN}fleet-viz${RESET} <cmd>        ${BOLD}Fleet visualization${RESET} — cross-repo insights and queue"
     echo -e "  ${CYAN}fix${RESET} \"goal\" [opts]     ${BOLD}Bulk fix${RESET} — apply a fix across multiple repos"
     echo -e "  ${CYAN}dashboard${RESET} <cmd>        ${BOLD}Fleet Command${RESET} — real-time WebSocket dashboard"
+    echo -e "  ${CYAN}public-dashboard${RESET} <cmd> ${BOLD}Public dashboard${RESET} — shareable pipeline progress (static HTML)"
+    echo -e "  ${CYAN}share${RESET} [...]            ${BOLD}Share pipeline${RESET} — alias for ${DIM}public-dashboard share${RESET}"
     echo -e "  ${CYAN}jira${RESET} <cmd>             ${BOLD}Jira sync${RESET} — bidirectional issue sync with Jira"
     echo -e "  ${CYAN}linear${RESET} <cmd>           ${BOLD}Linear sync${RESET} — bidirectional issue sync with Linear"
     echo -e "  ${CYAN}model${RESET} <cmd>            ${BOLD}Model router${RESET} — intelligent model routing and cost optimization"
@@ -297,6 +299,9 @@ main() {
             ;;
         dashboard|dash)
             exec "$SCRIPT_DIR/sw-dashboard.sh" "$@"
+            ;;
+        public-dashboard|share)
+            exec "$SCRIPT_DIR/sw-public-dashboard.sh" "$@"
             ;;
         jira)
             exec "$SCRIPT_DIR/sw-jira.sh" "$@"

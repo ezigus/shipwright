@@ -94,6 +94,9 @@ jobs:
       - name: Run status tests
         run: bash scripts/sw-status-test.sh
 
+      - name: Run launchd tests
+        run: bash scripts/sw-launchd-test.sh
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:

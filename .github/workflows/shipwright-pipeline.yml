@@ -420,6 +420,22 @@ Run \`claude setup-token\` locally to generate a fresh token." 2>/dev/null || tr
             fi
           fi
 
+      - name: Verify merged artifacts
+        run: |
+          echo "--- Recovered Artifacts ---"
+          RECOVERED=0
+          for f in plan.md dod.md context-bundle.md design.md; do
+            FPATH=".claude/pipeline-artifacts/${f}"
+            if [[ -f "$FPATH" && -s "$FPATH" ]]; then
+              LINES=$(wc -l < "$FPATH")
+              echo "  ✓ ${f}: ${LINES} lines"
+              RECOVERED=$((RECOVERED + 1))
+            else
+              echo "  ✗ ${f}: not found"
+            fi
+          done
+          echo "Recovered ${RECOVERED} artifact file(s) from partial work branch"
+
       - name: Check claim lock and pipeline start cap
         id: claim_check
         run: |

@@ -1270,6 +1270,80 @@ mark_stage_complete() {
     if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_stage_update &>/dev/null 2>&1; then
         gh_checks_stage_update "$stage_id" "completed" "success" "Stage $stage_id: ${timing}" 2>/dev/null || true
     fi
+
+    # Persist artifacts to feature branch after expensive stages
+    case "$stage_id" in
+        plan)   persist_artifacts "plan" "plan.md" "dod.md" "context-bundle.md" ;;
+        design) persist_artifacts "design" "design.md" ;;
+    esac
+}
+
+persist_artifacts() {
+    # Commit and push pipeline artifacts to the feature branch mid-pipeline.
+    # Only runs in CI — local runs skip. Non-fatal: logs failure but never crashes.
+    [[ "${CI_MODE:-false}" != "true" ]] && return 0
+    [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
+    [[ -z "${ARTIFACTS_DIR:-}" ]] && return 0
+
+    local stage="${1:-unknown}"
+    shift
+    local files=("$@")
+
+    # Collect files that actually exist
+    local to_add=()
+    for f in "${files[@]}"; do
+        local path="${ARTIFACTS_DIR}/${f}"
+        if [[ -f "$path" && -s "$path" ]]; then
+            to_add+=("$path")
+        fi
+    done
+
+    if [[ ${#to_add[@]} -eq 0 ]]; then
+        warn "persist_artifacts($stage): no artifact files found — skipping"
+        return 0
+    fi
+
+    info "Persisting ${#to_add[@]} artifact(s) after stage ${stage}..."
+
+    (
+        git add "${to_add[@]}" 2>/dev/null || true
+        if ! git diff --cached --quiet 2>/dev/null; then
+            git commit -m "chore: persist ${stage} artifacts for #${ISSUE_NUMBER} [skip ci]" --no-verify 2>/dev/null || true
+            local branch="shipwright/issue-${ISSUE_NUMBER}"
+            git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null || true
+            emit_event "artifacts.persisted" "issue=${ISSUE_NUMBER}" "stage=$stage" "file_count=${#to_add[@]}"
+        fi
+    ) 2>/dev/null || {
+        warn "persist_artifacts($stage): push failed — non-fatal, continuing"
+        emit_event "artifacts.persist_failed" "issue=${ISSUE_NUMBER}" "stage=$stage"
+    }
+
+    return 0
+}
+
+verify_stage_artifacts() {
+    # Check that required artifacts exist and are non-empty for a given stage.
+    # Returns 0 if all artifacts are present, 1 if any are missing.
+    local stage_id="$1"
+    [[ -z "${ARTIFACTS_DIR:-}" ]] && return 0
+
+    local required=()
+    case "$stage_id" in
+        plan)   required=("plan.md") ;;
+        design) required=("design.md" "plan.md") ;;
+        *)      return 0 ;;  # No artifact check needed
+    esac
+
+    local missing=0
+    for f in "${required[@]}"; do
+        local path="${ARTIFACTS_DIR}/${f}"
+        if [[ ! -f "$path" || ! -s "$path" ]]; then
+            warn "verify_stage_artifacts($stage_id): missing or empty: $f"
+            missing=1
+        fi
+    done
+
+    return "$missing"
 }
 
 mark_stage_failed() {
@@ -7190,11 +7264,17 @@ run_pipeline() {
 
         # CI resume: skip stages marked as completed from previous run
         if [[ -n "${COMPLETED_STAGES:-}" ]] && echo "$COMPLETED_STAGES" | tr ',' '\n' | grep -qx "$id"; then
-            echo -e "  ${GREEN}✓ ${id}${RESET} ${DIM}— skipped (CI resume)${RESET}"
-            set_stage_status "$id" "complete"
-            completed=$((completed + 1))
-            emit_event "stage.skipped" "issue=${ISSUE_NUMBER:-0}" "stage=$id" "reason=ci_resume"
-            continue
+            # Verify artifacts survived the merge — regenerate if missing
+            if verify_stage_artifacts "$id"; then
+                echo -e "  ${GREEN}✓ ${id}${RESET} ${DIM}— skipped (CI resume)${RESET}"
+                set_stage_status "$id" "complete"
+                completed=$((completed + 1))
+                emit_event "stage.skipped" "issue=${ISSUE_NUMBER:-0}" "stage=$id" "reason=ci_resume"
+                continue
+            else
+                warn "Stage $id marked complete but artifacts missing — regenerating"
+                emit_event "stage.artifact_miss" "issue=${ISSUE_NUMBER:-0}" "stage=$id"
+            fi
         fi
 
         # Self-healing build→test loop: when we hit build, run both together

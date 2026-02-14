@@ -1653,21 +1653,13 @@ test_persist_artifacts_exists() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_persist_artifacts_ci_guard() {
     (
-        # Source pipeline with stubs to avoid full init
-        info()    { true; }
-        success() { true; }
-        warn()    { true; }
-        error()   { true; }
-        emit_event() { true; }
-        now_iso()  { echo "2026-02-14T00:00:00Z"; }
-        now_epoch() { echo "1739491200"; }
+        # Source pipeline — sets ARTIFACTS_DIR="" so we must set vars AFTER source
+        source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
         CI_MODE=false
         ISSUE_NUMBER="99"
         ARTIFACTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-art-test.XXXXXX")
         echo "test plan" > "$ARTIFACTS_DIR/plan.md"
-
-        source "$REAL_PIPELINE_SCRIPT" 2>/dev/null || true
 
         # Should return 0 (skip) and NOT touch git
         persist_artifacts "plan" "plan.md" > /dev/null 2>&1
@@ -1682,18 +1674,10 @@ test_persist_artifacts_ci_guard() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_present() {
     (
-        info()    { true; }
-        success() { true; }
-        warn()    { true; }
-        error()   { true; }
-        emit_event() { true; }
-        now_iso()  { echo "2026-02-14T00:00:00Z"; }
-        now_epoch() { echo "1739491200"; }
+        source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
         ARTIFACTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-art-test.XXXXXX")
         echo "# Plan" > "$ARTIFACTS_DIR/plan.md"
-
-        source "$REAL_PIPELINE_SCRIPT" 2>/dev/null || true
 
         verify_stage_artifacts "plan" > /dev/null 2>&1
         local rc=$?
@@ -1707,18 +1691,10 @@ test_verify_artifacts_present() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_missing() {
     (
-        info()    { true; }
-        success() { true; }
-        warn()    { true; }
-        error()   { true; }
-        emit_event() { true; }
-        now_iso()  { echo "2026-02-14T00:00:00Z"; }
-        now_epoch() { echo "1739491200"; }
+        source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
         ARTIFACTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-art-test.XXXXXX")
         # plan.md does NOT exist
-
-        source "$REAL_PIPELINE_SCRIPT" 2>/dev/null || true
 
         if verify_stage_artifacts "plan" > /dev/null 2>&1; then
             rm -rf "$ARTIFACTS_DIR"
@@ -1735,18 +1711,10 @@ test_verify_artifacts_missing() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_empty() {
     (
-        info()    { true; }
-        success() { true; }
-        warn()    { true; }
-        error()   { true; }
-        emit_event() { true; }
-        now_iso()  { echo "2026-02-14T00:00:00Z"; }
-        now_epoch() { echo "1739491200"; }
+        source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
         ARTIFACTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-art-test.XXXXXX")
         touch "$ARTIFACTS_DIR/plan.md"  # Empty file
-
-        source "$REAL_PIPELINE_SCRIPT" 2>/dev/null || true
 
         if verify_stage_artifacts "plan" > /dev/null 2>&1; then
             rm -rf "$ARTIFACTS_DIR"
@@ -1763,17 +1731,9 @@ test_verify_artifacts_empty() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_no_requirements() {
     (
-        info()    { true; }
-        success() { true; }
-        warn()    { true; }
-        error()   { true; }
-        emit_event() { true; }
-        now_iso()  { echo "2026-02-14T00:00:00Z"; }
-        now_epoch() { echo "1739491200"; }
+        source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
         ARTIFACTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-art-test.XXXXXX")
-
-        source "$REAL_PIPELINE_SCRIPT" 2>/dev/null || true
 
         # build, test, review etc. have no artifact requirements
         verify_stage_artifacts "build" > /dev/null 2>&1
@@ -1788,19 +1748,11 @@ test_verify_artifacts_no_requirements() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_design_needs_plan() {
     (
-        info()    { true; }
-        success() { true; }
-        warn()    { true; }
-        error()   { true; }
-        emit_event() { true; }
-        now_iso()  { echo "2026-02-14T00:00:00Z"; }
-        now_epoch() { echo "1739491200"; }
+        source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
         ARTIFACTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-art-test.XXXXXX")
         echo "# Design" > "$ARTIFACTS_DIR/design.md"
         # plan.md missing — design should fail
-
-        source "$REAL_PIPELINE_SCRIPT" 2>/dev/null || true
 
         if verify_stage_artifacts "design" > /dev/null 2>&1; then
             rm -rf "$ARTIFACTS_DIR"
@@ -1902,6 +1854,14 @@ main() {
         "test_momentum_bootstrap_single_snapshot:Vitals: Momentum returns 60 for single snapshot past intake"
         "test_health_gate_blocks:Vitals: Health gate blocks when health < threshold"
         "test_health_gate_passes:Vitals: Health gate passes with default threshold=40"
+        "test_persist_artifacts_exists:Durable: persist_artifacts function exists"
+        "test_persist_artifacts_ci_guard:Durable: persist_artifacts skips in non-CI mode"
+        "test_verify_artifacts_present:Durable: verify_stage_artifacts passes when artifacts present"
+        "test_verify_artifacts_missing:Durable: verify_stage_artifacts fails when artifacts missing"
+        "test_verify_artifacts_empty:Durable: verify_stage_artifacts fails when artifacts empty"
+        "test_verify_artifacts_no_requirements:Durable: verify_stage_artifacts passes for stages with no requirements"
+        "test_verify_artifacts_design_needs_plan:Durable: verify_stage_artifacts design requires plan.md"
+        "test_mark_complete_persists_plan:Durable: mark_stage_complete wires persist for plan stage"
     )
 
     for entry in "${tests[@]}"; do

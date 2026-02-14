@@ -1654,6 +1654,12 @@ stage_plan() {
 
     info "Generating implementation plan..."
 
+    # ── Gather context bundle (if context engine available) ──
+    local context_script="${SCRIPT_DIR}/sw-context.sh"
+    if [[ -x "$context_script" ]]; then
+        "$context_script" gather --goal "$GOAL" --stage plan 2>/dev/null || true
+    fi
+
     # Build rich prompt with all available context
     local plan_prompt="You are an autonomous development agent. Analyze this codebase and create a detailed implementation plan.
 
@@ -1667,6 +1673,19 @@ ${GOAL}
 ## Issue Description
 ${ISSUE_BODY}
 "
+    fi
+
+    # Inject context bundle from context engine (if available)
+    local _context_bundle="${ARTIFACTS_DIR}/context-bundle.md"
+    if [[ -f "$_context_bundle" ]]; then
+        local _cb_content
+        _cb_content=$(cat "$_context_bundle" 2>/dev/null | head -100 || true)
+        if [[ -n "$_cb_content" ]]; then
+            plan_prompt="${plan_prompt}
+## Pipeline Context
+${_cb_content}
+"
+        fi
     fi
 
     # Inject intelligence memory context for similar past plans
@@ -5802,6 +5821,228 @@ ${route_instruction}"
     fi
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Bash 3.2 Compatibility Check
+# Scans modified .sh files for common bash 3.2 incompatibilities
+# Returns: count of violations found
+# ──────────────────────────────────────────────────────────────────────────────
+run_bash_compat_check() {
+    local violations=0
+    local violation_details=""
+
+    # Get modified .sh files relative to base branch
+    local changed_files
+    changed_files=$(git diff --name-only "origin/${BASE_BRANCH:-main}...HEAD" -- '*.sh' 2>/dev/null || echo "")
+
+    if [[ -z "$changed_files" ]]; then
+        echo "0"
+        return 0
+    fi
+
+    # Check each file for bash 3.2 incompatibilities
+    while IFS= read -r filepath; do
+        [[ -z "$filepath" ]] && continue
+
+        # declare -A (associative arrays)
+        local declare_a_count
+        declare_a_count=$(grep -c 'declare[[:space:]]*-[aA]' "$filepath" 2>/dev/null || true)
+        if [[ "$declare_a_count" -gt 0 ]]; then
+            violations=$((violations + declare_a_count))
+            violation_details="${violation_details}${filepath}: declare -A (${declare_a_count} occurrences)
+"
+        fi
+
+        # readarray or mapfile
+        local readarray_count
+        readarray_count=$(grep -c 'readarray\|mapfile' "$filepath" 2>/dev/null || true)
+        if [[ "$readarray_count" -gt 0 ]]; then
+            violations=$((violations + readarray_count))
+            violation_details="${violation_details}${filepath}: readarray/mapfile (${readarray_count} occurrences)
+"
+        fi
+
+        # ${var,,} or ${var^^} (case conversion)
+        local case_conv_count
+        case_conv_count=$(grep -c '\$\{[a-zA-Z_][a-zA-Z0-9_]*,,' "$filepath" 2>/dev/null || true)
+        case_conv_count=$((case_conv_count + $(grep -c '\$\{[a-zA-Z_][a-zA-Z0-9_]*\^\^' "$filepath" 2>/dev/null || true)))
+        if [[ "$case_conv_count" -gt 0 ]]; then
+            violations=$((violations + case_conv_count))
+            violation_details="${violation_details}${filepath}: case conversion \$\{var,,\} or \$\{var\^\^\} (${case_conv_count} occurrences)
+"
+        fi
+
+        # |& (pipe stderr to stdout in-place)
+        local pipe_ampersand_count
+        pipe_ampersand_count=$(grep -c '|&' "$filepath" 2>/dev/null || true)
+        if [[ "$pipe_ampersand_count" -gt 0 ]]; then
+            violations=$((violations + pipe_ampersand_count))
+            violation_details="${violation_details}${filepath}: |& operator (${pipe_ampersand_count} occurrences)
+"
+        fi
+
+        # ;& or ;;& in case statements (advanced fallthrough)
+        local advanced_case_count
+        advanced_case_count=$(grep -c ';&\|;;&' "$filepath" 2>/dev/null || true)
+        if [[ "$advanced_case_count" -gt 0 ]]; then
+            violations=$((violations + advanced_case_count))
+            violation_details="${violation_details}${filepath}: advanced case ;& or ;;& (${advanced_case_count} occurrences)
+"
+        fi
+
+    done <<< "$changed_files"
+
+    # Log details if violations found
+    if [[ "$violations" -gt 0 ]]; then
+        warn "Bash 3.2 compatibility check: ${violations} violation(s) found:"
+        echo "$violation_details" | sed 's/^/  /'
+    fi
+
+    echo "$violations"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test Coverage Check
+# Runs configured test command and extracts coverage percentage
+# Returns: coverage percentage (0-100), or "skip" if no test command configured
+# ──────────────────────────────────────────────────────────────────────────────
+run_test_coverage_check() {
+    local test_cmd="${TEST_CMD:-}"
+    if [[ -z "$test_cmd" ]]; then
+        echo "skip"
+        return 0
+    fi
+
+    info "Running test coverage check..."
+
+    # Run tests and capture output
+    local test_output
+    local test_rc=0
+    test_output=$(eval "$test_cmd" 2>&1) || test_rc=$?
+
+    if [[ "$test_rc" -ne 0 ]]; then
+        warn "Test command failed (exit code: $test_rc) — cannot extract coverage"
+        echo "0"
+        return 0
+    fi
+
+    # Extract coverage percentage from various formats
+    # Patterns: "XX% coverage", "Lines: XX%", "Stmts: XX%", "Coverage: XX%", "coverage XX%"
+    local coverage_pct
+    coverage_pct=$(echo "$test_output" | grep -oE '[0-9]{1,3}%[[:space:]]*(coverage|lines|stmts|statements)' | grep -oE '^[0-9]{1,3}' | head -1 || true)
+
+    if [[ -z "$coverage_pct" ]]; then
+        # Try alternate patterns without units
+        coverage_pct=$(echo "$test_output" | grep -oE 'coverage[:]?[[:space:]]*[0-9]{1,3}' | grep -oE '[0-9]{1,3}' | head -1 || true)
+    fi
+
+    if [[ -z "$coverage_pct" ]]; then
+        warn "Could not extract coverage percentage from test output"
+        echo "0"
+        return 0
+    fi
+
+    # Ensure it's a valid percentage (0-100)
+    if [[ ! "$coverage_pct" =~ ^[0-9]{1,3}$ ]] || [[ "$coverage_pct" -gt 100 ]]; then
+        coverage_pct=0
+    fi
+
+    success "Test coverage: ${coverage_pct}%"
+    echo "$coverage_pct"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Atomic Write Violations Check
+# Scans modified files for anti-patterns: direct echo > file to state/config files
+# Returns: count of violations found
+# ──────────────────────────────────────────────────────────────────────────────
+run_atomic_write_check() {
+    local violations=0
+    local violation_details=""
+
+    # Get modified files (not just .sh — includes state/config files)
+    local changed_files
+    changed_files=$(git diff --name-only "origin/${BASE_BRANCH:-main}...HEAD" 2>/dev/null || echo "")
+
+    if [[ -z "$changed_files" ]]; then
+        echo "0"
+        return 0
+    fi
+
+    # Check for direct writes to state/config files (patterns that should use tmp+mv)
+    # Look for: echo "..." > state/config files
+    while IFS= read -r filepath; do
+        [[ -z "$filepath" ]] && continue
+
+        # Only check state/config/artifacts files
+        if [[ ! "$filepath" =~ (state|config|artifact|cache|db|json)$ ]]; then
+            continue
+        fi
+
+        # Check for direct redirection writes (> file) in state/config paths
+        local bad_writes
+        bad_writes=$(git show "HEAD:$filepath" 2>/dev/null | grep -c 'echo.*>' "$filepath" 2>/dev/null || true)
+
+        if [[ "$bad_writes" -gt 0 ]]; then
+            violations=$((violations + bad_writes))
+            violation_details="${violation_details}${filepath}: ${bad_writes} direct write(s) (should use tmp+mv)
+"
+        fi
+    done <<< "$changed_files"
+
+    if [[ "$violations" -gt 0 ]]; then
+        warn "Atomic write violations: ${violations} found (should use tmp file + mv pattern):"
+        echo "$violation_details" | sed 's/^/  /'
+    fi
+
+    echo "$violations"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# New Function Test Detection
+# Detects new functions added in the diff but checks if corresponding tests exist
+# Returns: count of untested new functions
+# ──────────────────────────────────────────────────────────────────────────────
+run_new_function_test_check() {
+    local untested_functions=0
+    local details=""
+
+    # Get diff
+    local diff_content
+    diff_content=$(git diff "origin/${BASE_BRANCH:-main}...HEAD" 2>/dev/null || true)
+
+    if [[ -z "$diff_content" ]]; then
+        echo "0"
+        return 0
+    fi
+
+    # Extract newly added function definitions (lines starting with +functionname())
+    local new_functions
+    new_functions=$(echo "$diff_content" | grep -E '^\+[a-zA-Z_][a-zA-Z0-9_]*\(\)' | sed 's/^\+//' | sed 's/()//' || true)
+
+    if [[ -z "$new_functions" ]]; then
+        echo "0"
+        return 0
+    fi
+
+    # For each new function, check if test files were modified
+    local test_files_modified=0
+    test_files_modified=$(echo "$diff_content" | grep -c '\-\-\-.*test\|\.test\.\|_test\.' || true)
+
+    # Simple heuristic: if we have new functions but no test file modifications, warn
+    if [[ "$test_files_modified" -eq 0 ]]; then
+        local func_count
+        func_count=$(echo "$new_functions" | wc -l | xargs)
+        untested_functions="$func_count"
+        details="Added ${func_count} new function(s) but no test file modifications detected"
+    fi
+
+    if [[ "$untested_functions" -gt 0 ]]; then
+        warn "New functions without tests: ${details}"
+    fi
+
+    echo "$untested_functions"
+}
+
 stage_compound_quality() {
     CURRENT_STAGE_ID="compound_quality"
 
@@ -5841,6 +6082,79 @@ stage_compound_quality() {
     # Track findings for quality score
     local total_critical=0 total_major=0 total_minor=0
     local audits_run_list=""
+
+    # ── HARDENED QUALITY GATES (RUN BEFORE CYCLES) ──
+    # These checks must pass before we even start the audit cycles
+    echo ""
+    info "Running hardened quality gate checks..."
+
+    # 1. Bash 3.2 compatibility check
+    local bash_violations=0
+    bash_violations=$(run_bash_compat_check 2>/dev/null) || bash_violations=0
+    bash_violations="${bash_violations:-0}"
+
+    if [[ "$strict_quality" == "true" && "$bash_violations" -gt 0 ]]; then
+        error "STRICT QUALITY: Bash 3.2 incompatibilities found — blocking"
+        emit_event "quality.bash_compat_failed" \
+            "issue=${ISSUE_NUMBER:-0}" \
+            "violations=$bash_violations"
+        return 1
+    fi
+
+    if [[ "$bash_violations" -gt 0 ]]; then
+        warn "Bash 3.2 incompatibilities detected: ${bash_violations} (will impact quality score)"
+        total_minor=$((total_minor + bash_violations))
+    else
+        success "Bash 3.2 compatibility: clean"
+    fi
+
+    # 2. Test coverage check
+    local coverage_pct=0
+    coverage_pct=$(run_test_coverage_check 2>/dev/null) || coverage_pct=0
+    coverage_pct="${coverage_pct:-0}"
+
+    if [[ "$coverage_pct" != "skip" ]]; then
+        if [[ "$coverage_pct" -lt 60 ]]; then
+            if [[ "$strict_quality" == "true" ]]; then
+                error "STRICT QUALITY: Test coverage below 60% (${coverage_pct}%) — blocking"
+                emit_event "quality.coverage_failed" \
+                    "issue=${ISSUE_NUMBER:-0}" \
+                    "coverage=$coverage_pct"
+                return 1
+            else
+                warn "Test coverage below 60% threshold (${coverage_pct}%) — quality penalty applied"
+                total_major=$((total_major + 2))
+            fi
+        fi
+    fi
+
+    # 3. New functions without tests check
+    local untested_functions=0
+    untested_functions=$(run_new_function_test_check 2>/dev/null) || untested_functions=0
+    untested_functions="${untested_functions:-0}"
+
+    if [[ "$untested_functions" -gt 0 ]]; then
+        if [[ "$strict_quality" == "true" ]]; then
+            error "STRICT QUALITY: ${untested_functions} new function(s) without tests — blocking"
+            emit_event "quality.untested_functions" \
+                "issue=${ISSUE_NUMBER:-0}" \
+                "count=$untested_functions"
+            return 1
+        else
+            warn "New functions without corresponding tests: ${untested_functions}"
+            total_major=$((total_major + untested_functions))
+        fi
+    fi
+
+    # 4. Atomic write violations (optional, informational in most modes)
+    local atomic_violations=0
+    atomic_violations=$(run_atomic_write_check 2>/dev/null) || atomic_violations=0
+    atomic_violations="${atomic_violations:-0}"
+
+    if [[ "$atomic_violations" -gt 0 ]]; then
+        warn "Atomic write violations: ${atomic_violations} (state/config file patterns)"
+        total_minor=$((total_minor + atomic_violations))
+    fi
 
     # Vitals-driven adaptive cycle limit (preferred)
     local base_max_cycles="$max_cycles"
@@ -6239,24 +6553,52 @@ All quality checks clean:
     # Record quality score
     pipeline_record_quality_score "$quality_score" "$total_critical" "$total_major" "$total_minor" "$_dod_pass_rate" "$audits_run_list" 2>/dev/null || true
 
-    # ── Quality Gate ──
+    # ── Quality Gate (HARDENED) ──
     local compound_quality_blocking
     compound_quality_blocking=$(jq -r --arg id "compound_quality" \
         '(.stages[] | select(.id == $id) | .config.compound_quality_blocking) // true' \
         "$PIPELINE_CONFIG" 2>/dev/null) || true
     [[ -z "$compound_quality_blocking" || "$compound_quality_blocking" == "null" ]] && compound_quality_blocking="true"
 
-    if [[ "$quality_score" -lt 60 && "$compound_quality_blocking" == "true" ]]; then
+    # HARDENED THRESHOLD: quality_score must be >= 60 to pass
+    # In strict mode, higher requirements apply per the hardened checks above
+    local min_threshold=60
+    if [[ "$strict_quality" == "true" ]]; then
+        # Strict mode: require score >= 70 and ZERO critical issues
+        if [[ "$total_critical" -gt 0 ]]; then
+            error "STRICT QUALITY: ${total_critical} critical issue(s) found — BLOCKING (strict mode)"
+            emit_event "pipeline.quality_gate_failed_strict" \
+                "issue=${ISSUE_NUMBER:-0}" \
+                "reason=critical_issues" \
+                "critical=$total_critical"
+            log_stage "compound_quality" "Quality gate failed (strict mode): critical issues"
+            return 1
+        fi
+        min_threshold=70
+    fi
+
+    # Hard floor: score must be >= 40, regardless of other settings
+    if [[ "$quality_score" -lt 40 ]]; then
+        error "HARDENED GATE: Quality score ${quality_score}/100 below hard floor (40) — BLOCKING"
+        emit_event "quality.hard_floor_failed" \
+            "issue=${ISSUE_NUMBER:-0}" \
+            "quality_score=$quality_score"
+        log_stage "compound_quality" "Quality gate failed: score below hard floor (40)"
+        return 1
+    fi
+
+    if [[ "$quality_score" -lt "$min_threshold" && "$compound_quality_blocking" == "true" ]]; then
         emit_event "pipeline.quality_gate_failed" \
             "issue=${ISSUE_NUMBER:-0}" \
             "quality_score=$quality_score" \
+            "threshold=$min_threshold" \
             "critical=$total_critical" \
             "major=$total_major"
 
-        error "Quality gate FAILED: score ${quality_score}/100 (critical: ${total_critical}, major: ${total_major}, minor: ${total_minor})"
+        error "Quality gate FAILED: score ${quality_score}/100 (threshold: ${min_threshold}/100, critical: ${total_critical}, major: ${total_major}, minor: ${total_minor})"
 
         if [[ -n "$ISSUE_NUMBER" ]]; then
-            gh_comment_issue "$ISSUE_NUMBER" "❌ **Quality gate failed** — score ${quality_score}/100
+            gh_comment_issue "$ISSUE_NUMBER" "❌ **Quality gate failed** — score ${quality_score}/${min_threshold}
 
 | Finding Type | Count | Deduction |
 |---|---|---|
@@ -6268,25 +6610,41 @@ DoD pass rate: ${_dod_pass_rate}%
 Quality issues remain after ${max_cycles} cycles. Check artifacts for details." 2>/dev/null || true
         fi
 
-        log_stage "compound_quality" "Quality gate failed: ${quality_score}/100 after ${max_cycles} cycles"
+        log_stage "compound_quality" "Quality gate failed: ${quality_score}/${min_threshold} after ${max_cycles} cycles"
         return 1
     fi
 
-    # Exhausted all cycles but quality score is above threshold
-    if [[ "$quality_score" -ge 60 ]]; then
-        warn "Compound quality: score ${quality_score}/100 after ${max_cycles} cycles (above threshold, proceeding)"
-
-        if [[ -n "$ISSUE_NUMBER" ]]; then
-            gh_comment_issue "$ISSUE_NUMBER" "⚠️ **Compound quality** — score ${quality_score}/100 after ${max_cycles} cycles
-
-Some issues remain but quality score is above threshold. Proceeding." 2>/dev/null || true
+    # Exhausted all cycles but quality score is at or above threshold
+    if [[ "$quality_score" -ge "$min_threshold" ]]; then
+        if [[ "$quality_score" -eq 100 ]]; then
+            success "Compound quality PERFECT: 100/100"
+        elif [[ "$quality_score" -ge 80 ]]; then
+            success "Compound quality EXCELLENT: ${quality_score}/100"
+        elif [[ "$quality_score" -ge 70 ]]; then
+            success "Compound quality GOOD: ${quality_score}/100"
+        else
+            warn "Compound quality ACCEPTABLE: ${quality_score}/${min_threshold} after ${max_cycles} cycles"
         fi
 
-        log_stage "compound_quality" "Passed with score ${quality_score}/100 after ${max_cycles} cycles"
+        if [[ -n "$ISSUE_NUMBER" ]]; then
+            local quality_emoji="✅"
+            [[ "$quality_score" -lt 70 ]] && quality_emoji="⚠️"
+            gh_comment_issue "$ISSUE_NUMBER" "${quality_emoji} **Compound quality passed** — score ${quality_score}/${min_threshold} after ${max_cycles} cycles
+
+| Finding Type | Count |
+|---|---|
+| Critical | ${total_critical} |
+| Major | ${total_major} |
+| Minor | ${total_minor} |
+
+DoD pass rate: ${_dod_pass_rate}%" 2>/dev/null || true
+        fi
+
+        log_stage "compound_quality" "Passed with score ${quality_score}/${min_threshold} after ${max_cycles} cycles"
         return 0
     fi
 
-    error "Compound quality exhausted after ${max_cycles} cycles"
+    error "Compound quality exhausted after ${max_cycles} cycles with insufficient score"
 
     if [[ -n "$ISSUE_NUMBER" ]]; then
         gh_comment_issue "$ISSUE_NUMBER" "❌ **Compound quality failed** after ${max_cycles} cycles

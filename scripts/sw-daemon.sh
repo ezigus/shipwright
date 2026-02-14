@@ -1642,6 +1642,19 @@ daemon_spawn_pipeline() {
 
     daemon_log INFO "Spawning pipeline for issue #${issue_num}: ${issue_title}"
 
+    # ── Issue decomposition (if decomposer available) ──
+    local decompose_script="${SCRIPT_DIR}/sw-decompose.sh"
+    if [[ -x "$decompose_script" && "$NO_GITHUB" != "true" ]]; then
+        local decompose_result=""
+        decompose_result=$("$decompose_script" auto "$issue_num" 2>/dev/null) || true
+        if [[ "$decompose_result" == *"decomposed"* ]]; then
+            daemon_log INFO "Issue #${issue_num} decomposed into subtasks — skipping pipeline"
+            # Remove the shipwright label so decomposed parent doesn't re-queue
+            gh issue edit "$issue_num" --remove-label "shipwright" 2>/dev/null || true
+            return 0
+        fi
+    fi
+
     # Extract goal text from issue (title + first line of body)
     local issue_goal="$issue_title"
     if [[ "$NO_GITHUB" != "true" ]]; then

@@ -90,6 +90,7 @@ show_help() {
     echo -e "  ${CYAN}tracker${RESET} <cmd>           ${BOLD}Issue tracker${RESET} — configure Linear/Jira integration"
     echo -e "  ${CYAN}heartbeat${RESET} <cmd>        ${BOLD}Agent heartbeat${RESET} — write/check/list/clear heartbeats"
     echo -e "  ${CYAN}checkpoint${RESET} <cmd>       ${BOLD}Checkpoints${RESET} — save/restore agent state mid-stage"
+    echo -e "  ${CYAN}decompose${RESET} <cmd>        ${BOLD}Issue decomposer${RESET} — analyze complexity, auto-create subtasks"
     echo -e "  ${CYAN}connect${RESET} <cmd>          ${BOLD}Team connect${RESET} — sync local state to team dashboard"
     echo -e "  ${CYAN}remote${RESET} <cmd>           ${BOLD}Remote machines${RESET} — register and manage distributed workers"
     echo -e "  ${CYAN}launchd${RESET} <cmd>          ${BOLD}Process supervision${RESET} — auto-start daemon + dashboard on boot"
@@ -99,6 +100,7 @@ show_help() {
     echo -e "  ${CYAN}github${RESET}               ${BOLD}GitHub context${RESET} — repo metadata, security, blame"
     echo -e "  ${CYAN}checks${RESET}               ${BOLD}GitHub checks${RESET} — CI check runs and status"
     echo -e "  ${CYAN}deploys${RESET}              ${BOLD}Deployments${RESET} — deployment history and environments"
+    echo -e "  ${CYAN}context${RESET}              ${BOLD}Context engine${RESET} — gather context for pipeline stages"
     echo -e "  ${CYAN}init${RESET}                  ${BOLD}Quick tmux setup${RESET} — one command, no prompts"
     echo -e "  ${CYAN}setup${RESET}                 ${BOLD}Guided setup${RESET} — prerequisites, init, doctor, quick start"
     echo -e "  ${CYAN}help${RESET}                  Show this help message"
@@ -316,6 +318,12 @@ main() {
             ;;
         deploys|deployments)
             exec "$SCRIPT_DIR/sw-github-deploy.sh" "$@"
+            ;;
+        decompose)
+            exec "$SCRIPT_DIR/sw-decompose.sh" "$@"
+            ;;
+        context)
+            exec "$SCRIPT_DIR/sw-context.sh" "$@"
             ;;
         help|--help|-h)
             show_help

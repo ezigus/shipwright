@@ -182,6 +182,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-discovery.sh` | 412 | Cross-Pipeline Real-Time Learning |
 | `scripts/sw-docs.sh` | 635 | Documentation Keeper |
 | `scripts/sw-doctor.sh` | 965 | Validate Shipwright setup |
+| `scripts/sw-dora.sh` | 615 | DORA Metrics Dashboard with Engineering Intelligence |
 | `scripts/sw-eventbus.sh` | 393 | Durable event bus for real-time inter-component |
 | `scripts/sw-feedback.sh` | 471 | Production Feedback Loop |
 | `scripts/sw-fix.sh` | 482 | Bulk Fix Across Multiple Repos |
@@ -210,11 +211,13 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-regression.sh` | 642 | Regression Detection Pipeline |
 | `scripts/sw-release.sh` | 706 | Release train automation |
 | `scripts/sw-remote.sh` | 687 | Machine Registry & Remote Daemon Management |
+| `scripts/sw-scale.sh` | 444 | Dynamic agent team scaling during pipeline execution |
 | `scripts/sw-self-optimize.sh` | 1048 | Learning & Self-Tuning System |
 | `scripts/sw-session.sh` | 541 | Launch a Claude Code team session in a new tmux window |
 | `scripts/sw-setup.sh` | 234 | One-shot setup: check prerequisites, init, doctor |
 | `scripts/sw-status.sh` | 796 | Dashboard showing Claude Code team status |
 | `scripts/sw-templates.sh` | 247 | Browse and inspect team templates |
+| `scripts/sw-tmux-pipeline.sh` | 554 | Spawn and manage pipelines in tmux windows |
 | `scripts/sw-tmux.sh` | 591 | tmux Health & Plugin Management |
 | `scripts/sw-trace.sh` | 485 | E2E Traceability (Issue → Commit → PR → Deploy) |
 | `scripts/sw-tracker.sh` | 409 | Provider Router for Issue Tracker Integration |
@@ -222,7 +225,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-webhook.sh` | 627 | GitHub Webhook Receiver for Instant Issue Processing |
 | `scripts/sw-widgets.sh` | 530 | Embeddable Status Widgets |
 | `scripts/sw-worktree.sh` | 408 | Git worktree management for multi-agent isolation |
-| `scripts/sw` | 393 | CLI router — dispatches subcommands via exec |
+| `scripts/sw` | 404 | CLI router — dispatches subcommands via exec |
 <!-- /AUTO:core-scripts -->
 
 ### GitHub API Modules

@@ -23,19 +23,19 @@ RESET='\033[0m'
 # ─── Helpers (define fallbacks if not provided by parent) ─────────────────────
 # When sourced by sw-daemon.sh, these are already defined. When run standalone
 # or sourced by tests, we define them here.
-type info &>/dev/null 2>&1 || info()    { echo -e "${CYAN}${BOLD}▸${RESET} $*"; }
-type success &>/dev/null 2>&1 || success() { echo -e "${GREEN}${BOLD}✓${RESET} $*"; }
-type warn &>/dev/null 2>&1 || warn()    { echo -e "${YELLOW}${BOLD}⚠${RESET} $*"; }
-type error &>/dev/null 2>&1 || error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
-type now_epoch &>/dev/null 2>&1 || now_epoch() { date +%s; }
-type now_iso &>/dev/null 2>&1 || now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+[[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "${CYAN}${BOLD}▸${RESET} $*"; }
+[[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "${GREEN}${BOLD}✓${RESET} $*"; }
+[[ "$(type -t warn 2>/dev/null)" == "function" ]]    || warn()    { echo -e "${YELLOW}${BOLD}⚠${RESET} $*"; }
+[[ "$(type -t error 2>/dev/null)" == "function" ]]   || error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
+[[ "$(type -t now_epoch 2>/dev/null)" == "function" ]] || now_epoch() { date +%s; }
+[[ "$(type -t now_iso 2>/dev/null)" == "function" ]]   || now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 
 # ─── Paths (set defaults if not provided by parent) ──────────────────────────
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 EVENTS_FILE="${EVENTS_FILE:-${HOME}/.shipwright/events.jsonl}"
 
-if ! type emit_event &>/dev/null 2>&1; then
+if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     emit_event() {
         local event_type="$1"
         shift

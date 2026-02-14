@@ -357,6 +357,9 @@ main() {
         widgets)
             exec "$SCRIPT_DIR/sw-widgets.sh" "$@"
             ;;
+        feedback)
+            exec "$SCRIPT_DIR/sw-feedback.sh" "$@"
+            ;;
         help|--help|-h)
             show_help
             ;;

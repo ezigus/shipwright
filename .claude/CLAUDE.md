@@ -202,6 +202,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-prep.sh` | 1642 | Repository Preparation for Agent Teams |
 | `scripts/sw-ps.sh` | 171 | Show running agent process status |
 | `scripts/sw-reaper.sh` | 394 | Automatic tmux pane cleanup when agents exit |
+| `scripts/sw-regression.sh` | 642 | Regression Detection Pipeline |
+| `scripts/sw-release.sh` | 706 | Release train automation |
 | `scripts/sw-remote.sh` | 687 | Machine Registry & Remote Daemon Management |
 | `scripts/sw-self-optimize.sh` | 1048 | Learning & Self-Tuning System |
 | `scripts/sw-session.sh` | 541 | Launch a Claude Code team session in a new tmux window |
@@ -213,8 +215,9 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-tracker.sh` | 409 | Provider Router for Issue Tracker Integration |
 | `scripts/sw-upgrade.sh` | 479 | Detect and apply updates from the repo |
 | `scripts/sw-webhook.sh` | 627 | GitHub Webhook Receiver for Instant Issue Processing |
+| `scripts/sw-widgets.sh` | 530 | Embeddable Status Widgets |
 | `scripts/sw-worktree.sh` | 408 | Git worktree management for multi-agent isolation |
-| `scripts/sw` | 362 | CLI router — dispatches subcommands via exec |
+| `scripts/sw` | 374 | CLI router — dispatches subcommands via exec |
 <!-- /AUTO:core-scripts -->
 
 ### GitHub API Modules

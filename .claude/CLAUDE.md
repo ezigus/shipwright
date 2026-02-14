@@ -175,7 +175,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-connect.sh` | 619 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 605 | Context Engine for Pipeline Stages |
 | `scripts/sw-cost.sh` | 924 | Token Usage & Cost Intelligence |
-| `scripts/sw-daemon.sh` | 5869 | Autonomous GitHub Issue Watcher |
+| `scripts/sw-daemon.sh` | 5876 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 477 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 540 | SQLite Persistence Layer |
 | `scripts/sw-decompose.sh` | 539 | Intelligent Issue Decomposition |
@@ -223,6 +223,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-session.sh` | 541 | Launch a Claude Code team session in a new tmux window |
 | `scripts/sw-setup.sh` | 234 | One-shot setup: check prerequisites, init, doctor |
 | `scripts/sw-status.sh` | 796 | Dashboard showing Claude Code team status |
+| `scripts/sw-strategic.sh` | 677 | Strategic Intelligence Agent |
 | `scripts/sw-templates.sh` | 247 | Browse and inspect team templates |
 | `scripts/sw-tmux-pipeline.sh` | 554 | Spawn and manage pipelines in tmux windows |
 | `scripts/sw-tmux.sh` | 591 | tmux Health & Plugin Management |
@@ -233,7 +234,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-webhook.sh` | 627 | GitHub Webhook Receiver for Instant Issue Processing |
 | `scripts/sw-widgets.sh` | 530 | Embeddable Status Widgets |
 | `scripts/sw-worktree.sh` | 408 | Git worktree management for multi-agent isolation |
-| `scripts/sw` | 436 | CLI router — dispatches subcommands via exec |
+| `scripts/sw` | 439 | CLI router — dispatches subcommands via exec |
 <!-- /AUTO:core-scripts -->
 
 ### GitHub API Modules

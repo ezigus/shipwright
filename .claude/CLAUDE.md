@@ -177,10 +177,12 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-daemon.sh` | 5683 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 477 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 540 | SQLite Persistence Layer |
-| `scripts/sw-decompose.sh` | 539 | Issue Complexity Analysis & Subtask Generation |
+| `scripts/sw-decompose.sh` | 539 | Intelligent Issue Decomposition |
 | `scripts/sw-developer-simulation.sh` | 252 | Multi-Persona Developer Simulation |
+| `scripts/sw-discovery.sh` | 412 | Cross-Pipeline Real-Time Learning |
 | `scripts/sw-docs.sh` | 635 | Documentation Keeper |
 | `scripts/sw-doctor.sh` | 965 | Validate Shipwright setup |
+| `scripts/sw-feedback.sh` | 471 | Production Feedback Loop |
 | `scripts/sw-fix.sh` | 482 | Bulk Fix Across Multiple Repos |
 | `scripts/sw-fleet-discover.sh` | 567 | Auto-Discovery from GitHub Orgs |
 | `scripts/sw-fleet.sh` | 1387 | Multi-Repo Daemon Orchestrator |
@@ -217,7 +219,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-webhook.sh` | 627 | GitHub Webhook Receiver for Instant Issue Processing |
 | `scripts/sw-widgets.sh` | 530 | Embeddable Status Widgets |
 | `scripts/sw-worktree.sh` | 408 | Git worktree management for multi-agent isolation |
-| `scripts/sw` | 374 | CLI router — dispatches subcommands via exec |
+| `scripts/sw` | 381 | CLI router — dispatches subcommands via exec |
 <!-- /AUTO:core-scripts -->
 
 ### GitHub API Modules

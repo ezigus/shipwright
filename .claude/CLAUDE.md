@@ -267,7 +267,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | File | Lines | Purpose |
 | --- | ---: | --- |
 | `scripts/sw-connect-test.sh` | 831 | Validate dashboard connection, heartbeat |
-| `scripts/sw-daemon-test.sh` | 1932 | Unit tests for daemon metrics, health, alerting |
+| `scripts/sw-daemon-test.sh` | 2001 | Unit tests for daemon metrics, health, alerting |
 | `scripts/sw-docs-test.sh` | 791 | Validate documentation keeper, AUTO sections, |
 | `scripts/sw-e2e-integration-test.sh` | 359 | Real Claude + Real GitHub |
 | `scripts/sw-e2e-smoke-test.sh` | 799 | Pipeline orchestration without API keys |

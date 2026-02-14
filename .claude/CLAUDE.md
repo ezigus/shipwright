@@ -180,7 +180,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-decompose.sh` | 539 | Issue Complexity Analysis & Subtask Generation |
 | `scripts/sw-developer-simulation.sh` | 252 | Multi-Persona Developer Simulation |
 | `scripts/sw-docs.sh` | 635 | Documentation Keeper |
-| `scripts/sw-doctor.sh` | 907 | Validate Shipwright setup |
+| `scripts/sw-doctor.sh` | 965 | Validate Shipwright setup |
 | `scripts/sw-fix.sh` | 482 | Bulk Fix Across Multiple Repos |
 | `scripts/sw-fleet-discover.sh` | 567 | Auto-Discovery from GitHub Orgs |
 | `scripts/sw-fleet.sh` | 1387 | Multi-Repo Daemon Orchestrator |

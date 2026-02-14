@@ -197,7 +197,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 699 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 648 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 343 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 2278 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 2395 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 1626 | Persistent Learning & Context System |
 | `scripts/sw-model-router.sh` | 545 | Intelligent Model Routing & Cost Optimization |
 | `scripts/sw-otel.sh` | 596 | OpenTelemetry Observability |
@@ -273,7 +273,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-daemon-test.sh` | 2001 | Unit tests for daemon metrics, health, alerting |
 | `scripts/sw-docs-test.sh` | 791 | Validate documentation keeper, AUTO sections, |
 | `scripts/sw-e2e-integration-test.sh` | 359 | Real Claude + Real GitHub |
-| `scripts/sw-e2e-smoke-test.sh` | 799 | Pipeline orchestration without API keys |
+| `scripts/sw-e2e-smoke-test.sh` | 997 | Pipeline orchestration without API keys |
 | `scripts/sw-fix-test.sh` | 630 | Unit tests for bulk fix across repos |
 | `scripts/sw-fleet-test.sh` | 833 | Unit tests for fleet orchestration |
 | `scripts/sw-frontier-test.sh` | 581 | Validate adversarial review, developer |

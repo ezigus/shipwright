@@ -68,6 +68,7 @@ show_help() {
     echo -e "${BOLD}COMMANDS${RESET}"
     echo -e "  ${CYAN}session${RESET} [name]       Create a new tmux window for a Claude team"
     echo -e "  ${CYAN}status${RESET} [--json]        Show dashboard of running teams and agents"
+    echo -e "  ${CYAN}mission-control|mc${RESET}   Terminal-based pipeline mission control (drill-down, team tree, orchestration)"
     echo -e "  ${CYAN}ps${RESET}                    Show running agent processes and status"
     echo -e "  ${CYAN}logs${RESET} [team] [opts]    View and search agent pane logs"
     echo -e "  ${CYAN}templates${RESET} [list|show]  Manage team composition templates"
@@ -222,6 +223,9 @@ main() {
         status)
             check_tmux
             exec "$SCRIPT_DIR/sw-status.sh" "$@"
+            ;;
+        mission-control|mc)
+            exec "$SCRIPT_DIR/sw-mission-control.sh" "$@"
             ;;
         ps)
             check_tmux

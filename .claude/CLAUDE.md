@@ -209,11 +209,12 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-status.sh` | 796 | Dashboard showing Claude Code team status |
 | `scripts/sw-templates.sh` | 247 | Browse and inspect team templates |
 | `scripts/sw-tmux.sh` | 591 | tmux Health & Plugin Management |
+| `scripts/sw-trace.sh` | 485 | E2E Traceability (Issue → Commit → PR → Deploy) |
 | `scripts/sw-tracker.sh` | 409 | Provider Router for Issue Tracker Integration |
 | `scripts/sw-upgrade.sh` | 479 | Detect and apply updates from the repo |
 | `scripts/sw-webhook.sh` | 627 | GitHub Webhook Receiver for Instant Issue Processing |
 | `scripts/sw-worktree.sh` | 408 | Git worktree management for multi-agent isolation |
-| `scripts/sw` | 358 | CLI router — dispatches subcommands via exec |
+| `scripts/sw` | 362 | CLI router — dispatches subcommands via exec |
 <!-- /AUTO:core-scripts -->
 
 ### GitHub API Modules
@@ -254,6 +255,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-connect-test.sh` | 831 | Validate dashboard connection, heartbeat |
 | `scripts/sw-daemon-test.sh` | 1781 | Unit tests for daemon metrics, health, alerting |
 | `scripts/sw-docs-test.sh` | 791 | Validate documentation keeper, AUTO sections, |
+| `scripts/sw-e2e-integration-test.sh` | 359 | Real Claude + Real GitHub |
+| `scripts/sw-e2e-smoke-test.sh` | 799 | Pipeline orchestration without API keys |
 | `scripts/sw-fix-test.sh` | 630 | Unit tests for bulk fix across repos |
 | `scripts/sw-fleet-test.sh` | 833 | Unit tests for fleet orchestration |
 | `scripts/sw-frontier-test.sh` | 581 | Validate adversarial review, developer |

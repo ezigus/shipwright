@@ -101,6 +101,14 @@ load_tracker_config() {
                 warn "Jira provider script not found: $SCRIPT_DIR/sw-tracker-jira.sh"
             fi
             ;;
+        github)
+            if [[ -f "$SCRIPT_DIR/sw-tracker-github.sh" ]]; then
+                source "$SCRIPT_DIR/sw-tracker-github.sh"
+                return 0
+            else
+                warn "GitHub provider script not found: $SCRIPT_DIR/sw-tracker-github.sh"
+            fi
+            ;;
         none|"") return 0 ;;
         *)
             warn "Unknown tracker provider: $TRACKER_PROVIDER"
@@ -116,6 +124,98 @@ tracker_available() {
     [[ "$TRACKER_PROVIDER" != "none" && -n "$TRACKER_PROVIDER" ]]
 }
 
+# ─── Internal Dispatcher ──────────────────────────────────────────────────
+# Routes a provider function call to the loaded provider, with fallback to GitHub
+
+_dispatch_provider() {
+    local func="$1"
+    shift
+
+    load_tracker_config
+
+    # Build the function name
+    local provider_func="provider_${func}"
+
+    # Provider scripts define provider_* functions
+    if type "$provider_func" &>/dev/null; then
+        "$provider_func" "$@"
+        return $?
+    else
+        # Fall back to GitHub if provider doesn't define the function
+        # (for backward compatibility with minimal providers like Jira/Linear notify-only)
+        if [[ "$TRACKER_PROVIDER" != "github" && "$TRACKER_PROVIDER" != "none" ]]; then
+            # Try GitHub provider
+            if [[ -f "$SCRIPT_DIR/sw-tracker-github.sh" ]]; then
+                source "$SCRIPT_DIR/sw-tracker-github.sh"
+                if type "$provider_func" &>/dev/null; then
+                    "$provider_func" "$@"
+                    return $?
+                fi
+            fi
+        fi
+        return 1
+    fi
+}
+
+# ─── Discovery Interface ────────────────────────────────────────────────────
+# Used by daemon to discover issues from the configured tracker
+
+# Discover issues matching criteria
+# Usage: tracker_discover_issues <label> [state] [limit]
+# Output: JSON array of {id, title, labels[], state}
+tracker_discover_issues() {
+    _dispatch_provider "discover_issues" "$@"
+}
+
+# Fetch single issue details
+# Usage: tracker_get_issue <issue_id>
+# Output: JSON {id, title, body, labels[], state}
+tracker_get_issue() {
+    _dispatch_provider "get_issue" "$@"
+}
+
+# Fetch issue body text only
+# Usage: tracker_get_issue_body <issue_id>
+# Output: plain text body
+tracker_get_issue_body() {
+    _dispatch_provider "get_issue_body" "$@"
+}
+
+# ─── CRUD Interface ───────────────────────────────────────────────────────
+# Used by pipeline to modify issues
+
+# Add label to issue
+# Usage: tracker_add_label <issue_id> <label>
+tracker_add_label() {
+    _dispatch_provider "add_label" "$@"
+}
+
+# Remove label from issue
+# Usage: tracker_remove_label <issue_id> <label>
+tracker_remove_label() {
+    _dispatch_provider "remove_label" "$@"
+}
+
+# Add comment to issue
+# Usage: tracker_comment <issue_id> <body>
+tracker_comment() {
+    _dispatch_provider "comment" "$@"
+}
+
+# Close/resolve issue
+# Usage: tracker_close_issue <issue_id>
+tracker_close_issue() {
+    _dispatch_provider "close_issue" "$@"
+}
+
+# Create new issue
+# Usage: tracker_create_issue <title> <body> [labels]
+# Output: JSON {id, title}
+tracker_create_issue() {
+    _dispatch_provider "create_issue" "$@"
+}
+
+# ─── Notification Interface (Legacy) ───────────────────────────────────────
 # Route notification to the active provider
 # Usage: tracker_notify <event> <gh_issue> [detail]
 # Events: spawn, started, stage_complete, stage_failed, review, pr-created, completed, done, failed
@@ -361,8 +461,23 @@ show_help() {
     echo -e "  ${CYAN}help${RESET}                          Show this help"
     echo ""
     echo -e "${BOLD}PROVIDERS${RESET}"
+    echo -e "  ${CYAN}github${RESET}     GitHub (native, gh CLI)"
     echo -e "  ${CYAN}linear${RESET}     Linear.app (GraphQL API)"
     echo -e "  ${CYAN}jira${RESET}       Atlassian Jira (REST API v3)"
+    echo ""
+    echo -e "${BOLD}DISCOVERY INTERFACE${RESET} (for daemon)"
+    echo -e "  Provider-agnostic issue discovery and metadata:"
+    echo -e "  ${CYAN}tracker_discover_issues${RESET} <label> [state] [limit]"
+    echo -e "  ${CYAN}tracker_get_issue${RESET} <issue_id>"
+    echo -e "  ${CYAN}tracker_get_issue_body${RESET} <issue_id>"
+    echo ""
+    echo -e "${BOLD}CRUD INTERFACE${RESET} (for pipeline)"
+    echo -e "  Provider-agnostic issue modification:"
+    echo -e "  ${CYAN}tracker_add_label${RESET} <issue_id> <label>"
+    echo -e "  ${CYAN}tracker_remove_label${RESET} <issue_id> <label>"
+    echo -e "  ${CYAN}tracker_comment${RESET} <issue_id> <body>"
+    echo -e "  ${CYAN}tracker_close_issue${RESET} <issue_id>"
+    echo -e "  ${CYAN}tracker_create_issue${RESET} <title> <body> [labels]"
     echo ""
     echo -e "${BOLD}NOTIFICATION EVENTS${RESET}"
     echo -e "  ${CYAN}spawn${RESET}           Pipeline started"
@@ -374,7 +489,7 @@ show_help() {
     echo ""
     echo -e "${BOLD}CONFIGURATION${RESET}"
     echo -e "  Config file:  ${DIM}~/.shipwright/tracker-config.json${RESET}"
-    echo -e "  Env override: ${DIM}TRACKER_PROVIDER_OVERRIDE=linear|jira|none${RESET}"
+    echo -e "  Env override: ${DIM}TRACKER_PROVIDER_OVERRIDE=github|linear|jira|none${RESET}"
     echo -e "  Daemon block: ${DIM}.claude/daemon-config.json → .tracker.provider${RESET}"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"

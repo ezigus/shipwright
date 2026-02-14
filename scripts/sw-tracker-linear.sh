@@ -216,6 +216,257 @@ linear_attach_pr() {
     linear_add_comment "$issue_id" "$body"
 }
 
+# ─── Discovery & CRUD Interface ───────────────────────────────────────────
+# Implements provider interface for daemon discovery and pipeline CRUD
+
+provider_discover_issues() {
+    local label="$1"
+    local state="${2:-open}"
+    local limit="${3:-50}"
+
+    provider_load_config
+
+    # Build Linear query for issues
+    local query='query($teamId: String!, $first: Int, $filter: IssueFilter) {
+        team(id: $teamId) {
+            issues(first: $first, filter: $filter) {
+                nodes {
+                    id identifier title labels {nodes {name}}
+                    state {id name type}
+                }
+            }
+        }
+    }'
+
+    # Build filter for state
+    local state_filter=""
+    case "$state" in
+        open)
+            # Open = unstarted or started
+            state_filter='and: [or: [{state: {type: {eq: "unstarted"}}}, {state: {type: {eq: "started"}}}]]'
+            ;;
+        closed)
+            state_filter='and: [{state: {type: {eq: "completed"}}}]'
+            ;;
+        *)
+            # Custom state provided
+            state_filter="and: [{state: {type: {eq: \"${state}\"}}}]"
+            ;;
+    esac
+
+    # Add label filter if provided
+    if [[ -n "$label" ]]; then
+        state_filter="${state_filter}, {labels: {some: {name: {eq: \"${label}\"}}}}"
+    fi
+
+    local filter
+    filter="{${state_filter}}"
+
+    local vars
+    vars=$(jq -n --arg teamId "$LINEAR_TEAM_ID" --arg filter "$filter" --arg limit "$limit" \
+        "{teamId: \$teamId, first: (\$limit | tonumber), filter: $filter}" 2>/dev/null || \
+        jq -n --arg teamId "$LINEAR_TEAM_ID" --arg limit "$limit" \
+        '{teamId: $teamId, first: ($limit | tonumber)}')
+
+    local response
+    response=$(linear_graphql "$query" "$vars" 2>/dev/null) || {
+        echo "[]"
+        return 0
+    }
+
+    # Normalize to {id, title, labels[], state}
+    echo "$response" | jq '[.data.team.issues.nodes[]? | {id: .id, title: .title, labels: [.labels.nodes[]?.name // empty], state: .state.name}]' 2>/dev/null || echo "[]"
+}
+
+provider_get_issue() {
+    local issue_id="$1"
+
+    [[ -z "$issue_id" ]] && return 1
+
+    provider_load_config
+
+    local query='query($id: String!) {
+        issue(id: $id) {
+            id title description labels {nodes {name}}
+            state {id name}
+        }
+    }'
+
+    local vars
+    vars=$(jq -n --arg id "$issue_id" '{id: $id}')
+
+    local response
+    response=$(linear_graphql "$query" "$vars" 2>/dev/null) || {
+        return 1
+    }
+
+    # Normalize output
+    echo "$response" | jq '{id: .data.issue.id, title: .data.issue.title, body: .data.issue.description, labels: [.data.issue.labels.nodes[]?.name // empty], state: .data.issue.state.name}' 2>/dev/null || return 1
+}
+
+provider_get_issue_body() {
+    local issue_id="$1"
+
+    [[ -z "$issue_id" ]] && return 1
+
+    provider_load_config
+
+    local query='query($id: String!) {
+        issue(id: $id) {
+            description
+        }
+    }'
+
+    local vars
+    vars=$(jq -n --arg id "$issue_id" '{id: $id}')
+
+    local response
+    response=$(linear_graphql "$query" "$vars" 2>/dev/null) || {
+        return 1
+    }
+
+    echo "$response" | jq -r '.data.issue.description // ""' 2>/dev/null || return 1
+}
+
+provider_add_label() {
+    local issue_id="$1"
+    local label="$2"
+
+    [[ -z "$issue_id" || -z "$label" ]] && return 1
+
+    provider_load_config
+
+    # Linear label IDs are required — fetch them
+    local query='query {
+        labels(first: 100) {
+            nodes {id name}
+        }
+    }'
+
+    local labels_response
+    labels_response=$(linear_graphql "$query" "{}" 2>/dev/null) || return 1
+
+    local label_id
+    label_id=$(echo "$labels_response" | jq -r --arg name "$label" '.data.labels.nodes[] | select(.name == $name) | .id' 2>/dev/null || true)
+
+    if [[ -z "$label_id" ]]; then
+        # Label not found — skip
+        return 0
+    fi
+
+    local update_query='mutation($issueId: String!, $labelIds: [String!]) {
+        issueLabelCreate(issueId: $issueId, labelIds: $labelIds) {
+            success
+        }
+    }'
+
+    local vars
+    vars=$(jq -n --arg issueId "$issue_id" --arg labelId "$label_id" \
+        '{issueId: $issueId, labelIds: [$labelId]}')
+
+    linear_graphql "$update_query" "$vars" >/dev/null 2>&1 || return 1
+}
+
+provider_remove_label() {
+    local issue_id="$1"
+    local label="$2"
+
+    [[ -z "$issue_id" || -z "$label" ]] && return 1
+
+    provider_load_config
+
+    # Linear requires label IDs
+    local query='query {
+        labels(first: 100) {
+            nodes {id name}
+        }
+    }'
+
+    local labels_response
+    labels_response=$(linear_graphql "$query" "{}" 2>/dev/null) || return 1
+
+    local label_id
+    label_id=$(echo "$labels_response" | jq -r --arg name "$label" '.data.labels.nodes[] | select(.name == $name) | .id' 2>/dev/null || true)
+
+    if [[ -z "$label_id" ]]; then
+        return 0
+    fi
+
+    local update_query='mutation($issueId: String!, $labelIds: [String!]) {
+        issueLabelDelete(issueId: $issueId, labelIds: $labelIds) {
+            success
+        }
+    }'
+
+    local vars
+    vars=$(jq -n --arg issueId "$issue_id" --arg labelId "$label_id" \
+        '{issueId: $issueId, labelIds: [$labelId]}')
+
+    linear_graphql "$update_query" "$vars" >/dev/null 2>&1 || return 1
+}
+
+provider_comment() {
+    local issue_id="$1"
+    local body="$2"
+
+    [[ -z "$issue_id" || -z "$body" ]] && return 1
+
+    provider_load_config
+    linear_add_comment "$issue_id" "$body"
+}
+
+provider_close_issue() {
+    local issue_id="$1"
+
+    [[ -z "$issue_id" ]] && return 1
+
+    provider_load_config
+    linear_update_status "$issue_id" "$STATUS_DONE"
+}
+
+provider_create_issue() {
+    local title="$1"
+    local body="$2"
+    local labels="${3:-}"
+
+    [[ -z "$title" ]] && return 1
+
+    provider_load_config
+
+    local query='mutation($title: String!, $description: String, $teamId: String!) {
+        issueCreate(input: {title: $title, description: $description, teamId: $teamId}) {
+            issue {id}
+        }
+    }'
+
+    local vars
+    vars=$(jq -n --arg title "$title" --arg description "$body" --arg teamId "$LINEAR_TEAM_ID" \
+        '{title: $title, description: $description, teamId: $teamId}')
+
+    local response
+    response=$(linear_graphql "$query" "$vars" 2>/dev/null) || {
+        return 1
+    }
+
+    local issue_id
+    issue_id=$(echo "$response" | jq -r '.data.issueCreate.issue.id // empty' 2>/dev/null)
+
+    if [[ -z "$issue_id" ]]; then
+        return 1
+    fi
+
+    # Add labels if provided
+    if [[ -n "$labels" ]]; then
+        local label_list
+        label_list=$(echo "$labels" | tr ',' '\n' | tr ' ' '\n' | grep -v '^$' || true)
+        while IFS= read -r lbl; do
+            [[ -n "$lbl" ]] && provider_add_label "$issue_id" "$lbl" || true
+        done <<< "$label_list"
+    fi
+
+    echo "{\"id\": \"$issue_id\", \"title\": \"$title\"}"
+}
+
 # ─── Find Linear Issue ID from GitHub Issue Body ──────────────────────────
 
 find_linear_id() {

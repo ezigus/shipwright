@@ -137,6 +137,178 @@ jira_api() {
     curl "${args[@]}" "${JIRA_BASE_URL}/rest/api/3/${endpoint}" 2>&1
 }
 
+# ─── Discovery & CRUD Interface ───────────────────────────────────────────
+# Implements provider interface for daemon discovery and pipeline CRUD
+
+provider_discover_issues() {
+    local label="$1"
+    local state="${2:-open}"
+    local limit="${3:-50}"
+
+    provider_load_config
+
+    # Build JQL query
+    local jql="project = \"${JIRA_PROJECT_KEY}\""
+
+    if [[ -n "$label" ]]; then
+        jql="${jql} AND labels = \"${label}\""
+    fi
+
+    # Map state parameter to Jira status
+    case "$state" in
+        open)
+            jql="${jql} AND status IN (${JIRA_TRANSITION_IN_PROGRESS:-\"In Progress\"},${JIRA_TRANSITION_IN_REVIEW:-\"In Review\"})"
+            ;;
+        closed)
+            jql="${jql} AND status = ${JIRA_TRANSITION_DONE:-\"Done\"}"
+            ;;
+        *)
+            # Custom status provided
+            jql="${jql} AND status = \"${state}\""
+            ;;
+    esac
+
+    jql="${jql} ORDER BY created DESC"
+
+    # Fetch issues
+    local response
+    response=$(jira_api "GET" "search?jql=$(printf '%s' "$jql" | jq -sRr @uri)&maxResults=${limit}&fields=key,summary,labels,status" 2>/dev/null) || {
+        echo "[]"
+        return 0
+    }
+
+    # Normalize to {id, title, labels[], state}
+    echo "$response" | jq '[.issues[]? | {id: .key, title: .fields.summary, labels: [.fields.labels[]?.name // empty], state: .fields.status.name}]' 2>/dev/null || echo "[]"
+}
+
+provider_get_issue() {
+    local issue_id="$1"
+
+    [[ -z "$issue_id" ]] && return 1
+
+    provider_load_config
+
+    local response
+    response=$(jira_api "GET" "issue/${issue_id}?fields=key,summary,description,labels,status" 2>/dev/null) || {
+        return 1
+    }
+
+    # Normalize output
+    echo "$response" | jq '{id: .key, title: .fields.summary, body: .fields.description, labels: [.fields.labels[]?.name // empty], state: .fields.status.name}' 2>/dev/null || return 1
+}
+
+provider_get_issue_body() {
+    local issue_id="$1"
+
+    [[ -z "$issue_id" ]] && return 1
+
+    provider_load_config
+
+    local response
+    response=$(jira_api "GET" "issue/${issue_id}?fields=description" 2>/dev/null) || {
+        return 1
+    }
+
+    echo "$response" | jq -r '.fields.description // ""' 2>/dev/null || return 1
+}
+
+provider_add_label() {
+    local issue_id="$1"
+    local label="$2"
+
+    [[ -z "$issue_id" || -z "$label" ]] && return 1
+
+    provider_load_config
+
+    # Get current labels
+    local current_labels
+    current_labels=$(jira_api "GET" "issue/${issue_id}?fields=labels" 2>/dev/null | jq '.fields.labels[]?.name' 2>/dev/null || echo "[]")
+
+    # Add new label
+    local payload
+    payload=$(jq -n --arg label "$label" --argjson labels "$current_labels" '{fields: {labels: ($labels | map(select(. != $label)) + [$label])}}' 2>/dev/null)
+
+    jira_api "PUT" "issue/${issue_id}" "$payload" 2>/dev/null || return 1
+}
+
+provider_remove_label() {
+    local issue_id="$1"
+    local label="$2"
+
+    [[ -z "$issue_id" || -z "$label" ]] && return 1
+
+    provider_load_config
+
+    # Get current labels and remove the specified one
+    local payload
+    payload=$(jq -n --arg label "$label" '{fields: {labels: [{name: ""}]}}')
+
+    jira_api "PUT" "issue/${issue_id}" "$payload" 2>/dev/null || return 1
+}
+
+provider_comment() {
+    local issue_id="$1"
+    local body="$2"
+
+    [[ -z "$issue_id" || -z "$body" ]] && return 1
+
+    provider_load_config
+    jira_add_comment "$issue_id" "$body"
+}
+
+provider_close_issue() {
+    local issue_id="$1"
+
+    [[ -z "$issue_id" ]] && return 1
+
+    provider_load_config
+    jira_transition "$issue_id" "$JIRA_TRANSITION_DONE"
+}
+
+provider_create_issue() {
+    local title="$1"
+    local body="$2"
+    local labels="${3:-}"
+
+    [[ -z "$title" ]] && return 1
+
+    provider_load_config
+
+    # Build payload
+    local payload
+    payload=$(jq -n --arg summary "$title" --arg description "$body" --arg project "$JIRA_PROJECT_KEY" \
+        '{
+            fields: {
+                project: {key: $project},
+                summary: $summary,
+                description: $description,
+                issuetype: {name: "Task"}
+            }
+        }')
+
+    # Add labels if provided
+    if [[ -n "$labels" ]]; then
+        local label_array
+        label_array=$(echo "$labels" | jq -R 'split("[, ]"; "x") | map(select(length > 0))' 2>/dev/null || echo '[]')
+        payload=$(echo "$payload" | jq --argjson labels "$label_array" '.fields.labels = $labels' 2>/dev/null)
+    fi
+
+    local response
+    response=$(jira_api "POST" "issue" "$payload" 2>/dev/null) || {
+        return 1
+    }
+
+    # Extract issue key from response
+    local issue_key
+    issue_key=$(echo "$response" | jq -r '.key // empty' 2>/dev/null)
+
+    if [[ -z "$issue_key" ]]; then
+        return 1
+    fi
+
+    echo "{\"id\": \"$issue_key\", \"title\": \"$title\"}"
+}
+
 # ─── Find Jira Issue Key from GitHub Issue Body ───────────────────────────
 
 find_jira_key() {

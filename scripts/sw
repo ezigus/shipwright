@@ -102,6 +102,7 @@ show_help() {
     echo -e "  ${CYAN}github${RESET}               ${BOLD}GitHub context${RESET} — repo metadata, security, blame"
     echo -e "  ${CYAN}checks${RESET}               ${BOLD}GitHub checks${RESET} — CI check runs and status"
     echo -e "  ${CYAN}deploys${RESET}              ${BOLD}Deployments${RESET} — deployment history and environments"
+    echo -e "  ${CYAN}pr${RESET}                   ${BOLD}PR lifecycle${RESET} — auto-review, merge, cleanup, feedback"
     echo -e "  ${CYAN}context${RESET}              ${BOLD}Context engine${RESET} — gather context for pipeline stages"
     echo -e "  ${CYAN}init${RESET}                  ${BOLD}Quick tmux setup${RESET} — one command, no prompts"
     echo -e "  ${CYAN}setup${RESET}                 ${BOLD}Guided setup${RESET} — prerequisites, init, doctor, quick start"
@@ -332,6 +333,9 @@ main() {
             ;;
         context)
             exec "$SCRIPT_DIR/sw-context.sh" "$@"
+            ;;
+        pr)
+            exec "$SCRIPT_DIR/sw-pr-lifecycle.sh" "$@"
             ;;
         help|--help|-h)
             show_help

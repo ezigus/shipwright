@@ -126,7 +126,7 @@ analyze_issue() {
     fi
 
     local title body labels
-    title=$(echo "$issue_data" | jq -r '.title')
+    title=$(echo "$issue_data" | jq -r '.title // ""')
     body=$(echo "$issue_data" | jq -r '.body // ""')
     labels=$(echo "$issue_data" | jq -r '.labels[].name' | tr '\n' ',' | sed 's/,$//')
 
@@ -215,7 +215,7 @@ analyze_issue() {
                 is_security: ($is_security == "true"),
                 is_performance_critical: ($is_perf == "true")
             },
-            recommendation: "Based on complexity " + $complexity + ", estimated " + $effort_hours + "h effort"
+            recommendation: ("Based on complexity " + $complexity + ", estimated " + $effort_hours + "h effort")
         }')
 
     echo "$analysis"
@@ -478,29 +478,13 @@ cmd_recommend() {
     echo -e "${DIM}$(echo "$analysis" | jq -r '.title')${RESET}"
     echo ""
     echo -e "${CYAN}${BOLD}ANALYSIS${RESET}"
-    echo "$analysis" | jq -r '
-        "  File Scope: \(.file_scope)\n" +
-        "  Complexity: \(.complexity)/10\n" +
-        "  Risk Level: \(.risk)\n" +
-        "  Estimated Effort: \(.estimated_effort_hours)h\n" +
-        "  Files Affected: ~\(.estimated_files_affected)"
-    '
+    echo "$analysis" | jq -r '"  File Scope: \(.file_scope)\n  Complexity: \(.complexity)/10\n  Risk Level: \(.risk)\n  Estimated Effort: \(.estimated_effort_hours)h\n  Files Affected: ~\(.estimated_files_affected)"'
     echo ""
     echo -e "${CYAN}${BOLD}TEAM COMPOSITION${RESET}"
-    echo "$team_rec" | jq -r '
-        "  Roles: \(.roles | join(\", \"))\n" +
-        "  Team Size: \(.estimated_agents) agents\n" +
-        "  Pipeline Template: \(.template)\n" +
-        "  Model: \(.model)\n" +
-        "  Max Iterations: \(.max_iterations)\n" +
-        "  Confidence: \(.confidence_percent)%"
-    '
+    echo "$team_rec" | jq -r '"  Roles: \(.roles | join(", "))\n  Team Size: \(.estimated_agents) agents\n  Pipeline Template: \(.template)\n  Model: \(.model)\n  Max Iterations: \(.max_iterations)\n  Confidence: \(.confidence_percent)%"'
     echo ""
     echo -e "${CYAN}${BOLD}RISK ASSESSMENT${RESET}"
-    echo "$team_rec" | jq -r '
-        "  Factors: \(.risk_factors)\n" +
-        "  Mitigations: \(.mitigation_strategies)"
-    '
+    echo "$team_rec" | jq -r '"  Factors: \(.risk_factors)\n  Mitigations: \(.mitigation_strategies)"'
     echo ""
     echo -e "${CYAN}${BOLD}STAGE PLAN${RESET}"
     echo "$stages" | jq -r '.[] | "  \(.parallel_group). \(.name) (group \(.parallel_group), \(.agents) agent\(if .agents > 1 then "s" else "" end), \(.timeout_minutes)m)"'
@@ -536,26 +520,39 @@ cmd_learn() {
 
     # Find the recommendation in history
     local recommendation
-    recommendation=$(jq --arg issue "$issue_num" '.decisions[] | select(.issue == $issue) | .' "$PM_HISTORY" 2>/dev/null | head -1)
+    recommendation=$(jq -c --arg issue "$issue_num" '.decisions[] | select(.issue == $issue)' "$PM_HISTORY" 2>/dev/null | tail -1)
 
     if [[ -z "$recommendation" ]]; then
         warn "No previous recommendation found for issue #${issue_num}"
-        recommendation="{}"
+        recommendation='null'
     fi
 
     # Record the outcome
     local outcome_record
-    outcome_record=$(jq -n \
-        --arg issue "$issue_num" \
-        --arg outcome "$outcome" \
-        --arg timestamp "$(now_iso)" \
-        --argjson recommendation "$recommendation" \
-        '{
-            issue: $issue,
-            outcome: $outcome,
-            recorded_at: $timestamp,
-            recommendation: $recommendation
-        }')
+    if [[ "$recommendation" == "null" ]]; then
+        outcome_record=$(jq -n \
+            --arg issue "$issue_num" \
+            --arg outcome "$outcome" \
+            --arg timestamp "$(now_iso)" \
+            '{
+                issue: $issue,
+                outcome: $outcome,
+                recorded_at: $timestamp,
+                recommendation: null
+            }')
+    else
+        outcome_record=$(jq -n \
+            --arg issue "$issue_num" \
+            --arg outcome "$outcome" \
+            --arg timestamp "$(now_iso)" \
+            --argjson recommendation "$recommendation" \
+            '{
+                issue: $issue,
+                outcome: $outcome,
+                recorded_at: $timestamp,
+                recommendation: $recommendation
+            }')
+    fi
 
     # Save to history
     local tmp_hist

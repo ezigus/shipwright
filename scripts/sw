@@ -84,6 +84,7 @@ show_help() {
     echo -e "  ${CYAN}cost${RESET} <cmd>             ${BOLD}Cost intelligence${RESET} — track tokens, budgets, model routing"
     echo -e "  ${CYAN}regression${RESET} <cmd>       ${BOLD}Regression detection${RESET} — detect regressions after merge"
     echo -e "  ${CYAN}db${RESET} <cmd>               ${BOLD}SQLite persistence${RESET} — events, runs, developers, metrics"
+    echo -e "  ${CYAN}deps${RESET} <cmd>            ${BOLD}Dependency updates${RESET} — scan, classify, test, merge Dependabot/Renovate PRs"
     echo -e "  ${CYAN}fleet${RESET} <cmd>           ${BOLD}Multi-repo fleet${RESET} — orchestrate daemons across repos"
     echo -e "  ${CYAN}fleet-viz${RESET} <cmd>        ${BOLD}Fleet visualization${RESET} — cross-repo insights and queue"
     echo -e "  ${CYAN}fix${RESET} \"goal\" [opts]     ${BOLD}Bulk fix${RESET} — apply a fix across multiple repos"
@@ -266,6 +267,9 @@ main() {
             ;;
         db)
             exec "$SCRIPT_DIR/sw-db.sh" "$@"
+            ;;
+        deps)
+            exec "$SCRIPT_DIR/sw-deps.sh" "$@"
             ;;
         fleet)
             exec "$SCRIPT_DIR/sw-fleet.sh" "$@"

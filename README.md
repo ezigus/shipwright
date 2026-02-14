@@ -28,6 +28,20 @@ This repo uses Shipwright to process its own issues. Label a GitHub issue with `
 
 ---
 
+## What's New
+
+**v1.13.0** brings faster feedback loops and lower operational overhead:
+
+- **Webhook receiver** — Zero-latency issue processing (no more polling)
+- **PR lifecycle automation** — Auto-review, merge, cleanup reduces manual toil
+- **Fleet auto-discovery** — Populate fleet config from GitHub org in one command
+- **SQLite persistence** — ACID-safe state, crash recovery, transactional safety
+- **Issue decomposition** — AI-split complex features into manageable subtasks
+- **systemd support** — Cross-platform process supervision (Linux + macOS)
+- **Context engine** — Rich context injection for smarter pipeline decisions
+
+---
+
 ## How It Works
 
 ```mermaid
@@ -213,42 +227,106 @@ shipwright dashboard start
 
 Web dashboard with live pipeline progress, GitHub context (security alerts, contributors, deployments), DORA metrics, and cost tracking. WebSocket-powered, updates in real-time.
 
+### Webhook Receiver
+
+```bash
+shipwright webhook listen
+```
+
+Instant issue processing via GitHub webhooks instead of polling. Register webhook with `shipwright webhook register`, receive events in real-time, process issues with zero-lag.
+
+### PR Lifecycle Automation
+
+```bash
+shipwright pr auto-review
+shipwright pr merge
+shipwright pr cleanup
+```
+
+Fully automated PR management: auto-review based on predictive risk and coverage, intelligent auto-merge when gates pass, cleanup stale branches. Reduces manual PR overhead by 90%.
+
+### Fleet Auto-Discovery
+
+```bash
+shipwright fleet discover --org myorg
+```
+
+Scan a GitHub organization and auto-populate fleet config with all repos matching criteria (language, archived status, team ownership). One command instead of manual registry building.
+
+### SQLite Persistence
+
+ACID-safe state management replacing JSON files. Replaces volatile `.claude/pipeline-artifacts/` with reliable database schema. Atomic transactions ensure no partial states, crash recovery automatic.
+
+### Issue Decomposition
+
+```bash
+shipwright decompose --issue 42
+```
+
+AI-powered issue analysis: auto-split complex features into manageable subtasks, create child issues with inherited labels/assignees, generate dependency graph for parallel execution.
+
+### Linux systemd Support
+
+Cross-platform process supervision. Use systemd on Linux instead of tmux, same daemon commands:
+
+```bash
+shipwright launchd install  # macOS launchd
+# systemd service auto-generated on Linux
+```
+
+### Context Engine
+
+```bash
+shipwright context gather
+```
+
+Rich context injection for pipeline stages. Pulls together: contributor history, file hotspots, architecture rules, related issues, failure patterns. Injected automatically at each stage for smarter decisions.
+
 ---
 
 ## Commands
 
-| Command                                   | Purpose                          |
-| ----------------------------------------- | -------------------------------- |
-| `shipwright init`                         | One-command tmux setup           |
-| `shipwright setup`                        | Guided setup wizard              |
-| `shipwright pipeline start --issue N`     | Full delivery pipeline for issue |
-| `shipwright pipeline start --goal "..."`  | Pipeline from goal description   |
-| `shipwright pipeline resume`              | Resume from last checkpoint      |
-| `shipwright daemon start`                 | Watch GitHub for labeled issues  |
-| `shipwright daemon start --detach`        | Background daemon in tmux        |
-| `shipwright daemon metrics`               | DORA/DX metrics dashboard        |
-| `shipwright fleet start`                  | Multi-repo daemon orchestration  |
-| `shipwright fix "goal" --repos ~/a,~/b`   | Apply same fix across repos      |
-| `shipwright loop "goal" --test-cmd "..."` | Continuous autonomous loop       |
-| `shipwright session name -t template`     | Create team session with agents  |
-| `shipwright memory show`                  | View persistent memory           |
-| `shipwright cost show`                    | Token usage and spending         |
-| `shipwright cost budget set 50`           | Set daily budget limit           |
-| `shipwright prep`                         | Analyze repo, generate configs   |
-| `shipwright doctor`                       | Validate setup, diagnose issues  |
-| `shipwright status`                       | Team dashboard                   |
-| `shipwright ps`                           | Running agent processes          |
-| `shipwright logs team --follow`           | Tail agent logs                  |
-| `shipwright github context`               | Show repo GitHub context         |
-| `shipwright github security`              | CodeQL + Dependabot alerts       |
-| `shipwright checks list`                  | GitHub Check runs                |
-| `shipwright deploys list`                 | Deployment history               |
-| `shipwright intelligence`                 | Run intelligence analysis        |
-| `shipwright predict`                      | Risk assessment                  |
-| `shipwright optimize`                     | Self-optimization pass           |
-| `shipwright dashboard`                    | Start web dashboard              |
-| `shipwright cleanup --force`              | Kill orphaned sessions           |
-| `shipwright upgrade --apply`              | Pull latest updates              |
+| Command                                   | Purpose                            |
+| ----------------------------------------- | ---------------------------------- |
+| `shipwright init`                         | One-command tmux setup             |
+| `shipwright setup`                        | Guided setup wizard                |
+| `shipwright pipeline start --issue N`     | Full delivery pipeline for issue   |
+| `shipwright pipeline start --goal "..."`  | Pipeline from goal description     |
+| `shipwright pipeline resume`              | Resume from last checkpoint        |
+| `shipwright daemon start`                 | Watch GitHub for labeled issues    |
+| `shipwright daemon start --detach`        | Background daemon in tmux          |
+| `shipwright daemon metrics`               | DORA/DX metrics dashboard          |
+| `shipwright fleet start`                  | Multi-repo daemon orchestration    |
+| `shipwright fix "goal" --repos ~/a,~/b`   | Apply same fix across repos        |
+| `shipwright loop "goal" --test-cmd "..."` | Continuous autonomous loop         |
+| `shipwright session name -t template`     | Create team session with agents    |
+| `shipwright memory show`                  | View persistent memory             |
+| `shipwright cost show`                    | Token usage and spending           |
+| `shipwright cost budget set 50`           | Set daily budget limit             |
+| `shipwright prep`                         | Analyze repo, generate configs     |
+| `shipwright doctor`                       | Validate setup, diagnose issues    |
+| `shipwright status`                       | Team dashboard                     |
+| `shipwright ps`                           | Running agent processes            |
+| `shipwright logs team --follow`           | Tail agent logs                    |
+| `shipwright github context`               | Show repo GitHub context           |
+| `shipwright github security`              | CodeQL + Dependabot alerts         |
+| `shipwright checks list`                  | GitHub Check runs                  |
+| `shipwright deploys list`                 | Deployment history                 |
+| `shipwright intelligence`                 | Run intelligence analysis          |
+| `shipwright predict`                      | Risk assessment                    |
+| `shipwright optimize`                     | Self-optimization pass             |
+| `shipwright dashboard`                    | Start web dashboard                |
+| `shipwright webhook listen`               | Receive GitHub webhook events      |
+| `shipwright webhook register`             | Register webhook in GitHub repo    |
+| `shipwright pr auto-review`               | Auto-review PRs by risk + coverage |
+| `shipwright pr merge`                     | Intelligent PR auto-merge          |
+| `shipwright pr cleanup`                   | Clean up stale branches            |
+| `shipwright fleet discover --org <org>`   | Auto-discover repos in GitHub org  |
+| `shipwright decompose --issue N`          | Split complex issue into subtasks  |
+| `shipwright context gather`               | Assemble rich context for stages   |
+| `shipwright db <cmd>`                     | SQLite persistence management      |
+| `shipwright cleanup --force`              | Kill orphaned sessions             |
+| `shipwright upgrade --apply`              | Pull latest updates                |
 
 ## Pipeline Templates for Teams
 

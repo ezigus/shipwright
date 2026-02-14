@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
-# ║  shipwright decompose — Issue Complexity Analysis & Subtask Generation   ║
-# ║  Analyze ambitious issues · Auto-create smaller subtasks · Reduce waste  ║
+# ║  shipwright decompose — Intelligent Issue Decomposition                  ║
+# ║  Analyze complexity · Auto-create subtasks · Track progress             ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="0.26.0"
+VERSION="1.13.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 

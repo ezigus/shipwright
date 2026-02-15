@@ -2496,13 +2496,17 @@ Coverage baseline: ${coverage_baseline}% — do not decrease coverage."
     # Read accumulated token counts from build loop (written by sw-loop.sh)
     local _loop_token_file="${PROJECT_ROOT}/.claude/loop-logs/loop-tokens.json"
     if [[ -f "$_loop_token_file" ]] && command -v jq &>/dev/null; then
-        local _loop_in _loop_out
+        local _loop_in _loop_out _loop_cost
         _loop_in=$(jq -r '.input_tokens // 0' "$_loop_token_file" 2>/dev/null || echo "0")
         _loop_out=$(jq -r '.output_tokens // 0' "$_loop_token_file" 2>/dev/null || echo "0")
+        _loop_cost=$(jq -r '.cost_usd // 0' "$_loop_token_file" 2>/dev/null || echo "0")
         TOTAL_INPUT_TOKENS=$(( TOTAL_INPUT_TOKENS + ${_loop_in:-0} ))
         TOTAL_OUTPUT_TOKENS=$(( TOTAL_OUTPUT_TOKENS + ${_loop_out:-0} ))
+        if [[ -n "$_loop_cost" && "$_loop_cost" != "0" && "$_loop_cost" != "null" ]]; then
+            TOTAL_COST_USD="${_loop_cost}"
+        fi
         if [[ "${_loop_in:-0}" -gt 0 || "${_loop_out:-0}" -gt 0 ]]; then
-            info "Build loop tokens: in=${_loop_in} out=${_loop_out}"
+            info "Build loop tokens: in=${_loop_in} out=${_loop_out} cost=\$${_loop_cost:-0}"
         fi
     fi
 
@@ -8051,18 +8055,24 @@ pipeline_start() {
         memory_finalize_pipeline "$STATE_FILE" "$ARTIFACTS_DIR" 2>/dev/null || true
     fi
 
-    # Emit cost event
+    # Emit cost event — prefer actual cost from Claude CLI when available
     local model_key="${MODEL:-sonnet}"
-    local input_cost output_cost total_cost
-    input_cost=$(awk -v tokens="$TOTAL_INPUT_TOKENS" -v rate="$(echo "$COST_MODEL_RATES" | jq -r ".${model_key}.input // 3")" 'BEGIN{printf "%.4f", (tokens / 1000000) * rate}')
-    output_cost=$(awk -v tokens="$TOTAL_OUTPUT_TOKENS" -v rate="$(echo "$COST_MODEL_RATES" | jq -r ".${model_key}.output // 15")" 'BEGIN{printf "%.4f", (tokens / 1000000) * rate}')
-    total_cost=$(awk -v i="$input_cost" -v o="$output_cost" 'BEGIN{printf "%.4f", i + o}')
+    local total_cost
+    if [[ -n "${TOTAL_COST_USD:-}" && "${TOTAL_COST_USD}" != "0" && "${TOTAL_COST_USD}" != "null" ]]; then
+        total_cost="${TOTAL_COST_USD}"
+    else
+        # Fallback: estimate from token counts and model rates
+        local input_cost output_cost
+        input_cost=$(awk -v tokens="$TOTAL_INPUT_TOKENS" -v rate="$(echo "$COST_MODEL_RATES" | jq -r ".${model_key}.input // 3")" 'BEGIN{printf "%.4f", (tokens / 1000000) * rate}')
+        output_cost=$(awk -v tokens="$TOTAL_OUTPUT_TOKENS" -v rate="$(echo "$COST_MODEL_RATES" | jq -r ".${model_key}.output // 15")" 'BEGIN{printf "%.4f", (tokens / 1000000) * rate}')
+        total_cost=$(awk -v i="$input_cost" -v o="$output_cost" 'BEGIN{printf "%.4f", i + o}')
+    fi
 
     emit_event "pipeline.cost" \
         "input_tokens=$TOTAL_INPUT_TOKENS" \
         "output_tokens=$TOTAL_OUTPUT_TOKENS" \
         "model=$model_key" \
-        "estimated_cost_usd=$total_cost"
+        "cost_usd=$total_cost"
 
     return $exit_code
 }

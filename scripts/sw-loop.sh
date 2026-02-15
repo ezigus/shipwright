@@ -63,6 +63,7 @@ VERSION="2.0.0"
 # ─── Token Tracking ─────────────────────────────────────────────────────────
 LOOP_INPUT_TOKENS=0
 LOOP_OUTPUT_TOKENS=0
+LOOP_COST_MILLICENTS=0
 
 # ─── Flexible Iteration Defaults ────────────────────────────────────────────
 AUTO_EXTEND=true          # Auto-extend iterations when work is incomplete
@@ -408,27 +409,53 @@ select_audit_model() {
 }
 
 # ─── Token Accumulation ─────────────────────────────────────────────────────
-# Parse token counts from a Claude CLI log file and accumulate running totals.
-# Claude CLI may print usage info to stderr; logs capture both stdout+stderr.
+# Parse token counts from Claude CLI JSON output and accumulate running totals.
+# With --output-format json, the output is a JSON array containing a "result"
+# object with usage.input_tokens, usage.output_tokens, and total_cost_usd.
 accumulate_loop_tokens() {
     local log_file="$1"
     [[ ! -f "$log_file" ]] && return 0
 
-    local input_tok output_tok
-    input_tok=$(grep -oE 'input[_ ]tokens?[: ]+[0-9,]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9,]+' | tr -d ',' || echo "0")
-    output_tok=$(grep -oE 'output[_ ]tokens?[: ]+[0-9,]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9,]+' | tr -d ',' || echo "0")
+    # If jq is available and the file looks like JSON, parse structured output
+    if command -v jq &>/dev/null && head -c1 "$log_file" 2>/dev/null | grep -q '\['; then
+        local input_tok output_tok cache_read cache_create cost_usd
+        # The result object is the last element in the JSON array
+        input_tok=$(jq -r '.[-1].usage.input_tokens // 0' "$log_file" 2>/dev/null || echo "0")
+        output_tok=$(jq -r '.[-1].usage.output_tokens // 0' "$log_file" 2>/dev/null || echo "0")
+        cache_read=$(jq -r '.[-1].usage.cache_read_input_tokens // 0' "$log_file" 2>/dev/null || echo "0")
+        cache_create=$(jq -r '.[-1].usage.cache_creation_input_tokens // 0' "$log_file" 2>/dev/null || echo "0")
+        cost_usd=$(jq -r '.[-1].total_cost_usd // 0' "$log_file" 2>/dev/null || echo "0")
 
-    LOOP_INPUT_TOKENS=$(( LOOP_INPUT_TOKENS + ${input_tok:-0} ))
-    LOOP_OUTPUT_TOKENS=$(( LOOP_OUTPUT_TOKENS + ${output_tok:-0} ))
+        LOOP_INPUT_TOKENS=$(( LOOP_INPUT_TOKENS + ${input_tok:-0} + ${cache_read:-0} + ${cache_create:-0} ))
+        LOOP_OUTPUT_TOKENS=$(( LOOP_OUTPUT_TOKENS + ${output_tok:-0} ))
+        # Accumulate cost in millicents for integer arithmetic
+        if [[ -n "$cost_usd" && "$cost_usd" != "0" && "$cost_usd" != "null" ]]; then
+            local cost_millicents
+            cost_millicents=$(echo "$cost_usd" | awk '{printf "%.0f", $1 * 100000}' 2>/dev/null || echo "0")
+            LOOP_COST_MILLICENTS=$(( ${LOOP_COST_MILLICENTS:-0} + ${cost_millicents:-0} ))
+        fi
+    else
+        # Fallback: regex-based parsing for non-JSON output
+        local input_tok output_tok
+        input_tok=$(grep -oE 'input[_ ]tokens?[: ]+[0-9,]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9,]+' | tr -d ',' || echo "0")
+        output_tok=$(grep -oE 'output[_ ]tokens?[: ]+[0-9,]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9,]+' | tr -d ',' || echo "0")
+
+        LOOP_INPUT_TOKENS=$(( LOOP_INPUT_TOKENS + ${input_tok:-0} ))
+        LOOP_OUTPUT_TOKENS=$(( LOOP_OUTPUT_TOKENS + ${output_tok:-0} ))
+    fi
 }
 
 # Write accumulated token totals to a JSON file for the pipeline to read.
 write_loop_tokens() {
     local token_file="$LOG_DIR/loop-tokens.json"
+    local cost_usd="0"
+    if [[ "${LOOP_COST_MILLICENTS:-0}" -gt 0 ]]; then
+        cost_usd=$(awk "BEGIN {printf \"%.6f\", ${LOOP_COST_MILLICENTS} / 100000}" 2>/dev/null || echo "0")
+    fi
     local tmp_file
     tmp_file=$(mktemp "${token_file}.XXXXXX" 2>/dev/null || mktemp)
     cat > "$tmp_file" <<TOKJSON
-{"input_tokens":${LOOP_INPUT_TOKENS},"output_tokens":${LOOP_OUTPUT_TOKENS},"iterations":${ITERATION:-0}}
+{"input_tokens":${LOOP_INPUT_TOKENS},"output_tokens":${LOOP_OUTPUT_TOKENS},"cost_usd":${cost_usd},"iterations":${ITERATION:-0}}
 TOKJSON
     mv "$tmp_file" "$token_file"
 }
@@ -1585,6 +1612,7 @@ PROMPT
 build_claude_flags() {
     local flags=()
     flags+=("--model" "$MODEL")
+    flags+=("--output-format" "json")
 
     if $SKIP_PERMISSIONS; then
         flags+=("--dangerously-skip-permissions")
@@ -1599,6 +1627,7 @@ build_claude_flags() {
 
 run_claude_iteration() {
     local log_file="$LOG_DIR/iteration-${ITERATION}.log"
+    local json_file="$LOG_DIR/iteration-${ITERATION}.json"
     local prompt
     prompt="$(compose_prompt)"
 
@@ -1611,12 +1640,13 @@ run_claude_iteration() {
     echo -e "\n${CYAN}${BOLD}▸${RESET} ${BOLD}Iteration ${ITERATION}/${MAX_ITERATIONS}${RESET} — Starting..."
 
     # Run Claude headless (with timeout + PID capture for signal handling)
+    # Output goes to .json first, then we extract text into .log for compat
     local exit_code=0
     # shellcheck disable=SC2086
     if [[ -n "$TIMEOUT_CMD" ]]; then
-        $TIMEOUT_CMD "$CLAUDE_TIMEOUT" claude -p "$prompt" $flags > "$log_file" 2>&1 &
+        $TIMEOUT_CMD "$CLAUDE_TIMEOUT" claude -p "$prompt" $flags > "$json_file" 2>&1 &
     else
-        claude -p "$prompt" $flags > "$log_file" 2>&1 &
+        claude -p "$prompt" $flags > "$json_file" 2>&1 &
     fi
     CHILD_PID=$!
     wait "$CHILD_PID" 2>/dev/null || exit_code=$?
@@ -1625,14 +1655,23 @@ run_claude_iteration() {
         warn "Claude CLI timed out after ${CLAUDE_TIMEOUT}s"
     fi
 
+    # Extract text result from JSON into .log for backwards compatibility
+    # The result text is in the last array element's .result field
+    if command -v jq &>/dev/null && [[ -f "$json_file" ]] && head -c1 "$json_file" 2>/dev/null | grep -q '\['; then
+        jq -r '.[-1].result // empty' "$json_file" > "$log_file" 2>/dev/null || cp "$json_file" "$log_file"
+    else
+        # Fallback: if JSON parsing fails, just use raw output as log
+        [[ -f "$json_file" ]] && cp "$json_file" "$log_file"
+    fi
+
     local iter_end
     iter_end="$(now_epoch)"
     local iter_duration=$(( iter_end - iter_start ))
 
     echo -e "  ${GREEN}✓${RESET} Claude session completed ($(format_duration "$iter_duration"), exit $exit_code)"
 
-    # Accumulate token usage from this iteration
-    accumulate_loop_tokens "$log_file"
+    # Accumulate token usage from this iteration's JSON output
+    accumulate_loop_tokens "$json_file"
 
     # Show verbose output if requested
     if $VERBOSE; then
@@ -1901,10 +1940,18 @@ Focus on areas they haven't touched yet.
 PROMPT
 )"
 
-    # Run Claude
+    # Run Claude (output is JSON due to --output-format json in CLAUDE_FLAGS)
+    local JSON_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.json"
     LOG_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.log"
     # shellcheck disable=SC2086
-    claude -p "$PROMPT" $CLAUDE_FLAGS > "$LOG_FILE" 2>&1 || true
+    claude -p "$PROMPT" $CLAUDE_FLAGS > "$JSON_FILE" 2>&1 || true
+
+    # Extract text result from JSON into .log for backwards compat
+    if command -v jq &>/dev/null && [[ -f "$JSON_FILE" ]] && head -c1 "$JSON_FILE" 2>/dev/null | grep -q '\['; then
+        jq -r '.[-1].result // empty' "$JSON_FILE" > "$LOG_FILE" 2>/dev/null || cp "$JSON_FILE" "$LOG_FILE"
+    else
+        [[ -f "$JSON_FILE" ]] && cp "$JSON_FILE" "$LOG_FILE"
+    fi
 
     echo -e "  ${GREEN}✓${RESET} Claude session completed"
 

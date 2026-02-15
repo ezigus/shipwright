@@ -267,6 +267,43 @@ else
     assert_fail "Sources lib/compat.sh"
 fi
 
+# ─── Test 11: JSON output format in claude flags ────────────────────────────
+echo ""
+echo -e "${DIM}  json output format${RESET}"
+if grep -q 'output-format.*json' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "build_claude_flags includes --output-format json"
+else
+    assert_fail "build_claude_flags includes --output-format json"
+fi
+
+# ─── Test 12: Token accumulation parses JSON ────────────────────────────────
+if grep -q 'jq.*usage.input_tokens' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "accumulate_loop_tokens parses JSON usage"
+else
+    assert_fail "accumulate_loop_tokens parses JSON usage"
+fi
+
+# ─── Test 13: Cost tracking variable initialized ────────────────────────────
+if grep -q 'LOOP_COST_MILLICENTS=0' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "LOOP_COST_MILLICENTS initialized"
+else
+    assert_fail "LOOP_COST_MILLICENTS initialized"
+fi
+
+# ─── Test 14: write_loop_tokens includes cost ────────────────────────────────
+if grep -q 'cost_usd' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "write_loop_tokens includes cost_usd"
+else
+    assert_fail "write_loop_tokens includes cost_usd"
+fi
+
+# ─── Test 15: JSON-to-text extraction in run_claude_iteration ────────────────
+if grep -q 'jq.*result.*empty.*json_file' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "run_claude_iteration extracts text from JSON"
+else
+    assert_fail "run_claude_iteration extracts text from JSON"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -172,8 +172,12 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-adversarial.sh` | 274 | Adversarial Agent Code Review |
 | `scripts/sw-architecture-enforcer.sh` | 330 | Living Architecture Model & Enforcer |
 | `scripts/sw-auth.sh` | 613 | GitHub OAuth Authentication |
+| `scripts/sw-autonomous.sh` | 664 | Master controller for AI-building-AI loop |
+| `scripts/sw-changelog.sh` | 704 | Automated Release Notes & Migration Guides |
 | `scripts/sw-checkpoint.sh` | 468 | Save and restore agent state mid-stage |
+| `scripts/sw-ci.sh` | 602 | GitHub Actions CI/CD Orchestration |
 | `scripts/sw-cleanup.sh` | 359 | Clean up orphaned Claude team sessions & artifacts |
+| `scripts/sw-code-review.sh` | 637 | Clean Code & Architecture Analysis |
 | `scripts/sw-connect.sh` | 619 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 605 | Context Engine for Pipeline Stages |
 | `scripts/sw-cost.sh` | 924 | Token Usage & Cost Intelligence |
@@ -184,16 +188,22 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-deps.sh` | 551 | Automated Dependency Update Management |
 | `scripts/sw-developer-simulation.sh` | 252 | Multi-Persona Developer Simulation |
 | `scripts/sw-discovery.sh` | 412 | Cross-Pipeline Real-Time Learning |
+| `scripts/sw-docs-agent.sh` | 539 | Auto-sync README, wiki, API docs |
 | `scripts/sw-docs.sh` | 635 | Documentation Keeper |
 | `scripts/sw-doctor.sh` | 965 | Validate Shipwright setup |
 | `scripts/sw-dora.sh` | 615 | DORA Metrics Dashboard with Engineering Intelligence |
+| `scripts/sw-durable.sh` | 710 | Durable Workflow Engine |
+| `scripts/sw-e2e-orchestrator.sh` | 535 | Test suite registry & execution |
 | `scripts/sw-eventbus.sh` | 393 | Durable event bus for real-time inter-component |
 | `scripts/sw-feedback.sh` | 471 | Production Feedback Loop |
 | `scripts/sw-fix.sh` | 482 | Bulk Fix Across Multiple Repos |
 | `scripts/sw-fleet-discover.sh` | 567 | Auto-Discovery from GitHub Orgs |
 | `scripts/sw-fleet-viz.sh` | 404 | Multi-Repo Fleet Visualization |
 | `scripts/sw-fleet.sh` | 1387 | Multi-Repo Daemon Orchestrator |
+| `scripts/sw-guild.sh` | 569 | Knowledge Guilds & Cross-Team Learning |
 | `scripts/sw-heartbeat.sh` | 293 | File-based agent heartbeat protocol |
+| `scripts/sw-hygiene.sh` | 559 | Repository Organization & Cleanup |
+| `scripts/sw-incident.sh` | 617 | Autonomous Incident Detection & Response |
 | `scripts/sw-init.sh` | 609 | Complete setup for Shipwright + Shipwright |
 | `scripts/sw-instrument.sh` | 699 | Pipeline Instrumentation & Feedback Loops |
 | `scripts/sw-intelligence.sh` | 1196 | AI-Powered Analysis & Decision Engine |
@@ -206,6 +216,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-mission-control.sh` | 487 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 545 | Intelligent Model Routing & Cost Optimization |
 | `scripts/sw-otel.sh` | 596 | OpenTelemetry Observability |
+| `scripts/sw-oversight.sh` | 689 | Quality Oversight Board |
 | `scripts/sw-patrol-meta.sh` | 417 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 455 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1096 | Pipeline Vitals Engine |
@@ -218,19 +229,26 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-public-dashboard.sh` | 798 | Public real-time pipeline progress |
 | `scripts/sw-quality.sh` | 595 | Intelligent completion, audits, zero auto |
 | `scripts/sw-reaper.sh` | 394 | Automatic tmux pane cleanup when agents exit |
+| `scripts/sw-recruit.sh` | 573 | Agent Recruitment & Talent Management System |
 | `scripts/sw-regression.sh` | 642 | Regression Detection Pipeline |
+| `scripts/sw-release-manager.sh` | 736 | Autonomous Release Pipeline |
 | `scripts/sw-release.sh` | 706 | Release train automation |
 | `scripts/sw-remote.sh` | 687 | Machine Registry & Remote Daemon Management |
 | `scripts/sw-replay.sh` | 520 | Pipeline run replay, timeline viewing, narratives |
+| `scripts/sw-retro.sh` | 691 | Sprint Retrospective Engine |
 | `scripts/sw-scale.sh` | 444 | Dynamic agent team scaling during pipeline execution |
+| `scripts/sw-security-audit.sh` | 505 | Comprehensive Security Auditing |
 | `scripts/sw-self-optimize.sh` | 1048 | Learning & Self-Tuning System |
 | `scripts/sw-session.sh` | 541 | Launch a Claude Code team session in a new tmux window |
 | `scripts/sw-setup.sh` | 234 | One-shot setup: check prerequisites, init, doctor |
+| `scripts/sw-standup.sh` | 712 | Automated Daily Standups for AI Agent Teams |
 | `scripts/sw-status.sh` | 796 | Dashboard showing Claude Code team status |
-| `scripts/sw-strategic.sh` | 677 | Strategic Intelligence Agent |
+| `scripts/sw-strategic.sh` | 658 | Strategic Intelligence Agent |
 | `scripts/sw-stream.sh` | 450 | Live terminal output streaming from agent panes |
+| `scripts/sw-swarm.sh` | 583 | Dynamic agent swarm management |
 | `scripts/sw-team-stages.sh` | 511 | Multi-agent execution with leader/specialist roles |
 | `scripts/sw-templates.sh` | 247 | Browse and inspect team templates |
+| `scripts/sw-testgen.sh` | 515 | Autonomous test generation and coverage maintenance |
 | `scripts/sw-tmux-pipeline.sh` | 554 | Spawn and manage pipelines in tmux windows |
 | `scripts/sw-tmux.sh` | 591 | tmux Health & Plugin Management |
 | `scripts/sw-trace.sh` | 485 | E2E Traceability (Issue → Commit → PR → Deploy) |
@@ -241,7 +259,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-webhook.sh` | 627 | GitHub Webhook Receiver for Instant Issue Processing |
 | `scripts/sw-widgets.sh` | 530 | Embeddable Status Widgets |
 | `scripts/sw-worktree.sh` | 408 | Git worktree management for multi-agent isolation |
-| `scripts/sw` | 473 | CLI router — dispatches subcommands via exec |
+| `scripts/sw` | 545 | CLI router — dispatches subcommands via exec |
 <!-- /AUTO:core-scripts -->
 
 ### GitHub API Modules
@@ -300,6 +318,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-pipeline-test.sh` | 1900 | E2E validation invoking the REAL pipeline |
 | `scripts/sw-predictive-test.sh` | 698 | Unit tests for predictive intelligence |
 | `scripts/sw-prep-test.sh` | 644 | Validate repo preparation |
+| `scripts/sw-recruit-test.sh` | 189 | Test suite for agent recruitment system |
 | `scripts/sw-remote-test.sh` | 404 | Validate machine registry, atomic writes, |
 | `scripts/sw-self-optimize-test.sh` | 730 | Unit tests for learning & tuning system |
 | `scripts/sw-session-test.sh` | 591 | E2E validation of session creation flow |

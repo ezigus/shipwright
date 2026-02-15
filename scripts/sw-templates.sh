@@ -77,7 +77,7 @@ json_agent_count() {
     if command -v jq &>/dev/null; then
         jq -r '.agents // [] | length' "$file" 2>/dev/null
     else
-        grep -c '"name"' "$file" 2>/dev/null | head -1
+        grep -c '"name"' "$file" 2>/dev/null || echo "0"
     fi
 }
 

@@ -16,6 +16,11 @@ demo/*.gif
 .claude/pipeline-state.md
 .claude/loop-logs/
 .claude/intelligence-cache.json
+.claude/code-review.json
+.claude/hygiene-report.json
+
+# Generated changelogs (produced by sw-changelog.sh)
+CHANGELOG-*.md
 
 # Build artifacts
 dist/

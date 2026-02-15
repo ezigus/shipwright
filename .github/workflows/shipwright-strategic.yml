@@ -69,8 +69,14 @@ jobs:
             exit 0
           fi
 
-          echo "--- Running Strategic Intelligence Agent ---"
-          bash ./scripts/sw-strategic.sh run 2>&1
+          FORCE_FLAG=""
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            FORCE_FLAG="--force"
+            echo "--- Running Strategic Intelligence Agent (manual trigger, bypassing cooldown) ---"
+          else
+            echo "--- Running Strategic Intelligence Agent (scheduled) ---"
+          fi
+          bash ./scripts/sw-strategic.sh run $FORCE_FLAG 2>&1
           EXIT_CODE=$?
 
           if [[ "$EXIT_CODE" -eq 0 ]]; then

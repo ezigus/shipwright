@@ -584,7 +584,13 @@ strategic_run() {
     echo -e "  Issues skipped: ${skipped} (duplicates)"
     echo ""
 
-    emit_event "strategic.cycle_complete" "issues_created=$created" "issues_skipped=$skipped"
+    # Only record cycle completion if we actually ran analysis (for cooldown tracking)
+    # This prevents a "0 issues" run from burning the cooldown timer
+    if [[ "$created" -gt 0 ]] || [[ "$skipped" -gt 0 ]]; then
+        emit_event "strategic.cycle_complete" "issues_created=$created" "issues_skipped=$skipped"
+    else
+        info "No issues produced — cooldown NOT reset (will retry next cycle)"
+    fi
 }
 
 # ─── Status Command ──────────────────────────────────────────────────────────

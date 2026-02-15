@@ -334,13 +334,21 @@ strategic_call_api() {
     printf '%s' "$prompt" > "$tmp_prompt"
 
     local response_text
-    response_text=$(claude -p "$(cat "$tmp_prompt")" --max-turns 1 --model "$STRATEGIC_MODEL" 2>/dev/null || echo "")
+    response_text=$(cat "$tmp_prompt" | claude -p --max-turns 1 --model "$STRATEGIC_MODEL" 2>/dev/null || echo "")
     rm -f "$tmp_prompt"
 
     if [[ -z "$response_text" ]]; then
         error "Claude returned empty response"
         return 1
     fi
+
+    # Strip markdown code fences if present (Sonnet sometimes wraps output)
+    response_text=$(printf '%s' "$response_text" | sed '/^```/d')
+
+    # Debug: show first 200 chars of response
+    local preview
+    preview=$(printf '%s' "$response_text" | head -c 200)
+    info "Response preview: ${preview}..."
 
     printf '%s' "$response_text"
 }
@@ -386,34 +394,38 @@ strategic_parse_and_create() {
             continue
         fi
 
-        # Parse fields
-        if [[ "$line" == ISSUE_TITLE:* ]]; then
-            current_title="${line#ISSUE_TITLE: }"
+        # Strip leading markdown bold/italic markers for field matching
+        local clean_line
+        clean_line=$(echo "$line" | sed 's/^\*\*//;s/\*\*$//' | sed 's/^__//;s/__$//' | sed 's/^[[:space:]]*//')
+
+        # Parse fields (match with and without markdown formatting)
+        if [[ "$clean_line" == ISSUE_TITLE:* ]]; then
+            current_title="${clean_line#ISSUE_TITLE: }"
             current_title="${current_title#ISSUE_TITLE:}"
             current_title=$(echo "$current_title" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
             in_acceptance=false
-        elif [[ "$line" == PRIORITY:* ]]; then
-            current_priority="${line#PRIORITY: }"
+        elif [[ "$clean_line" == PRIORITY:* ]]; then
+            current_priority="${clean_line#PRIORITY: }"
             current_priority="${current_priority#PRIORITY:}"
             current_priority=$(echo "$current_priority" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
             in_acceptance=false
-        elif [[ "$line" == COMPLEXITY:* ]]; then
-            current_complexity="${line#COMPLEXITY: }"
+        elif [[ "$clean_line" == COMPLEXITY:* ]]; then
+            current_complexity="${clean_line#COMPLEXITY: }"
             current_complexity="${current_complexity#COMPLEXITY:}"
             current_complexity=$(echo "$current_complexity" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
             in_acceptance=false
-        elif [[ "$line" == STRATEGY_AREA:* ]]; then
-            current_strategy="${line#STRATEGY_AREA: }"
+        elif [[ "$clean_line" == STRATEGY_AREA:* ]]; then
+            current_strategy="${clean_line#STRATEGY_AREA: }"
             current_strategy="${current_strategy#STRATEGY_AREA:}"
             current_strategy=$(echo "$current_strategy" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
             in_acceptance=false
-        elif [[ "$line" == DESCRIPTION:* ]]; then
-            current_description="${line#DESCRIPTION: }"
+        elif [[ "$clean_line" == DESCRIPTION:* ]]; then
+            current_description="${clean_line#DESCRIPTION: }"
             current_description="${current_description#DESCRIPTION:}"
             current_description=$(echo "$current_description" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
             in_acceptance=false
-        elif [[ "$line" == ACCEPTANCE:* ]]; then
-            current_acceptance="${line#ACCEPTANCE: }"
+        elif [[ "$clean_line" == ACCEPTANCE:* ]]; then
+            current_acceptance="${clean_line#ACCEPTANCE: }"
             current_acceptance="${current_acceptance#ACCEPTANCE:}"
             current_acceptance=$(echo "$current_acceptance" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
             in_acceptance=true

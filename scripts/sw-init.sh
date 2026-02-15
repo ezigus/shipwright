@@ -77,17 +77,25 @@ echo ""
 
 # ─── tmux.conf ────────────────────────────────────────────────────────────────
 TOOK_FULL_TMUX_CONF=false
+IS_INTERACTIVE="${INTERACTIVE:-false}"
 if [[ -f "$REPO_DIR/tmux/tmux.conf" ]]; then
     if [[ -f "$HOME/.tmux.conf" ]]; then
         cp "$HOME/.tmux.conf" "$HOME/.tmux.conf.bak"
         warn "Backed up existing ~/.tmux.conf → ~/.tmux.conf.bak"
-        read -rp "$(echo -e "${CYAN}${BOLD}▸${RESET} Overwrite ~/.tmux.conf with the Shipwright config? [Y/n] ")" tmux_confirm
-        if [[ -z "$tmux_confirm" || "$(echo "$tmux_confirm" | tr '[:upper:]' '[:lower:]')" != "n" ]]; then
+        if [[ "$IS_INTERACTIVE" == "true" ]]; then
+            read -rp "$(echo -e "${CYAN}${BOLD}▸${RESET} Overwrite ~/.tmux.conf with the Shipwright config? [Y/n] ")" tmux_confirm
+            if [[ -z "$tmux_confirm" || "$(echo "$tmux_confirm" | tr '[:upper:]' '[:lower:]')" != "n" ]]; then
+                cp "$REPO_DIR/tmux/tmux.conf" "$HOME/.tmux.conf"
+                success "Installed ~/.tmux.conf"
+                TOOK_FULL_TMUX_CONF=true
+            else
+                info "Kept existing ~/.tmux.conf"
+            fi
+        else
+            # Non-interactive: default to yes
             cp "$REPO_DIR/tmux/tmux.conf" "$HOME/.tmux.conf"
             success "Installed ~/.tmux.conf"
             TOOK_FULL_TMUX_CONF=true
-        else
-            info "Kept existing ~/.tmux.conf"
         fi
     else
         cp "$REPO_DIR/tmux/tmux.conf" "$HOME/.tmux.conf"
@@ -111,17 +119,27 @@ fi
 # If user kept their own tmux.conf, ensure it sources the overlay
 if [[ "$TOOK_FULL_TMUX_CONF" == "false" && -f "$HOME/.tmux.conf" ]]; then
     if ! grep -q "shipwright-overlay" "$HOME/.tmux.conf" 2>/dev/null; then
-        read -rp "$(echo -e "${CYAN}${BOLD}▸${RESET} Add Shipwright overlay source to ~/.tmux.conf? [Y/n] ")" overlay_confirm
-        if [[ -z "$overlay_confirm" || "$(echo "$overlay_confirm" | tr '[:upper:]' '[:lower:]')" != "n" ]]; then
+        if [[ "$IS_INTERACTIVE" == "true" ]]; then
+            read -rp "$(echo -e "${CYAN}${BOLD}▸${RESET} Add Shipwright overlay source to ~/.tmux.conf? [Y/n] ")" overlay_confirm
+            if [[ -z "$overlay_confirm" || "$(echo "$overlay_confirm" | tr '[:upper:]' '[:lower:]')" != "n" ]]; then
+                {
+                    echo ""
+                    echo "# Shipwright agent overlay"
+                    echo "source-file -q ~/.tmux/shipwright-overlay.conf"
+                } >> "$HOME/.tmux.conf"
+                success "Appended overlay source to ~/.tmux.conf"
+            else
+                info "Skipped overlay injection. Add manually:"
+                echo -e "    ${DIM}source-file -q ~/.tmux/shipwright-overlay.conf${RESET}"
+            fi
+        else
+            # Non-interactive: inject automatically
             {
                 echo ""
                 echo "# Shipwright agent overlay"
                 echo "source-file -q ~/.tmux/shipwright-overlay.conf"
             } >> "$HOME/.tmux.conf"
             success "Appended overlay source to ~/.tmux.conf"
-        else
-            info "Skipped overlay injection. Add manually:"
-            echo -e "    ${DIM}source-file -q ~/.tmux/shipwright-overlay.conf${RESET}"
         fi
     fi
 fi

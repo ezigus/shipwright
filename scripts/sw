@@ -118,6 +118,7 @@ show_help() {
     echo -e "  ${CYAN}changelog${RESET} <cmd>       ${BOLD}Changelog engine${RESET} — auto-generate release notes and migration guides"
     echo -e "  ${CYAN}docs-agent${RESET} <cmd>      ${BOLD}Autonomous docs agent${RESET} — scan gaps, sync, coverage, API ref"
     echo -e "  ${CYAN}release${RESET} <cmd>         ${BOLD}Release automation${RESET} — bump versions, changelog, tags, releases"
+    echo -e "  ${CYAN}release-manager|rm${RESET}    ${BOLD}Autonomous release pipeline${RESET} — readiness checks, RC flow, rollback"
     echo -e "  ${CYAN}replay${RESET} <cmd>           ${BOLD}Pipeline DVR${RESET} — list, show, narrative, diff, export, compare runs"
     echo -e "  ${CYAN}scale${RESET} <cmd>            ${BOLD}Dynamic team scaling${RESET} — scale agents up/down during pipeline"
     echo -e "  ${CYAN}swarm${RESET} <cmd>            ${BOLD}Agent swarm manager${RESET} — registry, spawning, scaling, health, topology"
@@ -421,6 +422,9 @@ main() {
             ;;
         release)
             exec "$SCRIPT_DIR/sw-release.sh" "$@"
+            ;;
+        release-manager|rm)
+            exec "$SCRIPT_DIR/sw-release-manager.sh" "$@"
             ;;
         replay)
             exec "$SCRIPT_DIR/sw-replay.sh" "$@"

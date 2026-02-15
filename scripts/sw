@@ -55,6 +55,18 @@ check_in_tmux() {
     fi
 }
 
+ensure_repo_setup() {
+    if [[ ! -d ".claude" ]]; then
+        error "This repo hasn't been set up for Shipwright."
+        echo ""
+        echo -e "  ${CYAN}${BOLD}Run one of:${RESET}"
+        echo -e "    ${DIM}shipwright setup${RESET}  — guided setup (recommended)"
+        echo -e "    ${DIM}shipwright init${RESET}   — quick setup (no prompts)"
+        echo ""
+        exit 1
+    fi
+}
+
 show_version() {
     echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${VERSION}${RESET} — Orchestrate AI Coding Teams  ${DIM}(aliases: sw, cct)${RESET}"
 }
@@ -232,10 +244,31 @@ show_help() {
     echo -e "${DIM}Docs: https://sethdford.github.io/shipwright  |  GitHub: https://github.com/sethdford/shipwright${RESET}"
 }
 
+# ─── Welcome message helper ──────────────────────────────────────────────────
+show_welcome() {
+    echo ""
+    echo -e "${CYAN}${BOLD}  Welcome to Shipwright v${VERSION}!${RESET}"
+    echo -e "${DIM}  ════════════════════════════════════════════${RESET}"
+    echo ""
+    echo -e "  It looks like this repo hasn't been set up yet."
+    echo ""
+    echo -e "  ${CYAN}${BOLD}→${RESET} For guided setup (4 phases):    ${DIM}shipwright setup${RESET}"
+    echo -e "  ${CYAN}${BOLD}→${RESET} For quick setup (no prompts):     ${DIM}shipwright init${RESET}"
+    echo -e "  ${CYAN}${BOLD}→${RESET} For full help:                   ${DIM}shipwright help${RESET}"
+    echo ""
+}
+
 # ─── Command Router ──────────────────────────────────────────────────────────
 
 main() {
     local cmd="${1:-help}"
+
+    # Special case: if no arguments and .claude/ doesn't exist, show welcome
+    if [[ "$#" -eq 0 && ! -d ".claude" && ! -d "$(pwd)/.claude" ]]; then
+        show_welcome
+        return 0
+    fi
+
     shift 2>/dev/null || true
 
     case "$cmd" in

@@ -57,7 +57,7 @@ MAX_ITERATIONS_EXPLICIT=false
 MAX_RESTARTS=0
 SESSION_RESTART=false
 RESTART_COUNT=0
-VERSION="1.10.0"
+VERSION="2.0.0"
 
 # ─── Flexible Iteration Defaults ────────────────────────────────────────────
 AUTO_EXTEND=true          # Auto-extend iterations when work is incomplete

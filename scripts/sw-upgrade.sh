@@ -2,7 +2,7 @@
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  sw upgrade — Detect and apply updates from the repo                   ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="1.10.0"
+VERSION="2.0.0"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 

@@ -22,15 +22,18 @@ jobs:
 
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Install jq
+      - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
 
       - name: Configure git
         run: |
@@ -60,9 +63,9 @@ jobs:
         run: |
           set +e
 
-          if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-            echo "WARNING: ANTHROPIC_API_KEY not set — strategic analysis requires AI"
-            echo "Set ANTHROPIC_API_KEY in repository secrets to enable strategic intelligence"
+          if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+            echo "WARNING: CLAUDE_CODE_OAUTH_TOKEN not set — strategic analysis requires Claude"
+            echo "Set CLAUDE_CODE_OAUTH_TOKEN in repository secrets to enable strategic intelligence"
             exit 0
           fi
 

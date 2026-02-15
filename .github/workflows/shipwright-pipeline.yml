@@ -72,7 +72,7 @@ jobs:
 
     env:
       ISSUE_NUMBER: ${{ github.event.inputs.issue_number || github.event.issue.number }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
@@ -184,42 +184,25 @@ jobs:
           ${BODY}
           EOF
 
-          # Call Anthropic API directly for triage (no CLI install needed)
+          # Call Claude via CLI for triage
           PROMPT_TEXT=$(cat /tmp/triage-prompt.txt)
 
-          # Validate API key exists
-          if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-            echo "WARNING: ANTHROPIC_API_KEY not set — using defaults"
+          # Validate auth token exists
+          if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+            echo "WARNING: CLAUDE_CODE_OAUTH_TOKEN not set — using defaults"
             RESPONSE="APPROVED: true
           COMPLEXITY: standard
           TEMPLATE: standard
           MAX_ITERATIONS: 20
           ESTIMATED_MINUTES: 90
-          REASON: No API key configured — defaulting to approved"
+          REASON: No auth token configured — defaulting to approved"
           else
-            # Build request body safely via temp file (avoids shell escaping issues)
-            jq -n --arg prompt "$PROMPT_TEXT" '{
-              model: "claude-haiku-4-5-20251001",
-              max_tokens: 512,
-              messages: [{role: "user", content: $prompt}]
-            }' > /tmp/triage-request.json
-
-            HTTP_CODE=$(curl -s -o /tmp/triage-response.json -w '%{http_code}' --max-time 30 \
-              -H "x-api-key: ${ANTHROPIC_API_KEY}" \
-              -H "anthropic-version: 2023-06-01" \
-              -H "content-type: application/json" \
-              -d @/tmp/triage-request.json \
-              https://api.anthropic.com/v1/messages 2>/dev/null || echo "000")
-
-            echo "Triage API response: HTTP $HTTP_CODE"
-
-            if [[ "$HTTP_CODE" == "200" ]]; then
-              RESPONSE=$(jq -r '.content[0].text // empty' /tmp/triage-response.json 2>/dev/null || true)
-            else
-              echo "Triage API error (HTTP $HTTP_CODE):"
-              cat /tmp/triage-response.json 2>/dev/null | head -5 || true
-              RESPONSE=""
+            # Install Claude Code for triage (lightweight, cached by npm)
+            if ! command -v claude &>/dev/null; then
+              npm install -g @anthropic-ai/claude-code 2>/dev/null || true
             fi
+
+            RESPONSE=$(claude -p "$PROMPT_TEXT" --max-turns 1 --model claude-haiku-4-5-20251001 2>/dev/null || echo "")
 
             # Fallback if response is empty
             if [[ -z "$RESPONSE" ]]; then
@@ -228,7 +211,7 @@ jobs:
           TEMPLATE: standard
           MAX_ITERATIONS: 20
           ESTIMATED_MINUTES: 90
-          REASON: Triage API returned HTTP ${HTTP_CODE} — defaulting to approved"
+          REASON: Claude triage call failed — defaulting to approved"
             fi
           fi
 

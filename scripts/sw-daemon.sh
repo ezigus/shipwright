@@ -4001,8 +4001,8 @@ Patrol pre-filter findings to confirm: ${patrol_findings_summary}"
         patrol_meta_run
     fi
 
-    # ── Strategic Intelligence Patrol (requires ANTHROPIC_API_KEY) ──
-    if [[ -f "$SCRIPT_DIR/sw-strategic.sh" ]] && [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+    # ── Strategic Intelligence Patrol (requires CLAUDE_CODE_OAUTH_TOKEN) ──
+    if [[ -f "$SCRIPT_DIR/sw-strategic.sh" ]] && [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
         # shellcheck source=sw-strategic.sh
         source "$SCRIPT_DIR/sw-strategic.sh"
         strategic_patrol_run || true

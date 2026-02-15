@@ -305,49 +305,30 @@ PROMPT_EOF
 strategic_call_api() {
     local prompt="$1"
 
-    if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-        error "ANTHROPIC_API_KEY not set — cannot run strategic analysis"
+    if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+        error "CLAUDE_CODE_OAUTH_TOKEN not set — cannot run strategic analysis"
         return 1
     fi
 
-    local tmp_request tmp_response
-    tmp_request=$(mktemp)
-    tmp_response=$(mktemp)
-
-    # Build request body safely via jq (never string interpolation)
-    jq -n --arg prompt "$prompt" --arg model "$STRATEGIC_MODEL" --argjson max_tokens "$STRATEGIC_MAX_TOKENS" '{
-        model: $model,
-        max_tokens: $max_tokens,
-        messages: [{role: "user", content: $prompt}]
-    }' > "$tmp_request"
-
-    local http_code
-    http_code=$(curl -s -o "$tmp_response" -w '%{http_code}' --max-time 60 \
-        -H "x-api-key: ${ANTHROPIC_API_KEY}" \
-        -H "anthropic-version: 2023-06-01" \
-        -H "content-type: application/json" \
-        -d @"$tmp_request" \
-        https://api.anthropic.com/v1/messages 2>/dev/null || echo "000")
-
-    rm -f "$tmp_request"
-
-    if [[ "$http_code" == "200" ]]; then
-        local response_text
-        response_text=$(jq -r '.content[0].text // empty' "$tmp_response" 2>/dev/null || true)
-        rm -f "$tmp_response"
-
-        if [[ -z "$response_text" ]]; then
-            error "Anthropic API returned empty response"
-            return 1
-        fi
-
-        printf '%s' "$response_text"
-    else
-        error "Anthropic API error (HTTP ${http_code})"
-        cat "$tmp_response" 2>/dev/null | head -5 >&2 || true
-        rm -f "$tmp_response"
+    if ! command -v claude &>/dev/null; then
+        error "Claude Code CLI not found — install with: npm install -g @anthropic-ai/claude-code"
         return 1
     fi
+
+    local tmp_prompt
+    tmp_prompt=$(mktemp)
+    printf '%s' "$prompt" > "$tmp_prompt"
+
+    local response_text
+    response_text=$(claude -p "$(cat "$tmp_prompt")" --max-turns 1 --model "$STRATEGIC_MODEL" 2>/dev/null || echo "")
+    rm -f "$tmp_prompt"
+
+    if [[ -z "$response_text" ]]; then
+        error "Claude returned empty response"
+        return 1
+    fi
+
+    printf '%s' "$response_text"
 }
 
 # ─── Parse Response & Create Issues ──────────────────────────────────────────
@@ -523,9 +504,9 @@ strategic_run() {
         return 0
     fi
 
-    # Check API key
-    if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-        error "ANTHROPIC_API_KEY not set — strategic analysis requires Anthropic API access"
+    # Check auth token
+    if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+        error "CLAUDE_CODE_OAUTH_TOKEN not set — strategic analysis requires Claude access"
         return 1
     fi
 
@@ -628,7 +609,7 @@ strategic_show_help() {
     echo -e "  status    Show last run stats and cooldown"
     echo -e "  help      Show this help\n"
     echo -e "${BOLD}Environment:${RESET}"
-    echo -e "  ANTHROPIC_API_KEY    Required for API calls"
+    echo -e "  CLAUDE_CODE_OAUTH_TOKEN  Required for Claude access"
     echo -e "  NO_GITHUB=true       Dry-run mode (no issue creation)\n"
     echo -e "${BOLD}Cooldown:${RESET}"
     echo -e "  12 hours between cycles (checks events.jsonl)\n"
@@ -638,9 +619,9 @@ strategic_show_help() {
 strategic_patrol_run() {
     # Called by daemon during patrol cycle
     # Check cooldown (12h minimum between runs)
-    # Requires ANTHROPIC_API_KEY
-    if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-        echo -e "    ${DIM}●${RESET} Strategic patrol skipped (no ANTHROPIC_API_KEY)"
+    # Requires CLAUDE_CODE_OAUTH_TOKEN
+    if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+        echo -e "    ${DIM}●${RESET} Strategic patrol skipped (no CLAUDE_CODE_OAUTH_TOKEN)"
         return 0
     fi
 

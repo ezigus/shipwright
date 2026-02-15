@@ -143,6 +143,7 @@ show_help() {
     echo -e "  ${CYAN}team-stages${RESET}          ${BOLD}Multi-agent stage execution${RESET} — compose teams, delegate tasks, tally votes"
     echo -e "  ${CYAN}ux${RESET}                    ${BOLD}Premium UX layer${RESET} — themes, animations, shortcuts, accessibility"
     echo -e "  ${CYAN}recruit${RESET}               ${BOLD}Agent recruitment${RESET} — skill matching, role definitions, performance evaluation"
+    echo -e "  ${CYAN}testgen${RESET}              ${BOLD}Test generation${RESET} — analyze coverage, generate tests, maintain thresholds"
     echo -e "  ${CYAN}init${RESET}                  ${BOLD}Quick tmux setup${RESET} — one command, no prompts"
     echo -e "  ${CYAN}setup${RESET}                 ${BOLD}Guided setup${RESET} — prerequisites, init, doctor, quick start"
     echo -e "  ${CYAN}help${RESET}                  Show this help message"
@@ -495,6 +496,9 @@ main() {
             ;;
         recruit)
             exec "$SCRIPT_DIR/sw-recruit.sh" "$@"
+            ;;
+        testgen)
+            exec "$SCRIPT_DIR/sw-testgen.sh" "$@"
             ;;
         help|--help|-h)
             show_help

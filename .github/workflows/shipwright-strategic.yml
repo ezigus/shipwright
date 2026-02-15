@@ -4,7 +4,7 @@ name: Shipwright Strategic Intelligence
 # to decide what to build next. Creates well-scoped issues for the pipeline.
 on:
   schedule:
-    - cron: "0 6 * * *" # Daily at 6am UTC
+    - cron: "0 */4 * * *" # Every 4 hours — aligned with cooldown
   workflow_dispatch: {}
 
 concurrency:
@@ -18,7 +18,7 @@ permissions:
 jobs:
   strategic:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

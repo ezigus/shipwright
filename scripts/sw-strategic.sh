@@ -57,11 +57,12 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
 fi
 
 # ─── Constants ────────────────────────────────────────────────────────────────
-STRATEGIC_MAX_ISSUES=3
-STRATEGIC_COOLDOWN_SECONDS=43200  # 12 hours
-STRATEGIC_MODEL="claude-haiku-4-5-20251001"
-STRATEGIC_MAX_TOKENS=2048
+STRATEGIC_MAX_ISSUES=5
+STRATEGIC_COOLDOWN_SECONDS=14400  # 4 hours
+STRATEGIC_MODEL="claude-sonnet-4-5-20250929"
+STRATEGIC_MAX_TOKENS=4096
 STRATEGIC_STRATEGY_LINES=200
+STRATEGIC_LABELS="auto-patrol,ready-to-build,strategic,shipwright"
 
 # ─── Cooldown Check ──────────────────────────────────────────────────────────
 strategic_check_cooldown() {
@@ -257,6 +258,14 @@ strategic_build_prompt() {
         open_issues="(GitHub access disabled)"
     fi
 
+    # Recently closed issues (last 20) — so we don't rebuild what was just shipped
+    local recent_closed=""
+    if [[ "${NO_GITHUB:-false}" != "true" ]]; then
+        recent_closed=$(gh issue list --state closed --limit 20 --json number,title --jq '.[] | "#\(.number): \(.title)"' 2>/dev/null || echo "(could not fetch)")
+    else
+        recent_closed="(GitHub access disabled)"
+    fi
+
     # Compose the prompt
     cat <<PROMPT_EOF
 You are the Strategic PM for Shipwright — an autonomous software delivery system. Your job is to analyze the current state and recommend 1-3 high-impact improvements to build next.
@@ -278,6 +287,9 @@ ${strategy_content}
 ## Open Issues (already in progress — do NOT duplicate these)
 ${open_issues}
 
+## Recently Completed (already built — do NOT recreate these)
+${recent_closed}
+
 ## Your Task
 Based on the strategy priorities and current data, recommend 1-3 concrete improvements to build next. Each should be a single, well-scoped task completable by one autonomous pipeline run.
 
@@ -292,12 +304,14 @@ ACCEPTANCE: <bullet list of acceptance criteria, one per line starting with "- "
 ---
 
 Rules:
-- Do NOT duplicate any open issue listed above
+- Do NOT duplicate any open issue OR any recently completed issue
 - Prioritize based on STRATEGY.md priorities (P0 > P1 > P2 > ...)
 - Focus on concrete, actionable improvements (not vague goals)
 - Each issue should be completable by one autonomous pipeline run
-- Prefer reliability and DX improvements over new features
-- Maximum 3 issues
+- Balance: reliability/DX fixes AND strategic new capabilities
+- Think about what would make the biggest impact on success rate, developer experience, and system intelligence
+- Be ambitious — push the platform forward, don't just maintain it
+- Maximum ${STRATEGIC_MAX_ISSUES} issues
 PROMPT_EOF
 }
 
@@ -479,7 +493,14 @@ $(echo -e "$acceptance")
 BODY_EOF
 )
 
-    local labels="auto-patrol,ready-to-build,strategic"
+    local labels="${STRATEGIC_LABELS}"
+
+    # Ensure all labels exist (create if missing)
+    local IFS=','
+    for lbl in $labels; do
+        gh label create "$lbl" --color "7c3aed" 2>/dev/null || true
+    done
+    unset IFS
 
     gh issue create \
         --title "$title" \
@@ -496,12 +517,24 @@ BODY_EOF
 
 # ─── Main Strategic Run ──────────────────────────────────────────────────────
 strategic_run() {
+    local force=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force|-f) force=true; shift ;;
+            *) shift ;;
+        esac
+    done
+
     echo -e "\n${PURPLE}${BOLD}━━━ Strategic Intelligence Agent ━━━${RESET}"
     echo -e "${DIM}  Analyzing codebase, strategy, and metrics...${RESET}\n"
 
-    # Check cooldown
-    if ! strategic_check_cooldown; then
-        return 0
+    # Check cooldown (skip if --force)
+    if [[ "$force" != true ]]; then
+        if ! strategic_check_cooldown; then
+            return 0
+        fi
+    else
+        info "Cooldown bypassed (--force)"
     fi
 
     # Check auth token
@@ -605,14 +638,16 @@ strategic_show_help() {
     echo -e "${BOLD}Usage:${RESET}"
     echo -e "  sw-strategic.sh <command>\n"
     echo -e "${BOLD}Commands:${RESET}"
-    echo -e "  run       Run a strategic analysis cycle"
-    echo -e "  status    Show last run stats and cooldown"
-    echo -e "  help      Show this help\n"
+    echo -e "  run [--force]  Run a strategic analysis cycle (--force bypasses cooldown)"
+    echo -e "  status         Show last run stats and cooldown"
+    echo -e "  help           Show this help\n"
     echo -e "${BOLD}Environment:${RESET}"
     echo -e "  CLAUDE_CODE_OAUTH_TOKEN  Required for Claude access"
-    echo -e "  NO_GITHUB=true       Dry-run mode (no issue creation)\n"
-    echo -e "${BOLD}Cooldown:${RESET}"
-    echo -e "  12 hours between cycles (checks events.jsonl)\n"
+    echo -e "  NO_GITHUB=true           Dry-run mode (no issue creation)\n"
+    echo -e "${BOLD}Configuration:${RESET}"
+    echo -e "  Max issues/cycle:  ${STRATEGIC_MAX_ISSUES}"
+    echo -e "  Cooldown:          $(( STRATEGIC_COOLDOWN_SECONDS / 3600 )) hours"
+    echo -e "  Model:             ${STRATEGIC_MODEL}\n"
 }
 
 # ─── Daemon Integration (sourced mode) ────────────────────────────────────────
@@ -643,7 +678,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
         shift 2>/dev/null || true
 
         case "$cmd" in
-            run)     strategic_run ;;
+            run)     strategic_run "$@" ;;
             status)  strategic_status ;;
             help)    strategic_show_help ;;
             *)

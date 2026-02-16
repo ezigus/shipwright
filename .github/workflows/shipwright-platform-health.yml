@@ -25,24 +25,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-
-      - name: Install
-        run: npm ci
-
       - name: Validate policy.json
         run: |
           jq empty config/policy.json || { echo "::error::config/policy.json invalid or missing"; exit 1; }
+
       - name: Validate policy against schema (optional)
         run: |
-          if [[ -f config/policy.schema.json ]] && npx --yes ajv-cli validate -s config/policy.schema.json -d config/policy.json 2>/dev/null; then
-            echo "Policy valid against schema"
+          if command -v npx &>/dev/null && [[ -f config/policy.schema.json ]]; then
+            npx --yes ajv-cli validate -s config/policy.schema.json -d config/policy.json 2>/dev/null && echo "Policy valid against schema" || echo "::notice::Schema validation failed (non-blocking)"
           else
-            echo "::notice::Schema validation skipped (ajv-cli not run or schema optional)"
+            echo "::notice::Schema validation skipped (ajv-cli or schema not available)"
           fi
 
       - name: Platform refactor scan

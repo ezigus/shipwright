@@ -490,9 +490,9 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-connect.sh` | 619 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 605 | Context Engine for Pipeline Stages |
 | `scripts/sw-cost.sh` | 965 | Token Usage & Cost Intelligence |
-| `scripts/sw-daemon.sh` | 5918 | Autonomous GitHub Issue Watcher |
+| `scripts/sw-daemon.sh` | 5903 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 477 | Fleet Command Dashboard |
-| `scripts/sw-db.sh` | 1396 | SQLite Persistence Layer |
+| `scripts/sw-db.sh` | 1380 | SQLite Persistence Layer |
 | `scripts/sw-decompose.sh` | 539 | Intelligent Issue Decomposition |
 | `scripts/sw-deps.sh` | 551 | Automated Dependency Update Management |
 | `scripts/sw-developer-simulation.sh` | 252 | Multi-Persona Developer Simulation |
@@ -501,9 +501,9 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-docs.sh` | 635 | Documentation Keeper |
 | `scripts/sw-doctor.sh` | 1013 | Validate Shipwright setup |
 | `scripts/sw-dora.sh` | 615 | DORA Metrics Dashboard with Engineering Intelligence |
-| `scripts/sw-durable.sh` | 716 | Durable Workflow Engine |
+| `scripts/sw-durable.sh` | 710 | Durable Workflow Engine |
 | `scripts/sw-e2e-orchestrator.sh` | 535 | Test suite registry & execution |
-| `scripts/sw-eventbus.sh` | 399 | Durable event bus for real-time inter-component |
+| `scripts/sw-eventbus.sh` | 393 | Durable event bus for real-time inter-component |
 | `scripts/sw-feedback.sh` | 471 | Production Feedback Loop |
 | `scripts/sw-fix.sh` | 482 | Bulk Fix Across Multiple Repos |
 | `scripts/sw-fleet-discover.sh` | 567 | Auto-Discovery from GitHub Orgs |
@@ -529,7 +529,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 417 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 455 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1096 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 8380 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 8302 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 693 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 522 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 820 | Predictive & Proactive Intelligence |

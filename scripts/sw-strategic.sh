@@ -9,65 +9,59 @@
 
 VERSION="2.1.2"
 
-# ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-BLUE='\033[38;2;0;102;255m'
-GREEN='\033[38;2;74;222;128m'
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-# ─── Helpers (define fallbacks if not provided by parent) ─────────────────────
-# When sourced by sw-daemon.sh, these are already defined. When run standalone
-# or sourced by tests, we define them here.
-[[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "${CYAN}${BOLD}▸${RESET} $*"; }
-[[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "${GREEN}${BOLD}✓${RESET} $*"; }
-[[ "$(type -t warn 2>/dev/null)" == "function" ]]    || warn()    { echo -e "${YELLOW}${BOLD}⚠${RESET} $*"; }
-[[ "$(type -t error 2>/dev/null)" == "function" ]]   || error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
-[[ "$(type -t now_epoch 2>/dev/null)" == "function" ]] || now_epoch() { date +%s; }
-[[ "$(type -t now_iso 2>/dev/null)" == "function" ]]   || now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
-
 # ─── Paths (set defaults if not provided by parent) ──────────────────────────
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 EVENTS_FILE="${EVENTS_FILE:-${HOME}/.shipwright/events.jsonl}"
 
+# Canonical helpers (colors, output, events)
+# shellcheck source=lib/helpers.sh
+[[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# Fallbacks when helpers not loaded (e.g. test env, sourced by daemon)
+[[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
+[[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
+[[ "$(type -t warn 2>/dev/null)" == "function" ]]    || warn()    { echo -e "\033[38;2;250;204;21m\033[1m⚠\033[0m $*"; }
+[[ "$(type -t error 2>/dev/null)" == "function" ]]   || error()   { echo -e "\033[38;2;248;113;113m\033[1m✗\033[0m $*" >&2; }
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-    emit_event() {
-        local event_type="$1"
-        shift
-        local json_fields=""
-        for kv in "$@"; do
-            local key="${kv%%=*}"
-            local val="${kv#*=}"
-            if [[ "$val" =~ ^-?[0-9]+\.?[0-9]*$ ]]; then
-                json_fields="${json_fields},\"${key}\":${val}"
-            else
-                local escaped_val
-                escaped_val=$(printf '%s' "$val" | jq -Rs '.' 2>/dev/null || printf '"%s"' "${val//\"/\\\"}")
-                json_fields="${json_fields},\"${key}\":${escaped_val}"
-            fi
-        done
-        mkdir -p "${HOME}/.shipwright"
-        echo "{\"ts\":\"$(now_iso)\",\"ts_epoch\":$(now_epoch),\"type\":\"${event_type}\"${json_fields}}" >> "$EVENTS_FILE"
-    }
+  emit_event() {
+    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
+    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
+  }
 fi
+if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
+  now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+  now_epoch() { date +%s; }
+fi
+CYAN="${CYAN:-\033[38;2;0;212;255m}"
+PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
+GREEN="${GREEN:-\033[38;2;74;222;128m}"
+YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
+RED="${RED:-\033[38;2;248;113;113m}"
+DIM="${DIM:-\033[2m}"
+BOLD="${BOLD:-\033[1m}"
+RESET="${RESET:-\033[0m}"
 
-# ─── Constants ────────────────────────────────────────────────────────────────
+# ─── Constants (policy overrides when config/policy.json exists) ─────────────
 STRATEGIC_MAX_ISSUES=5
 STRATEGIC_COOLDOWN_SECONDS=14400  # 4 hours
 STRATEGIC_MODEL="claude-sonnet-4-5-20250929"
 STRATEGIC_MAX_TOKENS=4096
 STRATEGIC_STRATEGY_LINES=200
 STRATEGIC_LABELS="auto-patrol,ready-to-build,strategic,shipwright"
+STRATEGIC_OVERLAP_THRESHOLD=60  # Skip if >60% word overlap
+[[ -f "${SCRIPT_DIR:-}/lib/policy.sh" ]] && source "${SCRIPT_DIR:-}/lib/policy.sh"
+if type policy_get &>/dev/null 2>&1; then
+    STRATEGIC_MAX_ISSUES=$(policy_get ".strategic.max_issues_per_cycle" "5")
+    STRATEGIC_COOLDOWN_SECONDS=$(policy_get ".strategic.cooldown_seconds" "14400")
+    STRATEGIC_STRATEGY_LINES=$(policy_get ".strategic.strategy_lines" "200")
+    STRATEGIC_OVERLAP_THRESHOLD=$(policy_get ".strategic.overlap_threshold_percent" "60")
+fi
 
 # ─── Semantic Dedup ─────────────────────────────────────────────────────────
 # Cache of existing issue titles (open + recently closed) loaded at cycle start.
 STRATEGIC_TITLE_CACHE=""
-STRATEGIC_OVERLAP_THRESHOLD=60  # Skip if >60% word overlap
 
 # Compute word-overlap similarity between two titles (0-100).
 # Uses lowercase word sets, ignoring common stop words.
@@ -346,6 +340,20 @@ strategic_build_prompt() {
         recent_closed="(GitHub access disabled)"
     fi
 
+    # Platform health (hygiene + platform-refactor scan) — for AGI-level self-improvement
+    local platform_health_section="(No platform hygiene data — run \`shipwright hygiene platform-refactor\` or \`shipwright hygiene scan\` to generate .claude/platform-hygiene.json)"
+    if [[ -f "${repo_dir}/.claude/platform-hygiene.json" ]]; then
+        local ph_summary
+        ph_summary=$(jq -r '
+            "Counts: hardcoded=\(.counts.hardcoded // 0), fallback=\(.counts.fallback // 0), TODO=\(.counts.todo // 0), FIXME=\(.counts.fixme // 0), HACK/KLUDGE=\(.counts.hack // 0). " +
+            "Largest scripts (lines): " + ((.script_size_hotspots // [] | .[0:5] | map("\(.script):\(.lines)") | join(", ")) // "none") + ". " +
+            "Sample findings: " + (((.findings_sample // [] | length) | tostring) + " file:line entries.")
+        ' "${repo_dir}/.claude/platform-hygiene.json" 2>/dev/null || echo "")
+        if [[ -n "$ph_summary" ]]; then
+            platform_health_section="Platform refactor scan (AGI-level self-improvement): $ph_summary Use this to suggest refactor, reduce-hardcoding, or clean-architecture issues when it would move the platform toward full autonomy."
+        fi
+    fi
+
     # Compose the prompt
     cat <<PROMPT_EOF
 You are the Strategic PM for Shipwright — an autonomous software delivery system. Your job is to analyze the current state and recommend 1-3 high-impact improvements to build next.
@@ -370,6 +378,9 @@ ${open_issues}
 ## Recently Completed (already built — do NOT recreate these)
 ${recent_closed}
 
+## Platform Health (refactor / hardcoded / AGI-level readiness)
+${platform_health_section}
+
 ## Your Task
 Based on the strategy priorities and current data, recommend 1-3 concrete improvements to build next. Each should be a single, well-scoped task completable by one autonomous pipeline run.
 
@@ -391,6 +402,7 @@ Rules:
 - Balance: reliability/DX fixes AND strategic new capabilities
 - Think about what would make the biggest impact on success rate, developer experience, and system intelligence
 - Be ambitious — push the platform forward, don't just maintain it
+- AGI-level criterion: Consider what's hardcoded, static, or not clean architecture. When platform health data supports it, one of your recommendations MAY be a platform refactor or hygiene/architecture improvement (e.g. reduce hardcoded policy, move tunables to config, split monolithic scripts) so the platform can improve itself.
 - Maximum ${STRATEGIC_MAX_ISSUES} issues
 PROMPT_EOF
 }

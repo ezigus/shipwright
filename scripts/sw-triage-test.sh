@@ -201,6 +201,60 @@ assert_contains "suggest_labels includes type" "$labels_result" "type:bug"
 assert_contains "suggest_labels includes risk" "$labels_result" "risk:high"
 assert_contains "suggest_labels includes priority" "$labels_result" "priority:high"
 
+# ─── Test 14: team works offline with recruit (NO_GITHUB=1) ────────────
+echo ""
+echo -e "  ${CYAN}triage team offline fallback${RESET}"
+
+# Create mock recruit that returns team JSON
+cat > "$TEMP_DIR/bin/sw-recruit.sh" <<'MOCK_RECRUIT'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "team" && "${2:-}" == "--json" ]]; then
+    echo '{"team":["builder","reviewer"],"method":"heuristic","estimated_cost":3.0,"model":"sonnet","agents":2,"template":"standard","max_iterations":8}'
+    exit 0
+fi
+echo "mock recruit"
+MOCK_RECRUIT
+chmod +x "$TEMP_DIR/bin/sw-recruit.sh"
+
+# Point SCRIPT_DIR to temp dir and copy triage there
+cp "$SCRIPT_DIR/sw-triage.sh" "$TEMP_DIR/bin/sw-triage.sh"
+
+output=$(NO_GITHUB=1 SCRIPT_DIR="$TEMP_DIR/bin" bash "$TEMP_DIR/bin/sw-triage.sh" team 42 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+    assert_pass "team works offline with recruit (exit 0)"
+else
+    # Even if non-zero, check if it produced a recommendation
+    if echo "$output" | grep -q "pipeline_template"; then
+        assert_pass "team works offline with recruit (produced recommendation)"
+    else
+        assert_fail "team works offline with recruit" "exit=$rc output=$(echo "$output" | tail -3)"
+    fi
+fi
+
+# Verify team output contains expected fields
+if echo "$output" | grep -q "pipeline_template"; then
+    assert_pass "team offline output has pipeline_template"
+else
+    assert_fail "team offline output has pipeline_template" "got: $(echo "$output" | tail -5)"
+fi
+
+if echo "$output" | grep -q '"source": "recruit"'; then
+    assert_pass "team offline uses recruit source"
+elif echo "$output" | grep -q '"source": "heuristic"'; then
+    assert_pass "team offline falls back to heuristic source"
+else
+    assert_fail "team offline has source field" "got: $(echo "$output" | tail -5)"
+fi
+
+# ─── Test 15: team offline without recruit falls to defaults ──────────
+rm -f "$TEMP_DIR/bin/sw-recruit.sh"
+output=$(NO_GITHUB=1 SCRIPT_DIR="$TEMP_DIR/bin" bash "$TEMP_DIR/bin/sw-triage.sh" team 42 2>&1) && rc=0 || rc=$?
+if echo "$output" | grep -q "pipeline_template"; then
+    assert_pass "team offline without recruit uses heuristic defaults"
+else
+    assert_fail "team offline without recruit uses heuristic defaults" "exit=$rc output=$(echo "$output" | tail -3)"
+fi
+
 echo ""
 echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""

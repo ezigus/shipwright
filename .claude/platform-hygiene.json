@@ -1,0 +1,175 @@
+{
+  "timestamp": "2026-02-16T19:19:40Z",
+  "repository": "shipwright",
+  "counts": {
+    "hardcoded": 58,
+    "fallback": 54,
+    "todo": 37,
+    "fixme": 19,
+    "hack": 17
+  },
+  "findings_sample": [
+    {
+      "file": "scripts/sw-adaptive.sh",
+      "line": 0
+    },
+    {
+      "file": "scripts/sw-adaptive.sh",
+      "line": 4
+    },
+    {
+      "file": "scripts/sw-adaptive.sh",
+      "line": 700
+    },
+    {
+      "file": "scripts/sw-adaptive.sh",
+      "line": 703
+    },
+    {
+      "file": "scripts/sw-adaptive.sh",
+      "line": 829
+    },
+    {
+      "file": "scripts/sw-adaptive.sh",
+      "line": 840
+    },
+    {
+      "file": "scripts/sw-e2e-integration-test.sh",
+      "line": 864
+    },
+    {
+      "file": "scripts/sw-scale.sh",
+      "line": 229
+    },
+    {
+      "file": "scripts/sw-scale.sh",
+      "line": 163
+    },
+    {
+      "file": "scripts/sw-scale.sh",
+      "line": 189
+    },
+    {
+      "file": "scripts/sw-recruit.sh",
+      "line": 327
+    },
+    {
+      "file": "scripts/sw-recruit.sh",
+      "line": 1079
+    },
+    {
+      "file": "scripts/sw-recruit.sh",
+      "line": 1601
+    },
+    {
+      "file": "scripts/sw-recruit.sh",
+      "line": 1724
+    },
+    {
+      "file": "scripts/sw-checkpoint.sh",
+      "line": 2018
+    },
+    {
+      "file": "scripts/sw-intelligence-test.sh",
+      "line": 388
+    },
+    {
+      "file": "scripts/sw-regression.sh",
+      "line": 505
+    },
+    {
+      "file": "scripts/sw-daemon-test.sh",
+      "line": 104
+    },
+    {
+      "file": "scripts/sw-daemon-test.sh",
+      "line": 353
+    },
+    {
+      "file": "scripts/sw-predictive.sh",
+      "line": 1954
+    },
+    {
+      "file": "scripts/sw-predictive.sh",
+      "line": 396
+    },
+    {
+      "file": "scripts/sw-predictive.sh",
+      "line": 400
+    },
+    {
+      "file": "scripts/sw-connect.sh",
+      "line": 429
+    },
+    {
+      "file": "scripts/sw-pipeline.sh",
+      "line": 516
+    },
+    {
+      "file": "scripts/sw-pipeline.sh",
+      "line": 1101
+    }
+  ],
+  "script_size_hotspots": [
+    {
+      "script": "sw-pipeline.sh",
+      "lines": 8665
+    },
+    {
+      "script": "sw-daemon.sh",
+      "lines": 6104
+    },
+    {
+      "script": "sw-recruit.sh",
+      "lines": 2626
+    },
+    {
+      "script": "sw-loop.sh",
+      "lines": 2492
+    },
+    {
+      "script": "sw-daemon-test.sh",
+      "lines": 2005
+    },
+    {
+      "script": "sw-pipeline-test.sh",
+      "lines": 1900
+    },
+    {
+      "script": "sw-prep.sh",
+      "lines": 1646
+    },
+    {
+      "script": "sw-memory.sh",
+      "lines": 1645
+    },
+    {
+      "script": "sw-recruit-test.sh",
+      "lines": 1399
+    },
+    {
+      "script": "sw-fleet.sh",
+      "lines": 1387
+    },
+    {
+      "script": "sw-db.sh",
+      "lines": 1380
+    },
+    {
+      "script": "sw-intelligence.sh",
+      "lines": 1202
+    },
+    {
+      "script": "sw-pipeline-vitals.sh",
+      "lines": 1096
+    },
+    {
+      "script": "sw-self-optimize.sh",
+      "lines": 1048
+    },
+    {
+      "script": "sw-doctor.sh",
+      "lines": 1045
+    }
+  ]
+}

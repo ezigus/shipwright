@@ -40,6 +40,7 @@ setup_env() {
     cp "$SCRIPT_DIR/sw-tracker.sh" "$TEMP_DIR/scripts/"
     cp "$SCRIPT_DIR/sw-tracker-linear.sh" "$TEMP_DIR/scripts/"
     cp "$SCRIPT_DIR/sw-tracker-jira.sh" "$TEMP_DIR/scripts/"
+    cp "$SCRIPT_DIR/sw-tracker-github.sh" "$TEMP_DIR/scripts/"
     cp "$SCRIPT_DIR/sw-pipeline.sh" "$TEMP_DIR/scripts/"
 
     # Mock binaries directory
@@ -454,6 +455,56 @@ run_test "Tracker notify routes to provider (mock)" test_tracker_notify_routes
 run_test "Dashboard reads goal from pipeline state" test_dashboard_reads_goal
 run_test "Jira config validation" test_jira_config_validation
 run_test "Linear config migration (legacy fallback)" test_linear_config_migration
+echo ""
+
+# GitHub adapter tests
+echo -e "${PURPLE}${BOLD}GitHub Adapter${RESET}"
+
+test_github_adapter_exists() {
+    [[ -f "$TEMP_DIR/scripts/sw-tracker-github.sh" ]]
+}
+
+test_github_adapter_has_provider_discover() {
+    grep -q "provider_discover_issues" "$TEMP_DIR/scripts/sw-tracker-github.sh"
+}
+
+test_github_adapter_has_provider_get_issue() {
+    grep -q "provider_get_issue" "$TEMP_DIR/scripts/sw-tracker-github.sh"
+}
+
+test_github_adapter_has_provider_comment() {
+    grep -q "provider_comment" "$TEMP_DIR/scripts/sw-tracker-github.sh"
+}
+
+test_github_adapter_has_provider_create_issue() {
+    grep -q "provider_create_issue" "$TEMP_DIR/scripts/sw-tracker-github.sh"
+}
+
+test_github_adapter_no_github_guard() {
+    # provider_discover_issues should return empty when NO_GITHUB=1
+    (
+        export NO_GITHUB=1
+        source "$TEMP_DIR/scripts/sw-tracker-github.sh"
+        local result
+        result=$(provider_discover_issues "shipwright" "open" 10 2>/dev/null)
+        [[ -z "$result" || "$result" == "" ]]
+    )
+}
+
+test_github_adapter_normalize_output() {
+    # Verify the normalize jq transform produces correct schema
+    echo '[{"number":42,"title":"Test","labels":[{"name":"bug"}],"state":"OPEN"}]' | \
+        jq '[.[] | {id: .number, title: .title, labels: [.labels[].name], state: .state}]' | \
+        jq -e '.[0].id == 42 and .[0].labels[0] == "bug"' >/dev/null 2>&1
+}
+
+run_test "GitHub adapter file exists" test_github_adapter_exists
+run_test "GitHub adapter has provider_discover_issues" test_github_adapter_has_provider_discover
+run_test "GitHub adapter has provider_get_issue" test_github_adapter_has_provider_get_issue
+run_test "GitHub adapter has provider_comment" test_github_adapter_has_provider_comment
+run_test "GitHub adapter has provider_create_issue" test_github_adapter_has_provider_create_issue
+run_test "GitHub adapter NO_GITHUB guard works" test_github_adapter_no_github_guard
+run_test "GitHub adapter normalize jq produces correct schema" test_github_adapter_normalize_output
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════

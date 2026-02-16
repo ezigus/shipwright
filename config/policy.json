@@ -1,0 +1,73 @@
+{
+  "$schema": "https://shipwright.dev/schemas/policy-v1.json",
+  "description": "Central policy for Shipwright — timeouts, limits, thresholds. Prefer adaptive/learned overrides when available.",
+  "version": "1",
+  "daemon": {
+    "poll_interval_seconds": 60,
+    "health_heartbeat_timeout": 120,
+    "stage_timeouts": {
+      "intake": 60,
+      "plan": 60,
+      "design": 60,
+      "lint": 60,
+      "format": 60,
+      "build": 300,
+      "test": 180,
+      "review": 180,
+      "compound_quality": 180
+    },
+    "auto_scale_interval_cycles": 5,
+    "optimize_interval_cycles": 10,
+    "stale_reaper_interval_cycles": 10,
+    "stale_timeout_multiplier": 2,
+    "stale_state_hours": 2
+  },
+  "pipeline": {
+    "max_iterations_default": 10,
+    "max_cycles_convergence_cap": 50,
+    "coverage_threshold_percent": 60,
+    "quality_gate_score_threshold": 70,
+    "memory_baseline_fallback_percent": 20,
+    "memory_inject_fallback_percent": 30
+  },
+  "quality": {
+    "coverage_threshold": 60,
+    "gate_score_threshold": 70,
+    "audit_weights": {
+      "test_pass": 30,
+      "coverage": 20,
+      "security": 20,
+      "architecture": 15,
+      "correctness": 15
+    }
+  },
+  "strategic": {
+    "max_issues_per_cycle": 5,
+    "cooldown_seconds": 14400,
+    "overlap_threshold_percent": 60,
+    "strategy_lines": 200
+  },
+  "sweep": {
+    "cron_minutes": 30,
+    "stuck_threshold_hours": 4,
+    "retry_template": "full",
+    "retry_max_iterations": 25,
+    "stuck_retry_max_iterations": 30
+  },
+  "hygiene": {
+    "artifact_age_days": 7
+  },
+  "recruit": {
+    "self_tune_min_matches": 5,
+    "self_tune_min_success_rate": 60,
+    "match_confidence_threshold": 0.3,
+    "max_match_history_size": 5000,
+    "max_profile_task_history": 50,
+    "meta_learning_accuracy_floor": 50,
+    "auto_evolve_after_outcomes": 20,
+    "llm_timeout_seconds": 30,
+    "default_model": "sonnet",
+    "promote_threshold_tasks": 10,
+    "promote_threshold_success_rate": 85
+  }
+}

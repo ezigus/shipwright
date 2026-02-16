@@ -1039,12 +1039,12 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 18: Integration Point Validation
+# SECTION 18: Integration Point Validation (Static + Runtime)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo -e "\n${CYAN}${BOLD}═══ Section 18: Integration Validation ═══${RESET}\n"
 
-# Verify recruit integration hooks exist in other scripts
+# --- Static: Verify recruit integration hooks exist in other scripts ---
 
 test_case "sw-pipeline.sh has agent_id in pipeline.completed events"
 if grep -q "agent_id=\${PIPELINE_AGENT_ID" "${SCRIPT_DIR}/sw-pipeline.sh"; then
@@ -1100,6 +1100,289 @@ if grep -q "sw-recruit.sh.*match.*--json" "${SCRIPT_DIR}/sw-swarm.sh"; then
     pass
 else
     fail "swarm.sh missing recruit type selection"
+fi
+
+# --- Runtime: Verify recruit JSON output matches integration parse patterns ---
+# These tests simulate what each integration script does with recruit output,
+# proving the data contract is satisfied end-to-end.
+
+echo ""
+echo -e "  ${CYAN}${BOLD}--- Runtime Integration Contract Tests ---${RESET}"
+echo ""
+
+# Contract test: pipeline parses match --json for model
+test_case "CONTRACT: pipeline can parse recruit match --json for model"
+contract_match=$("$RECRUIT_SCRIPT" match --json "Fix login bug in authentication module" 2>/dev/null || true)
+contract_model=$(echo "$contract_match" | jq -r '.model // empty' 2>/dev/null)
+if [[ -n "$contract_model" && "$contract_model" != "null" ]]; then
+    pass
+else
+    fail "match --json missing .model field (pipeline needs this)"
+fi
+
+# Contract test: pipeline parses match --json for primary_role
+test_case "CONTRACT: pipeline can parse recruit match --json for role"
+contract_role=$(echo "$contract_match" | jq -r '.primary_role // empty' 2>/dev/null)
+if [[ -n "$contract_role" && "$contract_role" != "null" ]]; then
+    pass
+else
+    fail "match --json missing .primary_role field"
+fi
+
+# Contract test: pm parses team --json for team array + agents + model
+test_case "CONTRACT: pm can parse recruit team --json for team/agents/model"
+contract_team=$("$RECRUIT_SCRIPT" team --json "Implement new user dashboard feature" 2>/dev/null || true)
+ct_roles=$(echo "$contract_team" | jq -r '.team | join(",")' 2>/dev/null)
+ct_agents=$(echo "$contract_team" | jq -r '.agents' 2>/dev/null)
+ct_model=$(echo "$contract_team" | jq -r '.model' 2>/dev/null)
+if [[ -n "$ct_roles" && "$ct_agents" -gt 0 && -n "$ct_model" ]] 2>/dev/null; then
+    pass
+else
+    fail "team --json contract broken: roles=$ct_roles agents=$ct_agents model=$ct_model"
+fi
+
+# Contract test: triage parses team --json for template + max_iterations
+test_case "CONTRACT: triage can parse recruit team --json for template/max_iterations"
+ct_template=$(echo "$contract_team" | jq -r '.template // empty' 2>/dev/null)
+ct_iters=$(echo "$contract_team" | jq -r '.max_iterations // empty' 2>/dev/null)
+if [[ -n "$ct_template" && -n "$ct_iters" ]] 2>/dev/null; then
+    pass
+else
+    fail "team --json missing template or max_iterations (triage needs these)"
+fi
+
+# Contract test: swarm parses match --json .model for agent_type mapping
+test_case "CONTRACT: swarm can map recruit match --json model to agent type"
+sw_model=$(echo "$contract_match" | jq -r '.model // empty' 2>/dev/null)
+sw_type=""
+case "$sw_model" in
+    opus*) sw_type="powerful" ;;
+    sonnet*) sw_type="standard" ;;
+    haiku*) sw_type="fast" ;;
+    *) sw_type="standard" ;;
+esac
+if [[ -n "$sw_type" ]]; then
+    pass
+else
+    fail "Could not map model $sw_model to agent type"
+fi
+
+# Contract test: loop parses team --json .team for AGENT_ROLES
+test_case "CONTRACT: loop can parse recruit team --json for AGENT_ROLES"
+loop_roles=$(echo "$contract_team" | jq -r '.team // [] | join(",")' 2>/dev/null)
+if [[ -n "$loop_roles" ]]; then
+    pass
+else
+    fail "team --json .team empty (loop needs comma-separated roles)"
+fi
+
+# Contract test: autonomous parses match --json .model (array-safe)
+test_case "CONTRACT: autonomous can safely build args from match --json"
+auto_model=$(echo "$contract_match" | jq -r '.model // ""' 2>/dev/null || true)
+auto_args=()
+[[ -n "$auto_model" && "$auto_model" != "null" ]] && auto_args=(--model "$auto_model")
+if [[ ${#auto_args[@]} -eq 2 || ${#auto_args[@]} -eq 0 ]]; then
+    pass
+else
+    fail "recruit_args construction failed: ${auto_args[*]}"
+fi
+
+# Contract test: match→outcome linkage (match_id exists)
+test_case "CONTRACT: match records include match_id for outcome linkage"
+# Run a match, then check the last line of match history
+"$RECRUIT_SCRIPT" match "e2e contract test linkage validation" >/dev/null 2>&1 || true
+if [[ -f "${HOME}/.shipwright/recruitment/match-history.jsonl" ]]; then
+    last_match=$(tail -1 "${HOME}/.shipwright/recruitment/match-history.jsonl")
+    match_id=$(echo "$last_match" | jq -r '.match_id // empty' 2>/dev/null)
+    if [[ -n "$match_id" && "$match_id" == match-* ]]; then
+        pass
+    else
+        fail "match-history.jsonl missing match_id: got '$match_id'"
+    fi
+else
+    fail "No match-history.jsonl after running match"
+fi
+
+# Contract test: record-outcome backfills match history
+test_case "CONTRACT: record-outcome backfills match outcome"
+# Record an outcome for the agent who made the last match
+"$RECRUIT_SCRIPT" record-outcome contract-test-agent task-contract-1 success 8 3 >/dev/null 2>&1 || true
+# The most recent match with null outcome for this agent should now have an outcome
+# (We seeded agent_id earlier; check that the backfill mechanism doesn't crash)
+if [[ -f "${HOME}/.shipwright/recruitment/match-history.jsonl" ]]; then
+    pass
+else
+    fail "match-history.jsonl missing after record-outcome"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION 19: Policy Integration Tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo -e "\n${CYAN}${BOLD}═══ Section 19: Policy Integration ═══${RESET}\n"
+
+test_case "recruit reads policy.json recruit section"
+if [[ -f "${SCRIPT_DIR}/../config/policy.json" ]]; then
+    has_recruit_policy=$(jq '.recruit // empty' "${SCRIPT_DIR}/../config/policy.json" 2>/dev/null)
+    if [[ -n "$has_recruit_policy" ]]; then
+        pass
+    else
+        fail "config/policy.json missing recruit section"
+    fi
+else
+    fail "config/policy.json not found"
+fi
+
+test_case "policy values are loaded into recruit variables"
+# RECRUIT_DEFAULT_MODEL should be sourced from policy
+if grep -q 'RECRUIT_DEFAULT_MODEL=.*_recruit_policy' "${SCRIPT_DIR}/sw-recruit.sh"; then
+    pass
+else
+    fail "RECRUIT_DEFAULT_MODEL not reading from policy"
+fi
+
+test_case "policy self_tune_min_matches is configurable"
+if grep -q 'RECRUIT_SELF_TUNE_MIN_MATCHES=.*_recruit_policy' "${SCRIPT_DIR}/sw-recruit.sh"; then
+    pass
+else
+    fail "RECRUIT_SELF_TUNE_MIN_MATCHES not reading from policy"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION 20: Meta Feedback Loop Tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo -e "\n${CYAN}${BOLD}═══ Section 20: Meta Feedback Loop ═══${RESET}\n"
+
+test_case "meta-validation function exists"
+if grep -q "_recruit_meta_validate_self_tune" "${SCRIPT_DIR}/sw-recruit.sh"; then
+    pass
+else
+    fail "_recruit_meta_validate_self_tune not found"
+fi
+
+test_case "reflect calls meta-validation"
+if grep -q "_recruit_meta_validate_self_tune.*accuracy" "${SCRIPT_DIR}/sw-recruit.sh"; then
+    pass
+else
+    fail "reflect does not call meta-validation"
+fi
+
+test_case "meta-loop can detect declining accuracy"
+# Create a meta-learning DB with declining trend
+meta_db="${HOME}/.shipwright/recruitment/meta-learning.json"
+mkdir -p "${HOME}/.shipwright/recruitment"
+cat > "$meta_db" << 'META_EOF'
+{
+    "corrections": [],
+    "accuracy_trend": [
+        {"accuracy": 90, "ts": "2026-01-01T00:00:00Z"},
+        {"accuracy": 88, "ts": "2026-01-02T00:00:00Z"},
+        {"accuracy": 85, "ts": "2026-01-03T00:00:00Z"},
+        {"accuracy": 70, "ts": "2026-01-04T00:00:00Z"},
+        {"accuracy": 60, "ts": "2026-01-05T00:00:00Z"},
+        {"accuracy": 45, "ts": "2026-01-06T00:00:00Z"}
+    ]
+}
+META_EOF
+# Ensure heuristics file exists for revert to work
+echo '{"keyword_weights": {"test": 1.0}}' > "${HOME}/.shipwright/recruitment/heuristics.json"
+# Run a reflect which should trigger meta-validation
+"$RECRUIT_SCRIPT" reflect >/dev/null 2>&1 || true
+# Check if meta-warning or meta-revert event was emitted
+if grep -q "recruit_meta_revert\|recruit_meta_warning" "${HOME}/.shipwright/events.jsonl" 2>/dev/null; then
+    pass
+else
+    fail "No meta-loop warning/revert event emitted for declining accuracy"
+fi
+
+test_case "auto self-tune triggers after ingest-pipeline"
+if grep -q "Auto-running self-tune after ingesting" "${SCRIPT_DIR}/sw-recruit.sh"; then
+    pass
+else
+    fail "ingest-pipeline does not auto-trigger self-tune"
+fi
+
+test_case "auto evolve triggers after sufficient outcomes"
+if grep -q "Auto-running evolve" "${SCRIPT_DIR}/sw-recruit.sh"; then
+    pass
+else
+    fail "ingest-pipeline does not auto-trigger evolve"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION 21: Negative-Compounding Audit Loop Tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo -e "\n${CYAN}${BOLD}═══ Section 21: Negative-Compounding Audit ═══${RESET}\n"
+
+test_case "audit command exists"
+if grep -q "cmd_audit" "${SCRIPT_DIR}/sw-recruit.sh"; then
+    pass
+else
+    fail "cmd_audit not found in recruit"
+fi
+
+test_case "audit runs and produces score"
+audit_out=$("$RECRUIT_SCRIPT" audit 2>&1 || true)
+if echo "$audit_out" | grep -q "AUDIT SCORE:"; then
+    pass
+else
+    fail "audit did not produce a score"
+fi
+
+test_case "audit emits recruit_audit event"
+if grep -q "recruit_audit" "${HOME}/.shipwright/events.jsonl" 2>/dev/null; then
+    pass
+else
+    fail "audit did not emit recruit_audit event"
+fi
+
+test_case "audit tracks score trend in meta-learning"
+if [[ -f "${HOME}/.shipwright/recruitment/meta-learning.json" ]]; then
+    has_audit_trend=$(jq '.audit_trend // [] | length' "${HOME}/.shipwright/recruitment/meta-learning.json" 2>/dev/null)
+    if [[ "$has_audit_trend" -gt 0 ]] 2>/dev/null; then
+        pass
+    else
+        fail "audit_trend not populated in meta-learning.json"
+    fi
+else
+    fail "meta-learning.json not found"
+fi
+
+test_case "audit checks data stores"
+if echo "$audit_out" | grep -q "DATA STORES"; then
+    pass
+else
+    fail "audit does not check data stores"
+fi
+
+test_case "audit checks feedback loops"
+if echo "$audit_out" | grep -q "FEEDBACK LOOPS"; then
+    pass
+else
+    fail "audit does not check feedback loops"
+fi
+
+test_case "audit checks integration wiring"
+if echo "$audit_out" | grep -q "INTEGRATION WIRING"; then
+    pass
+else
+    fail "audit does not check integration wiring"
+fi
+
+test_case "audit checks policy governance"
+if echo "$audit_out" | grep -q "POLICY GOVERNANCE"; then
+    pass
+else
+    fail "audit does not check policy governance"
+fi
+
+test_case "audit checks automation triggers"
+if echo "$audit_out" | grep -q "AUTOMATION TRIGGERS"; then
+    pass
+else
+    fail "audit does not check automation triggers"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

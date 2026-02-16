@@ -15,20 +15,42 @@ VERSION="2.1.2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'     # #00d4ff — primary accent
-PURPLE='\033[38;2;124;58;237m'  # #7c3aed — secondary
-BLUE='\033[38;2;0;102;255m'     # #0066ff — tertiary
-GREEN='\033[38;2;74;222;128m'   # success
-YELLOW='\033[38;2;250;204;21m'  # warning
-RED='\033[38;2;248;113;113m'    # error
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
+# Canonical helpers (colors, output, events)
+# shellcheck source=lib/helpers.sh
+[[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
+[[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
+[[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
+[[ "$(type -t warn 2>/dev/null)" == "function" ]]    || warn()    { echo -e "\033[38;2;250;204;21m\033[1m⚠\033[0m $*"; }
+[[ "$(type -t error 2>/dev/null)" == "function" ]]   || error()   { echo -e "\033[38;2;248;113;113m\033[1m✗\033[0m $*" >&2; }
+if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
+  now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+  now_epoch() { date +%s; }
+fi
+if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
+  emit_event() {
+    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
+    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
+  }
+fi
+CYAN="${CYAN:-\033[38;2;0;212;255m}"
+PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
+BLUE="${BLUE:-\033[38;2;0;102;255m}"
+GREEN="${GREEN:-\033[38;2;74;222;128m}"
+YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
+RED="${RED:-\033[38;2;248;113;113m}"
+DIM="${DIM:-\033[2m}"
+BOLD="${BOLD:-\033[1m}"
+RESET="${RESET:-\033[0m}"
+# Policy + pipeline quality thresholds (config/policy.json via lib/pipeline-quality.sh)
+[[ -f "$SCRIPT_DIR/lib/pipeline-quality.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-quality.sh"
+PIPELINE_COVERAGE_THRESHOLD="${PIPELINE_COVERAGE_THRESHOLD:-60}"
+PIPELINE_QUALITY_GATE_THRESHOLD="${PIPELINE_QUALITY_GATE_THRESHOLD:-70}"
 
 # ─── Intelligence Engine (optional) ──────────────────────────────────────────
 # shellcheck source=sw-intelligence.sh
@@ -69,6 +91,10 @@ fi
 if [[ -f "$SCRIPT_DIR/sw-discovery.sh" ]]; then
     source "$SCRIPT_DIR/sw-discovery.sh"
 fi
+# shellcheck source=sw-durable.sh
+if [[ -f "$SCRIPT_DIR/sw-durable.sh" ]]; then
+    source "$SCRIPT_DIR/sw-durable.sh"
+fi
 
 # ─── GitHub API Modules (optional) ─────────────────────────────────────────
 # shellcheck source=sw-github-graphql.sh
@@ -77,15 +103,6 @@ fi
 [[ -f "$SCRIPT_DIR/sw-github-checks.sh" ]] && source "$SCRIPT_DIR/sw-github-checks.sh"
 # shellcheck source=sw-github-deploy.sh
 [[ -f "$SCRIPT_DIR/sw-github-deploy.sh" ]] && source "$SCRIPT_DIR/sw-github-deploy.sh"
-
-# ─── Output Helpers ─────────────────────────────────────────────────────────
-info()    { echo -e "${CYAN}${BOLD}▸${RESET} $*"; }
-success() { echo -e "${GREEN}${BOLD}✓${RESET} $*"; }
-warn()    { echo -e "${YELLOW}${BOLD}⚠${RESET} $*"; }
-error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
-
-now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
-now_epoch() { date +%s; }
 
 # Parse coverage percentage from test output — multi-framework patterns
 # Usage: parse_coverage_from_output <log_file>
@@ -1347,6 +1364,24 @@ mark_stage_complete() {
         plan)   persist_artifacts "plan" "plan.md" "dod.md" "context-bundle.md" ;;
         design) persist_artifacts "design" "design.md" ;;
     esac
+
+    # Automatic checkpoint at every stage boundary (for crash recovery)
+    if [[ -x "$SCRIPT_DIR/sw-checkpoint.sh" ]]; then
+        local _cp_sha _cp_files
+        _cp_sha=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+        _cp_files=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | head -20 | tr '\n' ',' || true)
+        bash "$SCRIPT_DIR/sw-checkpoint.sh" save \
+            --stage "$stage_id" \
+            --iteration "${SELF_HEAL_COUNT:-0}" \
+            --git-sha "$_cp_sha" \
+            --files-modified "${_cp_files:-}" \
+            --tests-passing "${TEST_PASSED:-false}" 2>/dev/null || true
+    fi
+
+    # Durable WAL: publish stage completion event
+    if type publish_event &>/dev/null 2>&1; then
+        publish_event "stage.complete" "{\"stage\":\"${stage_id}\",\"issue\":\"${ISSUE_NUMBER:-0}\",\"timing\":\"${timing}\"}" 2>/dev/null || true
+    fi
 }
 
 persist_artifacts() {
@@ -1483,6 +1518,22 @@ $(tail -5 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null || echo 'No log availabl
         local fail_summary
         fail_summary=$(tail -3 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null | head -c 500 || echo "Stage $stage_id failed")
         gh_checks_stage_update "$stage_id" "completed" "failure" "$fail_summary" 2>/dev/null || true
+    fi
+
+    # Save checkpoint on failure too (for crash recovery / resume)
+    if [[ -x "$SCRIPT_DIR/sw-checkpoint.sh" ]]; then
+        local _cp_sha
+        _cp_sha=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+        bash "$SCRIPT_DIR/sw-checkpoint.sh" save \
+            --stage "$stage_id" \
+            --iteration "${SELF_HEAL_COUNT:-0}" \
+            --git-sha "$_cp_sha" \
+            --tests-passing "false" 2>/dev/null || true
+    fi
+
+    # Durable WAL: publish stage failure event
+    if type publish_event &>/dev/null 2>&1; then
+        publish_event "stage.failed" "{\"stage\":\"${stage_id}\",\"issue\":\"${ISSUE_NUMBER:-0}\",\"timing\":\"${timing}\"}" 2>/dev/null || true
     fi
 }
 
@@ -6410,15 +6461,15 @@ stage_compound_quality() {
     coverage_pct="${coverage_pct:-0}"
 
     if [[ "$coverage_pct" != "skip" ]]; then
-        if [[ "$coverage_pct" -lt 60 ]]; then
+        if [[ "$coverage_pct" -lt "${PIPELINE_COVERAGE_THRESHOLD:-60}" ]]; then
             if [[ "$strict_quality" == "true" ]]; then
-                error "STRICT QUALITY: Test coverage below 60% (${coverage_pct}%) — blocking"
+                error "STRICT QUALITY: Test coverage below ${PIPELINE_COVERAGE_THRESHOLD:-60}% (${coverage_pct}%) — blocking"
                 emit_event "quality.coverage_failed" \
                     "issue=${ISSUE_NUMBER:-0}" \
                     "coverage=$coverage_pct"
                 return 1
             else
-                warn "Test coverage below 60% threshold (${coverage_pct}%) — quality penalty applied"
+                warn "Test coverage below ${PIPELINE_COVERAGE_THRESHOLD:-60}% threshold (${coverage_pct}%) — quality penalty applied"
                 total_major=$((total_major + 2))
             fi
         fi
@@ -6856,11 +6907,11 @@ All quality checks clean:
         "$PIPELINE_CONFIG" 2>/dev/null) || true
     [[ -z "$compound_quality_blocking" || "$compound_quality_blocking" == "null" ]] && compound_quality_blocking="true"
 
-    # HARDENED THRESHOLD: quality_score must be >= 60 to pass
-    # In strict mode, higher requirements apply per the hardened checks above
+    # HARDENED THRESHOLD: quality_score must be >= 60 (non-strict) or policy threshold (strict) to pass
     local min_threshold=60
     if [[ "$strict_quality" == "true" ]]; then
-        # Strict mode: require score >= 70 and ZERO critical issues
+        min_threshold="${PIPELINE_QUALITY_GATE_THRESHOLD:-70}"
+        # Strict mode: require score >= threshold and ZERO critical issues
         if [[ "$total_critical" -gt 0 ]]; then
             error "STRICT QUALITY: ${total_critical} critical issue(s) found — BLOCKING (strict mode)"
             emit_event "pipeline.quality_gate_failed_strict" \
@@ -8219,6 +8270,11 @@ pipeline_start() {
         "model=${MODEL:-opus}" \
         "goal=${GOAL}"
 
+    # Durable WAL: publish pipeline start event
+    if type publish_event &>/dev/null 2>&1; then
+        publish_event "pipeline.started" "{\"issue\":\"${ISSUE_NUMBER:-0}\",\"pipeline\":\"${PIPELINE_NAME}\",\"goal\":\"${GOAL:0:200}\"}" 2>/dev/null || true
+    fi
+
     run_pipeline
     local exit_code=$?
     PIPELINE_EXIT_CODE="$exit_code"
@@ -8267,6 +8323,16 @@ pipeline_start() {
         if [[ -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
             bash "$SCRIPT_DIR/sw-memory.sh" capture "$STATE_FILE" "$ARTIFACTS_DIR" 2>/dev/null || true
             bash "$SCRIPT_DIR/sw-memory.sh" analyze-failure "$ARTIFACTS_DIR/.claude-tokens-${CURRENT_STAGE_ID:-build}.log" "${CURRENT_STAGE_ID:-unknown}" 2>/dev/null || true
+
+            # Record negative fix outcome — memory suggested a fix but it didn't resolve the issue
+            # This closes the negative side of the fix-outcome feedback loop
+            if [[ "$SELF_HEAL_COUNT" -gt 0 ]]; then
+                local _fail_sig
+                _fail_sig=$(tail -30 "$ARTIFACTS_DIR/test-results.log" 2>/dev/null | head -3 | tr '\n' ' ' | sed 's/^ *//;s/ *$//' || true)
+                if [[ -n "$_fail_sig" ]]; then
+                    bash "$SCRIPT_DIR/sw-memory.sh" fix-outcome "$_fail_sig" "true" "false" 2>/dev/null || true
+                fi
+            fi
         fi
     fi
 
@@ -8281,6 +8347,25 @@ pipeline_start() {
         "predicted_complexity=${INTELLIGENCE_COMPLEXITY:-0}" \
         "actual_iterations=$SELF_HEAL_COUNT" \
         "success=$pipeline_success"
+
+    # Close intelligence prediction feedback loop — validate predicted vs actual
+    if type intelligence_validate_prediction &>/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
+        intelligence_validate_prediction \
+            "$ISSUE_NUMBER" \
+            "${INTELLIGENCE_COMPLEXITY:-0}" \
+            "${SELF_HEAL_COUNT:-0}" \
+            "$pipeline_success" 2>/dev/null || true
+    fi
+
+    # Close predictive anomaly feedback loop — confirm whether flagged anomalies were real
+    if [[ -x "$SCRIPT_DIR/sw-predictive.sh" ]]; then
+        local _actual_failure="false"
+        [[ "$exit_code" -ne 0 ]] && _actual_failure="true"
+        # Confirm anomalies for build and test stages based on pipeline outcome
+        for _anomaly_stage in build test; do
+            bash "$SCRIPT_DIR/sw-predictive.sh" confirm-anomaly "$_anomaly_stage" "duration_s" "$_actual_failure" 2>/dev/null || true
+        done
+    fi
 
     # Template outcome tracking
     emit_event "template.outcome" \

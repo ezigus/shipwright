@@ -1,7 +1,7 @@
 # Shipwright Strategy
 
 > Living document. Read by the strategic intelligence agent to guide autonomous product development.
-> Last human review: 2026-02-14
+> Last human review: 2026-02-16
 
 ## Vision
 
@@ -84,6 +84,16 @@ Open source growth through demonstrated value.
 - Example configurations for popular project types
 - Plugin/extension architecture for custom stages
 
+### P6: Platform Self-Improvement (AGI-Level Readiness)
+
+The platform should be able to ask and act on: _What's hardcoded? What's static? What should we refactor or redo to be a fully autonomous product development team?_
+
+- Reduce hardcoded policy (timeouts, limits, thresholds) — move to config/policy + adaptive overrides
+- Hygiene and code-review scans feed strategic agent — platform health influences what we build next
+- One of strategic's recommendations may be a platform refactor or clean-architecture improvement when data supports it
+- Target: platform that improves its own codebase, not only pipeline behavior
+- **Execution plan:** [docs/AGI-PLATFORM-PLAN.md](docs/AGI-PLATFORM-PLAN.md) — Phases 1-5 foundation complete; Phase 4 cleanup and monolith decomposition (3.1/3.3) ongoing.
+
 ## Technical Principles
 
 1. **Bash-first, Bash 3.2 compatible** — runs everywhere macOS ships
@@ -93,6 +103,7 @@ Open source growth through demonstrated value.
 5. **Self-healing** — retry with escalation, not just retry
 6. **Cost-conscious** — always consider the budget impact
 7. **Test everything** — every script gets a test suite
+8. **AGI-level product criterion** — the platform should ask: what's hardcoded, what should we refactor, and what would make us a fully autonomous product development team? This is part of product thinking and hygiene, not optional.
 
 ## What We're NOT Building
 
@@ -122,3 +133,5 @@ The strategic agent should consider these data sources:
 - **Memory patterns**: recurring failures, successful fixes, codebase conventions
 - **Test results**: which scripts are tested, coverage gaps
 - **Cost data**: spending trends, cost per pipeline, budget utilization
+- **Platform hygiene** (`.claude/platform-hygiene.json`): hardcoded/fallback/TODO/FIXME/HACK counts, script size hotspots — use to suggest refactor and clean-architecture issues
+- **Code-review scan** (when run on Shipwright): smells, SOLID, architecture boundaries — use to suggest platform self-improvement issues

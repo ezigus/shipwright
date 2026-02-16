@@ -63,7 +63,7 @@ PKG
     # Override HOME so memory writes go to temp dir
     export ORIG_HOME="$HOME"
     export HOME="$TEMP_DIR/home"
-    mkdir -p "$HOME/.shipwright"
+    export REPO_DIR="$TEMP_DIR/project"
     mkdir -p "$HOME/.shipwright"
 
     # Create mock pipeline state file
@@ -122,6 +122,7 @@ cleanup_env() {
     if [[ -n "${ORIG_HOME:-}" ]]; then
         export HOME="$ORIG_HOME"
     fi
+    unset REPO_DIR 2>/dev/null || true
     if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
         rm -rf "$TEMP_DIR"
     fi

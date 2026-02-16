@@ -307,7 +307,125 @@ test_pipeline_feedback_wiring() {
     grep -q 'sw-feedback.sh.*rollback' "$SCRIPT_DIR/sw-pipeline.sh" || { echo "Feedback rollback not wired into pipeline monitor"; return 1; }
 }
 
-# ── 2.12 Autonomous: Claude output redirected to findings file ───────────────
+# ── 2.12 Pipeline: intelligence prediction validation wired ───────────────
+test_pipeline_intelligence_validation() {
+    grep -q 'intelligence_validate_prediction' "$SCRIPT_DIR/sw-pipeline.sh" || {
+        echo "intelligence_validate_prediction not wired into pipeline completion"
+        return 1
+    }
+    grep -q 'INTELLIGENCE_COMPLEXITY' "$SCRIPT_DIR/sw-pipeline.sh" || {
+        echo "INTELLIGENCE_COMPLEXITY not used in validation call"
+        return 1
+    }
+}
+
+# ── 2.13 Pipeline: predictive anomaly confirmation wired ──────────────────
+test_pipeline_predictive_confirm() {
+    grep -q 'confirm-anomaly' "$SCRIPT_DIR/sw-pipeline.sh" || {
+        echo "confirm-anomaly not wired into pipeline completion"
+        return 1
+    }
+    # Confirm both build and test stages are checked
+    grep -q '_anomaly_stage in build test' "$SCRIPT_DIR/sw-pipeline.sh" || {
+        echo "confirm-anomaly not checking both build and test stages"
+        return 1
+    }
+}
+
+# ── 2.14 Pipeline: memory fix-outcome negative path wired ────────────────
+test_pipeline_memory_fix_negative() {
+    grep -q 'fix-outcome.*true.*false' "$SCRIPT_DIR/sw-pipeline.sh" || {
+        echo "Memory fix-outcome negative case (applied but not resolved) not wired"
+        return 1
+    }
+    # Verify it only triggers on failure with self-heal attempts
+    grep -q 'SELF_HEAL_COUNT.*-gt 0' "$SCRIPT_DIR/sw-pipeline.sh" || {
+        echo "fix-outcome not guarded by SELF_HEAL_COUNT > 0"
+        return 1
+    }
+}
+
+# ── 2.15 Triage: offline fallback with recruit ───────────────────────────
+test_triage_offline_fallback() {
+    # Verify triage team no longer calls check_gh at the top
+    local team_section
+    team_section=$(sed -n '/^cmd_team/,/^cmd_/p' "$SCRIPT_DIR/sw-triage.sh" | head -10)
+    if echo "$team_section" | grep -q 'check_gh'; then
+        echo "cmd_team still calls check_gh at the top (blocks offline)"
+        return 1
+    fi
+    # Verify gh_available detection
+    grep -q 'gh_available=false' "$SCRIPT_DIR/sw-triage.sh" || {
+        echo "triage cmd_team missing gh_available detection"
+        return 1
+    }
+    # Verify fallback issue_title
+    grep -q 'Issue #' "$SCRIPT_DIR/sw-triage.sh" || {
+        echo "triage cmd_team missing offline issue_title fallback"
+        return 1
+    }
+}
+
+# ── 2.16 Recruit: policy integration wired ───────────────────────────────
+test_recruit_policy_integration() {
+    grep -q '_recruit_policy' "$SCRIPT_DIR/sw-recruit.sh" || {
+        echo "recruit missing _recruit_policy function"
+        return 1
+    }
+    grep -q 'RECRUIT_DEFAULT_MODEL' "$SCRIPT_DIR/sw-recruit.sh" || {
+        echo "recruit not loading RECRUIT_DEFAULT_MODEL from policy"
+        return 1
+    }
+    jq -e '.recruit' "$SCRIPT_DIR/../config/policy.json" > /dev/null 2>&1 || {
+        echo "config/policy.json missing recruit section"
+        return 1
+    }
+}
+
+# ── 2.17 Recruit: meta feedback loop ─────────────────────────────────────
+test_recruit_meta_loop() {
+    grep -q '_recruit_meta_validate_self_tune' "$SCRIPT_DIR/sw-recruit.sh" || {
+        echo "recruit missing meta-validation function"
+        return 1
+    }
+    # Verify reflect calls meta-validation
+    local reflect_section
+    reflect_section=$(sed -n '/_recruit_reflect()/,/^}/p' "$SCRIPT_DIR/sw-recruit.sh")
+    echo "$reflect_section" | grep -q '_recruit_meta_validate_self_tune' || {
+        echo "reflect does not call meta-validation"
+        return 1
+    }
+}
+
+# ── 2.18 Recruit: audit (negative-compounding feedback loop) ────────────
+test_recruit_audit_command() {
+    grep -q 'cmd_audit' "$SCRIPT_DIR/sw-recruit.sh" || {
+        echo "recruit missing audit command"
+        return 1
+    }
+    grep -q 'AUDIT SCORE' "$SCRIPT_DIR/sw-recruit.sh" || {
+        echo "audit does not produce a score"
+        return 1
+    }
+    grep -q 'NEGATIVE COMPOUND' "$SCRIPT_DIR/sw-recruit.sh" || {
+        echo "audit missing negative-compounding escalation"
+        return 1
+    }
+}
+
+# ── 2.19 Autonomous: safe recruit_args quoting ──────────────────────────
+test_autonomous_safe_quoting() {
+    grep -q 'local -a recruit_args' "$SCRIPT_DIR/sw-autonomous.sh" || {
+        echo "autonomous not using array for recruit_args"
+        return 1
+    }
+    grep -q '"${recruit_args\[@\]}"' "$SCRIPT_DIR/sw-autonomous.sh" || {
+        echo "autonomous not expanding recruit_args safely"
+        return 1
+    }
+}
+
+# ── 2.20 Autonomous: Claude output redirected to findings file ───────────────
 test_autonomous_claude_redirect() {
     # Verify Claude output goes to $findings (not lost to stdout)
     # The claude -p command spans multiple lines; the redirect > "$findings" is on a later line
@@ -675,6 +793,14 @@ main() {
     run_test "Oversight: gate JSON safe from newline/quote injection" test_oversight_gate_json_safety
     run_test "Pipeline: oversight gate wired + respects SKIP_GATES" test_pipeline_oversight_wiring
     run_test "Pipeline: feedback collect/create-issue/rollback wired into monitor" test_pipeline_feedback_wiring
+    run_test "Pipeline: intelligence prediction validation wired" test_pipeline_intelligence_validation
+    run_test "Pipeline: predictive anomaly confirmation wired" test_pipeline_predictive_confirm
+    run_test "Pipeline: memory fix-outcome negative path wired" test_pipeline_memory_fix_negative
+    run_test "Triage: offline fallback with recruit" test_triage_offline_fallback
+    run_test "Recruit: policy integration wired" test_recruit_policy_integration
+    run_test "Recruit: meta feedback loop" test_recruit_meta_loop
+    run_test "Recruit: audit (negative-compounding feedback)" test_recruit_audit_command
+    run_test "Autonomous: safe recruit_args quoting" test_autonomous_safe_quoting
     run_test "Autonomous: Claude output redirected to findings file" test_autonomous_claude_redirect
     run_test "Autonomous: dual branch check (pipeline + daemon)" test_autonomous_dual_branch_check
     run_test "Autonomous: run_scheduler with loop/sleep" test_autonomous_scheduler

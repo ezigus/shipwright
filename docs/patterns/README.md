@@ -35,6 +35,7 @@ Each wave:
 | [Test Generation](test-generation.md)               | Comprehensive test coverage campaigns     | 3-4+          | 2-3 agents |
 | [Refactoring](refactoring.md)                       | Large-scale code transformations          | 3-4           | 2 agents   |
 | [Bug Hunt](bug-hunt.md)                             | Tracking down complex, elusive bugs       | 3-4           | 2-3 agents |
+| [Audit Loop](audit-loop.md)                         | Self-reflection, quality gates in loop    | N/A           | 1-2 agents |
 
 ---
 
@@ -147,3 +148,7 @@ Choose the right model for each agent's task:
 | Architecture decisions, complex debugging | `opus`   | Best reasoning         |
 | Test generation                           | `sonnet` | Good pattern matching  |
 | Documentation, reports                    | `sonnet` | Clear writing          |
+
+---
+
+See also: [docs/README.md](../README.md) — Documentation hub

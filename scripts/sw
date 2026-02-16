@@ -137,6 +137,7 @@ show_help() {
     echo -e "  ${CYAN}docs${RESET} <cmd>            ${BOLD}Documentation keeper${RESET} — auto-sync docs from source"
     echo -e "  ${CYAN}changelog${RESET} <cmd>       ${BOLD}Changelog engine${RESET} — auto-generate release notes and migration guides"
     echo -e "  ${CYAN}docs-agent${RESET} <cmd>      ${BOLD}Autonomous docs agent${RESET} — scan gaps, sync, coverage, API ref"
+    echo -e "  ${CYAN}doc-fleet${RESET} <cmd>       ${BOLD}Documentation fleet${RESET} — 5 specialized agents: audit, refactor, enhance docs"
     echo -e "  ${CYAN}release${RESET} <cmd>         ${BOLD}Release automation${RESET} — bump versions, changelog, tags, releases"
     echo -e "  ${CYAN}release-manager|rm${RESET}    ${BOLD}Autonomous release pipeline${RESET} — readiness checks, RC flow, rollback"
     echo -e "  ${CYAN}replay${RESET} <cmd>           ${BOLD}Pipeline DVR${RESET} — list, show, narrative, diff, export, compare runs"
@@ -535,6 +536,9 @@ main() {
             ;;
         docs-agent)
             exec "$SCRIPT_DIR/sw-docs-agent.sh" "$@"
+            ;;
+        doc-fleet)
+            exec "$SCRIPT_DIR/sw-doc-fleet.sh" "$@"
             ;;
         release)
             exec "$SCRIPT_DIR/sw-release.sh" "$@"

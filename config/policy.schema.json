@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://shipwright.dev/schemas/policy-v1.json",
+  "title": "Shipwright Policy",
+  "description": "Central policy for Shipwright — timeouts, limits, thresholds.",
+  "type": "object",
+  "properties": {
+    "version": { "type": "string" },
+    "daemon": {
+      "type": "object",
+      "properties": {
+        "poll_interval_seconds": { "type": "integer", "minimum": 10 },
+        "health_heartbeat_timeout": { "type": "integer", "minimum": 60 },
+        "stage_timeouts": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "auto_scale_interval_cycles": { "type": "integer" },
+        "optimize_interval_cycles": { "type": "integer" },
+        "stale_reaper_interval_cycles": { "type": "integer" }
+      }
+    },
+    "pipeline": {
+      "type": "object",
+      "properties": {
+        "max_iterations_default": { "type": "integer" },
+        "coverage_threshold_percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "quality_gate_score_threshold": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "memory_baseline_fallback_percent": { "type": "integer" },
+        "memory_inject_fallback_percent": { "type": "integer" }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "properties": {
+        "coverage_threshold": { "type": "integer" },
+        "gate_score_threshold": { "type": "integer" }
+      }
+    },
+    "strategic": {
+      "type": "object",
+      "properties": {
+        "max_issues_per_cycle": { "type": "integer" },
+        "cooldown_seconds": { "type": "integer" },
+        "overlap_threshold_percent": { "type": "integer" },
+        "strategy_lines": { "type": "integer" }
+      }
+    },
+    "sweep": {
+      "type": "object",
+      "properties": {
+        "cron_minutes": { "type": "integer" },
+        "stuck_threshold_hours": { "type": "integer" },
+        "retry_template": { "type": "string" },
+        "retry_max_iterations": { "type": "integer" },
+        "stuck_retry_max_iterations": { "type": "integer" }
+      }
+    },
+    "hygiene": {
+      "type": "object",
+      "properties": {
+        "artifact_age_days": { "type": "integer" }
+      }
+    }
+  },
+  "additionalProperties": true
+}

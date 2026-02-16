@@ -19,7 +19,7 @@ This project uses [Shipwright](https://github.com/sethdford/shipwright) for auto
 | `shipwright cost show` | Token usage and spending dashboard |
 | `shipwright cost budget set <amount>` | Set daily budget limit |
 | `shipwright cost remaining-budget` | Check remaining daily budget (used by auto-scaler) |
-| `shipwright memory list` | View captured failure patterns |
+| `shipwright memory show` | View captured failure patterns |
 | `shipwright dashboard` | Real-time web dashboard (requires Bun) |
 | `shipwright dashboard start` | Start dashboard in background |
 | `shipwright heartbeat list` | Show agent heartbeat status |
@@ -170,7 +170,7 @@ Generate with `shipwright daemon init`, then edit `.claude/daemon-config.json`:
 | Command | Purpose |
 |---------|---------|
 | `shipwright pipeline resume` | Resume from last completed stage |
-| `shipwright memory show` | View captured failure patterns |
+| `shipwright memory show`     | View captured failure patterns |
 | `shipwright doctor` | Diagnose setup issues |
 | `shipwright status` | Check team and agent status |
 | `shipwright cleanup --force` | Kill orphaned sessions |

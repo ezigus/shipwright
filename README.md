@@ -12,11 +12,29 @@
 <p align="center">
   <a href="https://github.com/sethdford/shipwright/actions/workflows/test.yml"><img src="https://github.com/sethdford/shipwright/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/sethdford/shipwright/actions/workflows/shipwright-pipeline.yml"><img src="https://github.com/sethdford/shipwright/actions/workflows/shipwright-pipeline.yml/badge.svg" alt="Pipeline"></a>
-  <img src="https://img.shields.io/badge/tests-500%2B_passing-4ade80?style=flat-square" alt="500+ tests">
-  <img src="https://img.shields.io/badge/version-2.1.0-00d4ff?style=flat-square" alt="v2.1.0">
+  <img src="https://img.shields.io/badge/tests-99_suites_passing-4ade80?style=flat-square" alt="99 suites">
+  <img src="https://img.shields.io/badge/version-2.1.2-00d4ff?style=flat-square" alt="v2.1.2">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License">
   <img src="https://img.shields.io/badge/bash-3.2%2B-7c3aed?style=flat-square" alt="Bash 3.2+">
 </p>
+
+---
+
+## Table of Contents
+
+- [Shipwright Builds Itself](#shipwright-builds-itself)
+- [What's New in v2.1.2](#whats-new-in-v212)
+- [How It Works](#how-it-works)
+- [Install](#install)
+- [Quick Start](#quick-start)
+- [Features](#features)
+- [Commands](#commands)
+- [Pipeline Templates for Teams](#pipeline-templates-for-teams)
+- [Configuration](#configuration)
+- [Prerequisites](#prerequisites)
+- [Architecture](#architecture)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
@@ -24,23 +42,25 @@
 
 This repo uses Shipwright to process its own issues. Label a GitHub issue with `shipwright` and the autonomous pipeline takes over: semantic triage, plan, design, build, test, review, quality gates, PR. No human in the loop.
 
-**[See it live](../../actions/workflows/shipwright-pipeline.yml)** | **[Create an issue](../../issues/new?template=shipwright.yml)** and watch it build.
+**[See it live](https://github.com/sethdford/shipwright/actions/workflows/shipwright-pipeline.yml)** | **[Create an issue](https://github.com/sethdford/shipwright/issues/new?template=shipwright.yml)** and watch it build.
 
 ---
 
-## What's New in v2.1.0
+## What's New in v2.1.2
 
-**tmux visual overhaul** — role-colored borders, pipeline status widgets, and active pane depth:
+**AGI-Level Agent Recruitment** — dynamic role creation, LLM-powered matching, closed-loop learning:
 
-- **Role-Colored Pane Borders** — Border color reflects agent role (builder=blue, reviewer=orange, tester=yellow)
-- **Pipeline Stage Badge** — Live `⚙ BUILD` / `⚡ TEST` / `↑ PR` widget in status bar with stage-colored badges
-- **Active Pane Lift** — Subtle background depth effect between active and inactive panes
-- **Agent Count Widget** — `λN` heartbeat-based agent counter in status bar
-- **`shipwright init --repair`** — Force clean reinstall after OS upgrades
-- **Color Palette Overhaul** — Warm grays replace harsh near-white text across all tmux chrome
-- **7 tmux Bug Fixes** — Pane indexing, capture bindings, reload, clipboard, and more
+- **`recruit match`** — AI/heuristic task→role matching with `--json` output for pipeline integration
+- **`recruit team`** — Context-aware team composition with cost estimation
+- **`recruit route`** — Smart routing based on agent performance history
+- **Cross-system integration** — Pipeline, PM, triage, loop, and swarm all use recruit for model/role selection
+- **Self-tuning heuristics** — System learns keyword→role mappings from successful outcomes
+- **Meta-learning** — Accuracy tracking and self-correction for matching decisions
+- **CI auto-discovery** — All 99 test suites now run in CI (previously 26)
 
-**v2.0.0 highlights**: 18 autonomous agents, 100+ CLI commands, intelligence layer, multi-repo fleet, local mode
+**v2.1.0**: tmux visual overhaul — role-colored borders, pipeline status widgets, active pane depth
+
+**v2.0.0**: 18 autonomous agents, 100+ CLI commands, intelligence layer, multi-repo fleet, local mode
 
 ---
 
@@ -187,7 +207,7 @@ Each stage is configurable with quality gates that auto-proceed or pause for app
 | Template     | Stages                            | Use Case                  |
 | ------------ | --------------------------------- | ------------------------- |
 | `fast`       | intake → build → test → PR        | Quick fixes, score >= 70  |
-| `standard`   | + plan, review                    | Normal feature work       |
+| `standard`   | + plan, design, review            | Normal feature work       |
 | `full`       | All 12 stages                     | Production deployment     |
 | `hotfix`     | Minimal, all auto                 | Urgent production fixes   |
 | `autonomous` | All stages, all auto              | Daemon-driven delivery    |
@@ -282,12 +302,12 @@ Instant issue processing via GitHub webhooks instead of polling. Register webhoo
 ### PR Lifecycle Automation
 
 ```bash
-shipwright pr auto-review
-shipwright pr merge
+shipwright pr review <pr#>
+shipwright pr merge <pr#>
 shipwright pr cleanup
 ```
 
-Fully automated PR management: auto-review based on predictive risk and coverage, intelligent auto-merge when gates pass, cleanup stale branches. Reduces manual PR overhead by 90%.
+Fully automated PR management: review based on predictive risk and coverage, intelligent auto-merge when gates pass, cleanup stale branches. Reduces manual PR overhead by 90%.
 
 ### Fleet Auto-Discovery
 
@@ -304,10 +324,11 @@ ACID-safe state management replacing JSON files. Replaces volatile `.claude/pipe
 ### Issue Decomposition
 
 ```bash
-shipwright decompose --issue 42
+shipwright decompose analyze 42
+shipwright decompose decompose 42
 ```
 
-AI-powered issue analysis: auto-split complex features into manageable subtasks, create child issues with inherited labels/assignees, generate dependency graph for parallel execution.
+AI-powered issue analysis: `analyze` scores complexity; `decompose` creates child issues with inherited labels/assignees and a dependency graph.
 
 ### Linux systemd Support
 
@@ -338,16 +359,16 @@ shipwright pipeline start --issue 42
 shipwright daemon start --detach
 
 # Agent teams
-shipwright swarm list
+shipwright swarm status
 shipwright recruit --roles builder,tester
 shipwright standup
-shipwright guild members
+shipwright guild list
 
 # Quality gates
 shipwright code-review
 shipwright security-audit
 shipwright testgen
-shipwright quality check
+shipwright quality validate
 
 # Observability
 shipwright vitals
@@ -375,11 +396,11 @@ shipwright upgrade --apply
 shipwright --help
 ```
 
-See `.claude/CLAUDE.md` for the complete 100+ command reference organized by workflow.
+See [.claude/CLAUDE.md](.claude/CLAUDE.md) for the complete 100+ command reference organized by workflow. Full documentation: [docs/](docs/).
 
 ## Pipeline Templates for Teams
 
-24 team templates covering the full SDLC:
+25 team templates covering the full SDLC:
 
 ```bash
 shipwright templates list
@@ -411,7 +432,7 @@ shipwright templates list
 
 ## Architecture
 
-95+ bash scripts (~100K lines), 27 test suites (500+ tests), plus a TypeScript dashboard server. Bash 3.2 compatible — runs on macOS and Linux out of the box.
+100+ bash scripts (~100K lines), 99 test suites (1000+ tests), plus a TypeScript dashboard server. Bash 3.2 compatible — runs on macOS and Linux out of the box.
 
 **Core Layers:**
 
@@ -477,12 +498,12 @@ Tools & UX
 
 ## Contributing
 
-**Let Shipwright build it:** Create an issue using the [Shipwright template](../../issues/new?template=shipwright.yml) and label it `shipwright`. The autonomous pipeline will triage, plan, build, test, review, and create a PR.
+**Let Shipwright build it:** Create an issue using the [Shipwright template](https://github.com/sethdford/shipwright/issues/new?template=shipwright.yml) and label it `shipwright`. The autonomous pipeline will triage, plan, build, test, review, and create a PR.
 
 **Manual development:** Fork, branch, then:
 
 ```bash
-npm test    # 450+ tests across 24 suites
+npm test    # 1000+ tests across 99 suites
 ```
 
 ## License

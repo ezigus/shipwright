@@ -3,6 +3,8 @@
 Use this template with `shipwright loop --definition-of-done <file>` to enforce completion criteria.
 Copy and customize for your project.
 
+> **Shipwright contributors:** See `.claude/DEFINITION-OF-DONE.md` for the project-specific checklist (bash standards, pipeline compliance, etc.).
+
 ## Checklist
 
 - [ ] All specified functionality is implemented

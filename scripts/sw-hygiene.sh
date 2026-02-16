@@ -10,46 +10,45 @@ VERSION="2.1.2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'     # #00d4ff — primary accent
-PURPLE='\033[38;2;124;58;237m'  # #7c3aed — secondary
-BLUE='\033[38;2;0;102;255m'     # #0066ff — tertiary
-GREEN='\033[38;2;74;222;128m'   # success
-YELLOW='\033[38;2;250;204;21m'  # warning
-RED='\033[38;2;248;113;113m'    # error
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
-
-# ─── Helpers ─────────────────────────────────────────────────────────────────
-info()    { echo -e "${CYAN}${BOLD}▸${RESET} $*"; }
-success() { echo -e "${GREEN}${BOLD}✓${RESET} $*"; }
-warn()    { echo -e "${YELLOW}${BOLD}⚠${RESET} $*"; }
-error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
-
-emit_event() {
+# Policy (config/policy.json) — tunables override defaults when present
+[[ -f "$SCRIPT_DIR/lib/policy.sh" ]] && source "$SCRIPT_DIR/lib/policy.sh"
+# Canonical helpers (colors, output, events)
+[[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# Fallback when helpers.sh not loaded
+[[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
+[[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
+[[ "$(type -t warn 2>/dev/null)" == "function" ]]    || warn()    { echo -e "\033[38;2;250;204;21m\033[1m⚠\033[0m $*"; }
+[[ "$(type -t error 2>/dev/null)" == "function" ]]   || error()   { echo -e "\033[38;2;248;113;113m\033[1m✗\033[0m $*" >&2; }
+if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
+  emit_event() {
     local event_type="$1"; shift
-    local events_file="${HOME}/.shipwright/events.jsonl"
-    mkdir -p "$(dirname "$events_file")"
+    mkdir -p "${HOME}/.shipwright"
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do
-        local key="${1%%=*}" val="${1#*=}"
-        payload="${payload},\"${key}\":\"${val}\""
-        shift
-    done
-    payload="${payload}}"
-    echo "$payload" >> "$events_file"
-}
+    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
+    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
+  }
+fi
+CYAN="${CYAN:-\033[38;2;0;212;255m}"
+PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
+GREEN="${GREEN:-\033[38;2;74;222;128m}"
+YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
+RED="${RED:-\033[38;2;248;113;113m}"
+DIM="${DIM:-\033[2m}"
+BOLD="${BOLD:-\033[1m}"
+RESET="${RESET:-\033[0m}"
+BLUE="${BLUE:-\033[38;2;0;102;255m}"
 
-# ─── Default Settings ───────────────────────────────────────────────────────
+# ─── Default Settings (policy overrides when config/policy.json exists) ──────
 SUBCOMMAND="${1:-help}"
 AUTO_FIX=false
 VERBOSE=false
 ARTIFACT_AGE_DAYS=7
+if type policy_get &>/dev/null 2>&1; then
+    ARTIFACT_AGE_DAYS=$(policy_get ".hygiene.artifact_age_days" "7")
+fi
 JSON_OUTPUT=false
 
 # ─── Help ───────────────────────────────────────────────────────────────────
@@ -68,6 +67,7 @@ show_help() {
     echo -e "  ${CYAN}naming${RESET}        Check naming conventions (files, functions, vars)"
     echo -e "  ${CYAN}branches${RESET}      List stale and merged remote branches"
     echo -e "  ${CYAN}size${RESET}          Size analysis and bloat detection"
+    echo -e "  ${CYAN}platform-refactor${RESET}  Scan for hardcoded/fallback/TODO/FIXME — for AGI-level self-improvement"
     echo -e "  ${CYAN}fix${RESET}           Auto-fix safe issues (naming, whitespace)"
     echo -e "  ${CYAN}report${RESET}        Generate comprehensive hygiene report"
     echo -e "  ${CYAN}help${RESET}          Show this help message"
@@ -373,6 +373,84 @@ analyze_size() {
     return 0
 }
 
+# ─── Platform Refactor / Hardcoded Scan (AGI-Level Self-Improvement) ───
+# Outputs JSON to REPO_DIR/.claude/platform-hygiene.json for strategic agent.
+scan_platform_refactor() {
+    info "Scanning for hardcoded/static/platform-refactor signals..."
+
+    mkdir -p "$REPO_DIR/.claude"
+    local out_file="$REPO_DIR/.claude/platform-hygiene.json"
+    local scripts_dir="${REPO_DIR}/scripts"
+
+    local hardcoded_count fallback_count todo_count fixme_count hack_count
+    hardcoded_count=$(grep -rE "hardcoded|Hardcoded|HARDCODED" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
+    fallback_count=$(grep -rE "Fallback:|fallback:" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
+    todo_count=$(grep -rE "TODO" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
+    fixme_count=$(grep -rE "FIXME" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
+    hack_count=$(grep -rE "HACK|KLUDGE" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
+    hardcoded_count=${hardcoded_count:-0}
+    fallback_count=${fallback_count:-0}
+    todo_count=${todo_count:-0}
+    fixme_count=${fixme_count:-0}
+    hack_count=${hack_count:-0}
+
+    # Sample findings: file:line (first 25) for strategic context (grep -n gives file:line:content)
+    local findings_file findings_raw
+    findings_file=$(mktemp)
+    findings_raw=$(mktemp)
+    grep -rnE "hardcoded|Hardcoded|Fallback:|fallback:|TODO|FIXME|HACK|KLUDGE" "$scripts_dir" --include="*.sh" 2>/dev/null | head -25 > "$findings_raw" || true
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local f="${line%%:*}" rest="${line#*:}" ln="${rest%%:*}"
+        ln="${ln:-0}"
+        printf '{"file":"%s","line":%s}\n' "${f#$REPO_DIR/}" "$ln"
+    done < "$findings_raw" > "$findings_file.raw" 2>/dev/null || true
+    jq -s '.' "$findings_file.raw" 2>/dev/null > "$findings_file" || echo "[]" > "$findings_file"
+    local findings
+    findings=$(cat "$findings_file" 2>/dev/null || echo "[]")
+    rm -f "$findings_file" "$findings_file.raw" "$findings_raw"
+
+    # Script sizes (lines) for hotspot detection
+    local sizes_file
+    sizes_file=$(mktemp)
+    find "$scripts_dir" -maxdepth 1 -name "*.sh" -type f 2>/dev/null | while read -r f; do
+        local lines
+        lines=$(wc -l < "$f" 2>/dev/null || echo 0)
+        printf '{"script":"%s","lines":%s}\n' "$(basename "$f")" "$lines"
+    done | jq -s 'sort_by(-.lines) | .[0:15]' 2>/dev/null > "$sizes_file"
+    local script_sizes
+    script_sizes=$(cat "$sizes_file" 2>/dev/null || echo "[]")
+    rm -f "$sizes_file"
+
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local report
+    report=$(jq -n \
+        --arg ts "$timestamp" \
+        --arg repo "$(basename "$REPO_DIR")" \
+        --argjson hc "$hardcoded_count" \
+        --argjson fb "$fallback_count" \
+        --argjson todo "$todo_count" \
+        --argjson fixme "$fixme_count" \
+        --argjson hack "$hack_count" \
+        --argjson findings "$findings" \
+        --argjson script_sizes "$script_sizes" \
+        '{timestamp:$ts,repository:$repo,counts:{hardcoded:$hc,fallback:$fb,todo:$todo,fixme:$fixme,hack:$hack},findings_sample:$findings,script_size_hotspots:$script_sizes}' 2>/dev/null)
+    if [[ -n "$report" ]]; then
+        echo "$report" > "$out_file"
+        success "Platform refactor scan saved to: $out_file"
+        if [[ "$JSON_OUTPUT" == true ]]; then
+            echo "$report" | jq .
+        else
+            info "  hardcoded: $hardcoded_count  fallback: $fallback_count  TODO: $todo_count  FIXME: $fixme_count  HACK/KLUDGE: $hack_count"
+        fi
+    else
+        warn "Could not build platform-hygiene JSON (jq missing?)"
+    fi
+    emit_event "hygiene_platform_refactor" "hardcoded=$hardcoded_count" "fallback=$fallback_count" "todo=$todo_count"
+    return 0
+}
+
 # ─── Auto-Fix Mode ────────────────────────────────────────────────────────
 
 auto_fix_issues() {
@@ -446,29 +524,39 @@ generate_report() {
     info "Generating comprehensive hygiene report..."
     mkdir -p "$REPO_DIR/.claude"
 
+    # Include platform-hygiene if available (for strategic agent)
+    local platform_refactor="{}"
+    if [[ -f "$REPO_DIR/.claude/platform-hygiene.json" ]]; then
+        platform_refactor=$(jq -c '.' "$REPO_DIR/.claude/platform-hygiene.json" 2>/dev/null || echo "{}")
+    fi
+
     # Build JSON report
     local report
-    report=$(cat <<'EOF'
+    report=$(jq -n \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg repo "$(basename "$REPO_DIR")" \
+        --arg ver "$VERSION" \
+        --argjson platform "$platform_refactor" \
+        '{timestamp:$ts,repository:$repo,version:$ver,sections:{dead_code:{},structure:{},dependencies:{},naming:{},branches:{},size:{}},platform_refactor:$platform}' 2>/dev/null)
+    if [[ -z "$report" ]]; then
+        report=$(cat <<EOF
 {
-    "timestamp": "TIMESTAMP",
-    "repository": "REPO",
-    "version": "VERSION",
+    "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "repository": "$(basename "$REPO_DIR")",
+    "version": "$VERSION",
     "sections": {
         "dead_code": {},
         "structure": {},
         "dependencies": {},
         "naming": {},
         "branches": {},
-        "size": {}
+        "size": {},
+        "platform_refactor": $platform_refactor
     }
 }
 EOF
 )
-
-    # Replace placeholders
-    report="${report//TIMESTAMP/$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
-    report="${report//REPO/$(basename "$REPO_DIR")}"
-    report="${report//VERSION/$VERSION}"
+    fi
 
     if [[ $JSON_OUTPUT == true ]]; then
         echo "$report" | jq .
@@ -489,6 +577,7 @@ run_full_scan() {
     check_naming
     list_stale_branches
     analyze_size
+    scan_platform_refactor
 
     echo -e "${CYAN}${BOLD}╰────────────────────────────────────────────────────────────────╯${RESET}"
 
@@ -531,6 +620,9 @@ main() {
             ;;
         size)
             analyze_size
+            ;;
+        platform-refactor)
+            scan_platform_refactor
             ;;
         fix)
             if [[ $AUTO_FIX != true ]]; then

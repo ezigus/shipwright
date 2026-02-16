@@ -179,6 +179,36 @@ output=$(bash "$SCRIPT_DIR/sw-hygiene.sh" dependencies 2>&1) && rc=0 || rc=$?
 assert_eq "dependencies exits 0" "0" "$rc"
 assert_contains "dependencies shows auditing" "$output" "Auditing"
 
+# ─── Test 11: platform-refactor subcommand (AGI-level self-improvement) ───
+echo ""
+echo -e "  ${CYAN}platform-refactor subcommand${RESET}"
+output=$(bash "$SCRIPT_DIR/sw-hygiene.sh" platform-refactor 2>&1) && rc=0 || rc=$?
+assert_eq "platform-refactor exits 0" "0" "$rc"
+assert_contains "platform-refactor scans for hardcoded/fallback" "$output" "hardcoded"
+platform_hygiene_file="$(cd "$SCRIPT_DIR/.." && pwd)/.claude/platform-hygiene.json"
+if [[ -f "$platform_hygiene_file" ]] && jq -e '.counts' "$platform_hygiene_file" >/dev/null 2>&1; then
+    assert_pass "platform-refactor creates platform-hygiene.json with counts"
+else
+    assert_fail "platform-refactor creates platform-hygiene.json with counts"
+fi
+
+# ─── Test 12: policy read (config/policy.json via policy_get) ───
+echo ""
+echo -e "  ${CYAN}policy read (policy_get from config)${RESET}"
+policy_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-policy-test.XXXXXX")
+mkdir -p "$policy_tmp/config"
+echo '{"hygiene":{"artifact_age_days":14}}' > "$policy_tmp/config/policy.json"
+got=$(REPO_DIR="$policy_tmp" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".hygiene.artifact_age_days\" \"7\"")
+rm -rf "$policy_tmp"
+assert_eq "policy_get returns value from config" "14" "$got"
+# Default when key missing
+policy_tmp2=$(mktemp -d "${TMPDIR:-/tmp}/sw-policy-test.XXXXXX")
+mkdir -p "$policy_tmp2/config"
+echo '{}' > "$policy_tmp2/config/policy.json"
+got_default=$(REPO_DIR="$policy_tmp2" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".hygiene.artifact_age_days\" \"7\"")
+rm -rf "$policy_tmp2"
+assert_eq "policy_get returns default when key missing" "7" "$got_default"
+
 echo ""
 echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""

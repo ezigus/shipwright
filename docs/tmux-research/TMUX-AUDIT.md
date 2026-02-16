@@ -5,6 +5,8 @@
 **Repository:** `/Users/sethford/Documents/shipwright`
 **Scope:** tmux configuration, CLI scripts, and integration code
 
+> **Note:** This audit is a point-in-time snapshot. Some issues may have been resolved since (e.g. sw-reaper.sh now uses `#{pane_id}` per line 117). Re-run the audit or verify each finding before acting.
+
 ---
 
 ## Executive Summary

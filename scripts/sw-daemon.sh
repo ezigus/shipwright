@@ -13,20 +13,44 @@ VERSION="2.1.2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'     # #00d4ff — primary accent
-PURPLE='\033[38;2;124;58;237m'  # #7c3aed — secondary
-BLUE='\033[38;2;0;102;255m'     # #0066ff — tertiary
-GREEN='\033[38;2;74;222;128m'   # success
-YELLOW='\033[38;2;250;204;21m'  # warning
-RED='\033[38;2;248;113;113m'    # error
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
+
+# Canonical helpers (colors, output, events)
+# shellcheck source=lib/helpers.sh
+[[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
+[[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
+[[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
+[[ "$(type -t warn 2>/dev/null)" == "function" ]]    || warn()    { echo -e "\033[38;2;250;204;21m\033[1m⚠\033[0m $*"; }
+[[ "$(type -t error 2>/dev/null)" == "function" ]]   || error()   { echo -e "\033[38;2;248;113;113m\033[1m✗\033[0m $*" >&2; }
+if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
+  now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+  now_epoch() { date +%s; }
+fi
+if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
+  emit_event() {
+    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
+    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
+  }
+fi
+CYAN="${CYAN:-\033[38;2;0;212;255m}"
+PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
+BLUE="${BLUE:-\033[38;2;0;102;255m}"
+GREEN="${GREEN:-\033[38;2;74;222;128m}"
+YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
+RED="${RED:-\033[38;2;248;113;113m}"
+DIM="${DIM:-\033[2m}"
+BOLD="${BOLD:-\033[1m}"
+RESET="${RESET:-\033[0m}"
+
+# Policy (config/policy.json) — daemon defaults when daemon-config.json missing or silent
+[[ -f "$SCRIPT_DIR/lib/policy.sh" ]] && source "$SCRIPT_DIR/lib/policy.sh"
+# Daemon health timeouts from policy (lib/daemon-health.sh)
+[[ -f "$SCRIPT_DIR/lib/daemon-health.sh" ]] && source "$SCRIPT_DIR/lib/daemon-health.sh"
 
 # ─── Intelligence Engine (optional) ──────────────────────────────────────────
 # shellcheck source=sw-intelligence.sh
@@ -51,15 +75,6 @@ RESET='\033[0m'
 [[ -f "$SCRIPT_DIR/sw-github-checks.sh" ]] && source "$SCRIPT_DIR/sw-github-checks.sh"
 # shellcheck source=sw-github-deploy.sh
 [[ -f "$SCRIPT_DIR/sw-github-deploy.sh" ]] && source "$SCRIPT_DIR/sw-github-deploy.sh"
-
-# ─── Output Helpers ─────────────────────────────────────────────────────────
-info()    { echo -e "${CYAN}${BOLD}▸${RESET} $*"; }
-success() { echo -e "${GREEN}${BOLD}✓${RESET} $*"; }
-warn()    { echo -e "${YELLOW}${BOLD}⚠${RESET} $*"; }
-error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
-
-now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
-now_epoch() { date +%s; }
 
 epoch_to_iso() {
     local epoch="$1"
@@ -197,9 +212,12 @@ LOG_FILE=""
 LOG_DIR=""
 WORKTREE_DIR=""
 
-# Config defaults (overridden by daemon-config.json)
+# Config defaults (overridden by daemon-config.json; policy overrides when present)
 WATCH_LABEL="ready-to-build"
 POLL_INTERVAL=60
+if type policy_get &>/dev/null 2>&1; then
+    POLL_INTERVAL=$(policy_get ".daemon.poll_interval_seconds" "60")
+fi
 MAX_PARALLEL=2
 PIPELINE_TEMPLATE="autonomous"
 SKIP_GATES=true
@@ -222,9 +240,12 @@ WATCH_MODE="repo"
 ORG=""
 REPO_FILTER=""
 
-# Auto-scaling defaults
+# Auto-scaling defaults (policy overrides when present)
 AUTO_SCALE=false
 AUTO_SCALE_INTERVAL=5
+if type policy_get &>/dev/null 2>&1; then
+    AUTO_SCALE_INTERVAL=$(policy_get ".daemon.auto_scale_interval_cycles" "5")
+fi
 MAX_WORKERS=8
 MIN_WORKERS=1
 WORKER_MEM_GB=4
@@ -377,7 +398,7 @@ load_config() {
     info "Loading config: ${DIM}${config_file}${RESET}"
 
     WATCH_LABEL=$(jq -r '.watch_label // "ready-to-build"' "$config_file")
-    POLL_INTERVAL=$(jq -r '.poll_interval // 60' "$config_file")
+    POLL_INTERVAL=$(jq -r '.poll_interval // '"$(type policy_get &>/dev/null 2>&1 && policy_get ".daemon.poll_interval_seconds" "60" || echo "60")"'' "$config_file")
     MAX_PARALLEL=$(jq -r '.max_parallel // 2' "$config_file")
     PIPELINE_TEMPLATE=$(jq -r '.pipeline_template // "autonomous"' "$config_file")
     SKIP_GATES=$(jq -r '.skip_gates // true' "$config_file")
@@ -437,7 +458,7 @@ load_config() {
 
     # self-optimization
     SELF_OPTIMIZE=$(jq -r '.self_optimize // false' "$config_file")
-    OPTIMIZE_INTERVAL=$(jq -r '.optimize_interval // 10' "$config_file")
+    OPTIMIZE_INTERVAL=$(jq -r '.optimize_interval // '"$(type policy_get &>/dev/null 2>&1 && policy_get ".daemon.optimize_interval_cycles" "10" || echo "10")"'' "$config_file")
 
     # intelligence engine settings
     INTELLIGENCE_ENABLED=$(jq -r '.intelligence.enabled // false' "$config_file")
@@ -456,7 +477,7 @@ load_config() {
 
     # stale state reaper: clean old worktrees, artifacts, state entries
     STALE_REAPER_ENABLED=$(jq -r '.stale_reaper // true' "$config_file")
-    STALE_REAPER_INTERVAL=$(jq -r '.stale_reaper_interval // 10' "$config_file")
+    STALE_REAPER_INTERVAL=$(jq -r '.stale_reaper_interval // '"$(type policy_get &>/dev/null 2>&1 && policy_get ".daemon.stale_reaper_interval_cycles" "10" || echo "10")"'' "$config_file")
     STALE_REAPER_AGE_DAYS=$(jq -r '.stale_reaper_age_days // 7' "$config_file")
 
     # priority lane settings
@@ -473,14 +494,14 @@ load_config() {
 
     # auto-scaling
     AUTO_SCALE=$(jq -r '.auto_scale // false' "$config_file")
-    AUTO_SCALE_INTERVAL=$(jq -r '.auto_scale_interval // 5' "$config_file")
+    AUTO_SCALE_INTERVAL=$(jq -r '.auto_scale_interval // '"$(type policy_get &>/dev/null 2>&1 && policy_get ".daemon.auto_scale_interval_cycles" "5" || echo "5")"'' "$config_file")
     MAX_WORKERS=$(jq -r '.max_workers // 8' "$config_file")
     MIN_WORKERS=$(jq -r '.min_workers // 1' "$config_file")
     WORKER_MEM_GB=$(jq -r '.worker_mem_gb // 4' "$config_file")
     EST_COST_PER_JOB=$(jq -r '.estimated_cost_per_job_usd // 5.0' "$config_file")
 
-    # heartbeat + checkpoint recovery
-    HEALTH_HEARTBEAT_TIMEOUT=$(jq -r '.health.heartbeat_timeout_s // 120' "$config_file")
+    # heartbeat + checkpoint recovery (policy fallback when config silent)
+    HEALTH_HEARTBEAT_TIMEOUT=$(jq -r '.health.heartbeat_timeout_s // '"$(type policy_get &>/dev/null 2>&1 && policy_get ".daemon.health_heartbeat_timeout" "120" || echo "120")"'' "$config_file")
     CHECKPOINT_ENABLED=$(jq -r '.health.checkpoint_enabled // true' "$config_file")
 
     # progress-based health monitoring (replaces static timeouts)
@@ -612,14 +633,23 @@ get_adaptive_heartbeat_timeout() {
         return
     fi
 
-    # Stage-specific defaults (used when no learned data)
+    # Stage-specific defaults (daemon-health.sh when sourced, else policy_get, else literal)
     local default_timeout="${HEALTH_HEARTBEAT_TIMEOUT:-120}"
-    case "$stage" in
-        build)  default_timeout=300 ;;
-        test)   default_timeout=180 ;;
-        review|compound_quality) default_timeout=180 ;;
-        lint|format|intake|plan|design) default_timeout=60 ;;
-    esac
+    if type daemon_health_timeout_for_stage &>/dev/null 2>&1; then
+        default_timeout=$(daemon_health_timeout_for_stage "$stage" "$default_timeout")
+    elif type policy_get &>/dev/null 2>&1; then
+        local policy_stage
+        policy_stage=$(policy_get ".daemon.stage_timeouts.$stage" "")
+        [[ -n "$policy_stage" && "$policy_stage" =~ ^[0-9]+$ ]] && default_timeout="$policy_stage"
+    else
+        case "$stage" in
+            build)  default_timeout=300 ;;
+            test)   default_timeout=180 ;;
+            review|compound_quality) default_timeout=180 ;;
+            lint|format|intake|plan|design) default_timeout=60 ;;
+        esac
+    fi
+    [[ "$default_timeout" =~ ^[0-9]+$ ]] || default_timeout="${HEALTH_HEARTBEAT_TIMEOUT:-120}"
 
     local durations_file="$HOME/.shipwright/optimization/stage-durations.json"
     if [[ ! -f "$durations_file" ]]; then

@@ -1,5 +1,7 @@
 # tmux Research Index: Best-in-Class 2025-2026
 
+↑ [docs/](../README.md) — Documentation hub
+
 **Research Completion Date**: February 12, 2026
 **Focus Areas**: 14 comprehensive topics
 **Total Documentation**: 4 detailed guides + this index
@@ -84,6 +86,21 @@ This research compiled best-in-class tmux configurations, patterns, and integrat
 | Version Compatibility   | Feature support by tmux version                       |
 
 **When to Use**: During active development, copy-paste configuration, quick lookups
+
+---
+
+### 4. TMUX-AUDIT.md
+
+**Shipwright tmux configuration audit (this repo)**
+
+| Section            | Content                                              |
+| ------------------ | ---------------------------------------------------- |
+| Executive Summary  | Findings, severity counts (critical/major/minor)     |
+| Critical Issues    | Race conditions, command injection, pane format bugs |
+| Major Issues       | Pane referencing, error handling, version compat     |
+| Test Coverage Gaps | Integration scenarios, edge cases                    |
+
+**When to Use**: Understanding Shipwright's tmux integration issues, triage for fixes
 
 ---
 

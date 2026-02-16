@@ -97,6 +97,30 @@ AGENT_MINDS_DB="${RECRUIT_ROOT}/agent-minds.json"
 INVENTED_ROLES_LOG="${RECRUIT_ROOT}/invented-roles.jsonl"
 META_LEARNING_DB="${RECRUIT_ROOT}/meta-learning.json"
 
+# ─── Policy Integration ──────────────────────────────────────────────────
+POLICY_FILE="${SCRIPT_DIR}/../config/policy.json"
+_recruit_policy() {
+    local key="$1"
+    local default="$2"
+    if [[ -f "$POLICY_FILE" ]] && command -v jq &>/dev/null; then
+        local val
+        val=$(jq -r ".recruit.${key} // empty" "$POLICY_FILE" 2>/dev/null) || true
+        [[ -n "$val" ]] && echo "$val" || echo "$default"
+    else
+        echo "$default"
+    fi
+}
+
+RECRUIT_CONFIDENCE_THRESHOLD=$(_recruit_policy "match_confidence_threshold" "0.3")
+RECRUIT_MAX_MATCH_HISTORY=$(_recruit_policy "max_match_history_size" "5000")
+RECRUIT_META_ACCURACY_FLOOR=$(_recruit_policy "meta_learning_accuracy_floor" "50")
+RECRUIT_LLM_TIMEOUT=$(_recruit_policy "llm_timeout_seconds" "30")
+RECRUIT_DEFAULT_MODEL=$(_recruit_policy "default_model" "sonnet")
+RECRUIT_SELF_TUNE_MIN_MATCHES=$(_recruit_policy "self_tune_min_matches" "5")
+RECRUIT_PROMOTE_TASKS=$(_recruit_policy "promote_threshold_tasks" "10")
+RECRUIT_PROMOTE_SUCCESS=$(_recruit_policy "promote_threshold_success_rate" "85")
+RECRUIT_AUTO_EVOLVE_AFTER=$(_recruit_policy "auto_evolve_after_outcomes" "20")
+
 ensure_recruit_dir() {
     mkdir -p "$RECRUIT_ROOT"
     [[ -f "$ROLES_DB" ]]          || echo '{}' > "$ROLES_DB"
@@ -373,6 +397,7 @@ Return JSON only, no markdown fences."
 }
 
 # Record a match for learning
+# Returns the match_id (epoch-based) so callers can pass it downstream for outcome linking
 _recruit_record_match() {
     local task="$1"
     local role="$2"
@@ -381,20 +406,28 @@ _recruit_record_match() {
     local agent_id="${5:-}"
 
     mkdir -p "$RECRUIT_ROOT"
+    local match_epoch
+    match_epoch=$(now_epoch)
+    local match_id="match-${match_epoch}-$$"
+
     local record
     record=$(jq -c -n \
         --arg ts "$(now_iso)" \
-        --argjson epoch "$(now_epoch)" \
+        --argjson epoch "$match_epoch" \
+        --arg match_id "$match_id" \
         --arg task "$task" \
         --arg role "$role" \
         --arg method "$method" \
         --argjson conf "$confidence" \
         --arg agent "$agent_id" \
-        '{ts: $ts, ts_epoch: $epoch, task: $task, role: $role, method: $method, confidence: $conf, agent_id: $agent, outcome: null}')
+        '{ts: $ts, ts_epoch: $epoch, match_id: $match_id, task: $task, role: $role, method: $method, confidence: $conf, agent_id: $agent, outcome: null}')
     echo "$record" >> "$MATCH_HISTORY"
 
     # Update role usage stats
     _recruit_track_role_usage "$role" "match"
+
+    # Store match_id in global for callers (avoids stdout contamination)
+    LAST_MATCH_ID="$match_id"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -613,6 +646,29 @@ cmd_record_outcome() {
     success "Recorded ${outcome} for ${CYAN}${agent_id}${RESET} (${tasks_completed} tasks, ${success_rate}% success)"
     emit_event "recruit_outcome" "agent_id=${agent_id}" "outcome=${outcome}" "success_rate=${success_rate}"
 
+    # Track role usage with outcome (closes the role-usage feedback loop)
+    _recruit_track_role_usage "$role_assigned" "$outcome"
+
+    # Backfill match history with outcome (closes the match→outcome linkage gap)
+    if [[ -f "$MATCH_HISTORY" ]]; then
+        local tmp_mh
+        tmp_mh=$(mktemp)
+        # Find the most recent match for this agent_id with null outcome, and backfill
+        awk -v agent="$agent_id" -v outcome="$outcome" '
+        BEGIN { found = 0 }
+        { lines[NR] = $0; count = NR }
+        END {
+            # Walk backwards to find the last unresolved match for this agent
+            for (i = count; i >= 1; i--) {
+                if (!found && index(lines[i], "\"agent_id\":\"" agent "\"") > 0 && index(lines[i], "\"outcome\":null") > 0) {
+                    gsub(/"outcome":null/, "\"outcome\":\"" outcome "\"", lines[i])
+                    found = 1
+                }
+            }
+            for (i = 1; i <= count; i++) print lines[i]
+        }' "$MATCH_HISTORY" > "$tmp_mh" && _recruit_locked_write "$MATCH_HISTORY" "$tmp_mh" || rm -f "$tmp_mh"
+    fi
+
     # Trigger meta-learning check (warn on failure instead of silencing)
     if ! _recruit_meta_learning_check "$agent_id" "$outcome" 2>&1; then
         warn "Meta-learning check failed for ${agent_id} (non-fatal)" >&2
@@ -662,6 +718,21 @@ cmd_ingest_pipeline() {
 
     success "Ingested ${ingested} pipeline outcomes"
     emit_event "recruit_ingest" "count=${ingested}" "days=${days}"
+
+    # Auto-trigger self-tune when new outcomes are ingested (closes the learning loop)
+    if [[ "$ingested" -gt 0 ]]; then
+        info "Auto-running self-tune after ingesting ${ingested} outcomes..."
+        cmd_self_tune 2>/dev/null || warn "Auto self-tune failed (non-fatal)" >&2
+
+        # Auto-trigger evolve when enough outcomes accumulate (policy-driven)
+        local total_outcomes
+        total_outcomes=$(jq -r '[.[] | .tasks_completed // 0] | add // 0' "$PROFILES_DB" 2>/dev/null || echo "0")
+        local evolve_threshold="${RECRUIT_AUTO_EVOLVE_AFTER:-20}"
+        if [[ "$total_outcomes" -ge "$evolve_threshold" ]]; then
+            info "Auto-running evolve (${total_outcomes} total outcomes >= ${evolve_threshold} threshold)..."
+            cmd_evolve 2>/dev/null || warn "Auto evolve failed (non-fatal)" >&2
+        fi
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1045,18 +1116,40 @@ Return JSON only."
     if $json_mode; then
         local roles_json
         roles_json=$(printf '%s\n' "${recommended_team[@]}" | jq -R . | jq -s .)
+
+        # Derive template and max_iterations from team size/composition (triage needs these)
+        local team_template="full"
+        local team_max_iterations=10
+        local team_size=${#recommended_team[@]}
+        if [[ $team_size -le 2 ]]; then
+            team_template="quick-fix"
+            team_max_iterations=5
+        elif [[ $team_size -ge 5 ]]; then
+            team_template="careful"
+            team_max_iterations=20
+        fi
+        # Security tasks get more iterations
+        if printf '%s\n' "${recommended_team[@]}" | grep -q "security-auditor"; then
+            team_template="careful"
+            [[ $team_max_iterations -lt 15 ]] && team_max_iterations=15
+        fi
+
         jq -c -n \
             --argjson team "$roles_json" \
             --arg method "$team_method" \
             --argjson cost "$total_cost" \
             --arg model "$team_model" \
-            --argjson agents "${#recommended_team[@]}" \
+            --argjson agents "$team_size" \
+            --arg template "$team_template" \
+            --argjson max_iterations "$team_max_iterations" \
             '{
                 team: $team,
                 method: $method,
                 estimated_cost: $cost,
                 model: $model,
-                agents: $agents
+                agents: $agents,
+                template: $template,
+                max_iterations: $max_iterations
             }'
         return 0
     fi
@@ -1215,6 +1308,57 @@ Return a brief text summary (3-5 bullet points). Be specific about which keyword
     fi
 
     emit_event "recruit_reflect" "accuracy=${accuracy}" "corrections=${total_corrections}"
+
+    # Meta-loop: validate self-tune effectiveness by comparing accuracy trend
+    _recruit_meta_validate_self_tune "$accuracy"
+}
+
+# Meta feedback loop: checks if self-tune is actually improving accuracy
+# If accuracy drops after self-tune, emits a warning and reverts heuristics
+_recruit_meta_validate_self_tune() {
+    local current_accuracy="${1:-0}"
+    [[ ! -f "$META_LEARNING_DB" ]] && return 0
+    [[ ! -f "$HEURISTICS_DB" ]] && return 0
+
+    local accuracy_floor="${RECRUIT_META_ACCURACY_FLOOR:-50}"
+
+    # Get accuracy trend (last 10 data points)
+    local trend_data
+    trend_data=$(jq -r '.accuracy_trend // [] | .[-10:]' "$META_LEARNING_DB" 2>/dev/null) || return 0
+
+    local trend_count
+    trend_count=$(echo "$trend_data" | jq 'length' 2>/dev/null) || return 0
+    [[ "$trend_count" -lt 3 ]] && return 0
+
+    # Compute moving average of first half vs second half
+    local first_half_avg second_half_avg
+    first_half_avg=$(echo "$trend_data" | jq '[.[:length/2 | floor][].accuracy] | add / length' 2>/dev/null) || return 0
+    second_half_avg=$(echo "$trend_data" | jq '[.[length/2 | floor:][].accuracy] | add / length' 2>/dev/null) || return 0
+
+    local is_declining
+    is_declining=$(awk -v f="$first_half_avg" -v s="$second_half_avg" 'BEGIN{print (s < f - 5) ? 1 : 0}')
+
+    local is_below_floor
+    is_below_floor=$(awk -v c="$current_accuracy" -v f="$accuracy_floor" 'BEGIN{print (c < f) ? 1 : 0}')
+
+    if [[ "$is_declining" == "1" ]]; then
+        warn "META-LOOP: Accuracy DECLINING after self-tune (${first_half_avg}% -> ${second_half_avg}%)"
+
+        if [[ "$is_below_floor" == "1" ]]; then
+            warn "META-LOOP: Accuracy ${current_accuracy}% below floor ${accuracy_floor}% — reverting heuristics to defaults"
+            # Reset heuristics to empty (forces fallback to keyword_match defaults)
+            local tmp_heur
+            tmp_heur=$(mktemp)
+            echo '{"keyword_weights": {}, "meta_reverted_at": "'"$(now_iso)"'", "revert_reason": "accuracy_below_floor"}' > "$tmp_heur"
+            _recruit_locked_write "$HEURISTICS_DB" "$tmp_heur" || rm -f "$tmp_heur"
+            emit_event "recruit_meta_revert" "accuracy=${current_accuracy}" "floor=${accuracy_floor}" "reason=declining_below_floor"
+        else
+            emit_event "recruit_meta_warning" "accuracy=${current_accuracy}" "trend=declining" "first_half=${first_half_avg}" "second_half=${second_half_avg}"
+        fi
+    elif [[ "$is_below_floor" == "1" ]]; then
+        warn "META-LOOP: Accuracy ${current_accuracy}% below floor ${accuracy_floor}%"
+        emit_event "recruit_meta_warning" "accuracy=${current_accuracy}" "floor=${accuracy_floor}" "trend=low"
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1610,8 +1754,9 @@ cmd_self_tune() {
     local total_matches
     total_matches=$(wc -l < "$MATCH_HISTORY" 2>/dev/null | tr -d ' ')
 
-    if [[ "$total_matches" -lt 5 ]]; then
-        warn "Need at least 5 matches to self-tune (have ${total_matches})"
+    local min_matches="${RECRUIT_SELF_TUNE_MIN_MATCHES:-5}"
+    if [[ "$total_matches" -lt "$min_matches" ]]; then
+        warn "Need at least ${min_matches} matches to self-tune (have ${total_matches})"
         return 0
     fi
 
@@ -1962,7 +2107,7 @@ cmd_promote() {
     local agent_count
     agent_count=$(echo "$pop_stats" | jq -r '.count')
 
-    local promote_sr_threshold=95
+    local promote_sr_threshold="${RECRUIT_PROMOTE_SUCCESS:-85}"
     local promote_q_threshold=9
     local demote_sr_threshold=60
     local demote_q_threshold=5
@@ -2190,6 +2335,7 @@ ${BOLD}AGI-LEVEL (Tier 3)${RESET}
   ${CYAN}mind${RESET} [agent-id]          Theory of mind: agent working style profiles
   ${CYAN}decompose${RESET} "<goal>"       Break vague goals into sub-tasks + role assignments
   ${CYAN}self-tune${RESET}                Self-modify keyword→role heuristics from outcomes
+  ${CYAN}audit${RESET}                   Negative-compounding self-audit of all loops and integrations
 
 ${BOLD}EXAMPLES${RESET}
   ${DIM}shipwright recruit match "Add OAuth2 authentication"${RESET}
@@ -2207,6 +2353,241 @@ ${BOLD}ROLE CATALOG${RESET}
 
 ${DIM}Store: ~/.shipwright/recruitment/${RESET}
 EOF
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NEGATIVE-COMPOUNDING FEEDBACK LOOP (Self-Audit)
+#
+# This command systematically asks every hard question about the system:
+# - What's broken? What's not wired? What's not fully implemented?
+# - Are feedback loops closed? Does data actually flow?
+# - Are integrations proven or just claimed?
+#
+# Findings compound: each audit creates a score, the score feeds into the
+# system, and declining scores trigger automated remediation.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+cmd_audit() {
+    ensure_recruit_dir
+
+    info "Running negative-compounding self-audit..."
+    echo ""
+
+    local total_checks=0
+    local pass_count=0
+    local fail_count=0
+    local warnings=()
+    local failures=()
+
+    _audit_check() {
+        local name="$1"
+        local result="$2"  # pass|fail|warn
+        local detail="$3"
+        total_checks=$((total_checks + 1))
+        case "$result" in
+            pass) pass_count=$((pass_count + 1)); echo -e "  ${GREEN}✓${RESET} $name" ;;
+            fail) fail_count=$((fail_count + 1)); failures+=("$name: $detail"); echo -e "  ${RED}✗${RESET} $name — $detail" ;;
+            warn) pass_count=$((pass_count + 1)); warnings+=("$name: $detail"); echo -e "  ${YELLOW}⚠${RESET} $name — $detail" ;;
+        esac
+    }
+
+    echo -e "${BOLD}1. DATA STORES${RESET}"
+
+    # Check all data stores exist and are valid JSON
+    for db_name in ROLES_DB PROFILES_DB ROLE_USAGE_DB HEURISTICS_DB META_LEARNING_DB AGENT_MINDS_DB; do
+        local db_path="${!db_name}"
+        if [[ -f "$db_path" ]]; then
+            if jq empty "$db_path" 2>/dev/null; then
+                _audit_check "$db_name is valid JSON" "pass" ""
+            else
+                _audit_check "$db_name is valid JSON" "fail" "corrupted JSON"
+            fi
+        else
+            _audit_check "$db_name exists" "warn" "not yet created (will be on first use)"
+        fi
+    done
+    [[ -f "$MATCH_HISTORY" ]] && _audit_check "MATCH_HISTORY exists" "pass" "" || _audit_check "MATCH_HISTORY exists" "warn" "no matches yet"
+    echo ""
+
+    echo -e "${BOLD}2. FEEDBACK LOOPS${RESET}"
+
+    # Loop 1: Role usage tracking — do successes/failures get updated?
+    if [[ -f "$ROLE_USAGE_DB" ]]; then
+        local has_outcomes
+        has_outcomes=$(jq '[.[]] | map(select(.successes > 0 or .failures > 0)) | length' "$ROLE_USAGE_DB" 2>/dev/null || echo "0")
+        if [[ "$has_outcomes" -gt 0 ]]; then
+            _audit_check "Role usage tracks outcomes (successes/failures)" "pass" ""
+        else
+            _audit_check "Role usage tracks outcomes (successes/failures)" "warn" "all roles have 0 successes & 0 failures — run pipelines first"
+        fi
+    else
+        _audit_check "Role usage tracks outcomes" "warn" "no role-usage.json yet"
+    fi
+
+    # Loop 2: Match → outcome linkage
+    if [[ -f "$MATCH_HISTORY" ]]; then
+        local has_match_ids
+        has_match_ids=$(head -5 "$MATCH_HISTORY" | jq -r '.match_id // empty' 2>/dev/null | head -1)
+        if [[ -n "$has_match_ids" ]]; then
+            _audit_check "Match history has match_id for outcome linkage" "pass" ""
+        else
+            _audit_check "Match history has match_id for outcome linkage" "fail" "old records lack match_id — run new matches"
+        fi
+
+        local resolved_outcomes
+        resolved_outcomes=$(grep -cE '"outcome":"(success|failure)"' "$MATCH_HISTORY" 2>/dev/null | tr -d '[:space:]' || true)
+        resolved_outcomes="${resolved_outcomes:-0}"
+        local total_mh
+        total_mh=$(wc -l < "$MATCH_HISTORY" 2>/dev/null | tr -d ' ')
+        if [[ "$resolved_outcomes" -gt 0 ]]; then
+            _audit_check "Match outcomes backfilled" "pass" "${resolved_outcomes}/${total_mh} resolved"
+        else
+            _audit_check "Match outcomes backfilled" "warn" "0/${total_mh} resolved — need pipeline outcomes"
+        fi
+    else
+        _audit_check "Match → outcome linkage" "warn" "no match history yet"
+    fi
+
+    # Loop 3: Self-tune effectiveness
+    if [[ -f "$HEURISTICS_DB" ]]; then
+        local kw_count
+        kw_count=$(jq '.keyword_weights | length' "$HEURISTICS_DB" 2>/dev/null || echo "0")
+        if [[ "$kw_count" -gt 0 ]]; then
+            _audit_check "Self-tune has learned keyword weights" "pass" "${kw_count} keywords"
+        else
+            _audit_check "Self-tune has learned keyword weights" "warn" "empty — need more match/outcome data"
+        fi
+    else
+        _audit_check "Self-tune active" "warn" "no heuristics.json yet"
+    fi
+
+    # Loop 4: Meta-learning accuracy trend
+    if [[ -f "$META_LEARNING_DB" ]]; then
+        local trend_len
+        trend_len=$(jq '.accuracy_trend | length' "$META_LEARNING_DB" 2>/dev/null || echo "0")
+        if [[ "$trend_len" -ge 3 ]]; then
+            local latest_acc
+            latest_acc=$(jq '.accuracy_trend[-1].accuracy' "$META_LEARNING_DB" 2>/dev/null || echo "0")
+            local floor="${RECRUIT_META_ACCURACY_FLOOR:-50}"
+            if awk -v a="$latest_acc" -v f="$floor" 'BEGIN{exit !(a >= f)}'; then
+                _audit_check "Meta-learning accuracy above floor" "pass" "${latest_acc}% >= ${floor}%"
+            else
+                _audit_check "Meta-learning accuracy above floor" "fail" "${latest_acc}% < ${floor}%"
+            fi
+        else
+            _audit_check "Meta-learning has accuracy trend" "warn" "only ${trend_len} data points (need 3+)"
+        fi
+    else
+        _audit_check "Meta-learning active" "warn" "no meta-learning.json yet"
+    fi
+    echo ""
+
+    echo -e "${BOLD}3. INTEGRATION WIRING${RESET}"
+
+    # Check each integration exists in the source
+    for script_check in \
+        "sw-pipeline.sh:sw-recruit.sh.*match.*--json:pipeline model selection" \
+        "sw-pipeline.sh:sw-recruit.sh.*ingest-pipeline:pipeline auto-ingest" \
+        "sw-pipeline.sh:agent_id=.*PIPELINE_AGENT_ID:pipeline agent_id in events" \
+        "sw-pm.sh:sw-recruit.sh.*team.*--json:PM team integration" \
+        "sw-triage.sh:sw-recruit.sh.*team.*--json:triage team integration" \
+        "sw-loop.sh:sw-recruit.sh.*team.*--json:loop role assignment" \
+        "sw-loop.sh:recruit_roles_db:loop recruit DB descriptions" \
+        "sw-swarm.sh:sw-recruit.sh.*match.*--json:swarm type selection" \
+        "sw-autonomous.sh:sw-recruit.sh.*match.*--json:autonomous model selection" \
+        "sw-autonomous.sh:sw-recruit.sh.*team.*--json:autonomous team recommendation" \
+        "sw-pipeline.sh:intelligence_validate_prediction:pipeline intelligence validation" \
+        "sw-pipeline.sh:confirm-anomaly:pipeline predictive anomaly confirmation" \
+        "sw-pipeline.sh:fix-outcome.*true.*false:pipeline memory negative fix-outcome" \
+        "sw-triage.sh:gh_available=false:triage offline fallback support"; do
+        local sc="${script_check%%:*}"; local rest="${script_check#*:}"
+        local pat="${rest%%:*}"; local desc="${rest#*:}"
+        if [[ -f "$SCRIPT_DIR/$sc" ]] && grep -qE "$pat" "$SCRIPT_DIR/$sc" 2>/dev/null; then
+            _audit_check "$desc ($sc)" "pass" ""
+        else
+            _audit_check "$desc ($sc)" "fail" "pattern not found"
+        fi
+    done
+    echo ""
+
+    echo -e "${BOLD}4. POLICY GOVERNANCE${RESET}"
+
+    if [[ -f "$POLICY_FILE" ]]; then
+        local has_recruit_section
+        has_recruit_section=$(jq '.recruit // empty' "$POLICY_FILE" 2>/dev/null)
+        if [[ -n "$has_recruit_section" ]]; then
+            _audit_check "policy.json has recruit section" "pass" ""
+        else
+            _audit_check "policy.json has recruit section" "fail" "missing recruit section"
+        fi
+    else
+        _audit_check "policy.json exists" "fail" "config/policy.json not found"
+    fi
+    echo ""
+
+    echo -e "${BOLD}5. AUTOMATION TRIGGERS${RESET}"
+
+    grep -q "cmd_self_tune.*2>/dev/null" "$SCRIPT_DIR/sw-recruit.sh" && \
+        _audit_check "Self-tune auto-triggers after ingest" "pass" "" || \
+        _audit_check "Self-tune auto-triggers after ingest" "fail" "not wired"
+
+    grep -q "cmd_evolve.*2>/dev/null" "$SCRIPT_DIR/sw-recruit.sh" && \
+        _audit_check "Evolve auto-triggers after sufficient outcomes" "pass" "" || \
+        _audit_check "Evolve auto-triggers after sufficient outcomes" "fail" "not wired"
+
+    grep -q "_recruit_meta_validate_self_tune" "$SCRIPT_DIR/sw-recruit.sh" && \
+        _audit_check "Meta-validation runs during reflect" "pass" "" || \
+        _audit_check "Meta-validation runs during reflect" "fail" "not wired"
+    echo ""
+
+    # ── Compute score ────────────────────────────────────────────────────────
+    local score
+    score=$(awk -v p="$pass_count" -v t="$total_checks" 'BEGIN{if(t>0) printf "%.1f", (p/t)*100; else print "0"}')
+
+    echo "════════════════════════════════════════════════════════════════"
+    echo -e "${BOLD}AUDIT SCORE:${RESET} ${score}% (${pass_count}/${total_checks} checks passed, ${fail_count} failures, ${#warnings[@]} warnings)"
+    echo "════════════════════════════════════════════════════════════════"
+
+    # Record audit result in events for trend tracking
+    emit_event "recruit_audit" "score=${score}" "passed=${pass_count}" "failed=${fail_count}" "warnings=${#warnings[@]}" "total=${total_checks}"
+
+    # Track audit score trend in meta-learning DB
+    if [[ -f "$META_LEARNING_DB" ]]; then
+        local tmp_audit
+        tmp_audit=$(mktemp)
+        jq --argjson score "$score" --arg ts "$(now_iso)" --argjson fails "$fail_count" '
+            .audit_trend = ((.audit_trend // []) + [{score: $score, ts: $ts, failures: $fails}] | .[-50:])
+        ' "$META_LEARNING_DB" > "$tmp_audit" && _recruit_locked_write "$META_LEARNING_DB" "$tmp_audit" || rm -f "$tmp_audit"
+    fi
+
+    # Negative compounding: if score is declining, escalate
+    if [[ -f "$META_LEARNING_DB" ]]; then
+        local audit_trend_len
+        audit_trend_len=$(jq '.audit_trend // [] | length' "$META_LEARNING_DB" 2>/dev/null || echo "0")
+        if [[ "$audit_trend_len" -ge 3 ]]; then
+            local prev_score
+            prev_score=$(jq '.audit_trend[-2].score // 100' "$META_LEARNING_DB" 2>/dev/null || echo "100")
+            if awk -v c="$score" -v p="$prev_score" 'BEGIN{exit !(c < p - 5)}'; then
+                echo ""
+                warn "NEGATIVE COMPOUND: Audit score DECLINED from ${prev_score}% to ${score}%"
+                warn "System health is degrading. Failures that compound:"
+                for f in "${failures[@]}"; do
+                    echo -e "  ${RED}→${RESET} $f"
+                done
+                emit_event "recruit_audit_decline" "from=${prev_score}" "to=${score}" "failures=${fail_count}"
+            fi
+        fi
+    fi
+
+    if [[ ${#failures[@]} -gt 0 ]]; then
+        echo ""
+        echo -e "${RED}${BOLD}FAILURES REQUIRING ACTION:${RESET}"
+        for f in "${failures[@]}"; do
+            echo -e "  ${RED}→${RESET} $f"
+        done
+    fi
+
+    [[ "$fail_count" -gt 0 ]] && return 1 || return 0
 }
 
 # ─── Main Router ──────────────────────────────────────────────────────────
@@ -2237,6 +2618,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
         mind)               cmd_mind "$@" ;;
         decompose)          cmd_decompose "$@" ;;
         self-tune)          cmd_self_tune ;;
+        audit)              cmd_audit ;;
         help|--help|-h)     cmd_help ;;
         *)
             error "Unknown command: ${cmd}"

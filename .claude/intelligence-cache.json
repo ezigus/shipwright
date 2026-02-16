@@ -37,7 +37,7 @@
       "result": {
         "raw_response": "Mock claude response"
       },
-      "timestamp": 1771256514,
+      "timestamp": 1771261744,
       "ttl": 3600
     },
     "efd5524ad1244fd20344bf3ff5d95233": {
@@ -242,6 +242,20 @@
       },
       "timestamp": 1770989238,
       "ttl": 3600
+    },
+    "a156bf0ffb49fa11868c31f028b2ef7b": {
+      "result": {
+        "raw_response": "Mock"
+      },
+      "timestamp": 1771260287,
+      "ttl": 1800
+    },
+    "f8fafd1134348ffe747e928d4eea3cca": {
+      "result": {
+        "raw_response": "Mock"
+      },
+      "timestamp": 1771260287,
+      "ttl": 1800
     }
   }
 }

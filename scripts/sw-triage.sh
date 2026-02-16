@@ -10,46 +10,38 @@ VERSION="2.1.2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'     # #00d4ff — primary accent
-PURPLE='\033[38;2;124;58;237m'  # #7c3aed — secondary
-BLUE='\033[38;2;0;102;255m'     # #0066ff — tertiary
-GREEN='\033[38;2;74;222;128m'   # success
-YELLOW='\033[38;2;250;204;21m'  # warning
-RED='\033[38;2;248;113;113m'    # error
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
-
-# ─── Helpers ─────────────────────────────────────────────────────────────────
-
-info()    { echo -e "${CYAN}${BOLD}▸${RESET} $*"; }
-success() { echo -e "${GREEN}${BOLD}✓${RESET} $*"; }
-warn()    { echo -e "${YELLOW}${BOLD}⚠${RESET} $*"; }
-error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
-
-now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
-
-# ─── Structured Event Log ──────────────────────────────────────────────────
-
-emit_event() {
-    local event_type="$1"; shift
-    local events_file="${HOME}/.shipwright/events.jsonl"
-    mkdir -p "$(dirname "$events_file")"
-    local payload="{\"ts\":\"$(now_iso)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do
-        local key="${1%%=*}" val="${1#*=}"
-        val="${val//\"/\\\"}"
-        payload="${payload},\"${key}\":\"${val}\""
-        shift
-    done
-    payload="${payload}}"
-    echo "$payload" >> "$events_file"
-}
+# Canonical helpers (colors, output, events)
+# shellcheck source=lib/helpers.sh
+[[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
+[[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
+[[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
+[[ "$(type -t warn 2>/dev/null)" == "function" ]]    || warn()    { echo -e "\033[38;2;250;204;21m\033[1m⚠\033[0m $*"; }
+[[ "$(type -t error 2>/dev/null)" == "function" ]]   || error()   { echo -e "\033[38;2;248;113;113m\033[1m✗\033[0m $*" >&2; }
+if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
+  now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+  now_epoch() { date +%s; }
+fi
+if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
+  emit_event() {
+    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
+    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
+  }
+fi
+CYAN="${CYAN:-\033[38;2;0;212;255m}"
+PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
+BLUE="${BLUE:-\033[38;2;0;102;255m}"
+GREEN="${GREEN:-\033[38;2;74;222;128m}"
+YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
+RED="${RED:-\033[38;2;248;113;113m}"
+DIM="${DIM:-\033[2m}"
+BOLD="${BOLD:-\033[1m}"
+RESET="${RESET:-\033[0m}"
 
 # ─── GitHub API (safe when NO_GITHUB set) ──────────────────────────────────
 
@@ -390,38 +382,53 @@ cmd_team() {
     local issue="${1:-}"
     [[ -z "$issue" ]] && { error "Usage: triage team <issue>"; exit 1; }
 
-    check_gh
-
     info "Recommending team setup for issue ${CYAN}${issue}${RESET}..."
 
-    # Get analysis
-    local analysis
-    analysis=$(cmd_analyze "$issue" 2>/dev/null)
+    # Determine if GitHub is available (don't exit — allow offline fallback)
+    local gh_available=false
+    if [[ "${NO_GITHUB:-}" != "1" ]] && command -v gh &>/dev/null; then
+        gh_available=true
+    fi
 
-    local complexity risk effort
-    complexity=$(echo "$analysis" | jq -r '.complexity')
-    risk=$(echo "$analysis" | jq -r '.risk')
-    effort=$(echo "$analysis" | jq -r '.effort')
+    # Get analysis (requires gh) — use defaults when offline
+    local analysis="" complexity="moderate" risk="medium" effort="m"
+    if $gh_available; then
+        analysis=$(cmd_analyze "$issue" 2>/dev/null) || true
+        if [[ -n "$analysis" ]]; then
+            complexity=$(echo "$analysis" | jq -r '.complexity // "moderate"')
+            risk=$(echo "$analysis" | jq -r '.risk // "medium"')
+            effort=$(echo "$analysis" | jq -r '.effort // "m"')
+        fi
+    else
+        warn "GitHub unavailable — using defaults for complexity/risk analysis"
+    fi
 
     # ── Try recruit-powered team composition first ──
     local template="" model="" max_iterations="" agents=""
     local recruit_source="heuristic"
     if [[ -x "${SCRIPT_DIR:-}/sw-recruit.sh" ]]; then
-        local issue_title
-        issue_title=$(gh issue view "$issue" --json title -q '.title' 2>/dev/null || echo "")
-        if [[ -n "$issue_title" ]]; then
-            local recruit_result
-            recruit_result=$(bash "$SCRIPT_DIR/sw-recruit.sh" team --json "$issue_title" 2>/dev/null) || true
-            if [[ -n "$recruit_result" ]] && echo "$recruit_result" | jq -e '.team' &>/dev/null 2>&1; then
-                model=$(echo "$recruit_result" | jq -r '.model // "sonnet"')
-                agents=$(echo "$recruit_result" | jq -r '.agents // 2')
-                # Map agent count to template
-                if [[ "$agents" -ge 4 ]]; then template="full"; max_iterations=15;
-                elif [[ "$agents" -ge 3 ]]; then template="standard"; max_iterations=8;
-                elif [[ "$agents" -le 1 ]]; then template="fast"; max_iterations=2;
-                else template="standard"; max_iterations=5; fi
-                recruit_source="recruit"
+        local issue_title=""
+        # Try to get title from GitHub; fall back to issue number as description
+        if $gh_available; then
+            issue_title=$(gh issue view "$issue" --json title -q '.title' 2>/dev/null || echo "")
+        fi
+        [[ -z "$issue_title" ]] && issue_title="Issue #${issue}"
+
+        local recruit_result
+        recruit_result=$(bash "$SCRIPT_DIR/sw-recruit.sh" team --json "$issue_title" 2>/dev/null) || true
+        if [[ -n "$recruit_result" ]] && echo "$recruit_result" | jq -e '.team' &>/dev/null 2>&1; then
+            model=$(echo "$recruit_result" | jq -r '.model // "sonnet"')
+            agents=$(echo "$recruit_result" | jq -r '.agents // 2')
+            template=$(echo "$recruit_result" | jq -r '.template // ""')
+            max_iterations=$(echo "$recruit_result" | jq -r '.max_iterations // ""')
+            # If recruit didn't provide template/max_iterations, derive from agent count
+            if [[ -z "$template" ]]; then
+                if [[ "$agents" -ge 4 ]]; then template="full"; max_iterations="${max_iterations:-15}";
+                elif [[ "$agents" -ge 3 ]]; then template="standard"; max_iterations="${max_iterations:-8}";
+                elif [[ "$agents" -le 1 ]]; then template="fast"; max_iterations="${max_iterations:-2}";
+                else template="standard"; max_iterations="${max_iterations:-5}"; fi
             fi
+            recruit_source="recruit"
         fi
     fi
 

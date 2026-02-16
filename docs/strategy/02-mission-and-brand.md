@@ -57,7 +57,7 @@ Shipwright orchestrates autonomous Claude Code agent teams with full-cycle deliv
 
 **Headline:** From GitHub issue to merged PR with zero human in the loop
 **Description:** Label a GitHub issue with `shipwright` and walk away. The daemon watches, triages, plans, designs, builds, tests, reviews, gates, and merges — all while learning from failures and adapting its approach. Teams get back 20+ hours per engineer per month by eliminating manual triage, code review, and routine feature shipping.
-**Proof Point:** Shipwright dogfoods itself — this repo processes its own issues with zero human intervention. See [live examples](../../actions/workflows/shipwright-pipeline.yml).
+**Proof Point:** Shipwright dogfoods itself — this repo processes its own issues with zero human intervention. See [live examples](../../.github/workflows/shipwright-pipeline.yml).
 
 ### 2. **Autonomous Teams That Learn**
 
@@ -572,8 +572,8 @@ This document will evolve. Update it when:
 - Metrics show messaging isn't landing
 - Team adds new features that shift differentiation
 
-**Last updated:** 2025-02-14
-**Next review:** 2025-05-14 (quarterly)
+**Last updated:** 2026-02-14
+**Next review:** 2026-05-14 (quarterly)
 **Owner:** Brand / Product Marketing
 
 ---

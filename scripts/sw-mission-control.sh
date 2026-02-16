@@ -46,28 +46,9 @@ format_duration() {
     fi
 }
 
-# ─── Structured Event Log ──────────────────────────────────────────────────
+# ─── Daemon State ───────────────────────────────────────────────────────────
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
 DAEMON_STATE="${HOME}/.shipwright/daemon-state.json"
-
-emit_event() {
-    local event_type="$1"
-    shift
-    local json_fields=""
-    for kv in "$@"; do
-        local key="${kv%%=*}"
-        local val="${kv#*=}"
-        if [[ "$val" =~ ^-?[0-9]+\.?[0-9]*$ ]]; then
-            json_fields="${json_fields},\"${key}\":${val}"
-        else
-            local escaped_val
-            escaped_val=$(printf '%s' "$val" | jq -Rs '.' 2>/dev/null || printf '"%s"' "${val//\"/\\\"}")
-            json_fields="${json_fields},\"${key}\":${escaped_val}"
-        fi
-    done
-    mkdir -p "${HOME}/.shipwright"
-    echo "{\"ts\":\"$(now_iso)\",\"ts_epoch\":$(now_epoch),\"type\":\"${event_type}\"${json_fields}}" >> "$EVENTS_FILE"
-}
 
 # ─── Daemon State Access ───────────────────────────────────────────────────
 load_daemon_state() {

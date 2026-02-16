@@ -21,10 +21,23 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load sweep policy from config
+        run: |
+          if [ -f config/policy.json ]; then
+            echo "STUCK_THRESHOLD_HOURS=$(jq -r '.sweep.stuck_threshold_hours // 4' config/policy.json)" >> $GITHUB_ENV
+            echo "RETRY_TEMPLATE=$(jq -r '.sweep.retry_template // "full"' config/policy.json)" >> $GITHUB_ENV
+            echo "RETRY_MAX_ITERATIONS=$(jq -r '.sweep.retry_max_iterations // 25' config/policy.json)" >> $GITHUB_ENV
+            echo "STUCK_RETRY_MAX_ITERATIONS=$(jq -r '.sweep.stuck_retry_max_iterations // 30' config/policy.json)" >> $GITHUB_ENV
+          fi
+
       - name: Sweep shipwright issues
         id: find
         run: |
           echo "--- Shipwright Sweep: $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"
+          STUCK_HOURS="${STUCK_THRESHOLD_HOURS:-4}"
 
           # Get all open issues with the 'shipwright' label
           ISSUES=$(gh issue list --repo "$GITHUB_REPOSITORY" \
@@ -40,9 +53,9 @@ jobs:
 
           echo "Found shipwright issues: $ISSUES"
 
-          # Timestamps for lookback windows
+          # Timestamps for lookback windows (stuck threshold from policy when present)
           ONE_HOUR_AGO=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-1H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2000-01-01T00:00:00Z")
-          FOUR_HOURS_AGO=$(date -u -d '4 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-4H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2000-01-01T00:00:00Z")
+          FOUR_HOURS_AGO=$(date -u -d "${STUCK_HOURS} hours ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-${STUCK_HOURS}H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2000-01-01T00:00:00Z")
 
           DISPATCH=""
           STUCK=""
@@ -144,8 +157,8 @@ jobs:
               gh workflow run shipwright-pipeline.yml \
                 --repo "$GITHUB_REPOSITORY" \
                 -f issue_number="$issue" \
-                -f template=full \
-                -f max_iterations="25" \
+                -f template="${RETRY_TEMPLATE:-full}" \
+                -f max_iterations="${RETRY_MAX_ITERATIONS:-25}" \
                 -f completed_stages="$COMPLETED_STAGES" \
                 -f skip_triage=true 2>&1 || echo "  Failed to dispatch retry for #$issue"
               sleep 5
@@ -254,8 +267,8 @@ jobs:
             gh workflow run shipwright-pipeline.yml \
               --repo "$GITHUB_REPOSITORY" \
               -f issue_number="$issue" \
-              -f template=full \
-              -f max_iterations="30" \
+              -f template="${RETRY_TEMPLATE:-full}" \
+              -f max_iterations="${STUCK_RETRY_MAX_ITERATIONS:-30}" \
               -f skip_triage=true 2>&1 || echo "  Failed to dispatch for stuck #$issue"
             sleep 5
           done

@@ -145,7 +145,7 @@ Press `prefix + G` to toggle zoom on the current pane. This makes one agent fill
 
 ### Synchronized input
 
-Press `prefix + Alt-t` to toggle synchronized panes. When enabled, anything you type goes to ALL panes simultaneously. Useful for:
+Press `prefix + S` or `prefix + Alt-t` (M-t) to toggle synchronized panes. When enabled, anything you type goes to ALL panes simultaneously. Useful for:
 
 - Stopping all agents at once (`Ctrl-C` in all panes)
 - Running the same command in all agent directories
@@ -154,7 +154,7 @@ Press `prefix + Alt-t` to toggle synchronized panes. When enabled, anything you 
 
 ### Capture pane contents
 
-Press `prefix + Alt-s` to save the current pane's visible content to a file in `/tmp/`. Useful for debugging agent output after the fact.
+Press `prefix + Alt-s` (M-s) to save the current pane's visible content to a file in `/tmp/`. Useful for debugging agent output after the fact.
 
 ---
 
@@ -341,3 +341,40 @@ Each agent writes findings/results to a file in this directory. The team lead re
 | [Test Generation](patterns/test-generation.md)               | 3-4+  | 2-3    | Coverage campaigns          |
 | [Refactoring](patterns/refactoring.md)                       | 3-4   | 2      | Large-scale transformations |
 | [Bug Hunt](patterns/bug-hunt.md)                             | 3-4   | 2-3    | Complex, elusive bugs       |
+
+---
+
+## Shipwright-Specific Tips
+
+### Use `--worktree` for parallel builds
+
+When running multiple agents or pipelines concurrently, use worktree isolation to avoid conflicts:
+
+```bash
+shipwright pipeline start --issue 42 --worktree
+shipwright loop "Refactor auth" --agents 2 --worktree
+```
+
+### Keep docs in sync
+
+```bash
+shipwright docs check   # Report stale AUTO sections (exit 1 if any)
+shipwright docs sync   # Regenerate all stale sections
+```
+
+### Definition of Done for loops
+
+Use a DoD file with `shipwright loop` to prevent premature completion:
+
+```bash
+shipwright loop "Add RBAC" --quality-gates --definition-of-done dod.md
+```
+
+Template at `docs/definition-of-done.example.md` (or `~/.shipwright/templates/` after install).
+
+### Run all test suites
+
+```bash
+npm test              # All 96+ test suites
+./scripts/sw-pipeline-test.sh   # Pipeline tests only (no real Claude/GitHub)
+```

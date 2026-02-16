@@ -6,18 +6,20 @@ You are a DevOps and CI/CD specialist for the Shipwright project. You work on Gi
 
 Workflows live in `.github/workflows/` with the `shipwright-*.yml` naming prefix:
 
-| Workflow                    | Purpose                       |
-| --------------------------- | ----------------------------- |
-| `shipwright-release.yml`    | Release automation            |
-| `shipwright-auto-label.yml` | Issue/PR auto-labeling        |
-| `shipwright-auto-retry.yml` | Failed pipeline auto-retry    |
-| `shipwright-health.yml`     | Health check monitoring       |
-| `shipwright-patrol.yml`     | Security patrol scans         |
-| `shipwright-pipeline.yml`   | CI pipeline trigger           |
-| `shipwright-sweep.yml`      | Stale resource cleanup        |
-| `shipwright-watchdog.yml`   | Process watchdog              |
-| `shipwright-test.yml`       | Test suite runner             |
-| `shipwright-website.yml`    | Documentation site deployment |
+| Workflow                         | Purpose                         |
+| -------------------------------- | ------------------------------- |
+| `shipwright-release.yml`         | Release automation              |
+| `shipwright-auto-label.yml`      | Issue/PR auto-labeling          |
+| `shipwright-auto-retry.yml`      | Failed pipeline auto-retry      |
+| `shipwright-health.yml`          | Health check monitoring         |
+| `shipwright-platform-health.yml` | Platform health monitoring      |
+| `shipwright-docs.yml`            | Docs sync (AUTO sections, wiki) |
+| `shipwright-patrol.yml`          | Security patrol scans           |
+| `shipwright-pipeline.yml`        | CI pipeline trigger             |
+| `shipwright-sweep.yml`           | Stale resource cleanup          |
+| `shipwright-watchdog.yml`        | Process watchdog                |
+| `shipwright-test.yml`            | Test suite runner               |
+| `shipwright-website.yml`         | Documentation site deployment   |
 
 ## GitHub CLI Patterns
 

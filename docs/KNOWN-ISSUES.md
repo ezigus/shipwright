@@ -142,28 +142,6 @@ If only one pane is listed while agents are active, the fallback occurred.
 
 ---
 
-## White/Bright Pane Backgrounds on Agent Spawn
-
-**Severity:** Medium — cosmetic but distracting
-
-**Problem:** When Claude Code spawns agent panes via tmux, new panes sometimes inherit the terminal's default background (often white/bright) instead of the tmux dark theme.
-
-**Root Cause:** tmux's `window-style` applies at the window level but newly spawned panes from external processes (like Claude Code) don't always inherit it.
-
-**Fix:** As of v1.3.0, `shipwright-overlay.conf` uses `set-hook` to force the dark theme on every new pane:
-
-```conf
-set-hook -g after-split-window "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
-set-hook -g after-new-window   "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
-set-hook -g after-new-session  "select-pane -P 'bg=#1a1a2e,fg=#e4e4e7'"
-```
-
-Run `shipwright init` or `shipwright upgrade --apply` to get the updated overlay with these hooks.
-
-**Status:** ✅ Resolved in v1.3.0
-
----
-
 ## TPM plugins not loading
 
 **Severity:** Low — cosmetic
@@ -204,4 +182,4 @@ shipwright reaper --dry-run    # Preview what would be reaped
 
 Or use the tmux keybinding: `prefix + R` for a quick one-shot cleanup.
 
-**Status:** Resolved in v1.6.0
+**Status:** ✅ Resolved in v1.6.0 — reaper is the recommended solution.

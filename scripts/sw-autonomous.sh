@@ -11,29 +11,38 @@ VERSION="2.1.2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'     # #00d4ff — primary accent
-PURPLE='\033[38;2;124;58;237m'  # #7c3aed — secondary
-BLUE='\033[38;2;0;102;255m'     # #0066ff — tertiary
-GREEN='\033[38;2;74;222;128m'   # success
-YELLOW='\033[38;2;250;204;21m'  # warning
-RED='\033[38;2;248;113;113m'    # error
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
-
-# ─── Output Helpers ─────────────────────────────────────────────────────────
-info()    { echo -e "${CYAN}${BOLD}▸${RESET} $*"; }
-success() { echo -e "${GREEN}${BOLD}✓${RESET} $*"; }
-warn()    { echo -e "${YELLOW}${BOLD}⚠${RESET} $*"; }
-error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
-
-now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
-now_epoch() { date +%s; }
+# Canonical helpers (colors, output, events)
+# shellcheck source=lib/helpers.sh
+[[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
+[[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
+[[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
+[[ "$(type -t warn 2>/dev/null)" == "function" ]]    || warn()    { echo -e "\033[38;2;250;204;21m\033[1m⚠\033[0m $*"; }
+[[ "$(type -t error 2>/dev/null)" == "function" ]]   || error()   { echo -e "\033[38;2;248;113;113m\033[1m✗\033[0m $*" >&2; }
+if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
+  now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+  now_epoch() { date +%s; }
+fi
+if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
+  emit_event() {
+    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
+    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
+  }
+fi
+CYAN="${CYAN:-\033[38;2;0;212;255m}"
+PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
+BLUE="${BLUE:-\033[38;2;0;102;255m}"
+GREEN="${GREEN:-\033[38;2;74;222;128m}"
+YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
+RED="${RED:-\033[38;2;248;113;113m}"
+DIM="${DIM:-\033[2m}"
+BOLD="${BOLD:-\033[1m}"
+RESET="${RESET:-\033[0m}"
 
 format_duration() {
     local secs="$1"
@@ -48,24 +57,6 @@ format_duration() {
 
 # ─── Structured Event Log ──────────────────────────────────────────────────
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
-
-emit_event() {
-    local event_type="$1"
-    shift
-    local json_fields=""
-    for kv in "$@"; do
-        local key="${kv%%=*}"
-        local val="${kv#*=}"
-        if [[ "$val" =~ ^-?[0-9]+\.?[0-9]*$ ]]; then
-            json_fields="${json_fields},\"${key}\":${val}"
-        else
-            val="${val//\"/\\\"}"
-            json_fields="${json_fields},\"${key}\":\"${val}\""
-        fi
-    done
-    mkdir -p "${HOME}/.shipwright"
-    echo "{\"ts\":\"$(now_iso)\",\"ts_epoch\":$(now_epoch),\"type\":\"${event_type}\"${json_fields}}" >> "$EVENTS_FILE"
-}
 
 # ─── State & Config Paths ─────────────────────────────────────────────────
 STATE_DIR="${HOME}/.shipwright/autonomous"
@@ -310,8 +301,22 @@ trigger_pipeline_for_finding() {
     if [[ ! -x "$SCRIPT_DIR/sw-pipeline.sh" ]]; then
         return 0
     fi
+
+    # Use recruit for model/team selection when available
+    local -a recruit_args=()
+    if [[ -x "$SCRIPT_DIR/sw-recruit.sh" ]]; then
+        local recruit_match
+        recruit_match=$(bash "$SCRIPT_DIR/sw-recruit.sh" match --json "$title" 2>/dev/null) || true
+        if [[ -n "$recruit_match" ]]; then
+            local rec_model
+            rec_model=$(echo "$recruit_match" | jq -r '.model // ""' 2>/dev/null) || true
+            [[ -n "$rec_model" && "$rec_model" != "null" ]] && recruit_args=(--model "$rec_model")
+            emit_event "autonomous.recruit_match" "issue=$issue_num" "role=$(echo "$recruit_match" | jq -r '.primary_role // ""' 2>/dev/null)" "model=$rec_model"
+        fi
+    fi
+
     info "Triggering pipeline for finding issue #${issue_num}: $title"
-    (cd "$REPO_DIR" && export REPO_DIR SCRIPT_DIR && bash "$SCRIPT_DIR/sw-pipeline.sh" start --issue "$issue_num" 2>/dev/null) &
+    (cd "$REPO_DIR" && export REPO_DIR SCRIPT_DIR && bash "$SCRIPT_DIR/sw-pipeline.sh" start --issue "$issue_num" "${recruit_args[@]}" 2>/dev/null) &
     emit_event "autonomous.pipeline_triggered" "issue=$issue_num" "title=$title"
 }
 
@@ -398,6 +403,21 @@ process_findings() {
         # Add category to labels if not present
         if [[ "$labels" != *"$category"* ]]; then
             labels="${category}${labels:+,$labels}"
+        fi
+
+        # Use recruit to decompose complex findings and assess team needs
+        if [[ -x "$SCRIPT_DIR/sw-recruit.sh" && "$effort" == "L" ]]; then
+            local team_json
+            team_json=$(bash "$SCRIPT_DIR/sw-recruit.sh" team --json "$title" 2>/dev/null) || true
+            if [[ -n "$team_json" ]]; then
+                local team_size
+                team_size=$(echo "$team_json" | jq -r '.agents // 0' 2>/dev/null) || true
+                [[ -n "$team_size" && "$team_size" -gt 0 ]] && \
+                    description="${description}
+
+---
+**Recruit Recommendation:** ${team_size}-agent team ($(echo "$team_json" | jq -r '.team | join(", ")' 2>/dev/null))"
+            fi
         fi
 
         local issue_num

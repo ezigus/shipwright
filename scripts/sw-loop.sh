@@ -58,7 +58,7 @@ MAX_RESTARTS=0
 SESSION_RESTART=false
 RESTART_COUNT=0
 REPO_OVERRIDE=""
-VERSION="2.1.0"
+VERSION="2.1.1"
 
 # ─── Token Tracking ─────────────────────────────────────────────────────────
 LOOP_INPUT_TOKENS=0

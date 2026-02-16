@@ -11,7 +11,7 @@ unset CLAUDECODE 2>/dev/null || true
 # Ignore SIGHUP so tmux attach/detach doesn't kill long-running plan/design/review stages
 trap '' HUP
 
-VERSION="2.1.0"
+VERSION="2.1.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -204,6 +204,7 @@ MODEL=""
 AGENTS=""
 PIPELINE_AGENT_ID="${PIPELINE_AGENT_ID:-pipeline-$$}"
 SKIP_GATES=false
+HEADLESS=false
 GIT_BRANCH=""
 GITHUB_ISSUE=""
 TASK_TYPE=""
@@ -226,6 +227,7 @@ CLEANUP_WORKTREE=false
 ORIGINAL_REPO_DIR=""
 REPO_OVERRIDE=""
 _cleanup_done=""
+PIPELINE_EXIT_CODE=1  # assume failure until run_pipeline succeeds
 
 # GitHub metadata (populated during intake)
 ISSUE_LABELS=""
@@ -273,6 +275,7 @@ show_help() {
     echo -e "  ${DIM}--model <model>${RESET}           Override AI model (opus, sonnet, haiku)"
     echo -e "  ${DIM}--agents <n>${RESET}              Override agent count"
     echo -e "  ${DIM}--skip-gates${RESET}              Auto-approve all gates (fully autonomous)"
+    echo -e "  ${DIM}--headless${RESET}                Full headless mode (skip gates, no prompts)"
     echo -e "  ${DIM}--base <branch>${RESET}           Base branch for PR (default: main)"
     echo -e "  ${DIM}--reviewers \"a,b\"${RESET}        Request PR reviewers (auto-detected if omitted)"
     echo -e "  ${DIM}--labels \"a,b\"${RESET}            Add labels to PR (inherited from issue if omitted)"
@@ -357,6 +360,7 @@ parse_args() {
             --model)       MODEL="$2"; shift 2 ;;
             --agents)      AGENTS="$2"; shift 2 ;;
             --skip-gates)  SKIP_GATES=true; shift ;;
+            --headless)    HEADLESS=true; SKIP_GATES=true; shift ;;
             --base)        BASE_BRANCH="$2"; shift 2 ;;
             --reviewers)   REVIEWERS="$2"; shift 2 ;;
             --labels)      LABELS="$2"; shift 2 ;;
@@ -393,6 +397,20 @@ parse_args() {
 PIPELINE_NAME_ARG=""
 parse_args "$@"
 
+# ─── Non-Interactive Detection ──────────────────────────────────────────────
+# When stdin is not a terminal (background, pipe, nohup, tmux send-keys),
+# auto-enable headless mode to prevent read prompts from killing the script.
+if [[ ! -t 0 ]]; then
+    HEADLESS=true
+    if [[ "$SKIP_GATES" != "true" ]]; then
+        SKIP_GATES=true
+    fi
+fi
+# --worktree implies headless when stdin is not a terminal
+if [[ "$AUTO_WORKTREE" == "true" && "$SKIP_GATES" != "true" && ! -t 0 ]]; then
+    SKIP_GATES=true
+fi
+
 # ─── Directory Setup ────────────────────────────────────────────────────────
 
 setup_dirs() {
@@ -411,10 +429,11 @@ find_pipeline_config() {
     local name="$1"
     local locations=(
         "$REPO_DIR/templates/pipelines/${name}.json"
+        "${PROJECT_ROOT:-}/templates/pipelines/${name}.json"
         "$HOME/.shipwright/pipelines/${name}.json"
     )
     for loc in "${locations[@]}"; do
-        if [[ -f "$loc" ]]; then
+        if [[ -n "$loc" && -f "$loc" ]]; then
             echo "$loc"
             return 0
         fi
@@ -7480,7 +7499,9 @@ run_pipeline() {
             if [[ "$build_gate" == "approve" && "$SKIP_GATES" != "true" ]]; then
                 show_stage_preview "build"
                 local answer=""
-                read -rp "  Proceed with build+test (self-healing)? [Y/n] " answer
+                if [[ -t 0 ]]; then
+                    read -rp "  Proceed with build+test (self-healing)? [Y/n] " answer || true
+                fi
                 if [[ "$answer" =~ ^[Nn] ]]; then
                     update_status "paused" "build"
                     info "Pipeline paused. Resume with: ${DIM}shipwright pipeline resume${RESET}"
@@ -7518,7 +7539,12 @@ run_pipeline() {
         if [[ "$gate" == "approve" && "$SKIP_GATES" != "true" ]]; then
             show_stage_preview "$id"
             local answer=""
-            read -rp "  Proceed with ${id}? [Y/n] " answer
+            if [[ -t 0 ]]; then
+                read -rp "  Proceed with ${id}? [Y/n] " answer || true
+            else
+                # Non-interactive: auto-approve (shouldn't reach here if headless detection works)
+                info "Non-interactive mode — auto-approving ${id}"
+            fi
             if [[ "$answer" =~ ^[Nn] ]]; then
                 update_status "paused" "$id"
                 info "Pipeline paused at ${BOLD}$id${RESET}. Resume with: ${DIM}shipwright pipeline resume${RESET}"
@@ -7826,8 +7852,14 @@ pipeline_cleanup_worktree() {
 
     if [[ -n "${ORIGINAL_REPO_DIR:-}" && "$worktree_path" != "$ORIGINAL_REPO_DIR" ]]; then
         cd "$ORIGINAL_REPO_DIR" 2>/dev/null || cd /
-        info "Cleaning up worktree: ${DIM}${worktree_path}${RESET}"
-        git worktree remove --force "$worktree_path" 2>/dev/null || true
+        # Only clean up worktree on success — preserve on failure for inspection
+        if [[ "${PIPELINE_EXIT_CODE:-1}" -eq 0 ]]; then
+            info "Cleaning up worktree: ${DIM}${worktree_path}${RESET}"
+            git worktree remove --force "$worktree_path" 2>/dev/null || true
+        else
+            warn "Pipeline failed — worktree preserved for inspection: ${DIM}${worktree_path}${RESET}"
+            warn "Clean up manually: ${DIM}git worktree remove --force ${worktree_path}${RESET}"
+        fi
     fi
 }
 
@@ -8110,7 +8142,9 @@ pipeline_start() {
 
     local gate_count
     gate_count=$(jq '[.stages[] | select(.gate == "approve" and .enabled == true)] | length' "$PIPELINE_CONFIG")
-    if [[ "$SKIP_GATES" == "true" ]]; then
+    if [[ "$HEADLESS" == "true" ]]; then
+        echo -e "  ${BOLD}Gates:${RESET}       ${YELLOW}all auto (headless — non-interactive stdin detected)${RESET}"
+    elif [[ "$SKIP_GATES" == "true" ]]; then
         echo -e "  ${BOLD}Gates:${RESET}       ${YELLOW}all auto (--skip-gates)${RESET}"
     else
         echo -e "  ${BOLD}Gates:${RESET}       ${gate_count} approval gate(s)"
@@ -8162,6 +8196,7 @@ pipeline_start() {
 
     run_pipeline
     local exit_code=$?
+    PIPELINE_EXIT_CODE="$exit_code"
 
     # Send completion notification + event
     local total_dur_s=""

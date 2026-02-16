@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="2.1.0"
+VERSION="2.1.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
@@ -58,7 +58,7 @@ UX_CONFIG_REPO="./.claude/ux-config.json"
 
 # Detect accessibility modes
 should_disable_colors() {
-    [[ -n "${NO_COLOR:-}" ]] || [[ -n "${CLICOLOR_FORCE:-}" && "$CLICOLOR_FORCE" == "0" ]]
+    [[ -n "${NO_COLOR:-}" ]] || [[ "${FORCE_COLOR:-}" == "0" ]] || [[ -n "${CLICOLOR_FORCE:-}" && "$CLICOLOR_FORCE" == "0" ]]
 }
 
 has_reduced_motion() {
@@ -408,9 +408,34 @@ set_reduced_motion() {
 enable_screen_reader_mode() {
     # Disable colors and animations for screen reader compatibility
     export NO_COLOR=1
+    export FORCE_COLOR=0
     export PREFERS_REDUCED_MOTION=1
+
+    # Propagate to tmux global environment so new panes inherit
+    if [[ -n "${TMUX:-}" ]]; then
+        tmux set-environment -g NO_COLOR 1
+        tmux set-environment -g FORCE_COLOR 0
+        tmux set-environment -g PREFERS_REDUCED_MOTION 1
+    fi
+
     success "Screen reader mode enabled (colors and animations disabled)"
     emit_event "ux_accessibility" "feature=screen_reader"
+}
+
+disable_screen_reader_mode() {
+    unset NO_COLOR
+    unset FORCE_COLOR
+    unset PREFERS_REDUCED_MOTION
+
+    # Remove from tmux global environment
+    if [[ -n "${TMUX:-}" ]]; then
+        tmux set-environment -g -u NO_COLOR 2>/dev/null || true
+        tmux set-environment -g -u FORCE_COLOR 2>/dev/null || true
+        tmux set-environment -g -u PREFERS_REDUCED_MOTION 2>/dev/null || true
+    fi
+
+    success "Screen reader mode disabled (colors and animations restored)"
+    emit_event "ux_accessibility" "feature=screen_reader_disabled"
 }
 
 # ─── Formatting Helpers ───────────────────────────────────────────────────
@@ -647,6 +672,9 @@ main() {
                         ;;
                     --screen-reader)
                         enable_screen_reader_mode
+                        ;;
+                    --no-screen-reader)
+                        disable_screen_reader_mode
                         ;;
                     *)
                         error "Unknown accessibility option: $1"

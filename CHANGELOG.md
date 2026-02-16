@@ -7,6 +7,26 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.1.1] — 2026-02-16
+
+**Pipeline E2E — headless execution fixes.**
+
+### Fixed
+
+- **`read -rp` kills script when headless** — gate approval prompts returned EOF (exit code 1) under `set -e` when stdin was not a terminal, instantly terminating backgrounded pipelines
+- **No non-interactive detection** — added `[[ ! -t 0 ]]` auto-detection that enables headless mode when running in background, pipe, nohup, or tmux send-keys
+- **Worktree cleanup destroys work on failure** — EXIT trap unconditionally removed worktrees; now preserves on failure for inspection
+- **Autonomous template `auto_merge: false`** — prevented fully autonomous pipelines from merging PRs; now `true`
+- **Template resolution missing project root** — `find_pipeline_config()` didn't search `$PROJECT_ROOT/templates/`, breaking worktree scenarios
+
+### Added
+
+- **`--headless` flag** — explicit headless mode (skip gates, no interactive prompts)
+- **Screen reader `FORCE_COLOR=0`** support in UX layer with tmux environment propagation
+- 4 new E2E smoke tests for headless behavior (19 total)
+
+---
+
 ## [2.1.0] — 2026-02-15
 
 **tmux Visual Overhaul & Init Hardening.**

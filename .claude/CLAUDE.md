@@ -529,7 +529,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 417 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 455 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1096 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 8505 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 8540 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 758 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 522 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 827 | Predictive & Proactive Intelligence |
@@ -566,7 +566,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-tracker.sh` | 524 | Provider Router for Issue Tracker Integration |
 | `scripts/sw-triage.sh` | 627 | Intelligent Issue Labeling & Prioritization |
 | `scripts/sw-upgrade.sh` | 479 | Detect and apply updates from the repo |
-| `scripts/sw-ux.sh` | 677 | Premium UX Enhancement Layer |
+| `scripts/sw-ux.sh` | 705 | Premium UX Enhancement Layer |
 | `scripts/sw-webhook.sh` | 627 | GitHub Webhook Receiver for Instant Issue Processing |
 | `scripts/sw-widgets.sh` | 530 | Embeddable Status Widgets |
 | `scripts/sw-worktree.sh` | 408 | Git worktree management for multi-agent isolation |
@@ -638,7 +638,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-durable-test.sh` | 259 | Validate durable workflow engine |
 | `scripts/sw-e2e-integration-test.sh` | 359 | Real Claude + Real GitHub |
 | `scripts/sw-e2e-orchestrator-test.sh` | 214 | Test suite registry & execution |
-| `scripts/sw-e2e-smoke-test.sh` | 799 | Pipeline orchestration without API keys |
+| `scripts/sw-e2e-smoke-test.sh` | 843 | Pipeline orchestration without API keys |
 | `scripts/sw-eventbus-test.sh` | 176 | Durable event bus tests |
 | `scripts/sw-feedback-test.sh` | 194 | Production Feedback Loop tests |
 | `scripts/sw-fix-test.sh` | 630 | Unit tests for bulk fix across repos |

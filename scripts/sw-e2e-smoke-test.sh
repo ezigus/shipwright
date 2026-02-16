@@ -714,6 +714,46 @@ test_issue_number_in_state() {
     )
 }
 
+# 16. Headless mode auto-detection
+# ──────────────────────────────────────────────────────────────────────────────
+test_headless_auto_detection() {
+    # invoke_pipeline runs in a subshell, so stdin is not a terminal
+    # The pipeline should auto-detect this and enable skip-gates
+    invoke_pipeline start --issue 42 --dry-run
+    assert_exit_code 0 "dry-run should succeed in headless mode" &&
+    assert_output_contains "headless.*non-interactive|all auto" "Headless mode auto-detected"
+}
+
+# 17. --headless flag explicitly sets skip-gates
+# ──────────────────────────────────────────────────────────────────────────────
+test_headless_flag() {
+    invoke_pipeline start --issue 42 --dry-run --headless
+    assert_exit_code 0 "dry-run should succeed with --headless" &&
+    assert_output_contains "headless|all auto" "Headless flag recognized"
+}
+
+# 18. Autonomous template has all auto gates
+# ──────────────────────────────────────────────────────────────────────────────
+test_autonomous_template_all_auto() {
+    invoke_pipeline start --pipeline autonomous --issue 42 --dry-run --skip-gates
+    assert_exit_code 0 "autonomous template loads" &&
+    # Verify autonomous template has 0 approval gates (or all auto)
+    assert_output_contains "all auto" "Autonomous template should show all auto gates"
+}
+
+# 19. Worktree cleanup preserves on failure (code path test)
+# ──────────────────────────────────────────────────────────────────────────────
+test_pipeline_exit_code_default() {
+    # Verify PIPELINE_EXIT_CODE is initialized to 1 (assume failure)
+    local has_default
+    has_default=$(grep -c 'PIPELINE_EXIT_CODE=1' "$TEMP_DIR/scripts/sw-pipeline.sh" 2>/dev/null || echo "0")
+    if [[ "$has_default" -gt 0 ]]; then
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} PIPELINE_EXIT_CODE=1 default not found"
+    return 1
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -761,6 +801,10 @@ main() {
         "test_goal_flag_accepted:Goal flag accepted"
         "test_invalid_template_errors:Invalid template errors correctly"
         "test_issue_number_in_state:Issue number in state"
+        "test_headless_auto_detection:Headless auto-detection (non-interactive stdin)"
+        "test_headless_flag:Headless flag sets skip-gates"
+        "test_autonomous_template_all_auto:Autonomous template all-auto gates"
+        "test_pipeline_exit_code_default:Pipeline exit code default is 1 (failure)"
     )
 
     for entry in "${tests[@]}"; do

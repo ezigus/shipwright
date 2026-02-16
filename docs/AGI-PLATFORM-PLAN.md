@@ -66,7 +66,7 @@
 
 **Goal:** Triage all TODO/FIXME/HACK; remove dead code; reduce fallback count.
 
-**Status:** 4.1–4.2 done (PLATFORM-TODO-TRIAGE.md created with full triage: 4 github-issue, 3 accepted-debt, 0 stale). 4.3–4.4 ongoing (run hygiene dead-code; reduce fallbacks over time). Pre-existing `now_unix` bug in sw-scale.sh fixed.
+**Status:** 4.1–4.2 done (PLATFORM-TODO-TRIAGE.md created with full triage: 4 github-issue, 3 accepted-debt, 0 stale). 4.3–4.4 ongoing (run hygiene dead-code; reduce fallbacks over time). Pre-existing `now_unix` bug in sw-scale.sh fixed. Current snapshot refreshed after monolith decomposition (platform-refactor counts: 66 hardcoded, 71 fallback).
 
 | #   | Task                                                                                                                                                                                                    | Owner | Acceptance                                               |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | -------------------------------------------------------- |
@@ -94,10 +94,10 @@
 
 ## Current Snapshot (from platform-refactor scan)
 
-- **hardcoded:** 58 | **fallback:** 54 | **TODO:** 37 | **FIXME:** 19 | **HACK/KLUDGE:** 17
+- **hardcoded:** 66 | **fallback:** 71 | **TODO:** 38 | **FIXME:** 19 | **HACK/KLUDGE:** 18
 - **Triage:** 4 github-issue, 3 accepted-debt, 0 stale, 0 fix-now (see `docs/PLATFORM-TODO-TRIAGE.md`)
-- **Largest scripts:** sw-pipeline.sh (8600+), sw-daemon.sh (6000+), sw-loop.sh (2400+), sw-recruit.sh (2200+), sw-prep.sh (1600+), sw-memory.sh (1600+).
-- _Last scan: 2026-02-16. Re-scan after full helpers migration to track delta._
+- **Largest scripts:** sw-pipeline.sh (8665), sw-daemon.sh (6150), sw-loop.sh (2492), sw-recruit.sh (2636), sw-prep.sh (1657), sw-memory.sh (1634). Pipeline/daemon have extracted libs (scripts/lib/pipeline-_.sh, scripts/lib/daemon-_.sh).
+- _Last scan: 2026-02-16. Run `shipwright hygiene platform-refactor` to refresh._
 
 ---
 

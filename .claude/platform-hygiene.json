@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-02-16T20:04:38Z",
+  "timestamp": "2026-02-16T20:44:24Z",
   "repository": "shipwright",
   "counts": {
     "hardcoded": 66,
-    "fallback": 69,
+    "fallback": 71,
     "todo": 38,
     "fixme": 19,
     "hack": 18
@@ -43,31 +43,31 @@
     },
     {
       "file": "scripts/sw-scale.sh",
-      "line": 180
+      "line": 184
     },
     {
       "file": "scripts/sw-scale.sh",
-      "line": 206
+      "line": 210
     },
     {
       "file": "scripts/sw-recruit.sh",
-      "line": 344
+      "line": 347
     },
     {
       "file": "scripts/sw-recruit.sh",
-      "line": 1077
+      "line": 1085
     },
     {
       "file": "scripts/sw-recruit.sh",
-      "line": 1599
+      "line": 1607
     },
     {
       "file": "scripts/sw-recruit.sh",
-      "line": 1722
+      "line": 1730
     },
     {
       "file": "scripts/sw-checkpoint.sh",
-      "line": 2016
+      "line": 2024
     },
     {
       "file": "scripts/sw-intelligence-test.sh",
@@ -83,11 +83,11 @@
     },
     {
       "file": "scripts/sw-daemon-test.sh",
-      "line": 353
+      "line": 356
     },
     {
       "file": "scripts/sw-predictive.sh",
-      "line": 1954
+      "line": 1937
     },
     {
       "file": "scripts/sw-predictive.sh",
@@ -113,15 +113,15 @@
   "script_size_hotspots": [
     {
       "script": "sw-pipeline.sh",
-      "lines": 8668
+      "lines": 8665
     },
     {
       "script": "sw-daemon.sh",
-      "lines": 6115
+      "lines": 6150
     },
     {
       "script": "sw-recruit.sh",
-      "lines": 2628
+      "lines": 2636
     },
     {
       "script": "sw-loop.sh",
@@ -129,11 +129,11 @@
     },
     {
       "script": "sw-daemon-test.sh",
-      "lines": 2005
+      "lines": 1988
     },
     {
       "script": "sw-pipeline-test.sh",
-      "lines": 1900
+      "lines": 1902
     },
     {
       "script": "sw-prep.sh",
@@ -156,6 +156,10 @@
       "lines": 1377
     },
     {
+      "script": "sw-self-optimize.sh",
+      "lines": 1195
+    },
+    {
       "script": "sw-intelligence.sh",
       "lines": 1191
     },
@@ -166,10 +170,6 @@
     {
       "script": "sw-doctor.sh",
       "lines": 1045
-    },
-    {
-      "script": "sw-self-optimize.sh",
-      "lines": 1044
     }
   ]
 }

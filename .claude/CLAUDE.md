@@ -490,7 +490,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-connect.sh` | 619 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 605 | Context Engine for Pipeline Stages |
 | `scripts/sw-cost.sh` | 965 | Token Usage & Cost Intelligence |
-| `scripts/sw-daemon.sh` | 6004 | Autonomous GitHub Issue Watcher |
+| `scripts/sw-daemon.sh` | 6085 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 477 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 1380 | SQLite Persistence Layer |
 | `scripts/sw-decompose.sh` | 539 | Intelligent Issue Decomposition |
@@ -520,8 +520,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 699 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 648 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 343 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 2463 | Continuous agent loop harness for Claude Code |
-| `scripts/sw-memory.sh` | 1643 | Persistent Learning & Context System |
+| `scripts/sw-loop.sh` | 2479 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-memory.sh` | 1645 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 487 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 545 | Intelligent Model Routing & Cost Optimization |
 | `scripts/sw-otel.sh` | 596 | OpenTelemetry Observability |
@@ -529,11 +529,11 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 417 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 455 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1096 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 8540 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 8580 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 758 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 522 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 827 | Predictive & Proactive Intelligence |
-| `scripts/sw-prep.sh` | 1642 | Repository Preparation for Agent Teams |
+| `scripts/sw-prep.sh` | 1646 | Repository Preparation for Agent Teams |
 | `scripts/sw-ps.sh` | 171 | Show running agent process status |
 | `scripts/sw-public-dashboard.sh` | 798 | Public real-time pipeline progress |
 | `scripts/sw-quality.sh` | 595 | Intelligent completion, audits, zero auto |

@@ -40,13 +40,13 @@
 
 ## 4. Not audited E2E
 
-| Item                                    | What                                                                                                                                                               | Next step                                                              |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| ~~**Pipeline E2E with policy**~~        | **Done.** `sw-policy-e2e-test.sh` (26 tests) verifies pipeline-quality.sh reads coverage/gate thresholds from policy, policy_get with mock and real configs.       | Added to npm test suite.                                               |
-| ~~**Daemon E2E with policy**~~          | **Done.** `sw-policy-e2e-test.sh` verifies daemon policy_get for poll_interval, heartbeat_timeout, stage_timeouts, auto_scale_interval.                            | Covered in policy E2E test.                                            |
-| **Platform-health workflow E2E**        | Workflow validated locally (schema, scan, report steps); not yet triggered via workflow_dispatch in CI.                                                            | Trigger workflow (workflow_dispatch) to confirm end-to-end in real CI. |
-| ~~**Doctor with no platform-hygiene**~~ | **Done.** Doctor now auto-runs `hygiene platform-refactor` when report is missing; `--skip-platform-scan` flag available for fast mode.                            | Complete.                                                              |
-| ~~**Full npm test with policy**~~       | **Done.** `sw-policy-e2e-test.sh` added to npm test; 26 policy-specific assertions covering policy_get, pipeline-quality.sh, daemon thresholds, and sanity checks. | In test suite.                                                         |
+| Item                                    | What                                                                                                                                                                                                     | Next step                   |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| ~~**Pipeline E2E with policy**~~        | **Done.** `sw-policy-e2e-test.sh` (26 tests) verifies pipeline-quality.sh reads coverage/gate thresholds from policy, policy_get with mock and real configs.                                             | Added to npm test suite.    |
+| ~~**Daemon E2E with policy**~~          | **Done.** `sw-policy-e2e-test.sh` verifies daemon policy_get for poll_interval, heartbeat_timeout, stage_timeouts, auto_scale_interval.                                                                  | Covered in policy E2E test. |
+| ~~**Platform-health workflow E2E**~~    | **Done.** Workflow triggered via workflow_dispatch; runs successfully: policy validation, schema validation (ajv-cli), platform-refactor scan, threshold gate. Reports hardcoded=58 fallback=54 TODO=37. | Complete.                   |
+| ~~**Doctor with no platform-hygiene**~~ | **Done.** Doctor now auto-runs `hygiene platform-refactor` when report is missing; `--skip-platform-scan` flag available for fast mode.                                                                  | Complete.                   |
+| ~~**Full npm test with policy**~~       | **Done.** `sw-policy-e2e-test.sh` added to npm test; 26 policy-specific assertions covering policy_get, pipeline-quality.sh, daemon thresholds, and sanity checks.                                       | In test suite.              |
 
 ---
 
@@ -60,7 +60,7 @@
 - [x] **E2E** — Pipeline + daemon policy assertions in sw-policy-e2e-test.sh; platform-health workflow validated locally.
 - [x] **TODO/FIXME/HACK** — Phase 4 triage complete: 4 github-issue, 3 accepted-debt, 0 stale. See `docs/PLATFORM-TODO-TRIAGE.md`.
 - [x] **Strategic + hygiene** — Strategic CI workflow now runs hygiene platform-refactor before analysis.
-- [ ] **Platform-health workflow_dispatch** — Trigger once in CI to confirm end-to-end execution.
+- [x] **Platform-health workflow_dispatch** — Triggered and confirmed: policy + schema validation, scan, threshold gate all pass in CI.
 - [x] **Monolith decomposition (Phase 3.1, 3.3)** — Done. Pipeline 8,665 → 2,434 lines; daemon 6,150 → 1,351 lines. All libs wired and sourced.
 - [x] **Doctor auto-hygiene** — Doctor auto-runs platform-refactor when report missing; `--skip-platform-scan` flag added.
 - [x] **Dead code scan** — 1 confirmed dead function (accepted debt); no unused scripts or temp files.

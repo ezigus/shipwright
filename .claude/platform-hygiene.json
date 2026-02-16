@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-02-16T19:50:04Z",
+  "timestamp": "2026-02-16T20:04:38Z",
   "repository": "shipwright",
   "counts": {
-    "hardcoded": 58,
-    "fallback": 54,
-    "todo": 37,
+    "hardcoded": 66,
+    "fallback": 69,
+    "todo": 38,
     "fixme": 19,
-    "hack": 17
+    "hack": 18
   },
   "findings_sample": [
     {
@@ -43,31 +43,31 @@
     },
     {
       "file": "scripts/sw-scale.sh",
-      "line": 173
+      "line": 180
     },
     {
       "file": "scripts/sw-scale.sh",
-      "line": 199
+      "line": 206
     },
     {
       "file": "scripts/sw-recruit.sh",
-      "line": 337
+      "line": 344
     },
     {
       "file": "scripts/sw-recruit.sh",
-      "line": 1067
+      "line": 1077
     },
     {
       "file": "scripts/sw-recruit.sh",
-      "line": 1589
+      "line": 1599
     },
     {
       "file": "scripts/sw-recruit.sh",
-      "line": 1712
+      "line": 1722
     },
     {
       "file": "scripts/sw-checkpoint.sh",
-      "line": 2006
+      "line": 2016
     },
     {
       "file": "scripts/sw-intelligence-test.sh",
@@ -91,15 +91,15 @@
     },
     {
       "file": "scripts/sw-predictive.sh",
-      "line": 392
+      "line": 394
     },
     {
       "file": "scripts/sw-predictive.sh",
-      "line": 396
+      "line": 398
     },
     {
       "file": "scripts/sw-connect.sh",
-      "line": 425
+      "line": 427
     },
     {
       "file": "scripts/sw-pipeline.sh",
@@ -113,7 +113,7 @@
   "script_size_hotspots": [
     {
       "script": "sw-pipeline.sh",
-      "lines": 8665
+      "lines": 8668
     },
     {
       "script": "sw-daemon.sh",
@@ -121,7 +121,7 @@
     },
     {
       "script": "sw-recruit.sh",
-      "lines": 2618
+      "lines": 2628
     },
     {
       "script": "sw-loop.sh",
@@ -169,7 +169,7 @@
     },
     {
       "script": "sw-self-optimize.sh",
-      "lines": 1041
+      "lines": 1044
     }
   ]
 }

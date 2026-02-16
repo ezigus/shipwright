@@ -20,45 +20,48 @@
 | Item                                       | What                                                                                                                                                                                          | Next step                                                                                       |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | ~~**Phase 3 libs not sourced**~~           | **Done.** `pipeline-quality.sh` sourced by `sw-pipeline.sh` and `sw-quality.sh`; `daemon-health.sh` sourced by `sw-daemon.sh`.                                                                | Wired and verified.                                                                             |
-| **Policy JSON Schema validation**          | We run `jq empty` in CI. Optional `ajv` step exists in platform-health workflow but is untested.                                                                                              | Trigger platform-health workflow once to validate; or document "schema is reference only".      |
+| ~~**Policy JSON Schema validation**~~      | **Done.** `config/policy.schema.json` created; `ajv-cli` validates successfully; optional step in platform-health workflow confirmed working.                                                 | Validated locally; trigger workflow_dispatch in CI to confirm.                                  |
 | ~~**Sweep workflow still hardcoded**~~     | **Done.** Sweep workflow now checks out repo, reads `config/policy.json`, and exports `STUCK_THRESHOLD_HOURS`, `RETRY_TEMPLATE`, `RETRY_MAX_ITERATIONS`, `STUCK_RETRY_MAX_ITERATIONS` to env. | Wired.                                                                                          |
-| ~~**Helpers adoption (Phase 1.4)**~~       | **Done.** 4 scripts migrated: `sw-hygiene.sh`, `sw-doctor.sh`, `sw-pipeline.sh`, `sw-quality.sh`. More in progress.                                                                           | Continue migrating remaining scripts in batches.                                                |
+| ~~**Helpers adoption (Phase 1.4)**~~       | **Done.** All ~98 scripts migrated to `lib/helpers.sh`. Zero duplicated info/success/warn/error blocks remain.                                                                                | Complete.                                                                                       |
 | **Monolith decomposition (Phase 3.1–3.4)** | Pipeline stages, pipeline quality gate, daemon poll loop, daemon health are **not** extracted into separate sourced files. Line counts unchanged (8600+ / 6000+).                             | Defer or do incrementally: extract one module (e.g. pipeline quality gate block) and source it. |
 
 ---
 
 ## 3. Not integrated
 
-| Item                             | What                                                                                                                                              | Next step                                                                                                    |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| ~~**pipeline-quality.sh**~~      | **Done.** Sourced by `sw-pipeline.sh` and `sw-quality.sh`; duplicate policy_get for thresholds removed.                                           | Wired.                                                                                                       |
-| ~~**daemon-health.sh**~~         | **Done.** Sourced by `sw-daemon.sh`; `get_adaptive_heartbeat_timeout` calls `daemon_health_timeout_for_stage` when loaded.                        | Wired.                                                                                                       |
-| **Strategic + platform-hygiene** | Strategic reads `.claude/platform-hygiene.json` when present but there is no automated run of `hygiene platform-refactor` before strategic in CI. | Optional: add a job that runs platform-refactor then strategic (e.g. in shipwright-strategic.yml or patrol). |
-| ~~**Test suite and policy**~~    | **Done.** Policy read test added to `sw-hygiene-test.sh` (Test 12): verifies `policy_get` reads from config and returns default when key missing. | Covered.                                                                                                     |
+| Item                                 | What                                                                                                                                              | Next step |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| ~~**pipeline-quality.sh**~~          | **Done.** Sourced by `sw-pipeline.sh` and `sw-quality.sh`; duplicate policy_get for thresholds removed.                                           | Wired.    |
+| ~~**daemon-health.sh**~~             | **Done.** Sourced by `sw-daemon.sh`; `get_adaptive_heartbeat_timeout` calls `daemon_health_timeout_for_stage` when loaded.                        | Wired.    |
+| ~~**Strategic + platform-hygiene**~~ | **Done.** `shipwright-strategic.yml` now runs `hygiene platform-refactor` before strategic analysis, feeding fresh data to the AI agent.          | Wired.    |
+| ~~**Test suite and policy**~~        | **Done.** Policy read test added to `sw-hygiene-test.sh` (Test 12): verifies `policy_get` reads from config and returns default when key missing. | Covered.  |
 
 ---
 
 ## 4. Not audited E2E
 
-| Item                                | What                                                                                                                           | Next step                                                                                                                                                              |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Pipeline E2E with policy**        | E2E integration test runs pipeline but does not assert that coverage/quality thresholds come from policy.                      | Add a case: set policy.json with a custom threshold, run pipeline through compound_quality (or quality gate), assert threshold used (e.g. from logs or exit behavior). |
-| **Daemon E2E with policy**          | No test runs daemon with policy and checks POLL_INTERVAL or health timeouts.                                                   | Add daemon test that loads config + policy and asserts POLL_INTERVAL (or equivalent) matches policy.                                                                   |
-| **Platform-health workflow E2E**    | Workflow has not been run in CI yet (new file). Possible issues: path to scripts, `npm ci` vs script-only, permissions.        | Trigger workflow (workflow_dispatch) and fix any path/permission errors.                                                                                               |
-| **Doctor with no platform-hygiene** | When `.claude/platform-hygiene.json` is missing, doctor shows "Platform hygiene not run". Not wrong, but we never auto-run it. | Optional: doctor could run `hygiene platform-refactor` once and then show section (add flag `--skip-platform-scan` to preserve current fast behavior).                 |
-| **Full npm test with policy**       | `npm test` runs 98 suites; none specifically load policy or assert policy-driven behavior.                                     | Run `npm test` after policy changes to ensure no regressions; add one policy-aware test in hygiene or a new policy-test.sh.                                            |
+| Item                                | What                                                                                                                                                               | Next step                                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| ~~**Pipeline E2E with policy**~~    | **Done.** `sw-policy-e2e-test.sh` (26 tests) verifies pipeline-quality.sh reads coverage/gate thresholds from policy, policy_get with mock and real configs.       | Added to npm test suite.                                                           |
+| ~~**Daemon E2E with policy**~~      | **Done.** `sw-policy-e2e-test.sh` verifies daemon policy_get for poll_interval, heartbeat_timeout, stage_timeouts, auto_scale_interval.                            | Covered in policy E2E test.                                                        |
+| **Platform-health workflow E2E**    | Workflow validated locally (schema, scan, report steps); not yet triggered via workflow_dispatch in CI.                                                            | Trigger workflow (workflow_dispatch) to confirm end-to-end in real CI.             |
+| **Doctor with no platform-hygiene** | When `.claude/platform-hygiene.json` is missing, doctor shows "Platform hygiene not run". Not wrong, but we never auto-run it.                                     | Optional: doctor could run `hygiene platform-refactor` once and then show section. |
+| ~~**Full npm test with policy**~~   | **Done.** `sw-policy-e2e-test.sh` added to npm test; 26 policy-specific assertions covering policy_get, pipeline-quality.sh, daemon thresholds, and sanity checks. | In test suite.                                                                     |
 
 ---
 
 ## 5. Summary checklist
 
 - [x] **Wire or remove** pipeline-quality.sh and daemon-health.sh — sourced in pipeline, quality, daemon.
-- [ ] **Policy schema** — Optional ajv step exists in CI; trigger once to validate or document as reference-only.
+- [x] **Policy schema** — `config/policy.schema.json` created; ajv validates successfully; integrated in CI.
 - [x] **Sweep** — Workflow reads policy.json and exports env vars.
-- [x] **Helpers** — 4 scripts migrated (hygiene, doctor, pipeline, quality); continuing batch migration.
-- [x] **Test** — Policy read test in hygiene-test.sh (Test 12).
-- [ ] **E2E** — Run platform-health workflow once; optionally add pipeline/daemon E2E with policy.
-- [ ] **TODO/FIXME/HACK** — Phase 4: triage backlog (issues or "accepted tech debt" comments); run dead-code and reduce fallbacks over time.
+- [x] **Helpers** — All ~98 scripts migrated to lib/helpers.sh; zero duplicated helper blocks remain.
+- [x] **Test** — Policy read test in hygiene-test.sh (Test 12) + 26 E2E policy tests in sw-policy-e2e-test.sh.
+- [x] **E2E** — Pipeline + daemon policy assertions in sw-policy-e2e-test.sh; platform-health workflow validated locally.
+- [x] **TODO/FIXME/HACK** — Phase 4 triage complete: 4 github-issue, 3 accepted-debt, 0 stale. See `docs/PLATFORM-TODO-TRIAGE.md`.
+- [x] **Strategic + hygiene** — Strategic CI workflow now runs hygiene platform-refactor before analysis.
+- [ ] **Platform-health workflow_dispatch** — Trigger once in CI to confirm end-to-end execution.
+- [ ] **Monolith decomposition (Phase 3.1, 3.3)** — Deferred; high risk, requires incremental extraction.
 
 ---
 

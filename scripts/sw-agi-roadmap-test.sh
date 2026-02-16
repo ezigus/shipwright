@@ -240,14 +240,14 @@ test_predictive_inject_prevention() {
 
 # ── 2.5 Pipeline: predictive anomaly wired into mark_stage_complete ──────────
 test_pipeline_predictive_wiring() {
-    grep -q 'sw-predictive.sh.*anomaly' "$SCRIPT_DIR/sw-pipeline.sh" || { echo "Predictive anomaly not wired into pipeline"; return 1; }
-    grep -q 'sw-predictive.sh.*baseline' "$SCRIPT_DIR/sw-pipeline.sh" || { echo "Predictive baseline not wired into pipeline"; return 1; }
-    grep -q 'sw-predictive.sh.*inject-prevention' "$SCRIPT_DIR/sw-pipeline.sh" || { echo "Predictive inject-prevention not wired into pipeline build stage"; return 1; }
+    grep -q 'sw-predictive.sh.*anomaly' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || { echo "Predictive anomaly not wired into pipeline"; return 1; }
+    grep -q 'sw-predictive.sh.*baseline' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || { echo "Predictive baseline not wired into pipeline"; return 1; }
+    grep -q 'sw-predictive.sh.*inject-prevention' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || { echo "Predictive inject-prevention not wired into pipeline build stage"; return 1; }
 }
 
 # ── 2.6 Pipeline: memory metric wired into mark_stage_complete ───────────────
 test_pipeline_memory_wiring() {
-    grep -q 'sw-memory.sh.*metric.*duration_s' "$SCRIPT_DIR/sw-pipeline.sh" || { echo "Memory metric not wired into pipeline stage completion"; return 1; }
+    grep -q 'sw-memory.sh.*metric.*duration_s' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || { echo "Memory metric not wired into pipeline stage completion"; return 1; }
 }
 
 # ── 2.7 Oversight: gate command functional test ──────────────────────────────
@@ -291,10 +291,12 @@ test_oversight_gate_json_safety() {
 
 # ── 2.10 Pipeline: oversight gate wired into stage_review ────────────────────
 test_pipeline_oversight_wiring() {
-    grep -q 'sw-oversight.sh.*gate.*--diff' "$SCRIPT_DIR/sw-pipeline.sh" || { echo "Oversight gate not wired into pipeline review stage"; return 1; }
+    grep -q 'sw-oversight.sh.*gate.*--diff' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || { echo "Oversight gate not wired into pipeline review stage"; return 1; }
     # The key check: the if-block containing oversight gate also checks SKIP_GATES
     # Line structure: if [[ -x oversight.sh ]] && [[ SKIP_GATES != true ]]; then ... gate ...
-    grep -B 10 'sw-oversight.sh.*gate' "$SCRIPT_DIR/sw-pipeline.sh" | grep -q 'SKIP_GATES' || {
+    local _ctx
+    _ctx="$(grep -B 10 'sw-oversight.sh.*gate' "$SCRIPT_DIR/sw-pipeline.sh" 2>/dev/null || true; grep -B 10 'sw-oversight.sh.*gate' "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || true)"
+    echo "$_ctx" | grep -q 'SKIP_GATES' || {
         echo "Oversight gate does not respect SKIP_GATES"
         return 1
     }
@@ -302,18 +304,18 @@ test_pipeline_oversight_wiring() {
 
 # ── 2.11 Pipeline: feedback wired into monitor ──────────────────────────────
 test_pipeline_feedback_wiring() {
-    grep -q 'sw-feedback.sh.*collect' "$SCRIPT_DIR/sw-pipeline.sh" || { echo "Feedback collect not wired into pipeline monitor"; return 1; }
-    grep -q 'sw-feedback.sh.*create-issue' "$SCRIPT_DIR/sw-pipeline.sh" || { echo "Feedback create-issue not wired into pipeline monitor"; return 1; }
-    grep -q 'sw-feedback.sh.*rollback' "$SCRIPT_DIR/sw-pipeline.sh" || { echo "Feedback rollback not wired into pipeline monitor"; return 1; }
+    grep -q 'sw-feedback.sh.*collect' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || { echo "Feedback collect not wired into pipeline monitor"; return 1; }
+    grep -q 'sw-feedback.sh.*create-issue' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || { echo "Feedback create-issue not wired into pipeline monitor"; return 1; }
+    grep -q 'sw-feedback.sh.*rollback' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || { echo "Feedback rollback not wired into pipeline monitor"; return 1; }
 }
 
 # ── 2.12 Pipeline: intelligence prediction validation wired ───────────────
 test_pipeline_intelligence_validation() {
-    grep -q 'intelligence_validate_prediction' "$SCRIPT_DIR/sw-pipeline.sh" || {
+    grep -q 'intelligence_validate_prediction' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || {
         echo "intelligence_validate_prediction not wired into pipeline completion"
         return 1
     }
-    grep -q 'INTELLIGENCE_COMPLEXITY' "$SCRIPT_DIR/sw-pipeline.sh" || {
+    grep -q 'INTELLIGENCE_COMPLEXITY' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || {
         echo "INTELLIGENCE_COMPLEXITY not used in validation call"
         return 1
     }
@@ -321,12 +323,12 @@ test_pipeline_intelligence_validation() {
 
 # ── 2.13 Pipeline: predictive anomaly confirmation wired ──────────────────
 test_pipeline_predictive_confirm() {
-    grep -q 'confirm-anomaly' "$SCRIPT_DIR/sw-pipeline.sh" || {
+    grep -q 'confirm-anomaly' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || {
         echo "confirm-anomaly not wired into pipeline completion"
         return 1
     }
     # Confirm both build and test stages are checked
-    grep -q '_anomaly_stage in build test' "$SCRIPT_DIR/sw-pipeline.sh" || {
+    grep -q '_anomaly_stage in build test' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || {
         echo "confirm-anomaly not checking both build and test stages"
         return 1
     }
@@ -334,12 +336,12 @@ test_pipeline_predictive_confirm() {
 
 # ── 2.14 Pipeline: memory fix-outcome negative path wired ────────────────
 test_pipeline_memory_fix_negative() {
-    grep -q 'fix-outcome.*true.*false' "$SCRIPT_DIR/sw-pipeline.sh" || {
+    grep -q 'fix-outcome.*true.*false' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || {
         echo "Memory fix-outcome negative case (applied but not resolved) not wired"
         return 1
     }
     # Verify it only triggers on failure with self-heal attempts
-    grep -q 'SELF_HEAL_COUNT.*-gt 0' "$SCRIPT_DIR/sw-pipeline.sh" || {
+    grep -q 'SELF_HEAL_COUNT.*-gt 0' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || {
         echo "fix-outcome not guarded by SELF_HEAL_COUNT > 0"
         return 1
     }
@@ -664,11 +666,11 @@ test_stage_self_awareness_hint() {
 # ── 4.3 Pipeline: record_stage_effectiveness called on both complete/failed ──
 test_effectiveness_both_paths() {
     # mark_stage_complete calls record_stage_effectiveness (can be up to 15 lines in)
-    grep -A 15 'mark_stage_complete()' "$SCRIPT_DIR/sw-pipeline.sh" | grep -q 'record_stage_effectiveness.*complete' || {
+    ( grep -A 15 'mark_stage_complete()' "$SCRIPT_DIR/sw-pipeline.sh" 2>/dev/null; grep -A 15 'mark_stage_complete()' "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ) | grep -q 'record_stage_effectiveness.*complete' || {
         echo "record_stage_effectiveness not called on mark_stage_complete"
         return 1
     }
-    grep -A 10 'mark_stage_failed()' "$SCRIPT_DIR/sw-pipeline.sh" | grep -q 'record_stage_effectiveness.*failed' || {
+    ( grep -A 10 'mark_stage_failed()' "$SCRIPT_DIR/sw-pipeline.sh" 2>/dev/null; grep -A 10 'mark_stage_failed()' "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ) | grep -q 'record_stage_effectiveness.*failed' || {
         echo "record_stage_effectiveness not called on mark_stage_failed"
         return 1
     }
@@ -676,7 +678,7 @@ test_effectiveness_both_paths() {
 
 # ── 4.4 Pipeline: discovery inject wired into plan/design/build stages ───────
 test_discovery_inject_wiring() {
-    grep -q 'sw-discovery.sh.*inject' "$SCRIPT_DIR/sw-pipeline.sh" || {
+    grep -q 'sw-discovery.sh.*inject' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || {
         echo "sw-discovery.sh inject not wired into pipeline"
         return 1
     }
@@ -684,7 +686,7 @@ test_discovery_inject_wiring() {
 
 # ── 4.5 Pipeline: self-awareness hint injected into plan prompt ──────────────
 test_plan_hint_injection() {
-    grep -q 'get_stage_self_awareness_hint.*plan' "$SCRIPT_DIR/sw-pipeline.sh" || {
+    grep -q 'get_stage_self_awareness_hint.*plan' "$SCRIPT_DIR/sw-pipeline.sh" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null || {
         echo "get_stage_self_awareness_hint not called for plan stage"
         return 1
     }

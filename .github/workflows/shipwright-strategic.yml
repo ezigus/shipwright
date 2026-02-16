@@ -59,6 +59,15 @@ jobs:
             echo "No shipwright-data branch found — starting fresh"
           fi
 
+      - name: Fresh platform hygiene scan
+        run: |
+          echo "--- Running platform-refactor hygiene scan (feeds strategic agent) ---"
+          bash ./scripts/sw-hygiene.sh platform-refactor 2>&1 || true
+          if [[ -f .claude/platform-hygiene.json ]]; then
+            echo "Platform hygiene report generated:"
+            jq -r '"  TODO: \(.counts.todo // 0), FIXME: \(.counts.fixme // 0), HACK: \(.counts.hack // 0), hardcoded: \(.counts.hardcoded // 0)"' .claude/platform-hygiene.json
+          fi
+
       - name: Run strategic analysis
         run: |
           set +e

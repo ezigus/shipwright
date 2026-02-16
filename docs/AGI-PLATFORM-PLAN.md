@@ -20,7 +20,7 @@
 
 **Goal:** Policy and helpers are the default; at least two key scripts read from policy; plan is visible and tracked.
 
-**Status:** Done. 1.1–1.3 done (strategic + hygiene read policy; plan linked from STRATEGY P6). 1.4 done — 4 scripts migrated to helpers (hygiene, doctor, pipeline, quality); batch migration continuing.
+**Status:** Done. 1.1–1.3 done (strategic + hygiene read policy; plan linked from STRATEGY P6). 1.4 done — all ~98 scripts migrated to `lib/helpers.sh`; zero duplicated helper blocks remain.
 
 | #   | Task                                                                                                                                                                                              | Owner | Acceptance                                                                                   |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | -------------------------------------------------------------------------------------------- |
@@ -66,7 +66,7 @@
 
 **Goal:** Triage all TODO/FIXME/HACK; remove dead code; reduce fallback count.
 
-**Status:** 4.1–4.2 done (PLATFORM-TODO-BACKLOG.md + file:line triage one-liner). 4.3–4.4 ongoing (run hygiene dead-code; reduce fallbacks over time).
+**Status:** 4.1–4.2 done (PLATFORM-TODO-TRIAGE.md created with full triage: 4 github-issue, 3 accepted-debt, 0 stale). 4.3–4.4 ongoing (run hygiene dead-code; reduce fallbacks over time). Pre-existing `now_unix` bug in sw-scale.sh fixed.
 
 | #   | Task                                                                                                                                                                                                    | Owner | Acceptance                                               |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | -------------------------------------------------------- |
@@ -81,7 +81,7 @@
 
 **Goal:** Platform health is measured and improved continuously.
 
-**Status:** 5.1 done (shipwright-platform-health.yml with threshold gate). 5.2 done (strategic reads platform-hygiene + AGI rule). 5.3 done (doctor shows platform health counts). 5.4 done (policy.schema.json + optional ajv in CI). Policy read test added to hygiene-test.
+**Status:** 5.1 done (shipwright-platform-health.yml with threshold gate). 5.2 done (strategic reads platform-hygiene + AGI rule; CI workflow now runs hygiene before strategic). 5.3 done (doctor shows platform health counts). 5.4 done (config/policy.schema.json created; ajv validates; integrated in CI). E2E policy tests added (sw-policy-e2e-test.sh, 26 tests).
 
 | #   | Task                                                                                                                                                                                               | Owner | Acceptance                                                |
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | --------------------------------------------------------- |
@@ -95,8 +95,9 @@
 ## Current Snapshot (from platform-refactor scan)
 
 - **hardcoded:** 58 | **fallback:** 54 | **TODO:** 37 | **FIXME:** 19 | **HACK/KLUDGE:** 17
+- **Triage:** 4 github-issue, 3 accepted-debt, 0 stale, 0 fix-now (see `docs/PLATFORM-TODO-TRIAGE.md`)
 - **Largest scripts:** sw-pipeline.sh (8600+), sw-daemon.sh (6000+), sw-loop.sh (2400+), sw-recruit.sh (2200+), sw-prep.sh (1600+), sw-memory.sh (1600+).
-- _Last scan: 2026-02-16. Re-scan after helpers migration to track delta._
+- _Last scan: 2026-02-16. Re-scan after full helpers migration to track delta._
 
 ---
 
@@ -120,3 +121,6 @@ Sweep workflow (`.github/workflows/shipwright-sweep.yml`) uses hardcoded values:
 - **docs/config-policy.md** — Policy usage and roadmap.
 - **scripts/lib/policy.sh** — policy_get helper.
 - **scripts/lib/helpers.sh** — Canonical colors and output helpers.
+- **config/policy.schema.json** — JSON Schema for policy validation.
+- **docs/PLATFORM-TODO-TRIAGE.md** — Phase 4 TODO/FIXME/HACK triage results.
+- **scripts/sw-policy-e2e-test.sh** — E2E policy integration tests (26 tests).

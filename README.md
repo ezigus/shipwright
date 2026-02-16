@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/sethdford/shipwright/actions/workflows/test.yml"><img src="https://github.com/sethdford/shipwright/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/sethdford/shipwright/actions/workflows/shipwright-pipeline.yml"><img src="https://github.com/sethdford/shipwright/actions/workflows/shipwright-pipeline.yml/badge.svg" alt="Pipeline"></a>
-  <img src="https://img.shields.io/badge/tests-99_suites_passing-4ade80?style=flat-square" alt="99 suites">
+  <img src="https://img.shields.io/badge/tests-103_suites_passing-4ade80?style=flat-square" alt="103 suites">
   <img src="https://img.shields.io/badge/version-2.1.2-00d4ff?style=flat-square" alt="v2.1.2">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License">
   <img src="https://img.shields.io/badge/bash-3.2%2B-7c3aed?style=flat-square" alt="Bash 3.2+">
@@ -56,7 +56,7 @@ This repo uses Shipwright to process its own issues. Label a GitHub issue with `
 - **Cross-system integration** — Pipeline, PM, triage, loop, and swarm all use recruit for model/role selection
 - **Self-tuning heuristics** — System learns keyword→role mappings from successful outcomes
 - **Meta-learning** — Accuracy tracking and self-correction for matching decisions
-- **CI auto-discovery** — All 99 test suites now run in CI (previously 26)
+- **CI auto-discovery** — All 103 test suites now run in CI (previously 26)
 
 **v2.1.0**: tmux visual overhaul — role-colored borders, pipeline status widgets, active pane depth
 
@@ -432,7 +432,7 @@ shipwright templates list
 
 ## Architecture
 
-100+ bash scripts (~100K lines), 99 test suites (1000+ tests), plus a TypeScript dashboard server. Bash 3.2 compatible — runs on macOS and Linux out of the box.
+100+ bash scripts (~100K lines), 103 test suites (1000+ tests), plus a TypeScript dashboard server. Bash 3.2 compatible — runs on macOS and Linux out of the box.
 
 **Core Layers:**
 
@@ -503,7 +503,7 @@ Tools & UX
 **Manual development:** Fork, branch, then:
 
 ```bash
-npm test    # 1000+ tests across 99 suites
+npm test    # 1000+ tests across 103 suites
 ```
 
 ## License

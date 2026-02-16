@@ -44,9 +44,10 @@ TEMP_DIR=""
 setup_env() {
     TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-pipeline-test.XXXXXX")
 
-    # ── Copy real pipeline script ─────────────────────────────────────────
+    # ── Copy real pipeline script and libs (pipeline sources lib/*.sh) ──────
     mkdir -p "$TEMP_DIR/scripts"
     cp "$REAL_PIPELINE_SCRIPT" "$TEMP_DIR/scripts/sw-pipeline.sh"
+    [[ -d "$SCRIPT_DIR/lib" ]] && cp -r "$SCRIPT_DIR/lib" "$TEMP_DIR/scripts/lib"
 
     # ── Mock sw-loop.sh (next to pipeline — preflight checks $SCRIPT_DIR/sw-loop.sh) ──
     cat > "$TEMP_DIR/scripts/sw-loop.sh" <<'LOOP_EOF'
@@ -895,7 +896,7 @@ test_finding_classification() {
     # we verify the function exists and is callable by checking it's in the script.
 
     # First verify the classification function is defined in the real pipeline script
-    if ! grep -q "^classify_quality_findings()" "$REAL_PIPELINE_SCRIPT"; then
+    if ! ( grep -q "^classify_quality_findings()" "$REAL_PIPELINE_SCRIPT" || grep -q "^classify_quality_findings()" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ); then
         echo -e "    ${RED}✗${RESET} classify_quality_findings function not found in pipeline"
         return 1
     fi
@@ -925,7 +926,7 @@ SEC
     # Verify pipeline succeeded
     assert_exit_code 0 "pipeline should complete" &&
     # Verify the function is callable (exists in script)
-    (grep -q "classify_quality_findings" "$TEMP_DIR/scripts/sw-pipeline.sh" && return 0 || return 1)
+    ( grep -q "classify_quality_findings" "$TEMP_DIR/scripts/sw-pipeline.sh" || grep -q "classify_quality_findings" "$TEMP_DIR/scripts/lib"/pipeline-*.sh 2>/dev/null ) && return 0 || return 1
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1067,7 +1068,7 @@ test_post_completion_cleanup() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_pipeline_cancel_check_runs_exists() {
     # Verify the pipeline_cancel_check_runs function is defined
-    if grep -q "^pipeline_cancel_check_runs()" "$REAL_PIPELINE_SCRIPT"; then
+    if ( grep -q "^pipeline_cancel_check_runs()" "$REAL_PIPELINE_SCRIPT" || grep -q "^pipeline_cancel_check_runs()" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ); then
         return 0
     fi
     echo -e "    ${RED}✗${RESET} pipeline_cancel_check_runs function not found in pipeline"
@@ -1164,28 +1165,28 @@ test_vitals_budget_trajectory() {
 # 28. Quality: pipeline_select_audits function exists
 # ──────────────────────────────────────────────────────────────────────────────
 test_quality_gate_function_exists() {
-    grep -q "^pipeline_select_audits()" "$REAL_PIPELINE_SCRIPT"
+    grep -q "^pipeline_select_audits()" "$REAL_PIPELINE_SCRIPT" || grep -q "^pipeline_select_audits()" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 29. Quality: pipeline_security_source_scan function exists
 # ──────────────────────────────────────────────────────────────────────────────
 test_security_scan_function_exists() {
-    grep -q "^pipeline_security_source_scan()" "$REAL_PIPELINE_SCRIPT"
+    grep -q "^pipeline_security_source_scan()" "$REAL_PIPELINE_SCRIPT" || grep -q "^pipeline_security_source_scan()" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 30. Quality: pipeline_verify_dod function exists
 # ──────────────────────────────────────────────────────────────────────────────
 test_dod_verify_function_exists() {
-    grep -q "^pipeline_verify_dod()" "$REAL_PIPELINE_SCRIPT"
+    grep -q "^pipeline_verify_dod()" "$REAL_PIPELINE_SCRIPT" || grep -q "^pipeline_verify_dod()" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 31. Quality: pipeline_record_quality_score function exists
 # ──────────────────────────────────────────────────────────────────────────────
 test_quality_score_recording() {
-    grep -q "^pipeline_record_quality_score()" "$REAL_PIPELINE_SCRIPT"
+    grep -q "^pipeline_record_quality_score()" "$REAL_PIPELINE_SCRIPT" || grep -q "^pipeline_record_quality_score()" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1437,12 +1438,12 @@ test_multi_backtrack_tracking() {
 # 40. Quality: 6 categories in classify_quality_findings
 # ──────────────────────────────────────────────────────────────────────────────
 test_quality_6_categories() {
-    grep -q "performance_count" "$REAL_PIPELINE_SCRIPT" &&
-    grep -q "testing_count" "$REAL_PIPELINE_SCRIPT" &&
-    grep -q "security_count" "$REAL_PIPELINE_SCRIPT" &&
-    grep -q "arch_count" "$REAL_PIPELINE_SCRIPT" &&
-    grep -q "correctness_count" "$REAL_PIPELINE_SCRIPT" &&
-    grep -q "style_count" "$REAL_PIPELINE_SCRIPT"
+    ( grep -q "performance_count" "$REAL_PIPELINE_SCRIPT" || grep -q "performance_count" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ) &&
+    ( grep -q "testing_count" "$REAL_PIPELINE_SCRIPT" || grep -q "testing_count" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ) &&
+    ( grep -q "security_count" "$REAL_PIPELINE_SCRIPT" || grep -q "security_count" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ) &&
+    ( grep -q "arch_count" "$REAL_PIPELINE_SCRIPT" || grep -q "arch_count" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ) &&
+    ( grep -q "correctness_count" "$REAL_PIPELINE_SCRIPT" || grep -q "correctness_count" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ) &&
+    ( grep -q "style_count" "$REAL_PIPELINE_SCRIPT" || grep -q "style_count" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null )
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1453,24 +1454,24 @@ test_quality_6_categories() {
 # 41. Pre-deploy gates exist in pipeline
 # ──────────────────────────────────────────────────────────────────────────────
 test_pre_deploy_gates_exist() {
-    grep -q "pre_deploy_ci_status" "$REAL_PIPELINE_SCRIPT" &&
-    grep -q "pre_deploy_min_cov" "$REAL_PIPELINE_SCRIPT"
+    ( grep -q "pre_deploy_ci_status" "$REAL_PIPELINE_SCRIPT" || grep -q "pre_deploy_ci_status" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ) &&
+    ( grep -q "pre_deploy_min_cov" "$REAL_PIPELINE_SCRIPT" || grep -q "pre_deploy_min_cov" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null )
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 42. Deploy strategy config pattern in pipeline
 # ──────────────────────────────────────────────────────────────────────────────
 test_deploy_strategy_config() {
-    grep -q "deploy_strategy" "$REAL_PIPELINE_SCRIPT"
+    grep -q "deploy_strategy" "$REAL_PIPELINE_SCRIPT" || grep -q "deploy_strategy" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 43. Canary deploy flow patterns exist
 # ──────────────────────────────────────────────────────────────────────────────
 test_canary_deploy_flow() {
-    grep -q "canary_cmd" "$REAL_PIPELINE_SCRIPT" &&
-    grep -q "promote_cmd" "$REAL_PIPELINE_SCRIPT" &&
-    grep -q "canary_healthy" "$REAL_PIPELINE_SCRIPT"
+    ( grep -q "canary_cmd" "$REAL_PIPELINE_SCRIPT" || grep -q "canary_cmd" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ) &&
+    ( grep -q "promote_cmd" "$REAL_PIPELINE_SCRIPT" || grep -q "promote_cmd" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ) &&
+    ( grep -q "canary_healthy" "$REAL_PIPELINE_SCRIPT" || grep -q "canary_healthy" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null )
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1479,6 +1480,7 @@ test_canary_deploy_flow() {
 test_pipeline_state_removed() {
     # Verify no remaining PIPELINE_STATE variable references
     local count
+    # Only count in main script (lib may still use STATE_FILE / state; test enforces main-script cleanup)
     count=$(grep -c 'PIPELINE_STATE' "$REAL_PIPELINE_SCRIPT" 2>/dev/null || true)
     count="${count:-0}"
     [[ "$count" -eq 0 ]] || { echo "Expected 0 PIPELINE_STATE references, found $count"; return 1; }
@@ -1489,7 +1491,7 @@ test_pipeline_state_removed() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_coverage_json_created() {
     # Verify the pipeline script has coverage file creation logic
-    grep -q "coverage.*json\|coverage-summary" "$REAL_PIPELINE_SCRIPT" || \
+    ( grep -q "coverage.*json\|coverage-summary" "$REAL_PIPELINE_SCRIPT" || grep -q "coverage.*json\|coverage-summary" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ) || \
         { echo "Expected coverage JSON creation in pipeline"; return 1; }
 }
 
@@ -1645,7 +1647,7 @@ test_health_gate_passes() {
 # 51. persist_artifacts function exists in pipeline
 # ──────────────────────────────────────────────────────────────────────────────
 test_persist_artifacts_exists() {
-    grep -q "^persist_artifacts()" "$REAL_PIPELINE_SCRIPT"
+    grep -q "^persist_artifacts()" "$REAL_PIPELINE_SCRIPT" || grep -q "^persist_artifacts()" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1768,7 +1770,7 @@ test_verify_artifacts_design_needs_plan() {
 # 58. mark_stage_complete calls persist_artifacts for plan stage
 # ──────────────────────────────────────────────────────────────────────────────
 test_mark_complete_persists_plan() {
-    grep -A5 "Persist artifacts to feature branch" "$REAL_PIPELINE_SCRIPT" | \
+    ( grep -A5 "Persist artifacts to feature branch" "$REAL_PIPELINE_SCRIPT" 2>/dev/null || grep -A5 "Persist artifacts to feature branch" "$SCRIPT_DIR"/lib/pipeline-*.sh 2>/dev/null ) | \
         grep -q 'plan.*persist_artifacts.*plan.md.*dod.md.*context-bundle.md'
 }
 

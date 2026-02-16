@@ -4,6 +4,12 @@
 #   Source this from any script: source "$SCRIPT_DIR/lib/helpers.sh"
 # ═══════════════════════════════════════════════════════════════════
 #
+# Exit code convention:
+#   0 — success / nothing to do
+#   1 — error (invalid args, missing deps, runtime failure)
+#   2 — check condition failed (regressions found, quality below threshold, etc.)
+#         Callers should distinguish: exit 1 = broken, exit 2 = check negative
+#
 # This is the canonical reference for common boilerplate that was
 # previously duplicated across 18+ scripts. Existing scripts are NOT
 # being modified to source this (too risky for a sweep), but all NEW
@@ -75,5 +81,28 @@ emit_event() {
         fi
     done
     mkdir -p "${HOME}/.shipwright"
-    echo "{\"ts\":\"$(now_iso)\",\"ts_epoch\":$(now_epoch),\"type\":\"${event_type}\"${json_fields}}" >> "$EVENTS_FILE"
+    local _event_line="{\"ts\":\"$(now_iso)\",\"ts_epoch\":$(now_epoch),\"type\":\"${event_type}\"${json_fields}}"
+    # Use flock to prevent concurrent write corruption
+    local _lock_file="${EVENTS_FILE}.lock"
+    (
+        if command -v flock &>/dev/null; then
+            flock -w 2 200 2>/dev/null || true
+        fi
+        echo "$_event_line" >> "$EVENTS_FILE"
+    ) 200>"$_lock_file"
+}
+
+# Rotate a JSONL file to keep it within max_lines.
+# Usage: rotate_jsonl <file> <max_lines>
+rotate_jsonl() {
+    local file="$1"
+    local max_lines="${2:-10000}"
+    [[ ! -f "$file" ]] && return 0
+    local current_lines
+    current_lines=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
+    if [[ "$current_lines" -gt "$max_lines" ]]; then
+        local tmp_rotate
+        tmp_rotate=$(mktemp)
+        tail -n "$max_lines" "$file" > "$tmp_rotate" && mv "$tmp_rotate" "$file" || rm -f "$tmp_rotate"
+    fi
 }

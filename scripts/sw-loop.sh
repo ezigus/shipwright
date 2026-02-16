@@ -58,7 +58,7 @@ MAX_RESTARTS=0
 SESSION_RESTART=false
 RESTART_COUNT=0
 REPO_OVERRIDE=""
-VERSION="2.1.1"
+VERSION="2.1.2"
 
 # ─── Token Tracking ─────────────────────────────────────────────────────────
 LOOP_INPUT_TOKENS=0
@@ -1021,19 +1021,34 @@ run_test_gate() {
 write_error_summary() {
     local error_json="$LOG_DIR/error-summary.json"
 
-    # Only write on test failure
+    # Write on test failure OR build failure (non-zero exit from Claude iteration)
+    local build_log="$LOG_DIR/iteration-${ITERATION}.log"
     if [[ "${TEST_PASSED:-}" != "false" ]]; then
-        # Clear previous error summary on success
-        rm -f "$error_json" 2>/dev/null || true
-        return
+        # Check for build-level failures (Claude iteration exited non-zero or produced errors)
+        local build_had_errors=false
+        if [[ -f "$build_log" ]]; then
+            local build_err_count
+            build_err_count=$(tail -30 "$build_log" 2>/dev/null | grep -ciE '(error|fail|exception|panic|FATAL)' || true)
+            [[ "${build_err_count:-0}" -gt 0 ]] && build_had_errors=true
+        fi
+        if [[ "$build_had_errors" != "true" ]]; then
+            # Clear previous error summary on success
+            rm -f "$error_json" 2>/dev/null || true
+            return
+        fi
     fi
 
+    # Prefer test log, fall back to build log
     local test_log="${TEST_LOG_FILE:-$LOG_DIR/tests-iter-${ITERATION}.log}"
-    [[ ! -f "$test_log" ]] && return
+    local source_log="$test_log"
+    if [[ ! -f "$source_log" ]]; then
+        source_log="$build_log"
+    fi
+    [[ ! -f "$source_log" ]] && return
 
     # Extract error lines (last 30 lines, grep for error patterns)
     local error_lines_raw
-    error_lines_raw=$(tail -30 "$test_log" 2>/dev/null | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' | head -10 || true)
+    error_lines_raw=$(tail -30 "$source_log" 2>/dev/null | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' | head -10 || true)
 
     local error_count=0
     if [[ -n "$error_lines_raw" ]]; then
@@ -2434,8 +2449,9 @@ run_loop_with_restarts() {
             [[ -f "$old_log" ]] && mv "$old_log" "$restart_archive/" 2>/dev/null || true
         done
         # Archive progress.md and error-summary.json from previous session
+        # IMPORTANT: copy (not move) error-summary.json so the fresh session can still read it
         [[ -f "$LOG_DIR/progress.md" ]] && cp "$LOG_DIR/progress.md" "$restart_archive/progress.md" 2>/dev/null || true
-        [[ -f "$LOG_DIR/error-summary.json" ]] && mv "$LOG_DIR/error-summary.json" "$restart_archive/" 2>/dev/null || true
+        [[ -f "$LOG_DIR/error-summary.json" ]] && cp "$LOG_DIR/error-summary.json" "$restart_archive/" 2>/dev/null || true
 
         write_state
 

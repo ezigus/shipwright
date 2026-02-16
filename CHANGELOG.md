@@ -7,6 +7,33 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.1.2] — 2026-02-16
+
+**Autonomy wiring — connect all feedback loops, kill zombie pipelines, clean up branches.**
+
+### Fixed
+
+- **Memory functions never executed** — `memory_finalize_pipeline()`, `memory_closed_loop_inject()`, and `optimize_analyze_outcome()` checked via `type` but scripts were never sourced; pipeline now sources `sw-memory.sh`, `sw-self-optimize.sh`, `sw-discovery.sh`
+- **`sw-memory.sh` missing source guard** — added `BASH_SOURCE[0]` guard so it can be sourced without executing the CLI dispatcher
+- **Error-summary.json lost on session restart** — `mv` changed to `cp` so fresh sessions retain error context from previous session
+- **Build failures not captured in error-summary** — `write_error_summary()` only ran on test failure; now also captures build-level errors
+- **Stale pipelines never killed** — daemon's legacy stale detection only logged warnings; now kills at 2x adaptive timeout with SIGTERM then SIGKILL
+- **Stale `pipeline-state.md` never cleaned** — stuck "running" states with no active jobs now marked failed by daemon after 2 hours
+- **Worktree cleanup left remote branches** — successful pipeline cleanup now deletes both local and remote `pipeline/*` branches
+- **`optimize_tune_templates()` never called** — template weight tuning now fires automatically after outcome recording
+- **`broadcast_discovery()` never called** — cross-pipeline learning now broadcasts on every pipeline completion
+- **Dead tmux panes not reaped** — wired `sw-reaper.sh` into daemon patrol checks
+- **Orphaned `pipeline/*` branches accumulate** — daemon stale reaper now cleans orphaned pipeline branches (local + remote)
+- **`sw-prep.sh` unbound variable** — `GENERATED_FILES[@]` crashed under `set -u` on idempotent runs without `--force`
+- **`sw-hygiene-test.sh` SIGPIPE flake** — replaced pipe-based `assert_contains` with bash string matching
+
+### Added
+
+- Pipeline completion now broadcasts discovery events for cross-pipeline learning
+- Daemon patrol now includes dead pane reaping when running inside tmux
+
+---
+
 ## [2.1.1] — 2026-02-16
 
 **Pipeline E2E — headless execution fixes.**

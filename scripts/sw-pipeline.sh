@@ -11,7 +11,7 @@ unset CLAUDECODE 2>/dev/null || true
 # Ignore SIGHUP so tmux attach/detach doesn't kill long-running plan/design/review stages
 trap '' HUP
 
-VERSION="2.1.1"
+VERSION="2.1.2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -54,6 +54,20 @@ fi
 # shellcheck source=sw-pipeline-vitals.sh
 if [[ -f "$SCRIPT_DIR/sw-pipeline-vitals.sh" ]]; then
     source "$SCRIPT_DIR/sw-pipeline-vitals.sh"
+fi
+
+# ─── Memory, Optimization & Discovery (optional) ─────────────────────────
+# shellcheck source=sw-memory.sh
+if [[ -f "$SCRIPT_DIR/sw-memory.sh" ]]; then
+    source "$SCRIPT_DIR/sw-memory.sh"
+fi
+# shellcheck source=sw-self-optimize.sh
+if [[ -f "$SCRIPT_DIR/sw-self-optimize.sh" ]]; then
+    source "$SCRIPT_DIR/sw-self-optimize.sh"
+fi
+# shellcheck source=sw-discovery.sh
+if [[ -f "$SCRIPT_DIR/sw-discovery.sh" ]]; then
+    source "$SCRIPT_DIR/sw-discovery.sh"
 fi
 
 # ─── GitHub API Modules (optional) ─────────────────────────────────────────
@@ -7855,7 +7869,18 @@ pipeline_cleanup_worktree() {
         # Only clean up worktree on success — preserve on failure for inspection
         if [[ "${PIPELINE_EXIT_CODE:-1}" -eq 0 ]]; then
             info "Cleaning up worktree: ${DIM}${worktree_path}${RESET}"
+            # Extract branch name before removing worktree
+            local _wt_branch=""
+            _wt_branch=$(git worktree list --porcelain 2>/dev/null | grep -A1 "worktree ${worktree_path}$" | grep "^branch " | sed 's|^branch refs/heads/||' || true)
             git worktree remove --force "$worktree_path" 2>/dev/null || true
+            # Clean up the local branch
+            if [[ -n "$_wt_branch" ]]; then
+                git branch -D "$_wt_branch" 2>/dev/null || true
+            fi
+            # Clean up the remote branch (if it was pushed)
+            if [[ -n "$_wt_branch" && "${NO_GITHUB:-}" != "true" ]]; then
+                git push origin --delete "$_wt_branch" 2>/dev/null || true
+            fi
         else
             warn "Pipeline failed — worktree preserved for inspection: ${DIM}${worktree_path}${RESET}"
             warn "Clean up manually: ${DIM}git worktree remove --force ${worktree_path}${RESET}"
@@ -8287,10 +8312,25 @@ pipeline_start() {
     # Record pipeline outcome for model routing feedback loop
     if type optimize_analyze_outcome &>/dev/null 2>&1; then
         optimize_analyze_outcome "$STATE_FILE" 2>/dev/null || true
+        # Tune template weights based on accumulated outcomes
+        if type optimize_tune_templates &>/dev/null 2>&1; then
+            optimize_tune_templates 2>/dev/null || true
+        fi
     fi
 
     if type memory_finalize_pipeline &>/dev/null 2>&1; then
         memory_finalize_pipeline "$STATE_FILE" "$ARTIFACTS_DIR" 2>/dev/null || true
+    fi
+
+    # Broadcast discovery for cross-pipeline learning
+    if type broadcast_discovery &>/dev/null 2>&1; then
+        local _disc_result="failure"
+        [[ "$exit_code" -eq 0 ]] && _disc_result="success"
+        local _disc_files=""
+        _disc_files=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | head -20 | tr '\n' ',' || true)
+        broadcast_discovery "pipeline_${_disc_result}" "${_disc_files:-unknown}" \
+            "Pipeline ${_disc_result} for issue #${ISSUE_NUMBER:-0} (${PIPELINE_NAME:-unknown} template, stage=${CURRENT_STAGE_ID:-unknown})" \
+            "${_disc_result}" 2>/dev/null || true
     fi
 
     # Emit cost event — prefer actual cost from Claude CLI when available

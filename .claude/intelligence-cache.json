@@ -35,50 +35,9 @@
     },
     "d41d8cd98f00b204e9800998ecf8427e": {
       "result": {
-        "overall_risk": 82,
-        "failure_stages": [
-          {
-            "stage": "design",
-            "risk": 75,
-            "reason": "Massive scope with 3 new dashboard views, 6+ client components, 4+ API endpoints, WebSocket streaming, and xterm.js integration. Architecture decisions around real-time data flow (tmux capture-pane → server → WebSocket → xterm.js) are complex and easy to get wrong."
-          },
-          {
-            "stage": "build",
-            "risk": 90,
-            "reason": "This is effectively a full frontend application rewrite touching server.ts (3501 lines), multiple new client components, WebSocket message types, tmux pane capture integration, and xterm.js terminal emulation. The sheer volume of changes across both server and client will exhaust context quickly. Dependencies on issues #41, #42, #43 may not be resolved."
-          },
-          {
-            "stage": "test",
-            "risk": 80,
-            "reason": "Testing real-time WebSocket streaming, xterm.js rendering, tmux capture-pane integration, and keyboard navigation requires browser-level testing infrastructure that likely doesn't exist yet. Mock complexity is very high for the data flow pipeline."
-          },
-          {
-            "stage": "review",
-            "risk": 70,
-            "reason": "Large diff across TypeScript server, HTML/CSS/JS frontend, and bash integration points. Security surface includes new API endpoints and WebSocket streams that could leak terminal output or allow unauthorized tmux access."
-          },
-          {
-            "stage": "compound_quality",
-            "risk": 65,
-            "reason": "Integration between bash-based tmux capture, Bun WebSocket server, and browser xterm.js creates a fragile chain. Any component mismatch breaks the real-time experience silently."
-          },
-          {
-            "stage": "deploy",
-            "risk": 55,
-            "reason": "Dashboard requires Bun runtime and tmux access on the host. New WebSocket endpoints and terminal streaming add operational complexity."
-          }
-        ],
-        "preventative_actions": [
-          "Break into sub-issues: fleet overview enhancements, team tree component, live terminal streaming, stage orchestration view — each as a separate pipeline",
-          "Verify dependencies #41, #42, #43 are merged before starting build",
-          "Implement server-side API endpoints first with unit tests before building client components",
-          "Use --max-restarts 3 and increase build loop iterations given the scope",
-          "Add security review for terminal streaming — ensure no credential leakage through captured pane output",
-          "Create mock tmux capture-pane output fixtures for testing without live tmux sessions",
-          "Scope first iteration to team tree + activity indicators only, defer xterm.js live terminals to follow-up"
-        ]
+        "raw_response": "Mock claude response"
       },
-      "timestamp": 1770988486,
+      "timestamp": 1771256514,
       "ttl": 3600
     },
     "efd5524ad1244fd20344bf3ff5d95233": {

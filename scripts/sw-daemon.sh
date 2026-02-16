@@ -9,7 +9,7 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 # Allow spawning Claude CLI from within a Claude Code session (daemon, fleet, etc.)
 unset CLAUDECODE 2>/dev/null || true
 
-VERSION="2.1.1"
+VERSION="2.1.2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -4049,6 +4049,27 @@ Auto-detected by \`shipwright daemon patrol\` on $(now_iso)." \
     fi
     echo ""
 
+    echo -e "  ${BOLD}Dead Pane Reaping${RESET}"
+    pre_check_findings=$total_findings
+    if [[ -x "$SCRIPT_DIR/sw-reaper.sh" ]] && [[ -n "${TMUX:-}" ]]; then
+        local reaper_output
+        reaper_output=$(bash "$SCRIPT_DIR/sw-reaper.sh" --once 2>/dev/null) || true
+        local reaped_count=0
+        reaped_count=$(echo "$reaper_output" | grep -c "Reaped" 2>/dev/null || true)
+        if [[ "${reaped_count:-0}" -gt 0 ]]; then
+            total_findings=$((total_findings + reaped_count))
+            echo -e "    ${CYAN}●${RESET} Reaped ${reaped_count} dead agent pane(s)"
+        else
+            echo -e "    ${GREEN}●${RESET} No dead panes found"
+        fi
+    else
+        echo -e "    ${DIM}●${RESET} Skipped (no tmux session or reaper not found)"
+    fi
+    if [[ "$total_findings" -gt "$pre_check_findings" ]]; then
+        patrol_findings_summary="${patrol_findings_summary}reaper: $((total_findings - pre_check_findings)) finding(s); "
+    fi
+    echo ""
+
     # ── Stage 2: AI-Powered Confirmation (if enabled) ──
     if [[ "${PREDICTION_ENABLED:-false}" == "true" ]] && type patrol_ai_analyze &>/dev/null 2>&1; then
         daemon_log INFO "Intelligence: using AI patrol analysis (prediction enabled)"
@@ -4592,9 +4613,24 @@ NUDGE_EOF
                 local stale_timeout
                 stale_timeout=$(get_adaptive_stale_timeout "$PIPELINE_TEMPLATE")
                 if [[ "$elapsed" -gt "$stale_timeout" ]]; then
-                    daemon_log WARN "Stale job (legacy): issue #${issue_num} (${elapsed}s > ${stale_timeout}s, PID $pid)"
-                    # Don't kill — just log. Let the process run.
-                    emit_event "daemon.stale_warning" "issue=$issue_num" "elapsed_s=$elapsed" "pid=$pid"
+                    # Check if process is still alive
+                    if kill -0 "$pid" 2>/dev/null; then
+                        # Kill at 2x stale timeout — the process is truly hung
+                        local kill_threshold=$(( stale_timeout * 2 ))
+                        if [[ "$elapsed" -gt "$kill_threshold" ]]; then
+                            daemon_log WARN "Killing stale job (legacy): issue #${issue_num} (${elapsed}s > ${kill_threshold}s kill threshold, PID $pid)"
+                            emit_event "daemon.stale_kill" "issue=$issue_num" "elapsed_s=$elapsed" "pid=$pid"
+                            kill "$pid" 2>/dev/null || true
+                            sleep 2
+                            kill -9 "$pid" 2>/dev/null || true
+                        else
+                            daemon_log WARN "Stale job (legacy): issue #${issue_num} (${elapsed}s > ${stale_timeout}s, PID $pid) — will kill at ${kill_threshold}s"
+                            emit_event "daemon.stale_warning" "issue=$issue_num" "elapsed_s=$elapsed" "pid=$pid"
+                        fi
+                    else
+                        daemon_log WARN "Stale job with dead process: issue #${issue_num} (PID $pid no longer exists)"
+                        emit_event "daemon.stale_dead" "issue=$issue_num" "pid=$pid"
+                    fi
                     findings=$((findings + 1))
                 fi
             fi
@@ -5165,6 +5201,51 @@ daemon_cleanup_stale() {
             daemon_log INFO "Pruned ${#stale_keys[@]} stale retry count(s)"
             cleaned=$((cleaned + ${#stale_keys[@]}))
         fi
+    fi
+
+    # ── 6. Detect stale pipeline-state.md stuck in "running" ──
+    local pipeline_state=".claude/pipeline-state.md"
+    if [[ -f "$pipeline_state" ]]; then
+        local ps_status=""
+        ps_status=$(sed -n 's/^status: *//p' "$pipeline_state" 2>/dev/null | head -1 | tr -d ' ')
+        if [[ "$ps_status" == "running" ]]; then
+            local ps_mtime
+            ps_mtime=$(stat -f '%m' "$pipeline_state" 2>/dev/null || stat -c '%Y' "$pipeline_state" 2>/dev/null || echo "0")
+            local ps_age=$((now_e - ps_mtime))
+            # If pipeline-state.md has been "running" for more than 2 hours and no active job
+            if [[ "$ps_age" -gt 7200 ]]; then
+                local has_active=false
+                if [[ -f "$STATE_FILE" ]]; then
+                    local active_count
+                    active_count=$(jq '.active_jobs | length' "$STATE_FILE" 2>/dev/null || echo "0")
+                    [[ "${active_count:-0}" -gt 0 ]] && has_active=true
+                fi
+                if [[ "$has_active" == "false" ]]; then
+                    daemon_log WARN "Stale pipeline-state.md stuck in 'running' for ${ps_age}s with no active jobs — marking failed"
+                    # Atomically update status to failed
+                    local tmp_ps="${pipeline_state}.tmp.$$"
+                    sed 's/^status: *running/status: failed (stale — cleaned by daemon)/' "$pipeline_state" > "$tmp_ps" 2>/dev/null && mv "$tmp_ps" "$pipeline_state" || rm -f "$tmp_ps"
+                    emit_event "daemon.stale_pipeline_state" "age_s=$ps_age"
+                    cleaned=$((cleaned + 1))
+                fi
+            fi
+        fi
+    fi
+
+    # ── 7. Clean remote branches for merged pipeline/* branches ──
+    if command -v git &>/dev/null && [[ "${NO_GITHUB:-}" != "true" ]]; then
+        while IFS= read -r branch; do
+            [[ -z "$branch" ]] && continue
+            branch="${branch## }"
+            [[ "$branch" == pipeline/* ]] || continue
+            local br_issue="${branch#pipeline/pipeline-issue-}"
+            if ! daemon_is_inflight "$br_issue" 2>/dev/null; then
+                daemon_log INFO "Removing orphaned pipeline branch: ${branch}"
+                git branch -D "$branch" 2>/dev/null || true
+                git push origin --delete "$branch" 2>/dev/null || true
+                cleaned=$((cleaned + 1))
+            fi
+        done < <(git branch --list 'pipeline/*' 2>/dev/null)
     fi
 
     if [[ "$cleaned" -gt 0 ]]; then

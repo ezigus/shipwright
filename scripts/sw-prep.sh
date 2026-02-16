@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="2.1.1"
+VERSION="2.1.2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Handle subcommands ───────────────────────────────────────────────────────
@@ -1361,20 +1361,22 @@ prep_generate_manifest() {
 
     local files_json="{"
     local first=true
-    for entry in "${GENERATED_FILES[@]}"; do
-        local fname flines
-        fname="${entry%%|*}"
-        flines="${entry##*|}"
-        local checksum
-        checksum=$(compute_md5 "$PROJECT_ROOT/$fname" || echo "unknown")
-        if $first; then
-            first=false
-        else
-            files_json+=","
-        fi
-        files_json+="
+    if [[ ${#GENERATED_FILES[@]} -gt 0 ]]; then
+        for entry in "${GENERATED_FILES[@]}"; do
+            local fname flines
+            fname="${entry%%|*}"
+            flines="${entry##*|}"
+            local checksum
+            checksum=$(compute_md5 "$PROJECT_ROOT/$fname" || echo "unknown")
+            if $first; then
+                first=false
+            else
+                files_json+=","
+            fi
+            files_json+="
     \"${fname}\": { \"checksum\": \"${checksum}\", \"lines\": ${flines} }"
-    done
+        done
+    fi
     files_json+="
   }"
 
@@ -1580,12 +1582,14 @@ prep_report() {
     echo -e "  ${BOLD}Files:${RESET}      ${#GENERATED_FILES[@]} generated"
     echo ""
     echo -e "  ${BOLD}Created:${RESET}"
+    if [[ ${#GENERATED_FILES[@]} -gt 0 ]]; then
     for entry in "${GENERATED_FILES[@]}"; do
         local fname flines
         fname="${entry%%|*}"
         flines="${entry##*|}"
         printf "    ${GREEN}${BOLD}✓${RESET} %-42s ${DIM}(%s lines)${RESET}\n" "$fname" "$flines"
     done
+    fi
     echo ""
     echo -e "  ${DIM}Next steps:${RESET}"
     echo -e "    ${DIM}1. Review generated files and customize as needed${RESET}"

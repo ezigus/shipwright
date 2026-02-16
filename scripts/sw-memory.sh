@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="2.1.1"
+VERSION="2.1.2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -1585,59 +1585,61 @@ show_help() {
 
 # ─── Command Router ─────────────────────────────────────────────────────────
 
-SUBCOMMAND="${1:-help}"
-shift 2>/dev/null || true
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    SUBCOMMAND="${1:-help}"
+    shift 2>/dev/null || true
 
-case "$SUBCOMMAND" in
-    show)
-        memory_show "$@"
-        ;;
-    search)
-        memory_search "$@"
-        ;;
-    forget)
-        memory_forget "$@"
-        ;;
-    export)
-        memory_export
-        ;;
-    import)
-        memory_import "$@"
-        ;;
-    stats)
-        memory_stats
-        ;;
-    capture)
-        memory_capture_pipeline "$@"
-        ;;
-    inject)
-        memory_inject_context "$@"
-        ;;
-    pattern)
-        memory_capture_pattern "$@"
-        ;;
-    get)
-        memory_get_baseline "$@"
-        ;;
-    metric)
-        memory_update_metrics "$@"
-        ;;
-    decision)
-        memory_capture_decision "$@"
-        ;;
-    analyze-failure)
-        memory_analyze_failure "$@"
-        ;;
-    fix-outcome)
-        memory_record_fix_outcome "$@"
-        ;;
-    help|--help|-h)
-        show_help
-        ;;
-    *)
-        error "Unknown command: ${SUBCOMMAND}"
-        echo ""
-        show_help
-        exit 1
-        ;;
-esac
+    case "$SUBCOMMAND" in
+        show)
+            memory_show "$@"
+            ;;
+        search)
+            memory_search "$@"
+            ;;
+        forget)
+            memory_forget "$@"
+            ;;
+        export)
+            memory_export
+            ;;
+        import)
+            memory_import "$@"
+            ;;
+        stats)
+            memory_stats
+            ;;
+        capture)
+            memory_capture_pipeline "$@"
+            ;;
+        inject)
+            memory_inject_context "$@"
+            ;;
+        pattern)
+            memory_capture_pattern "$@"
+            ;;
+        get)
+            memory_get_baseline "$@"
+            ;;
+        metric)
+            memory_update_metrics "$@"
+            ;;
+        decision)
+            memory_capture_decision "$@"
+            ;;
+        analyze-failure)
+            memory_analyze_failure "$@"
+            ;;
+        fix-outcome)
+            memory_record_fix_outcome "$@"
+            ;;
+        help|--help|-h)
+            show_help
+            ;;
+        *)
+            error "Unknown command: ${SUBCOMMAND}"
+            echo ""
+            show_help
+            exit 1
+            ;;
+    esac
+fi

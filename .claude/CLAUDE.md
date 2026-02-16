@@ -490,7 +490,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-connect.sh` | 630 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 616 | Context Engine for Pipeline Stages |
 | `scripts/sw-cost.sh` | 955 | Token Usage & Cost Intelligence |
-| `scripts/sw-daemon.sh` | 6115 | Autonomous GitHub Issue Watcher |
+| `scripts/sw-daemon.sh` | 6150 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 468 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 1390 | SQLite Persistence Layer |
 | `scripts/sw-decompose.sh` | 531 | Intelligent Issue Decomposition |
@@ -530,7 +530,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 448 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 446 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1082 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 2474 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 8665 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 748 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 510 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 825 | Predictive & Proactive Intelligence |
@@ -539,23 +539,23 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-public-dashboard.sh` | 788 | Public real-time pipeline progress |
 | `scripts/sw-quality.sh` | 597 | Intelligent completion, audits, zero auto |
 | `scripts/sw-reaper.sh` | 411 | Automatic tmux pane cleanup when agents exit |
-| `scripts/sw-recruit.sh` | 2628 | AGI-Level Agent Recruitment & Talent Management |
+| `scripts/sw-recruit.sh` | 2636 | AGI-Level Agent Recruitment & Talent Management |
 | `scripts/sw-regression.sh` | 634 | Regression Detection Pipeline |
 | `scripts/sw-release-manager.sh` | 728 | Autonomous Release Pipeline |
 | `scripts/sw-release.sh` | 704 | Release train automation |
 | `scripts/sw-remote.sh` | 678 | Machine Registry & Remote Daemon Management |
 | `scripts/sw-replay.sh` | 532 | Pipeline run replay, timeline viewing, narratives |
 | `scripts/sw-retro.sh` | 682 | Sprint Retrospective Engine |
-| `scripts/sw-scale.sh` | 461 | Dynamic agent team scaling during pipeline execution |
+| `scripts/sw-scale.sh` | 464 | Dynamic agent team scaling during pipeline execution |
 | `scripts/sw-security-audit.sh` | 515 | Comprehensive Security Auditing |
-| `scripts/sw-self-optimize.sh` | 1044 | Learning & Self-Tuning System |
+| `scripts/sw-self-optimize.sh` | 1195 | Learning & Self-Tuning System |
 | `scripts/sw-session.sh` | 557 | Launch a Claude Code team session in a new tmux window |
 | `scripts/sw-setup.sh` | 384 | Comprehensive onboarding wizard |
 | `scripts/sw-standup.sh` | 722 | Automated Daily Standups for AI Agent Teams |
 | `scripts/sw-status.sh` | 858 | Dashboard showing Claude Code team status |
 | `scripts/sw-strategic.sh` | 818 | Strategic Intelligence Agent |
-| `scripts/sw-stream.sh` | 446 | Live terminal output streaming from agent panes |
-| `scripts/sw-swarm.sh` | 629 | Dynamic agent swarm management |
+| `scripts/sw-stream.sh` | 452 | Live terminal output streaming from agent panes |
+| `scripts/sw-swarm.sh` | 626 | Dynamic agent swarm management |
 | `scripts/sw-team-stages.sh` | 503 | Multi-agent execution with leader/specialist roles |
 | `scripts/sw-templates.sh` | 262 | Browse and inspect team templates |
 | `scripts/sw-testgen.sh` | 565 | Autonomous test generation and coverage maintenance |
@@ -564,7 +564,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-tmux-status.sh` | 159 | Status bar widgets for tmux |
 | `scripts/sw-tmux.sh` | 607 | tmux Health & Plugin Management |
 | `scripts/sw-trace.sh` | 496 | E2E Traceability (Issue → Commit → PR → Deploy) |
-| `scripts/sw-tracker.sh` | 514 | Provider Router for Issue Tracker Integration |
+| `scripts/sw-tracker.sh` | 532 | Provider Router for Issue Tracker Integration |
 | `scripts/sw-triage.sh` | 634 | Intelligent Issue Labeling & Prioritization |
 | `scripts/sw-upgrade.sh` | 493 | Detect and apply updates from the repo |
 | `scripts/sw-ux.sh` | 700 | Premium UX Enhancement Layer |
@@ -625,7 +625,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-connect-test.sh` | 831 | Validate dashboard connection, heartbeat |
 | `scripts/sw-context-test.sh` | 239 | Context Engine for Pipeline Stages tests |
 | `scripts/sw-cost-test.sh` | 230 | Validate token usage & cost intelligence |
-| `scripts/sw-daemon-test.sh` | 2013 | Unit tests for daemon metrics, health, alerting |
+| `scripts/sw-daemon-test.sh` | 1988 | Unit tests for daemon metrics, health, alerting |
 | `scripts/sw-dashboard-test.sh` | 347 | Validate fleet command dashboard |
 | `scripts/sw-db-test.sh` | 980 | SQLite Persistence Layer Test Suite |
 | `scripts/sw-decompose-test.sh` | 160 | Intelligent Issue Decomposition tests |
@@ -677,7 +677,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-pm-test.sh` | 246 | Autonomous PM Agent test suite |
 | `scripts/sw-policy-e2e-test.sh` | 286 | Verify config/policy.json is honored |
 | `scripts/sw-pr-lifecycle-test.sh` | 357 | Validate autonomous PR management |
-| `scripts/sw-predictive-test.sh` | 698 | Unit tests for predictive intelligence |
+| `scripts/sw-predictive-test.sh` | 701 | Unit tests for predictive intelligence |
 | `scripts/sw-prep-test.sh` | 644 | Validate repo preparation |
 | `scripts/sw-ps-test.sh` | 336 | Validate agent process status display |
 | `scripts/sw-public-dashboard-test.sh` | 186 | Validate public dashboard generation |
@@ -692,7 +692,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-retro-test.sh` | 228 | Sprint retrospective engine tests |
 | `scripts/sw-scale-test.sh` | 172 | Dynamic agent team scaling |
 | `scripts/sw-security-audit-test.sh` | 219 | Security auditing tests |
-| `scripts/sw-self-optimize-test.sh` | 730 | Unit tests for learning & tuning system |
+| `scripts/sw-self-optimize-test.sh` | 725 | Unit tests for learning & tuning system |
 | `scripts/sw-session-test.sh` | 591 | E2E validation of session creation flow |
 | `scripts/sw-setup-test.sh` | 302 | Validate comprehensive onboarding wizard |
 | `scripts/sw-standup-test.sh` | 271 | Validate daily standup automation |
@@ -706,7 +706,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-tmux-pipeline-test.sh` | 208 | Validate tmux pipeline management |
 | `scripts/sw-tmux-test.sh` | 752 | Validate tmux doctor, install, fix, reload, |
 | `scripts/sw-trace-test.sh` | 167 | E2E traceability (Issue → Commit → PR → Deploy) |
-| `scripts/sw-tracker-test.sh` | 527 | Validate tracker router, providers, and |
+| `scripts/sw-tracker-test.sh` | 543 | Validate tracker router, providers, and |
 | `scripts/sw-triage-test.sh` | 263 | Intelligent Issue Labeling & Prioritization |
 | `scripts/sw-upgrade-test.sh` | 374 | Validate upgrade detection and apply |
 | `scripts/sw-ux-test.sh` | 162 | Validate UX enhancement layer |

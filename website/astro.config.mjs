@@ -40,6 +40,7 @@ export default defineConfig({
             { label: "Issue Tracking", link: "/guides/tracking/" },
             { label: "Persistent Memory", link: "/guides/memory/" },
             { label: "Intelligence Layer", link: "/guides/intelligence/" },
+            { label: "Code Factory", link: "/guides/code-factory/" },
           ],
         },
         {

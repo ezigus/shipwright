@@ -23,6 +23,7 @@
 ## Table of Contents
 
 - [Shipwright Builds Itself](#shipwright-builds-itself)
+- [Code Factory Pattern](#code-factory-pattern)
 - [What's New in v2.3.1](#whats-new-in-v231)
 - [How It Works](#how-it-works)
 - [Install](#install)
@@ -43,6 +44,62 @@
 This repo uses Shipwright to process its own issues. Label a GitHub issue with `shipwright` and the autonomous pipeline takes over: semantic triage, plan, design, build, test, review, quality gates, PR. No human in the loop.
 
 **[See it live](https://github.com/sethdford/shipwright/actions/workflows/shipwright-pipeline.yml)** | **[Create an issue](https://github.com/sethdford/shipwright/issues/new?template=shipwright.yml)** and watch it build.
+
+---
+
+## Code Factory Pattern
+
+Shipwright implements the complete **Code Factory** control-plane pattern — where agents write 100% of the code and the repo enforces deterministic, risk-aware checks before every merge. Every decision is traceable to policy. Every merge is backed by machine-verifiable evidence.
+
+```
+Agent writes code → Risk policy gate → Tier-appropriate CI → Code review agent
+→ Findings auto-remediated → SHA-validated evidence → Bot threads cleaned → Merge
+→ Incidents feed back into harness coverage
+```
+
+### What makes Shipwright best-in-class
+
+| Code Factory Layer     | Shipwright Implementation                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| **Single contract**    | `config/policy.json` — risk tiers, merge policy, docs drift, evidence specs, harness SLAs in one file   |
+| **Preflight gate**     | `risk-policy-gate.yml` classifies risk from changed files before expensive CI runs                      |
+| **SHA discipline**     | All checks, reviews, and approvals validated against current PR head — stale evidence is never trusted  |
+| **Rerun writer**       | `sw-review-rerun.sh` — SHA-deduped, single canonical writer, no duplicate bot comments                  |
+| **Remediation loop**   | `review-remediation.yml` — agent reads findings, patches code, validates, pushes fix to same branch     |
+| **Bot thread cleanup** | `auto-resolve-threads.yml` — resolves bot-only threads after clean rerun, never touches human threads   |
+| **Evidence framework** | `sw-evidence.sh` — browser, API, database, CLI, webhook, and custom evidence with freshness enforcement |
+| **Harness-gap loop**   | `shipwright incident gap` — every regression creates a test case with SLA tracking                      |
+
+### Beyond the baseline
+
+Shipwright extends the Code Factory pattern with capabilities most implementations don't have:
+
+- **12-stage pipeline** with self-healing builds, adversarial review, and compound quality gates
+- **Predictive risk scoring** using GitHub signals (security alerts, contributor expertise, file churn)
+- **Persistent memory** — failure patterns, fix effectiveness, and prediction accuracy compound over time
+- **18 autonomous agents** with specialized roles (PM, reviewer, security auditor, test generator, etc.)
+- **Fleet operations** — the Code Factory pattern applied across every repo in your org
+- **Cost intelligence** — per-pipeline cost tracking, budget enforcement, adaptive model routing
+- **Self-optimization** — DORA metrics analysis auto-tunes daemon config and template weights
+
+```bash
+# Evidence framework — capture and verify all types
+npm run harness:evidence:capture          # All collectors (browser, API, DB, CLI)
+npm run harness:evidence:capture:api      # API endpoints only
+npm run harness:evidence:capture:cli      # CLI commands only
+npm run harness:evidence:capture:database # Database checks only
+npm run harness:evidence:verify           # Verify manifest + freshness
+npm run harness:evidence:pre-pr           # Capture + verify in one step
+
+# Risk and policy
+npm run harness:risk-tier
+
+# Incident-to-harness loop
+shipwright incident gap list
+shipwright incident gap sla
+```
+
+**[Full Code Factory documentation](https://sethdford.github.io/shipwright/guides/code-factory/)**
 
 ---
 
@@ -408,16 +465,18 @@ shipwright templates list
 
 ## Configuration
 
-| File                          | Purpose                                            |
-| ----------------------------- | -------------------------------------------------- |
-| `.claude/daemon-config.json`  | Daemon settings, intelligence flags, patrol config |
-| `.claude/pipeline-state.md`   | Current pipeline state                             |
-| `templates/pipelines/*.json`  | 8 pipeline template definitions                    |
-| `tmux/templates/*.json`       | 24 team composition templates                      |
-| `~/.shipwright/events.jsonl`  | Event log for metrics                              |
-| `~/.shipwright/costs.json`    | Cost tracking data                                 |
-| `~/.shipwright/budget.json`   | Budget limits                                      |
-| `~/.shipwright/github-cache/` | Cached GitHub API responses                        |
+| File                          | Purpose                                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------- |
+| `config/policy.json`          | **Central contract** — risk tiers, merge policy, docs drift, browser evidence, harness SLAs |
+| `config/policy.schema.json`   | JSON Schema validation for the policy contract                                              |
+| `.claude/daemon-config.json`  | Daemon settings, intelligence flags, patrol config                                          |
+| `.claude/pipeline-state.md`   | Current pipeline state                                                                      |
+| `templates/pipelines/*.json`  | 8 pipeline template definitions                                                             |
+| `tmux/templates/*.json`       | 24 team composition templates                                                               |
+| `~/.shipwright/events.jsonl`  | Event log for metrics                                                                       |
+| `~/.shipwright/costs.json`    | Cost tracking data                                                                          |
+| `~/.shipwright/budget.json`   | Budget limits                                                                               |
+| `~/.shipwright/github-cache/` | Cached GitHub API responses                                                                 |
 
 ## Prerequisites
 

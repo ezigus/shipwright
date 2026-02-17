@@ -56,7 +56,12 @@ get_pr_config() {
 
 get_pr_info() {
     local pr_number="$1"
-    gh pr view "$pr_number" --json number,title,body,state,headRefName,baseRefName,statusCheckRollup,reviews,commits,createdAt,updatedAt 2>/dev/null || return 1
+    gh pr view "$pr_number" --json number,title,body,state,headRefName,baseRefName,statusCheckRollup,reviews,commits,createdAt,updatedAt,headRefOid 2>/dev/null || return 1
+}
+
+get_pr_head_sha() {
+    local pr_number="$1"
+    gh pr view "$pr_number" --json headRefOid --jq '.headRefOid' 2>/dev/null || return 1
 }
 
 get_pr_checks_status() {
@@ -93,6 +98,144 @@ get_pr_originating_issue() {
     local body
     body=$(gh pr view "$pr_number" --json body 2>/dev/null | jq -r '.body')
     echo "$body" | grep -oiE '(closes|fixes|resolves) #[0-9]+' | grep -oE '[0-9]+' | head -1
+}
+
+# ─── Current-Head SHA Discipline ─────────────────────────────────────────────
+# All check results and review approvals MUST correspond to the current PR head
+# SHA. Stale evidence from older commits is never trusted. This is the single
+# most important safety invariant in the Code Factory pattern.
+
+validate_checks_for_head_sha() {
+    local pr_number="$1"
+    local head_sha="$2"
+
+    if [[ -z "$head_sha" ]]; then
+        error "No head SHA provided — cannot validate check freshness"
+        return 1
+    fi
+
+    local short_sha="${head_sha:0:7}"
+
+    # Get check runs for the current head SHA
+    local owner_repo
+    owner_repo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
+    if [[ -z "$owner_repo" ]]; then
+        warn "Could not detect repo — skipping SHA discipline check"
+        return 0
+    fi
+
+    local check_runs
+    check_runs=$(gh api "repos/${owner_repo}/commits/${head_sha}/check-runs" --jq '.check_runs' 2>/dev/null || echo "[]")
+
+    local total_checks
+    total_checks=$(echo "$check_runs" | jq 'length' 2>/dev/null || echo "0")
+
+    if [[ "$total_checks" -eq 0 ]]; then
+        warn "No check runs found for head SHA ${short_sha}"
+        return 0
+    fi
+
+    local failed_checks
+    failed_checks=$(echo "$check_runs" | jq '[.[] | select(.conclusion == "failure" or .conclusion == "cancelled")] | length' 2>/dev/null || echo "0")
+
+    local pending_checks
+    pending_checks=$(echo "$check_runs" | jq '[.[] | select(.status != "completed")] | length' 2>/dev/null || echo "0")
+
+    if [[ "$failed_checks" -gt 0 ]]; then
+        error "PR #${pr_number} has ${failed_checks} failed check(s) on current head ${short_sha}"
+        return 1
+    fi
+
+    if [[ "$pending_checks" -gt 0 ]]; then
+        warn "PR #${pr_number} has ${pending_checks} pending check(s) on head ${short_sha}"
+        return 1
+    fi
+
+    info "All ${total_checks} checks passed for current head SHA ${short_sha}"
+    return 0
+}
+
+validate_reviews_for_head_sha() {
+    local pr_number="$1"
+    local head_sha="$2"
+
+    if [[ -z "$head_sha" ]]; then
+        return 0
+    fi
+
+    local short_sha="${head_sha:0:7}"
+
+    # Get reviews and check they're not stale (submitted before the latest push)
+    local reviews_json
+    reviews_json=$(gh pr view "$pr_number" --json reviews --jq '.reviews' 2>/dev/null || echo "[]")
+
+    local latest_commit_date
+    latest_commit_date=$(gh pr view "$pr_number" --json commits --jq '.commits[-1].committedDate' 2>/dev/null || echo "")
+
+    if [[ -z "$latest_commit_date" ]]; then
+        return 0
+    fi
+
+    # Check if any approvals are stale (submitted before last commit)
+    local stale_approvals
+    stale_approvals=$(echo "$reviews_json" | jq --arg cutoff "$latest_commit_date" \
+        '[.[] | select(.state == "APPROVED" and .submittedAt < $cutoff)] | length' 2>/dev/null || echo "0")
+
+    if [[ "$stale_approvals" -gt 0 ]]; then
+        warn "PR #${pr_number} has ${stale_approvals} stale approval(s) from before head ${short_sha} — reviews should be refreshed"
+    fi
+
+    return 0
+}
+
+compute_risk_tier_for_pr() {
+    local pr_number="$1"
+    local policy_file="${REPO_DIR}/config/policy.json"
+
+    if [[ ! -f "$policy_file" ]]; then
+        echo "medium"
+        return
+    fi
+
+    local changed_files
+    changed_files=$(gh pr diff "$pr_number" --name-only 2>/dev/null || echo "")
+
+    if [[ -z "$changed_files" ]]; then
+        echo "low"
+        return
+    fi
+
+    local tier="low"
+
+    check_tier_match() {
+        local check_tier="$1"
+        local patterns
+        patterns=$(jq -r ".riskTierRules.${check_tier}[]? // empty" "$policy_file" 2>/dev/null)
+        [[ -z "$patterns" ]] && return 1
+
+        while IFS= read -r pattern; do
+            [[ -z "$pattern" ]] && continue
+            local regex
+            regex=$(echo "$pattern" | sed 's/\./\\./g; s/\*\*/DOUBLESTAR/g; s/\*/[^\/]*/g; s/DOUBLESTAR/.*/g')
+            while IFS= read -r file; do
+                [[ -z "$file" ]] && continue
+                if echo "$file" | grep -qE "^${regex}$"; then
+                    return 0
+                fi
+            done <<< "$changed_files"
+        done <<< "$patterns"
+        return 1
+    }
+
+    if check_tier_match "critical"; then
+        tier="critical"
+    elif check_tier_match "high"; then
+        tier="high"
+    elif check_tier_match "medium"; then
+        tier="medium"
+    fi
+
+    echo "$tier"
 }
 
 # ─── Review Pass ────────────────────────────────────────────────────────────
@@ -220,6 +363,35 @@ pr_merge() {
         return 1
     fi
 
+    # ── Current-head SHA discipline ──────────────────────────────────────────
+    # All evidence (checks, reviews) must be validated against the current head.
+    # Never merge on stale evidence from an older commit.
+    local head_sha
+    head_sha=$(echo "$pr_info" | jq -r '.headRefOid // empty' 2>/dev/null)
+    if [[ -z "$head_sha" ]]; then
+        head_sha=$(get_pr_head_sha "$pr_number")
+    fi
+
+    if [[ -n "$head_sha" ]]; then
+        local short_sha="${head_sha:0:7}"
+        info "Validating evidence for current head SHA: ${short_sha}"
+
+        if ! validate_checks_for_head_sha "$pr_number" "$head_sha"; then
+            error "PR #${pr_number} blocked — checks not passing for current head ${short_sha}"
+            emit_event "pr.merge_failed" "pr=${pr_number}" "reason=stale_checks" "head_sha=${short_sha}"
+            return 1
+        fi
+
+        validate_reviews_for_head_sha "$pr_number" "$head_sha"
+    else
+        warn "Could not determine head SHA — falling back to legacy check"
+    fi
+
+    # ── Risk tier enforcement ────────────────────────────────────────────────
+    local risk_tier
+    risk_tier=$(compute_risk_tier_for_pr "$pr_number")
+    info "Risk tier: ${risk_tier}"
+
     # Check for merge conflicts
     if has_merge_conflicts "$pr_number"; then
         error "PR #${pr_number} has merge conflicts — manual intervention required"
@@ -227,7 +399,7 @@ pr_merge() {
         return 1
     fi
 
-    # Check CI status
+    # Check CI status (legacy check, supplementary to SHA-based validation)
     local status_check_rollup
     status_check_rollup=$(echo "$pr_info" | jq -r '.statusCheckRollup[].state' 2>/dev/null | sort | uniq)
     if [[ -z "$status_check_rollup" ]] || echo "$status_check_rollup" | grep -qi "failure\|error"; then
@@ -246,10 +418,10 @@ pr_merge() {
     fi
 
     # Perform squash merge and delete branch
-    info "Merging PR #${pr_number} with squash..."
+    info "Merging PR #${pr_number} with squash (tier: ${risk_tier}, head: ${head_sha:0:7})..."
     if gh pr merge "$pr_number" --squash --delete-branch 2>/dev/null; then
         success "PR #${pr_number} merged and branch deleted"
-        emit_event "pr.merged" "pr=${pr_number}"
+        emit_event "pr.merged" "pr=${pr_number}" "risk_tier=${risk_tier}" "head_sha=${head_sha:0:7}"
 
         # Post feedback to originating issue
         local issue_number

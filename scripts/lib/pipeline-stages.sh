@@ -1761,6 +1761,60 @@ stage_merge() {
         return 0
     fi
 
+    # ── Oversight gate: merge block on verdict (diff + review criticals + goal) ──
+    if [[ -x "$SCRIPT_DIR/sw-oversight.sh" ]] && [[ "${SKIP_GATES:-false}" != "true" ]]; then
+        local merge_diff_file="${ARTIFACTS_DIR}/review-diff.patch"
+        local merge_review_file="${ARTIFACTS_DIR}/review.md"
+        if [[ ! -s "$merge_diff_file" ]]; then
+            git diff "${BASE_BRANCH}...${GIT_BRANCH}" > "$merge_diff_file" 2>/dev/null || \
+                git diff HEAD~5 > "$merge_diff_file" 2>/dev/null || true
+        fi
+        if [[ -s "$merge_diff_file" ]]; then
+            local _merge_critical _merge_sec _merge_blocking _merge_reject
+            _merge_critical=$(grep -ciE '\*\*\[?Critical\]?\*\*' "$merge_review_file" 2>/dev/null || echo "0")
+            _merge_sec=$(grep -ciE '\*\*\[?Security\]?\*\*' "$merge_review_file" 2>/dev/null || echo "0")
+            _merge_blocking=$((${_merge_critical:-0} + ${_merge_sec:-0}))
+            [[ "$_merge_blocking" -gt 0 ]] && _merge_reject="Review found ${_merge_blocking} critical/security issue(s)"
+            if ! bash "$SCRIPT_DIR/sw-oversight.sh" gate --diff "$merge_diff_file" --description "${GOAL:-Pipeline merge}" --reject-if "${_merge_reject:-}" >/dev/null 2>&1; then
+                error "Oversight gate rejected — blocking merge"
+                emit_event "merge.oversight_blocked" "issue=${ISSUE_NUMBER:-0}"
+                log_stage "merge" "BLOCKED: oversight gate rejected"
+                return 1
+            fi
+        fi
+    fi
+
+    # ── Approval gates: block if merge requires approval and pending for this issue ──
+    local ag_file="${HOME}/.shipwright/approval-gates.json"
+    if [[ -f "$ag_file" ]] && [[ "${SKIP_GATES:-false}" != "true" ]]; then
+        local ag_enabled ag_stages ag_pending_merge ag_issue_num
+        ag_enabled=$(jq -r '.enabled // false' "$ag_file" 2>/dev/null || echo "false")
+        ag_stages=$(jq -r '.stages // [] | if type == "array" then .[] else empty end' "$ag_file" 2>/dev/null || true)
+        ag_issue_num=$(echo "${ISSUE_NUMBER:-0}" | awk '{print $1+0}')
+        if [[ "$ag_enabled" == "true" ]] && echo "$ag_stages" | grep -qx "merge" 2>/dev/null; then
+            local ha_file="${ARTIFACTS_DIR}/human-approval.txt"
+            local ha_approved="false"
+            if [[ -f "$ha_file" ]]; then
+                ha_approved=$(jq -r --arg stage "merge" 'select(.stage == $stage) | .approved // false' "$ha_file" 2>/dev/null || echo "false")
+            fi
+            if [[ "$ha_approved" != "true" ]]; then
+                ag_pending_merge=$(jq -r --argjson issue "$ag_issue_num" --arg stage "merge" \
+                    '[.pending[]? | select(.issue == $issue and .stage == $stage)] | length' "$ag_file" 2>/dev/null || echo "0")
+                if [[ "${ag_pending_merge:-0}" -eq 0 ]]; then
+                    local req_at tmp_ag
+                    req_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || true)
+                    tmp_ag=$(mktemp "${HOME}/.shipwright/approval-gates.json.XXXXXX" 2>/dev/null || mktemp)
+                    jq --argjson issue "$ag_issue_num" --arg stage "merge" --arg requested "${req_at}" \
+                        '.pending += [{"issue": $issue, "stage": $stage, "requested_at": $requested}]' "$ag_file" > "$tmp_ag" 2>/dev/null && mv "$tmp_ag" "$ag_file" || rm -f "$tmp_ag"
+                fi
+                info "Merge requires approval — awaiting human approval via dashboard"
+                emit_event "merge.approval_pending" "issue=${ISSUE_NUMBER:-0}"
+                log_stage "merge" "BLOCKED: approval gate pending"
+                return 1
+            fi
+        fi
+    fi
+
     # ── Branch Protection Check ──
     if type gh_branch_protection &>/dev/null 2>&1 && [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
         local protection_json
@@ -2471,6 +2525,11 @@ _Created automatically by \`shipwright pipeline\` monitor stage_" 2>/dev/null ||
     echo "Log errors: ${log_errors}" >> "$report_file"
 
     success "Post-deploy monitoring clean (${total_errors} errors in ${duration_minutes}m)"
+
+    # Proactive feedback collection: always collect deploy logs for trend analysis
+    if [[ -f "$deploy_log_file" ]] && [[ -s "$deploy_log_file" ]] && [[ -x "$SCRIPT_DIR/sw-feedback.sh" ]]; then
+        (cd "$PROJECT_ROOT" && ARTIFACTS_DIR="$ARTIFACTS_DIR" bash "$SCRIPT_DIR/sw-feedback.sh" collect "$deploy_log_file" 2>/dev/null) || true
+    fi
 
     if [[ -n "$ISSUE_NUMBER" ]]; then
         gh_comment_issue "$ISSUE_NUMBER" "✅ **Post-deploy monitoring passed** — ${duration_minutes}m, ${total_errors} errors" 2>/dev/null || true

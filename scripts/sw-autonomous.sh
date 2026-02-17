@@ -7,7 +7,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="2.3.0"
+VERSION="2.3.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -64,6 +64,7 @@ STATE_FILE="${STATE_DIR}/state.json"
 HISTORY_FILE="${STATE_DIR}/history.jsonl"
 CONFIG_FILE="${STATE_DIR}/config.json"
 CYCLE_COUNTER="${STATE_DIR}/cycle-counter.txt"
+AUTONOMOUS_OVERLAP_FILE="${HOME}/.shipwright/autonomous-state.json"
 
 # Ensure directories exist
 ensure_state_dir() {
@@ -80,7 +81,8 @@ ensure_state_dir() {
   "max_consecutive_failures": 3,
   "learning_enabled": true,
   "self_improvement_enabled": true,
-  "shipwright_self_improvement_threshold": 3
+  "shipwright_self_improvement_threshold": 3,
+  "daemon_aware": true
 }
 EOF
         info "Created default config at ${CONFIG_FILE}"
@@ -179,6 +181,110 @@ record_cycle() {
         >> "$HISTORY_FILE"
 }
 
+# ─── Strategic Agent Integration ────────────────────────────────────────────
+
+# Compute word-overlap similarity between two titles (0-100). Used for dedup.
+title_similarity_percent() {
+    local title_a="$1"
+    local title_b="$2"
+    local words_a words_b
+    words_a=$(printf '%s' "$title_a" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n' | \
+        grep -vE '^(a|an|the|and|or|for|to|in|of|is|it|by|on|at|with|from|based)$' | grep -v '^$' | sort -u || true)
+    words_b=$(printf '%s' "$title_b" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n' | \
+        grep -vE '^(a|an|the|and|or|for|to|in|of|is|it|by|on|at|with|from|based)$' | grep -v '^$' | sort -u || true)
+    [[ -z "$words_a" || -z "$words_b" ]] && echo "0" && return 0
+    local count_a count_b shared min_count
+    count_a=$(printf '%s\n' "$words_a" | wc -l | tr -d ' ')
+    count_b=$(printf '%s\n' "$words_b" | wc -l | tr -d ' ')
+    shared=$(comm -12 <(printf '%s\n' "$words_a") <(printf '%s\n' "$words_b") | wc -l | tr -d ' ')
+    [[ "$count_a" -le "$count_b" ]] && min_count="$count_a" || min_count="$count_b"
+    [[ "$min_count" -eq 0 ]] && echo "0" && return 0
+    echo $(( shared * 100 / min_count ))
+}
+
+# Record that a strategic issue has been acknowledged so we don't re-process it.
+autonomous_register_strategic_overlap() {
+    local title="$1"
+    local issue_num="${2:-}"
+    mkdir -p "$(dirname "$AUTONOMOUS_OVERLAP_FILE")"
+    local tmp_file
+    tmp_file=$(mktemp "${TMPDIR:-/tmp}/sw-autonomous-overlap.XXXXXX")
+    if [[ -f "$AUTONOMOUS_OVERLAP_FILE" ]]; then
+        jq --arg t "$title" --arg n "$issue_num" --arg ts "$(now_iso)" \
+            '.strategic_acknowledged = ((.strategic_acknowledged // []) + [{"title": $t, "issue": (if $n != "" then ($n | tonumber) else null end), "acked_at": $ts}])' \
+            "$AUTONOMOUS_OVERLAP_FILE" > "$tmp_file" 2>/dev/null || true
+    else
+        jq -n --arg t "$title" --arg n "$issue_num" --arg ts "$(now_iso)" \
+            '{strategic_acknowledged: [{"title": $t, "issue": (if $n != "" then ($n | tonumber) else null end), "acked_at": $ts}]}' \
+            > "$tmp_file" 2>/dev/null || true
+    fi
+    mv "$tmp_file" "$AUTONOMOUS_OVERLAP_FILE" 2>/dev/null || rm -f "$tmp_file" || true
+}
+
+# Read strategic.issue_created events from last 24h; return JSON array of findings.
+# Excludes issues already in strategic_acknowledged. Resolves issue numbers via gh when possible.
+ingest_strategic_findings() {
+    local events_file="${EVENTS_FILE:-${HOME}/.shipwright/events.jsonl}"
+    [[ ! -f "$events_file" ]] && echo "[]" && return 0
+
+    local now_e
+    now_e=$(now_epoch 2>/dev/null || date +%s)
+    local cutoff_e=$(( now_e - 86400 ))
+
+    local acked_titles
+    acked_titles=""
+    if [[ -f "$AUTONOMOUS_OVERLAP_FILE" ]]; then
+        acked_titles=$(jq -r '.strategic_acknowledged // [] | .[].title' "$AUTONOMOUS_OVERLAP_FILE" 2>/dev/null || echo "")
+    fi
+
+    local findings="[]"
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local ev_type ts_epoch title priority complexity
+        ev_type=$(echo "$line" | jq -r '.type // ""' 2>/dev/null) || true
+        [[ "$ev_type" != "strategic.issue_created" ]] && continue
+        ts_epoch=$(echo "$line" | jq -r '.ts_epoch // 0' 2>/dev/null) || true
+        [[ "$ts_epoch" -lt "$cutoff_e" ]] && continue
+        title=$(echo "$line" | jq -r '.title // ""' 2>/dev/null) || true
+        [[ -z "$title" ]] && continue
+
+        local already_acked=false
+        if [[ -n "$acked_titles" ]]; then
+            while IFS= read -r acked; do
+                [[ -z "$acked" ]] && continue
+                local sim
+                sim=$(title_similarity_percent "$title" "$acked" 2>/dev/null || echo "0")
+                if [[ "${sim:-0}" -ge 60 ]]; then
+                    already_acked=true
+                    break
+                fi
+            done <<< "$acked_titles"
+        fi
+        [[ "$already_acked" == true ]] && continue
+
+        priority=$(echo "$line" | jq -r '.priority // "P2"' 2>/dev/null) || true
+        complexity=$(echo "$line" | jq -r '.complexity // "standard"' 2>/dev/null) || true
+
+        local issue_num=""
+        if [[ "${NO_GITHUB:-false}" != "true" ]] && command -v gh &>/dev/null; then
+            issue_num=$(gh issue list --state open --search "$title" --json number -q '.[0].number' 2>/dev/null || echo "")
+        fi
+
+        local finding
+        finding=$(jq -n \
+            --arg title "$title" \
+            --arg priority "$priority" \
+            --arg complexity "$complexity" \
+            --arg source "strategic" \
+            --arg issue "$issue_num" \
+            '{title: $title, description: ("Strategic: " + $title), priority: $priority, effort: (if $complexity == "fast" then "S" elif $complexity == "full" then "L" else "M" end), labels: ["strategic", "shipwright"], category: "strategic", source: $source, issue: $issue}')
+
+        findings=$(echo "$findings" | jq -c --argjson f "$finding" '. + [$f]' 2>/dev/null || echo "$findings")
+    done < <(grep '"strategic.issue_created"' "$events_file" 2>/dev/null || true)
+
+    echo "$findings"
+}
+
 # ─── Analysis Cycle ────────────────────────────────────────────────────────
 
 run_analysis_cycle() {
@@ -238,7 +344,52 @@ Output ONLY a JSON array, no other text.' --max-turns 3 > "$findings" 2>/dev/nul
         } > "$findings"
     fi
 
-    cat "$findings"
+    # Ingest strategic findings and merge with Claude/heuristic findings
+    local strategic_json
+    strategic_json=$(ingest_strategic_findings 2>/dev/null || echo "[]")
+
+    local merged_file
+    merged_file=$(mktemp "${TMPDIR:-/tmp}/sw-autonomous-merged.XXXXXX")
+    # Parse claude findings (may be invalid if Claude wrapped in markdown)
+    local claude_array
+    claude_array=$(jq -c '.' "$findings" 2>/dev/null || echo "[]")
+    # Extract JSON array from potential markdown-wrapped output
+    if ! echo "$claude_array" | jq -e 'type == "array"' &>/dev/null; then
+        claude_array=$(sed -n '/^\[/,/^\]/p' "$findings" 2>/dev/null | jq -c '.' 2>/dev/null || echo "[]")
+    fi
+    if ! echo "$claude_array" | jq -e 'type == "array"' &>/dev/null; then
+        claude_array="[]"
+    fi
+
+    # Filter: drop Claude findings that overlap (>=60% similar) with strategic
+    local filtered_claude="[]"
+    local strategic_titles
+    strategic_titles=$(echo "$strategic_json" | jq -r '.[].title' 2>/dev/null || true)
+    while IFS= read -r cf; do
+        [[ -z "$cf" ]] && continue
+        local ctitle
+        ctitle=$(echo "$cf" | jq -r '.title // ""' 2>/dev/null) || true
+        [[ -z "$ctitle" ]] && continue
+        local overlaps=false
+        if [[ -n "$strategic_titles" ]]; then
+            while IFS= read -r stitle; do
+                [[ -z "$stitle" ]] && continue
+                local sim
+                sim=$(title_similarity_percent "$ctitle" "$stitle" 2>/dev/null || echo "0")
+                if [[ "${sim:-0}" -ge 60 ]]; then
+                    overlaps=true
+                    break
+                fi
+            done <<< "$strategic_titles"
+        fi
+        [[ "$overlaps" == true ]] && continue
+        filtered_claude=$(echo "$filtered_claude" | jq -c --argjson f "$cf" '. + [$f]' 2>/dev/null || echo "$filtered_claude")
+    done < <(echo "$claude_array" | jq -c '.[]' 2>/dev/null || true)
+
+    # Merge: filtered Claude + strategic
+    jq -n -c --argjson c "$filtered_claude" --argjson s "$strategic_json" '$c + $s' 2>/dev/null > "$merged_file" || cat "$findings" > "$merged_file"
+    cat "$merged_file"
+    rm -f "$merged_file" "$findings" 2>/dev/null || true
 }
 
 # ─── Issue Creation ────────────────────────────────────────────────────────
@@ -255,11 +406,11 @@ create_issue_from_finding() {
         return 1
     fi
 
-    # Check if issue already exists
+    # Dedup: check if an open issue with the same title already exists
     local existing
-    existing=$(gh issue list --search "$title" --json number -q 'length' 2>/dev/null || echo "0")
-    if [[ "${existing:-0}" -gt 0 ]]; then
-        warn "Issue already exists: $title"
+    existing=$(gh issue list --state open --search "$title" --json number,title --limit 20 2>/dev/null | jq -r --arg t "$title" '[.[] | select(.title == $t) | .number][0] // empty' || echo "")
+    if [[ -n "$existing" ]]; then
+        warn "Open issue with same title already exists: #${existing} ($title)"
         return 1
     fi
 
@@ -290,8 +441,31 @@ create_issue_from_finding() {
     return 0
 }
 
+# ─── Daemon Awareness ───────────────────────────────────────────────────────
+# Check if daemon is running (avoids duplicate work: autonomous vs daemon)
+daemon_is_running() {
+    local daemon_state="${HOME}/.shipwright/daemon-state.json"
+    local pid_file="${HOME}/.shipwright/daemon.pid"
+    if [[ ! -f "$daemon_state" ]]; then
+        return 1
+    fi
+    if [[ ! -f "$pid_file" ]]; then
+        return 1
+    fi
+    local pid
+    pid=$(cat "$pid_file" 2>/dev/null || true)
+    [[ -z "$pid" ]] && return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    # Optional: also check daemon field if present (API/dashboard format)
+    local daemon_status
+    daemon_status=$(jq -r '.daemon // "running"' "$daemon_state" 2>/dev/null || echo "running")
+    [[ "$daemon_status" == "running" ]] || return 1
+    return 0
+}
+
 # ─── Issue Processing from Analysis ────────────────────────────────────────
-# Trigger pipeline for a finding issue (daemon will also pick it up; this runs immediately)
+# Trigger pipeline for a finding issue. When daemon is running, delegate via
+# ready-to-build label; otherwise trigger pipeline directly.
 trigger_pipeline_for_finding() {
     local issue_num="$1"
     local title="$2"
@@ -302,7 +476,27 @@ trigger_pipeline_for_finding() {
         return 0
     fi
 
-    # Use recruit for model/team selection when available
+    local daemon_aware
+    daemon_aware=$(get_config "daemon_aware" "true")
+    if [[ "$daemon_aware" != "true" && "$daemon_aware" != "1" ]]; then
+        daemon_aware=false
+    else
+        daemon_aware=true
+    fi
+
+    if [[ "$daemon_aware" == "true" ]] && daemon_is_running; then
+        # Daemon running: label ready-to-build and let daemon pick it up
+        if [[ "$NO_GITHUB" != "true" ]]; then
+            gh issue edit "$issue_num" --add-label "ready-to-build" 2>/dev/null || {
+                warn "Failed to add ready-to-build label to #${issue_num}"
+            }
+        fi
+        info "Delegated issue #${issue_num} to daemon (labeled ready-to-build)"
+        emit_event "autonomous.delegated_to_daemon" "issue=$issue_num" "title=$title"
+        return 0
+    fi
+
+    # Daemon not running or DAEMON_AWARE=false: trigger pipeline directly
     local -a recruit_args=()
     if [[ -x "$SCRIPT_DIR/sw-recruit.sh" ]]; then
         local recruit_match
@@ -386,19 +580,36 @@ process_findings() {
         [[ -z "$finding" ]] && continue
 
         total=$((total + 1))
-        [[ "$created" -ge "$max_per_cycle" ]] && break
 
-        local title description priority effort labels category
+        local title description priority effort labels category source issue_num
         title=$(echo "$finding" | jq -r '.title // ""')
         description=$(echo "$finding" | jq -r '.description // ""')
         priority=$(echo "$finding" | jq -r '.priority // "medium"')
         effort=$(echo "$finding" | jq -r '.effort // "M"')
-        labels=$(echo "$finding" | jq -r '.labels | join(",") // ""')
+        labels=$(echo "$finding" | jq -r '(.labels | if type == "array" then join(",") else . end) // ""')
         category=$(echo "$finding" | jq -r '.category // ""')
+        source=$(echo "$finding" | jq -r '.source // ""')
+        issue_num=$(echo "$finding" | jq -r '.issue // ""')
 
         if [[ -z "$title" ]]; then
             continue
         fi
+
+        # Strategic findings: issue already created by strategic agent; trigger pipeline and register, skip create
+        if [[ "$source" == "strategic" ]]; then
+            [[ -z "$issue_num" && "${NO_GITHUB:-false}" != "true" ]] && command -v gh &>/dev/null && \
+                issue_num=$(gh issue list --state open --search "$title" --json number -q '.[0].number' 2>/dev/null || echo "")
+            if [[ -n "$issue_num" && "$issue_num" =~ ^[0-9]+$ ]]; then
+                trigger_pipeline_for_finding "$issue_num" "$title"
+                autonomous_register_strategic_overlap "$title" "$issue_num" || true
+                info "Acknowledged strategic finding: #${issue_num} $title"
+            else
+                autonomous_register_strategic_overlap "$title" "" || true
+            fi
+            continue
+        fi
+
+        [[ "$created" -ge "$max_per_cycle" ]] && continue
 
         # Add category to labels if not present
         if [[ "$labels" != *"$category"* ]]; then
@@ -420,7 +631,6 @@ process_findings() {
             fi
         fi
 
-        local issue_num
         issue_num=$(create_issue_from_finding "$title" "$description" "$priority" "$effort" "$labels")
         if [[ $? -eq 0 && -n "$issue_num" ]]; then
             created=$((created + 1))
@@ -664,6 +874,12 @@ set_cycle_config() {
             set_config "rollback_on_failures" "$bool_val"
             success "Rollback on failures set to ${CYAN}${bool_val}${RESET}"
             ;;
+        daemon-aware|daemon_aware)
+            local bool_val="true"
+            [[ "$value" == "false" || "$value" == "0" || "$value" == "no" ]] && bool_val="false"
+            set_config "daemon_aware" "$bool_val"
+            success "Daemon-aware (delegate to daemon when running) set to ${CYAN}${bool_val}${RESET}"
+            ;;
         *)
             error "Unknown config key: $key"
             return 1
@@ -697,6 +913,7 @@ OPTIONS (for config)
   set max-pipelines <num>   Set max concurrent pipelines (default 2)
   set approval <bool>       Enable human approval mode (default false)
   set rollback <bool>       Rollback on failures (default true)
+  set daemon-aware <bool>   Delegate to daemon when running (default true)
 
 EXAMPLES
   sw autonomous start                        # Start the loop

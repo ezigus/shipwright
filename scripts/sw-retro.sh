@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="2.3.0"
+VERSION="2.3.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -464,6 +464,9 @@ cmd_run() {
 
     # Generate report
     generate_retro_report "$from_date" "$to_date" "$analysis" "$agent_perf" "$velocity"
+
+    # Feed retro into self-optimization loop (|| true to avoid breaking retro if optimization unavailable)
+    [[ -f "$SCRIPT_DIR/sw-self-optimize.sh" ]] && "$SCRIPT_DIR/sw-self-optimize.sh" ingest-retro || true
 
     # Offer to create issues
     if command -v gh &>/dev/null; then

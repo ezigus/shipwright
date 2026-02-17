@@ -7,6 +7,32 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.3.1] — 2026-02-16
+
+**Autonomous feedback loops, testing foundation, and chaos resilience.**
+
+### Added
+
+- **Vitest test suite** — 113 unit tests across 6 files covering state store, API client, router, WebSocket, design tokens, and icons (`dashboard:test`)
+- **Server API test suite** — 46 endpoint tests for error handling, edge cases, lifecycle operations (`sw-server-api-test.sh`)
+- **Autonomous E2E test** — 20 tests validating daemon coordination, strategic ingestion, retro-optimize integration, oversight in merge stage (`sw-autonomous-e2e-test.sh`)
+- **Budget & chaos tests** — 16 tests for budget limits, missing files, corrupted data, large files, concurrent writes (`sw-budget-chaos-test.sh`)
+- **Memory & discovery E2E** — 16 tests for failure patterns, fix effectiveness, discovery broadcast/query/TTL, cross-pipeline learning (`sw-memory-discovery-e2e-test.sh`)
+- **`optimize_ingest_retro()`** — Self-optimize reads retro JSON reports, appends to outcomes, adjusts template weights when quality is low
+- **`analyze_with_ai()`** — AI-driven triage via intelligence engine with `--ai` flag and `TRIAGE_AI` config; falls back to keyword-based
+- **`ingest_strategic_findings()`** — Autonomous loop reads strategic agent events from last 24h, deduplicates, feeds into autonomous creation loop
+- **`autonomous_register_strategic_overlap()`** — Tracks acknowledged strategic issues to prevent re-processing
+- **`daemon_is_running()`** — Autonomous loop detects running daemon; delegates via `ready-to-build` label instead of direct pipeline start
+
+### Fixed
+
+- **Retro -> self-optimize** — `sw retro run` now calls `sw-self-optimize.sh ingest-retro` automatically after generating report
+- **Oversight before merge** — `stage_merge()` now has oversight gate (blocks on critical/security issues) + approval gate check
+- **Proactive feedback** — Monitor stage now always collects deploy logs via `sw-feedback.sh collect`, even on clean monitoring pass
+- **Dashboard E2E in CI** — `sw-dashboard-e2e-test.sh` added to `npm test` chain so it runs on every PR
+
+---
+
 ## [2.3.0] — 2026-02-16
 
 **Fleet Command completeness overhaul + autonomous team oversight.**

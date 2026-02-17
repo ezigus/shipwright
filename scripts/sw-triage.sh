@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="2.3.0"
+VERSION="2.3.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -165,6 +165,125 @@ analyze_effort() {
     esac
 }
 
+# analyze_with_ai <title> <body>
+# AI-driven triage via intelligence engine. Returns JSON or empty on failure.
+# Schema: {type, complexity, risk, effort, labels[], summary}
+# Always falls back to keyword-based analysis when AI unavailable.
+analyze_with_ai() {
+    local title="$1"
+    local body="$2"
+    local combined="${title} ${body}"
+
+    # Check sw-intelligence.sh is sourceable and claude CLI exists
+    if [[ ! -f "${SCRIPT_DIR}/sw-intelligence.sh" ]]; then
+        return 1
+    fi
+    if ! command -v claude &>/dev/null; then
+        return 1
+    fi
+
+    # Source intelligence (provides _intelligence_call_claude, compute_md5)
+    if ! source "${SCRIPT_DIR}/sw-intelligence.sh" 2>/dev/null; then
+        return 1
+    fi
+
+    local prompt
+    prompt="Analyze this GitHub issue and return ONLY a valid JSON object (no markdown, no explanation).
+
+Title: ${title}
+
+Body: ${body}
+
+Return JSON with exactly these fields:
+{
+  \"type\": \"<bug|feature|security|performance|refactor|docs|chore>\",
+  \"complexity\": \"<trivial|simple|moderate|complex|epic>\",
+  \"risk\": \"<low|medium|high|critical>\",
+  \"effort\": \"<xs|s|m|l|xl>\",
+  \"labels\": [\"type:X\", \"complexity:X\", \"risk:X\", \"priority:X\", \"effort:X\"],
+  \"summary\": \"<brief one-line summary>\"
+}"
+
+    local cache_key
+    cache_key="triage_analyze_$(compute_md5 --string "$combined" 2>/dev/null || echo "$(echo "$combined" | md5 2>/dev/null | cut -c1-16)")"
+
+    local result
+    result=$(_intelligence_call_claude "$prompt" "$cache_key" 2>/dev/null) || true
+
+    if [[ -z "$result" ]] || echo "$result" | jq -e '.' &>/dev/null; then
+        :  # result is empty or valid JSON
+    else
+        return 1
+    fi
+
+    # Validate required fields and normalize
+    local type_val complexity_val risk_val effort_val labels_val
+    type_val=$(echo "$result" | jq -r '.type // empty' 2>/dev/null)
+    complexity_val=$(echo "$result" | jq -r '.complexity // empty' 2>/dev/null)
+    risk_val=$(echo "$result" | jq -r '.risk // empty' 2>/dev/null)
+    effort_val=$(echo "$result" | jq -r '.effort // empty' 2>/dev/null)
+    labels_val=$(echo "$result" | jq -r '.labels // []' 2>/dev/null)
+
+    # Reject if we got an error object
+    if echo "$result" | jq -e '.error' &>/dev/null; then
+        return 1
+    fi
+
+    # Need at least type or complexity to consider AI result useful
+    if [[ -z "$type_val" && -z "$complexity_val" && -z "$risk_val" ]]; then
+        return 1
+    fi
+
+    # Normalize to valid triage schema values
+    local valid_type
+    case "$(echo "$type_val" | tr '[:upper:]' '[:lower:]')" in
+        bug) valid_type="bug" ;;
+        feature) valid_type="feature" ;;
+        security) valid_type="security" ;;
+        performance) valid_type="performance" ;;
+        refactor) valid_type="refactor" ;;
+        docs) valid_type="docs" ;;
+        chore) valid_type="chore" ;;
+        *) valid_type="" ;;
+    esac
+    local valid_complexity
+    case "$(echo "$complexity_val" | tr '[:upper:]' '[:lower:]')" in
+        trivial) valid_complexity="trivial" ;;
+        simple) valid_complexity="simple" ;;
+        moderate) valid_complexity="moderate" ;;
+        complex) valid_complexity="complex" ;;
+        epic) valid_complexity="epic" ;;
+        *) valid_complexity="" ;;
+    esac
+    local valid_risk
+    case "$(echo "$risk_val" | tr '[:upper:]' '[:lower:]')" in
+        low) valid_risk="low" ;;
+        medium) valid_risk="medium" ;;
+        high) valid_risk="high" ;;
+        critical) valid_risk="critical" ;;
+        *) valid_risk="" ;;
+    esac
+    local valid_effort
+    case "$(echo "$effort_val" | tr '[:upper:]' '[:lower:]')" in
+        xs) valid_effort="xs" ;;
+        s) valid_effort="s" ;;
+        m) valid_effort="m" ;;
+        l) valid_effort="l" ;;
+        xl) valid_effort="xl" ;;
+        *) valid_effort="" ;;
+    esac
+
+    jq -n \
+        --arg type "${valid_type:-}" \
+        --arg complexity "${valid_complexity:-}" \
+        --arg risk "${valid_risk:-}" \
+        --arg effort "${valid_effort:-}" \
+        --argjson labels "${labels_val:-[]}" \
+        --arg summary "$(echo "$result" | jq -r '.summary // ""' 2>/dev/null)" \
+        '{type: $type, complexity: $complexity, risk: $risk, effort: $effort, labels: $labels, summary: $summary}'
+    return 0
+}
+
 # suggest_labels <type> <complexity> <risk> <effort>
 # Generates label recommendations
 suggest_labels() {
@@ -199,9 +318,37 @@ suggest_labels() {
 
 # ─── Subcommand: analyze ──────────────────────────────────────────────────
 
+# Check if AI triage should be used (TRIAGE_AI env, --ai flag, or daemon-config)
+_triage_use_ai() {
+    if [[ "${TRIAGE_AI:-}" == "1" || "${TRIAGE_AI:-}" == "true" ]]; then
+        return 0
+    fi
+    local config="${REPO_DIR}/.claude/daemon-config.json"
+    if [[ -f "$config" ]]; then
+        local enabled
+        enabled=$(jq -r '.intelligence.enabled // false' "$config" 2>/dev/null || echo "false")
+        [[ "$enabled" == "true" ]]
+    else
+        return 1
+    fi
+}
+
 cmd_analyze() {
-    local issue="${1:-}"
-    [[ -z "$issue" ]] && { error "Usage: triage analyze <issue>"; exit 1; }
+    local issue=""
+    local use_ai=false
+
+    # Parse args for --ai and issue number
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --ai) use_ai=true; shift ;;
+            *) [[ -z "$issue" ]] && issue="$1"; shift ;;
+        esac
+    done
+
+    [[ -z "$issue" ]] && { error "Usage: triage analyze [--ai] <issue>"; exit 1; }
+
+    # Enable AI if --ai flag or config
+    _triage_use_ai && use_ai=true
 
     check_gh
 
@@ -223,13 +370,45 @@ cmd_analyze() {
 
     local combined_text="${title} ${body}"
 
-    # Analyze
-    local type complexity risk effort labels
-    type=$(analyze_type "$combined_text")
-    complexity=$(analyze_complexity "$combined_text")
-    risk=$(analyze_risk "$combined_text")
-    effort=$(analyze_effort "$complexity" "$risk")
-    labels=$(suggest_labels "$type" "$complexity" "$risk" "$effort")
+    # Keyword-based analysis (always run for fallback)
+    local kw_type kw_complexity kw_risk kw_effort kw_labels
+    kw_type=$(analyze_type "$combined_text")
+    kw_complexity=$(analyze_complexity "$combined_text")
+    kw_risk=$(analyze_risk "$combined_text")
+    kw_effort=$(analyze_effort "$kw_complexity" "$kw_risk")
+    kw_labels=$(suggest_labels "$kw_type" "$kw_complexity" "$kw_risk" "$kw_effort")
+
+    # Try AI analysis first when enabled
+    local type="$kw_type" complexity="$kw_complexity" risk="$kw_risk" effort="$kw_effort" labels="$kw_labels"
+    if $use_ai; then
+        local ai_result
+        if ai_result=$(analyze_with_ai "$title" "$body" 2>/dev/null); then
+            local ai_type ai_complexity ai_risk ai_effort ai_labels
+            ai_type=$(echo "$ai_result" | jq -r '.type // empty')
+            ai_complexity=$(echo "$ai_result" | jq -r '.complexity // empty')
+            ai_risk=$(echo "$ai_result" | jq -r '.risk // empty')
+            ai_effort=$(echo "$ai_result" | jq -r '.effort // empty')
+            ai_labels=$(echo "$ai_result" | jq -r '.labels // []' 2>/dev/null)
+
+            # Merge: AI takes precedence where available
+            [[ -n "$ai_type" ]] && type="$ai_type"
+            [[ -n "$ai_complexity" ]] && complexity="$ai_complexity"
+            [[ -n "$ai_risk" ]] && risk="$ai_risk"
+            if [[ -n "$ai_effort" ]]; then
+                effort="$ai_effort"
+            else
+                effort=$(analyze_effort "$complexity" "$risk")
+            fi
+            if [[ -n "$ai_labels" && "$ai_labels" != "[]" ]]; then
+                labels=$(echo "$ai_labels" | jq -r 'join(" ")')
+            else
+                labels=$(suggest_labels "$type" "$complexity" "$risk" "$effort")
+            fi
+            info "AI triage applied"
+        else
+            warn "AI triage unavailable, using keyword analysis"
+        fi
+    fi
 
     # Output as structured JSON
     cat << EOF
@@ -575,7 +754,7 @@ cmd_help() {
     echo -e "  ${CYAN}shipwright triage${RESET} <subcommand> [options]"
     echo ""
     echo -e "${BOLD}SUBCOMMANDS${RESET}"
-    echo -e "  ${CYAN}analyze <issue>${RESET}        Analyze issue and suggest labels (outputs JSON)"
+    echo -e "  ${CYAN}analyze [--ai] <issue>${RESET}  Analyze issue and suggest labels (outputs JSON)"
     echo -e "  ${CYAN}label <issue>${RESET}          Apply suggested labels to issue"
     echo -e "  ${CYAN}prioritize${RESET}            Score and rank all open issues by priority"
     echo -e "  ${CYAN}team <issue>${RESET}           Recommend team size & pipeline template"
@@ -585,6 +764,8 @@ cmd_help() {
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo -e "  ${DIM}shipwright triage analyze 42${RESET}"
+    echo -e "  ${DIM}shipwright triage analyze --ai 42${RESET}"
+    echo -e "  ${DIM}shipwright triage --ai analyze 42${RESET}"
     echo -e "  ${DIM}shipwright triage label 42${RESET}"
     echo -e "  ${DIM}shipwright triage prioritize${RESET}"
     echo -e "  ${DIM}shipwright triage team 42${RESET}"
@@ -596,6 +777,12 @@ cmd_help() {
 # ─── Main ──────────────────────────────────────────────────────────────────
 
 main() {
+    # Parse global --ai flag (enables AI triage for this invocation)
+    if [[ "${1:-}" == "--ai" ]]; then
+        export TRIAGE_AI=1
+        shift
+    fi
+
     local cmd="${1:-help}"
     shift 2>/dev/null || true
 

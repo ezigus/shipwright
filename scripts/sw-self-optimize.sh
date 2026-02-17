@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="2.3.0"
+VERSION="2.3.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -207,6 +207,100 @@ optimize_analyze_outcome() {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
+# RETRO INGEST
+# ═════════════════════════════════════════════════════════════════════════════
+
+# optimize_ingest_retro
+# Read most recent retro JSON, append summary to outcomes, adjust template weights
+optimize_ingest_retro() {
+    local retros_dir="${HOME}/.shipwright/retros"
+
+    if [[ ! -d "$retros_dir" ]]; then
+        return 0
+    fi
+
+    local latest_retro
+    latest_retro=$(ls -t "$retros_dir"/retro-*.json 2>/dev/null | head -1)
+    [[ -z "$latest_retro" || ! -f "$latest_retro" ]] && return 0
+
+    if ! command -v jq &>/dev/null; then
+        warn "jq required for retro ingest — skipping"
+        return 0
+    fi
+
+    ensure_optimization_dir
+
+    # Extract metrics from retro JSON
+    local analysis_json
+    analysis_json=$(jq -r '.analysis // {}' "$latest_retro" 2>/dev/null || echo "{}")
+    [[ -z "$analysis_json" || "$analysis_json" == "null" ]] && return 0
+
+    local success_rate avg_duration slowest_stage quality_score retries from_date to_date
+    success_rate=$(echo "$analysis_json" | jq -r 'if .pipelines > 0 then ((.succeeded // 0) / .pipelines * 100) | floor else 0 end' 2>/dev/null || echo "0")
+    avg_duration=$(echo "$analysis_json" | jq -r '.avg_duration // 0' 2>/dev/null || echo "0")
+    slowest_stage=$(echo "$analysis_json" | jq -r '.slowest_stage // ""' 2>/dev/null || echo "")
+    quality_score=$(echo "$analysis_json" | jq -r '.quality_score // 0' 2>/dev/null || echo "0")
+    retries=$(echo "$analysis_json" | jq -r '.retries // 0' 2>/dev/null || echo "0")
+    from_date=$(jq -r '.from_date // ""' "$latest_retro" 2>/dev/null || echo "")
+    to_date=$(jq -r '.to_date // ""' "$latest_retro" 2>/dev/null || echo "")
+
+    # Append retro_summary to outcomes.jsonl
+    local retro_record
+    retro_record=$(jq -c -n \
+        --arg ts "$(now_iso)" \
+        --argjson success_rate "${success_rate:-0}" \
+        --argjson avg_duration "${avg_duration:-0}" \
+        --arg slowest_stage "${slowest_stage:-}" \
+        --argjson quality_score "${quality_score:-0}" \
+        --argjson retries "${retries:-0}" \
+        --arg from_date "${from_date:-}" \
+        --arg to_date "${to_date:-}" \
+        '{
+            ts: $ts,
+            type: "retro_summary",
+            success_rate: $success_rate,
+            avg_duration: $avg_duration,
+            slowest_stage: $slowest_stage,
+            quality_score: $quality_score,
+            retries: $retries,
+            from_date: $from_date,
+            to_date: $to_date
+        }')
+    echo "$retro_record" >> "$OUTCOMES_FILE"
+
+    # Adjust template weights when quality is low — boost templates with stronger performance
+    # (success_rate in .weights is avg weight; values > 1.0 indicate above-average success)
+    if [[ "${quality_score:-0}" -lt 70 ]] && [[ -f "$TEMPLATE_WEIGHTS_FILE" ]]; then
+        info "Quality score low (${quality_score}) — boosting templates with stronger quality gates"
+        local tmp_weights
+        tmp_weights=$(mktemp "${TEMPLATE_WEIGHTS_FILE}.tmp.XXXXXX")
+        trap "rm -f '$tmp_weights'" RETURN
+        if jq '
+            if .weights then
+                .weights |= with_entries(
+                    if (.value.success_rate >= 1.2) and (.value.raw_weights != null) then
+                        .value.raw_weights |= with_entries(.value = ((.value * 1.15) | if . > 2.0 then 2.0 else . end))
+                    else . end
+                )
+            else . end
+        ' "$TEMPLATE_WEIGHTS_FILE" > "$tmp_weights" 2>/dev/null && [[ -s "$tmp_weights" ]]; then
+            mv "$tmp_weights" "$TEMPLATE_WEIGHTS_FILE"
+        else
+            rm -f "$tmp_weights"
+        fi
+    fi
+
+    type rotate_jsonl &>/dev/null 2>&1 && rotate_jsonl "$OUTCOMES_FILE" 10000
+
+    emit_event "optimize.retro_ingested" \
+        "success_rate=${success_rate:-0}" \
+        "quality_score=${quality_score:-0}" \
+        "slowest_stage=${slowest_stage:-}"
+
+    success "Retro ingested from $(basename "$latest_retro")"
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
 # TEMPLATE TUNING
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -233,6 +327,8 @@ optimize_tune_templates() {
 
     # Extract template, labels, result from each outcome line
     while IFS= read -r line; do
+        # Skip retro_summary and other non-pipeline outcome lines
+        [[ "$(echo "$line" | jq -r '.type // ""' 2>/dev/null)" == "retro_summary" ]] && continue
         local template result labels_str
         template=$(echo "$line" | jq -r '.template // "unknown"' 2>/dev/null) || continue
         result=$(echo "$line" | jq -r '.result // "unknown"' 2>/dev/null) || continue
@@ -1176,6 +1272,7 @@ show_help() {
     echo "  analyze-outcome <state-file>   Analyze a completed pipeline outcome"
     echo "  tune                           Run full optimization analysis"
     echo "  report                         Show optimization report (last 7 days)"
+    echo "  ingest-retro                   Ingest most recent retro into optimization loop"
     echo "  evolve-memory                  Prune/strengthen/promote memory patterns"
     echo "  help                           Show this help"
     echo ""
@@ -1197,6 +1294,7 @@ main() {
     case "$cmd" in
         analyze-outcome) optimize_analyze_outcome "$@" ;;
         tune)            optimize_full_analysis ;;
+        ingest-retro)    optimize_ingest_retro ;;
         report)          optimize_report ;;
         evolve-memory)   optimize_evolve_memory ;;
         help|--help|-h)  show_help ;;

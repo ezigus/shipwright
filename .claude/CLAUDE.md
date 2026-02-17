@@ -508,6 +508,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-durable.sh` | 720 | Durable Workflow Engine |
 | `scripts/sw-e2e-orchestrator.sh` | 550 | Test suite registry & execution |
 | `scripts/sw-eventbus.sh` | 406 | Durable event bus for real-time inter-component |
+| `scripts/sw-evidence.sh` | 664 | Machine-Verifiable Proof for Agent Deliveries |
 | `scripts/sw-feedback.sh` | 468 | Production Feedback Loop |
 | `scripts/sw-fix.sh` | 473 | Bulk Fix Across Multiple Repos |
 | `scripts/sw-fleet-discover.sh` | 556 | Auto-Discovery from GitHub Orgs |
@@ -516,7 +517,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-guild.sh` | 562 | Knowledge Guilds & Cross-Team Learning |
 | `scripts/sw-heartbeat.sh` | 304 | File-based agent heartbeat protocol |
 | `scripts/sw-hygiene.sh` | 651 | Repository Organization & Cleanup |
-| `scripts/sw-incident.sh` | 647 | Autonomous Incident Detection & Response |
+| `scripts/sw-incident.sh` | 890 | Autonomous Incident Detection & Response |
 | `scripts/sw-init.sh` | 855 | Complete setup for Shipwright + Shipwright |
 | `scripts/sw-instrument.sh` | 693 | Pipeline Instrumentation & Feedback Loops |
 | `scripts/sw-intelligence.sh` | 1195 | AI-Powered Analysis & Decision Engine |
@@ -535,7 +536,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-pipeline-vitals.sh` | 1080 | Pipeline Vitals Engine |
 | `scripts/sw-pipeline.sh` | 2437 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 751 | Autonomous PM Agent for Team Orchestration |
-| `scripts/sw-pr-lifecycle.sh` | 510 | Autonomous PR Management |
+| `scripts/sw-pr-lifecycle.sh` | 682 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 828 | Predictive & Proactive Intelligence |
 | `scripts/sw-prep.sh` | 1658 | Repository Preparation for Agent Teams |
 | `scripts/sw-ps.sh` | 186 | Show running agent process status |
@@ -549,6 +550,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-remote.sh` | 678 | Machine Registry & Remote Daemon Management |
 | `scripts/sw-replay.sh` | 532 | Pipeline run replay, timeline viewing, narratives |
 | `scripts/sw-retro.sh` | 685 | Sprint Retrospective Engine |
+| `scripts/sw-review-rerun.sh` | 220 | Canonical Rerun Comment Writer |
 | `scripts/sw-scale.sh` | 467 | Dynamic agent team scaling during pipeline execution |
 | `scripts/sw-security-audit.sh` | 515 | Comprehensive Security Auditing |
 | `scripts/sw-self-optimize.sh` | 1307 | Learning & Self-Tuning System |

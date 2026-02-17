@@ -13,7 +13,7 @@
   <a href="https://github.com/sethdford/shipwright/actions/workflows/test.yml"><img src="https://github.com/sethdford/shipwright/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/sethdford/shipwright/actions/workflows/shipwright-pipeline.yml"><img src="https://github.com/sethdford/shipwright/actions/workflows/shipwright-pipeline.yml/badge.svg" alt="Pipeline"></a>
   <img src="https://img.shields.io/badge/tests-103_suites_passing-4ade80?style=flat-square" alt="103 suites">
-  <img src="https://img.shields.io/badge/version-2.3.1-00d4ff?style=flat-square" alt="v2.3.1">
+  <img src="https://img.shields.io/badge/version-2.4.0-00d4ff?style=flat-square" alt="v2.4.0">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License">
   <img src="https://img.shields.io/badge/bash-3.2%2B-7c3aed?style=flat-square" alt="Bash 3.2+">
 </p>
@@ -24,7 +24,7 @@
 
 - [Shipwright Builds Itself](#shipwright-builds-itself)
 - [Code Factory Pattern](#code-factory-pattern)
-- [What's New in v2.3.1](#whats-new-in-v231)
+- [What's New in v2.4.0](#whats-new-in-v240)
 - [How It Works](#how-it-works)
 - [Install](#install)
 - [Quick Start](#quick-start)
@@ -103,18 +103,21 @@ shipwright incident gap sla
 
 ---
 
-## What's New in v2.3.1
+## What's New in v2.4.0
 
-**Docs & platform polish** — doc-fleet, shared libs, policy schema, release infra:
+**Code Factory pattern** — deterministic, risk-aware agent delivery with machine-verifiable evidence:
 
-- **Doc-fleet** — Five Cursor agents (doc-architect, claude-md, strategy-curator, pattern-writer, readme-optimizer) keep docs, strategy, and README in sync
-- **Pipeline lib split** — `scripts/lib/pipeline-quality.sh`, `daemon-health.sh`, `policy.sh` for reuse and tests
-- **Policy schema** — `config/policy.json` and `docs/config-policy.md` for hygiene, quality, and platform rules
-- **Release infra** — npm, GitHub Releases (darwin/linux/windows), Homebrew tap; `scripts/build-release.sh` and `.github/workflows/release.yml` ship all platforms
+- **Risk policy gate** — PR-level preflight classifies risk tier from changed files; blocks before expensive CI
+- **SHA discipline** — All evidence validated against current PR head SHA; stale evidence never trusted
+- **Evidence framework** — 6 collector types (browser, API, database, CLI, webhook, custom) with freshness enforcement
+- **Review remediation** — Agent reads review findings, patches code, validates, pushes fix commit in-branch
+- **Auto-resolve bot threads** — Bot-only PR threads cleaned up after clean rerun; human threads untouched
+- **Harness-gap loop** — Every incident creates a test case requirement with SLA tracking (P0: 24h, P1: 72h)
+- **Policy contract v2** — Risk tiers, merge policy, docs drift rules, evidence specs, harness SLAs in one file
 
-**v2.1.2**: AGI-level recruit — `recruit match` / `team` / `route`, cross-system integration, 103 test suites in CI
+**v2.3.1**: Autonomous feedback loops, testing foundation, chaos resilience
 
-**v2.1.0**: tmux visual overhaul — role-colored borders, pipeline status widgets, active pane depth
+**v2.3.0**: Fleet Command completeness overhaul + autonomous team oversight
 
 **v2.0.0**: 18 autonomous agents, 100+ CLI commands, intelligence layer, multi-repo fleet, local mode
 

@@ -7,6 +7,33 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.4.0] — 2026-02-17
+
+**Code Factory pattern — deterministic, risk-aware agent delivery with machine-verifiable evidence.**
+
+### Added
+
+- **Code Factory control plane** — Complete implementation of the Code Factory pattern for deterministic agent-driven delivery with auditable merge evidence
+- **Risk policy gate** — `risk-policy-gate.yml` workflow classifies PR risk tier from changed files before expensive CI runs; path-based rules in `config/policy.json`
+- **Current-head SHA discipline** — All checks, reviews, and approvals validated against current PR head SHA; stale evidence is never trusted (`sw-pr-lifecycle.sh`)
+- **Evidence framework** — `sw-evidence.sh` with 6 collector types: browser, API, database, CLI, webhook, custom; freshness enforcement and machine-readable manifests
+- **Policy contract extensions** — `riskTierRules`, `mergePolicy` (per-tier required checks and evidence types), `docsDriftRules`, `evidence` collectors, `harnessGapPolicy`, `codeReviewAgent` config
+- **Canonical rerun writer** — `sw-review-rerun.sh` with SHA-deduped comments; single writer prevents duplicate bot comments across workflows
+- **Review remediation workflow** — `review-remediation.yml` reads review findings, triggers agent to patch code, validates, pushes fix commit to same branch
+- **Auto-resolve bot threads** — `auto-resolve-threads.yml` resolves bot-only PR threads after clean rerun; never touches human-participated threads
+- **Harness-gap loop** — `shipwright incident gap` commands: every production regression creates a GitHub issue, tracks SLA (P0: 24h, P1: 72h, P2: 168h), requires test case before close
+- **Evidence npm scripts** — `harness:evidence:capture`, `harness:evidence:verify`, `harness:evidence:pre-pr`, type-specific variants for api/cli/database/browser
+- **Code Factory documentation** — Full guide on website (`/guides/code-factory/`), README section with comparison table, website index cards
+- **Docs drift detection** — `risk-policy-gate.yml` detects when control-plane files change without corresponding documentation updates
+
+### Changed
+
+- **Policy schema v2** — `config/policy.schema.json` extended with JSON Schema definitions for all new policy sections; validated by CI
+- **Merge policy** — Per-tier `requiredEvidence` array replaces boolean `requireBrowserEvidence`; critical tier requires CLI + API evidence
+- **PR lifecycle** — `sw-pr-lifecycle.sh` now validates check results and review freshness against current head SHA before allowing merge
+
+---
+
 ## [2.3.1] — 2026-02-16
 
 **Autonomous feedback loops, testing foundation, and chaos resilience.**

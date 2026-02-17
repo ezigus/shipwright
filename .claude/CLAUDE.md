@@ -484,7 +484,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-adversarial.sh` | 268 | Adversarial Agent Code Review |
 | `scripts/sw-architecture-enforcer.sh` | 327 | Living Architecture Model & Enforcer |
 | `scripts/sw-auth.sh` | 609 | GitHub OAuth Authentication |
-| `scripts/sw-autonomous.sh` | 774 | Master controller for AI-building-AI loop |
+| `scripts/sw-autonomous.sh` | 991 | Master controller for AI-building-AI loop |
 | `scripts/sw-changelog.sh` | 703 | Automated Release Notes & Migration Guides |
 | `scripts/sw-checkpoint.sh` | 480 | Save and restore agent state mid-stage |
 | `scripts/sw-ci.sh` | 590 | GitHub Actions CI/CD Orchestration |
@@ -548,10 +548,10 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-release.sh` | 706 | Release train automation |
 | `scripts/sw-remote.sh` | 678 | Machine Registry & Remote Daemon Management |
 | `scripts/sw-replay.sh` | 532 | Pipeline run replay, timeline viewing, narratives |
-| `scripts/sw-retro.sh` | 682 | Sprint Retrospective Engine |
+| `scripts/sw-retro.sh` | 685 | Sprint Retrospective Engine |
 | `scripts/sw-scale.sh` | 467 | Dynamic agent team scaling during pipeline execution |
 | `scripts/sw-security-audit.sh` | 515 | Comprehensive Security Auditing |
-| `scripts/sw-self-optimize.sh` | 1209 | Learning & Self-Tuning System |
+| `scripts/sw-self-optimize.sh` | 1307 | Learning & Self-Tuning System |
 | `scripts/sw-session.sh` | 557 | Launch a Claude Code team session in a new tmux window |
 | `scripts/sw-setup.sh` | 384 | Comprehensive onboarding wizard |
 | `scripts/sw-standup.sh` | 723 | Automated Daily Standups for AI Agent Teams |
@@ -568,7 +568,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-tmux.sh` | 607 | tmux Health & Plugin Management |
 | `scripts/sw-trace.sh` | 496 | E2E Traceability (Issue → Commit → PR → Deploy) |
 | `scripts/sw-tracker.sh` | 532 | Provider Router for Issue Tracker Integration |
-| `scripts/sw-triage.sh` | 634 | Intelligent Issue Labeling & Prioritization |
+| `scripts/sw-triage.sh` | 821 | Intelligent Issue Labeling & Prioritization |
 | `scripts/sw-upgrade.sh` | 493 | Detect and apply updates from the repo |
 | `scripts/sw-ux.sh` | 700 | Premium UX Enhancement Layer |
 | `scripts/sw-webhook.sh` | 632 | GitHub Webhook Receiver for Instant Issue Processing |
@@ -619,7 +619,9 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-agi-roadmap-test.sh` | 866 | Tests every feature we implemented |
 | `scripts/sw-architecture-enforcer-test.sh` | 339 | Validate architecture model |
 | `scripts/sw-auth-test.sh` | 168 | Validate OAuth authentication commands |
+| `scripts/sw-autonomous-e2e-test.sh` | 303 | Autonomous Loop E2E Test |
 | `scripts/sw-autonomous-test.sh` | 219 | AI-building-AI master controller tests |
+| `scripts/sw-budget-chaos-test.sh` | 262 | Budget Exhaustion & Chaos Tests |
 | `scripts/sw-changelog-test.sh` | 231 | Validate release notes generation |
 | `scripts/sw-checkpoint-test.sh` | 349 | Validate checkpoint save/restore |
 | `scripts/sw-ci-test.sh` | 237 | GitHub Actions CI/CD orchestration tests |
@@ -669,6 +671,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-linear-test.sh` | 339 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 320 | Validate agent pane log viewing, searching, |
 | `scripts/sw-loop-test.sh` | 368 | Validate continuous agent loop harness |
+| `scripts/sw-memory-discovery-e2e-test.sh` | 417 | Memory & Discovery E2E Test |
 | `scripts/sw-memory-test.sh` | 873 | Unit tests for memory system & cost tracking |
 | `scripts/sw-mission-control-test.sh` | 174 | Validate mission control dashboard |
 | `scripts/sw-model-router-test.sh` | 154 | Intelligent model routing & optimization |
@@ -697,6 +700,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-scale-test.sh` | 172 | Dynamic agent team scaling |
 | `scripts/sw-security-audit-test.sh` | 219 | Security auditing tests |
 | `scripts/sw-self-optimize-test.sh` | 725 | Unit tests for learning & tuning system |
+| `scripts/sw-server-api-test.sh` | 687 | Dashboard Server API Test Suite |
 | `scripts/sw-session-test.sh` | 591 | E2E validation of session creation flow |
 | `scripts/sw-setup-test.sh` | 302 | Validate comprehensive onboarding wizard |
 | `scripts/sw-standup-test.sh` | 271 | Validate daily standup automation |

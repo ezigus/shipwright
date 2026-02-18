@@ -529,7 +529,7 @@ cmd_secret() {
             echo "$new_secret" > "$WEBHOOK_SECRET_FILE"
             chmod 600 "$WEBHOOK_SECRET_FILE"
             success "Webhook secret regenerated"
-            info "New secret: ${new_secret}"
+            info "Secret: ${new_secret:0:8}... (full value in ${WEBHOOK_SECRET_FILE})"
             ;;
         *)
             error "Unknown secret action: $action"

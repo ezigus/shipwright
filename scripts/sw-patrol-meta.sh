@@ -312,8 +312,8 @@ patrol_meta_template_effectiveness() {
 
         local best_int=${best_rate%.*}
         local worst_int=${worst_rate%.*}
-        best_int=${best_int:-0}
-        worst_int=${worst_int:-0}
+        [[ "$best_int" =~ ^[0-9]+$ ]] || best_int=0
+        [[ "$worst_int" =~ ^[0-9]+$ ]] || worst_int=0
         local rate_diff=$(( best_int - worst_int ))
 
         if [[ "$rate_diff" -gt 30 ]]; then

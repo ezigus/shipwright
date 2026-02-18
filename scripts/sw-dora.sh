@@ -430,7 +430,7 @@ show_trends() {
         printf "  %-3s   %d          %.1fh         %.1f%%  %.1fh\n" \
             "$date_str" "$deploys" "$ct" "$cfr" "$mttr"
 
-        ((day++))
+        day=$((day + 1))
     done
 
     echo ""

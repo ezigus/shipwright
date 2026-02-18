@@ -182,7 +182,7 @@ cmd_delegate() {
                 result: null
             }')
         tasks=$(echo "$tasks" | jq ". += [$task_json]")
-        ((file_count++))
+        file_count=$((file_count + 1))
     done < <(echo "$changed_files")
 
     # Output delegation result
@@ -255,7 +255,7 @@ cmd_status() {
         local spec_status
         spec_status=$(echo "$team_json" | jq -r ".specialist_status[$spec_idx] // \"pending\"" 2>/dev/null || echo "pending")
         printf "    ${DIM}%-3d${RESET}  %-20s  %-15s\n" "$((spec_idx + 1))" "$spec" "$spec_status"
-        ((spec_idx++))
+        spec_idx=$((spec_idx + 1))
     done < <(echo "$specs")
     echo ""
 }
@@ -292,11 +292,11 @@ cmd_vote() {
         local verdict
         verdict=$(echo "$team_json" | jq -r ".verdicts[\"$spec\"]? // \"neutral\"" 2>/dev/null || echo "neutral")
         case "$verdict" in
-            approve) ((approve_count++)) ;;
-            reject)  ((reject_count++)) ;;
-            *)       ((neutral_count++)) ;;
+            approve) approve_count=$((approve_count + 1)) ;;
+            reject)  reject_count=$((reject_count + 1)) ;;
+            *)       neutral_count=$((neutral_count + 1)) ;;
         esac
-        ((total++))
+        total=$((total + 1))
     done < <(echo "$specs")
 
     # Consensus: majority vote with leader tiebreak
@@ -370,9 +370,9 @@ cmd_aggregate() {
 
         if [[ -n "$result" ]]; then
             if echo "$result" | jq -e '.success' >/dev/null 2>&1; then
-                ((success_count++))
+                success_count=$((success_count + 1))
             else
-                ((failure_count++))
+                failure_count=$((failure_count + 1))
             fi
             results=$(echo "$results" | jq ". += [$result]")
         fi

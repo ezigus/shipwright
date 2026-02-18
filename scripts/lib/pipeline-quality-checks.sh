@@ -853,9 +853,9 @@ run_bash_compat_check() {
     while IFS= read -r filepath; do
         [[ -z "$filepath" ]] && continue
 
-        # declare -A (associative arrays)
+        # declare -A (associative arrays; declare -a is bash 3.2 compatible)
         local declare_a_count
-        declare_a_count=$(grep -c 'declare[[:space:]]*-[aA]' "$filepath" 2>/dev/null || true)
+        declare_a_count=$(grep -c 'declare[[:space:]]*-A' "$filepath" 2>/dev/null || true)
         if [[ "$declare_a_count" -gt 0 ]]; then
             violations=$((violations + declare_a_count))
             violation_details="${violation_details}${filepath}: declare -A (${declare_a_count} occurrences)

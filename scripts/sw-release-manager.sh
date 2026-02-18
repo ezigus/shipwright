@@ -125,7 +125,9 @@ check_tests_passing() {
         return 0
     fi
 
-    if ! npm test 2>&1 | tee /tmp/test-output.log | tail -20; then
+    local _test_log
+    _test_log=$(mktemp "${TMPDIR:-/tmp}/sw-test-output.XXXXXX")
+    if ! npm test 2>&1 | tee "$_test_log" | tail -20; then
         error "Tests are not passing"
         return 1
     fi

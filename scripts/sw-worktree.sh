@@ -114,7 +114,7 @@ worktree_list() {
 
         printf "  ${CYAN}%-16s${RESET} ${PURPLE}%-22s${RESET} %b  ${DIM}.worktrees/%s/${RESET}\n" \
             "$name" "$branch" "$status_str" "$name"
-        ((found++))
+        found=$((found + 1))
     done
 
     if [[ $found -eq 0 ]]; then
@@ -159,8 +159,8 @@ worktree_sync_all() {
         [[ -d "$dir" ]] || continue
         local name
         name="$(basename "$dir")"
-        worktree_sync "$name" || ((failed++))
-        ((count++))
+        worktree_sync "$name" || failed=$((failed + 1))
+        count=$((count + 1))
     done
 
     echo ""
@@ -211,7 +211,7 @@ worktree_merge_all() {
             echo -e "  ${DIM}Resolve the conflict, then re-run: shipwright worktree merge-all${RESET}"
             return 1
         }
-        ((count++))
+        count=$((count + 1))
     done
 
     echo ""
@@ -251,7 +251,7 @@ worktree_cleanup() {
         local name
         name="$(basename "$dir")"
         worktree_remove "$name"
-        ((count++))
+        count=$((count + 1))
     done
 
     # Prune stale worktree references
@@ -296,7 +296,7 @@ worktree_status() {
 
         printf "  ${CYAN}%-16s${RESET} ${PURPLE}%-22s${RESET} ${GREEN}%s ahead${RESET}, ${YELLOW}%s behind${RESET}%b\n" \
             "$name" "$branch" "$ahead" "$behind" "$dirty"
-        ((found++))
+        found=$((found + 1))
     done
 
     if [[ $found -eq 0 ]]; then

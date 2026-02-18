@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-02-18T02:51:51Z",
+  "timestamp": "2026-02-18T04:35:01Z",
   "repository": "shipwright",
   "counts": {
-    "hardcoded": 58,
-    "fallback": 55,
-    "todo": 39,
-    "fixme": 19,
-    "hack": 17
+    "hardcoded": 62,
+    "fallback": 56,
+    "todo": 44,
+    "fixme": 24,
+    "hack": 21
   },
   "findings_sample": [
     {
@@ -39,7 +39,7 @@
     },
     {
       "file": "scripts/sw-scale.sh",
-      "line": 231
+      "line": 233
     },
     {
       "file": "scripts/sw-scale.sh",
@@ -78,8 +78,24 @@
       "line": 505
     },
     {
-      "file": "scripts/sw-daemon-test.sh",
+      "file": "scripts/sw-adapters-test.sh",
       "line": 96
+    },
+    {
+      "file": "scripts/sw-adapters-test.sh",
+      "line": 180
+    },
+    {
+      "file": "scripts/sw-adapters-test.sh",
+      "line": 183
+    },
+    {
+      "file": "scripts/sw-adapters-test.sh",
+      "line": 189
+    },
+    {
+      "file": "scripts/sw-daemon-test.sh",
+      "line": 192
     },
     {
       "file": "scripts/sw-daemon-test.sh",
@@ -92,22 +108,6 @@
     {
       "file": "scripts/sw-predictive.sh",
       "line": 396
-    },
-    {
-      "file": "scripts/sw-predictive.sh",
-      "line": 400
-    },
-    {
-      "file": "scripts/sw-connect.sh",
-      "line": 429
-    },
-    {
-      "file": "scripts/sw-pipeline.sh",
-      "line": 527
-    },
-    {
-      "file": "scripts/sw-pipeline.sh",
-      "line": 825
     }
   ],
   "script_size_hotspots": [
@@ -117,11 +117,11 @@
     },
     {
       "script": "sw-loop.sh",
-      "lines": 2593
+      "lines": 2648
     },
     {
       "script": "sw-pipeline.sh",
-      "lines": 2491
+      "lines": 2464
     },
     {
       "script": "sw-daemon-test.sh",

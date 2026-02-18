@@ -129,7 +129,7 @@ query_discoveries() {
 
             echo -e "  ${DIM}→${RESET} [${category}] ${discovery} [${disc_patterns}]"
 
-            ((count++))
+            count=$((count + 1))
             [[ "$count" -ge "$limit" ]] && break
         fi
     done < "$DISCOVERIES_FILE"
@@ -177,7 +177,7 @@ inject_discoveries() {
 
         if [[ -n "$disc_patterns" ]] && patterns_overlap "$file_patterns" "$disc_patterns"; then
             injected_entries+=("$line")
-            ((new_count++))
+            new_count=$((new_count + 1))
         fi
     done < "$DISCOVERIES_FILE"
 
@@ -292,7 +292,7 @@ clean_discoveries() {
         if [[ "$ts_epoch" -ge "$cutoff" ]]; then
             echo "$line" >> "$tmp_file"
         else
-            ((removed_count++))
+            removed_count=$((removed_count + 1))
         fi
     done < "$DISCOVERIES_FILE"
 

@@ -502,14 +502,14 @@ cmd_stats() {
         mttr=$(jq -r '.mttr_seconds // 0' "$incident_file" 2>/dev/null || echo "0")
 
         case "$sev" in
-            P0) ((p0_count++)) ;;
-            P1) ((p1_count++)) ;;
-            P2) ((p2_count++)) ;;
-            *) ((p3_count++)) ;;
+            P0) p0_count=$((p0_count + 1)) ;;
+            P1) p1_count=$((p1_count + 1)) ;;
+            P2) p2_count=$((p2_count + 1)) ;;
+            *) p3_count=$((p3_count + 1)) ;;
         esac
 
         if [[ "$status" == "resolved" ]]; then
-            ((resolved_count++))
+            resolved_count=$((resolved_count + 1))
             mttr_sum=$((mttr_sum + mttr))
         fi
     done <<< "$incident_files"

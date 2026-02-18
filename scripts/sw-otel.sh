@@ -95,18 +95,18 @@ cmd_metrics() {
 
             case "$event_type" in
                 pipeline_start|pipeline.started)
-                    ((total_pipelines++))
-                    ((active_pipelines++))
+                    total_pipelines=$((total_pipelines + 1))
+                    active_pipelines=$((active_pipelines + 1))
                     ;;
                 pipeline_complete|pipeline.completed)
                     ((active_pipelines--))
-                    ((succeeded_pipelines++))
-                    ((status_success++))
+                    succeeded_pipelines=$((succeeded_pipelines + 1))
+                    status_success=$((status_success + 1))
                     ;;
                 pipeline_failed|pipeline.failed)
                     ((active_pipelines--))
-                    ((failed_pipelines++))
-                    ((status_failed++))
+                    failed_pipelines=$((failed_pipelines + 1))
+                    status_failed=$((status_failed + 1))
                     ;;
                 stage_complete)
                     local stage duration
@@ -409,7 +409,7 @@ cmd_webhook() {
                 return 0
             fi
 
-            ((retry++))
+            retry=$((retry + 1))
             if [[ $retry -lt $max_retries ]]; then
                 warn "Webhook failed (HTTP $http_code), retrying in ${backoff}s..."
                 sleep "$backoff"

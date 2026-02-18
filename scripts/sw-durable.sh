@@ -383,7 +383,7 @@ cmd_consume() {
     local failed=0
 
     while IFS= read -r line; do
-        ((line_num++))
+        line_num=$((line_num + 1))
 
         if (( line_num <= offset )); then
             continue
@@ -395,14 +395,14 @@ cmd_consume() {
 
         if [[ -z "$event_id" ]]; then
             error "Invalid event format at line $line_num"
-            ((failed++))
+            failed=$((failed + 1))
             continue
         fi
 
         # Check if already processed (exactly-once)
         if is_operation_completed "$event_id"; then
             info "Event $event_id already processed, skipping"
-            ((processed++))
+            processed=$((processed + 1))
             save_consumer_offset "$consumer_id" "$line_num"
             continue
         fi
@@ -411,11 +411,11 @@ cmd_consume() {
         if echo "$line" | bash -c "$handler_cmd" 2>/dev/null; then
             mark_operation_completed "$event_id" '{"status":"success"}'
             success "Event $event_id processed"
-            ((processed++))
+            processed=$((processed + 1))
         else
             error "Handler failed for event $event_id"
             send_to_dlq "$event_id" "handler_failed" 1
-            ((failed++))
+            failed=$((failed + 1))
         fi
 
         # Update offset after successful processing
@@ -447,7 +447,7 @@ cmd_replay() {
 
         if (( seq >= start_seq )); then
             echo "$line" | bash -c "$handler_cmd"
-            ((replayed++))
+            replayed=$((replayed + 1))
         fi
     done < "$log_file"
 

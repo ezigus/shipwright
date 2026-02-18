@@ -512,7 +512,7 @@ cmd_capture() {
             *)         warn "Unknown collector type: ${ctype} (skipping ${cname})" ; continue ;;
         esac
 
-        ((total++))
+        total=$((total + 1))
 
         local evidence_file="${EVIDENCE_DIR}/${cname}.json"
         local cpassed="false"
@@ -521,9 +521,9 @@ cmd_capture() {
         fi
 
         if [[ "$cpassed" == "true" ]]; then
-            ((passed++))
+            passed=$((passed + 1))
         else
-            ((failed++))
+            failed=$((failed + 1))
         fi
 
         manifest_entries=$(echo "$manifest_entries" | jq \
@@ -585,7 +585,7 @@ cmd_verify() {
     if [[ "$require_fresh" == "true" && "$age_seconds" -gt "$max_age_seconds" ]]; then
         error "Evidence is stale: captured ${age_seconds}s ago (max: ${max_age_seconds}s)"
         all_passed="false"
-        ((failed++))
+        failed=$((failed + 1))
     else
         local age_minutes=$((age_seconds / 60))
         info "Evidence age: ${age_minutes}m (max: ${max_age_minutes}m)"
@@ -600,7 +600,7 @@ cmd_verify() {
 
     while IFS= read -r entry; do
         [[ -z "$entry" ]] && continue
-        ((checked++))
+        checked=$((checked + 1))
 
         local cname ctype cpassed
         cname=$(echo "$entry" | jq -r '.name')
@@ -610,7 +610,7 @@ cmd_verify() {
         if [[ "$cpassed" != "true" ]]; then
             error "Collector '${cname}' (${ctype}) failed"
             all_passed="false"
-            ((failed++))
+            failed=$((failed + 1))
         else
             success "Collector '${cname}' (${ctype}) passed"
         fi

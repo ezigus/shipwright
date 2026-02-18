@@ -299,25 +299,25 @@ pr_review() {
     if echo "$diff_output" | grep -qE '(HACK|TODO|FIXME|XXX|BROKEN|DEBUG)'; then
         warnings="${warnings}
 - Found HACK/TODO/FIXME markers in code"
-        ((issues_found++))
+        issues_found=$((issues_found + 1))
     fi
 
     if echo "$diff_output" | grep -qE 'console\.(log|warn|error)\('; then
         warnings="${warnings}
 - Found console.log statements (should use proper logging)"
-        ((issues_found++))
+        issues_found=$((issues_found + 1))
     fi
 
     if [[ $line_additions -gt 500 ]]; then
         warnings="${warnings}
 - Large addition (${line_additions} lines) — consider splitting into smaller PRs"
-        ((issues_found++))
+        issues_found=$((issues_found + 1))
     fi
 
     if [[ $file_count -gt 20 ]]; then
         warnings="${warnings}
 - Many files changed (${file_count}) — consider splitting"
-        ((issues_found++))
+        issues_found=$((issues_found + 1))
     fi
 
     # Post review comment to PR
@@ -499,7 +499,7 @@ ${DIM}— Shipwright auto-lifecycle manager${RESET}"
             gh pr comment "$pr_number" --body "$close_comment" 2>/dev/null || true
             gh pr close "$pr_number" 2>/dev/null && {
                 success "Closed PR #${pr_number}"
-                ((closed_count++))
+                closed_count=$((closed_count + 1))
                 emit_event "pr.closed_stale" "pr=${pr_number}" "age_days=${age_days}"
             }
         fi

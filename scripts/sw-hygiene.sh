@@ -112,7 +112,7 @@ detect_dead_code() {
 
             # Function definition counts as 1 usage; if only 1, it's unused
             case "$usage_count" in
-                0|1) [[ $VERBOSE == true ]] && warn "Unused function: $func (in $(basename "$func_file"))"; ((unused_functions++)) ;;
+                0|1) [[ $VERBOSE == true ]] && warn "Unused function: $func (in $(basename "$func_file"))"; unused_functions=$((unused_functions + 1)) ;;
             esac
         done <<< "$funcs"
     done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null | head -20)
@@ -133,9 +133,9 @@ detect_dead_code() {
         ref_count=$(printf '%s' "$ref_count" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
         case "$ref_count" in
-            0|1) [[ $VERBOSE == true ]] && warn "Potentially unused script: $basename_script"; ((unused_scripts++)) ;;
+            0|1) [[ $VERBOSE == true ]] && warn "Potentially unused script: $basename_script"; unused_scripts=$((unused_scripts + 1)) ;;
         esac
-        ((script_count++))
+        script_count=$((script_count + 1))
     done < <(find "$REPO_DIR/scripts" -maxdepth 1 -name "sw-*.sh" -type f 2>/dev/null)
 
     # Find test fixtures without corresponding tests
@@ -145,7 +145,7 @@ detect_dead_code() {
 
         if ! grep -r "$test_name" "$REPO_DIR/scripts" --include="*-test.sh" 2>/dev/null | grep -q .; then
             warn "Orphaned test fixture: $(basename "$fixture")"
-            ((orphaned_tests++))
+            orphaned_tests=$((orphaned_tests + 1))
         fi
     done < <(find "$REPO_DIR" -name "*.fixture" -type f 2>/dev/null)
 
@@ -170,7 +170,7 @@ validate_structure() {
 
         if [[ "$dir" != "$REPO_DIR/scripts" ]]; then
             warn "Script outside scripts/ directory: $script"
-            ((structure_issues++))
+            structure_issues=$((structure_issues + 1))
         fi
     done < <(find "$REPO_DIR" -name "*.sh" -type f ! -path "*/node_modules/*" ! -path "*/.git/*" 2>/dev/null | grep -E '(sw-|shipwright)' || true)
 
@@ -181,19 +181,19 @@ validate_structure() {
 
         if [[ ! "$basename_test" =~ -test\.sh$ ]]; then
             warn "Test file not named *-test.sh: $basename_test"
-            ((structure_issues++))
+            structure_issues=$((structure_issues + 1))
         fi
     done < <(find "$REPO_DIR/scripts" -path "*test*" -name "*.sh" -type f 2>/dev/null)
 
     # Check directory organization
     if [[ ! -d "$REPO_DIR/scripts" ]]; then
         error "scripts/ directory missing"
-        ((structure_issues++))
+        structure_issues=$((structure_issues + 1))
     fi
 
     if [[ ! -d "$REPO_DIR/.claude" ]]; then
         error ".claude/ directory missing"
-        ((structure_issues++))
+        structure_issues=$((structure_issues + 1))
     fi
 
     [[ $VERBOSE == true ]] && {
@@ -222,7 +222,7 @@ audit_dependencies() {
             # Simple check: does the dep appear in source files?
             if ! grep -r "$dep" "$REPO_DIR/scripts" --include="*.sh" 2>/dev/null | grep -q .; then
                 [[ $VERBOSE == true ]] && warn "Potentially unused npm dependency: $dep"
-                ((unused_deps++))
+                unused_deps=$((unused_deps + 1))
             fi
         done <<< "$deps"
     fi
@@ -238,7 +238,7 @@ audit_dependencies() {
             # Check if sourced_by also sources the original script
             if grep -q "source.*$(basename "$source_script")" "$script" 2>/dev/null; then
                 warn "Circular dependency: $(basename "$script") ←→ $(basename "$source_script")"
-                ((circular_deps++))
+                circular_deps=$((circular_deps + 1))
             fi
         done <<< "$sourced_by"
     done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null | head -10)
@@ -264,7 +264,7 @@ check_naming() {
 
         if ! [[ "$basename_script" =~ ^sw-[a-z0-9-]+\.sh$ ]] && ! [[ "$basename_script" == "sw" ]]; then
             [[ $VERBOSE == true ]] && warn "Script not following naming convention: $basename_script"
-            ((naming_issues++))
+            naming_issues=$((naming_issues + 1))
         fi
     done < <(find "$REPO_DIR/scripts" -maxdepth 1 -name "*.sh" -type f 2>/dev/null)
 
@@ -276,7 +276,7 @@ check_naming() {
         while IFS= read -r func; do
             [[ -z "$func" ]] && continue
             [[ $VERBOSE == true ]] && warn "Function not using snake_case: $func (in $(basename "$script"))"
-            ((naming_issues++))
+            naming_issues=$((naming_issues + 1))
         done <<< "$bad_functions"
     done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null | head -20)
 
@@ -311,7 +311,7 @@ list_stale_branches() {
         while IFS= read -r branch; do
             [[ -z "$branch" ]] && continue
             echo -e "  ${DIM}$branch${RESET}"
-            ((stale_count++))
+            stale_count=$((stale_count + 1))
         done <<< "$merged_branches"
     fi
 
@@ -364,7 +364,7 @@ analyze_size() {
     while IFS= read -r file; do
         [[ -z "$file" ]] && continue
         warn "Binary file in repo: $(basename "$file")"
-        ((binary_count++))
+        binary_count=$((binary_count + 1))
     done < <(find "$REPO_DIR" -type f ! -path '*/.git/*' ! -path '*/node_modules/*' ! -path '*/.claude/*' \
         -exec file {} \; 2>/dev/null | grep -i "executable\|binary" | cut -d: -f1 || true)
 
@@ -464,7 +464,7 @@ auto_fix_issues() {
         if ! [[ -x "$script" ]]; then
             chmod +x "$script"
             success "Made executable: $(basename "$script")"
-            ((fixed_count++))
+            fixed_count=$((fixed_count + 1))
         fi
     done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null)
 
@@ -475,7 +475,7 @@ auto_fix_issues() {
             sed -i.bak 's/[[:space:]]*$//' "$file" 2>/dev/null || sed -i '' 's/[[:space:]]*$//' "$file"
             rm -f "${file}.bak" 2>/dev/null || true
             success "Cleaned whitespace: $(basename "$file")"
-            ((fixed_count++))
+            fixed_count=$((fixed_count + 1))
         fi
     done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null | head -20)
 

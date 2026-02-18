@@ -134,7 +134,7 @@ collect_script_metrics() {
     # Check for syntax errors
     while IFS= read -r script; do
         if ! bash -n "$script" 2>/dev/null; then
-            ((syntax_errors++))
+            syntax_errors=$((syntax_errors + 1))
         fi
     done < <(find "$REPO_DIR/scripts" -maxdepth 1 -name "*.sh" -type f 2>/dev/null)
 
@@ -291,14 +291,14 @@ cmd_check() {
             # Metric should not decrease
             if (( $(echo "$current_val_num < $baseline_val_num" | bc -l 2>/dev/null || echo "0") )); then
                 echo -e "${RED}✗ $name: $baseline_val_num → $current_val_num (${pct_diff}%)${RESET}"
-                ((regressions++))
+                regressions=$((regressions + 1))
                 return 1
             fi
         elif [[ "$direction" == "increase" ]]; then
             # Metric should not increase beyond threshold
             if (( $(echo "$pct_diff > $threshold_val" | bc -l 2>/dev/null || echo "0") )); then
                 echo -e "${RED}✗ $name: $baseline_val_num → $current_val_num (+${pct_diff}%)${RESET}"
-                ((regressions++))
+                regressions=$((regressions + 1))
                 return 1
             fi
         fi
@@ -306,10 +306,10 @@ cmd_check() {
         # Improvement
         if [[ "$direction" == "decrease" ]] && (( $(echo "$current_val_num > $baseline_val_num" | bc -l 2>/dev/null || echo "0") )); then
             echo -e "${GREEN}✓ $name: $baseline_val_num → $current_val_num (improved)${RESET}"
-            ((improvements++))
+            improvements=$((improvements + 1))
         elif [[ "$direction" == "increase" ]] && (( $(echo "$current_val_num < $baseline_val_num" | bc -l 2>/dev/null || echo "0") )); then
             echo -e "${GREEN}✓ $name: $baseline_val_num → $current_val_num (improved)${RESET}"
-            ((improvements++))
+            improvements=$((improvements + 1))
         fi
     }
 
@@ -335,10 +335,10 @@ cmd_check() {
     pass_rate_diff=$(awk "BEGIN { printf \"%.1f\", ($base_pass_rate - $curr_pass_rate) }")
     if (( $(echo "$pass_rate_diff > $pass_rate_threshold" | bc -l 2>/dev/null || echo "0") )); then
         echo -e "${RED}✗ Pass Rate: $base_pass_rate% → $curr_pass_rate% (drop: ${pass_rate_diff}%)${RESET}"
-        ((regressions++))
+        regressions=$((regressions + 1))
     elif (( $(echo "$curr_pass_rate > $base_pass_rate" | bc -l 2>/dev/null || echo "0") )); then
         echo -e "${GREEN}✓ Pass Rate: $base_pass_rate% → $curr_pass_rate%${RESET}"
-        ((improvements++))
+        improvements=$((improvements + 1))
     else
         echo -e "${DIM}= Pass Rate: $base_pass_rate% → $curr_pass_rate%${RESET}"
     fi
@@ -373,10 +373,10 @@ cmd_check() {
     curr_syntax_errors=$(echo "$current" | jq -r '.syntax_errors // 0')
     if [[ "$curr_syntax_errors" -gt "$base_syntax_errors" ]]; then
         echo -e "${RED}✗ Syntax Errors: $base_syntax_errors → $curr_syntax_errors${RESET}"
-        ((regressions++))
+        regressions=$((regressions + 1))
     elif [[ "$curr_syntax_errors" -lt "$base_syntax_errors" ]]; then
         echo -e "${GREEN}✓ Syntax Errors: $base_syntax_errors → $curr_syntax_errors${RESET}"
-        ((improvements++))
+        improvements=$((improvements + 1))
     else
         echo -e "${DIM}= Syntax Errors: $base_syntax_errors → $curr_syntax_errors${RESET}"
     fi
@@ -510,7 +510,7 @@ cmd_history() {
 
     local count=0
     while IFS= read -r baseline_file; do
-        ((count++))
+        count=$((count + 1))
         if [[ "$count" -gt 10 ]]; then
             break
         fi

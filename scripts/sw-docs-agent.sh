@@ -321,7 +321,7 @@ show_coverage() {
         script_name=$(basename "$script" .sh | sed 's/^sw-//')
 
         if grep -q "$script_name" "$REPO_DIR/.claude/CLAUDE.md" 2>/dev/null; then
-            ((documented_count++))
+            documented_count=$((documented_count + 1))
         else
             undocumented_scripts="${undocumented_scripts}${script_name}\\n"
         fi
@@ -371,7 +371,7 @@ scan_gaps() {
 
             if [[ "$freshness" -lt 70 ]]; then
                 warn "Stale section in README: $section (freshness: ${freshness}%)"
-                ((gaps_found++))
+                gaps_found=$((gaps_found + 1))
             fi
         done
     fi
@@ -387,7 +387,7 @@ scan_gaps() {
 
             if [[ "$freshness" -lt 70 ]]; then
                 warn "Stale section in CLAUDE.md: $section (freshness: ${freshness}%)"
-                ((gaps_found++))
+                gaps_found=$((gaps_found + 1))
             fi
         done
     fi
@@ -412,11 +412,11 @@ sync_docs() {
 
     # Regenerate API reference
     generate_api_reference
-    ((synced_count++))
+    synced_count=$((synced_count + 1))
 
     # Regenerate wiki
     generate_wiki_pages
-    ((synced_count++))
+    synced_count=$((synced_count + 1))
 
     success "Documentation sync complete ($synced_count updates)"
     emit_event "docs_sync_complete" "updates=$synced_count"

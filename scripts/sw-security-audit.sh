@@ -60,10 +60,10 @@ add_finding() {
 
     local color=""
     case "$priority" in
-        CRITICAL) color="$RED"; ((CRITICAL_COUNT++)) ;;
-        HIGH) color="$RED"; ((HIGH_COUNT++)) ;;
-        MEDIUM) color="$YELLOW"; ((MEDIUM_COUNT++)) ;;
-        LOW) color="$BLUE"; ((LOW_COUNT++)) ;;
+        CRITICAL) color="$RED"; CRITICAL_COUNT=$((CRITICAL_COUNT + 1)) ;;
+        HIGH) color="$RED"; HIGH_COUNT=$((HIGH_COUNT + 1)) ;;
+        MEDIUM) color="$YELLOW"; MEDIUM_COUNT=$((MEDIUM_COUNT + 1)) ;;
+        LOW) color="$BLUE"; LOW_COUNT=$((LOW_COUNT + 1)) ;;
     esac
 
     FINDINGS+=("${priority}|${category}|${title}|${description}|${remediation}")
@@ -176,7 +176,7 @@ scan_vulnerabilities() {
     if [[ -f "$REPO_DIR/package.json" ]] && command -v npm >/dev/null 2>&1; then
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
-            ((vuln_count++))
+            vuln_count=$((vuln_count + 1))
             add_finding "HIGH" "vulnerabilities" "npm security vulnerability" \
                 "Found npm audit issue: $line" \
                 "Run 'npm audit fix' to remediate. Update vulnerable dependencies. Re-test after updates."
@@ -188,7 +188,7 @@ scan_vulnerabilities() {
         if command -v safety >/dev/null 2>&1; then
             while IFS= read -r line; do
                 [[ -z "$line" ]] && continue
-                ((vuln_count++))
+                vuln_count=$((vuln_count + 1))
                 add_finding "HIGH" "vulnerabilities" "Python package vulnerability" \
                     "Found via safety: $line" \
                     "Update vulnerable package. Test compatibility. Run safety check after updates."

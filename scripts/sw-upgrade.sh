@@ -269,7 +269,7 @@ bootstrap_manifest() {
         IFS='|' read -r key _ dest _ _ <<< "$entry"
         if [[ -f "$dest" ]]; then
             echo -e "  ${GREEN}✓${RESET} ${DIM}$key${RESET}  →  $dest"
-            ((found++))
+            found=$((found + 1))
         fi
     done
 

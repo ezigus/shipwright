@@ -300,8 +300,8 @@ run_parallel() {
     for (( i = 0; i < max_parallel && i < ${#suite_array[@]}; i++ )); do
         run_suite "${suite_array[$i]}" &
         pids+=($!)
-        ((running++))
-        ((idx++))
+        running=$((running + 1))
+        idx=$((idx + 1))
     done
 
     # Process remaining suites as workers finish
@@ -315,7 +315,7 @@ run_parallel() {
                 if [[ $idx -lt ${#suite_array[@]} ]]; then
                     run_suite "${suite_array[$idx]}" &
                     pids[$i]=$!
-                    ((idx++))
+                    idx=$((idx + 1))
                 else
                     unset 'pids[$i]'
                 fi
@@ -353,11 +353,11 @@ cmd_report() {
     while IFS= read -r line; do
         local exit_code=$(echo "$line" | jq -r '.exit_code // 0')
         if [[ $exit_code -eq 0 ]]; then
-            ((pass++))
+            pass=$((pass + 1))
         elif [[ $exit_code -eq 124 ]]; then
-            ((timeout++))
+            timeout=$((timeout + 1))
         else
-            ((fail++))
+            fail=$((fail + 1))
         fi
     done < "$RESULTS_LOG"
 

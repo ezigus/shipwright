@@ -29,14 +29,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 CYAN="${CYAN:-\033[38;2;0;212;255m}"
 PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
 BLUE="${BLUE:-\033[38;2;0;102;255m}"
@@ -167,8 +159,8 @@ rotate_event_log() {
 daemon_github_context() {
     # Skip if no GitHub
     [[ "${NO_GITHUB:-false}" == "true" ]] && return 0
-    type gh_repo_context &>/dev/null 2>&1 || return 0
-    type _gh_detect_repo &>/dev/null 2>&1 || return 0
+    type gh_repo_context >/dev/null 2>&1 || return 0
+    type _gh_detect_repo >/dev/null 2>&1 || return 0
 
     _gh_detect_repo 2>/dev/null || return 0
     local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
@@ -192,8 +184,8 @@ gh_retry() {
 
     while [[ $attempt -lt $max_retries ]]; do
         attempt=$((attempt + 1))
-        # Run the gh command; capture exit code
-        if output=$("$@" 2>&1); then
+        # Run the gh command with per-call timeout; capture exit code
+        if output=$(_timeout 30 "$@" 2>&1); then
             echo "$output"
             return 0
         fi
@@ -229,7 +221,7 @@ WORKTREE_DIR=""
 # Config defaults (overridden by daemon-config.json; policy overrides when present)
 WATCH_LABEL="shipwright"
 POLL_INTERVAL=60
-if type policy_get &>/dev/null 2>&1; then
+if type policy_get >/dev/null 2>&1; then
     POLL_INTERVAL=$(policy_get ".daemon.poll_interval_seconds" "60")
 fi
 MAX_PARALLEL=2
@@ -257,7 +249,7 @@ REPO_FILTER=""
 # Auto-scaling defaults (policy overrides when present)
 AUTO_SCALE=false
 AUTO_SCALE_INTERVAL=5
-if type policy_get &>/dev/null 2>&1; then
+if type policy_get >/dev/null 2>&1; then
     AUTO_SCALE_INTERVAL=$(policy_get ".daemon.auto_scale_interval_cycles" "5")
 fi
 MAX_WORKERS=8
@@ -412,7 +404,7 @@ load_config() {
     info "Loading config: ${DIM}${config_file}${RESET}"
 
     WATCH_LABEL=$(jq -r '.watch_label // "shipwright"' "$config_file")
-    POLL_INTERVAL=$(jq -r '.poll_interval // '"$(type policy_get &>/dev/null 2>&1 && policy_get ".daemon.poll_interval_seconds" "60" || echo "60")"'' "$config_file")
+    POLL_INTERVAL=$(jq -r '.poll_interval // '"$(type policy_get >/dev/null 2>&1 && policy_get ".daemon.poll_interval_seconds" "60" || echo "60")"'' "$config_file")
     MAX_PARALLEL=$(jq -r '.max_parallel // 2' "$config_file")
     PIPELINE_TEMPLATE=$(jq -r '.pipeline_template // "autonomous"' "$config_file")
     SKIP_GATES=$(jq -r '.skip_gates // true' "$config_file")
@@ -472,7 +464,7 @@ load_config() {
 
     # self-optimization
     SELF_OPTIMIZE=$(jq -r '.self_optimize // false' "$config_file")
-    OPTIMIZE_INTERVAL=$(jq -r '.optimize_interval // '"$(type policy_get &>/dev/null 2>&1 && policy_get ".daemon.optimize_interval_cycles" "10" || echo "10")"'' "$config_file")
+    OPTIMIZE_INTERVAL=$(jq -r '.optimize_interval // '"$(type policy_get >/dev/null 2>&1 && policy_get ".daemon.optimize_interval_cycles" "10" || echo "10")"'' "$config_file")
 
     # intelligence engine settings
     INTELLIGENCE_ENABLED=$(jq -r '.intelligence.enabled // false' "$config_file")
@@ -491,7 +483,7 @@ load_config() {
 
     # stale state reaper: clean old worktrees, artifacts, state entries
     STALE_REAPER_ENABLED=$(jq -r '.stale_reaper // true' "$config_file")
-    STALE_REAPER_INTERVAL=$(jq -r '.stale_reaper_interval // '"$(type policy_get &>/dev/null 2>&1 && policy_get ".daemon.stale_reaper_interval_cycles" "10" || echo "10")"'' "$config_file")
+    STALE_REAPER_INTERVAL=$(jq -r '.stale_reaper_interval // '"$(type policy_get >/dev/null 2>&1 && policy_get ".daemon.stale_reaper_interval_cycles" "10" || echo "10")"'' "$config_file")
     STALE_REAPER_AGE_DAYS=$(jq -r '.stale_reaper_age_days // 7' "$config_file")
 
     # priority lane settings
@@ -508,14 +500,14 @@ load_config() {
 
     # auto-scaling
     AUTO_SCALE=$(jq -r '.auto_scale // false' "$config_file")
-    AUTO_SCALE_INTERVAL=$(jq -r '.auto_scale_interval // '"$(type policy_get &>/dev/null 2>&1 && policy_get ".daemon.auto_scale_interval_cycles" "5" || echo "5")"'' "$config_file")
+    AUTO_SCALE_INTERVAL=$(jq -r '.auto_scale_interval // '"$(type policy_get >/dev/null 2>&1 && policy_get ".daemon.auto_scale_interval_cycles" "5" || echo "5")"'' "$config_file")
     MAX_WORKERS=$(jq -r '.max_workers // 8' "$config_file")
     MIN_WORKERS=$(jq -r '.min_workers // 1' "$config_file")
     WORKER_MEM_GB=$(jq -r '.worker_mem_gb // 4' "$config_file")
     EST_COST_PER_JOB=$(jq -r '.estimated_cost_per_job_usd // 5.0' "$config_file")
 
     # heartbeat + checkpoint recovery (policy fallback when config silent)
-    HEALTH_HEARTBEAT_TIMEOUT=$(jq -r '.health.heartbeat_timeout_s // '"$(type policy_get &>/dev/null 2>&1 && policy_get ".daemon.health_heartbeat_timeout" "120" || echo "120")"'' "$config_file")
+    HEALTH_HEARTBEAT_TIMEOUT=$(jq -r '.health.heartbeat_timeout_s // '"$(type policy_get >/dev/null 2>&1 && policy_get ".daemon.health_heartbeat_timeout" "120" || echo "120")"'' "$config_file")
     CHECKPOINT_ENABLED=$(jq -r '.health.checkpoint_enabled // true' "$config_file")
 
     # progress-based health monitoring (replaces static timeouts)
@@ -647,7 +639,7 @@ daemon_start() {
 
     # Detach mode: re-exec in a tmux session
     if [[ "$DETACH" == "true" ]]; then
-        if ! command -v tmux &>/dev/null; then
+        if ! command -v tmux >/dev/null 2>&1; then
             error "tmux required for --detach mode"
             exit 1
         fi
@@ -689,7 +681,7 @@ daemon_start() {
     rm -f "$SHUTDOWN_FLAG"
 
     # Initialize SQLite database (if available)
-    if type init_schema &>/dev/null; then
+    if type init_schema >/dev/null 2>&1; then
         init_schema 2>/dev/null || true
     fi
 
@@ -761,7 +753,7 @@ daemon_start() {
         if [[ -f "$STATE_FILE" ]]; then
             if ! jq '.' "$STATE_FILE" >/dev/null 2>&1; then
                 daemon_log WARN "Watchdog: state file corrupt — recovering from backup"
-                type validate_json &>/dev/null 2>&1 && validate_json "$STATE_FILE" || true
+                type validate_json >/dev/null 2>&1 && validate_json "$STATE_FILE" || true
             fi
         fi
     done
@@ -1052,7 +1044,7 @@ daemon_metrics() {
         exit 1
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required for metrics. Install: brew install jq"
         exit 1
     fi

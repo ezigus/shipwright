@@ -86,7 +86,7 @@ jira_api() {
     local method="$1" endpoint="$2" data="${3:-}"
     local auth
     auth=$(printf '%s:%s' "$JIRA_EMAIL" "$JIRA_API_TOKEN" | base64)
-    local args=(-sf -X "$method" \
+    local args=(-sf --connect-timeout 10 --max-time 30 -X "$method" \
         -H "Authorization: Basic $auth" \
         -H "Content-Type: application/json")
     [[ -n "$data" ]] && args+=(-d "$data")

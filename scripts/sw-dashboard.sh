@@ -91,7 +91,7 @@ show_help() {
 
 # ─── Prerequisite Check ────────────────────────────────────────────────────
 check_bun() {
-    if ! command -v bun &>/dev/null; then
+    if ! command -v bun >/dev/null 2>&1; then
         error "Bun is required but not installed"
         info "Install Bun: ${UNDERLINE}https://bun.sh${RESET}"
         exit 1
@@ -294,7 +294,7 @@ dashboard_status() {
 
         # Try to get port from /proc or lsof
         local port=""
-        if command -v lsof &>/dev/null; then
+        if command -v lsof >/dev/null 2>&1; then
             port=$(lsof -nP -iTCP -sTCP:LISTEN -a -p "$pid" 2>/dev/null | grep -oE ':\d+' | head -1 | tr -d ':' || true)
         fi
 
@@ -309,7 +309,7 @@ dashboard_status() {
         if [[ -f "$PID_FILE" ]]; then
             local pid_mtime
             if [[ "$(uname)" == "Darwin" ]]; then
-                pid_mtime=$(stat -f %m "$PID_FILE" 2>/dev/null || echo "0")
+                pid_mtime=$(file_mtime "$PID_FILE")
             else
                 pid_mtime=$(stat -c %Y "$PID_FILE" 2>/dev/null || echo "0")
             fi
@@ -331,7 +331,7 @@ dashboard_status() {
         if [[ -n "$port" ]]; then
             local health
             health=$(curl -s --max-time 2 "http://localhost:${port}/api/health" 2>/dev/null || true)
-            if [[ -n "$health" ]] && command -v jq &>/dev/null; then
+            if [[ -n "$health" ]] && command -v jq >/dev/null 2>&1; then
                 local connections
                 connections=$(echo "$health" | jq -r '.connections // empty' 2>/dev/null || true)
                 if [[ -n "$connections" ]]; then
@@ -361,7 +361,7 @@ dashboard_open() {
     if is_running; then
         local pid
         pid=$(get_pid)
-        if command -v lsof &>/dev/null; then
+        if command -v lsof >/dev/null 2>&1; then
             local detected_port
             detected_port=$(lsof -nP -iTCP -sTCP:LISTEN -a -p "$pid" 2>/dev/null | grep -oE ':\d+' | head -1 | tr -d ':' || true)
             if [[ -n "$detected_port" ]]; then
@@ -379,7 +379,7 @@ dashboard_open() {
 
     if open_url "$url" 2>/dev/null; then
         : # opened via compat.sh
-    elif command -v powershell.exe &>/dev/null; then
+    elif command -v powershell.exe >/dev/null 2>&1; then
         powershell.exe -Command "Start-Process '$url'" 2>/dev/null
     else
         error "No browser opener found"

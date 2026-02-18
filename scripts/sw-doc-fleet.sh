@@ -115,9 +115,9 @@ cmd_audit() {
     total_checks=$((total_checks + 1))
     if [[ -f "${REPO_DIR}/.claude/CLAUDE.md" ]]; then
         local claude_age_days=0
-        if command -v stat &>/dev/null; then
+        if command -v stat >/dev/null 2>&1; then
             local claude_mtime
-            claude_mtime=$(stat -f %m "${REPO_DIR}/.claude/CLAUDE.md" 2>/dev/null || stat -c %Y "${REPO_DIR}/.claude/CLAUDE.md" 2>/dev/null || echo "0")
+            claude_mtime=$(file_mtime "${REPO_DIR}/.claude/CLAUDE.md")
             local now_epoch_val
             now_epoch_val=$(date +%s)
             claude_age_days=$(( (now_epoch_val - claude_mtime) / 86400 ))
@@ -376,7 +376,7 @@ cmd_launch() {
         fi
 
         # Spawn via tmux if available
-        if command -v tmux &>/dev/null; then
+        if command -v tmux >/dev/null 2>&1; then
             local session_name="docfleet-${role}"
 
             # Kill existing session for this role if present
@@ -482,7 +482,7 @@ cmd_status() {
     local active=0
     for role in $FLEET_ROLES; do
         local session_name="docfleet-${role}"
-        if command -v tmux &>/dev/null && tmux has-session -t "$session_name" 2>/dev/null; then
+        if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$session_name" 2>/dev/null; then
             echo -e "  ${GREEN}●${RESET} ${CYAN}${role}${RESET}  →  tmux session: ${DIM}${session_name}${RESET}"
             active=$((active + 1))
         else
@@ -529,7 +529,7 @@ cmd_retire() {
     local retired=0
     for role in $roles_to_retire; do
         local session_name="docfleet-${role}"
-        if command -v tmux &>/dev/null && tmux has-session -t "$session_name" 2>/dev/null; then
+        if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$session_name" 2>/dev/null; then
             tmux kill-session -t "$session_name" 2>/dev/null && \
                 success "Retired: ${CYAN}${role}${RESET}" || \
                 warn "Failed to retire: ${role}"
@@ -566,7 +566,7 @@ cmd_manifest() {
         # Extract first heading
         title=$(grep -m1 '^#' "$md_file" 2>/dev/null | sed 's/^#* //' || echo "$rel_path")
         local mtime
-        mtime=$(stat -f %m "$md_file" 2>/dev/null || stat -c %Y "$md_file" 2>/dev/null || echo "0")
+        mtime=$(file_mtime "$md_file")
 
         # Determine audience
         local audience="contributor"

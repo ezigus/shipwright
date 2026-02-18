@@ -101,7 +101,7 @@ linear_graphql() {
     payload=$(jq -n --arg q "$query" --argjson v "$variables" '{query: $q, variables: $v}')
 
     local response
-    response=$(curl -sf -X POST "$LINEAR_API" \
+    response=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "$LINEAR_API" \
         -H "Authorization: $LINEAR_API_KEY" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>&1) || {
@@ -191,7 +191,7 @@ cmd_sync() {
 
         # Check if GitHub issue already exists for this Linear issue
         local existing_gh
-        existing_gh=$(gh issue list --label "ready-to-build" --search "Linear: ${linear_identifier}" --json number --jq '.[0].number // empty' 2>/dev/null || true)
+        existing_gh=$(_timeout 30 gh issue list --label "ready-to-build" --search "Linear: ${linear_identifier}" --json number --jq '.[0].number // empty' 2>/dev/null || true)
 
         if [[ -n "$existing_gh" ]]; then
             echo -e "  ${DIM}Skip${RESET} ${linear_identifier}: ${title} ${DIM}(GitHub #${existing_gh})${RESET}"
@@ -224,7 +224,7 @@ cmd_sync() {
             fi
 
             local gh_num
-            gh_num=$(gh issue create --title "$title" --body "$gh_body" --label "$labels" --json number --jq '.number' 2>&1) || {
+            gh_num=$(_timeout 30 gh issue create --title "$title" --body "$gh_body" --label "$labels" --json number --jq '.number' 2>&1) || {
                 error "Failed to create GitHub issue for ${linear_identifier}: ${gh_num}"
                 i=$((i + 1))
                 continue
@@ -277,7 +277,7 @@ cmd_update() {
 
     # Find the Linear issue ID from the GitHub issue body
     local linear_id
-    linear_id=$(gh issue view "$gh_issue" --json body --jq '.body' 2>/dev/null | \
+    linear_id=$(_timeout 30 gh issue view "$gh_issue" --json body --jq '.body' 2>/dev/null | \
         grep -o 'Linear ID:.*' | sed 's/.*\*\*Linear ID:\*\* //' | tr -d '[:space:]' || true)
 
     if [[ -z "$linear_id" ]]; then
@@ -551,7 +551,7 @@ linear_notify() {
     # Find the Linear issue ID from GitHub issue
     local linear_id=""
     if [[ -n "$gh_issue" ]]; then
-        linear_id=$(gh issue view "$gh_issue" --json body --jq '.body' 2>/dev/null | \
+        linear_id=$(_timeout 30 gh issue view "$gh_issue" --json body --jq '.body' 2>/dev/null | \
             grep -o 'Linear ID:.*' | sed 's/.*\*\*Linear ID:\*\* //' | tr -d '[:space:]' || true)
     fi
 

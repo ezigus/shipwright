@@ -8,6 +8,8 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREP_SCRIPT="$SCRIPT_DIR/sw-prep.sh"
+# shellcheck source=lib/compat.sh
+[[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
 CYAN='\033[38;2;0;212;255m'
@@ -474,7 +476,7 @@ test_idempotency() {
 
     # Record modification time
     local mtime_before
-    mtime_before=$(stat -f "%m" "$test_dir/.claude/CLAUDE.md" 2>/dev/null || stat -c "%Y" "$test_dir/.claude/CLAUDE.md" 2>/dev/null)
+    mtime_before=$(file_mtime "$test_dir/.claude/CLAUDE.md")
 
     # Second run without --force
     invoke_prep "$test_dir"
@@ -482,7 +484,7 @@ test_idempotency() {
 
     # Verify file was NOT rewritten (mtime unchanged)
     local mtime_after
-    mtime_after=$(stat -f "%m" "$test_dir/.claude/CLAUDE.md" 2>/dev/null || stat -c "%Y" "$test_dir/.claude/CLAUDE.md" 2>/dev/null)
+    mtime_after=$(file_mtime "$test_dir/.claude/CLAUDE.md")
 
     if [[ "$mtime_before" != "$mtime_after" ]]; then
         echo -e "    ${RED}✗${RESET} CLAUDE.md was overwritten without --force"

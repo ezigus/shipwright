@@ -70,7 +70,7 @@ get_health_status() {
     # degraded (yellow) = some failures but recovering
     # failing (red) = persistent failures
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         echo "unknown"
         return
     fi
@@ -98,7 +98,7 @@ color_health() {
 
 # ─── Overview Subcommand ───────────────────────────────────────────────────
 show_overview() {
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required for fleet visualization"
         exit 1
     fi
@@ -144,7 +144,7 @@ show_overview() {
 
 # ─── Workers Subcommand ────────────────────────────────────────────────────
 show_workers() {
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required for fleet visualization"
         exit 1
     fi
@@ -197,7 +197,7 @@ show_workers() {
 
 # ─── Insights Subcommand ───────────────────────────────────────────────────
 show_insights() {
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required for fleet visualization"
         exit 1
     fi
@@ -238,7 +238,7 @@ show_insights() {
 
 # ─── Queue Subcommand ──────────────────────────────────────────────────────
 show_queue() {
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required for fleet visualization"
         exit 1
     fi
@@ -281,7 +281,7 @@ show_queue() {
 
 # ─── Costs Subcommand ──────────────────────────────────────────────────────
 show_costs() {
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required for fleet visualization"
         exit 1
     fi
@@ -323,7 +323,7 @@ show_costs() {
 
 # ─── Export Subcommand ─────────────────────────────────────────────────────
 show_export() {
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required for fleet visualization"
         exit 1
     fi

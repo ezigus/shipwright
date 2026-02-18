@@ -9,14 +9,14 @@ gh_init() {
         return
     fi
 
-    if ! command -v gh &>/dev/null; then
+    if ! command -v gh >/dev/null 2>&1; then
         GH_AVAILABLE=false
         warn "gh CLI not found — GitHub integration disabled"
         return
     fi
 
     # Check if authenticated
-    if ! gh auth status &>/dev/null 2>&1; then
+    if ! gh auth status >/dev/null 2>&1; then
         GH_AVAILABLE=false
         warn "gh not authenticated — GitHub integration disabled"
         return
@@ -46,7 +46,7 @@ gh_init() {
 gh_comment_issue() {
     [[ "$GH_AVAILABLE" != "true" ]] && return 0
     local issue_num="$1" body="$2"
-    gh issue comment "$issue_num" --body "$body" 2>/dev/null || true
+    _timeout 30 gh issue comment "$issue_num" --body "$body" 2>/dev/null || true
 }
 
 # Post a progress-tracking comment and save its ID for later updates
@@ -56,7 +56,7 @@ gh_post_progress() {
     local issue_num="$1" body="$2"
     local result
     result=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/${issue_num}/comments" \
-        -f body="$body" --jq '.id' 2>/dev/null) || true
+        -f body="$body" --jq '.id' --timeout 30 2>/dev/null) || true
     if [[ -n "$result" && "$result" != "null" ]]; then
         PROGRESS_COMMENT_ID="$result"
     fi
@@ -68,7 +68,7 @@ gh_update_progress() {
     [[ "$GH_AVAILABLE" != "true" || -z "$PROGRESS_COMMENT_ID" ]] && return 0
     local body="$1"
     gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${PROGRESS_COMMENT_ID}" \
-        -X PATCH -f body="$body" 2>/dev/null || true
+        -X PATCH -f body="$body" --timeout 30 2>/dev/null || true
 }
 
 # Add labels to an issue or PR
@@ -77,7 +77,7 @@ gh_add_labels() {
     [[ "$GH_AVAILABLE" != "true" ]] && return 0
     local issue_num="$1" labels="$2"
     [[ -z "$labels" ]] && return 0
-    gh issue edit "$issue_num" --add-label "$labels" 2>/dev/null || true
+    _timeout 30 gh issue edit "$issue_num" --add-label "$labels" 2>/dev/null || true
 }
 
 # Remove a label from an issue
@@ -85,7 +85,7 @@ gh_add_labels() {
 gh_remove_label() {
     [[ "$GH_AVAILABLE" != "true" ]] && return 0
     local issue_num="$1" label="$2"
-    gh issue edit "$issue_num" --remove-label "$label" 2>/dev/null || true
+    _timeout 30 gh issue edit "$issue_num" --remove-label "$label" 2>/dev/null || true
 }
 
 # Self-assign an issue
@@ -93,7 +93,7 @@ gh_remove_label() {
 gh_assign_self() {
     [[ "$GH_AVAILABLE" != "true" ]] && return 0
     local issue_num="$1"
-    gh issue edit "$issue_num" --add-assignee "@me" 2>/dev/null || true
+    _timeout 30 gh issue edit "$issue_num" --add-assignee "@me" 2>/dev/null || true
 }
 
 # Get full issue metadata as JSON
@@ -101,7 +101,7 @@ gh_assign_self() {
 gh_get_issue_meta() {
     [[ "$GH_AVAILABLE" != "true" ]] && return 0
     local issue_num="$1"
-    gh issue view "$issue_num" --json title,body,labels,milestone,assignees,comments,number,state 2>/dev/null || true
+    _timeout 30 gh issue view "$issue_num" --json title,body,labels,milestone,assignees,comments,number,state 2>/dev/null || true
 }
 
 # Build a progress table for GitHub comment

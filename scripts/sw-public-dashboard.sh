@@ -133,7 +133,7 @@ gather_pipeline_state() {
 # ─── Generate Token ─────────────────────────────────────────────────────────
 generate_token() {
     # Create a read-only token (32 hex chars)
-    if command -v openssl &>/dev/null; then
+    if command -v openssl >/dev/null 2>&1; then
         openssl rand -hex 16
     else
         # Fallback to simple pseudo-random

@@ -9,6 +9,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# shellcheck source=lib/compat.sh
+[[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
@@ -128,7 +130,7 @@ agent_widget() {
         # Heartbeat is alive if updated within last 60 seconds
         local mtime
         if [[ "$(uname)" == "Darwin" ]]; then
-            mtime="$(stat -f %m "$hb" 2>/dev/null || echo 0)"
+            mtime="$(file_mtime "$hb")"
         else
             mtime="$(stat -c %Y "$hb" 2>/dev/null || echo 0)"
         fi

@@ -21,7 +21,7 @@ triage_score_issue() {
     issue_body=$(echo "$issue_json" | jq -r '.body // ""')
 
     # ── Intelligence-powered triage (if enabled) ──
-    if [[ "${INTELLIGENCE_ENABLED:-false}" == "true" ]] && type intelligence_analyze_issue &>/dev/null 2>&1; then
+    if [[ "${INTELLIGENCE_ENABLED:-false}" == "true" ]] && type intelligence_analyze_issue >/dev/null 2>&1; then
         daemon_log INFO "Intelligence: using AI triage (intelligence enabled)" >&2
         local analysis
         analysis=$(intelligence_analyze_issue "$issue_json" 2>/dev/null || echo "")
@@ -143,10 +143,14 @@ triage_score_issue() {
     # Check if this issue blocks others (search issue references)
     if [[ "$NO_GITHUB" != "true" ]]; then
         local mentions
-        mentions=$(gh api "repos/{owner}/{repo}/issues/${issue_num}/timeline" --paginate -q '
-            [.[] | select(.event == "cross-referenced") | .source.issue.body // ""] |
-            map(select(test("blocked by #'"${issue_num}"'|depends on #'"${issue_num}"'"; "i"))) | length
-        ' 2>/dev/null || echo "0")
+        local repo_nwo
+        repo_nwo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
+        if [[ -n "$repo_nwo" ]]; then
+            mentions=$(gh api "repos/${repo_nwo}/issues/${issue_num}/timeline" --paginate -q '
+                [.[] | select(.event == "cross-referenced") | .source.issue.body // ""] |
+                map(select(test("blocked by #'"${issue_num}"'|depends on #'"${issue_num}"'"; "i"))) | length
+            ' 2>/dev/null || echo "0")
+        fi
         mentions=${mentions:-0}
         if [[ "$mentions" -gt 0 ]]; then
             dep_score=15
@@ -212,7 +216,7 @@ select_pipeline_template() {
     fi
 
     # ── Intelligence-composed pipeline (if enabled) ──
-    if [[ "${COMPOSER_ENABLED:-false}" == "true" ]] && type composer_create_pipeline &>/dev/null 2>&1; then
+    if [[ "${COMPOSER_ENABLED:-false}" == "true" ]] && type composer_create_pipeline >/dev/null 2>&1; then
         daemon_log INFO "Intelligence: using AI pipeline composition (composer enabled)" >&2
         local analysis="${INTELLIGENCE_ANALYSIS:-{}}"
         local repo_context=""
@@ -301,8 +305,8 @@ select_pipeline_template() {
     fi
 
     # ── Branch protection escalation (highest priority) ──
-    if type gh_branch_protection &>/dev/null 2>&1 && [[ "${NO_GITHUB:-false}" != "true" ]]; then
-        if type _gh_detect_repo &>/dev/null 2>&1; then
+    if type gh_branch_protection >/dev/null 2>&1 && [[ "${NO_GITHUB:-false}" != "true" ]]; then
+        if type _gh_detect_repo >/dev/null 2>&1; then
             _gh_detect_repo 2>/dev/null || true
         fi
         local gh_owner="${GH_OWNER:-}" gh_repo="${GH_REPO:-}"

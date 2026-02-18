@@ -32,7 +32,9 @@ cleanup() { rm -f "$out_file" "$err_file"; }
 trap cleanup EXIT
 
 run_claude() {
-    if command -v timeout &>/dev/null; then
+    if command -v gtimeout &>/dev/null; then
+        gtimeout "$SCRIPT_TIMEOUT" claude -p "Reply with exactly: OK" --max-turns 1 2>"$err_file" | head -c 4096 > "$out_file"
+    elif command -v timeout &>/dev/null; then
         timeout "$SCRIPT_TIMEOUT" claude -p "Reply with exactly: OK" --max-turns 1 2>"$err_file" | head -c 4096 > "$out_file"
     else
         claude -p "Reply with exactly: OK" --max-turns 1 2>"$err_file" | head -c 4096 > "$out_file"

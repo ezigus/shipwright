@@ -216,7 +216,7 @@ cmd_status() {
         for team_file in "$TEAM_STATE_DIR"/*.json; do
             [[ -f "$team_file" ]] || continue
             local ts
-            ts=$(stat -f %Bm "$team_file" 2>/dev/null || stat -c %Y "$team_file" 2>/dev/null || echo 0)
+            ts=$(file_mtime "$team_file")
             local name
             name=$(basename "$team_file" .json)
             local status

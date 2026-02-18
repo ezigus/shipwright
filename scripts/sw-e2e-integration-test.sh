@@ -10,6 +10,8 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=lib/compat.sh
+[[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
 
 # ─── Colors (matches shipwright theme) ────────────────────────────────────
 CYAN='\033[38;2;0;212;255m'
@@ -148,8 +150,10 @@ test_run_pipeline() {
 
     # Run pipeline and capture exit code through tee
     # Note: PIPESTATUS[0] captures the timeout/pipeline exit, not tee's
+    local timeout_cmd="timeout"
+    command -v gtimeout &>/dev/null && timeout_cmd="gtimeout"
     set +o pipefail
-    timeout "$PIPELINE_TIMEOUT" bash "$SCRIPT_DIR/sw-pipeline.sh" start \
+    "$timeout_cmd" "$PIPELINE_TIMEOUT" bash "$SCRIPT_DIR/sw-pipeline.sh" start \
         --issue "$ISSUE_NUMBER" \
         --pipeline fast \
         --ci \
@@ -250,7 +254,7 @@ test_cost_recorded() {
 
     local file_mod_epoch
     if [[ "$(uname)" == "Darwin" ]]; then
-        file_mod_epoch=$(stat -f %m "$costs_file" 2>/dev/null || echo "0")
+        file_mod_epoch=$(file_mtime "$costs_file")
     else
         file_mod_epoch=$(stat -c %Y "$costs_file" 2>/dev/null || echo "0")
     fi

@@ -71,6 +71,10 @@ jobs:
     needs: github-release
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
       - name: Extract version from tag
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
@@ -91,7 +95,28 @@ jobs:
           echo "darwin_x86_64=$sha_x64" >> "$GITHUB_OUTPUT"
           echo "linux_x86_64=$sha_linux" >> "$GITHUB_OUTPUT"
 
-      - name: Update Homebrew formula
+      - name: Update Homebrew formula in repo
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          formula="homebrew/shipwright.rb"
+          sed -i "s|version \"[^\"]*\"|version \"${v}\"|g" "$formula"
+          sed -i "s|sha256 \"PLACEHOLDER_DARWIN_ARM64_SHA256\"|sha256 \"${{ steps.sha.outputs.darwin_arm64 }}\"|g" "$formula"
+          sed -i "s|sha256 \"PLACEHOLDER_DARWIN_X86_64_SHA256\"|sha256 \"${{ steps.sha.outputs.darwin_x86_64 }}\"|g" "$formula"
+          sed -i "s|sha256 \"PLACEHOLDER_LINUX_X86_64_SHA256\"|sha256 \"${{ steps.sha.outputs.linux_x86_64 }}\"|g" "$formula"
+
+      - name: Commit and push formula
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add homebrew/shipwright.rb
+          if git diff --staged --quiet; then
+            echo "No formula changes to commit"
+          else
+            git commit -m "chore: update Homebrew formula SHA256 for v${{ steps.version.outputs.version }}"
+            git push
+          fi
+
+      - name: Dispatch to Homebrew tap
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}

@@ -65,7 +65,7 @@ done < <(grep -rl '^VERSION="' "$REPO_ROOT/scripts/" "$REPO_ROOT/install.sh" 2>/
 # Update package.json
 PKG="$REPO_ROOT/package.json"
 if [[ -f "$PKG" ]]; then
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         jq --arg v "$NEW_VERSION" '.version = $v' "$PKG" > "$PKG.tmp" && mv "$PKG.tmp" "$PKG"
     else
         sed_i "s/\"version\": \"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" "$PKG"
@@ -91,7 +91,7 @@ fi
 # .claude/hygiene-report.json if present
 HYGIENTE="$REPO_ROOT/.claude/hygiene-report.json"
 if [[ -f "$HYGIENTE" ]]; then
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         jq --arg v "$NEW_VERSION" '.version = $v' "$HYGIENTE" > "$HYGIENTE.tmp" && mv "$HYGIENTE.tmp" "$HYGIENTE"
     else
         sed_i "s/\"version\": \"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" "$HYGIENTE"

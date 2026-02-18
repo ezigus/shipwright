@@ -266,7 +266,7 @@ ingest_strategic_findings() {
         complexity=$(echo "$line" | jq -r '.complexity // "standard"' 2>/dev/null) || true
 
         local issue_num=""
-        if [[ "${NO_GITHUB:-false}" != "true" ]] && command -v gh &>/dev/null; then
+        if [[ "${NO_GITHUB:-false}" != "true" ]] && command -v gh >/dev/null 2>&1; then
             issue_num=$(gh issue list --state open --search "$title" --json number -q '.[0].number' 2>/dev/null || echo "")
         fi
 
@@ -285,6 +285,74 @@ ingest_strategic_findings() {
     echo "$findings"
 }
 
+# ─── Codebase Analysis (Claude fallback) ────────────────────────────────────
+# When Claude is unavailable, scan the codebase for real findings.
+autonomous_codebase_analysis() {
+    local findings=()
+    local repo_root
+    repo_root="${REPO_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || echo ".")}"
+
+    # Find TODO/FIXME/HACK comments with context (portable: find + grep, no --include)
+    local todo_count
+    todo_count=$(find "$repo_root/scripts" -name "*.sh" -print0 2>/dev/null | xargs -0 grep -oh 'TODO\|FIXME\|HACK\|XXX' 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "${todo_count:-0}" -gt 10 ]]; then
+        local top_files
+        top_files=$(find "$repo_root/scripts" -name "*.sh" 2>/dev/null | while read -r f; do
+            printf '%s %s\n' "$(grep -c 'TODO\|FIXME\|HACK' "$f" 2>/dev/null || echo 0)" "$f"
+        done | sort -rn | head -3 | awk '{print $2}' | xargs -I {} basename {} 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+        findings+=("Resolve ${todo_count} TODO/FIXME/HACK items (most in: ${top_files:-unknown})")
+    fi
+
+    # Find scripts without test files
+    local untested=()
+    for script in "$repo_root"/scripts/sw-*.sh; do
+        [[ -e "$script" ]] || continue
+        [[ "$script" == *-test.sh ]] && continue
+        local base
+        base=$(basename "$script" .sh)
+        if [[ ! -f "$repo_root/scripts/${base}-test.sh" ]]; then
+            untested+=("$base")
+        fi
+    done
+    if [[ ${#untested[@]} -gt 0 ]]; then
+        local untested_preview
+        untested_preview=$(printf '%s ' "${untested[@]:0:5}" | sed 's/ $//')
+        findings+=("Add tests for untested scripts: ${untested_preview}")
+    fi
+
+    # Check for large files that should be refactored
+    local large_files
+    large_files=$(wc -l "$repo_root"/scripts/sw-*.sh 2>/dev/null | sort -rn | head -5 | awk '$1 > 1500 {print $2}' | xargs -I{} basename {} 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+    if [[ -n "${large_files:-}" ]]; then
+        findings+=("Refactor large scripts (>1500 lines): ${large_files}")
+    fi
+
+    # Shellcheck findings if available
+    if command -v shellcheck &>/dev/null; then
+        local sc_count
+        sc_count=$(shellcheck -x "$repo_root"/scripts/*.sh 2>/dev/null | grep -c '^In \|^SC' || echo "0")
+        if [[ "${sc_count:-0}" -gt 5 ]]; then
+            findings+=("Fix shellcheck warnings in scripts (${sc_count}+ issues)")
+        fi
+    fi
+
+    # Output findings as JSON array; empty if none
+    if [[ ${#findings[@]} -eq 0 ]]; then
+        echo "[]"
+        return 0
+    fi
+    local json="[]"
+    for f in "${findings[@]}"; do
+        local category="quality"
+        [[ "$f" == *"TODO"* || "$f" == *"FIXME"* ]] && category="tech-debt"
+        [[ "$f" == *"test"* || "$f" == *"untested"* ]] && category="test"
+        [[ "$f" == *"Refactor"* || "$f" == *"large"* ]] && category="refactor"
+        [[ "$f" == *"shellcheck"* ]] && category="quality"
+        json=$(echo "$json" | jq -c --arg t "$f" --arg c "$category" '. + [{title: $t, description: $t, priority: "medium", effort: "M", labels: [$c], category: $c}]' 2>/dev/null || echo "[]")
+    done
+    echo "$json"
+}
+
 # ─── Analysis Cycle ────────────────────────────────────────────────────────
 
 run_analysis_cycle() {
@@ -297,7 +365,7 @@ run_analysis_cycle() {
     findings=$(mktemp "${TMPDIR:-/tmp}/sw-autonomous-findings.XXXXXX")
 
     # Use Claude to analyze the codebase
-    if command -v claude &>/dev/null; then
+    if command -v claude >/dev/null 2>&1; then
         info "Running codebase analysis with Claude..."
 
         claude -p 'You are Shipwright'"'"'s autonomous PM. Analyze this repository for:
@@ -313,35 +381,13 @@ For each finding, output JSON with fields: title, description, priority (critica
 Output ONLY a JSON array, no other text.' --max-turns 3 > "$findings" 2>/dev/null || true
 
     else
-        warn "Claude CLI not available, using static heuristics..."
+        warn "Claude CLI not available, using codebase-aware analysis..."
 
-        # Static heuristics for analysis
-        {
-            local has_tests=$(find . -type f -name "*test*" -o -name "*spec*" | wc -l || echo "0")
-            local shell_scripts=$(find scripts -type f -name "*.sh" | wc -l || echo "0")
-
-            jq -n \
-                --argjson test_count "$has_tests" \
-                --argjson script_count "$shell_scripts" \
-                '[
-                    {
-                        title: "Add comprehensive test coverage for critical paths",
-                        description: "Several scripts lack unit test coverage",
-                        priority: "high",
-                        effort: "L",
-                        labels: ["test", "quality"],
-                        category: "test"
-                    },
-                    {
-                        title: "Simplify error handling in daemon.sh",
-                        description: "Daemon error handling could be more robust",
-                        priority: "medium",
-                        effort: "M",
-                        labels: ["refactor", "self-improvement"],
-                        category: "self-improvement"
-                    }
-                ]'
-        } > "$findings"
+        autonomous_codebase_analysis > "$findings"
+        if [[ ! -s "$findings" ]] || [[ "$(cat "$findings")" == "[]" ]]; then
+            # No findings from codebase analysis
+            echo "[]" > "$findings"
+        fi
     fi
 
     # Ingest strategic findings and merge with Claude/heuristic findings
@@ -354,10 +400,10 @@ Output ONLY a JSON array, no other text.' --max-turns 3 > "$findings" 2>/dev/nul
     local claude_array
     claude_array=$(jq -c '.' "$findings" 2>/dev/null || echo "[]")
     # Extract JSON array from potential markdown-wrapped output
-    if ! echo "$claude_array" | jq -e 'type == "array"' &>/dev/null; then
+    if ! echo "$claude_array" | jq -e 'type == "array"' >/dev/null 2>&1; then
         claude_array=$(sed -n '/^\[/,/^\]/p' "$findings" 2>/dev/null | jq -c '.' 2>/dev/null || echo "[]")
     fi
-    if ! echo "$claude_array" | jq -e 'type == "array"' &>/dev/null; then
+    if ! echo "$claude_array" | jq -e 'type == "array"' >/dev/null 2>&1; then
         claude_array="[]"
     fi
 
@@ -597,7 +643,7 @@ process_findings() {
 
         # Strategic findings: issue already created by strategic agent; trigger pipeline and register, skip create
         if [[ "$source" == "strategic" ]]; then
-            [[ -z "$issue_num" && "${NO_GITHUB:-false}" != "true" ]] && command -v gh &>/dev/null && \
+            [[ -z "$issue_num" && "${NO_GITHUB:-false}" != "true" ]] && command -v gh >/dev/null 2>&1 && \
                 issue_num=$(gh issue list --state open --search "$title" --json number -q '.[0].number' 2>/dev/null || echo "")
             if [[ -n "$issue_num" && "$issue_num" =~ ^[0-9]+$ ]]; then
                 trigger_pipeline_for_finding "$issue_num" "$title"

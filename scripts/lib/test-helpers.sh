@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║  shipwright test-helpers — Shared test harness for all unit tests        ║
+# ║  Source this from any *-test.sh file to get assert_*, setup, teardown    ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+#
+# Usage:
+#   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#   source "$SCRIPT_DIR/lib/test-helpers.sh"
+#
+# Provides:
+#   Colors, counters, assert_pass/fail/eq/contains/contains_regex/gt/json_key
+#   setup_test_env / cleanup_test_env  (temp dir, mock PATH, mock HOME)
+#   print_test_header / print_test_results
+#   Mock helpers: mock_binary, mock_jq, mock_git, mock_gh, mock_claude
+
+[[ -n "${_TEST_HELPERS_LOADED:-}" ]] && return 0
+_TEST_HELPERS_LOADED=1
+
+# ─── Colors ──────────────────────────────────────────────────────────────────
+CYAN='\033[38;2;0;212;255m'
+GREEN='\033[38;2;74;222;128m'
+RED='\033[38;2;248;113;113m'
+YELLOW='\033[38;2;250;204;21m'
+DIM='\033[2m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+# ─── Counters ────────────────────────────────────────────────────────────────
+PASS=0
+FAIL=0
+TOTAL=0
+FAILURES=()
+TEST_TEMP_DIR=""
+
+# ─── Assertions ──────────────────────────────────────────────────────────────
+
+assert_pass() {
+    local desc="$1"
+    TOTAL=$((TOTAL + 1))
+    PASS=$((PASS + 1))
+    echo -e "  ${GREEN}✓${RESET} ${desc}"
+}
+
+assert_fail() {
+    local desc="$1"
+    local detail="${2:-}"
+    TOTAL=$((TOTAL + 1))
+    FAIL=$((FAIL + 1))
+    FAILURES+=("$desc")
+    echo -e "  ${RED}✗${RESET} ${desc}"
+    [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
+}
+
+assert_eq() {
+    local desc="$1"
+    local expected="$2"
+    local actual="$3"
+    if [[ "$expected" == "$actual" ]]; then
+        assert_pass "$desc"
+    else
+        assert_fail "$desc" "expected: $expected, got: $actual"
+    fi
+}
+
+assert_contains() {
+    local desc="$1"
+    local haystack="$2"
+    local needle="$3"
+    if echo "$haystack" | grep -qF "$needle" 2>/dev/null; then
+        assert_pass "$desc"
+    else
+        assert_fail "$desc" "output missing: $needle"
+    fi
+}
+
+assert_contains_regex() {
+    local desc="$1"
+    local haystack="$2"
+    local pattern="$3"
+    if echo "$haystack" | grep -qE "$pattern" 2>/dev/null; then
+        assert_pass "$desc"
+    else
+        assert_fail "$desc" "output missing pattern: $pattern"
+    fi
+}
+
+assert_gt() {
+    local desc="$1"
+    local actual="$2"
+    local threshold="$3"
+    if [[ "$actual" -gt "$threshold" ]] 2>/dev/null; then
+        assert_pass "$desc"
+    else
+        assert_fail "$desc" "expected >$threshold, got: $actual"
+    fi
+}
+
+assert_json_key() {
+    local desc="$1"
+    local json="$2"
+    local key="$3"
+    local expected="$4"
+    local actual
+    actual=$(echo "$json" | jq -r "$key" 2>/dev/null)
+    if [[ "$actual" == "$expected" ]]; then
+        assert_pass "$desc"
+    else
+        assert_fail "$desc" "key $key: expected $expected, got: $actual"
+    fi
+}
+
+assert_exit_code() {
+    local desc="$1"
+    local expected="$2"
+    local actual="$3"
+    if [[ "$expected" == "$actual" ]]; then
+        assert_pass "$desc (exit $actual)"
+    else
+        assert_fail "$desc" "expected exit code: $expected, got: $actual"
+    fi
+}
+
+assert_file_exists() {
+    local desc="$1"
+    local filepath="$2"
+    if [[ -f "$filepath" ]]; then
+        assert_pass "$desc"
+    else
+        assert_fail "$desc" "file not found: $filepath"
+    fi
+}
+
+assert_file_not_exists() {
+    local desc="$1"
+    local filepath="$2"
+    if [[ ! -f "$filepath" ]]; then
+        assert_pass "$desc"
+    else
+        assert_fail "$desc" "file should not exist: $filepath"
+    fi
+}
+
+# ─── Test Environment ────────────────────────────────────────────────────────
+
+setup_test_env() {
+    local test_name="${1:-sw-test}"
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/${test_name}.XXXXXX")
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/project"
+    mkdir -p "$TEST_TEMP_DIR/logs"
+
+    ORIG_HOME="${HOME}"
+    ORIG_PATH="${PATH}"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export NO_GITHUB=true
+
+    # Link real jq if available
+    if command -v jq >/dev/null 2>&1; then
+        ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
+    fi
+}
+
+cleanup_test_env() {
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
+    fi
+    [[ -n "${ORIG_HOME:-}" ]] && export HOME="$ORIG_HOME"
+    [[ -n "${ORIG_PATH:-}" ]] && export PATH="$ORIG_PATH"
+}
+
+# ─── Mock Helpers ────────────────────────────────────────────────────────────
+
+mock_binary() {
+    local name="$1"
+    local script="${2:-exit 0}"
+    cat > "$TEST_TEMP_DIR/bin/$name" <<MOCK
+#!/usr/bin/env bash
+$script
+MOCK
+    chmod +x "$TEST_TEMP_DIR/bin/$name"
+}
+
+mock_git() {
+    mock_binary "git" 'case "${1:-}" in
+    rev-parse)
+        if [[ "${2:-}" == "--show-toplevel" ]]; then echo "/tmp/mock-repo"
+        elif [[ "${2:-}" == "--abbrev-ref" ]]; then echo "main"
+        else echo "/tmp/mock-repo"
+        fi ;;
+    remote) echo "https://github.com/testuser/testrepo.git" ;;
+    branch) echo "" ;;
+    log) echo "" ;;
+    *) echo "" ;;
+esac
+exit 0'
+}
+
+mock_gh() {
+    mock_binary "gh" 'case "${1:-}" in
+    api) echo "{}" ;;
+    issue) echo "[]" ;;
+    pr) echo "[]" ;;
+    *) echo "" ;;
+esac
+exit 0'
+}
+
+mock_claude() {
+    mock_binary "claude" 'echo "Mock claude response"
+exit 0'
+}
+
+# ─── Output Helpers ──────────────────────────────────────────────────────────
+
+print_test_header() {
+    local title="$1"
+    echo ""
+    echo -e "${CYAN}${BOLD}  ${title}${RESET}"
+    echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
+    echo ""
+}
+
+print_test_section() {
+    local title="$1"
+    echo ""
+    echo -e "  ${CYAN}${title}${RESET}"
+}
+
+print_test_results() {
+    echo ""
+    echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+    echo ""
+    if [[ $FAIL -eq 0 ]]; then
+        echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"
+    else
+        echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"
+        echo ""
+        for f in "${FAILURES[@]}"; do
+            echo -e "  ${RED}✗${RESET} $f"
+        done
+    fi
+    echo ""
+    exit "$FAIL"
+}

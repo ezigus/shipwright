@@ -169,7 +169,7 @@ _predictive_record_anomaly() {
         '{ts: $ts, ts_epoch: $epoch, stage: $stage, metric: $metric, severity: $severity, value: $value, baseline: $baseline, confirmed: null}')
     echo "$record" >> "$tracking_file"
     # Rotate anomaly tracking to prevent unbounded growth
-    type rotate_jsonl &>/dev/null 2>&1 && rotate_jsonl "$tracking_file" 5000
+    type rotate_jsonl >/dev/null 2>&1 && rotate_jsonl "$tracking_file" 5000
 }
 
 # predictive_confirm_anomaly <stage> <metric_name> <was_real_failure>
@@ -308,7 +308,7 @@ _predictive_github_risk_factors() {
     local issue_json="$1"
     local risk_factors='{"security_risk": 0, "churn_risk": 0, "contributor_risk": 0, "recurrence_risk": 0}'
 
-    type _gh_detect_repo &>/dev/null 2>&1 || { echo "$risk_factors"; return 0; }
+    type _gh_detect_repo >/dev/null 2>&1 || { echo "$risk_factors"; return 0; }
     _gh_detect_repo 2>/dev/null || { echo "$risk_factors"; return 0; }
 
     local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
@@ -316,7 +316,7 @@ _predictive_github_risk_factors() {
 
     # Security risk: active alerts
     local sec_risk=0
-    if type gh_security_alerts &>/dev/null 2>&1; then
+    if type gh_security_alerts >/dev/null 2>&1; then
         local alert_count
         alert_count=$(gh_security_alerts "$owner" "$repo" 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
         if [[ "${alert_count:-0}" -gt 10 ]]; then
@@ -330,7 +330,7 @@ _predictive_github_risk_factors() {
 
     # Recurrence risk: similar past issues
     local rec_risk=0
-    if type gh_similar_issues &>/dev/null 2>&1; then
+    if type gh_similar_issues >/dev/null 2>&1; then
         local title
         title=$(echo "$issue_json" | jq -r '.title // ""' 2>/dev/null | head -c 100)
         if [[ -n "$title" ]]; then
@@ -346,7 +346,7 @@ _predictive_github_risk_factors() {
 
     # Contributor risk: low contributor count = bus factor risk
     local cont_risk=0
-    if type gh_contributors &>/dev/null 2>&1; then
+    if type gh_contributors >/dev/null 2>&1; then
         local contributor_count
         contributor_count=$(gh_contributors "$owner" "$repo" 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
         if [[ "${contributor_count:-0}" -lt 2 ]]; then
@@ -368,7 +368,7 @@ predict_pipeline_risk() {
     local issue_json="${1:-"{}"}"
     local repo_context="${2:-}"
 
-    if [[ "$INTELLIGENCE_AVAILABLE" == "true" ]] && command -v _intelligence_call_claude &>/dev/null; then
+    if [[ "$INTELLIGENCE_AVAILABLE" == "true" ]] && command -v _intelligence_call_claude >/dev/null 2>&1; then
         local prompt
         prompt="Analyze this issue for pipeline risk. Return ONLY valid JSON.
 
@@ -381,7 +381,7 @@ Return JSON format:
         local result
         result=$(_intelligence_call_claude "$prompt" 2>/dev/null || echo "")
 
-        if [[ -n "$result" ]] && echo "$result" | jq -e '.overall_risk' &>/dev/null; then
+        if [[ -n "$result" ]] && echo "$result" | jq -e '.overall_risk' >/dev/null 2>&1; then
             # Validate range
             local risk
             risk=$(echo "$result" | jq '.overall_risk')
@@ -503,7 +503,7 @@ $(head -100 "$file_path" 2>/dev/null || true)
         return 0
     fi
 
-    if [[ "$INTELLIGENCE_AVAILABLE" != "true" ]] || ! command -v _intelligence_call_claude &>/dev/null; then
+    if [[ "$INTELLIGENCE_AVAILABLE" != "true" ]] || ! command -v _intelligence_call_claude >/dev/null 2>&1; then
         echo '[]'
         return 0
     fi
@@ -524,7 +524,7 @@ Only return findings with severity 'high' or 'critical'. Return [] if nothing si
     local result
     result=$(_intelligence_call_claude "$prompt" 2>/dev/null || echo "")
 
-    if [[ -n "$result" ]] && echo "$result" | jq -e 'type == "array"' &>/dev/null; then
+    if [[ -n "$result" ]] && echo "$result" | jq -e 'type == "array"' >/dev/null 2>&1; then
         # Filter to only high/critical findings
         local filtered
         filtered=$(echo "$result" | jq '[.[] | select(.severity == "high" or .severity == "critical")]')

@@ -209,7 +209,7 @@ cmd_check() {
     local hb_epoch now_epoch age_secs
 
     # macOS date -j -f vs GNU date -d (TZ=UTC since timestamps are UTC)
-    if TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$updated_at" +%s &>/dev/null; then
+    if TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$updated_at" +%s >/dev/null 2>&1; then
         hb_epoch="$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$updated_at" +%s 2>/dev/null)"
     else
         hb_epoch="$(date -d "$updated_at" +%s 2>/dev/null || echo 0)"

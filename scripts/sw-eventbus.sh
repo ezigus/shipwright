@@ -176,14 +176,14 @@ cmd_watch() {
     echo ""
 
     # Determine platform and use appropriate watcher
-    if command -v fswatch &>/dev/null; then
+    if command -v fswatch >/dev/null 2>&1; then
         # macOS with fswatch
         fswatch -r "$watch_dir" | while read -r file; do
             local payload
             payload="{\"file\": \"$file\", \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
             cmd_publish "file.changed" "watcher" "$(generate_uuid)" "$payload"
         done
-    elif command -v inotifywait &>/dev/null; then
+    elif command -v inotifywait >/dev/null 2>&1; then
         # Linux with inotify-tools
         inotifywait -m -r "$watch_dir" | while read -r dir action file; do
             local filepath="${dir}${file}"

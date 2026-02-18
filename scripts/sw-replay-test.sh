@@ -146,6 +146,40 @@ output=$(bash "$SCRIPT_DIR/sw-replay.sh" bogus 2>&1) && rc=0 || rc=$?
 assert_eq "unknown command exits non-zero" "1" "$rc"
 assert_contains "unknown command shows error" "$output" "Unknown subcommand"
 
+# ─── Test 11: Fixture events - list, show, narrative, export for issue #42 ───
+echo ""
+echo -e "${BOLD}  Pipeline Events Fixture (Issue #42)${RESET}"
+cat > "$HOME/.shipwright/events.jsonl" <<'EVENTS42'
+{"type":"pipeline.started","ts":"2026-02-15T10:00:00Z","issue":42,"pipeline":"standard","model":"opus","goal":"Fix the replay export format"}
+{"type":"stage.completed","ts":"2026-02-15T10:05:00Z","issue":42,"stage":"plan","duration_s":300,"result":"success"}
+{"type":"stage.completed","ts":"2026-02-15T10:15:00Z","issue":42,"stage":"build","duration_s":600,"result":"success"}
+{"type":"pipeline.completed","ts":"2026-02-15T10:30:00Z","issue":42,"result":"success","duration_s":1800,"input_tokens":50000,"output_tokens":10000}
+EVENTS42
+output=$(bash "$SCRIPT_DIR/sw-replay.sh" list 2>&1) || true
+assert_contains "list shows issue 42" "$output" "#42"
+output=$(bash "$SCRIPT_DIR/sw-replay.sh" show 42 2>&1) || true
+assert_contains "show 42 has stage information" "$output" "Stages"
+assert_contains "show 42 has plan stage" "$output" "plan"
+assert_contains "show 42 has build stage" "$output" "build"
+assert_contains "show 42 has Pipeline Type" "$output" "Pipeline Type"
+output=$(bash "$SCRIPT_DIR/sw-replay.sh" narrative 42 2>&1) || true
+assert_contains "narrative 42 produces prose" "$output" "Pipeline processed issue #42"
+assert_contains "narrative 42 has stages count" "$output" "stages"
+output=$(bash "$SCRIPT_DIR/sw-replay.sh" export 42 2>&1) || true
+assert_contains "export 42 produces report" "$output" "Pipeline Report"
+assert_contains "export 42 has JSON-structured events" "$output" "Events"
+assert_contains "export 42 has stage table" "$output" "| Stage |"
+
+# ─── Test 12: Diff and compare error handling (missing second arg) ───────────
+echo ""
+echo -e "${BOLD}  Diff/Compare Error Handling${RESET}"
+output=$(bash "$SCRIPT_DIR/sw-replay.sh" diff 2>&1) && rc=0 || rc=$?
+assert_eq "diff without issue exits non-zero" "1" "$rc"
+assert_contains "diff without issue shows usage" "$output" "Usage"
+output=$(bash "$SCRIPT_DIR/sw-replay.sh" compare 42 2>&1) && rc=0 || rc=$?
+assert_eq "compare with missing second issue exits non-zero" "1" "$rc"
+assert_contains "compare missing arg shows usage" "$output" "Usage"
+
 echo ""
 echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""

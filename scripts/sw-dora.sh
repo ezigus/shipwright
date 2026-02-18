@@ -126,7 +126,7 @@ calculate_dora() {
         return 0
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         echo '{"deploy_freq":0,"cycle_time":0,"cfr":0,"mttr":0,"total":0}'
         return 0
     fi
@@ -179,7 +179,7 @@ show_dora_dashboard() {
     current=$(calculate_dora 7 0)
     previous=$(calculate_dora 7 7)
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required for dashboard display"
         exit 1
     fi
@@ -281,7 +281,7 @@ show_dx_metrics() {
         return 0
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required"
         exit 1
     fi
@@ -342,7 +342,7 @@ show_ai_metrics() {
         return 0
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required"
         exit 1
     fi
@@ -404,7 +404,7 @@ show_trends() {
         return 0
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required"
         exit 1
     fi
@@ -451,7 +451,7 @@ show_comparison() {
     curr=$(calculate_dora "$current_period" 0)
     prev=$(calculate_dora "$previous_period" "$current_period")
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required"
         exit 1
     fi
@@ -498,7 +498,7 @@ export_metrics() {
     current=$(calculate_dora 7 0)
     previous=$(calculate_dora 7 7)
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required for JSON export"
         exit 1
     fi

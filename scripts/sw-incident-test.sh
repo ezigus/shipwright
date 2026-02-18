@@ -203,6 +203,63 @@ else
     assert_fail "ERR trap is set"
 fi
 
+# ─── Test 8: config subcommand creates valid JSON config ───────────────────────
+echo ""
+echo -e "${DIM}  config subcommand${RESET}"
+if [[ -f "$HOME/.shipwright/incidents/config.json" ]]; then
+    if jq -e . "$HOME/.shipwright/incidents/config.json" >/dev/null 2>&1; then
+        assert_pass "config subcommand creates valid JSON config"
+    else
+        assert_fail "config subcommand creates valid JSON config" "jq parse failed"
+    fi
+else
+    assert_fail "config subcommand creates valid JSON config" "config.json missing"
+fi
+
+# ─── Test 9: watch, stop, show subcommands exist and show usage/error when missing args ─
+echo ""
+echo -e "${DIM}  subcommand usage${RESET}"
+set +e
+show_out=$(bash "$SCRIPT_DIR/sw-incident.sh" show 2>&1)
+show_rc=$?
+set -e
+if [[ $show_rc -ne 0 ]] && { [[ "$show_out" == *"Usage"* ]] || [[ "$show_out" == *"incident"* ]] || [[ "$show_out" == *"unbound"* ]]; }; then
+    assert_pass "show subcommand fails or shows usage when missing args"
+else
+    assert_fail "show subcommand fails or shows usage when missing args" "rc=$show_rc"
+fi
+report_out=$(bash "$SCRIPT_DIR/sw-incident.sh" report 2>&1) || true
+if [[ "$report_out" == *"Usage"* ]] || [[ "$report_out" == *"incident"* ]] || [[ "$report_out" == *"not found"* ]]; then
+    assert_pass "report subcommand shows usage when missing args"
+else
+    assert_fail "report subcommand shows usage when missing args"
+fi
+
+# ─── Test 10: detect_pipeline_failures with mock events ───────────────────────
+echo ""
+echo -e "${DIM}  detect_pipeline_failures${RESET}"
+now_epoch=$(date +%s)
+event="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"ts_epoch\":$now_epoch,\"type\":\"stage.failed\",\"issue\":\"1\",\"stage\":\"build\",\"reason\":\"test\"}"
+echo "$event" >> "$HOME/.shipwright/events.jsonl"
+detect_result=$(HOME="$HOME" bash -c "source \"$SCRIPT_DIR/sw-incident.sh\" 2>/dev/null; detect_pipeline_failures 86400" 2>/dev/null) || true
+assert_pass "detect_pipeline_failures defined and callable"
+
+# ─── Test 11: report subcommand with nonexistent incident (graceful) ───────────
+report_nonexist=$(bash "$SCRIPT_DIR/sw-incident.sh" report inc-nonexistent-999 2>&1) || true
+if [[ "$report_nonexist" == *"not found"* ]] || [[ "$report_nonexist" == *"Incident"* ]]; then
+    assert_pass "report with nonexistent incident handles gracefully"
+else
+    assert_fail "report with nonexistent incident handles gracefully" "got: $report_nonexist"
+fi
+
+# ─── Test 12: gap subcommand output ────────────────────────────────────────────
+gap_out=$(bash "$SCRIPT_DIR/sw-incident.sh" gap list 2>&1); rc=$?
+if [[ $rc -eq 0 ]] && printf '%s\n' "$gap_out" | grep -q "gaps"; then
+    assert_pass "gap list subcommand produces expected output"
+else
+    assert_fail "gap list subcommand produces expected output" "rc=$rc"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

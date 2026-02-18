@@ -262,7 +262,7 @@ git show $regression_commit
 EOF
     )
 
-    if ! command -v gh &>/dev/null; then
+    if ! command -v gh >/dev/null 2>&1; then
         error "gh CLI not found — cannot create issue"
         return 1
     fi
@@ -275,7 +275,7 @@ EOF
         --body "$issue_body" \
         --label "shipwright" \
         --label "hotfix" \
-        2>&1 | tail -1)
+        2>&1 | tail -1) || true
 
     if [[ -n "$issue_url" ]]; then
         success "Created issue: $issue_url"

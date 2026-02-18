@@ -250,6 +250,68 @@ fi
 # ─── Test 11: doctor shows header ───────────────────────────────────────────
 assert_contains "output shows Shipwright header" "$output" "Doctor"
 
+# ─── Test 12: Check logic exists for key tools (tmux, jq, claude, git, gh) ───
+echo ""
+echo -e "${DIM}  check logic for tools${RESET}"
+if grep -qE 'command -v tmux|tmux -V' "$SCRIPT_DIR/sw-doctor.sh"; then
+    assert_pass "Source checks for tmux"
+else
+    assert_fail "Source checks for tmux"
+fi
+if grep -qE 'command -v jq|jq ' "$SCRIPT_DIR/sw-doctor.sh"; then
+    assert_pass "Source checks for jq"
+else
+    assert_fail "Source checks for jq"
+fi
+if grep -qE 'command -v claude|Claude Code CLI' "$SCRIPT_DIR/sw-doctor.sh"; then
+    assert_pass "Source checks for Claude CLI"
+else
+    assert_fail "Source checks for Claude CLI"
+fi
+if grep -qE 'command -v git|git --version' "$SCRIPT_DIR/sw-doctor.sh"; then
+    assert_pass "Source checks for git"
+else
+    assert_fail "Source checks for git"
+fi
+if grep -qE 'command -v gh|gh auth' "$SCRIPT_DIR/sw-doctor.sh"; then
+    assert_pass "Source checks for gh"
+else
+    assert_fail "Source checks for gh"
+fi
+
+# ─── Test 13: --version flag ────────────────────────────────────────────────
+echo ""
+echo -e "${DIM}  version flag${RESET}"
+ver_output=$(bash "$SCRIPT_DIR/sw-doctor.sh" --version 2>&1)
+if [[ "$ver_output" == *"sw-doctor"* && "$ver_output" == *"2."* ]]; then
+    assert_pass "--version outputs sw-doctor and version"
+else
+    assert_fail "--version outputs sw-doctor and version" "got: $ver_output"
+fi
+bash "$SCRIPT_DIR/sw-doctor.sh" -V 2>&1 | grep -q "sw-doctor" && assert_pass "-V short flag works" || assert_fail "-V short flag works"
+
+# ─── Test 14: Doctor with missing jq in PATH ──────────────────────────────────
+echo ""
+echo -e "${DIM}  missing tool handling${RESET}"
+# Temporarily hide jq so doctor runs without it
+jq_path="$TEMP_DIR/bin/jq"
+if [[ -f "$jq_path" ]]; then
+    mv "$jq_path" "${jq_path}.bak"
+fi
+output_no_jq=$(bash "$SCRIPT_DIR/sw-doctor.sh" 2>&1) || true
+if [[ -f "${jq_path}.bak" ]]; then
+    mv "${jq_path}.bak" "$jq_path"
+fi
+if [[ "$output_no_jq" == *"jq"* ]]; then
+    assert_pass "Doctor reports when jq missing from PATH"
+else
+    assert_fail "Doctor reports when jq missing from PATH" "output should mention jq"
+fi
+
+# ─── Test 15: Output includes PREREQUISITES and INSTALLED FILES sections ─────
+assert_contains "output includes PREREQUISITES section" "$output" "PREREQUISITES"
+assert_contains "output includes INSTALLED FILES section" "$output" "INSTALLED FILES"
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

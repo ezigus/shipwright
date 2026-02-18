@@ -139,7 +139,60 @@ echo -e "${BOLD}  Report${RESET}"
 output=$(bash "$SCRIPT_DIR/sw-model-router.sh" report 2>&1) || true
 assert_contains "report with no data warns" "$output" "No usage data"
 
-# ─── Test 14: Unknown subcommand ─────────────────────────────────────────
+# ─── Test 14: record_usage creates usage data file ───────────────────────
+echo ""
+echo -e "${BOLD}  Record Usage${RESET}"
+source "$SCRIPT_DIR/sw-model-router.sh" 2>/dev/null || true
+record_usage "plan" "opus" 1000 500 2>/dev/null || true
+record_usage "build" "sonnet" 2000 800 2>/dev/null || true
+if [[ -f "$HOME/.shipwright/model-usage.jsonl" ]]; then
+    assert_pass "record_usage creates usage file"
+    lines=$(wc -l < "$HOME/.shipwright/model-usage.jsonl" 2>/dev/null | tr -d ' ' || echo "0")
+    assert_eq "record_usage writes entries" "2" "$lines"
+else
+    assert_fail "record_usage creates usage file"
+fi
+
+# ─── Test 15: Report with usage data shows summary ───────────────────────
+output=$(bash "$SCRIPT_DIR/sw-model-router.sh" report 2>&1) || true
+assert_contains "report with data shows summary" "$output" "Summary"
+assert_contains "report shows total runs" "$output" "Total runs"
+assert_contains "report shows cost" "$output" "cost"
+assert_contains_regex "report shows model counts" "$output" "(Haiku|Sonnet|Opus) runs"
+
+# ─── Test 16: Route for all stages at all complexity levels ──────────────
+echo ""
+echo -e "${BOLD}  Route All Stages & Complexity${RESET}"
+for stage in intake plan design build test review compound_quality validate monitor; do
+    out=$(bash "$SCRIPT_DIR/sw-model-router.sh" route "$stage" 50 2>&1)
+    if [[ -n "$out" && "$out" =~ ^(haiku|sonnet|opus)$ ]]; then
+        assert_pass "route $stage at 50 returns model"
+    else
+        assert_fail "route $stage at 50 returns model" "got: $out"
+    fi
+done
+out_low=$(bash "$SCRIPT_DIR/sw-model-router.sh" route plan 10 2>&1)
+out_high=$(bash "$SCRIPT_DIR/sw-model-router.sh" route plan 95 2>&1)
+assert_eq "route plan at low complexity = sonnet" "sonnet" "$out_low"
+assert_eq "route plan at high complexity = opus" "opus" "$out_high"
+
+# ─── Test 17: Config set and config show cycle ───────────────────────────
+echo ""
+echo -e "${BOLD}  Config Set/Show Cycle${RESET}"
+bash "$SCRIPT_DIR/sw-model-router.sh" config set cost_aware_mode false 2>/dev/null || true
+output=$(bash "$SCRIPT_DIR/sw-model-router.sh" config show 2>&1) || true
+assert_contains "config show reflects settings" "$output" "cost_aware_mode"
+val=$(jq -r '.cost_aware_mode' "$config_file" 2>/dev/null)
+assert_eq "config set persists" "false" "$val"
+
+# ─── Test 18: Estimate with specific stages and complexity ───────────────
+output=$(bash "$SCRIPT_DIR/sw-model-router.sh" estimate standard 25 2>&1) || true
+assert_contains "estimate with low complexity shows stages" "$output" "intake"
+assert_contains "estimate shows Total" "$output" "Total"
+output=$(bash "$SCRIPT_DIR/sw-model-router.sh" estimate standard 75 2>&1) || true
+assert_contains "estimate with high complexity" "$output" "plan"
+
+# ─── Test 19: Unknown subcommand ────────────────────────────────────────
 echo ""
 echo -e "${BOLD}  Error Handling${RESET}"
 output=$(bash "$SCRIPT_DIR/sw-model-router.sh" bogus 2>&1) && rc=0 || rc=$?

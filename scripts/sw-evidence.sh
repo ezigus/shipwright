@@ -24,21 +24,13 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 
 # Cross-platform timeout: macOS lacks GNU timeout
 _run_with_timeout() {
     local secs="$1"; shift
-    if command -v gtimeout &>/dev/null; then
+    if command -v gtimeout >/dev/null 2>&1; then
         gtimeout "$secs" "$@"
-    elif command -v timeout &>/dev/null; then
+    elif command -v timeout >/dev/null 2>&1; then
         timeout "$secs" "$@"
     else
         # Fallback: run without timeout
@@ -151,7 +143,7 @@ collect_browser() {
 
     local entrypoint base_url url
     entrypoint=$(echo "$collector_json" | jq -r '.entrypoint // "/"')
-    base_url=$(echo "$collector_json" | jq -r '.baseUrl // "http://localhost:3000"')
+    base_url=$(echo "$collector_json" | jq -r '.baseUrl // "http://localhost:8767"')
     url="${base_url}${entrypoint}"
 
     info "[browser] ${name}: ${url}"
@@ -160,7 +152,7 @@ collect_browser() {
     local response_size="0"
     local response_body=""
 
-    if command -v curl &>/dev/null; then
+    if command -v curl >/dev/null 2>&1; then
         local tmpfile="/tmp/sw-evidence-${name}.txt"
         http_status=$(curl -s -o "$tmpfile" -w "%{http_code}" --max-time 30 "$url" 2>/dev/null || echo "0")
         if [[ -f "$tmpfile" ]]; then
@@ -201,7 +193,7 @@ collect_api() {
 
     if [[ -z "$url" ]]; then
         local base_url entrypoint
-        base_url=$(echo "$collector_json" | jq -r '.baseUrl // "http://localhost:3000"')
+        base_url=$(echo "$collector_json" | jq -r '.baseUrl // "http://localhost:8767"')
         entrypoint=$(echo "$collector_json" | jq -r '.entrypoint // "/"')
         url="${base_url}${entrypoint}"
     fi
@@ -213,9 +205,10 @@ collect_api() {
     local response_body=""
     local content_type=""
 
-    if command -v curl &>/dev/null; then
-        local tmpfile="/tmp/sw-evidence-${name}.txt"
-        local header_file="/tmp/sw-evidence-${name}-headers.txt"
+    if command -v curl >/dev/null 2>&1; then
+        local tmpfile header_file
+        tmpfile=$(mktemp "${TMPDIR:-/tmp}/sw-evidence-api.XXXXXX")
+        header_file=$(mktemp "${TMPDIR:-/tmp}/sw-evidence-api-headers.XXXXXX")
         local curl_args=(-s -o "$tmpfile" -D "$header_file" -w "%{http_code}" -X "$method" --max-time "$timeout")
 
         # Add custom headers
@@ -244,6 +237,7 @@ collect_api() {
             content_type=$(grep -i "^content-type:" "$header_file" 2>/dev/null | head -1 | sed 's/^[^:]*: *//' | tr -d '\r' || echo "")
             rm -f "$header_file"
         fi
+        rm -f "$tmpfile"
     fi
 
     local passed="false"
@@ -391,7 +385,7 @@ collect_webhook() {
     local http_status="0"
     local response_body=""
 
-    if command -v curl &>/dev/null; then
+    if command -v curl >/dev/null 2>&1; then
         local tmpfile="/tmp/sw-evidence-${name}.txt"
         http_status=$(curl -s -o "$tmpfile" -w "%{http_code}" -X "$method" \
             -H "Content-Type: application/json" -d "$body" \

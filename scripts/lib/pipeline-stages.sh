@@ -125,7 +125,7 @@ stage_plan() {
     CURRENT_STAGE_ID="plan"
     local plan_file="$ARTIFACTS_DIR/plan.md"
 
-    if ! command -v claude &>/dev/null; then
+    if ! command -v claude >/dev/null 2>&1; then
         error "Claude CLI not found — cannot generate plan"
         return 1
     fi
@@ -167,7 +167,7 @@ ${_cb_content}
     fi
 
     # Inject intelligence memory context for similar past plans
-    if type intelligence_search_memory &>/dev/null 2>&1; then
+    if type intelligence_search_memory >/dev/null 2>&1; then
         local plan_memory
         plan_memory=$(intelligence_search_memory "plan stage for ${TASK_TYPE:-feature}: ${GOAL:-}" "${HOME}/.shipwright/memory" 5 2>/dev/null) || true
         if [[ -n "$plan_memory" && "$plan_memory" != *'"results":[]'* && "$plan_memory" != *'"error"'* ]]; then
@@ -392,7 +392,7 @@ CC_TASKS_EOF
 
     # ── Plan Validation Gate ──
     # Ask Claude to validate the plan before proceeding
-    if command -v claude &>/dev/null && [[ -s "$plan_file" ]]; then
+    if command -v claude >/dev/null 2>&1 && [[ -s "$plan_file" ]]; then
         local validation_attempts=0
         local max_validation_attempts=2
         local plan_valid=false
@@ -405,7 +405,7 @@ CC_TASKS_EOF
             local validation_extra=""
 
             # Inject rejected plan history from memory
-            if type intelligence_search_memory &>/dev/null 2>&1; then
+            if type intelligence_search_memory >/dev/null 2>&1; then
                 local rejected_plans
                 rejected_plans=$(intelligence_search_memory "rejected plan validation failures for: ${GOAL:-}" "${HOME}/.shipwright/memory" 3 2>/dev/null) || true
                 if [[ -n "$rejected_plans" ]]; then
@@ -560,7 +560,7 @@ stage_design() {
         return 0
     fi
 
-    if ! command -v claude &>/dev/null; then
+    if ! command -v claude >/dev/null 2>&1; then
         error "Claude CLI not found — cannot generate design"
         return 1
     fi
@@ -569,7 +569,7 @@ stage_design() {
 
     # Memory integration — inject context if memory system available
     local memory_context=""
-    if type intelligence_search_memory &>/dev/null 2>&1; then
+    if type intelligence_search_memory >/dev/null 2>&1; then
         local mem_dir="${HOME}/.shipwright/memory"
         memory_context=$(intelligence_search_memory "design stage architecture patterns for: ${GOAL:-}" "$mem_dir" 5 2>/dev/null) || true
     fi
@@ -608,7 +608,7 @@ ${arch_layers}}"
 
     # Inject rejected design approaches and anti-patterns from memory
     local design_antipatterns=""
-    if type intelligence_search_memory &>/dev/null 2>&1; then
+    if type intelligence_search_memory >/dev/null 2>&1; then
         local rejected_designs
         rejected_designs=$(intelligence_search_memory "rejected design approaches anti-patterns for: ${GOAL:-}" "${HOME}/.shipwright/memory" 3 2>/dev/null) || true
         if [[ -n "$rejected_designs" ]]; then
@@ -749,7 +749,7 @@ stage_build() {
 
     # Memory integration — inject context if memory system available
     local memory_context=""
-    if type intelligence_search_memory &>/dev/null 2>&1; then
+    if type intelligence_search_memory >/dev/null 2>&1; then
         local mem_dir="${HOME}/.shipwright/memory"
         memory_context=$(intelligence_search_memory "build stage for: ${GOAL:-}" "$mem_dir" 5 2>/dev/null) || true
     fi
@@ -790,7 +790,7 @@ $(cat "$TASKS_FILE")"
     fi
 
     # Inject file hotspots from GitHub intelligence
-    if [[ "${NO_GITHUB:-}" != "true" ]] && type gh_file_change_frequency &>/dev/null 2>&1; then
+    if [[ "${NO_GITHUB:-}" != "true" ]] && type gh_file_change_frequency >/dev/null 2>&1; then
         local build_hotspots
         build_hotspots=$(gh_file_change_frequency 2>/dev/null | head -5 || true)
         if [[ -n "$build_hotspots" ]]; then
@@ -802,7 +802,7 @@ ${build_hotspots}"
     fi
 
     # Inject security alerts context
-    if [[ "${NO_GITHUB:-}" != "true" ]] && type gh_security_alerts &>/dev/null 2>&1; then
+    if [[ "${NO_GITHUB:-}" != "true" ]] && type gh_security_alerts >/dev/null 2>&1; then
         local build_alerts
         build_alerts=$(gh_security_alerts 2>/dev/null | head -3 || true)
         if [[ -n "$build_alerts" ]]; then
@@ -930,6 +930,11 @@ ${prevention_text}"
     # Definition of Done: use plan-extracted DoD if available
     [[ -s "$dod_file" ]] && loop_args+=(--definition-of-done "$dod_file")
 
+    # Checkpoint resume: when pipeline resumed from build-stage checkpoint, pass --resume to loop
+    if [[ "${RESUME_FROM_CHECKPOINT:-false}" == "true" && "${checkpoint_stage:-}" == "build" ]]; then
+        loop_args+=(--resume)
+    fi
+
     # Skip permissions in CI (no interactive terminal)
     [[ "${CI_MODE:-false}" == "true" ]] && loop_args+=(--skip-permissions)
 
@@ -967,7 +972,7 @@ ${prevention_text}"
 
     # Read accumulated token counts from build loop (written by sw-loop.sh)
     local _loop_token_file="${PROJECT_ROOT}/.claude/loop-logs/loop-tokens.json"
-    if [[ -f "$_loop_token_file" ]] && command -v jq &>/dev/null; then
+    if [[ -f "$_loop_token_file" ]] && command -v jq >/dev/null 2>&1; then
         local _loop_in _loop_out _loop_cost
         _loop_in=$(jq -r '.input_tokens // 0' "$_loop_token_file" 2>/dev/null || echo "0")
         _loop_out=$(jq -r '.output_tokens // 0' "$_loop_token_file" 2>/dev/null || echo "0")
@@ -988,7 +993,7 @@ ${prevention_text}"
     info "Build produced ${BOLD}$commit_count${RESET} commit(s)"
 
     # Commit quality evaluation when intelligence is enabled
-    if type intelligence_search_memory &>/dev/null 2>&1 && command -v claude &>/dev/null && [[ "${commit_count:-0}" -gt 0 ]]; then
+    if type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1 && [[ "${commit_count:-0}" -gt 0 ]]; then
         local commit_msgs
         commit_msgs=$(git log --format="%s" "${BASE_BRANCH}..HEAD" 2>/dev/null | head -20)
         local quality_score
@@ -1129,7 +1134,7 @@ stage_review() {
         return 0
     fi
 
-    if ! command -v claude &>/dev/null; then
+    if ! command -v claude >/dev/null 2>&1; then
         warn "Claude CLI not found — skipping AI review"
         return 0
     fi
@@ -1139,7 +1144,7 @@ stage_review() {
     info "Running AI code review... ${DIM}($diff_stats)${RESET}"
 
     # Semantic risk scoring when intelligence is enabled
-    if type intelligence_search_memory &>/dev/null 2>&1 && command -v claude &>/dev/null; then
+    if type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
         local diff_files
         diff_files=$(git diff --name-only "${BASE_BRANCH}...${GIT_BRANCH}" 2>/dev/null || true)
         local risk_score="low"
@@ -1185,7 +1190,7 @@ If no issues are found, write: \"Review clean — no issues found.\"
 "
 
     # Inject previous review findings and anti-patterns from memory
-    if type intelligence_search_memory &>/dev/null 2>&1; then
+    if type intelligence_search_memory >/dev/null 2>&1; then
         local review_memory
         review_memory=$(intelligence_search_memory "code review findings anti-patterns for: ${GOAL:-}" "${HOME}/.shipwright/memory" 5 2>/dev/null) || true
         if [[ -n "$review_memory" ]]; then
@@ -1211,7 +1216,7 @@ ${conventions}
     fi
 
     # Inject CODEOWNERS focus areas for review
-    if [[ "${NO_GITHUB:-}" != "true" ]] && type gh_codeowners &>/dev/null 2>&1; then
+    if [[ "${NO_GITHUB:-}" != "true" ]] && type gh_codeowners >/dev/null 2>&1; then
         local review_owners
         review_owners=$(gh_codeowners 2>/dev/null | head -10 || true)
         if [[ -n "$review_owners" ]]; then
@@ -1448,7 +1453,7 @@ stage_pr() {
 
     # ── Developer Simulation (pre-PR review) ──
     local simulation_summary=""
-    if type simulation_review &>/dev/null 2>&1; then
+    if type simulation_review >/dev/null 2>&1; then
         local sim_enabled
         sim_enabled=$(jq -r '.intelligence.simulation_enabled // false' "$PIPELINE_CONFIG" 2>/dev/null || echo "false")
         # Also check daemon-config
@@ -1479,7 +1484,7 @@ stage_pr() {
 
     # ── Architecture Validation (pre-PR check) ──
     local arch_summary=""
-    if type architecture_validate_changes &>/dev/null 2>&1; then
+    if type architecture_validate_changes >/dev/null 2>&1; then
         local arch_enabled
         arch_enabled=$(jq -r '.intelligence.architecture_enabled // false' "$PIPELINE_CONFIG" 2>/dev/null || echo "false")
         local daemon_cfg=".claude/daemon-config.json"
@@ -1687,7 +1692,7 @@ EOF
         local reviewer_assigned=false
 
         # Try CODEOWNERS-based routing via GraphQL API
-        if type gh_codeowners &>/dev/null 2>&1 && [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
+        if type gh_codeowners >/dev/null 2>&1 && [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
             local codeowners_json
             codeowners_json=$(gh_codeowners "$REPO_OWNER" "$REPO_NAME" 2>/dev/null || echo "[]")
             if [[ "$codeowners_json" != "[]" && -n "$codeowners_json" ]]; then
@@ -1710,7 +1715,7 @@ EOF
         fi
 
         # Fallback: contributor-based routing via GraphQL API
-        if [[ "$reviewer_assigned" != "true" ]] && type gh_contributors &>/dev/null 2>&1 && [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
+        if [[ "$reviewer_assigned" != "true" ]] && type gh_contributors >/dev/null 2>&1 && [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
             local contributors_json
             contributors_json=$(gh_contributors "$REPO_OWNER" "$REPO_NAME" 2>/dev/null || echo "[]")
             local top_contributor
@@ -1816,7 +1821,7 @@ stage_merge() {
     fi
 
     # ── Branch Protection Check ──
-    if type gh_branch_protection &>/dev/null 2>&1 && [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
+    if type gh_branch_protection >/dev/null 2>&1 && [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
         local protection_json
         protection_json=$(gh_branch_protection "$REPO_OWNER" "$REPO_NAME" "${BASE_BRANCH:-main}" 2>/dev/null || echo '{"protected": false}')
         local is_protected
@@ -1912,13 +1917,13 @@ stage_merge() {
         check_status=$(gh pr checks "$pr_number" --json 'bucket,name' --jq '[.[] | .bucket] | unique | sort' 2>/dev/null || echo '["pending"]')
 
         # If all checks passed (only "pass" in buckets)
-        if echo "$check_status" | jq -e '. == ["pass"]' &>/dev/null; then
+        if echo "$check_status" | jq -e '. == ["pass"]' >/dev/null 2>&1; then
             success "All CI checks passed"
             break
         fi
 
         # If any check failed
-        if echo "$check_status" | jq -e 'any(. == "fail")' &>/dev/null; then
+        if echo "$check_status" | jq -e 'any(. == "fail")' >/dev/null 2>&1; then
             error "CI checks failed — aborting merge"
             return 1
         fi
@@ -2018,7 +2023,7 @@ stage_deploy() {
     # Create GitHub deployment tracking
     local gh_deploy_env="production"
     [[ -n "$staging_cmd" && -z "$prod_cmd" ]] && gh_deploy_env="staging"
-    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_deploy_pipeline_start &>/dev/null 2>&1; then
+    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_deploy_pipeline_start >/dev/null 2>&1; then
         if [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
             gh_deploy_pipeline_start "$REPO_OWNER" "$REPO_NAME" "${GIT_BRANCH:-HEAD}" "$gh_deploy_env" 2>/dev/null || true
             info "GitHub Deployment: tracking as $gh_deploy_env"
@@ -2151,7 +2156,7 @@ stage_deploy() {
                 error "Staging deploy failed"
                 [[ -n "$ISSUE_NUMBER" ]] && gh_comment_issue "$ISSUE_NUMBER" "Staging deploy failed"
                 # Mark GitHub deployment as failed
-                if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_deploy_pipeline_complete &>/dev/null 2>&1; then
+                if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_deploy_pipeline_complete >/dev/null 2>&1; then
                     gh_deploy_pipeline_complete "$REPO_OWNER" "$REPO_NAME" "$gh_deploy_env" false "Staging deploy failed" 2>/dev/null || true
                 fi
                 return 1
@@ -2169,7 +2174,7 @@ stage_deploy() {
                 fi
                 [[ -n "$ISSUE_NUMBER" ]] && gh_comment_issue "$ISSUE_NUMBER" "Production deploy failed — rollback ${rollback_cmd:+attempted}"
                 # Mark GitHub deployment as failed
-                if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_deploy_pipeline_complete &>/dev/null 2>&1; then
+                if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_deploy_pipeline_complete >/dev/null 2>&1; then
                     gh_deploy_pipeline_complete "$REPO_OWNER" "$REPO_NAME" "$gh_deploy_env" false "Production deploy failed" 2>/dev/null || true
                 fi
                 return 1
@@ -2184,7 +2189,7 @@ stage_deploy() {
     fi
 
     # Mark GitHub deployment as successful
-    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_deploy_pipeline_complete &>/dev/null 2>&1; then
+    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_deploy_pipeline_complete >/dev/null 2>&1; then
         if [[ -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
             gh_deploy_pipeline_complete "$REPO_OWNER" "$REPO_NAME" "$gh_deploy_env" true "" 2>/dev/null || true
         fi

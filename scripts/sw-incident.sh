@@ -25,14 +25,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 CYAN="${CYAN:-\033[38;2;0;212;255m}"
 PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
 BLUE="${BLUE:-\033[38;2;0;102;255m}"
@@ -226,7 +218,7 @@ create_hotfix_issue() {
     local severity="$2"
     local root_cause="$3"
 
-    if ! command -v gh &>/dev/null; then
+    if ! command -v gh >/dev/null 2>&1; then
         warn "gh CLI not found, skipping GitHub issue creation"
         return 1
     fi
@@ -314,7 +306,7 @@ cmd_watch() {
             local failures_json
             failures_json=$(get_recent_failures "$interval")
             local failure_count
-            failure_count=$(echo "$failures_json" | jq 'length')
+            failure_count=$(echo "$failures_json" | jq 'length' 2>/dev/null || echo "0")
 
             if [[ "$failure_count" -gt 0 ]]; then
                 info "Detected $failure_count failure(s)"
@@ -629,7 +621,7 @@ EOF
     emit_event "harness_gap.created" "gap_id=${gap_id}" "incident=${incident_id}" "sla_hours=${sla_hours}"
 
     # Auto-create GitHub issue for gap tracking
-    if [[ "$HARNESS_GAP_AUTO_CREATE" == "true" ]] && command -v gh &>/dev/null; then
+    if [[ "$HARNESS_GAP_AUTO_CREATE" == "true" ]] && command -v gh >/dev/null 2>&1; then
         local title="[HARNESS GAP] ${severity}: Add test case for ${root_cause}"
         local body="## Harness Gap
 
@@ -701,7 +693,7 @@ resolve_harness_gap() {
     # Close the GitHub issue if it exists
     local github_issue
     github_issue=$(jq -r '.github_issue // empty' "$gap_file" 2>/dev/null)
-    if [[ -n "$github_issue" ]] && command -v gh &>/dev/null; then
+    if [[ -n "$github_issue" ]] && command -v gh >/dev/null 2>&1; then
         gh issue close "$github_issue" --comment "Harness gap resolved. Test case: \`${test_case_file:-none}\`" 2>/dev/null || true
     fi
 }
@@ -768,16 +760,16 @@ cmd_gap() {
 
             while IFS= read -r gf; do
                 [[ -z "$gf" ]] && continue
-                ((total++))
+                total=$((total + 1))
                 local status sla_deadline
                 status=$(jq -r '.status // "open"' "$gf" 2>/dev/null)
                 sla_deadline=$(jq -r '.sla_deadline_epoch // 0' "$gf" 2>/dev/null)
 
                 if [[ "$status" == "resolved" ]]; then
-                    ((resolved++))
-                    ((within_sla++))
+                    resolved=$((resolved + 1))
+                    within_sla=$((within_sla + 1))
                 elif [[ "$current_epoch" -gt "$sla_deadline" ]]; then
-                    ((overdue++))
+                    overdue=$((overdue + 1))
                 fi
             done <<< "$gap_files"
 

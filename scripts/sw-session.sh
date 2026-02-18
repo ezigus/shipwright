@@ -207,7 +207,7 @@ if [[ -n "$TEMPLATE_NAME" ]]; then
     info "Loading template: ${PURPLE}${BOLD}${TEMPLATE_NAME}${RESET}"
 
     # Parse template — single jq call extracts all fields + agents in one pass
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         # Single jq call: outputs metadata lines then agent lines
         # Format: META<tab>field<tab>value for metadata, AGENT<tab>name|role|focus for agents
         while IFS=$'\t' read -r tag key value; do
@@ -508,7 +508,7 @@ LAUNCHER_STATIC
         tmux select-pane -t "$WINDOW_NAME" -P 'bg=#1a1a2e,fg=#e4e4e7' 2>/dev/null || true
     } &
 
-elif [[ -f "$ADAPTER_FILE" ]] && type -t spawn_agent &>/dev/null; then
+elif [[ -f "$ADAPTER_FILE" ]] && type -t spawn_agent >/dev/null 2>&1; then
     # ─── Non-tmux adapter session (iterm2, wezterm, etc.) ──────────────────
     info "Creating team session: ${CYAN}${BOLD}${TEAM_NAME}${RESET} ${DIM}(${TERMINAL_ADAPTER})${RESET}"
 

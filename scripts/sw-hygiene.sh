@@ -46,7 +46,7 @@ SUBCOMMAND="${1:-help}"
 AUTO_FIX=false
 VERBOSE=false
 ARTIFACT_AGE_DAYS=7
-if type policy_get &>/dev/null 2>&1; then
+if type policy_get >/dev/null 2>&1; then
     ARTIFACT_AGE_DAYS=$(policy_get ".hygiene.artifact_age_days" "7")
 fi
 JSON_OUTPUT=false
@@ -292,7 +292,7 @@ check_naming() {
 list_stale_branches() {
     info "Scanning for stale branches..."
 
-    if ! git rev-parse --git-dir &>/dev/null; then
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
         error "Not in a git repository"
         return 1
     fi
@@ -348,13 +348,13 @@ analyze_size() {
         awk '{print $5, $9}' | \
         sort -h | \
         tail -10 | \
-        while read size file; do
+        while read -r size file; do
             echo -e "  ${DIM}$size${RESET} $(basename "$file")"
         done
 
     # Find bloated directories
     info "Largest directories:"
-    du -sh "$REPO_DIR"/* 2>/dev/null | sort -h | tail -10 | while read size dir; do
+    du -sh "$REPO_DIR"/* 2>/dev/null | sort -h | tail -10 | while read -r size dir; do
         echo -e "  ${DIM}$size${RESET} $(basename "$dir")"
     done
 
@@ -481,25 +481,25 @@ auto_fix_issues() {
 
     # Clean up temp files
     info "Removing temporary files..."
-    find "$REPO_DIR" -name "*.tmp" -o -name "*.bak" -o -name "*~" 2>/dev/null | while read tmpfile; do
+    find "$REPO_DIR" -name "*.tmp" -o -name "*.bak" -o -name "*~" 2>/dev/null | while read -r tmpfile; do
         rm -f "$tmpfile"
         success "Removed: $(basename "$tmpfile")"
-        ((fixed_count++))
+        fixed_count=$((fixed_count + 1))
     done
 
     # Remove old build artifacts
     info "Removing old build artifacts (>$ARTIFACT_AGE_DAYS days)..."
     find "$REPO_DIR" -type f \( -name "*.o" -o -name "*.a" -o -name "*.out" \) \
-        -mtime "+$ARTIFACT_AGE_DAYS" 2>/dev/null | while read artifact; do
+        -mtime "+$ARTIFACT_AGE_DAYS" 2>/dev/null | while read -r artifact; do
         rm -f "$artifact"
         success "Removed: $(basename "$artifact")"
-        ((fixed_count++))
+        fixed_count=$((fixed_count + 1))
     done
 
     success "Auto-fixed $fixed_count issues"
 
     # Create a commit if changes were made
-    if [[ $fixed_count -gt 0 ]] && git rev-parse --git-dir &>/dev/null; then
+    if [[ $fixed_count -gt 0 ]] && git rev-parse --git-dir >/dev/null 2>&1; then
         git add -A
         git commit -m "chore: hygiene auto-fix ($fixed_count items)
 

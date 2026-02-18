@@ -51,7 +51,7 @@ warn()    { echo -e "${YELLOW}${BOLD}⚠${RESET} $*"; }
 error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
 
 check_tmux() {
-    if ! command -v tmux &>/dev/null; then
+    if ! command -v tmux >/dev/null 2>&1; then
         error "tmux is not installed. Install it first:"
         echo -e "  ${DIM}brew install tmux${RESET}  (macOS)"
         echo -e "  ${DIM}sudo apt install tmux${RESET}  (Ubuntu/Debian)"

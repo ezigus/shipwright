@@ -9,7 +9,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 # Verify wezterm CLI is available
-if ! command -v wezterm &>/dev/null; then
+if ! command -v wezterm >/dev/null 2>&1; then
     echo -e "\033[38;2;248;113;113m\033[1m✗\033[0m wezterm CLI not found. Install WezTerm first." >&2
     exit 1
 fi

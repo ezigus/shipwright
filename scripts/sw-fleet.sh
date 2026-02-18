@@ -200,7 +200,7 @@ _fleet_repo_priority() {
     local repo_path="$1"
     local priority=50  # default neutral priority
 
-    type _gh_detect_repo &>/dev/null 2>&1 || { echo "$priority"; return 0; }
+    type _gh_detect_repo >/dev/null 2>&1 || { echo "$priority"; return 0; }
 
     # Detect repo from the repo path (run in subshell to avoid cd side-effects)
     local gh_priority
@@ -213,7 +213,7 @@ _fleet_repo_priority() {
         local p=50
 
         # Factor: security alerts (urgent work)
-        if type gh_security_alerts &>/dev/null 2>&1; then
+        if type gh_security_alerts >/dev/null 2>&1; then
             local alerts
             alerts=$(gh_security_alerts "$owner" "$repo" 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
             if [[ "${alerts:-0}" -gt 5 ]]; then
@@ -224,7 +224,7 @@ _fleet_repo_priority() {
         fi
 
         # Factor: contributor count (more contributors = more active = higher priority)
-        if type gh_contributors &>/dev/null 2>&1; then
+        if type gh_contributors >/dev/null 2>&1; then
             local contribs
             contribs=$(gh_contributors "$owner" "$repo" 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
             if [[ "${contribs:-0}" -gt 10 ]]; then
@@ -749,12 +749,12 @@ fleet_start() {
     echo -e "${PURPLE}${BOLD}━━━ shipwright fleet v${VERSION} — start ━━━${RESET}"
     echo ""
 
-    if ! command -v tmux &>/dev/null; then
+    if ! command -v tmux >/dev/null 2>&1; then
         error "tmux is required for fleet mode"
         exit 1
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required. Install: brew install jq"
         exit 1
     fi
@@ -1146,7 +1146,7 @@ fleet_metrics() {
         exit 1
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required. Install: brew install jq"
         exit 1
     fi

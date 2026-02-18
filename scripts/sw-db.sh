@@ -89,7 +89,7 @@ check_sqlite3() {
     # Cache the result to avoid repeated command lookups
     if [[ -z "$_SQLITE3_CHECKED" ]]; then
         _SQLITE3_CHECKED=1
-        if command -v sqlite3 &>/dev/null; then
+        if command -v sqlite3 >/dev/null 2>&1; then
             _SQLITE3_AVAILABLE=1
         else
             _SQLITE3_AVAILABLE=""
@@ -868,7 +868,7 @@ db_sync_push() {
     local auth_header=""
     [[ -n "${SYNC_TOKEN:-}" ]] && auth_header="-H 'Authorization: Bearer ${SYNC_TOKEN}'"
 
-    response=$(curl -s -w "%{http_code}" -o /dev/null \
+    response=$(curl -s --connect-timeout 10 --max-time 30 -w "%{http_code}" -o /dev/null \
         -X POST "${SYNC_URL}/api/sync/push" \
         -H "Content-Type: application/json" \
         ${auth_header} \
@@ -901,7 +901,7 @@ db_sync_pull() {
     [[ -n "${SYNC_TOKEN:-}" ]] && auth_header="-H 'Authorization: Bearer ${SYNC_TOKEN}'"
 
     local response_body
-    response_body=$(curl -s \
+    response_body=$(curl -s --connect-timeout 10 --max-time 30 \
         "${SYNC_URL}/api/sync/pull?since=${last_sync}" \
         -H "Accept: application/json" \
         ${auth_header} 2>/dev/null || echo "{}")

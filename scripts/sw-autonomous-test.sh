@@ -206,6 +206,51 @@ assert_eq "config set interval works" "30" "$interval"
 output=$(bash "$SCRIPT_DIR/sw-autonomous.sh" history 2>&1) || true
 assert_contains "history handles no data" "$output" "No cycle history"
 
+# ─── Test 17: Config set/show cycle (persistence) ─────────────────────────────
+echo ""
+echo -e "${BOLD}  Config Set/Show Cycle${RESET}"
+bash "$SCRIPT_DIR/sw-autonomous.sh" config set interval 45 >/dev/null 2>&1 || true
+output=$(bash "$SCRIPT_DIR/sw-autonomous.sh" config show 2>&1) || true
+assert_contains "config show reflects set value" "$output" "45"
+interval_val=$(jq -r '.cycle_interval_minutes' "$HOME/.shipwright/autonomous/config.json" 2>/dev/null)
+assert_eq "config value persists in file" "45" "$interval_val"
+
+# ─── Test 18: Config.json contains expected keys ─────────────────────────────
+echo ""
+echo -e "${BOLD}  Config Structure${RESET}"
+for key in cycle_interval_minutes max_issues_per_cycle daemon_aware; do
+    if jq -e ".$key" "$HOME/.shipwright/autonomous/config.json" >/dev/null 2>&1; then
+        assert_pass "config contains key: $key"
+    else
+        assert_fail "config contains key: $key"
+    fi
+done
+
+# ─── Test 19: History with fixture events ───────────────────────────────────
+echo ""
+echo -e "${BOLD}  History With Fixture Events${RESET}"
+mkdir -p "$HOME/.shipwright/autonomous"
+echo '{"ts":"2026-02-15T10:00:00Z","found":3,"created":2,"status":"success"}' >> "$HOME/.shipwright/autonomous/history.jsonl"
+echo '{"ts":"2026-02-15T11:00:00Z","found":1,"created":0,"status":"success"}' >> "$HOME/.shipwright/autonomous/history.jsonl"
+output=$(bash "$SCRIPT_DIR/sw-autonomous.sh" history 2>&1) || true
+assert_contains "history shows recent cycles" "$output" "Recent Cycles"
+assert_contains "history shows cycle entries" "$output" "2026-02-15"
+
+# ─── Test 20: Status output includes expected fields (running vs stopped) ─────
+echo ""
+echo -e "${BOLD}  Status Fields${RESET}"
+bash "$SCRIPT_DIR/sw-autonomous.sh" start >/dev/null 2>&1 || true
+output=$(bash "$SCRIPT_DIR/sw-autonomous.sh" status 2>&1) || true
+assert_contains "status when running includes Status" "$output" "Status"
+assert_contains "status when running includes Cycles" "$output" "Cycles"
+assert_contains "status when running includes Issues Created" "$output" "Issues Created"
+assert_contains "status when running includes Pipelines" "$output" "Pipelines"
+assert_contains "status when running includes Cycle Interval" "$output" "Cycle Interval"
+assert_contains "status when running shows running" "$output" "running"
+bash "$SCRIPT_DIR/sw-autonomous.sh" stop >/dev/null 2>&1 || true
+output=$(bash "$SCRIPT_DIR/sw-autonomous.sh" status 2>&1) || true
+assert_contains "status when stopped shows stopped" "$output" "stopped"
+
 echo ""
 echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""

@@ -76,16 +76,16 @@ cmd_setup() {
     info "GitHub App Configuration"
     echo ""
 
-    read -p "App ID: " app_id
-    read -p "Private key file path: " key_path
+    read -rp "App ID: " app_id
+    read -rp "Private key file path: " key_path
 
     if [[ ! -f "$key_path" ]]; then
         error "Private key file not found: $key_path"
         return 1
     fi
 
-    read -p "Installation ID: " installation_id
-    read -p "Webhook secret (optional, press Enter to skip): " webhook_secret
+    read -rp "Installation ID: " installation_id
+    read -rp "Webhook secret (optional, press Enter to skip): " webhook_secret
 
     # Create config atomically
     local tmp_config
@@ -171,7 +171,7 @@ _get_installation_token() {
     fi
 
     local response
-    response=$(curl -s -H "Authorization: Bearer $jwt" \
+    response=$(curl -s --connect-timeout 10 --max-time 30 -H "Authorization: Bearer $jwt" \
         -H "Accept: application/vnd.github+json" \
         "https://api.github.com/app/installations/${installation_id}/access_tokens" \
         -d '{}' -X POST 2>/dev/null) || true

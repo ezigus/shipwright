@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  Shipwright — Remote Installer                                          ║
-# ║  curl -fsSL https://raw.githubusercontent.com/.../install-remote.sh | sh ║
+# ║  curl -fsSL https://raw.githubusercontent.com/.../install-remote.sh | bash║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
+
+# Ensure HOME is set (portability: some curl|sh environments don't set it)
+HOME="${HOME:-${USERPROFILE:-$(eval echo ~$(id -un 2>/dev/null || whoami 2>/dev/null))}}"
+[[ -z "$HOME" ]] && { echo "Error: could not determine HOME directory"; exit 1; }
 
 VERSION="2.4.0"
 REPO="${SHIPWRIGHT_GITHUB_REPO:-sethdford/shipwright}"
@@ -86,7 +90,7 @@ detect_platform() {
 check_deps() {
     local missing=()
     for cmd in curl tar; do
-        if ! command -v "$cmd" &>/dev/null; then
+        if ! command -v "$cmd" >/dev/null 2>&1; then
             missing+=("$cmd")
         fi
     done
@@ -109,14 +113,23 @@ install() {
     info "Detected platform: ${BOLD}${platform}${RESET}"
     info "Downloading ${DIM}${url}${RESET}"
 
-    if ! curl -fsSL "$url" -o "$tmpdir/$tarball"; then
-        error "Download failed"
+    if ! curl -fsSL --connect-timeout 30 --max-time 120 "$url" -o "$tmpdir/$tarball"; then
+        error "Download failed: could not fetch ${url}"
         echo -e "  ${DIM}Check https://github.com/${REPO}/releases for available versions${RESET}"
+        echo -e "  ${DIM}Ensure curl has network access and the release exists${RESET}"
+        exit 1
+    fi
+
+    if [[ ! -s "$tmpdir/$tarball" ]]; then
+        error "Download failed: empty or missing tarball"
         exit 1
     fi
 
     info "Extracting..."
-    tar -xzf "$tmpdir/$tarball" -C "$tmpdir"
+    if ! tar -xzf "$tmpdir/$tarball" -C "$tmpdir"; then
+        error "Extraction failed: tarball may be corrupt"
+        exit 1
+    fi
 
     # Install library files
     info "Installing to ${BOLD}${INSTALL_LIB}${RESET}"
@@ -135,7 +148,8 @@ install() {
     mkdir -p "$INSTALL_DIR"
     ln -sf "$INSTALL_LIB/scripts/sw" "$INSTALL_DIR/shipwright"
     ln -sf "$INSTALL_LIB/scripts/sw" "$INSTALL_DIR/sw"
-    success "Created symlinks: ${BOLD}shipwright${RESET}, ${BOLD}sw${RESET}"
+    ln -sf "$INSTALL_LIB/scripts/sw" "$INSTALL_DIR/cct"
+    success "Created symlinks: ${BOLD}shipwright${RESET}, ${BOLD}sw${RESET}, ${BOLD}cct${RESET}"
 
     # Install shell completions if available
     if [[ -f "$INSTALL_LIB/scripts/install-completions.sh" ]]; then
@@ -162,7 +176,7 @@ check_path() {
             fish) rc_file="~/.config/fish/config.fish" ;;
             *)    rc_file="~/.profile" ;;
         esac
-        echo -e "  ${DIM}echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ${rc_file}${RESET}"
+        echo -e "  ${DIM}echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ${rc_file}${RESET}"
         echo -e "  ${DIM}source ${rc_file}${RESET}"
     fi
 }
@@ -176,11 +190,10 @@ main() {
     check_path
 
     echo ""
-    echo -e "${CYAN}${BOLD}  ⚓ Ready to build${RESET}"
+    echo -e "${GREEN}${BOLD}Shipwright CLI installed!${RESET} Next steps:"
     echo ""
-    echo -e "  ${DIM}\$${RESET} shipwright doctor     ${DIM}# Verify your setup${RESET}"
-    echo -e "  ${DIM}\$${RESET} shipwright session    ${DIM}# Launch an agent team${RESET}"
-    echo -e "  ${DIM}\$${RESET} shipwright pipeline   ${DIM}# Run a delivery pipeline${RESET}"
+    echo -e "  ${DIM}shipwright init${RESET}    ${DIM}# Set up tmux, hooks, and templates${RESET}"
+    echo -e "  ${DIM}shipwright doctor${RESET}  ${DIM}# Verify your setup${RESET}"
     echo ""
 }
 

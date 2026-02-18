@@ -9,11 +9,14 @@
 #
 # Provides:
 #   - NO_COLOR / dumb terminal / non-tty detection (auto-blanks color vars)
+#   - _to_lower() / _to_upper() — bash 3.2 compat (${var,,}/${var^^} require bash 4+)
+#   - file_mtime() — cross-platform file modification time (epoch)
 #   - sed_i()    — cross-platform sed in-place editing
 #   - open_url() — cross-platform browser open
 #   - tmp_dir()  — returns best temp directory for platform
 #   - is_wsl()   — detect WSL environment
 #   - is_macos() / is_linux() — platform checks
+#   - _timeout() — run command with timeout (timeout/gtimeout or no-op on macOS)
 
 # ─── NO_COLOR support (https://no-color.org/) ─────────────────────────────
 # Blanks standard color variables when:
@@ -30,6 +33,11 @@ _COMPAT_UNAME="${_COMPAT_UNAME:-$(uname -s 2>/dev/null || echo "Unknown")}"
 
 is_macos() { [[ "$_COMPAT_UNAME" == "Darwin" ]]; }
 is_linux() { [[ "$_COMPAT_UNAME" == "Linux" ]]; }
+
+# ─── Bash 3.2 compat (macOS ships bash 3.2) ───────────────────────────────
+# Case conversion: ${var,,} and ${var^^} require bash 4+. Use these instead:
+_to_lower() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
+_to_upper() { echo "$1" | tr '[:lower:]' '[:upper:]'; }
 is_wsl()   { is_linux && [[ -n "${WSL_DISTRO_NAME:-}" || -f /proc/version ]] && grep -qi microsoft /proc/version 2>/dev/null; }
 
 # ─── sed -i (macOS vs GNU) ────────────────────────────────────────────────
@@ -49,14 +57,14 @@ open_url() {
         open "$url"
     elif is_wsl; then
         # WSL: use wslview (from wslu) or powershell
-        if command -v wslview &>/dev/null; then
+        if command -v wslview >/dev/null 2>&1; then
             wslview "$url"
-        elif command -v powershell.exe &>/dev/null; then
+        elif command -v powershell.exe >/dev/null 2>&1; then
             powershell.exe -Command "Start-Process '$url'" 2>/dev/null
         else
             return 1
         fi
-    elif command -v xdg-open &>/dev/null; then
+    elif command -v xdg-open >/dev/null 2>&1; then
         xdg-open "$url"
     else
         return 1
@@ -83,7 +91,7 @@ sw_valid_error_category() {
     local category="${1:-}"
     local custom_file="$HOME/.shipwright/optimization/error-taxonomy.json"
     # Check custom taxonomy first
-    if [[ -f "$custom_file" ]] && command -v jq &>/dev/null; then
+    if [[ -f "$custom_file" ]] && command -v jq >/dev/null 2>&1; then
         local custom_cats
         custom_cats=$(jq -r '.categories[]? // empty' "$custom_file" 2>/dev/null || true)
         if [[ -n "$custom_cats" ]]; then
@@ -113,7 +121,7 @@ complexity_bucket() {
     local config_file="$HOME/.shipwright/optimization/complexity-clusters.json"
     local low_boundary=3
     local high_boundary=6
-    if [[ -f "$config_file" ]] && command -v jq &>/dev/null; then
+    if [[ -f "$config_file" ]] && command -v jq >/dev/null 2>&1; then
         local lb hb
         lb=$(jq -r '.low_boundary // 3' "$config_file" 2>/dev/null || echo "3")
         hb=$(jq -r '.high_boundary // 6' "$config_file" 2>/dev/null || echo "6")
@@ -156,7 +164,7 @@ detect_primary_language() {
 
 detect_test_framework() {
     local dir="${1:-.}"
-    if [[ -f "$dir/package.json" ]] && command -v jq &>/dev/null; then
+    if [[ -f "$dir/package.json" ]] && command -v jq >/dev/null 2>&1; then
         local runner
         runner=$(jq -r '
             if .devDependencies.vitest then "vitest"
@@ -181,6 +189,28 @@ detect_test_framework() {
         echo "gradle test"
     else
         echo ""
+    fi
+}
+
+# ─── Cross-platform file modification time (epoch) ────────────────────────
+# macOS/BSD: stat -f %m; Linux: stat -c '%Y'
+file_mtime() {
+    local file="$1"
+    stat -f %m "$file" 2>/dev/null || stat -c '%Y' "$file" 2>/dev/null || echo "0"
+}
+
+# ─── Timeout command (macOS may lack timeout; gtimeout from coreutils) ─────
+# Usage: _timeout <seconds> <command> [args...]
+_timeout() {
+    local secs="$1"
+    shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$secs" "$@"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        gtimeout "$secs" "$@"
+    else
+        # Fallback: run without timeout (e.g. on older macOS)
+        "$@"
     fi
 }
 

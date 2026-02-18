@@ -123,7 +123,7 @@ daemon_preflight_auth_check() {
 
     # gh auth check
     if [[ "${NO_GITHUB:-false}" != "true" ]]; then
-        if ! gh auth status &>/dev/null 2>&1; then
+        if ! gh auth status >/dev/null 2>&1; then
             daemon_log ERROR "GitHub auth check failed — auto-pausing daemon"
             local pause_json
             pause_json=$(jq -n --arg reason "gh_auth_failure" --arg ts "$(now_iso)" \
@@ -189,7 +189,7 @@ preflight_checks() {
     local optional_tools=("tmux" "curl")
 
     for tool in "${required_tools[@]}"; do
-        if command -v "$tool" &>/dev/null; then
+        if command -v "$tool" >/dev/null 2>&1; then
             echo -e "  ${GREEN}✓${RESET} $tool"
         else
             echo -e "  ${RED}✗${RESET} $tool ${RED}(required)${RESET}"
@@ -198,7 +198,7 @@ preflight_checks() {
     done
 
     for tool in "${optional_tools[@]}"; do
-        if command -v "$tool" &>/dev/null; then
+        if command -v "$tool" >/dev/null 2>&1; then
             echo -e "  ${GREEN}✓${RESET} $tool"
         else
             echo -e "  ${DIM}○${RESET} $tool ${DIM}(optional — some features disabled)${RESET}"
@@ -207,7 +207,7 @@ preflight_checks() {
 
     # 2. Git state
     echo ""
-    if git rev-parse --is-inside-work-tree &>/dev/null; then
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         echo -e "  ${GREEN}✓${RESET} Inside git repo"
     else
         echo -e "  ${RED}✗${RESET} Not inside a git repository"
@@ -215,7 +215,7 @@ preflight_checks() {
     fi
 
     # Check base branch exists
-    if git rev-parse --verify "$BASE_BRANCH" &>/dev/null; then
+    if git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
         echo -e "  ${GREEN}✓${RESET} Base branch: $BASE_BRANCH"
     else
         echo -e "  ${RED}✗${RESET} Base branch not found: $BASE_BRANCH"
@@ -224,7 +224,7 @@ preflight_checks() {
 
     # 3. GitHub auth (required for daemon — it needs to poll issues)
     if [[ "$NO_GITHUB" != "true" ]]; then
-        if gh auth status &>/dev/null 2>&1; then
+        if gh auth status >/dev/null 2>&1; then
             echo -e "  ${GREEN}✓${RESET} GitHub authenticated"
         else
             echo -e "  ${RED}✗${RESET} GitHub not authenticated (required for daemon)"
@@ -294,7 +294,7 @@ locked_state_update() {
     shift
     local lock_file="${STATE_FILE}.lock"
     (
-        if command -v flock &>/dev/null; then
+        if command -v flock >/dev/null 2>&1; then
             flock -w 5 200 2>/dev/null || {
                 daemon_log ERROR "locked_state_update: lock acquisition timed out — aborting"
                 return 1
@@ -343,7 +343,7 @@ init_state() {
             }')
         local lock_file="${STATE_FILE}.lock"
         (
-            if command -v flock &>/dev/null; then
+            if command -v flock >/dev/null 2>&1; then
                 flock -w 5 200 2>/dev/null || {
                     daemon_log ERROR "init_state: lock acquisition timed out"
                     return 1
@@ -417,7 +417,7 @@ locked_get_active_count() {
     local count
     count=$(
         (
-            if command -v flock &>/dev/null; then
+            if command -v flock >/dev/null 2>&1; then
                 flock -w 5 200 2>/dev/null || {
                     daemon_log WARN "locked_get_active_count: lock timeout — returning MAX_PARALLEL as safe default" >&2
                     echo "$MAX_PARALLEL"
@@ -496,6 +496,22 @@ untrack_priority_job() {
 
 # ─── Distributed Issue Claiming ───────────────────────────────────────────
 
+# Verify we have exclusive claim: exactly one claimed:* label matching our machine
+_verify_claim_exclusive() {
+    local issue_num="$1" machine_name="$2"
+    local claimed_labels
+    claimed_labels=$(gh issue view "$issue_num" --json labels --jq \
+        '[.labels[].name | select(startswith("claimed:"))]' 2>/dev/null || echo "[]")
+    local count
+    count=$(echo "$claimed_labels" | jq 'length' 2>/dev/null || echo "0")
+    if [[ "$count" != "1" ]]; then
+        return 1  # Competing claims (multiple or none)
+    fi
+    local sole_claim
+    sole_claim=$(echo "$claimed_labels" | jq -r '.[0]' 2>/dev/null || echo "")
+    [[ "$sole_claim" == "claimed:${machine_name}" ]]
+}
+
 claim_issue() {
     local issue_num="$1"
     local machine_name="$2"
@@ -509,9 +525,15 @@ claim_issue() {
         -d "$(jq -n --argjson issue "$issue_num" --arg machine "$machine_name" \
             '{issue: $issue, machine: $machine}')" 2>/dev/null || echo "")
 
-    if [[ -n "$resp" ]] && echo "$resp" | jq -e '.approved == true' &>/dev/null; then
+    if [[ -n "$resp" ]] && echo "$resp" | jq -e '.approved == true' >/dev/null 2>&1; then
+        # VERIFY: re-read labels, ensure only our claim exists
+        if ! _verify_claim_exclusive "$issue_num" "$machine_name"; then
+            daemon_log INFO "Issue #${issue_num} claim race lost (competing claim) — removing our label"
+            gh issue edit "$issue_num" --remove-label "claimed:${machine_name}" 2>/dev/null || true
+            return 1
+        fi
         return 0
-    elif [[ -n "$resp" ]] && echo "$resp" | jq -e '.approved == false' &>/dev/null; then
+    elif [[ -n "$resp" ]] && echo "$resp" | jq -e '.approved == false' >/dev/null 2>&1; then
         local claimed_by
         claimed_by=$(echo "$resp" | jq -r '.claimed_by // "another machine"')
         daemon_log INFO "Issue #${issue_num} claimed by ${claimed_by} (via dashboard)"
@@ -530,6 +552,12 @@ claim_issue() {
     fi
 
     gh issue edit "$issue_num" --add-label "claimed:${machine_name}" 2>/dev/null || return 1
+    # VERIFY: re-read labels, ensure only our claim exists
+    if ! _verify_claim_exclusive "$issue_num" "$machine_name"; then
+        daemon_log INFO "Issue #${issue_num} claim race lost (competing claim) — removing our label"
+        gh issue edit "$issue_num" --remove-label "claimed:${machine_name}" 2>/dev/null || true
+        return 1
+    fi
     return 0
 }
 

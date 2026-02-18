@@ -3,8 +3,9 @@
   "version": "2.4.0",
   "description": "Orchestrate autonomous Claude Code agent teams in tmux",
   "bin": {
-    "shipwright": "./scripts/sw",
-    "sw": "./scripts/sw"
+    "shipwright": "scripts/sw",
+    "sw": "scripts/sw",
+    "cct": "scripts/sw"
   },
   "files": [
     "config/",
@@ -47,9 +48,7 @@
     "harness:evidence:capture:cli": "bash scripts/sw-evidence.sh capture cli",
     "harness:ui:capture-browser-evidence": "bash scripts/sw-evidence.sh capture browser",
     "harness:ui:verify-browser-evidence": "bash scripts/sw-evidence.sh verify",
-    "harness:ui:pre-pr": "bash scripts/sw-evidence.sh pre-pr browser",
-    "harness:risk-tier": "bash scripts/sw-pr-lifecycle.sh risk-tier",
-    "harness:policy-gate": "bash scripts/sw-pr-lifecycle.sh policy-gate"
+    "harness:ui:pre-pr": "bash scripts/sw-evidence.sh pre-pr browser"
   },
   "keywords": [
     "claude",

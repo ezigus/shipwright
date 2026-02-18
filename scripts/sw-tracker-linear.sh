@@ -175,7 +175,7 @@ linear_graphql() {
     payload=$(jq -n --arg q "$query" --argjson v "$variables" '{query: $q, variables: $v}')
 
     local response
-    response=$(curl -sf -X POST "$LINEAR_API" \
+    response=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "$LINEAR_API" \
         -H "Authorization: $LINEAR_API_KEY" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>&1) || {

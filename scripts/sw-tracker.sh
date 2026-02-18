@@ -26,14 +26,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 CYAN="${CYAN:-\033[38;2;0;212;255m}"
 PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
 BLUE="${BLUE:-\033[38;2;0;102;255m}"
@@ -127,7 +119,7 @@ _dispatch_provider() {
     local provider_func="provider_${func}"
 
     # Provider scripts define provider_* functions
-    if type "$provider_func" &>/dev/null; then
+    if type "$provider_func" >/dev/null 2>&1; then
         "$provider_func" "$@"
         return $?
     else
@@ -137,7 +129,7 @@ _dispatch_provider() {
             # Try GitHub provider
             if [[ -f "$SCRIPT_DIR/sw-tracker-github.sh" ]]; then
                 source "$SCRIPT_DIR/sw-tracker-github.sh"
-                if type "$provider_func" &>/dev/null; then
+                if type "$provider_func" >/dev/null 2>&1; then
                     "$provider_func" "$@"
                     return $?
                 fi
@@ -221,7 +213,7 @@ tracker_notify() {
     fi
 
     # Provider scripts define provider_notify()
-    if type provider_notify &>/dev/null; then
+    if type provider_notify >/dev/null 2>&1; then
         provider_notify "$event" "$gh_issue" "$detail"
     else
         warn "Provider '$TRACKER_PROVIDER' loaded but provider_notify() not defined"
@@ -330,7 +322,7 @@ _init_linear() {
     local payload
     payload=$(jq -n --arg q 'query { viewer { id name } }' '{query: $q}')
     local response
-    response=$(curl -sf -X POST "https://api.linear.app/graphql" \
+    response=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "https://api.linear.app/graphql" \
         -H "Authorization: $api_key" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>&1) || {
@@ -405,7 +397,7 @@ _init_jira() {
     local auth
     auth=$(printf '%s:%s' "$email" "$api_token" | base64)
     local response
-    response=$(curl -sf -X GET "${base_url}/rest/api/3/myself" \
+    response=$(curl -sf --connect-timeout 10 --max-time 30 -X GET "${base_url}/rest/api/3/myself" \
         -H "Authorization: Basic $auth" \
         -H "Content-Type: application/json" 2>&1) || {
         warn "Could not validate connection — check your credentials"

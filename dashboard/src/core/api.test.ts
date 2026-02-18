@@ -334,6 +334,315 @@ describe("API Client", () => {
     });
   });
 
+  describe("machine health check and join tokens", () => {
+    it("machineHealthCheck calls POST", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ machine: {} }));
+      await api.machineHealthCheck("node-1");
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/machines/node-1/health-check",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    it("fetchJoinTokens calls GET /api/join-token", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ tokens: [] }));
+      await api.fetchJoinTokens();
+      expect(mockFetch).toHaveBeenCalledWith("/api/join-token", undefined);
+    });
+
+    it("generateJoinToken calls POST /api/join-token", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ join_cmd: "sw join ..." }));
+      await api.generateJoinToken({ label: "test", max_workers: 4 });
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/join-token",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+  });
+
+  describe("costs", () => {
+    it("fetchCostBreakdown defaults to 7 day period", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({}));
+      await api.fetchCostBreakdown();
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/costs/breakdown?period=7",
+        undefined,
+      );
+    });
+
+    it("fetchCostTrend defaults to 30 day period", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ points: [] }));
+      await api.fetchCostTrend();
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/costs/trend?period=30",
+        undefined,
+      );
+    });
+  });
+
+  describe("daemon", () => {
+    it("fetchDaemonConfig calls GET /api/daemon/config", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({}));
+      await api.fetchDaemonConfig();
+      expect(mockFetch).toHaveBeenCalledWith("/api/daemon/config", undefined);
+    });
+
+    it("daemonControl calls POST /api/daemon/:action", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ ok: true }));
+      await api.daemonControl("pause");
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/daemon/pause",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+  });
+
+  describe("alerts and artifacts", () => {
+    it("fetchAlerts calls GET /api/alerts", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ alerts: [] }));
+      await api.fetchAlerts();
+      expect(mockFetch).toHaveBeenCalledWith("/api/alerts", undefined);
+    });
+
+    it("fetchArtifact calls correct endpoint", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ content: "..." }));
+      await api.fetchArtifact(42, "plan");
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/artifacts/42/plan",
+        undefined,
+      );
+    });
+
+    it("fetchGitHubStatus calls GET", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({}));
+      await api.fetchGitHubStatus(42);
+      expect(mockFetch).toHaveBeenCalledWith("/api/github/42", undefined);
+    });
+
+    it("fetchLogs calls GET", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ content: "log" }));
+      await api.fetchLogs(42);
+      expect(mockFetch).toHaveBeenCalledWith("/api/logs/42", undefined);
+    });
+  });
+
+  describe("metrics detail", () => {
+    it("fetchStagePerformance defaults to 7 days", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ stages: [] }));
+      await api.fetchStagePerformance();
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/metrics/stage-performance?period=7",
+        undefined,
+      );
+    });
+
+    it("fetchBottlenecks calls GET", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ bottlenecks: [] }));
+      await api.fetchBottlenecks();
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/metrics/bottlenecks",
+        undefined,
+      );
+    });
+
+    it("fetchThroughputTrend defaults to 30 days", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ points: [] }));
+      await api.fetchThroughputTrend();
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/metrics/throughput-trend?period=30",
+        undefined,
+      );
+    });
+
+    it("fetchCapacity calls GET", async () => {
+      mockFetch.mockReturnValueOnce(
+        jsonResponse({ rate: 2, queue_clear_hours: 1 }),
+      );
+      await api.fetchCapacity();
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/metrics/capacity",
+        undefined,
+      );
+    });
+
+    it("fetchDoraTrend defaults to 30 days", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({}));
+      await api.fetchDoraTrend();
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/metrics/dora-trend?period=30",
+        undefined,
+      );
+    });
+  });
+
+  describe("team endpoints", () => {
+    it("fetchTeam calls GET /api/team", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({}));
+      await api.fetchTeam();
+      expect(mockFetch).toHaveBeenCalledWith("/api/team", undefined);
+    });
+
+    it("fetchTeamActivity returns events array", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ events: [{ id: 1 }] }));
+      const result = await api.fetchTeamActivity();
+      expect(result).toEqual([{ id: 1 }]);
+    });
+
+    it("fetchTeamActivity returns empty array on error", async () => {
+      mockFetch.mockReturnValueOnce(errorResponse(500));
+      const result = await api.fetchTeamActivity();
+      expect(result).toEqual([]);
+    });
+
+    it("createTeamInvite calls POST /api/team/invite", async () => {
+      mockFetch.mockReturnValueOnce(
+        jsonResponse({ token: "abc", url: "...", expires_at: "..." }),
+      );
+      await api.createTeamInvite({ expires_hours: 24 });
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/team/invite",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+  });
+
+  describe("pipeline test results and learnings", () => {
+    it("fetchPipelineTestResults calls GET", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({}));
+      await api.fetchPipelineTestResults(42);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/pipeline/42/test-results",
+        undefined,
+      );
+    });
+
+    it("fetchGlobalLearnings calls GET", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ learnings: [] }));
+      await api.fetchGlobalLearnings();
+      expect(mockFetch).toHaveBeenCalledWith("/api/memory/global", undefined);
+    });
+
+    it("fetchPatrol returns findings on success", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ findings: [{ id: 1 }] }));
+      const result = await api.fetchPatrol();
+      expect(result).toEqual({ findings: [{ id: 1 }] });
+    });
+  });
+
+  describe("integration and DB endpoints", () => {
+    it("fetchLinearStatus calls GET", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({}));
+      await api.fetchLinearStatus();
+      expect(mockFetch).toHaveBeenCalledWith("/api/linear/status", undefined);
+    });
+
+    it("fetchDbEvents with defaults", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ events: [], source: "db" }));
+      await api.fetchDbEvents();
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/db/events?since=0&limit=200",
+        undefined,
+      );
+    });
+
+    it("fetchDbJobs without status filter", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ jobs: [], source: "db" }));
+      await api.fetchDbJobs();
+      expect(mockFetch).toHaveBeenCalledWith("/api/db/jobs", undefined);
+    });
+
+    it("fetchDbJobs with status filter", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ jobs: [], source: "db" }));
+      await api.fetchDbJobs("active");
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/db/jobs?status=active",
+        undefined,
+      );
+    });
+
+    it("fetchDbCostsToday calls GET", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({}));
+      await api.fetchDbCostsToday();
+      expect(mockFetch).toHaveBeenCalledWith("/api/db/costs/today", undefined);
+    });
+
+    it("fetchDbHeartbeats calls GET", async () => {
+      mockFetch.mockReturnValueOnce(
+        jsonResponse({ heartbeats: [], source: "db" }),
+      );
+      await api.fetchDbHeartbeats();
+      expect(mockFetch).toHaveBeenCalledWith("/api/db/heartbeats", undefined);
+    });
+
+    it("fetchDbHealth calls GET", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({}));
+      await api.fetchDbHealth();
+      expect(mockFetch).toHaveBeenCalledWith("/api/db/health", undefined);
+    });
+  });
+
+  describe("audit, quality gates, approvals, notifications", () => {
+    it("fetchAuditLog calls GET", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ entries: [] }));
+      await api.fetchAuditLog();
+      expect(mockFetch).toHaveBeenCalledWith("/api/audit-log", undefined);
+    });
+
+    it("fetchQualityGates calls GET", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ enabled: true, rules: [] }));
+      await api.fetchQualityGates();
+      expect(mockFetch).toHaveBeenCalledWith("/api/quality-gates", undefined);
+    });
+
+    it("fetchPipelineQuality calls GET", async () => {
+      mockFetch.mockReturnValueOnce(
+        jsonResponse({ quality: {}, gates: {}, results: [] }),
+      );
+      await api.fetchPipelineQuality(42);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/pipeline/42/quality",
+        undefined,
+      );
+    });
+
+    it("fetchApprovalGates calls GET", async () => {
+      mockFetch.mockReturnValueOnce(
+        jsonResponse({ enabled: true, stages: [], pending: [] }),
+      );
+      await api.fetchApprovalGates();
+      expect(mockFetch).toHaveBeenCalledWith("/api/approval-gates", undefined);
+    });
+
+    it("updateApprovalGates calls POST", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ ok: true }));
+      await api.updateApprovalGates({ enabled: true, stages: ["review"] });
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/approval-gates",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    it("fetchNotificationConfig calls GET", async () => {
+      mockFetch.mockReturnValueOnce(
+        jsonResponse({ enabled: true, webhooks: [] }),
+      );
+      await api.fetchNotificationConfig();
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/notifications/config",
+        undefined,
+      );
+    });
+
+    it("testNotification calls POST", async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ ok: true }));
+      await api.testNotification();
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/notifications/test",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+  });
+
   describe("error handling", () => {
     it("throws on non-ok response", async () => {
       mockFetch.mockReturnValueOnce(errorResponse(404, { error: "Not found" }));

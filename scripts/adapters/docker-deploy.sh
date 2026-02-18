@@ -38,7 +38,7 @@ get_rollback_cmd() {
 }
 
 get_health_url() {
-    echo "http://localhost:3000/health"
+    echo "http://localhost:8767/health"
 }
 
 get_smoke_cmd() {

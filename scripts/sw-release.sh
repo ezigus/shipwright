@@ -531,7 +531,7 @@ cmd_publish() {
 
     # Step 5: Create GitHub release
     info "Step 5/5: Creating GitHub release..."
-    if command -v gh &>/dev/null; then
+    if command -v gh >/dev/null 2>&1; then
         if gh release create "$next_version" --title "$next_version" --notes-file /tmp/release-changelog.md; then
             success "GitHub release created"
         else

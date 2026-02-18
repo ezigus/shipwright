@@ -335,7 +335,7 @@ cmd_export() {
     if [[ "$format" == "trace" ]]; then
         payload=$(cmd_trace)
         local response
-        response=$(curl -s -X POST \
+        response=$(curl -s --connect-timeout 10 --max-time 30 -X POST \
             "$endpoint/v1/traces" \
             -H "Content-Type: application/json" \
             $auth_header \
@@ -350,7 +350,7 @@ cmd_export() {
     else
         payload=$(cmd_metrics text)
         local response
-        response=$(curl -s -X POST \
+        response=$(curl -s --connect-timeout 10 --max-time 30 -X POST \
             "$endpoint/metrics" \
             -H "Content-Type: text/plain" \
             $auth_header \
@@ -394,7 +394,7 @@ cmd_webhook() {
 
         while [[ $retry -lt $max_retries ]]; do
             local response
-            response=$(curl -s -w "\n%{http_code}" -X POST \
+            response=$(curl -s --connect-timeout 10 --max-time 30 -w "\n%{http_code}" -X POST \
                 "$webhook_url" \
                 -H "Content-Type: application/json" \
                 -d "$payload" 2>&1 || echo "000")

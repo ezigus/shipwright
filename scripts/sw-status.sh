@@ -63,14 +63,14 @@ done
 
 # ─── JSON Output Mode ─────────────────────────────────────────────────────────
 if [[ "$JSON_OUTPUT" == "true" ]]; then
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         echo "Error: jq is required for --json output" >&2
         exit 1
     fi
 
     # -- tmux windows --
     WINDOWS_JSON="[]"
-    if command -v tmux &>/dev/null; then
+    if command -v tmux >/dev/null 2>&1; then
         WINDOWS_JSON=$(tmux list-windows -a -F '#{session_name}:#{window_index}|#{window_name}|#{window_panes}|#{window_active}' 2>/dev/null | \
             while IFS='|' read -r sw wn pc act; do
                 is_claude="false"
@@ -195,7 +195,7 @@ if [[ "$JSON_OUTPUT" == "true" ]]; then
     _team_cfg="${HOME}/.shipwright/team-config.json"
     if [[ -f "$_team_cfg" ]]; then
         _dash_url=$(jq -r '.dashboard_url // ""' "$_team_cfg" 2>/dev/null || true)
-        if [[ -n "$_dash_url" ]] && command -v curl &>/dev/null; then
+        if [[ -n "$_dash_url" ]] && command -v curl >/dev/null 2>&1; then
             _api_resp=$(curl -s --max-time 3 "${_dash_url}/api/status" 2>/dev/null || echo "")
             if [[ -n "$_api_resp" ]] && echo "$_api_resp" | jq empty 2>/dev/null; then
                 _online=$(echo "$_api_resp" | jq '.total_online // 0' 2>/dev/null || echo "0")
@@ -211,7 +211,7 @@ if [[ "$JSON_OUTPUT" == "true" ]]; then
     # -- database --
     DATABASE_JSON="null"
     _db_file="${HOME}/.shipwright/shipwright.db"
-    if command -v sqlite3 &>/dev/null && [[ -f "$_db_file" ]]; then
+    if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$_db_file" ]]; then
         _db_ver=$(sqlite3 "$_db_file" "SELECT MAX(version) FROM _schema;" 2>/dev/null || echo "0")
         _db_wal=$(sqlite3 "$_db_file" "PRAGMA journal_mode;" 2>/dev/null || echo "unknown")
         _db_events=$(sqlite3 "$_db_file" "SELECT COUNT(*) FROM events;" 2>/dev/null || echo "0")
@@ -753,7 +753,7 @@ fi
 # ─── Database ────────────────────────────────────────────────────────────
 
 _DB_FILE="${HOME}/.shipwright/shipwright.db"
-if command -v sqlite3 &>/dev/null && [[ -f "$_DB_FILE" ]]; then
+if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$_DB_FILE" ]]; then
     echo ""
     echo -e "${PURPLE}${BOLD}  DATABASE${RESET}  ${DIM}~/.shipwright/shipwright.db${RESET}"
     echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
@@ -773,7 +773,7 @@ fi
 # ─── Connected Developers ─────────────────────────────────────────────────
 
 # Check if curl and jq are available
-if command -v curl &>/dev/null && command -v jq &>/dev/null; then
+if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
     # Read dashboard URL from config, fall back to default
     TEAM_CONFIG="${HOME}/.shipwright/team-config.json"
     DASHBOARD_URL=""

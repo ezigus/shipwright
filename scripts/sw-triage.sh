@@ -25,14 +25,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 CYAN="${CYAN:-\033[38;2;0;212;255m}"
 PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
 BLUE="${BLUE:-\033[38;2;0;102;255m}"
@@ -50,7 +42,7 @@ check_gh() {
         error "GitHub access disabled (NO_GITHUB=1)"
         exit 1
     fi
-    if ! command -v gh &>/dev/null; then
+    if ! command -v gh >/dev/null 2>&1; then
         error "gh CLI not found. Install: https://cli.github.com"
         exit 1
     fi
@@ -178,7 +170,7 @@ analyze_with_ai() {
     if [[ ! -f "${SCRIPT_DIR}/sw-intelligence.sh" ]]; then
         return 1
     fi
-    if ! command -v claude &>/dev/null; then
+    if ! command -v claude >/dev/null 2>&1; then
         return 1
     fi
 
@@ -210,7 +202,7 @@ Return JSON with exactly these fields:
     local result
     result=$(_intelligence_call_claude "$prompt" "$cache_key" 2>/dev/null) || true
 
-    if [[ -z "$result" ]] || echo "$result" | jq -e '.' &>/dev/null; then
+    if [[ -z "$result" ]] || echo "$result" | jq -e '.' >/dev/null 2>&1; then
         :  # result is empty or valid JSON
     else
         return 1
@@ -225,7 +217,7 @@ Return JSON with exactly these fields:
     labels_val=$(echo "$result" | jq -r '.labels // []' 2>/dev/null)
 
     # Reject if we got an error object
-    if echo "$result" | jq -e '.error' &>/dev/null; then
+    if echo "$result" | jq -e '.error' >/dev/null 2>&1; then
         return 1
     fi
 
@@ -540,13 +532,13 @@ cmd_prioritize() {
     echo -e "${BOLD}Prioritized Backlog${RESET}"
     echo "─────────────────────────────────────────────────────────────────"
     echo ""
-    echo "$output_json" | jq -r '.[] | "\(.number | tostring | @json) \(.score | tostring): \(.title) [type:\(.type) complexity:\(.complexity) risk:\(.risk)]"' | while IFS= read -r line; do
+    echo "$output_json" | jq -r '.[] | "#\(.number) \(.score): \(.title) [type:\(.type) complexity:\(.complexity) risk:\(.risk)]"' | while IFS= read -r line; do
         local number score rest
-        number=$(echo "$line" | jq -r 'split(" ")[0]' <<< "$line")
-        score=$(echo "$line" | cut -d: -f2 | cut -d' ' -f1)
+        number=$(echo "$line" | cut -d' ' -f1)
+        score=$(echo "$line" | cut -d' ' -f2 | tr -d ':')
         rest=$(echo "$line" | cut -d' ' -f3-)
 
-        echo -e "  ${CYAN}#${number}${RESET} ${BOLD}${score}${RESET}  ${rest}"
+        echo -e "  ${CYAN}${number}${RESET} ${BOLD}${score}${RESET}  ${rest}"
     done
 
     echo ""
@@ -565,7 +557,7 @@ cmd_team() {
 
     # Determine if GitHub is available (don't exit — allow offline fallback)
     local gh_available=false
-    if [[ "${NO_GITHUB:-}" != "1" ]] && command -v gh &>/dev/null; then
+    if [[ "${NO_GITHUB:-}" != "1" ]] && command -v gh >/dev/null 2>&1; then
         gh_available=true
     fi
 
@@ -595,7 +587,7 @@ cmd_team() {
 
         local recruit_result
         recruit_result=$(bash "$SCRIPT_DIR/sw-recruit.sh" team --json "$issue_title" 2>/dev/null) || true
-        if [[ -n "$recruit_result" ]] && echo "$recruit_result" | jq -e '.team' &>/dev/null 2>&1; then
+        if [[ -n "$recruit_result" ]] && echo "$recruit_result" | jq -e '.team' >/dev/null 2>&1; then
             model=$(echo "$recruit_result" | jq -r '.model // "sonnet"')
             agents=$(echo "$recruit_result" | jq -r '.agents // 2')
             template=$(echo "$recruit_result" | jq -r '.template // ""')

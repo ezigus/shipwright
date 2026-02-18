@@ -10,7 +10,7 @@ VERSION="2.4.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Dependency check ─────────────────────────────────────────────────────────
-if ! command -v jq &>/dev/null; then
+if ! command -v jq >/dev/null 2>&1; then
     echo "ERROR: sw-scale.sh requires 'jq'. Install with: brew install jq (macOS) or apt install jq (Linux)" >&2
     exit 1
 fi
@@ -148,7 +148,7 @@ emit_scale_event() {
         '{ts: $ts, action: $action, role: $role, reason: $reason, context: $context}')
 
     echo "$event" >> "$SCALE_EVENTS_FILE"
-    type rotate_jsonl &>/dev/null 2>&1 && rotate_jsonl "$SCALE_EVENTS_FILE" 5000
+    type rotate_jsonl >/dev/null 2>&1 && rotate_jsonl "$SCALE_EVENTS_FILE" 5000
 }
 
 # ─── Scale Up: spawn new agent ───────────────────────────────────────────

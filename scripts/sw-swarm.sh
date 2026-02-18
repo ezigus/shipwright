@@ -198,7 +198,7 @@ cmd_spawn() {
     record_metric "$agent_id" "spawn" "1" "$agent_type"
 
     # Create real tmux session for the agent (so scale/loop can send commands)
-    if command -v tmux &>/dev/null; then
+    if command -v tmux >/dev/null 2>&1; then
         local session_name="swarm-${agent_id}"
         if ! tmux has-session -t "$session_name" 2>/dev/null; then
             tmux new-session -d -s "$session_name" -c "$REPO_DIR" \
@@ -250,7 +250,7 @@ cmd_retire() {
 
     # Kill real tmux session if present
     local session_name="swarm-${agent_id}"
-    if command -v tmux &>/dev/null && tmux has-session -t "$session_name" 2>/dev/null; then
+    if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$session_name" 2>/dev/null; then
         tmux kill-session -t "$session_name" 2>/dev/null && info "Tmux session killed: $session_name" || warn "Tmux kill failed for $session_name"
     fi
 

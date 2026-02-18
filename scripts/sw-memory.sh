@@ -207,7 +207,7 @@ memory_capture_failure() {
         "$failures_file" 2>/dev/null || echo "-1")
 
     (
-        if command -v flock &>/dev/null; then
+        if command -v flock >/dev/null 2>&1; then
             flock -w 10 200 2>/dev/null || { warn "Memory lock timeout"; return 1; }
         fi
         local tmp_file
@@ -274,7 +274,7 @@ memory_record_fix_outcome() {
     [[ "$fix_resolved" == "true" ]] && resolved_inc=1
 
     (
-        if command -v flock &>/dev/null; then
+        if command -v flock >/dev/null 2>&1; then
             flock -w 10 200 2>/dev/null || { warn "Memory lock timeout"; return 1; }
         fi
         local tmp_file
@@ -583,7 +583,7 @@ Return JSON only, no markdown fences, no explanation."
     fi
 
     # Validate category against shared taxonomy (compat.sh) or built-in list
-    if type sw_valid_error_category &>/dev/null 2>&1; then
+    if type sw_valid_error_category >/dev/null 2>&1; then
         if ! sw_valid_error_category "$category"; then
             category="unknown"
         fi
@@ -758,7 +758,7 @@ memory_inject_context() {
     local stage_id="${1:-}"
 
     # Try intelligence-ranked search first
-    if type intelligence_search_memory &>/dev/null 2>&1; then
+    if type intelligence_search_memory >/dev/null 2>&1; then
         local config="${REPO_DIR:-.}/.claude/daemon-config.json"
         local intel_enabled="false"
         if [[ -f "$config" ]]; then
@@ -1296,10 +1296,10 @@ memory_search() {
     local found=0
 
     # ── Semantic search via intelligence (if available) ──
-    if type intelligence_search_memory &>/dev/null 2>&1; then
+    if type intelligence_search_memory >/dev/null 2>&1; then
         local semantic_results
         semantic_results=$(intelligence_search_memory "$keyword" "$mem_dir" 5 2>/dev/null || echo "")
-        if [[ -n "$semantic_results" ]] && echo "$semantic_results" | jq -e '.results | length > 0' &>/dev/null; then
+        if [[ -n "$semantic_results" ]] && echo "$semantic_results" | jq -e '.results | length > 0' >/dev/null 2>&1; then
             echo -e "  ${BOLD}${CYAN}Semantic Results (AI-ranked):${RESET}"
             local result_count
             result_count=$(echo "$semantic_results" | jq '.results | length')

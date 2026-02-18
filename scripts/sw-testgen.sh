@@ -210,7 +210,7 @@ EOF
     # Generate test template; use Claude for real assertions when available
     local test_template_file="$TESTGEN_DIR/generated-tests.sh"
     local use_claude="false"
-    command -v claude &>/dev/null && use_claude="true"
+    command -v claude >/dev/null 2>&1 && use_claude="true"
     [[ "${TESTGEN_USE_CLAUDE:-true}" == "false" ]] && use_claude="false"
 
     {
@@ -468,7 +468,7 @@ detect_regressions() {
         [[ "$(basename "$test_file")" == "sw-testgen-test.sh" ]] && continue
 
         local result
-        if bash "$test_file" &>/dev/null; then
+        if bash "$test_file" >/dev/null 2>&1; then
             result="PASS"
         else
             result="FAIL"

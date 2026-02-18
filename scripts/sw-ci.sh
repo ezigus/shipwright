@@ -464,7 +464,7 @@ cmd_validate() {
     info "Validating workflow YAML: $workflow_file"
 
     # Check for valid YAML structure
-    if ! jq -e 'type' <<< "$(yq eval -o=json "$workflow_file" 2>/dev/null || echo '{}')" &>/dev/null; then
+    if ! jq -e 'type' <<< "$(yq eval -o=json "$workflow_file" 2>/dev/null || echo '{}')" >/dev/null 2>&1; then
         # Fallback: basic validation
         if grep -q "^name:" "$workflow_file" && grep -q "^on:" "$workflow_file" && grep -q "^jobs:" "$workflow_file"; then
             success "Workflow structure looks valid"

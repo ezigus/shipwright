@@ -69,14 +69,14 @@ _adversarial_security_context() {
     local diff_paths="$1"
     local context=""
 
-    type _gh_detect_repo &>/dev/null 2>&1 || { echo ""; return 0; }
+    type _gh_detect_repo >/dev/null 2>&1 || { echo ""; return 0; }
     _gh_detect_repo 2>/dev/null || { echo ""; return 0; }
 
     local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
     [[ -z "$owner" || -z "$repo" ]] && { echo ""; return 0; }
 
     # Get CodeQL alerts for changed files
-    if type gh_security_alerts &>/dev/null 2>&1; then
+    if type gh_security_alerts >/dev/null 2>&1; then
         local alerts
         alerts=$(gh_security_alerts "$owner" "$repo" 2>/dev/null || echo "[]")
         local relevant_alerts
@@ -94,7 +94,7 @@ ${alert_summary}
     fi
 
     # Get Dependabot alerts
-    if type gh_dependabot_alerts &>/dev/null 2>&1; then
+    if type gh_dependabot_alerts >/dev/null 2>&1; then
         local dep_alerts
         dep_alerts=$(gh_dependabot_alerts "$owner" "$repo" 2>/dev/null || echo "[]")
         local dep_count

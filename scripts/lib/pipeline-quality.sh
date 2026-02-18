@@ -5,7 +5,7 @@ _PIPELINE_QUALITY_LOADED=1
 
 # Policy overrides when config/policy.json exists
 [[ -f "${SCRIPT_DIR:-}/lib/policy.sh" ]] && source "${SCRIPT_DIR:-}/lib/policy.sh"
-if type policy_get &>/dev/null 2>&1; then
+if type policy_get >/dev/null 2>&1; then
     PIPELINE_COVERAGE_THRESHOLD=$(policy_get ".pipeline.coverage_threshold_percent" "60")
     PIPELINE_QUALITY_GATE_THRESHOLD=$(policy_get ".pipeline.quality_gate_score_threshold" "70")
     QUALITY_COVERAGE_THRESHOLD=$(policy_get ".quality.coverage_threshold" "70")

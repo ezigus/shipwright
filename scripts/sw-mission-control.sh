@@ -268,7 +268,7 @@ show_resource_usage() {
 
     echo -e "${BOLD}System Resources${RESET}"
 
-    if command -v top &>/dev/null || command -v ps &>/dev/null; then
+    if command -v top >/dev/null 2>&1 || command -v ps >/dev/null 2>&1; then
         # Get system memory and CPU stats
         local mem_pct=65
         local cpu_pct=42

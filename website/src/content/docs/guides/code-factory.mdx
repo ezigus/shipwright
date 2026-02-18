@@ -178,23 +178,23 @@ Collectors are defined in `config/policy.json` under the `evidence` section:
         "name": "dashboard-api-health",
         "type": "api",
         "method": "GET",
-        "url": "http://localhost:3000/api/health",
+        "url": "http://localhost:8767/api/health",
         "expectedStatus": 200,
         "assertions": ["status-ok", "response-has-version"]
       },
       {
         "name": "pipeline-cli-smoke",
         "type": "cli",
-        "command": "bash scripts/sw-pipeline.sh status --json",
+        "command": "bash scripts/sw-pipeline.sh status",
         "expectedExitCode": 0,
-        "assertions": ["valid-json-output", "has-pipeline-state"]
+        "assertions": ["has-pipeline-state"]
       },
       {
         "name": "db-schema-integrity",
         "type": "database",
-        "command": "bash scripts/sw-db.sh check",
+        "command": "bash scripts/sw-db.sh health",
         "expectedExitCode": 0,
-        "assertions": ["schema-valid", "migrations-current"]
+        "assertions": ["schema-valid", "db-accessible"]
       }
     ]
   }

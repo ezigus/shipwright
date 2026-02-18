@@ -501,7 +501,7 @@ docs_wiki() {
     fi
 
     # Push to GitHub wiki
-    if [[ "${NO_GITHUB:-}" == "true" ]] || ! command -v gh &>/dev/null; then
+    if [[ "${NO_GITHUB:-}" == "true" ]] || ! command -v gh >/dev/null 2>&1; then
         warn "GitHub not available — wiki pages saved to: $wiki_dir"
         return 0
     fi

@@ -186,6 +186,70 @@ else
     assert_fail "Has source guard pattern"
 fi
 
+# ─── Test 8: percentile, mean, median statistical functions ───────────────────
+echo ""
+echo -e "${DIM}  statistical functions${RESET}"
+if grep -qE '^percentile\(\)|^mean\(\)|^median\(\)' "$SCRIPT_DIR/sw-adaptive.sh"; then
+    assert_pass "percentile, mean, median functions defined in source"
+else
+    assert_fail "percentile, mean, median functions defined in source"
+fi
+m=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEMP_DIR/home" bash -c '
+source "$SCRIPT_DIR/sw-adaptive.sh" 2>/dev/null
+mean "[1, 2, 3, 4, 5]"
+' 2>/dev/null)
+if [[ -n "$m" && "$m" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+    assert_pass "mean returns numeric value (avg of 1-5 is 3)"
+else
+    assert_fail "mean returns numeric value" "got: $m"
+fi
+# percentile/median use jq --arg for p; test via get_timeout which uses them internally
+
+# ─── Test 9: get_timeout with and without event data ──────────────────────────
+echo ""
+echo -e "${DIM}  get_timeout / get_iterations / get_model${RESET}"
+timeout_def=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEMP_DIR/home" bash -c '
+source "$SCRIPT_DIR/sw-adaptive.sh" 2>/dev/null
+get_timeout "build" "." "1800"
+' 2>/dev/null)
+if [[ -n "$timeout_def" && "$timeout_def" =~ ^[0-9]+$ ]]; then
+    assert_pass "get_timeout returns number (default with no events)"
+else
+    assert_fail "get_timeout returns number" "got: $timeout_def"
+fi
+iter_val=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEMP_DIR/home" bash -c '
+source "$SCRIPT_DIR/sw-adaptive.sh" 2>/dev/null
+get_iterations 5 "build" "10"
+' 2>/dev/null)
+if [[ -n "$iter_val" && "$iter_val" =~ ^[0-9]+$ ]]; then
+    assert_pass "get_iterations returns number"
+else
+    assert_fail "get_iterations returns number" "got: $iter_val"
+fi
+model_val=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEMP_DIR/home" bash -c '
+source "$SCRIPT_DIR/sw-adaptive.sh" 2>/dev/null
+get_model "build" "opus"
+' 2>/dev/null)
+if [[ -n "$model_val" && "$model_val" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    assert_pass "get_model returns valid model name"
+else
+    assert_fail "get_model returns valid model name" "got: $model_val"
+fi
+
+# ─── Test 10: train subcommand with mock events data ──────────────────────────
+echo ""
+echo -e "${DIM}  train subcommand${RESET}"
+# Add mock events so train has data to process
+for i in 1 2 3 4 5; do
+    echo "{\"ts\":\"2024-01-0${i}T12:00:00Z\",\"type\":\"stage_complete\",\"stage\":\"build\",\"duration\":${i}000,\"exit_code\":0,\"model\":\"opus\",\"iterations\":$i}"
+done >> "$TEMP_DIR/home/.shipwright/events.jsonl"
+train_out=$(bash "$SCRIPT_DIR/sw-adaptive.sh" train --repo "$SCRIPT_DIR" 2>&1) || true
+if [[ "$train_out" == *"trained"* ]] || [[ "$train_out" == *"Models"* ]] || [[ "$train_out" == *"Training"* ]] || [[ -f "$TEMP_DIR/home/.shipwright/adaptive-models.json" ]]; then
+    assert_pass "train subcommand runs with mock events"
+else
+    assert_fail "train subcommand runs with mock events" "out: ${train_out:0:100}"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

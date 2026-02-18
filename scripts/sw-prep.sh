@@ -153,7 +153,7 @@ done
 # ─── prep_init ──────────────────────────────────────────────────────────────
 
 prep_init() {
-    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         error "Not inside a git repository"
         exit 1
     fi
@@ -591,7 +591,7 @@ prep_extract_patterns() {
 # ─── Intelligence Check ──────────────────────────────────────────────────
 
 intelligence_available() {
-    command -v claude &>/dev/null || return 1
+    command -v claude >/dev/null 2>&1 || return 1
     # Honor --with-claude flag
     $WITH_CLAUDE && return 0
     # Check daemon config for intelligence.enabled
@@ -1407,7 +1407,7 @@ prep_generate_manifest() {
 HEREDOC
 
     # Validate JSON
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         if ! jq empty "$filepath" 2>/dev/null; then
             warn "prep-manifest.json may have invalid JSON — check manually"
         fi
@@ -1422,7 +1422,7 @@ HEREDOC
 prep_with_claude() {
     if ! $WITH_CLAUDE; then return; fi
 
-    if ! command -v claude &>/dev/null; then
+    if ! command -v claude >/dev/null 2>&1; then
         warn "claude CLI not found — skipping deep analysis"
         return
     fi
@@ -1471,7 +1471,7 @@ prep_validate() {
     local issues=0
 
     # Check JSON files
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         for f in "$PROJECT_ROOT/.claude/settings.json" "$PROJECT_ROOT/.claude/prep-manifest.json"; do
             if [[ -f "$f" ]] && ! jq empty "$f" 2>/dev/null; then
                 warn "Invalid JSON: ${f##"$PROJECT_ROOT"/}"

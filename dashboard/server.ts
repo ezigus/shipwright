@@ -5289,6 +5289,68 @@ const server = Bun.serve({
           );
         }
 
+        // VERIFY: re-read labels — if competing claimed:* labels exist, we lost the race
+        try {
+          const verifyLabels = execSync(
+            `gh issue view ${issue}${repoFlag} --json labels -q '.labels[].name'`,
+            {
+              encoding: "utf-8",
+              timeout: 10000,
+              stdio: ["pipe", "pipe", "pipe"],
+            },
+          )
+            .trim()
+            .split("\n")
+            .filter((l: string) => l.startsWith("claimed:"));
+          if (
+            verifyLabels.length !== 1 ||
+            verifyLabels[0] !== `claimed:${machine}`
+          ) {
+            // Competing claim — remove ours and reject
+            execSync(
+              `gh issue edit ${issue}${repoFlag} --remove-label "claimed:${machine}"`,
+              { timeout: 10000, stdio: ["pipe", "pipe", "pipe"] },
+            );
+            return new Response(
+              JSON.stringify({
+                approved: false,
+                claimed_by:
+                  verifyLabels[0]?.replace("claimed:", "") || "another machine",
+                error: "Claim race lost",
+              }),
+              {
+                headers: {
+                  "Content-Type": "application/json",
+                  ...CORS_HEADERS,
+                },
+              },
+            );
+          }
+        } catch {
+          // Verification failed — conservative: remove our label and reject
+          try {
+            execSync(
+              `gh issue edit ${issue}${repoFlag} --remove-label "claimed:${machine}"`,
+              { timeout: 10000, stdio: ["pipe", "pipe", "pipe"] },
+            );
+          } catch {
+            /* best-effort cleanup */
+          }
+          return new Response(
+            JSON.stringify({
+              approved: false,
+              error: "Claim verification failed",
+            }),
+            {
+              status: 500,
+              headers: {
+                "Content-Type": "application/json",
+                ...CORS_HEADERS,
+              },
+            },
+          );
+        }
+
         return new Response(
           JSON.stringify({ approved: true, claimed_by: machine }),
           {

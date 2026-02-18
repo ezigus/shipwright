@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RECRUIT_VERSION="3.0.0"
 
 # ─── Dependency check ─────────────────────────────────────────────────────────
-if ! command -v jq &>/dev/null; then
+if ! command -v jq >/dev/null 2>&1; then
     echo "ERROR: sw-recruit.sh requires 'jq' (JSON processor). Install with:" >&2
     echo "  macOS:  brew install jq" >&2
     echo "  Ubuntu: sudo apt install jq" >&2
@@ -65,7 +65,7 @@ _recruit_locked_write() {
     local lock_file="${target}.lock"
 
     (
-        if command -v flock &>/dev/null; then
+        if command -v flock >/dev/null 2>&1; then
             flock -w 5 200 2>/dev/null || true
         fi
         mv "$tmp_file" "$target"
@@ -90,7 +90,7 @@ POLICY_FILE="${SCRIPT_DIR}/../config/policy.json"
 _recruit_policy() {
     local key="$1"
     local default="$2"
-    if [[ -f "$POLICY_FILE" ]] && command -v jq &>/dev/null; then
+    if [[ -f "$POLICY_FILE" ]] && command -v jq >/dev/null 2>&1; then
         local val
         val=$(jq -r ".recruit.${key} // empty" "$POLICY_FILE" 2>/dev/null) || true
         [[ -n "$val" ]] && echo "$val" || echo "$default"
@@ -133,7 +133,7 @@ fi
 # Set SW_RECRUIT_NO_LLM=1 to disable LLM calls (e.g., in tests)
 _recruit_has_claude() {
     [[ "${SW_RECRUIT_NO_LLM:-}" == "1" ]] && return 1
-    command -v claude &>/dev/null
+    command -v claude >/dev/null 2>&1
 }
 
 # Call Claude with a prompt, return text. Falls back gracefully.
@@ -144,7 +144,7 @@ _recruit_call_claude() {
     # Honor the no-LLM flag everywhere (not just _recruit_has_claude)
     [[ "${SW_RECRUIT_NO_LLM:-}" == "1" ]] && { echo ""; return; }
 
-    if [[ "$INTELLIGENCE_AVAILABLE" == "true" ]] && command -v _intelligence_call_claude &>/dev/null; then
+    if [[ "$INTELLIGENCE_AVAILABLE" == "true" ]] && command -v _intelligence_call_claude >/dev/null 2>&1; then
         _intelligence_call_claude "$prompt" 2>/dev/null || echo ""
         return
     fi
@@ -164,7 +164,7 @@ _recruit_call_claude() {
 initialize_builtin_roles() {
     ensure_recruit_dir
 
-    if jq -e '.architect' "$ROLES_DB" &>/dev/null 2>&1; then
+    if jq -e '.architect' "$ROLES_DB" >/dev/null 2>&1; then
         return 0
     fi
 
@@ -385,7 +385,7 @@ Return JSON only, no markdown fences."
     local result
     result=$(_recruit_call_claude "$prompt")
 
-    if [[ -n "$result" ]] && echo "$result" | jq -e '.primary_role' &>/dev/null 2>&1; then
+    if [[ -n "$result" ]] && echo "$result" | jq -e '.primary_role' >/dev/null 2>&1; then
         echo "$result"
         return 0
     fi
@@ -483,7 +483,7 @@ Return JSON only."
         local result
         result=$(_recruit_call_claude "$prompt")
 
-        if [[ -n "$result" ]] && echo "$result" | jq -e '.key' &>/dev/null 2>&1; then
+        if [[ -n "$result" ]] && echo "$result" | jq -e '.key' >/dev/null 2>&1; then
             role_key=$(echo "$result" | jq -r '.key')
             role_title=$(echo "$result" | jq -r '.title')
             role_desc=$(echo "$result" | jq -r '.description')
@@ -1042,7 +1042,7 @@ cmd_team() {
 
         # Gather codebase context if in a git repo
         local codebase_context=""
-        if command -v git &>/dev/null && git rev-parse --git-dir &>/dev/null 2>&1; then
+        if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
             local file_count lang_summary
             file_count=$(git ls-files 2>/dev/null | wc -l | tr -d ' ')
             lang_summary=$(git ls-files 2>/dev/null | grep -oE '\.[^.]+$' | sort | uniq -c | sort -rn | head -5 | tr '\n' ';' || echo "unknown")
@@ -1069,7 +1069,7 @@ Return JSON only."
         local result
         result=$(_recruit_call_claude "$prompt")
 
-        if [[ -n "$result" ]] && echo "$result" | jq -e '.team' &>/dev/null 2>&1; then
+        if [[ -n "$result" ]] && echo "$result" | jq -e '.team' >/dev/null 2>&1; then
             while IFS= read -r role; do
                 [[ -z "$role" || "$role" == "null" ]] && continue
                 recommended_team+=("$role")
@@ -1439,7 +1439,7 @@ Return JSON only."
     local result
     result=$(_recruit_call_claude "$prompt")
 
-    if [[ -n "$result" ]] && echo "$result" | jq -e '.roles | length > 0' &>/dev/null 2>&1; then
+    if [[ -n "$result" ]] && echo "$result" | jq -e '.roles | length > 0' >/dev/null 2>&1; then
         local new_count
         new_count=$(echo "$result" | jq '.roles | length')
 
@@ -1596,7 +1596,7 @@ Return JSON only."
         local result
         result=$(_recruit_call_claude "$prompt")
 
-        if [[ -n "$result" ]] && echo "$result" | jq -e '.working_style' &>/dev/null 2>&1; then
+        if [[ -n "$result" ]] && echo "$result" | jq -e '.working_style' >/dev/null 2>&1; then
             # Save the LLM-generated mind profile
             local tmp_file
             tmp_file=$(mktemp)
@@ -1700,7 +1700,7 @@ Return JSON only."
         local result
         result=$(_recruit_call_claude "$prompt")
 
-        if [[ -n "$result" ]] && echo "$result" | jq -e '.sub_tasks' &>/dev/null 2>&1; then
+        if [[ -n "$result" ]] && echo "$result" | jq -e '.sub_tasks' >/dev/null 2>&1; then
             local restated_goal
             restated_goal=$(echo "$result" | jq -r '.goal // ""')
             [[ -n "$restated_goal" ]] && echo -e "  ${DIM}Interpreted as: ${restated_goal}${RESET}"
@@ -1926,7 +1926,7 @@ cmd_match() {
         local llm_result
         llm_result=$(_recruit_llm_match "$task_description" "$available_roles")
 
-        if [[ -n "$llm_result" ]] && echo "$llm_result" | jq -e '.primary_role' &>/dev/null 2>&1; then
+        if [[ -n "$llm_result" ]] && echo "$llm_result" | jq -e '.primary_role' >/dev/null 2>&1; then
             primary_role=$(echo "$llm_result" | jq -r '.primary_role')
             secondary_roles=$(echo "$llm_result" | jq -r '.secondary_roles // [] | join(", ")')
             confidence=$(echo "$llm_result" | jq -r '.confidence // 0.8')
@@ -1961,7 +1961,7 @@ cmd_match() {
     fi
 
     # Validate role exists
-    if ! jq -e ".\"${primary_role}\"" "$ROLES_DB" &>/dev/null 2>&1; then
+    if ! jq -e ".\"${primary_role}\"" "$ROLES_DB" >/dev/null 2>&1; then
         primary_role="builder"
     fi
 

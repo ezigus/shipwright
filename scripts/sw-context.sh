@@ -26,14 +26,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 CYAN="${CYAN:-\033[38;2;0;212;255m}"
 PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
 BLUE="${BLUE:-\033[38;2;0;102;255m}"
@@ -124,7 +116,7 @@ extract_recent_prs() {
         return
     fi
 
-    if ! command -v gh &>/dev/null; then
+    if ! command -v gh >/dev/null 2>&1; then
         echo "(gh CLI not available, using git log)"
         echo ""
         local recent_commits
@@ -405,6 +397,7 @@ gather_context() {
 
     local tmp_file
     tmp_file=$(mktemp "${TMPDIR:-/tmp}/sw-context-bundle.XXXXXX")
+    trap "rm -f '$tmp_file'" RETURN
 
     # Write bundle header
     {
@@ -584,7 +577,7 @@ main() {
 
             # If issue provided, fetch from GitHub
             if [[ -n "$issue" ]]; then
-                if [[ "${NO_GITHUB:-}" == "true" ]] || ! command -v gh &>/dev/null; then
+                if [[ "${NO_GITHUB:-}" == "true" ]] || ! command -v gh >/dev/null 2>&1; then
                     goal="GitHub issue #$issue (fetch unavailable)"
                 else
                     goal=$(gh issue view "$issue" --json title,body --template '{{.title}}: {{.body}}' 2>/dev/null || echo "GitHub issue #$issue")

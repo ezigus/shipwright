@@ -21,14 +21,6 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
 [[ "$(type -t warn 2>/dev/null)" == "function" ]]    || warn()    { echo -e "\033[38;2;250;204;21m\033[1m⚠\033[0m $*"; }
 [[ "$(type -t error 2>/dev/null)" == "function" ]]   || error()   { echo -e "\033[38;2;248;113;113m\033[1m✗\033[0m $*" >&2; }
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 CYAN="${CYAN:-\033[38;2;0;212;255m}"
 PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
 BLUE="${BLUE:-\033[38;2;0;102;255m}"
@@ -336,7 +328,7 @@ auto_fix() {
     cp "$target_file" "$backup"
 
     # Report shellcheck issues (informational — auto-fix is limited to whitespace)
-    if command -v shellcheck &>/dev/null; then
+    if command -v shellcheck >/dev/null 2>&1; then
         local warnings_file
         warnings_file=$(mktemp)
         shellcheck -f json "$target_file" > "$warnings_file" 2>/dev/null || true
@@ -380,7 +372,7 @@ run_claude_semantic_review() {
     local diff_content="$1"
     local requirements="${2:-}"
     [[ -z "$diff_content" ]] && return 0
-    if ! command -v claude &>/dev/null; then
+    if ! command -v claude >/dev/null 2>&1; then
         return 0
     fi
 
@@ -454,7 +446,7 @@ review_changes() {
         diff_content=$(cd "$REPO_DIR" && git diff main...HEAD 2>/dev/null || true)
     fi
     local semantic_issues=()
-    if [[ -n "$diff_content" ]] && command -v claude &>/dev/null; then
+    if [[ -n "$diff_content" ]] && command -v claude >/dev/null 2>&1; then
         info "Running Claude semantic review (logic, race conditions, API usage)..."
         while IFS= read -r _si; do [[ -n "$_si" ]] && semantic_issues+=("$_si"); done < <(run_claude_semantic_review "$diff_content" "${REVIEW_REQUIREMENTS:-}" || true)
         if [[ ${#semantic_issues[@]} -gt 0 ]]; then

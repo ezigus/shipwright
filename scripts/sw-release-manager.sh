@@ -26,14 +26,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 CYAN="${CYAN:-\033[38;2;0;212;255m}"
 PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
 BLUE="${BLUE:-\033[38;2;0;102;255m}"
@@ -171,7 +163,7 @@ check_coverage_threshold() {
 check_no_open_blockers() {
     info "Checking for open blockers..."
 
-    if ! command -v gh &>/dev/null; then
+    if ! command -v gh >/dev/null 2>&1; then
         warn "GitHub CLI not available — skipping blocker check"
         return 0
     fi
@@ -191,13 +183,20 @@ check_no_open_blockers() {
 check_security_scan() {
     info "Checking security scan status..."
 
-    if ! command -v gh &>/dev/null; then
+    if ! command -v gh >/dev/null 2>&1; then
         warn "GitHub CLI not available — skipping security check"
         return 0
     fi
 
+    local repo_nwo
+    repo_nwo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
+    if [[ -z "$repo_nwo" ]]; then
+        warn "Could not determine repository — skipping security check"
+        return 0
+    fi
+
     local vulns
-    vulns=$(gh api repos/{owner}/{repo}/dependabot/alerts --jq 'length' 2>/dev/null || echo "0")
+    vulns=$(gh api "repos/${repo_nwo}/dependabot/alerts" --jq 'length' 2>/dev/null || echo "0")
 
     if [[ $vulns -gt 0 ]]; then
         error "Found $vulns security vulnerabilities"
@@ -319,7 +318,7 @@ publish_release() {
     fi
 
     # Create GitHub release
-    if command -v gh &>/dev/null; then
+    if command -v gh >/dev/null 2>&1; then
         if gh release create "$next_version" --title "$next_version" --generate-notes; then
             success "GitHub release created"
         else
@@ -371,7 +370,7 @@ create_rc() {
     fi
 
     # Create GitHub pre-release
-    if command -v gh &>/dev/null; then
+    if command -v gh >/dev/null 2>&1; then
         if gh release create "$rc_version" --title "RC: $rc_version" --prerelease --generate-notes; then
             success "GitHub pre-release created"
         else
@@ -424,7 +423,7 @@ promote_rc() {
     fi
 
     # Create GitHub release (not pre-release)
-    if command -v gh &>/dev/null; then
+    if command -v gh >/dev/null 2>&1; then
         if gh release create "$stable_version" --title "$stable_version" --generate-notes; then
             success "GitHub release created"
         else
@@ -472,7 +471,7 @@ rollback_release() {
     fi
 
     # Delete GitHub release
-    if command -v gh &>/dev/null; then
+    if command -v gh >/dev/null 2>&1; then
         if gh release delete "$version" --yes 2>/dev/null; then
             success "GitHub release deleted"
         else
@@ -534,7 +533,7 @@ show_history() {
     info "Release History"
     echo ""
 
-    if ! command -v gh &>/dev/null; then
+    if ! command -v gh >/dev/null 2>&1; then
         error "GitHub CLI required for history"
         return 1
     fi

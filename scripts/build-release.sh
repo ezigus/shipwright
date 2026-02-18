@@ -45,7 +45,7 @@ BOLD="${BOLD:-\033[1m}"
 RESET="${RESET:-\033[0m}"
 
 # ─── Read version from package.json ───────────────────────────────────────
-if command -v jq &>/dev/null && [[ -f "$REPO_ROOT/package.json" ]]; then
+if command -v jq >/dev/null 2>&1 && [[ -f "$REPO_ROOT/package.json" ]]; then
     VERSION="$(jq -r .version "$REPO_ROOT/package.json")"
 fi
 

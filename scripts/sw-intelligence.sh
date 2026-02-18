@@ -249,8 +249,8 @@ _intelligence_call_claude() {
     # Call Claude (--print mode returns raw text response)
     # Use timeout (gtimeout on macOS via coreutils, timeout on Linux) to prevent hangs
     local _timeout_cmd=""
-    if command -v gtimeout &>/dev/null; then _timeout_cmd="gtimeout 60"
-    elif command -v timeout &>/dev/null; then _timeout_cmd="timeout 60"
+    if command -v gtimeout >/dev/null 2>&1; then _timeout_cmd="gtimeout 60"
+    elif command -v timeout >/dev/null 2>&1; then _timeout_cmd="timeout 60"
     fi
 
     local response
@@ -968,7 +968,7 @@ intelligence_github_enrich() {
     local analysis_json="$1"
 
     # Skip if GraphQL not available
-    type _gh_detect_repo &>/dev/null 2>&1 || { echo "$analysis_json"; return 0; }
+    type _gh_detect_repo >/dev/null 2>&1 || { echo "$analysis_json"; return 0; }
     _gh_detect_repo 2>/dev/null || { echo "$analysis_json"; return 0; }
 
     local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
@@ -976,13 +976,13 @@ intelligence_github_enrich() {
 
     # Get repo context
     local repo_context="{}"
-    if type gh_repo_context &>/dev/null 2>&1; then
+    if type gh_repo_context >/dev/null 2>&1; then
         repo_context=$(gh_repo_context "$owner" "$repo" 2>/dev/null || echo "{}")
     fi
 
     # Get security alerts count
     local security_count=0
-    if type gh_security_alerts &>/dev/null 2>&1; then
+    if type gh_security_alerts >/dev/null 2>&1; then
         local alerts
         alerts=$(gh_security_alerts "$owner" "$repo" 2>/dev/null || echo "[]")
         security_count=$(echo "$alerts" | jq 'length' 2>/dev/null || echo "0")
@@ -990,7 +990,7 @@ intelligence_github_enrich() {
 
     # Get dependabot alerts count
     local dependabot_count=0
-    if type gh_dependabot_alerts &>/dev/null 2>&1; then
+    if type gh_dependabot_alerts >/dev/null 2>&1; then
         local deps
         deps=$(gh_dependabot_alerts "$owner" "$repo" 2>/dev/null || echo "[]")
         dependabot_count=$(echo "$deps" | jq 'length' 2>/dev/null || echo "0")
@@ -1011,7 +1011,7 @@ intelligence_file_risk_score() {
     local file_path="$1"
     local risk_score=0
 
-    type _gh_detect_repo &>/dev/null 2>&1 || { echo "0"; return 0; }
+    type _gh_detect_repo >/dev/null 2>&1 || { echo "0"; return 0; }
     _gh_detect_repo 2>/dev/null || { echo "0"; return 0; }
 
     local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
@@ -1019,7 +1019,7 @@ intelligence_file_risk_score() {
 
     # Factor 1: File churn (high change frequency = higher risk)
     local changes=0
-    if type gh_file_change_frequency &>/dev/null 2>&1; then
+    if type gh_file_change_frequency >/dev/null 2>&1; then
         changes=$(gh_file_change_frequency "$owner" "$repo" "$file_path" 30 2>/dev/null || echo "0")
     fi
     if [[ "${changes:-0}" -gt 20 ]]; then
@@ -1031,7 +1031,7 @@ intelligence_file_risk_score() {
     fi
 
     # Factor 2: Security alerts on this file
-    if type gh_security_alerts &>/dev/null 2>&1; then
+    if type gh_security_alerts >/dev/null 2>&1; then
         local file_alerts
         file_alerts=$(gh_security_alerts "$owner" "$repo" 2>/dev/null | \
             jq --arg path "$file_path" '[.[] | select(.most_recent_instance.location.path == $path)] | length' 2>/dev/null || echo "0")
@@ -1039,7 +1039,7 @@ intelligence_file_risk_score() {
     fi
 
     # Factor 3: Many contributors = higher coordination risk
-    if type gh_blame_data &>/dev/null 2>&1; then
+    if type gh_blame_data >/dev/null 2>&1; then
         local author_count
         author_count=$(gh_blame_data "$owner" "$repo" "$file_path" 2>/dev/null | jq 'length' 2>/dev/null || echo "0")
         [[ "${author_count:-0}" -gt 5 ]] && risk_score=$((risk_score + 10))
@@ -1053,13 +1053,13 @@ intelligence_file_risk_score() {
 intelligence_contributor_expertise() {
     local file_path="$1"
 
-    type _gh_detect_repo &>/dev/null 2>&1 || { echo "[]"; return 0; }
+    type _gh_detect_repo >/dev/null 2>&1 || { echo "[]"; return 0; }
     _gh_detect_repo 2>/dev/null || { echo "[]"; return 0; }
 
     local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
     [[ -z "$owner" || -z "$repo" ]] && { echo "[]"; return 0; }
 
-    if type gh_blame_data &>/dev/null 2>&1; then
+    if type gh_blame_data >/dev/null 2>&1; then
         gh_blame_data "$owner" "$repo" "$file_path" 2>/dev/null || echo "[]"
     else
         echo "[]"

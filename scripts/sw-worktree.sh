@@ -23,14 +23,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 CYAN="${CYAN:-\033[38;2;0;212;255m}"
 PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
 BLUE="${BLUE:-\033[38;2;0;102;255m}"
@@ -185,7 +177,7 @@ worktree_merge() {
     local current_branch
     current_branch="$(git branch --show-current)"
 
-    if ! git rev-parse --verify "$branch" &>/dev/null; then
+    if ! git rev-parse --verify "$branch" >/dev/null 2>&1; then
         error "Branch '$branch' does not exist."
         return 1
     fi
@@ -234,7 +226,9 @@ worktree_remove() {
     if [[ -d "$worktree_path" ]]; then
         git worktree remove "$worktree_path" --force 2>/dev/null || {
             warn "Could not cleanly remove worktree $name, forcing..."
-            rm -rf "$worktree_path"
+            if [[ -n "$worktree_path" && "$worktree_path" == "$WORKTREE_DIR/"* ]]; then
+                rm -rf "$worktree_path"
+            fi
             git worktree prune 2>/dev/null || true
         }
     fi

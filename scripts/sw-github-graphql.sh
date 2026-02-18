@@ -87,7 +87,7 @@ _gh_cache_get() {
     # Check file age
     local file_epoch now
     if [[ "$(uname)" == "Darwin" ]]; then
-        file_epoch=$(stat -f '%m' "$cache_file" 2>/dev/null || echo "0")
+        file_epoch=$(file_mtime "$cache_file")
     else
         file_epoch=$(stat -c '%Y' "$cache_file" 2>/dev/null || echo "0")
     fi

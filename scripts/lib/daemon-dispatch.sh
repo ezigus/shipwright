@@ -37,6 +37,22 @@ daemon_spawn_pipeline() {
 
     daemon_log INFO "Spawning pipeline for issue #${issue_num}: ${issue_title}"
 
+    # ── Budget gate: hard-stop if daily budget exhausted ──
+    if [[ -x "${SCRIPT_DIR}/sw-cost.sh" ]]; then
+        local remaining
+        remaining=$("${SCRIPT_DIR}/sw-cost.sh" remaining-budget 2>/dev/null || echo "")
+        if [[ -n "$remaining" && "$remaining" != "unlimited" ]]; then
+            if awk -v r="$remaining" 'BEGIN { exit !(r <= 0) }' 2>/dev/null; then
+                daemon_log WARN "Budget exhausted (remaining: \$${remaining}) — skipping issue #${issue_num}"
+                emit_event "daemon.budget_exhausted" "remaining=$remaining" "issue=$issue_num"
+                return 1
+            fi
+            if awk -v r="$remaining" 'BEGIN { exit !(r < 1.0) }' 2>/dev/null; then
+                daemon_log WARN "Budget low: \$${remaining} remaining"
+            fi
+        fi
+    fi
+
     # ── Issue decomposition (if decomposer available) ──
     local decompose_script="${SCRIPT_DIR}/sw-decompose.sh"
     if [[ -x "$decompose_script" && "$NO_GITHUB" != "true" ]]; then
@@ -45,7 +61,7 @@ daemon_spawn_pipeline() {
         if [[ "$decompose_result" == *"decomposed"* ]]; then
             daemon_log INFO "Issue #${issue_num} decomposed into subtasks — skipping pipeline"
             # Remove the shipwright label so decomposed parent doesn't re-queue
-            gh issue edit "$issue_num" --remove-label "shipwright" 2>/dev/null || true
+            _timeout 30 gh issue edit "$issue_num" --remove-label "shipwright" 2>/dev/null || true
             return 0
         fi
     fi
@@ -54,14 +70,14 @@ daemon_spawn_pipeline() {
     local issue_goal="$issue_title"
     if [[ "$NO_GITHUB" != "true" ]]; then
         local issue_body_first
-        issue_body_first=$(gh issue view "$issue_num" --json body --jq '.body' 2>/dev/null | head -3 | tr '\n' ' ' | cut -c1-200 || true)
+        issue_body_first=$(_timeout 30 gh issue view "$issue_num" --json body --jq '.body' 2>/dev/null | head -3 | tr '\n' ' ' | cut -c1-200 || true)
         if [[ -n "$issue_body_first" ]]; then
             issue_goal="${issue_title}: ${issue_body_first}"
         fi
     fi
 
     # ── Predictive risk assessment (if enabled) ──
-    if [[ "${PREDICTION_ENABLED:-false}" == "true" ]] && type predict_pipeline_risk &>/dev/null 2>&1; then
+    if [[ "${PREDICTION_ENABLED:-false}" == "true" ]] && type predict_pipeline_risk >/dev/null 2>&1; then
         local issue_json_for_pred=""
         if [[ "$NO_GITHUB" != "true" ]]; then
             issue_json_for_pred=$(gh issue view "$issue_num" --json number,title,body,labels 2>/dev/null || echo "")
@@ -214,7 +230,7 @@ daemon_track_job() {
     local issue_num="$1" pid="$2" worktree="$3" title="${4:-}" repo="${5:-}" goal="${6:-}"
 
     # Write to SQLite (non-blocking, best-effort)
-    if type db_save_job &>/dev/null; then
+    if type db_save_job >/dev/null 2>&1; then
         local job_id="daemon-${issue_num}-$(now_epoch)"
         db_save_job "$job_id" "$issue_num" "$title" "$pid" "$worktree" "" "${PIPELINE_TEMPLATE:-autonomous}" "$goal" 2>/dev/null || true
     fi
@@ -309,7 +325,7 @@ daemon_reap_completed() {
         emit_event "daemon.reap" "issue=$issue_num" "result=$result_str" "duration_s=$dur_s"
 
         # Update SQLite (mark job complete/failed)
-        if type db_complete_job &>/dev/null && type db_fail_job &>/dev/null; then
+        if type db_complete_job >/dev/null 2>&1 && type db_fail_job >/dev/null 2>&1; then
             local _db_job_id="daemon-${issue_num}-${start_epoch}"
             if [[ "$exit_code" -eq 0 ]]; then
                 db_complete_job "$_db_job_id" "$result_str" 2>/dev/null || true
@@ -343,7 +359,7 @@ daemon_reap_completed() {
                                     --method PATCH \
                                     --field status=completed \
                                     --field conclusion=cancelled \
-                                    --silent 2>/dev/null || true
+                                    --silent --timeout 30 2>/dev/null || true
                             fi
                         fi
                     done < <(jq -r 'keys[]' "$check_ids_file" 2>/dev/null || true)
@@ -352,7 +368,7 @@ daemon_reap_completed() {
         fi
 
         # Finalize memory (capture failure patterns for future runs)
-        if type memory_finalize_pipeline &>/dev/null 2>&1; then
+        if type memory_finalize_pipeline >/dev/null 2>&1; then
             local _job_state _job_artifacts
             _job_state="${worktree:-.}/.claude/pipeline-state.md"
             _job_artifacts="${worktree:-.}/.claude/pipeline-artifacts"
@@ -453,12 +469,12 @@ daemon_on_success() {
 
     if [[ "$NO_GITHUB" != "true" ]]; then
         # Remove watch label, add success label
-        gh issue edit "$issue_num" \
+        _timeout 30 gh issue edit "$issue_num" \
             --remove-label "$ON_SUCCESS_REMOVE_LABEL" \
             --add-label "$ON_SUCCESS_ADD_LABEL" 2>/dev/null || true
 
         # Comment on issue
-        gh issue comment "$issue_num" --body "## ✅ Pipeline Complete
+        _timeout 30 gh issue comment "$issue_num" --body "## ✅ Pipeline Complete
 
 The autonomous pipeline finished successfully.
 
@@ -471,7 +487,7 @@ Check the associated PR for the implementation." 2>/dev/null || true
 
         # Optionally close the issue
         if [[ "$ON_SUCCESS_CLOSE_ISSUE" == "true" ]]; then
-            gh issue close "$issue_num" 2>/dev/null || true
+            _timeout 30 gh issue close "$issue_num" 2>/dev/null || true
         fi
     fi
 

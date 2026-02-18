@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-16T21:15:04Z",
+  "timestamp": "2026-02-18T02:51:51Z",
   "repository": "shipwright",
   "counts": {
     "hardcoded": 58,
-    "fallback": 54,
-    "todo": 37,
+    "fallback": 55,
+    "todo": 39,
     "fixme": 19,
     "hack": 17
   },
@@ -39,35 +39,35 @@
     },
     {
       "file": "scripts/sw-scale.sh",
-      "line": 229
+      "line": 231
     },
     {
       "file": "scripts/sw-scale.sh",
-      "line": 184
+      "line": 186
     },
     {
       "file": "scripts/sw-scale.sh",
-      "line": 210
+      "line": 212
     },
     {
       "file": "scripts/sw-recruit.sh",
-      "line": 347
+      "line": 350
     },
     {
       "file": "scripts/sw-recruit.sh",
-      "line": 1085
+      "line": 1092
     },
     {
       "file": "scripts/sw-recruit.sh",
-      "line": 1607
+      "line": 1620
     },
     {
       "file": "scripts/sw-recruit.sh",
-      "line": 1730
+      "line": 1744
     },
     {
       "file": "scripts/sw-checkpoint.sh",
-      "line": 2024
+      "line": 2039
     },
     {
       "file": "scripts/sw-intelligence-test.sh",
@@ -91,15 +91,15 @@
     },
     {
       "file": "scripts/sw-predictive.sh",
-      "line": 394
+      "line": 396
     },
     {
       "file": "scripts/sw-predictive.sh",
-      "line": 398
+      "line": 400
     },
     {
       "file": "scripts/sw-connect.sh",
-      "line": 427
+      "line": 429
     },
     {
       "file": "scripts/sw-pipeline.sh",
@@ -107,21 +107,21 @@
     },
     {
       "file": "scripts/sw-pipeline.sh",
-      "line": 817
+      "line": 825
     }
   ],
   "script_size_hotspots": [
     {
       "script": "sw-recruit.sh",
-      "lines": 2636
+      "lines": 2652
     },
     {
       "script": "sw-loop.sh",
-      "lines": 2492
+      "lines": 2593
     },
     {
       "script": "sw-pipeline.sh",
-      "lines": 2434
+      "lines": 2491
     },
     {
       "script": "sw-daemon-test.sh",
@@ -133,11 +133,11 @@
     },
     {
       "script": "sw-prep.sh",
-      "lines": 1657
+      "lines": 1658
     },
     {
       "script": "sw-memory.sh",
-      "lines": 1634
+      "lines": 1643
     },
     {
       "script": "sw-recruit-test.sh",
@@ -153,23 +153,23 @@
     },
     {
       "script": "sw-daemon.sh",
-      "lines": 1351
+      "lines": 1343
     },
     {
       "script": "sw-self-optimize.sh",
-      "lines": 1195
+      "lines": 1307
     },
     {
       "script": "sw-intelligence.sh",
-      "lines": 1191
+      "lines": 1195
     },
     {
       "script": "sw-doctor.sh",
-      "lines": 1086
+      "lines": 1093
     },
     {
       "script": "sw-pipeline-vitals.sh",
-      "lines": 1082
+      "lines": 1080
     }
   ]
 }

@@ -118,7 +118,7 @@ FIXTURE
 
     # Create fixture: team config for dashboard
     cat > "$TEMP_DIR/home/.shipwright/team-config.json" <<'FIXTURE'
-{"dashboard_url":"http://localhost:3000"}
+{"dashboard_url":"http://localhost:8767"}
 FIXTURE
 
     export PATH="$TEMP_DIR/bin:$PATH"

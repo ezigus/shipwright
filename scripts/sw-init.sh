@@ -33,14 +33,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 CYAN="${CYAN:-\033[38;2;0;212;255m}"
 PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
 BLUE="${BLUE:-\033[38;2;0;102;255m}"
@@ -111,7 +103,7 @@ if [[ "$REPAIR_MODE" == "true" ]]; then
     # Strip legacy overlay source lines from user's tmux.conf
     if [[ -f "$HOME/.tmux.conf" ]] && grep -q "claude-teams-overlay" "$HOME/.tmux.conf" 2>/dev/null; then
         tmp=$(mktemp)
-        grep -v "claude-teams-overlay" "$HOME/.tmux.conf" > "$tmp" && mv "$tmp" "$HOME/.tmux.conf"
+        grep -v "claude-teams-overlay" "$HOME/.tmux.conf" > "$tmp" && mv "$tmp" "$HOME/.tmux.conf" || rm -f "$tmp"
         success "Removed legacy claude-teams-overlay references from ~/.tmux.conf"
     fi
 fi
@@ -498,11 +490,11 @@ if [[ -f "$SETTINGS_FILE" ]]; then
         success "Agent teams already enabled in settings.json"
     else
         # Try to add using jq
-        if jq -e '.env' "$SETTINGS_FILE" &>/dev/null 2>&1; then
+        if jq -e '.env' "$SETTINGS_FILE" >/dev/null 2>&1; then
             tmp=$(mktemp)
             jq '.env["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"] = "1"' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
             success "Enabled agent teams in existing settings.json"
-        elif jq -e '.' "$SETTINGS_FILE" &>/dev/null 2>&1; then
+        elif jq -e '.' "$SETTINGS_FILE" >/dev/null 2>&1; then
             tmp=$(mktemp)
             jq '. + {"env": {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"}}' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
             success "Added agent teams env to settings.json"
@@ -557,17 +549,17 @@ fi
 
 # ─── Wire Hooks into settings.json ──────────────────────────────────────────
 # Ensure each installed hook has a matching event config in settings.json
-if [[ -f "$SETTINGS_FILE" ]] && jq -e '.' "$SETTINGS_FILE" &>/dev/null; then
+if [[ -f "$SETTINGS_FILE" ]] && jq -e '.' "$SETTINGS_FILE" >/dev/null 2>&1; then
     hooks_wired=0
 
     # Ensure .hooks object exists
-    if ! jq -e '.hooks' "$SETTINGS_FILE" &>/dev/null; then
+    if ! jq -e '.hooks' "$SETTINGS_FILE" >/dev/null 2>&1; then
         tmp=$(mktemp)
         jq '.hooks = {}' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
     fi
 
     # TeammateIdle
-    if [[ -f "$CLAUDE_DIR/hooks/teammate-idle.sh" ]] && ! jq -e '.hooks.TeammateIdle' "$SETTINGS_FILE" &>/dev/null; then
+    if [[ -f "$CLAUDE_DIR/hooks/teammate-idle.sh" ]] && ! jq -e '.hooks.TeammateIdle' "$SETTINGS_FILE" >/dev/null 2>&1; then
         tmp=$(mktemp)
         jq '.hooks.TeammateIdle = [{"hooks": [{"type": "command", "command": "~/.claude/hooks/teammate-idle.sh", "timeout": 30, "statusMessage": "Running typecheck before idle..."}]}]' \
             "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
@@ -575,7 +567,7 @@ if [[ -f "$SETTINGS_FILE" ]] && jq -e '.' "$SETTINGS_FILE" &>/dev/null; then
     fi
 
     # TaskCompleted
-    if [[ -f "$CLAUDE_DIR/hooks/task-completed.sh" ]] && ! jq -e '.hooks.TaskCompleted' "$SETTINGS_FILE" &>/dev/null; then
+    if [[ -f "$CLAUDE_DIR/hooks/task-completed.sh" ]] && ! jq -e '.hooks.TaskCompleted' "$SETTINGS_FILE" >/dev/null 2>&1; then
         tmp=$(mktemp)
         jq '.hooks.TaskCompleted = [{"hooks": [{"type": "command", "command": "~/.claude/hooks/task-completed.sh", "timeout": 60, "statusMessage": "Running quality checks..."}]}]' \
             "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
@@ -583,7 +575,7 @@ if [[ -f "$SETTINGS_FILE" ]] && jq -e '.' "$SETTINGS_FILE" &>/dev/null; then
     fi
 
     # Notification
-    if [[ -f "$CLAUDE_DIR/hooks/notify-idle.sh" ]] && ! jq -e '.hooks.Notification' "$SETTINGS_FILE" &>/dev/null; then
+    if [[ -f "$CLAUDE_DIR/hooks/notify-idle.sh" ]] && ! jq -e '.hooks.Notification' "$SETTINGS_FILE" >/dev/null 2>&1; then
         tmp=$(mktemp)
         jq '.hooks.Notification = [{"hooks": [{"type": "command", "command": "~/.claude/hooks/notify-idle.sh", "async": true}]}]' \
             "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
@@ -591,7 +583,7 @@ if [[ -f "$SETTINGS_FILE" ]] && jq -e '.' "$SETTINGS_FILE" &>/dev/null; then
     fi
 
     # PreCompact
-    if [[ -f "$CLAUDE_DIR/hooks/pre-compact-save.sh" ]] && ! jq -e '.hooks.PreCompact' "$SETTINGS_FILE" &>/dev/null; then
+    if [[ -f "$CLAUDE_DIR/hooks/pre-compact-save.sh" ]] && ! jq -e '.hooks.PreCompact' "$SETTINGS_FILE" >/dev/null 2>&1; then
         tmp=$(mktemp)
         jq '.hooks.PreCompact = [{"matcher": "auto", "hooks": [{"type": "command", "command": "~/.claude/hooks/pre-compact-save.sh", "statusMessage": "Saving context before compaction..."}]}]' \
             "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
@@ -599,7 +591,7 @@ if [[ -f "$SETTINGS_FILE" ]] && jq -e '.' "$SETTINGS_FILE" &>/dev/null; then
     fi
 
     # SessionStart
-    if [[ -f "$CLAUDE_DIR/hooks/session-start.sh" ]] && ! jq -e '.hooks.SessionStart' "$SETTINGS_FILE" &>/dev/null; then
+    if [[ -f "$CLAUDE_DIR/hooks/session-start.sh" ]] && ! jq -e '.hooks.SessionStart' "$SETTINGS_FILE" >/dev/null 2>&1; then
         tmp=$(mktemp)
         jq '.hooks.SessionStart = [{"hooks": [{"type": "command", "command": "~/.claude/hooks/session-start.sh", "timeout": 5}]}]' \
             "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
@@ -649,8 +641,8 @@ fi
 
 # ─── GitHub CLI Authentication ────────────────────────────────────────────────
 # gh auth is required for daemon, pipeline, PR creation, and issue management
-if command -v gh &>/dev/null; then
-    if gh auth status &>/dev/null 2>&1; then
+if command -v gh >/dev/null 2>&1; then
+    if gh auth status >/dev/null 2>&1; then
         success "GitHub CLI authenticated"
     else
         warn "GitHub CLI installed but not authenticated"
@@ -674,13 +666,13 @@ if [[ -n "${TMUX:-}" ]]; then
 fi
 
 # ─── Bun (required for dashboard) ──────────────────────────────────────────
-if command -v bun &>/dev/null || [[ -x "$HOME/.bun/bin/bun" ]]; then
+if command -v bun >/dev/null 2>&1 || [[ -x "$HOME/.bun/bin/bun" ]]; then
     _bun_cmd="bun"
     [[ -x "$HOME/.bun/bin/bun" ]] && _bun_cmd="$HOME/.bun/bin/bun"
     success "Bun $($_bun_cmd --version 2>/dev/null || echo "installed") — dashboard ready"
 else
     info "Installing Bun (required for ${BOLD}shipwright dashboard${RESET})..."
-    if curl -fsSL https://bun.sh/install | bash 2>/dev/null; then
+    if curl -fsSL --connect-timeout 10 --max-time 120 https://bun.sh/install | bash 2>/dev/null; then
         export PATH="$HOME/.bun/bin:$PATH"
         success "Bun installed — dashboard ready"
     else

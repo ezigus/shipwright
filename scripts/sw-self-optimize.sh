@@ -64,13 +64,13 @@ ensure_optimization_dir() {
 # ─── GitHub Metrics ──────────────────────────────────────────────────────
 
 _optimize_github_metrics() {
-    type _gh_detect_repo &>/dev/null 2>&1 || { echo "{}"; return 0; }
+    type _gh_detect_repo >/dev/null 2>&1 || { echo "{}"; return 0; }
     _gh_detect_repo 2>/dev/null || { echo "{}"; return 0; }
 
     local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
     [[ -z "$owner" || -z "$repo" ]] && { echo "{}"; return 0; }
 
-    if type gh_actions_runs &>/dev/null 2>&1; then
+    if type gh_actions_runs >/dev/null 2>&1; then
         local runs
         runs=$(gh_actions_runs "$owner" "$repo" "" 50 2>/dev/null || echo "[]")
         local success_rate avg_duration
@@ -171,7 +171,7 @@ optimize_analyze_outcome() {
     echo "$outcome_line" >> "$OUTCOMES_FILE"
 
     # Rotate outcomes file to prevent unbounded growth
-    type rotate_jsonl &>/dev/null 2>&1 && rotate_jsonl "$OUTCOMES_FILE" 10000
+    type rotate_jsonl >/dev/null 2>&1 && rotate_jsonl "$OUTCOMES_FILE" 10000
 
     # Record GitHub CI metrics alongside outcome
     local gh_ci_metrics
@@ -223,7 +223,7 @@ optimize_ingest_retro() {
     latest_retro=$(ls -t "$retros_dir"/retro-*.json 2>/dev/null | head -1)
     [[ -z "$latest_retro" || ! -f "$latest_retro" ]] && return 0
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         warn "jq required for retro ingest — skipping"
         return 0
     fi
@@ -290,7 +290,7 @@ optimize_ingest_retro() {
         fi
     fi
 
-    type rotate_jsonl &>/dev/null 2>&1 && rotate_jsonl "$OUTCOMES_FILE" 10000
+    type rotate_jsonl >/dev/null 2>&1 && rotate_jsonl "$OUTCOMES_FILE" 10000
 
     emit_event "optimize.retro_ingested" \
         "success_rate=${success_rate:-0}" \
@@ -680,7 +680,7 @@ _optimize_apply_prediction_bias() {
     fi
 
     # Rotate validation file
-    type rotate_jsonl &>/dev/null 2>&1 && rotate_jsonl "$validation_file" 5000
+    type rotate_jsonl >/dev/null 2>&1 && rotate_jsonl "$validation_file" 5000
 }
 
 # ═════════════════════════════════════════════════════════════════════════════

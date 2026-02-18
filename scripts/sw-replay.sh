@@ -46,7 +46,7 @@ RESET="${RESET:-\033[0m}"
 
 # Check if jq is available
 check_jq() {
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required. Install with: brew install jq"
         exit 1
     fi
@@ -290,7 +290,7 @@ cmd_diff() {
         exit 1
     fi
 
-    if ! command -v git &>/dev/null; then
+    if ! command -v git >/dev/null 2>&1; then
         error "git is required for diff subcommand"
         exit 1
     fi
@@ -317,7 +317,7 @@ cmd_diff() {
 
     # Also try to find by branch name pattern
     local branch_pattern="issue-${issue}"
-    if git show-ref --verify "refs/heads/$branch_pattern" &>/dev/null; then
+    if git show-ref --verify "refs/heads/$branch_pattern" >/dev/null 2>&1; then
         echo ""
         info "Commits on branch '$branch_pattern':"
         git log "$branch_pattern" --oneline || true

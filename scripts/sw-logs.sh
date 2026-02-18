@@ -44,7 +44,7 @@ LOGS_DIR="$HOME/.shipwright/logs"
 
 # ─── Intelligence Check ──────────────────────────────────────────────────
 intelligence_available() {
-    command -v claude &>/dev/null || return 1
+    command -v claude >/dev/null 2>&1 || return 1
     local config
     for config in "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/daemon-config.json" \
                   "${HOME}/.shipwright/config.json"; do

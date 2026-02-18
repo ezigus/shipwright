@@ -133,7 +133,7 @@ scan_licenses() {
     [[ -f "$REPO_DIR/Cargo.toml" ]] && has_cargo=true
 
     # Check npm licenses
-    if $has_npm && command -v npm &>/dev/null; then
+    if $has_npm && command -v npm >/dev/null 2>&1; then
         while IFS= read -r line; do
             [[ "$line" =~ GPL|AGPL ]] && [[ ! "$line" =~ MIT|Apache|BSD ]] && \
                 add_finding "MEDIUM" "licenses" "GPL/AGPL dependency in npm project" \
@@ -173,7 +173,7 @@ scan_vulnerabilities() {
     local vuln_count=0
 
     # Check npm vulnerabilities
-    if [[ -f "$REPO_DIR/package.json" ]] && command -v npm &>/dev/null; then
+    if [[ -f "$REPO_DIR/package.json" ]] && command -v npm >/dev/null 2>&1; then
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             ((vuln_count++))
@@ -184,8 +184,8 @@ scan_vulnerabilities() {
     fi
 
     # Check pip vulnerabilities
-    if [[ -f "$REPO_DIR/requirements.txt" ]] && command -v pip &>/dev/null; then
-        if command -v safety &>/dev/null; then
+    if [[ -f "$REPO_DIR/requirements.txt" ]] && command -v pip >/dev/null 2>&1; then
+        if command -v safety >/dev/null 2>&1; then
             while IFS= read -r line; do
                 [[ -z "$line" ]] && continue
                 ((vuln_count++))
@@ -210,7 +210,7 @@ generate_sbom() {
     local sbom='{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}'
 
     # Add npm packages
-    if [[ -f "$REPO_DIR/package.json" ]] && command -v npm &>/dev/null; then
+    if [[ -f "$REPO_DIR/package.json" ]] && command -v npm >/dev/null 2>&1; then
         local npm_list
         npm_list=$(npm list --json 2>/dev/null || echo '{"dependencies":{}}')
         while IFS='=' read -r name version; do

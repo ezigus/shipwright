@@ -177,7 +177,7 @@ show_config() {
     info "Model Routing Configuration"
     echo ""
 
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         jq . "$MODEL_ROUTING_CONFIG" 2>/dev/null || cat "$MODEL_ROUTING_CONFIG"
     else
         cat "$MODEL_ROUTING_CONFIG"
@@ -196,7 +196,7 @@ set_config() {
 
     ensure_config
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required for config updates"
         return 1
     fi
@@ -330,7 +330,7 @@ configure_ab_test() {
 
     ensure_config
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required for A/B test configuration"
         return 1
     fi
@@ -370,7 +370,7 @@ show_report() {
         return 0
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required to view reports"
         return 1
     fi
@@ -432,7 +432,7 @@ show_ab_results() {
         return 0
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required to view A/B test results"
         return 1
     fi
@@ -520,7 +520,7 @@ main() {
             elif [[ "${1:-}" == "disable" ]]; then
                 # Disable A/B testing
                 ensure_config
-                if command -v jq &>/dev/null; then
+                if command -v jq >/dev/null 2>&1; then
                     local tmp_config
                     tmp_config=$(mktemp)
                     trap "rm -f '$tmp_config'" RETURN

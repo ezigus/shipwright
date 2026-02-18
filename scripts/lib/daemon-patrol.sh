@@ -45,7 +45,7 @@ daemon_patrol() {
         local findings=0
 
         # npm audit
-        if [[ -f "package.json" ]] && command -v npm &>/dev/null; then
+        if [[ -f "package.json" ]] && command -v npm >/dev/null 2>&1; then
             local audit_json
             audit_json=$(npm audit --json 2>/dev/null || true)
             if [[ -n "$audit_json" ]]; then
@@ -95,7 +95,7 @@ Auto-detected by \`shipwright daemon patrol\`." \
         fi
 
         # pip-audit
-        if [[ -f "requirements.txt" ]] && command -v pip-audit &>/dev/null; then
+        if [[ -f "requirements.txt" ]] && command -v pip-audit >/dev/null 2>&1; then
             local pip_json
             pip_json=$(pip-audit --format=json 2>/dev/null || true)
             if [[ -n "$pip_json" ]]; then
@@ -106,7 +106,7 @@ Auto-detected by \`shipwright daemon patrol\`." \
         fi
 
         # cargo audit
-        if [[ -f "Cargo.toml" ]] && command -v cargo-audit &>/dev/null; then
+        if [[ -f "Cargo.toml" ]] && command -v cargo-audit >/dev/null 2>&1; then
             local cargo_json
             cargo_json=$(cargo audit --json 2>/dev/null || true)
             if [[ -n "$cargo_json" ]]; then
@@ -117,8 +117,8 @@ Auto-detected by \`shipwright daemon patrol\`." \
         fi
 
         # Enrich with GitHub security alerts
-        if type gh_security_alerts &>/dev/null 2>&1 && [[ "${NO_GITHUB:-false}" != "true" ]]; then
-            if type _gh_detect_repo &>/dev/null 2>&1; then
+        if type gh_security_alerts >/dev/null 2>&1 && [[ "${NO_GITHUB:-false}" != "true" ]]; then
+            if type _gh_detect_repo >/dev/null 2>&1; then
                 _gh_detect_repo 2>/dev/null || true
             fi
             local gh_owner="${GH_OWNER:-}" gh_repo="${GH_REPO:-}"
@@ -135,7 +135,7 @@ Auto-detected by \`shipwright daemon patrol\`." \
         fi
 
         # Enrich with GitHub Dependabot alerts
-        if type gh_dependabot_alerts &>/dev/null 2>&1 && [[ "${NO_GITHUB:-false}" != "true" ]]; then
+        if type gh_dependabot_alerts >/dev/null 2>&1 && [[ "${NO_GITHUB:-false}" != "true" ]]; then
             local gh_owner="${GH_OWNER:-}" gh_repo="${GH_REPO:-}"
             if [[ -n "$gh_owner" && -n "$gh_repo" ]]; then
                 local dep_alerts
@@ -162,7 +162,7 @@ Auto-detected by \`shipwright daemon patrol\`." \
         daemon_log INFO "Patrol: checking for stale dependencies"
         local findings=0
 
-        if [[ -f "package.json" ]] && command -v npm &>/dev/null; then
+        if [[ -f "package.json" ]] && command -v npm >/dev/null 2>&1; then
             local outdated_json
             outdated_json=$(npm outdated --json 2>/dev/null || true)
             if [[ -n "$outdated_json" ]] && [[ "$outdated_json" != "{}" ]]; then
@@ -534,7 +534,7 @@ Auto-detected by \`shipwright daemon patrol\` on $(now_iso)." \
         failures_json=$(
             (
                 source "$memory_script" > /dev/null 2>&1 || true
-                if command -v memory_get_actionable_failures &>/dev/null; then
+                if command -v memory_get_actionable_failures >/dev/null 2>&1; then
                     memory_get_actionable_failures "$PATROL_FAILURES_THRESHOLD"
                 else
                     echo "[]"
@@ -1046,7 +1046,7 @@ Auto-detected by \`shipwright daemon patrol\` on $(now_iso)." \
     echo ""
 
     # ── Stage 2: AI-Powered Confirmation (if enabled) ──
-    if [[ "${PREDICTION_ENABLED:-false}" == "true" ]] && type patrol_ai_analyze &>/dev/null 2>&1; then
+    if [[ "${PREDICTION_ENABLED:-false}" == "true" ]] && type patrol_ai_analyze >/dev/null 2>&1; then
         daemon_log INFO "Intelligence: using AI patrol analysis (prediction enabled)"
         echo -e "  ${BOLD}AI Deep Analysis${RESET}"
         # Sample recent source files for AI analysis

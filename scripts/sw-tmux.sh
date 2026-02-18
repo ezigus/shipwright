@@ -34,14 +34,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 CYAN="${CYAN:-\033[38;2;0;212;255m}"
 PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
 BLUE="${BLUE:-\033[38;2;0;102;255m}"
@@ -73,7 +65,7 @@ tmux_doctor() {
 
     # ─── 1. tmux installed + version ─────────────────────────────────────
     echo -e "${BOLD}1. tmux Version${RESET}"
-    if ! command -v tmux &>/dev/null; then
+    if ! command -v tmux >/dev/null 2>&1; then
         check_fail "tmux not installed"
         echo -e "    ${DIM}brew install tmux  (macOS)${RESET}"
         echo -e "    ${DIM}sudo apt install tmux  (Ubuntu/Debian)${RESET}"

@@ -11,7 +11,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 CANONICAL=""
 if [[ -f "$REPO_ROOT/package.json" ]]; then
-  if command -v jq &>/dev/null; then
+  if command -v jq >/dev/null 2>&1; then
     CANONICAL="$(jq -r .version "$REPO_ROOT/package.json")"
   else
     CANONICAL="$(grep -oE '"version":\s*"[^"]+"' "$REPO_ROOT/package.json" | head -1 | sed 's/.*"\([^"]*\)".*/\1/')"

@@ -64,7 +64,7 @@ emit_event() {
     shift
 
     # Try SQLite first (via sw-db.sh's db_add_event)
-    if type db_add_event &>/dev/null; then
+    if type db_add_event >/dev/null 2>&1; then
         db_add_event "$event_type" "$@" 2>/dev/null || true
     fi
 
@@ -85,7 +85,7 @@ emit_event() {
     # Use flock to prevent concurrent write corruption
     local _lock_file="${EVENTS_FILE}.lock"
     (
-        if command -v flock &>/dev/null; then
+        if command -v flock >/dev/null 2>&1; then
             flock -w 2 200 2>/dev/null || true
         fi
         echo "$_event_line" >> "$EVENTS_FILE"

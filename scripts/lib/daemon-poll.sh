@@ -692,7 +692,7 @@ daemon_auto_scale() {
 
     # ── Vitals-driven scaling factor ──
     local max_by_vitals="$MAX_WORKERS"
-    if type pipeline_compute_vitals &>/dev/null 2>&1 && [[ -f "$STATE_FILE" ]]; then
+    if type pipeline_compute_vitals >/dev/null 2>&1 && [[ -f "$STATE_FILE" ]]; then
         local _total_health=0 _health_count=0
         while IFS= read -r _job; do
             local _job_issue _job_worktree
@@ -813,7 +813,7 @@ daemon_self_optimize() {
     fi
 
     # ── Intelligence-powered optimization (if enabled) ──
-    if [[ "${OPTIMIZATION_ENABLED:-false}" == "true" ]] && type optimize_full_analysis &>/dev/null 2>&1; then
+    if [[ "${OPTIMIZATION_ENABLED:-false}" == "true" ]] && type optimize_full_analysis >/dev/null 2>&1; then
         daemon_log INFO "Running intelligence-powered optimization"
         optimize_full_analysis 2>/dev/null || {
             daemon_log WARN "Intelligence optimization failed — falling back to DORA-based tuning"
@@ -968,7 +968,7 @@ daemon_cleanup_stale() {
     now_e=$(now_epoch)
 
     # ── 1. Clean old git worktrees ──
-    if command -v git &>/dev/null; then
+    if command -v git >/dev/null 2>&1; then
         while IFS= read -r line; do
             local wt_path
             wt_path=$(echo "$line" | awk '{print $1}')
@@ -976,7 +976,7 @@ daemon_cleanup_stale() {
             [[ "$wt_path" == *"daemon-issue-"* ]] || continue
             # Check worktree age via directory mtime
             local mtime
-            mtime=$(stat -f '%m' "$wt_path" 2>/dev/null || stat -c '%Y' "$wt_path" 2>/dev/null || echo "0")
+            mtime=$(file_mtime "$wt_path")
             if [[ $((now_e - mtime)) -gt $age_secs ]]; then
                 daemon_log INFO "Removing stale worktree: ${wt_path}"
                 git worktree remove "$wt_path" --force 2>/dev/null || true
@@ -1003,7 +1003,7 @@ daemon_cleanup_stale() {
         while IFS= read -r artifact_dir; do
             [[ -d "$artifact_dir" ]] || continue
             local mtime
-            mtime=$(stat -f '%m' "$artifact_dir" 2>/dev/null || stat -c '%Y' "$artifact_dir" 2>/dev/null || echo "0")
+            mtime=$(file_mtime "$artifact_dir")
             if [[ $((now_e - mtime)) -gt $age_secs ]]; then
                 daemon_log INFO "Removing stale artifact: ${artifact_dir}"
                 rm -rf "$artifact_dir"
@@ -1013,7 +1013,7 @@ daemon_cleanup_stale() {
     fi
 
     # ── 3. Clean orphaned daemon/* branches (no matching worktree or active job) ──
-    if command -v git &>/dev/null; then
+    if command -v git >/dev/null 2>&1; then
         while IFS= read -r branch; do
             [[ -z "$branch" ]] && continue
             branch="${branch## }"  # trim leading spaces
@@ -1075,7 +1075,7 @@ daemon_cleanup_stale() {
         ps_status=$(sed -n 's/^status: *//p' "$pipeline_state" 2>/dev/null | head -1 | tr -d ' ')
         if [[ "$ps_status" == "running" ]]; then
             local ps_mtime
-            ps_mtime=$(stat -f '%m' "$pipeline_state" 2>/dev/null || stat -c '%Y' "$pipeline_state" 2>/dev/null || echo "0")
+            ps_mtime=$(file_mtime "$pipeline_state")
             local ps_age=$((now_e - ps_mtime))
             # If pipeline-state.md has been "running" for more than 2 hours and no active job
             if [[ "$ps_age" -gt 7200 ]]; then
@@ -1098,7 +1098,7 @@ daemon_cleanup_stale() {
     fi
 
     # ── 7. Clean remote branches for merged pipeline/* branches ──
-    if command -v git &>/dev/null && [[ "${NO_GITHUB:-}" != "true" ]]; then
+    if command -v git >/dev/null 2>&1 && [[ "${NO_GITHUB:-}" != "true" ]]; then
         while IFS= read -r branch; do
             [[ -z "$branch" ]] && continue
             branch="${branch## }"

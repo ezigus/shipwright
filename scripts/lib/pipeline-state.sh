@@ -191,7 +191,7 @@ mark_stage_complete() {
     fi
 
     # Update GitHub Check Run for this stage
-    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_stage_update &>/dev/null 2>&1; then
+    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_stage_update >/dev/null 2>&1; then
         gh_checks_stage_update "$stage_id" "completed" "success" "Stage $stage_id: ${timing}" 2>/dev/null || true
     fi
 
@@ -215,7 +215,7 @@ mark_stage_complete() {
     fi
 
     # Durable WAL: publish stage completion event
-    if type publish_event &>/dev/null 2>&1; then
+    if type publish_event >/dev/null 2>&1; then
         publish_event "stage.complete" "{\"stage\":\"${stage_id}\",\"issue\":\"${ISSUE_NUMBER:-0}\",\"timing\":\"${timing}\"}" 2>/dev/null || true
     fi
 }
@@ -350,7 +350,7 @@ $(tail -5 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null || echo 'No log availabl
     fi
 
     # Update GitHub Check Run for this stage
-    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_stage_update &>/dev/null 2>&1; then
+    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_stage_update >/dev/null 2>&1; then
         local fail_summary
         fail_summary=$(tail -3 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null | head -c 500 || echo "Stage $stage_id failed")
         gh_checks_stage_update "$stage_id" "completed" "failure" "$fail_summary" 2>/dev/null || true
@@ -368,7 +368,7 @@ $(tail -5 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null || echo 'No log availabl
     fi
 
     # Durable WAL: publish stage failure event
-    if type publish_event &>/dev/null 2>&1; then
+    if type publish_event >/dev/null 2>&1; then
         publish_event "stage.failed" "{\"stage\":\"${stage_id}\",\"issue\":\"${ISSUE_NUMBER:-0}\",\"timing\":\"${timing}\"}" 2>/dev/null || true
     fi
 }

@@ -23,9 +23,9 @@ FAIL=0
 SKIP=0
 TOTAL=0
 
-test_pass() { ((PASS++)); ((TOTAL++)); echo -e "  ${GREEN}✓${RESET} $1"; }
-test_fail() { ((FAIL++)); ((TOTAL++)); echo -e "  ${RED}✗${RESET} $1"; echo -e "    ${DIM}$2${RESET}"; }
-test_skip() { ((SKIP++)); ((TOTAL++)); echo -e "  ${YELLOW}○${RESET} $1 (skipped)"; }
+test_pass() { PASS=$((PASS + 1)); TOTAL=$((TOTAL + 1)); echo -e "  ${GREEN}✓${RESET} $1"; }
+test_fail() { FAIL=$((FAIL + 1)); TOTAL=$((TOTAL + 1)); echo -e "  ${RED}✗${RESET} $1"; echo -e "    ${DIM}$2${RESET}"; }
+test_skip() { SKIP=$((SKIP + 1)); TOTAL=$((TOTAL + 1)); echo -e "  ${YELLOW}○${RESET} $1 (skipped)"; }
 
 # ─── Mock Data Setup ──────────────────────────────────────────────────
 MOCK_DIR="$(mktemp -d)"

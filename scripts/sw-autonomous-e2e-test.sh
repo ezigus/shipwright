@@ -22,8 +22,8 @@ PASS=0
 FAIL=0
 TOTAL=0
 
-test_pass() { ((PASS++)); ((TOTAL++)); echo -e "  ${GREEN}✓${RESET} $1"; }
-test_fail() { ((FAIL++)); ((TOTAL++)); echo -e "  ${RED}✗${RESET} $1"; echo -e "    ${DIM}$2${RESET}"; }
+test_pass() { PASS=$((PASS + 1)); TOTAL=$((TOTAL + 1)); echo -e "  ${GREEN}✓${RESET} $1"; }
+test_fail() { FAIL=$((FAIL + 1)); TOTAL=$((TOTAL + 1)); echo -e "  ${RED}✗${RESET} $1"; echo -e "    ${DIM}$2${RESET}"; }
 
 # ─── Mock Environment ─────────────────────────────────────────────────
 MOCK_DIR="$(mktemp -d)"

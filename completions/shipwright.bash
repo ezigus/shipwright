@@ -10,7 +10,7 @@ _shipwright_completions() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Top-level commands (includes groups and flat commands)
-    local commands="agent quality observe release intel init setup session status ps logs templates doctor cleanup reaper upgrade loop pipeline worktree prep daemon fleet memory cost db fix dashboard jira linear tracker heartbeat checkpoint webhook decompose connect remote launchd intelligence optimize predict adversarial simulate architecture vitals docs tmux github checks deploys pr context help version"
+    local commands="agent quality observe release intel init setup session status ps logs templates doctor cleanup reaper upgrade loop pipeline worktree prep daemon fleet memory cost db fix dashboard jira linear tracker heartbeat checkpoint webhook decompose connect remote launchd intelligence optimize predict adversarial simulation architecture vitals docs tmux github checks deploys pr context help version"
 
     case "$prev" in
         shipwright|sw)
@@ -30,7 +30,7 @@ _shipwright_completions() {
             return 0
             ;;
         release)
-            COMPREPLY=( $(compgen -W "release release-manager changelog deploy" -- "$cur") )
+            COMPREPLY=( $(compgen -W "release release-manager changelog deploy build" -- "$cur") )
             return 0
             ;;
         intel)
@@ -119,10 +119,6 @@ _shipwright_completions() {
             ;;
         pr)
             COMPREPLY=( $(compgen -W "review merge cleanup feedback" -- "$cur") )
-            return 0
-            ;;
-        budget)
-            COMPREPLY=( $(compgen -W "set show" -- "$cur") )
             return 0
             ;;
     esac

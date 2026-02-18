@@ -749,7 +749,7 @@ pipeline_record_quality_score() {
     rm -f "$tmp_score"
 
     # Rotate quality scores file to prevent unbounded growth
-    type rotate_jsonl &>/dev/null 2>&1 && rotate_jsonl "$scores_file" 5000
+    type rotate_jsonl >/dev/null 2>&1 && rotate_jsonl "$scores_file" 5000
 
     emit_event "pipeline.quality_score_recorded" \
         "issue=${ISSUE_NUMBER:-0}" \
@@ -1117,7 +1117,7 @@ stage_compound_quality() {
 
     # Intelligent audit selection
     local audit_plan='{"adversarial":"targeted","architecture":"targeted","simulation":"targeted","security":"targeted","dod":"targeted"}'
-    if type pipeline_select_audits &>/dev/null 2>&1; then
+    if type pipeline_select_audits >/dev/null 2>&1; then
         local _selected
         _selected=$(pipeline_select_audits 2>/dev/null) || true
         if [[ -n "$_selected" && "$_selected" != "null" ]]; then
@@ -1205,9 +1205,9 @@ stage_compound_quality() {
 
     # Vitals-driven adaptive cycle limit (preferred)
     local base_max_cycles="$max_cycles"
-    if type pipeline_adaptive_limit &>/dev/null 2>&1; then
+    if type pipeline_adaptive_limit >/dev/null 2>&1; then
         local _cq_vitals=""
-        if type pipeline_compute_vitals &>/dev/null 2>&1; then
+        if type pipeline_compute_vitals >/dev/null 2>&1; then
             _cq_vitals=$(pipeline_compute_vitals "$STATE_FILE" "$ARTIFACTS_DIR" "${ISSUE_NUMBER:-}" 2>/dev/null) || true
         fi
         local vitals_cq_limit
@@ -1270,7 +1270,7 @@ stage_compound_quality() {
         fi
 
         # 3. Developer Simulation (intelligence module)
-        if type simulation_review &>/dev/null 2>&1; then
+        if type simulation_review >/dev/null 2>&1; then
             local sim_enabled
             sim_enabled=$(jq -r '.intelligence.simulation_enabled // false' "$PIPELINE_CONFIG" 2>/dev/null || echo "false")
             local daemon_cfg="${PROJECT_ROOT}/.claude/daemon-config.json"
@@ -1310,7 +1310,7 @@ stage_compound_quality() {
         fi
 
         # 4. Architecture Enforcer (intelligence module)
-        if type architecture_validate_changes &>/dev/null 2>&1; then
+        if type architecture_validate_changes >/dev/null 2>&1; then
             local arch_enabled
             arch_enabled=$(jq -r '.intelligence.architecture_enabled // false' "$PIPELINE_CONFIG" 2>/dev/null || echo "false")
             local daemon_cfg="${PROJECT_ROOT}/.claude/daemon-config.json"
@@ -1474,7 +1474,7 @@ All quality checks clean:
 
             # DoD verification on successful pass
             local _dod_pass_rate=100
-            if type pipeline_verify_dod &>/dev/null 2>&1; then
+            if type pipeline_verify_dod >/dev/null 2>&1; then
                 pipeline_verify_dod "$ARTIFACTS_DIR" 2>/dev/null || true
                 if [[ -f "$ARTIFACTS_DIR/dod-verification.json" ]]; then
                     _dod_pass_rate=$(jq -r '.pass_rate // 100' "$ARTIFACTS_DIR/dod-verification.json" 2>/dev/null || echo "100")
@@ -1496,7 +1496,7 @@ All quality checks clean:
 
             # DoD verification on successful pass
             local _dod_pass_rate=100
-            if type pipeline_verify_dod &>/dev/null 2>&1; then
+            if type pipeline_verify_dod >/dev/null 2>&1; then
                 pipeline_verify_dod "$ARTIFACTS_DIR" 2>/dev/null || true
                 if [[ -f "$ARTIFACTS_DIR/dod-verification.json" ]]; then
                     _dod_pass_rate=$(jq -r '.pass_rate // 100' "$ARTIFACTS_DIR/dod-verification.json" 2>/dev/null || echo "100")
@@ -1590,7 +1590,7 @@ All quality checks clean:
 
     # DoD verification
     local _dod_pass_rate=0
-    if type pipeline_verify_dod &>/dev/null 2>&1; then
+    if type pipeline_verify_dod >/dev/null 2>&1; then
         pipeline_verify_dod "$ARTIFACTS_DIR" 2>/dev/null || true
         if [[ -f "$ARTIFACTS_DIR/dod-verification.json" ]]; then
             _dod_pass_rate=$(jq -r '.pass_rate // 0' "$ARTIFACTS_DIR/dod-verification.json" 2>/dev/null || echo "0")

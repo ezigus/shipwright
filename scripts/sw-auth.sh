@@ -65,7 +65,7 @@ ensure_auth_dir() {
 # Returns device_code, user_code, interval, expires_in
 initiate_device_flow() {
     local response
-    response=$(curl -s -X POST \
+    response=$(curl -s --connect-timeout 10 --max-time 30 -X POST \
         -H "Accept: application/json" \
         "${API_ENDPOINT}/login/device/code" \
         -d "client_id=${OAUTH_CLIENT_ID}&scope=read:user%20user:email" 2>/dev/null) || {
@@ -113,7 +113,7 @@ poll_for_token() {
         fi
 
         local response
-        response=$(curl -s -X POST \
+        response=$(curl -s --connect-timeout 10 --max-time 30 -X POST \
             -H "Accept: application/json" \
             "${API_ENDPOINT}/login/oauth/access_token" \
             -d "client_id=${OAUTH_CLIENT_ID}&device_code=${device_code}&grant_type=urn:ietf:params:oauth:grant-type:device_code" 2>/dev/null) || {
@@ -161,7 +161,7 @@ fetch_user_info() {
     local token="$1"
     local response
 
-    response=$(curl -s -H "Authorization: Bearer ${token}" \
+    response=$(curl -s --connect-timeout 10 --max-time 30 -H "Authorization: Bearer ${token}" \
         -H "Accept: application/vnd.github.v3+json" \
         "${API_ENDPOINT}/user" 2>/dev/null) || {
         error "Failed to fetch user info"
@@ -182,7 +182,7 @@ fetch_user_info() {
 validate_token() {
     local token="$1"
 
-    if ! curl -s -f \
+    if ! curl -s -f --connect-timeout 10 --max-time 30 \
         -H "Authorization: Bearer ${token}" \
         -H "Accept: application/vnd.github.v3+json" \
         "${API_ENDPOINT}/user" >/dev/null 2>&1; then

@@ -131,21 +131,13 @@ try {
   }
 
   // Print success banner
-  const version = JSON.parse(
-    readFileSync(join(PKG_DIR, "package.json"), "utf8"),
-  ).version;
   console.log();
-  console.log(`${CYAN}${BOLD}  ⚓ Shipwright v${version} installed${RESET}`);
-  console.log();
-  console.log(`  Next steps:`);
+  console.log(`${GREEN}${BOLD}Shipwright CLI installed!${RESET} Next steps:`);
   console.log(
-    `  ${DIM}$${RESET} shipwright doctor     ${DIM}# Verify your setup${RESET}`,
+    `  ${DIM}shipwright init${RESET}    ${DIM}# Set up tmux, hooks, and templates${RESET}`,
   );
   console.log(
-    `  ${DIM}$${RESET} shipwright session    ${DIM}# Launch an agent team${RESET}`,
-  );
-  console.log(
-    `  ${DIM}$${RESET} shipwright pipeline   ${DIM}# Run a delivery pipeline${RESET}`,
+    `  ${DIM}shipwright doctor${RESET}  ${DIM}# Verify your setup${RESET}`,
   );
   console.log();
 } catch (err) {

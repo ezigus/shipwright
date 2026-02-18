@@ -186,6 +186,77 @@ else
     assert_fail "WEIGHT_CONVERGENCE defined"
 fi
 
+# ─── Test 7: Source and test _compute_momentum with known data ─────────────────
+echo ""
+echo -e "${DIM}  _compute_momentum${RESET}"
+# Create progress file with known snapshots
+progress_file="$TEMP_DIR/home/.shipwright/progress/issue-1.json"
+mkdir -p "$(dirname "$progress_file")"
+cat > "$progress_file" <<'PROGEOF'
+{
+  "snapshots": [
+    {"stage": "intake", "iteration": 0, "diff_lines": 0, "ts": "2024-01-01T00:00:00Z"},
+    {"stage": "build", "iteration": 1, "diff_lines": 50, "ts": "2024-01-01T00:01:00Z"},
+    {"stage": "build", "iteration": 2, "diff_lines": 120, "ts": "2024-01-01T00:02:00Z"}
+  ],
+  "no_progress_count": 0
+}
+PROGEOF
+# Source script and call _compute_momentum (needs SCRIPT_DIR, compat, helpers)
+result=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEMP_DIR/home" bash -c '
+source "$SCRIPT_DIR/lib/compat.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/sw-pipeline-vitals.sh" 2>/dev/null || true
+_compute_momentum "$HOME/.shipwright/progress/issue-1.json" "build" 3 150
+' 2>/dev/null)
+if [[ -n "$result" && "$result" =~ ^[0-9]+$ && "$result" -ge 0 && "$result" -le 100 ]]; then
+    assert_pass "_compute_momentum returns numeric score 0-100 (got: $result)"
+else
+    assert_fail "_compute_momentum returns numeric score" "got: $result"
+fi
+
+# ─── Test 8: _compute_convergence with known quality data ─────────────────────
+echo ""
+echo -e "${DIM}  _compute_convergence${RESET}"
+err_log="$TEMP_DIR/home/.shipwright/progress/issue-1-errors.log"
+touch "$err_log"
+conv_result=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEMP_DIR/home" bash -c '
+source "$SCRIPT_DIR/lib/compat.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/sw-pipeline-vitals.sh" 2>/dev/null || true
+_compute_convergence /dev/null "$HOME/.shipwright/progress/issue-1.json"
+' 2>/dev/null)
+if [[ -n "$conv_result" && "$conv_result" =~ ^[0-9]+$ ]]; then
+    assert_pass "_compute_convergence returns numeric score (got: $conv_result)"
+else
+    assert_fail "_compute_convergence returns numeric score" "got: $conv_result"
+fi
+
+# ─── Test 9: pipeline_health_verdict returns valid verdicts ──────────────────
+echo ""
+echo -e "${DIM}  pipeline_health_verdict${RESET}"
+for score in 80 55 35 15; do
+    v=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" bash -c '
+    source "$SCRIPT_DIR/sw-pipeline-vitals.sh" 2>/dev/null || true
+    pipeline_health_verdict '"$score"'
+    ' 2>/dev/null)
+    if [[ "$v" == "continue" || "$v" == "warn" || "$v" == "intervene" || "$v" == "abort" ]]; then
+        assert_pass "pipeline_health_verdict($score) returns valid verdict: $v"
+    else
+        assert_fail "pipeline_health_verdict($score) returns valid verdict" "got: $v"
+    fi
+done
+
+# ─── Test 10: WEIGHT_ constants are numeric ───────────────────────────────────
+for w in WEIGHT_MOMENTUM WEIGHT_CONVERGENCE WEIGHT_BUDGET WEIGHT_ERROR_MATURITY; do
+    val=$(grep -E "^${w}=" "$SCRIPT_DIR/sw-pipeline-vitals.sh" | head -1 | grep -oE '[0-9]+' | head -1)
+    if [[ -n "$val" && "$val" =~ ^[0-9]+$ ]]; then
+        assert_pass "$w is numeric ($val)"
+    else
+        assert_fail "$w is numeric"
+    fi
+done
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

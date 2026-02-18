@@ -10,15 +10,15 @@ quality_check_security() {
     local tool_found=false
 
     # Try npm audit
-    if [[ -f "package.json" ]] && command -v npm &>/dev/null; then
+    if [[ -f "package.json" ]] && command -v npm >/dev/null 2>&1; then
         tool_found=true
         npm audit --production 2>&1 | tee "$audit_log" || audit_exit=$?
     # Try pip-audit
-    elif [[ -f "requirements.txt" || -f "pyproject.toml" ]] && command -v pip-audit &>/dev/null; then
+    elif [[ -f "requirements.txt" || -f "pyproject.toml" ]] && command -v pip-audit >/dev/null 2>&1; then
         tool_found=true
         pip-audit 2>&1 | tee "$audit_log" || audit_exit=$?
     # Try cargo audit
-    elif [[ -f "Cargo.toml" ]] && command -v cargo-audit &>/dev/null; then
+    elif [[ -f "Cargo.toml" ]] && command -v cargo-audit >/dev/null 2>&1; then
         tool_found=true
         cargo audit 2>&1 | tee "$audit_log" || audit_exit=$?
     fi
@@ -170,7 +170,7 @@ quality_check_bundle_size() {
     mv "$tmp_bundle_hist" "$bundle_history_file" 2>/dev/null || true
 
     # Intelligence: identify top dependency bloaters
-    if type intelligence_search_memory &>/dev/null 2>&1 && [[ -f "package.json" ]] && command -v jq &>/dev/null; then
+    if type intelligence_search_memory >/dev/null 2>&1 && [[ -f "package.json" ]] && command -v jq >/dev/null 2>&1; then
         local dep_sizes=""
         local deps
         deps=$(jq -r '.dependencies // {} | keys[]' package.json 2>/dev/null || true)
@@ -237,7 +237,7 @@ quality_check_perf_regression() {
         if [[ -f "$daemon_cfg" ]]; then
             intel_enabled=$(jq -r '.intelligence.enabled // false' "$daemon_cfg" 2>/dev/null || echo "false")
         fi
-        if [[ "$intel_enabled" == "true" ]] && command -v claude &>/dev/null; then
+        if [[ "$intel_enabled" == "true" ]] && command -v claude >/dev/null 2>&1; then
             local tail_output
             tail_output=$(tail -30 "$test_log" 2>/dev/null || true)
             if [[ -n "$tail_output" ]]; then
@@ -378,7 +378,7 @@ quality_check_api_compat() {
 
     # Check for breaking changes: removed endpoints, changed methods
     local removed_endpoints=""
-    if command -v jq &>/dev/null && [[ "$spec_file" == *.json ]]; then
+    if command -v jq >/dev/null 2>&1 && [[ "$spec_file" == *.json ]]; then
         local old_paths new_paths
         old_paths=$(echo "$old_spec" | jq -r '.paths | keys[]' 2>/dev/null | sort || true)
         new_paths=$(jq -r '.paths | keys[]' "$spec_file" 2>/dev/null | sort || true)
@@ -387,7 +387,7 @@ quality_check_api_compat() {
 
     # Enhanced schema diff: parameter changes, response schema, auth changes
     local param_changes="" schema_changes=""
-    if command -v jq &>/dev/null && [[ "$spec_file" == *.json ]]; then
+    if command -v jq >/dev/null 2>&1 && [[ "$spec_file" == *.json ]]; then
         # Detect parameter changes on existing endpoints
         local common_paths
         common_paths=$(comm -12 <(echo "$old_spec" | jq -r '.paths | keys[]' 2>/dev/null | sort) <(jq -r '.paths | keys[]' "$spec_file" 2>/dev/null | sort) 2>/dev/null || true)
@@ -407,7 +407,7 @@ quality_check_api_compat() {
 
     # Intelligence: semantic API diff for complex changes
     local semantic_diff=""
-    if type intelligence_search_memory &>/dev/null 2>&1 && command -v claude &>/dev/null; then
+    if type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
         local spec_git_diff
         spec_git_diff=$(git diff "${BASE_BRANCH}...HEAD" -- "$spec_file" 2>/dev/null | head -200 || true)
         if [[ -n "$spec_git_diff" ]]; then
@@ -441,7 +441,7 @@ ${spec_git_diff}" --model haiku < /dev/null 2>/dev/null || true)
     if [[ -n "$removed_endpoints" || -n "$param_changes" ]]; then
         local issue_count=0
         [[ -n "$removed_endpoints" ]] && issue_count=$((issue_count + $(echo "$removed_endpoints" | wc -l | xargs)))
-        [[ -n "$param_changes" ]] && issue_count=$((issue_count + $(echo "$param_changes" | grep -c '.' || true)))
+        [[ -n "$param_changes" ]] && issue_count=$((issue_count + $(echo "$param_changes" | grep -c '.' 2>/dev/null || echo "0")))
         warn "API breaking changes: ${issue_count} issue(s) found"
         return 1
     fi
@@ -470,7 +470,7 @@ quality_check_coverage() {
         if [[ -f "$daemon_cfg_cov" ]]; then
             intel_enabled_cov=$(jq -r '.intelligence.enabled // false' "$daemon_cfg_cov" 2>/dev/null || echo "false")
         fi
-        if [[ "$intel_enabled_cov" == "true" ]] && command -v claude &>/dev/null; then
+        if [[ "$intel_enabled_cov" == "true" ]] && command -v claude >/dev/null 2>&1; then
             local tail_cov_output
             tail_cov_output=$(tail -40 "$test_log" 2>/dev/null || true)
             if [[ -n "$tail_cov_output" ]]; then
@@ -559,7 +559,7 @@ run_adversarial_review() {
     fi
 
     # Delegate to sw-adversarial.sh module when available (uses intelligence cache)
-    if type adversarial_review &>/dev/null 2>&1; then
+    if type adversarial_review >/dev/null 2>&1; then
         info "Using intelligence-backed adversarial review..."
         local json_result
         json_result=$(adversarial_review "$diff_content" "${GOAL:-}" 2>/dev/null || echo "[]")
@@ -605,7 +605,7 @@ run_adversarial_review() {
 
     # Inject previous adversarial findings from memory
     local adv_memory=""
-    if type intelligence_search_memory &>/dev/null 2>&1; then
+    if type intelligence_search_memory >/dev/null 2>&1; then
         adv_memory=$(intelligence_search_memory "adversarial review security findings for: ${GOAL:-}" "${HOME}/.shipwright/memory" 5 2>/dev/null) || true
     fi
 
@@ -676,7 +676,7 @@ $(head -200 "$file" 2>/dev/null || true)
 
     # Inject previous negative prompting findings from memory
     local neg_memory=""
-    if type intelligence_search_memory &>/dev/null 2>&1; then
+    if type intelligence_search_memory >/dev/null 2>&1; then
         neg_memory=$(intelligence_search_memory "negative prompting findings common concerns for: ${GOAL:-}" "${HOME}/.shipwright/memory" 5 2>/dev/null) || true
     fi
 
@@ -990,7 +990,7 @@ run_atomic_write_check() {
 
         # Check for direct redirection writes (> file) in state/config paths
         local bad_writes
-        bad_writes=$(git show "HEAD:$filepath" 2>/dev/null | grep -c 'echo.*>' "$filepath" 2>/dev/null || true)
+        bad_writes=$(git show "HEAD:$filepath" 2>/dev/null | grep -c 'echo.*>' 2>/dev/null || echo "0")
 
         if [[ "$bad_writes" -gt 0 ]]; then
             violations=$((violations + bad_writes))

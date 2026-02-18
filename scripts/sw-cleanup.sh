@@ -281,7 +281,7 @@ if [[ -d "$HEARTBEAT_DIR" ]]; then
 
     while IFS= read -r hb_file; do
         [[ -f "$hb_file" ]] || continue
-        hb_mtime=$(stat -f '%m' "$hb_file" 2>/dev/null || stat -c '%Y' "$hb_file" 2>/dev/null || echo "0")
+        hb_mtime=$(file_mtime "$hb_file")
         if [[ $((now_e - hb_mtime)) -gt $stale_threshold ]]; then
             HEARTBEATS_FOUND=$((HEARTBEATS_FOUND + 1))
             hb_name=$(basename "$hb_file" .json)
@@ -310,7 +310,7 @@ echo ""
 echo -e "${BOLD}Orphaned Branches${RESET}  ${DIM}pipeline/* and daemon/*${RESET}"
 echo -e "${DIM}────────────────────────────────────────${RESET}"
 
-if command -v git &>/dev/null && git rev-parse --is-inside-work-tree &>/dev/null; then
+if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     # Collect active worktree paths
     active_worktrees=""
     while IFS= read -r wt_line; do

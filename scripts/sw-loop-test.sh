@@ -304,6 +304,18 @@ else
     assert_fail "_extract_text_from_json helper defined"
 fi
 
+# ─── Test 15b: validate_claude_output and check_budget_gate exist ───────────
+if grep -q 'validate_claude_output()' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "validate_claude_output helper defined"
+else
+    assert_fail "validate_claude_output helper defined"
+fi
+if grep -q 'check_budget_gate()' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "check_budget_gate helper defined"
+else
+    assert_fail "check_budget_gate helper defined"
+fi
+
 # ─── Test 16: run_claude_iteration separates stdout/stderr ───────────────────
 if grep -q '2>"$err_file"' "$SCRIPT_DIR/sw-loop.sh"; then
     assert_pass "run_claude_iteration separates stdout from stderr"
@@ -350,6 +362,87 @@ else
     assert_fail "_extract_text_from_json passes through plain text" "expected 'plain text' in $tmpdir/out3.log"
 fi
 rm -rf "$tmpdir"
+
+# ─── Test 20: Default configuration values from source ─────────────────────────
+echo ""
+echo -e "${DIM}  default config from source${RESET}"
+max_iter_line=$(grep -E '^MAX_ITERATIONS=' "$SCRIPT_DIR/sw-loop.sh" | head -1)
+if [[ "$max_iter_line" =~ 20 ]]; then
+    assert_pass "Default MAX_ITERATIONS is 20 (from source)"
+else
+    assert_fail "Default MAX_ITERATIONS is 20 (from source)" "got: $max_iter_line"
+fi
+if grep -qE '^AGENTS=' "$SCRIPT_DIR/sw-loop.sh" && grep -q 'AGENTS=1' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Default AGENTS is 1 (from source)"
+else
+    assert_fail "Default AGENTS is 1 (from source)"
+fi
+if grep -qE '^MAX_RESTARTS=' "$SCRIPT_DIR/sw-loop.sh" && grep -q 'MAX_RESTARTS=0' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Default MAX_RESTARTS is 0 (from source)"
+else
+    assert_fail "Default MAX_RESTARTS is 0 (from source)"
+fi
+
+# ─── Test 21: _extract_text_from_json — nested objects and binary ─────────────
+echo ""
+echo -e "${DIM}  json extraction edge cases${RESET}"
+_extract_fn=$(sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")
+tmpdir2=$(mktemp -d)
+bash -c "
+warn() { :; }
+$_extract_fn
+# Nested JSON array with objects
+echo '[{\"type\":\"result\",\"result\":\"Nested extraction works\",\"usage\":{\"input_tokens\":50}}]' > '$tmpdir2/nested.json'
+_extract_text_from_json '$tmpdir2/nested.json' '$tmpdir2/nested_out.log' ''
+# Binary garbage — should not crash, pass through or handle
+printf '\x00\x01\x02\xff\xfe' > '$tmpdir2/binary.dat'
+_extract_text_from_json '$tmpdir2/binary.dat' '$tmpdir2/binary_out.log' ''
+" 2>/dev/null
+
+if grep -q "Nested extraction works" "$tmpdir2/nested_out.log" 2>/dev/null; then
+    assert_pass "_extract_text_from_json handles nested JSON objects"
+else
+    assert_fail "_extract_text_from_json handles nested JSON objects" "expected 'Nested extraction works'"
+fi
+# Binary input should not crash; output may be raw or placeholder
+if [[ -f "$tmpdir2/binary_out.log" ]]; then
+    assert_pass "_extract_text_from_json handles binary garbage without crash"
+else
+    assert_fail "_extract_text_from_json handles binary garbage without crash"
+fi
+rm -rf "$tmpdir2"
+
+# ─── Test 22: Script structure — circuit breaker, stuckness, test gate ────────
+echo ""
+echo -e "${DIM}  script structure${RESET}"
+if grep -qE 'check_circuit_breaker|CIRCUIT_BREAKER' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Script has circuit breaker logic"
+else
+    assert_fail "Script has circuit breaker logic"
+fi
+if grep -qE 'detect_stuckness|stuckness' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Script has stuckness detection"
+else
+    assert_fail "Script has stuckness detection"
+fi
+if grep -qE 'run_test_gate|run_quality_gates' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Script has test/quality gate functions"
+else
+    assert_fail "Script has test/quality gate functions"
+fi
+
+# ─── Test 23: --help key flags defined in show_help ────────────────────────────
+# (Actual help output assertions are in Test 2 above)
+if grep -qF -- '--model' "$SCRIPT_DIR/sw-loop.sh" && grep -qF -- '--agents' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Help text defines --model and --agents flags"
+else
+    assert_fail "Help text defines --model and --agents flags"
+fi
+if grep -qF -- '--test-cmd' "$SCRIPT_DIR/sw-loop.sh" && grep -qF -- '--resume' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Help text defines --test-cmd and --resume flags"
+else
+    assert_fail "Help text defines --test-cmd and --resume flags"
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS

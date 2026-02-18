@@ -25,14 +25,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 CYAN="${CYAN:-\033[38;2;0;212;255m}"
 PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
 BLUE="${BLUE:-\033[38;2;0;102;255m}"
@@ -141,7 +133,7 @@ process_webhook_event() {
 
 # Check if nc (netcat) is available
 check_nc() {
-    if ! command -v nc &>/dev/null; then
+    if ! command -v nc >/dev/null 2>&1; then
         error "netcat (nc) is required but not installed"
         echo -e "  ${DIM}brew install netcat${RESET}  (macOS)"
         echo -e "  ${DIM}sudo apt install netcat-openbsd${RESET}  (Ubuntu/Debian)"
@@ -254,17 +246,20 @@ webhook_server_bash() {
                 local method path protocol
                 read -r method path protocol <<< "$request_line"
 
-                # Read headers until blank line
-                local -A headers
+                # Read headers until blank line (Bash 3.2 compatible — no associative arrays)
                 local header_line content_length=0
+                local hdr_signature="" hdr_event_type=""
                 while read -r -u 3 -t 0.1 header_line; do
                     [[ -z "$header_line" || "$header_line" == $'\r' ]] && break
                     local key="${header_line%%:*}"
                     local value="${header_line#*:}"
                     value="${value#[[:space:]]}"
                     value="${value%$'\r'}"
-                    headers["$key"]="$value"
-                    [[ "${key,,}" == "content-length" ]] && content_length="$value"
+                    local key_lower
+                    key_lower=$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')
+                    [[ "$key_lower" == "content-length" ]] && content_length="$value"
+                    [[ "$key_lower" == "x-hub-signature-256" ]] && hdr_signature="$value"
+                    [[ "$key_lower" == "x-github-event" ]] && hdr_event_type="$value"
                 done 2>/dev/null || true
 
                 # Read body if content-length > 0
@@ -275,8 +270,8 @@ webhook_server_bash() {
 
                 # Process webhook if method is POST
                 if [[ "$method" == "POST" && "$path" == "/webhook" ]]; then
-                    local signature="${headers[X-Hub-Signature-256]:-}"
-                    local event_type="${headers[X-Github-Event]:-}"
+                    local signature="$hdr_signature"
+                    local event_type="$hdr_event_type"
 
                     if validate_webhook_signature "$body" "$signature"; then
                         if process_webhook_event "$body" "$event_type"; then
@@ -331,7 +326,7 @@ cmd_setup() {
     info "Webhook endpoint: http://localhost:${WEBHOOK_PORT}/webhook"
 
     # Check if gh CLI is available
-    if ! command -v gh &>/dev/null; then
+    if ! command -v gh >/dev/null 2>&1; then
         error "GitHub CLI (gh) is required but not installed"
         return 1
     fi
@@ -345,7 +340,7 @@ cmd_setup() {
         -f "url=http://localhost:${WEBHOOK_PORT}/webhook" \
         -F "events=issues" \
         -f "config[content_type]=json" \
-        -f "config[secret]=${secret}" 2>&1); then
+        -f "config[secret]=${secret}" --timeout 30 2>&1); then
 
         local hook_id
         hook_id=$(echo "$webhook_response" | jq -r '.id // empty' 2>/dev/null || true)
@@ -403,7 +398,7 @@ cmd_test() {
         return 1
     fi
 
-    if ! command -v gh &>/dev/null; then
+    if ! command -v gh >/dev/null 2>&1; then
         error "GitHub CLI (gh) is required"
         return 1
     fi
@@ -440,7 +435,7 @@ cmd_test() {
     if gh api "repos/${org_repo}/hooks/tests" \
         -H "Accept: application/vnd.github+json" \
         -X POST \
-        2>&1 | grep -q "Test hook sent"; then
+        --timeout 30 2>&1 | grep -q "Test hook sent"; then
         success "Test ping sent to GitHub"
     else
         warn "Could not send test via GitHub API, but payload is valid:"

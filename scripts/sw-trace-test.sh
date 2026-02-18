@@ -27,17 +27,18 @@ setup_env() {
     if command -v jq &>/dev/null; then
         ln -sf "$(command -v jq)" "$TEMP_DIR/bin/jq"
     fi
-    cat > "$TEMP_DIR/bin/git" <<'MOCK'
+    MOCK_REPO_DIR="$TEMP_DIR/mock-repo"
+    cat > "$TEMP_DIR/bin/git" <<MOCK
 #!/usr/bin/env bash
-case "${1:-}" in
+case "\${1:-}" in
     rev-parse)
-        if [[ "${2:-}" == "--show-toplevel" ]]; then echo "/tmp/mock-repo"
-        elif [[ "${2:-}" == "--is-inside-work-tree" ]]; then echo "true"
+        if [[ "\${2:-}" == "--show-toplevel" ]]; then echo "$MOCK_REPO_DIR"
+        elif [[ "\${2:-}" == "--is-inside-work-tree" ]]; then echo "true"
         else echo "abc1234"; fi ;;
     log) echo "abc1234 fix: something" ;;
     branch)
-        if [[ "${2:-}" == "-r" ]]; then echo ""
-        elif [[ "${2:-}" == "--show-current" ]]; then echo "main"
+        if [[ "\${2:-}" == "-r" ]]; then echo ""
+        elif [[ "\${2:-}" == "--show-current" ]]; then echo "main"
         else echo ""; fi ;;
     show-ref) exit 1 ;;
     worktree) echo "" ;;
@@ -65,8 +66,7 @@ esac
 exit 0
 MOCK
     chmod +x "$TEMP_DIR/bin/gh"
-    # Create mock .claude directory
-    mkdir -p "/tmp/mock-repo/.claude/pipeline-artifacts"
+    mkdir -p "$MOCK_REPO_DIR/.claude/pipeline-artifacts"
     export PATH="$TEMP_DIR/bin:$PATH"
     export HOME="$TEMP_DIR/home"
     export NO_GITHUB=true
@@ -74,7 +74,6 @@ MOCK
 
 cleanup_env() {
     [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
-    rm -rf "/tmp/mock-repo" 2>/dev/null || true
 }
 trap cleanup_env EXIT
 

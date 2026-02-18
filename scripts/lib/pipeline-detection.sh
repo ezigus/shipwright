@@ -101,7 +101,7 @@ detect_project_lang() {
     fi
 
     # Intelligence: holistic analysis for polyglot/monorepo detection
-    if [[ "$detected" == "unknown" ]] && type intelligence_search_memory &>/dev/null 2>&1 && command -v claude &>/dev/null; then
+    if [[ "$detected" == "unknown" ]] && type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
         local config_files
         config_files=$(ls "$root" 2>/dev/null | grep -E '\.(json|toml|yaml|yml|xml|gradle|lock|mod)$' | head -15)
         if [[ -n "$config_files" ]]; then
@@ -221,7 +221,7 @@ detect_task_type() {
     local goal="$1"
 
     # Intelligence: Claude classification with confidence score
-    if type intelligence_search_memory &>/dev/null 2>&1 && command -v claude &>/dev/null; then
+    if type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
         local ai_result
         ai_result=$(claude --print --output-format text -p "Classify this task into exactly ONE category. Reply in format: CATEGORY|CONFIDENCE (0-100)
 

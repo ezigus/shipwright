@@ -11,7 +11,7 @@ _DAEMON_HEALTH_LOADED=1
 daemon_health_timeout_for_stage() {
     local stage="${1:-unknown}"
     local fallback="${2:-120}"
-    if type policy_get &>/dev/null 2>&1; then
+    if type policy_get >/dev/null 2>&1; then
         local policy_val
         policy_val=$(policy_get ".daemon.stage_timeouts.$stage" "")
         if [[ -n "$policy_val" && "$policy_val" =~ ^[0-9]+$ ]]; then

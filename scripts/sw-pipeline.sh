@@ -30,14 +30,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 CYAN="${CYAN:-\033[38;2;0;212;255m}"
 PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
 BLUE="${BLUE:-\033[38;2;0;102;255m}"
@@ -199,33 +191,6 @@ load_composed_pipeline() {
     return 0
 }
 
-# ─── Structured Event Log ──────────────────────────────────────────────────
-# Appends JSON events to ~/.shipwright/events.jsonl for metrics/traceability
-
-EVENTS_DIR="${HOME}/.shipwright"
-EVENTS_FILE="${EVENTS_DIR}/events.jsonl"
-
-emit_event() {
-    local event_type="$1"
-    shift
-    # Remaining args are key=value pairs
-    local json_fields=""
-    for kv in "$@"; do
-        local key="${kv%%=*}"
-        local val="${kv#*=}"
-        # Numbers: don't quote; strings: quote
-        if [[ "$val" =~ ^-?[0-9]+\.?[0-9]*$ ]]; then
-            json_fields="${json_fields},\"${key}\":${val}"
-        else
-            # Escape quotes in value
-            val="${val//\"/\\\"}"
-            json_fields="${json_fields},\"${key}\":\"${val}\""
-        fi
-    done
-    mkdir -p "$EVENTS_DIR"
-    echo "{\"ts\":\"$(now_iso)\",\"ts_epoch\":$(now_epoch),\"type\":\"${event_type}\"${json_fields}}" >> "$EVENTS_FILE"
-}
-
 # ─── Token / Cost Parsing ─────────────────────────────────────────────────
 parse_claude_tokens() {
     local log_file="$1"
@@ -260,6 +225,7 @@ CI_MODE=false
 DRY_RUN=false
 IGNORE_BUDGET=false
 COMPLETED_STAGES=""
+RESUME_FROM_CHECKPOINT=false
 MAX_ITERATIONS_OVERRIDE=""
 MAX_RESTARTS_OVERRIDE=""
 FAST_TEST_CMD_OVERRIDE=""
@@ -413,6 +379,7 @@ parse_args() {
             --ignore-budget) IGNORE_BUDGET=true; shift ;;
             --max-iterations) MAX_ITERATIONS_OVERRIDE="$2"; shift 2 ;;
             --completed-stages) COMPLETED_STAGES="$2"; shift 2 ;;
+            --resume) RESUME_FROM_CHECKPOINT=true; shift ;;
             --worktree=*) AUTO_WORKTREE=true; WORKTREE_NAME="${1#--worktree=}"; WORKTREE_NAME="${WORKTREE_NAME//[^a-zA-Z0-9_-]/}"; if [[ -z "$WORKTREE_NAME" ]]; then error "Invalid worktree name (alphanumeric, hyphens, underscores only)"; exit 1; fi; shift ;;
             --worktree)   AUTO_WORKTREE=true; shift ;;
             --dry-run)     DRY_RUN=true; shift ;;
@@ -487,11 +454,11 @@ find_pipeline_config() {
 load_pipeline_config() {
     # Check for intelligence-composed pipeline first
     local composed_pipeline="${ARTIFACTS_DIR}/composed-pipeline.json"
-    if [[ -f "$composed_pipeline" ]] && type composer_validate_pipeline &>/dev/null; then
+    if [[ -f "$composed_pipeline" ]] && type composer_validate_pipeline >/dev/null 2>&1; then
         # Use composed pipeline if fresh (< 1 hour old)
         local composed_age=99999
         local composed_mtime
-        composed_mtime=$(stat -f %m "$composed_pipeline" 2>/dev/null || stat -c %Y "$composed_pipeline" 2>/dev/null || echo "0")
+        composed_mtime=$(file_mtime "$composed_pipeline")
         if [[ "$composed_mtime" -gt 0 ]]; then
             composed_age=$(( $(now_epoch) - composed_mtime ))
         fi
@@ -574,7 +541,10 @@ ci_push_partial_work() {
     fi
 
     # Push branch (create if needed, force to overwrite previous WIP)
-    git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null || true
+    if ! git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null; then
+        warn "git push failed for $branch — remote may be out of sync"
+        emit_event "pipeline.push_failed" "branch=$branch"
+    fi
 }
 
 ci_post_stage_event() {
@@ -584,7 +554,7 @@ ci_post_stage_event() {
 
     local stage="$1" status="$2" elapsed="${3:-0s}"
     local comment="<!-- SHIPWRIGHT-STAGE: ${stage}:${status}:${elapsed} -->"
-    gh issue comment "$ISSUE_NUMBER" --body "$comment" 2>/dev/null || true
+    _timeout 30 gh issue comment "$ISSUE_NUMBER" --body "$comment" 2>/dev/null || true
 }
 
 # ─── Signal Handling ───────────────────────────────────────────────────────
@@ -620,7 +590,10 @@ cleanup_on_exit() {
 
     # Update GitHub
     if [[ -n "${ISSUE_NUMBER:-}" && "${GH_AVAILABLE:-false}" == "true" ]]; then
-        gh_comment_issue "$ISSUE_NUMBER" "⏸️ **Pipeline interrupted** at stage: ${CURRENT_STAGE_ID:-unknown}" 2>/dev/null || true
+        if ! _timeout 30 gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Pipeline interrupted** at stage: ${CURRENT_STAGE_ID:-unknown}" 2>/dev/null; then
+            warn "gh issue comment failed — status update may not have been posted"
+            emit_event "pipeline.comment_failed" "issue=$ISSUE_NUMBER"
+        fi
     fi
 
     exit "$exit_code"
@@ -641,7 +614,7 @@ preflight_checks() {
     local optional_tools=("gh" "claude" "bc" "curl")
 
     for tool in "${required_tools[@]}"; do
-        if command -v "$tool" &>/dev/null; then
+        if command -v "$tool" >/dev/null 2>&1; then
             echo -e "  ${GREEN}✓${RESET} $tool"
         else
             echo -e "  ${RED}✗${RESET} $tool ${RED}(required)${RESET}"
@@ -650,7 +623,7 @@ preflight_checks() {
     done
 
     for tool in "${optional_tools[@]}"; do
-        if command -v "$tool" &>/dev/null; then
+        if command -v "$tool" >/dev/null 2>&1; then
             echo -e "  ${GREEN}✓${RESET} $tool"
         else
             echo -e "  ${DIM}○${RESET} $tool ${DIM}(optional — some features disabled)${RESET}"
@@ -659,7 +632,7 @@ preflight_checks() {
 
     # 2. Git state
     echo ""
-    if git rev-parse --is-inside-work-tree &>/dev/null; then
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         echo -e "  ${GREEN}✓${RESET} Inside git repo"
     else
         echo -e "  ${RED}✗${RESET} Not inside a git repository"
@@ -685,7 +658,7 @@ preflight_checks() {
     fi
 
     # Check if base branch exists
-    if git rev-parse --verify "$BASE_BRANCH" &>/dev/null; then
+    if git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
         echo -e "  ${GREEN}✓${RESET} Base branch: $BASE_BRANCH"
     else
         echo -e "  ${RED}✗${RESET} Base branch not found: $BASE_BRANCH"
@@ -693,8 +666,8 @@ preflight_checks() {
     fi
 
     # 3. GitHub auth (if gh available and not disabled)
-    if [[ "$NO_GITHUB" != "true" ]] && command -v gh &>/dev/null; then
-        if gh auth status &>/dev/null 2>&1; then
+    if [[ "$NO_GITHUB" != "true" ]] && command -v gh >/dev/null 2>&1; then
+        if gh auth status >/dev/null 2>&1; then
             echo -e "  ${GREEN}✓${RESET} GitHub authenticated"
         else
             echo -e "  ${YELLOW}⚠${RESET} GitHub not authenticated (features disabled)"
@@ -702,7 +675,7 @@ preflight_checks() {
     fi
 
     # 4. Claude CLI
-    if command -v claude &>/dev/null; then
+    if command -v claude >/dev/null 2>&1; then
         echo -e "  ${GREEN}✓${RESET} Claude CLI available"
     else
         echo -e "  ${RED}✗${RESET} Claude CLI not found — plan/build stages will fail"
@@ -754,7 +727,7 @@ notify() {
         payload=$(jq -n \
             --arg text "${emoji} *${title}*\n${message}" \
             '{text: $text}')
-        curl -sf -X POST -H 'Content-Type: application/json' \
+        curl -sf --connect-timeout 10 --max-time 30 -X POST -H 'Content-Type: application/json' \
             -d "$payload" "$SLACK_WEBHOOK" >/dev/null 2>&1 || true
     fi
 
@@ -767,7 +740,7 @@ notify() {
             --arg level "$level" --arg pipeline "${PIPELINE_NAME:-}" \
             --arg goal "${GOAL:-}" --arg stage "${CURRENT_STAGE_ID:-}" \
             '{title:$title, message:$message, level:$level, pipeline:$pipeline, goal:$goal, stage:$stage}')
-        curl -sf -X POST -H 'Content-Type: application/json' \
+        curl -sf --connect-timeout 10 --max-time 30 -X POST -H 'Content-Type: application/json' \
             -d "$payload" "$_webhook_url" >/dev/null 2>&1 || true
     fi
 }
@@ -815,7 +788,7 @@ classify_error() {
     elif echo "$log_tail" | grep -qiE 'error\[E[0-9]+\]|error: aborting|FAILED.*compile|build failed|tsc.*error|eslint.*error'; then
         classification="logic"
     # Intelligence fallback: Claude classification for unknown errors
-    elif [[ "$classification" == "unknown" ]] && type intelligence_search_memory &>/dev/null 2>&1 && command -v claude &>/dev/null; then
+    elif [[ "$classification" == "unknown" ]] && type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
         local ai_class
         ai_class=$(claude --print --output-format text -p "Classify this error as exactly one of: infrastructure, configuration, logic, unknown.
 
@@ -951,9 +924,9 @@ self_healing_build_test() {
     local prev_fail_count=0 zero_convergence_streak=0
 
     # Vitals-driven adaptive limit (preferred over static BUILD_TEST_RETRIES)
-    if type pipeline_adaptive_limit &>/dev/null 2>&1; then
+    if type pipeline_adaptive_limit >/dev/null 2>&1; then
         local _vitals_json=""
-        if type pipeline_compute_vitals &>/dev/null 2>&1; then
+        if type pipeline_compute_vitals >/dev/null 2>&1; then
             _vitals_json=$(pipeline_compute_vitals "$STATE_FILE" "$ARTIFACTS_DIR" "${ISSUE_NUMBER:-}" 2>/dev/null) || true
         fi
         local vitals_limit
@@ -968,7 +941,7 @@ self_healing_build_test() {
                 "vitals_limit=$vitals_limit"
         fi
     # Fallback: intelligence-based adaptive limits
-    elif type composer_estimate_iterations &>/dev/null 2>&1; then
+    elif type composer_estimate_iterations >/dev/null 2>&1; then
         local estimated
         estimated=$(composer_estimate_iterations \
             "${INTELLIGENCE_ANALYSIS:-{}}" \
@@ -1022,7 +995,7 @@ self_healing_build_test() {
         if [[ "$cycle" -gt 1 && -n "$last_test_error" ]]; then
             # Query memory for known fixes
             local _memory_fix=""
-            if type memory_closed_loop_inject &>/dev/null 2>&1; then
+            if type memory_closed_loop_inject >/dev/null 2>&1; then
                 local _error_sig_short
                 _error_sig_short=$(echo "$last_test_error" | head -3 || echo "")
                 _memory_fix=$(memory_closed_loop_inject "$_error_sig_short" 2>/dev/null) || true
@@ -1053,7 +1026,7 @@ Focus on fixing the failing tests while keeping all passing tests working."
                 local timing
                 timing=$(get_stage_timing "build")
                 success "Stage ${BOLD}build${RESET} complete ${DIM}(${timing})${RESET}"
-                if type pipeline_emit_progress_snapshot &>/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
+                if type pipeline_emit_progress_snapshot >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
                     local _diff_count
                     _diff_count=$(git diff --stat HEAD~1 2>/dev/null | tail -1 | grep -oE '[0-9]+' | head -1) || true
                     local _snap_files _snap_error
@@ -1078,7 +1051,7 @@ Focus on fixing the failing tests while keeping all passing tests working."
                 local timing
                 timing=$(get_stage_timing "build")
                 success "Stage ${BOLD}build${RESET} complete ${DIM}(${timing})${RESET}"
-                if type pipeline_emit_progress_snapshot &>/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
+                if type pipeline_emit_progress_snapshot >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
                     local _diff_count
                     _diff_count=$(git diff --stat HEAD~1 2>/dev/null | tail -1 | grep -oE '[0-9]+' | head -1) || true
                     local _snap_files _snap_error
@@ -1109,7 +1082,7 @@ Focus on fixing the failing tests while keeping all passing tests working."
             emit_event "convergence.tests_passed" \
                 "issue=${ISSUE_NUMBER:-0}" \
                 "cycle=$cycle"
-            if type pipeline_emit_progress_snapshot &>/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
+            if type pipeline_emit_progress_snapshot >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
                 local _diff_count
                 _diff_count=$(git diff --stat HEAD~1 2>/dev/null | tail -1 | grep -oE '[0-9]+' | head -1) || true
                 local _snap_files _snap_error
@@ -1402,7 +1375,7 @@ run_pipeline() {
         fi
 
         # Intelligence: per-stage model routing with A/B testing
-        if type intelligence_recommend_model &>/dev/null 2>&1; then
+        if type intelligence_recommend_model >/dev/null 2>&1; then
             local stage_complexity="${INTELLIGENCE_COMPLEXITY:-5}"
             local budget_remaining=""
             if [[ -x "$SCRIPT_DIR/sw-cost.sh" ]]; then
@@ -1475,7 +1448,7 @@ run_pipeline() {
         emit_event "stage.started" "issue=${ISSUE_NUMBER:-0}" "stage=$id"
 
         # Mark GitHub Check Run as in-progress
-        if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_stage_update &>/dev/null 2>&1; then
+        if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_stage_update >/dev/null 2>&1; then
             gh_checks_stage_update "$id" "in_progress" "" "Stage $id started" 2>/dev/null || true
         fi
 
@@ -1621,7 +1594,7 @@ pipeline_cancel_check_runs() {
         return
     fi
 
-    if ! type gh_checks_stage_update &>/dev/null 2>&1; then
+    if ! type gh_checks_stage_update >/dev/null 2>&1; then
         return
     fi
 
@@ -1673,7 +1646,7 @@ pipeline_setup_worktree() {
 
     # Store original dir for cleanup, then cd into worktree
     ORIGINAL_REPO_DIR="$(pwd)"
-    cd "$worktree_path"
+    cd "$worktree_path" || { error "Failed to cd into worktree: $worktree_path"; return 1; }
     CLEANUP_WORKTREE=true
 
     success "Worktree ready: ${CYAN}${worktree_path}${RESET} (branch: ${branch_name})"
@@ -1807,7 +1780,7 @@ run_dry_run() {
     local optional_tools=("gh" "claude" "bc")
 
     for tool in "${required_tools[@]}"; do
-        if command -v "$tool" &>/dev/null; then
+        if command -v "$tool" >/dev/null 2>&1; then
             echo -e "  ${GREEN}✓${RESET} $tool"
         else
             echo -e "  ${RED}✗${RESET} $tool ${RED}(required)${RESET}"
@@ -1816,7 +1789,7 @@ run_dry_run() {
     done
 
     for tool in "${optional_tools[@]}"; do
-        if command -v "$tool" &>/dev/null; then
+        if command -v "$tool" >/dev/null 2>&1; then
             echo -e "  ${GREEN}✓${RESET} $tool"
         else
             echo -e "  ${DIM}○${RESET} $tool"
@@ -1852,7 +1825,7 @@ run_dry_run() {
     echo ""
 
     # Validate composed pipeline if intelligence is enabled
-    if [[ -f "$ARTIFACTS_DIR/composed-pipeline.json" ]] && type composer_validate_pipeline &>/dev/null; then
+    if [[ -f "$ARTIFACTS_DIR/composed-pipeline.json" ]] && type composer_validate_pipeline >/dev/null 2>&1; then
         echo -e "${BLUE}${BOLD}━━━ Intelligence-Composed Pipeline ━━━${RESET}"
         echo ""
 
@@ -1905,7 +1878,7 @@ pipeline_start() {
         exit 1
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required. Install it: brew install jq"
         exit 1
     fi
@@ -1942,7 +1915,61 @@ pipeline_start() {
     gh_init
 
     load_pipeline_config
-    initialize_state
+
+    # Checkpoint resume: when --resume is passed and a checkpoint exists, restore context
+    checkpoint_stage=""
+    checkpoint_iteration=0
+    if $RESUME_FROM_CHECKPOINT && [[ -d "${ARTIFACTS_DIR}/checkpoints" ]]; then
+        local cp_dir="${ARTIFACTS_DIR}/checkpoints"
+        local latest_cp="" latest_mtime=0
+        local f
+        for f in "$cp_dir"/*-checkpoint.json; do
+            [[ -f "$f" ]] || continue
+            local mtime
+            mtime=$(file_mtime "$f" 2>/dev/null || echo "0")
+            if [[ "${mtime:-0}" -gt "$latest_mtime" ]]; then
+                latest_mtime="${mtime}"
+                latest_cp="$f"
+            fi
+        done
+        if [[ -n "$latest_cp" && -x "$SCRIPT_DIR/sw-checkpoint.sh" ]]; then
+            checkpoint_stage="$(basename "$latest_cp" -checkpoint.json)"
+            local cp_json
+            cp_json="$("$SCRIPT_DIR/sw-checkpoint.sh" restore --stage "$checkpoint_stage" 2>/dev/null)" || true
+            if [[ -n "$cp_json" ]] && command -v jq >/dev/null 2>&1; then
+                checkpoint_iteration="$(echo "$cp_json" | jq -r '.iteration // 0' 2>/dev/null)" || checkpoint_iteration=0
+                info "Checkpoint resume: stage=${checkpoint_stage} iteration=${checkpoint_iteration}"
+                # Build COMPLETED_STAGES: all enabled stages before checkpoint_stage
+                local enabled_list before_list=""
+                enabled_list="$(jq -r '.stages[] | select(.enabled == true) | .id' "$PIPELINE_CONFIG" 2>/dev/null)" || true
+                local s
+                while IFS= read -r s; do
+                    [[ -z "$s" ]] && continue
+                    if [[ "$s" == "$checkpoint_stage" ]]; then
+                        break
+                    fi
+                    [[ -n "$before_list" ]] && before_list="${before_list},${s}" || before_list="$s"
+                done <<< "$enabled_list"
+                if [[ -n "$before_list" ]]; then
+                    COMPLETED_STAGES="${before_list}"
+                    SELF_HEAL_COUNT="${checkpoint_iteration}"
+                fi
+            fi
+        fi
+    fi
+
+    # Restore from state file if resuming (failed/interrupted pipeline); else initialize fresh
+    if $RESUME_FROM_CHECKPOINT && [[ -f "$STATE_FILE" ]]; then
+        local existing_status
+        existing_status="$(sed -n 's/^status: *//p' "$STATE_FILE" | head -1)"
+        if [[ "$existing_status" == "failed" || "$existing_status" == "interrupted" ]]; then
+            resume_state
+        else
+            initialize_state
+        fi
+    else
+        initialize_state
+    fi
 
     # CI resume: restore branch + goal context when intake is skipped
     if [[ -n "${COMPLETED_STAGES:-}" ]] && echo "$COMPLETED_STAGES" | tr ',' '\n' | grep -qx "intake"; then
@@ -1951,7 +1978,7 @@ pipeline_start() {
 
         # Restore GOAL from issue if not already set
         if [[ -z "$GOAL" && -n "$ISSUE_NUMBER" ]]; then
-            GOAL=$(gh issue view "$ISSUE_NUMBER" --json title -q .title 2>/dev/null || echo "Issue #${ISSUE_NUMBER}")
+            GOAL=$(_timeout 30 gh issue view "$ISSUE_NUMBER" --json title -q .title 2>/dev/null || echo "Issue #${ISSUE_NUMBER}")
             info "CI resume: goal from issue — ${GOAL}"
         fi
 
@@ -2022,7 +2049,7 @@ pipeline_start() {
     start_heartbeat
 
     # Initialize GitHub Check Runs for all pipeline stages
-    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_pipeline_start &>/dev/null 2>&1; then
+    if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_pipeline_start >/dev/null 2>&1; then
         local head_sha
         head_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
         if [[ -n "$head_sha" && -n "$REPO_OWNER" && -n "$REPO_NAME" ]]; then
@@ -2043,7 +2070,7 @@ pipeline_start() {
         "goal=${GOAL}"
 
     # Durable WAL: publish pipeline start event
-    if type publish_event &>/dev/null 2>&1; then
+    if type publish_event >/dev/null 2>&1; then
         publish_event "pipeline.started" "{\"issue\":\"${ISSUE_NUMBER:-0}\",\"pipeline\":\"${PIPELINE_NAME}\",\"goal\":\"${GOAL:0:200}\"}" 2>/dev/null || true
     fi
 
@@ -2121,7 +2148,7 @@ pipeline_start() {
         "success=$pipeline_success"
 
     # Close intelligence prediction feedback loop — validate predicted vs actual
-    if type intelligence_validate_prediction &>/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
+    if type intelligence_validate_prediction >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
         intelligence_validate_prediction \
             "$ISSUE_NUMBER" \
             "${INTELLIGENCE_COMPLEXITY:-0}" \
@@ -2167,20 +2194,20 @@ pipeline_start() {
     fi
 
     # Record pipeline outcome for model routing feedback loop
-    if type optimize_analyze_outcome &>/dev/null 2>&1; then
+    if type optimize_analyze_outcome >/dev/null 2>&1; then
         optimize_analyze_outcome "$STATE_FILE" 2>/dev/null || true
         # Tune template weights based on accumulated outcomes
-        if type optimize_tune_templates &>/dev/null 2>&1; then
+        if type optimize_tune_templates >/dev/null 2>&1; then
             optimize_tune_templates 2>/dev/null || true
         fi
     fi
 
-    if type memory_finalize_pipeline &>/dev/null 2>&1; then
+    if type memory_finalize_pipeline >/dev/null 2>&1; then
         memory_finalize_pipeline "$STATE_FILE" "$ARTIFACTS_DIR" 2>/dev/null || true
     fi
 
     # Broadcast discovery for cross-pipeline learning
-    if type broadcast_discovery &>/dev/null 2>&1; then
+    if type broadcast_discovery >/dev/null 2>&1; then
         local _disc_result="failure"
         [[ "$exit_code" -eq 0 ]] && _disc_result="success"
         local _disc_files=""

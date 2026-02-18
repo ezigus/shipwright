@@ -153,6 +153,8 @@ assert_contains "gather_context includes TOTAL_SCRIPTS" "$context_output" "TOTAL
 assert_contains "gather_context includes TOTAL_TESTS" "$context_output" "TOTAL_TESTS="
 assert_contains "gather_context includes UNTESTED_COUNT" "$context_output" "UNTESTED_COUNT="
 assert_contains "gather_context includes SUCCESS_RATE" "$context_output" "SUCCESS_RATE="
+assert_contains "gather_context includes PIPELINES_COMPLETED" "$context_output" "PIPELINES_COMPLETED="
+assert_contains "gather_context includes COMMON_FAILURES" "$context_output" "COMMON_FAILURES="
 
 # ─── Test 8: strategic_build_prompt produces prompt ──────────────────
 echo -e "${BOLD}  Prompt Building${RESET}"
@@ -160,6 +162,9 @@ prompt_output=$(strategic_build_prompt 2>/dev/null) || true
 assert_contains "build_prompt includes strategy content" "$prompt_output" "Strategy"
 assert_contains "build_prompt includes format instructions" "$prompt_output" "ISSUE_TITLE"
 assert_contains "build_prompt includes rules" "$prompt_output" "Rules"
+assert_contains "build_prompt includes Current Codebase" "$prompt_output" "Current Codebase"
+assert_contains "build_prompt includes Recent Pipeline Performance" "$prompt_output" "Recent Pipeline Performance"
+assert_contains "build_prompt includes Platform Health" "$prompt_output" "Platform Health"
 
 # ─── Test 9: strategic_parse_and_create with mock response ───────────
 echo -e "${BOLD}  Parse & Create${RESET}"
@@ -187,6 +192,17 @@ assert_contains "status shows header" "$output" "Strategic Agent Status"
 echo "{\"ts\":\"2026-02-15T10:00:00Z\",\"ts_epoch\":${local_epoch},\"type\":\"strategic.cycle_complete\",\"issues_created\":2,\"issues_skipped\":1}" > "$EVENTS_FILE"
 output=$(strategic_status 2>&1) || true
 assert_contains "status shows last run" "$output" "Last run"
+
+# ─── Test 11b: Status with full fixture (cycle + issue_created) ─────────
+cat > "$EVENTS_FILE" <<'EVFIX'
+{"ts":"2026-02-15T10:00:00Z","ts_epoch":1739617200,"type":"strategic.cycle_complete","issues_created":2,"issues_skipped":1}
+{"ts":"2026-02-15T09:00:00Z","type":"strategic.issue_created","title":"Test issue 1"}
+{"ts":"2026-02-14T10:00:00Z","type":"strategic.issue_created","title":"Test issue 2"}
+EVFIX
+output=$(strategic_status 2>&1) || true
+assert_contains "status with fixture shows Total created" "$output" "Total created"
+assert_contains "status with fixture shows Total cycles" "$output" "Total cycles"
+assert_contains "status with fixture shows Cooldown" "$output" "Cooldown"
 
 # ─── Test 12: Run without CLAUDE_CODE_OAUTH_TOKEN ────────────────────
 echo -e "${BOLD}  Run Guard${RESET}"

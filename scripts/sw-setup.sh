@@ -128,7 +128,7 @@ OPTIONAL_TOOLS=("bun")
 for tool in "${REQUIRED_TOOLS[@]}"; do
     case "$tool" in
         tmux)
-            if command -v tmux &>/dev/null; then
+            if command -v tmux >/dev/null 2>&1; then
                 TMUX_VERSION="$(tmux -V | grep -oE '[0-9]+\.[0-9a-z]+')"
                 TMUX_MAJOR="$(echo "$TMUX_VERSION" | cut -d. -f1)"
                 TMUX_MINOR="$(echo "$TMUX_VERSION" | cut -d. -f2 | tr -dc '0-9')"
@@ -153,7 +153,7 @@ for tool in "${REQUIRED_TOOLS[@]}"; do
             fi
             ;;
         git)
-            if command -v git &>/dev/null; then
+            if command -v git >/dev/null 2>&1; then
                 check_pass "git $(git --version | awk '{print $3}')"
             else
                 check_fail "git not installed"
@@ -161,7 +161,7 @@ for tool in "${REQUIRED_TOOLS[@]}"; do
             fi
             ;;
         jq)
-            if command -v jq &>/dev/null; then
+            if command -v jq >/dev/null 2>&1; then
                 check_pass "jq $(jq --version 2>&1 | tr -d 'jq-')"
             else
                 check_fail "jq not installed"
@@ -169,8 +169,8 @@ for tool in "${REQUIRED_TOOLS[@]}"; do
             fi
             ;;
         gh)
-            if command -v gh &>/dev/null; then
-                if gh auth status &>/dev/null 2>&1; then
+            if command -v gh >/dev/null 2>&1; then
+                if gh auth status >/dev/null 2>&1; then
                     GH_USER="$(gh api user -q .login 2>/dev/null || echo "authenticated")"
                     check_pass "GitHub CLI: ${GH_USER}"
                 else
@@ -183,7 +183,7 @@ for tool in "${REQUIRED_TOOLS[@]}"; do
             fi
             ;;
         claude)
-            if command -v claude &>/dev/null; then
+            if command -v claude >/dev/null 2>&1; then
                 check_pass "Claude Code CLI"
             else
                 check_fail "Claude Code CLI not found"
@@ -199,7 +199,7 @@ echo ""
 for tool in "${OPTIONAL_TOOLS[@]}"; do
     case "$tool" in
         bun)
-            if command -v bun &>/dev/null; then
+            if command -v bun >/dev/null 2>&1; then
                 check_pass "Bun (dashboard server)"
             else
                 check_warn "Bun not installed (optional — for dashboard)"

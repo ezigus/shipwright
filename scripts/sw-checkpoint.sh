@@ -399,7 +399,7 @@ cmd_expire() {
         else
             # Fallback: check file mtime
             local mtime
-            mtime=$(stat -f '%m' "$file" 2>/dev/null || stat -c '%Y' "$file" 2>/dev/null || echo "0")
+            mtime=$(file_mtime "$file")
             if [[ "$mtime" -gt 0 && $((now_e - mtime)) -gt $max_secs ]]; then
                 rm -f "$file"
                 expired=$((expired + 1))

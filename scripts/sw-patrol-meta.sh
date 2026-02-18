@@ -310,7 +310,11 @@ patrol_meta_template_effectiveness() {
         worst_template=$(echo "$template_stats" | jq -r '.[-1].template' 2>/dev/null || echo "unknown")
         worst_rate=$(echo "$template_stats" | jq -r '.[-1].rate' 2>/dev/null || echo "0")
 
-        local rate_diff=$(( ${best_rate%.*} - ${worst_rate%.*} ))
+        local best_int=${best_rate%.*}
+        local worst_int=${worst_rate%.*}
+        best_int=${best_int:-0}
+        worst_int=${worst_int:-0}
+        local rate_diff=$(( best_int - worst_int ))
 
         if [[ "$rate_diff" -gt 30 ]]; then
             patrol_meta_create_issue \

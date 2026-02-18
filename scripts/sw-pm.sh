@@ -224,7 +224,7 @@ recommend_team() {
         if [[ -n "$issue_title" ]]; then
             local recruit_result
             recruit_result=$(bash "$SCRIPT_DIR/sw-recruit.sh" team --json "$issue_title" 2>/dev/null) || true
-            if [[ -n "$recruit_result" ]] && echo "$recruit_result" | jq -e '.team' &>/dev/null 2>&1; then
+            if [[ -n "$recruit_result" ]] && echo "$recruit_result" | jq -e '.team' >/dev/null 2>&1; then
                 local recruit_roles recruit_model recruit_agents recruit_cost
                 recruit_roles=$(echo "$recruit_result" | jq -r '.team | join(",")')
                 recruit_model=$(echo "$recruit_result" | jq -r '.model // "sonnet"')

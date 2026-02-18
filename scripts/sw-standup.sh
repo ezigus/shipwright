@@ -62,7 +62,7 @@ ensure_dirs() {
 # Convert ISO 8601 timestamp to epoch seconds (works on macOS and Linux)
 iso_to_epoch() {
     local iso="$1"
-    if TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s &>/dev/null 2>&1; then
+    if TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s >/dev/null 2>&1; then
         TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null || echo 0
     else
         date -d "$iso" +%s 2>/dev/null || echo 0
@@ -533,9 +533,9 @@ cmd_notify() {
             ]
         }')
 
-    if command -v curl &>/dev/null; then
-        if curl -s -X POST -H 'Content-type: application/json' \
-            --data "$payload" "$webhook_url" &>/dev/null; then
+    if command -v curl >/dev/null 2>&1; then
+        if curl -s --connect-timeout 10 --max-time 30 -X POST -H 'Content-type: application/json' \
+            --data "$payload" "$webhook_url" >/dev/null 2>&1; then
             success "Standup delivered to webhook"
         else
             error "Failed to deliver standup to webhook"

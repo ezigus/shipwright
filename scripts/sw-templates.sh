@@ -79,7 +79,7 @@ find_template() {
 # Extract a top-level string field from JSON
 json_field() {
     local file="$1" field="$2"
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         jq -r ".${field} // \"\"" "$file" 2>/dev/null
     else
         grep -o "\"${field}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$file" | head -1 | sed 's/.*: *"//;s/"$//'
@@ -89,7 +89,7 @@ json_field() {
 # Extract agent count from JSON
 json_agent_count() {
     local file="$1"
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         jq -r '.agents // [] | length' "$file" 2>/dev/null
     else
         grep -c '"name"' "$file" 2>/dev/null || echo "0"
@@ -99,7 +99,7 @@ json_agent_count() {
 # Print agent details from a template
 print_agents() {
     local file="$1"
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         jq -r '.agents // [] | .[] | "\(.name // "?")|\(.role // "")|\(.focus // "")"' "$file" 2>/dev/null
     else
         # Best-effort grep fallback for simple cases

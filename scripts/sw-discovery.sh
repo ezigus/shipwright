@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Dependency check ─────────────────────────────────────────────────────────
-if ! command -v jq &>/dev/null; then
+if ! command -v jq >/dev/null 2>&1; then
     echo "ERROR: sw-discovery.sh requires 'jq'. Install with: brew install jq (macOS) or apt install jq (Linux)" >&2
     exit 1
 fi
@@ -91,7 +91,7 @@ broadcast_discovery() {
         '{ts: $ts, ts_epoch: $ts_epoch, pipeline_id: $pipeline_id, category: $category, file_patterns: $file_patterns, discovery: $discovery, resolution: $resolution}')
 
     echo "$entry" >> "$DISCOVERIES_FILE"
-    type rotate_jsonl &>/dev/null 2>&1 && rotate_jsonl "$DISCOVERIES_FILE" 5000
+    type rotate_jsonl >/dev/null 2>&1 && rotate_jsonl "$DISCOVERIES_FILE" 5000
     success "Broadcast discovery: ${category} (${file_patterns})"
 }
 

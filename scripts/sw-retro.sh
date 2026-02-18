@@ -25,14 +25,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
-  emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
-    while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
-  }
-fi
 CYAN="${CYAN:-\033[38;2;0;212;255m}"
 PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
 BLUE="${BLUE:-\033[38;2;0;102;255m}"
@@ -97,17 +89,17 @@ analyze_sprint_data() {
         return 0
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         error "jq is required for sprint analysis"
         return 1
     fi
 
-    # Convert dates to epoch
+    # Convert dates to epoch (GNU date -d or macOS date -jf)
     local from_epoch to_epoch
     from_epoch=$(date -u -d "${from_date}T00:00:00Z" +%s 2>/dev/null || \
-                date -u -r "$(date -d "${from_date}T00:00:00Z" +%s 2>/dev/null || echo 0)" +%s || echo 0)
+                date -u -jf "%Y-%m-%dT%H:%M:%SZ" "${from_date}T00:00:00Z" +%s 2>/dev/null || echo 0)
     to_epoch=$(date -u -d "${to_date}T23:59:59Z" +%s 2>/dev/null || \
-              date -u -r "$(date -d "${to_date}T23:59:59Z" +%s 2>/dev/null || echo 0)" +%s || echo 0)
+              date -u -jf "%Y-%m-%dT%H:%M:%SZ" "${to_date}T23:59:59Z" +%s 2>/dev/null || echo 0)
 
     jq -s --argjson from "$from_epoch" --argjson to "$to_epoch" '
         [.[] | select(.ts_epoch >= $from and .ts_epoch <= $to)] as $events |
@@ -146,7 +138,7 @@ analyze_agent_performance() {
         return 0
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         echo '{"agents":[]}'
         return 0
     fi
@@ -180,7 +172,7 @@ analyze_velocity() {
         return 0
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         echo '{"current":0,"previous":0,"trend":"→"}'
         return 0
     fi
@@ -213,7 +205,7 @@ analyze_velocity() {
 generate_improvement_actions() {
     local analysis_json="$1"
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         echo '{"actions":[]}'
         return 0
     fi
@@ -253,18 +245,18 @@ generate_improvement_actions() {
 create_action_issues() {
     local actions_json="$1"
 
-    if ! command -v gh &>/dev/null; then
+    if ! command -v gh >/dev/null 2>&1; then
         warn "GitHub CLI (gh) not found. Skipping issue creation."
         return 1
     fi
 
-    if ! command -v jq &>/dev/null; then
+    if ! command -v jq >/dev/null 2>&1; then
         warn "jq not found. Skipping issue creation."
         return 1
     fi
 
     local action_count
-    action_count=$(echo "$actions_json" | jq '.actions | length')
+    action_count=$(echo "$actions_json" | jq '.actions | length' 2>/dev/null || echo "0")
 
     for ((i = 0; i < action_count; i++)); do
         local title description label priority
@@ -367,7 +359,7 @@ generate_retro_report() {
     } > "$report_file"
 
     # Add agent stats
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         local agent_count
         agent_count=$(echo "$agent_json" | jq '.agents | length' 2>/dev/null || echo 0)
         for ((i = 0; i < agent_count; i++)); do
@@ -446,12 +438,12 @@ cmd_run() {
 
     # Display summary
     echo -e "${BOLD}Sprint Summary${RESET}"
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         local pipelines succeeded failed quality_score
-        pipelines=$(echo "$analysis" | jq -r '.pipelines')
-        succeeded=$(echo "$analysis" | jq -r '.succeeded')
-        failed=$(echo "$analysis" | jq -r '.failed')
-        quality_score=$(echo "$analysis" | jq -r '.quality_score')
+        pipelines=$(echo "$analysis" | jq -r '.pipelines // 0')
+        succeeded=$(echo "$analysis" | jq -r '.succeeded // 0')
+        failed=$(echo "$analysis" | jq -r '.failed // 0')
+        quality_score=$(echo "$analysis" | jq -r '.quality_score // 0')
 
         echo "Pipelines: $pipelines total | ${GREEN}$succeeded succeeded${RESET} | ${RED}$failed failed${RESET}"
         echo "Success Rate: ${quality_score}%"
@@ -469,7 +461,7 @@ cmd_run() {
     [[ -f "$SCRIPT_DIR/sw-self-optimize.sh" ]] && "$SCRIPT_DIR/sw-self-optimize.sh" ingest-retro || true
 
     # Offer to create issues
-    if command -v gh &>/dev/null; then
+    if command -v gh >/dev/null 2>&1; then
         echo ""
         info "Create improvement issues? (y/n)"
         read -r -t 5 response || response="n"
@@ -492,7 +484,7 @@ cmd_summary() {
     local analysis
     analysis=$(analyze_sprint_data "$from_date" "$to_date")
 
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         echo "$analysis" | jq '.'
     else
         echo "$analysis"
@@ -526,7 +518,7 @@ cmd_trends() {
         local analysis
         analysis=$(analyze_sprint_data "$start_date" "$end_date")
 
-        if command -v jq &>/dev/null; then
+        if command -v jq >/dev/null 2>&1; then
             local quality pipelines
             quality=$(echo "$analysis" | jq -r '.quality_score')
             pipelines=$(echo "$analysis" | jq -r '.pipelines')
@@ -548,7 +540,7 @@ cmd_agents() {
     local agent_perf
     agent_perf=$(analyze_agent_performance "$from_date" "$to_date")
 
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         echo "$agent_perf" | jq '.agents[] | "\(.agent): \(.completed) completed, \(.succeeded) succeeded, \(.failed) failed"' -r
     else
         echo "$agent_perf"
@@ -569,7 +561,7 @@ cmd_actions() {
     analysis=$(analyze_sprint_data "$from_date" "$to_date")
     improvements=$(generate_improvement_actions "$analysis")
 
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         echo "$improvements" | jq '.actions[] | "\(.priority | ascii_upcase): \(.title)\n  \(.description)"' -r
     else
         echo "$improvements"
@@ -592,7 +584,7 @@ cmd_compare() {
     analysis1=$(analyze_sprint_data "$period1" "$(date -u -d "${period1} + 7 days" +"%Y-%m-%d")")
     analysis2=$(analyze_sprint_data "$period2" "$(date -u -d "${period2} + 7 days" +"%Y-%m-%d")")
 
-    if command -v jq &>/dev/null; then
+    if command -v jq >/dev/null 2>&1; then
         echo "Sprint 1 (${period1}):"
         echo "$analysis1" | jq '.'
         echo ""

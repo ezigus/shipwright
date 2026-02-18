@@ -85,9 +85,9 @@ get_adaptive_heartbeat_timeout() {
 
     # Stage-specific defaults (daemon-health.sh when sourced, else policy_get, else literal)
     local default_timeout="${HEALTH_HEARTBEAT_TIMEOUT:-120}"
-    if type daemon_health_timeout_for_stage &>/dev/null 2>&1; then
+    if type daemon_health_timeout_for_stage >/dev/null 2>&1; then
         default_timeout=$(daemon_health_timeout_for_stage "$stage" "$default_timeout")
-    elif type policy_get &>/dev/null 2>&1; then
+    elif type policy_get >/dev/null 2>&1; then
         local policy_stage
         policy_stage=$(policy_get ".daemon.stage_timeouts.$stage" "")
         [[ -n "$policy_stage" && "$policy_stage" =~ ^[0-9]+$ ]] && default_timeout="$policy_stage"
@@ -385,7 +385,7 @@ daemon_assess_progress() {
         ' "$progress_file" > "$tmp_progress" 2>/dev/null && mv "$tmp_progress" "$progress_file"
 
     # ── Vitals-based verdict (preferred over static thresholds) ──
-    if type pipeline_compute_vitals &>/dev/null 2>&1 && type pipeline_health_verdict &>/dev/null 2>&1; then
+    if type pipeline_compute_vitals >/dev/null 2>&1 && type pipeline_health_verdict >/dev/null 2>&1; then
         # Compute vitals using the worktree's pipeline state if available
         local _worktree_state=""
         local _worktree_artifacts=""

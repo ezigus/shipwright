@@ -58,13 +58,13 @@ ARTIFACTS_DIR=".claude/pipeline-artifacts"
 # ─── GitHub CI History ─────────────────────────────────────────────────────
 
 _composer_github_ci_history() {
-    type _gh_detect_repo &>/dev/null 2>&1 || { echo "{}"; return 0; }
+    type _gh_detect_repo >/dev/null 2>&1 || { echo "{}"; return 0; }
     _gh_detect_repo 2>/dev/null || { echo "{}"; return 0; }
 
     local owner="${GH_OWNER:-}" repo="${GH_REPO:-}"
     [[ -z "$owner" || -z "$repo" ]] && { echo "{}"; return 0; }
 
-    if type gh_actions_runs &>/dev/null 2>&1; then
+    if type gh_actions_runs >/dev/null 2>&1; then
         local runs
         runs=$(gh_actions_runs "$owner" "$repo" "" 20 2>/dev/null || echo "[]")
         local avg_duration p90_duration
@@ -111,14 +111,14 @@ composer_create_pipeline() {
     # Try intelligence-driven composition
     if [[ "$INTELLIGENCE_AVAILABLE" == "true" ]] && \
        [[ -n "$issue_analysis" ]] && \
-       type intelligence_compose_pipeline &>/dev/null; then
+       type intelligence_compose_pipeline >/dev/null 2>&1; then
 
         info "Composing pipeline with intelligence engine..." >&2
 
         local composed=""
         composed=$(intelligence_compose_pipeline "$issue_analysis" "$repo_context" "$budget_json" 2>/dev/null) || true
 
-        if [[ -n "$composed" ]] && echo "$composed" | jq -e '.stages' &>/dev/null; then
+        if [[ -n "$composed" ]] && echo "$composed" | jq -e '.stages' >/dev/null 2>&1; then
             # Validate the composed pipeline
             if echo "$composed" | composer_validate_pipeline; then
                 # Atomic write
@@ -293,7 +293,7 @@ composer_estimate_iterations() {
     # Try intelligence-based estimation
     if [[ "$INTELLIGENCE_AVAILABLE" == "true" ]] && \
        [[ -n "$issue_analysis" ]] && \
-       type intelligence_estimate_iterations &>/dev/null; then
+       type intelligence_estimate_iterations >/dev/null 2>&1; then
 
         local estimate=""
         estimate=$(intelligence_estimate_iterations "$issue_analysis" "$historical_data" 2>/dev/null) || true
@@ -343,7 +343,7 @@ composer_validate_pipeline() {
     fi
 
     # Check: stages array exists
-    if ! echo "$pipeline_json" | jq -e '.stages' &>/dev/null; then
+    if ! echo "$pipeline_json" | jq -e '.stages' >/dev/null 2>&1; then
         error "Validation failed: missing 'stages' array"
         return 1
     fi

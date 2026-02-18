@@ -73,7 +73,7 @@ echo -e "${PURPLE}${BOLD}  PREREQUISITES${RESET}"
 echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 
 # tmux
-if command -v tmux &>/dev/null; then
+if command -v tmux >/dev/null 2>&1; then
     TMUX_VERSION="$(tmux -V | grep -oE '[0-9]+\.[0-9a-z]+')"
     TMUX_MAJOR="$(echo "$TMUX_VERSION" | cut -d. -f1)"
     TMUX_MINOR="$(echo "$TMUX_VERSION" | cut -d. -f2 | tr -dc '0-9')"
@@ -98,7 +98,7 @@ else
 fi
 
 # jq
-if command -v jq &>/dev/null; then
+if command -v jq >/dev/null 2>&1; then
     check_pass "jq $(jq --version 2>&1 | tr -d 'jq-')"
 else
     check_fail "jq not installed — required for template parsing"
@@ -107,7 +107,7 @@ else
 fi
 
 # Claude Code CLI
-if command -v claude &>/dev/null; then
+if command -v claude >/dev/null 2>&1; then
     check_pass "Claude Code CLI found"
 else
     check_fail "Claude Code CLI not found"
@@ -115,7 +115,7 @@ else
 fi
 
 # Node.js
-if command -v node &>/dev/null; then
+if command -v node >/dev/null 2>&1; then
     NODE_VERSION="$(node -v | tr -d 'v')"
     NODE_MAJOR="$(echo "$NODE_VERSION" | cut -d. -f1)"
     if [[ "$NODE_MAJOR" -ge 20 ]]; then
@@ -128,7 +128,7 @@ else
 fi
 
 # Git
-if command -v git &>/dev/null; then
+if command -v git >/dev/null 2>&1; then
     check_pass "git $(git --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
 else
     check_fail "git not found"
@@ -207,7 +207,7 @@ else
 fi
 
 # Hook wiring validation — check hooks are configured in settings.json
-if [[ -d "$HOOKS_DIR" && -f "$HOME/.claude/settings.json" ]] && jq -e '.' "$HOME/.claude/settings.json" &>/dev/null; then
+if [[ -d "$HOOKS_DIR" && -f "$HOME/.claude/settings.json" ]] && jq -e '.' "$HOME/.claude/settings.json" >/dev/null 2>&1; then
     wired=0 unwired=0 hook_total_check=0
     # Colon-separated pairs: filename:EventName (Bash 3.2 compatible)
     for pair in \
@@ -221,7 +221,7 @@ if [[ -d "$HOOKS_DIR" && -f "$HOME/.claude/settings.json" ]] && jq -e '.' "$HOME
         # Only check hooks that are actually installed
         [[ -f "$HOOKS_DIR/$hfile" ]] || continue
         hook_total_check=$((hook_total_check + 1))
-        if jq -e ".hooks.${hevent}" "$HOME/.claude/settings.json" &>/dev/null; then
+        if jq -e ".hooks.${hevent}" "$HOME/.claude/settings.json" >/dev/null 2>&1; then
             wired=$((wired + 1))
         else
             unwired=$((unwired + 1))
@@ -307,8 +307,8 @@ else
 fi
 
 # GitHub CLI
-if command -v gh &>/dev/null; then
-    if gh auth status &>/dev/null; then
+if command -v gh >/dev/null 2>&1; then
+    if gh auth status >/dev/null 2>&1; then
         GH_USER="$(gh api user -q .login 2>/dev/null || echo "authenticated")"
         check_pass "GitHub CLI: ${GH_USER}"
     else
@@ -339,7 +339,7 @@ else
 fi
 
 # Check sw subcommands are installed alongside the router
-if command -v sw &>/dev/null; then
+if command -v sw >/dev/null 2>&1; then
     SW_DIR="$(dirname "$(command -v sw)")"
     # Follow symlinks to find the actual scripts directory
     _sw_path="$(command -v sw)"
@@ -373,7 +373,7 @@ fi
 # ═════════════════════════════════════════════════════════════════════════════
 REPO_ROOT_DOC="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)"
 if [[ -n "$REPO_ROOT_DOC" && -f "$REPO_ROOT_DOC/package.json" ]] && \
-   command -v jq &>/dev/null && \
+   command -v jq >/dev/null 2>&1 && \
    [[ "$(jq -r '.name // ""' "$REPO_ROOT_DOC/package.json" 2>/dev/null)" == "shipwright-cli" ]]; then
     echo ""
     echo -e "${PURPLE}${BOLD}  VERSION CONSISTENCY${RESET} ${DIM}(Shipwright repo)${RESET}"
@@ -513,7 +513,7 @@ for dir in "${EXPECTED_DIRS[@]}"; do
 done
 
 # JSON validation for templates
-if command -v jq &>/dev/null; then
+if command -v jq >/dev/null 2>&1; then
     json_errors=0
     json_total=0
     for tpl_dir in "$HOME/.shipwright/templates" "$HOME/.shipwright/pipelines"; do
@@ -521,7 +521,7 @@ if command -v jq &>/dev/null; then
             while IFS= read -r json_file; do
                 [[ -z "$json_file" ]] && continue
                 json_total=$((json_total + 1))
-                if ! jq -e . "$json_file" &>/dev/null; then
+                if ! jq -e . "$json_file" >/dev/null 2>&1; then
                     check_fail "Invalid JSON: ${json_file/#$HOME/\~}"
                     json_errors=$((json_errors + 1))
                 fi
@@ -631,7 +631,7 @@ case "$TERM_PROGRAM" in
 esac
 
 # Check mouse window clicking (tmux 3.4+ changed the default)
-if command -v tmux &>/dev/null && [[ -n "${TMUX:-}" ]]; then
+if command -v tmux >/dev/null 2>&1 && [[ -n "${TMUX:-}" ]]; then
     MOUSE_BIND="$(tmux list-keys 2>/dev/null | grep 'MouseDown1Status' | head -1 || true)"
     if echo "$MOUSE_BIND" | grep -q 'select-window'; then
         check_pass "Mouse window click: select-window (correct)"
@@ -758,7 +758,7 @@ if [[ -f "$MACHINES_FILE" ]]; then
     if [[ "$machine_count" -gt 0 ]]; then
         check_pass "Registered machines: ${machine_count}"
         # Check SSH connectivity (quick check, 5s timeout per machine)
-        if command -v ssh &>/dev/null; then
+        if command -v ssh >/dev/null 2>&1; then
             while IFS= read -r machine; do
                 [[ -z "$machine" ]] && continue
                 m_name=$(echo "$machine" | jq -r '.name // ""')
@@ -812,7 +812,7 @@ fi
 # Check team config
 TEAM_CONFIG="$HOME/.shipwright/team-config.json"
 if [[ -f "$TEAM_CONFIG" ]]; then
-    if jq -e . "$TEAM_CONFIG" &>/dev/null; then
+    if jq -e . "$TEAM_CONFIG" >/dev/null 2>&1; then
         check_pass "Team config: valid JSON"
 
         # Check dashboard_url field
@@ -821,8 +821,8 @@ if [[ -f "$TEAM_CONFIG" ]]; then
             check_pass "Dashboard URL: configured"
 
             # Try to reach dashboard with 3s timeout
-            if command -v curl &>/dev/null; then
-                if curl -s -m 3 "${DASHBOARD_URL}/api/health" &>/dev/null; then
+            if command -v curl >/dev/null 2>&1; then
+                if curl -s -m 3 "${DASHBOARD_URL}/api/health" >/dev/null 2>&1; then
                     check_pass "Dashboard reachable: ${DASHBOARD_URL}"
                 else
                     check_warn "Dashboard unreachable: ${DASHBOARD_URL}"
@@ -845,7 +845,7 @@ fi
 # Check developer registry
 DEVELOPER_REGISTRY="$HOME/.shipwright/developer-registry.json"
 if [[ -f "$DEVELOPER_REGISTRY" ]]; then
-    if jq -e . "$DEVELOPER_REGISTRY" &>/dev/null; then
+    if jq -e . "$DEVELOPER_REGISTRY" >/dev/null 2>&1; then
         check_pass "Developer registry: exists and valid"
     else
         check_fail "Developer registry: invalid JSON"
@@ -862,8 +862,8 @@ echo ""
 echo -e "${PURPLE}${BOLD}  GITHUB INTEGRATION${RESET}"
 echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 
-if command -v gh &>/dev/null; then
-    if gh auth status &>/dev/null 2>&1; then
+if command -v gh >/dev/null 2>&1; then
+    if gh auth status >/dev/null 2>&1; then
         check_pass "gh CLI authenticated"
 
         # Check required scopes
@@ -885,7 +885,7 @@ if command -v gh &>/dev/null; then
         fi
 
         # Check GraphQL endpoint
-        if gh api graphql -f query='{viewer{login}}' &>/dev/null 2>&1; then
+        if gh api graphql -f query='{viewer{login}}' >/dev/null 2>&1; then
             check_pass "GraphQL API accessible"
         else
             check_warn "GraphQL API not accessible — intelligence enrichment will use fallbacks"
@@ -897,7 +897,7 @@ if command -v gh &>/dev/null; then
         dr_repo_owner=$(git remote get-url origin 2>/dev/null | sed -E 's#.*[:/]([^/]+)/[^/]+(\.git)?$#\1#' || echo "")
         dr_repo_name=$(git remote get-url origin 2>/dev/null | sed -E 's#.*/([^/]+)(\.git)?$#\1#' || echo "")
         if [[ -n "$dr_repo_owner" && -n "$dr_repo_name" ]]; then
-            if gh api "repos/$dr_repo_owner/$dr_repo_name/code-scanning/alerts?per_page=1" &>/dev/null 2>&1; then
+            if gh api "repos/$dr_repo_owner/$dr_repo_name/code-scanning/alerts?per_page=1" >/dev/null 2>&1; then
                 check_pass "Code scanning API accessible"
             else
                 info "  Code scanning API not available ${DIM}(may need GitHub Advanced Security)${RESET}"
@@ -944,7 +944,7 @@ echo -e "${PURPLE}${BOLD}  DASHBOARD & DEPENDENCIES${RESET}"
 echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 
 # Bun runtime
-if command -v bun &>/dev/null; then
+if command -v bun >/dev/null 2>&1; then
     bun_ver="$(bun --version 2>/dev/null || echo "unknown")"
     check_pass "bun $bun_ver"
 else
@@ -976,15 +976,15 @@ else
 fi
 
 # Port 3000 availability
-if command -v lsof &>/dev/null; then
-    if lsof -i :3000 -sTCP:LISTEN &>/dev/null 2>&1; then
+if command -v lsof >/dev/null 2>&1; then
+    if lsof -i :3000 -sTCP:LISTEN >/dev/null 2>&1; then
         dr_port_proc="$(lsof -i :3000 -sTCP:LISTEN -t 2>/dev/null | head -1 || echo "unknown")"
         check_warn "Port 3000 in use (PID: $dr_port_proc) — dashboard may need a different port"
         echo -e "    ${DIM}Use: shipwright dashboard start --port 3001${RESET}"
     else
         check_pass "Port 3000 available"
     fi
-elif command -v ss &>/dev/null; then
+elif command -v ss >/dev/null 2>&1; then
     if ss -tlnp 2>/dev/null | grep -q ':3000 '; then
         check_warn "Port 3000 in use — dashboard may need a different port"
     else
@@ -1001,7 +1001,7 @@ echo ""
 echo -e "${PURPLE}${BOLD}  DATABASE HEALTH${RESET}"
 echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 
-if command -v sqlite3 &>/dev/null; then
+if command -v sqlite3 >/dev/null 2>&1; then
     _sqlite_ver="$(sqlite3 --version 2>/dev/null | cut -d' ' -f1 || echo "unknown")"
     check_pass "sqlite3 ${_sqlite_ver}"
 
@@ -1057,7 +1057,7 @@ if [[ ! -f "$PH_FILE" ]] && [[ "$SKIP_PLATFORM_SCAN" != "true" ]]; then
         bash "$SCRIPT_DIR_DOC/sw-hygiene.sh" platform-refactor >/dev/null 2>&1 || true
     fi
 fi
-if [[ -f "$PH_FILE" ]] && command -v jq &>/dev/null; then
+if [[ -f "$PH_FILE" ]] && command -v jq >/dev/null 2>&1; then
     hc=$(jq -r '.counts.hardcoded // 0' "$PH_FILE" 2>/dev/null || echo "0")
     fb=$(jq -r '.counts.fallback // 0' "$PH_FILE" 2>/dev/null || echo "0")
     todo=$(jq -r '.counts.todo // 0' "$PH_FILE" 2>/dev/null || echo "0")

@@ -651,7 +651,7 @@ cmd_status_linux() {
     echo ""
 
     # Show recent journal entries for daemon
-    if command -v journalctl &>/dev/null; then
+    if command -v journalctl >/dev/null 2>&1; then
         echo -e "${DIM}Recent daemon logs:${RESET}"
         journalctl --user -u shipwright-daemon.service -n 3 --no-pager 2>/dev/null | tail -3 | sed 's/^/    /' || true
         echo ""

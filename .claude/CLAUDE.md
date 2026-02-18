@@ -545,7 +545,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-reaper.sh` | 411 | Automatic tmux pane cleanup when agents exit |
 | `scripts/sw-recruit.sh` | 2652 | AGI-Level Agent Recruitment & Talent Management |
 | `scripts/sw-regression.sh` | 635 | Regression Detection Pipeline |
-| `scripts/sw-release-manager.sh` | 727 | Autonomous Release Pipeline |
+| `scripts/sw-release-manager.sh` | 729 | Autonomous Release Pipeline |
 | `scripts/sw-release.sh` | 706 | Release train automation |
 | `scripts/sw-remote.sh` | 678 | Machine Registry & Remote Daemon Management |
 | `scripts/sw-replay.sh` | 532 | Pipeline run replay, timeline viewing, narratives |

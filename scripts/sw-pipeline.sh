@@ -11,7 +11,7 @@ unset CLAUDECODE 2>/dev/null || true
 # Ignore SIGHUP so tmux attach/detach doesn't kill long-running plan/design/review stages
 trap '' HUP
 
-VERSION="2.4.0"
+VERSION="2.5.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -251,6 +251,10 @@ GH_AVAILABLE=false
 # Timing
 PIPELINE_START_EPOCH=""
 STAGE_TIMINGS=""
+PIPELINE_STAGES_PASSED=""
+PIPELINE_SLOWEST_STAGE=""
+LAST_STAGE_ERROR_CLASS=""
+LAST_STAGE_ERROR=""
 
 PROJECT_ROOT=""
 STATE_DIR=""
@@ -855,14 +859,23 @@ run_stage_with_retry() {
             return 0
         fi
 
+        # Capture error_class and error snippet for stage.failed / pipeline.completed events
+        local error_class
+        error_class=$(classify_error "$stage_id")
+        LAST_STAGE_ERROR_CLASS="$error_class"
+        LAST_STAGE_ERROR=""
+        local _log_file="${ARTIFACTS_DIR}/${stage_id}-results.log"
+        [[ ! -f "$_log_file" ]] && _log_file="${ARTIFACTS_DIR}/test-results.log"
+        if [[ -f "$_log_file" ]]; then
+            LAST_STAGE_ERROR=$(tail -20 "$_log_file" 2>/dev/null | grep -iE 'error|fail|exception|fatal' 2>/dev/null | head -1 | cut -c1-200 || true)
+        fi
+
         attempt=$((attempt + 1))
         if [[ "$attempt" -gt "$max_retries" ]]; then
             return 1
         fi
 
-        # Classify the error to decide whether retry makes sense
-        local error_class
-        error_class=$(classify_error "$stage_id")
+        # Classify done above; decide whether retry makes sense
 
         emit_event "retry.classified" \
             "issue=${ISSUE_NUMBER:-0}" \
@@ -1381,8 +1394,9 @@ run_pipeline() {
             if [[ -x "$SCRIPT_DIR/sw-cost.sh" ]]; then
                 budget_remaining=$(bash "$SCRIPT_DIR/sw-cost.sh" remaining-budget 2>/dev/null || echo "")
             fi
-            local recommended_model
-            recommended_model=$(intelligence_recommend_model "$id" "$stage_complexity" "$budget_remaining" 2>/dev/null || echo "")
+            local recommended_json recommended_model
+            recommended_json=$(intelligence_recommend_model "$id" "$stage_complexity" "$budget_remaining" 2>/dev/null || echo "")
+            recommended_model=$(echo "$recommended_json" | jq -r '.model // empty' 2>/dev/null || echo "")
             if [[ -n "$recommended_model" && "$recommended_model" != "null" ]]; then
                 # A/B testing: decide whether to use the recommended model
                 local ab_ratio=20  # default 20% use recommended model
@@ -1400,10 +1414,11 @@ run_pipeline() {
                 local ab_group="control"
 
                 if [[ -f "$routing_file" ]]; then
+                    # Support .routes.stage (self-optimize) and .stage (legacy) formats
                     local stage_samples
-                    stage_samples=$(jq -r --arg s "$id" '.[$s].sonnet_samples // 0' "$routing_file" 2>/dev/null || echo "0")
+                    stage_samples=$(jq -r --arg s "$id" '.routes[$s].sonnet_samples // .[$s].sonnet_samples // 0' "$routing_file" 2>/dev/null || echo "0")
                     local total_samples
-                    total_samples=$(jq -r --arg s "$id" '((.[$s].sonnet_samples // 0) + (.[$s].opus_samples // 0))' "$routing_file" 2>/dev/null || echo "0")
+                    total_samples=$(jq -r --arg s "$id" '((.routes[$s].sonnet_samples // .[$s].sonnet_samples // 0) + (.routes[$s].opus_samples // .[$s].opus_samples // 0))' "$routing_file" 2>/dev/null || echo "0")
 
                     if [[ "$total_samples" -ge 50 ]]; then
                         # Enough data — use optimizer's recommendation as default
@@ -1464,7 +1479,7 @@ run_pipeline() {
             timing=$(get_stage_timing "$id")
             stage_dur_s=$(( $(now_epoch) - stage_start_epoch ))
             success "Stage ${BOLD}$id${RESET} complete ${DIM}(${timing})${RESET}"
-            emit_event "stage.completed" "issue=${ISSUE_NUMBER:-0}" "stage=$id" "duration_s=$stage_dur_s"
+            emit_event "stage.completed" "issue=${ISSUE_NUMBER:-0}" "stage=$id" "duration_s=$stage_dur_s" "result=success"
             # Broadcast discovery for cross-pipeline learning
             if [[ -x "$SCRIPT_DIR/sw-discovery.sh" ]]; then
                 local _disc_cat _disc_patterns _disc_text
@@ -1487,7 +1502,12 @@ run_pipeline() {
             stage_dur_s=$(( $(now_epoch) - stage_start_epoch ))
             error "Pipeline failed at stage: ${BOLD}$id${RESET}"
             update_status "failed" "$id"
-            emit_event "stage.failed" "issue=${ISSUE_NUMBER:-0}" "stage=$id" "duration_s=$stage_dur_s"
+            emit_event "stage.failed" \
+                "issue=${ISSUE_NUMBER:-0}" \
+                "stage=$id" \
+                "duration_s=$stage_dur_s" \
+                "error=${LAST_STAGE_ERROR:-unknown}" \
+                "error_class=${LAST_STAGE_ERROR_CLASS:-unknown}"
             # Log model used for prediction feedback
             echo "${id}|${stage_model_used}|false" >> "${ARTIFACTS_DIR}/model-routing.log"
             # Cancel any remaining in_progress check runs
@@ -1498,6 +1518,11 @@ run_pipeline() {
 
     # Pipeline complete!
     update_status "complete" ""
+    PIPELINE_STAGES_PASSED="$completed"
+    PIPELINE_SLOWEST_STAGE=""
+    if type get_slowest_stage >/dev/null 2>&1; then
+        PIPELINE_SLOWEST_STAGE=$(get_slowest_stage 2>/dev/null || true)
+    fi
     local total_dur=""
     if [[ -n "$PIPELINE_START_EPOCH" ]]; then
         total_dur=$(format_duration $(( $(now_epoch) - PIPELINE_START_EPOCH )))
@@ -2045,6 +2070,33 @@ pipeline_start() {
         return $?
     fi
 
+    # Capture predictions for feedback loop (intelligence → actuals → learning)
+    if type intelligence_analyze_issue >/dev/null 2>&1 && (type intelligence_estimate_iterations >/dev/null 2>&1 || type intelligence_predict_cost >/dev/null 2>&1); then
+        local issue_json="${INTELLIGENCE_ANALYSIS:-}"
+        if [[ -z "$issue_json" || "$issue_json" == "{}" ]]; then
+            if [[ -n "$ISSUE_NUMBER" ]]; then
+                issue_json=$(gh issue view "$ISSUE_NUMBER" --json number,title,body,labels 2>/dev/null || echo "{}")
+            else
+                issue_json=$(jq -n --arg title "${GOAL:-untitled}" --arg body "" '{title: $title, body: $body, labels: []}')
+            fi
+            if [[ -n "$issue_json" && "$issue_json" != "{}" ]]; then
+                issue_json=$(intelligence_analyze_issue "$issue_json" 2>/dev/null || echo "{}")
+            fi
+        fi
+        if [[ -n "$issue_json" && "$issue_json" != "{}" ]]; then
+            if type intelligence_estimate_iterations >/dev/null 2>&1; then
+                PREDICTED_ITERATIONS=$(intelligence_estimate_iterations "$issue_json" "" 2>/dev/null || echo "")
+                export PREDICTED_ITERATIONS
+            fi
+            if type intelligence_predict_cost >/dev/null 2>&1; then
+                local cost_json
+                cost_json=$(intelligence_predict_cost "$issue_json" "{}" 2>/dev/null || echo "{}")
+                PREDICTED_COST=$(echo "$cost_json" | jq -r '.estimated_cost_usd // empty' 2>/dev/null || echo "")
+                export PREDICTED_COST
+            fi
+        fi
+    fi
+
     # Start background heartbeat writer
     start_heartbeat
 
@@ -2065,6 +2117,9 @@ pipeline_start() {
 
     emit_event "pipeline.started" \
         "issue=${ISSUE_NUMBER:-0}" \
+        "template=${PIPELINE_NAME}" \
+        "complexity=${INTELLIGENCE_COMPLEXITY:-0}" \
+        "machine=$(hostname 2>/dev/null || echo "unknown")" \
         "pipeline=${PIPELINE_NAME}" \
         "model=${MODEL:-opus}" \
         "goal=${GOAL}"
@@ -2091,6 +2146,11 @@ pipeline_start() {
             "issue=${ISSUE_NUMBER:-0}" \
             "result=success" \
             "duration_s=${total_dur_s:-0}" \
+            "iterations=$((SELF_HEAL_COUNT + 1))" \
+            "template=${PIPELINE_NAME}" \
+            "complexity=${INTELLIGENCE_COMPLEXITY:-0}" \
+            "stages_passed=${PIPELINE_STAGES_PASSED:-0}" \
+            "slowest_stage=${PIPELINE_SLOWEST_STAGE:-}" \
             "pr_url=${pr_url:-}" \
             "agent_id=${PIPELINE_AGENT_ID}" \
             "input_tokens=$TOTAL_INPUT_TOKENS" \
@@ -2107,7 +2167,11 @@ pipeline_start() {
             "issue=${ISSUE_NUMBER:-0}" \
             "result=failure" \
             "duration_s=${total_dur_s:-0}" \
+            "iterations=$((SELF_HEAL_COUNT + 1))" \
+            "template=${PIPELINE_NAME}" \
+            "complexity=${INTELLIGENCE_COMPLEXITY:-0}" \
             "failed_stage=${CURRENT_STAGE_ID:-unknown}" \
+            "error_class=${LAST_STAGE_ERROR_CLASS:-unknown}" \
             "agent_id=${PIPELINE_AGENT_ID}" \
             "input_tokens=$TOTAL_INPUT_TOKENS" \
             "output_tokens=$TOTAL_OUTPUT_TOKENS" \
@@ -2156,6 +2220,12 @@ pipeline_start() {
             "$pipeline_success" 2>/dev/null || true
     fi
 
+    # Validate iterations prediction against actuals (cost validation moved below after total_cost is computed)
+    local ACTUAL_ITERATIONS=$((SELF_HEAL_COUNT + 1))
+    if [[ -n "${PREDICTED_ITERATIONS:-}" ]] && type intelligence_validate_prediction >/dev/null 2>&1; then
+        intelligence_validate_prediction "iterations" "$PREDICTED_ITERATIONS" "$ACTUAL_ITERATIONS" 2>/dev/null || true
+    fi
+
     # Close predictive anomaly feedback loop — confirm whether flagged anomalies were real
     if [[ -x "$SCRIPT_DIR/sw-predictive.sh" ]]; then
         local _actual_failure="false"
@@ -2171,7 +2241,8 @@ pipeline_start() {
         "issue=${ISSUE_NUMBER:-0}" \
         "template=${PIPELINE_NAME}" \
         "success=$pipeline_success" \
-        "duration_s=${total_dur_s:-0}"
+        "duration_s=${total_dur_s:-0}" \
+        "complexity=${INTELLIGENCE_COMPLEXITY:-0}"
 
     # Risk prediction vs actual failure
     local predicted_risk="${INTELLIGENCE_RISK_SCORE:-0}"
@@ -2196,10 +2267,16 @@ pipeline_start() {
     # Record pipeline outcome for model routing feedback loop
     if type optimize_analyze_outcome >/dev/null 2>&1; then
         optimize_analyze_outcome "$STATE_FILE" 2>/dev/null || true
-        # Tune template weights based on accumulated outcomes
-        if type optimize_tune_templates >/dev/null 2>&1; then
-            optimize_tune_templates 2>/dev/null || true
-        fi
+    fi
+
+    # Auto-learn after pipeline completion (non-blocking)
+    if type optimize_tune_templates &>/dev/null; then
+        (
+            optimize_tune_templates 2>/dev/null
+            optimize_learn_iterations 2>/dev/null
+            optimize_route_models 2>/dev/null
+            optimize_learn_risk_keywords 2>/dev/null
+        ) &
     fi
 
     if type memory_finalize_pipeline >/dev/null 2>&1; then
@@ -2235,6 +2312,11 @@ pipeline_start() {
         "output_tokens=$TOTAL_OUTPUT_TOKENS" \
         "model=$model_key" \
         "cost_usd=$total_cost"
+
+    # Validate cost prediction against actual (after total_cost is computed)
+    if [[ -n "${PREDICTED_COST:-}" ]] && type intelligence_validate_prediction >/dev/null 2>&1; then
+        intelligence_validate_prediction "cost" "$PREDICTED_COST" "$total_cost" 2>/dev/null || true
+    fi
 
     return $exit_code
 }

@@ -7,7 +7,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="2.4.0"
+VERSION="2.5.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -46,9 +46,15 @@ BOLD="${BOLD:-\033[1m}"
 RESET="${RESET:-\033[0m}"
 
 # ─── File Paths ────────────────────────────────────────────────────────────
-MODEL_ROUTING_CONFIG="${HOME}/.shipwright/model-routing.json"
-MODEL_USAGE_LOG="${HOME}/.shipwright/model-usage.jsonl"
+# Unified: prefer optimization dir (written by self-optimize), fallback to legacy
+OPTIMIZATION_DIR="${HOME}/.shipwright/optimization"
+MODEL_ROUTING_OPTIMIZATION="${OPTIMIZATION_DIR}/model-routing.json"
+MODEL_ROUTING_LEGACY="${HOME}/.shipwright/model-routing.json"
+MODEL_USAGE_LOG="${OPTIMIZATION_DIR}/model-usage.jsonl"
 AB_RESULTS_FILE="${HOME}/.shipwright/ab-results.jsonl"
+
+# Resolve which config file to use (set by _resolve_routing_config)
+MODEL_ROUTING_CONFIG=""
 
 # ─── Model Costs (per million tokens) ───────────────────────────────────────
 HAIKU_INPUT_COST="0.80"
@@ -70,9 +76,25 @@ OPUS_STAGES="plan|design|build|compound_quality"
 COMPLEXITY_LOW=30          # Below this: use sonnet
 COMPLEXITY_HIGH=80         # Above this: use opus
 
+# ─── Resolve Routing Config Path ────────────────────────────────────────────
+# Priority: optimization (self-optimize writes) > legacy > create in optimization
+_resolve_routing_config() {
+    if [[ -f "$MODEL_ROUTING_OPTIMIZATION" ]]; then
+        MODEL_ROUTING_CONFIG="$MODEL_ROUTING_OPTIMIZATION"
+        return
+    fi
+    if [[ -f "$MODEL_ROUTING_LEGACY" ]]; then
+        MODEL_ROUTING_CONFIG="$MODEL_ROUTING_LEGACY"
+        return
+    fi
+    # Neither exists — use optimization as canonical location
+    MODEL_ROUTING_CONFIG="$MODEL_ROUTING_OPTIMIZATION"
+}
+
 # ─── Ensure Config File Exists ──────────────────────────────────────────────
 ensure_config() {
-    mkdir -p "${HOME}/.shipwright"
+    _resolve_routing_config
+    mkdir -p "$(dirname "$MODEL_ROUTING_CONFIG")"
 
     if [[ ! -f "$MODEL_ROUTING_CONFIG" ]]; then
         cat > "$MODEL_ROUTING_CONFIG" <<'CONFIG'
@@ -127,24 +149,51 @@ route_model() {
     fi
 
     local model=""
+    _resolve_routing_config
 
-    # Complexity-based override (applies to all stages)
-    if [[ "$complexity" -lt "$COMPLEXITY_LOW" ]]; then
-        model="sonnet"
-    elif [[ "$complexity" -gt "$COMPLEXITY_HIGH" ]]; then
-        model="opus"
-    else
-        # Stage-based routing for medium complexity
-        if [[ "$stage" =~ $HAIKU_STAGES ]]; then
-            model="haiku"
-        elif [[ "$stage" =~ $SONNET_STAGES ]]; then
+    # Strategy 1: Optimization file (self-optimize format) — .routes.stage.model or .routes.stage.recommended
+    if [[ -n "$MODEL_ROUTING_CONFIG" && -f "$MODEL_ROUTING_CONFIG" ]] && command -v jq >/dev/null 2>&1; then
+        local from_routes
+        from_routes=$(jq -r --arg s "$stage" '.routes[$s].model // .routes[$s].recommended // .[$s].recommended // .[$s].model // empty' "$MODEL_ROUTING_CONFIG" 2>/dev/null || true)
+        if [[ -n "$from_routes" && "$from_routes" =~ ^(haiku|sonnet|opus)$ ]]; then
+            model="$from_routes"
+        fi
+        # Fallback: legacy default_routing format
+        if [[ -z "$model" ]]; then
+            local from_default
+            from_default=$(jq -r --arg s "$stage" '.default_routing[$s] // empty' "$MODEL_ROUTING_CONFIG" 2>/dev/null || true)
+            if [[ -n "$from_default" && "$from_default" =~ ^(haiku|sonnet|opus)$ ]]; then
+                model="$from_default"
+            fi
+        fi
+    fi
+
+    # Strategy 2: Built-in defaults (complexity + stage rules)
+    if [[ -z "$model" ]]; then
+        if [[ "$complexity" -lt "$COMPLEXITY_LOW" ]]; then
             model="sonnet"
-        elif [[ "$stage" =~ $OPUS_STAGES ]]; then
+        elif [[ "$complexity" -gt "$COMPLEXITY_HIGH" ]]; then
             model="opus"
         else
-            # Default to sonnet for unknown stages
-            model="sonnet"
+            if [[ "$stage" =~ $HAIKU_STAGES ]]; then
+                model="haiku"
+            elif [[ "$stage" =~ $SONNET_STAGES ]]; then
+                model="sonnet"
+            elif [[ "$stage" =~ $OPUS_STAGES ]]; then
+                model="opus"
+            else
+                model="sonnet"
+            fi
         fi
+    fi
+
+    # Complexity override: upgrade/downgrade based on complexity even when config says otherwise
+    if [[ "$complexity" -lt "$COMPLEXITY_LOW" && "$model" == "opus" ]]; then
+        model="sonnet"
+    elif [[ "$complexity" -gt "$COMPLEXITY_HIGH" && "$model" == "haiku" ]]; then
+        model="opus"
+    elif [[ "$complexity" -gt "$COMPLEXITY_HIGH" ]]; then
+        model="opus"
     fi
 
     echo "$model"
@@ -298,7 +347,7 @@ record_usage() {
     local input_tokens="${3:-0}"
     local output_tokens="${4:-0}"
 
-    mkdir -p "${HOME}/.shipwright"
+    mkdir -p "$(dirname "$MODEL_USAGE_LOG")"
 
     local cost
     cost=$(awk "BEGIN {}" ) # Calculate actual cost

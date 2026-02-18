@@ -375,6 +375,11 @@ daemon_reap_completed() {
             memory_finalize_pipeline "$_job_state" "$_job_artifacts" 2>/dev/null || true
         fi
 
+        # Trigger learning after pipeline reap
+        if type optimize_full_analysis &>/dev/null; then
+            optimize_full_analysis &>/dev/null &
+        fi
+
         # Clean up progress tracking for this job
         daemon_clear_progress "$issue_num"
 
@@ -416,13 +421,15 @@ daemon_reap_completed() {
         local current_active
         current_active=$(locked_get_active_count)
         if [[ "$current_active" -lt "$MAX_PARALLEL" ]]; then
-            local next_issue
-            next_issue=$(dequeue_next)
-            if [[ -n "$next_issue" ]]; then
+            local next_issue_key
+            next_issue_key=$(dequeue_next)
+            if [[ -n "$next_issue_key" ]]; then
+                local next_issue_num="$next_issue_key" next_repo=""
+                [[ "$next_issue_key" == *:* ]] && next_repo="${next_issue_key%%:*}" && next_issue_num="${next_issue_key##*:}"
                 local next_title
-                next_title=$(jq -r --arg n "$next_issue" '.titles[$n] // ""' "$STATE_FILE" 2>/dev/null || true)
-                daemon_log INFO "Dequeuing issue #${next_issue}: ${next_title}"
-                daemon_spawn_pipeline "$next_issue" "$next_title"
+                next_title=$(jq -r --arg n "$next_issue_key" '.titles[$n] // ""' "$STATE_FILE" 2>/dev/null || true)
+                daemon_log INFO "Dequeuing issue #${next_issue_num}${next_repo:+, repo=${next_repo}}: ${next_title}"
+                daemon_spawn_pipeline "$next_issue_num" "$next_title" "$next_repo"
             fi
         fi
     done <<< "$jobs"

@@ -63,6 +63,23 @@ get_stage_timing_seconds() {
     fi
 }
 
+# Name of the slowest completed stage (for pipeline.completed event)
+get_slowest_stage() {
+    local slowest="" max_sec=0
+    local stage_ids
+    stage_ids=$(echo "$STAGE_TIMINGS" | grep "_start:" | sed 's/_start:.*//' | sort -u)
+    for sid in $stage_ids; do
+        [[ -z "$sid" ]] && continue
+        local sec
+        sec=$(get_stage_timing_seconds "$sid")
+        if [[ -n "$sec" && "$sec" =~ ^[0-9]+$ && "$sec" -gt "$max_sec" ]]; then
+            max_sec="$sec"
+            slowest="$sid"
+        fi
+    done
+    echo "${slowest:-}"
+}
+
 get_stage_description() {
     local stage_id="$1"
 

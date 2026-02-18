@@ -7,6 +7,48 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.5.0] — 2026-02-18
+
+### Fixed
+
+- **`sw-cleanup.sh` crash** — `file_mtime` undefined when cleaning stale heartbeats
+- **Daemon worktree creation** — Failures were being silently ignored
+- **Org-mode daemon** — Lost repo association when queuing issues
+- **Daemon issue polling** — Capped at 20 issues (now 100)
+- **Daemon shutdown** — Issue claim labels not released
+- **`with_retry` helper** — Returned wrong exit code after failed commands
+- **`emit_event`** — Produced corrupt JSON (incomplete escaping of backslashes, newlines, tabs)
+- **Tmux adapter** — Empty pane ID after failed tmux command could send keys to wrong pane
+- **`sw-loop.sh` multi-agent mode** — Sent keys to window instead of specific pane
+- **`sw-status.sh`** — `date -j` crashed on Linux (added portable date parsing)
+- **`sw-init.sh --deploy`** — Hung in non-interactive/CI environments
+- **`sw-cleanup.sh`** — Used relative paths (could delete wrong project data)
+- **`sw-status.sh`** — Used `local` outside function scope
+- **`daemon-patrol.sh`** — npm audit parsing failed on npm 7+
+- **Tmux adapter** — Pane map deleted while agents still running
+
+### Changed
+
+- **Portable arithmetic** — Replace `((var++))` with `$((var + 1))` across 18 scripts (bash 3.2 safety)
+- **`_curl_safe` and `_gh_safe`** — Timeout wrappers for network calls
+- **`_parse_iso_epoch`** — Portable date helper for cross-platform support
+- **Version consistency checker** — Skip dynamic version lines
+- **WINDOW_NAME validation** — In tmux adapter
+
+### Added
+
+- **Adapter smoke test suite** — `sw-adapters-test.sh` (72 tests)
+- **CLI routes** — `evidence` and `review-rerun` commands
+- **Shell completions** — In npm postinstall
+
+### Security
+
+- **install-remote.sh** — Remove last `eval` usage from HOME detection
+- **Webhook secret** — Redact full secret from console output
+- **Release manager** — Use `mktemp` instead of predictable `/tmp` paths
+
+---
+
 ## [2.4.0] — 2026-02-17
 
 **Code Factory pattern — deterministic, risk-aware agent delivery with machine-verifiable evidence.**

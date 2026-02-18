@@ -239,9 +239,15 @@ fi
 # ─── Test 10: train subcommand with mock events data ──────────────────────────
 echo ""
 echo -e "${DIM}  train subcommand${RESET}"
-# Add mock events so train has data to process
+# Add mock events matching pipeline schema (stage.completed, pipeline.completed, model.outcome)
 for i in 1 2 3 4 5; do
-    echo "{\"ts\":\"2024-01-0${i}T12:00:00Z\",\"type\":\"stage_complete\",\"stage\":\"build\",\"duration\":${i}000,\"exit_code\":0,\"model\":\"opus\",\"iterations\":$i}"
+    echo "{\"ts\":\"2024-01-0${i}T12:00:00Z\",\"type\":\"stage.completed\",\"stage\":\"build\",\"duration_s\":$((i * 120)),\"issue\":1}"
+done >> "$TEMP_DIR/home/.shipwright/events.jsonl"
+for i in 1 2 3 4 5; do
+    echo "{\"ts\":\"2024-01-0${i}T12:05:00Z\",\"type\":\"pipeline.completed\",\"issue\":1,\"result\":\"success\",\"duration_s\":600,\"self_heal_count\":$((i-1)),\"iterations\":$i}"
+done >> "$TEMP_DIR/home/.shipwright/events.jsonl"
+for i in 1 2 3 4 5; do
+    echo "{\"ts\":\"2024-01-0${i}T12:06:00Z\",\"type\":\"model.outcome\",\"stage\":\"build\",\"model\":\"opus\",\"success\":true,\"issue\":1}"
 done >> "$TEMP_DIR/home/.shipwright/events.jsonl"
 train_out=$(bash "$SCRIPT_DIR/sw-adaptive.sh" train --repo "$SCRIPT_DIR" 2>&1) || true
 if [[ "$train_out" == *"trained"* ]] || [[ "$train_out" == *"Models"* ]] || [[ "$train_out" == *"Training"* ]] || [[ -f "$TEMP_DIR/home/.shipwright/adaptive-models.json" ]]; then

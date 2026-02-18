@@ -4,7 +4,7 @@
 # ║                                                                          ║
 # ║  Checks prerequisites, installed files, PATH, and common issues.        ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="2.4.0"
+VERSION="2.5.0"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -48,9 +48,11 @@ FAIL=0
 SKIP_PLATFORM_SCAN=false
 
 # Parse doctor flags
+INTELLIGENCE_ONLY=false
 for _arg in "$@"; do
     case "$_arg" in
         --skip-platform-scan) SKIP_PLATFORM_SCAN=true ;;
+        --intelligence) INTELLIGENCE_ONLY=true ;;
         --version|-V) echo "sw-doctor $VERSION"; exit 0 ;;
     esac
 done
@@ -65,6 +67,99 @@ echo -e "${CYAN}${BOLD}  Shipwright — Doctor${RESET}"
 echo -e "${DIM}  $(date '+%Y-%m-%d %H:%M:%S')${RESET}"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
+
+# ─── Intelligence-only mode: run only INTELLIGENCE FEATURES section ─────────
+doctor_check_intelligence() {
+    echo -e "${PURPLE}${BOLD}  INTELLIGENCE FEATURES${RESET}"
+    echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+
+    # Claude CLI available and authenticated
+    if command -v claude >/dev/null 2>&1; then
+        if claude --version >/dev/null 2>&1; then
+            check_pass "Claude CLI: available and authenticated"
+        else
+            check_warn "Claude CLI: installed but may need authentication"
+            echo -e "    ${DIM}Run: claude auth login${RESET}"
+        fi
+    else
+        check_fail "Claude CLI: not found"
+        echo -e "    ${DIM}npm install -g @anthropic-ai/claude-code${RESET}"
+    fi
+
+    # intelligence.enabled from daemon-config
+    DAEMON_CFG=""
+    REPO_ROOT_DOC="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)"
+    for cfg in "$(pwd)/.claude/daemon-config.json" "$REPO_ROOT_DOC/.claude/daemon-config.json" "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/daemon-config.json" "$HOME/.claude/daemon-config.json"; do
+        [[ -n "$cfg" && -f "$cfg" ]] && DAEMON_CFG="$cfg" && break
+    done
+    if [[ -n "$DAEMON_CFG" && -f "$DAEMON_CFG" ]]; then
+        intel_enabled=$(jq -r '.intelligence.enabled // "auto"' "$DAEMON_CFG" 2>/dev/null || echo "auto")
+        composer_enabled=$(jq -r '.intelligence.composer_enabled // "auto"' "$DAEMON_CFG" 2>/dev/null || echo "auto")
+        if [[ "$intel_enabled" == "true" ]]; then
+            check_pass "intelligence.enabled: true"
+        elif [[ "$intel_enabled" == "auto" ]]; then
+            if command -v claude >/dev/null 2>&1; then
+                check_pass "intelligence.enabled: auto (resolved: enabled)"
+            else
+                check_warn "intelligence.enabled: auto (resolved: disabled — Claude not found)"
+            fi
+        else
+            check_warn "intelligence.enabled: false"
+        fi
+        if [[ "$composer_enabled" == "true" ]]; then
+            check_pass "composer: enabled"
+        elif [[ "$composer_enabled" == "auto" ]]; then
+            if command -v claude >/dev/null 2>&1; then
+                check_pass "composer: auto (resolved: enabled)"
+            else
+                check_warn "composer: auto (resolved: disabled)"
+            fi
+        else
+            check_warn "composer: disabled"
+        fi
+    else
+        check_warn "daemon-config.json not found — intelligence defaults to auto"
+        echo -e "    ${DIM}Run: shipwright daemon init${RESET}"
+    fi
+
+    # Adaptive model (has training data)
+    ADAPTIVE_MODEL="${HOME}/.shipwright/adaptive-models.json"
+    if [[ -f "$ADAPTIVE_MODEL" ]]; then
+        sample_count=$(jq '(.models // []) | map(.samples // 0) | add // 0' "$ADAPTIVE_MODEL" 2>/dev/null || echo "0")
+        if [[ "${sample_count:-0}" -gt 0 ]]; then
+            check_pass "Adaptive model: trained (${sample_count} samples)"
+        else
+            check_warn "Adaptive model: exists but no training data"
+        fi
+    else
+        check_warn "Adaptive model: not found"
+        echo -e "    ${DIM}Run pipelines to accumulate training data${RESET}"
+    fi
+
+    # Predictive baselines
+    BASELINES_DIR="${HOME}/.shipwright/baselines"
+    if [[ -d "$BASELINES_DIR" ]]; then
+        baseline_count=$(find "$BASELINES_DIR" -name "*.json" -type f 2>/dev/null | wc -l | tr -d ' ')
+        if [[ "${baseline_count:-0}" -gt 0 ]]; then
+            check_pass "Predictive baselines: ${baseline_count} file(s)"
+        else
+            check_warn "Predictive baselines: directory exists but no baseline files"
+        fi
+    else
+        check_warn "Predictive baselines: not found"
+        echo -e "    ${DIM}Run pipelines to build baselines${RESET}"
+    fi
+}
+
+if [[ "$INTELLIGENCE_ONLY" == "true" ]]; then
+    doctor_check_intelligence
+    echo ""
+    echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
+    echo ""
+    echo -e "  ${GREEN}${BOLD}${PASS}${RESET} passed  ${YELLOW}${BOLD}${WARN}${RESET} warnings  ${RED}${BOLD}${FAIL}${RESET} failed  ${DIM}($((PASS + WARN + FAIL)) checks)${RESET}"
+    echo ""
+    exit 0
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 1. Prerequisites
@@ -1034,13 +1129,19 @@ if command -v sqlite3 >/dev/null 2>&1; then
         _event_count=$(sqlite3 "$_db_file" "SELECT COUNT(*) FROM events;" 2>/dev/null || echo "0")
         _run_count=$(sqlite3 "$_db_file" "SELECT COUNT(*) FROM pipeline_runs;" 2>/dev/null || echo "0")
         info "  Tables: events=${_event_count} pipeline_runs=${_run_count}"
-    else
-        check_warn "Database not initialized — run: shipwright db init"
-    fi
+else
+    check_warn "Database not initialized — run: shipwright db init"
+fi
 else
     check_warn "sqlite3 not installed — DB features disabled"
     echo -e "    ${DIM}Install: brew install sqlite (macOS) or apt install sqlite3 (Linux)${RESET}"
 fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 15b. Intelligence Features
+# ═════════════════════════════════════════════════════════════════════════════
+echo ""
+doctor_check_intelligence
 
 # ═════════════════════════════════════════════════════════════════════════════
 # 14. Platform health (AGI-level self-improvement)

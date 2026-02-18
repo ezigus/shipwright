@@ -8,7 +8,7 @@
 # ║                                                                          ║
 # ║  --deploy  Detect platform and generate deployed.json template          ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="2.4.0"
+VERSION="2.5.0"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 trap 'rm -f "${tmp:-}"' EXIT
@@ -778,7 +778,11 @@ else
     fi
 
     # Confirm with user
-    read -rp "$(echo -e "${CYAN}${BOLD}▸${RESET} Configure deploy for ${BOLD}${DEPLOY_PLATFORM}${RESET}? [Y/n] ")" confirm
+    if [[ -t 0 ]]; then
+        read -rp "$(echo -e "${CYAN}${BOLD}▸${RESET} Configure deploy for ${BOLD}${DEPLOY_PLATFORM}${RESET}? [Y/n] ")" confirm
+    else
+        confirm="y"
+    fi
     if [[ "$(echo "$confirm" | tr '[:upper:]' '[:lower:]')" == "n" ]]; then
         info "Aborted. Use --platform to specify manually."
         exit 0

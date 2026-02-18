@@ -475,6 +475,7 @@ function isPublicRoute(pathname: string): boolean {
     pathname === "/login" ||
     pathname.startsWith("/auth/") ||
     pathname === "/api/health" ||
+    pathname === "/api/ws-status" ||
     pathname.startsWith("/api/join/") ||
     pathname.startsWith("/api/connect/") ||
     pathname === "/api/team" ||
@@ -2395,6 +2396,24 @@ const server = Bun.serve({
       return new Response(JSON.stringify(health), {
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
       });
+    }
+
+    // GET /api/ws-status — WebSocket connection status (for evidence collection)
+    if (pathname === "/api/ws-status" && req.method === "GET") {
+      const clients = wsClients?.size ?? 0;
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          websocket: {
+            active_connections: clients,
+            server_running: true,
+          },
+          timestamp: new Date().toISOString(),
+        }),
+        {
+          headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+        },
+      );
     }
 
     // GET /api/join/{token} — Serve join script (public, no auth required)

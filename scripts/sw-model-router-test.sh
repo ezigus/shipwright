@@ -113,7 +113,8 @@ echo ""
 echo -e "${BOLD}  Config${RESET}"
 output=$(bash "$SCRIPT_DIR/sw-model-router.sh" config show 2>&1) || true
 assert_contains "config show displays JSON" "$output" "default_routing"
-config_file="$HOME/.shipwright/model-routing.json"
+# Unified config: canonical location is optimization dir
+config_file="$HOME/.shipwright/optimization/model-routing.json"
 if [[ -f "$config_file" ]]; then
     assert_pass "config creates default file"
 else
@@ -145,9 +146,10 @@ echo -e "${BOLD}  Record Usage${RESET}"
 source "$SCRIPT_DIR/sw-model-router.sh" 2>/dev/null || true
 record_usage "plan" "opus" 1000 500 2>/dev/null || true
 record_usage "build" "sonnet" 2000 800 2>/dev/null || true
-if [[ -f "$HOME/.shipwright/model-usage.jsonl" ]]; then
+usage_file="$HOME/.shipwright/optimization/model-usage.jsonl"
+if [[ -f "$usage_file" ]]; then
     assert_pass "record_usage creates usage file"
-    lines=$(wc -l < "$HOME/.shipwright/model-usage.jsonl" 2>/dev/null | tr -d ' ' || echo "0")
+    lines=$(wc -l < "$usage_file" 2>/dev/null | tr -d ' ' || echo "0")
     assert_eq "record_usage writes entries" "2" "$lines"
 else
     assert_fail "record_usage creates usage file"

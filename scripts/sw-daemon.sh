@@ -9,7 +9,7 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 # Allow spawning Claude CLI from within a Claude Code session (daemon, fleet, etc.)
 unset CLAUDECODE 2>/dev/null || true
 
-VERSION="2.4.0"
+VERSION="2.5.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -466,10 +466,39 @@ load_config() {
     SELF_OPTIMIZE=$(jq -r '.self_optimize // false' "$config_file")
     OPTIMIZE_INTERVAL=$(jq -r '.optimize_interval // '"$(type policy_get >/dev/null 2>&1 && policy_get ".daemon.optimize_interval_cycles" "10" || echo "10")"'' "$config_file")
 
-    # intelligence engine settings
-    INTELLIGENCE_ENABLED=$(jq -r '.intelligence.enabled // false' "$config_file")
+    # intelligence engine settings (default "auto" = enable when Claude CLI available)
+    INTELLIGENCE_ENABLED=$(jq -r '.intelligence.enabled // "auto"' "$config_file")
     INTELLIGENCE_CACHE_TTL=$(jq -r '.intelligence.cache_ttl_seconds // 3600' "$config_file")
-    COMPOSER_ENABLED=$(jq -r '.intelligence.composer_enabled // false' "$config_file")
+    COMPOSER_ENABLED=$(jq -r '.intelligence.composer_enabled // "auto"' "$config_file")
+
+    # Auto-enable intelligence when Claude is available (unless explicitly disabled)
+    if [[ "${INTELLIGENCE_ENABLED}" == "false" && "${INTELLIGENCE_EXPLICIT_DISABLE:-false}" != "true" ]]; then
+        if command -v claude &>/dev/null; then
+            INTELLIGENCE_ENABLED=true
+            type daemon_log &>/dev/null && daemon_log INFO "Intelligence auto-enabled (Claude CLI detected). Disable with intelligence.enabled=false in daemon-config.json"
+        fi
+    elif [[ "${INTELLIGENCE_ENABLED}" == "auto" ]]; then
+        if command -v claude &>/dev/null; then
+            INTELLIGENCE_ENABLED=true
+            type daemon_log &>/dev/null && daemon_log INFO "Intelligence enabled (auto: Claude CLI detected)"
+        else
+            INTELLIGENCE_ENABLED=false
+        fi
+    fi
+
+    # Auto-enable composer when Claude is available (unless explicitly disabled)
+    if [[ "${COMPOSER_ENABLED}" == "false" && "${COMPOSER_EXPLICIT_DISABLE:-false}" != "true" ]]; then
+        if command -v claude &>/dev/null; then
+            COMPOSER_ENABLED=true
+            type daemon_log &>/dev/null && daemon_log INFO "Composer auto-enabled (Claude CLI detected). Disable with intelligence.composer_enabled=false in daemon-config.json"
+        fi
+    elif [[ "${COMPOSER_ENABLED}" == "auto" ]]; then
+        if command -v claude &>/dev/null; then
+            COMPOSER_ENABLED=true
+        else
+            COMPOSER_ENABLED=false
+        fi
+    fi
     OPTIMIZATION_ENABLED=$(jq -r '.intelligence.optimization_enabled // false' "$config_file")
     PREDICTION_ENABLED=$(jq -r '.intelligence.prediction_enabled // false' "$config_file")
     ANOMALY_THRESHOLD=$(jq -r '.intelligence.anomaly_threshold // 3.0' "$config_file")
@@ -594,6 +623,18 @@ cleanup_on_exit() {
                     fi
                 done <<< "$child_pids"
             fi
+        fi
+
+        # Release claims on active issues before exit
+        local active_issues
+        active_issues=$(jq -r '.active_jobs[].issue // empty' "$STATE_FILE" 2>/dev/null || true)
+        if [[ -n "$active_issues" ]]; then
+            local machine_name
+            machine_name=$(jq -r '.machines[] | select(.role == "primary") | .name' "$HOME/.shipwright/machines.json" 2>/dev/null || hostname -s)
+            for issue_num in $active_issues; do
+                [[ -z "$issue_num" ]] && continue
+                release_claim "$issue_num" "$machine_name" 2>/dev/null || true
+            done
         fi
     fi
 
@@ -985,9 +1026,9 @@ daemon_init() {
   "worker_mem_gb": 4,
   "estimated_cost_per_job_usd": 5.0,
   "intelligence": {
-    "enabled": true,
+    "enabled": "auto",
     "cache_ttl_seconds": 3600,
-    "composer_enabled": true,
+    "composer_enabled": "auto",
     "optimization_enabled": true,
     "prediction_enabled": true,
     "adversarial_enabled": false,

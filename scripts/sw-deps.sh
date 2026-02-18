@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="2.4.0"
+VERSION="2.5.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -407,7 +407,7 @@ cmd_batch() {
     local approved=0
     local flagged=0
 
-    echo "$prs" | jq -r '.[] | .number' | while read -r pr_num; do
+    while read -r pr_num; do
         info "Processing PR #${pr_num}..."
 
         local classify_json
@@ -430,7 +430,7 @@ cmd_batch() {
                 ;;
         esac
         processed=$((processed + 1))
-    done
+    done < <(echo "$prs" | jq -r '.[] | .number')
 
     echo ""
     echo -e "${CYAN}${BOLD}═══ Batch Summary ═══${RESET}"
@@ -462,7 +462,7 @@ cmd_report() {
     if [[ -n "$prs" && "$prs" != "[]" ]]; then
         total=$(echo "$prs" | jq 'length')
 
-        echo "$prs" | jq -r '.[] | .title' | while read -r title; do
+        while read -r title; do
             if [[ "$title" =~ from\ ([^ ]+)\ to\ ([^ ]+) ]]; then
                 local from_ver="${BASH_REMATCH[1]}"
                 local to_ver="${BASH_REMATCH[2]}"
@@ -474,7 +474,7 @@ cmd_report() {
                     major) major_count=$((major_count + 1)) ;;
                 esac
             fi
-        done
+        done < <(echo "$prs" | jq -r '.[] | .title')
     fi
 
     # Find oldest PR

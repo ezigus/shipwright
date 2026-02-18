@@ -71,7 +71,7 @@ MAX_RESTARTS=0
 SESSION_RESTART=false
 RESTART_COUNT=0
 REPO_OVERRIDE=""
-VERSION="2.4.0"
+VERSION="2.5.0"
 
 # ─── Token Tracking ─────────────────────────────────────────────────────────
 LOOP_INPUT_TOKENS=0
@@ -1609,13 +1609,35 @@ PROMPT
 }
 
 # ─── Stuckness Detection ─────────────────────────────────────────────────────
-# Multi-signal detection: text overlap, git diff, error repetition, iteration budget.
+# Multi-signal detection: text overlap, git diff hash, error repetition, exit code pattern, iteration budget.
 # Returns 0 when stuck, 1 when not. Outputs stuckness section and sets STUCKNESS_HINT when stuck.
+# When stuck: increments STUCKNESS_COUNT, emits event; if STUCKNESS_COUNT >= 3, caller triggers session restart.
+STUCKNESS_COUNT=0
+STUCKNESS_TRACKING_FILE=""
+
+record_iteration_stuckness_data() {
+    local exit_code="${1:-0}"
+    [[ -z "$LOG_DIR" ]] && return 0
+    local tracking_file="${STUCKNESS_TRACKING_FILE:-$LOG_DIR/stuckness-tracking.txt}"
+    local diff_hash error_hash
+    diff_hash=$(git -C "${PROJECT_ROOT:-.}" diff HEAD 2>/dev/null | (md5 -q 2>/dev/null || md5sum 2>/dev/null | cut -d' ' -f1) || echo "none")
+    local error_log="${ARTIFACTS_DIR:-${STATE_DIR:-${PROJECT_ROOT:-.}/.claude}/pipeline-artifacts}/error-log.jsonl"
+    if [[ -f "$error_log" ]]; then
+        error_hash=$(tail -5 "$error_log" 2>/dev/null | sort -u | (md5 -q 2>/dev/null || md5sum 2>/dev/null | cut -d' ' -f1) || echo "none")
+    else
+        error_hash="none"
+    fi
+    echo "${diff_hash}|${error_hash}|${exit_code}" >> "$tracking_file"
+}
+
 detect_stuckness() {
     STUCKNESS_HINT=""
     local iteration="${ITERATION:-0}"
     local stuckness_signals=0
     local stuckness_reasons=()
+    local tracking_file="${STUCKNESS_TRACKING_FILE:-$LOG_DIR/stuckness-tracking.txt}"
+    local tracking_lines
+    tracking_lines=$(wc -l < "$tracking_file" 2>/dev/null || echo "0")
 
     # Signal 1: Text overlap (existing logic) — compare last 2 iteration logs
     if [[ "$iteration" -ge 3 ]]; then
@@ -1644,15 +1666,31 @@ detect_stuckness() {
         fi
     fi
 
-    # Signal 2: Git diff size — no or minimal code changes between iterations
-    local diff_lines
-    diff_lines=$(git -C "${PROJECT_ROOT:-.}" diff HEAD 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-    if [[ "${diff_lines:-0}" -lt 5 ]] && [[ "$iteration" -gt 2 ]]; then
-        stuckness_signals=$((stuckness_signals + 1))
-        stuckness_reasons+=("no code changes in last iteration")
+    # Signal 2: Git diff hash — last 3 iterations produced zero or identical diffs
+    if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 3 ]]; then
+        local last_three
+        last_three=$(tail -3 "$tracking_file" 2>/dev/null | cut -d'|' -f1 || true)
+        local unique_hashes
+        unique_hashes=$(echo "$last_three" | sort -u | grep -v '^$' | wc -l | tr -d ' ')
+        if [[ "$unique_hashes" -le 1 ]] && [[ -n "$last_three" ]]; then
+            stuckness_signals=$((stuckness_signals + 1))
+            stuckness_reasons+=("identical or zero git diffs in last 3 iterations")
+        fi
     fi
 
-    # Signal 3: Same error repeating 3+ times
+    # Signal 3: Error repetition — same error hash in last 3 iterations
+    if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 3 ]]; then
+        local last_three_errors
+        last_three_errors=$(tail -3 "$tracking_file" 2>/dev/null | cut -d'|' -f2 || true)
+        local unique_error_hashes
+        unique_error_hashes=$(echo "$last_three_errors" | sort -u | grep -v '^none$' | grep -v '^$' | wc -l | tr -d ' ')
+        if [[ "$unique_error_hashes" -eq 1 ]] && [[ -n "$(echo "$last_three_errors" | grep -v '^none$')" ]]; then
+            stuckness_signals=$((stuckness_signals + 1))
+            stuckness_reasons+=("same error in last 3 iterations")
+        fi
+    fi
+
+    # Signal 4: Same error repeating 3+ times (legacy check on error-log content)
     local error_log
     error_log="${ARTIFACTS_DIR:-$PROJECT_ROOT/.claude/pipeline-artifacts}/error-log.jsonl"
     if [[ -f "$error_log" ]]; then
@@ -1666,7 +1704,33 @@ detect_stuckness() {
         fi
     fi
 
-    # Signal 4: Iteration budget — used >70% without passing tests
+    # Signal 5: Exit code pattern — last 3 iterations had same non-zero exit code
+    if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 3 ]]; then
+        local last_three_exits
+        last_three_exits=$(tail -3 "$tracking_file" 2>/dev/null | cut -d'|' -f3 || true)
+        local first_exit
+        first_exit=$(echo "$last_three_exits" | head -1)
+        if [[ "$first_exit" =~ ^[0-9]+$ ]] && [[ "$first_exit" -ne 0 ]]; then
+            local all_same=true
+            while IFS= read -r ex; do
+                [[ "$ex" != "$first_exit" ]] && all_same=false
+            done <<< "$last_three_exits"
+            if [[ "$all_same" == true ]]; then
+                stuckness_signals=$((stuckness_signals + 1))
+                stuckness_reasons+=("same non-zero exit code (${first_exit}) in last 3 iterations")
+            fi
+        fi
+    fi
+
+    # Signal 6: Git diff size — no or minimal code changes (existing)
+    local diff_lines
+    diff_lines=$(git -C "${PROJECT_ROOT:-.}" diff HEAD 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+    if [[ "${diff_lines:-0}" -lt 5 ]] && [[ "$iteration" -gt 2 ]]; then
+        stuckness_signals=$((stuckness_signals + 1))
+        stuckness_reasons+=("no code changes in last iteration")
+    fi
+
+    # Signal 7: Iteration budget — used >70% without passing tests
     local max_iter="${MAX_ITERATIONS:-20}"
     local progress_pct=0
     if [[ "$max_iter" -gt 0 ]]; then
@@ -1679,8 +1743,12 @@ detect_stuckness() {
 
     # Decision: 2+ signals = stuck
     if [[ "$stuckness_signals" -ge 2 ]]; then
+        STUCKNESS_COUNT=$(( STUCKNESS_COUNT + 1 ))
+        if type emit_event >/dev/null 2>&1; then
+            emit_event "loop.stuckness_detected" "signals=$stuckness_signals" "count=$STUCKNESS_COUNT" "iteration=$iteration" "reasons=${stuckness_reasons[*]}"
+        fi
         STUCKNESS_HINT="IMPORTANT: The loop appears stuck. Previous approaches have not worked. You MUST try a fundamentally different strategy. Reasons: ${stuckness_reasons[*]}"
-        warn "Stuckness detected (${stuckness_signals} signals): ${stuckness_reasons[*]}"
+        warn "Stuckness detected (${stuckness_signals} signals, count ${STUCKNESS_COUNT}): ${stuckness_reasons[*]}"
 
         local diff_summary=""
         local log1="$LOG_DIR/iteration-$(( iteration - 1 )).log"
@@ -2284,11 +2352,12 @@ launch_multi_agent() {
         local worker_script
         worker_script="$(generate_worker_script "$i" "$AGENTS")"
 
-        tmux split-window -t "$MULTI_WINDOW_NAME" -c "$PROJECT_ROOT"
+        local worker_pane_id
+        worker_pane_id="$(tmux split-window -t "$MULTI_WINDOW_NAME" -c "$PROJECT_ROOT" -P -F '#{pane_id}')"
         sleep 0.1
-        tmux send-keys -t "$MULTI_WINDOW_NAME" "printf '\\033]2;agent-${i}\\033\\\\'" Enter
+        tmux send-keys -t "$worker_pane_id" "printf '\\033]2;agent-${i}\\033\\\\'" Enter
         sleep 0.1
-        tmux send-keys -t "$MULTI_WINDOW_NAME" "bash '$worker_script'" Enter
+        tmux send-keys -t "$worker_pane_id" "bash '$worker_script'" Enter
     done
 
     # Layout: monitor pane on top (35%), worker agents tile below
@@ -2386,6 +2455,9 @@ run_single_agent_loop() {
 
     # Track applied memory fix patterns for outcome recording
     _applied_fix_pattern=""
+    STUCKNESS_COUNT=0
+    STUCKNESS_TRACKING_FILE="$LOG_DIR/stuckness-tracking.txt"
+    : > "$STUCKNESS_TRACKING_FILE" 2>/dev/null || true
 
     show_banner
 
@@ -2428,6 +2500,9 @@ ${GOAL}"
         run_claude_iteration || exit_code=$?
 
         local log_file="$LOG_DIR/iteration-${ITERATION}.log"
+
+        # Record iteration data for stuckness detection (diff hash, error hash, exit code)
+        record_iteration_stuckness_data "$exit_code"
 
         # Detect fatal CLI errors (API key, auth, network) — abort immediately
         if check_fatal_error "$log_file" "$exit_code"; then
@@ -2551,6 +2626,15 @@ HUMAN FEEDBACK (received after iteration $ITERATION): $human_msg"
             fi
         fi
 
+        # Stuckness-triggered restart: if detected 3+ times, break to allow session restart
+        if [[ "${STUCKNESS_COUNT:-0}" -ge 3 ]]; then
+            STATUS="stuck_restart"
+            write_state
+            write_progress
+            warn "Stuckness detected 3+ times — triggering session restart"
+            break
+        fi
+
         sleep 2
     done
 
@@ -2603,6 +2687,7 @@ run_loop_with_restarts() {
         ITERATION=0
         CONSECUTIVE_FAILURES=0
         EXTENSION_COUNT=0
+        STUCKNESS_COUNT=0
         STATUS="running"
         LOG_ENTRIES=""
         TEST_PASSED=""

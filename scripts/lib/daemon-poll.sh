@@ -53,7 +53,7 @@ daemon_poll_issues() {
             --owner "$ORG" \
             --state open \
             --json repository,number,title,labels,body,createdAt \
-            --limit 20 2>/dev/null) || {
+            --limit 100 2>/dev/null) || {
             # Handle rate limiting with exponential backoff
             if [[ $BACKOFF_SECS -eq 0 ]]; then
                 BACKOFF_SECS=30
@@ -80,7 +80,7 @@ daemon_poll_issues() {
             --label "$WATCH_LABEL" \
             --state open \
             --json number,title,labels,body,createdAt \
-            --limit 20 2>/dev/null) || {
+            --limit 100 2>/dev/null) || {
             # Handle rate limiting with exponential backoff
             if [[ $BACKOFF_SECS -eq 0 ]]; then
                 BACKOFF_SECS=30
@@ -212,18 +212,22 @@ daemon_poll_issues() {
     while IFS='|' read -r score issue_num repo_name; do
         [[ -z "$issue_num" ]] && continue
 
-        local issue_title labels_csv
-        issue_title=$(echo "$issues_json" | jq -r --argjson n "$issue_num" '.[] | select(.number == $n) | .title')
-        labels_csv=$(echo "$issues_json" | jq -r --argjson n "$issue_num" '.[] | select(.number == $n) | [.labels[].name] | join(",")')
+        local issue_key
+        issue_key="$issue_num"
+        [[ -n "$repo_name" ]] && issue_key="${repo_name}:${issue_num}"
 
-        # Cache title in state for dashboard visibility
+        local issue_title labels_csv
+        issue_title=$(echo "$issues_json" | jq -r --argjson n "$issue_num" --arg repo "$repo_name" '.[] | select(.number == $n) | select($repo == "" or (.repository.nameWithOwner // "") == $repo) | .title')
+        labels_csv=$(echo "$issues_json" | jq -r --argjson n "$issue_num" --arg repo "$repo_name" '.[] | select(.number == $n) | select($repo == "" or (.repository.nameWithOwner // "") == $repo) | [.labels[].name] | join(",")')
+
+        # Cache title in state for dashboard visibility (use issue_key for org mode)
         if [[ -n "$issue_title" ]]; then
-            locked_state_update --arg num "$issue_num" --arg title "$issue_title" \
+            locked_state_update --arg num "$issue_key" --arg title "$issue_title" \
                 '.titles[$num] = $title'
         fi
 
         # Skip if already inflight
-        if daemon_is_inflight "$issue_num"; then
+        if daemon_is_inflight "$issue_key"; then
             continue
         fi
 
@@ -263,7 +267,7 @@ daemon_poll_issues() {
         # Check capacity
         active_count=$(locked_get_active_count)
         if [[ "$active_count" -ge "$MAX_PARALLEL" ]]; then
-            enqueue_issue "$issue_num"
+            enqueue_issue "$issue_key"
             continue
         fi
 
@@ -308,24 +312,26 @@ daemon_poll_issues() {
     local drain_active
     drain_active=$(locked_get_active_count)
     while [[ "$drain_active" -lt "$MAX_PARALLEL" ]]; do
-        local drain_issue
-        drain_issue=$(dequeue_next)
-        [[ -z "$drain_issue" ]] && break
+        local drain_issue_key
+        drain_issue_key=$(dequeue_next)
+        [[ -z "$drain_issue_key" ]] && break
+        local drain_issue_num="$drain_issue_key" drain_repo=""
+        [[ "$drain_issue_key" == *:* ]] && drain_repo="${drain_issue_key%%:*}" && drain_issue_num="${drain_issue_key##*:}"
         local drain_title
-        drain_title=$(jq -r --arg n "$drain_issue" '.titles[$n] // ""' "$STATE_FILE" 2>/dev/null || true)
+        drain_title=$(jq -r --arg n "$drain_issue_key" '.titles[$n] // ""' "$STATE_FILE" 2>/dev/null || true)
 
         local drain_labels drain_score drain_template
-        drain_labels=$(echo "$issues_json" | jq -r --argjson n "$drain_issue" \
-            '.[] | select(.number == $n) | [.labels[].name] | join(",")' 2>/dev/null || echo "")
-        drain_score=$(echo "$sorted_order" | grep "|${drain_issue}|" | cut -d'|' -f1 || echo "50")
+        drain_labels=$(echo "$issues_json" | jq -r --argjson n "$drain_issue_num" --arg repo "$drain_repo" \
+            '.[] | select(.number == $n) | select($repo == "" or (.repository.nameWithOwner // "") == $repo) | [.labels[].name] | join(",")' 2>/dev/null || echo "")
+        drain_score=$(echo "$sorted_order" | grep "|${drain_issue_num}|" | cut -d'|' -f1 || echo "50")
         drain_template=$(select_pipeline_template "$drain_labels" "${drain_score:-50}" 2>/dev/null | tail -1)
         drain_template=$(printf '%s' "$drain_template" | sed $'s/\x1b\\[[0-9;]*m//g' | tr -cd '[:alnum:]-_')
         [[ -z "$drain_template" ]] && drain_template="$PIPELINE_TEMPLATE"
 
-        daemon_log INFO "Draining queue: issue #${drain_issue}, template=${drain_template}"
+        daemon_log INFO "Draining queue: issue #${drain_issue_num}${drain_repo:+, repo=${drain_repo}}, template=${drain_template}"
         local orig_template="$PIPELINE_TEMPLATE"
         PIPELINE_TEMPLATE="$drain_template"
-        daemon_spawn_pipeline "$drain_issue" "$drain_title"
+        daemon_spawn_pipeline "$drain_issue_num" "$drain_title" "$drain_repo"
         PIPELINE_TEMPLATE="$orig_template"
         drain_active=$(locked_get_active_count)
     done

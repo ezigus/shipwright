@@ -369,13 +369,15 @@ update_state_field() {
 # ─── Inflight Check ─────────────────────────────────────────────────────────
 
 daemon_is_inflight() {
-    local issue_num="$1"
+    local issue_key="$1"
+    local issue_num="$issue_key"
+    [[ "$issue_key" == *:* ]] && issue_num="${issue_key##*:}"
 
     if [[ ! -f "$STATE_FILE" ]]; then
         return 1
     fi
 
-    # Check active_jobs
+    # Check active_jobs (stored with numeric .issue)
     local active_match
     active_match=$(jq -r --argjson num "$issue_num" \
         '.active_jobs[] | select(.issue == $num) | .issue' \
@@ -384,10 +386,10 @@ daemon_is_inflight() {
         return 0
     fi
 
-    # Check queued
+    # Check queued (stores full key e.g. "owner/repo:42" or "42")
     local queued_match
-    queued_match=$(jq -r --argjson num "$issue_num" \
-        '.queued[] | select(. == $num)' \
+    queued_match=$(jq -r --arg key "$issue_key" \
+        '.queued[] | select(. == $key)' \
         "$STATE_FILE" 2>/dev/null || true)
     if [[ -n "$queued_match" ]]; then
         return 0
@@ -433,10 +435,10 @@ locked_get_active_count() {
 # ─── Queue Management ───────────────────────────────────────────────────────
 
 enqueue_issue() {
-    local issue_num="$1"
-    locked_state_update --argjson num "$issue_num" \
-        '.queued += [$num] | .queued |= unique'
-    daemon_log INFO "Queued issue #${issue_num} (at capacity)"
+    local issue_key="$1"
+    locked_state_update --arg key "$issue_key" \
+        '.queued += [$key] | .queued |= unique'
+    daemon_log INFO "Queued issue ${issue_key} (at capacity)"
 }
 
 dequeue_next() {

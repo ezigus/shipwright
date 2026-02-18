@@ -5,7 +5,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="2.4.0"
+VERSION="2.5.0"
 
 # Resolve symlinks (required for npm global install where bin/ symlinks to node_modules/)
 SOURCE="${BASH_SOURCE[0]}"
@@ -467,6 +467,9 @@ main() {
         replay)
             exec "$SCRIPT_DIR/sw-replay.sh" "$@"
             ;;
+        review-rerun|rr)
+            exec "$SCRIPT_DIR/sw-review-rerun.sh" "$@"
+            ;;
         scale)
             exec "$SCRIPT_DIR/sw-scale.sh" "$@"
             ;;
@@ -523,6 +526,9 @@ main() {
             ;;
         eventbus)
             exec "$SCRIPT_DIR/sw-eventbus.sh" "$@"
+            ;;
+        evidence|ev)
+            exec "$SCRIPT_DIR/sw-evidence.sh" "$@"
             ;;
         otel)
             exec "$SCRIPT_DIR/sw-otel.sh" "$@"

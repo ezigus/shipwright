@@ -76,7 +76,10 @@ emit_event() {
         if [[ "$val" =~ ^-?[0-9]+\.?[0-9]*$ ]]; then
             json_fields="${json_fields},\"${key}\":${val}"
         else
-            val="${val//\"/\\\"}"
+            val="${val//\\/\\\\}"       # escape backslashes first
+            val="${val//\"/\\\"}"       # then quotes
+            val="${val//$'\n'/\\n}"     # then newlines
+            val="${val//$'\t'/\\t}"     # then tabs
             json_fields="${json_fields},\"${key}\":\"${val}\""
         fi
     done
@@ -103,9 +106,7 @@ with_retry() {
     local attempt=1
     local delay=1
     while [[ "$attempt" -le "$max_attempts" ]]; do
-        if "$@"; then
-            return 0
-        fi
+        "$@" && return 0
         local exit_code=$?
         if [[ "$attempt" -lt "$max_attempts" ]]; then
             warn "Attempt $attempt/$max_attempts failed (exit $exit_code), retrying in ${delay}s..."

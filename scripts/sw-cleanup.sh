@@ -5,7 +5,7 @@
 # ║  Default: dry-run (shows what would be cleaned).                         ║
 # ║  Use --force to actually kill sessions and remove files.                 ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="2.4.0"
+VERSION="2.5.0"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -14,6 +14,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# shellcheck source=lib/compat.sh
+[[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -181,7 +186,7 @@ echo ""
 echo -e "${BOLD}Pipeline Artifacts${RESET}  ${DIM}.claude/pipeline-artifacts/${RESET}"
 echo -e "${DIM}────────────────────────────────────────${RESET}"
 
-PIPELINE_ARTIFACTS=".claude/pipeline-artifacts"
+PIPELINE_ARTIFACTS="$PROJECT_ROOT/.claude/pipeline-artifacts"
 if [[ -d "$PIPELINE_ARTIFACTS" ]]; then
     artifact_file_count=$(find "$PIPELINE_ARTIFACTS" -type f 2>/dev/null | wc -l | tr -d ' ')
     if [[ "${artifact_file_count:-0}" -gt 0 ]]; then
@@ -211,7 +216,7 @@ echo ""
 echo -e "${BOLD}Checkpoints${RESET}  ${DIM}.claude/pipeline-artifacts/checkpoints/${RESET}"
 echo -e "${DIM}────────────────────────────────────────${RESET}"
 
-CHECKPOINT_DIR=".claude/pipeline-artifacts/checkpoints"
+CHECKPOINT_DIR="$PROJECT_ROOT/.claude/pipeline-artifacts/checkpoints"
 if [[ -d "$CHECKPOINT_DIR" ]]; then
     cp_file_count=0
     for cp_file in "${CHECKPOINT_DIR}"/*-checkpoint.json; do
@@ -242,7 +247,7 @@ echo ""
 echo -e "${BOLD}Pipeline State${RESET}  ${DIM}.claude/pipeline-state.md${RESET}"
 echo -e "${DIM}────────────────────────────────────────${RESET}"
 
-PIPELINE_STATE=".claude/pipeline-state.md"
+PIPELINE_STATE="$PROJECT_ROOT/.claude/pipeline-state.md"
 if [[ -f "$PIPELINE_STATE" ]]; then
     state_status=$(sed -n 's/^status: *//p' "$PIPELINE_STATE" | head -1 || true)
     state_issue=$(sed -n 's/^issue: *//p' "$PIPELINE_STATE" | head -1 || true)

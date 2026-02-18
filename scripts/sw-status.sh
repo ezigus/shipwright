@@ -4,7 +4,7 @@
 # ║                                                                          ║
 # ║  Shows running teams, agent windows, and task progress.                  ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="2.4.0"
+VERSION="2.5.0"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -17,6 +17,23 @@ _COMPAT="$SCRIPT_DIR/lib/compat.sh"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+
+# Portable ISO timestamp parsing (macOS uses -j -f, Linux uses -d)
+_parse_iso_epoch() {
+    local ts="$1"
+    if date -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" "+%s" 2>/dev/null; then
+        return
+    fi
+    # Linux: date -d handles ISO format
+    date -d "$ts" "+%s" 2>/dev/null || echo "0"
+}
+_format_iso_time() {
+    local ts="$1" fmt="${2:-+%H:%M}"
+    if date -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" "$fmt" 2>/dev/null; then
+        return
+    fi
+    date -d "$ts" "$fmt" 2>/dev/null || echo ""
+}
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -433,7 +450,7 @@ if [[ -f "$STATE_FILE" ]]; then
             # Calculate uptime
             uptime_str=""
             if [[ "$started_at" != "unknown" && "$started_at" != "null" ]]; then
-                start_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$started_at" +%s 2>/dev/null || echo 0)
+                start_epoch=$(_parse_iso_epoch "$started_at")
                 if [[ "$start_epoch" -gt 0 ]]; then
                     now_e=$(date +%s)
                     elapsed=$((now_e - start_epoch))
@@ -471,7 +488,7 @@ if [[ -f "$STATE_FILE" ]]; then
                 # Time elapsed
                 age_str=""
                 if [[ -n "$a_started" && "$a_started" != "null" ]]; then
-                    s_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$a_started" +%s 2>/dev/null || echo 0)
+                    s_epoch=$(_parse_iso_epoch "$a_started")
                     if [[ "$s_epoch" -gt 0 ]]; then
                         now_e=$(date +%s)
                         el=$((now_e - s_epoch))
@@ -592,7 +609,7 @@ if [[ -f "$STATE_FILE" ]]; then
                     # Format timestamp as HH:MM
                     evt_time=""
                     if [[ -n "$evt_ts" && "$evt_ts" != "null" ]]; then
-                        evt_time=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$evt_ts" +"%H:%M" 2>/dev/null || echo "")
+                        evt_time=$(_format_iso_time "$evt_ts" "+%H:%M")
                     fi
 
                     case "$evt_type" in
@@ -678,7 +695,7 @@ if [[ -d "$HEARTBEAT_DIR" ]]; then
 
         for hb_file in "${HEARTBEAT_DIR}"/*.json; do
             [[ -f "$hb_file" ]] || continue
-            local_job_id="$(basename "$hb_file" .json)"
+            job_id="$(basename "$hb_file" .json)"
             hb_pid=$(jq -r '.pid // ""' "$hb_file" 2>/dev/null || true)
             hb_stage=$(jq -r '.stage // ""' "$hb_file" 2>/dev/null || true)
             hb_issue=$(jq -r '.issue // ""' "$hb_file" 2>/dev/null || true)
@@ -696,7 +713,7 @@ if [[ -d "$HEARTBEAT_DIR" ]]; then
             # Calculate age
             hb_age_str=""
             if [[ -n "$hb_updated" && "$hb_updated" != "null" ]]; then
-                hb_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$hb_updated" +%s 2>/dev/null || echo 0)
+                hb_epoch=$(_parse_iso_epoch "$hb_updated")
                 if [[ "$hb_epoch" -gt 0 ]]; then
                     now_e=$(date +%s)
                     hb_age=$((now_e - hb_epoch))
@@ -714,7 +731,7 @@ if [[ -d "$HEARTBEAT_DIR" ]]; then
                 hb_icon="${RED}●${RESET}"
             fi
 
-            echo -e "  ${hb_icon} ${BOLD}${local_job_id}${RESET}  ${DIM}pid:${hb_pid}${RESET}"
+            echo -e "  ${hb_icon} ${BOLD}${job_id}${RESET}  ${DIM}pid:${hb_pid}${RESET}"
             detail_line="    "
             [[ -n "$hb_issue" && "$hb_issue" != "null" && "$hb_issue" != "0" ]] && detail_line+="${CYAN}#${hb_issue}${RESET}  "
             [[ -n "$hb_stage" && "$hb_stage" != "null" ]] && detail_line+="${BLUE}${hb_stage}${RESET}  "

@@ -47,8 +47,20 @@ daemon_patrol() {
         # npm audit
         if [[ -f "package.json" ]] && command -v npm >/dev/null 2>&1; then
             local audit_json
-            audit_json=$(npm audit --json 2>/dev/null || true)
-            if [[ -n "$audit_json" ]]; then
+            audit_json=$(npm audit --json 2>/dev/null || echo '{}')
+            local audit_version
+            audit_version=$(echo "$audit_json" | jq -r '.auditReportVersion // 1')
+
+            local vuln_list
+            if [[ "$audit_version" == "2" ]]; then
+                # npm 7+ format: .vulnerabilities is an object keyed by package name
+                vuln_list=$(echo "$audit_json" | jq -c '[.vulnerabilities | to_entries[] | .value | {name: .name, severity: .severity, url: (.via[0].url // "N/A"), title: (.via[0].title // .name)}]' 2>/dev/null || echo '[]')
+            else
+                # npm 6 format: .advisories is an object keyed by advisory ID
+                vuln_list=$(echo "$audit_json" | jq -c '[.advisories | to_entries[] | .value | {name: .module_name, severity: .severity, url: .url, title: .title}]' 2>/dev/null || echo '[]')
+            fi
+
+            if [[ -n "$vuln_list" && "$vuln_list" != "[]" ]]; then
                 while IFS= read -r vuln; do
                     local severity name advisory_url title
                     severity=$(echo "$vuln" | jq -r '.severity // "unknown"')
@@ -90,7 +102,7 @@ Auto-detected by \`shipwright daemon patrol\`." \
                     else
                         echo -e "    ${RED}●${RESET} ${BOLD}${severity}${RESET}: ${title} in ${CYAN}${name}${RESET}"
                     fi
-                done < <(echo "$audit_json" | jq -c '.vulnerabilities | to_entries[] | .value' 2>/dev/null)
+                done < <(echo "$vuln_list" | jq -c '.[]' 2>/dev/null)
             fi
         fi
 

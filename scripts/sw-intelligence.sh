@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="2.4.0"
+VERSION="2.5.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
@@ -146,8 +146,15 @@ _intelligence_enabled() {
     local config="${REPO_DIR}/.claude/daemon-config.json"
     if [[ -f "$config" ]]; then
         local enabled
-        enabled=$(jq -r '.intelligence.enabled // false' "$config" 2>/dev/null || echo "false")
-        [[ "$enabled" == "true" ]]
+        enabled=$(jq -r '.intelligence.enabled // "auto"' "$config" 2>/dev/null || echo "auto")
+        if [[ "$enabled" == "true" ]]; then
+            return 0
+        elif [[ "$enabled" == "auto" ]]; then
+            # Auto: enabled when Claude CLI is available
+            command -v claude &>/dev/null
+        else
+            return 1
+        fi
     else
         return 1
     fi
@@ -715,8 +722,9 @@ intelligence_recommend_model() {
     # Strategy 1: Check historical model routing data
     local routing_file="${HOME}/.shipwright/optimization/model-routing.json"
     if [[ -f "$routing_file" ]]; then
+        # Support both formats: .routes.stage (self-optimize) and .stage (legacy)
         local stage_data
-        stage_data=$(jq -r --arg s "$stage" '.[$s] // empty' "$routing_file" 2>/dev/null || true)
+        stage_data=$(jq -r --arg s "$stage" '.routes[$s] // .[$s] // empty' "$routing_file" 2>/dev/null || true)
 
         if [[ -n "$stage_data" && "$stage_data" != "null" ]]; then
             local recommended sonnet_rate sonnet_samples opus_rate opus_samples
@@ -865,13 +873,46 @@ intelligence_recommend_model() {
 
 # ─── Prediction Validation ─────────────────────────────────────────────────
 
-# intelligence_validate_prediction <issue_id> <predicted_complexity> <actual_iterations> <actual_success>
-# Compares predicted complexity to actual outcome for feedback learning.
+# intelligence_validate_prediction [<metric>|<issue_id>] <predicted> <actual> [<actual_success>]
+# Compares predicted vs actual for feedback learning.
+# Form 1 (complexity): intelligence_validate_prediction <issue_id> <predicted_complexity> <actual_iterations> <actual_success>
+# Form 2 (iterations): intelligence_validate_prediction "iterations" <predicted> <actual>
+# Form 3 (cost):       intelligence_validate_prediction "cost" <predicted> <actual>
 intelligence_validate_prediction() {
-    local issue_id="${1:-}"
-    local predicted_complexity="${2:-0}"
-    local actual_iterations="${3:-0}"
-    local actual_success="${4:-false}"
+    local arg1="${1:-}"
+    local arg2="${2:-0}"
+    local arg3="${3:-0}"
+    local arg4="${4:-false}"
+
+    # Form 2 & 3: metric-based validation (iterations, cost)
+    if [[ "$arg1" == "iterations" || "$arg1" == "cost" ]]; then
+        local metric="$arg1"
+        local predicted="$arg2"
+        local actual="$arg3"
+        [[ -z "$predicted" || "$predicted" == "null" ]] && return 0
+        local validation_file="${HOME}/.shipwright/optimization/prediction-validation.jsonl"
+        mkdir -p "${HOME}/.shipwright/optimization"
+        local delta
+        delta=$(awk -v p="$predicted" -v a="$actual" 'BEGIN { printf "%.2f", p - a }' 2>/dev/null || echo "0")
+        local record
+        record=$(jq -c -n \
+            --arg ts "$(now_iso)" \
+            --arg issue "${ISSUE_NUMBER:-unknown}" \
+            --arg m "$metric" \
+            --argjson pred "$predicted" \
+            --argjson act "$actual" \
+            --argjson d "$delta" \
+            '{ts: $ts, issue: $issue, metric: $m, predicted: $pred, actual: $act, delta: $d}')
+        echo "$record" >> "$validation_file"
+        emit_event "intelligence.prediction_validated" "metric=$metric" "predicted=$predicted" "actual=$actual" "delta=$delta"
+        return 0
+    fi
+
+    # Form 1: complexity validation (original)
+    local issue_id="$arg1"
+    local predicted_complexity="$arg2"
+    local actual_iterations="$arg3"
+    local actual_success="$arg4"
 
     if [[ -z "$issue_id" ]]; then
         error "Usage: intelligence_validate_prediction <issue_id> <predicted> <actual_iterations> <actual_success>"
@@ -1085,6 +1126,7 @@ show_help() {
     echo -e "  ${CYAN}search-memory${RESET} <context> [dir]  Search memory by relevance"
     echo -e "  ${CYAN}estimate-iterations${RESET} <analysis>  Estimate build iterations"
     echo -e "  ${CYAN}recommend-model${RESET} <stage> [cplx] Recommend model for stage"
+    echo -e "  ${CYAN}status${RESET}                         Show intelligence status and config"
     echo -e "  ${CYAN}cache-stats${RESET}                    Show cache statistics"
     echo -e "  ${CYAN}validate-prediction${RESET} <id> <pred> <iters> <success>  Validate prediction accuracy"
     echo -e "  ${CYAN}cache-clear${RESET}                    Clear intelligence cache"
@@ -1095,6 +1137,75 @@ show_help() {
     echo -e "    ${DIM}{\"intelligence\": {\"enabled\": true}}${RESET}"
     echo ""
     echo -e "${DIM}Version ${VERSION}${RESET}"
+}
+
+cmd_status() {
+    # Find daemon-config (project root, cwd, or shipwright install)
+    local config=""
+    for cfg in "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/daemon-config.json" "$(pwd)/.claude/daemon-config.json" "${REPO_DIR}/.claude/daemon-config.json"; do
+        [[ -n "$cfg" && -f "$cfg" ]] && config="$cfg" && break
+    done
+    local intel_enabled="auto"
+    if [[ -n "$config" && -f "$config" ]]; then
+        intel_enabled=$(jq -r '.intelligence.enabled // "auto"' "$config" 2>/dev/null || echo "auto")
+    fi
+
+    # Resolved: is intelligence actually enabled?
+    local resolved="disabled"
+    if [[ "$intel_enabled" == "true" ]]; then
+        resolved="enabled"
+    elif [[ "$intel_enabled" == "auto" ]]; then
+        if command -v claude &>/dev/null; then
+            resolved="enabled (auto)"
+        else
+            resolved="disabled (auto)"
+        fi
+    fi
+
+    # Cached analyses count (use same .claude as config when found)
+    local cache_file="$INTELLIGENCE_CACHE"
+    local cached_count=0
+    if [[ -n "$config" ]]; then
+        cache_file="$(dirname "$config")/intelligence-cache.json"
+    fi
+    if [[ -f "$cache_file" ]]; then
+        cached_count=$(jq '.entries | length' "$cache_file" 2>/dev/null || echo "0")
+    fi
+
+    # Memory entries count
+    local memory_dir="${HOME}/.shipwright/memory"
+    local memory_count=0
+    if [[ -d "$memory_dir" ]]; then
+        memory_count=$(find "$memory_dir" -name "*.json" -o -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    fi
+
+    # Claude authenticated
+    local claude_ok="no"
+    if command -v claude &>/dev/null; then
+        if claude --version &>/dev/null; then
+            claude_ok="yes"
+        fi
+    fi
+
+    # Last intelligence call timestamp
+    local last_ts="never"
+    local events_file="${HOME}/.shipwright/events.jsonl"
+    if [[ -f "$events_file" ]]; then
+        local last_event
+        last_event=$(grep -E '"type":"intelligence\.' "$events_file" 2>/dev/null | tail -1)
+        if [[ -n "$last_event" ]]; then
+            last_ts=$(echo "$last_event" | jq -r '.ts // .ts_epoch // "unknown"' 2>/dev/null || echo "unknown")
+        fi
+    fi
+
+    echo ""
+    echo -e "${BOLD}Intelligence Status${RESET}"
+    echo -e "  Config:           ${CYAN}${intel_enabled}${RESET} — resolved: ${resolved}"
+    echo -e "  Cached analyses:  ${CYAN}${cached_count}${RESET}"
+    echo -e "  Memory entries:   ${CYAN}${memory_count}${RESET}"
+    echo -e "  Claude auth:      ${claude_ok}"
+    echo -e "  Last call:       ${DIM}${last_ts}${RESET}"
+    echo ""
 }
 
 cmd_cache_stats() {
@@ -1171,6 +1282,9 @@ main() {
             ;;
         validate-prediction)
             intelligence_validate_prediction "$@"
+            ;;
+        status)
+            cmd_status
             ;;
         cache-stats)
             cmd_cache_stats

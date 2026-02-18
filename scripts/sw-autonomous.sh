@@ -7,7 +7,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="2.4.0"
+VERSION="2.5.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -287,68 +287,94 @@ ingest_strategic_findings() {
 
 # ─── Codebase Analysis (Claude fallback) ────────────────────────────────────
 # When Claude is unavailable, scan the codebase for real findings.
-autonomous_codebase_analysis() {
+# Outputs pipe-delimited lines: title|type|complexity (converted to JSON by caller).
+autonomous_heuristic_analysis() {
     local findings=()
     local repo_root
-    repo_root="${REPO_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || echo ".")}"
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
 
-    # Find TODO/FIXME/HACK comments with context (portable: find + grep, no --include)
-    local todo_count
-    todo_count=$(find "$repo_root/scripts" -name "*.sh" -print0 2>/dev/null | xargs -0 grep -oh 'TODO\|FIXME\|HACK\|XXX' 2>/dev/null | wc -l | tr -d ' ')
-    if [[ "${todo_count:-0}" -gt 10 ]]; then
-        local top_files
-        top_files=$(find "$repo_root/scripts" -name "*.sh" 2>/dev/null | while read -r f; do
-            printf '%s %s\n' "$(grep -c 'TODO\|FIXME\|HACK' "$f" 2>/dev/null || echo 0)" "$f"
-        done | sort -rn | head -3 | awk '{print $2}' | xargs -I {} basename {} 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-        findings+=("Resolve ${todo_count} TODO/FIXME/HACK items (most in: ${top_files:-unknown})")
-    fi
-
-    # Find scripts without test files
-    local untested=()
+    # 1. Find scripts with no test files
+    local untested_scripts=0
     for script in "$repo_root"/scripts/sw-*.sh; do
         [[ -e "$script" ]] || continue
         [[ "$script" == *-test.sh ]] && continue
         local base
         base=$(basename "$script" .sh)
         if [[ ! -f "$repo_root/scripts/${base}-test.sh" ]]; then
-            untested+=("$base")
+            untested_scripts=$((untested_scripts + 1))
+            if [[ "$untested_scripts" -le 2 ]]; then
+                findings+=("Add test coverage for ${base}.sh|testing|5")
+            fi
         fi
     done
-    if [[ ${#untested[@]} -gt 0 ]]; then
-        local untested_preview
-        untested_preview=$(printf '%s ' "${untested[@]:0:5}" | sed 's/ $//')
-        findings+=("Add tests for untested scripts: ${untested_preview}")
-    fi
 
-    # Check for large files that should be refactored
-    local large_files
-    large_files=$(wc -l "$repo_root"/scripts/sw-*.sh 2>/dev/null | sort -rn | head -5 | awk '$1 > 1500 {print $2}' | xargs -I{} basename {} 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-    if [[ -n "${large_files:-}" ]]; then
-        findings+=("Refactor large scripts (>1500 lines): ${large_files}")
-    fi
+    # 2. Find large files that could be refactored
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local lcount file
+        lcount=$(echo "$line" | awk '{print $1}')
+        file=$(echo "$line" | awk '{$1=""; print substr($0,2)}')
+        if [[ "$lcount" =~ ^[0-9]+$ ]] && [[ "$lcount" -gt 1500 ]]; then
+            local base
+            base=$(basename "$file")
+            findings+=("Refactor ${base} (${lcount} lines) into smaller modules|refactor|7")
+        fi
+    done < <(find "$repo_root/scripts" -name "*.sh" -not -name "*-test.sh" -exec wc -l {} \; 2>/dev/null | sort -rn | head -5)
 
-    # Shellcheck findings if available
+    # 3. Check for shellcheck warnings
     if command -v shellcheck &>/dev/null; then
-        local sc_count
-        sc_count=$(shellcheck -x "$repo_root"/scripts/*.sh 2>/dev/null | grep -c '^In \|^SC' || echo "0")
-        if [[ "${sc_count:-0}" -gt 5 ]]; then
-            findings+=("Fix shellcheck warnings in scripts (${sc_count}+ issues)")
+        local sc_warnings
+        sc_warnings=$(shellcheck -S warning "$repo_root"/scripts/sw-*.sh 2>/dev/null | grep -c "^In " || true)
+        if [[ "${sc_warnings:-0}" -gt 10 ]]; then
+            findings+=("Fix ${sc_warnings} shellcheck warnings across scripts|quality|4")
         fi
     fi
 
-    # Output findings as JSON array; empty if none
-    if [[ ${#findings[@]} -eq 0 ]]; then
-        echo "[]"
-        return 0
+    # 4. Check for TODO/FIXME in production code
+    local todo_count
+    todo_count=$(find "$repo_root/scripts" -name "sw-*.sh" ! -name "*-test.sh" -exec grep -oh 'TODO\|FIXME\|HACK\|XXX' {} \; 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "${todo_count:-0}" -gt 5 ]]; then
+        findings+=("Address ${todo_count} TODO/FIXME items in production scripts|quality|3")
     fi
-    local json="[]"
+
+    # 5. Check recent failures from events
+    local events_file="$HOME/.shipwright/events.jsonl"
+    if [[ -f "$events_file" ]]; then
+        local recent_failures
+        recent_failures=$(tail -200 "$events_file" 2>/dev/null | grep '"result":"failure"' | wc -l | tr -d ' ')
+        if [[ "${recent_failures:-0}" -gt 3 ]]; then
+            local common_stage
+            common_stage=$(tail -200 "$events_file" 2>/dev/null | grep '"result":"failure"' | grep -oE '"stage":"[^"]*"' | sort | uniq -c | sort -rn | head -1 | sed 's/.*"stage":"\([^"]*\)".*/\1/' || true)
+            findings+=("Investigate ${recent_failures} recent pipeline failures${common_stage:+ (common: ${common_stage})}|bug|6")
+        fi
+    fi
+
+    # Output findings (at most 5) — pipe-delimited: title|type|complexity
+    local count=0
     for f in "${findings[@]}"; do
-        local category="quality"
-        [[ "$f" == *"TODO"* || "$f" == *"FIXME"* ]] && category="tech-debt"
-        [[ "$f" == *"test"* || "$f" == *"untested"* ]] && category="test"
-        [[ "$f" == *"Refactor"* || "$f" == *"large"* ]] && category="refactor"
-        [[ "$f" == *"shellcheck"* ]] && category="quality"
-        json=$(echo "$json" | jq -c --arg t "$f" --arg c "$category" '. + [{title: $t, description: $t, priority: "medium", effort: "M", labels: [$c], category: $c}]' 2>/dev/null || echo "[]")
+        [[ "$count" -ge 5 ]] && break
+        echo "$f"
+        count=$((count + 1))
+    done
+}
+
+# Convert pipe-delimited heuristic output (title|type|complexity) to JSON array.
+autonomous_heuristic_to_json() {
+    local json="[]"
+    while IFS= read -r line; do
+        [[ -z "$line" ]] || [[ "$line" != *"|"* ]] && continue
+        local title type complexity
+        title="${line%%|*}"
+        line="${line#*|}"
+        type="${line%%|*}"
+        complexity="${line##*|}"
+        local effort="M"
+        [[ "$complexity" =~ ^[0-9]+$ ]] && {
+            [[ "$complexity" -le 4 ]] && effort="S"
+            [[ "$complexity" -ge 7 ]] && effort="L"
+        }
+        json=$(echo "$json" | jq -c --arg t "$title" --arg c "$type" --arg e "$effort" \
+            '. + [{title: $t, description: $t, priority: "medium", effort: $e, labels: [$c], category: $c}]' 2>/dev/null || echo "$json")
     done
     echo "$json"
 }
@@ -383,9 +409,9 @@ Output ONLY a JSON array, no other text.' --max-turns 3 > "$findings" 2>/dev/nul
     else
         warn "Claude CLI not available, using codebase-aware analysis..."
 
-        autonomous_codebase_analysis > "$findings"
+        autonomous_heuristic_analysis | autonomous_heuristic_to_json > "$findings"
         if [[ ! -s "$findings" ]] || [[ "$(cat "$findings")" == "[]" ]]; then
-            # No findings from codebase analysis
+            # No findings from heuristic analysis
             echo "[]" > "$findings"
         fi
     fi
@@ -531,13 +557,13 @@ trigger_pipeline_for_finding() {
     fi
 
     if [[ "$daemon_aware" == "true" ]] && daemon_is_running; then
-        # Daemon running: label ready-to-build and let daemon pick it up
+        # Daemon running: add shipwright (daemon watch label) + ready-to-build (status), let daemon pick it up
         if [[ "$NO_GITHUB" != "true" ]]; then
-            gh issue edit "$issue_num" --add-label "ready-to-build" 2>/dev/null || {
-                warn "Failed to add ready-to-build label to #${issue_num}"
+            gh issue edit "$issue_num" --add-label "shipwright" --add-label "ready-to-build" 2>/dev/null || {
+                warn "Failed to add shipwright/ready-to-build labels to #${issue_num}"
             }
         fi
-        info "Delegated issue #${issue_num} to daemon (labeled ready-to-build)"
+        info "Delegated issue #${issue_num} to daemon (labeled shipwright, ready-to-build)"
         emit_event "autonomous.delegated_to_daemon" "issue=$issue_num" "title=$title"
         return 0
     fi

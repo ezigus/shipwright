@@ -25,6 +25,7 @@ class Shipwright < Formula
 
   depends_on "bash"
   depends_on "jq"
+  depends_on "sqlite"
   depends_on "tmux"
 
   def install

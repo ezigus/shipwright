@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="2.4.0"
+VERSION="2.5.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -739,10 +739,13 @@ optimize_route_models() {
         done
     done < "$outcomes_file"
 
-    # Build routing recommendations
+    # Build routing recommendations; extract .routes from existing file when present
     local routing='{}'
-    if [[ -f "$MODEL_ROUTING_FILE" ]]; then
-        routing=$(cat "$MODEL_ROUTING_FILE")
+    if [[ -f "$MODEL_ROUTING_FILE" ]] && command -v jq >/dev/null 2>&1; then
+        local existing
+        existing=$(cat "$MODEL_ROUTING_FILE")
+        # Use .routes when present (self-optimize format), else flatten for merge
+        routing=$(echo "$existing" | jq -r 'if .routes then .routes else . end | if type == "object" then . else {} end' 2>/dev/null || echo '{}')
     fi
 
     if [[ -f "$tmp_stage_stats" && -s "$tmp_stage_stats" ]]; then
@@ -760,7 +763,7 @@ optimize_route_models() {
             sonnet_success="${sonnet_success:-0}"
 
             if [[ "$sonnet_total" -gt 0 ]]; then
-                sonnet_rate=$(awk "BEGIN{printf \"%.1f\", ($sonnet_success/$sonnet_total)*100}")
+                sonnet_rate=$(awk "BEGIN{printf \"%.1f\", ($sonnet_success/$sonnet_total)*100}" | tr -d '\n')
             else
                 sonnet_rate="0"
             fi
@@ -773,7 +776,7 @@ optimize_route_models() {
             opus_success="${opus_success:-0}"
 
             if [[ "$opus_total" -gt 0 ]]; then
-                opus_rate=$(awk "BEGIN{printf \"%.1f\", ($opus_success/$opus_total)*100}")
+                opus_rate=$(awk "BEGIN{printf \"%.1f\", ($opus_success/$opus_total)*100}" | tr -d '\n')
             else
                 opus_rate="0"
             fi
@@ -812,7 +815,7 @@ optimize_route_models() {
         routes: (. | to_entries | map({
             key: .key,
             value: {
-                model: .value.recommended,
+                model: (.value.recommended // .value.model),
                 confidence: (if .value.sonnet_samples + .value.opus_samples >= 10 then 0.9
                     elif .value.sonnet_samples + .value.opus_samples >= 5 then 0.7
                     else 0.5 end),

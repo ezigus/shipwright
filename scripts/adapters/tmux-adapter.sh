@@ -14,9 +14,14 @@
 # Track spawned panes by agent name → pane ID (file-based for bash 3.2 compat)
 _TMUX_PANE_MAP="${TMPDIR:-/tmp}/shipwright-tmux-pane-map.$$"
 : > "$_TMUX_PANE_MAP"
-trap 'rm -f "$_TMUX_PANE_MAP"' EXIT
+trap '
+    if [[ -f "$_TMUX_PANE_MAP" ]] && [[ ! -s "$_TMUX_PANE_MAP" ]]; then
+        rm -f "$_TMUX_PANE_MAP"
+    fi
+' EXIT
 
 spawn_agent() {
+    [[ -z "${WINDOW_NAME:-}" ]] && { echo "ERROR: WINDOW_NAME not set" >&2; return 1; }
     local name="$1"
     local working_dir="${2:-#{pane_current_path}}"
     local command="${3:-}"
@@ -30,6 +35,11 @@ spawn_agent() {
     else
         # Split the current window and capture the new pane ID
         new_pane_id=$(tmux split-window -t "$WINDOW_NAME" -c "$working_dir" -P -F '#{pane_id}')
+    fi
+
+    if [[ -z "$new_pane_id" ]]; then
+        echo "ERROR: Failed to create tmux pane for agent '$name'" >&2
+        return 1
     fi
 
     # Record the mapping: name → pane_id

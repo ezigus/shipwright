@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="2.4.0"
+VERSION="2.5.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -112,11 +112,15 @@ get_recent_failures() {
 
     [[ ! -f "$EVENTS_FILE" ]] && echo "[]" && return 0
 
-    jq -s --arg cutoff "$cutoff_time" '
+    # Safe JSONL parsing: filter to lines that look like JSON objects, then slurp
+    grep '^{' "$EVENTS_FILE" 2>/dev/null | jq -s -R --arg cutoff "$cutoff_time" '
+        split("\n") |
+        map(select(length > 0) | (fromjson? // empty)) |
         map(
             select(
-                (.ts_epoch | tonumber) > ($cutoff | tonumber) and
-                (.type | contains("failed") or contains("error") or contains("timeout"))
+                . != null and
+                ((.ts_epoch | tonumber) > ($cutoff | tonumber)) and
+                ((.type | tostring) | (contains("failed") or contains("error") or contains("timeout")))
             ) |
             {
                 ts: .ts,
@@ -128,7 +132,7 @@ get_recent_failures() {
                 error: .error
             }
         )
-    ' "$EVENTS_FILE" 2>/dev/null || echo "[]"
+    ' 2>/dev/null || echo "[]"
 }
 
 # ─── Severity Classification ───────────────────────────────────────────────

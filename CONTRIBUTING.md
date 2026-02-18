@@ -69,7 +69,7 @@ Follow conventional commits:
 
 Label a GitHub issue with `shipwright` and the autonomous pipeline processes it automatically. You can also create issues for Shipwright to process:
 
-1. [Create an issue](https://github.com/sethdford/shipwright/issues/new?template=shipwright.yml)
+1. [Create an issue](https://github.com/sethdford/shipwright/issues/new?template=shipwright-build.yml)
 2. Add the `shipwright` label
 3. The pipeline handles: triage → plan → build → test → review → PR
 

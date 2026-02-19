@@ -33,15 +33,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
 # Policy + quality thresholds (lib/pipeline-quality.sh sets QUALITY_* from config/policy.json)
 [[ -f "$SCRIPT_DIR/lib/pipeline-quality.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-quality.sh"
 
@@ -145,6 +136,62 @@ validate_quality() {
     emit_event "quality.validate" "pass=$all_pass" "score=$score"
 }
 
+# ─── Semantic audit (Claude-powered, supplements grep) ───────────────────────
+quality_semantic_audit() {
+    local target="${1:-$REPO_DIR}"
+    local audit_type="${2:-general}"
+    local results_file="${3:-}"
+
+    if ! command -v claude &>/dev/null; then
+        return 1
+    fi
+
+    local code_sample=""
+    local changed_files
+    changed_files=$(cd "$REPO_DIR" 2>/dev/null && git diff --name-only HEAD~1 2>/dev/null) || true
+    [[ -z "$changed_files" ]] && changed_files=$(cd "$REPO_DIR" 2>/dev/null && git diff --cached --name-only 2>/dev/null) || true
+    [[ -z "$changed_files" ]] && changed_files=$(find "$target" -type f \( -name "*.sh" -o -name "*.ts" -o -name "*.js" \) 2>/dev/null | head -20)
+
+    local file_count=0
+    while IFS= read -r file; do
+        [[ -z "$file" ]] && continue
+        local full_path="$file"
+        [[ "$file" != /* ]] && full_path="$REPO_DIR/$file"
+        [[ ! -f "$full_path" ]] && continue
+        [[ "$file_count" -ge 10 ]] && break
+        local content
+        content=$(head -200 "$full_path" 2>/dev/null)
+        local display_path="$file"
+        [[ "$full_path" == "$REPO_DIR"* ]] && display_path="${full_path#$REPO_DIR/}"
+        code_sample+="
+--- $display_path ---
+$content
+"
+        file_count=$((file_count + 1))
+    done <<< "$changed_files"
+
+    [[ -z "$code_sample" ]] && return 1
+
+    local prompt="You are a senior code reviewer performing a ${audit_type} audit. Analyze these files for real issues only - no style nits, no false positives. Return JSON array of findings:
+[{\"severity\": \"critical|high|medium|low\", \"file\": \"path\", \"line\": N, \"category\": \"security|correctness|architecture|performance\", \"description\": \"specific issue\", \"suggestion\": \"how to fix\"}]
+
+Only report REAL issues. Empty array [] if none found.
+
+$code_sample"
+
+    local result
+    result=$(echo "$prompt" | timeout 60 claude -p 2>/dev/null) || return 1
+
+    local findings
+    findings=$(echo "$result" | grep -o '\[.*\]' | head -1) || findings="[]"
+
+    if [[ -n "$results_file" ]]; then
+        echo "$findings" > "$results_file"
+    else
+        echo "$findings"
+    fi
+}
+
 # ─── Audit subcommand ───────────────────────────────────────────────────────
 audit_quality() {
     info "Running adversarial quality audits..."
@@ -203,6 +250,26 @@ audit_quality() {
         # Check for mixed abstraction levels
         if grep -r "TODO.*FIXME\|HACK\|KLUDGE" "$REPO_DIR" --include="*.js" --include="*.py" --include="*.go" 2>/dev/null | wc -l | grep -qE "[1-9]"; then
             architecture_findings+=("Code quality markers (TODO/HACK) in implementation")
+        fi
+    fi
+
+    # Run semantic audit when Claude is available (supplements grep)
+    local semantic_results
+    if semantic_results=$(quality_semantic_audit "$REPO_DIR" "general" 2>/dev/null); then
+        local semantic_count
+        semantic_count=$(echo "$semantic_results" | jq 'length' 2>/dev/null || echo "0")
+        if [[ -n "$semantic_count" && "$semantic_count" -gt 0 ]]; then
+            info "  Semantic audit found $semantic_count additional issue(s)"
+            while IFS=$'\t' read -r cat line; do
+                [[ -z "$line" ]] && continue
+                case "${cat:-correctness}" in
+                    security) security_findings+=( "$line" ) ;;
+                    correctness) correctness_findings+=( "$line" ) ;;
+                    architecture) architecture_findings+=( "$line" ) ;;
+                    performance) correctness_findings+=( "$line" ) ;;
+                    *) correctness_findings+=( "$line" ) ;;
+                esac
+            done < <(echo "$semantic_results" | jq -r '.[] | "\(.category)\t[\(.severity)] \(.file):\(.line // "?") - \(.description)"' 2>/dev/null)
         fi
     fi
 

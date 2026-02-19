@@ -17,6 +17,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -34,16 +35,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Configuration ─────────────────────────────────────────────────────────
 CONFIG_DIR="${HOME}/.shipwright"
 TRACKER_CONFIG="${CONFIG_DIR}/tracker-config.json"
@@ -86,7 +77,7 @@ jira_api() {
     local method="$1" endpoint="$2" data="${3:-}"
     local auth
     auth=$(printf '%s:%s' "$JIRA_EMAIL" "$JIRA_API_TOKEN" | base64)
-    local args=(-sf --connect-timeout 10 --max-time 30 -X "$method" \
+    local args=(-sf --connect-timeout "$(_config_get_int "network.connect_timeout" 10)" --max-time "$(_config_get_int "network.max_time" 30)" -X "$method" \
         -H "Authorization: Basic $auth" \
         -H "Content-Type: application/json")
     [[ -n "$data" ]] && args+=(-d "$data")
@@ -186,7 +177,7 @@ cmd_sync() {
 
         # Check if GitHub issue already exists for this Jira issue
         local existing_gh
-        existing_gh=$(gh issue list --label "ready-to-build" --search "Jira: ${jira_key}" --json number --jq '.[0].number // empty' 2>/dev/null || true)
+        existing_gh=$(gh issue list --label "$(_config_get "labels.ready_to_build" "ready-to-build")" --search "Jira: ${jira_key}" --json number --jq '.[0].number // empty' 2>/dev/null || true)
 
         if [[ -n "$existing_gh" ]]; then
             echo -e "  ${DIM}Skip${RESET} ${jira_key}: ${title} ${DIM}(GitHub #${existing_gh})${RESET}"
@@ -215,7 +206,7 @@ cmd_sync() {
             synced=$((synced + 1))
         else
             # Create GitHub issue
-            local labels="ready-to-build"
+            local labels="$(_config_get "labels.ready_to_build" "ready-to-build")"
             if [[ -n "$priority_label" ]]; then
                 labels="${labels},${priority_label}"
             fi

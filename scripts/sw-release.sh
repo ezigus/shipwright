@@ -5,7 +5,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
-trap 'rm -f "${tmp_file:-}"' EXIT
+trap 'rm -f "${tmp_file:-}" "${tmp_changelog:-}"' EXIT
 
 VERSION="2.5.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,6 +18,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -35,16 +36,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Parse flags ───────────────────────────────────────────────────────────
 DRY_RUN=false
 VERSION_TYPE=""
@@ -510,7 +501,8 @@ cmd_publish() {
     info "Step 2/5: Generating changelog..."
     local changelog
     changelog="$(generate_changelog_md "$next_version" "$current_version" "HEAD")"
-    echo "$changelog" > /tmp/release-changelog.md
+    tmp_changelog="$(mktemp)"
+    echo "$changelog" > "$tmp_changelog"
     success "Changelog generated"
     echo ""
 
@@ -532,14 +524,14 @@ cmd_publish() {
     # Step 5: Create GitHub release
     info "Step 5/5: Creating GitHub release..."
     if command -v gh >/dev/null 2>&1; then
-        if gh release create "$next_version" --title "$next_version" --notes-file /tmp/release-changelog.md; then
+        if gh release create "$next_version" --title "$next_version" --notes-file "$tmp_changelog"; then
             success "GitHub release created"
         else
             warn "Failed to create GitHub release (may already exist)"
         fi
     else
         warn "gh CLI not installed — skipping GitHub release creation"
-        echo -e "  Manual create: ${DIM}gh release create $next_version --title '$next_version' --notes-file /tmp/release-changelog.md${RESET}"
+        echo -e "  Manual create: ${DIM}gh release create $next_version --title '$next_version' --notes-file <changelog_file>${RESET}"
     fi
     echo ""
 

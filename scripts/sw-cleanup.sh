@@ -16,6 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
@@ -36,16 +37,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Parse Args ──────────────────────────────────────────────────────────────
 
 FORCE=false
@@ -282,7 +273,7 @@ echo -e "${DIM}─────────────────────�
 HEARTBEAT_DIR="${HOME}/.shipwright/heartbeats"
 if [[ -d "$HEARTBEAT_DIR" ]]; then
     now_e=$(date +%s)
-    stale_threshold=3600  # 1 hour
+    stale_threshold=$(_config_get_int "cleanup.heartbeat_stale_seconds" 3600)
 
     while IFS= read -r hb_file; do
         [[ -f "$hb_file" ]] || continue

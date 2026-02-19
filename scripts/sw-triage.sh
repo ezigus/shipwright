@@ -16,7 +16,15 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
+[[ -z "${CYAN:-}" ]]  && { [[ -z "${NO_COLOR:-}" ]] && CYAN='\033[38;2;0;212;255m'   || CYAN=''; } || true
+[[ -z "${RESET:-}" ]] && { [[ -z "${NO_COLOR:-}" ]] && RESET='\033[0m'               || RESET=''; } || true
+[[ -z "${BOLD:-}" ]]  && { [[ -z "${NO_COLOR:-}" ]] && BOLD='\033[1m'                || BOLD=''; } || true
+[[ -z "${DIM:-}" ]]   && { [[ -z "${NO_COLOR:-}" ]] && DIM='\033[2m'                 || DIM=''; } || true
+[[ -z "${GREEN:-}" ]] && { [[ -z "${NO_COLOR:-}" ]] && GREEN='\033[38;2;74;222;128m' || GREEN=''; } || true
+[[ -z "${RED:-}" ]]   && { [[ -z "${NO_COLOR:-}" ]] && RED='\033[38;2;248;113;113m'  || RED=''; } || true
+[[ -z "${YELLOW:-}" ]] && { [[ -z "${NO_COLOR:-}" ]] && YELLOW='\033[38;2;250;204;21m' || YELLOW=''; } || true
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
 [[ "$(type -t warn 2>/dev/null)" == "function" ]]    || warn()    { echo -e "\033[38;2;250;204;21m\033[1m⚠\033[0m $*"; }
@@ -25,16 +33,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── GitHub API (safe when NO_GITHUB set) ──────────────────────────────────
 
 check_gh() {
@@ -461,7 +459,7 @@ cmd_prioritize() {
 
     # Fetch all open issues
     local issues_json
-    issues_json=$(gh issue list --state open --json number,title,body,labels,createdAt,reactions --limit 100 2>/dev/null || echo "[]")
+    issues_json=$(gh issue list --state open --json number,title,body,labels,createdAt,reactions --limit "$(_config_get_int "limits.triage_issues" 100)" 2>/dev/null || echo "[]")
 
     local issue_count
     issue_count=$(echo "$issues_json" | jq 'length')
@@ -667,7 +665,7 @@ cmd_batch() {
 
     # Fetch unlabeled open issues
     local issues_json
-    issues_json=$(gh issue list --state open --search "no:label" --json number --limit 50 2>/dev/null || echo "[]")
+    issues_json=$(gh issue list --state open --search "no:label" --json number --limit "$(_config_get_int "limits.triage_unlabeled" 50)" 2>/dev/null || echo "[]")
 
     local issue_count
     issue_count=$(echo "$issues_json" | jq 'length')
@@ -693,7 +691,7 @@ cmd_report() {
 
     # Fetch labeled issues
     local issues_json
-    issues_json=$(gh issue list --state open --json labels,title,number --limit 100 2>/dev/null || echo "[]")
+    issues_json=$(gh issue list --state open --json labels,title,number --limit "$(_config_get_int "limits.triage_issues" 100)" 2>/dev/null || echo "[]")
 
     local type_counts complexity_counts priority_counts
     type_counts='{}'

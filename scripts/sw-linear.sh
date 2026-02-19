@@ -17,6 +17,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -34,16 +35,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Configuration ─────────────────────────────────────────────────────────
 CONFIG_DIR="${HOME}/.shipwright"
 LINEAR_CONFIG="${CONFIG_DIR}/linear-config.json"
@@ -57,7 +48,7 @@ STATUS_IN_PROGRESS="${LINEAR_STATUS_IN_PROGRESS:-}"
 STATUS_IN_REVIEW="${LINEAR_STATUS_IN_REVIEW:-}"
 STATUS_DONE="${LINEAR_STATUS_DONE:-}"
 
-LINEAR_API="https://api.linear.app/graphql"
+LINEAR_API="$(_config_get "urls.linear_api" "https://api.linear.app/graphql")"
 
 load_config() {
     if [[ -f "$LINEAR_CONFIG" ]]; then
@@ -224,7 +215,7 @@ cmd_sync() {
             fi
 
             local gh_num
-            gh_num=$(_timeout 30 gh issue create --title "$title" --body "$gh_body" --label "$labels" --json number --jq '.number' 2>&1) || {
+            gh_num=$(_timeout "$(_config_get_int "network.gh_timeout" 30)" gh issue create --title "$title" --body "$gh_body" --label "$labels" --json number --jq '.number' 2>&1) || {
                 error "Failed to create GitHub issue for ${linear_identifier}: ${gh_num}"
                 i=$((i + 1))
                 continue
@@ -277,7 +268,7 @@ cmd_update() {
 
     # Find the Linear issue ID from the GitHub issue body
     local linear_id
-    linear_id=$(_timeout 30 gh issue view "$gh_issue" --json body --jq '.body' 2>/dev/null | \
+    linear_id=$(_timeout "$(_config_get_int "network.gh_timeout" 30)" gh issue view "$gh_issue" --json body --jq '.body' 2>/dev/null | \
         grep -o 'Linear ID:.*' | sed 's/.*\*\*Linear ID:\*\* //' | tr -d '[:space:]' || true)
 
     if [[ -z "$linear_id" ]]; then
@@ -551,7 +542,7 @@ linear_notify() {
     # Find the Linear issue ID from GitHub issue
     local linear_id=""
     if [[ -n "$gh_issue" ]]; then
-        linear_id=$(_timeout 30 gh issue view "$gh_issue" --json body --jq '.body' 2>/dev/null | \
+        linear_id=$(_timeout "$(_config_get_int "network.gh_timeout" 30)" gh issue view "$gh_issue" --json body --jq '.body' 2>/dev/null | \
             grep -o 'Linear ID:.*' | sed 's/.*\*\*Linear ID:\*\* //' | tr -d '[:space:]' || true)
     fi
 

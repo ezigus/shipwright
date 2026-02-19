@@ -34,15 +34,14 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
+# Color fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
+[[ -z "${PURPLE+set}" ]] && PURPLE='\033[38;2;124;58;237m'
+[[ -z "${BOLD+set}" ]] && BOLD='\033[1m'
+[[ -z "${DIM+set}" ]] && DIM='\033[2m'
+[[ -z "${RESET+set}" ]] && RESET='\033[0m'
+[[ -z "${YELLOW+set}" ]] && YELLOW='\033[38;2;250;204;21m'
+[[ -z "${GREEN+set}" ]] && GREEN='\033[38;2;74;222;128m'
+[[ -z "${RED+set}" ]] && RED='\033[38;2;248;113;113m'
 # ─── Constants (policy overrides when config/policy.json exists) ─────────────
 STRATEGIC_MAX_ISSUES=5
 STRATEGIC_COOLDOWN_SECONDS=14400  # 4 hours
@@ -116,6 +115,55 @@ strategic_load_title_cache() {
 
     STRATEGIC_TITLE_CACHE="${open_titles}
 ${closed_titles}"
+}
+
+# ─── Outcome Tracking (Learning Loop) ────────────────────────────────────────
+# Tracks which strategic issues shipped vs closed unshipped, so we learn from outcomes.
+strategic_track_outcomes() {
+    local outcomes_file="$HOME/.shipwright/strategic/outcomes.jsonl"
+    mkdir -p "$HOME/.shipwright/strategic"
+
+    if [[ "${NO_GITHUB:-false}" == "true" ]]; then
+        return 0
+    fi
+
+    local strategic_issues
+    strategic_issues=$(gh issue list --label "strategic" --state all --json number,title,state,closedAt,labels --limit 50 2>/dev/null) || return 0
+
+    [[ -z "$strategic_issues" || "$strategic_issues" == "[]" ]] && return 0
+
+    touch "$outcomes_file" 2>/dev/null || true
+
+    while IFS= read -r issue; do
+        [[ -z "$issue" || "$issue" == "null" ]] && continue
+        local num title state
+        num=$(echo "$issue" | jq -r '.number')
+        title=$(echo "$issue" | jq -r '.title')
+        state=$(echo "$issue" | jq -r '.state')
+
+        # Check if already tracked
+        if grep -q "\"issue\":$num" "$outcomes_file" 2>/dev/null; then
+            continue
+        fi
+
+        # Determine outcome
+        local outcome="pending"
+        local success=false
+        if [[ "$state" == "CLOSED" ]]; then
+            local merged_prs
+            merged_prs=$(gh pr list --search "closes #$num" --state merged --json number --limit 1 2>/dev/null)
+            if [[ "$(echo "$merged_prs" | jq 'length' 2>/dev/null)" -gt 0 ]]; then
+                outcome="shipped"
+                success=true
+            else
+                outcome="closed_unshipped"
+            fi
+        fi
+
+        local title_escaped
+        title_escaped=$(echo "$title" | jq -R . 2>/dev/null || echo "null")
+        echo "{\"issue\":$num,\"title\":$title_escaped,\"outcome\":\"$outcome\",\"success\":$success,\"tracked_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >> "$outcomes_file"
+    done < <(echo "$strategic_issues" | jq -c '.[]' 2>/dev/null)
 }
 
 # Check if a title has >threshold% overlap with any cached title.
@@ -340,6 +388,25 @@ strategic_build_prompt() {
         recent_closed="(GitHub access disabled)"
     fi
 
+    # Outcome history (shipped vs closed_unshipped) — learning loop
+    local outcomes_section="(No past outcomes yet — run a few cycles to build history)"
+    local outcomes_file="$HOME/.shipwright/strategic/outcomes.jsonl"
+    if [[ -f "$outcomes_file" ]]; then
+        local shipped failed
+        shipped=$(grep '"outcome":"shipped"' "$outcomes_file" 2>/dev/null | tail -10 | jq -r '.title' 2>/dev/null | sed 's/^/  - SUCCEEDED: /' || true)
+        failed=$(grep -E '"outcome":"closed_unshipped"' "$outcomes_file" 2>/dev/null | tail -10 | jq -r '.title' 2>/dev/null | sed 's/^/  - FAILED: /' || true)
+        if [[ -n "$shipped" || -n "$failed" ]]; then
+            outcomes_section="
+Learn from these outcomes. Suggest more things like the successes, avoid patterns similar to failures.
+
+SUCCEEDED (shipped with merged PR):
+${shipped:-  (none yet)}
+
+FAILED (closed without shipping):
+${failed:-  (none yet)}"
+        fi
+    fi
+
     # Platform health (hygiene + platform-refactor scan) — for AGI-level self-improvement
     local platform_health_section="(No platform hygiene data — run \`shipwright hygiene platform-refactor\` or \`shipwright hygiene scan\` to generate .claude/platform-hygiene.json)"
     if [[ -f "${repo_dir}/.claude/platform-hygiene.json" ]]; then
@@ -381,6 +448,9 @@ ${recent_closed}
 ## Platform Health (refactor / hardcoded / AGI-level readiness)
 ${platform_health_section}
 
+## Past Strategic Suggestions and Outcomes (learn from these)
+${outcomes_section}
+
 ## Your Task
 Based on the strategy priorities and current data, recommend 1-3 concrete improvements to build next. Each should be a single, well-scoped task completable by one autonomous pipeline run.
 
@@ -395,6 +465,7 @@ ACCEPTANCE: <bullet list of acceptance criteria, one per line starting with "- "
 ---
 
 Rules:
+- Learn from PAST STRATEGIC SUGGESTIONS: prefer patterns that succeeded, avoid patterns similar to failures
 - Do NOT duplicate any open issue OR any recently completed issue
 - Prioritize based on STRATEGY.md priorities (P0 > P1 > P2 > ...)
 - Focus on concrete, actionable improvements (not vague goals)
@@ -659,6 +730,10 @@ strategic_run() {
         return 1
     fi
 
+    # Track outcomes of past strategic issues (learning loop)
+    info "Tracking outcomes of past strategic issues..."
+    strategic_track_outcomes || true
+
     # Load existing issue titles for semantic dedup
     info "Loading issue title cache for dedup..."
     strategic_load_title_cache
@@ -757,6 +832,45 @@ strategic_status() {
     echo ""
 }
 
+# ─── Outcomes Command ─────────────────────────────────────────────────────────
+strategic_outcomes() {
+    local outcomes_file="$HOME/.shipwright/strategic/outcomes.jsonl"
+
+    echo -e "\n${PURPLE}${BOLD}━━━ Strategic Outcomes (Learning Loop) ━━━${RESET}\n"
+
+    if [[ ! -f "$outcomes_file" ]]; then
+        info "No outcomes tracked yet. Run \`shipwright strategic run\` to start the learning loop."
+        echo ""
+        return 0
+    fi
+
+    local shipped_count failed_count pending_count
+    shipped_count=$(grep -c '"outcome":"shipped"' "$outcomes_file" 2>/dev/null || echo "0")
+    failed_count=$(grep -cE '"outcome":"closed_unshipped"' "$outcomes_file" 2>/dev/null || echo "0")
+    pending_count=$(grep -c '"outcome":"pending"' "$outcomes_file" 2>/dev/null || echo "0")
+
+    echo -e "  ${GREEN}Shipped:${RESET}       $shipped_count (closed with merged PR)"
+    echo -e "  ${RED}Closed unshipped:${RESET} $failed_count (closed without merge)"
+    echo -e "  ${DIM}Pending:${RESET}        $pending_count (still open)"
+    echo ""
+
+    echo -e "  ${BOLD}Recent shipped:${RESET}"
+    grep '"outcome":"shipped"' "$outcomes_file" 2>/dev/null | tail -5 | while IFS= read -r line; do
+        local title
+        title=$(echo "$line" | jq -r '.title // "?"' 2>/dev/null)
+        echo -e "    ${GREEN}✓${RESET} $title"
+    done
+    echo ""
+
+    echo -e "  ${BOLD}Recent failed (closed without shipping):${RESET}"
+    grep -E '"outcome":"closed_unshipped"' "$outcomes_file" 2>/dev/null | tail -5 | while IFS= read -r line; do
+        local title
+        title=$(echo "$line" | jq -r '.title // "?"' 2>/dev/null)
+        echo -e "    ${RED}✗${RESET} $title"
+    done
+    echo ""
+}
+
 # ─── Help ─────────────────────────────────────────────────────────────────────
 strategic_show_help() {
     echo -e "${PURPLE}${BOLD}Shipwright Strategic Intelligence Agent${RESET} v${VERSION}\n"
@@ -765,7 +879,8 @@ strategic_show_help() {
     echo -e "  sw-strategic.sh <command>\n"
     echo -e "${BOLD}Commands:${RESET}"
     echo -e "  run [--force]  Run a strategic analysis cycle (--force bypasses cooldown)"
-    echo -e "  status         Show last run stats and cooldown"
+    echo -e "  status        Show last run stats and cooldown"
+    echo -e "  outcomes      Show outcome tracking (shipped vs failed suggestions)"
     echo -e "  help           Show this help\n"
     echo -e "${BOLD}Environment:${RESET}"
     echo -e "  CLAUDE_CODE_OAUTH_TOKEN  Required for Claude access"
@@ -806,6 +921,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
         case "$cmd" in
             run)     strategic_run "$@" ;;
             status)  strategic_status ;;
+            outcomes) strategic_outcomes ;;
             help)    strategic_show_help ;;
             *)
                 error "Unknown command: $cmd"

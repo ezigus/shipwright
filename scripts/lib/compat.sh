@@ -214,6 +214,59 @@ _timeout() {
     fi
 }
 
+# ─── Cross-platform date helpers (GNU date -d vs BSD date -j/-v) ──────────
+# date_to_epoch: convert date string to Unix epoch
+# date_days_ago: YYYY-MM-DD for N days ago
+# date_add_days: YYYY-MM-DD for base_date + N days
+# epoch_to_iso: convert epoch to ISO 8601
+date_to_epoch() {
+    local datestr="$1"
+    local fmt=""
+    if [[ "$datestr" == *"T"* ]]; then
+        fmt="%Y-%m-%dT%H:%M:%SZ"
+    else
+        fmt="%Y-%m-%d"
+    fi
+    if date -u -d "$datestr" +%s 2>/dev/null; then
+        return
+    fi
+    # BSD date: -j = don't set date, -f = format
+    date -u -j -f "$fmt" "$datestr" +%s 2>/dev/null || echo "0"
+}
+
+date_days_ago() {
+    local days="$1"
+    if date -u -d "$days days ago" +%Y-%m-%d 2>/dev/null; then
+        return
+    fi
+    date -u -v-${days}d +%Y-%m-%d 2>/dev/null || echo "1970-01-01"
+}
+
+date_add_days() {
+    local base_date="$1"
+    local days="$2"
+    if date -u -d "${base_date} + ${days} days" +%Y-%m-%d 2>/dev/null; then
+        return
+    fi
+    # BSD: compute via epoch arithmetic
+    local base_epoch
+    base_epoch=$(date_to_epoch "$base_date")
+    if [[ -n "$base_epoch" && "$base_epoch" != "0" ]]; then
+        local result_epoch=$((base_epoch + (days * 86400)))
+        date -u -r "$result_epoch" +%Y-%m-%d 2>/dev/null || date -u -d "@$result_epoch" +%Y-%m-%d 2>/dev/null || echo "1970-01-01"
+    else
+        echo "1970-01-01"
+    fi
+}
+
+epoch_to_iso() {
+    local epoch="$1"
+    date -u -r "$epoch" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
+    date -u -d "@$epoch" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
+    python3 -c "import datetime; print(datetime.datetime.utcfromtimestamp($epoch).strftime('%Y-%m-%dT%H:%M:%SZ'))" 2>/dev/null || \
+    echo "1970-01-01T00:00:00Z"
+}
+
 # ─── Cross-platform MD5 ──────────────────────────────────────────────────
 # Usage:
 #   compute_md5 --string "some text"   → md5 hash of string

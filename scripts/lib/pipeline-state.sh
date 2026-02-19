@@ -235,6 +235,15 @@ mark_stage_complete() {
     if type publish_event >/dev/null 2>&1; then
         publish_event "stage.complete" "{\"stage\":\"${stage_id}\",\"issue\":\"${ISSUE_NUMBER:-0}\",\"timing\":\"${timing}\"}" 2>/dev/null || true
     fi
+
+    # Durable checkpoint: save to DB for pipeline resume
+    if type db_save_checkpoint >/dev/null 2>&1; then
+        local checkpoint_data
+        checkpoint_data=$(jq -nc --arg stage "$stage_id" --arg status "${PIPELINE_STATUS:-running}" \
+            --arg issue "${ISSUE_NUMBER:-}" --arg goal "${GOAL:-}" --arg template "${PIPELINE_TEMPLATE:-}" \
+            '{stage: $stage, status: $status, issue: $issue, goal: $goal, template: $template, ts: "'"$(now_iso)"'"}')
+        db_save_checkpoint "pipeline-${SHIPWRIGHT_PIPELINE_ID:-$$}" "$checkpoint_data" 2>/dev/null || true
+    fi
 }
 
 persist_artifacts() {
@@ -463,6 +472,16 @@ _SW_STATE_END_
         printf '## Log\n'
         printf '%s\n' "$LOG_ENTRIES"
     } >> "$STATE_FILE"
+
+    # Update pipeline_runs in DB
+    if type update_pipeline_status >/dev/null 2>&1 && db_available 2>/dev/null; then
+        local _job_id="${SHIPWRIGHT_PIPELINE_ID:-pipeline-$$-${ISSUE_NUMBER:-0}}"
+        local _dur_secs=0
+        if [[ -n "$PIPELINE_START_EPOCH" ]]; then
+            _dur_secs=$(( $(now_epoch) - PIPELINE_START_EPOCH ))
+        fi
+        update_pipeline_status "$_job_id" "$PIPELINE_STATUS" "$CURRENT_STAGE" "" "$_dur_secs" 2>/dev/null || true
+    fi
 }
 
 resume_state() {

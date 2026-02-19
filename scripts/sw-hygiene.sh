@@ -17,6 +17,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 [[ -f "$SCRIPT_DIR/lib/policy.sh" ]] && source "$SCRIPT_DIR/lib/policy.sh"
 # Canonical helpers (colors, output, events)
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 # Fallback when helpers.sh not loaded
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -31,24 +32,12 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
 
 # ─── Default Settings (policy overrides when config/policy.json exists) ──────
 SUBCOMMAND="${1:-help}"
 AUTO_FIX=false
 VERBOSE=false
-ARTIFACT_AGE_DAYS=7
-if type policy_get >/dev/null 2>&1; then
-    ARTIFACT_AGE_DAYS=$(policy_get ".hygiene.artifact_age_days" "7")
-fi
+ARTIFACT_AGE_DAYS=$(_config_get_int "cleanup.artifact_age_days" 7)
 JSON_OUTPUT=false
 
 # ─── Help ───────────────────────────────────────────────────────────────────
@@ -95,15 +84,22 @@ detect_dead_code() {
     local unused_functions=0
     local unused_scripts=0
     local orphaned_tests=0
+    local func_limit func_count=0
+    func_limit=$(_config_get_int "limits.function_scan_limit" 0)
 
     # Find unused bash functions (simplified for Bash 3.2)
     while IFS= read -r func_file; do
+        [[ "$func_limit" -gt 0 && "$func_count" -ge "$func_limit" ]] && break
         # Extract function names
         local funcs
         funcs=$(grep -E '^[a-z_][a-z0-9_]*\(\)' "$func_file" 2>/dev/null | sed 's/()$//' | sed 's/^ *//' || true)
+        if [[ "$func_limit" -gt 0 ]]; then
+            funcs=$(echo "$funcs" | head -"$((func_limit - func_count))")
+        fi
 
         while IFS= read -r func; do
             [[ -z "$func" ]] && continue
+            [[ "$func_limit" -gt 0 && "$func_count" -ge "$func_limit" ]] && break
 
             # Check if function is used in other files (count lines with this function name)
             local usage_count
@@ -114,8 +110,9 @@ detect_dead_code() {
             case "$usage_count" in
                 0|1) [[ $VERBOSE == true ]] && warn "Unused function: $func (in $(basename "$func_file"))"; unused_functions=$((unused_functions + 1)) ;;
             esac
+            func_count=$((func_count + 1))
         done <<< "$funcs"
-    done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null | head -20)
+    done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null)
 
     # Find scripts referenced nowhere
     local script_count=0
@@ -210,11 +207,16 @@ audit_dependencies() {
 
     local unused_deps=0
     local circular_deps=0
+    local dep_limit
+    dep_limit=$(_config_get_int "limits.dependency_scan_limit" 0)
 
     # Check for unused npm/yarn dependencies
     if [[ -f "$REPO_DIR/package.json" ]]; then
         local deps
         deps=$(jq -r '.dependencies, .devDependencies | keys[]?' "$REPO_DIR/package.json" 2>/dev/null || true)
+        if [[ "$dep_limit" -gt 0 ]]; then
+            deps=$(echo "$deps" | head -"$dep_limit")
+        fi
 
         while IFS= read -r dep; do
             [[ -z "$dep" ]] && continue
@@ -241,7 +243,7 @@ audit_dependencies() {
                 circular_deps=$((circular_deps + 1))
             fi
         done <<< "$sourced_by"
-    done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null | head -10)
+    done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null)
 
     [[ $VERBOSE == true ]] && {
         info "Dependency audit: $unused_deps unused, $circular_deps circular"
@@ -278,7 +280,7 @@ check_naming() {
             [[ $VERBOSE == true ]] && warn "Function not using snake_case: $func (in $(basename "$script"))"
             naming_issues=$((naming_issues + 1))
         done <<< "$bad_functions"
-    done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null | head -20)
+    done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null)
 
     [[ $VERBOSE == true ]] && {
         info "Naming validation: $naming_issues issues found"
@@ -398,7 +400,7 @@ scan_platform_refactor() {
     local findings_file findings_raw
     findings_file=$(mktemp)
     findings_raw=$(mktemp)
-    grep -rnE "hardcoded|Hardcoded|Fallback:|fallback:|TODO|FIXME|HACK|KLUDGE" "$scripts_dir" --include="*.sh" 2>/dev/null | head -25 > "$findings_raw" || true
+    grep -rnE "hardcoded|Hardcoded|Fallback:|fallback:|TODO|FIXME|HACK|KLUDGE" "$scripts_dir" --include="*.sh" 2>/dev/null > "$findings_raw" || true
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
         local f="${line%%:*}" rest="${line#*:}" ln="${rest%%:*}"
@@ -477,7 +479,7 @@ auto_fix_issues() {
             success "Cleaned whitespace: $(basename "$file")"
             fixed_count=$((fixed_count + 1))
         fi
-    done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null | head -20)
+    done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null)
 
     # Clean up temp files
     info "Removing temporary files..."

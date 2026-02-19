@@ -17,6 +17,8 @@ REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
+[[ -f "$SCRIPT_DIR/sw-db.sh" ]] && source "$SCRIPT_DIR/sw-db.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -34,22 +36,95 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Intelligence Configuration ─────────────────────────────────────────────
 INTELLIGENCE_CACHE="${REPO_DIR}/.claude/intelligence-cache.json"
 INTELLIGENCE_CONFIG_DIR="${HOME}/.shipwright/optimization"
 CACHE_TTL_CONFIG="${INTELLIGENCE_CONFIG_DIR}/cache-ttl.json"
 CACHE_STATS_FILE="${INTELLIGENCE_CONFIG_DIR}/cache-stats.json"
-DEFAULT_CACHE_TTL=3600  # 1 hour (fallback)
+DEFAULT_CACHE_TTL=$(_config_get_int "intelligence.cache_ttl" 3600 2>/dev/null || echo 3600)  # 1 hour (fallback)
+
+# ─── Adaptive Thresholds ─────────────────────────────────────────────────────
+# Compute thresholds from historical metrics distribution (mean + N*stddev when DB available)
+
+adaptive_threshold() {
+    local metric_name="$1" default_value="${2:-3.0}" sigma_multiplier="${3:-2.0}"
+
+    if ! db_available 2>/dev/null; then
+        echo "$default_value"
+        return
+    fi
+
+    local stats
+    stats=$(_db_query "SELECT AVG(value) as mean,
+        CASE WHEN COUNT(*) > 1 THEN
+            SQRT(SUM((value - (SELECT AVG(value) FROM metrics WHERE metric_name = '$metric_name')) *
+                     (value - (SELECT AVG(value) FROM metrics WHERE metric_name = '$metric_name'))) / (COUNT(*) - 1))
+        ELSE 0 END as stddev,
+        COUNT(*) as n
+        FROM metrics WHERE metric_name = '$metric_name' AND created_at > datetime('now', '-30 days');" 2>/dev/null || echo "")
+
+    if [[ -z "$stats" ]]; then
+        echo "$default_value"
+        return
+    fi
+
+    local mean stddev n
+    IFS='|' read -r mean stddev n <<< "$stats"
+
+    # Need minimum sample size
+    if [[ "${n:-0}" -lt 10 ]]; then
+        echo "$default_value"
+        return
+    fi
+
+    # Adaptive: mean + sigma_multiplier * stddev
+    awk "BEGIN { printf \"%.2f\", $mean + ($sigma_multiplier * $stddev) }"
+}
+
+# Get adaptive anomaly threshold
+get_anomaly_threshold() {
+    adaptive_threshold "anomaly_score" "$(_config_get "intelligence.anomaly_threshold" 3.0)" 2.0
+}
+
+# Get adaptive quality threshold
+get_quality_threshold() {
+    local base
+    base=$(_config_get "quality.gate_score_threshold" 70)
+    # For quality, use percentile-based approach: mean - 1*stddev as minimum
+    if ! db_available 2>/dev/null; then
+        echo "$base"
+        return
+    fi
+
+    local mean_score
+    mean_score=$(_db_query "SELECT AVG(value) FROM metrics WHERE metric_name = 'quality_score' AND created_at > datetime('now', '-30 days');" 2>/dev/null || echo "")
+
+    if [[ -z "$mean_score" || "$mean_score" == "" ]]; then
+        echo "$base"
+        return
+    fi
+
+    # Use the higher of: base threshold or historical mean - 10%
+    local adaptive_min
+    adaptive_min=$(awk "BEGIN { printf \"%d\", $mean_score * 0.9 }")
+    if [[ "$adaptive_min" -gt "$base" ]]; then
+        echo "$adaptive_min"
+    else
+        echo "$base"
+    fi
+}
+
+# Store threshold values for debugging
+persist_thresholds() {
+    if db_available 2>/dev/null; then
+        local anomaly_t quality_t
+        anomaly_t=$(get_anomaly_threshold)
+        quality_t=$(get_quality_threshold)
+        _db_exec "INSERT OR REPLACE INTO _sync_metadata (key, value, updated_at) VALUES
+            ('threshold.anomaly', '$anomaly_t', '$(now_iso)'),
+            ('threshold.quality', '$quality_t', '$(now_iso)');" 2>/dev/null || true
+    fi
+}
 
 # Load adaptive cache TTL from config or use default
 _intelligence_get_cache_ttl() {
@@ -255,9 +330,11 @@ _intelligence_call_claude() {
 
     # Call Claude (--print mode returns raw text response)
     # Use timeout (gtimeout on macOS via coreutils, timeout on Linux) to prevent hangs
+    local _claude_timeout
+    _claude_timeout=$(_config_get_int "intelligence.claude_timeout" 60 2>/dev/null || echo 60)
     local _timeout_cmd=""
-    if command -v gtimeout >/dev/null 2>&1; then _timeout_cmd="gtimeout 60"
-    elif command -v timeout >/dev/null 2>&1; then _timeout_cmd="timeout 60"
+    if command -v gtimeout >/dev/null 2>&1; then _timeout_cmd="gtimeout $_claude_timeout"
+    elif command -v timeout >/dev/null 2>&1; then _timeout_cmd="timeout $_claude_timeout"
     fi
 
     local response
@@ -899,10 +976,10 @@ intelligence_validate_prediction() {
             --arg ts "$(now_iso)" \
             --arg issue "${ISSUE_NUMBER:-unknown}" \
             --arg m "$metric" \
-            --argjson pred "$predicted" \
-            --argjson act "$actual" \
-            --argjson d "$delta" \
-            '{ts: $ts, issue: $issue, metric: $m, predicted: $pred, actual: $act, delta: $d}')
+            --arg pred "$predicted" \
+            --arg act "$actual" \
+            --arg d "$delta" \
+            '{ts: $ts, issue: $issue, metric: $m, predicted: ($pred | tonumber? // 0), actual: ($act | tonumber? // 0), delta: ($d | tonumber? // 0)}')
         echo "$record" >> "$validation_file"
         emit_event "intelligence.prediction_validated" "metric=$metric" "predicted=$predicted" "actual=$actual" "delta=$delta"
         return 0

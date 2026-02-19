@@ -1,0 +1,81 @@
+{
+  "$schema": "https://shipwright.dev/schemas/events-v1.json",
+  "description": "Known Shipwright event types and their expected fields",
+  "version": "1",
+  "event_types": {
+    "pipeline.started": {
+      "required": ["job_id"],
+      "optional": ["issue", "goal", "template"]
+    },
+    "pipeline.completed": {
+      "required": ["job_id"],
+      "optional": ["duration_s", "result"]
+    },
+    "pipeline.failed": {
+      "required": ["job_id"],
+      "optional": ["error", "stage"]
+    },
+    "stage.started": { "required": ["job_id", "stage"], "optional": [] },
+    "stage.completed": {
+      "required": ["job_id", "stage"],
+      "optional": ["duration_s"]
+    },
+    "stage.failed": { "required": ["job_id", "stage"], "optional": ["error"] },
+    "daemon.started": { "required": [], "optional": ["pid", "mode"] },
+    "daemon.stopped": { "required": [], "optional": ["reason"] },
+    "daemon.claimed": { "required": ["issue"], "optional": ["repo", "title"] },
+    "daemon.released": { "required": ["issue"], "optional": ["reason"] },
+    "daemon.spawn": {
+      "required": ["issue"],
+      "optional": ["template", "worktree"]
+    },
+    "daemon.complete": {
+      "required": ["issue"],
+      "optional": ["result", "duration_s"]
+    },
+    "daemon.failure": {
+      "required": ["issue"],
+      "optional": ["error", "retry_count"]
+    },
+    "loop.started": { "required": [], "optional": ["goal", "test_cmd"] },
+    "loop.iteration": {
+      "required": ["iteration"],
+      "optional": ["test_result"]
+    },
+    "loop.completed": { "required": [], "optional": ["iterations", "result"] },
+    "cost.recorded": {
+      "required": ["cost_usd"],
+      "optional": ["model", "tokens_in", "tokens_out", "stage"]
+    },
+    "intelligence.analysis": {
+      "required": ["analysis_type"],
+      "optional": ["result", "cache_hit"]
+    },
+    "memory.captured": {
+      "required": ["memory_type"],
+      "optional": ["pattern", "repo"]
+    },
+    "quality.gate": {
+      "required": ["gate_name", "passed"],
+      "optional": ["score", "details"]
+    },
+    "pr.created": {
+      "required": ["pr_number"],
+      "optional": ["title", "branch"]
+    },
+    "deploy.started": { "required": ["environment"], "optional": ["version"] },
+    "deploy.completed": {
+      "required": ["environment"],
+      "optional": ["version", "duration_s"]
+    },
+    "heartbeat.write": {
+      "required": ["job_id"],
+      "optional": ["stage", "iteration"]
+    },
+    "session.started": {
+      "required": ["session_id"],
+      "optional": ["template", "agents"]
+    },
+    "session.ended": { "required": ["session_id"], "optional": ["duration_s"] }
+  }
+}

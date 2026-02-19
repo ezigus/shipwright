@@ -16,6 +16,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
 [[ "$(type -t warn 2>/dev/null)" == "function" ]]    || warn()    { echo -e "\033[38;2;250;204;21m\033[1m⚠\033[0m $*"; }
@@ -143,7 +144,8 @@ collect_browser() {
 
     local entrypoint base_url url
     entrypoint=$(echo "$collector_json" | jq -r '.entrypoint // "/"')
-    base_url=$(echo "$collector_json" | jq -r '.baseUrl // "http://localhost:8767"')
+    base_url=$(echo "$collector_json" | jq -r '.baseUrl // ""')
+    [[ -z "$base_url" ]] && base_url="http://localhost:$(_config_get_int "dashboard.port" 8767)"
     url="${base_url}${entrypoint}"
 
     info "[browser] ${name}: ${url}"
@@ -153,7 +155,8 @@ collect_browser() {
     local response_body=""
 
     if command -v curl >/dev/null 2>&1; then
-        local tmpfile="/tmp/sw-evidence-${name}.txt"
+        local tmpfile
+        tmpfile=$(mktemp "${TMPDIR:-/tmp}/sw-evidence-browser.XXXXXX")
         http_status=$(curl -s -o "$tmpfile" -w "%{http_code}" --max-time 30 "$url" 2>/dev/null || echo "0")
         if [[ -f "$tmpfile" ]]; then
             response_size=$(wc -c < "$tmpfile" 2>/dev/null || echo "0")
@@ -193,7 +196,8 @@ collect_api() {
 
     if [[ -z "$url" ]]; then
         local base_url entrypoint
-        base_url=$(echo "$collector_json" | jq -r '.baseUrl // "http://localhost:8767"')
+        base_url=$(echo "$collector_json" | jq -r '.baseUrl // ""')
+        [[ -z "$base_url" ]] && base_url="http://localhost:$(_config_get_int "dashboard.port" 8767)"
         entrypoint=$(echo "$collector_json" | jq -r '.entrypoint // "/"')
         url="${base_url}${entrypoint}"
     fi
@@ -386,7 +390,8 @@ collect_webhook() {
     local response_body=""
 
     if command -v curl >/dev/null 2>&1; then
-        local tmpfile="/tmp/sw-evidence-${name}.txt"
+        local tmpfile
+        tmpfile=$(mktemp "${TMPDIR:-/tmp}/sw-evidence-webhook.XXXXXX")
         http_status=$(curl -s -o "$tmpfile" -w "%{http_code}" -X "$method" \
             -H "Content-Type: application/json" -d "$body" \
             --max-time "$timeout" "$url" 2>/dev/null || echo "0")

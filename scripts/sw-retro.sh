@@ -16,6 +16,9 @@ _COMPAT="$SCRIPT_DIR/lib/compat.sh"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# DB layer for dual-read (SQLite + JSONL fallback)
+# shellcheck source=sw-db.sh
+[[ -f "$SCRIPT_DIR/sw-db.sh" ]] && source "$SCRIPT_DIR/sw-db.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -25,16 +28,7 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
+# epoch_to_iso from compat.sh (cross-platform: BSD date -r first, then GNU -d)
 epoch_to_iso() {
     local epoch="$1"
     date -u -r "$epoch" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
@@ -66,11 +60,9 @@ get_sprint_dates() {
     local to_date="${2:-}"
 
     if [[ -z "$from_date" ]]; then
-        # Default: last 7 days
+        # Default: last 7 days (cross-platform: date_days_ago from compat.sh)
         to_date=$(date -u +"%Y-%m-%d")
-        from_date=$(date -u -v-7d +"%Y-%m-%d" 2>/dev/null || \
-                   date -u -d "7 days ago" +"%Y-%m-%d" 2>/dev/null || \
-                   python3 -c "from datetime import datetime, timedelta; print((datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d'))")
+        from_date=$(date_days_ago 7 2>/dev/null || python3 -c "from datetime import datetime, timedelta; print((datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d'))")
     elif [[ -z "$to_date" ]]; then
         to_date=$(date -u +"%Y-%m-%d")
     fi
@@ -83,26 +75,19 @@ analyze_sprint_data() {
     local from_date="$1"
     local to_date="$2"
 
-    local events_file="${HOME}/.shipwright/events.jsonl"
-    if [[ ! -f "$events_file" ]]; then
-        echo '{"pipelines":0,"succeeded":0,"failed":0,"retries":0,"avg_duration":0,"avg_stages":0,"slowest_stage":"","quality_score":0}'
-        return 0
-    fi
-
     if ! command -v jq >/dev/null 2>&1; then
         error "jq is required for sprint analysis"
         return 1
     fi
 
-    # Convert dates to epoch (GNU date -d or macOS date -jf)
+    # Convert dates to epoch (cross-platform: date_to_epoch from compat.sh)
     local from_epoch to_epoch
-    from_epoch=$(date -u -d "${from_date}T00:00:00Z" +%s 2>/dev/null || \
-                date -u -jf "%Y-%m-%dT%H:%M:%SZ" "${from_date}T00:00:00Z" +%s 2>/dev/null || echo 0)
-    to_epoch=$(date -u -d "${to_date}T23:59:59Z" +%s 2>/dev/null || \
-              date -u -jf "%Y-%m-%dT%H:%M:%SZ" "${to_date}T23:59:59Z" +%s 2>/dev/null || echo 0)
+    from_epoch=$(date_to_epoch "${from_date}T00:00:00Z")
+    to_epoch=$(date_to_epoch "${to_date}T23:59:59Z")
 
-    jq -s --argjson from "$from_epoch" --argjson to "$to_epoch" '
-        [.[] | select(.ts_epoch >= $from and .ts_epoch <= $to)] as $events |
+    # Use db_query_events_since (SQLite + JSONL fallback)
+    db_query_events_since "$from_epoch" "" "$to_epoch" | jq --argjson from "$from_epoch" --argjson to "$to_epoch" '
+        (if type == "array" then . else [] end) as $events |
         [$events[] | select(.type == "pipeline.completed")] as $completed |
         ($completed | length) as $total_pipelines |
         [$completed[] | select(.result == "success")] as $successes |
@@ -124,7 +109,7 @@ analyze_sprint_data() {
             slowest_stage: $slowest,
             quality_score: $quality
         }
-    ' "$events_file" 2>/dev/null || echo '{"pipelines":0,"succeeded":0,"failed":0,"retries":0,"avg_duration":0,"avg_stages":0,"slowest_stage":"","quality_score":0}'
+    ' 2>/dev/null || echo '{"pipelines":0,"succeeded":0,"failed":0,"retries":0,"avg_duration":0,"avg_stages":0,"slowest_stage":"","quality_score":0}'
 }
 
 # ─── Agent Performance Analysis ─────────────────────────────────────────────
@@ -132,23 +117,17 @@ analyze_agent_performance() {
     local from_date="$1"
     local to_date="$2"
 
-    local events_file="${HOME}/.shipwright/events.jsonl"
-    if [[ ! -f "$events_file" ]]; then
-        echo '{"agents":[]}'
-        return 0
-    fi
-
     if ! command -v jq >/dev/null 2>&1; then
         echo '{"agents":[]}'
         return 0
     fi
 
     local from_epoch to_epoch
-    from_epoch=$(date -u -d "${from_date}T00:00:00Z" +%s 2>/dev/null || echo 0)
-    to_epoch=$(date -u -d "${to_date}T23:59:59Z" +%s 2>/dev/null || echo 0)
+    from_epoch=$(date_to_epoch "${from_date}T00:00:00Z")
+    to_epoch=$(date_to_epoch "${to_date}T23:59:59Z")
 
-    jq -s --argjson from "$from_epoch" --argjson to "$to_epoch" '
-        [.[] | select(.ts_epoch >= $from and .ts_epoch <= $to)] as $events |
+    db_query_events_since "$from_epoch" "" "$to_epoch" | jq --argjson from "$from_epoch" --argjson to "$to_epoch" '
+        (if type == "array" then . else [] end) as $events |
         [$events[] | select(.type == "pipeline.completed" and (.agent_id // .agent))] as $completions |
         $completions | group_by(.agent_id // .agent) | map({
             agent: .[0].agent_id // .[0].agent,
@@ -158,7 +137,7 @@ analyze_agent_performance() {
             avg_duration: (([.[].duration_s // 0] | add / length) | floor)
         }) | sort_by(-.completed) as $agent_stats |
         { agents: $agent_stats }
-    ' "$events_file" 2>/dev/null || echo '{"agents":[]}'
+    ' 2>/dev/null || echo '{"agents":[]}'
 }
 
 # ─── Velocity & Trends ──────────────────────────────────────────────────────
@@ -166,21 +145,15 @@ analyze_velocity() {
     local from_date="$1"
     local to_date="$2"
 
-    local events_file="${HOME}/.shipwright/events.jsonl"
-    if [[ ! -f "$events_file" ]]; then
-        echo '{"current":0,"previous":0,"trend":"→"}'
-        return 0
-    fi
-
     if ! command -v jq >/dev/null 2>&1; then
         echo '{"current":0,"previous":0,"trend":"→"}'
         return 0
     fi
 
-    # Get current period
+    # Get current period (cross-platform: date_to_epoch from compat.sh)
     local from_epoch to_epoch prev_from_epoch prev_to_epoch
-    from_epoch=$(date -u -d "${from_date}T00:00:00Z" +%s 2>/dev/null || echo 0)
-    to_epoch=$(date -u -d "${to_date}T23:59:59Z" +%s 2>/dev/null || echo 0)
+    from_epoch=$(date_to_epoch "${from_date}T00:00:00Z")
+    to_epoch=$(date_to_epoch "${to_date}T23:59:59Z")
 
     # Get previous period (same duration before current)
     local duration_days
@@ -188,17 +161,19 @@ analyze_velocity() {
     prev_to_epoch=$from_epoch
     prev_from_epoch=$((from_epoch - (duration_days * 86400)))
 
-    jq -s --argjson curr_from "$from_epoch" --argjson curr_to "$to_epoch" \
+    # Need full event range for current + previous; use db_query_events since prev_from may be before from
+    db_query_events "" 10000 | jq --argjson curr_from "$from_epoch" --argjson curr_to "$to_epoch" \
            --argjson prev_from "$prev_from_epoch" --argjson prev_to "$prev_to_epoch" '
-        [.[] | select(.ts_epoch >= $curr_from and .ts_epoch <= $curr_to and .type == "pipeline.completed" and .result == "success")] | length as $current |
-        [.[] | select(.ts_epoch >= $prev_from and .ts_epoch <= $prev_to and .type == "pipeline.completed" and .result == "success")] | length as $previous |
+        (if type == "array" then . else [] end) as $all |
+        [$all[] | select(.ts_epoch >= $curr_from and .ts_epoch <= $curr_to and .type == "pipeline.completed" and .result == "success")] | length as $current |
+        [$all[] | select(.ts_epoch >= $prev_from and .ts_epoch <= $prev_to and .type == "pipeline.completed" and .result == "success")] | length as $previous |
         (if $previous > 0 and $current > $previous then "↑" elif $current < $previous then "↓" else "→" end) as $trend |
         {
             current: $current,
             previous: $previous,
             trend: $trend
         }
-    ' "$events_file" 2>/dev/null || echo '{"current":0,"previous":0,"trend":"→"}'
+    ' 2>/dev/null || echo '{"current":0,"previous":0,"trend":"→"}'
 }
 
 # ─── Generate Insights & Actions ────────────────────────────────────────────
@@ -495,8 +470,9 @@ cmd_trends() {
     info "Multi-Sprint Trend Analysis"
     echo ""
 
-    local events_file="${HOME}/.shipwright/events.jsonl"
-    if [[ ! -f "$events_file" ]]; then
+    local event_check
+    event_check=$(db_query_events "" 1 2>/dev/null || echo "[]")
+    if [[ "$event_check" == "[]" ]] || [[ -z "$event_check" ]]; then
         error "No event data found. Run pipelines first."
         return 1
     fi
@@ -510,10 +486,8 @@ cmd_trends() {
         offset_end=$((i * 7))
         offset_start=$(((i + 1) * 7))
 
-        end_date=$(date -u -v-${offset_end}d +"%Y-%m-%d" 2>/dev/null || \
-                  date -u -d "${offset_end} days ago" +"%Y-%m-%d" 2>/dev/null || echo "$today")
-        start_date=$(date -u -v-${offset_start}d +"%Y-%m-%d" 2>/dev/null || \
-                    date -u -d "${offset_start} days ago" +"%Y-%m-%d" 2>/dev/null || echo "$today")
+        end_date=$(date_days_ago "$offset_end" 2>/dev/null || echo "$today")
+        start_date=$(date_days_ago "$offset_start" 2>/dev/null || echo "$today")
 
         local analysis
         analysis=$(analyze_sprint_data "$start_date" "$end_date")
@@ -581,8 +555,8 @@ cmd_compare() {
     echo ""
 
     local analysis1 analysis2
-    analysis1=$(analyze_sprint_data "$period1" "$(date -u -d "${period1} + 7 days" +"%Y-%m-%d")")
-    analysis2=$(analyze_sprint_data "$period2" "$(date -u -d "${period2} + 7 days" +"%Y-%m-%d")")
+    analysis1=$(analyze_sprint_data "$period1" "$(date_add_days "$period1" 7)")
+    analysis2=$(analyze_sprint_data "$period2" "$(date_add_days "$period2" 7)")
 
     if command -v jq >/dev/null 2>&1; then
         echo "Sprint 1 (${period1}):"

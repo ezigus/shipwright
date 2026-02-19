@@ -34,16 +34,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Structured Event Log ──────────────────────────────────────────────────
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
 
@@ -588,9 +578,13 @@ predict_detect_anomaly() {
         return 0
     fi
 
-    # Get per-metric thresholds (adaptive or default)
+    # Get per-metric thresholds (adaptive from intelligence/DB, or file-based, or default)
     local metric_critical_mult metric_warning_mult
-    metric_critical_mult=$(_predictive_get_anomaly_threshold "$metric_name")
+    if [[ "$(type -t get_anomaly_threshold 2>/dev/null)" == "function" ]]; then
+        metric_critical_mult=$(get_anomaly_threshold)
+    else
+        metric_critical_mult=$(_predictive_get_anomaly_threshold "$metric_name")
+    fi
     metric_warning_mult=$(_predictive_get_warning_multiplier "$metric_name")
 
     # Calculate thresholds using awk for floating-point

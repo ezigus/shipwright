@@ -42,20 +42,10 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Database Configuration ──────────────────────────────────────────────────
 DB_DIR="${HOME}/.shipwright"
 DB_FILE="${DB_DIR}/shipwright.db"
-SCHEMA_VERSION=2
+SCHEMA_VERSION=6
 
 # JSON fallback paths
 EVENTS_FILE="${DB_DIR}/events.jsonl"
@@ -244,6 +234,12 @@ CREATE TABLE IF NOT EXISTS metrics (
 -- Phase 1: New tables for state migration
 -- ═══════════════════════════════════════════════════════════════════════
 
+-- Daemon queue (issue keys waiting for a slot)
+CREATE TABLE IF NOT EXISTS daemon_queue (
+    issue_key TEXT PRIMARY KEY,
+    added_at TEXT NOT NULL
+);
+
 -- Daemon state (replaces daemon-state.json)
 CREATE TABLE IF NOT EXISTS daemon_state (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -317,6 +313,50 @@ CREATE TABLE IF NOT EXISTS memory_failures (
     synced INTEGER DEFAULT 0
 );
 
+-- Memory: patterns (replaces memory/*/patterns.json)
+CREATE TABLE IF NOT EXISTS memory_patterns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo_hash TEXT NOT NULL,
+    pattern_type TEXT NOT NULL,
+    pattern_key TEXT NOT NULL,
+    description TEXT,
+    frequency INTEGER DEFAULT 1,
+    confidence REAL DEFAULT 0.5,
+    last_seen_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    metadata TEXT,
+    synced INTEGER DEFAULT 0,
+    UNIQUE(repo_hash, pattern_type, pattern_key)
+);
+
+-- Memory: decisions (replaces memory/*/decisions.json)
+CREATE TABLE IF NOT EXISTS memory_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo_hash TEXT NOT NULL,
+    decision_type TEXT NOT NULL,
+    context TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    outcome TEXT,
+    confidence REAL DEFAULT 0.5,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    metadata TEXT,
+    synced INTEGER DEFAULT 0
+);
+
+-- Memory: embeddings for semantic search
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content_hash TEXT UNIQUE NOT NULL,
+    source_type TEXT NOT NULL,
+    source_id INTEGER,
+    content_text TEXT NOT NULL,
+    embedding BLOB,
+    repo_hash TEXT,
+    created_at TEXT NOT NULL,
+    synced INTEGER DEFAULT 0
+);
+
 -- ═══════════════════════════════════════════════════════════════════════
 -- Sync tables
 -- ═══════════════════════════════════════════════════════════════════════
@@ -354,6 +394,7 @@ CREATE INDEX IF NOT EXISTS idx_developers_name ON developers(name);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 CREATE INDEX IF NOT EXISTS idx_metrics_job_id ON metrics(job_id);
 CREATE INDEX IF NOT EXISTS idx_metrics_type ON metrics(metric_type);
+CREATE INDEX IF NOT EXISTS idx_daemon_queue_added ON daemon_queue(added_at);
 CREATE INDEX IF NOT EXISTS idx_daemon_state_status ON daemon_state(status);
 CREATE INDEX IF NOT EXISTS idx_daemon_state_job ON daemon_state(job_id);
 CREATE INDEX IF NOT EXISTS idx_cost_entries_epoch ON cost_entries(ts_epoch DESC);
@@ -361,7 +402,73 @@ CREATE INDEX IF NOT EXISTS idx_cost_entries_synced ON cost_entries(synced) WHERE
 CREATE INDEX IF NOT EXISTS idx_heartbeats_job ON heartbeats(job_id);
 CREATE INDEX IF NOT EXISTS idx_memory_failures_repo ON memory_failures(repo_hash);
 CREATE INDEX IF NOT EXISTS idx_memory_failures_class ON memory_failures(failure_class);
+CREATE INDEX IF NOT EXISTS idx_memory_patterns_repo ON memory_patterns(repo_hash);
+CREATE INDEX IF NOT EXISTS idx_memory_patterns_type ON memory_patterns(pattern_type);
+CREATE INDEX IF NOT EXISTS idx_memory_decisions_repo ON memory_decisions(repo_hash);
+CREATE INDEX IF NOT EXISTS idx_memory_decisions_type ON memory_decisions(decision_type);
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_hash ON memory_embeddings(content_hash);
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_source ON memory_embeddings(source_type);
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_repo ON memory_embeddings(repo_hash);
 CREATE INDEX IF NOT EXISTS idx_sync_log_unsynced ON _sync_log(synced) WHERE synced = 0;
+
+-- Event consumer offset tracking
+CREATE TABLE IF NOT EXISTS event_consumers (
+    consumer_id TEXT PRIMARY KEY,
+    last_event_id INTEGER NOT NULL DEFAULT 0,
+    last_consumed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_event_consumers_id ON event_consumers(consumer_id);
+
+-- Outcome-based learning (Thompson sampling, UCB1)
+CREATE TABLE IF NOT EXISTS pipeline_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT UNIQUE NOT NULL,
+    issue_number TEXT,
+    template TEXT,
+    success INTEGER NOT NULL DEFAULT 0,
+    duration_secs INTEGER DEFAULT 0,
+    retry_count INTEGER DEFAULT 0,
+    cost_usd REAL DEFAULT 0,
+    complexity TEXT DEFAULT 'medium',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS model_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    success INTEGER NOT NULL DEFAULT 0,
+    duration_secs INTEGER DEFAULT 0,
+    cost_usd REAL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_outcomes_template ON pipeline_outcomes(template);
+CREATE INDEX IF NOT EXISTS idx_pipeline_outcomes_complexity ON pipeline_outcomes(complexity);
+CREATE INDEX IF NOT EXISTS idx_model_outcomes_model_stage ON model_outcomes(model, stage);
+
+-- Durable workflow checkpoints
+CREATE TABLE IF NOT EXISTS durable_checkpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workflow_id TEXT NOT NULL,
+    checkpoint_data TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(workflow_id)
+);
+
+-- Reasoning traces for multi-step autonomous pipelines
+CREATE TABLE IF NOT EXISTS reasoning_traces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    step_name TEXT NOT NULL,
+    input_context TEXT,
+    reasoning TEXT,
+    output_decision TEXT,
+    confidence REAL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (job_id) REFERENCES pipeline_runs(job_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reasoning_traces_job ON reasoning_traces(job_id);
 SCHEMA
 }
 
@@ -403,6 +510,138 @@ migrate_schema() {
         _db_exec "INSERT OR IGNORE INTO _sync_metadata (key, value, updated_at) VALUES ('device_id', '$(uname -n)-$$-$(now_epoch)', '$(now_iso)');"
         success "Migrated to schema v2"
     fi
+
+    # Migration from v2 → v3: add memory_patterns, memory_decisions, memory_embeddings
+    if [[ "$current_version" -lt 3 ]]; then
+        info "Migrating schema v${current_version} → v3..."
+        sqlite3 "$DB_FILE" "
+CREATE TABLE IF NOT EXISTS memory_patterns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo_hash TEXT NOT NULL,
+    pattern_type TEXT NOT NULL,
+    pattern_key TEXT NOT NULL,
+    description TEXT,
+    frequency INTEGER DEFAULT 1,
+    confidence REAL DEFAULT 0.5,
+    last_seen_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    metadata TEXT,
+    synced INTEGER DEFAULT 0,
+    UNIQUE(repo_hash, pattern_type, pattern_key)
+);
+CREATE TABLE IF NOT EXISTS memory_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo_hash TEXT NOT NULL,
+    decision_type TEXT NOT NULL,
+    context TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    outcome TEXT,
+    confidence REAL DEFAULT 0.5,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    metadata TEXT,
+    synced INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS memory_embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content_hash TEXT UNIQUE NOT NULL,
+    source_type TEXT NOT NULL,
+    source_id INTEGER,
+    content_text TEXT NOT NULL,
+    embedding BLOB,
+    repo_hash TEXT,
+    created_at TEXT NOT NULL,
+    synced INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_memory_patterns_repo ON memory_patterns(repo_hash);
+CREATE INDEX IF NOT EXISTS idx_memory_patterns_type ON memory_patterns(pattern_type);
+CREATE INDEX IF NOT EXISTS idx_memory_decisions_repo ON memory_decisions(repo_hash);
+CREATE INDEX IF NOT EXISTS idx_memory_decisions_type ON memory_decisions(decision_type);
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_hash ON memory_embeddings(content_hash);
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_source ON memory_embeddings(source_type);
+CREATE INDEX IF NOT EXISTS idx_memory_embeddings_repo ON memory_embeddings(repo_hash);
+"
+        _db_exec "INSERT OR REPLACE INTO _schema (version, created_at, applied_at) VALUES (3, '$(now_iso)', '$(now_iso)');"
+        success "Migrated to schema v3"
+    fi
+
+    # Migration from v3 → v4: event_consumers, durable_checkpoints
+    if [[ "$current_version" -lt 4 ]]; then
+        info "Migrating schema v${current_version} → v4..."
+        sqlite3 "$DB_FILE" "
+CREATE TABLE IF NOT EXISTS event_consumers (
+    consumer_id TEXT PRIMARY KEY,
+    last_event_id INTEGER NOT NULL DEFAULT 0,
+    last_consumed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_event_consumers_id ON event_consumers(consumer_id);
+CREATE TABLE IF NOT EXISTS durable_checkpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workflow_id TEXT NOT NULL,
+    checkpoint_data TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(workflow_id)
+);
+"
+        _db_exec "INSERT OR REPLACE INTO _schema (version, created_at, applied_at) VALUES (4, '$(now_iso)', '$(now_iso)');"
+        success "Migrated to schema v4"
+    fi
+
+    # Migration from v4 → v5: pipeline_outcomes, model_outcomes for outcome-based learning
+    if [[ "$current_version" -lt 5 ]]; then
+        info "Migrating schema v${current_version} → v5..."
+        sqlite3 "$DB_FILE" "
+CREATE TABLE IF NOT EXISTS pipeline_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT UNIQUE NOT NULL,
+    issue_number TEXT,
+    template TEXT,
+    success INTEGER NOT NULL DEFAULT 0,
+    duration_secs INTEGER DEFAULT 0,
+    retry_count INTEGER DEFAULT 0,
+    cost_usd REAL DEFAULT 0,
+    complexity TEXT DEFAULT 'medium',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS model_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    success INTEGER NOT NULL DEFAULT 0,
+    duration_secs INTEGER DEFAULT 0,
+    cost_usd REAL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_outcomes_template ON pipeline_outcomes(template);
+CREATE INDEX IF NOT EXISTS idx_pipeline_outcomes_complexity ON pipeline_outcomes(complexity);
+CREATE INDEX IF NOT EXISTS idx_model_outcomes_model_stage ON model_outcomes(model, stage);
+"
+        _db_exec "INSERT OR REPLACE INTO _schema (version, created_at, applied_at) VALUES (5, '$(now_iso)', '$(now_iso)');"
+        success "Migrated to schema v5"
+    fi
+
+    # Migration from v5 → v6: reasoning_traces for multi-step autonomous reasoning
+    if [[ "$current_version" -lt 6 ]]; then
+        info "Migrating schema v${current_version} → v6..."
+        sqlite3 "$DB_FILE" "
+CREATE TABLE IF NOT EXISTS reasoning_traces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    step_name TEXT NOT NULL,
+    input_context TEXT,
+    reasoning TEXT,
+    output_decision TEXT,
+    confidence REAL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (job_id) REFERENCES pipeline_runs(job_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reasoning_traces_job ON reasoning_traces(job_id);
+"
+        _db_exec "INSERT OR REPLACE INTO _schema (version, created_at, applied_at) VALUES (6, '$(now_iso)', '$(now_iso)');"
+        success "Migrated to schema v6"
+    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -440,6 +679,116 @@ db_add_event() {
     fi
 
     _db_exec "INSERT OR IGNORE INTO events (ts, ts_epoch, type, job_id, stage, status, duration_secs, metadata, created_at, synced) VALUES ('${ts}', ${ts_epoch}, '${event_type}', '${job_id}', '${stage}', '${status}', ${duration_secs}, '${metadata}', '${ts}', 0);" || return 1
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Event Query Functions (dual-read: SQLite preferred, JSONL fallback)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# db_query_events [filter] [limit] — Query events, SQLite when available else JSONL
+# Output: JSON array of events. Uses duration_secs AS duration_s for compat.
+db_query_events() {
+    local filter="${1:-}"
+    local limit="${2:-5000}"
+    local db_file="${DB_FILE:-$HOME/.shipwright/shipwright.db}"
+
+    if [[ -f "$db_file" ]] && command -v sqlite3 &>/dev/null; then
+        local where_clause=""
+        [[ -n "$filter" ]] && where_clause="WHERE type = '$filter'"
+        local result
+        result=$(sqlite3 -json "$db_file" "SELECT ts, ts_epoch, type, job_id, stage, status, duration_secs, metadata FROM events $where_clause ORDER BY ts_epoch DESC LIMIT $limit" 2>/dev/null) || true
+        if [[ -n "$result" ]]; then
+            echo "$result" | jq -c '
+                map(. + {duration_s: (.duration_secs // 0), result: (.result // .status)} + ((.metadata | if type == "string" then (fromjson? // {}) else {} end) // {}))
+                | map(del(.duration_secs, .metadata))
+            ' 2>/dev/null || echo "$result"
+            return 0
+        fi
+    fi
+
+    # Fallback to JSONL
+    local events_file="${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}"
+    [[ ! -f "$events_file" ]] && echo "[]" && return 0
+    if [[ -n "$filter" ]]; then
+        grep -F "\"type\":\"$filter\"" "$events_file" 2>/dev/null | tail -n "$limit" | jq -s '.' 2>/dev/null || echo "[]"
+    else
+        tail -n "$limit" "$events_file" | jq -s '.' 2>/dev/null || echo "[]"
+    fi
+}
+
+# db_query_events_since <since_epoch> [event_type] [to_epoch] — Events in time range
+# Output: JSON array. SQLite when available else JSONL.
+db_query_events_since() {
+    local since_epoch="$1"
+    local event_type="${2:-}"
+    local to_epoch="${3:-}"
+    local db_file="${DB_FILE:-$HOME/.shipwright/shipwright.db}"
+
+    if [[ -f "$db_file" ]] && command -v sqlite3 &>/dev/null; then
+        local type_filter=""
+        [[ -n "$event_type" ]] && type_filter="AND type = '$event_type'"
+        local to_filter=""
+        [[ -n "$to_epoch" ]] && to_filter="AND ts_epoch <= $to_epoch"
+        local result
+        result=$(sqlite3 -json "$db_file" "SELECT ts, ts_epoch, type, job_id, stage, status, duration_secs, metadata FROM events WHERE ts_epoch >= $since_epoch $type_filter $to_filter ORDER BY ts_epoch DESC" 2>/dev/null) || true
+        if [[ -n "$result" ]]; then
+            echo "$result" | jq -c '
+                map(. + {duration_s: (.duration_secs // 0), result: (.result // .status)} + ((.metadata | if type == "string" then (fromjson? // {}) else {} end) // {}))
+                | map(del(.duration_secs, .metadata))
+            ' 2>/dev/null || echo "$result"
+            return 0
+        fi
+    fi
+
+    # JSONL fallback (DB not available or query failed)
+    local events_file="${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}"
+    [[ ! -f "$events_file" ]] && echo "[]" && return 0
+    local to=${to_epoch:-9999999999}
+    if [[ -n "$event_type" ]]; then
+        grep '^{' "$events_file" 2>/dev/null | jq -s --argjson from "$since_epoch" --argjson to "$to" --arg t "$event_type" '
+            map(select(. != null and .ts_epoch != null)) |
+            map(select(.ts_epoch >= $from and .ts_epoch <= $to and .type == $t))
+        ' 2>/dev/null || echo "[]"
+    else
+        grep '^{' "$events_file" 2>/dev/null | jq -s --argjson from "$since_epoch" --argjson to "$to" '
+            map(select(. != null and .ts_epoch != null)) |
+            map(select(.ts_epoch >= $from and .ts_epoch <= $to))
+        ' 2>/dev/null || echo "[]"
+    fi
+}
+
+# db_get_consumer_offset <consumer_id> — returns last_event_id or "0"
+db_get_consumer_offset() {
+    local consumer_id="$1"
+    consumer_id="${consumer_id//\'/\'\'}"
+    _db_query "SELECT last_event_id FROM event_consumers WHERE consumer_id = '${consumer_id}';" 2>/dev/null || echo "0"
+}
+
+# db_set_consumer_offset <consumer_id> <last_event_id>
+db_set_consumer_offset() {
+    local consumer_id="$1"
+    local last_event_id="$2"
+    consumer_id="${consumer_id//\'/\'\'}"
+    _db_exec "INSERT OR REPLACE INTO event_consumers (consumer_id, last_event_id, last_consumed_at) VALUES ('${consumer_id}', ${last_event_id}, '$(now_iso)');"
+}
+
+# db_save_checkpoint <workflow_id> <data> — durable workflow checkpoint
+db_save_checkpoint() {
+    local workflow_id="$1"
+    local data="$2"
+    workflow_id="${workflow_id//\'/\'\'}"
+    data="${data//$'\n'/ }"
+    data="${data//\'/\'\'}"
+    if ! db_available; then return 1; fi
+    _db_exec "INSERT OR REPLACE INTO durable_checkpoints (workflow_id, checkpoint_data, created_at) VALUES ('${workflow_id}', '${data}', '$(now_iso)');"
+}
+
+# db_load_checkpoint <workflow_id> — returns checkpoint_data or empty
+db_load_checkpoint() {
+    local workflow_id="$1"
+    workflow_id="${workflow_id//\'/\'\'}"
+    if ! db_available; then return 1; fi
+    _db_query "SELECT checkpoint_data FROM durable_checkpoints WHERE workflow_id = '${workflow_id}';" 2>/dev/null || echo ""
 }
 
 # Legacy positional API (backward compat with existing add_event calls)
@@ -564,6 +913,44 @@ db_remove_active_job() {
     _db_exec "DELETE FROM daemon_state WHERE job_id = '${job_id}' AND status = 'active';"
 }
 
+# db_enqueue_issue <issue_key> — add to daemon queue
+db_enqueue_issue() {
+    local issue_key="$1"
+    if ! db_available; then return 1; fi
+    issue_key="${issue_key//\'/\'\'}"
+    _db_exec "INSERT OR REPLACE INTO daemon_queue (issue_key, added_at) VALUES ('${issue_key}', '$(now_iso)');"
+}
+
+# db_dequeue_next — returns first issue_key and removes it, empty if none
+db_dequeue_next() {
+    if ! db_available; then echo ""; return 0; fi
+    local next escaped
+    next=$(_db_query "SELECT issue_key FROM daemon_queue ORDER BY added_at ASC LIMIT 1;" || echo "")
+    if [[ -n "$next" ]]; then
+        escaped="${next//\'/\'\'}"
+        _db_exec "DELETE FROM daemon_queue WHERE issue_key = '${escaped}';" 2>/dev/null || true
+        echo "$next"
+    fi
+}
+
+# db_is_issue_queued <issue_key> — returns 0 if queued, 1 if not
+db_is_issue_queued() {
+    local issue_key="$1"
+    if ! db_available; then return 1; fi
+    issue_key="${issue_key//\'/\'\'}"
+    local count
+    count=$(_db_query "SELECT COUNT(*) FROM daemon_queue WHERE issue_key = '${issue_key}';")
+    [[ "${count:-0}" -gt 0 ]]
+}
+
+# db_remove_from_queue <issue_key> — remove specific key from queue
+db_remove_from_queue() {
+    local issue_key="$1"
+    if ! db_available; then return 1; fi
+    issue_key="${issue_key//\'/\'\'}"
+    _db_exec "DELETE FROM daemon_queue WHERE issue_key = '${issue_key}';"
+}
+
 # db_daemon_summary — outputs JSON summary for status dashboard
 db_daemon_summary() {
     if ! db_available; then echo "{}"; return 0; fi
@@ -578,6 +965,23 @@ db_daemon_summary() {
 # ═══════════════════════════════════════════════════════════════════════════
 # Cost Functions (replaces costs.json)
 # ═══════════════════════════════════════════════════════════════════════════
+
+# Record pipeline outcome for learning (Thompson sampling, optimize_tune_templates)
+# db_record_outcome <job_id> [issue] [template] [success] [duration_secs] [retries] [cost_usd] [complexity]
+db_record_outcome() {
+    local job_id="$1" issue="${2:-}" template="${3:-}" success="${4:-1}"
+    local duration="${5:-0}" retries="${6:-0}" cost="${7:-0}" complexity="${8:-medium}"
+
+    if ! db_available; then return 1; fi
+
+    job_id="${job_id//\'/\'\'}"
+    issue="${issue//\'/\'\'}"
+    template="${template//\'/\'\'}"
+
+    _db_exec "INSERT OR REPLACE INTO pipeline_outcomes
+        (job_id, issue_number, template, success, duration_secs, retry_count, cost_usd, complexity, created_at)
+        VALUES ('$job_id', '$issue', '$template', $success, $duration, $retries, $cost, '$complexity', '$(now_iso)');"
+}
 
 # db_record_cost <input_tokens> <output_tokens> <model> <cost_usd> <stage> [issue]
 db_record_cost() {
@@ -751,6 +1155,93 @@ db_query_similar_failures() {
     [[ -n "$failure_class" ]] && where_clause="${where_clause} AND failure_class = '${failure_class}'"
 
     _db_query "SELECT json_group_array(json_object('failure_class', failure_class, 'error_signature', error_signature, 'root_cause', root_cause, 'fix_description', fix_description, 'file_path', file_path, 'occurrences', occurrences, 'last_seen_at', last_seen_at)) FROM (SELECT * FROM memory_failures ${where_clause} ORDER BY occurrences DESC, last_seen_at DESC LIMIT ${limit});" || echo "[]"
+}
+
+# Memory patterns
+db_save_pattern() {
+    local repo_hash="$1" pattern_type="$2" pattern_key="$3" description="${4:-}" metadata="${5:-}"
+    if ! db_available; then return 1; fi
+    description="${description//\'/\'\'}"
+    metadata="${metadata//\'/\'\'}"
+    _db_exec "INSERT INTO memory_patterns (repo_hash, pattern_type, pattern_key, description, last_seen_at, created_at, metadata)
+              VALUES ('$repo_hash', '$pattern_type', '$pattern_key', '$description', '$(now_iso)', '$(now_iso)', '$metadata')
+              ON CONFLICT(repo_hash, pattern_type, pattern_key) DO UPDATE SET
+                frequency = frequency + 1, last_seen_at = '$(now_iso)', description = COALESCE(NULLIF('$description',''), description);"
+}
+
+db_query_patterns() {
+    local repo_hash="$1" pattern_type="${2:-}" limit="${3:-20}"
+    if ! db_available; then echo "[]"; return 0; fi
+    local where="WHERE repo_hash = '$repo_hash'"
+    [[ -n "$pattern_type" ]] && where="$where AND pattern_type = '$pattern_type'"
+    _db_query -json "SELECT * FROM memory_patterns $where ORDER BY frequency DESC, last_seen_at DESC LIMIT $limit;" || echo "[]"
+}
+
+# Memory decisions
+db_save_decision() {
+    local repo_hash="$1" decision_type="$2" context="$3" decision="$4" metadata="${5:-}"
+    if ! db_available; then return 1; fi
+    context="${context//\'/\'\'}"
+    decision="${decision//\'/\'\'}"
+    metadata="${metadata//\'/\'\'}"
+    _db_exec "INSERT INTO memory_decisions (repo_hash, decision_type, context, decision, created_at, updated_at, metadata)
+              VALUES ('$repo_hash', '$decision_type', '$context', '$decision', '$(now_iso)', '$(now_iso)', '$metadata');"
+}
+
+db_update_decision_outcome() {
+    local decision_id="$1" outcome="$2" confidence="${3:-}"
+    if ! db_available; then return 1; fi
+    outcome="${outcome//\'/\'\'}"
+    local set_clause="outcome = '$outcome', updated_at = '$(now_iso)'"
+    [[ -n "$confidence" ]] && set_clause="$set_clause, confidence = $confidence"
+    _db_exec "UPDATE memory_decisions SET $set_clause WHERE id = $decision_id;"
+}
+
+db_query_decisions() {
+    local repo_hash="$1" decision_type="${2:-}" limit="${3:-20}"
+    if ! db_available; then echo "[]"; return 0; fi
+    local where="WHERE repo_hash = '$repo_hash'"
+    [[ -n "$decision_type" ]] && where="$where AND decision_type = '$decision_type'"
+    _db_query -json "SELECT * FROM memory_decisions $where ORDER BY updated_at DESC LIMIT $limit;" || echo "[]"
+}
+
+# Memory embeddings
+db_save_embedding() {
+    local content_hash="$1" source_type="$2" content_text="$3" repo_hash="${4:-}"
+    if ! db_available; then return 1; fi
+    content_text="${content_text//\'/\'\'}"
+    _db_exec "INSERT OR IGNORE INTO memory_embeddings (content_hash, source_type, content_text, repo_hash, created_at)
+              VALUES ('$content_hash', '$source_type', '$content_text', '$repo_hash', '$(now_iso)');"
+}
+
+db_query_embeddings() {
+    local source_type="${1:-}" repo_hash="${2:-}" limit="${3:-50}"
+    if ! db_available; then echo "[]"; return 0; fi
+    local where="WHERE 1=1"
+    [[ -n "$source_type" ]] && where="$where AND source_type = '$source_type'"
+    [[ -n "$repo_hash" ]] && where="$where AND repo_hash = '$repo_hash'"
+    _db_query -json "SELECT id, content_hash, source_type, content_text, repo_hash, created_at FROM memory_embeddings $where ORDER BY created_at DESC LIMIT $limit;" || echo "[]"
+}
+
+# Reasoning traces for multi-step autonomous pipelines
+db_save_reasoning_trace() {
+    local job_id="$1" step_name="$2" input_context="$3" reasoning="$4" output_decision="$5" confidence="${6:-0.5}"
+    local escaped_input escaped_reasoning escaped_output
+    escaped_input=$(echo "$input_context" | sed "s/'/''/g")
+    escaped_reasoning=$(echo "$reasoning" | sed "s/'/''/g")
+    escaped_output=$(echo "$output_decision" | sed "s/'/''/g")
+    job_id="${job_id//\'/\'\'}"
+    step_name="${step_name//\'/\'\'}"
+    if ! db_available; then return 1; fi
+    _db_exec "INSERT INTO reasoning_traces (job_id, step_name, input_context, reasoning, output_decision, confidence, created_at)
+              VALUES ('$job_id', '$step_name', '$escaped_input', '$escaped_reasoning', '$escaped_output', $confidence, '$(now_iso)');"
+}
+
+db_query_reasoning_traces() {
+    local job_id="$1"
+    job_id="${job_id//\'/\'\'}"
+    if ! db_available; then echo "[]"; return 0; fi
+    _db_query -json "SELECT * FROM reasoning_traces WHERE job_id = '$job_id' ORDER BY id ASC;" || echo "[]"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════

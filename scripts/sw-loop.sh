@@ -23,6 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -40,15 +41,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
 
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 GOAL=""
@@ -67,7 +59,7 @@ MAX_TURNS=""
 RESUME=false
 VERBOSE=false
 MAX_ITERATIONS_EXPLICIT=false
-MAX_RESTARTS=0
+MAX_RESTARTS=$(_config_get_int "loop.max_restarts" 0 2>/dev/null || echo 0)
 SESSION_RESTART=false
 RESTART_COUNT=0
 REPO_OVERRIDE=""
@@ -356,7 +348,7 @@ if command -v timeout >/dev/null 2>&1; then
 elif command -v gtimeout >/dev/null 2>&1; then
     TIMEOUT_CMD="gtimeout"
 fi
-CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-1800}"  # 30 min default
+CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-$(_config_get_int "loop.claude_timeout" 1800 2>/dev/null || echo 1800)}"  # 30 min default
 
 if [[ "$AGENTS" -gt 1 ]]; then
     if ! command -v tmux >/dev/null 2>&1; then
@@ -619,9 +611,6 @@ compute_velocity_avg() {
 
 # ─── Timing Helpers ───────────────────────────────────────────────────────────
 
-now_iso()   { date -u +%Y-%m-%dT%H:%M:%SZ; }
-now_epoch() { date +%s; }
-
 format_duration() {
     local secs="$1"
     local mins=$(( secs / 60 ))
@@ -728,6 +717,21 @@ resume_state() {
         warn "Previous run stopped at iteration $ITERATION/$MAX_ITERATIONS."
         echo -e "  Extend with: ${DIM}shipwright loop --resume --max-iterations $(( MAX_ITERATIONS + 10 ))${RESET}"
         exit 0
+    fi
+
+    # Restore Claude context for meaningful resume (source so exports persist to this shell)
+    if [[ -f "$SCRIPT_DIR/sw-checkpoint.sh" ]] && [[ -d "${PROJECT_ROOT:-}" ]]; then
+        source "$SCRIPT_DIR/sw-checkpoint.sh"
+        local _orig_pwd="$PWD"
+        cd "$PROJECT_ROOT" 2>/dev/null || true
+        if checkpoint_restore_context "build" 2>/dev/null; then
+            RESUMED_FROM_ITERATION="${RESTORED_ITERATION:-}"
+            RESUMED_MODIFIED="${RESTORED_MODIFIED:-}"
+            RESUMED_FINDINGS="${RESTORED_FINDINGS:-}"
+            RESUMED_TEST_OUTPUT="${RESTORED_TEST_OUTPUT:-}"
+            [[ -n "${RESTORED_ITERATION:-}" && "${RESTORED_ITERATION:-0}" -gt 0 ]] && info "Restored context from iteration ${RESTORED_ITERATION}"
+        fi
+        cd "$_orig_pwd" 2>/dev/null || true
     fi
 
     success "Resumed: iteration $ITERATION/$MAX_ITERATIONS"
@@ -1557,9 +1561,36 @@ You are starting a FRESH session after the previous one exhausted its iterations
 Read the progress above and continue from where it left off. Do NOT repeat work already done."
     fi
 
+    # Resume-from-checkpoint context — reconstruct Claude context for meaningful resume
+    local resume_section=""
+    if [[ -n "${RESUMED_FROM_ITERATION:-}" && "${RESUMED_FROM_ITERATION:-0}" -gt 0 ]]; then
+        local _test_tail="  (none recorded)"
+        [[ -n "${RESUMED_TEST_OUTPUT:-}" ]] && _test_tail="$(echo "$RESUMED_TEST_OUTPUT" | tail -20)"
+        resume_section="## RESUMING FROM ITERATION ${RESUMED_FROM_ITERATION}
+
+Continue from where you left off. Do NOT repeat work already done.
+
+Previous work modified these files:
+${RESUMED_MODIFIED:-  (none recorded)}
+
+Previous findings/errors from earlier iterations:
+${RESUMED_FINDINGS:-  (none recorded)}
+
+Last test output (fix any failures, tail):
+${_test_tail}
+
+---
+"
+        # Clear after first use so we don't keep injecting on every iteration
+        RESUMED_FROM_ITERATION=""
+        RESUMED_MODIFIED=""
+        RESUMED_FINDINGS=""
+        RESUMED_TEST_OUTPUT=""
+    fi
+
     cat <<PROMPT
 You are an autonomous coding agent on iteration ${ITERATION}/${MAX_ITERATIONS} of a continuous loop.
-
+${resume_section}
 ## Your Goal
 ${GOAL}
 
@@ -2107,6 +2138,15 @@ cleanup() {
         --iteration "$ITERATION" \
         --git-sha "$(git rev-parse HEAD 2>/dev/null || echo unknown)" 2>/dev/null || true
 
+    # Save Claude context for meaningful resume (goal, findings, test output)
+    export SW_LOOP_GOAL="$GOAL"
+    export SW_LOOP_ITERATION="$ITERATION"
+    export SW_LOOP_STATUS="$STATUS"
+    export SW_LOOP_TEST_OUTPUT="${TEST_OUTPUT:-}"
+    export SW_LOOP_FINDINGS="${LOG_ENTRIES:-}"
+    export SW_LOOP_MODIFIED="$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')"
+    "$SCRIPT_DIR/sw-checkpoint.sh" save-context --stage build 2>/dev/null || true
+
     # Clear heartbeat
     "$SCRIPT_DIR/sw-heartbeat.sh" clear "${PIPELINE_JOB_ID:-loop-$$}" 2>/dev/null || true
 
@@ -2296,7 +2336,7 @@ PROMPT
         break
     fi
 
-    sleep 2
+    sleep __SLEEP_BETWEEN_ITERATIONS__
 done
 
 echo -e "\n${DIM}Agent ${AGENT_NUM} finished after ${ITERATION} iterations${RESET}"
@@ -2307,6 +2347,7 @@ WORKEREOF
     sed_i "s|__AGENT_NUM__|${agent_num}|g" "$worker_script"
     sed_i "s|__TOTAL_AGENTS__|${total_agents}|g" "$worker_script"
     sed_i "s|__MAX_ITERATIONS__|${MAX_ITERATIONS}|g" "$worker_script"
+    sed_i "s|__SLEEP_BETWEEN_ITERATIONS__|$(_config_get_int "loop.sleep_between_iterations" 2 2>/dev/null || echo 2)|g" "$worker_script"
     # Paths and commands may contain sed-special chars — use awk
     awk -v val="$wt_path" '{gsub(/__WORK_DIR__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
         && mv "${worker_script}.tmp" "$worker_script"
@@ -2416,7 +2457,7 @@ wait_for_multi_completion() {
             fi
         fi
 
-        sleep 5
+        sleep "$(_config_get_int "loop.multi_agent_sleep" 5 2>/dev/null || echo 5)"
     done
 }
 
@@ -2571,6 +2612,15 @@ ${GOAL}"
             _applied_fix_pattern=""
         fi
 
+        # Save Claude context for checkpoint resume (goal, findings, test output)
+        export SW_LOOP_GOAL="$GOAL"
+        export SW_LOOP_ITERATION="$ITERATION"
+        export SW_LOOP_STATUS="${STATUS:-running}"
+        export SW_LOOP_TEST_OUTPUT="${TEST_OUTPUT:-}"
+        export SW_LOOP_FINDINGS="${LOG_ENTRIES:-}"
+        export SW_LOOP_MODIFIED="$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')"
+        "$SCRIPT_DIR/sw-checkpoint.sh" save-context --stage build 2>/dev/null || true
+
         # Audit agent (reviews implementer's work)
         run_audit_agent
 
@@ -2635,7 +2685,7 @@ HUMAN FEEDBACK (received after iteration $ITERATION): $human_msg"
             break
         fi
 
-        sleep 2
+        sleep "$(_config_get_int "loop.sleep_between_iterations" 2 2>/dev/null || echo 2)"
     done
 
     # Write final state after loop exits
@@ -2709,7 +2759,7 @@ run_loop_with_restarts() {
 
         write_state
 
-        sleep 2
+        sleep "$(_config_get_int "loop.sleep_between_iterations" 2 2>/dev/null || echo 2)"
     done
 }
 

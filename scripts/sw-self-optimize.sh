@@ -34,18 +34,11 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Structured Event Log ────────────────────────────────────────────────────
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
+
+# ─── DB for outcome-based learning ─────────────────────────────────────────────
+[[ -f "$SCRIPT_DIR/sw-db.sh" ]] && source "$SCRIPT_DIR/sw-db.sh"
 
 # ─── Storage Paths ───────────────────────────────────────────────────────────
 OPTIMIZATION_DIR="${HOME}/.shipwright/optimization"
@@ -837,6 +830,129 @@ optimize_route_models() {
     rm -f "$tmp_stage_stats" 2>/dev/null || true
 
     success "Model routing updated"
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# OUTCOME-BASED LEARNING: Thompson Sampling & UCB1
+# ═════════════════════════════════════════════════════════════════════════════
+
+# Thompson sampling: select template based on historical success rates
+# Uses Beta distribution approximation: sample from Beta(successes+1, failures+1)
+thompson_select_template() {
+    local complexity="${1:-medium}"
+
+    if ! db_available 2>/dev/null; then
+        _legacy_template_select "$complexity"
+        return
+    fi
+
+    local templates
+    templates=$(_db_query "SELECT template,
+        SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as losses
+        FROM pipeline_outcomes
+        WHERE complexity = '$complexity' AND template IS NOT NULL AND template != ''
+        GROUP BY template;" 2>/dev/null || echo "")
+
+    if [[ -z "$templates" ]]; then
+        echo "standard"
+        return
+    fi
+
+    local best_template="standard"
+    local best_score=0
+
+    while IFS='|' read -r template wins losses; do
+        [[ -z "$template" ]] && continue
+        template=$(echo "$template" | xargs)
+        local alpha=$((wins + 1))
+        local beta_param=$((losses + 1))
+        local total=$((alpha + beta_param))
+        local mean_x1000=$(( (alpha * 1000) / total ))
+        local noise=$(( (RANDOM % 200) - 100 ))
+        local variance_factor=$(( 1000 / (total + 1) ))
+        local score=$(( mean_x1000 + (noise * variance_factor / 100) ))
+
+        if [[ $score -gt $best_score ]]; then
+            best_score=$score
+            best_template="$template"
+        fi
+    done <<< "$templates"
+
+    echo "$best_template"
+}
+
+# Fallback when DB unavailable: map complexity to template
+_legacy_template_select() {
+    local complexity="${1:-medium}"
+    case "$complexity" in
+        low|fast)   echo "fast" ;;
+        high|full)  echo "full" ;;
+        *)         echo "standard" ;;
+    esac
+}
+
+# UCB1: select best model for a given stage
+# UCB1 = mean_reward + sqrt(2 * ln(total_trials) / trials_for_this_arm)
+ucb1_select_model() {
+    local stage="${1:-build}"
+
+    if ! db_available 2>/dev/null; then
+        echo "sonnet"
+        return
+    fi
+
+    local total_trials
+    total_trials=$(_db_query "SELECT COUNT(*) FROM model_outcomes WHERE stage = '$stage';" 2>/dev/null || echo "0")
+
+    if [[ "${total_trials:-0}" -lt 5 ]]; then
+        echo ""
+        return
+    fi
+
+    local models
+    models=$(_db_query "SELECT model,
+        AVG(success) as mean_reward,
+        COUNT(*) as trials,
+        AVG(cost_usd) as avg_cost
+        FROM model_outcomes
+        WHERE stage = '$stage'
+        GROUP BY model;" 2>/dev/null || echo "")
+
+    if [[ -z "$models" ]]; then
+        echo "sonnet"
+        return
+    fi
+
+    local best_model="sonnet"
+    local best_ucb=0
+
+    while IFS='|' read -r model mean_reward trials avg_cost; do
+        [[ -z "$model" ]] && continue
+        model=$(echo "$model" | xargs)
+        local mean_x1000 exploration ucb
+        mean_x1000=$(echo "$mean_reward" | awk '{printf "%d", $1 * 1000}')
+        exploration=$(awk "BEGIN { printf \"%d\", 1000 * sqrt(2 * log($total_trials) / $trials) }" 2>/dev/null || echo "0")
+        ucb=$((mean_x1000 + exploration))
+
+        if [[ $ucb -gt $best_ucb ]]; then
+            best_ucb=$ucb
+            best_model="$model"
+        fi
+    done <<< "$models"
+
+    echo "$best_model"
+}
+
+# Record model outcome for UCB1 learning
+record_model_outcome() {
+    local model="$1" stage="$2" success="${3:-1}" duration="${4:-0}" cost="${5:-0}"
+    if db_available 2>/dev/null; then
+        model="${model//\'/\'\'}"
+        stage="${stage//\'/\'\'}"
+        _db_exec "INSERT INTO model_outcomes (model, stage, success, duration_secs, cost_usd, created_at)
+                  VALUES ('$model', '$stage', $success, $duration, $cost, '$(now_iso)');" 2>/dev/null || true
+    fi
 }
 
 # ═════════════════════════════════════════════════════════════════════════════

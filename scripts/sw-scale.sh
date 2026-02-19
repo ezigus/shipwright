@@ -39,16 +39,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Constants ──────────────────────────────────────────────────────────────
 SCALE_RULES_FILE="${HOME}/.shipwright/scale-rules.json"
 SCALE_EVENTS_FILE="${HOME}/.shipwright/scale-events.jsonl"
@@ -153,8 +143,14 @@ emit_scale_event() {
 
 # ─── Scale Up: spawn new agent ───────────────────────────────────────────
 cmd_up() {
-    local role="${1:-builder}"
-    shift 2>/dev/null || true
+    local count="${1:-1}"
+    local role="${2:-builder}"
+
+    # Parse: "up builder" -> count=1 role=builder; "up 2 tester" -> count=2 role=tester
+    if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+        role="$count"
+        count=1
+    fi
 
     ensure_dirs
     init_rules
@@ -178,43 +174,124 @@ cmd_up() {
     local max_size
     max_size=$(jq -r '.max_team_size // 8' "$SCALE_RULES_FILE")
 
-    info "Scaling up team with ${role} agent"
+    info "Scaling up team with ${count} ${role} agent(s)"
     echo -e "  Max team size: ${CYAN}${max_size}${RESET}"
     echo -e "  Role:          ${CYAN}${role}${RESET}"
     echo ""
 
-    # TODO: Integrate with tmux/SendMessage to spawn agent
-    # For now, emit event and log
-    emit_scale_event "up" "$role" "manual" "$*"
+    local repo_root
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || repo_root="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)"
+
+    if ! command -v tmux &>/dev/null; then
+        warn "tmux not available - cannot spawn agents"
+        echo "Install tmux to enable agent scaling: brew install tmux"
+        emit_scale_event "up" "$role" "manual" "tmux_unavailable"
+        update_scale_state
+        success "Scale-up event recorded (role: ${role})"
+        echo ""
+        echo -e "  ${DIM}Note: Actual agent spawn requires tmux (brew install tmux)${RESET}"
+        return 1
+    fi
+
+    for i in $(seq 1 "$count"); do
+        local agent_name="sw-agent-${role}-$(date +%s)-${i}"
+        local session_name="shipwright-${agent_name}"
+
+        # Spawn a real agent in a tmux session
+        tmux new-session -d -s "$session_name" \
+            "cd \"${repo_root}\" && SW_AGENT_ROLE=$role SW_AGENT_NAME=$agent_name bash scripts/sw-daemon.sh start --role $role 2>&1 | tee /tmp/sw-agent-${agent_name}.log" 2>/dev/null && {
+            emit_scale_event "up" "$role" "agent_started" "agent=$agent_name"
+            echo "Started agent $agent_name in tmux session $session_name"
+        } || {
+            warn "Failed to spawn agent $agent_name in tmux"
+        }
+    done
+
+    emit_scale_event "up" "$role" "manual" "count=$count"
     update_scale_state
 
-    success "Scale-up event recorded (role: ${role})"
+    success "Scale-up event recorded (role: ${role}, count: ${count})"
     echo ""
-    echo -e "  ${DIM}Note: Actual agent spawn requires tmux/claude integration${RESET}"
 }
 
 # ─── Scale Down: send shutdown to agent ──────────────────────────────────
 cmd_down() {
-    local agent_id="${1:-}"
-    shift 2>/dev/null || true
+    local first_arg="${1:-}"
+    local second_arg="${2:-}"
 
-    if [[ -z "$agent_id" ]]; then
-        error "Usage: shipwright scale down <agent-id>"
+    # Require at least one argument for backward compat (down <agent-id> or down <count> [role])
+    if [[ -z "$first_arg" ]]; then
+        error "Usage: shipwright scale down <agent-id|count> [role]"
         return 1
+    fi
+
+    local count="$first_arg"
+    local role="$second_arg"
+
+    # Backward compat: "down agent-42" -> treat as session/agent identifier
+    if [[ -n "$count" ]] && [[ "$count" != *[0-9]* ]] || [[ "$count" == agent-* ]]; then
+        # Specific agent/session id
+        local session_pattern="*${count}*"
+        local sessions
+        sessions=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -E "shipwright|swarm" | grep -i "$count" || true)
+        if [[ -z "$sessions" ]]; then
+            emit_scale_event "down" "unknown" "manual" "agent_id=$count"
+            update_scale_state
+            success "Scale-down event recorded (agent: ${count})"
+            return 0
+        fi
+        local session
+        session=$(echo "$sessions" | head -1)
+        tmux kill-session -t "$session" 2>/dev/null && {
+            emit_scale_event "down" "unknown" "agent_stopped" "session=$session"
+            echo "Stopped agent session: $session"
+        }
+        emit_scale_event "down" "unknown" "manual" "agent_id=$count"
+        update_scale_state
+        success "Scale-down event recorded (agent: ${count})"
+        return 0
+    fi
+
+    # Numeric count
+    if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+        count=1
     fi
 
     ensure_dirs
     init_rules
 
-    info "Scaling down agent: ${agent_id}"
-    echo ""
+    # Find running agent sessions
+    local sessions
+    sessions=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^shipwright-sw-agent\|^swarm-' || true)
 
-    # TODO: Integrate with SendMessage to shut down agent
-    emit_scale_event "down" "unknown" "manual" "agent_id=$agent_id"
+    if [[ -z "$sessions" ]]; then
+        echo "No running agents to stop"
+        emit_scale_event "down" "unknown" "manual" "none_running"
+        update_scale_state
+        return 0
+    fi
+
+    local stopped=0
+    while IFS= read -r session; do
+        [[ "$stopped" -ge "$count" ]] && break
+        [[ -z "$session" ]] && continue
+
+        # Filter by role if specified
+        if [[ -n "$role" ]] && ! echo "$session" | grep -q "$role"; then
+            continue
+        fi
+
+        if tmux kill-session -t "$session" 2>/dev/null; then
+            stopped=$((stopped + 1))
+            emit_scale_event "down" "unknown" "agent_stopped" "session=$session"
+            echo "Stopped agent session: $session"
+        fi
+    done <<< "$sessions"
+
+    emit_scale_event "down" "unknown" "manual" "count=$stopped"
     update_scale_state
-
-    success "Scale-down event recorded (agent: ${agent_id})"
-    echo -e "  ${DIM}Note: Agent shutdown requires SendMessage integration${RESET}"
+    echo "Stopped $stopped agent(s)"
+    success "Scale-down event recorded"
 }
 
 # ─── Manage scaling rules ────────────────────────────────────────────────

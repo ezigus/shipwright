@@ -17,6 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# shellcheck source=sw-db.sh
+[[ -f "$SCRIPT_DIR/sw-db.sh" ]] && source "$SCRIPT_DIR/sw-db.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -34,24 +36,14 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Configuration ──────────────────────────────────────────────────────────
-EVENTBUS_FILE="${HOME}/.shipwright/eventbus.jsonl"
+EVENTS_FILE="${EVENTS_FILE:-${HOME}/.shipwright/events.jsonl}"
 EVENT_TTL_DAYS=7  # Default TTL for events (seconds = 7 * 86400)
 
 # ─── Initialize eventbus directory ──────────────────────────────────────────
 ensure_eventbus_dir() {
     local dir
-    dir="$(dirname "$EVENTBUS_FILE")"
+    dir="$(dirname "$EVENTS_FILE")"
     [[ -d "$dir" ]] || mkdir -p "$dir"
 }
 
@@ -66,7 +58,7 @@ generate_uuid() {
 cmd_publish() {
     local event_type="$1"
     local source="${2:-unknown}"
-    local correlation_id="$3"
+    local correlation_id="${3:-}"
     local payload_json="${4:-{}}"
 
     if [[ -z "$event_type" ]]; then
@@ -80,47 +72,54 @@ cmd_publish() {
         correlation_id="$(generate_uuid)"
     fi
 
-    local timestamp
-    timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-    # Build event JSON on single line
-    local event_json
-    event_json="{\"type\": \"$event_type\", \"source\": \"$source\", \"correlation_id\": \"$correlation_id\", \"timestamp\": \"$timestamp\", \"payload\": $payload_json}"
-
-
-    # Atomic write (append to JSONL file)
-    local tmp_file
-    tmp_file="$(mktemp)"
-    if [[ -f "$EVENTBUS_FILE" ]]; then
-        cat "$EVENTBUS_FILE" > "$tmp_file"
-    fi
-    echo "$event_json" >> "$tmp_file"
-    mv "$tmp_file" "$EVENTBUS_FILE"
+    emit_event "$event_type" "source=$source" "correlation_id=$correlation_id" "payload=$payload_json"
 
     success "Published event: $event_type (correlation_id: $correlation_id)"
 }
 
 # ─── Subscribe command ──────────────────────────────────────────────────────
 cmd_subscribe() {
-    local event_type_filter="${1:-}"
-    local max_lines="${2:-}"
+    local filter="${1:-}"
+    local poll_interval=1
+    local last_id=0
 
-    ensure_eventbus_dir
+    # Try to resume from last consumer offset
+    if db_available 2>/dev/null; then
+        last_id=$(db_get_consumer_offset "eventbus-subscribe-$$" 2>/dev/null || echo "0")
+    fi
 
-    [[ ! -f "$EVENTBUS_FILE" ]] && {
-        warn "Event bus is empty or does not exist yet"
-        return 0
-    }
-
-    info "Subscribing to event bus (${event_type_filter:-(all types)})..."
+    info "Subscribing to events (${filter:-(all types)})..."
     echo ""
 
-    # Tail the file with optional grep filter
-    if [[ -n "$event_type_filter" ]]; then
-        tail -f "$EVENTBUS_FILE" | grep "\"type\": \"$event_type_filter\""
-    else
-        tail -f "$EVENTBUS_FILE"
-    fi
+    while true; do
+        if db_available 2>/dev/null; then
+            local events batch_last_id=0
+            events=$(sqlite3 -json "$DB_FILE" "SELECT * FROM events WHERE id > $last_id ORDER BY id ASC LIMIT 50;" 2>/dev/null || echo "[]")
+            if [[ "$events" != "[]" && -n "$events" ]]; then
+                while IFS= read -r event; do
+                    [[ -z "$event" ]] && continue
+                    local etype
+                    etype=$(echo "$event" | jq -r '.type // ""')
+                    if [[ -z "$filter" || "$etype" == *"$filter"* ]]; then
+                        echo "$event"
+                    fi
+                    batch_last_id=$(echo "$event" | jq -r '.id // 0')
+                    [[ "${batch_last_id:-0}" -gt 0 ]] && last_id="$batch_last_id"
+                done < <(echo "$events" | jq -c '.[]' 2>/dev/null)
+                [[ "$last_id" -gt 0 ]] && db_set_consumer_offset "eventbus-subscribe-$$" "$last_id" 2>/dev/null || true
+            fi
+        else
+            # Fallback: tail the JSONL
+            [[ ! -f "$EVENTS_FILE" ]] && touch "$EVENTS_FILE"
+            tail -n 0 -f "$EVENTS_FILE" 2>/dev/null | while IFS= read -r line; do
+                if [[ -z "$filter" ]] || echo "$line" | jq -r '.type // ""' 2>/dev/null | grep -q "$filter"; then
+                    echo "$line"
+                fi
+            done
+            return
+        fi
+        sleep "$poll_interval"
+    done
 }
 
 # ─── Process reaper (SIGCHLD monitor) ──────────────────────────────────────
@@ -204,28 +203,27 @@ cmd_replay() {
 
     ensure_eventbus_dir
 
-    [[ ! -f "$EVENTBUS_FILE" ]] && {
-        warn "Event bus is empty or does not exist yet"
-        return 0
-    }
-
     info "Replaying events from the last ${minutes} minutes..."
     echo ""
 
-    # Calculate cutoff timestamp
     local cutoff_epoch
     cutoff_epoch=$(($(date +%s) - (minutes * 60)))
-    local cutoff_iso
-    cutoff_iso="$(date -u -j -f %s "$cutoff_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d @"$cutoff_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
 
-    # Grep and display events after cutoff
-    grep "timestamp" "$EVENTBUS_FILE" | while read -r line; do
-        local ts
-        ts=$(echo "$line" | grep -o '"timestamp": "[^"]*"' | cut -d'"' -f4)
-        if [[ "$ts" > "$cutoff_iso" ]]; then
-            echo "$line"
-        fi
-    done
+    if db_available 2>/dev/null; then
+        sqlite3 -json "$DB_FILE" "SELECT * FROM events WHERE ts_epoch >= $cutoff_epoch ORDER BY id ASC;" 2>/dev/null | jq -c '.[]' 2>/dev/null | while IFS= read -r event; do
+            [[ -n "$event" ]] && echo "$event"
+        done
+    elif [[ -f "$EVENTS_FILE" ]]; then
+        local cutoff_iso
+        cutoff_iso="$(date -u -j -f %s "$cutoff_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d @"$cutoff_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
+        grep "ts" "$EVENTS_FILE" 2>/dev/null | while read -r line; do
+            local ts
+            ts=$(echo "$line" | jq -r '.ts // ""' 2>/dev/null)
+            [[ -n "$ts" && "$ts" > "$cutoff_iso" ]] && echo "$line"
+        done
+    else
+        warn "Event bus is empty or does not exist yet"
+    fi
 }
 
 # ─── Status command ────────────────────────────────────────────────────────
@@ -237,31 +235,37 @@ cmd_status() {
     echo -e "${DIM}$(date '+%Y-%m-%d %H:%M:%S')${RESET}"
     echo ""
 
-    if [[ ! -f "$EVENTBUS_FILE" ]]; then
-        echo -e "  ${YELLOW}Event bus not yet initialized${RESET}"
+    if db_available 2>/dev/null; then
+        local total_events last_event_ts
+        total_events=$(_db_query "SELECT COUNT(*) FROM events;" 2>/dev/null || echo "0")
+        last_event_ts=$(_db_query "SELECT ts FROM events ORDER BY id DESC LIMIT 1;" 2>/dev/null || echo "never")
+        echo -e "  ${CYAN}Event Store:${RESET} SQLite ($DB_FILE)"
+        echo -e "  ${CYAN}Total Events:${RESET} ${BOLD}${total_events}${RESET}"
+        echo -e "  ${CYAN}Last Event:${RESET} $last_event_ts"
         echo ""
-        return 0
+        if [[ "${total_events:-0}" -gt 0 ]]; then
+            echo -e "  ${PURPLE}${BOLD}Events by Type${RESET}"
+            _db_query "SELECT type, COUNT(*) as cnt FROM events GROUP BY type ORDER BY cnt DESC;" 2>/dev/null | while IFS='|' read -r etype count; do
+                printf "    ${DIM}%-40s${RESET} %3d events\n" "$etype" "$count"
+            done
+        fi
+    elif [[ -f "$EVENTS_FILE" ]]; then
+        local total_events last_event_ts
+        total_events=$(wc -l < "$EVENTS_FILE" || echo 0)
+        last_event_ts=$(tail -1 "$EVENTS_FILE" | jq -r '.ts // "never"' 2>/dev/null || echo "never")
+        echo -e "  ${CYAN}Event Store:${RESET} $EVENTS_FILE (file fallback)"
+        echo -e "  ${CYAN}Total Events:${RESET} ${BOLD}${total_events}${RESET}"
+        echo -e "  ${CYAN}Last Event:${RESET} $last_event_ts"
+        echo ""
+        if [[ "${total_events:-0}" -gt 0 ]]; then
+            echo -e "  ${PURPLE}${BOLD}Events by Type${RESET}"
+            jq -r '.type' "$EVENTS_FILE" 2>/dev/null | sort | uniq -c | sort -rn | while read -r count type; do
+                printf "    ${DIM}%-40s${RESET} %3d events\n" "$type" "$count"
+            done
+        fi
+    else
+        echo -e "  ${YELLOW}Event bus not yet initialized${RESET}"
     fi
-
-    local total_events
-    total_events=$(wc -l < "$EVENTBUS_FILE" || echo 0)
-
-    local last_event_ts
-    last_event_ts=$(tail -1 "$EVENTBUS_FILE" | grep -o '"timestamp": "[^"]*"' | cut -d'"' -f4 || echo "never")
-
-    echo -e "  ${CYAN}Event Bus:${RESET} $EVENTBUS_FILE"
-    echo -e "  ${CYAN}Total Events:${RESET} ${BOLD}${total_events}${RESET}"
-    echo -e "  ${CYAN}Last Event:${RESET} $last_event_ts"
-    echo ""
-
-    # Count events by type
-    if [[ $total_events -gt 0 ]]; then
-        echo -e "  ${PURPLE}${BOLD}Events by Type${RESET}"
-        grep '"type"' "$EVENTBUS_FILE" | cut -d'"' -f4 | sort | uniq -c | sort -rn | while read -r count type; do
-            printf "    ${DIM}%-40s${RESET} %3d events\n" "$type" "$count"
-        done
-    fi
-
     echo ""
 }
 
@@ -271,40 +275,36 @@ cmd_clean() {
 
     ensure_eventbus_dir
 
-    [[ ! -f "$EVENTBUS_FILE" ]] && {
-        success "Event bus is empty"
-        return 0
-    }
-
-    info "Cleaning events older than ${ttl_days} days..."
-
-    # Calculate cutoff timestamp
     local cutoff_epoch
     cutoff_epoch=$(($(date +%s) - (ttl_days * 86400)))
     local cutoff_iso
     cutoff_iso="$(date -u -j -f %s "$cutoff_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d @"$cutoff_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
 
-    local old_count
-    old_count=$(grep -c "timestamp" "$EVENTBUS_FILE" 2>/dev/null || echo 0)
-
-    # Keep only recent events
-    local tmp_file
-    tmp_file="$(mktemp)"
-    grep "timestamp" "$EVENTBUS_FILE" | while read -r line; do
-        local ts
-        ts=$(echo "$line" | grep -o '"timestamp": "[^"]*"' | cut -d'"' -f4)
-        if [[ "$ts" > "$cutoff_iso" ]]; then
-            echo "$line" >> "$tmp_file"
-        fi
-    done
-
-    mv "$tmp_file" "$EVENTBUS_FILE"
-
-    local new_count
-    new_count=$(wc -l < "$EVENTBUS_FILE" || echo 0)
-    local removed=$((old_count - new_count))
-
-    success "Removed $removed old events. Remaining: $new_count"
+    if db_available 2>/dev/null; then
+        local old_count new_count removed
+        old_count=$(_db_query "SELECT COUNT(*) FROM events;" 2>/dev/null || echo 0)
+        _db_exec "DELETE FROM events WHERE ts < '${cutoff_iso}';" 2>/dev/null || true
+        new_count=$(_db_query "SELECT COUNT(*) FROM events;" 2>/dev/null || echo 0)
+        removed=$((old_count - new_count))
+        success "Removed $removed old events. Remaining: $new_count"
+    elif [[ -f "$EVENTS_FILE" ]]; then
+        info "Cleaning events older than ${ttl_days} days..."
+        local old_count tmp_file new_count removed
+        old_count=$(grep -c "ts" "$EVENTS_FILE" 2>/dev/null || echo 0)
+        tmp_file="$(mktemp)"
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            local ts
+            ts=$(echo "$line" | jq -r '.ts // ""' 2>/dev/null)
+            [[ -n "$ts" && "$ts" > "$cutoff_iso" ]] && echo "$line" >> "$tmp_file"
+        done < "$EVENTS_FILE"
+        mv "$tmp_file" "$EVENTS_FILE"
+        new_count=$(wc -l < "$EVENTS_FILE" || echo 0)
+        removed=$((old_count - new_count))
+        success "Removed $removed old events. Remaining: $new_count"
+    else
+        success "Event bus is empty"
+    fi
 }
 
 # ─── Help command ──────────────────────────────────────────────────────────

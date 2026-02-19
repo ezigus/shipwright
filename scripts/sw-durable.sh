@@ -17,6 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# shellcheck source=sw-db.sh
+[[ -f "$SCRIPT_DIR/sw-db.sh" ]] && source "$SCRIPT_DIR/sw-db.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -34,16 +36,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Durable State Directory ────────────────────────────────────────────────
 DURABLE_DIR="${HOME}/.shipwright/durable"
 
@@ -68,7 +60,7 @@ event_log_file() {
     echo "${DURABLE_DIR}/event-log/events.jsonl"
 }
 
-# Append event to WAL with sequence number
+# Publish event to unified event store (durable WAL + emit_event for global events.jsonl)
 publish_event() {
     local event_type="$1"
     local payload="$2"
@@ -76,36 +68,12 @@ publish_event() {
     event_id="$(generate_event_id "evt")"
 
     ensure_durable_dir
+    local wal
+    wal="$(event_log_file)"
+    echo "{\"ts\":\"$(now_iso)\",\"type\":\"$event_type\",\"event_id\":\"$event_id\",\"payload\":$payload}" >> "$wal"
 
-    # Get next sequence number (count existing lines + 1)
-    local seq=1
-    local log_file
-    log_file="$(event_log_file)"
-    if [[ -f "$log_file" ]]; then
-        seq=$(($(wc -l < "$log_file" || true) + 1))
-    fi
+    emit_event "$event_type" "event_id=$event_id" "payload=$payload"
 
-    # Build event JSON atomically
-    local tmp_file
-    tmp_file="$(mktemp "${DURABLE_DIR}/.tmp.XXXXXX")"
-
-    jq -n \
-        --argjson sequence "$seq" \
-        --arg event_id "$event_id" \
-        --arg event_type "$event_type" \
-        --argjson payload "$(echo "$payload" | jq . 2>/dev/null || echo '{}')" \
-        --arg timestamp "$(now_iso)" \
-        --arg status "published" \
-        '{
-            sequence: $sequence,
-            event_id: $event_id,
-            event_type: $event_type,
-            payload: $payload,
-            timestamp: $timestamp,
-            status: $status
-        }' >> "$log_file" || { rm -f "$tmp_file"; return 1; }
-
-    rm -f "$tmp_file"
     echo "$event_id"
 }
 
@@ -126,10 +94,8 @@ save_checkpoint() {
     local cp_file
     cp_file="$(checkpoint_file "$workflow_id")"
 
-    local tmp_file
-    tmp_file="$(mktemp "${DURABLE_DIR}/.tmp.XXXXXX")"
-
-    jq -n \
+    local cp_data
+    cp_data=$(jq -n \
         --arg workflow_id "$workflow_id" \
         --arg stage "$stage" \
         --argjson sequence "$seq" \
@@ -143,9 +109,15 @@ save_checkpoint() {
             state: $state,
             checkpoint_id: $checkpoint_id,
             created_at: $created_at
-        }' > "$tmp_file" || { rm -f "$tmp_file"; return 1; }
+        }' 2>/dev/null) || return 1
 
-    mv "$tmp_file" "$cp_file"
+    # DB storage (when available)
+    if type db_save_checkpoint >/dev/null 2>&1 && db_available 2>/dev/null; then
+        db_save_checkpoint "$workflow_id" "$cp_data" 2>/dev/null || true
+    fi
+
+    # File storage (backup)
+    echo "$cp_data" > "$cp_file"
     success "Checkpoint saved for workflow $workflow_id at stage $stage (seq: $seq)"
 }
 
@@ -154,6 +126,17 @@ restore_checkpoint() {
     local cp_file
     cp_file="$(checkpoint_file "$workflow_id")"
 
+    # Try DB first
+    if type db_load_checkpoint >/dev/null 2>&1 && db_available 2>/dev/null; then
+        local db_data
+        db_data=$(db_load_checkpoint "$workflow_id" 2>/dev/null)
+        if [[ -n "$db_data" ]]; then
+            echo "$db_data"
+            return 0
+        fi
+    fi
+
+    # Fallback to file
     if [[ ! -f "$cp_file" ]]; then
         error "No checkpoint found for workflow: $workflow_id"
         return 1

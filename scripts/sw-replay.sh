@@ -17,6 +17,9 @@ EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# DB layer for dual-read (SQLite + JSONL fallback)
+# shellcheck source=sw-db.sh
+[[ -f "$SCRIPT_DIR/sw-db.sh" ]] && source "$SCRIPT_DIR/sw-db.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -34,16 +37,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # Check if jq is available
 check_jq() {
     if ! command -v jq >/dev/null 2>&1; then
@@ -85,22 +78,23 @@ color_status() {
 cmd_list() {
     check_jq
 
-    if [[ ! -f "$EVENTS_FILE" ]]; then
-        warn "No pipeline runs recorded yet (events file not found)"
+    local events_json
+    events_json=$(db_query_events "" 5000 2>/dev/null || echo "[]")
+    if [[ "$events_json" == "[]" ]] || [[ -z "$events_json" ]]; then
+        warn "No pipeline runs recorded yet (events not found)"
         exit 0
     fi
 
-    info "Pipeline runs (${DIM}from $EVENTS_FILE${RESET})"
+    info "Pipeline runs (${DIM}DB + JSONL${RESET})"
     echo ""
 
     # Extract unique pipeline runs, sorted by start time
-    # Use --slurpfile to handle parsing errors gracefully
-    jq -r 'select(.type == "pipeline.started") | [.ts, .issue, .pipeline, .model, .goal] | @tsv' "$EVENTS_FILE" 2>/dev/null | \
+    echo "$events_json" | jq -r '.[] | select(.type == "pipeline.started") | [.ts, .issue, .pipeline, .model, .goal] | @tsv' 2>/dev/null | \
     sort -r | \
     while IFS=$'\t' read -r ts issue pipeline model goal; do
         # Find corresponding completion event
         local completion
-        completion=$(jq -r "select(.type == \"pipeline.completed\" and .issue == $issue) | .result, .duration_s" "$EVENTS_FILE" 2>/dev/null | head -2)
+        completion=$(echo "$events_json" | jq -r ".[] | select(.type == \"pipeline.completed\" and .issue == $issue) | .result, .duration_s" 2>/dev/null | head -2)
 
         if [[ -n "$completion" ]]; then
             local result duration
@@ -137,14 +131,16 @@ cmd_show() {
         exit 1
     fi
 
-    if [[ ! -f "$EVENTS_FILE" ]]; then
+    local events_json
+    events_json=$(db_query_events "" 5000 2>/dev/null || echo "[]")
+    if [[ "$events_json" == "[]" ]] || [[ -z "$events_json" ]]; then
         error "No events recorded yet"
         exit 1
     fi
 
     # Find pipeline run for this issue
     local pipeline_start
-    pipeline_start=$(jq -r "select(.type == \"pipeline.started\" and .issue == $issue) | [.ts, .pipeline, .model, .goal] | @tsv" "$EVENTS_FILE" 2>/dev/null | head -1)
+    pipeline_start=$(echo "$events_json" | jq -r ".[] | select(.type == \"pipeline.started\" and .issue == $issue) | [.ts, .pipeline, .model, .goal] | @tsv" 2>/dev/null | head -1)
 
     if [[ -z "$pipeline_start" ]]; then
         error "No pipeline run found for issue #$issue"
@@ -166,7 +162,7 @@ cmd_show() {
 
     # Find all stage events for this issue
     echo -e "  ${BOLD}Stages:${RESET}"
-    jq -r "select(.issue == $issue and .type == \"stage.completed\") | [.ts, .stage, .duration_s // 0, .result // \"success\"] | @tsv" "$EVENTS_FILE" 2>/dev/null | \
+    echo "$events_json" | jq -r ".[] | select(.issue == $issue and .type == \"stage.completed\") | [.ts, .stage, .duration_s // 0, .result // \"success\"] | @tsv" 2>/dev/null | \
     while IFS=$'\t' read -r ts stage duration result; do
         local status_icon
         case "$result" in
@@ -185,7 +181,7 @@ cmd_show() {
 
     # Find pipeline completion
     local completion
-    completion=$(jq -r "select(.type == \"pipeline.completed\" and .issue == $issue) | [.result // \"unknown\", .duration_s // 0, .input_tokens // 0, .output_tokens // 0] | @tsv" "$EVENTS_FILE" 2>/dev/null | head -1)
+    completion=$(echo "$events_json" | jq -r ".[] | select(.type == \"pipeline.completed\" and .issue == $issue) | [.result // \"unknown\", .duration_s // 0, .input_tokens // 0, .output_tokens // 0] | @tsv" 2>/dev/null | head -1)
 
     if [[ -n "$completion" ]]; then
         echo ""
@@ -214,13 +210,15 @@ cmd_narrative() {
         exit 1
     fi
 
-    if [[ ! -f "$EVENTS_FILE" ]]; then
+    local events_json
+    events_json=$(db_query_events "" 5000 2>/dev/null || echo "[]")
+    if [[ "$events_json" == "[]" ]] || [[ -z "$events_json" ]]; then
         error "No events recorded yet"
         exit 1
     fi
 
     local pipeline_start
-    pipeline_start=$(jq -r "select(.type == \"pipeline.started\" and .issue == $issue) | [.ts, .goal // \"\", .pipeline // \"standard\"] | @tsv" "$EVENTS_FILE" 2>/dev/null | head -1)
+    pipeline_start=$(echo "$events_json" | jq -r ".[] | select(.type == \"pipeline.started\" and .issue == $issue) | [.ts, .goal // \"\", .pipeline // \"standard\"] | @tsv" 2>/dev/null | head -1)
 
     if [[ -z "$pipeline_start" ]]; then
         error "No pipeline run found for issue #$issue"
@@ -234,7 +232,7 @@ cmd_narrative() {
 
     # Get pipeline completion
     local completion
-    completion=$(jq -r "select(.type == \"pipeline.completed\" and .issue == $issue) | [.result // \"unknown\", .duration_s // 0, .input_tokens // 0, .output_tokens // 0] | @tsv" "$EVENTS_FILE" 2>/dev/null | head -1)
+    completion=$(echo "$events_json" | jq -r ".[] | select(.type == \"pipeline.completed\" and .issue == $issue) | [.result // \"unknown\", .duration_s // 0, .input_tokens // 0, .output_tokens // 0] | @tsv" 2>/dev/null | head -1)
 
     local result duration input_tokens output_tokens
     if [[ -n "$completion" ]]; then
@@ -251,7 +249,7 @@ cmd_narrative() {
 
     # Count stages
     local stage_count
-    stage_count=$(jq -r "select(.issue == $issue and .type == \"stage.completed\") | .stage" "$EVENTS_FILE" 2>/dev/null | wc -l)
+    stage_count=$(echo "$events_json" | jq -r ".[] | select(.issue == $issue and .type == \"stage.completed\") | .stage" 2>/dev/null | wc -l)
 
     # Build narrative
     info "Pipeline Narrative"
@@ -267,9 +265,9 @@ cmd_narrative() {
 
     # Key events
     local retry_count build_iterations test_failures
-    retry_count=$(jq -r "select(.issue == $issue and .type == \"stage.completed\" and .result == \"retry\") | .stage" "$EVENTS_FILE" 2>/dev/null | wc -l)
-    build_iterations=$(jq -r "select(.issue == $issue and .type == \"build.iteration\") | .iteration" "$EVENTS_FILE" 2>/dev/null | tail -1)
-    test_failures=$(jq -r "select(.issue == $issue and .type == \"test.failed\") | .test" "$EVENTS_FILE" 2>/dev/null | wc -l)
+    retry_count=$(echo "$events_json" | jq -r ".[] | select(.issue == $issue and .type == \"stage.completed\" and .result == \"retry\") | .stage" 2>/dev/null | wc -l)
+    build_iterations=$(echo "$events_json" | jq -r ".[] | select(.issue == $issue and .type == \"build.iteration\") | .iteration" 2>/dev/null | tail -1)
+    test_failures=$(echo "$events_json" | jq -r ".[] | select(.issue == $issue and .type == \"test.failed\") | .test" 2>/dev/null | wc -l)
 
     echo "Key Events:"
     [[ $retry_count -gt 0 ]] && echo "  • $retry_count stage retries"
@@ -295,14 +293,16 @@ cmd_diff() {
         exit 1
     fi
 
-    if [[ ! -f "$EVENTS_FILE" ]]; then
+    local events_json
+    events_json=$(db_query_events "" 5000 2>/dev/null || echo "[]")
+    if [[ "$events_json" == "[]" ]] || [[ -z "$events_json" ]]; then
         error "No events recorded yet"
         exit 1
     fi
 
     # Check if issue was processed
     local found
-    found=$(jq -r "select(.issue == $issue and .type == \"pipeline.completed\") | .issue" "$EVENTS_FILE" | head -1)
+    found=$(echo "$events_json" | jq -r ".[] | select(.issue == $issue and .type == \"pipeline.completed\") | .issue" 2>/dev/null | head -1)
 
     if [[ -z "$found" ]]; then
         error "No pipeline run found for issue #$issue"
@@ -337,13 +337,15 @@ cmd_export() {
         exit 1
     fi
 
-    if [[ ! -f "$EVENTS_FILE" ]]; then
+    local events_json
+    events_json=$(db_query_events "" 5000 2>/dev/null || echo "[]")
+    if [[ "$events_json" == "[]" ]] || [[ -z "$events_json" ]]; then
         error "No events recorded yet"
         exit 1
     fi
 
     local pipeline_start
-    pipeline_start=$(jq -r "select(.type == \"pipeline.started\" and .issue == $issue) | [.ts, .goal // \"\", .pipeline // \"standard\"] | @tsv" "$EVENTS_FILE" 2>/dev/null | head -1)
+    pipeline_start=$(echo "$events_json" | jq -r ".[] | select(.type == \"pipeline.started\" and .issue == $issue) | [.ts, .goal // \"\", .pipeline // \"standard\"] | @tsv" 2>/dev/null | head -1)
 
     if [[ -z "$pipeline_start" ]]; then
         error "No pipeline run found for issue #$issue"
@@ -356,7 +358,7 @@ cmd_export() {
     pipeline_type=$(echo "$pipeline_start" | cut -f3)
 
     local completion
-    completion=$(jq -r "select(.type == \"pipeline.completed\" and .issue == $issue) | [.result // \"unknown\", .duration_s // 0] | @tsv" "$EVENTS_FILE" 2>/dev/null | head -1)
+    completion=$(echo "$events_json" | jq -r ".[] | select(.type == \"pipeline.completed\" and .issue == $issue) | [.result // \"unknown\", .duration_s // 0] | @tsv" 2>/dev/null | head -1)
 
     local result duration
     if [[ -n "$completion" ]]; then
@@ -386,7 +388,7 @@ $goal
 EOF
 
     # Add stage rows
-    jq -r "select(.issue == $issue and .type == \"stage.completed\") | [.stage, .duration_s // 0, .result // \"success\"] | @tsv" "$EVENTS_FILE" 2>/dev/null | \
+    echo "$events_json" | jq -r ".[] | select(.issue == $issue and .type == \"stage.completed\") | [.stage, .duration_s // 0, .result // \"success\"] | @tsv" 2>/dev/null | \
     while IFS=$'\t' read -r stage duration result; do
         printf "| %s | %s | %s |\n" "$stage" "$(format_duration "$duration")" "$result"
     done
@@ -402,7 +404,7 @@ EOF
 
 ## Events
 
-$(jq -r "select(.issue == $issue) | [.ts, .type] | @tsv" "$EVENTS_FILE" 2>/dev/null | awk '{print "- " $1 " — " $2}')
+$(echo "$events_json" | jq -r ".[] | select(.issue == $issue) | [.ts, .type] | @tsv" 2>/dev/null | awk '{print "- " $1 " — " $2}')
 
 EOF
 
@@ -420,7 +422,9 @@ cmd_compare() {
         exit 1
     fi
 
-    if [[ ! -f "$EVENTS_FILE" ]]; then
+    local events_json
+    events_json=$(db_query_events "" 5000 2>/dev/null || echo "[]")
+    if [[ "$events_json" == "[]" ]] || [[ -z "$events_json" ]]; then
         error "No events recorded yet"
         exit 1
     fi
@@ -430,8 +434,8 @@ cmd_compare() {
 
     # Get both runs
     local run1 run2
-    run1=$(jq -r "select(.type == \"pipeline.started\" and .issue == $issue1) | [.goal // \"\", .pipeline, .model] | @tsv" "$EVENTS_FILE" 2>/dev/null | head -1)
-    run2=$(jq -r "select(.type == \"pipeline.started\" and .issue == $issue2) | [.goal // \"\", .pipeline, .model] | @tsv" "$EVENTS_FILE" 2>/dev/null | head -1)
+    run1=$(echo "$events_json" | jq -r ".[] | select(.type == \"pipeline.started\" and .issue == $issue1) | [.goal // \"\", .pipeline, .model] | @tsv" 2>/dev/null | head -1)
+    run2=$(echo "$events_json" | jq -r ".[] | select(.type == \"pipeline.started\" and .issue == $issue2) | [.goal // \"\", .pipeline, .model] | @tsv" 2>/dev/null | head -1)
 
     if [[ -z "$run1" || -z "$run2" ]]; then
         error "Could not find both pipeline runs"
@@ -451,8 +455,8 @@ cmd_compare() {
 
     # Get completions
     local comp1 comp2
-    comp1=$(jq -r "select(.type == \"pipeline.completed\" and .issue == $issue1) | [.result // \"unknown\", .duration_s // 0] | @tsv" "$EVENTS_FILE" 2>/dev/null | head -1)
-    comp2=$(jq -r "select(.type == \"pipeline.completed\" and .issue == $issue2) | [.result // \"unknown\", .duration_s // 0] | @tsv" "$EVENTS_FILE" 2>/dev/null | head -1)
+    comp1=$(echo "$events_json" | jq -r ".[] | select(.type == \"pipeline.completed\" and .issue == $issue1) | [.result // \"unknown\", .duration_s // 0] | @tsv" 2>/dev/null | head -1)
+    comp2=$(echo "$events_json" | jq -r ".[] | select(.type == \"pipeline.completed\" and .issue == $issue2) | [.result // \"unknown\", .duration_s // 0] | @tsv" 2>/dev/null | head -1)
 
     local result1 duration1 result2 duration2
     result1=$(echo "$comp1" | cut -f1)
@@ -497,7 +501,7 @@ ${BOLD}EXAMPLES${RESET}
   shipwright replay export 42                        # Markdown report for #42
   shipwright replay compare 42 43                    # Compare two runs
 
-${DIM}Pipeline events are read from: $EVENTS_FILE${RESET}
+${DIM}Pipeline events are read from: DB + JSONL fallback${RESET}
 
 EOF
 }

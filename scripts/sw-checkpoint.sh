@@ -9,7 +9,7 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 VERSION="2.5.0"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
@@ -35,15 +35,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
 
 # ─── Checkpoint Directory ───────────────────────────────────────────────────
 CHECKPOINT_DIR=".claude/pipeline-artifacts/checkpoints"
@@ -55,6 +46,102 @@ ensure_checkpoint_dir() {
 checkpoint_file() {
     local stage="$1"
     echo "${CHECKPOINT_DIR}/${stage}-checkpoint.json"
+}
+
+# Context file for Claude prompt reconstruction on resume
+claude_context_file() {
+    local stage="$1"
+    echo "${CHECKPOINT_DIR}/${stage}-claude-context.json"
+}
+
+# ─── Save/Restore Claude Context (for meaningful resume) ────────────────────────
+# Captures goal, findings, modified files, test output so resume can reconstruct prompt.
+checkpoint_save_context() {
+    local stage="${1:-build}"
+    local context_file
+    context_file="$(claude_context_file "$stage")"
+    ensure_checkpoint_dir
+
+    local context="{}"
+
+    # Save current goal (from env or file)
+    local goal_content=""
+    if [[ -n "${SW_LOOP_GOAL:-}" ]]; then
+        goal_content="${SW_LOOP_GOAL}"
+    elif [[ -n "${SW_LOOP_GOAL_FILE:-}" && -f "${SW_LOOP_GOAL_FILE:-}" ]]; then
+        goal_content="$(cat "${SW_LOOP_GOAL_FILE}" 2>/dev/null || true)"
+    fi
+    if [[ -n "$goal_content" ]]; then
+        context=$(printf '%s' "$context" | jq --arg g "$goal_content" '.goal = $g' 2>/dev/null || echo "$context")
+    fi
+
+    # Save accumulated findings
+    local findings_content=""
+    if [[ -n "${SW_LOOP_FINDINGS:-}" ]]; then
+        findings_content="${SW_LOOP_FINDINGS}"
+    elif [[ -n "${SW_LOOP_FINDINGS_FILE:-}" && -f "${SW_LOOP_FINDINGS_FILE:-}" ]]; then
+        findings_content="$(cat "${SW_LOOP_FINDINGS_FILE}" 2>/dev/null || true)"
+    fi
+    if [[ -n "$findings_content" ]]; then
+        context=$(printf '%s' "$context" | jq --arg f "$findings_content" '.findings = $f' 2>/dev/null || echo "$context")
+    fi
+
+    # Save files modified (git diff)
+    local modified
+    modified="$(git diff --name-only HEAD 2>/dev/null | head -50 || true)"
+    if [[ -z "$modified" ]]; then
+        modified="${SW_LOOP_MODIFIED:-}"
+    fi
+    context=$(printf '%s' "$context" | jq --arg m "${modified:-}" '.modified_files = $m' 2>/dev/null || echo "$context")
+
+    # Save last test output
+    local test_content=""
+    if [[ -n "${SW_LOOP_TEST_OUTPUT:-}" ]]; then
+        test_content="${SW_LOOP_TEST_OUTPUT}"
+    elif [[ -n "${SW_LOOP_TEST_OUTPUT_FILE:-}" && -f "${SW_LOOP_TEST_OUTPUT_FILE:-}" ]]; then
+        test_content="$(tail -100 "${SW_LOOP_TEST_OUTPUT_FILE}" 2>/dev/null || true)"
+    fi
+    if [[ -n "$test_content" ]]; then
+        context=$(printf '%s' "$context" | jq --arg t "$test_content" '.last_test_output = $t' 2>/dev/null || echo "$context")
+    fi
+
+    # Save iteration count and status
+    local iter="${SW_LOOP_ITERATION:-0}"
+    local status="${SW_LOOP_STATUS:-running}"
+    context=$(printf '%s' "$context" | jq --argjson i "${iter}" --arg s "$status" '.iteration = ($i | tonumber) | .status = $s' 2>/dev/null || echo "$context")
+
+    printf '%s' "$context" > "$context_file" 2>/dev/null || true
+}
+
+checkpoint_restore_context() {
+    local stage="${1:-build}"
+    local context_file
+    context_file="$(claude_context_file "$stage")"
+
+    [[ ! -f "$context_file" ]] && return 1
+
+    local goal findings modified test_output iter status
+    goal="$(jq -r '.goal // empty' "$context_file" 2>/dev/null)"
+    findings="$(jq -r '.findings // empty' "$context_file" 2>/dev/null)"
+    modified="$(jq -r '.modified_files // empty' "$context_file" 2>/dev/null)"
+    test_output="$(jq -r '.last_test_output // empty' "$context_file" 2>/dev/null)"
+    iter="$(jq -r '.iteration // 0' "$context_file" 2>/dev/null)"
+    status="$(jq -r '.status // empty' "$context_file" 2>/dev/null)"
+
+    # Export both RESTORED_* (for restore-context CLI) and SW_LOOP_* (for sw-loop.sh)
+    export RESTORED_GOAL="$goal"
+    export RESTORED_FINDINGS="$findings"
+    export RESTORED_MODIFIED="$modified"
+    export RESTORED_TEST_OUTPUT="$test_output"
+    export RESTORED_ITERATION="$iter"
+    export RESTORED_STATUS="$status"
+    export SW_LOOP_GOAL="$goal"
+    export SW_LOOP_FINDINGS="$findings"
+    export SW_LOOP_MODIFIED="$modified"
+    export SW_LOOP_TEST_OUTPUT="$test_output"
+    export SW_LOOP_ITERATION="$iter"
+    export SW_LOOP_STATUS="$status"
+    return 0
 }
 
 # ─── Save ────────────────────────────────────────────────────────────────────
@@ -314,7 +401,10 @@ cmd_clear() {
             local file
             for file in "${CHECKPOINT_DIR}"/*-checkpoint.json; do
                 [[ -f "$file" ]] || continue
+                local stage_name
+                stage_name="$(basename "$file" -checkpoint.json)"
                 rm -f "$file"
+                rm -f "$(claude_context_file "$stage_name")" 2>/dev/null || true
                 count=$((count + 1))
             done
             success "Cleared ${count} checkpoint(s)"
@@ -334,6 +424,7 @@ cmd_clear() {
 
     if [[ -f "$target" ]]; then
         rm -f "$target"
+        rm -f "$(claude_context_file "$stage")" 2>/dev/null || true
         success "Cleared checkpoint for stage ${BOLD}${stage}${RESET}"
     else
         warn "No checkpoint found for stage ${BOLD}${stage}${RESET}"
@@ -421,8 +512,10 @@ show_help() {
     echo -e "  ${CYAN}shipwright checkpoint${RESET} <command> [options]"
     echo ""
     echo -e "${BOLD}COMMANDS${RESET}"
-    echo -e "  ${CYAN}save${RESET}      Save a checkpoint for a stage"
-    echo -e "  ${CYAN}restore${RESET}   Restore a checkpoint (prints JSON to stdout)"
+    echo -e "  ${CYAN}save${RESET}           Save a checkpoint for a stage"
+    echo -e "  ${CYAN}restore${RESET}        Restore a checkpoint (prints JSON to stdout)"
+    echo -e "  ${CYAN}save-context${RESET}   Save Claude context (goal, findings, test output) for resume"
+    echo -e "  ${CYAN}restore-context${RESET} Restore Claude context (exports RESTORED_* and SW_LOOP_* vars)"
     echo -e "  ${CYAN}list${RESET}      Show all available checkpoints"
     echo -e "  ${CYAN}clear${RESET}     Remove checkpoint(s)"
     echo -e "  ${CYAN}expire${RESET}    Remove checkpoints older than N hours"
@@ -455,6 +548,32 @@ show_help() {
     echo -e "  ${DIM}shipwright checkpoint expire --hours 48${RESET}"
 }
 
+# ─── Save Context / Restore Context (subcommands) ─────────────────────────────
+
+cmd_save_context() {
+    local stage="build"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --stage) stage="${2:-build}"; shift 2 ;;
+            --stage=*) stage="${1#--stage=}"; shift ;;
+            *) shift ;;
+        esac
+    done
+    checkpoint_save_context "$stage"
+}
+
+cmd_restore_context() {
+    local stage="build"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --stage) stage="${2:-build}"; shift 2 ;;
+            --stage=*) stage="${1#--stage=}"; shift ;;
+            *) shift ;;
+        esac
+    done
+    checkpoint_restore_context "$stage"
+}
+
 # ─── Command Router ─────────────────────────────────────────────────────────
 
 main() {
@@ -462,11 +581,13 @@ main() {
     shift 2>/dev/null || true
 
     case "$cmd" in
-        save)       cmd_save "$@" ;;
-        restore)    cmd_restore "$@" ;;
-        list)       cmd_list ;;
-        clear)      cmd_clear "$@" ;;
-        expire)     cmd_expire "$@" ;;
+        save)           cmd_save "$@" ;;
+        restore)        cmd_restore "$@" ;;
+        save-context)   cmd_save_context "$@" ;;
+        restore-context) cmd_restore_context "$@" ;;
+        list)           cmd_list ;;
+        clear)          cmd_clear "$@" ;;
+        expire)         cmd_expire "$@" ;;
         help|--help|-h) show_help ;;
         *)
             error "Unknown command: ${cmd}"
@@ -477,4 +598,7 @@ main() {
     esac
 }
 
-main "$@"
+# Only run main when executed directly (not when sourced)
+if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

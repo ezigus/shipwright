@@ -20,6 +20,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -29,15 +30,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
 
 # Policy (config/policy.json) — daemon defaults when daemon-config.json missing or silent
 [[ -f "$SCRIPT_DIR/lib/policy.sh" ]] && source "$SCRIPT_DIR/lib/policy.sh"
@@ -99,28 +91,6 @@ format_duration() {
     else
         printf "%ds" "$secs"
     fi
-}
-
-# ─── Structured Event Log ──────────────────────────────────────────────────
-EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
-
-emit_event() {
-    local event_type="$1"
-    shift
-    local json_fields=""
-    for kv in "$@"; do
-        local key="${kv%%=*}"
-        local val="${kv#*=}"
-        if [[ "$val" =~ ^-?[0-9]+\.?[0-9]*$ ]]; then
-            json_fields="${json_fields},\"${key}\":${val}"
-        else
-            local escaped_val
-            escaped_val=$(printf '%s' "$val" | jq -Rs '.' 2>/dev/null || printf '"%s"' "${val//\"/\\\"}")
-            json_fields="${json_fields},\"${key}\":${escaped_val}"
-        fi
-    done
-    mkdir -p "${HOME}/.shipwright"
-    echo "{\"ts\":\"$(now_iso)\",\"ts_epoch\":$(now_epoch),\"type\":\"${event_type}\"${json_fields}}" >> "$EVENTS_FILE"
 }
 
 # ─── Event Log Rotation ─────────────────────────────────────────────────────
@@ -185,7 +155,7 @@ gh_retry() {
     while [[ $attempt -lt $max_retries ]]; do
         attempt=$((attempt + 1))
         # Run the gh command with per-call timeout; capture exit code
-        if output=$(_timeout 30 "$@" 2>&1); then
+        if output=$(_timeout "$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)" "$@" 2>&1); then
             echo "$output"
             return 0
         fi
@@ -219,12 +189,13 @@ LOG_DIR=""
 WORKTREE_DIR=""
 
 # Config defaults (overridden by daemon-config.json; policy overrides when present)
-WATCH_LABEL="shipwright"
-POLL_INTERVAL=60
+WATCH_LABEL="$(_config_get "labels.watch" "shipwright" 2>/dev/null || echo "shipwright")"
+POLL_INTERVAL=$(_config_get_int "daemon.poll_interval" 60 2>/dev/null || echo 60)
 if type policy_get >/dev/null 2>&1; then
     POLL_INTERVAL=$(policy_get ".daemon.poll_interval_seconds" "60")
 fi
-MAX_PARALLEL=2
+MAX_PARALLEL=$(_config_get_int "daemon.max_parallel" 4 2>/dev/null || echo 4)
+ISSUE_LIMIT=$(_config_get_int "daemon.issue_limit" 100 2>/dev/null || echo 100)
 PIPELINE_TEMPLATE="autonomous"
 SKIP_GATES=true
 MODEL="opus"
@@ -272,7 +243,7 @@ PATROL_RETRY_THRESHOLD=2
 LAST_PATROL_EPOCH=0
 
 # Team dashboard coordination
-DASHBOARD_URL="${DASHBOARD_URL:-http://localhost:8767}"
+DASHBOARD_URL="${DASHBOARD_URL:-$(_config_get "dashboard.url" "http://localhost:8767" 2>/dev/null || echo "http://localhost:8767")}"
 
 # Runtime
 NO_GITHUB=false
@@ -406,6 +377,7 @@ load_config() {
     WATCH_LABEL=$(jq -r '.watch_label // "shipwright"' "$config_file")
     POLL_INTERVAL=$(jq -r '.poll_interval // '"$(type policy_get >/dev/null 2>&1 && policy_get ".daemon.poll_interval_seconds" "60" || echo "60")"'' "$config_file")
     MAX_PARALLEL=$(jq -r '.max_parallel // 2' "$config_file")
+    ISSUE_LIMIT=$(jq -r '.issue_limit // 100' "$config_file")
     PIPELINE_TEMPLATE=$(jq -r '.pipeline_template // "autonomous"' "$config_file")
     SKIP_GATES=$(jq -r '.skip_gates // true' "$config_file")
     MODEL=$(jq -r '.model // "opus"' "$config_file")

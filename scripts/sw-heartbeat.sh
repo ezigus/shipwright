@@ -16,6 +16,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+
+# SQLite persistence (DB as primary read path)
+# shellcheck source=sw-db.sh
+[[ -f "$SCRIPT_DIR/sw-db.sh" ]] && source "$SCRIPT_DIR/sw-db.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -33,16 +37,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Constants ──────────────────────────────────────────────────────────────
 HEARTBEAT_DIR="$HOME/.shipwright/heartbeats"
 
@@ -167,6 +161,11 @@ cmd_write() {
 
     # Atomic write
     mv "$tmp_file" "${HEARTBEAT_DIR}/${job_id}.json"
+
+    # Dual-write to DB when available
+    if type db_record_heartbeat >/dev/null 2>&1 && db_available 2>/dev/null; then
+        db_record_heartbeat "$job_id" "$pid" "${issue:-0}" "$stage" "${iteration:-0}" "$activity" "$memory_mb" 2>/dev/null || true
+    fi
 }
 
 # ─── Check Heartbeat ───────────────────────────────────────────────────────
@@ -189,6 +188,30 @@ cmd_check() {
                 ;;
         esac
     done
+
+    # Try DB first when available
+    if type db_list_heartbeats >/dev/null 2>&1 && db_available 2>/dev/null; then
+        local hb_json
+        hb_json=$(db_list_heartbeats 2>/dev/null | jq -r --arg id "$job_id" '.[] | select(.job_id == $id) | .updated_at' 2>/dev/null || true)
+        if [[ -n "$hb_json" ]]; then
+            local updated_at="$hb_json"
+            local hb_epoch now_epoch age_secs
+            if TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$updated_at" +%s >/dev/null 2>&1; then
+                hb_epoch="$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$updated_at" +%s 2>/dev/null)"
+            else
+                hb_epoch="$(date -d "$updated_at" +%s 2>/dev/null || echo 0)"
+            fi
+            now_epoch="$(date +%s)"
+            age_secs=$((now_epoch - hb_epoch))
+            if [[ "$age_secs" -le "$timeout" ]]; then
+                success "Job ${job_id} alive (${age_secs}s ago)"
+                return 0
+            else
+                warn "Job ${job_id} stale (${age_secs}s ago, timeout: ${timeout}s)"
+                return 1
+            fi
+        fi
+    fi
 
     local hb_file="${HEARTBEAT_DIR}/${job_id}.json"
 
@@ -231,6 +254,16 @@ cmd_check() {
 cmd_list() {
     ensure_dir
 
+    # Try DB first when available
+    if type db_list_heartbeats >/dev/null 2>&1 && db_available 2>/dev/null; then
+        local db_result
+        db_result=$(db_list_heartbeats 2>/dev/null || echo "[]")
+        if [[ -n "$db_result" ]] && echo "$db_result" | jq -e 'length > 0' >/dev/null 2>&1; then
+            echo "$db_result" | jq -c '[.[] | . + {cpu_pct: 0}]' 2>/dev/null || echo "[]"
+            return 0
+        fi
+    fi
+
     local result="["
     local first=true
 
@@ -271,6 +304,10 @@ cmd_clear() {
     fi
 
     local hb_file="${HEARTBEAT_DIR}/${job_id}.json"
+
+    if type db_clear_heartbeat >/dev/null 2>&1 && db_available 2>/dev/null; then
+        db_clear_heartbeat "$job_id" 2>/dev/null || true
+    fi
 
     if [[ -f "$hb_file" ]]; then
         rm -f "$hb_file"

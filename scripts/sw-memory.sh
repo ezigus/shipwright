@@ -34,15 +34,9 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
+# ─── Database (for dual-write memory to DB) ───────────────────────────────────
+# shellcheck source=sw-db.sh
+[[ -f "$SCRIPT_DIR/sw-db.sh" ]] && source "$SCRIPT_DIR/sw-db.sh"
 
 # ─── Intelligence Engine (optional) ──────────────────────────────────────────
 # shellcheck source=sw-intelligence.sh
@@ -51,6 +45,98 @@ RESET="${RESET:-\033[0m}"
 # ─── Memory Storage Paths ──────────────────────────────────────────────────
 MEMORY_ROOT="${HOME}/.shipwright/memory"
 GLOBAL_MEMORY="${MEMORY_ROOT}/global.json"
+
+# ─── Embedding & Semantic Search ───────────────────────────────────────────
+
+# Generate content hash for deduplication
+_memory_content_hash() {
+    echo -n "$1" | shasum -a 256 | cut -d' ' -f1
+}
+
+# Store a memory with its text content for future embedding
+memory_store_for_embedding() {
+    local source_type="$1" content_text="$2" repo_hash="${3:-}"
+    local content_hash
+    content_hash=$(_memory_content_hash "$content_text")
+
+    if type db_save_embedding >/dev/null 2>&1; then
+        db_save_embedding "$content_hash" "$source_type" "$content_text" "$repo_hash" 2>/dev/null || true
+    fi
+}
+
+# Semantic search using text similarity (TF-IDF approximation without embeddings)
+# Falls back to keyword matching when no embedding API is available
+memory_semantic_search() {
+    local query="$1" repo_hash="${2:-}" limit="${3:-5}"
+
+    if ! db_available 2>/dev/null; then
+        # Fallback: grep through memory files
+        local mem_dir="$HOME/.shipwright/memory"
+        [[ -d "$mem_dir" ]] && grep -ril "$query" "$mem_dir" 2>/dev/null | head -"$limit" || true
+        return
+    fi
+
+    # Extract keywords from query (remove stop words)
+    local keywords
+    keywords=$(echo "$query" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n' | \
+        grep -vxE '(the|a|an|is|are|was|were|be|been|being|have|has|had|do|does|did|will|would|could|should|may|might|can|shall|and|or|but|not|no|if|then|else|when|where|how|what|which|who|whom|this|that|these|those|it|its|of|in|to|for|on|with|at|by|from|as|into)' | \
+        head -10)
+
+    if [[ -z "$keywords" ]]; then
+        echo "[]"
+        return
+    fi
+
+    # Build SQL LIKE clauses for each keyword (escape single quotes)
+    local where_clauses="" score_parts=""
+    local first_where=true first_score=true
+    while IFS= read -r kw; do
+        [[ -z "$kw" ]] && continue
+        local kw_escaped
+        kw_escaped=$(echo "$kw" | sed "s/'/''/g")
+        if $first_where; then
+            where_clauses="content_text LIKE '%${kw_escaped}%'"
+            score_parts="(CASE WHEN content_text LIKE '%${kw_escaped}%' THEN 1 ELSE 0 END)"
+            first_where=false
+            first_score=false
+        else
+            where_clauses="$where_clauses OR content_text LIKE '%${kw_escaped}%'"
+            score_parts="$score_parts + (CASE WHEN content_text LIKE '%${kw_escaped}%' THEN 1 ELSE 0 END)"
+        fi
+    done <<< "$keywords"
+
+    local repo_filter=""
+    [[ -n "$repo_hash" ]] && repo_filter="AND (repo_hash = '$repo_hash' OR repo_hash = '')"
+
+    # Score by number of keyword matches
+    if type _db_query >/dev/null 2>&1; then
+        _db_query -json "SELECT id, source_type, content_text, repo_hash, created_at,
+        ($score_parts) as relevance_score
+        FROM memory_embeddings
+        WHERE ($where_clauses) $repo_filter
+        ORDER BY relevance_score DESC, created_at DESC
+        LIMIT $limit;" 2>/dev/null || echo "[]"
+    else
+        echo "[]"
+    fi
+}
+
+# Inject relevant memories into agent prompts (goal-based)
+memory_inject_goal_context() {
+    local goal="$1" repo_hash="${2:-}" max_tokens="${3:-2000}"
+
+    local memories
+    memories=$(memory_semantic_search "$goal" "$repo_hash" 5 2>/dev/null || echo "[]")
+
+    if [[ "$memories" == "[]" || -z "$memories" ]]; then
+        return
+    fi
+
+    echo "## Relevant Past Context"
+    echo ""
+    echo "$memories" | jq -r '.[] | "- [\(.source_type)] \(.content_text | .[0:200])"' 2>/dev/null || true
+    echo ""
+}
 
 # Get a deterministic hash for the current repo
 repo_hash() {
@@ -236,6 +322,15 @@ memory_capture_failure() {
                "$failures_file" > "$tmp_file" && mv "$tmp_file" "$failures_file" || rm -f "$tmp_file"
         fi
     ) 200>"${failures_file}.lock"
+
+    # Dual-write to DB
+    if type db_record_failure >/dev/null 2>&1; then
+        local rhash
+        rhash="$(repo_hash)"
+        db_record_failure "$rhash" "unknown" "$pattern" "" "" "" "$stage" 2>/dev/null || true
+    fi
+
+    memory_store_for_embedding "failure" "$pattern" "$(repo_hash)" 2>/dev/null || true
 
     emit_event "memory.failure" "stage=${stage}" "pattern=${pattern:0:80}"
 }
@@ -725,6 +820,14 @@ memory_capture_pattern() {
                    }
                }' "$patterns_file" > "$tmp_file" && mv "$tmp_file" "$patterns_file"
 
+            # Dual-write to DB
+            if type db_save_pattern >/dev/null 2>&1; then
+                local rhash proj_desc
+                rhash="$(repo_hash)"
+                proj_desc="type=$proj_type,framework=$framework,test_runner=$test_runner,package_manager=$pkg_mgr,language=$lang"
+                db_save_pattern "$rhash" "project" "project" "$proj_desc" "" 2>/dev/null || true
+            fi
+            memory_store_for_embedding "pattern" "project: $proj_type/$framework, $pkg_mgr, $lang" "$(repo_hash)" 2>/dev/null || true
             emit_event "memory.pattern" "type=project" "proj_type=${proj_type}" "framework=${framework}"
             success "Captured project patterns (${proj_type}/${framework:-none})"
             ;;
@@ -740,6 +843,14 @@ memory_capture_pattern() {
                     else . + {known_issues: [$issue]}
                     end | .known_issues = (.known_issues | .[-50:])' \
                    "$patterns_file" > "$tmp_file" && mv "$tmp_file" "$patterns_file"
+                # Dual-write to DB
+                if type db_save_pattern >/dev/null 2>&1; then
+                    local rhash issue_key
+                    rhash="$(repo_hash)"
+                    issue_key=$(echo -n "$pattern_data" | shasum -a 256 | cut -c1-16)
+                    db_save_pattern "$rhash" "known_issue" "$issue_key" "$pattern_data" "" 2>/dev/null || true
+                fi
+                memory_store_for_embedding "pattern" "known_issue: $pattern_data" "$(repo_hash)" 2>/dev/null || true
                 emit_event "memory.pattern" "type=known_issue"
             fi
             ;;
@@ -1155,6 +1266,15 @@ memory_capture_decision() {
        }] | .decisions = (.decisions | .[-100:])' \
        "$decisions_file" > "$tmp_file" && mv "$tmp_file" "$decisions_file"
 
+    # Dual-write to DB
+    if type db_save_decision >/dev/null 2>&1; then
+        local rhash
+        rhash="$(repo_hash)"
+        db_save_decision "$rhash" "$dec_type" "${detail:-}" "$summary" "" 2>/dev/null || true
+    fi
+
+    memory_store_for_embedding "decision" "${dec_type}: ${summary} - ${detail:-}" "$(repo_hash)" 2>/dev/null || true
+
     emit_event "memory.decision" "type=${dec_type}" "summary=${summary:0:80}"
     success "Recorded decision: ${summary}"
 }
@@ -1276,10 +1396,17 @@ memory_show() {
 }
 
 memory_search() {
+    if [[ "${1:-}" == "--semantic" ]]; then
+        shift
+        memory_semantic_search "$*" "" 10
+        exit 0
+    fi
+
     local keyword="${1:-}"
 
     if [[ -z "$keyword" ]]; then
         error "Usage: shipwright memory search <keyword>"
+        echo -e "  ${DIM}Or: shipwright memory search --semantic <query>${RESET}"
         return 1
     fi
 
@@ -1557,6 +1684,7 @@ show_help() {
     echo -e "  ${CYAN}show${RESET}               Display memory for current repo"
     echo -e "  ${CYAN}show${RESET} --global       Display cross-repo learnings"
     echo -e "  ${CYAN}search${RESET} <keyword>    Search memory for keyword"
+    echo -e "  ${CYAN}search${RESET} --semantic <query>  Semantic search via memory_embeddings"
     echo -e "  ${CYAN}forget${RESET} --all         Clear memory for current repo"
     echo -e "  ${CYAN}export${RESET}              Export memory as JSON"
     echo -e "  ${CYAN}import${RESET} <file>        Import memory from JSON"

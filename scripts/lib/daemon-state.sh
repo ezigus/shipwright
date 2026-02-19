@@ -3,6 +3,10 @@
 [[ -n "${_DAEMON_STATE_LOADED:-}" ]] && return 0
 _DAEMON_STATE_LOADED=1
 
+# SQLite persistence (DB as primary read path)
+_DAEMON_STATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "${_DAEMON_STATE_DIR}/../sw-db.sh" ]] && source "${_DAEMON_STATE_DIR}/../sw-db.sh"
+
 daemon_log() {
     local level="$1"
     shift
@@ -286,9 +290,42 @@ atomic_write_state() {
     }
 }
 
+# Sync active_jobs from state JSON to DB (dual-write, best-effort)
+_sync_state_to_db() {
+    local state_json="$1"
+    [[ -z "$state_json" ]] && return 0
+    if ! type db_save_job >/dev/null 2>&1 || ! db_available 2>/dev/null; then
+        return 0
+    fi
+    local start_epoch job_id
+    while IFS= read -r job; do
+        [[ -z "$job" || "$job" == "null" ]] && continue
+        local issue title pid worktree branch template goal started_at
+        issue=$(echo "$job" | jq -r '.issue // 0' 2>/dev/null)
+        title=$(echo "$job" | jq -r '.title // ""' 2>/dev/null)
+        pid=$(echo "$job" | jq -r '.pid // 0' 2>/dev/null)
+        worktree=$(echo "$job" | jq -r '.worktree // ""' 2>/dev/null)
+        branch=$(echo "$job" | jq -r '.branch // ""' 2>/dev/null)
+        template=$(echo "$job" | jq -r '.template // "autonomous"' 2>/dev/null)
+        goal=$(echo "$job" | jq -r '.goal // ""' 2>/dev/null)
+        started_at=$(echo "$job" | jq -r '.started_at // ""' 2>/dev/null)
+        if [[ -z "$issue" || "$issue" == "0" ]] || [[ ! "$issue" =~ ^[0-9]+$ ]]; then
+            continue
+        fi
+        start_epoch=0
+        if [[ -n "$started_at" ]]; then
+            start_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$started_at" +%s 2>/dev/null || date -d "$started_at" +%s 2>/dev/null || echo "0")
+        fi
+        [[ -z "$start_epoch" ]] && start_epoch=0
+        job_id="daemon-${issue}-${start_epoch}"
+        db_save_job "$job_id" "$issue" "$title" "$pid" "$worktree" "$branch" "$template" "$goal" 2>/dev/null || true
+    done < <(echo "$state_json" | jq -c '.active_jobs[]? // empty' 2>/dev/null || true)
+}
+
 # Locked read-modify-write: prevents TOCTOU race on state file.
 # Usage: locked_state_update '.queued += [42]'
 # The jq expression is applied to the current state file atomically.
+# Dual-write: also syncs active_jobs to DB when available.
 locked_state_update() {
     local jq_expr="$1"
     shift
@@ -309,6 +346,7 @@ locked_state_update() {
             daemon_log ERROR "locked_state_update: atomic_write_state failed"
             return 1
         }
+        _sync_state_to_db "$tmp" 2>/dev/null || true
     ) 200>"$lock_file"
 }
 
@@ -357,6 +395,11 @@ init_state() {
             --arg pid "$$" \
             --arg started "$(now_iso)" \
             '.pid = ($pid | tonumber) | .started_at = $started'
+    fi
+
+    # Ensure DB schema is initialized when available
+    if type migrate_schema >/dev/null 2>&1 && db_available 2>/dev/null; then
+        migrate_schema 2>/dev/null || true
     fi
 }
 
@@ -438,10 +481,27 @@ enqueue_issue() {
     local issue_key="$1"
     locked_state_update --arg key "$issue_key" \
         '.queued += [$key] | .queued |= unique'
+    if type db_enqueue_issue >/dev/null 2>&1; then
+        db_enqueue_issue "$issue_key" 2>/dev/null || true
+    fi
     daemon_log INFO "Queued issue ${issue_key} (at capacity)"
 }
 
 dequeue_next() {
+    # Try DB first when available
+    if type db_dequeue_next >/dev/null 2>&1 && db_available 2>/dev/null; then
+        local next
+        next=$(db_dequeue_next 2>/dev/null || true)
+        if [[ -n "$next" ]]; then
+            # Also update JSON file for backward compat
+            if [[ -f "$STATE_FILE" ]]; then
+                locked_state_update --arg key "$next" '.queued = [.queued[] | select(. != $key)]'
+            fi
+            echo "$next"
+            return
+        fi
+    fi
+
     if [[ ! -f "$STATE_FILE" ]]; then
         return
     fi
@@ -449,8 +509,10 @@ dequeue_next() {
     local next
     next=$(jq -r '.queued[0] // empty' "$STATE_FILE" 2>/dev/null || true)
     if [[ -n "$next" ]]; then
-        # Remove from queue (locked to prevent race with enqueue)
         locked_state_update '.queued = .queued[1:]'
+        if type db_remove_from_queue >/dev/null 2>&1; then
+            db_remove_from_queue "$next" 2>/dev/null || true
+        fi
         echo "$next"
     fi
 }

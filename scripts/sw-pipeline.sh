@@ -21,6 +21,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -30,15 +31,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
 # Policy + pipeline quality thresholds (config/policy.json via lib/pipeline-quality.sh)
 [[ -f "$SCRIPT_DIR/lib/pipeline-quality.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-quality.sh"
 # shellcheck source=lib/pipeline-state.sh
@@ -99,6 +91,8 @@ fi
 if [[ -f "$SCRIPT_DIR/sw-durable.sh" ]]; then
     source "$SCRIPT_DIR/sw-durable.sh"
 fi
+# shellcheck source=sw-db.sh — for db_save_checkpoint/db_load_checkpoint (durable workflows)
+[[ -f "$SCRIPT_DIR/sw-db.sh" ]] && source "$SCRIPT_DIR/sw-db.sh"
 
 # ─── GitHub API Modules (optional) ─────────────────────────────────────────
 # shellcheck source=sw-github-graphql.sh
@@ -493,7 +487,7 @@ SLACK_WEBHOOK=""
 NOTIFICATION_ENABLED=false
 
 # Self-healing
-BUILD_TEST_RETRIES=2
+BUILD_TEST_RETRIES=$(_config_get_int "pipeline.build_test_retries" 3 2>/dev/null || echo 3)
 STASHED_CHANGES=false
 SELF_HEAL_COUNT=0
 
@@ -515,7 +509,7 @@ start_heartbeat() {
                 --stage "${CURRENT_STAGE_ID:-unknown}" \
                 --iteration "0" \
                 --activity "$(get_stage_description "${CURRENT_STAGE_ID:-}" 2>/dev/null || echo "Running pipeline")" 2>/dev/null || true
-            sleep 30
+            sleep "$(_config_get_int "pipeline.heartbeat_interval" 30 2>/dev/null || echo 30)"
         done
     ) >/dev/null 2>&1 &
     HEARTBEAT_PID=$!
@@ -558,7 +552,7 @@ ci_post_stage_event() {
 
     local stage="$1" status="$2" elapsed="${3:-0s}"
     local comment="<!-- SHIPWRIGHT-STAGE: ${stage}:${status}:${elapsed} -->"
-    _timeout 30 gh issue comment "$ISSUE_NUMBER" --body "$comment" 2>/dev/null || true
+    _timeout "$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)" gh issue comment "$ISSUE_NUMBER" --body "$comment" 2>/dev/null || true
 }
 
 # ─── Signal Handling ───────────────────────────────────────────────────────
@@ -594,7 +588,7 @@ cleanup_on_exit() {
 
     # Update GitHub
     if [[ -n "${ISSUE_NUMBER:-}" && "${GH_AVAILABLE:-false}" == "true" ]]; then
-        if ! _timeout 30 gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Pipeline interrupted** at stage: ${CURRENT_STAGE_ID:-unknown}" 2>/dev/null; then
+        if ! _timeout "$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)" gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Pipeline interrupted** at stage: ${CURRENT_STAGE_ID:-unknown}" 2>/dev/null; then
             warn "gh issue comment failed — status update may not have been posted"
             emit_event "pipeline.comment_failed" "issue=$ISSUE_NUMBER"
         fi
@@ -731,7 +725,7 @@ notify() {
         payload=$(jq -n \
             --arg text "${emoji} *${title}*\n${message}" \
             '{text: $text}')
-        curl -sf --connect-timeout 10 --max-time 30 -X POST -H 'Content-Type: application/json' \
+        curl -sf --connect-timeout "$(_config_get_int "network.connect_timeout" 10 2>/dev/null || echo 10)" --max-time "$(_config_get_int "network.max_time" 60 2>/dev/null || echo 60)" -X POST -H 'Content-Type: application/json' \
             -d "$payload" "$SLACK_WEBHOOK" >/dev/null 2>&1 || true
     fi
 
@@ -911,6 +905,15 @@ run_stage_with_retry() {
                 ;;
         esac
         prev_error_class="$error_class"
+
+        if type db_save_reasoning_trace >/dev/null 2>&1; then
+            local job_id="${SHIPWRIGHT_PIPELINE_ID:-$$}"
+            local error_msg="${LAST_STAGE_ERROR:-$error_class}"
+            db_save_reasoning_trace "$job_id" "retry_reasoning" \
+                "stage=$stage_id error=$error_msg" \
+                "Stage failed, analyzing error pattern before retry" \
+                "retry_strategy=self_heal" 0.6 2>/dev/null || true
+        fi
 
         warn "Stage $stage_id failed (attempt $attempt/$((max_retries + 1)), class: $error_class) — retrying..."
         # Exponential backoff with jitter to avoid thundering herd
@@ -1387,54 +1390,59 @@ run_pipeline() {
             fi
         fi
 
-        # Intelligence: per-stage model routing with A/B testing
-        if type intelligence_recommend_model >/dev/null 2>&1; then
+        # Intelligence: per-stage model routing (UCB1 when DB has data, else A/B testing)
+        local recommended_model="" from_ucb1=false
+        if type ucb1_select_model >/dev/null 2>&1; then
+            recommended_model=$(ucb1_select_model "$id" 2>/dev/null || echo "")
+            [[ -n "$recommended_model" ]] && from_ucb1=true
+        fi
+        if [[ -z "$recommended_model" ]] && type intelligence_recommend_model >/dev/null 2>&1; then
             local stage_complexity="${INTELLIGENCE_COMPLEXITY:-5}"
             local budget_remaining=""
             if [[ -x "$SCRIPT_DIR/sw-cost.sh" ]]; then
                 budget_remaining=$(bash "$SCRIPT_DIR/sw-cost.sh" remaining-budget 2>/dev/null || echo "")
             fi
-            local recommended_json recommended_model
+            local recommended_json
             recommended_json=$(intelligence_recommend_model "$id" "$stage_complexity" "$budget_remaining" 2>/dev/null || echo "")
             recommended_model=$(echo "$recommended_json" | jq -r '.model // empty' 2>/dev/null || echo "")
-            if [[ -n "$recommended_model" && "$recommended_model" != "null" ]]; then
-                # A/B testing: decide whether to use the recommended model
-                local ab_ratio=20  # default 20% use recommended model
+        fi
+        if [[ -n "$recommended_model" && "$recommended_model" != "null" ]]; then
+            if [[ "$from_ucb1" == "true" ]]; then
+                # UCB1 already balances exploration/exploitation — use directly
+                export CLAUDE_MODEL="$recommended_model"
+                emit_event "intelligence.model_ucb1" \
+                    "issue=${ISSUE_NUMBER:-0}" \
+                    "stage=$id" \
+                    "model=$recommended_model"
+            else
+                # A/B testing for intelligence recommendation
+                local ab_ratio=20
                 local daemon_cfg="${PROJECT_ROOT}/.claude/daemon-config.json"
                 if [[ -f "$daemon_cfg" ]]; then
                     local cfg_ratio
                     cfg_ratio=$(jq -r '.intelligence.ab_test_ratio // 0.2' "$daemon_cfg" 2>/dev/null || echo "0.2")
-                    # Convert ratio (0.0-1.0) to percentage (0-100)
                     ab_ratio=$(awk -v r="$cfg_ratio" 'BEGIN{printf "%d", r * 100}' 2>/dev/null || echo "20")
                 fi
 
-                # Check if we have enough data points to graduate from A/B testing
                 local routing_file="${HOME}/.shipwright/optimization/model-routing.json"
                 local use_recommended=false
                 local ab_group="control"
 
                 if [[ -f "$routing_file" ]]; then
-                    # Support .routes.stage (self-optimize) and .stage (legacy) formats
-                    local stage_samples
+                    local stage_samples total_samples
                     stage_samples=$(jq -r --arg s "$id" '.routes[$s].sonnet_samples // .[$s].sonnet_samples // 0' "$routing_file" 2>/dev/null || echo "0")
-                    local total_samples
                     total_samples=$(jq -r --arg s "$id" '((.routes[$s].sonnet_samples // .[$s].sonnet_samples // 0) + (.routes[$s].opus_samples // .[$s].opus_samples // 0))' "$routing_file" 2>/dev/null || echo "0")
-
-                    if [[ "$total_samples" -ge 50 ]]; then
-                        # Enough data — use optimizer's recommendation as default
+                    if [[ "${total_samples:-0}" -ge 50 ]]; then
                         use_recommended=true
                         ab_group="graduated"
                     fi
                 fi
 
                 if [[ "$use_recommended" != "true" ]]; then
-                    # A/B test: RANDOM % 100 < ab_ratio → use recommended
                     local roll=$((RANDOM % 100))
                     if [[ "$roll" -lt "$ab_ratio" ]]; then
                         use_recommended=true
                         ab_group="experiment"
-                    else
-                        ab_group="control"
                     fi
                 fi
 
@@ -1480,6 +1488,8 @@ run_pipeline() {
             stage_dur_s=$(( $(now_epoch) - stage_start_epoch ))
             success "Stage ${BOLD}$id${RESET} complete ${DIM}(${timing})${RESET}"
             emit_event "stage.completed" "issue=${ISSUE_NUMBER:-0}" "stage=$id" "duration_s=$stage_dur_s" "result=success"
+            # Record model outcome for UCB1 learning
+            type record_model_outcome >/dev/null 2>&1 && record_model_outcome "$stage_model_used" "$id" 1 "$stage_dur_s" 0 2>/dev/null || true
             # Broadcast discovery for cross-pipeline learning
             if [[ -x "$SCRIPT_DIR/sw-discovery.sh" ]]; then
                 local _disc_cat _disc_patterns _disc_text
@@ -1510,6 +1520,8 @@ run_pipeline() {
                 "error_class=${LAST_STAGE_ERROR_CLASS:-unknown}"
             # Log model used for prediction feedback
             echo "${id}|${stage_model_used}|false" >> "${ARTIFACTS_DIR}/model-routing.log"
+            # Record model outcome for UCB1 learning
+            type record_model_outcome >/dev/null 2>&1 && record_model_outcome "$stage_model_used" "$id" 0 "$stage_dur_s" 0 2>/dev/null || true
             # Cancel any remaining in_progress check runs
             pipeline_cancel_check_runs 2>/dev/null || true
             return 1
@@ -1566,11 +1578,16 @@ run_pipeline() {
 pipeline_post_completion_cleanup() {
     local cleaned=0
 
-    # 1. Clear checkpoints (they only matter for resume; pipeline is done)
+    # 1. Clear checkpoints and context files (they only matter for resume; pipeline is done)
     if [[ -d "${ARTIFACTS_DIR}/checkpoints" ]]; then
         local cp_count=0
         local cp_file
         for cp_file in "${ARTIFACTS_DIR}/checkpoints"/*-checkpoint.json; do
+            [[ -f "$cp_file" ]] || continue
+            rm -f "$cp_file"
+            cp_count=$((cp_count + 1))
+        done
+        for cp_file in "${ARTIFACTS_DIR}/checkpoints"/*-claude-context.json; do
             [[ -f "$cp_file" ]] || continue
             rm -f "$cp_file"
             cp_count=$((cp_count + 1))
@@ -1875,6 +1892,100 @@ run_dry_run() {
     return 0
 }
 
+# ─── Reasoning Trace Generation ──────────────────────────────────────────────
+# Multi-step autonomous reasoning traces for pipeline start (before stages run)
+
+generate_reasoning_trace() {
+    local job_id="${SHIPWRIGHT_PIPELINE_ID:-$$}"
+    local issue="${ISSUE_NUMBER:-}"
+    local goal="${GOAL:-}"
+
+    # Step 1: Analyze issue complexity and risk
+    local complexity="medium"
+    local risk_score=50
+    if [[ -n "$issue" ]] && type intelligence_analyze_issue >/dev/null 2>&1; then
+        local issue_json analysis
+        issue_json=$(gh issue view "$issue" --json number,title,body,labels 2>/dev/null || echo "{}")
+        if [[ -n "$issue_json" && "$issue_json" != "{}" ]]; then
+            analysis=$(intelligence_analyze_issue "$issue_json" 2>/dev/null || echo "")
+            if [[ -n "$analysis" ]]; then
+                local comp_num
+                comp_num=$(echo "$analysis" | jq -r '.complexity // 5' 2>/dev/null || echo "5")
+                if [[ "$comp_num" -le 3 ]]; then
+                    complexity="low"
+                elif [[ "$comp_num" -le 6 ]]; then
+                    complexity="medium"
+                else
+                    complexity="high"
+                fi
+                risk_score=$((100 - $(echo "$analysis" | jq -r '.success_probability // 50' 2>/dev/null || echo "50")))
+            fi
+        fi
+    elif [[ -n "$goal" ]]; then
+        issue_json=$(jq -n --arg title "${goal}" --arg body "" '{title: $title, body: $body, labels: []}')
+        if type intelligence_analyze_issue >/dev/null 2>&1; then
+            analysis=$(intelligence_analyze_issue "$issue_json" 2>/dev/null || echo "")
+            if [[ -n "$analysis" ]]; then
+                local comp_num
+                comp_num=$(echo "$analysis" | jq -r '.complexity // 5' 2>/dev/null || echo "5")
+                if [[ "$comp_num" -le 3 ]]; then complexity="low"; elif [[ "$comp_num" -le 6 ]]; then complexity="medium"; else complexity="high"; fi
+                risk_score=$((100 - $(echo "$analysis" | jq -r '.success_probability // 50' 2>/dev/null || echo "50")))
+            fi
+        fi
+    fi
+
+    # Step 2: Query similar past issues
+    local similar_context=""
+    if type memory_semantic_search >/dev/null 2>&1 && [[ -n "$goal" ]]; then
+        similar_context=$(memory_semantic_search "$goal" "" 3 2>/dev/null || echo "")
+    fi
+
+    # Step 3: Select template using Thompson sampling
+    local selected_template="${PIPELINE_TEMPLATE:-}"
+    if [[ -z "$selected_template" ]] && type thompson_select_template >/dev/null 2>&1; then
+        selected_template=$(thompson_select_template "$complexity" 2>/dev/null || echo "standard")
+    fi
+    [[ -z "$selected_template" ]] && selected_template="standard"
+
+    # Step 4: Predict failure modes from memory
+    local failure_predictions=""
+    if type memory_semantic_search >/dev/null 2>&1 && [[ -n "$goal" ]]; then
+        failure_predictions=$(memory_semantic_search "failure error $goal" "" 3 2>/dev/null || echo "")
+    fi
+
+    # Save reasoning traces to DB
+    if type db_save_reasoning_trace >/dev/null 2>&1; then
+        db_save_reasoning_trace "$job_id" "complexity_analysis" \
+            "issue=$issue goal=$goal" \
+            "Analyzed complexity=$complexity risk=$risk_score" \
+            "complexity=$complexity risk_score=$risk_score" 0.7 2>/dev/null || true
+
+        db_save_reasoning_trace "$job_id" "template_selection" \
+            "complexity=$complexity historical_outcomes" \
+            "Thompson sampling over historical success rates" \
+            "template=$selected_template" 0.8 2>/dev/null || true
+
+        if [[ -n "$similar_context" && "$similar_context" != "[]" ]]; then
+            db_save_reasoning_trace "$job_id" "similar_issues" \
+                "$goal" \
+                "Found similar past issues for context injection" \
+                "$similar_context" 0.6 2>/dev/null || true
+        fi
+
+        if [[ -n "$failure_predictions" && "$failure_predictions" != "[]" ]]; then
+            db_save_reasoning_trace "$job_id" "failure_prediction" \
+                "$goal" \
+                "Predicted potential failure modes from history" \
+                "$failure_predictions" 0.5 2>/dev/null || true
+        fi
+    fi
+
+    # Export for use by pipeline stages
+    [[ -n "$selected_template" && -z "${PIPELINE_TEMPLATE:-}" ]] && export PIPELINE_TEMPLATE="$selected_template"
+
+    emit_event "reasoning.trace" "job_id=$job_id" "complexity=$complexity" "risk=$risk_score" "template=${selected_template:-standard}" 2>/dev/null || true
+}
+
 # ─── Subcommands ────────────────────────────────────────────────────────────
 
 pipeline_start() {
@@ -1941,10 +2052,36 @@ pipeline_start() {
 
     load_pipeline_config
 
-    # Checkpoint resume: when --resume is passed and a checkpoint exists, restore context
+    # Checkpoint resume: when --resume is passed, try DB first, then file-based
     checkpoint_stage=""
     checkpoint_iteration=0
-    if $RESUME_FROM_CHECKPOINT && [[ -d "${ARTIFACTS_DIR}/checkpoints" ]]; then
+    if $RESUME_FROM_CHECKPOINT && type db_load_checkpoint >/dev/null 2>&1; then
+        local saved_checkpoint
+        saved_checkpoint=$(db_load_checkpoint "pipeline-${SHIPWRIGHT_PIPELINE_ID:-$$}" 2>/dev/null || echo "")
+        if [[ -n "$saved_checkpoint" ]]; then
+            checkpoint_stage=$(echo "$saved_checkpoint" | jq -r '.stage // ""' 2>/dev/null || echo "")
+            if [[ -n "$checkpoint_stage" ]]; then
+                info "Resuming from DB checkpoint: stage=$checkpoint_stage"
+                checkpoint_iteration=$(echo "$saved_checkpoint" | jq -r '.iteration // 0' 2>/dev/null || echo "0")
+                # Build COMPLETED_STAGES: all enabled stages before checkpoint_stage
+                local enabled_list before_list=""
+                enabled_list=$(jq -r '.stages[] | select(.enabled == true) | .id' "$PIPELINE_CONFIG" 2>/dev/null) || true
+                local s
+                while IFS= read -r s; do
+                    [[ -z "$s" ]] && continue
+                    if [[ "$s" == "$checkpoint_stage" ]]; then
+                        break
+                    fi
+                    [[ -n "$before_list" ]] && before_list="${before_list},${s}" || before_list="$s"
+                done <<< "$enabled_list"
+                if [[ -n "$before_list" ]]; then
+                    COMPLETED_STAGES="${before_list}"
+                    SELF_HEAL_COUNT="${checkpoint_iteration}"
+                fi
+            fi
+        fi
+    fi
+    if $RESUME_FROM_CHECKPOINT && [[ -z "$checkpoint_stage" ]] && [[ -d "${ARTIFACTS_DIR}/checkpoints" ]]; then
         local cp_dir="${ARTIFACTS_DIR}/checkpoints"
         local latest_cp="" latest_mtime=0
         local f
@@ -2003,7 +2140,7 @@ pipeline_start() {
 
         # Restore GOAL from issue if not already set
         if [[ -z "$GOAL" && -n "$ISSUE_NUMBER" ]]; then
-            GOAL=$(_timeout 30 gh issue view "$ISSUE_NUMBER" --json title -q .title 2>/dev/null || echo "Issue #${ISSUE_NUMBER}")
+            GOAL=$(_timeout "$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)" gh issue view "$ISSUE_NUMBER" --json title -q .title 2>/dev/null || echo "Issue #${ISSUE_NUMBER}")
             info "CI resume: goal from issue — ${GOAL}"
         fi
 
@@ -2312,6 +2449,24 @@ pipeline_start() {
         "output_tokens=$TOTAL_OUTPUT_TOKENS" \
         "model=$model_key" \
         "cost_usd=$total_cost"
+
+    # Record pipeline outcome for Thompson sampling / outcome-based learning
+    if type db_record_outcome >/dev/null 2>&1; then
+        local _outcome_success=0
+        [[ "$exit_code" -eq 0 ]] && _outcome_success=1
+        local _outcome_complexity="medium"
+        [[ "${INTELLIGENCE_COMPLEXITY:-5}" -le 3 ]] && _outcome_complexity="low"
+        [[ "${INTELLIGENCE_COMPLEXITY:-5}" -ge 7 ]] && _outcome_complexity="high"
+        db_record_outcome \
+            "${SHIPWRIGHT_PIPELINE_ID:-pipeline-$$-${ISSUE_NUMBER:-0}}" \
+            "${ISSUE_NUMBER:-}" \
+            "${PIPELINE_NAME:-standard}" \
+            "$_outcome_success" \
+            "${total_dur_s:-0}" \
+            "${SELF_HEAL_COUNT:-0}" \
+            "${total_cost:-0}" \
+            "$_outcome_complexity" 2>/dev/null || true
+    fi
 
     # Validate cost prediction against actual (after total_cost is computed)
     if [[ -n "${PREDICTED_COST:-}" ]] && type intelligence_validate_prediction >/dev/null 2>&1; then

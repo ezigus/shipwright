@@ -57,6 +57,21 @@ function getDb(): Database | null {
   }
 }
 
+function dbQueryEventsByIdGreaterThan(
+  afterId: number,
+  limit = 100,
+): Array<Record<string, unknown>> {
+  const conn = getDb();
+  if (!conn) return [];
+  try {
+    return conn
+      .query(`SELECT * FROM events WHERE id > ? ORDER BY id ASC LIMIT ?`)
+      .all(afterId, limit) as Array<Record<string, unknown>>;
+  } catch {
+    return [];
+  }
+}
+
 function dbQueryEvents(since?: number, limit = 200): DaemonEvent[] {
   const conn = getDb();
   if (!conn) return [];
@@ -877,6 +892,8 @@ function appendAuditLog(
 
 // ─── WebSocket client tracking ───────────────────────────────────────
 const wsClients = new Set<import("bun").ServerWebSocket<unknown>>();
+const eventClients = new Set<import("bun").ServerWebSocket<unknown>>();
+let lastBroadcastEventId = 0;
 const startTime = Date.now();
 
 function broadcastToClients(data: FleetState): void {
@@ -887,6 +904,30 @@ function broadcastToClients(data: FleetState): void {
     } catch {
       wsClients.delete(ws);
     }
+  }
+}
+
+function broadcastNewEvents(): void {
+  if (eventClients.size === 0) return;
+  const db = getDb();
+  if (!db) return;
+  try {
+    const newEvents = dbQueryEventsByIdGreaterThan(lastBroadcastEventId, 100);
+    if (newEvents.length > 0) {
+      const eventMsg = JSON.stringify({ type: "events", data: newEvents });
+      for (const ws of eventClients) {
+        try {
+          ws.send(eventMsg);
+        } catch {
+          eventClients.delete(ws);
+        }
+      }
+      const lastRow = newEvents[newEvents.length - 1];
+      const lastId = (lastRow?.id as number) | 0;
+      if (lastId > 0) lastBroadcastEventId = lastId;
+    }
+  } catch {
+    /* non-fatal */
   }
 }
 
@@ -918,6 +959,47 @@ function readEvents(): DaemonEvent[] {
 }
 
 function readDaemonState(): Record<string, unknown> | null {
+  // Try DB first
+  try {
+    const conn = getDb();
+    if (conn) {
+      const active = dbQueryJobs("active") as Array<Record<string, unknown>>;
+      const completedRows = conn
+        .query(
+          "SELECT * FROM daemon_state WHERE status IN ('completed', 'failed') ORDER BY completed_at DESC LIMIT 20",
+        )
+        .all() as Array<Record<string, unknown>>;
+      if (active.length > 0 || completedRows.length > 0) {
+        const activeJobs = active.map((j) => ({
+          job_id: j.job_id,
+          issue: j.issue_number,
+          title: j.title || "",
+          stage: j.stage_name || "",
+          started_at: j.started_at,
+          started_epoch: j.started_at
+            ? Math.floor(new Date(j.started_at as string).getTime() / 1000)
+            : 0,
+          worktree: j.worktree || "",
+          branch: j.branch || "",
+          pid: j.pid || 0,
+        }));
+        const completed = completedRows.map((j) => ({
+          issue: j.issue_number,
+          result: j.result || "",
+          duration: j.duration || "",
+          completed_at: j.completed_at || "",
+        }));
+        return {
+          active_jobs: activeJobs,
+          completed,
+          queued: [] as number[],
+        };
+      }
+    }
+  } catch {
+    /* fall through to file */
+  }
+  // Fallback to file
   if (!existsSync(DAEMON_STATE)) return null;
   try {
     return JSON.parse(readFileSync(DAEMON_STATE, "utf-8"));
@@ -1547,7 +1629,63 @@ function getAgents(): AgentInfo[] {
     }
   }
 
-  // Read heartbeat files
+  // Try DB heartbeats first
+  try {
+    const conn = getDb();
+    if (conn) {
+      const rows = dbQueryHeartbeats();
+      if (rows.length > 0) {
+        for (const hb of rows) {
+          const jobId = String(hb.job_id || "");
+          const issue = (hb.issue as number) || 0;
+          const updatedAt = (hb.updated_at as string) || "";
+          let hbEpoch = 0;
+          try {
+            hbEpoch = Math.floor(new Date(updatedAt).getTime() / 1000);
+          } catch {
+            /* ignore */
+          }
+          const age = hbEpoch > 0 ? now - hbEpoch : 9999;
+
+          let status: AgentInfo["status"] = "active";
+          if (age > 120) status = "stale";
+          else if (age > 30) status = "idle";
+
+          const job = issue ? jobMap[issue] : undefined;
+          const startedAt = job ? (job.started_at as string) || "" : updatedAt;
+          let elapsed = 0;
+          if (startedAt) {
+            try {
+              elapsed = now - Math.floor(new Date(startedAt).getTime() / 1000);
+            } catch {
+              /* ignore */
+            }
+          }
+
+          agents.push({
+            id: jobId,
+            issue,
+            title: job ? (job.title as string) || "" : "",
+            machine: (hb.machine as string) || "localhost",
+            stage: (hb.stage as string) || "",
+            iteration: (hb.iteration as number) || 0,
+            activity: (hb.last_activity as string) || "",
+            memory_mb: (hb.memory_mb as number) || 0,
+            cpu_pct: (hb.cpu_pct as number) || 0,
+            status,
+            heartbeat_age_s: age,
+            started_at: startedAt,
+            elapsed_s: elapsed,
+          });
+        }
+        return agents;
+      }
+    }
+  } catch {
+    /* fall through to file */
+  }
+
+  // Fallback: Read heartbeat files
   if (existsSync(HEARTBEAT_DIR)) {
     try {
       const files = readdirSync(HEARTBEAT_DIR).filter((f) =>
@@ -1870,9 +2008,47 @@ interface CostInfo {
   pct_used: number;
 }
 
+function dbQueryBudget(): { dailyBudget: number } {
+  const conn = getDb();
+  if (!conn) return { dailyBudget: 0 };
+  try {
+    const row = conn
+      .query("SELECT daily_budget_usd, enabled FROM budgets WHERE id = 1")
+      .get() as { daily_budget_usd: number; enabled: number } | null;
+    if (!row || row.enabled !== 1) return { dailyBudget: 0 };
+    return { dailyBudget: row.daily_budget_usd || 0 };
+  } catch {
+    return { dailyBudget: 0 };
+  }
+}
+
 function getCostInfo(): CostInfo {
   let todaySpent = 0;
   let dailyBudget = 0;
+
+  // Try DB first
+  try {
+    const conn = getDb();
+    if (conn) {
+      const costs = dbQueryCostsToday();
+      if (costs.count > 0 || costs.total > 0) {
+        todaySpent = Math.round(costs.total * 100) / 100;
+        const budget = dbQueryBudget();
+        dailyBudget = budget.dailyBudget;
+        const pctUsed =
+          dailyBudget > 0
+            ? Math.round((todaySpent / dailyBudget) * 10000) / 100
+            : 0;
+        return {
+          today_spent: todaySpent,
+          daily_budget: dailyBudget,
+          pct_used: pctUsed,
+        };
+      }
+    }
+  } catch {
+    /* fall through to file */
+  }
 
   if (existsSync(COSTS_FILE)) {
     try {
@@ -2127,6 +2303,7 @@ function startEventsWatcher(): void {
         // Check for new events and send notifications
         if (filename === "events.jsonl") {
           checkAndNotifyNewEvents();
+          broadcastNewEvents();
         }
       }
     });
@@ -2139,15 +2316,22 @@ function startEventsWatcher(): void {
 let lastPushedJson = "";
 
 function periodicPush(): void {
-  if (wsClients.size === 0) return;
+  const hasStateClients = wsClients.size > 0;
+  const hasEventClients = eventClients.size > 0;
 
-  const state = getFleetState();
-  const json = JSON.stringify(state);
-  // Skip push if nothing changed (file watcher already pushed)
-  if (json === lastPushedJson) return;
-  lastPushedJson = json;
+  if (hasStateClients) {
+    const state = getFleetState();
+    const json = JSON.stringify(state);
+    // Skip push if nothing changed (file watcher already pushed)
+    if (json !== lastPushedJson) {
+      lastPushedJson = json;
+      broadcastToClients(state);
+    }
+  }
 
-  broadcastToClients(state);
+  if (hasEventClients) {
+    broadcastNewEvents();
+  }
 }
 
 // ─── GitHub OAuth helpers ───────────────────────────────────────────
@@ -2511,7 +2695,7 @@ const server = Bun.serve({
       const session = getSession(req);
       if (!session) {
         // WebSocket upgrade attempt without auth
-        if (pathname === "/ws") {
+        if (pathname === "/ws" || pathname === "/ws/events") {
           return new Response("Unauthorized", { status: 401 });
         }
         return new Response(null, {
@@ -2523,7 +2707,14 @@ const server = Bun.serve({
 
     // ── Protected routes ──────────────────────────────────────────
 
-    // WebSocket upgrade
+    // WebSocket upgrade — /ws/events streams raw events, /ws streams aggregated state
+    if (pathname === "/ws/events") {
+      const upgraded = server.upgrade(req, {
+        data: { type: "events", lastEventId: 0 },
+      });
+      if (upgraded) return undefined as unknown as Response;
+      return new Response("WebSocket upgrade failed", { status: 400 });
+    }
     if (pathname === "/ws") {
       const upgraded = server.upgrade(req);
       if (upgraded) return undefined as unknown as Response;
@@ -5554,12 +5745,20 @@ const server = Bun.serve({
 
   websocket: {
     open(ws) {
-      wsClients.add(ws);
-      // Send initial state immediately on connect
-      try {
-        ws.send(JSON.stringify(getFleetState()));
-      } catch {
-        wsClients.delete(ws);
+      const data = ws.data as
+        | { type?: string; lastEventId?: number }
+        | undefined;
+      if (data?.type === "events") {
+        eventClients.add(ws);
+        // Event clients get events via broadcastNewEvents; no initial state
+      } else {
+        wsClients.add(ws);
+        // Send initial state immediately on connect
+        try {
+          ws.send(JSON.stringify(getFleetState()));
+        } catch {
+          wsClients.delete(ws);
+        }
       }
     },
     message(_ws, _message) {
@@ -5567,6 +5766,7 @@ const server = Bun.serve({
     },
     close(ws) {
       wsClients.delete(ws);
+      eventClients.delete(ws);
     },
   },
 });
@@ -5653,7 +5853,15 @@ process.on("SIGINT", () => {
       // ignore
     }
   }
+  for (const ws of eventClients) {
+    try {
+      ws.close(1001, "Server shutting down");
+    } catch {
+      // ignore
+    }
+  }
   wsClients.clear();
+  eventClients.clear();
   server.stop();
   process.exit(0);
 });
@@ -5678,7 +5886,7 @@ console.log(
   `  ${GREEN}\u25CF${RESET} API:       ${ULINE}http://localhost:${server.port}/api/status${RESET}`,
 );
 console.log(
-  `  ${GREEN}\u25CF${RESET} WebSocket: ${ULINE}ws://localhost:${server.port}/ws${RESET}`,
+  `  ${GREEN}\u25CF${RESET} WebSocket: ${ULINE}ws://localhost:${server.port}/ws${RESET} | ${ULINE}/ws/events${RESET}`,
 );
 console.log(
   `  ${GREEN}\u25CF${RESET} Health:    ${ULINE}http://localhost:${server.port}/api/health${RESET}`,

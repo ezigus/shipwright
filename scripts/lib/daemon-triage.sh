@@ -390,6 +390,24 @@ select_pipeline_template() {
         fi
     fi
 
+    # ── Thompson sampling (outcome-based learning, when DB available) ──
+    if type thompson_select_template >/dev/null 2>&1; then
+        local _complexity="medium"
+        [[ "$score" -ge 70 ]] && _complexity="low"
+        [[ "$score" -lt 40 ]] && _complexity="high"
+        local _thompson_result
+        _thompson_result=$(thompson_select_template "$_complexity" 2>/dev/null || echo "")
+        if [[ -n "${_thompson_result:-}" && "${_thompson_result:-}" != "standard" ]]; then
+            daemon_log INFO "Thompson sampling: $_thompson_result (complexity=$_complexity)" >&2
+            echo "$_thompson_result"
+            return
+        fi
+        if [[ -n "${_thompson_result:-}" ]]; then
+            echo "$_thompson_result"
+            return
+        fi
+    fi
+
     # ── Learned template weights ──
     local _tw_file="${HOME}/.shipwright/optimization/template-weights.json"
     if [[ -f "$_tw_file" ]]; then

@@ -17,6 +17,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -26,16 +27,6 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Configuration ─────────────────────────────────────────────────────────
 CONFIG_DIR="${HOME}/.shipwright"
 TRACKER_CONFIG="${CONFIG_DIR}/tracker-config.json"
@@ -322,7 +313,7 @@ _init_linear() {
     local payload
     payload=$(jq -n --arg q 'query { viewer { id name } }' '{query: $q}')
     local response
-    response=$(curl -sf --connect-timeout 10 --max-time 30 -X POST "https://api.linear.app/graphql" \
+    response=$(curl -sf --connect-timeout "$(_config_get_int "network.connect_timeout" 10)" --max-time "$(_config_get_int "network.max_time" 30)" -X POST "$(_config_get "urls.linear_api" "https://api.linear.app/graphql")" \
         -H "Authorization: $api_key" \
         -H "Content-Type: application/json" \
         -d "$payload" 2>&1) || {
@@ -397,7 +388,7 @@ _init_jira() {
     local auth
     auth=$(printf '%s:%s' "$email" "$api_token" | base64)
     local response
-    response=$(curl -sf --connect-timeout 10 --max-time 30 -X GET "${base_url}/rest/api/3/myself" \
+    response=$(curl -sf --connect-timeout "$(_config_get_int "network.connect_timeout" 10)" --max-time "$(_config_get_int "network.max_time" 30)" -X GET "${base_url}/rest/api/3/myself" \
         -H "Authorization: Basic $auth" \
         -H "Content-Type: application/json" 2>&1) || {
         warn "Could not validate connection — check your credentials"

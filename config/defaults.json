@@ -1,0 +1,111 @@
+{
+  "$schema": "https://shipwright.dev/schemas/defaults-v1.json",
+  "description": "Default values for all Shipwright tunables. Override via daemon-config.json, config/policy.json, or SHIPWRIGHT_* env vars.",
+  "version": "1",
+  "network": {
+    "connect_timeout": 10,
+    "max_time": 60,
+    "gh_timeout": 30,
+    "retry_count": 3,
+    "retry_delay": 2
+  },
+  "daemon": {
+    "poll_interval": 30,
+    "max_parallel": 4,
+    "watch_label": "shipwright",
+    "issue_limit": 100,
+    "on_success_remove_label": true,
+    "health_check_interval": 60,
+    "stale_job_timeout_hours": 2,
+    "branch_pattern": "shipwright/issue-{issue}",
+    "worktree_dir": ".worktrees"
+  },
+  "pipeline": {
+    "max_iterations": 20,
+    "build_test_retries": 3,
+    "claude_timeout": 1800,
+    "heartbeat_interval": 30,
+    "branch_pattern": "shipwright/issue-{issue}",
+    "stage_order": [
+      "intake",
+      "plan",
+      "design",
+      "build",
+      "test",
+      "review",
+      "compound_quality",
+      "pr",
+      "merge",
+      "deploy",
+      "validate",
+      "monitor"
+    ]
+  },
+  "loop": {
+    "claude_timeout": 1800,
+    "sleep_between_iterations": 2,
+    "max_restarts": 0,
+    "fast_test_interval": 5,
+    "convergence_threshold": 3,
+    "multi_agent_sleep": 5
+  },
+  "dashboard": {
+    "port": 8767,
+    "poll_interval_ms": 2000,
+    "ws_heartbeat_ms": 30000
+  },
+  "webhook": {
+    "port": 8765,
+    "secret_length": 32,
+    "max_payload_bytes": 1048576
+  },
+  "urls": {
+    "linear_api": "https://api.linear.app/graphql",
+    "github_api": "https://api.github.com",
+    "github_device_code": "https://github.com/login/device/code",
+    "github_device_login": "https://github.com/login/device",
+    "otel_endpoint": "http://localhost:4318",
+    "tpm_repo": "https://github.com/tmux-plugins/tpm",
+    "bun_install": "https://bun.sh/install"
+  },
+  "intelligence": {
+    "cache_ttl": 3600,
+    "complexity_bands": { "low": 3, "medium": 6, "high": 10 },
+    "miss_rate_high": 30,
+    "miss_rate_low": 5,
+    "anomaly_threshold": 3.0,
+    "ab_test_ratio": 0.2,
+    "claude_timeout": 60
+  },
+  "quality": {
+    "gate_score_threshold": 70,
+    "secret_threshold": 3,
+    "min_file_count": 10,
+    "score_weight_per_file": 25,
+    "pass_rate_threshold": 5.0
+  },
+  "cleanup": {
+    "artifact_age_days": 7,
+    "heartbeat_stale_seconds": 300,
+    "checkpoint_max_count": 10
+  },
+  "labels": {
+    "watch": "shipwright",
+    "ready_to_build": "ready-to-build",
+    "hotfix": "hotfix",
+    "claimed_prefix": "claimed:",
+    "incident": ["hotfix", "shipwright"],
+    "incident_labels": "hotfix,shipwright",
+    "harness_gap": ["harness-gap", "shipwright"],
+    "harness_gap_labels": "harness-gap,shipwright"
+  },
+  "limits": {
+    "triage_issues": 100,
+    "triage_unlabeled": 50,
+    "strategic_closed": 30,
+    "dora_days": 30,
+    "log_tail_lines": 100,
+    "function_scan_limit": 0,
+    "dependency_scan_limit": 0
+  }
+}

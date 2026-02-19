@@ -16,6 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -33,15 +34,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
 UNDERLINE='\033[4m'
 
 # ─── Paths ──────────────────────────────────────────────────────────────────
@@ -50,7 +42,7 @@ PID_FILE="${TEAMS_DIR}/dashboard.pid"
 LOG_DIR="${TEAMS_DIR}/logs"
 LOG_FILE="${LOG_DIR}/dashboard.log"
 EVENTS_FILE="${TEAMS_DIR}/events.jsonl"
-DEFAULT_PORT=8767
+DEFAULT_PORT=$(_config_get_int "dashboard.port" 8767 2>/dev/null || echo 8767)
 
 # ─── Header ────────────────────────────────────────────────────────────────
 dashboard_header() {
@@ -78,6 +70,7 @@ show_help() {
     echo -e "${BOLD}OPTIONS${RESET}"
     echo -e "  ${CYAN}--port${RESET} <N>         Port to run on ${DIM}(default: ${DEFAULT_PORT})${RESET}"
     echo -e "  ${CYAN}--foreground${RESET}       Run in foreground ${DIM}(don't daemonize)${RESET}"
+    echo -e "  ${CYAN}--no-build${RESET}         Skip build check; start immediately"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo -e "  ${DIM}shipwright dashboard${RESET}                # Start in foreground"
@@ -95,6 +88,40 @@ check_bun() {
         error "Bun is required but not installed"
         info "Install Bun: ${UNDERLINE}https://bun.sh${RESET}"
         exit 1
+    fi
+}
+
+# ─── Build Check (before serve) ─────────────────────────────────────────────
+ensure_dashboard_built() {
+    local server_ts="$1"
+    local repo_root
+    repo_root=$(dirname "$(dirname "$server_ts")")
+    local dist_dir="$repo_root/dashboard/public/dist"
+    local src_dir="$repo_root/dashboard/src"
+
+    # Check if dist exists and has main.js
+    if [[ ! -d "$dist_dir" ]] || [[ ! -f "$dist_dir/main.js" ]]; then
+        echo "Dashboard not built. Building..."
+        if command -v bun &>/dev/null; then
+            (cd "$repo_root" && bun run dashboard:build)
+        elif command -v npx &>/dev/null; then
+            (cd "$repo_root" && npx esbuild dashboard/src/main.ts --bundle --outdir=dashboard/public/dist --target=esnext)
+        else
+            warn "Cannot build dashboard: neither bun nor npx available"
+            return 1
+        fi
+    else
+        # Check if source is newer than build
+        local src_mtime
+        src_mtime=$(find "$src_dir" -name "*.ts" -newer "$dist_dir/main.js" 2>/dev/null | head -1)
+        if [[ -n "$src_mtime" ]]; then
+            echo "Dashboard source changed. Rebuilding..."
+            if command -v bun &>/dev/null; then
+                (cd "$repo_root" && bun run dashboard:build)
+            elif command -v npx &>/dev/null; then
+                (cd "$repo_root" && npx esbuild dashboard/src/main.ts --bundle --outdir=dashboard/public/dist --target=esnext)
+            fi
+        fi
     fi
 }
 
@@ -161,6 +188,10 @@ dashboard_start_bg() {
     local server_ts
     server_ts=$(find_server)
 
+    if [[ "$NO_BUILD" != "true" ]]; then
+        ensure_dashboard_built "$server_ts" || exit 1
+    fi
+
     # Ensure directories exist
     mkdir -p "$LOG_DIR" "$TEAMS_DIR"
 
@@ -216,6 +247,10 @@ dashboard_start_fg() {
 
     local server_ts
     server_ts=$(find_server)
+
+    if [[ "$NO_BUILD" != "true" ]]; then
+        ensure_dashboard_built "$server_ts" || exit 1
+    fi
 
     mkdir -p "$TEAMS_DIR"
 
@@ -392,6 +427,7 @@ dashboard_open() {
 SUBCOMMAND=""
 PORT="$DEFAULT_PORT"
 FOREGROUND=false
+NO_BUILD=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -425,6 +461,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --foreground|-f)
             FOREGROUND=true
+            shift
+            ;;
+        --no-build)
+            NO_BUILD=true
             shift
             ;;
         --version|-v)

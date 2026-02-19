@@ -16,6 +16,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# DB layer for dual-read (SQLite + JSONL fallback)
+# shellcheck source=sw-db.sh
+[[ -f "$SCRIPT_DIR/sw-db.sh" ]] && source "$SCRIPT_DIR/sw-db.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -33,16 +36,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Paths ─────────────────────────────────────────────────────────────────
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
 MODELS_FILE="${HOME}/.shipwright/adaptive-models.json"
@@ -137,13 +130,9 @@ save_models() {
 query_events() {
     local field="$1"
     local value="$2"
-    if [[ ! -f "$EVENTS_FILE" ]]; then
-        echo "[]"
-        return
-    fi
-    jq -s "
+    db_query_events "" 5000 | jq "
         map(select(.${field} == \"${value}\")) | map(.duration_s, .iterations, .model, .template, .score, .coverage // empty) | flatten
-    " "$EVENTS_FILE" 2>/dev/null || echo "[]"
+    " 2>/dev/null || echo "[]"
 }
 
 # ─── Get Timeout Recommendation ─────────────────────────────────────────────
@@ -155,10 +144,10 @@ get_timeout() {
 
     # Query events for this stage (pipeline emits stage.completed with duration_s)
     local durations
-    durations=$(jq -s "
+    durations=$(db_query_events "" 5000 | jq "
         map(select(.type == \"stage.completed\" and .stage == \"${stage}\") | .duration_s // empty) |
         map(select(. > 0 and (. | type) == \"number\")) | sort
-    " "$EVENTS_FILE" 2>/dev/null || echo "[]")
+    " 2>/dev/null || echo "[]")
 
     local samples
     samples=$(echo "$durations" | jq 'length')
@@ -190,7 +179,7 @@ get_iterations() {
 
     # Query pipeline.completed iterations or prediction.validated actual_iterations
     local iterations_data
-    iterations_data=$(jq -s "
+    iterations_data=$(db_query_events "" 5000 | jq "
         (
             map(select(.type == \"pipeline.completed\") | ((.self_heal_count // 0 | tonumber) + 1)) |
             map(select(. > 0))
@@ -199,7 +188,7 @@ get_iterations() {
             map(select(. > 0))
         ) |
         map(select(. > 0))
-    " "$EVENTS_FILE" 2>/dev/null || echo "[]")
+    " 2>/dev/null || echo "[]")
 
     local samples
     samples=$(echo "$iterations_data" | jq 'length')
@@ -230,7 +219,7 @@ get_model() {
 
     # Query model.outcome by stage: success=true maps to exit_code=0; estimate cost from model name
     local model_success
-    model_success=$(jq -s "
+    model_success=$(db_query_events "" 5000 | jq "
         map(select(.type == \"model.outcome\" and (.stage == \"${stage}\" or .stage == null))) |
         group_by(.model) |
         map({
@@ -243,7 +232,7 @@ get_model() {
         map(select((.success / .total) > 0.9)) |
         sort_by(.cost) |
         .[0].model // \"$default\"
-    " "$EVENTS_FILE" 2>/dev/null || echo "\"$default\"")
+    " 2>/dev/null || echo "\"$default\"")
 
     echo "$model_success" | tr -d '"'
 }
@@ -256,10 +245,10 @@ get_team_size() {
 
     # team_size not emitted by pipeline; return default when no data
     local team_data
-    team_data=$(jq -s "
+    team_data=$(db_query_events "" 5000 | jq "
         map(select(.team_size != null) | .team_size) |
         map(select(. > 0))
-    " "$EVENTS_FILE" 2>/dev/null || echo "[]")
+    " 2>/dev/null || echo "[]")
 
     local samples
     samples=$(echo "$team_data" | jq 'length')
@@ -289,7 +278,7 @@ get_template() {
 
     # Find most successful template (template.outcome has .template, .success; .complexity optional)
     local template
-    template=$(jq -s "
+    template=$(db_query_events "" 5000 | jq "
         map(select(.type == \"template.outcome\" and .template != null)) |
         group_by(.template) |
         map({
@@ -298,7 +287,7 @@ get_template() {
         }) |
         sort_by(-.success_rate) |
         .[0].template // \"$default\"
-    " "$EVENTS_FILE" 2>/dev/null || echo "\"$default\"")
+    " 2>/dev/null || echo "\"$default\"")
 
     echo "$template" | tr -d '"'
 }
@@ -310,10 +299,10 @@ get_poll_interval() {
 
     # queue_update with queue_depth not emitted by pipeline; daemon.poll has issues_found, active
     local queue_events
-    queue_events=$(jq -s "
+    queue_events=$(db_query_events "" 5000 | jq "
         map(select(.type == \"daemon.poll\" and .issues_found != null) | .issues_found // 0 | tonumber) |
         map(select(. > 0))
-    " "$EVENTS_FILE" 2>/dev/null || echo "[]")
+    " 2>/dev/null || echo "[]")
 
     local samples
     samples=$(echo "$queue_events" | jq 'length')
@@ -345,7 +334,7 @@ get_retry_limit() {
 
     # retry.classified has error_class; retries/successes not directly emitted, keep default
     local retry_data
-    retry_data=$(jq -s "
+    retry_data=$(db_query_events "" 5000 | jq "
         map(select(.type == \"retry.classified\" and .error_class != null)) |
         group_by(.error_class) |
         map({
@@ -355,7 +344,7 @@ get_retry_limit() {
         }) |
         map(select(.error_class == \"${error_class}\")) |
         .[0]
-    " "$EVENTS_FILE" 2>/dev/null || echo "{}")
+    " 2>/dev/null || echo "{}")
 
     # Extract success rate with safe defaults for missing data
     local success_rate
@@ -379,7 +368,7 @@ get_quality_threshold() {
 
     # build.commit_quality has .score; pipeline.quality_gate_failed has .quality_score
     local quality_data
-    quality_data=$(jq -s "
+    quality_data=$(db_query_events "" 5000 | jq "
         (
             map(select(.type == \"build.commit_quality\" and .score != null) | .score | tonumber)
         ) + (
@@ -387,7 +376,7 @@ get_quality_threshold() {
         ) |
         map(select(. > 0)) |
         sort
-    " "$EVENTS_FILE" 2>/dev/null || echo "[]")
+    " 2>/dev/null || echo "[]")
 
     local samples
     samples=$(echo "$quality_data" | jq 'length')
@@ -417,11 +406,11 @@ get_coverage_min() {
 
     # quality.coverage and test.completed emit .coverage
     local coverage_data
-    coverage_data=$(jq -s "
+    coverage_data=$(db_query_events "" 5000 | jq "
         map(select((.type == \"quality.coverage\" or .type == \"test.completed\") and .coverage != null) | .coverage | tonumber) |
         map(select(. > 0)) |
         sort
-    " "$EVENTS_FILE" 2>/dev/null || echo "[]")
+    " 2>/dev/null || echo "[]")
 
     local samples
     samples=$(echo "$coverage_data" | jq 'length')
@@ -522,7 +511,7 @@ cmd_profile() {
     local timeout_val
     timeout_val=$(get_timeout "build" "$repo" "1800")
     local timeout_samples
-    timeout_samples=$(jq -s "map(select(.type == \"stage.completed\" and .stage == \"build\") | .duration_s) | length" "$EVENTS_FILE" 2>/dev/null || echo "0")
+    timeout_samples=$(db_query_events "" 5000 | jq "map(select(.type == \"stage.completed\" and .stage == \"build\") | .duration_s) | length" 2>/dev/null || echo "0")
     local timeout_conf
     timeout_conf=$(confidence_level "$timeout_samples")
     printf "%-25s %-15s %-15s %-12s %-10s\n" "timeout (s)" "$timeout_val" "1800" "$timeout_samples" "$timeout_conf"
@@ -531,12 +520,12 @@ cmd_profile() {
     local iter_val
     iter_val=$(get_iterations 5 "build" "10")
     local iter_samples
-    iter_samples=$(jq -s "
+    iter_samples=$(db_query_events "" 5000 | jq "
         (
             map(select(.type == \"pipeline.completed\")) +
             map(select(.type == \"prediction.validated\" and .actual_iterations != null))
         ) | length
-    " "$EVENTS_FILE" 2>/dev/null || echo "0")
+    " 2>/dev/null || echo "0")
     local iter_conf
     iter_conf=$(confidence_level "$iter_samples")
     printf "%-25s %-15s %-15s %-12s %-10s\n" "iterations" "$iter_val" "10" "$iter_samples" "$iter_conf"
@@ -545,7 +534,7 @@ cmd_profile() {
     local model_val
     model_val=$(get_model "build" "opus")
     local model_samples
-    model_samples=$(jq -s "map(select(.type == \"model.outcome\" and .model != null)) | length" "$EVENTS_FILE" 2>/dev/null || echo "0")
+    model_samples=$(db_query_events "" 5000 | jq "map(select(.type == \"model.outcome\" and .model != null)) | length" 2>/dev/null || echo "0")
     local model_conf
     model_conf=$(confidence_level "$model_samples")
     printf "%-25s %-15s %-15s %-12s %-10s\n" "model" "$model_val" "opus" "$model_samples" "$model_conf"
@@ -554,7 +543,7 @@ cmd_profile() {
     local team_val
     team_val=$(get_team_size 5 "2")
     local team_samples
-    team_samples=$(jq -s "map(select(.team_size != null)) | length" "$EVENTS_FILE" 2>/dev/null || echo "0")
+    team_samples=$(db_query_events "" 5000 | jq "map(select(.team_size != null)) | length" 2>/dev/null || echo "0")
     local team_conf
     team_conf=$(confidence_level "$team_samples")
     printf "%-25s %-15s %-15s %-12s %-10s\n" "team_size" "$team_val" "2" "$team_samples" "$team_conf"
@@ -563,7 +552,7 @@ cmd_profile() {
     local template_val
     template_val=$(get_template 5 "standard")
     local template_samples
-    template_samples=$(jq -s "map(select(.type == \"template.outcome\" and .template != null)) | length" "$EVENTS_FILE" 2>/dev/null || echo "0")
+    template_samples=$(db_query_events "" 5000 | jq "map(select(.type == \"template.outcome\" and .template != null)) | length" 2>/dev/null || echo "0")
     local template_conf
     template_conf=$(confidence_level "$template_samples")
     printf "%-25s %-15s %-15s %-12s %-10s\n" "template" "$template_val" "standard" "$template_samples" "$template_conf"
@@ -572,7 +561,7 @@ cmd_profile() {
     local poll_val
     poll_val=$(get_poll_interval "60")
     local poll_samples
-    poll_samples=$(jq -s "map(select(.type == \"daemon.poll\")) | length" "$EVENTS_FILE" 2>/dev/null || echo "0")
+    poll_samples=$(db_query_events "" 5000 | jq "map(select(.type == \"daemon.poll\")) | length" 2>/dev/null || echo "0")
     local poll_conf
     poll_conf=$(confidence_level "$poll_samples")
     printf "%-25s %-15s %-15s %-12s %-10s\n" "poll_interval (s)" "$poll_val" "60" "$poll_samples" "$poll_conf"
@@ -581,12 +570,12 @@ cmd_profile() {
     local quality_val
     quality_val=$(get_quality_threshold "70")
     local quality_samples
-    quality_samples=$(jq -s "
+    quality_samples=$(db_query_events "" 5000 | jq "
         (
             map(select(.type == \"build.commit_quality\" and .score != null)) +
             map(select(.type == \"pipeline.quality_gate_failed\" and .quality_score != null))
         ) | length
-    " "$EVENTS_FILE" 2>/dev/null || echo "0")
+    " 2>/dev/null || echo "0")
     local quality_conf
     quality_conf=$(confidence_level "$quality_samples")
     printf "%-25s %-15s %-15s %-12s %-10s\n" "quality_threshold" "$quality_val" "70" "$quality_samples" "$quality_conf"
@@ -595,9 +584,9 @@ cmd_profile() {
     local coverage_val
     coverage_val=$(get_coverage_min "80")
     local coverage_samples
-    coverage_samples=$(jq -s "
+    coverage_samples=$(db_query_events "" 5000 | jq "
         map(select((.type == \"quality.coverage\" or .type == \"test.completed\") and .coverage != null)) | length
-    " "$EVENTS_FILE" 2>/dev/null || echo "0")
+    " 2>/dev/null || echo "0")
     local coverage_conf
     coverage_conf=$(confidence_level "$coverage_samples")
     printf "%-25s %-15s %-15s %-12s %-10s\n" "coverage_min (%)" "$coverage_val" "80" "$coverage_samples" "$coverage_conf"
@@ -616,45 +605,44 @@ cmd_train() {
         esac
     done
 
-    if [[ ! -f "$EVENTS_FILE" ]]; then
-        warn "No events file found: $EVENTS_FILE"
+    local event_count
+    event_count=$(db_query_events "" 5000 | jq 'length' 2>/dev/null || echo 0)
+    if [[ "${event_count:-0}" -eq 0 ]]; then
+        warn "No events found (checked DB and JSONL fallback)"
         return 1
     fi
 
-    info "Training adaptive models from ${CYAN}${EVENTS_FILE}${RESET}"
-
-    local event_count
-    event_count=$(jq -s 'length' "$EVENTS_FILE" 2>/dev/null || echo 0)
+    info "Training adaptive models from events (DB + JSONL fallback)"
     info "Processing ${CYAN}${event_count}${RESET} events..."
 
     # Build comprehensive models JSON using jq directly
     local timeout_learned timeout_samples
     timeout_learned=$(get_timeout "build" "$repo" "1800")
-    timeout_samples=$(jq -s "map(select(.type == \"stage.completed\" and .stage == \"build\") | .duration_s) | length" "$EVENTS_FILE" 2>/dev/null || echo 0)
+    timeout_samples=$(db_query_events "" 5000 | jq "map(select(.type == \"stage.completed\" and .stage == \"build\") | .duration_s) | length" 2>/dev/null || echo 0)
 
     local iterations_learned iterations_samples
     iterations_learned=$(get_iterations 5 "build" "10")
-    iterations_samples=$(jq -s "
+    iterations_samples=$(db_query_events "" 5000 | jq "
         (map(select(.type == \"pipeline.completed\")) + map(select(.type == \"prediction.validated\" and .actual_iterations != null))) | length
-    " "$EVENTS_FILE" 2>/dev/null || echo 0)
+    " 2>/dev/null || echo 0)
 
     local model_learned model_samples
     model_learned=$(get_model "build" "opus")
-    model_samples=$(jq -s "map(select(.type == \"model.outcome\" and .model != null)) | length" "$EVENTS_FILE" 2>/dev/null || echo 0)
+    model_samples=$(db_query_events "" 5000 | jq "map(select(.type == \"model.outcome\" and .model != null)) | length" 2>/dev/null || echo 0)
 
     local team_learned team_samples
     team_learned=$(get_team_size 5 "2")
-    team_samples=$(jq -s "map(select(.team_size != null)) | length" "$EVENTS_FILE" 2>/dev/null || echo 0)
+    team_samples=$(db_query_events "" 5000 | jq "map(select(.team_size != null)) | length" 2>/dev/null || echo 0)
 
     local quality_learned quality_samples
     quality_learned=$(get_quality_threshold "70")
-    quality_samples=$(jq -s "
+    quality_samples=$(db_query_events "" 5000 | jq "
         (map(select(.type == \"build.commit_quality\" and .score != null)) + map(select(.type == \"pipeline.quality_gate_failed\" and .quality_score != null))) | length
-    " "$EVENTS_FILE" 2>/dev/null || echo 0)
+    " 2>/dev/null || echo 0)
 
     local coverage_learned coverage_samples
     coverage_learned=$(get_coverage_min "80")
-    coverage_samples=$(jq -s "map(select((.type == \"quality.coverage\" or .type == \"test.completed\") and .coverage != null)) | length" "$EVENTS_FILE" 2>/dev/null || echo 0)
+    coverage_samples=$(db_query_events "" 5000 | jq "map(select((.type == \"quality.coverage\" or .type == \"test.completed\") and .coverage != null)) | length" 2>/dev/null || echo 0)
 
     local trained_at
     trained_at=$(now_iso)
@@ -811,7 +799,7 @@ cmd_recommend() {
         poll_interval: $(get_poll_interval "60"),
         coverage_min: $(get_coverage_min "80"),
         confidence: \"high\",
-        reasoning: \"Based on $(jq -s 'length' "$EVENTS_FILE" 2>/dev/null || echo 0) historical events\"
+        reasoning: \"Based on $(db_query_events "" 5000 | jq 'length' 2>/dev/null || echo 0) historical events\"
     }")
 
     echo "$recommendation" | jq .

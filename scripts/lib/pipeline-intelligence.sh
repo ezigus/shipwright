@@ -106,8 +106,45 @@ pipeline_should_skip_stage() {
 # Returns JSON with classified findings and routing recommendations.
 # ──────────────────────────────────────────────────────────────────────────────
 classify_quality_findings() {
-    local findings_dir="$ARTIFACTS_DIR"
-    local result_file="$ARTIFACTS_DIR/classified-findings.json"
+    local findings_dir="${1:-$ARTIFACTS_DIR}"
+    local result_file="$findings_dir/classified-findings.json"
+
+    # Build combined content for semantic classification
+    local content=""
+    if [[ -f "$findings_dir/adversarial-review.md" ]]; then
+        content="${content}
+--- adversarial-review.md ---
+$(head -500 "$findings_dir/adversarial-review.md" 2>/dev/null)"
+    fi
+    if [[ -f "$findings_dir/negative-review.md" ]]; then
+        content="${content}
+--- negative-review.md ---
+$(head -300 "$findings_dir/negative-review.md" 2>/dev/null)"
+    fi
+    if [[ -f "$findings_dir/security-audit.log" ]]; then
+        content="${content}
+--- security-audit.log ---
+$(cat "$findings_dir/security-audit.log" 2>/dev/null)"
+    fi
+    if [[ -f "$findings_dir/compound-architecture-validation.json" ]]; then
+        content="${content}
+--- compound-architecture-validation.json ---
+$(jq -r '.[] | "\(.severity): \(.message // .description // .)"' "$findings_dir/compound-architecture-validation.json" 2>/dev/null | head -50)"
+    fi
+
+    # Try semantic classification first when Claude is available
+    local route=""
+    if command -v claude &>/dev/null && [[ "${INTELLIGENCE_ENABLED:-false}" != "false" ]] && [[ -n "$content" ]]; then
+        local prompt="Classify these code review findings into exactly ONE primary category. Return ONLY a single word: security, architecture, correctness, performance, testing, documentation, style.
+
+Findings:
+$content"
+        local category
+        category=$(echo "$prompt" | timeout 30 claude -p --model sonnet 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+        if [[ "$category" =~ ^(security|architecture|correctness|performance|testing|documentation|style)$ ]]; then
+            route="$category"
+        fi
+    fi
 
     # Initialize counters
     local arch_count=0 security_count=0 correctness_count=0 performance_count=0 testing_count=0 style_count=0
@@ -173,40 +210,53 @@ classify_quality_findings() {
     fi
 
     # ── Determine routing ──
-    # Priority order: security > architecture > correctness > performance > testing > style
-    local route="correctness"  # default
+    # Use semantic classification when available; else fall back to grep-derived priority
     local needs_backtrack=false
     local priority_findings=""
 
-    if [[ "$security_count" -gt 0 ]]; then
-        route="security"
-        priority_findings="security:${security_count}"
-    fi
+    if [[ -z "$route" ]]; then
+        # Fallback: grep-based priority order: security > architecture > correctness > performance > testing > style
+        route="correctness"
 
-    if [[ "$arch_count" -gt 0 ]]; then
-        if [[ "$route" == "correctness" ]]; then
-            route="architecture"
-            needs_backtrack=true
+        if [[ "$security_count" -gt 0 ]]; then
+            route="security"
+            priority_findings="security:${security_count}"
         fi
-        priority_findings="${priority_findings:+${priority_findings},}architecture:${arch_count}"
-    fi
 
-    if [[ "$correctness_count" -gt 0 ]]; then
-        priority_findings="${priority_findings:+${priority_findings},}correctness:${correctness_count}"
-    fi
-
-    if [[ "$performance_count" -gt 0 ]]; then
-        if [[ "$route" == "correctness" && "$correctness_count" -eq 0 ]]; then
-            route="performance"
+        if [[ "$arch_count" -gt 0 ]]; then
+            if [[ "$route" == "correctness" ]]; then
+                route="architecture"
+                needs_backtrack=true
+            fi
+            priority_findings="${priority_findings:+${priority_findings},}architecture:${arch_count}"
         fi
-        priority_findings="${priority_findings:+${priority_findings},}performance:${performance_count}"
-    fi
 
-    if [[ "$testing_count" -gt 0 ]]; then
-        if [[ "$route" == "correctness" && "$correctness_count" -eq 0 && "$performance_count" -eq 0 ]]; then
-            route="testing"
+        if [[ "$correctness_count" -gt 0 ]]; then
+            priority_findings="${priority_findings:+${priority_findings},}correctness:${correctness_count}"
         fi
-        priority_findings="${priority_findings:+${priority_findings},}testing:${testing_count}"
+
+        if [[ "$performance_count" -gt 0 ]]; then
+            if [[ "$route" == "correctness" && "$correctness_count" -eq 0 ]]; then
+                route="performance"
+            fi
+            priority_findings="${priority_findings:+${priority_findings},}performance:${performance_count}"
+        fi
+
+        if [[ "$testing_count" -gt 0 ]]; then
+            if [[ "$route" == "correctness" && "$correctness_count" -eq 0 && "$performance_count" -eq 0 ]]; then
+                route="testing"
+            fi
+            priority_findings="${priority_findings:+${priority_findings},}testing:${testing_count}"
+        fi
+    else
+        # Semantic route: build priority_findings from counts, set needs_backtrack for architecture
+        [[ "$route" == "architecture" ]] && needs_backtrack=true
+        [[ "$arch_count" -gt 0 ]] && priority_findings="architecture:${arch_count}"
+        [[ "$security_count" -gt 0 ]] && priority_findings="${priority_findings:+${priority_findings},}security:${security_count}"
+        [[ "$correctness_count" -gt 0 ]] && priority_findings="${priority_findings:+${priority_findings},}correctness:${correctness_count}"
+        [[ "$performance_count" -gt 0 ]] && priority_findings="${priority_findings:+${priority_findings},}performance:${performance_count}"
+        [[ "$testing_count" -gt 0 ]] && priority_findings="${priority_findings:+${priority_findings},}testing:${testing_count}"
+        [[ -z "$priority_findings" ]] && priority_findings="${route}:1"
     fi
 
     # Style findings don't affect routing or count toward failure threshold

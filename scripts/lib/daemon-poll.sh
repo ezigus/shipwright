@@ -53,7 +53,7 @@ daemon_poll_issues() {
             --owner "$ORG" \
             --state open \
             --json repository,number,title,labels,body,createdAt \
-            --limit 100 2>/dev/null) || {
+            --limit "${ISSUE_LIMIT:-100}" 2>/dev/null) || {
             # Handle rate limiting with exponential backoff
             if [[ $BACKOFF_SECS -eq 0 ]]; then
                 BACKOFF_SECS=30

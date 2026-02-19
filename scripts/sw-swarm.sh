@@ -33,16 +33,6 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
-CYAN="${CYAN:-\033[38;2;0;212;255m}"
-PURPLE="${PURPLE:-\033[38;2;124;58;237m}"
-BLUE="${BLUE:-\033[38;2;0;102;255m}"
-GREEN="${GREEN:-\033[38;2;74;222;128m}"
-YELLOW="${YELLOW:-\033[38;2;250;204;21m}"
-RED="${RED:-\033[38;2;248;113;113m}"
-DIM="${DIM:-\033[2m}"
-BOLD="${BOLD:-\033[1m}"
-RESET="${RESET:-\033[0m}"
-
 # ─── Constants ──────────────────────────────────────────────────────────────
 SWARM_DIR="${HOME}/.shipwright/swarm"
 REGISTRY_FILE="${SWARM_DIR}/registry.json"
@@ -197,12 +187,12 @@ cmd_spawn() {
     mv "$tmp_file" "$REGISTRY_FILE" || { rm -f "$tmp_file"; error "Failed to update registry"; return 1; }
     record_metric "$agent_id" "spawn" "1" "$agent_type"
 
-    # Create real tmux session for the agent (so scale/loop can send commands)
+    # Create real tmux session for the agent (run actual daemon)
     if command -v tmux >/dev/null 2>&1; then
         local session_name="swarm-${agent_id}"
         if ! tmux has-session -t "$session_name" 2>/dev/null; then
             tmux new-session -d -s "$session_name" -c "$REPO_DIR" \
-                "echo \"Agent $agent_id ready (type: $agent_type)\"; while true; do sleep 3600; done" 2>/dev/null && \
+                "SW_AGENT_ROLE=builder bash scripts/sw-daemon.sh start --role builder 2>&1 | tee /tmp/sw-swarm-${agent_id}.log" 2>/dev/null && \
                 info "Tmux session created: $session_name" || warn "Tmux session creation failed (agent still in registry)"
         fi
     fi
@@ -342,37 +332,87 @@ cmd_health() {
     fi
 }
 
+# ─── Swarm spawn helper (for cmd_scale) ───────────────────────────────────
+swarm_spawn_agent() {
+    local role="${1:-builder}"
+    local count="${2:-1}"
+    local i
+    for i in $(seq 1 "$count"); do
+        cmd_spawn "standard" 2>/dev/null || true
+    done
+}
+
 # ─── Auto-scale logic ────────────────────────────────────────────────────
 cmd_scale() {
+    local target="${1:-auto}"
+
     ensure_dirs
     init_registry
     init_config
 
-    local auto_scale_enabled
-    auto_scale_enabled=$(jq -r '.auto_scaling_enabled' "$CONFIG_FILE")
+    if [[ "$target" == "auto" ]]; then
+        # Auto-scale based on queue depth
+        local queue_depth=0
+        local state_file="$HOME/.shipwright/daemon-state.json"
+        if [[ -f "$state_file" ]]; then
+            queue_depth=$(jq '.queued | length' "$state_file" 2>/dev/null || echo "0")
+        fi
 
-    if [[ "$auto_scale_enabled" != "true" ]]; then
-        warn "Auto-scaling is disabled"
-        return 0
+        local current_agents
+        current_agents=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -cE '^shipwright-sw-agent|^swarm-' || echo "0")
+
+        local target_agents=1
+        if [[ "$queue_depth" -gt 5 ]]; then
+            target_agents=3
+        elif [[ "$queue_depth" -gt 2 ]]; then
+            target_agents=2
+        fi
+
+        if [[ "$current_agents" -lt "$target_agents" ]]; then
+            local to_spawn=$((target_agents - current_agents))
+            echo "Queue depth: $queue_depth, scaling up by $to_spawn"
+            swarm_spawn_agent "builder" "$to_spawn"
+        elif [[ "$current_agents" -gt "$target_agents" && "$current_agents" -gt 1 ]]; then
+            local to_retire=$((current_agents - target_agents))
+            echo "Queue depth: $queue_depth, scaling down by $to_retire"
+            # Retire oldest agents from registry (tmux sessions are managed by scale down)
+            local registry_count
+            registry_count=$(jq -r '.agents | length' "$REGISTRY_FILE" 2>/dev/null || echo "0")
+            local retired=0
+            if [[ "$registry_count" -gt 0 ]] && [[ "$to_retire" -gt 0 ]]; then
+                local agent_id
+                agent_id=$(jq -r '.agents[0].id // empty' "$REGISTRY_FILE" 2>/dev/null)
+                if [[ -n "$agent_id" ]]; then
+                    cmd_retire "$agent_id" 2>/dev/null && retired=1 || true
+                fi
+            fi
+        else
+            echo "Queue depth: $queue_depth, agents: $current_agents (optimal)"
+        fi
+    else
+        # Scale to specific count - show current state
+        local auto_scale_enabled
+        auto_scale_enabled=$(jq -r '.auto_scaling_enabled' "$CONFIG_FILE")
+
+        if [[ "$auto_scale_enabled" != "true" ]]; then
+            warn "Auto-scaling is disabled"
+        fi
+
+        local min_agents max_agents target_util
+        min_agents=$(jq -r '.min_agents // 1' "$CONFIG_FILE")
+        max_agents=$(jq -r '.max_agents // 8' "$CONFIG_FILE")
+        target_util=$(jq -r '.target_utilization // 0.75' "$CONFIG_FILE")
+
+        local active_count
+        active_count=$(jq -r '.active_count // 0' "$REGISTRY_FILE")
+
+        info "Auto-Scaling Analysis"
+        echo ""
+        echo -e "  Current agents:     ${CYAN}${active_count}/${max_agents}${RESET}"
+        echo -e "  Min agents:         ${CYAN}${min_agents}${RESET}"
+        echo -e "  Target utilization: ${CYAN}${target_util}${RESET}"
+        echo ""
     fi
-
-    local min_agents max_agents target_util
-    min_agents=$(jq -r '.min_agents // 1' "$CONFIG_FILE")
-    max_agents=$(jq -r '.max_agents // 8' "$CONFIG_FILE")
-    target_util=$(jq -r '.target_utilization // 0.75' "$CONFIG_FILE")
-
-    local active_count
-    active_count=$(jq -r '.active_count // 0' "$REGISTRY_FILE")
-
-    # TODO: Implement queue depth and resource monitoring
-    # For now, just show current state
-    info "Auto-Scaling Analysis"
-    echo ""
-    echo -e "  Current agents:     ${CYAN}${active_count}/${max_agents}${RESET}"
-    echo -e "  Min agents:         ${CYAN}${min_agents}${RESET}"
-    echo -e "  Target utilization: ${CYAN}${target_util}${RESET}"
-    echo ""
-    echo -e "  ${DIM}Queue depth monitoring and scaling recommendations require active pipeline${RESET}"
 }
 
 # ─── Performance leaderboard ──────────────────────────────────────────────

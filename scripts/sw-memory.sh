@@ -46,11 +46,133 @@ fi
 MEMORY_ROOT="${HOME}/.shipwright/memory"
 GLOBAL_MEMORY="${MEMORY_ROOT}/global.json"
 
+# ─── Domain keyword expansion (shared semantic concept) ──────────────────────
+
+_expand_domain_keywords() {
+    local text="$1"
+    local expanded="$text"
+
+    local dom
+    for dom in auth api db ui test deploy error perf; do
+        case "$dom" in
+            auth)   [[ "$text" =~ [aA]uth ]] && expanded="$expanded authentication authorization login session token credential permission access" ;;
+            api)    [[ "$text" =~ [aA]pi ]]  && expanded="$expanded endpoint route handler request response rest graphql" ;;
+            db)     [[ "$text" =~ [dD]b ]]   && expanded="$expanded database query migration schema model table sql" ;;
+            ui)     [[ "$text" =~ [uU]i ]]   && expanded="$expanded component view render template layout style css frontend" ;;
+            test)   [[ "$text" =~ [tT]est ]] && expanded="$expanded testing assertion coverage mock stub fixture spec" ;;
+            deploy) [[ "$text" =~ [dD]eploy ]] && expanded="$expanded deployment release publish ship ci cd pipeline" ;;
+            error)  [[ "$text" =~ [eE]rror ]] && expanded="$expanded exception failure crash bug issue defect" ;;
+            perf)   [[ "$text" =~ [pP]erf ]] && expanded="$expanded performance optimization speed latency throughput cache" ;;
+        esac
+    done
+
+    echo "$expanded"
+}
+
 # ─── Embedding & Semantic Search ───────────────────────────────────────────
 
 # Generate content hash for deduplication
 _memory_content_hash() {
     echo -n "$1" | shasum -a 256 | cut -d' ' -f1
+}
+
+# TF-IDF-like ranked search across failures, patterns, decisions
+# Returns JSON array of {source_type, content_text} for injection compatibility
+memory_ranked_search() {
+    local query="$1"
+    local memory_dir="$2"
+    local max_results="${3:-5}"
+
+    # Use repo memory dir when not specified
+    if [[ -z "$memory_dir" ]] && type repo_memory_dir &>/dev/null 2>&1; then
+        memory_dir="$(repo_memory_dir)"
+    fi
+    memory_dir="${memory_dir:-$HOME/.shipwright/memory}"
+    [[ ! -d "$memory_dir" ]] && echo "[]" && return 0
+
+    # Extract and expand query keywords
+    local keywords
+    keywords=$(echo "$query" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n' | sort -u | \
+        grep -vxE '^.{1,2}$|^(the|and|for|not|with|this|that|from)$' || true)
+    keywords=$(_expand_domain_keywords "$keywords" 2>/dev/null || echo "$keywords")
+
+    local results_file
+    results_file=$(mktemp)
+
+    # Search failures.json
+    if [[ -f "$memory_dir/failures.json" ]]; then
+        jq -c '.failures[]? // empty' "$memory_dir/failures.json" 2>/dev/null | while IFS= read -r entry; do
+            [[ -z "$entry" ]] && continue
+            local entry_text
+            entry_text=$(echo "$entry" | jq -r '(.pattern // "") + " " + (.root_cause // "") + " " + (.fix // "")' 2>/dev/null)
+            local score=0
+            while IFS= read -r kw; do
+                [[ -z "$kw" ]] && continue
+                if echo "$entry_text" | grep -qiF "$kw" 2>/dev/null; then
+                    score=$((score + 1))
+                fi
+            done <<< "$keywords"
+
+            # Boost by effectiveness
+            local effectiveness
+            effectiveness=$(echo "$entry" | jq -r '.fix_effectiveness_rate // 0' 2>/dev/null)
+            if [[ "$effectiveness" =~ ^[0-9]+$ ]] && [[ "$effectiveness" -gt 50 ]]; then
+                score=$((score + 2))
+            fi
+
+            if [[ "$score" -gt 0 ]]; then
+                local content
+                content=$(echo "$entry" | jq -r '(.pattern // "") + " | " + (.root_cause // "") + " | " + (.fix // "")' 2>/dev/null)
+                echo "${score}|{\"source_type\":\"failure\",\"content_text\":$(echo "$content" | jq -Rs .)}" >> "$results_file"
+            fi
+        done
+    fi
+
+    # Search decisions.json
+    if [[ -f "$memory_dir/decisions.json" ]]; then
+        jq -c '.decisions[]? // empty' "$memory_dir/decisions.json" 2>/dev/null | while IFS= read -r entry; do
+            [[ -z "$entry" ]] && continue
+            local entry_text
+            entry_text=$(echo "$entry" | jq -r '(.summary // "") + " " + (.detail // "") + " " + (.type // "")' 2>/dev/null)
+            local score=0
+            while IFS= read -r kw; do
+                [[ -z "$kw" ]] && continue
+                echo "$entry_text" | grep -qiF "$kw" 2>/dev/null && score=$((score + 1))
+            done <<< "$keywords"
+            if [[ "$score" -gt 0 ]]; then
+                local content
+                content=$(echo "$entry" | jq -r '(.summary // "") + " | " + (.detail // "")' 2>/dev/null)
+                echo "${score}|{\"source_type\":\"decision\",\"content_text\":$(echo "$content" | jq -Rs .)}" >> "$results_file"
+            fi
+        done
+    fi
+
+    # Search patterns.json (project, conventions, known_issues as text)
+    if [[ -f "$memory_dir/patterns.json" ]]; then
+        local entry_text
+        entry_text=$(jq -r 'to_entries | map(select(.key != "known_issues")) | from_entries | tostring' "$memory_dir/patterns.json" 2>/dev/null || echo "")
+        entry_text="$entry_text $(jq -r '.known_issues[]? // empty' "$memory_dir/patterns.json" 2>/dev/null | tr '\n' ' ')"
+        local score=0
+        while IFS= read -r kw; do
+            [[ -z "$kw" ]] && continue
+            echo "$entry_text" | grep -qiF "$kw" 2>/dev/null && score=$((score + 1))
+        done <<< "$keywords"
+        if [[ "$score" -gt 0 ]]; then
+            local content
+            content=$(jq -r 'to_entries | map("\(.key): \(.value)") | join(" | ")' "$memory_dir/patterns.json" 2>/dev/null | head -c 500)
+            echo "${score}|{\"source_type\":\"pattern\",\"content_text\":$(echo "$content" | jq -Rs .)}" >> "$results_file"
+        fi
+    fi
+
+    # Sort by score and output as JSON array
+    local output
+    if [[ -s "$results_file" ]]; then
+        output=$(sort -t'|' -k1 -rn "$results_file" | head -"$max_results" | cut -d'|' -f2- | jq -s '.' 2>/dev/null || echo "[]")
+    else
+        output="[]"
+    fi
+    rm -f "$results_file" 2>/dev/null || true
+    echo "$output"
 }
 
 # Store a memory with its text content for future embedding
@@ -64,61 +186,27 @@ memory_store_for_embedding() {
     fi
 }
 
-# Semantic search using text similarity (TF-IDF approximation without embeddings)
-# Falls back to keyword matching when no embedding API is available
+# Check if vector embeddings search is available (future: SQLite vec0, etc.)
+_has_embeddings() {
+    return 1  # No embedding-based search yet
+}
+
+# Semantic search: embeddings when available, else TF-IDF-like ranked keyword search
 memory_semantic_search() {
     local query="$1" repo_hash="${2:-}" limit="${3:-5}"
 
-    if ! db_available 2>/dev/null; then
-        # Fallback: grep through memory files
-        local mem_dir="$HOME/.shipwright/memory"
-        [[ -d "$mem_dir" ]] && grep -ril "$query" "$mem_dir" 2>/dev/null | head -"$limit" || true
-        return
+    if _has_embeddings 2>/dev/null; then
+        # Future: _search_embeddings "$query" "$repo_hash" "$limit"
+        :
     fi
 
-    # Extract keywords from query (remove stop words)
-    local keywords
-    keywords=$(echo "$query" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n' | \
-        grep -vxE '(the|a|an|is|are|was|were|be|been|being|have|has|had|do|does|did|will|would|could|should|may|might|can|shall|and|or|but|not|no|if|then|else|when|where|how|what|which|who|whom|this|that|these|those|it|its|of|in|to|for|on|with|at|by|from|as|into)' | \
-        head -10)
-
-    if [[ -z "$keywords" ]]; then
-        echo "[]"
-        return
+    # Fall back to ranked keyword search (better than SQL LIKE or grep)
+    local mem_dir
+    mem_dir=""
+    if type repo_memory_dir &>/dev/null 2>&1; then
+        mem_dir="$(repo_memory_dir)"
     fi
-
-    # Build SQL LIKE clauses for each keyword (escape single quotes)
-    local where_clauses="" score_parts=""
-    local first_where=true first_score=true
-    while IFS= read -r kw; do
-        [[ -z "$kw" ]] && continue
-        local kw_escaped
-        kw_escaped=$(echo "$kw" | sed "s/'/''/g")
-        if $first_where; then
-            where_clauses="content_text LIKE '%${kw_escaped}%'"
-            score_parts="(CASE WHEN content_text LIKE '%${kw_escaped}%' THEN 1 ELSE 0 END)"
-            first_where=false
-            first_score=false
-        else
-            where_clauses="$where_clauses OR content_text LIKE '%${kw_escaped}%'"
-            score_parts="$score_parts + (CASE WHEN content_text LIKE '%${kw_escaped}%' THEN 1 ELSE 0 END)"
-        fi
-    done <<< "$keywords"
-
-    local repo_filter=""
-    [[ -n "$repo_hash" ]] && repo_filter="AND (repo_hash = '$repo_hash' OR repo_hash = '')"
-
-    # Score by number of keyword matches
-    if type _db_query >/dev/null 2>&1; then
-        _db_query -json "SELECT id, source_type, content_text, repo_hash, created_at,
-        ($score_parts) as relevance_score
-        FROM memory_embeddings
-        WHERE ($where_clauses) $repo_filter
-        ORDER BY relevance_score DESC, created_at DESC
-        LIMIT $limit;" 2>/dev/null || echo "[]"
-    else
-        echo "[]"
-    fi
+    memory_ranked_search "$query" "$mem_dir" "$limit"
 }
 
 # Inject relevant memories into agent prompts (goal-based)
@@ -824,10 +912,10 @@ memory_capture_pattern() {
             if type db_save_pattern >/dev/null 2>&1; then
                 local rhash proj_desc
                 rhash="$(repo_hash)"
-                proj_desc="type=$proj_type,framework=$framework,test_runner=$test_runner,package_manager=$pkg_mgr,language=$lang"
+                proj_desc="type=$proj_type,framework=$framework,test_runner=$test_runner,package_manager=$pkg_mgr,language=$language"
                 db_save_pattern "$rhash" "project" "project" "$proj_desc" "" 2>/dev/null || true
             fi
-            memory_store_for_embedding "pattern" "project: $proj_type/$framework, $pkg_mgr, $lang" "$(repo_hash)" 2>/dev/null || true
+            memory_store_for_embedding "pattern" "project: $proj_type/$framework, $pkg_mgr, $language" "$(repo_hash)" 2>/dev/null || true
             emit_event "memory.pattern" "type=project" "proj_type=${proj_type}" "framework=${framework}"
             success "Captured project patterns (${proj_type}/${framework:-none})"
             ;;
@@ -1039,7 +1127,17 @@ memory_inject_context() {
             ;;
 
         *)
-            # Generic context for any stage — inject top-K most relevant across all categories
+            # Generic context — use ranked semantic search when intelligence unavailable
+            if ! type intelligence_search_memory &>/dev/null 2>&1; then
+                local ranked_json
+                ranked_json=$(memory_ranked_search "${stage_id} stage context" "$mem_dir" 5 2>/dev/null || echo "[]")
+                if [[ -n "$ranked_json" && "$ranked_json" != "[]" ]]; then
+                    echo "## Ranked Relevant Memory"
+                    echo "$ranked_json" | jq -r '.[]? | "- [\(.source_type)] \(.content_text[0:200])"' 2>/dev/null || true
+                    echo ""
+                fi
+            fi
+
             echo "## Repository Patterns"
             if [[ -f "$mem_dir/patterns.json" ]]; then
                 jq -r 'to_entries | map(select(.key != "known_issues")) | from_entries' \

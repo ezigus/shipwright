@@ -450,6 +450,20 @@ accumulate_loop_tokens() {
             local cost_millicents
             cost_millicents=$(echo "$cost_usd" | awk '{printf "%.0f", $1 * 100000}' 2>/dev/null || echo "0")
             LOOP_COST_MILLICENTS=$(( ${LOOP_COST_MILLICENTS:-0} + ${cost_millicents:-0} ))
+        else
+            # Estimate cost from tokens when Claude doesn't provide it (rates per million tokens)
+            local total_in total_out
+            total_in=$(( ${input_tok:-0} + ${cache_read:-0} + ${cache_create:-0} ))
+            total_out=${output_tok:-0}
+            local cost=0
+            case "${MODEL:-${CLAUDE_MODEL:-sonnet}}" in
+                *opus*)   cost=$(awk -v i="$total_in" -v o="$total_out" 'BEGIN{printf "%.6f", (i * 15 + o * 75) / 1000000}') ;;
+                *sonnet*) cost=$(awk -v i="$total_in" -v o="$total_out" 'BEGIN{printf "%.6f", (i * 3 + o * 15) / 1000000}') ;;
+                *haiku*)  cost=$(awk -v i="$total_in" -v o="$total_out" 'BEGIN{printf "%.6f", (i * 0.25 + o * 1.25) / 1000000}') ;;
+                *)       cost=$(awk -v i="$total_in" -v o="$total_out" 'BEGIN{printf "%.6f", (i * 3 + o * 15) / 1000000}') ;;
+            esac
+            cost_millicents=$(echo "$cost" | awk '{printf "%.0f", $1 * 100000}' 2>/dev/null || echo "0")
+            LOOP_COST_MILLICENTS=$(( ${LOOP_COST_MILLICENTS:-0} + ${cost_millicents:-0} ))
         fi
     else
         # Fallback: regex-based parsing for non-JSON output
@@ -1080,6 +1094,113 @@ check_max_iterations() {
     return 1
 }
 
+# ─── Failure Diagnosis ─────────────────────────────────────────────────────────
+# Pattern-based root-cause classification for smarter retries (no Claude needed).
+# Returns markdown context to inject into the next iteration's goal.
+
+diagnose_failure() {
+    local error_output="$1"
+    local changed_files="$2"
+    local iteration="$3"
+
+    local diagnosis=""
+    local strategy="retry_with_context"  # default
+
+    # Pattern-based classification (fast, no Claude needed)
+    if echo "$error_output" | grep -qiE 'import.*not found|cannot find module|no module named'; then
+        diagnosis="missing_import"
+        strategy="fix_imports"
+    elif echo "$error_output" | grep -qiE 'syntax error|unexpected token|parse error'; then
+        diagnosis="syntax_error"
+        strategy="fix_syntax"
+    elif echo "$error_output" | grep -qiE 'type.*not assignable|type error|TypeError'; then
+        diagnosis="type_error"
+        strategy="fix_types"
+    elif echo "$error_output" | grep -qiE 'undefined.*variable|not defined|ReferenceError'; then
+        diagnosis="undefined_reference"
+        strategy="fix_references"
+    elif echo "$error_output" | grep -qiE 'timeout|timed out|ETIMEDOUT'; then
+        diagnosis="timeout"
+        strategy="optimize_performance"
+    elif echo "$error_output" | grep -qiE 'assertion.*fail|expect.*to|AssertionError'; then
+        diagnosis="test_assertion"
+        strategy="fix_logic"
+    elif echo "$error_output" | grep -qiE 'permission denied|EACCES|forbidden'; then
+        diagnosis="permission_error"
+        strategy="fix_permissions"
+    elif echo "$error_output" | grep -qiE 'out of memory|heap|OOM|ENOMEM'; then
+        diagnosis="resource_error"
+        strategy="reduce_resource_usage"
+    else
+        diagnosis="unknown"
+        strategy="retry_with_context"
+    fi
+
+    # Check if we've seen this diagnosis before in this session
+    local diagnosis_file="${LOG_DIR:-/tmp}/diagnoses.txt"
+    local repeat_count=0
+    if [[ -f "$diagnosis_file" ]]; then
+        repeat_count=$(grep -c "^${diagnosis}$" "$diagnosis_file" 2>/dev/null || echo "0")
+    fi
+    echo "$diagnosis" >> "$diagnosis_file"
+
+    # Escalate strategy if same diagnosis repeats
+    if [[ "$repeat_count" -ge 2 ]]; then
+        strategy="alternative_approach"
+    fi
+
+    # Try memory-based fix lookup
+    local known_fix=""
+    if type memory_query_fix_for_error &>/dev/null; then
+        local fix_json
+        fix_json=$(memory_query_fix_for_error "$error_output" 2>/dev/null || true)
+        if [[ -n "$fix_json" && "$fix_json" != "null" ]]; then
+            known_fix=$(echo "$fix_json" | jq -r '.fix // ""' 2>/dev/null | head -5)
+        fi
+    fi
+
+    # Build diagnosis context for Claude
+    local diagnosis_context="## Failure Diagnosis (Iteration $iteration)
+Classification: $diagnosis
+Strategy: $strategy
+Repeat count: $repeat_count"
+
+    if [[ -n "$known_fix" ]]; then
+        diagnosis_context+="
+Known fix from memory: $known_fix"
+    fi
+
+    # Strategy-specific guidance
+    case "$strategy" in
+        fix_imports)
+            diagnosis_context+="
+INSTRUCTION: The error is about missing imports/modules. Check that all imports are correct, packages are installed, and paths are right. Do NOT change the logic - just fix the imports."
+            ;;
+        fix_syntax)
+            diagnosis_context+="
+INSTRUCTION: This is a syntax error. Carefully check the exact line mentioned in the error. Look for missing brackets, semicolons, commas, or mismatched quotes."
+            ;;
+        fix_types)
+            diagnosis_context+="
+INSTRUCTION: Type mismatch error. Check the types at the error location. Ensure function signatures match their usage."
+            ;;
+        fix_logic)
+            diagnosis_context+="
+INSTRUCTION: Test assertion failure. The code logic is wrong, not the syntax. Re-read the test expectations and fix the implementation to match."
+            ;;
+        alternative_approach)
+            diagnosis_context+="
+INSTRUCTION: This error has occurred $repeat_count times. The previous approach is not working. Try a FUNDAMENTALLY DIFFERENT approach:
+- If you were modifying existing code, try rewriting the function from scratch
+- If you were using one library, try a different one
+- If you were adding to a file, try creating a new file instead
+- Step back and reconsider the requirements"
+            ;;
+    esac
+
+    echo "$diagnosis_context"
+}
+
 # ─── Test Gate ────────────────────────────────────────────────────────────────
 
 run_test_gate() {
@@ -1389,6 +1510,79 @@ guard_completion() {
     return 0
 }
 
+# ─── Context Window Management ───────────────────────────────────────────────
+# Prevents prompt from exceeding Claude's context limit (~200K tokens).
+# Trims least-critical sections first when over budget.
+
+CONTEXT_BUDGET_CHARS="${CONTEXT_BUDGET_CHARS:-180000}"  # ~45K tokens at 4 chars/token
+
+manage_context_window() {
+    local prompt="$1"
+    local budget="${CONTEXT_BUDGET_CHARS}"
+    local current_len=${#prompt}
+
+    if [[ "$current_len" -le "$budget" ]]; then
+        echo "$prompt"
+        return
+    fi
+
+    # Over budget — progressively trim sections (least important first)
+    local trimmed="$prompt"
+
+    # 1. Trim DORA/Performance baselines (least critical for code generation)
+    if [[ "${#trimmed}" -gt "$budget" ]]; then
+        trimmed=$(echo "$trimmed" | awk '/^## Performance Baselines/{skip=1; next} skip && /^## [^#]/{skip=0} !skip{print}')
+    fi
+
+    # 2. Trim file hotspots to top 5
+    if [[ "${#trimmed}" -gt "$budget" ]]; then
+        trimmed=$(echo "$trimmed" | awk '/## File Hotspots/{p=1; c=0} p && /^- /{c++; if(c>5) next} {print}')
+    fi
+
+    # 3. Trim git log to last 10 entries
+    if [[ "${#trimmed}" -gt "$budget" ]]; then
+        trimmed=$(echo "$trimmed" | awk '/## Recent Git Activity/{p=1; c=0} p && /^[a-f0-9]/{c++; if(c>10) next} {print}')
+    fi
+
+    # 4. Truncate memory context to first 20K chars
+    if [[ "${#trimmed}" -gt "$budget" ]]; then
+        trimmed=$(echo "$trimmed" | awk -v max=20000 '
+            /## Memory Context/{mem=1; skip_rest=0; chars=0; print; next}
+            mem && /^## [^#]/{mem=0; print; next}
+            mem{chars+=length($0)+1; if(chars>max){print "... (memory truncated for context budget)"; skip_rest=1; mem=0; next}}
+            skip_rest && /^## [^#]/{skip_rest=0; print; next}
+            skip_rest{next}
+            {print}
+        ')
+    fi
+
+    # 5. Truncate test output to last 50 lines
+    if [[ "${#trimmed}" -gt "$budget" ]]; then
+        trimmed=$(echo "$trimmed" | awk '
+            /## Test Results/{found=1; buf=""; print; next}
+            found && /^## [^#]/{found=0; n=split(buf,arr,"\n"); start=(n>50)?(n-49):1; for(i=start;i<=n;i++) if(arr[i]!="") print arr[i]; print; next}
+            found{buf=buf $0 "\n"; next}
+            {print}
+        ')
+    fi
+
+    # 6. Last resort: hard truncate with notice
+    if [[ "${#trimmed}" -gt "$budget" ]]; then
+        trimmed="${trimmed:0:$budget}
+
+... [CONTEXT TRUNCATED: prompt exceeded ${budget} char budget. Focus on the goal and most recent errors.]"
+    fi
+
+    # Log the trimming
+    local final_len=${#trimmed}
+    if [[ "$final_len" -lt "$current_len" ]]; then
+        warn "Context trimmed from ${current_len} to ${final_len} chars (budget: ${budget})"
+        emit_event "loop.context_trimmed" "original=$current_len" "trimmed=$final_len" "budget=$budget" 2>/dev/null || true
+    fi
+
+    echo "$trimmed"
+}
+
 # ─── Prompt Composition ──────────────────────────────────────────────────────
 
 compose_prompt() {
@@ -1550,6 +1744,34 @@ ${last_error}"
     # Stuckness detection — compare last 3 iteration outputs
     local stuckness_section=""
     stuckness_section="$(detect_stuckness)"
+    local _stuck_ret=$?
+    local stuckness_detected=false
+    [[ "$_stuck_ret" -eq 0 ]] && stuckness_detected=true
+
+    # Strategy exploration when stuck — append alternative strategy to GOAL
+    if [[ "$stuckness_detected" == "true" ]]; then
+        local last_error diagnosis
+        last_error=$(tail -1 "${ARTIFACTS_DIR:-${PROJECT_ROOT:-.}/.claude/pipeline-artifacts}/error-log.jsonl" 2>/dev/null | jq -r '"Type: \(.type), Exit: \(.exit_code), Error: \(.error | split("\n") | first)"' 2>/dev/null || true)
+        [[ -z "$last_error" || "$last_error" == "null" ]] && last_error="unknown"
+        diagnosis="${STUCKNESS_DIAGNOSIS:-}"
+        local alt_strategy
+        alt_strategy=$(explore_alternative_strategy "$last_error" "${ITERATION:-0}" "$diagnosis")
+        GOAL="${GOAL}
+
+${alt_strategy}"
+
+        # Handle model escalation
+        if [[ "${ESCALATE_MODEL:-}" == "true" ]]; then
+            if [[ -f "$SCRIPT_DIR/sw-model-router.sh" ]]; then
+                source "$SCRIPT_DIR/sw-model-router.sh" 2>/dev/null || true
+            fi
+            if type escalate_model &>/dev/null; then
+                MODEL=$(escalate_model "${MODEL:-sonnet}")
+                info "Escalated to model: $MODEL"
+            fi
+            unset ESCALATE_MODEL
+        fi
+    fi
 
     # Session restart context — inject previous session progress
     local restart_section=""
@@ -1775,6 +1997,7 @@ detect_stuckness() {
     # Decision: 2+ signals = stuck
     if [[ "$stuckness_signals" -ge 2 ]]; then
         STUCKNESS_COUNT=$(( STUCKNESS_COUNT + 1 ))
+        STUCKNESS_DIAGNOSIS="${stuckness_reasons[*]}"
         if type emit_event >/dev/null 2>&1; then
             emit_event "loop.stuckness_detected" "signals=$stuckness_signals" "count=$STUCKNESS_COUNT" "iteration=$iteration" "reasons=${stuckness_reasons[*]}"
         fi
@@ -1963,6 +2186,12 @@ run_claude_iteration() {
     local json_file="$LOG_DIR/iteration-${ITERATION}.json"
     local prompt
     prompt="$(compose_prompt)"
+    local final_prompt
+    final_prompt=$(manage_context_window "$prompt")
+
+    local prompt_chars=${#final_prompt}
+    local approx_tokens=$((prompt_chars / 4))
+    info "Prompt: ~${approx_tokens} tokens (${prompt_chars} chars)"
 
     local flags
     flags="$(build_claude_flags)"
@@ -1978,9 +2207,9 @@ run_claude_iteration() {
     # shellcheck disable=SC2086
     local err_file="${json_file%.json}.stderr"
     if [[ -n "$TIMEOUT_CMD" ]]; then
-        $TIMEOUT_CMD "$CLAUDE_TIMEOUT" claude -p "$prompt" $flags > "$json_file" 2>"$err_file" &
+        $TIMEOUT_CMD "$CLAUDE_TIMEOUT" claude -p "$final_prompt" $flags > "$json_file" 2>"$err_file" &
     else
-        claude -p "$prompt" $flags > "$json_file" 2>"$err_file" &
+        claude -p "$final_prompt" $flags > "$json_file" 2>"$err_file" &
     fi
     CHILD_PID=$!
     wait "$CHILD_PID" 2>/dev/null || exit_code=$?
@@ -2499,6 +2728,7 @@ run_single_agent_loop() {
     STUCKNESS_COUNT=0
     STUCKNESS_TRACKING_FILE="$LOG_DIR/stuckness-tracking.txt"
     : > "$STUCKNESS_TRACKING_FILE" 2>/dev/null || true
+    : > "${LOG_DIR:-/tmp}/strategy-attempts.txt" 2>/dev/null || true
 
     show_banner
 
@@ -2516,13 +2746,36 @@ run_single_agent_loop() {
         }
         ITERATION=$(( ITERATION + 1 ))
 
-        # Try memory-based fix suggestion on retry after test failure
+        # Root-cause diagnosis and memory-based fix on retry after test failure
         if [[ "${TEST_PASSED:-}" == "false" ]]; then
+            # Source memory module for diagnosis and fix lookup
+            [[ -f "$SCRIPT_DIR/sw-memory.sh" ]] && source "$SCRIPT_DIR/sw-memory.sh" 2>/dev/null || true
+
+            # Capture failure for memory (enables memory_analyze_failure and future fix lookup)
+            if type memory_capture_failure &>/dev/null && [[ -n "${TEST_OUTPUT:-}" ]]; then
+                memory_capture_failure "test" "$TEST_OUTPUT" 2>/dev/null || true
+            fi
+
+            # Pattern-based diagnosis (no Claude needed) — inject into goal for smarter retry
+            local _changed_files=""
+            _changed_files=$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')
+            local _diagnosis
+            _diagnosis=$(diagnose_failure "${TEST_OUTPUT:-}" "$_changed_files" "$ITERATION" 2>/dev/null || true)
+
+            if [[ -n "$_diagnosis" ]]; then
+                GOAL="${GOAL}
+
+${_diagnosis}"
+                info "Failure diagnosis injected (classification from error pattern)"
+            fi
+
+            # Memory-based fix suggestion (from past successful fixes)
             local _last_error=""
             local _prev_log="$LOG_DIR/iteration-$(( ITERATION - 1 )).log"
             if [[ -f "$_prev_log" ]]; then
                 _last_error=$(tail -20 "$_prev_log" 2>/dev/null | grep -iE '(error|fail|exception)' | head -1 || true)
             fi
+            [[ -z "$_last_error" ]] && _last_error=$(echo "${TEST_OUTPUT:-}" | head -3 | tr '\n' ' ')
             local _fix_suggestion=""
             if type memory_closed_loop_inject >/dev/null 2>&1 && [[ -n "${_last_error:-}" ]]; then
                 _fix_suggestion=$(memory_closed_loop_inject "$_last_error" 2>/dev/null) || true
@@ -2533,6 +2786,14 @@ run_single_agent_loop() {
 
 ${GOAL}"
                 info "Memory fix injected: ${_fix_suggestion:0:80}"
+            fi
+
+            # Analyze failure via Claude (background, non-blocking) for richer root_cause/fix in memory
+            if type memory_analyze_failure &>/dev/null && [[ "${INTELLIGENCE_ENABLED:-auto}" != "false" ]]; then
+                local _test_log="${TEST_LOG_FILE:-$LOG_DIR/tests-iter-$(( ITERATION - 1 )).log}"
+                if [[ -f "$_test_log" ]]; then
+                    memory_analyze_failure "$_test_log" "test" 2>/dev/null &
+                fi
             fi
         fi
 

@@ -148,6 +148,8 @@ out=$(show_stage_preview "intake" 2>&1)
 assert_contains "Intake preview" "$out" "Fetch issue"
 out=$(show_stage_preview "build" 2>&1)
 assert_contains "Build preview" "$out" "loop"
+out=$(show_stage_preview "test_first" 2>&1)
+assert_contains "test_first preview" "$out" "TDD"
 out=$(show_stage_preview "pr" 2>&1)
 assert_contains "PR preview" "$out" "Create GitHub PR"
 

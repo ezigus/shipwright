@@ -633,6 +633,12 @@ check_machine_health() {
             emit_event "fleet.machine_offline" "machine=$name" "host=$host"
         fi
     done
+
+    # After health checks: trigger failover to re-queue work from offline machines
+    if [[ -f "$SCRIPT_DIR/lib/fleet-failover.sh" ]]; then
+        source "$SCRIPT_DIR/lib/fleet-failover.sh" 2>/dev/null || true
+        fleet_failover_check 2>/dev/null || true
+    fi
 }
 
 # ─── Cross-Machine Event Aggregation ───────────────────────────────────

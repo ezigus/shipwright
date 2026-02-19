@@ -137,6 +137,21 @@ format_duration() {
     fi
 }
 
+# Rotate event log if needed (standalone mode — daemon has its own rotation in poll loop)
+rotate_event_log_if_needed() {
+    local events_file="${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}"
+    local max_lines=10000
+    [[ ! -f "$events_file" ]] && return
+    local lines
+    lines=$(wc -l < "$events_file" 2>/dev/null || echo "0")
+    if [[ "$lines" -gt "$max_lines" ]]; then
+        local tmp="${events_file}.rotating"
+        if tail -5000 "$events_file" > "$tmp" 2>/dev/null && mv "$tmp" "$events_file" 2>/dev/null; then
+            info "Rotated events.jsonl: ${lines} -> 5000 lines"
+        fi
+    fi
+}
+
 _pipeline_compact_goal() {
     local goal="$1"
     local plan_file="${2:-}"
@@ -194,6 +209,36 @@ parse_claude_tokens() {
 
     TOTAL_INPUT_TOKENS=$(( TOTAL_INPUT_TOKENS + ${input_tok:-0} ))
     TOTAL_OUTPUT_TOKENS=$(( TOTAL_OUTPUT_TOKENS + ${output_tok:-0} ))
+}
+
+# Estimate pipeline cost using historical averages from completed pipelines.
+# Falls back to per-stage estimates when no history exists.
+estimate_pipeline_cost() {
+    local stages="$1"
+    local stage_count
+    stage_count=$(echo "$stages" | jq 'length' 2>/dev/null || echo "6")
+    [[ ! "$stage_count" =~ ^[0-9]+$ ]] && stage_count=6
+
+    local events_file="${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}"
+    local avg_input=0 avg_output=0
+    if [[ -f "$events_file" ]]; then
+        local hist
+        hist=$(grep '"type":"pipeline.completed"' "$events_file" 2>/dev/null | tail -10)
+        if [[ -n "$hist" ]]; then
+            avg_input=$(echo "$hist" | jq -s -r '[.[] | .input_tokens // 0 | tonumber] | if length > 0 then (add / length | floor | tostring) else "0" end' 2>/dev/null | head -1)
+            avg_output=$(echo "$hist" | jq -s -r '[.[] | .output_tokens // 0 | tonumber] | if length > 0 then (add / length | floor | tostring) else "0" end' 2>/dev/null | head -1)
+        fi
+    fi
+    [[ ! "$avg_input" =~ ^[0-9]+$ ]] && avg_input=0
+    [[ ! "$avg_output" =~ ^[0-9]+$ ]] && avg_output=0
+
+    # Fall back to reasonable per-stage estimates only if no history
+    if [[ "$avg_input" -eq 0 ]]; then
+        avg_input=$(( stage_count * 8000 ))   # More realistic: ~8K input per stage
+        avg_output=$(( stage_count * 4000 ))  # ~4K output per stage
+    fi
+
+    echo "{\"input_tokens\":${avg_input},\"output_tokens\":${avg_output}}"
 }
 
 # ─── Defaults ───────────────────────────────────────────────────────────────
@@ -297,6 +342,7 @@ show_help() {
     echo -e "  ${DIM}--max-iterations <n>${RESET}       Override max build loop iterations"
     echo -e "  ${DIM}--max-restarts <n>${RESET}         Max session restarts in build loop"
     echo -e "  ${DIM}--fast-test-cmd <cmd>${RESET}      Fast/subset test for build loop"
+    echo -e "  ${DIM}--tdd${RESET}                     Test-first: generate tests before implementation"
     echo -e "  ${DIM}--completed-stages \"a,b\"${RESET}   Skip these stages (CI resume)"
     echo ""
     echo -e "${BOLD}STAGES${RESET}  ${DIM}(configurable per pipeline template)${RESET}"
@@ -392,6 +438,7 @@ parse_args() {
                 shift 2 ;;
 
             --fast-test-cmd) FAST_TEST_CMD_OVERRIDE="$2"; shift 2 ;;
+            --tdd)         TDD_ENABLED=true; shift ;;
             --help|-h)     show_help; exit 0 ;;
             *)
                 if [[ -z "$PIPELINE_NAME_ARG" ]]; then
@@ -478,6 +525,9 @@ load_pipeline_config() {
         exit 1
     }
     info "Pipeline: ${BOLD}$PIPELINE_NAME${RESET} ${DIM}($PIPELINE_CONFIG)${RESET}"
+    # TDD from template (overridable by --tdd)
+    [[ "$(jq -r '.tdd // false' "$PIPELINE_CONFIG" 2>/dev/null)" == "true" ]] && PIPELINE_TDD=true
+    return 0
 }
 
 CURRENT_STAGE_ID=""
@@ -1224,6 +1274,9 @@ auto_rebase() {
 }
 
 run_pipeline() {
+    # Rotate event log if needed (standalone mode)
+    rotate_event_log_if_needed
+
     local stages
     stages=$(jq -c '.stages[]' "$PIPELINE_CONFIG")
 
@@ -1318,6 +1371,10 @@ run_pipeline() {
 
         # Self-healing build→test loop: when we hit build, run both together
         if [[ "$id" == "build" && "$use_self_healing" == "true" ]]; then
+            # TDD: generate tests before build when enabled
+            if [[ "${TDD_ENABLED:-false}" == "true" || "${PIPELINE_TDD:-}" == "true" ]]; then
+                stage_test_first || true
+            fi
             # Gate check for build
             local build_gate
             build_gate=$(echo "$stage" | jq -r '.gate')
@@ -1349,6 +1406,11 @@ run_pipeline() {
                 return 1
             fi
             continue
+        fi
+
+        # TDD: generate tests before build when enabled (non-self-healing path)
+        if [[ "$id" == "build" && "$use_self_healing" != "true" ]] && [[ "${TDD_ENABLED:-false}" == "true" || "${PIPELINE_TDD:-}" == "true" ]]; then
+            stage_test_first || true
         fi
 
         # Skip test if already handled by self-healing loop
@@ -1840,15 +1902,17 @@ run_dry_run() {
 
     echo ""
 
-    # Cost estimation (rough approximation)
+    # Cost estimation: use historical averages from past pipelines when available
     echo -e "${BLUE}${BOLD}━━━ Estimated Resource Usage ━━━${RESET}"
     echo ""
 
-    # Very rough cost estimation: ~2000 input tokens per stage, ~3000 output tokens
-    # Adjust based on pipeline complexity
+    local stages_json
+    stages_json=$(jq '[.stages[] | select(.enabled == true)]' "$PIPELINE_CONFIG" 2>/dev/null || echo "[]")
+    local est
+    est=$(estimate_pipeline_cost "$stages_json")
     local input_tokens_estimate output_tokens_estimate
-    input_tokens_estimate=$(( enabled_stages * 2000 ))
-    output_tokens_estimate=$(( enabled_stages * 3000 ))
+    input_tokens_estimate=$(echo "$est" | jq -r '.input_tokens // 0')
+    output_tokens_estimate=$(echo "$est" | jq -r '.output_tokens // 0')
 
     # Calculate cost based on selected model
     local input_rate output_rate input_cost output_cost total_cost
@@ -1863,7 +1927,7 @@ run_dry_run() {
     echo -e "  ${BOLD}Estimated Input Tokens:${RESET}  ~$input_tokens_estimate"
     echo -e "  ${BOLD}Estimated Output Tokens:${RESET} ~$output_tokens_estimate"
     echo -e "  ${BOLD}Model Cost Rate:${RESET}        $stage_model"
-    echo -e "  ${BOLD}Estimated Cost:${RESET}         \$$total_cost USD (rough estimate)"
+    echo -e "  ${BOLD}Estimated Cost:${RESET}         \$$total_cost USD"
     echo ""
 
     # Validate composed pipeline if intelligence is enabled
@@ -2007,6 +2071,13 @@ pipeline_start() {
         info "Using repository: $ORIGINAL_REPO_DIR"
     fi
 
+    # Bootstrap optimization & memory if cold start (before first intelligence use)
+    if [[ -f "$SCRIPT_DIR/lib/bootstrap.sh" ]]; then
+        source "$SCRIPT_DIR/lib/bootstrap.sh"
+        [[ ! -f "$HOME/.shipwright/optimization/iteration-model.json" ]] && bootstrap_optimization 2>/dev/null || true
+        [[ ! -f "$HOME/.shipwright/memory/patterns.json" ]] && bootstrap_memory 2>/dev/null || true
+    fi
+
     if [[ -z "$GOAL" && -z "$ISSUE_NUMBER" ]]; then
         error "Must provide --goal or --issue"
         echo -e "  Example: ${DIM}shipwright pipeline start --goal \"Add JWT auth\"${RESET}"
@@ -2031,6 +2102,13 @@ pipeline_start() {
     fi
 
     setup_dirs
+
+    # Generate reasoning trace (complexity analysis, template selection, failure predictions)
+    local user_specified_pipeline="$PIPELINE_NAME"
+    generate_reasoning_trace 2>/dev/null || true
+    if [[ -n "${PIPELINE_TEMPLATE:-}" && "$user_specified_pipeline" == "standard" ]]; then
+        PIPELINE_NAME="$PIPELINE_TEMPLATE"
+    fi
 
     # Check for existing pipeline
     if [[ -f "$STATE_FILE" ]]; then
@@ -2270,6 +2348,18 @@ pipeline_start() {
     local exit_code=$?
     PIPELINE_EXIT_CODE="$exit_code"
 
+    # Compute total cost for pipeline.completed (prefer actual from Claude when available)
+    local model_key="${MODEL:-sonnet}"
+    local total_cost
+    if [[ -n "${TOTAL_COST_USD:-}" && "${TOTAL_COST_USD}" != "0" && "${TOTAL_COST_USD}" != "null" ]]; then
+        total_cost="${TOTAL_COST_USD}"
+    else
+        local input_cost output_cost
+        input_cost=$(awk -v tokens="$TOTAL_INPUT_TOKENS" -v rate="$(echo "$COST_MODEL_RATES" | jq -r ".${model_key}.input // 3")" 'BEGIN{printf "%.4f", (tokens / 1000000) * rate}')
+        output_cost=$(awk -v tokens="$TOTAL_OUTPUT_TOKENS" -v rate="$(echo "$COST_MODEL_RATES" | jq -r ".${model_key}.output // 15")" 'BEGIN{printf "%.4f", (tokens / 1000000) * rate}')
+        total_cost=$(awk -v i="$input_cost" -v o="$output_cost" 'BEGIN{printf "%.4f", i + o}')
+    fi
+
     # Send completion notification + event
     local total_dur_s=""
     [[ -n "$PIPELINE_START_EPOCH" ]] && total_dur_s=$(( $(now_epoch) - PIPELINE_START_EPOCH ))
@@ -2292,6 +2382,7 @@ pipeline_start() {
             "agent_id=${PIPELINE_AGENT_ID}" \
             "input_tokens=$TOTAL_INPUT_TOKENS" \
             "output_tokens=$TOTAL_OUTPUT_TOKENS" \
+            "total_cost=$total_cost" \
             "self_heal_count=$SELF_HEAL_COUNT"
 
         # Auto-ingest pipeline outcome into recruit profiles
@@ -2312,6 +2403,7 @@ pipeline_start() {
             "agent_id=${PIPELINE_AGENT_ID}" \
             "input_tokens=$TOTAL_INPUT_TOKENS" \
             "output_tokens=$TOTAL_OUTPUT_TOKENS" \
+            "total_cost=$total_cost" \
             "self_heal_count=$SELF_HEAL_COUNT"
 
         # Auto-ingest pipeline outcome into recruit profiles

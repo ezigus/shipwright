@@ -1144,6 +1144,12 @@ daemon_poll_loop() {
         daemon_reap_completed || daemon_log WARN "daemon_reap_completed failed — continuing"
         daemon_health_check || daemon_log WARN "daemon_health_check failed — continuing"
 
+        # Fleet failover: re-queue work from offline machines
+        if [[ -f "$HOME/.shipwright/machines.json" ]]; then
+            [[ -f "$SCRIPT_DIR/lib/fleet-failover.sh" ]] && source "$SCRIPT_DIR/lib/fleet-failover.sh" 2>/dev/null || true
+            fleet_failover_check 2>/dev/null || true
+        fi
+
         # Increment cycle counter (must be before all modulo checks)
         POLL_CYCLE_COUNT=$((POLL_CYCLE_COUNT + 1))
 

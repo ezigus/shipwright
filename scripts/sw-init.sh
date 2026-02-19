@@ -377,6 +377,13 @@ if [[ -d "$PIPELINES_SRC" ]]; then
     success "Installed ${pip_count} pipeline templates → ~/.shipwright/pipelines/"
 fi
 
+# ─── Bootstrap optimization & memory (cold-start) ─────────────────────────────
+if [[ -f "$SCRIPT_DIR/lib/bootstrap.sh" ]]; then
+    source "$SCRIPT_DIR/lib/bootstrap.sh"
+    bootstrap_optimization 2>/dev/null || true
+    bootstrap_memory 2>/dev/null || true
+fi
+
 # ─── Shell Completions ────────────────────────────────────────────────────────
 # Detect shell type and install completions to the correct location
 # Detect the user's login shell (not the script's running shell).

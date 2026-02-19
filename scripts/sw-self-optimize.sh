@@ -1182,6 +1182,100 @@ optimize_evolve_memory() {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
+# QUALITY INDEX (LONGITUDINAL TRACKING)
+# ═════════════════════════════════════════════════════════════════════════════
+
+# optimize_track_quality_index
+# Compute composite quality metrics from last N pipeline outcomes and append to quality-index.jsonl
+optimize_track_quality_index() {
+    local quality_file="${HOME}/.shipwright/optimization/quality-index.jsonl"
+    mkdir -p "$(dirname "$quality_file")"
+
+    local outcomes_file="${HOME}/.shipwright/optimization/outcomes.jsonl"
+    [[ ! -f "$outcomes_file" ]] && return 0
+
+    if ! command -v jq >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # Get pipeline outcomes only (exclude retro_summary, ci_metrics)
+    local window=20
+    local recent
+    recent=$(jq -c 'select((.type // "") != "retro_summary" and (.type // "") != "ci_metrics")' "$outcomes_file" 2>/dev/null | tail -"$window" || true)
+
+    [[ -z "$recent" ]] && return 0
+
+    local total success_count
+    total=$(echo "$recent" | wc -l | tr -d ' ')
+    [[ "$total" -lt 3 ]] && return 0
+
+    success_count=$(echo "$recent" | jq -c 'select(.result == "success" or .result == "completed")' 2>/dev/null | wc -l | tr -d ' ')
+    success_count="${success_count:-0}"
+
+    local avg_iterations avg_quality
+    avg_iterations=$(echo "$recent" | jq -s '[.[] | .iterations // 0 | tonumber] | if length > 0 then add / length else 0 end' 2>/dev/null || echo "0")
+    # quality_score: use from record if present, else 100 for success/completed, 0 for failed
+    avg_quality=$(echo "$recent" | jq -s '[.[] | .quality_score // (if (.result == "success" or .result == "completed") then 100 else 0 end) | tonumber] | if length > 0 then add / length else 0 end' 2>/dev/null || echo "0")
+
+    local success_rate=0
+    [[ "$total" -gt 0 ]] && success_rate=$((success_count * 100 / total))
+    [[ "$success_rate" -gt 100 ]] && success_rate=100
+
+    # Efficiency (lower iterations = more efficient)
+    local efficiency
+    efficiency=$(awk "BEGIN{if($avg_iterations > 0) printf \"%.1f\", 100 / $avg_iterations; else print 0}" 2>/dev/null || echo "0")
+
+    # Composite quality index (0-100): success_rate 40%, efficiency 30%, quality 30%
+    local quality_index
+    quality_index=$(awk "BEGIN{printf \"%.0f\", ($success_rate * 0.4) + ($efficiency * 0.3) + ($avg_quality * 0.3)}" 2>/dev/null || echo "0")
+
+    local entry="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"window\":$window,\"total\":$total,\"success_rate\":$success_rate,\"avg_iterations\":$avg_iterations,\"avg_quality\":$avg_quality,\"efficiency\":$efficiency,\"quality_index\":$quality_index}"
+    echo "$entry" >> "$quality_file"
+
+    # Detect trend
+    if [[ -f "$quality_file" ]]; then
+        local line_count
+        line_count=$(wc -l < "$quality_file" 2>/dev/null | tr -d ' ' || echo "0")
+        if [[ "$line_count" -ge 2 ]]; then
+            local prev_index
+            prev_index=$(tail -2 "$quality_file" | head -1 | jq -r '.quality_index // 0' 2>/dev/null || echo "0")
+            local delta
+            delta=$(awk "BEGIN{printf \"%.0f\", $quality_index - $prev_index}" 2>/dev/null || echo "0")
+
+            if [[ "$delta" -gt 5 ]]; then
+                info "Quality index: $quality_index (+${delta}) - IMPROVING"
+            elif [[ "$delta" -lt -5 ]]; then
+                warn "Quality index: $quality_index (${delta}) - DECLINING"
+            else
+                info "Quality index: $quality_index (stable)"
+            fi
+        fi
+    fi
+
+    emit_event "quality.index_updated" "quality_index=$quality_index" "success_rate=$success_rate" 2>/dev/null || true
+}
+
+# cmd_quality_index — Show quality trend (last 10 snapshots)
+cmd_quality_index() {
+    local quality_file="${HOME}/.shipwright/optimization/quality-index.jsonl"
+    if [[ ! -f "$quality_file" ]]; then
+        echo "No quality data yet. Run some pipelines first."
+        return
+    fi
+
+    echo "Quality Index Trend (last 10 snapshots):"
+    echo "========================================="
+    tail -10 "$quality_file" | while IFS= read -r line; do
+        local ts qi sr ai
+        ts=$(echo "$line" | jq -r '.timestamp' 2>/dev/null)
+        qi=$(echo "$line" | jq -r '.quality_index' 2>/dev/null)
+        sr=$(echo "$line" | jq -r '.success_rate' 2>/dev/null)
+        ai=$(echo "$line" | jq -r '.avg_iterations' 2>/dev/null)
+        printf "  %s  QI: %s  Success: %s%%  Avg Iters: %s\n" "$ts" "$qi" "$sr" "$ai"
+    done
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
 # FULL ANALYSIS (DAILY)
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -1201,6 +1295,7 @@ optimize_full_analysis() {
     optimize_route_models
     optimize_learn_risk_keywords
     optimize_evolve_memory
+    optimize_track_quality_index 2>/dev/null || true
     optimize_report >> "${OPTIMIZATION_DIR}/last-report.txt" 2>/dev/null || true
     optimize_adjust_audit_intensity 2>/dev/null || true
 
@@ -1391,6 +1486,7 @@ show_help() {
     echo "  analyze-outcome <state-file>   Analyze a completed pipeline outcome"
     echo "  tune                           Run full optimization analysis"
     echo "  report                         Show optimization report (last 7 days)"
+    echo "  quality-index                  Show quality trend (last 10 snapshots)"
     echo "  ingest-retro                   Ingest most recent retro into optimization loop"
     echo "  evolve-memory                  Prune/strengthen/promote memory patterns"
     echo "  help                           Show this help"
@@ -1415,6 +1511,7 @@ main() {
         tune)            optimize_full_analysis ;;
         ingest-retro)    optimize_ingest_retro ;;
         report)          optimize_report ;;
+        quality-index)   cmd_quality_index ;;
         evolve-memory)   optimize_evolve_memory ;;
         help|--help|-h)  show_help ;;
         *)               error "Unknown command: $cmd"; exit 1 ;;

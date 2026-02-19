@@ -589,12 +589,13 @@ Usage: shipwright retro <subcommand> [options]
 Subcommands:
   run [--from DATE] [--to DATE]  Run retrospective for sprint (default: last 7 days)
   summary [DATE1] [DATE2]         Quick sprint summary stats
-  trends                           Multi-sprint trend analysis (last 4 sprints)
+  trends                          Multi-sprint trend analysis (last 4 sprints)
   agents [DATE1] [DATE2]          Agent performance breakdown
   actions [DATE1] [DATE2]         List generated improvement actions
-  compare DATE1 DATE2              Compare two sprint periods
-  history                          Show past retrospective reports
-  help                             Show this help message
+  compare DATE1 DATE2             Compare two sprint periods
+  history                         Show past retrospective reports
+  quality                         Show quality index trend (longitudinal)
+  help                            Show this help message
 
 Options:
   --from DATE                      Start date (YYYY-MM-DD)
@@ -638,6 +639,17 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
             ;;
         history)
             cmd_history "$@"
+            ;;
+        quality)
+            if [[ -f "$SCRIPT_DIR/sw-self-optimize.sh" ]]; then
+                source "$SCRIPT_DIR/sw-self-optimize.sh" 2>/dev/null || true
+                cmd_quality_index 2>/dev/null || {
+                    echo "No quality data yet. Run some pipelines first."
+                }
+            else
+                error "sw-self-optimize.sh not found"
+                exit 1
+            fi
             ;;
         help|--help|-h)
             cmd_help

@@ -86,6 +86,7 @@ broadcast_discovery() {
 }
 
 # query: find relevant discoveries for given file patterns
+# Uses path overlap + semantic similarity (Jaccard on keywords, domain expansion)
 query_discoveries() {
     local file_patterns="$1"
     local limit="${2:-10}"
@@ -99,30 +100,60 @@ query_discoveries() {
 
     local count=0
     local found=false
+    local query_context
+    query_context=$(_expand_domain_keywords "$file_patterns")
 
+    # Collect candidates (path or semantic match)
+    local candidates
+    candidates=()
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
 
-        local disc_patterns
+        local disc_patterns discovery_desc
         disc_patterns=$(echo "$line" | jq -r '.file_patterns // ""' 2>/dev/null || echo "")
+        discovery_desc=$(echo "$line" | jq -r '.discovery // ""' 2>/dev/null || echo "")
 
-        # Check if patterns overlap
+        local matched=false
         if patterns_overlap "$file_patterns" "$disc_patterns"; then
-            if [[ "$found" == "false" ]]; then
-                success "Found relevant discoveries:"
-                found=true
+            matched=true
+        else
+            # Semantic match: discovery about "authentication" matches "session verification"
+            local desc_similarity
+            desc_similarity=$(_discovery_semantic_match "$query_context" "$discovery_desc")
+            if [[ "${desc_similarity:-0}" -gt 30 ]]; then
+                matched=true
             fi
+        fi
 
-            local category discovery
-            category=$(echo "$line" | jq -r '.category' 2>/dev/null || echo "?")
-            discovery=$(echo "$line" | jq -r '.discovery' 2>/dev/null || echo "?")
-
-            echo -e "  ${DIM}→${RESET} [${category}] ${discovery} [${disc_patterns}]"
-
-            count=$((count + 1))
-            [[ "$count" -ge "$limit" ]] && break
+        if [[ "$matched" == "true" ]]; then
+            candidates+=("$line")
         fi
     done < "$DISCOVERIES_FILE"
+
+    # Optionally use Claude to rank when many candidates
+    if [[ "${INTELLIGENCE_ENABLED:-auto}" != "false" ]] && command -v claude &>/dev/null 2>&1 && [[ ${#candidates[@]} -gt 5 ]]; then
+        # TODO: batch Claude call to rank by relevance (future enhancement)
+        :
+    fi
+
+    # Output up to limit
+    local line
+    for line in "${candidates[@]+"${candidates[@]}"}"; do
+        if [[ "$found" == "false" ]]; then
+            success "Found relevant discoveries:"
+            found=true
+        fi
+
+        local category discovery disc_patterns
+        category=$(echo "$line" | jq -r '.category' 2>/dev/null || echo "?")
+        discovery=$(echo "$line" | jq -r '.discovery' 2>/dev/null || echo "?")
+        disc_patterns=$(echo "$line" | jq -r '.file_patterns // ""' 2>/dev/null || echo "")
+
+        echo -e "  ${DIM}→${RESET} [${category}] ${discovery} [${disc_patterns}]"
+
+        count=$((count + 1))
+        [[ "$count" -ge "$limit" ]] && break
+    done
 
     if [[ "$found" == "false" ]]; then
         info "No relevant discoveries found for patterns: ${file_patterns}"
@@ -143,8 +174,10 @@ inject_discoveries() {
 
     local seen_file
     seen_file=$(get_seen_file "$pipeline_id")
+    local query_context
+    query_context=$(_expand_domain_keywords "$file_patterns")
 
-    # Find relevant discoveries not yet seen
+    # Find relevant discoveries not yet seen (path or semantic match)
     local new_count=0
     local injected_entries=()
 
@@ -161,11 +194,23 @@ inject_discoveries() {
             fi
         fi
 
-        # Check if relevant to current file patterns
-        local disc_patterns
+        # Check if relevant: path overlap OR semantic similarity > 30
+        local disc_patterns discovery_desc
         disc_patterns=$(echo "$line" | jq -r '.file_patterns // ""' 2>/dev/null || echo "")
+        discovery_desc=$(echo "$line" | jq -r '.discovery // ""' 2>/dev/null || echo "")
 
+        local matched=false
         if [[ -n "$disc_patterns" ]] && patterns_overlap "$file_patterns" "$disc_patterns"; then
+            matched=true
+        else
+            local desc_similarity
+            desc_similarity=$(_discovery_semantic_match "$query_context" "$discovery_desc")
+            if [[ "${desc_similarity:-0}" -gt 30 ]]; then
+                matched=true
+            fi
+        fi
+
+        if [[ "$matched" == "true" ]]; then
             injected_entries+=("$line")
             new_count=$((new_count + 1))
         fi
@@ -215,6 +260,53 @@ inject_discoveries() {
     for entry in "${injected_entries[@]}"; do
         echo "$entry" | jq -r '"[\(.category)] \(.discovery) — Resolution: \(.resolution)"' 2>/dev/null || true
     done
+}
+
+# ─── Semantic matching helpers ───────────────────────────────────────────────
+
+# Domain keyword expansion for related concepts
+_expand_domain_keywords() {
+    local text="$1"
+    local expanded="$text"
+
+    # Domain synonym groups (iterate over fixed keys to avoid set -u issues)
+    local dom
+    for dom in auth api db ui test deploy error perf; do
+        case "$dom" in
+            auth)   [[ "$text" =~ [aA]uth ]] && expanded="$expanded authentication authorization login session token credential permission access" ;;
+            api)    [[ "$text" =~ [aA]pi ]]  && expanded="$expanded endpoint route handler request response rest graphql" ;;
+            db)     [[ "$text" =~ [dD]b ]]   && expanded="$expanded database query migration schema model table sql" ;;
+            ui)     [[ "$text" =~ [uU]i ]]   && expanded="$expanded component view render template layout style css frontend" ;;
+            test)   [[ "$text" =~ [tT]est ]] && expanded="$expanded testing assertion coverage mock stub fixture spec" ;;
+            deploy) [[ "$text" =~ [dD]eploy ]] && expanded="$expanded deployment release publish ship ci cd pipeline" ;;
+            error)  [[ "$text" =~ [eE]rror ]] && expanded="$expanded exception failure crash bug issue defect" ;;
+            perf)   [[ "$text" =~ [pP]erf ]] && expanded="$expanded performance optimization speed latency throughput cache" ;;
+        esac
+    done
+
+    echo "$expanded"
+}
+
+# Semantic similarity between discovery descriptions (Jaccard on keywords)
+_discovery_semantic_match() {
+    local query_desc="$1"
+    local discovery_desc="$2"
+
+    # Extract keywords from both descriptions
+    local query_words discovery_words
+    query_words=$(echo "$query_desc" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n' | sort -u | grep -vE '^(the|a|an|is|are|was|were|in|on|at|to|for|of|and|or|but|not|with|this|that|from|by)$')
+    discovery_words=$(echo "$discovery_desc" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n' | sort -u | grep -vE '^(the|a|an|is|are|was|were|in|on|at|to|for|of|and|or|but|not|with|this|that|from|by)$')
+
+    # Compute Jaccard similarity
+    local intersection union
+    intersection=$(comm -12 <(echo "$query_words") <(echo "$discovery_words") 2>/dev/null | wc -l | tr -d ' ')
+    union=$(sort -u <(echo "$query_words") <(echo "$discovery_words") 2>/dev/null | wc -l | tr -d ' ')
+
+    if [[ "$union" -gt 0 ]]; then
+        echo "$((intersection * 100 / union))"
+    else
+        echo "0"
+    fi
 }
 
 # patterns_overlap: check if two comma-separated patterns overlap

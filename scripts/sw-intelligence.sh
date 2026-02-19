@@ -36,6 +36,15 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
+# ─── Bootstrap (cold-start) ──────────────────────────────────────────────────
+# Ensure optimization data exists when intelligence is first used
+[[ -f "$SCRIPT_DIR/lib/bootstrap.sh" ]] && source "$SCRIPT_DIR/lib/bootstrap.sh"
+if type bootstrap_optimization &>/dev/null 2>&1; then
+    if [[ ! -f "$HOME/.shipwright/optimization/iteration-model.json" ]]; then
+        bootstrap_optimization 2>/dev/null || true
+    fi
+fi
+
 # ─── Intelligence Configuration ─────────────────────────────────────────────
 INTELLIGENCE_CACHE="${REPO_DIR}/.claude/intelligence-cache.json"
 INTELLIGENCE_CONFIG_DIR="${HOME}/.shipwright/optimization"
@@ -375,6 +384,86 @@ _intelligence_call_claude() {
     return 0
 }
 
+# ─── Data-Driven Fallbacks (when Claude unavailable) ─────────────────────────
+
+_intelligence_fallback_analyze() {
+    local title="$1" body="$2" labels="$3"
+
+    local complexity=5 risk="medium" probability=50 template="standard"
+
+    # Try historical data first
+    local outcomes_file="$HOME/.shipwright/optimization/outcomes.jsonl"
+    if [[ -f "$outcomes_file" ]] && command -v jq &>/dev/null; then
+        local sample_count
+        sample_count=$(wc -l < "$outcomes_file" 2>/dev/null || echo "0")
+
+        if [[ "$sample_count" -gt 5 ]]; then
+            # Compute average complexity from past outcomes
+            local avg_complexity
+            avg_complexity=$(tail -100 "$outcomes_file" | jq -s '[.[].complexity // 5 | tonumber] | add / length | floor' 2>/dev/null || echo "5")
+            [[ "$avg_complexity" -gt 0 && "$avg_complexity" -le 10 ]] && complexity=$avg_complexity
+
+            # Compute success probability from past outcomes (result: success|failure)
+            local success_rate
+            success_rate=$(tail -100 "$outcomes_file" | jq -s '[.[] | select(has("result")) | .result // "failure"] | (map(select(. == "success" or . == "completed")) | length) as $s | length as $t | if $t > 0 then ($s * 100 / $t | floor) else 50 end' 2>/dev/null || echo "50")
+            [[ "$success_rate" -gt 0 ]] && probability=$success_rate
+        fi
+    fi
+
+    # Label-based heuristics (better than nothing)
+    if echo "$labels" | grep -qiE 'bug|fix|hotfix' 2>/dev/null; then
+        complexity=$((complexity > 3 ? complexity - 2 : complexity))
+        risk="low"
+        template="hotfix"
+    elif echo "$labels" | grep -qiE 'feature|enhancement' 2>/dev/null; then
+        complexity=$((complexity + 1 > 10 ? 10 : complexity + 1))
+        template="standard"
+    elif echo "$labels" | grep -qiE 'refactor|cleanup' 2>/dev/null; then
+        risk="low"
+        template="standard"
+    elif echo "$labels" | grep -qiE 'security|vulnerability' 2>/dev/null; then
+        risk="high"
+        template="standard"
+    fi
+
+    # Title-based heuristics — use awk (no wc/tr dependency)
+    local word_count
+    word_count=$(echo "$title $body" | awk '{print NF}' 2>/dev/null || echo "5")
+    if [[ "$word_count" -lt 10 ]]; then
+        complexity=$((complexity > 2 ? complexity - 1 : complexity))
+    elif [[ "$word_count" -gt 100 ]]; then
+        complexity=$((complexity + 2 > 10 ? 10 : complexity + 2))
+    fi
+
+    echo "{\"complexity\":$complexity,\"risk_level\":\"$risk\",\"success_probability\":$probability,\"recommended_template\":\"$template\"}"
+}
+
+_intelligence_fallback_cost() {
+    local events_file="$HOME/.shipwright/events.jsonl"
+    local avg_cost=0
+    if [[ -f "$events_file" ]]; then
+        avg_cost=$(grep '"pipeline.completed"' "$events_file" | tail -20 | jq -r '.cost_usd // .total_cost // 0' 2>/dev/null | awk '{s+=$1; n++} END{if(n>0) printf "%.2f", s/n; else print "0"}')
+    fi
+    echo "{\"estimated_cost_usd\":$avg_cost,\"confidence\":\"historical\"}"
+}
+
+_intelligence_fallback_compose() {
+    local issue_analysis="${1:-"{}"}"
+    local complexity risk_level
+    complexity=$(echo "$issue_analysis" | jq -r '.complexity // 5' 2>/dev/null || echo "5")
+    risk_level=$(echo "$issue_analysis" | jq -r '.risk_level // "medium"' 2>/dev/null || echo "medium")
+    # Build sensible default stages from complexity: low=minimal, high=full
+    local stages_json
+    if [[ "$complexity" -le 3 ]]; then
+        stages_json='[{"id":"intake","enabled":true,"model":"sonnet","config":{}},{"id":"build","enabled":true,"model":"sonnet","config":{}},{"id":"test","enabled":true,"model":"sonnet","config":{}},{"id":"pr","enabled":true,"model":"sonnet","config":{}}]'
+    elif [[ "$complexity" -ge 8 ]]; then
+        stages_json='[{"id":"intake","enabled":true,"model":"opus","config":{}},{"id":"plan","enabled":true,"model":"opus","config":{}},{"id":"design","enabled":true,"model":"opus","config":{}},{"id":"build","enabled":true,"model":"sonnet","config":{}},{"id":"test","enabled":true,"model":"sonnet","config":{}},{"id":"review","enabled":true,"model":"sonnet","config":{}},{"id":"pr","enabled":true,"model":"sonnet","config":{}}]'
+    else
+        stages_json='[{"id":"intake","enabled":true,"model":"sonnet","config":{}},{"id":"build","enabled":true,"model":"sonnet","config":{}},{"id":"test","enabled":true,"model":"sonnet","config":{}},{"id":"pr","enabled":true,"model":"sonnet","config":{}}]'
+    fi
+    echo "{\"stages\":$stages_json,\"rationale\":\"data-driven fallback from complexity=$complexity risk=$risk_level\"}"
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PUBLIC FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -384,15 +473,24 @@ _intelligence_call_claude() {
 intelligence_analyze_issue() {
     local issue_json="${1:-"{}"}"
 
-    if ! _intelligence_enabled; then
-        echo '{"error":"intelligence_disabled","complexity":5,"risk_level":"medium","success_probability":50,"recommended_template":"standard","key_risks":[],"implementation_hints":[]}'
-        return 0
-    fi
-
     local title body labels
     title=$(echo "$issue_json" | jq -r '.title // "untitled"' 2>/dev/null || echo "untitled")
     body=$(echo "$issue_json" | jq -r '.body // ""' 2>/dev/null || echo "")
     labels=$(echo "$issue_json" | jq -r '(.labels // []) | join(", ")' 2>/dev/null || echo "")
+
+    if ! _intelligence_enabled; then
+        local fallback merged
+        fallback=$(_intelligence_fallback_analyze "$title" "$body" "$labels" 2>/dev/null) || true
+        if [[ -n "$fallback" ]]; then
+            merged=$(printf '%s' "$fallback" | jq -c '. + {error: "intelligence_disabled", key_risks: [], implementation_hints: []}' 2>/dev/null)
+        fi
+        if [[ -n "${merged:-}" ]]; then
+            echo "$merged"
+        else
+            echo '{"error":"intelligence_disabled","complexity":5,"risk_level":"medium","success_probability":50,"recommended_template":"standard","key_risks":[],"implementation_hints":[]}'
+        fi
+        return 0
+    fi
 
     local prompt
     prompt="Analyze this GitHub issue for a software project and return ONLY a JSON object (no markdown, no explanation).
@@ -421,8 +519,8 @@ Return JSON with exactly these fields:
         valid=$(echo "$result" | jq 'has("complexity") and has("risk_level") and has("success_probability") and has("recommended_template")' 2>/dev/null || echo "false")
 
         if [[ "$valid" != "true" ]]; then
-            warn "Intelligence response missing required fields, using fallback"
-            result='{"complexity":5,"risk_level":"medium","success_probability":50,"recommended_template":"standard","key_risks":["analysis_incomplete"],"implementation_hints":[]}'
+            warn "Intelligence response missing required fields, using data-driven fallback"
+            result=$(_intelligence_fallback_analyze "$title" "$body" "$labels" | jq -c '. + {key_risks: ["analysis_incomplete"], implementation_hints: []}')
         fi
 
         emit_event "intelligence.analysis" \
@@ -437,7 +535,9 @@ Return JSON with exactly these fields:
         echo "$result"
         return 0
     else
-        echo '{"error":"analysis_failed","complexity":5,"risk_level":"medium","success_probability":50,"recommended_template":"standard","key_risks":["analysis_failed"],"implementation_hints":[]}'
+        local fallback
+        fallback=$(_intelligence_fallback_analyze "$title" "$body" "$labels")
+        echo "$fallback" | jq -c '. + {error: "analysis_failed", key_risks: ["analysis_failed"], implementation_hints: []}' 2>/dev/null || echo '{"error":"analysis_failed","complexity":5,"risk_level":"medium","success_probability":50,"recommended_template":"standard","key_risks":["analysis_failed"],"implementation_hints":[]}'
         return 0
     fi
 }
@@ -450,7 +550,9 @@ intelligence_compose_pipeline() {
     local budget="${3:-0}"
 
     if ! _intelligence_enabled; then
-        echo '{"error":"intelligence_disabled","stages":[]}'
+        local fallback
+        fallback=$(_intelligence_fallback_compose "$issue_analysis")
+        echo "$fallback" | jq -c '. + {error: "intelligence_disabled"}' 2>/dev/null || echo '{"error":"intelligence_disabled","stages":[]}'
         return 0
     fi
 
@@ -486,8 +588,8 @@ Return ONLY a JSON object (no markdown):
         has_stages=$(echo "$result" | jq 'has("stages") and (.stages | type == "array")' 2>/dev/null || echo "false")
 
         if [[ "$has_stages" != "true" ]]; then
-            warn "Pipeline composition missing stages array, using fallback"
-            result='{"stages":[{"id":"intake","enabled":true,"model":"sonnet","config":{}},{"id":"build","enabled":true,"model":"sonnet","config":{}},{"id":"test","enabled":true,"model":"sonnet","config":{}},{"id":"pr","enabled":true,"model":"sonnet","config":{}}],"rationale":"fallback pipeline"}'
+            warn "Pipeline composition missing stages array, using data-driven fallback"
+            result=$(_intelligence_fallback_compose "$issue_analysis")
         fi
 
         emit_event "intelligence.compose" \
@@ -497,7 +599,9 @@ Return ONLY a JSON object (no markdown):
         echo "$result"
         return 0
     else
-        echo '{"error":"composition_failed","stages":[]}'
+        local fallback
+        fallback=$(_intelligence_fallback_compose "$issue_analysis")
+        echo "$fallback" | jq -c '. + {error: "composition_failed"}' 2>/dev/null || echo '{"error":"composition_failed","stages":[]}'
         return 0
     fi
 }
@@ -509,7 +613,9 @@ intelligence_predict_cost() {
     local historical_data="${2:-"{}"}"
 
     if ! _intelligence_enabled; then
-        echo '{"error":"intelligence_disabled","estimated_cost_usd":0,"estimated_iterations":0,"likely_failure_stage":"unknown"}'
+        local fallback
+        fallback=$(_intelligence_fallback_cost)
+        echo "$fallback" | jq -c '. + {error: "intelligence_disabled", estimated_iterations: 0, likely_failure_stage: "unknown"}' 2>/dev/null || echo '{"error":"intelligence_disabled","estimated_cost_usd":0,"estimated_iterations":0,"likely_failure_stage":"unknown"}'
         return 0
     fi
 
@@ -540,8 +646,8 @@ Based on similar complexity (${complexity}/10) issues, estimate:
         valid=$(echo "$result" | jq 'has("estimated_cost_usd") and has("estimated_iterations")' 2>/dev/null || echo "false")
 
         if [[ "$valid" != "true" ]]; then
-            warn "Cost prediction missing required fields, using fallback"
-            result='{"estimated_cost_usd":5.0,"estimated_iterations":3,"estimated_tokens":500000,"likely_failure_stage":"test","confidence":30}'
+            warn "Cost prediction missing required fields, using data-driven fallback"
+            result=$(_intelligence_fallback_cost | jq -c '. + {estimated_iterations: 3, estimated_tokens: 500000, likely_failure_stage: "test", confidence: 30}')
         fi
 
         emit_event "intelligence.prediction" \
@@ -552,7 +658,9 @@ Based on similar complexity (${complexity}/10) issues, estimate:
         echo "$result"
         return 0
     else
-        echo '{"error":"prediction_failed","estimated_cost_usd":0,"estimated_iterations":0,"likely_failure_stage":"unknown"}'
+        local fallback
+        fallback=$(_intelligence_fallback_cost)
+        echo "$fallback" | jq -c '. + {error: "prediction_failed", estimated_iterations: 0, likely_failure_stage: "unknown"}' 2>/dev/null || echo '{"error":"prediction_failed","estimated_cost_usd":0,"estimated_iterations":0,"likely_failure_stage":"unknown"}'
         return 0
     fi
 }
@@ -796,6 +904,18 @@ intelligence_recommend_model() {
     local model="sonnet"
     local reason="default balanced choice"
 
+    # Budget-constrained: always use haiku regardless of routing (highest priority)
+    if [[ "$budget_remaining" != "" ]] && [[ "$(awk -v b="$budget_remaining" 'BEGIN{print (b+0<5)?1:0}')" == "1" ]]; then
+        model="haiku"
+        reason="budget constrained (< \$5 remaining)"
+        local result
+        result=$(jq -n --arg model "$model" --arg reason "$reason" --arg stage "$stage" --argjson complexity "$complexity" \
+            '{"model": $model, "reason": $reason, "stage": $stage, "complexity": $complexity, "source": "heuristic"}')
+        emit_event "intelligence.model" "stage=$stage" "complexity=$complexity" "model=$model" "source=heuristic"
+        echo "$result"
+        return 0
+    fi
+
     # Strategy 1: Check historical model routing data
     local routing_file="${HOME}/.shipwright/optimization/model-routing.json"
     if [[ -f "$routing_file" ]]; then
@@ -854,7 +974,7 @@ intelligence_recommend_model() {
             fi
 
             if [[ "$use_sonnet" == "true" ]]; then
-                if [[ "$budget_remaining" != "" ]] && [[ "$(echo "$budget_remaining < 5" | bc 2>/dev/null || echo "0")" == "1" ]]; then
+                if [[ "$budget_remaining" != "" ]] && [[ "$(awk -v b="$budget_remaining" 'BEGIN{print (b+0<5)?1:0}')" == "1" ]]; then
                     model="haiku"
                     reason="sonnet viable (${sonnet_rate}% success) but budget constrained"
                 else
@@ -871,7 +991,7 @@ intelligence_recommend_model() {
                 case "$stage" in
                     plan|design|review|compound_quality)
                         if [[ "$model" != "opus" ]]; then
-                            if [[ "$budget_remaining" == "" ]] || [[ "$(echo "$budget_remaining >= 10" | bc 2>/dev/null || echo "1")" == "1" ]]; then
+                            if [[ "$budget_remaining" == "" ]] || [[ "$(awk -v b="$budget_remaining" 'BEGIN{print (b+0>=10)?1:0}')" == "1" ]]; then
                                 model="opus"
                                 reason="high complexity (${complexity}/10) overrides historical for critical stage (${stage})"
                             fi
@@ -897,7 +1017,7 @@ intelligence_recommend_model() {
 
     # Strategy 2: Heuristic fallback (no historical data available)
     # Budget-constrained: use haiku
-    if [[ "$budget_remaining" != "" ]] && [[ "$(echo "$budget_remaining < 5" | bc 2>/dev/null || echo "0")" == "1" ]]; then
+    if [[ "$budget_remaining" != "" ]] && [[ "$(awk -v b="$budget_remaining" 'BEGIN{print (b+0<5)?1:0}')" == "1" ]]; then
         model="haiku"
         reason="budget constrained (< \$5 remaining)"
     # High complexity + critical stages: use opus

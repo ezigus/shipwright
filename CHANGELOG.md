@@ -7,6 +7,63 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed sw-adaptive.sh dead code: aligned event schema with actual pipeline emissions
+- Unified two disconnected model routing systems into single source of truth
+- Fixed jq -s JSONL parsing in sw-incident.sh
+- Fixed sw-deps.sh batch counters lost in subshells
+- Fixed checkpoint context variable mismatch for proper resume
+- Fixed cross-platform date compatibility (BSD/GNU) in sw-retro.sh
+- Fixed event emission consistency across pipeline lifecycle
+- Fixed autonomous-to-daemon label mismatch
+- Fixed distributed claim race condition with verification
+- Fixed silent error swallowing in critical git push/gh operations
+- Fixed /tmp collision issues in concurrent evidence collection
+- Restored config/policy.json and fixed color variable fallbacks across 12 scripts
+
+### Added
+
+- Auto-learning: self-optimize runs automatically after every pipeline completion
+- Unified feedback loop: predictions validated against actuals with bias correction
+- Claude-powered semantic quality audits (with grep fallback)
+- Claude-powered finding classification (with keyword fallback)
+- Strategic planning outcome tracking (learns which suggestions succeed)
+- SQLite dual-read adoption (transparent JSONL fallback)
+- Intelligence "auto" mode: enabled when Claude CLI is available
+- `sw doctor --intelligence` health check
+- `sw intelligence status` command
+- `sw strategic outcomes` command
+- Homebrew SHA256 automation in release workflow
+- Real agent spawning via tmux in sw-scale.sh
+- Queue-depth auto-scaling in sw-swarm.sh
+- Dashboard build-before-serve with --no-build flag
+- Codebase-aware autonomous fallback analysis
+- Stuckness detection with diff/error/exit-code tracking
+- /api/ws-status WebSocket status endpoint
+- Evidence verification before PR creation
+- Budget gate enforcement in loop and dispatch
+- Claude output validation before git commit
+- Cross-platform file_mtime() and date helpers in compat.sh
+- Checkpoint context preservation for meaningful resume
+
+### Testing
+
+- Added E2E system test proving full daemon→pipeline→loop→PR flow (17 tests)
+- Added daemon-dispatch.sh tests (20+ tests)
+- Added pipeline-stages.sh tests (29 tests)
+- Added real loop iteration behavior tests (7 new tests)
+- Added tracker provider tests for GitHub/Linear/Jira (26 tests)
+- Added sw-review-rerun.sh tests (14 tests)
+- Added dashboard view tests for overview/pipelines/team/metrics (21 tests)
+- Improved dashboard router coverage from 63% to 100%
+- Dashboard overall coverage: 98% statements, 92% branches
+- Shell test pass rate: 122/125 (97.6%)
+
+---
+
 ## [2.5.0] — 2026-02-18
 
 ### Fixed

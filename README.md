@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/sethdford/shipwright/actions/workflows/test.yml"><img src="https://github.com/sethdford/shipwright/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/sethdford/shipwright/actions/workflows/shipwright-pipeline.yml"><img src="https://github.com/sethdford/shipwright/actions/workflows/shipwright-pipeline.yml/badge.svg" alt="Pipeline"></a>
-  <img src="https://img.shields.io/badge/tests-103_suites_passing-4ade80?style=flat-square" alt="103 suites">
+  <img src="https://img.shields.io/badge/tests-141_suites_passing-4ade80?style=flat-square" alt="141 suites">
   <img src="https://img.shields.io/badge/version-2.5.0-00d4ff?style=flat-square" alt="v2.5.0">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License">
   <img src="https://img.shields.io/badge/bash-3.2%2B-7c3aed?style=flat-square" alt="Bash 3.2+">
@@ -77,7 +77,12 @@ Shipwright extends the Code Factory pattern with capabilities most implementatio
 - **12-stage pipeline** with self-healing builds, adversarial review, and compound quality gates
 - **Predictive risk scoring** using GitHub signals (security alerts, contributor expertise, file churn)
 - **Persistent memory** — failure patterns, fix effectiveness, and prediction accuracy compound over time
+- **Auto-learning** — self-optimize runs automatically after every pipeline completion
+- **Unified model routing** — single source of truth for model selection across all components
+- **Evidence-gated merges** — SHA discipline ensures all evidence validated against current PR head
+- **Semantic quality audits** — Claude-powered audits with grep fallback when Claude unavailable
 - **18 autonomous agents** with specialized roles (PM, reviewer, security auditor, test generator, etc.)
+- **Cross-platform compatibility** — portable date helpers, file_mtime, and compat layer for macOS/Linux
 - **Fleet operations** — the Code Factory pattern applied across every repo in your org
 - **Cost intelligence** — per-pipeline cost tracking, budget enforcement, adaptive model routing
 - **Self-optimization** — DORA metrics analysis auto-tunes daemon config and template weights
@@ -277,7 +282,7 @@ Each stage is configurable with quality gates that auto-proceed or pause for app
 
 ### Intelligence Layer
 
-7 modules that make the pipeline smarter over time. All optional, all degrade gracefully.
+7 modules that make the pipeline smarter over time. **Auto mode**: intelligence is enabled when Claude CLI is available; set `intelligence.enabled=false` to disable. All modules degrade gracefully.
 
 | Module                       | What It Does                                                                                                          |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
@@ -494,7 +499,7 @@ shipwright templates list
 
 ## Architecture
 
-100+ bash scripts (~100K lines), 103 test suites (1000+ tests), plus a TypeScript dashboard server. Bash 3.2 compatible — runs on macOS and Linux out of the box.
+100+ bash scripts (~100K lines), 125 shell test suites + 16 dashboard test files (141 total), plus E2E system test proving full daemon→pipeline→loop→PR flow. Dashboard at 98% coverage. Bash 3.2 compatible — runs on macOS and Linux out of the box.
 
 **Core Layers:**
 
@@ -565,7 +570,7 @@ Tools & UX
 **Manual development:** Fork, branch, then:
 
 ```bash
-npm test    # 1000+ tests across 103 suites
+npm test    # 125 shell suites + 16 dashboard test files (141 total), E2E system test
 ```
 
 ## License

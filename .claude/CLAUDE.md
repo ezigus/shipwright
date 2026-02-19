@@ -799,7 +799,7 @@ The pipeline uses native GitHub APIs for CI integration, deployment tracking, an
 
 ## Intelligence Layer
 
-All intelligence features are behind feature flags and disabled by default. Configure in `.claude/daemon-config.json` under the `intelligence` key.
+Intelligence defaults to **auto** (enabled when Claude CLI is available). Configure in `.claude/daemon-config.json` under the `intelligence` key; set `intelligence.enabled=false` to explicitly disable.
 
 ### Feature Flags
 

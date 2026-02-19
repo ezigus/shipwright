@@ -7,7 +7,7 @@ import { Tabs, TabItem, Card, CardGrid } from "@astrojs/starlight/components";
 
 Shipwright's intelligence layer replaces hardcoded heuristics with AI-powered analysis at every decision point in the delivery pipeline. From issue triage to model selection to architecture validation, intelligence modules make context-aware decisions that improve over time.
 
-All intelligence features are behind feature flags and degrade gracefully to static fallbacks when disabled. Enable any combination of modules based on your workflow.
+All intelligence features are behind feature flags and degrade gracefully to static fallbacks when disabled. Intelligence uses **auto** mode by default: enabled when Claude CLI is available; set `intelligence.enabled=false` to explicitly disable.
 
 ## Overview
 
@@ -23,7 +23,7 @@ The intelligence layer consists of seven specialized modules that work together:
 
 ## Enabling Intelligence
 
-All intelligence features are disabled by default. Enable them in `.claude/daemon-config.json`:
+Intelligence is **auto** by default (enabled when Claude CLI is available). Override in `.claude/daemon-config.json`:
 
 ```json
 {
@@ -450,7 +450,7 @@ All intelligence settings go in `.claude/daemon-config.json` under `intelligence
 
 | Setting                | Default | Purpose                                              |
 | ---------------------- | ------- | ---------------------------------------------------- |
-| `enabled`              | `false` | Master switch for intelligence engine                |
+| `enabled`              | `auto`  | Master switch: `auto` when Claude CLI available      |
 | `cache_ttl_seconds`    | `3600`  | How long analysis results are cached                 |
 | `composer_enabled`     | `false` | Enable dynamic pipeline composition                  |
 | `optimization_enabled` | `false` | Enable self-tuning based on DORA metrics             |

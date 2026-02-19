@@ -359,14 +359,14 @@ Monitors pipeline success rates and alerts on quality declines.
 
 ## Intelligence Configuration
 
-The intelligence layer adds semantic codebase analysis, predictive risk assessment, and self-optimization to the daemon. All intelligence features are optional, disabled by default, and configured in the `intelligence` section of `.claude/daemon-config.json`.
+The intelligence layer adds semantic codebase analysis, predictive risk assessment, and self-optimization to the daemon. All intelligence features are optional and configured in the `intelligence` section of `.claude/daemon-config.json`.
 
 ### Core Intelligence Settings
 
-| Field                            | Default | Description                                                                                |
-| -------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
-| `intelligence.enabled`           | `false` | Master switch for the intelligence core (semantic triage, AI memory search, model routing) |
-| `intelligence.cache_ttl_seconds` | `3600`  | Cache duration for intelligence responses (prevents re-analyzing the same issue)           |
+| Field                            | Default | Description                                                                            |
+| -------------------------------- | ------- | -------------------------------------------------------------------------------------- |
+| `intelligence.enabled`           | `auto`  | Master switch: `auto` enables when Claude CLI is available; `true`/`false` to override |
+| `intelligence.cache_ttl_seconds` | `3600`  | Cache duration for intelligence responses (prevents re-analyzing the same issue)       |
 
 ### Intelligence Feature Flags
 

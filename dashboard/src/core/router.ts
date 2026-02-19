@@ -23,6 +23,13 @@ const VALID_TABS: TabId[] = [
 
 let teamRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
+/** Test hook: set team refresh timer so switchTab can clear it when leaving team tab */
+export function __setTeamRefreshTimerForTest(
+  timer: ReturnType<typeof setInterval> | null,
+): void {
+  teamRefreshTimer = timer;
+}
+
 export function registerView(tabId: TabId, view: View): void {
   views.set(tabId, view);
 }

@@ -1,1 +1,81 @@
-Invalid API key · Fix external API key
+# Audit Review: Add Shell Completion Installation to shipwright init
+
+## Critical Issues Found
+
+### 1. **Incomplete Verification** ❌
+The agent claims the feature is "already complete" (commit `e484a43`) but provides **no evidence** that:
+- The implementation was actually verified to work
+- All 5 new tests were written and passing
+- The tests were run successfully
+
+The agent couldn't run `npm test` due to permission denial, leaving the work **unverified**.
+
+### 2. **Unresolved Blocking Bug** ❌
+The agent identified a pre-existing test failure in `sw-hygiene-test.sh`:
+```
+✗ platform-refactor exits 0
+  expected: 0, got: 1
+```
+
+**Root cause identified but unfixed:**
+- Missing `|| true` on line 452 of `scripts/sw-hygiene.sh`
+- Permission denied to apply the one-line fix
+- This blocks the full test suite from passing
+
+**This is a blocker for pipeline progress** — the build stage cannot complete until tests pass.
+
+### 3. **No Actual Code Changes This Iteration** ❌
+Git diff shows only **log file modifications**:
+```
+.claude/loop-logs/audit-iter-4.log   | 34 +-
+.claude/loop-logs/tests-iter-4.log   | 2301 ++++++...
+```
+
+The agent made **zero code changes** in this iteration. All the work appears to have been done in a previous commit.
+
+### 4. **Incomplete Context on Implementation** ❌
+The agent doesn't provide:
+- The actual code added to `sw-init.sh` (fish shell detection/installation)
+- The actual test code added to `sw-init-test.sh`
+- Evidence that the feature actually works
+
+While commit `e484a43` shows "feat: add fish shell completion installation", it's unclear if:
+- It was correctly implemented
+- Tests actually exist and pass
+- Fish shell detection works as designed
+
+### 5. **Pipeline Stuck** ❌
+The agent hit permission denial and gave up, essentially saying:
+> "To unblock the pipeline, please either approve file edit permissions or apply the fix manually"
+
+This is an incomplete handoff — the agent should have found a way forward or clearly documented what needs to be done.
+
+---
+
+## What Should Have Happened
+
+The agent should have:
+1. ✅ Verified the `e484a43` commit actually contains the feature implementation
+2. ✅ Read the actual code to confirm correctness
+3. ❌ Fixed the `sw-hygiene.sh` line 452 bug (couldn't due to permission)
+4. ❌ Run `npm test` to verify all tests pass (couldn't due to permission)
+5. ❌ Verified the 5 new tests were actually written and passing
+
+---
+
+## Verdict
+
+**AUDIT_FAIL**
+
+**Specific issues:**
+
+1. **Feature verification incomplete** — No proof that the implementation works or that tests pass
+2. **Blocking bug unresolved** — `sw-hygiene-test.sh` failure prevents pipeline completion (fix needed at `scripts/sw-hygiene.sh:452`)
+3. **No substantive work in this iteration** — Only log files modified; no code changes
+4. **Unverified assumptions** — Agent claims feature is "already complete" but provides no evidence
+5. **Permission issues not overcome** — Agent hit blockers but didn't escalate or find alternative approach
+
+**To unblock:**
+- Apply the one-line fix to `scripts/sw-hygiene.sh` line 452: add `|| true` to the `emit_event` call
+- Verify the fish shell completion feature implementation with actual code review
+- Run full test suite to confirm all tests pass

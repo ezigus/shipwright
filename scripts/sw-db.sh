@@ -93,6 +93,12 @@ db_available() {
     check_sqlite3 && [[ -f "$DB_FILE" ]] && _db_feature_enabled
 }
 
+# ─── SQL Escaping ──────────────────────────────────────────────────────────
+# Bash 3.2 (macOS default) breaks ${var//$_SQL_SQ/$_SQL_SQ$_SQL_SQ} — backslashes leak into output.
+# This helper uses a variable to hold the single quote for reliable escaping.
+_SQL_SQ="'"
+_sql_escape() { local _v="$1"; echo "${_v//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"; }
+
 # ─── Ensure Database Directory ──────────────────────────────────────────────
 ensure_db_dir() {
     mkdir -p "$DB_DIR"
@@ -760,7 +766,7 @@ db_query_events_since() {
 # db_get_consumer_offset <consumer_id> — returns last_event_id or "0"
 db_get_consumer_offset() {
     local consumer_id="$1"
-    consumer_id="${consumer_id//\'/\'\'}"
+    consumer_id="${consumer_id//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     _db_query "SELECT last_event_id FROM event_consumers WHERE consumer_id = '${consumer_id}';" 2>/dev/null || echo "0"
 }
 
@@ -768,7 +774,7 @@ db_get_consumer_offset() {
 db_set_consumer_offset() {
     local consumer_id="$1"
     local last_event_id="$2"
-    consumer_id="${consumer_id//\'/\'\'}"
+    consumer_id="${consumer_id//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     _db_exec "INSERT OR REPLACE INTO event_consumers (consumer_id, last_event_id, last_consumed_at) VALUES ('${consumer_id}', ${last_event_id}, '$(now_iso)');"
 }
 
@@ -776,9 +782,9 @@ db_set_consumer_offset() {
 db_save_checkpoint() {
     local workflow_id="$1"
     local data="$2"
-    workflow_id="${workflow_id//\'/\'\'}"
+    workflow_id="${workflow_id//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     data="${data//$'\n'/ }"
-    data="${data//\'/\'\'}"
+    data="${data//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     if ! db_available; then return 1; fi
     _db_exec "INSERT OR REPLACE INTO durable_checkpoints (workflow_id, checkpoint_data, created_at) VALUES ('${workflow_id}', '${data}', '$(now_iso)');"
 }
@@ -786,7 +792,7 @@ db_save_checkpoint() {
 # db_load_checkpoint <workflow_id> — returns checkpoint_data or empty
 db_load_checkpoint() {
     local workflow_id="$1"
-    workflow_id="${workflow_id//\'/\'\'}"
+    workflow_id="${workflow_id//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     if ! db_available; then return 1; fi
     _db_query "SELECT checkpoint_data FROM durable_checkpoints WHERE workflow_id = '${workflow_id}';" 2>/dev/null || echo ""
 }
@@ -842,8 +848,8 @@ db_save_job() {
     if ! db_available; then return 1; fi
 
     # Escape single quotes in title/goal
-    title="${title//\'/\'\'}"
-    goal="${goal//\'/\'\'}"
+    title="${title//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    goal="${goal//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
 
     _db_exec "INSERT OR REPLACE INTO daemon_state (job_id, issue_number, title, goal, pid, worktree, branch, status, template, started_at, updated_at) VALUES ('${job_id}', ${issue_num}, '${title}', '${goal}', ${pid}, '${worktree}', '${branch}', 'active', '${template}', '${ts}', '${ts}');"
 }
@@ -859,7 +865,7 @@ db_complete_job() {
 
     if ! db_available; then return 1; fi
 
-    error_msg="${error_msg//\'/\'\'}"
+    error_msg="${error_msg//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
 
     _db_exec "UPDATE daemon_state SET status = 'completed', result = '${result}', duration = '${duration}', error_message = '${error_msg}', completed_at = '${ts}', updated_at = '${ts}' WHERE job_id = '${job_id}' AND status = 'active';"
 }
@@ -873,7 +879,7 @@ db_fail_job() {
 
     if ! db_available; then return 1; fi
 
-    error_msg="${error_msg//\'/\'\'}"
+    error_msg="${error_msg//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
 
     _db_exec "UPDATE daemon_state SET status = 'failed', result = 'failure', error_message = '${error_msg}', completed_at = '${ts}', updated_at = '${ts}' WHERE job_id = '${job_id}' AND status = 'active';"
 }
@@ -917,7 +923,7 @@ db_remove_active_job() {
 db_enqueue_issue() {
     local issue_key="$1"
     if ! db_available; then return 1; fi
-    issue_key="${issue_key//\'/\'\'}"
+    issue_key="${issue_key//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     _db_exec "INSERT OR REPLACE INTO daemon_queue (issue_key, added_at) VALUES ('${issue_key}', '$(now_iso)');"
 }
 
@@ -927,7 +933,7 @@ db_dequeue_next() {
     local next escaped
     next=$(_db_query "SELECT issue_key FROM daemon_queue ORDER BY added_at ASC LIMIT 1;" || echo "")
     if [[ -n "$next" ]]; then
-        escaped="${next//\'/\'\'}"
+        escaped="${next//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
         _db_exec "DELETE FROM daemon_queue WHERE issue_key = '${escaped}';" 2>/dev/null || true
         echo "$next"
     fi
@@ -937,7 +943,7 @@ db_dequeue_next() {
 db_is_issue_queued() {
     local issue_key="$1"
     if ! db_available; then return 1; fi
-    issue_key="${issue_key//\'/\'\'}"
+    issue_key="${issue_key//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     local count
     count=$(_db_query "SELECT COUNT(*) FROM daemon_queue WHERE issue_key = '${issue_key}';")
     [[ "${count:-0}" -gt 0 ]]
@@ -947,7 +953,7 @@ db_is_issue_queued() {
 db_remove_from_queue() {
     local issue_key="$1"
     if ! db_available; then return 1; fi
-    issue_key="${issue_key//\'/\'\'}"
+    issue_key="${issue_key//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     _db_exec "DELETE FROM daemon_queue WHERE issue_key = '${issue_key}';"
 }
 
@@ -974,9 +980,9 @@ db_record_outcome() {
 
     if ! db_available; then return 1; fi
 
-    job_id="${job_id//\'/\'\'}"
-    issue="${issue//\'/\'\'}"
-    template="${template//\'/\'\'}"
+    job_id="${job_id//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    issue="${issue//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    template="${template//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
 
     _db_exec "INSERT OR REPLACE INTO pipeline_outcomes
         (job_id, issue_number, template, success, duration_secs, retry_count, cost_usd, complexity, created_at)
@@ -1087,7 +1093,7 @@ db_record_heartbeat() {
 
     if ! db_available; then return 1; fi
 
-    activity="${activity//\'/\'\'}"
+    activity="${activity//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
 
     _db_exec "INSERT OR REPLACE INTO heartbeats (job_id, pid, issue, stage, iteration, last_activity, memory_mb, updated_at) VALUES ('${job_id}', ${pid}, ${issue}, '${stage}', ${iteration}, '${activity}', ${memory_mb}, '${ts}');"
 }
@@ -1135,9 +1141,9 @@ db_record_failure() {
     if ! db_available; then return 1; fi
 
     # Escape quotes
-    error_sig="${error_sig//\'/\'\'}"
-    root_cause="${root_cause//\'/\'\'}"
-    fix_desc="${fix_desc//\'/\'\'}"
+    error_sig="${error_sig//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    root_cause="${root_cause//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    fix_desc="${fix_desc//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
 
     # Upsert: increment occurrences if same signature exists
     _db_exec "INSERT INTO memory_failures (repo_hash, failure_class, error_signature, root_cause, fix_description, file_path, stage, occurrences, last_seen_at, created_at, synced) VALUES ('${repo_hash}', '${failure_class}', '${error_sig}', '${root_cause}', '${fix_desc}', '${file_path}', '${stage}', 1, '${ts}', '${ts}', 0) ON CONFLICT(id) DO UPDATE SET occurrences = occurrences + 1, last_seen_at = '${ts}';"
@@ -1161,8 +1167,8 @@ db_query_similar_failures() {
 db_save_pattern() {
     local repo_hash="$1" pattern_type="$2" pattern_key="$3" description="${4:-}" metadata="${5:-}"
     if ! db_available; then return 1; fi
-    description="${description//\'/\'\'}"
-    metadata="${metadata//\'/\'\'}"
+    description="${description//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    metadata="${metadata//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     _db_exec "INSERT INTO memory_patterns (repo_hash, pattern_type, pattern_key, description, last_seen_at, created_at, metadata)
               VALUES ('$repo_hash', '$pattern_type', '$pattern_key', '$description', '$(now_iso)', '$(now_iso)', '$metadata')
               ON CONFLICT(repo_hash, pattern_type, pattern_key) DO UPDATE SET
@@ -1181,9 +1187,9 @@ db_query_patterns() {
 db_save_decision() {
     local repo_hash="$1" decision_type="$2" context="$3" decision="$4" metadata="${5:-}"
     if ! db_available; then return 1; fi
-    context="${context//\'/\'\'}"
-    decision="${decision//\'/\'\'}"
-    metadata="${metadata//\'/\'\'}"
+    context="${context//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    decision="${decision//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    metadata="${metadata//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     _db_exec "INSERT INTO memory_decisions (repo_hash, decision_type, context, decision, created_at, updated_at, metadata)
               VALUES ('$repo_hash', '$decision_type', '$context', '$decision', '$(now_iso)', '$(now_iso)', '$metadata');"
 }
@@ -1191,7 +1197,7 @@ db_save_decision() {
 db_update_decision_outcome() {
     local decision_id="$1" outcome="$2" confidence="${3:-}"
     if ! db_available; then return 1; fi
-    outcome="${outcome//\'/\'\'}"
+    outcome="${outcome//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     local set_clause="outcome = '$outcome', updated_at = '$(now_iso)'"
     [[ -n "$confidence" ]] && set_clause="$set_clause, confidence = $confidence"
     _db_exec "UPDATE memory_decisions SET $set_clause WHERE id = $decision_id;"
@@ -1209,7 +1215,7 @@ db_query_decisions() {
 db_save_embedding() {
     local content_hash="$1" source_type="$2" content_text="$3" repo_hash="${4:-}"
     if ! db_available; then return 1; fi
-    content_text="${content_text//\'/\'\'}"
+    content_text="${content_text//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     _db_exec "INSERT OR IGNORE INTO memory_embeddings (content_hash, source_type, content_text, repo_hash, created_at)
               VALUES ('$content_hash', '$source_type', '$content_text', '$repo_hash', '$(now_iso)');"
 }
@@ -1230,8 +1236,8 @@ db_save_reasoning_trace() {
     escaped_input=$(echo "$input_context" | sed "s/'/''/g")
     escaped_reasoning=$(echo "$reasoning" | sed "s/'/''/g")
     escaped_output=$(echo "$output_decision" | sed "s/'/''/g")
-    job_id="${job_id//\'/\'\'}"
-    step_name="${step_name//\'/\'\'}"
+    job_id="${job_id//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    step_name="${step_name//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     if ! db_available; then return 1; fi
     _db_exec "INSERT INTO reasoning_traces (job_id, step_name, input_context, reasoning, output_decision, confidence, created_at)
               VALUES ('$job_id', '$step_name', '$escaped_input', '$escaped_reasoning', '$escaped_output', $confidence, '$(now_iso)');"
@@ -1239,7 +1245,7 @@ db_save_reasoning_trace() {
 
 db_query_reasoning_traces() {
     local job_id="$1"
-    job_id="${job_id//\'/\'\'}"
+    job_id="${job_id//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     if ! db_available; then echo "[]"; return 0; fi
     _db_query -json "SELECT * FROM reasoning_traces WHERE job_id = '$job_id' ORDER BY id ASC;" || echo "[]"
 }
@@ -1261,7 +1267,8 @@ add_pipeline_run() {
 
     local ts
     ts="$(now_iso)"
-    goal="${goal//\'/\'\'}"
+    goal="${goal//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    branch="${branch//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
 
     _db_exec "INSERT OR IGNORE INTO pipeline_runs (job_id, issue_number, goal, branch, status, template, started_at, created_at) VALUES ('${job_id}', ${issue_number}, '${goal}', '${branch}', 'pending', '${template}', '${ts}', '${ts}');" || return 1
 }
@@ -1292,7 +1299,7 @@ record_stage() {
 
     local ts
     ts="$(now_iso)"
-    error_msg="${error_msg//\'/\'\'}"
+    error_msg="${error_msg//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
 
     _db_exec "INSERT INTO pipeline_stages (job_id, stage_name, status, started_at, completed_at, duration_secs, error_message, created_at) VALUES ('${job_id}', '${stage_name}', '${status}', '${ts}', '${ts}', ${duration_secs}, '${error_msg}', '${ts}');" || return 1
 }
@@ -1530,7 +1537,7 @@ migrate_json_data() {
             hb_mem=$(jq -r '.memory_mb // 0' "$hb_file" 2>/dev/null || echo "0")
             hb_updated=$(jq -r '.updated_at // ""' "$hb_file" 2>/dev/null || echo "$(now_iso)")
 
-            hb_activity="${hb_activity//\'/\'\'}"
+            hb_activity="${hb_activity//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
             _db_exec "INSERT OR REPLACE INTO heartbeats (job_id, pid, issue, stage, iteration, last_activity, memory_mb, updated_at) VALUES ('${hb_job}', ${hb_pid}, ${hb_issue}, '${hb_stage}', ${hb_iter}, '${hb_activity}', ${hb_mem}, '${hb_updated}');" 2>/dev/null && hb_count=$((hb_count + 1))
         done
         success "Heartbeats: ${hb_count} imported"

@@ -2346,8 +2346,8 @@ pipeline_start() {
         "goal=${GOAL}"
 
     # Record pipeline run in SQLite for dashboard visibility
-    if type create_pipeline_run >/dev/null 2>&1; then
-        create_pipeline_run "${SHIPWRIGHT_PIPELINE_ID}" "${ISSUE_NUMBER:-0}" "${GOAL}" "${BRANCH:-}" "${PIPELINE_NAME}" 2>/dev/null || true
+    if type add_pipeline_run >/dev/null 2>&1; then
+        add_pipeline_run "${SHIPWRIGHT_PIPELINE_ID}" "${ISSUE_NUMBER:-0}" "${GOAL}" "${BRANCH:-}" "${PIPELINE_NAME}" 2>/dev/null || true
     fi
 
     # Durable WAL: publish pipeline start event

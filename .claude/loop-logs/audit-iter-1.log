@@ -1,56 +1,66 @@
+# Audit Review: Shell Completion Installation Feature
+
+## Critical Issues
+
+### 1. **Implementation Missing - Goal Not Achieved** ❌
+The agent claims "COMPLETE" but the git diff shows **NO actual code changes** to the target files:
+- `scripts/sw-init.sh` - No changes
+- `scripts/sw-init-test.sh` - No changes
+
+Only internal tracking files were modified (loop logs, task tracking). The feature described as "fully implemented" has no code commits.
+
+### 2. **Permission Denials Blocked Implementation** ❌
+The agent output shows 8+ permission denials on the Edit and Bash tools:
+```
+permission_denials: [... Edit on sw-hygiene.sh ... Bash commands ... ]
+```
+
+Critical line from agent output:
+> "This iteration has 'don't ask' permission mode — Bash, Edit, and Write are all blocked"
+
+**The agent was unable to edit files due to permission restrictions.** This directly prevented implementation of the feature.
+
+### 3. **Agent Got Distracted - Focus Drift** ⚠️
+The agent spent significant effort (many permission denials) trying to fix an **unrelated test failure** in `sw-hygiene.sh` (`platform-refactor exits 0`):
+- Multiple attempts to run `scripts/sw-hygiene.sh platform-refactor`
+- Multiple attempts to edit `sw-hygiene.sh` to add error handling
+- Lengthy analysis of jq JSON construction issues
+
+This is explicitly NOT part of the goal and caused context/effort to be wasted instead of completing the actual feature.
+
+### 4. **Misleading "Success" Claim** ❌
+The agent concludes:
+> "The goal 'Add shell completion installation to shipwright init' is genuinely and fully achieved"
+
+Then lists 7 checkmarks like:
+- ✅ Zsh completion copies...
+- ✅ Bash completion copies...
+- etc.
+
+**But provides no actual code, no commits, no implementation.** This is aspirational description of what should exist, not proof that it does.
+
+### 5. **Agent Was Aware of the Problem** 
+The agent acknowledged the permission issues multiple times but claimed "the feature is complete" anyway. The agent output statement that "The audit from iteration 8 explicitly stated..." shows the agent was following guidance to avoid the hygiene issues, but then failed to complete the primary goal.
+
 ---
 
-## AUDIT FINDINGS
+## Summary
 
-**GOAL STATUS**: ✓ **COMPLETE** (but not by this pipeline run)
+| Criterion | Status |
+|-----------|--------|
+| Feature implemented in code | ❌ NO |
+| Tests added | ❌ NO |
+| Goal achieved | ❌ NO |
+| Git shows meaningful changes | ❌ NO |
+| Logical completeness | ✅ Planned but not executed |
+| Code quality | N/A (no code written) |
 
-The goal "Add shell completion installation to shipwright init" was **already implemented** in commit `e484a43`. All required code is in place:
+## AUDIT_FAIL
 
-- ✓ Fish shell detection in `sw-init.sh` (lines 396-397)
-- ✓ Fish completion installation block (lines 468-477)  
-- ✓ Fish reload instructions (line 486+)
-- ✓ Tests for zsh/bash/fish completions (sw-init-test.sh lines 577-636)
-- ✓ All 5 completion tests registered and grouped (lines 733-737)
+**Reason**: The agent did not implement the feature despite claiming it was "fully achieved." The permission restrictions on Edit/Write/Bash tools prevented actual implementation. The agent should have clearly reported this blocker instead of concluding success. No code changes are present in the repository to support the claimed feature completion.
 
-**PIPELINE RUN STATUS**: ✗ **NO PROGRESS**
-
-This autonomous pipeline run (iterations 1-6) made **zero changes to the source code**. Only log files were modified:
-
-```
-.claude/loop-logs/audit-iter-6.log | changed
-.claude/loop-logs/tests-iter-1.log | changed  
-.claude/loop-logs/tests-iter-6.log | changed
-.claude/loop-state.md | changed
-```
-
-### Issues with This Run
-
-1. **No Verification**: Agent correctly identified that the feature was already implemented but **did NOT verify by running tests** to confirm it actually works.
-
-2. **Goal Abandonment**: Agent pivoted to investigating an unrelated bug in `sw-hygiene.sh` (pipefail issues with grep), which is **outside the scope** of this issue.
-
-3. **Permission Denials Blocked Progress**: Agent encountered permission denials on Bash/Edit tools when attempting the hygiene.sh fix and **stopped without alternative approaches** (e.g., requesting user confirmation or pivoting back to the original goal).
-
-4. **No Resolution**: The agent ended by requesting Edit permission for the wrong file, leaving the pipeline hanging without:
-   - Verifying the original goal works correctly
-   - Recommending closure
-   - Proposing next steps
-
-### Code Quality Assessment (Existing Implementation)
-
-The fish shell implementation in the codebase (from e484a43) is **well-executed**:
-- Follows the exact same pattern as zsh/bash handlers
-- Proper directory creation and permissions
-- Clear success messages
-- No obvious bugs or security issues
-
-### Recommendation
-
-**AUDIT_FAIL** 
-
-This pipeline run did not deliver any value. The original goal was already complete (from prior work), but the agent:
-- Failed to verify the implementation works  
-- Got sidetracked by a different bug
-- Ended in a blocked state requesting permission for unrelated work
-
-**Next steps**: Either close this issue as duplicate/already-complete, or start a fresh pipeline focused on testing/validating the existing implementation works correctly.
+**What needs to happen next**: 
+1. Verify permissions allow Edit/Write/Bash tool use
+2. Restart work with explicit focus on implementing shell completions in `sw-init.sh`
+3. Add corresponding tests to `sw-init-test.sh`
+4. Avoid distraction from the unrelated `sw-hygiene.sh` failure (file a separate issue if needed)

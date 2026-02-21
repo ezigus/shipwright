@@ -6,17 +6,24 @@ _PIPELINE_DETECTION_LOADED=1
 detect_test_cmd() {
     local root="$PROJECT_ROOT"
 
-    # iOS/Xcode: custom test harness script takes highest priority
-    if [[ -f "$root/scripts/run-xcode-tests.sh" ]]; then
-        echo "./scripts/run-xcode-tests.sh"; return
-    fi
-
     # iOS/Xcode: xcworkspace or xcodeproj (before Node.js — iOS projects often have package.json for tooling)
     local xc_workspace xc_project
     xc_workspace=$(find "$root" -maxdepth 1 -name "*.xcworkspace" 2>/dev/null | head -1 || true)
     xc_project=$(find "$root" -maxdepth 1 -name "*.xcodeproj" 2>/dev/null | head -1 || true)
     if [[ -n "$xc_workspace" || -n "$xc_project" ]]; then
-        local sim_dest="platform=iOS Simulator,name=iPhone 16,OS=latest"
+        # Resolve simulator destination dynamically via project script if available
+        local sim_dest
+        if [[ -x "$root/scripts/resolve-simulator-destination.sh" ]]; then
+            local resolved
+            resolved=$("$root/scripts/resolve-simulator-destination.sh" "iPhone 17 Pro" 2>/dev/null || true)
+            if [[ -n "$resolved" ]]; then
+                sim_dest="$resolved"
+            else
+                sim_dest="platform=iOS Simulator,name=iPhone 17 Pro Max,OS=26.2"
+            fi
+        else
+            sim_dest="platform=iOS Simulator,name=iPhone 17 Pro Max,OS=26.2"
+        fi
         if [[ -n "$xc_workspace" ]]; then
             local ws_name
             ws_name=$(basename "$xc_workspace" .xcworkspace)
@@ -110,8 +117,6 @@ detect_project_lang() {
     elif find "$root" -maxdepth 1 -name "*.xcworkspace" 2>/dev/null | grep -q .; then
         detected="swift"
     elif [[ -f "$root/Package.swift" ]]; then
-        detected="swift"
-    elif [[ -f "$root/scripts/run-xcode-tests.sh" ]]; then
         detected="swift"
     elif [[ -f "$root/package.json" ]]; then
         if grep -q "typescript" "$root/package.json" 2>/dev/null; then

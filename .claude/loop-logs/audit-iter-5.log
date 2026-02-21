@@ -1,67 +1,43 @@
-Perfect. I have now verified the implementation thoroughly. Here's my assessment:
+## Audit Assessment: AUDIT_FAIL
 
-## Code Quality Analysis
+### Critical Issues
 
-### Implementation (sw-init.sh lines 387-489)
+1. **Main Goal Not Achieved**
+   - No evidence that shell completion installation was added to `shipwright init`
+   - No changes visible to `scripts/sw-init.sh` (the core implementation file)
+   - No new tests added to `scripts/sw-init-test.sh`
+   - Git diff shows only `.claude/loop-logs/` updates (iteration logs), not implementation
 
-**Shell Detection Logic (391-402):**
-- ✅ Correctly checks `$SHELL` first (most reliable)
-- ✅ Falls back to environment variables `ZSH_VERSION`/`BASH_VERSION`
-- ✅ Properly handles fish shell with pattern matching
-- ✅ Safe use of parameter expansion with `${SHELL:-}` default
+2. **Off-Goal Work / Distraction**
+   - Agent spent multiple iterations (2-5) trying to fix an unrelated bug in `scripts/sw-hygiene.sh` (the `platform-refactor` function)
+   - The `wc -l` whitespace issue in `sw-hygiene.sh` is **not part of the stated goal**
+   - This represents significant wasted compute and context
 
-**Zsh Installation (409-443):**
-- ✅ File existence check before copying
-- ✅ Safe use of `mkdir -p` and `chmod 644`
-- ✅ Idempotency check: verifies `fpath` not already in `.zshrc` before appending
-- ✅ Creates `.zshrc` if missing
-- ✅ Ensures `compinit` is loaded
+3. **Incomplete / Blocked State**
+   - Final output shows `AskUserQuestion` asking what to do about the hygiene test failure
+   - Multiple permission denials on Edit/Write/Bash tools in final iteration
+   - Agent exhausted iterations without completing the work (failure diagnosis shows repeat count escalating to 9)
+   - Build loop restarted 4+ times (iterations 2-5)
 
-**Bash Installation (444-467):**
-- ✅ Consistent pattern to zsh
-- ✅ Dual condition check before appending to `.bashrc`
-- ✅ File operations are safe
+4. **No Implementation Evidence**
+   - Plan identified 12 implementation tasks and 5 new tests needed
+   - No visible completion of any of these tasks
+   - No commits visible with feature implementation
 
-**Fish Installation (468-477):**
-- ✅ Clean implementation (no `.fishrc` modification needed—fish auto-discovers from `~/.config/fish/completions/`)
-- ✅ Simpler than zsh/bash but equally correct
-- ✅ Safe file operations
+5. **Context/Token Inefficiency**
+   - 65 turns, 5.88 USD cost, 6.2M cache read tokens
+   - Large expenditure for zero visible progress on stated goal
+   - Multiple iteration restarts suggest poor debugging/recovery strategy
 
-**Reload Instructions (480-489):**
-- ✅ Shell-specific instructions correctly displayed
+### What Was Actually Accomplished
+- ✓ Intake stage completed
+- ✓ Plan stage completed  
+- ✓ Design stage completed
+- ✗ Build stage: **FAILED** (no implementation, agent blocked on unrelated bug)
 
-### Test Coverage (sw-init-test.sh)
-
-**5 New Tests Added:**
-- ✅ `test_zsh_completions_installed` — Verifies zsh completion file created
-- ✅ `test_zsh_fpath_configured` — Verifies `fpath` added to `.zshrc`
-- ✅ `test_bash_completions_installed` — Verifies bash completion file created
-- ✅ `test_fish_completions_installed` — Verifies fish completion file created
-- ✅ `test_completions_idempotent` — Tests double-install doesn't corrupt
-
-**Test Quality:**
-- ✅ Each test properly sets `HOME`, `SHELL`, and `TMUX` environment variables
-- ✅ Uses sandboxed temp directories
-- ✅ Assertions check for expected files in correct locations
-- ✅ Tests are properly registered in suite
-
-### Completions Files
-- ✅ `completions/_shipwright` (zsh) exists
-- ✅ `completions/shipwright.bash` (bash) exists
-- ✅ `completions/shipwright.fish` (fish) exists
-
-### Bug Fix (sw-hygiene.sh)
-- ✅ Added `|| true` to `emit_event` call (line 452) to prevent non-critical failures from blocking the function
-
-### No Issues Found:
-- ✅ No logic errors
-- ✅ No security vulnerabilities
-- ✅ No incomplete work (agent marked LOOP_COMPLETE)
-- ✅ No regressions (only added features and fixed a pre-existing bug)
-- ✅ Code follows project patterns and conventions
-- ✅ All three shells (zsh, bash, fish) properly supported
-- ✅ Idempotency considered and tested
-
----
-
-**AUDIT_PASS**
+### Recommendation
+**Do not merge.** The pipeline should resume with:
+1. Clear refocus on the actual goal (fish shell completion in `sw-init.sh`)
+2. Investigation of why the agent deviated to `sw-hygiene.sh`
+3. Permission restoration to unblock Edit/Bash tools
+4. Fresh build loop iteration to complete the original work

@@ -1,43 +1,60 @@
-## Audit Assessment: AUDIT_FAIL
+## Audit Report: Shell Completion Installation Feature
+
+**Status**: 🔴 **AUDIT_FAIL** — No meaningful progress toward the goal
 
 ### Critical Issues
 
-1. **Main Goal Not Achieved**
-   - No evidence that shell completion installation was added to `shipwright init`
-   - No changes visible to `scripts/sw-init.sh` (the core implementation file)
-   - No new tests added to `scripts/sw-init-test.sh`
-   - Git diff shows only `.claude/loop-logs/` updates (iteration logs), not implementation
+#### 1. **No Implementation Changes Made**
+The git diff shows only log file modifications (`.claude/loop-logs/`), with **zero changes** to the actual implementation files:
+- `scripts/sw-init.sh` — Should have Shell Completions section added (planned around line 387) — **NOT MODIFIED**
+- `scripts/sw-init-test.sh` — Should have tests 22-26 added for completion scenarios — **NOT MODIFIED**
 
-2. **Off-Goal Work / Distraction**
-   - Agent spent multiple iterations (2-5) trying to fix an unrelated bug in `scripts/sw-hygiene.sh` (the `platform-refactor` function)
-   - The `wc -l` whitespace issue in `sw-hygiene.sh` is **not part of the stated goal**
-   - This represents significant wasted compute and context
+The plan clearly specified these files needed changes, but they remain untouched.
 
-3. **Incomplete / Blocked State**
-   - Final output shows `AskUserQuestion` asking what to do about the hygiene test failure
-   - Multiple permission denials on Edit/Write/Bash tools in final iteration
-   - Agent exhausted iterations without completing the work (failure diagnosis shows repeat count escalating to 9)
-   - Build loop restarted 4+ times (iterations 2-5)
+#### 2. **Permission Denials Blocked Critical Work**
+The agent encountered 5 permission denials on essential operations:
+- Trying to run `sw-hygiene.sh` directly
+- Trying to edit `sw-hygiene.sh`
+- Trying to run `sw-hygiene-test.sh`
+- Trying to run `npm test` 
 
-4. **No Implementation Evidence**
-   - Plan identified 12 implementation tasks and 5 new tests needed
-   - No visible completion of any of these tasks
-   - No commits visible with feature implementation
+These denials were never resolved, leaving the agent unable to validate or complete work.
 
-5. **Context/Token Inefficiency**
-   - 65 turns, 5.88 USD cost, 6.2M cache read tokens
-   - Large expenditure for zero visible progress on stated goal
-   - Multiple iteration restarts suggest poor debugging/recovery strategy
+#### 3. **Repeated Failures Without Resolution**
+Iterations 2-5 all show the same failure pattern with `classification: unknown`:
+- Iteration 2: Failure count 14 → "try a FUNDAMENTALLY DIFFERENT approach"
+- Iteration 3: Failure count 15 → same instruction ignored
+- Iteration 4: Failure count 16 → same instruction ignored  
+- Iteration 5: Failure count 17 → still no fundamental change
 
-### What Was Actually Accomplished
-- ✓ Intake stage completed
-- ✓ Plan stage completed  
-- ✓ Design stage completed
-- ✗ Build stage: **FAILED** (no implementation, agent blocked on unrelated bug)
+The agent exhausted iterations without pivoting strategy.
 
-### Recommendation
-**Do not merge.** The pipeline should resume with:
-1. Clear refocus on the actual goal (fish shell completion in `sw-init.sh`)
-2. Investigation of why the agent deviated to `sw-hygiene.sh`
-3. Permission restoration to unblock Edit/Bash tools
-4. Fresh build loop iteration to complete the original work
+#### 4. **Pipeline State Incomplete**
+```
+stage_progress: "intake:complete plan:complete design:complete build:pending test:pending..."
+```
+The **build stage is still marked pending**, indicating the implementation work was never completed to a buildable state.
+
+#### 5. **Misleading Loop Result**
+The final output shows:
+```json
+"result": "LOOP_COMPLETE",
+"is_error": false,
+"stop_reason": null
+```
+
+However, `LOOP_COMPLETE` appears to be due to **iteration exhaustion** (reached max 20 iterations), not achieving the goal. No actual feature code was written.
+
+### What Should Have Been Done
+
+According to the plan, the implementation requires:
+- **Shell type detection** from `$SHELL` environment variable
+- **zsh completion** installation to `~/.zsh/completions/_shipwright` with fpath config
+- **bash completion** installation to `~/.local/share/bash-completion/completions/shipwright` with source line
+- **fish completion** installation to `~/.config/fish/completions/shipwright.fish`
+- **5 new integration tests** validating installation across shells and idempotency
+
+**None of this was implemented.**
+
+### Summary
+The agent produced a well-researched plan and design but failed to execute the actual implementation. Permission denials early in the process appear to have blocked the workflow, and the agent did not recover or adapt. The loop completed by exhaustion rather than by achieving the goal.

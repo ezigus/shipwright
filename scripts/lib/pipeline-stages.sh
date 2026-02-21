@@ -1160,6 +1160,38 @@ ${commit_msgs}" --model haiku < /dev/null 2>/dev/null || true)
     log_stage "build" "Build loop completed ($commit_count commits)"
 }
 
+# Kill stale xcodebuild processes and reset simulators before a test run
+_ios_pre_test_cleanup() {
+    pkill -f "xcodebuild.*test" 2>/dev/null || true
+    sleep 2
+    xcrun simctl shutdown all 2>/dev/null || true
+    sleep 1
+}
+
+# Acquire a system-wide lock so only one xcodebuild test runs at a time.
+_ios_acquire_test_lock() {
+    local lock_file="/tmp/shipwright-xcodebuild.lock"
+    local max_wait=120 waited=0
+    while [[ -f "$lock_file" ]]; do
+        local lock_pid
+        lock_pid=$(cat "$lock_file" 2>/dev/null || echo "")
+        if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
+            rm -f "$lock_file"; break  # stale lock from dead process
+        fi
+        if [[ "$waited" -ge "$max_wait" ]]; then
+            warn "xcodebuild lock wait timeout (${max_wait}s) — forcing"
+            rm -f "$lock_file"; break
+        fi
+        sleep 5; waited=$((waited + 5))
+    done
+    echo $$ > "$lock_file"
+}
+
+_ios_release_test_lock() {
+    local lock_file="/tmp/shipwright-xcodebuild.lock"
+    [[ "$(cat "$lock_file" 2>/dev/null)" == "$$" ]] && rm -f "$lock_file" || true
+}
+
 stage_test() {
     CURRENT_STAGE_ID="test"
     local test_cmd="${TEST_CMD}"
@@ -1184,7 +1216,14 @@ stage_test() {
 
     info "Running tests: ${DIM}$test_cmd${RESET}"
     local test_exit=0
+    if echo "$test_cmd" | grep -qE "xcodebuild|run-xcode-tests"; then
+        _ios_pre_test_cleanup
+        _ios_acquire_test_lock
+    fi
     bash -c "$test_cmd" > "$test_log" 2>&1 || test_exit=$?
+    if echo "$test_cmd" | grep -qE "xcodebuild|run-xcode-tests"; then
+        _ios_release_test_lock
+    fi
 
     if [[ "$test_exit" -eq 0 ]]; then
         success "Tests passed"

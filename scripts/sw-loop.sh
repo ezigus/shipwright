@@ -1201,6 +1201,38 @@ INSTRUCTION: This error has occurred $repeat_count times. The previous approach 
     echo "$diagnosis_context"
 }
 
+# ─── iOS Test Helpers (inline — sw-loop.sh is standalone) ────────────────────
+
+_ios_pre_test_cleanup() {
+    pkill -f "xcodebuild.*test" 2>/dev/null || true
+    sleep 2
+    xcrun simctl shutdown all 2>/dev/null || true
+    sleep 1
+}
+
+_ios_acquire_test_lock() {
+    local lock_file="/tmp/shipwright-xcodebuild.lock"
+    local max_wait=120 waited=0
+    while [[ -f "$lock_file" ]]; do
+        local lock_pid
+        lock_pid=$(cat "$lock_file" 2>/dev/null || echo "")
+        if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
+            rm -f "$lock_file"; break
+        fi
+        if [[ "$waited" -ge "$max_wait" ]]; then
+            warn "xcodebuild lock wait timeout (${max_wait}s) — forcing"
+            rm -f "$lock_file"; break
+        fi
+        sleep 5; waited=$((waited + 5))
+    done
+    echo $$ > "$lock_file"
+}
+
+_ios_release_test_lock() {
+    local lock_file="/tmp/shipwright-xcodebuild.lock"
+    [[ "$(cat "$lock_file" 2>/dev/null)" == "$$" ]] && rm -f "$lock_file" || true
+}
+
 # ─── Test Gate ────────────────────────────────────────────────────────────────
 
 run_test_gate() {
@@ -1235,12 +1267,19 @@ run_test_gate() {
     elif command -v gtimeout >/dev/null 2>&1; then
         test_wrapper="gtimeout ${test_timeout} bash -c $(printf '%q' "$active_test_cmd")"
     fi
+    if echo "$active_test_cmd" | grep -qE "xcodebuild|run-xcode-tests"; then
+        _ios_pre_test_cleanup
+        _ios_acquire_test_lock
+    fi
     if bash -c "$test_wrapper" > "$test_log" 2>&1; then
         TEST_PASSED=true
         TEST_OUTPUT="All tests passed (${test_mode} mode)."
     else
         TEST_PASSED=false
         TEST_OUTPUT="$(tail -50 "$test_log")"
+    fi
+    if echo "$active_test_cmd" | grep -qE "xcodebuild|run-xcode-tests"; then
+        _ios_release_test_lock
     fi
 }
 

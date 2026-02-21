@@ -6,6 +6,34 @@ _PIPELINE_DETECTION_LOADED=1
 detect_test_cmd() {
     local root="$PROJECT_ROOT"
 
+    # iOS/Xcode: custom test harness script takes highest priority
+    if [[ -f "$root/scripts/run-xcode-tests.sh" ]]; then
+        echo "./scripts/run-xcode-tests.sh"; return
+    fi
+
+    # iOS/Xcode: xcworkspace or xcodeproj (before Node.js — iOS projects often have package.json for tooling)
+    local xc_workspace xc_project
+    xc_workspace=$(find "$root" -maxdepth 1 -name "*.xcworkspace" 2>/dev/null | head -1 || true)
+    xc_project=$(find "$root" -maxdepth 1 -name "*.xcodeproj" 2>/dev/null | head -1 || true)
+    if [[ -n "$xc_workspace" || -n "$xc_project" ]]; then
+        local sim_dest="platform=iOS Simulator,name=iPhone 16,OS=latest"
+        if [[ -n "$xc_workspace" ]]; then
+            local ws_name
+            ws_name=$(basename "$xc_workspace" .xcworkspace)
+            echo "xcodebuild -workspace ${xc_workspace} -scheme ${ws_name} -sdk iphonesimulator -destination '${sim_dest}' -parallel-testing-enabled NO -enableCodeCoverage YES test"
+        else
+            local proj_name
+            proj_name=$(basename "$xc_project" .xcodeproj)
+            echo "xcodebuild -project ${xc_project} -scheme ${proj_name} -sdk iphonesimulator -destination '${sim_dest}' -parallel-testing-enabled NO -enableCodeCoverage YES test"
+        fi
+        return
+    fi
+
+    # Swift Package Manager (no Xcode project)
+    if [[ -f "$root/Package.swift" ]]; then
+        echo "swift test"; return
+    fi
+
     # Node.js: check package.json scripts
     if [[ -f "$root/package.json" ]]; then
         local has_test
@@ -76,7 +104,16 @@ detect_project_lang() {
     local detected=""
 
     # Fast heuristic detection (grep-based)
-    if [[ -f "$root/package.json" ]]; then
+    # iOS/Swift: check before Node.js — iOS projects often have package.json for tooling
+    if find "$root" -maxdepth 1 -name "*.xcodeproj" 2>/dev/null | grep -q .; then
+        detected="swift"
+    elif find "$root" -maxdepth 1 -name "*.xcworkspace" 2>/dev/null | grep -q .; then
+        detected="swift"
+    elif [[ -f "$root/Package.swift" ]]; then
+        detected="swift"
+    elif [[ -f "$root/scripts/run-xcode-tests.sh" ]]; then
+        detected="swift"
+    elif [[ -f "$root/package.json" ]]; then
         if grep -q "typescript" "$root/package.json" 2>/dev/null; then
             detected="typescript"
         elif grep -q "\"next\"" "$root/package.json" 2>/dev/null; then

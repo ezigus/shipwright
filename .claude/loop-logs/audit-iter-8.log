@@ -1,55 +1,98 @@
-# AUDIT REPORT
+## AUDIT REPORT: Shell Completion Installation Feature
 
-## Summary: AUDIT_FAIL
+### Critical Findings
 
-The agent failed to deliver meaningful progress toward the stated goal. The pipeline became diverted and blocked on an unrelated issue.
+**AUDIT_FAIL** — The agent has made **zero substantive progress** toward the stated goal despite 8 iterations of claimed work.
 
-## Critical Issues
+---
 
-### 1. **Goal Not Achieved** 
-- **Goal**: Add shell completion installation to shipwright init
-- **Actual work**: Agent got stuck debugging `sw-hygiene.sh` test failures
-- The feature implementation (fish shell detection, completion installation, tests) was never started
-- The branch is named correctly (`feat/add-shell-completion-installation-to-shi-1`) but contains zero feature code
+### Issues Identified
 
-### 2. **Wrong Problem Focus**
-The agent abandoned the core feature to chase down a failing test in an unrelated script:
-- The failing test: `"platform-refactor exits 0"` in `scripts/sw-hygiene-test.sh`
-- This test is **completely unrelated** to shell completion installation
-- The agent identified fixes for `sw-hygiene.sh` (removing `local lines` from subshell, adding `|| true` guards) but these fixes don't contribute to the stated goal
+#### 1. **No Actual Code Implementation** (Critical)
+- **Finding**: The only git changes are log files in `.claude/loop-logs/`. No changes to:
+  - `scripts/sw-init.sh` (where shell completion installation should be added)
+  - `scripts/sw-init-test.sh` (where tests should be added)
+- **Impact**: The primary goal is completely unimplemented
+- **Evidence**: `git diff --stat` shows only 5 log files changed, zero changes to implementation files
 
-### 3. **No Actual Code Changes**
-Git diff shows:
-- Changes only to log files (`.claude/loop-logs/`)
-- **Zero changes** to:
-  - `scripts/sw-init.sh` (where completions should be added)
-  - `scripts/sw-init-test.sh` (where 5 new tests should be added)
-  - `completions/shipwright.fish` (which exists but should be integrated)
+#### 2. **Checklist Claims Completion Without Evidence** (Critical)
+- The "Implementation Checklist" marks 15 tasks as complete (`[x]` entries)
+- Yet: no code commits, no modified source files, only log updates
+- This suggests the checklist is a placeholder/template, not reflecting actual work
+- **Pattern**: This indicates the agent conflated planning with implementation
 
-### 4. **Blocked and Incomplete**
-The agent ended in a permission-denied state:
-- Cannot apply the hygiene fixes it identified (permission settings deny Edit/Write/Bash)
-- This highlights poor problem-solving: the agent should have either
-  - Skipped the unrelated hygiene test failure and continued with the feature
-  - Identified this as a blocker and escalated early
+#### 3. **Agent Blocked By Tool Restrictions** (Blocker)
+- Last output shows both `Edit` and `Bash` tools denied in final iterations
+- Agent diagnosed the root cause of `sw-hygiene.sh` failures but couldn't apply fixes
+- Session ended with: "Could you please either: 1. Make these two edits to `scripts/sw-hygiene.sh`, or 2. Enable Bash/Edit tools so I can proceed autonomously"
+- **Impact**: Work is genuinely incomplete due to external constraints, not lack of understanding
 
-### 5. **Work Organization Failure**
-The task checklist shows 12 specific implementation steps, all marked `incomplete`:
-- ✗ Add fish shell detection block
-- ✗ Add fish completion installation block  
-- ✗ Add fish case to reload instructions
-- ✗ Add idempotency checks (zsh & bash)
-- ✗ Write 5 new tests
+#### 4. **Wrong Focus in Latest Iteration** (Process Issue)
+- Agent spent effort debugging an **unrelated** test failure in `sw-hygiene.sh` (platform-refactor check)
+- This diverted from the core goal (shell completion installation)
+- Root cause: Test suite failures were blocking `LOOP_COMPLETE`, forcing investigation of unrelated code
+- **Pattern**: Agent correctly identified the blocking issue but got sidetracked from the primary goal
 
-Not a single item was attempted.
+#### 5. **Iteration Exhaustion With No Completion** (Process Issue)
+- 8 iterations run ("Failure Diagnosis" sections show iterations 2-8)
+- Each iteration marked as "alternative_approach" with repeat counts 14-20
+- No forward progress captured in git history after iteration 1
+- Suggests the loop became stuck in diagnostic mode rather than implementation mode
 
-## Specific Recommendations
+---
 
-The fix is clear: restart the pipeline **focused on the original goal**:
-1. Implement the 3 changes to `sw-init.sh` (fish detection, installation, reload)
-2. Implement the 2 idempotency guards (zsh and bash)
-3. Write the 5 tests in `sw-init-test.sh`
-4. Run `npm test` and verify all 26 tests pass (21 existing + 5 new)
-5. **Do not** get distracted by unrelated test failures in other scripts
+### What SHOULD Have Been Done
 
-The hygiene script issues are separate and should be addressed in a different issue/iteration.
+According to the plan, the implementation requires:
+
+1. **In `scripts/sw-init.sh`** (after Pipeline Templates section ~line 387):
+   - Shell type detection from `$SHELL` environment variable
+   - Zsh: copy `_shipwright` to `~/.zsh/completions/`, inject `fpath` and `compinit` into `~/.zshrc`
+   - Bash: copy `shipwright.bash` to `~/.local/share/bash-completion/completions/`, source in `~/.bashrc`
+   - Fish: copy `shipwright.fish` to `~/.config/fish/completions/`
+   - Print reload hints
+
+2. **In `scripts/sw-init-test.sh`** (tests 22-26):
+   - Test zsh completion installation with `SHELL=/bin/zsh`
+   - Test zsh fpath configuration in `.zshrc`
+   - Test bash completion installation
+   - Test fish completion installation
+   - Test idempotency (run init twice, verify no corruption)
+
+**None of these are visible in any commit.**
+
+---
+
+### Secondary Issue: sw-hygiene.sh Bug Diagnosis
+
+The agent's diagnosis of the `sw-hygiene.sh` issue is **technically correct** but is orthogonal to the goal:
+
+```bash
+# Line 405: BREAKS under set -euo pipefail when $line is non-empty
+[[ -z "$line" ]] && continue    # && short-circuits with exit 1 → set -e exits function
+
+# Should be:
+if [[ -z "$line" ]]; then continue; fi  # if-then always exempt from set -e
+```
+
+This is a real bug but **not part of this issue**. It blocked progress but shouldn't have become the focus.
+
+---
+
+### Verdict
+
+| Criterion | Result |
+|-----------|--------|
+| Meaningful progress toward goal? | ❌ Zero code changes |
+| Implementation complete? | ❌ No evidence in git |
+| Tests written? | ❌ No test additions |
+| Code quality acceptable? | ⚠️ Unassessable (no code) |
+| Regressions/broken patterns? | ⚠️ Unassessable |
+| Incomplete work/TODOs? | ✅ Yes—entire goal |
+
+**Status**: The agent needs:
+1. **Permission restoration** (Edit/Bash tools enabled)
+2. **Refocus** on the original goal, not diagnostic work
+3. **Implementation** of shell completion in sw-init.sh and tests
+4. **Fix** to sw-hygiene.sh (2-line change) unblocking the test suite
+5. **Verification** that all tests pass

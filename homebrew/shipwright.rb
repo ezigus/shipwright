@@ -5,7 +5,7 @@
 class Shipwright < Formula
   desc "Orchestrate autonomous Claude Code agent teams in tmux"
   homepage "https://github.com/sethdford/shipwright"
-  version "2.5.0"
+  version "3.0.0"
   license "MIT"
 
   on_macos do

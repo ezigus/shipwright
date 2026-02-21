@@ -449,7 +449,7 @@ scan_platform_refactor() {
     else
         warn "Could not build platform-hygiene JSON (jq missing?)"
     fi
-    emit_event "hygiene_platform_refactor" "hardcoded=$hardcoded_count" "fallback=$fallback_count" "todo=$todo_count"
+    emit_event "hygiene_platform_refactor" "hardcoded=$hardcoded_count" "fallback=$fallback_count" "todo=$todo_count" || true
     return 0
 }
 

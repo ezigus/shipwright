@@ -283,7 +283,7 @@ fi
 echo ""
 echo -e "${DIM}  version flag${RESET}"
 ver_output=$(bash "$SCRIPT_DIR/sw-doctor.sh" --version 2>&1)
-if [[ "$ver_output" == *"sw-doctor"* && "$ver_output" == *"2."* ]]; then
+if [[ "$ver_output" == *"sw-doctor"* && "$ver_output" == *"3."* ]]; then
     assert_pass "--version outputs sw-doctor and version"
 else
     assert_fail "--version outputs sw-doctor and version" "got: $ver_output"

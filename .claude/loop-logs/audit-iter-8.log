@@ -1,1 +1,55 @@
-Invalid API key · Fix external API key
+# AUDIT REPORT
+
+## Summary: AUDIT_FAIL
+
+The agent failed to deliver meaningful progress toward the stated goal. The pipeline became diverted and blocked on an unrelated issue.
+
+## Critical Issues
+
+### 1. **Goal Not Achieved** 
+- **Goal**: Add shell completion installation to shipwright init
+- **Actual work**: Agent got stuck debugging `sw-hygiene.sh` test failures
+- The feature implementation (fish shell detection, completion installation, tests) was never started
+- The branch is named correctly (`feat/add-shell-completion-installation-to-shi-1`) but contains zero feature code
+
+### 2. **Wrong Problem Focus**
+The agent abandoned the core feature to chase down a failing test in an unrelated script:
+- The failing test: `"platform-refactor exits 0"` in `scripts/sw-hygiene-test.sh`
+- This test is **completely unrelated** to shell completion installation
+- The agent identified fixes for `sw-hygiene.sh` (removing `local lines` from subshell, adding `|| true` guards) but these fixes don't contribute to the stated goal
+
+### 3. **No Actual Code Changes**
+Git diff shows:
+- Changes only to log files (`.claude/loop-logs/`)
+- **Zero changes** to:
+  - `scripts/sw-init.sh` (where completions should be added)
+  - `scripts/sw-init-test.sh` (where 5 new tests should be added)
+  - `completions/shipwright.fish` (which exists but should be integrated)
+
+### 4. **Blocked and Incomplete**
+The agent ended in a permission-denied state:
+- Cannot apply the hygiene fixes it identified (permission settings deny Edit/Write/Bash)
+- This highlights poor problem-solving: the agent should have either
+  - Skipped the unrelated hygiene test failure and continued with the feature
+  - Identified this as a blocker and escalated early
+
+### 5. **Work Organization Failure**
+The task checklist shows 12 specific implementation steps, all marked `incomplete`:
+- ✗ Add fish shell detection block
+- ✗ Add fish completion installation block  
+- ✗ Add fish case to reload instructions
+- ✗ Add idempotency checks (zsh & bash)
+- ✗ Write 5 new tests
+
+Not a single item was attempted.
+
+## Specific Recommendations
+
+The fix is clear: restart the pipeline **focused on the original goal**:
+1. Implement the 3 changes to `sw-init.sh` (fish detection, installation, reload)
+2. Implement the 2 idempotency guards (zsh and bash)
+3. Write the 5 tests in `sw-init-test.sh`
+4. Run `npm test` and verify all 26 tests pass (21 existing + 5 new)
+5. **Do not** get distracted by unrelated test failures in other scripts
+
+The hygiene script issues are separate and should be addressed in a different issue/iteration.

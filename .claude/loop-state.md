@@ -62,16 +62,16 @@ Task tracking (check off items as you complete them):
 - Branch: feat/add-shell-completion-installation-to-shi-1
 - Issue: #1
 - Generated: 2026-02-21T11:55:33Z"
-iteration: 0
+iteration: 1
 max_iterations: 20
 status: running
 test_cmd: "npm test"
 model: sonnet
 agents: 1
-started_at: 2026-02-21T11:57:09Z
-last_iteration_at: 2026-02-21T11:57:09Z
+started_at: 2026-02-21T11:59:25Z
+last_iteration_at: 2026-02-21T11:59:25Z
 consecutive_failures: 0
-total_commits: 0
+total_commits: 1
 audit_enabled: true
 audit_agent_enabled: true
 quality_gates_enabled: true
@@ -82,4 +82,6 @@ max_extensions: 3
 ---
 
 ## Log
+### Iteration 1 (2026-02-21T11:59:25Z)
+{"type":"result","subtype":"success","is_error":false,"duration_ms":76296,"duration_api_ms":79439,"num_turns":9,"result"
 

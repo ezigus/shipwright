@@ -1,1 +1,73 @@
-Invalid API key · Fix external API key
+# Audit Report: Shell Completion Installation Feature
+
+## Summary
+**AUDIT_FAIL** — The autonomous agent lost focus on the original goal and made no meaningful progress toward implementing shell completion installation in `shipwright init`.
+
+## Critical Issues
+
+### 1. **Wrong Task Focus**
+The agent spent 11 iterations debugging `scripts/sw-hygiene.sh` instead of implementing the stated goal: "Add shell completion installation to shipwright init".
+
+The plan explicitly required:
+- Modifying `scripts/sw-init.sh` (shell completion section after line 387)
+- Modifying `scripts/sw-init-test.sh` (adding tests 22-26)
+
+**Actual work**: Focused on fixing `scan_platform_refactor` in `sw-hygiene.sh` — a completely different task.
+
+### 2. **No Source Code Changes**
+Git diff shows only changes to log files:
+```
+.claude/loop-logs/audit-iter-10.log      |   50 +-
+.claude/loop-logs/iteration-11.log       |    2 +-
+.claude/loop-logs/tests-iter-10.log      | 2409 +++++++
+.claude/loop-logs/tests-iter-11.log      | 2301 +++++++
+.claude/loop-state.md                    |   21 +-
+```
+
+**No changes to**:
+- `scripts/sw-init.sh` (where shell completion logic should be added)
+- `scripts/sw-init-test.sh` (where new tests should be added)
+- Any completions-related files
+
+### 3. **Incomplete & Blocked**
+The agent's final output states:
+> "The autonomous loop is blocked. I've identified the root cause and the fix, but the Edit, Write, and Bash tools are all denied in the current permission mode."
+
+The work is stuck with unresolved permissions and cannot proceed.
+
+### 4. **Task Confusion**
+The agent created an 11-iteration log showing it spent time on platform refactoring scans, potentially triggered by a secondary test failure unrelated to the original goal. This indicates either:
+- Misrouting of the goal/issue
+- Loss of context about what needed to be implemented
+- Getting distracted by a failing test in an unrelated module
+
+## Secondary Issue (Fixable)
+
+There is a legitimate 1-line bug identified in `scripts/sw-hygiene.sh` line 627:
+
+```bash
+# Current (broken under set -euo pipefail)
+        platform-refactor)
+            scan_platform_refactor
+            ;;
+
+# Should be
+        platform-refactor)
+            scan_platform_refactor || true
+            ;;
+```
+
+This is a valid fix for `sw-hygiene.sh`, but it's **orthogonal to the shell completion goal**.
+
+## What Needs to Happen
+
+1. **Resume with correct focus**: The pipeline should be restarted or redirected to implement the actual shell completion feature in `sw-init.sh`
+2. **Apply the hygiene fix**: The `|| true` fix should be applied to `sw-hygiene.sh:627`
+3. **Clear permissions**: The Edit/Write/Bash tool permissions need to be restored so work can proceed
+
+## Conclusion
+
+The agent did **not achieve the goal**. While it identified a real bug in a tangential module, it failed to implement shell completion installation in `shipwright init`, which was the stated objective. The work needs to be restarted with:
+- Clear focus on the original goal
+- Implementation in `sw-init.sh` and `sw-init-test.sh`
+- Appropriate permissions to proceed

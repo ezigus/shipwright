@@ -393,6 +393,8 @@ if [[ "${SHELL:-}" == *"zsh"* ]]; then
     SHELL_TYPE="zsh"
 elif [[ "${SHELL:-}" == *"bash"* ]]; then
     SHELL_TYPE="bash"
+elif [[ "${SHELL:-}" == *"fish"* ]]; then
+    SHELL_TYPE="fish"
 elif [[ -n "${ZSH_VERSION:-}" ]]; then
     SHELL_TYPE="zsh"
 elif [[ -n "${BASH_VERSION:-}" ]]; then
@@ -463,6 +465,16 @@ elif [[ "$SHELL_TYPE" == "bash" ]]; then
         success "Installed bash completions → ~/.local/share/bash-completion/completions/shipwright"
         install_completions=1
     fi
+elif [[ "$SHELL_TYPE" == "fish" ]]; then
+    # Install fish completion to ~/.config/fish/completions/
+    FISH_COMPLETION_DIR="$HOME/.config/fish/completions"
+    if [[ -f "$COMPLETIONS_SRC/shipwright.fish" ]]; then
+        mkdir -p "$FISH_COMPLETION_DIR"
+        cp "$COMPLETIONS_SRC/shipwright.fish" "$FISH_COMPLETION_DIR/shipwright.fish"
+        chmod 644 "$FISH_COMPLETION_DIR/shipwright.fish"
+        success "Installed fish completions → ~/.config/fish/completions/shipwright.fish"
+        install_completions=1
+    fi
 fi
 
 if [[ $install_completions -eq 1 ]]; then
@@ -471,6 +483,8 @@ if [[ $install_completions -eq 1 ]]; then
         echo -e "    ${DIM}source ~/.zshrc${RESET}"
     elif [[ "$SHELL_TYPE" == "bash" ]]; then
         echo -e "    ${DIM}source ~/.bashrc${RESET}"
+    elif [[ "$SHELL_TYPE" == "fish" ]]; then
+        echo -e "    ${DIM}source ~/.config/fish/config.fish${RESET}"
     fi
 fi
 

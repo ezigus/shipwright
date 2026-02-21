@@ -1,45 +1,45 @@
-Looking at this audit, I need to assess whether the agent made meaningful progress on the goal: "Add shell completion installation to shipwright init".
+## AUDIT FAIL
 
-## Critical Assessment
+The agent made **zero meaningful progress** toward the goal and got stuck on an unrelated issue.
 
-**Status: AUDIT_FAIL** — The agent made NO progress toward the goal.
+### Critical Issues:
 
-### Issues Found:
+1. **No Code Changes to Goal Files**
+   - **Expected**: Changes to `scripts/sw-init.sh` and `scripts/sw-init-test.sh`
+   - **Actual**: Only log file changes; the two target files are untouched
+   - The git diff shows no modifications to the actual implementation files
 
-1. **No Implementation Changes**: The git diff shows only modifications to log files (`.claude/loop-logs/`). The two files that needed modification are untouched:
-   - `scripts/sw-init.sh` — No fish shell detection, no fish completion installation block added
-   - `scripts/sw-init-test.sh` — No new tests added
+2. **Complete Task List Remains Unfulfilled**
+   - All 12 tasks in the checklist are incomplete:
+     - ✗ No shell detection code added
+     - ✗ No fish completion installation block added
+     - ✗ No idempotency checks for zsh/bash
+     - ✗ No tests written for shell completions
+   - Agent never progressed past the planning stage
 
-2. **All 12 Planned Tasks Incomplete**: The implementation checklist in the plan lists 12 specific tasks (add fish detection, add fish installation block, add tests for zsh/bash/fish, etc.). **Zero of these tasks were completed.**
+3. **Context Drift - Wrong Problem Domain**
+   - Agent got distracted by unrelated `sw-hygiene.sh` failures (grep pipelines with `set -euo pipefail`)
+   - This is completely unrelated to the goal of adding shell completion installation
+   - Spent 10+ iterations (iterations 2-6) on `sw-hygiene.sh` instead of the actual goal
 
-3. **Sidetracked by Unrelated Bug**: Instead of implementing the feature, the agent spent effort diagnosing a `set -euo pipefail` issue in `scripts/sw-hygiene.sh` (grep pipelines exiting 1 on no matches). While that's a real bug, **it's not the goal**.
+4. **Repeated Failure Pattern Without Course Correction**
+   - Failed 10 times with diagnostic saying "try a fundamentally different approach"
+   - Never actually pivoted strategy; kept trying to fix `sw-hygiene.sh`
+   - Should have either: (a) focused on the actual goal, or (b) escalated the `sw-hygiene.sh` issue as a blocker
 
-4. **Blocked by Permission Denials**: The agent encountered permission denials on Bash and Edit tools and appears to have given up rather than:
-   - Requesting permission to proceed
-   - Finding alternative approaches
-   - Escalating for user approval
-
-5. **No Feature Delivered**: After 6 iterations and requesting significant token spend, the branch still has no:
-   - Fish shell detection code
-   - Fish completion installation logic  
-   - Tests covering fish or the other shells
-   - Any of the idempotency guards mentioned in the plan
+5. **Permission Denial as Exit Point**
+   - Agent ended by requesting permission to edit `sw-hygiene.sh`
+   - This suggests the agent was working on code outside the scope of the goal
+   - The agent should have had (or requested) permission for the actual target files
 
 ### What Should Have Happened:
 
-According to the detailed plan, the agent should have:
-- Added `elif [[ "${SHELL:-}" == *"fish"* ]]` to shell detection in `sw-init.sh`
-- Added fish completion installation block before the closing `fi`
-- Added fish case to reload instructions
-- Added idempotency guards to zsh/bash blocks
-- Written 5 new test cases in `sw-init-test.sh`
-- Verified all 26 tests pass (21 existing + 5 new)
+The agent should have:
+1. ✓ Added fish shell detection block to `sw-init.sh` (line ~290)
+2. ✓ Added fish completion installation block to `sw-init.sh` (line ~420)
+3. ✓ Added idempotency guards to existing zsh/bash blocks
+4. ✓ Written 5 new tests in `sw-init-test.sh`
+5. ✓ Run tests scoped to just the completions functionality
+6. ✓ Verified all tests pass
 
-**None of this happened.**
-
-### Recommendation
-
-This pipeline iteration should be **retried or abandoned**. The agent has exhausted 6 iterations (per loop-logs) without implementing the core feature. Consider:
-- Manually applying the planned changes to unblock progress
-- Starting a fresh pipeline with different approach/agent
-- Simplifying the scope if complexity is causing analysis paralysis
+**Recommendation**: Reset the agent to focus strictly on the implementation checklist. The `sw-hygiene.sh` issue appears to be a pre-existing or environmental problem unrelated to this goal and should be addressed separately.

@@ -2345,6 +2345,11 @@ pipeline_start() {
         "model=${MODEL:-opus}" \
         "goal=${GOAL}"
 
+    # Record pipeline run in SQLite for dashboard visibility
+    if type create_pipeline_run >/dev/null 2>&1; then
+        create_pipeline_run "${SHIPWRIGHT_PIPELINE_ID}" "${ISSUE_NUMBER:-0}" "${GOAL}" "${BRANCH:-}" "${PIPELINE_NAME}" 2>/dev/null || true
+    fi
+
     # Durable WAL: publish pipeline start event
     if type publish_event >/dev/null 2>&1; then
         publish_event "pipeline.started" "{\"issue\":\"${ISSUE_NUMBER:-0}\",\"pipeline\":\"${PIPELINE_NAME}\",\"goal\":\"${GOAL:0:200}\"}" 2>/dev/null || true
@@ -2391,6 +2396,11 @@ pipeline_start() {
             "total_cost=$total_cost" \
             "self_heal_count=$SELF_HEAL_COUNT"
 
+        # Update pipeline run status in SQLite
+        if type update_pipeline_status >/dev/null 2>&1; then
+            update_pipeline_status "${SHIPWRIGHT_PIPELINE_ID}" "completed" "${PIPELINE_SLOWEST_STAGE:-}" "complete" "${total_dur_s:-0}" 2>/dev/null || true
+        fi
+
         # Auto-ingest pipeline outcome into recruit profiles
         if [[ -x "$SCRIPT_DIR/sw-recruit.sh" ]]; then
             bash "$SCRIPT_DIR/sw-recruit.sh" ingest-pipeline 1 2>/dev/null || true
@@ -2431,6 +2441,11 @@ pipeline_start() {
             "output_tokens=$TOTAL_OUTPUT_TOKENS" \
             "total_cost=$total_cost" \
             "self_heal_count=$SELF_HEAL_COUNT"
+
+        # Update pipeline run status in SQLite
+        if type update_pipeline_status >/dev/null 2>&1; then
+            update_pipeline_status "${SHIPWRIGHT_PIPELINE_ID}" "failed" "${CURRENT_STAGE_ID:-unknown}" "failed" "${total_dur_s:-0}" 2>/dev/null || true
+        fi
 
         # Auto-ingest pipeline outcome into recruit profiles
         if [[ -x "$SCRIPT_DIR/sw-recruit.sh" ]]; then

@@ -24,6 +24,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
 [[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
+# Source DB for dual-write (emit_event → JSONL + SQLite).
+# Note: do NOT call init_schema here — the pipeline (sw-pipeline.sh) owns schema
+# initialization. Calling it here would create an empty DB that shadows JSON cost data.
+if [[ -f "$SCRIPT_DIR/sw-db.sh" ]]; then
+    source "$SCRIPT_DIR/sw-db.sh" 2>/dev/null || true
+fi
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -2746,6 +2752,16 @@ run_single_agent_loop() {
         }
         ITERATION=$(( ITERATION + 1 ))
 
+        # Emit iteration start event for pipeline visibility
+        if type emit_event >/dev/null 2>&1; then
+            emit_event "loop.iteration_start" \
+                "iteration=$ITERATION" \
+                "max=$MAX_ITERATIONS" \
+                "job_id=${PIPELINE_JOB_ID:-loop-$$}" \
+                "agent=${AGENT_NUM:-1}" \
+                "test_passed=${TEST_PASSED:-unknown}"
+        fi
+
         # Root-cause diagnosis and memory-based fix on retry after test failure
         if [[ "${TEST_PASSED:-}" == "false" ]]; then
             # Source memory module for diagnosis and fix lookup
@@ -2914,6 +2930,18 @@ $summary
 "
         write_state
         write_progress
+
+        # Emit iteration complete event for pipeline visibility
+        if type emit_event >/dev/null 2>&1; then
+            emit_event "loop.iteration_complete" \
+                "iteration=$ITERATION" \
+                "max=$MAX_ITERATIONS" \
+                "job_id=${PIPELINE_JOB_ID:-loop-$$}" \
+                "agent=${AGENT_NUM:-1}" \
+                "test_passed=${TEST_PASSED:-unknown}" \
+                "commits=$TOTAL_COMMITS" \
+                "status=${STATUS:-running}"
+        fi
 
         # Update heartbeat
         "$SCRIPT_DIR/sw-heartbeat.sh" write "${PIPELINE_JOB_ID:-loop-$$}" \

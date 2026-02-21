@@ -142,9 +142,9 @@ cost_record() {
     local cost_usd
     cost_usd=$(cost_calculate "$input_tokens" "$output_tokens" "$model")
 
-    # Try SQLite first
+    # Try SQLite first (arg order must match db_record_cost signature: tokens, tokens, model, cost, stage, issue)
     if type db_record_cost >/dev/null 2>&1; then
-        db_record_cost "$input_tokens" "$output_tokens" "$model" "$stage" "$cost_usd" "$issue" 2>/dev/null || true
+        db_record_cost "$input_tokens" "$output_tokens" "$model" "$cost_usd" "$stage" "$issue" 2>/dev/null || true
     fi
 
     # Always write to JSON (dual-write period)

@@ -385,11 +385,11 @@ scan_platform_refactor() {
     local scripts_dir="${REPO_DIR}/scripts"
 
     local hardcoded_count fallback_count todo_count fixme_count hack_count
-    hardcoded_count=$(grep -rE "hardcoded|Hardcoded|HARDCODED" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
-    fallback_count=$(grep -rE "Fallback:|fallback:" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
-    todo_count=$(grep -rE "TODO" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
-    fixme_count=$(grep -rE "FIXME" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
-    hack_count=$(grep -rE "HACK|KLUDGE" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
+    hardcoded_count=$(grep -rE "hardcoded|Hardcoded|HARDCODED" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ') || true
+    fallback_count=$(grep -rE "Fallback:|fallback:" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ') || true
+    todo_count=$(grep -rE "TODO" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ') || true
+    fixme_count=$(grep -rE "FIXME" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ') || true
+    hack_count=$(grep -rE "HACK|KLUDGE" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ') || true
     hardcoded_count=${hardcoded_count:-0}
     fallback_count=${fallback_count:-0}
     todo_count=${todo_count:-0}
@@ -419,7 +419,7 @@ scan_platform_refactor() {
         local lines
         lines=$(wc -l < "$f" 2>/dev/null || echo 0)
         printf '{"script":"%s","lines":%s}\n' "$(basename "$f")" "$lines"
-    done | jq -s 'sort_by(-.lines) | .[0:15]' 2>/dev/null > "$sizes_file"
+    done | jq -s 'sort_by(-.lines) | .[0:15]' 2>/dev/null > "$sizes_file" || true
     local script_sizes
     script_sizes=$(cat "$sizes_file" 2>/dev/null || echo "[]")
     rm -f "$sizes_file"
@@ -437,7 +437,7 @@ scan_platform_refactor() {
         --argjson hack "$hack_count" \
         --argjson findings "$findings" \
         --argjson script_sizes "$script_sizes" \
-        '{timestamp:$ts,repository:$repo,counts:{hardcoded:$hc,fallback:$fb,todo:$todo,fixme:$fixme,hack:$hack},findings_sample:$findings,script_size_hotspots:$script_sizes}' 2>/dev/null)
+        '{timestamp:$ts,repository:$repo,counts:{hardcoded:$hc,fallback:$fb,todo:$todo,fixme:$fixme,hack:$hack},findings_sample:$findings,script_size_hotspots:$script_sizes}' 2>/dev/null) || true
     if [[ -n "$report" ]]; then
         echo "$report" > "$out_file"
         success "Platform refactor scan saved to: $out_file"

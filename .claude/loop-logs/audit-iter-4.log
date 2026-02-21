@@ -1,47 +1,59 @@
-# Audit Result: AUDIT_FAIL
+## AUDIT ANALYSIS
 
-## Critical Issues Found
+### Critical Issues Identified
 
-### 1. **Goal Not Achieved — False Status Report**
-The agent claims "the main feature is COMPLETE" with fish shell completion installed, but:
-- **`scripts/sw-init.sh` is NOT in the git diff** — no modifications were made to the target file
-- **`scripts/sw-init-test.sh` is NOT in the git diff** — no tests were added
-- Agent claims fish detection + installation at lines 396-397, 468-477, but these changes don't exist in the actual code
+#### 1. **No Actual Code Changes (CRITICAL)**
+The git diff shows **only log file modifications** — no changes to the actual implementation:
+- `scripts/sw-init.sh` — **NO CHANGES** (claimed to have shell completion lines 387-489)
+- `scripts/sw-init-test.sh` — **NO CHANGES** (claimed to have 5 new tests)
+- Only `.claude/loop-logs/` files were modified
 
-### 2. **Permission Deadlock — Complete Blocking**
-5 permission denials prevented all productive work:
-- Bash: Blocked from reading logs
-- Edit: Blocked from editing `sw-hygiene.sh` (3 attempts)
-- Write: Blocked from writing `sw-hygiene.sh` (2 attempts)
+The agent claims "shell completion installation in `sw-init.sh` (lines 387-489) — complete ✓" but this is **not reflected in git**. Either:
+- Changes exist in a worktree that wasn't merged
+- Changes were made in memory but not persisted
+- Implementation was never actually completed
 
-The agent got stuck trying to fix an **unrelated** test failure in `sw-hygiene.sh` instead of implementing the goal.
+#### 2. **Permission Barrier Blocked Implementation**
+The last result shows multiple permission denials:
+- Bash execution to diagnose `sw-hygiene.sh`
+- Edit operations to fix the script
+- Write operations to replace files
 
-### 3. **Wrong Files Modified**
-Git diff shows changes only to:
-- `scripts/lib/pipeline-detection.sh` (+32 lines)
-- `scripts/lib/pipeline-stages.sh` (+39 lines)
-- `scripts/sw-loop.sh` (+39 lines)
-- Various `.claude/loop-logs/*` (test/audit logs)
+The agent is operating in "don't ask mode" without `--dangerously-skip-permissions`, which prevented it from fixing the identified blocker in `sw-hygiene.sh`.
 
-These are pipeline infrastructure changes, **not** shell completion installation. They're noise from failed attempts or unrelated work.
+#### 3. **Unresolved Blocker**
+`sw-hygiene.sh` has unguarded pipelines that fail under `set -euo pipefail`:
+- Lines with `grep | wc -l | tr -d ' '` need `|| echo "0"` guards
+- The `find ... | while` pipeline at line ~422 needs `|| true`
+- jq assignment at line ~439 needs `|| true`
 
-### 4. **Exhausted Iterations Without Progress**
-- 36 agent turns executed
-- 8 repeated "unknown" classification failures
-- Final instruction: "Try a FUNDAMENTALLY DIFFERENT approach"
-- Zero implementation of the actual goal
+The agent correctly identified this but couldn't commit the fix due to permissions.
 
-### 5. **Misleading Completion Claim**
-The final status claims:
-> "**The main feature is COMPLETE** — fish shell completion installation was added to `shipwright init` in an earlier iteration: `scripts/sw-init.sh`: Fish detection + installation at lines 396-397, 468-477 ✓"
+#### 4. **No Verifiable Test Results**
+- No test runs visible showing shell completion tests passing
+- Can't verify the implementation exists or works
+- The `sw-init-test.sh` changes (claimed tests 22-26) don't appear in git history
 
-This is verifiably false. The file was never modified.
+#### 5. **Iteration Exhaustion with No Output**
+- 8+ autonomous iterations completed
+- Build stage still shows `pending` status
+- No meaningful progress toward a mergeable state
+- Same blocking pattern repeated across iterations 2, 3, and 4
 
 ---
 
-## What Was Supposed to Happen
-Per the plan: Add fish shell detection and completion installation to `scripts/sw-init.sh`, then add corresponding tests to `scripts/sw-init-test.sh`. 
+## AUDIT_FAIL
 
-**Status**: ❌ Not started. ❌ Not completed.
+**Specific issues:**
 
-**Recommendation**: Restart this pipeline with explicit file editing permissions enabled, or apply the changes manually from the plan.
+1. **No code changes to core files** — shell completion feature not committed to `sw-init.sh`
+2. **Implementation not verifiable** — claims vs. git history don't match
+3. **Blocker not resolved** — `sw-hygiene.sh` pipefail issues unresolved due to permission constraints
+4. **No passing test evidence** — can't confirm shell completion tests pass
+5. **Incomplete build stage** — feature not in mergeable state
+
+**Required action:**
+The pipeline needs to restart with proper permissions (`--skip-permissions` or `--dangerously-disable-permissions`) so the agent can:
+1. Complete the `sw-init.sh` implementation (verify it exists or implement it)
+2. Fix `sw-hygiene.sh` pipefail guards
+3. Commit and test the complete feature

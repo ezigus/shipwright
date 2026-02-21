@@ -495,7 +495,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-cost.sh` | 949 | Token Usage & Cost Intelligence |
 | `scripts/sw-daemon.sh` | 1356 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 508 | Fleet Command Dashboard |
-| `scripts/sw-db.sh` | 1881 | SQLite Persistence Layer |
+| `scripts/sw-db.sh` | 1888 | SQLite Persistence Layer |
 | `scripts/sw-decompose.sh` | 521 | Intelligent Issue Decomposition |
 | `scripts/sw-deps.sh` | 530 | Automated Dependency Update Management |
 | `scripts/sw-developer-simulation.sh` | 236 | Multi-Persona Developer Simulation |
@@ -525,7 +525,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 702 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 640 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 350 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 3044 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 3072 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 1869 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 468 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 597 | Intelligent Model Routing & Cost Optimization |
@@ -534,7 +534,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 442 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 438 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1070 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 2824 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 2839 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 741 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 684 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 822 | Predictive & Proactive Intelligence |

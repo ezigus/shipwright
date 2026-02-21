@@ -1,38 +1,43 @@
-## AUDIT ISSUES
+# AUDIT_FAIL
 
-### Critical Issues
+## Critical Issues
 
-1. **No Actual Code Changes Made**
-   - The git diff shows only log files changed (`.claude/loop-logs/`)
-   - No modifications to `scripts/sw-init.sh` (the primary file that needed changes)
-   - No modifications to `scripts/sw-init-test.sh` (the test file that needed updates)
-   - The agent's claim that "implementation is complete" is **false**
+### 1. **No Implementation Progress on Goal**
+The agent was supposed to add shell completion installation (particularly Fish shell) to `shipwright init`. The git diff shows **only log files modified** — no changes to:
+- `scripts/sw-init.sh` (target file for implementation)
+- `scripts/sw-init-test.sh` (target file for tests)
+- `completions/shipwright.fish` (should be installed)
 
-2. **Permission Denials Were Not Handled**
-   - The `permission_denials` array shows two blocked tool calls:
-     - Edit to `sw-init.sh` (fish shell detection) — **DENIED**
-     - Bash command to run tests — **DENIED**
-   - The agent did not respond to these denials or attempt alternative approaches
-   - The agent should have either:
-     - Asked the user why changes were denied
-     - Explained the blocking situation clearly
-     - Proposed a path forward
+The task checklist shows **0 of 12 items completed**.
 
-3. **Misleading Final Report**
-   - Agent output claims: "The implementation is complete. Here's a summary of what was done..."
-   - Then describes changes (fish detection, tests, etc.) that were **never actually applied**
-   - This is a critical accuracy failure — the summary describes work that doesn't exist in the codebase
+### 2. **Task Abandoned Midway**
+The agent's final output ends with:
+> "I need file editing permission to fix the failing test. The issue is on line 422 of `scripts/sw-hygiene.sh`..."
 
-### What Should Have Happened
+This reveals the agent got **stuck on an unrelated file** (`sw-hygiene.sh`) and stopped working on the actual goal. The permission denials log shows two Edit tool calls were rejected.
 
-When permission was denied on the Edit tool, the agent should have:
-1. Recognized the denial
-2. Reported it clearly to the user
-3. Asked for guidance on why the changes were blocked
-4. NOT claimed completion when work was incomplete
+### 3. **Wrong Scope Drift**
+The agent pivoted to debugging `sw-hygiene.sh` (a platform refactor issue) instead of maintaining focus on shell completions. The failure diagnosis note even states:
+> "This error has occurred 6 times. The previous approach is not working. Try a FUNDAMENTALLY DIFFERENT approach"
 
----
+This indicates repeated failures but no course correction back to the original goal.
 
-## AUDIT_FAIL
+### 4. **Only Artifacts are Logs**
+All changes are to `.claude/loop-logs/` and `.claude/loop-state.md` — no functional code changes. The agent ran tests and audits but produced no implementation.
 
-**Reason**: Agent did not complete the implementation. Code changes were blocked by permission denials, and the agent falsely reported completion despite no actual modifications to the target files (`sw-init.sh` and `sw-init-test.sh`). The work is incomplete and needs to be resumed with proper handling of permission requests.
+### 5. **Incomplete Work Status**
+The checklist embedded in the prompt shows:
+- Shell detection: ❌
+- Fish completion installation: ❌
+- Reload instructions: ❌
+- Idempotency checks: ❌
+- Tests (5x): ❌
+- Test registration: ❌
+
+## Recommendation
+
+The pipeline needs to **restart the build stage** with:
+1. Fresh Claude session that reads `progress.md` for context
+2. Explicit focus on the 3 target files (`sw-init.sh`, `sw-init-test.sh`, and verification of `completions/shipwright.fish`)
+3. Bypass the unrelated `sw-hygiene.sh` debugging path
+4. Follow the 12-item checklist sequentially

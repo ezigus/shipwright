@@ -1148,7 +1148,16 @@ stage_compound_quality() {
     _cq_real_changes=$(git diff --name-only "origin/${BASE_BRANCH:-main}...HEAD" \
         -- . ':!.claude/loop-state.md' ':!.claude/pipeline-state.md' \
         ':!.claude/pipeline-artifacts/*' ':!**/progress.md' \
-        ':!**/error-summary.json' 2>/dev/null | wc -l | xargs || echo "0")
+        ':!**/error-summary.json' 2>/dev/null | wc -l || echo "0")
+    _cq_real_changes=$(echo "$_cq_real_changes" | tr -d '[:space:]')
+    [[ -z "$_cq_real_changes" ]] && _cq_real_changes=0
+    # Fallback: if no remote, compare against first commit
+    if [[ "$_cq_real_changes" -eq 0 ]] 2>/dev/null; then
+        _cq_real_changes=$(git diff --name-only "$(git rev-list --max-parents=0 HEAD 2>/dev/null)...HEAD" \
+            -- . ':!.claude/*' ':!**/progress.md' ':!**/error-summary.json' 2>/dev/null | wc -l || echo "0")
+        _cq_real_changes=$(echo "$_cq_real_changes" | tr -d '[:space:]')
+        [[ -z "$_cq_real_changes" ]] && _cq_real_changes=0
+    fi
     if [[ "${_cq_real_changes:-0}" -eq 0 ]]; then
         error "Compound quality: no meaningful code changes found — failing quality gate"
         return 1
@@ -1207,8 +1216,11 @@ stage_compound_quality() {
 
     # 2. Test coverage check
     local coverage_pct=0
-    coverage_pct=$(run_test_coverage_check 2>/dev/null) || coverage_pct=0
+    coverage_pct=$(run_test_coverage_check 2>/dev/null | tr -d '[:space:][:cntrl:]') || coverage_pct=0
     coverage_pct="${coverage_pct:-0}"
+    # Sanitize: strip anything non-numeric (ANSI codes, whitespace, etc.)
+    coverage_pct=$(echo "$coverage_pct" | sed 's/[^0-9]//g')
+    [[ -z "$coverage_pct" ]] && coverage_pct=0
 
     if [[ "$coverage_pct" != "skip" ]]; then
         if [[ "$coverage_pct" -lt "${PIPELINE_COVERAGE_THRESHOLD:-60}" ]]; then
@@ -1254,7 +1266,9 @@ stage_compound_quality() {
     fi
 
     # Vitals-driven adaptive cycle limit (preferred)
+    # Respect the template's max_cycles as a ceiling — vitals can only reduce, not inflate
     local base_max_cycles="$max_cycles"
+    local template_max_cycles="$max_cycles"
     if type pipeline_adaptive_limit >/dev/null 2>&1; then
         local _cq_vitals=""
         if type pipeline_compute_vitals >/dev/null 2>&1; then
@@ -1263,7 +1277,10 @@ stage_compound_quality() {
         local vitals_cq_limit
         vitals_cq_limit=$(pipeline_adaptive_limit "compound_quality" "$_cq_vitals" 2>/dev/null) || true
         if [[ -n "$vitals_cq_limit" && "$vitals_cq_limit" =~ ^[0-9]+$ && "$vitals_cq_limit" -gt 0 ]]; then
-            max_cycles="$vitals_cq_limit"
+            # Cap at template max — don't let vitals override the pipeline template's intent
+            if [[ "$vitals_cq_limit" -le "$template_max_cycles" ]]; then
+                max_cycles="$vitals_cq_limit"
+            fi
             if [[ "$max_cycles" != "$base_max_cycles" ]]; then
                 info "Vitals-driven cycles: ${base_max_cycles} → ${max_cycles} (compound_quality)"
             fi

@@ -1077,8 +1077,9 @@ ${prevention_text}"
         loop_args+=(--resume)
     fi
 
-    # Skip permissions in CI (no interactive terminal)
-    [[ "${CI_MODE:-false}" == "true" ]] && loop_args+=(--skip-permissions)
+    # Skip permissions — pipeline runs headlessly (claude -p) and has no terminal
+    # for interactive permission prompts. Without this flag, agents can't write files.
+    loop_args+=(--skip-permissions)
 
     info "Starting build loop: ${DIM}shipwright loop${RESET} (max ${max_iter} iterations, ${agents} agent(s))"
 

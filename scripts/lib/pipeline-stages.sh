@@ -301,9 +301,21 @@ Checklist of completion criteria.
     fi
 
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-plan.log"
-    claude --print --model "$plan_model" --max-turns 25 \
+    claude --print --model "$plan_model" --max-turns 25 --dangerously-skip-permissions \
         "$plan_prompt" < /dev/null > "$plan_file" 2>"$_token_log" || true
     parse_claude_tokens "$_token_log"
+
+    # Claude may write to disk via tools instead of stdout — rescue those files
+    local _plan_rescue
+    for _plan_rescue in "${PROJECT_ROOT}/PLAN.md" "${PROJECT_ROOT}/plan.md" \
+                         "${PROJECT_ROOT}/implementation-plan.md"; do
+        if [[ -s "$_plan_rescue" ]] && [[ $(wc -l < "$plan_file" 2>/dev/null | xargs) -lt 10 ]]; then
+            info "Plan written to ${_plan_rescue} via tools — adopting as plan artifact"
+            cat "$_plan_rescue" >> "$plan_file"
+            rm -f "$_plan_rescue"
+            break
+        fi
+    done
 
     if [[ ! -s "$plan_file" ]]; then
         error "Plan generation failed — empty output"
@@ -709,9 +721,21 @@ Be concrete and specific. Reference actual file paths in the codebase. Consider 
     fi
 
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-design.log"
-    claude --print --model "$design_model" --max-turns 25 \
+    claude --print --model "$design_model" --max-turns 25 --dangerously-skip-permissions \
         "$design_prompt" < /dev/null > "$design_file" 2>"$_token_log" || true
     parse_claude_tokens "$_token_log"
+
+    # Claude may write to disk via tools instead of stdout — rescue those files
+    local _design_rescue
+    for _design_rescue in "${PROJECT_ROOT}/design-adr.md" "${PROJECT_ROOT}/design.md" \
+                           "${PROJECT_ROOT}/ADR.md" "${PROJECT_ROOT}/DESIGN.md"; do
+        if [[ -s "$_design_rescue" ]] && [[ $(wc -l < "$design_file" 2>/dev/null | xargs) -lt 10 ]]; then
+            info "Design written to ${_design_rescue} via tools — adopting as design artifact"
+            cat "$_design_rescue" >> "$design_file"
+            rm -f "$_design_rescue"
+            break
+        fi
+    done
 
     if [[ ! -s "$design_file" ]]; then
         error "Design generation failed — empty output"

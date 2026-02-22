@@ -493,7 +493,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-connect.sh` | 623 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 599 | Context Engine for Pipeline Stages |
 | `scripts/sw-cost.sh` | 945 | Token Usage & Cost Intelligence |
-| `scripts/sw-daemon.sh` | 1356 | Autonomous GitHub Issue Watcher |
+| `scripts/sw-daemon.sh` | 1376 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 508 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 1881 | SQLite Persistence Layer |
 | `scripts/sw-decompose.sh` | 521 | Intelligent Issue Decomposition |
@@ -525,7 +525,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 702 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 640 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 350 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 3044 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 3050 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 1869 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 468 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 597 | Intelligent Model Routing & Cost Optimization |
@@ -674,13 +674,13 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-jira-test.sh` | 323 | Validate Jira ↔ GitHub bidirectional sync |
 | `scripts/sw-launchd-test.sh` | 910 | Validate service management on |
 | `scripts/sw-lib-compat-test.sh` | 297 | Unit tests for cross-platform helpers |
-| `scripts/sw-lib-daemon-dispatch-test.sh` | 414 | Unit tests for spawn/reap/queue |
+| `scripts/sw-lib-daemon-dispatch-test.sh` | 412 | Unit tests for spawn/reap/queue |
 | `scripts/sw-lib-daemon-failure-test.sh` | 213 | Unit tests for failure handling |
 | `scripts/sw-lib-daemon-poll-test.sh` | 172 | Unit tests for poll, health, cleanup |
 | `scripts/sw-lib-daemon-state-test.sh` | 381 | Unit tests for state management |
 | `scripts/sw-lib-daemon-triage-test.sh` | 265 | Unit tests for triage scoring |
 | `scripts/sw-lib-helpers-test.sh` | 229 | Unit tests for shared helper functions |
-| `scripts/sw-lib-pipeline-detection-test.sh` | 279 | Unit tests for detection fns |
+| `scripts/sw-lib-pipeline-detection-test.sh` | 358 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 258 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 193 | Unit tests for quality |
 | `scripts/sw-lib-pipeline-stages-test.sh` | 289 | Unit tests for stage functions |

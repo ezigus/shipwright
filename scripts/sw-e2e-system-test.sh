@@ -75,8 +75,11 @@ use_json=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -p) prompt="${2:-}"; shift 2 ;;
-        --output-format) [[ "$2" == "json" ]] && use_json=true; shift 2 ;;
-        --print|--model|--max-turns|--dangerously-skip-permissions) shift 2 ;;
+        --output-format) [[ "${2:-}" == "json" ]] && use_json=true; shift 2 ;;
+        --output-format=*) [[ "${1#*=}" == "json" ]] && use_json=true; shift ;;
+        --model|--max-turns) [[ $# -gt 1 ]] && shift 2 || shift ;;
+        --print|--dangerously-skip-permissions) shift ;;
+        --*) shift ;;
         *) prompt="${1:-}"; shift ;;
     esac
 done

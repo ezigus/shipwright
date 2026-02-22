@@ -576,7 +576,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-webhook.sh` | 618 | GitHub Webhook Receiver for Instant Issue Processing |
 | `scripts/sw-widgets.sh` | 523 | Embeddable Status Widgets |
 | `scripts/sw-worktree.sh` | 409 | Git worktree management for multi-agent isolation |
-| `scripts/sw` | 610 | CLI router — dispatches subcommands via exec |
+| `scripts/sw` | 611 | CLI router — dispatches subcommands via exec |
 <!-- /AUTO:core-scripts -->
 
 ### GitHub API Modules

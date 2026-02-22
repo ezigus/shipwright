@@ -484,7 +484,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 
 | File | Lines | Purpose |
 | --- | ---: | --- |
-| `scripts/sw-activity.sh` | 479 | Live agent activity stream |
+| `scripts/sw-activity.sh` | 473 | Live agent activity stream |
 | `scripts/sw-adaptive.sh` | 940 | data-driven pipeline tuning |
 | `scripts/sw-adversarial.sh` | 258 | Adversarial Agent Code Review |
 | `scripts/sw-architecture-enforcer.sh` | 317 | Living Architecture Model & Enforcer |
@@ -492,13 +492,13 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-autonomous.sh` | 1053 | Master controller for AI-building-AI loop |
 | `scripts/sw-changelog.sh` | 693 | Automated Release Notes & Migration Guides |
 | `scripts/sw-checkpoint.sh` | 604 | Save and restore agent state mid-stage |
-| `scripts/sw-ci.sh` | 580 | GitHub Actions CI/CD Orchestration |
+| `scripts/sw-ci.sh` | 585 | GitHub Actions CI/CD Orchestration |
 | `scripts/sw-cleanup.sh` | 372 | Clean up orphaned Claude team sessions & artifacts |
-| `scripts/sw-code-review.sh` | 672 | Clean Code & Architecture Analysis |
+| `scripts/sw-code-review.sh` | 691 | Clean Code & Architecture Analysis |
 | `scripts/sw-connect.sh` | 623 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 599 | Context Engine for Pipeline Stages |
-| `scripts/sw-cost.sh` | 954 | Token Usage & Cost Intelligence |
-| `scripts/sw-daemon.sh` | 1356 | Autonomous GitHub Issue Watcher |
+| `scripts/sw-cost.sh` | 963 | Token Usage & Cost Intelligence |
+| `scripts/sw-daemon.sh` | 1359 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 508 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 1888 | SQLite Persistence Layer |
 | `scripts/sw-decide.sh` | 685 | Shipwright Autonomous Decision Engine |
@@ -511,43 +511,43 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-docs.sh` | 625 | Documentation Keeper |
 | `scripts/sw-doctor.sh` | 1184 | Validate Shipwright setup |
 | `scripts/sw-dora.sh` | 602 | DORA Metrics Dashboard with Engineering Intelligence |
-| `scripts/sw-durable.sh` | 703 | Durable Workflow Engine |
+| `scripts/sw-durable.sh` | 707 | Durable Workflow Engine |
 | `scripts/sw-e2e-orchestrator.sh` | 534 | Test suite registry & execution |
-| `scripts/sw-eventbus.sh` | 406 | Durable event bus for real-time inter-component |
+| `scripts/sw-eventbus.sh` | 409 | Durable event bus for real-time inter-component |
 | `scripts/sw-evidence.sh` | 748 | Machine-Verifiable Proof for Agent Deliveries |
 | `scripts/sw-feedback.sh` | 458 | Production Feedback Loop |
 | `scripts/sw-fix.sh` | 455 | Bulk Fix Across Multiple Repos |
 | `scripts/sw-fleet-discover.sh` | 546 | Auto-Discovery from GitHub Orgs |
-| `scripts/sw-fleet-viz.sh` | 406 | Multi-Repo Fleet Visualization |
+| `scripts/sw-fleet-viz.sh` | 408 | Multi-Repo Fleet Visualization |
 | `scripts/sw-fleet.sh` | 1373 | Multi-Repo Daemon Orchestrator |
 | `scripts/sw-guild.sh` | 552 | Knowledge Guilds & Cross-Team Learning |
 | `scripts/sw-heartbeat.sh` | 341 | File-based agent heartbeat protocol |
-| `scripts/sw-hygiene.sh` | 653 | Repository Organization & Cleanup |
-| `scripts/sw-incident.sh` | 864 | Autonomous Incident Detection & Response |
+| `scripts/sw-hygiene.sh` | 655 | Repository Organization & Cleanup |
+| `scripts/sw-incident.sh` | 868 | Autonomous Incident Detection & Response |
 | `scripts/sw-init.sh` | 853 | Complete setup for Shipwright + Shipwright |
 | `scripts/sw-instrument.sh` | 683 | Pipeline Instrumentation & Feedback Loops |
-| `scripts/sw-intelligence.sh` | 1510 | AI-Powered Analysis & Decision Engine |
+| `scripts/sw-intelligence.sh` | 1511 | AI-Powered Analysis & Decision Engine |
 | `scripts/sw-jira.sh` | 624 | Jira ↔ GitHub Bidirectional Sync |
 | `scripts/sw-launchd.sh` | 702 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 640 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 350 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 3294 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 3298 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 1886 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 468 | Terminal-based pipeline mission control |
-| `scripts/sw-model-router.sh` | 597 | Intelligent Model Routing & Cost Optimization |
-| `scripts/sw-otel.sh` | 598 | OpenTelemetry Observability |
+| `scripts/sw-model-router.sh` | 598 | Intelligent Model Routing & Cost Optimization |
+| `scripts/sw-otel.sh` | 600 | OpenTelemetry Observability |
 | `scripts/sw-oversight.sh` | 748 | Quality Oversight Board |
 | `scripts/sw-patrol-meta.sh` | 442 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 438 | Dynamic Pipeline Composition |
-| `scripts/sw-pipeline-vitals.sh` | 1070 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 2865 | Autonomous Feature Delivery (Idea → Production) |
-| `scripts/sw-pm.sh` | 741 | Autonomous PM Agent for Team Orchestration |
+| `scripts/sw-pipeline-vitals.sh` | 1075 | Pipeline Vitals Engine |
+| `scripts/sw-pipeline.sh` | 2867 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pm.sh` | 742 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 687 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 822 | Predictive & Proactive Intelligence |
 | `scripts/sw-prep.sh` | 1648 | Repository Preparation for Agent Teams |
 | `scripts/sw-ps.sh` | 176 | Show running agent process status |
-| `scripts/sw-public-dashboard.sh` | 784 | Public real-time pipeline progress |
-| `scripts/sw-quality.sh` | 668 | Intelligent completion, audits, zero auto |
+| `scripts/sw-public-dashboard.sh` | 785 | Public real-time pipeline progress |
+| `scripts/sw-quality.sh` | 671 | Intelligent completion, audits, zero auto |
 | `scripts/sw-reaper.sh` | 401 | Automatic tmux pane cleanup when agents exit |
 | `scripts/sw-recruit.sh` | 2642 | AGI-Level Agent Recruitment & Talent Management |
 | `scripts/sw-regression.sh` | 625 | Regression Detection Pipeline |
@@ -557,19 +557,19 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-replay.sh` | 536 | Pipeline run replay, timeline viewing, narratives |
 | `scripts/sw-retro.sh` | 663 | Sprint Retrospective Engine |
 | `scripts/sw-review-rerun.sh` | 220 | Canonical Rerun Comment Writer |
-| `scripts/sw-scale.sh` | 600 | Dynamic agent team scaling during pipeline execution |
+| `scripts/sw-scale.sh` | 602 | Dynamic agent team scaling during pipeline execution |
 | `scripts/sw-security-audit.sh` | 505 | Comprehensive Security Auditing |
-| `scripts/sw-self-optimize.sh` | 1523 | Learning & Self-Tuning System |
+| `scripts/sw-self-optimize.sh` | 1528 | Learning & Self-Tuning System |
 | `scripts/sw-session.sh` | 547 | Launch a Claude Code team session in a new tmux window |
 | `scripts/sw-setup.sh` | 374 | Comprehensive onboarding wizard |
 | `scripts/sw-standup.sh` | 713 | Automated Daily Standups for AI Agent Teams |
 | `scripts/sw-status.sh` | 867 | Dashboard showing Claude Code team status |
-| `scripts/sw-strategic.sh` | 935 | Strategic Intelligence Agent |
-| `scripts/sw-stream.sh` | 442 | Live terminal output streaming from agent panes |
-| `scripts/sw-swarm.sh` | 671 | Dynamic agent swarm management |
+| `scripts/sw-strategic.sh` | 940 | Strategic Intelligence Agent |
+| `scripts/sw-stream.sh` | 445 | Live terminal output streaming from agent panes |
+| `scripts/sw-swarm.sh` | 672 | Dynamic agent swarm management |
 | `scripts/sw-team-stages.sh` | 493 | Multi-agent execution with leader/specialist roles |
 | `scripts/sw-templates.sh` | 252 | Browse and inspect team templates |
-| `scripts/sw-testgen.sh` | 556 | Autonomous test generation and coverage maintenance |
+| `scripts/sw-testgen.sh` | 561 | Autonomous test generation and coverage maintenance |
 | `scripts/sw-tmux-pipeline.sh` | 535 | Spawn and manage pipelines in tmux windows |
 | `scripts/sw-tmux-role-color.sh` | 79 | Set pane border color by agent role |
 | `scripts/sw-tmux-status.sh` | 151 | Status bar widgets for tmux |
@@ -579,8 +579,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-triage.sh` | 811 | Intelligent Issue Labeling & Prioritization |
 | `scripts/sw-upgrade.sh` | 475 | Detect and apply updates from the repo |
 | `scripts/sw-ux.sh` | 682 | Premium UX Enhancement Layer |
-| `scripts/sw-webhook.sh` | 618 | GitHub Webhook Receiver for Instant Issue Processing |
-| `scripts/sw-widgets.sh` | 523 | Embeddable Status Widgets |
+| `scripts/sw-webhook.sh` | 619 | GitHub Webhook Receiver for Instant Issue Processing |
+| `scripts/sw-widgets.sh` | 526 | Embeddable Status Widgets |
 | `scripts/sw-worktree.sh` | 409 | Git worktree management for multi-agent isolation |
 | `scripts/sw` | 614 | CLI router — dispatches subcommands via exec |
 <!-- /AUTO:core-scripts -->
@@ -591,7 +591,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 
 | File | Lines | Purpose |
 | --- | ---: | --- |
-| `scripts/sw-github-app.sh` | 578 | GitHub App Management & Webhook Receiver |
+| `scripts/sw-github-app.sh` | 579 | GitHub App Management & Webhook Receiver |
 | `scripts/sw-github-checks.sh` | 500 | Native GitHub Checks API Integration |
 | `scripts/sw-github-deploy.sh` | 512 | Native GitHub Deployments API Integration |
 | `scripts/sw-github-graphql.sh` | 954 | GitHub GraphQL API Client |

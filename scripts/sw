@@ -531,6 +531,9 @@ main() {
         evidence|ev)
             exec "$SCRIPT_DIR/sw-evidence.sh" "$@"
             ;;
+        decide)
+            exec "$SCRIPT_DIR/sw-decide.sh" "$@"
+            ;;
         otel)
             exec "$SCRIPT_DIR/sw-otel.sh" "$@"
             ;;

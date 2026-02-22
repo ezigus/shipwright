@@ -222,5 +222,13 @@
     "default_model": "sonnet",
     "promote_threshold_tasks": 10,
     "promote_threshold_success_rate": 85
+  },
+  "decision": {
+    "enabled": false,
+    "cycle_interval_seconds": 1800,
+    "tiers_file": "config/decision-tiers.json",
+    "outcome_learning_enabled": true,
+    "outcome_min_samples": 10,
+    "dedup_window_days": 7
   }
 }

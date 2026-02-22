@@ -853,8 +853,8 @@ Auto-detected by \`shipwright daemon patrol\` on $(now_iso)." \
                 usage_count=${usage_count:-0}
 
                 local line_count
-                line_count=$(wc -l < "$script" 2>/dev/null | tr -d ' ' || echo "0")
-                line_count=${line_count:-0}
+                line_count=$(wc -l < "$script" 2>/dev/null | tr -d ' ' || true)
+                line_count="${line_count:-0}"
 
                 untested_entries="${untested_entries}${usage_count}|${basename}|${line_count}\n"
                 findings=$((findings + 1))

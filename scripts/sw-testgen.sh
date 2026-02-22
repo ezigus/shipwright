@@ -98,7 +98,8 @@ analyze_coverage() {
     if [[ -f "$target_script" ]]; then
         # Parse function definitions
         function_names=$(grep -E '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$target_script" | sed 's/().*//' || echo "")
-        total_functions=$(echo "$function_names" | grep -c . || echo "0")
+        total_functions=$(echo "$function_names" | grep -c . || true)
+        total_functions="${total_functions:-0}"
     fi
 
     # Find existing tests that call these functions
@@ -182,7 +183,8 @@ EOF
     fi
 
     local untested_count=0
-    [[ -n "$untested_functions" ]] && untested_count=$(echo "$untested_functions" | grep -c . || echo "0")
+    [[ -n "$untested_functions" ]] && untested_count=$(echo "$untested_functions" | grep -c . || true)
+    untested_count="${untested_count:-0}"
 
     if [[ $untested_count -eq 0 ]]; then
         success "All functions have tests"
@@ -338,15 +340,18 @@ score_quality() {
 
     # Count assertions
     local assertion_count=0
-    assertion_count=$(grep -c -E '(assert_|test_|expect_)' "$test_file" || echo "0")
+    assertion_count=$(grep -c -E '(assert_|test_|expect_)' "$test_file" || true)
+    assertion_count="${assertion_count:-0}"
 
     # Count edge case patterns
     local edge_case_count=0
-    edge_case_count=$(grep -c -E '(empty|null|nil|missing|invalid|error|fail)' "$test_file" || echo "0")
+    edge_case_count=$(grep -c -E '(empty|null|nil|missing|invalid|error|fail)' "$test_file" || true)
+    edge_case_count="${edge_case_count:-0}"
 
     # Count error path tests
     local error_path_count=0
-    error_path_count=$(grep -c -E '(exit|return 1|error|ERROR)' "$test_file" || echo "0")
+    error_path_count=$(grep -c -E '(exit|return 1|error|ERROR)' "$test_file" || true)
+    error_path_count="${error_path_count:-0}"
 
     # Calculate score (0-100)
     local quality_score=0

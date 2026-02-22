@@ -1242,7 +1242,8 @@ stage_test() {
         # Post failure to GitHub with more context
         if [[ -n "$ISSUE_NUMBER" ]]; then
             local log_lines
-            log_lines=$(wc -l < "$test_log" 2>/dev/null || echo "0")
+            log_lines=$(wc -l < "$test_log" 2>/dev/null || true)
+            log_lines="${log_lines:-0}"
             local log_excerpt
             if [[ "$log_lines" -lt 60 ]]; then
                 log_excerpt="$(cat "$test_log" 2>/dev/null || true)"
@@ -1837,7 +1838,8 @@ stage_pr() {
     real_changes=$(_safe_base_diff --name-only \
         -- . ':!.claude/loop-state.md' ':!.claude/pipeline-state.md' \
         ':!.claude/pipeline-artifacts/*' ':!**/progress.md' \
-        ':!**/error-summary.json' | wc -l | xargs || echo "0")
+        ':!**/error-summary.json' | wc -l | xargs || true)
+    real_changes="${real_changes:-0}"
     if [[ "${real_changes:-0}" -eq 0 ]]; then
         error "No meaningful code changes detected — only bookkeeping files modified"
         error "Refusing to create PR with zero real changes"

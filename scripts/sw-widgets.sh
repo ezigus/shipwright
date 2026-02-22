@@ -82,7 +82,8 @@ _get_test_stats() {
 
     # Count test-related events
     local pass_count
-    pass_count=$(grep -i "test.*passed" "$EVENTS_FILE" 2>/dev/null | wc -l || echo "0")
+    pass_count=$(grep -i "test.*passed" "$EVENTS_FILE" 2>/dev/null | wc -l || true)
+    pass_count="${pass_count:-0}"
     pass_count=$(_safe_num "$pass_count")
 
     echo "$pass_count"
@@ -109,11 +110,13 @@ _get_health_score() {
     recent_events=$(tail -n 100 "$EVENTS_FILE" 2>/dev/null || true)
 
     local success_count
-    success_count=$(echo "$recent_events" | grep -i "stage.*completed" | wc -l || echo "0")
+    success_count=$(echo "$recent_events" | grep -i "stage.*completed" | wc -l || true)
+    success_count="${success_count:-0}"
     success_count=$(_safe_num "$success_count")
 
     local fail_count
-    fail_count=$(echo "$recent_events" | grep -i "stage.*failed" | wc -l || echo "0")
+    fail_count=$(echo "$recent_events" | grep -i "stage.*failed" | wc -l || true)
+    fail_count="${fail_count:-0}"
     fail_count=$(_safe_num "$fail_count")
 
     local total=$((success_count + fail_count))

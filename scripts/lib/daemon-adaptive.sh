@@ -223,10 +223,12 @@ daemon_collect_snapshot() {
     if [[ -d "$worktree/.git" ]] || [[ -f "$worktree/.git" ]]; then
         diff_lines=$(cd "$worktree" && git diff --stat 2>/dev/null | tail -1 | grep -o '[0-9]* insertion' | grep -o '[0-9]*' || echo "0")
         [[ -z "$diff_lines" ]] && diff_lines=0
-        files_changed=$(cd "$worktree" && git diff --name-only 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+        files_changed=$(cd "$worktree" && git diff --name-only 2>/dev/null | wc -l | tr -d ' ' || true)
+        files_changed="${files_changed:-0}"
         # Also count untracked files the agent has created
         local untracked
-        untracked=$(cd "$worktree" && git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+        untracked=$(cd "$worktree" && git ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ' || true)
+        untracked="${untracked:-0}"
         files_changed=$((files_changed + untracked))
     fi
 

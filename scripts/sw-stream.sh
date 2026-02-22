@@ -113,7 +113,8 @@ capture_pane_output() {
 
     # Trim to buffer size (keep latest N lines)
     local line_count
-    line_count=$(wc -l < "$pane_file" 2>/dev/null || echo 0)
+    line_count=$(wc -l < "$pane_file" 2>/dev/null || true)
+    line_count="${line_count:-0}"
     if [[ "$line_count" -gt "$BUFFER_LINES" ]]; then
         local skip=$((line_count - BUFFER_LINES))
         tail -n "$BUFFER_LINES" "$pane_file" > "${pane_file}.tmp"
@@ -273,8 +274,10 @@ stream_list() {
 
         # Get file size and line count
         local file_size lines_count
-        file_size=$(stat -f%z "$stream_file" 2>/dev/null || stat -c%s "$stream_file" 2>/dev/null || echo 0)
-        lines_count=$(wc -l < "$stream_file" 2>/dev/null || echo 0)
+        file_size=$(stat -f%z "$stream_file" 2>/dev/null || stat -c%s "$stream_file" 2>/dev/null || true)
+        file_size="${file_size:-0}"
+        lines_count=$(wc -l < "$stream_file" 2>/dev/null || true)
+        lines_count="${lines_count:-0}"
 
         # Get latest timestamp
         local latest_ts

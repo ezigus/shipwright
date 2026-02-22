@@ -176,7 +176,7 @@ show_workers() {
     echo -e "${BOLD}Remote Machines:${RESET}"
     echo ""
 
-    if jq '.machines[]?' "$MACHINES_FILE" 2>/dev/null | grep -q .; then
+    if jq '.machines[]?' "$MACHINES_FILE" 2>/dev/null | grep -q . 2>/dev/null; then
         jq -r '.machines[]? | "\(.name) (\(.hostname)) — \(.status) — \(.active_jobs // 0) active"' "$MACHINES_FILE" 2>/dev/null | while read -r machine; do
             echo -e "  ${machine}"
         done
@@ -205,8 +205,10 @@ show_insights() {
 
     # Fleet-wide success rate (last 30 days)
     local total_pipelines successful_pipelines
-    total_pipelines=$(grep '"type":"pipeline.completed"' "$EVENTS_FILE" 2>/dev/null | tail -5000 | wc -l || echo "0")
-    successful_pipelines=$(grep '"type":"pipeline.completed".*"status":"success"' "$EVENTS_FILE" 2>/dev/null | tail -5000 | wc -l || echo "0")
+    total_pipelines=$(grep '"type":"pipeline.completed"' "$EVENTS_FILE" 2>/dev/null | tail -5000 | wc -l || true)
+    total_pipelines="${total_pipelines:-0}"
+    successful_pipelines=$(grep '"type":"pipeline.completed".*"status":"success"' "$EVENTS_FILE" 2>/dev/null | tail -5000 | wc -l || true)
+    successful_pipelines="${successful_pipelines:-0}"
 
     local success_rate=0
     if [[ "$total_pipelines" -gt 0 ]]; then

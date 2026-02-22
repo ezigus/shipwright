@@ -359,7 +359,8 @@ cmd_scale() {
         fi
 
         local current_agents
-        current_agents=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -cE '^shipwright-sw-agent|^swarm-' || echo "0")
+        current_agents=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -cE '^shipwright-sw-agent|^swarm-' || true)
+        current_agents="${current_agents:-0}"
 
         local target_agents=1
         if [[ "$queue_depth" -gt 5 ]]; then

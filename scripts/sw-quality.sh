@@ -81,7 +81,8 @@ validate_quality() {
     local uncommitted_pass=true
     if [[ -d "$REPO_DIR/.git" ]]; then
         local dirty_count
-        dirty_count=$(cd "$REPO_DIR" && git status --short 2>/dev/null | wc -l || echo "0")
+        dirty_count=$(cd "$REPO_DIR" && git status --short 2>/dev/null | wc -l || true)
+        dirty_count="${dirty_count:-0}"
         if [[ "$dirty_count" -gt 0 ]]; then
             uncommitted_pass=false
             all_pass=false
@@ -403,14 +404,16 @@ calculate_quality_score() {
     # Security audit (20%)
     local security_files=0
     if [[ -d "$REPO_DIR" ]]; then
-        security_files=$(find "$REPO_DIR" -type f \( -name "*.js" -o -name "*.py" -o -name "*.go" \) 2>/dev/null | wc -l || echo "0")
+        security_files=$(find "$REPO_DIR" -type f \( -name "*.js" -o -name "*.py" -o -name "*.go" \) 2>/dev/null | wc -l || true)
+        security_files="${security_files:-0}"
         security_score=$((security_files > 0 ? 85 : 0))
     fi
 
     # Architecture audit (15%)
     local architecture_files=0
     if [[ -d "$REPO_DIR" ]]; then
-        architecture_files=$(find "$REPO_DIR" -type f \( -name "*.js" -o -name "*.py" \) 2>/dev/null | wc -l || echo "0")
+        architecture_files=$(find "$REPO_DIR" -type f \( -name "*.js" -o -name "*.py" \) 2>/dev/null | wc -l || true)
+        architecture_files="${architecture_files:-0}"
         architecture_score=$((architecture_files > 0 ? 80 : 0))
     fi
 

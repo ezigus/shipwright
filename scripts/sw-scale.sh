@@ -357,7 +357,8 @@ cmd_status() {
     fi
 
     if [[ -f "$SCALE_EVENTS_FILE" ]]; then
-        event_count=$(wc -l < "$SCALE_EVENTS_FILE" || echo "0")
+        event_count=$(wc -l < "$SCALE_EVENTS_FILE" || true)
+        event_count="${event_count:-0}"
     fi
 
     local last_scale_time
@@ -445,7 +446,8 @@ cmd_recommend() {
         local base_branch="${BASE_BRANCH:-main}"
         if git rev-parse --verify "$base_branch" >/dev/null 2>&1; then
             module_count=$(git diff --name-only "${base_branch}..HEAD" 2>/dev/null \
-                | sed 's|/[^/]*$||' | sort -u | wc -l | xargs || echo "0")
+                | sed 's|/[^/]*$||' | sort -u | wc -l || true)
+            module_count="${module_count:-0}"
         fi
         module_count="${module_count:-0}"
     fi

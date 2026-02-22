@@ -395,7 +395,8 @@ _intelligence_fallback_analyze() {
     local outcomes_file="$HOME/.shipwright/optimization/outcomes.jsonl"
     if [[ -f "$outcomes_file" ]] && command -v jq &>/dev/null; then
         local sample_count
-        sample_count=$(wc -l < "$outcomes_file" 2>/dev/null || echo "0")
+        sample_count=$(wc -l < "$outcomes_file" 2>/dev/null || true)
+        sample_count="${sample_count:-0}"
 
         if [[ "$sample_count" -gt 5 ]]; then
             # Compute average complexity from past outcomes

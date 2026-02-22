@@ -121,7 +121,8 @@ analyze_issue() {
     # Count estimated files affected by analyzing body content
     local file_scope complexity risk estimated_hours
     local files_mentioned
-    files_mentioned=$(echo "$body" | grep -o '\b[a-zA-Z0-9_.-]*\.[a-z]*' | sort -u | wc -l || echo "0")
+    files_mentioned=$(echo "$body" | grep -o '\b[a-zA-Z0-9_.-]*\.[a-z]*' | sort -u | wc -l || true)
+    files_mentioned="${files_mentioned:-0}"
     files_mentioned=$((files_mentioned + 1))  # At least 1 file
 
     # Determine file scope

@@ -1148,13 +1148,15 @@ stage_compound_quality() {
     _cq_real_changes=$(git diff --name-only "origin/${BASE_BRANCH:-main}...HEAD" \
         -- . ':!.claude/loop-state.md' ':!.claude/pipeline-state.md' \
         ':!.claude/pipeline-artifacts/*' ':!**/progress.md' \
-        ':!**/error-summary.json' 2>/dev/null | wc -l || echo "0")
+        ':!**/error-summary.json' 2>/dev/null | wc -l || true)
+    _cq_real_changes="${_cq_real_changes:-0}"
     _cq_real_changes=$(echo "$_cq_real_changes" | tr -d '[:space:]')
     [[ -z "$_cq_real_changes" ]] && _cq_real_changes=0
     # Fallback: if no remote, compare against first commit
     if [[ "$_cq_real_changes" -eq 0 ]] 2>/dev/null; then
         _cq_real_changes=$(git diff --name-only "$(git rev-list --max-parents=0 HEAD 2>/dev/null)...HEAD" \
-            -- . ':!.claude/*' ':!**/progress.md' ':!**/error-summary.json' 2>/dev/null | wc -l || echo "0")
+            -- . ':!.claude/*' ':!**/progress.md' ':!**/error-summary.json' 2>/dev/null | wc -l || true)
+        _cq_real_changes="${_cq_real_changes:-0}"
         _cq_real_changes=$(echo "$_cq_real_changes" | tr -d '[:space:]')
         [[ -z "$_cq_real_changes" ]] && _cq_real_changes=0
     fi

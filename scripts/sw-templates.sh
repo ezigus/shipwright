@@ -82,8 +82,8 @@ json_agent_count() {
     if command -v jq >/dev/null 2>&1; then
         jq -r '.agents // [] | length' "$file" 2>/dev/null
     else
-        grep -c '"name"' "$file" 2>/dev/null || echo "0"
-    fi
+        grep -c '"name"' "$file" 2>/dev/null || true
+    fi | tr -d ' ' | sed 's/^$/0/'
 }
 
 # Print agent details from a template

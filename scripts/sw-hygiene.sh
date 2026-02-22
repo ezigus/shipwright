@@ -103,7 +103,8 @@ detect_dead_code() {
 
             # Check if function is used in other files (count lines with this function name)
             local usage_count
-            usage_count=$(grep -r "$func" "$REPO_DIR/scripts" --include="*.sh" 2>/dev/null | wc -l) || usage_count="0"
+            usage_count=$(grep -r "$func" "$REPO_DIR/scripts" --include="*.sh" 2>/dev/null | wc -l || true)
+            usage_count="${usage_count:-0}"
             usage_count=$(printf '%s' "$usage_count" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
             # Function definition counts as 1 usage; if only 1, it's unused
@@ -417,7 +418,8 @@ scan_platform_refactor() {
     sizes_file=$(mktemp)
     find "$scripts_dir" -maxdepth 1 -name "*.sh" -type f 2>/dev/null | while read -r f; do
         local lines
-        lines=$(wc -l < "$f" 2>/dev/null || echo 0)
+        lines=$(wc -l < "$f" 2>/dev/null || true)
+        lines="${lines:-0}"
         printf '{"script":"%s","lines":%s}\n' "$(basename "$f")" "$lines"
     done | jq -s 'sort_by(-.lines) | .[0:15]' 2>/dev/null > "$sizes_file"
     local script_sizes

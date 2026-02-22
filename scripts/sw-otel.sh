@@ -77,6 +77,7 @@ cmd_metrics() {
 
     # Parse events.jsonl
     if [[ -f "$EVENTS_FILE" ]]; then
+        {
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
 
@@ -462,7 +463,8 @@ cmd_report() {
     local last_event_ts=""
 
     if [[ -f "$EVENTS_FILE" ]]; then
-        event_count=$(wc -l < "$EVENTS_FILE" || echo "0")
+        event_count=$(wc -l < "$EVENTS_FILE" || true)
+        event_count="${event_count:-0}"
         export_count=$(grep -c '"type":"otel_export"' "$EVENTS_FILE" 2>/dev/null || true)
         export_count="${export_count:-0}"
         webhook_count=$(grep -c '"type":"webhook_sent"' "$EVENTS_FILE" 2>/dev/null || true)

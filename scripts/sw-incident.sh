@@ -133,10 +133,14 @@ analyze_root_cause() {
     local config="$2"
 
     local timeout_hits error_hits memory_hits dependency_hits
-    timeout_hits=$(echo "$failure_log" | grep -ic "timeout\|deadline\|too slow" || echo "0")
-    memory_hits=$(echo "$failure_log" | grep -ic "out of memory\|OOM\|heap" || echo "0")
-    dependency_hits=$(echo "$failure_log" | grep -ic "dependency\|import\|require\|not found" || echo "0")
-    error_hits=$(echo "$failure_log" | grep -c . || echo "0")
+    timeout_hits=$(echo "$failure_log" | grep -ic "timeout\|deadline\|too slow" || true)
+    timeout_hits="${timeout_hits:-0}"
+    memory_hits=$(echo "$failure_log" | grep -ic "out of memory\|OOM\|heap" || true)
+    memory_hits="${memory_hits:-0}"
+    dependency_hits=$(echo "$failure_log" | grep -ic "dependency\|import\|require\|not found" || true)
+    dependency_hits="${dependency_hits:-0}"
+    error_hits=$(echo "$failure_log" | grep -c . || true)
+    error_hits="${error_hits:-0}"
 
     if [[ "$timeout_hits" -gt 0 ]]; then
         echo "Performance degradation: Timeout detected (${timeout_hits} occurrences)"

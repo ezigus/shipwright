@@ -416,7 +416,8 @@ show_report() {
 
     # Summary stats
     local total_runs
-    total_runs=$(wc -l < "$MODEL_USAGE_LOG" || echo "0")
+    total_runs=$(wc -l < "$MODEL_USAGE_LOG" || true)
+    total_runs="${total_runs:-0}"
 
     local haiku_runs
     haiku_runs=$(grep -c '"model":"haiku"' "$MODEL_USAGE_LOG" || true)

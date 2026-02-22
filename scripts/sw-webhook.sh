@@ -373,7 +373,8 @@ cmd_status() {
     echo ""
     if [[ -f "$WEBHOOK_EVENTS_FILE" ]]; then
         local event_count
-        event_count=$(wc -l < "$WEBHOOK_EVENTS_FILE" 2>/dev/null || echo 0)
+        event_count=$(wc -l < "$WEBHOOK_EVENTS_FILE" 2>/dev/null || true)
+        event_count="${event_count:-0}"
         info "Recent webhook events (${event_count} total):"
         tail -5 "$WEBHOOK_EVENTS_FILE" 2>/dev/null | jq -c '{ts, repo, issue, label}' || echo "  (no events yet)"
     else

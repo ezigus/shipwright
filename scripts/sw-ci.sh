@@ -227,15 +227,20 @@ cmd_analyze() {
     info "Analyzing workflow efficiency"
 
     local job_count step_count matrix_enabled
-    job_count=$(grep -c "^  [a-z_-]*:" "$workflow_file" 2>/dev/null || echo "0")
-    step_count=$(grep -c "      - name:" "$workflow_file" 2>/dev/null || echo "0")
-    matrix_enabled=$(grep -c "matrix:" "$workflow_file" 2>/dev/null || echo "0")
+    job_count=$(grep -c "^  [a-z_-]*:" "$workflow_file" 2>/dev/null || true)
+    job_count="${job_count:-0}"
+    step_count=$(grep -c "      - name:" "$workflow_file" 2>/dev/null || true)
+    step_count="${step_count:-0}"
+    matrix_enabled=$(grep -c "matrix:" "$workflow_file" 2>/dev/null || true)
+    matrix_enabled="${matrix_enabled:-0}"
 
     local has_cache
-    has_cache=$(grep -c "actions/cache" "$workflow_file" 2>/dev/null || echo "0")
+    has_cache=$(grep -c "actions/cache" "$workflow_file" 2>/dev/null || true)
+    has_cache="${has_cache:-0}"
 
     local has_timeout
-    has_timeout=$(grep -c "timeout-minutes:" "$workflow_file" 2>/dev/null || echo "0")
+    has_timeout=$(grep -c "timeout-minutes:" "$workflow_file" 2>/dev/null || true)
+    has_timeout="${has_timeout:-0}"
 
     echo ""
     echo -e "${BOLD}Workflow Analysis: $(basename "$workflow_file")${RESET}"

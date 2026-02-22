@@ -1206,10 +1206,14 @@ optimize_track_quality_index() {
     [[ -z "$recent" ]] && return 0
 
     local total success_count
-    total=$(echo "$recent" | wc -l | tr -d ' ')
+    total=$(echo "$recent" | wc -l || true)
+    total="${total:-0}"
+    total=$(echo "$total" | tr -d ' ')
     [[ "$total" -lt 3 ]] && return 0
 
-    success_count=$(echo "$recent" | jq -c 'select(.result == "success" or .result == "completed")' 2>/dev/null | wc -l | tr -d ' ')
+    success_count=$(echo "$recent" | jq -c 'select(.result == "success" or .result == "completed")' 2>/dev/null | wc -l || true)
+    success_count="${success_count:-0}"
+    success_count=$(echo "$success_count" | tr -d ' ')
     success_count="${success_count:-0}"
 
     local avg_iterations avg_quality
@@ -1235,7 +1239,8 @@ optimize_track_quality_index() {
     # Detect trend
     if [[ -f "$quality_file" ]]; then
         local line_count
-        line_count=$(wc -l < "$quality_file" 2>/dev/null | tr -d ' ' || echo "0")
+        line_count=$(wc -l < "$quality_file" 2>/dev/null | tr -d ' ' || true)
+        line_count="${line_count:-0}"
         if [[ "$line_count" -ge 2 ]]; then
             local prev_index
             prev_index=$(tail -2 "$quality_file" | head -1 | jq -r '.quality_index // 0' 2>/dev/null || echo "0")

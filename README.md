@@ -475,6 +475,7 @@ shipwright templates list
 
 | File                          | Purpose                                                                                     |
 | ----------------------------- | ------------------------------------------------------------------------------------------- |
+| `config/defaults.json`        | Default runtime config (including pipeline command discovery and fallback behavior)          |
 | `config/policy.json`          | **Central contract** — risk tiers, merge policy, docs drift, browser evidence, harness SLAs |
 | `config/policy.schema.json`   | JSON Schema validation for the policy contract                                              |
 | `.claude/daemon-config.json`  | Daemon settings, intelligence flags, patrol config                                          |
@@ -485,6 +486,10 @@ shipwright templates list
 | `~/.shipwright/costs.json`    | Cost tracking data                                                                          |
 | `~/.shipwright/budget.json`   | Budget limits                                                                               |
 | `~/.shipwright/github-cache/` | Cached GitHub API responses                                                                 |
+
+Pipeline command discovery notes:
+- Shipwright scans repository markers recursively (default depth: `6`) via `pipeline.command_discovery.search_max_depth`.
+- If `scripts/run-xcode-tests.sh` is unavailable, iOS/SwiftPM test commands fall back to `xcodebuild test` and `swift test`.
 
 ## Prerequisites
 

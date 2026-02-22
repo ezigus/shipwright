@@ -983,6 +983,26 @@ daemon_init() {
   },
   "max_retries": 2,
   "retry_escalation": true,
+  "pipeline": {
+    "command_discovery": {
+      "enabled": true,
+      "help_args": "--help",
+      "helpers": [
+        {
+          "id": "xcode_runner",
+          "script": "scripts/run-xcode-tests.sh",
+          "environments": ["ios_xcode", "swiftpm"],
+          "help_args": "--help",
+          "parser": "xcode_runner_help_v1",
+          "default_mode": "unit",
+          "mode_flags": {
+            "swiftpm_all": "-t Packages"
+          },
+          "prefer_helper": true
+        }
+      ]
+    }
+  },
   "self_optimize": false,
   "optimize_interval": 10,
   "priority_lane": false,

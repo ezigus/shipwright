@@ -193,7 +193,8 @@ route_quality() {
         security-audit|audit) exec "$SCRIPT_DIR/sw-security-audit.sh" "$@" ;;
         testgen)          exec "$SCRIPT_DIR/sw-testgen.sh" "$@" ;;
         hygiene)          exec "$SCRIPT_DIR/sw-hygiene.sh" "$@" ;;
-        help|*) echo "Usage: shipwright quality {code-review|security-audit|testgen|hygiene}"; exit 1 ;;
+        validate|gate)    exec "$SCRIPT_DIR/sw-quality.sh" "$@" ;;
+        help|*) echo "Usage: shipwright quality {code-review|security-audit|testgen|hygiene|validate}"; exit 1 ;;
     esac
 }
 
@@ -536,8 +537,8 @@ main() {
         triage)
             exec "$SCRIPT_DIR/sw-triage.sh" "$@"
             ;;
-        quality)
-            exec "$SCRIPT_DIR/sw-quality.sh" "$@"
+        pipeline-composer|composer)
+            exec "$SCRIPT_DIR/sw-pipeline-composer.sh" "$@"
             ;;
         oversight)
             exec "$SCRIPT_DIR/sw-oversight.sh" "$@"

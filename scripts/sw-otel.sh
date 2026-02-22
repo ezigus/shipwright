@@ -64,16 +64,16 @@ cmd_metrics() {
     local status_running=0
 
     # Template counts
-    declare -a templates
-    declare -a template_counts
+    declare -a templates=()
+    declare -a template_counts=()
 
     # Stage timing
-    declare -a stages
-    declare -a stage_durations
+    declare -a stages=()
+    declare -a stage_durations=()
 
     # Model costs
-    declare -a models
-    declare -a model_costs
+    declare -a models=()
+    declare -a model_costs=()
 
     # Parse events.jsonl
     if [[ -f "$EVENTS_FILE" ]]; then
@@ -89,12 +89,18 @@ cmd_metrics() {
                     active_pipelines=$((active_pipelines + 1))
                     ;;
                 pipeline_complete|pipeline.completed)
-                    ((active_pipelines--))
+                    active_pipelines=$((active_pipelines - 1))
+                    if [[ "$active_pipelines" -lt 0 ]]; then
+                        active_pipelines=0
+                    fi
                     succeeded_pipelines=$((succeeded_pipelines + 1))
                     status_success=$((status_success + 1))
                     ;;
                 pipeline_failed|pipeline.failed)
-                    ((active_pipelines--))
+                    active_pipelines=$((active_pipelines - 1))
+                    if [[ "$active_pipelines" -lt 0 ]]; then
+                        active_pipelines=0
+                    fi
                     failed_pipelines=$((failed_pipelines + 1))
                     status_failed=$((status_failed + 1))
                     ;;

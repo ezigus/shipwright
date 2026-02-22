@@ -502,7 +502,7 @@ prep_scan_structure() {
     TOTAL_LINES=$(find "$root" \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \
         -o -name "*.py" -o -name "*.rb" -o -name "*.go" -o -name "*.rs" -o -name "*.java" \) \
         -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/vendor/*" \
-        -not -path "*/target/*" 2>/dev/null -exec cat {} + 2>/dev/null | wc -l | tr -d ' ')
+        -not -path "*/target/*" -exec cat {} + 2>/dev/null | wc -l | tr -d ' ')
 
     success "Found ${BOLD}${SRC_FILE_COUNT}${RESET} source files, ${BOLD}${TEST_FILE_COUNT}${RESET} test files (${DIM}~${TOTAL_LINES} lines${RESET})"
 }

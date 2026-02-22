@@ -11,8 +11,11 @@ import {
   readFileSync,
   writeFileSync,
   appendFileSync,
+  chmodSync,
+  readdirSync,
 } from "fs";
-import { join } from "path";
+import { join, basename } from "path";
+import { execSync } from "child_process";
 
 const HOME = process.env.HOME || process.env.USERPROFILE;
 const PKG_DIR = join(import.meta.dirname, "..");
@@ -128,6 +131,77 @@ try {
     copyDir(LEGACY_DIR, SHIPWRIGHT_DIR);
     writeFileSync(join(SHIPWRIGHT_DIR, ".migrated"), new Date().toISOString());
     success("Migrated legacy config (originals preserved)");
+  }
+
+  // Set executable bits on all scripts (npm strips them on some platforms)
+  const scriptsDir = join(PKG_DIR, "scripts");
+  if (existsSync(scriptsDir)) {
+    let madeExecutable = 0;
+    for (const file of readdirSync(scriptsDir)) {
+      const fp = join(scriptsDir, file);
+      try {
+        chmodSync(fp, 0o755);
+        madeExecutable++;
+      } catch (_) {
+        // skip non-files
+      }
+    }
+    const libDir = join(scriptsDir, "lib");
+    if (existsSync(libDir)) {
+      for (const file of readdirSync(libDir)) {
+        try {
+          chmodSync(join(libDir, file), 0o755);
+          madeExecutable++;
+        } catch (_) {}
+      }
+    }
+    success(`Set executable bits on ${madeExecutable} scripts`);
+  }
+
+  // Install shell completions for the user's current shell
+  const completionsDir = join(PKG_DIR, "completions");
+  if (existsSync(completionsDir)) {
+    const shell = basename(process.env.SHELL || "/bin/bash");
+    try {
+      if (shell === "bash") {
+        const dest =
+          process.env.BASH_COMPLETION_USER_DIR ||
+          join(
+            process.env.XDG_DATA_HOME || join(HOME, ".local", "share"),
+            "bash-completion",
+            "completions",
+          );
+        ensureDir(dest);
+        cpSync(
+          join(completionsDir, "shipwright.bash"),
+          join(dest, "shipwright"),
+        );
+        cpSync(join(completionsDir, "shipwright.bash"), join(dest, "sw"));
+        success(`Installed bash completions to ${dest}`);
+      } else if (shell === "zsh") {
+        const dest = join(HOME, ".zfunc");
+        ensureDir(dest);
+        cpSync(join(completionsDir, "_shipwright"), join(dest, "_shipwright"));
+        cpSync(join(completionsDir, "_shipwright"), join(dest, "_sw"));
+        success(`Installed zsh completions to ${dest}`);
+      } else if (shell === "fish") {
+        const dest = join(
+          process.env.XDG_CONFIG_HOME || join(HOME, ".config"),
+          "fish",
+          "completions",
+        );
+        ensureDir(dest);
+        cpSync(
+          join(completionsDir, "shipwright.fish"),
+          join(dest, "shipwright.fish"),
+        );
+        cpSync(join(completionsDir, "shipwright.fish"), join(dest, "sw.fish"));
+        success(`Installed fish completions to ${dest}`);
+      }
+    } catch (e) {
+      warn(`Could not auto-install completions: ${e.message}`);
+      info(`Run: shipwright init  (or: bash scripts/install-completions.sh)`);
+    }
   }
 
   // Print success banner

@@ -332,7 +332,6 @@ cmd_stats() {
     local end_time=""
 
     # Read directly to avoid subshell issues
-    echo "DEBUG: Starting read loop..." >&2
     while IFS= read -r line; do
         [ -z "$line" ] && continue
 
@@ -363,14 +362,9 @@ cmd_stats() {
         end_time="$ts"
     done < <(grep -v '^$' "$EVENTS_FILE" 2>/dev/null)
 
-    echo "DEBUG: Read complete, total=$total_events" >&2
-    echo "DEBUG: agents_seen length: ${#agents_seen}" >&2
     local unique_agents
-    echo "DEBUG: About to compute unique..." >&2
     unique_agents=$(sort -u <<< "$agents_seen" | grep -v '^$' | wc -l | tr -d ' ')
-    echo "DEBUG: unique_agents=$unique_agents" >&2
 
-    echo "DEBUG: About to print results..." >&2
     printf "${BOLD}Total Events:${RESET} %d\n" "$total_events"
     printf "${BOLD}Commits:${RESET} %d\n" "$commits"
     printf "${BOLD}Tests:${RESET} %d\n" "$tests"

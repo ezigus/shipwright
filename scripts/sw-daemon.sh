@@ -8,6 +8,9 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 # Allow spawning Claude CLI from within a Claude Code session (daemon, fleet, etc.)
 unset CLAUDECODE 2>/dev/null || true
+# Ignore SIGHUP so daemon survives tmux attach/detach
+trap '' HUP
+trap '' SIGPIPE
 
 VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

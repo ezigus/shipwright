@@ -10,6 +10,7 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 unset CLAUDECODE 2>/dev/null || true
 # Ignore SIGHUP so tmux attach/detach doesn't kill long-running plan/design/review stages
 trap '' HUP
+trap '' SIGPIPE
 
 VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -149,7 +150,8 @@ rotate_event_log_if_needed() {
     local max_lines=10000
     [[ ! -f "$events_file" ]] && return
     local lines
-    lines=$(wc -l < "$events_file" 2>/dev/null || echo "0")
+    lines=$(wc -l < "$events_file" 2>/dev/null || true)
+    lines="${lines:-0}"
     if [[ "$lines" -gt "$max_lines" ]]; then
         local tmp="${events_file}.rotating"
         if tail -5000 "$events_file" > "$tmp" 2>/dev/null && mv "$tmp" "$events_file" 2>/dev/null; then

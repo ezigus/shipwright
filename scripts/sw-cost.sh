@@ -154,7 +154,7 @@ cost_record() {
         fi
         local tmp_file
         tmp_file=$(mktemp "${COST_FILE}.tmp.XXXXXX")
-        jq --argjson input "$input_tokens" \
+        if ! jq --argjson input "$input_tokens" \
            --argjson output "$output_tokens" \
            --arg model "$model" \
            --arg stage "$stage" \
@@ -172,7 +172,16 @@ cost_record() {
                ts: $ts,
                ts_epoch: $epoch
            }] | .entries = (.entries | .[-1000:])' \
-           "$COST_FILE" > "$tmp_file" && mv "$tmp_file" "$COST_FILE" || rm -f "$tmp_file"
+           "$COST_FILE" > "$tmp_file" 2>/dev/null; then
+            error "Cost jq transformation failed — entry may be lost"
+            rm -f "$tmp_file"
+            # Continue without updating cost file
+        else
+            mv "$tmp_file" "$COST_FILE" || {
+                error "Failed to update cost file"
+                rm -f "$tmp_file"
+            }
+        fi
     ) 200>"${COST_FILE}.lock"
 
     emit_event "cost.record" \

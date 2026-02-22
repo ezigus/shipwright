@@ -89,7 +89,9 @@ emit_event() {
     local _lock_file="${EVENTS_FILE}.lock"
     (
         if command -v flock >/dev/null 2>&1; then
-            flock -w 2 200 2>/dev/null || true
+            if ! flock -w 2 200 2>/dev/null; then
+                echo "WARN: emit_event lock timeout — concurrent write possible" >&2
+            fi
         fi
         echo "$_event_line" >> "$EVENTS_FILE"
     ) 200>"$_lock_file"

@@ -14,6 +14,7 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 unset CLAUDECODE 2>/dev/null || true
 # Ignore SIGHUP so tmux attach/detach doesn't kill long-running agent sessions
 trap '' HUP
+trap '' SIGPIPE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -975,7 +976,7 @@ check_fatal_error() {
         local match
         match=$(grep -iE "$fatal_patterns" "$log_file" 2>/dev/null | head -1 | cut -c1-120)
         error "Fatal CLI error: $match"
-        return 0  # fatal error detected
+        return 1  # fatal error detected
     fi
 
     # Non-zero exit + tiny output = likely CLI crash
@@ -2102,7 +2103,8 @@ detect_stuckness() {
     local stuckness_reasons=()
     local tracking_file="${STUCKNESS_TRACKING_FILE:-$LOG_DIR/stuckness-tracking.txt}"
     local tracking_lines
-    tracking_lines=$(wc -l < "$tracking_file" 2>/dev/null || echo "0")
+    tracking_lines=$(wc -l < "$tracking_file" 2>/dev/null || true)
+    tracking_lines="${tracking_lines:-0}"
 
     # Signal 1: Text overlap (existing logic) — compare last 2 iteration logs
     if [[ "$iteration" -ge 3 ]]; then
@@ -2117,7 +2119,8 @@ detect_stuckness() {
 
             if [[ -n "$lines1" && -n "$lines2" ]]; then
                 total=$(echo "$lines1" | wc -l | tr -d ' ')
-                common=$(comm -12 <(echo "$lines1") <(echo "$lines2") 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+                common=$(comm -12 <(echo "$lines1") <(echo "$lines2") 2>/dev/null | wc -l | tr -d ' ' || true)
+                common="${common:-0}"
                 if [[ "$total" -gt 0 ]]; then
                     overlap_pct=$(( common * 100 / total ))
                 else
@@ -2189,7 +2192,8 @@ detect_stuckness() {
 
     # Signal 6: Git diff size — no or minimal code changes (existing)
     local diff_lines
-    diff_lines=$(git -C "${PROJECT_ROOT:-.}" diff HEAD 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+    diff_lines=$(git -C "${PROJECT_ROOT:-.}" diff HEAD 2>/dev/null | wc -l | tr -d ' ' || true)
+    diff_lines="${diff_lines:-0}"
     if [[ "${diff_lines:-0}" -lt 5 ]] && [[ "$iteration" -gt 2 ]]; then
         stuckness_signals=$((stuckness_signals + 1))
         stuckness_reasons+=("no code changes in last iteration")

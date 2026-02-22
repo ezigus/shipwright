@@ -458,6 +458,13 @@ get_active_count() {
         echo 0
         return
     fi
+    # Validate state file JSON before parsing (mid-flight corruption check)
+    if ! jq empty "$STATE_FILE" 2>/dev/null; then
+        daemon_log WARN "State file corrupted mid-flight — backing up and resetting"
+        cp "$STATE_FILE" "${STATE_FILE}.corrupted.$(date +%s)" 2>/dev/null || true
+        init_state
+        return
+    fi
     jq -r '.active_jobs | length' "$STATE_FILE" 2>/dev/null || echo 0
 }
 

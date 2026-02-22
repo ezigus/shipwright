@@ -500,7 +500,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-cost.sh` | 963 | Token Usage & Cost Intelligence |
 | `scripts/sw-daemon.sh` | 1359 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 508 | Fleet Command Dashboard |
-| `scripts/sw-db.sh` | 1888 | SQLite Persistence Layer |
+| `scripts/sw-db.sh` | 1896 | SQLite Persistence Layer |
 | `scripts/sw-decide.sh` | 685 | Shipwright Autonomous Decision Engine |
 | `scripts/sw-decompose.sh` | 521 | Intelligent Issue Decomposition |
 | `scripts/sw-deps.sh` | 530 | Automated Dependency Update Management |
@@ -531,7 +531,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 702 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 640 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 350 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 3298 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 3313 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 1886 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 468 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 598 | Intelligent Model Routing & Cost Optimization |
@@ -540,7 +540,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 442 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 438 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1075 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 2867 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 2875 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 742 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 687 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 822 | Predictive & Proactive Intelligence |

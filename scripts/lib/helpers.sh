@@ -198,16 +198,3 @@ _sw_github_url() {
     echo "https://github.com/${repo}"
 }
 
-# ─── Network Safe Wrappers (config-aware timeouts) ─────────────────────────────
-# Use SHIPWRIGHT_* env vars if set; otherwise _config_get_int when config.sh is loaded
-# Usage: _curl_safe [curl args...]  |  _gh_safe [gh args...]
-_curl_safe() {
-    local ct="${SHIPWRIGHT_CONNECT_TIMEOUT:-$(_config_get_int "network.connect_timeout" 10 2>/dev/null || echo 10)}"
-    local mt="${SHIPWRIGHT_MAX_TIME:-$(_config_get_int "network.max_time" 60 2>/dev/null || echo 60)}"
-    curl --connect-timeout "$ct" --max-time "$mt" "$@"
-}
-
-_gh_safe() {
-    local gh_timeout="${SHIPWRIGHT_GH_TIMEOUT:-$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)}"
-    GH_HTTP_TIMEOUT="$gh_timeout" _timeout "$gh_timeout" gh "$@"
-}

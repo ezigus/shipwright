@@ -1392,11 +1392,9 @@ $(cat "$dod_file")
 ## Diff to Review
 $(cat "$diff_file")"
 
-    # Build claude args — add --dangerously-skip-permissions in CI
-    local review_args=(--print --model "$review_model" --max-turns 25)
-    if [[ "${CI_MODE:-false}" == "true" ]]; then
-        review_args+=(--dangerously-skip-permissions)
-    fi
+    # Skip permissions — pipeline runs headlessly (claude -p) and has no terminal
+    # for interactive permission prompts. Same rationale as build stage (line ~1083).
+    local review_args=(--print --model "$review_model" --max-turns 25 --dangerously-skip-permissions)
 
     claude "${review_args[@]}" "$review_prompt" < /dev/null > "$review_file" 2>"${ARTIFACTS_DIR}/.claude-tokens-review.log" || true
     parse_claude_tokens "${ARTIFACTS_DIR}/.claude-tokens-review.log"
@@ -1541,9 +1539,10 @@ ${review_summary}
     log_stage "review" "AI review complete ($total_issues issues: $critical_count critical, $bug_count bugs, $warning_count suggestions)"
 }
 
-# ─── Compound Quality ───────────────────────────────────────────────────────
-# Aggregation gate: adversarial review, negative testing, e2e checks, DoD audit.
-# Runs sub-checks based on the stage config from the pipeline template.
+# ─── Compound Quality (fallback) ────────────────────────────────────────────
+# Basic implementation: adversarial review, negative testing, e2e checks, DoD audit.
+# If pipeline-intelligence.sh was sourced first, its enhanced version takes priority.
+if ! type stage_compound_quality >/dev/null 2>&1; then
 stage_compound_quality() {
     CURRENT_STAGE_ID="compound_quality"
 
@@ -1644,6 +1643,7 @@ stage_compound_quality() {
 
     return 0
 }
+fi  # end fallback stage_compound_quality
 
 stage_pr() {
     CURRENT_STAGE_ID="pr"

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-02-22T02:20:05Z",
+  "timestamp": "2026-02-22T10:52:19Z",
   "repository": "shipwright",
   "counts": {
     "hardcoded": 62,
@@ -399,27 +399,27 @@
     },
     {
       "file": "scripts/lib/pipeline-stages.sh",
-      "line": 47
+      "line": 48
     },
     {
       "file": "scripts/lib/pipeline-stages.sh",
-      "line": 334
+      "line": 335
     },
     {
       "file": "scripts/lib/pipeline-stages.sh",
-      "line": 796
+      "line": 797
     },
     {
       "file": "scripts/lib/pipeline-stages.sh",
-      "line": 1582
+      "line": 1687
     },
     {
       "file": "scripts/lib/pipeline-stages.sh",
-      "line": 1949
+      "line": 2054
     },
     {
       "file": "scripts/lib/daemon-adaptive.sh",
-      "line": 1964
+      "line": 2069
     },
     {
       "file": "scripts/lib/daemon-adaptive.sh",

@@ -812,7 +812,9 @@ add_event() {
 
     # Try SQLite first
     if db_available; then
-        _db_exec "INSERT OR IGNORE INTO events (ts, ts_epoch, type, job_id, stage, status, duration_secs, metadata, created_at, synced) VALUES ('${ts}', ${ts_epoch}, '${event_type}', '${job_id}', '${stage}', '${status}', ${duration_secs}, '${metadata}', '${ts}', 0);" || true
+        if ! _db_exec "INSERT OR IGNORE INTO events (ts, ts_epoch, type, job_id, stage, status, duration_secs, metadata, created_at, synced) VALUES ('${ts}', ${ts_epoch}, '${event_type}', '${job_id}', '${stage}', '${status}', ${duration_secs}, '${metadata}', '${ts}', 0);" 2>/dev/null; then
+            warn "db_add_event: SQLite insert failed for event type=${event_type}" >&2
+        fi
     fi
 
     # Always write to JSONL for backward compat (dual-write period)
@@ -934,7 +936,9 @@ db_dequeue_next() {
     next=$(_db_query "SELECT issue_key FROM daemon_queue ORDER BY added_at ASC LIMIT 1;" || echo "")
     if [[ -n "$next" ]]; then
         escaped="${next//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
-        _db_exec "DELETE FROM daemon_queue WHERE issue_key = '${escaped}';" 2>/dev/null || true
+        if ! _db_exec "DELETE FROM daemon_queue WHERE issue_key = '${escaped}';" 2>/dev/null; then
+            warn "db_dequeue_next: failed to delete queue entry for ${next}" >&2
+        fi
         echo "$next"
     fi
 }
@@ -1829,8 +1833,12 @@ main() {
             ensure_db_dir
             init_schema
             # Set schema version
-            _db_exec "INSERT OR REPLACE INTO _schema (version, created_at, applied_at) VALUES (${SCHEMA_VERSION}, '$(now_iso)', '$(now_iso)');" 2>/dev/null || true
-            _db_exec "INSERT OR IGNORE INTO _sync_metadata (key, value, updated_at) VALUES ('device_id', '$(uname -n)-$$-$(now_epoch)', '$(now_iso)');" 2>/dev/null || true
+            if ! _db_exec "INSERT OR REPLACE INTO _schema (version, created_at, applied_at) VALUES (${SCHEMA_VERSION}, '$(now_iso)', '$(now_iso)');" 2>/dev/null; then
+                warn "db init: failed to write schema version ${SCHEMA_VERSION}" >&2
+            fi
+            if ! _db_exec "INSERT OR IGNORE INTO _sync_metadata (key, value, updated_at) VALUES ('device_id', '$(uname -n)-$$-$(now_epoch)', '$(now_iso)');" 2>/dev/null; then
+                warn "db init: failed to write device_id metadata" >&2
+            fi
             success "Database initialized at ${DB_FILE} (WAL mode, schema v${SCHEMA_VERSION})"
             ;;
         migrate)

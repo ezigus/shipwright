@@ -1793,10 +1793,14 @@ pipeline_cleanup_worktree() {
             # Extract branch name before removing worktree
             local _wt_branch=""
             _wt_branch=$(git worktree list --porcelain 2>/dev/null | grep -A1 "worktree ${worktree_path}$" | grep "^branch " | sed 's|^branch refs/heads/||' || true)
-            git worktree remove --force "$worktree_path" 2>/dev/null || true
+            if ! git worktree remove --force "$worktree_path" 2>/dev/null; then
+                warn "Failed to remove worktree at ${worktree_path} — may need manual cleanup"
+            fi
             # Clean up the local branch
             if [[ -n "$_wt_branch" ]]; then
-                git branch -D "$_wt_branch" 2>/dev/null || true
+                if ! git branch -D "$_wt_branch" 2>/dev/null; then
+                    warn "Failed to delete local branch ${_wt_branch}"
+                fi
             fi
             # Clean up the remote branch (if it was pushed)
             if [[ -n "$_wt_branch" && "${NO_GITHUB:-}" != "true" ]]; then
@@ -2260,11 +2264,15 @@ pipeline_start() {
         if [[ -z "$GIT_BRANCH" ]]; then
             local ci_branch="ci/issue-${ISSUE_NUMBER}"
             info "CI resume: creating branch ${ci_branch} from current HEAD"
-            git checkout -b "$ci_branch" 2>/dev/null || git checkout "$ci_branch" 2>/dev/null || true
+            if ! git checkout -b "$ci_branch" 2>/dev/null && ! git checkout "$ci_branch" 2>/dev/null; then
+                warn "CI resume: failed to create or checkout branch ${ci_branch}"
+            fi
             GIT_BRANCH="$ci_branch"
         elif [[ "$(git branch --show-current 2>/dev/null)" != "$GIT_BRANCH" ]]; then
             info "CI resume: checking out branch ${GIT_BRANCH}"
-            git checkout -b "$GIT_BRANCH" 2>/dev/null || git checkout "$GIT_BRANCH" 2>/dev/null || true
+            if ! git checkout -b "$GIT_BRANCH" 2>/dev/null && ! git checkout "$GIT_BRANCH" 2>/dev/null; then
+                warn "CI resume: failed to create or checkout branch ${GIT_BRANCH}"
+            fi
         fi
         write_state 2>/dev/null || true
     fi

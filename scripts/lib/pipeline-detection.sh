@@ -49,39 +49,59 @@ _append_env_json() {
 detect_repo_environments_json() {
     local root="${PROJECT_ROOT:-$(pwd)}"
     local envs='[]'
+    local max_depth
+    max_depth=$(_pipeline_cd_get "pipeline.command_discovery.search_max_depth" "6")
     local xc_workspace xc_project
-    xc_workspace=$(find "$root" -maxdepth 1 -name "*.xcworkspace" 2>/dev/null | head -1 || true)
-    xc_project=$(find "$root" -maxdepth 1 -name "*.xcodeproj" 2>/dev/null | head -1 || true)
+    xc_workspace=$(find "$root" -maxdepth "$max_depth" -name "*.xcworkspace" 2>/dev/null | head -1 || true)
+    xc_project=$(find "$root" -maxdepth "$max_depth" -name "*.xcodeproj" 2>/dev/null | head -1 || true)
 
     if [[ -n "$xc_workspace" || -n "$xc_project" ]]; then
         envs=$(_append_env_json "$envs" "ios_xcode" "${xc_workspace:-$xc_project}")
     fi
-    if [[ -f "$root/Package.swift" ]]; then
-        envs=$(_append_env_json "$envs" "swiftpm" "Package.swift")
+    local swiftpm_marker
+    swiftpm_marker=$(find "$root" -maxdepth "$max_depth" -name "Package.swift" 2>/dev/null | head -1 || true)
+    if [[ -n "$swiftpm_marker" ]]; then
+        envs=$(_append_env_json "$envs" "swiftpm" "${swiftpm_marker#$root/}")
     fi
-    if [[ -f "$root/package.json" ]]; then
-        envs=$(_append_env_json "$envs" "node" "package.json")
+    local node_marker
+    node_marker=$(find "$root" -maxdepth "$max_depth" -name "package.json" -type f 2>/dev/null | head -1 || true)
+    if [[ -n "$node_marker" ]]; then
+        envs=$(_append_env_json "$envs" "node" "${node_marker#$root/}")
     fi
-    if [[ -f "$root/pyproject.toml" || -f "$root/setup.py" || -f "$root/requirements.txt" || -f "$root/pytest.ini" ]]; then
-        envs=$(_append_env_json "$envs" "python" "python markers")
+    local python_marker
+    python_marker=$(find "$root" -maxdepth "$max_depth" \( -name "pyproject.toml" -o -name "setup.py" -o -name "requirements.txt" -o -name "pytest.ini" \) -type f 2>/dev/null | head -1 || true)
+    if [[ -n "$python_marker" ]]; then
+        envs=$(_append_env_json "$envs" "python" "${python_marker#$root/}")
     fi
-    if [[ -f "$root/go.mod" ]]; then
-        envs=$(_append_env_json "$envs" "go" "go.mod")
+    local go_marker
+    go_marker=$(find "$root" -maxdepth "$max_depth" -name "go.mod" -type f 2>/dev/null | head -1 || true)
+    if [[ -n "$go_marker" ]]; then
+        envs=$(_append_env_json "$envs" "go" "${go_marker#$root/}")
     fi
-    if [[ -f "$root/Cargo.toml" ]]; then
-        envs=$(_append_env_json "$envs" "rust" "Cargo.toml")
+    local rust_marker
+    rust_marker=$(find "$root" -maxdepth "$max_depth" -name "Cargo.toml" -type f 2>/dev/null | head -1 || true)
+    if [[ -n "$rust_marker" ]]; then
+        envs=$(_append_env_json "$envs" "rust" "${rust_marker#$root/}")
     fi
-    if [[ -f "$root/Gemfile" ]]; then
-        envs=$(_append_env_json "$envs" "ruby" "Gemfile")
+    local ruby_marker
+    ruby_marker=$(find "$root" -maxdepth "$max_depth" -name "Gemfile" -type f 2>/dev/null | head -1 || true)
+    if [[ -n "$ruby_marker" ]]; then
+        envs=$(_append_env_json "$envs" "ruby" "${ruby_marker#$root/}")
     fi
-    if [[ -f "$root/pom.xml" ]]; then
-        envs=$(_append_env_json "$envs" "java_maven" "pom.xml")
+    local maven_marker
+    maven_marker=$(find "$root" -maxdepth "$max_depth" -name "pom.xml" -type f 2>/dev/null | head -1 || true)
+    if [[ -n "$maven_marker" ]]; then
+        envs=$(_append_env_json "$envs" "java_maven" "${maven_marker#$root/}")
     fi
-    if [[ -f "$root/build.gradle" || -f "$root/build.gradle.kts" ]]; then
-        envs=$(_append_env_json "$envs" "java_gradle" "gradle")
+    local gradle_marker
+    gradle_marker=$(find "$root" -maxdepth "$max_depth" \( -name "build.gradle" -o -name "build.gradle.kts" \) -type f 2>/dev/null | head -1 || true)
+    if [[ -n "$gradle_marker" ]]; then
+        envs=$(_append_env_json "$envs" "java_gradle" "${gradle_marker#$root/}")
     fi
-    if [[ -f "$root/Makefile" ]] && grep -q "^test:" "$root/Makefile" 2>/dev/null; then
-        envs=$(_append_env_json "$envs" "make" "Makefile")
+    local make_marker
+    make_marker=$(find "$root" -maxdepth "$max_depth" -name "Makefile" -type f 2>/dev/null | head -1 || true)
+    if [[ -n "$make_marker" ]] && grep -q "^test:" "$make_marker" 2>/dev/null; then
+        envs=$(_append_env_json "$envs" "make" "${make_marker#$root/}")
     fi
 
     echo "$envs"
@@ -212,7 +232,7 @@ resolve_relevant_environments_json() {
                 ;;
         esac
         case "$f" in
-            Package.swift|Sources/*|Tests/*)
+            Package.swift|*/Package.swift|Sources/*|*/Sources/*|Tests/*|*/Tests/*)
                 relevant=$(jq -c '. + ["swiftpm"]' <<<"$relevant")
                 ;;
         esac
@@ -267,6 +287,15 @@ resolve_test_mode_for_env() {
 }
 
 select_test_commands_for_context_json() {
+    local enabled
+    enabled=$(_pipeline_cd_get "pipeline.command_discovery.enabled" "true")
+    case "$enabled" in
+        false|0|off|no)
+            echo "[]"
+            return
+            ;;
+    esac
+
     local envs_json changed_files_json relevant_envs helpers_json
     envs_json=$(detect_repo_environments_json)
     changed_files_json=$(collect_changed_files_json)

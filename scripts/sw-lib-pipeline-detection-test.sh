@@ -198,6 +198,18 @@ assert_contains "Detects iOS environment" "$envs" "\"ios_xcode\""
 assert_contains "Detects SwiftPM environment" "$envs" "\"swiftpm\""
 assert_contains "Detects Node environment" "$envs" "\"node\""
 
+# Nested environments are detected (not root-only hierarchy)
+rm -f "$PROJECT_ROOT/Package.swift" "$PROJECT_ROOT/package.json"
+mkdir -p "$PROJECT_ROOT/apps/mobile"
+touch "$PROJECT_ROOT/apps/mobile/Package.swift"
+mkdir -p "$PROJECT_ROOT/apps/web"
+cat > "$PROJECT_ROOT/apps/web/package.json" <<'JSON'
+{"name":"nested-web"}
+JSON
+envs=$(detect_repo_environments_json)
+assert_contains "Detects nested SwiftPM environment" "$envs" "apps/mobile/Package.swift"
+assert_contains "Detects nested Node environment" "$envs" "apps/web/package.json"
+
 changed='["Package.swift","Sources/Foo.swift"]'
 relevant=$(resolve_relevant_environments_json "$envs" "$changed")
 assert_contains "SwiftPM selected for package changes" "$relevant" "\"swiftpm\""
@@ -210,7 +222,13 @@ fi
 changed='["web/src/app.ts"]'
 relevant=$(resolve_relevant_environments_json "$envs" "$changed")
 assert_contains "Node selected for JS/TS changes" "$relevant" "\"node\""
-rm -rf "$PROJECT_ROOT/App.xcodeproj" "$PROJECT_ROOT/Package.swift" "$PROJECT_ROOT/package.json"
+rm -rf "$PROJECT_ROOT/App.xcodeproj" "$PROJECT_ROOT/Package.swift" "$PROJECT_ROOT/package.json" "$PROJECT_ROOT/apps"
+
+# command_discovery.enabled=false disables auto command selection
+export SHIPWRIGHT_PIPELINE_COMMAND_DISCOVERY_ENABLED=false
+result=$(detect_test_cmd)
+assert_eq "command discovery can be disabled via config/env" "" "$result"
+unset SHIPWRIGHT_PIPELINE_COMMAND_DISCOVERY_ENABLED
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # detect_project_lang

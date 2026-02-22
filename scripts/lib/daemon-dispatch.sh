@@ -289,7 +289,14 @@ daemon_reap_completed() {
         # Note: wait returns 127 if process was already reaped (e.g., by init)
         # In that case, check pipeline log for success/failure indicators
         local exit_code=0
-        wait "$pid" 2>/dev/null || exit_code=$?
+        # wait can return non-zero for non-child/reaped PIDs; avoid aborting callers with set -e.
+        local had_errexit=0
+        case "$-" in
+            *e*) had_errexit=1; set +e ;;
+        esac
+        wait "$pid" 2>/dev/null
+        exit_code=$?
+        [[ "$had_errexit" -eq 1 ]] && set -e
         if [[ "$exit_code" -eq 127 ]]; then
             # Process already reaped — check log file for real outcome
             local issue_log="$LOG_DIR/issue-${issue_num}.log"
@@ -509,4 +516,3 @@ Check the associated PR for the implementation." 2>/dev/null || true
 }
 
 # ─── Failure Classification ─────────────────────────────────────────────────
-

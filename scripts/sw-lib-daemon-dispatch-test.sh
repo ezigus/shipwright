@@ -27,6 +27,7 @@ export NO_GITHUB=true
 export BASE_BRANCH="main"
 export PIPELINE_TEMPLATE="autonomous"
 export MAX_PARALLEL=2
+export RETRY_ESCALATION=false
 export ON_SUCCESS_REMOVE_LABEL="pipeline/in-progress"
 export ON_SUCCESS_ADD_LABEL="shipwright-shipped"
 export ON_SUCCESS_CLOSE_ISSUE="false"
@@ -378,12 +379,9 @@ print_test_section "daemon_is_inflight"
 
 init_daemon_state
 jq '.active_jobs = [{issue: 42}] | .queued = ["43"]' "$STATE_FILE" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
-daemon_is_inflight 42 || true
-inflight_42=$?
-daemon_is_inflight 43 || true
-inflight_43=$?
-daemon_is_inflight 99 || true
-inflight_99=$?
+if daemon_is_inflight 42; then inflight_42=0; else inflight_42=$?; fi
+if daemon_is_inflight 43; then inflight_43=0; else inflight_43=$?; fi
+if daemon_is_inflight 99; then inflight_99=0; else inflight_99=$?; fi
 [[ $inflight_42 -eq 0 ]] && assert_pass "Issue 42 is inflight (active)" || assert_fail "Issue 42 inflight" "expected 0"
 [[ $inflight_43 -eq 0 ]] && assert_pass "Issue 43 is inflight (queued)" || assert_fail "Issue 43 inflight" "expected 0"
 [[ $inflight_99 -eq 1 ]] && assert_pass "Issue 99 not inflight" || assert_fail "Issue 99 not inflight" "expected 1"

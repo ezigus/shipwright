@@ -3,6 +3,21 @@
 [[ -n "${_PIPELINE_STAGES_LOADED:-}" ]] && return 0
 _PIPELINE_STAGES_LOADED=1
 
+# ─── Safe git helpers ────────────────────────────────────────────────────────
+# BASE_BRANCH may not exist locally (e.g. --local mode with no remote).
+# These helpers return empty output instead of crashing under set -euo pipefail.
+_safe_base_log() {
+    local branch="${BASE_BRANCH:-main}"
+    git rev-parse --verify "$branch" >/dev/null 2>&1 || { echo ""; return 0; }
+    git log "$@" "${branch}..HEAD" 2>/dev/null || true
+}
+
+_safe_base_diff() {
+    local branch="${BASE_BRANCH:-main}"
+    git rev-parse --verify "$branch" >/dev/null 2>&1 || { git diff HEAD~5 "$@" 2>/dev/null || true; return 0; }
+    git diff "${branch}...HEAD" "$@" 2>/dev/null || true
+}
+
 show_stage_preview() {
     local stage_id="$1"
     echo ""
@@ -764,7 +779,7 @@ Be concrete and specific. Reference actual file paths in the codebase. Consider 
     files_to_modify=$(sed -n '/Files to modify/,/^-\|^#\|^$/p' "$design_file" 2>/dev/null | grep -E '^\s*-' | head -20 || true)
 
     if [[ -n "$files_to_create" || -n "$files_to_modify" ]]; then
-        info "Design scope: ${DIM}$(echo "$files_to_create $files_to_modify" | grep -c '^\s*-' || echo 0) file(s)${RESET}"
+        info "Design scope: ${DIM}$(echo "$files_to_create $files_to_modify" | grep -c '^\s*-' || true) file(s)${RESET}"
     fi
 
     # Post design to GitHub issue
@@ -1157,13 +1172,13 @@ ${prevention_text}"
 
     # Count commits made during build
     local commit_count
-    commit_count=$(git log --oneline "${BASE_BRANCH}..HEAD" 2>/dev/null | wc -l | xargs)
+    commit_count=$(_safe_base_log --oneline | wc -l | xargs)
     info "Build produced ${BOLD}$commit_count${RESET} commit(s)"
 
     # Commit quality evaluation when intelligence is enabled
     if type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1 && [[ "${commit_count:-0}" -gt 0 ]]; then
         local commit_msgs
-        commit_msgs=$(git log --format="%s" "${BASE_BRANCH}..HEAD" 2>/dev/null | head -20)
+        commit_msgs=$(_safe_base_log --format="%s" | head -20)
         local quality_score
         quality_score=$(claude --print --output-format text -p "Rate the quality of these git commit messages on a scale of 0-100. Consider: focus (one thing per commit), clarity (describes the why), atomicity (small logical units). Reply with ONLY a number 0-100.
 
@@ -1302,8 +1317,7 @@ stage_review() {
     local diff_file="$ARTIFACTS_DIR/review-diff.patch"
     local review_file="$ARTIFACTS_DIR/review.md"
 
-    git diff "${BASE_BRANCH}...${GIT_BRANCH}" > "$diff_file" 2>/dev/null || \
-        git diff HEAD~5 > "$diff_file" 2>/dev/null || true
+    _safe_base_diff > "$diff_file" 2>/dev/null || true
 
     if [[ ! -s "$diff_file" ]]; then
         warn "No diff found — skipping review"
@@ -1316,13 +1330,13 @@ stage_review() {
     fi
 
     local diff_stats
-    diff_stats=$(git diff --stat "${BASE_BRANCH}...${GIT_BRANCH}" 2>/dev/null | tail -1 || echo "")
+    diff_stats=$(_safe_base_diff --stat | tail -1 || echo "")
     info "Running AI code review... ${DIM}($diff_stats)${RESET}"
 
     # Semantic risk scoring when intelligence is enabled
     if type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
         local diff_files
-        diff_files=$(git diff --name-only "${BASE_BRANCH}...${GIT_BRANCH}" 2>/dev/null || true)
+        diff_files=$(_safe_base_diff --name-only || true)
         local risk_score="low"
         # Fast heuristic: flag high-risk file patterns
         if echo "$diff_files" | grep -qiE 'migration|schema|auth|crypto|security|password|token|secret|\.env'; then
@@ -1682,7 +1696,7 @@ stage_pr() {
         local branch_name
         branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
         local commit_count
-        commit_count=$(git log --oneline "${BASE_BRANCH}..HEAD" 2>/dev/null | wc -l | xargs)
+        commit_count=$(_safe_base_log --oneline | wc -l | xargs)
         {
             echo "# PR Draft (local mode)"
             echo ""
@@ -1691,7 +1705,7 @@ stage_pr() {
             echo "**Goal:** ${GOAL:-N/A}"
             echo ""
             echo "## Changes"
-            git diff --stat "${BASE_BRANCH}...HEAD" 2>/dev/null || true
+            _safe_base_diff --stat || true
         } > ".claude/pr-draft.md" 2>/dev/null || true
         emit_event "pr.skipped" "issue=${ISSUE_NUMBER:-0}" "reason=local_mode"
         return 0
@@ -1699,7 +1713,7 @@ stage_pr() {
 
     # ── PR Hygiene Checks (informational) ──
     local hygiene_commit_count
-    hygiene_commit_count=$(git log --oneline "${BASE_BRANCH}..HEAD" 2>/dev/null | wc -l | xargs)
+    hygiene_commit_count=$(_safe_base_log --oneline | wc -l | xargs)
     hygiene_commit_count="${hygiene_commit_count:-0}"
 
     if [[ "$hygiene_commit_count" -gt 20 ]]; then
@@ -1708,7 +1722,7 @@ stage_pr() {
 
     # Check for WIP/fixup/squash commits (expanded patterns)
     local wip_commits
-    wip_commits=$(git log --oneline "${BASE_BRANCH}..HEAD" 2>/dev/null | grep -ciE '^[0-9a-f]+ (WIP|fixup!|squash!|TODO|HACK|TEMP|BROKEN|wip[:-]|temp[:-]|broken[:-]|do not merge)' || true)
+    wip_commits=$(_safe_base_log --oneline | grep -ciE '^[0-9a-f]+ (WIP|fixup!|squash!|TODO|HACK|TEMP|BROKEN|wip[:-]|temp[:-]|broken[:-]|do not merge)' || true)
     wip_commits="${wip_commits:-0}"
     if [[ "$wip_commits" -gt 0 ]]; then
         warn "Branch has ${wip_commits} WIP/fixup/squash/temp commit(s) — consider cleaning up"
@@ -1716,7 +1730,7 @@ stage_pr() {
 
     # ── PR Quality Gate: reject PRs with no real code changes ──
     local real_files
-    real_files=$(git diff --name-only "${BASE_BRANCH}...HEAD" 2>/dev/null | grep -v '^\.claude/' | grep -v '^\.github/' || true)
+    real_files=$(_safe_base_diff --name-only | grep -v '^\.claude/' | grep -v '^\.github/' || true)
     if [[ -z "$real_files" ]]; then
         error "No real code changes detected — only pipeline artifacts (.claude/ logs)."
         error "The build agent did not produce meaningful changes. Skipping PR creation."
@@ -1766,7 +1780,7 @@ stage_pr() {
         if [[ "$sim_enabled" == "true" ]]; then
             info "Running developer simulation review..."
             local diff_for_sim
-            diff_for_sim=$(git diff "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+            diff_for_sim=$(_safe_base_diff || true)
             if [[ -n "$diff_for_sim" ]]; then
                 local sim_result
                 sim_result=$(simulation_review "$diff_for_sim" "${GOAL:-}" 2>/dev/null || echo "")
@@ -1796,7 +1810,7 @@ stage_pr() {
         if [[ "$arch_enabled" == "true" ]]; then
             info "Validating architecture..."
             local diff_for_arch
-            diff_for_arch=$(git diff "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+            diff_for_arch=$(_safe_base_diff || true)
             if [[ -n "$diff_for_arch" ]]; then
                 local arch_result
                 arch_result=$(architecture_validate_changes "$diff_for_arch" "" 2>/dev/null || echo "")
@@ -1820,10 +1834,10 @@ stage_pr() {
 
     # Pre-PR diff gate — verify meaningful code changes exist (not just bookkeeping)
     local real_changes
-    real_changes=$(git diff --name-only "origin/${BASE_BRANCH:-main}...HEAD" \
+    real_changes=$(_safe_base_diff --name-only \
         -- . ':!.claude/loop-state.md' ':!.claude/pipeline-state.md' \
         ':!.claude/pipeline-artifacts/*' ':!**/progress.md' \
-        ':!**/error-summary.json' 2>/dev/null | wc -l | xargs || echo "0")
+        ':!**/error-summary.json' | wc -l | xargs || echo "0")
     if [[ "${real_changes:-0}" -eq 0 ]]; then
         error "No meaningful code changes detected — only bookkeeping files modified"
         error "Refusing to create PR with zero real changes"
@@ -1878,10 +1892,10 @@ stage_pr() {
     [[ -n "${GITHUB_ISSUE:-}" ]] && closes_line="Closes ${GITHUB_ISSUE}"
 
     local diff_stats
-    diff_stats=$(git diff --stat "${BASE_BRANCH}...${GIT_BRANCH}" 2>/dev/null | tail -1 || echo "")
+    diff_stats=$(_safe_base_diff --stat | tail -1 || echo "")
 
     local commit_count
-    commit_count=$(git log --oneline "${BASE_BRANCH}..HEAD" 2>/dev/null | wc -l | xargs)
+    commit_count=$(_safe_base_log --oneline | wc -l | xargs)
 
     local total_dur=""
     if [[ -n "$PIPELINE_START_EPOCH" ]]; then
@@ -1926,7 +1940,7 @@ EOF
     risk_tier="low"
     if [[ -f "$REPO_DIR/config/policy.json" ]]; then
         local changed_files
-        changed_files=$(git diff --name-only "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+        changed_files=$(_safe_base_diff --name-only || true)
         if [[ -n "$changed_files" ]]; then
             local policy_file="$REPO_DIR/config/policy.json"
             check_tier_match() {
@@ -2058,7 +2072,7 @@ EOF
             codeowners_json=$(gh_codeowners "$REPO_OWNER" "$REPO_NAME" 2>/dev/null || echo "[]")
             if [[ "$codeowners_json" != "[]" && -n "$codeowners_json" ]]; then
                 local changed_files
-                changed_files=$(git diff --name-only "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+                changed_files=$(_safe_base_diff --name-only || true)
                 if [[ -n "$changed_files" ]]; then
                     local co_reviewers
                     co_reviewers=$(echo "$codeowners_json" | jq -r '.[].owners[]' 2>/dev/null | sort -u | head -3 || true)
@@ -2132,13 +2146,14 @@ stage_merge() {
         local merge_diff_file="${ARTIFACTS_DIR}/review-diff.patch"
         local merge_review_file="${ARTIFACTS_DIR}/review.md"
         if [[ ! -s "$merge_diff_file" ]]; then
-            git diff "${BASE_BRANCH}...${GIT_BRANCH}" > "$merge_diff_file" 2>/dev/null || \
-                git diff HEAD~5 > "$merge_diff_file" 2>/dev/null || true
+            _safe_base_diff > "$merge_diff_file" 2>/dev/null || true
         fi
         if [[ -s "$merge_diff_file" ]]; then
             local _merge_critical _merge_sec _merge_blocking _merge_reject
-            _merge_critical=$(grep -ciE '\*\*\[?Critical\]?\*\*' "$merge_review_file" 2>/dev/null || echo "0")
-            _merge_sec=$(grep -ciE '\*\*\[?Security\]?\*\*' "$merge_review_file" 2>/dev/null || echo "0")
+            _merge_critical=$(grep -ciE '\*\*\[?Critical\]?\*\*' "$merge_review_file" 2>/dev/null || true)
+            _merge_critical="${_merge_critical:-0}"
+            _merge_sec=$(grep -ciE '\*\*\[?Security\]?\*\*' "$merge_review_file" 2>/dev/null || true)
+            _merge_sec="${_merge_sec:-0}"
             _merge_blocking=$((${_merge_critical:-0} + ${_merge_sec:-0}))
             [[ "$_merge_blocking" -gt 0 ]] && _merge_reject="Review found ${_merge_blocking} critical/security issue(s)"
             if ! bash "$SCRIPT_DIR/sw-oversight.sh" gate --diff "$merge_diff_file" --description "${GOAL:-Pipeline merge}" --reject-if "${_merge_reject:-}" >/dev/null 2>&1; then

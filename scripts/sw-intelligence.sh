@@ -552,7 +552,8 @@ intelligence_compose_pipeline() {
     if ! _intelligence_enabled; then
         local fallback
         fallback=$(_intelligence_fallback_compose "$issue_analysis")
-        echo "$fallback" | jq -c '. + {error: "intelligence_disabled"}' 2>/dev/null || echo '{"error":"intelligence_disabled","stages":[]}'
+        echo "$fallback" | jq -c '. + {status: "disabled", error: "intelligence_disabled"}' 2>/dev/null || echo '{"status":"disabled","error":"intelligence_disabled","stages":[]}'
+        [[ -z "${_INTEL_DISABLED_LOGGED:-}" ]] && { info "Intelligence disabled — using data-driven fallbacks"; _INTEL_DISABLED_LOGGED=1; }
         return 0
     fi
 
@@ -615,7 +616,8 @@ intelligence_predict_cost() {
     if ! _intelligence_enabled; then
         local fallback
         fallback=$(_intelligence_fallback_cost)
-        echo "$fallback" | jq -c '. + {error: "intelligence_disabled", estimated_iterations: 0, likely_failure_stage: "unknown"}' 2>/dev/null || echo '{"error":"intelligence_disabled","estimated_cost_usd":0,"estimated_iterations":0,"likely_failure_stage":"unknown"}'
+        echo "$fallback" | jq -c '. + {status: "disabled", error: "intelligence_disabled", estimated_iterations: 0, likely_failure_stage: "unknown"}' 2>/dev/null || echo '{"status":"disabled","error":"intelligence_disabled","estimated_cost_usd":0,"estimated_iterations":0,"likely_failure_stage":"unknown"}'
+        [[ -z "${_INTEL_DISABLED_LOGGED:-}" ]] && { info "Intelligence disabled — using data-driven fallbacks"; _INTEL_DISABLED_LOGGED=1; }
         return 0
     fi
 
@@ -671,7 +673,8 @@ intelligence_synthesize_findings() {
     local findings_json="${1:-"[]"}"
 
     if ! _intelligence_enabled; then
-        echo '{"error":"intelligence_disabled","priority_fixes":[],"root_causes":[],"recommended_approach":""}'
+        echo '{"status":"disabled","error":"intelligence_disabled","priority_fixes":[],"root_causes":[],"recommended_approach":""}'
+        [[ -z "${_INTEL_DISABLED_LOGGED:-}" ]] && { info "Intelligence disabled — using data-driven fallbacks"; _INTEL_DISABLED_LOGGED=1; }
         return 0
     fi
 
@@ -720,7 +723,8 @@ intelligence_search_memory() {
     local top_n="${3:-5}"
 
     if ! _intelligence_enabled; then
-        echo '{"error":"intelligence_disabled","results":[]}'
+        echo '{"status":"disabled","error":"intelligence_disabled","results":[]}'
+        [[ -z "${_INTEL_DISABLED_LOGGED:-}" ]] && { info "Intelligence disabled — using data-driven fallbacks"; _INTEL_DISABLED_LOGGED=1; }
         return 0
     fi
 

@@ -424,16 +424,72 @@ cmd_recommend() {
     echo -e "    Modules changed:   ${CYAN}${module_threshold}${RESET} (add reviewer above this)"
     echo ""
 
-    # TODO: Parse pipeline context to generate actual recommendations
-    echo -e "  ${DIM}Recommendations require active pipeline context (passed via environment)${RESET}"
-    echo ""
+    # Read pipeline context from env or pipeline-state.md
+    local actual_iterations="${ACTUAL_ITERATIONS:-0}"
+    local test_coverage="${TEST_COVERAGE:-0}"
+    local module_count="${MODULE_COUNT:-0}"
 
-    # Example output when context is available:
-    # echo -e "  ${YELLOW}⚠${RESET}  Failed 4 iterations (threshold: 3)"
-    # echo -e "       ${CYAN}→ Recommend adding: tester${RESET}"
-    # echo ""
-    # echo -e "  ${YELLOW}⚠${RESET}  Coverage at 45% (threshold: 60%)"
-    # echo -e "       ${CYAN}→ Recommend adding: tester${RESET}"
+    # Try to extract from pipeline-state.md if env vars not set
+    local state_file=".claude/pipeline-state.md"
+    if [[ "$actual_iterations" == "0" && -f "$state_file" ]]; then
+        actual_iterations=$(grep -oE 'iterations?[: ]+([0-9]+)' "$state_file" 2>/dev/null | grep -oE '[0-9]+' | tail -1 || echo "0")
+        actual_iterations="${actual_iterations:-0}"
+    fi
+    if [[ "$test_coverage" == "0" && -f "$state_file" ]]; then
+        test_coverage=$(grep -oE 'coverage[: ]+([0-9]+)' "$state_file" 2>/dev/null | grep -oE '[0-9]+' | tail -1 || echo "0")
+        test_coverage="${test_coverage:-0}"
+    fi
+
+    # Count changed modules via git diff
+    if [[ "$module_count" == "0" ]] && command -v git >/dev/null 2>&1; then
+        local base_branch="${BASE_BRANCH:-main}"
+        if git rev-parse --verify "$base_branch" >/dev/null 2>&1; then
+            module_count=$(git diff --name-only "${base_branch}..HEAD" 2>/dev/null \
+                | sed 's|/[^/]*$||' | sort -u | wc -l | xargs || echo "0")
+        fi
+        module_count="${module_count:-0}"
+    fi
+
+    local has_recommendations=false
+
+    # Check iterations against threshold
+    if [[ "$actual_iterations" -gt 0 && "$actual_iterations" -ge "$iteration_threshold" ]]; then
+        echo -e "  ${YELLOW}⚠${RESET}  Failed ${actual_iterations} iterations (threshold: ${iteration_threshold})"
+        echo -e "       ${CYAN}→ Recommend adding: tester${RESET}"
+        echo ""
+        has_recommendations=true
+    fi
+
+    # Check coverage against threshold
+    if [[ "$test_coverage" -gt 0 && "$test_coverage" -lt "$coverage_threshold" ]]; then
+        echo -e "  ${YELLOW}⚠${RESET}  Coverage at ${test_coverage}% (threshold: ${coverage_threshold}%)"
+        echo -e "       ${CYAN}→ Recommend adding: tester${RESET}"
+        echo ""
+        has_recommendations=true
+    fi
+
+    # Check module count against threshold
+    if [[ "$module_count" -gt 0 && "$module_count" -ge "$module_threshold" ]]; then
+        echo -e "  ${YELLOW}⚠${RESET}  ${module_count} modules changed (threshold: ${module_threshold})"
+        echo -e "       ${CYAN}→ Recommend adding: reviewer${RESET}"
+        echo ""
+        has_recommendations=true
+    fi
+
+    if [[ "$has_recommendations" == "false" ]]; then
+        if [[ "$actual_iterations" == "0" && "$test_coverage" == "0" && "$module_count" == "0" ]]; then
+            echo -e "  ${DIM}No pipeline context available — run during an active pipeline or set ACTUAL_ITERATIONS, TEST_COVERAGE, MODULE_COUNT${RESET}"
+        else
+            success "All metrics within thresholds — no scaling changes needed"
+        fi
+        echo ""
+    fi
+
+    emit_event "scale.recommendation" \
+        "iterations=$actual_iterations" \
+        "coverage=$test_coverage" \
+        "modules=$module_count" \
+        "has_recommendations=$has_recommendations"
 }
 
 # ─── Help message ────────────────────────────────────────────────────────

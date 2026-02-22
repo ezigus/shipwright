@@ -515,7 +515,7 @@ load_config() {
     PROGRESS_MONITORING=$(jq -r '.health.progress_based // true' "$config_file")
     PROGRESS_CHECKS_BEFORE_WARN=$(jq -r '.health.stale_checks_before_warn // 20' "$config_file")
     PROGRESS_CHECKS_BEFORE_KILL=$(jq -r '.health.stale_checks_before_kill // 120' "$config_file")
-    PROGRESS_HARD_LIMIT_S=$(jq -r '.health.hard_limit_s // 0' "$config_file")  # 0 = disabled (no hard kill)
+    PROGRESS_HARD_LIMIT_S=$(jq -r '.health.hard_limit_s // 21600' "$config_file")  # 21600s = 6h default; 0 = disabled
     NUDGE_ENABLED=$(jq -r '.health.nudge_enabled // true' "$config_file")
     NUDGE_AFTER_CHECKS=$(jq -r '.health.nudge_after_checks // 40' "$config_file")
 

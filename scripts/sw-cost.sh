@@ -264,6 +264,11 @@ cost_remaining_budget() {
     budget_usd=$(jq -r '.daily_budget_usd' "$BUDGET_FILE" 2>/dev/null || echo "0")
 
     if [[ "$budget_enabled" != "true" || "$budget_usd" == "0" ]]; then
+        if [[ -z "${_BUDGET_UNCONFIGURED_WARNED:-}" ]]; then
+            info "Budget not configured — unlimited. Use 'shipwright cost budget set <amount>'"
+            emit_event "cost.budget_unconfigured" "status=unlimited"
+            _BUDGET_UNCONFIGURED_WARNED=1
+        fi
         echo "unlimited"
         return 0
     fi

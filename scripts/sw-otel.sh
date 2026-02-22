@@ -463,8 +463,10 @@ cmd_report() {
 
     if [[ -f "$EVENTS_FILE" ]]; then
         event_count=$(wc -l < "$EVENTS_FILE" || echo "0")
-        export_count=$(grep -c '"type":"otel_export"' "$EVENTS_FILE" 2>/dev/null || echo "0")
-        webhook_count=$(grep -c '"type":"webhook_sent"' "$EVENTS_FILE" 2>/dev/null || echo "0")
+        export_count=$(grep -c '"type":"otel_export"' "$EVENTS_FILE" 2>/dev/null || true)
+        export_count="${export_count:-0}"
+        webhook_count=$(grep -c '"type":"webhook_sent"' "$EVENTS_FILE" 2>/dev/null || true)
+        webhook_count="${webhook_count:-0}"
         last_event_ts=$(tail -n1 "$EVENTS_FILE" | jq -r '.ts // "unknown"' 2>/dev/null || echo "unknown")
     fi
 

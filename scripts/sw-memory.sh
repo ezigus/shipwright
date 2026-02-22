@@ -88,7 +88,13 @@ memory_ranked_search() {
         memory_dir="$(repo_memory_dir)"
     fi
     memory_dir="${memory_dir:-$HOME/.shipwright/memory}"
-    [[ ! -d "$memory_dir" ]] && echo "[]" && return 0
+    if [[ ! -d "$memory_dir" ]]; then
+        info "Memory dir not found at ${memory_dir} — auto-creating"
+        mkdir -p "$memory_dir"
+        emit_event "memory.not_available" "path=$memory_dir" "action=auto_created"
+        echo "[]"
+        return 0
+    fi
 
     # Extract and expand query keywords
     local keywords
@@ -372,7 +378,10 @@ memory_capture_failure() {
         pattern=$(echo "$error_output" | head -1 | cut -c1-200)
     fi
 
-    [[ -z "$pattern" ]] && return 0
+    if [[ -z "$pattern" ]]; then
+        warn "Memory capture: empty error pattern — skipping"
+        return 0
+    fi
 
     # Check for duplicate — increment seen_count if pattern already exists
     local existing_idx
@@ -987,6 +996,7 @@ memory_inject_context() {
     done
 
     if [[ "$has_memory" == "false" ]]; then
+        info "No memory available for repo (${mem_dir}) — first pipeline run will seed it"
         echo "# No memory available for this repository yet."
         return 0
     fi
@@ -1642,6 +1652,11 @@ memory_export() {
     local mem_dir
     mem_dir="$(repo_memory_dir)"
 
+    # Ensure all memory files exist (jq --slurpfile fails on missing files)
+    for f in patterns.json failures.json decisions.json metrics.json; do
+        [[ -f "$mem_dir/$f" ]] || echo '{}' > "$mem_dir/$f"
+    done
+
     # Merge all memory files into a single JSON export
     local export_json
     export_json=$(jq -n \
@@ -1757,8 +1772,10 @@ memory_stats() {
     # Event-based hit rate
     local inject_count capture_count
     if [[ -f "$EVENTS_FILE" ]]; then
-        inject_count=$(grep -c '"memory.inject"' "$EVENTS_FILE" 2>/dev/null || echo 0)
-        capture_count=$(grep -c '"memory.capture"' "$EVENTS_FILE" 2>/dev/null || echo 0)
+        inject_count=$(grep -c '"memory.inject"' "$EVENTS_FILE" 2>/dev/null || true)
+        inject_count="${inject_count:-0}"
+        capture_count=$(grep -c '"memory.capture"' "$EVENTS_FILE" 2>/dev/null || true)
+        capture_count="${capture_count:-0}"
         echo ""
         echo -e "  ${BOLD}Usage${RESET}"
         printf "    %-18s %s\n" "Context injections:" "$inject_count"

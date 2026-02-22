@@ -93,7 +93,8 @@ validate_quality() {
     local todos_pass=true
     if [[ -d "$REPO_DIR/.git" ]]; then
         local todo_count
-        todo_count=$(cd "$REPO_DIR" && git diff --cached 2>/dev/null | grep -cE '^\+.*(TODO|FIXME)' || echo "0")
+        todo_count=$(cd "$REPO_DIR" && git diff --cached 2>/dev/null | grep -cE '^\+.*(TODO|FIXME)' || true)
+        todo_count="${todo_count:-0}"
         if [[ "$todo_count" -gt 0 ]]; then
             todos_pass=false
             all_pass=false
@@ -106,7 +107,8 @@ validate_quality() {
     local secret_patterns="(password|secret|token|api[_-]?key|aws_access|private_key)"
     if [[ -d "$REPO_DIR/.git" ]]; then
         local secret_count
-        secret_count=$(cd "$REPO_DIR" && git diff --cached 2>/dev/null | grep -ciE "$secret_patterns" || echo "0")
+        secret_count=$(cd "$REPO_DIR" && git diff --cached 2>/dev/null | grep -ciE "$secret_patterns" || true)
+        secret_count="${secret_count:-0}"
         if [[ "$secret_count" -gt 3 ]]; then
             secrets_pass=false
             all_pass=false
@@ -322,7 +324,8 @@ completion_detection() {
     # Check diminishing returns: < 10 lines changed in last 3 iterations
     local recent_changes=0
     if [[ -f "$ARTIFACTS_DIR/progress.md" ]]; then
-        recent_changes=$(grep -c "^### Iteration" "$ARTIFACTS_DIR/progress.md" || echo "0")
+        recent_changes=$(grep -c "^### Iteration" "$ARTIFACTS_DIR/progress.md" || true)
+        recent_changes="${recent_changes:-0}"
     fi
 
     # Check if tests went from failing to passing
@@ -339,7 +342,8 @@ completion_detection() {
     local subtasks_done=true
     if [[ -f ".claude/goal.md" ]]; then
         local unchecked_count
-        unchecked_count=$(grep -c "^- \[ \]" ".claude/goal.md" 2>/dev/null || echo "0")
+        unchecked_count=$(grep -c "^- \[ \]" ".claude/goal.md" 2>/dev/null || true)
+        unchecked_count="${unchecked_count:-0}"
         if [[ "$unchecked_count" -gt 0 ]]; then
             subtasks_done=false
         fi

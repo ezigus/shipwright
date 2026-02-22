@@ -45,7 +45,8 @@ $(find "$repo_root" -type f \( -name '*.ts' -o -name '*.js' -o -name '*.py' -o -
             while IFS= read -r f; do
                 [[ -f "$f" ]] || continue
                 local exports=0
-                exports=$(grep -c "^export " "$f" 2>/dev/null || echo "0")
+                exports=$(grep -c "^export " "$f" 2>/dev/null || true)
+                exports="${exports:-0}"
                 [[ "$exports" -gt 2 ]] 2>/dev/null && context="${context}  $(basename "$f"): $exports exports
 "
             done < <(find "$repo_root/src" "$repo_root/lib" -name "*.ts" -o -name "*.js" 2>/dev/null | head -30)

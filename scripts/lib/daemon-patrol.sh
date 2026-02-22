@@ -814,7 +814,7 @@ Auto-detected by \`shipwright daemon patrol\` on $(now_iso)." \
             if [[ ! -f "$scripts_dir/sw-${name}-test.sh" ]]; then
                 # Count usage across other scripts
                 local usage_count
-                usage_count=$(grep -rl "sw-${name}" "$scripts_dir"/sw-*.sh 2>/dev/null | grep -cv "$basename" 2>/dev/null || echo "0")
+                usage_count=$(grep -rl "sw-${name}" "$scripts_dir"/sw-*.sh 2>/dev/null | grep -cv "$basename" 2>/dev/null || true)
                 usage_count=${usage_count:-0}
 
                 local line_count

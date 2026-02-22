@@ -639,6 +639,11 @@ cleanup_on_exit() {
         git stash pop --quiet 2>/dev/null || true
     fi
 
+    # Release durable pipeline lock
+    if [[ -n "${_PIPELINE_LOCK_ID:-}" ]] && type release_lock >/dev/null 2>&1; then
+        release_lock "$_PIPELINE_LOCK_ID" 2>/dev/null || true
+    fi
+
     # Cancel lingering in_progress GitHub Check Runs
     pipeline_cancel_check_runs 2>/dev/null || true
 
@@ -1556,6 +1561,10 @@ run_pipeline() {
             stage_dur_s=$(( $(now_epoch) - stage_start_epoch ))
             success "Stage ${BOLD}$id${RESET} complete ${DIM}(${timing})${RESET}"
             emit_event "stage.completed" "issue=${ISSUE_NUMBER:-0}" "stage=$id" "duration_s=$stage_dur_s" "result=success"
+            # Emit vitals snapshot on every stage transition (not just build/test)
+            if type pipeline_emit_progress_snapshot >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
+                pipeline_emit_progress_snapshot "${ISSUE_NUMBER}" "$id" "0" "0" "0" "" 2>/dev/null || true
+            fi
             # Record model outcome for UCB1 learning
             type record_model_outcome >/dev/null 2>&1 && record_model_outcome "$stage_model_used" "$id" 1 "$stage_dur_s" 0 2>/dev/null || true
             # Broadcast discovery for cross-pipeline learning
@@ -1586,6 +1595,10 @@ run_pipeline() {
                 "duration_s=$stage_dur_s" \
                 "error=${LAST_STAGE_ERROR:-unknown}" \
                 "error_class=${LAST_STAGE_ERROR_CLASS:-unknown}"
+            # Emit vitals snapshot on failure too
+            if type pipeline_emit_progress_snapshot >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
+                pipeline_emit_progress_snapshot "${ISSUE_NUMBER}" "$id" "0" "0" "0" "${LAST_STAGE_ERROR:-unknown}" 2>/dev/null || true
+            fi
             # Log model used for prediction feedback
             echo "${id}|${stage_model_used}|false" >> "${ARTIFACTS_DIR}/model-routing.log"
             # Record model outcome for UCB1 learning
@@ -2108,6 +2121,19 @@ pipeline_start() {
     fi
 
     setup_dirs
+
+    # Acquire durable lock to prevent concurrent pipelines on the same issue/goal
+    _PIPELINE_LOCK_ID=""
+    if type acquire_lock >/dev/null 2>&1; then
+        _PIPELINE_LOCK_ID="pipeline-${ISSUE_NUMBER:-goal-$$}"
+        if ! acquire_lock "$_PIPELINE_LOCK_ID" 5 2>/dev/null; then
+            error "Another pipeline is already running for this issue/goal"
+            echo -e "  Wait for it to finish, or remove stale lock:"
+            echo -e "  ${DIM}rm -rf ~/.shipwright/durable/locks/${_PIPELINE_LOCK_ID}.lock${RESET}"
+            _PIPELINE_LOCK_ID=""
+            exit 1
+        fi
+    fi
 
     # Generate reasoning trace (complexity analysis, template selection, failure predictions)
     local user_specified_pipeline="$PIPELINE_NAME"

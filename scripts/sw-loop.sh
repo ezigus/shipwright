@@ -878,7 +878,8 @@ validate_claude_output() {
 
     # Check for obviously corrupt output (API errors dumped as code)
     local total_changed
-    total_changed=$(echo "$changed_files" | grep -c '.' 2>/dev/null || echo "0")
+    total_changed=$(echo "$changed_files" | grep -c '.' 2>/dev/null || true)
+    total_changed="${total_changed:-0}"
     if [[ "$total_changed" -eq 0 ]]; then
         warn "Claude iteration produced no file changes"
         issues=$((issues + 1))
@@ -972,7 +973,8 @@ check_fatal_error() {
     # Non-zero exit + tiny output = likely CLI crash
     if [[ "$cli_exit_code" -ne 0 ]]; then
         local line_count
-        line_count=$(grep -cv '^$' "$log_file" 2>/dev/null || echo 0)
+        line_count=$(grep -cv '^$' "$log_file" 2>/dev/null || true)
+        line_count="${line_count:-0}"
         if [[ "$line_count" -lt 3 ]]; then
             local content
             content=$(head -3 "$log_file" 2>/dev/null | cut -c1-120)
@@ -1146,7 +1148,8 @@ diagnose_failure() {
     local diagnosis_file="${LOG_DIR:-/tmp}/diagnoses.txt"
     local repeat_count=0
     if [[ -f "$diagnosis_file" ]]; then
-        repeat_count=$(grep -c "^${diagnosis}$" "$diagnosis_file" 2>/dev/null || echo "0")
+        repeat_count=$(grep -c "^${diagnosis}$" "$diagnosis_file" 2>/dev/null || true)
+        repeat_count="${repeat_count:-0}"
     fi
     echo "$diagnosis" >> "$diagnosis_file"
 

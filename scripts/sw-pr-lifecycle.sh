@@ -274,13 +274,16 @@ pr_review() {
     # Evaluate quality criteria
     local issues_found=0
     local file_count
-    file_count=$(echo "$diff_output" | grep -c '^diff --git' || echo "0")
+    file_count=$(echo "$diff_output" | grep -c '^diff --git' || true)
+    file_count="${file_count:-0}"
 
     local line_additions
-    line_additions=$(echo "$diff_output" | grep -c '^+' || echo "0")
+    line_additions=$(echo "$diff_output" | grep -c '^+' || true)
+    line_additions="${line_additions:-0}"
 
     local line_deletions
-    line_deletions=$(echo "$diff_output" | grep -c '^-' || echo "0")
+    line_deletions=$(echo "$diff_output" | grep -c '^-' || true)
+    line_deletions="${line_deletions:-0}"
 
     info "Diff analysis: ${file_count} files, +${line_additions}/-${line_deletions} lines"
 

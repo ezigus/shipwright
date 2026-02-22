@@ -250,7 +250,7 @@ select_pipeline_template() {
         _dora_events=$(tail -500 "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" \
             | grep '"type":"pipeline.completed"' 2>/dev/null \
             | tail -5 || true)
-        _dora_total=$(echo "$_dora_events" | grep -c '.' 2>/dev/null || echo "0")
+        _dora_total=$(echo "$_dora_events" | grep -c '.' 2>/dev/null || true)
         _dora_total="${_dora_total:-0}"
         if [[ "$_dora_total" -ge 3 ]]; then
             _dora_failures=$(echo "$_dora_events" | grep -c '"result":"failure"' 2>/dev/null || true)

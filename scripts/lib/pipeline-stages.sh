@@ -1,4 +1,4 @@
-# pipeline-stages.sh — Stage implementations (intake, plan, build, test, review, pr, merge, deploy, validate, monitor) for sw-pipeline.sh
+# pipeline-stages.sh — Stage implementations (intake, plan, build, test, review, compound_quality, pr, merge, deploy, validate, monitor) for sw-pipeline.sh
 # Source from sw-pipeline.sh. Requires all pipeline globals and state/github/detection/quality modules.
 [[ -n "${_PIPELINE_STAGES_LOADED:-}" ]] && return 0
 _PIPELINE_STAGES_LOADED=1
@@ -15,6 +15,7 @@ show_stage_preview() {
         test_first) echo -e "  Generate tests from requirements (TDD mode) before implementation" ;;
         test)     echo -e "  Run test suite and check coverage" ;;
         review)   echo -e "  AI code review on the diff, post findings" ;;
+        compound_quality) echo -e "  Adversarial review, negative tests, e2e, DoD audit" ;;
         pr)       echo -e "  Create GitHub PR with labels, reviewers, milestone" ;;
         merge)    echo -e "  Wait for CI checks, merge PR, optionally delete branch" ;;
         deploy)   echo -e "  Deploy to staging/production with rollback" ;;
@@ -1538,6 +1539,110 @@ ${review_summary}
     fi
 
     log_stage "review" "AI review complete ($total_issues issues: $critical_count critical, $bug_count bugs, $warning_count suggestions)"
+}
+
+# ─── Compound Quality ───────────────────────────────────────────────────────
+# Aggregation gate: adversarial review, negative testing, e2e checks, DoD audit.
+# Runs sub-checks based on the stage config from the pipeline template.
+stage_compound_quality() {
+    CURRENT_STAGE_ID="compound_quality"
+
+    # Read stage config from pipeline template
+    local cfg
+    cfg=$(jq -r '.stages[] | select(.id == "compound_quality") | .config // {}' "$PIPELINE_CONFIG" 2>/dev/null) || cfg="{}"
+
+    local do_adversarial do_negative do_e2e do_dod max_cycles blocking
+    do_adversarial=$(echo "$cfg" | jq -r '.adversarial // false')
+    do_negative=$(echo "$cfg" | jq -r '.negative // false')
+    do_e2e=$(echo "$cfg" | jq -r '.e2e // false')
+    do_dod=$(echo "$cfg" | jq -r '.dod_audit // false')
+    max_cycles=$(echo "$cfg" | jq -r '.max_cycles // 1')
+    blocking=$(echo "$cfg" | jq -r '.compound_quality_blocking // false')
+
+    local pass_count=0 fail_count=0 total=0
+    local compound_log="$ARTIFACTS_DIR/compound-quality.log"
+    : > "$compound_log"
+
+    # ── Adversarial review ──
+    if [[ "$do_adversarial" == "true" ]]; then
+        total=$((total + 1))
+        info "Running adversarial review..."
+        if [[ -x "$SCRIPT_DIR/sw-adversarial.sh" ]]; then
+            if bash "$SCRIPT_DIR/sw-adversarial.sh" --repo "${REPO_DIR:-.}" >> "$compound_log" 2>&1; then
+                pass_count=$((pass_count + 1))
+                success "Adversarial review passed"
+            else
+                fail_count=$((fail_count + 1))
+                warn "Adversarial review found issues"
+            fi
+        else
+            warn "sw-adversarial.sh not found, skipping"
+        fi
+    fi
+
+    # ── Negative / edge-case testing ──
+    if [[ "$do_negative" == "true" ]]; then
+        total=$((total + 1))
+        info "Running negative test pass..."
+        if [[ -n "${TEST_CMD:-}" ]]; then
+            if eval "$TEST_CMD" >> "$compound_log" 2>&1; then
+                pass_count=$((pass_count + 1))
+                success "Negative test pass passed"
+            else
+                fail_count=$((fail_count + 1))
+                warn "Negative test pass found failures"
+            fi
+        else
+            pass_count=$((pass_count + 1))
+            info "No test command configured, skipping negative tests"
+        fi
+    fi
+
+    # ── E2E checks ──
+    if [[ "$do_e2e" == "true" ]]; then
+        total=$((total + 1))
+        info "Running e2e checks..."
+        if [[ -x "$SCRIPT_DIR/sw-e2e-orchestrator.sh" ]]; then
+            if bash "$SCRIPT_DIR/sw-e2e-orchestrator.sh" run >> "$compound_log" 2>&1; then
+                pass_count=$((pass_count + 1))
+                success "E2E checks passed"
+            else
+                fail_count=$((fail_count + 1))
+                warn "E2E checks found issues"
+            fi
+        else
+            pass_count=$((pass_count + 1))
+            info "sw-e2e-orchestrator.sh not found, skipping e2e"
+        fi
+    fi
+
+    # ── Definition of Done audit ──
+    if [[ "$do_dod" == "true" ]]; then
+        total=$((total + 1))
+        info "Running definition-of-done audit..."
+        if [[ -x "$SCRIPT_DIR/sw-quality.sh" ]]; then
+            if bash "$SCRIPT_DIR/sw-quality.sh" validate >> "$compound_log" 2>&1; then
+                pass_count=$((pass_count + 1))
+                success "DoD audit passed"
+            else
+                fail_count=$((fail_count + 1))
+                warn "DoD audit found gaps"
+            fi
+        else
+            pass_count=$((pass_count + 1))
+            info "sw-quality.sh not found, skipping DoD audit"
+        fi
+    fi
+
+    # ── Summary ──
+    log_stage "compound_quality" "Compound quality: $pass_count/$total checks passed, $fail_count failed"
+
+    if [[ "$fail_count" -gt 0 && "$blocking" == "true" ]]; then
+        error "Compound quality gate failed: $fail_count of $total checks failed"
+        return 1
+    fi
+
+    return 0
 }
 
 stage_pr() {

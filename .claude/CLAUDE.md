@@ -530,7 +530,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 702 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 640 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 350 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 3075 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 3294 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 1886 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 468 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 597 | Intelligent Model Routing & Cost Optimization |
@@ -581,7 +581,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-webhook.sh` | 618 | GitHub Webhook Receiver for Instant Issue Processing |
 | `scripts/sw-widgets.sh` | 523 | Embeddable Status Widgets |
 | `scripts/sw-worktree.sh` | 409 | Git worktree management for multi-agent isolation |
-| `scripts/sw` | 611 | CLI router — dispatches subcommands via exec |
+| `scripts/sw` | 614 | CLI router — dispatches subcommands via exec |
 <!-- /AUTO:core-scripts -->
 
 ### GitHub API Modules

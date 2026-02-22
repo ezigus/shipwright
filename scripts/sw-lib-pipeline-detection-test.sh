@@ -212,7 +212,7 @@ envs=$(detect_repo_environments_json)
 assert_contains "Detects nested SwiftPM environment" "$envs" "apps/mobile/Package.swift"
 assert_contains "Detects nested Node environment" "$envs" "apps/web/package.json"
 result=$(detect_test_cmd)
-assert_contains "Nested Node command executes in package directory" "$result" "(cd \"apps/web\" && npm test)"
+assert_contains "Nested Node command executes in package directory" "$result" "(cd -- apps/web && npm test)"
 
 changed='["Package.swift","Sources/Foo.swift"]'
 relevant=$(resolve_relevant_environments_json "$envs" "$changed")
@@ -235,7 +235,11 @@ if [[ "${1:-}" == "-C" ]]; then
 fi
 case "${1:-}" in
     rev-parse)
-        echo "/tmp/mock-repo"
+        if [[ "${2:-}" == "--is-inside-work-tree" ]]; then
+            echo "true"
+        else
+            echo "/tmp/mock-repo"
+        fi
         ;;
     diff)
         if [[ "${2:-}" == "--name-only" && "${3:-}" == "HEAD~1" ]]; then

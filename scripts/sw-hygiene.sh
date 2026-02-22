@@ -92,6 +92,12 @@ detect_dead_code() {
     local partial_reasons=""
     func_limit=$(_config_get_int "limits.function_scan_limit" 1000)
     dead_code_timeout="${SHIPWRIGHT_HYGIENE_DEAD_CODE_TIMEOUT_S:-$(_config_get_int "limits.dead_code_timeout_seconds" 20)}"
+    case "$dead_code_timeout" in
+        ''|*[!0-9-]*)
+            warn "Invalid dead-code timeout '$dead_code_timeout'; falling back to 20s."
+            dead_code_timeout=20
+            ;;
+    esac
     start_ts=$(date +%s)
 
     _dead_code_timed_out() {
@@ -143,7 +149,7 @@ detect_dead_code() {
 
             # Use a prebuilt index so every function check is O(index) instead of O(repo scan).
             local usage_count
-            usage_count=$(printf '%s\n' "$script_index" | grep -F -c "$func" 2>/dev/null || true)
+            usage_count=$(printf '%s\n' "$script_index" | grep -F -w -c "$func" 2>/dev/null || true)
             usage_count="${usage_count:-0}"
             usage_count=$(printf '%s' "$usage_count" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 

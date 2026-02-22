@@ -129,7 +129,7 @@ default_test_cmd_for_environment() {
             fi
             ;;
         node)
-            local marker_dir lock_root cmd
+            local marker_dir lock_root cmd escaped_marker_dir
             marker_dir="."
             [[ -n "$marker" ]] && marker_dir=$(dirname "$marker")
             lock_root="$root"
@@ -150,7 +150,8 @@ default_test_cmd_for_environment() {
             if [[ "$marker_dir" == "." ]]; then
                 echo "$cmd"
             else
-                echo "(cd \"$marker_dir\" && $cmd)"
+                escaped_marker_dir=$(printf '%q' "$marker_dir")
+                echo "(cd -- $escaped_marker_dir && $cmd)"
             fi
             ;;
         python) echo "pytest" ;;

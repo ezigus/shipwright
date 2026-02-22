@@ -31,6 +31,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/sw-db.sh" ]]; then
     source "$SCRIPT_DIR/sw-db.sh" 2>/dev/null || true
 fi
+# Cross-pipeline discovery (learnings from other pipeline runs)
+[[ -f "$SCRIPT_DIR/sw-discovery.sh" ]] && source "$SCRIPT_DIR/sw-discovery.sh" 2>/dev/null || true
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -1787,6 +1789,16 @@ Fix these specific errors. Each line above is one distinct error from the test o
         memory_section="$("$SCRIPT_DIR/sw-memory.sh" inject build 2>/dev/null || true)"
     fi
 
+    # Cross-pipeline discovery injection (learnings from other pipeline runs)
+    local discovery_section=""
+    if type inject_discoveries >/dev/null 2>&1; then
+        local disc_output
+        disc_output="$(inject_discoveries "${GOAL:-}" 2>/dev/null || true)"
+        if [[ -n "$disc_output" ]]; then
+            discovery_section="$disc_output"
+        fi
+    fi
+
     # DORA baselines for context
     local dora_section=""
     if type memory_get_dora_baseline >/dev/null 2>&1; then
@@ -1990,6 +2002,9 @@ ${error_summary_section:+$error_summary_section
 }
 ${memory_section:+## Memory Context
 $memory_section
+}
+${discovery_section:+## Cross-Pipeline Learnings
+$discovery_section
 }
 ${dora_section:+$dora_section
 }

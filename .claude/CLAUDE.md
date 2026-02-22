@@ -501,6 +501,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-daemon.sh` | 1356 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 508 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 1888 | SQLite Persistence Layer |
+| `scripts/sw-decide.sh` | 685 | Shipwright Autonomous Decision Engine |
 | `scripts/sw-decompose.sh` | 521 | Intelligent Issue Decomposition |
 | `scripts/sw-deps.sh` | 530 | Automated Dependency Update Management |
 | `scripts/sw-developer-simulation.sh` | 236 | Multi-Persona Developer Simulation |
@@ -642,6 +643,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-dashboard-e2e-test.sh` | 600 | full live validation |
 | `scripts/sw-dashboard-test.sh` | 254 | validates dashboard structure |
 | `scripts/sw-db-test.sh` | 980 | SQLite Persistence Layer Test Suite |
+| `scripts/sw-decide-test.sh` | 518 | Unit tests for the Autonomous Decision Engine |
 | `scripts/sw-decompose-test.sh` | 160 | Intelligent Issue Decomposition tests |
 | `scripts/sw-deps-test.sh` | 186 | Automated Dependency Update Management tests |
 | `scripts/sw-developer-simulation-test.sh` | 301 | Validate multi-persona |

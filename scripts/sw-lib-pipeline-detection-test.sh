@@ -22,6 +22,18 @@ export PROJECT_ROOT="$TEST_TEMP_DIR/project"
 _PIPELINE_DETECTION_LOADED=""
 source "$SCRIPT_DIR/lib/pipeline-detection.sh"
 
+mkdir -p "$PROJECT_ROOT/scripts"
+cat > "$PROJECT_ROOT/scripts/run-xcode-tests.sh" <<'SH'
+#!/usr/bin/env bash
+cat <<'HELP'
+Usage: scripts/run-xcode-tests.sh [OPTIONS]
+  -t <tests>        Use "Packages" to run every SwiftPM package test
+  -p [suite]        Verify test plan coverage
+  --help            Show this message
+HELP
+SH
+chmod +x "$PROJECT_ROOT/scripts/run-xcode-tests.sh"
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # detect_test_cmd
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -59,15 +71,35 @@ cat > "$PROJECT_ROOT/package.json" <<'JSON'
 JSON
 rm -f "$PROJECT_ROOT/Cargo.toml" "$PROJECT_ROOT/go.mod" "$PROJECT_ROOT/Gemfile" "$PROJECT_ROOT/pom.xml" "$PROJECT_ROOT/build.gradle" "$PROJECT_ROOT/build.gradle.kts" "$PROJECT_ROOT/Makefile"
 result=$(detect_test_cmd)
-assert_eq "package.json without test script returns empty" "" "$result"
+assert_eq "package.json without test script defaults to npm test" "npm test" "$result"
 
 # "no test specified" placeholder
 cat > "$PROJECT_ROOT/package.json" <<'JSON'
 {"scripts":{"test":"echo \"Error: no test specified\" && exit 1"}}
 JSON
 result=$(detect_test_cmd)
-assert_eq "npm 'no test specified' returns empty" "" "$result"
+assert_eq "npm 'no test specified' defaults to npm test" "npm test" "$result"
 rm -f "$PROJECT_ROOT/package.json"
+
+# SwiftPM defaults to helper script with Packages target
+touch "$PROJECT_ROOT/Package.swift"
+result=$(detect_test_cmd)
+assert_eq "SwiftPM defaults to helper packages mode" "bash ./scripts/run-xcode-tests.sh -t Packages" "$result"
+rm -f "$PROJECT_ROOT/Package.swift"
+
+# iOS/Xcode defaults to helper script
+mkdir -p "$PROJECT_ROOT/App.xcodeproj"
+result=$(detect_test_cmd)
+assert_eq "iOS defaults to helper script" "bash ./scripts/run-xcode-tests.sh" "$result"
+rm -rf "$PROJECT_ROOT/App.xcodeproj"
+
+# Mixed iOS + SwiftPM returns both commands without hierarchy
+mkdir -p "$PROJECT_ROOT/App.xcodeproj"
+touch "$PROJECT_ROOT/Package.swift"
+result=$(detect_test_cmd)
+assert_contains "Mixed env includes iOS command" "$result" "bash ./scripts/run-xcode-tests.sh"
+assert_contains "Mixed env includes SwiftPM packages command" "$result" "bash ./scripts/run-xcode-tests.sh -t Packages"
+rm -rf "$PROJECT_ROOT/App.xcodeproj" "$PROJECT_ROOT/Package.swift"
 
 # Python with pyproject.toml + pytest
 cat > "$PROJECT_ROOT/pyproject.toml" <<'TOML'
@@ -150,6 +182,35 @@ rm -f "$PROJECT_ROOT/Makefile"
 # Empty project
 result=$(detect_test_cmd)
 assert_eq "Empty project returns empty" "" "$result"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Environment inventory and context selection
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "environment selection"
+
+mkdir -p "$PROJECT_ROOT/App.xcodeproj"
+touch "$PROJECT_ROOT/Package.swift"
+cat > "$PROJECT_ROOT/package.json" <<'JSON'
+{"name":"test-project"}
+JSON
+envs=$(detect_repo_environments_json)
+assert_contains "Detects iOS environment" "$envs" "\"ios_xcode\""
+assert_contains "Detects SwiftPM environment" "$envs" "\"swiftpm\""
+assert_contains "Detects Node environment" "$envs" "\"node\""
+
+changed='["Package.swift","Sources/Foo.swift"]'
+relevant=$(resolve_relevant_environments_json "$envs" "$changed")
+assert_contains "SwiftPM selected for package changes" "$relevant" "\"swiftpm\""
+if echo "$relevant" | grep -q "\"node\""; then
+    assert_fail "Node not selected for package-only changes" "unexpected node env: $relevant"
+else
+    assert_pass "Node not selected for package-only changes"
+fi
+
+changed='["web/src/app.ts"]'
+relevant=$(resolve_relevant_environments_json "$envs" "$changed")
+assert_contains "Node selected for JS/TS changes" "$relevant" "\"node\""
+rm -rf "$PROJECT_ROOT/App.xcodeproj" "$PROJECT_ROOT/Package.swift" "$PROJECT_ROOT/package.json"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # detect_project_lang

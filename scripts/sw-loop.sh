@@ -24,6 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
 [[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
+[[ -f "$SCRIPT_DIR/lib/pipeline-detection.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-detection.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -370,6 +371,11 @@ STATE_DIR="$PROJECT_ROOT/.claude"
 STATE_FILE="$STATE_DIR/loop-state.md"
 LOG_DIR="$STATE_DIR/loop-logs"
 WORKTREE_DIR="$PROJECT_ROOT/.worktrees"
+
+if [[ -z "$TEST_CMD" ]] && [[ "$(type -t detect_test_cmd 2>/dev/null)" == "function" ]]; then
+    TEST_CMD="$(detect_test_cmd)"
+    [[ -n "$TEST_CMD" ]] && info "Auto-detected test command: ${DIM}${TEST_CMD}${RESET}"
+fi
 
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 

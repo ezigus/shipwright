@@ -39,7 +39,35 @@
       "deploy",
       "validate",
       "monitor"
-    ]
+    ],
+    "command_discovery": {
+      "enabled": true,
+      "help_args": "--help",
+      "cache_ttl_seconds": 300,
+      "execution": {
+        "fail_fast": true,
+        "separator": " && "
+      },
+      "mode_map": {
+        "UITests": "ui",
+        "integration": "integration",
+        "Package.swift": "swiftpm_all"
+      },
+      "helpers": [
+        {
+          "id": "xcode_runner",
+          "script": "scripts/run-xcode-tests.sh",
+          "environments": ["ios_xcode", "swiftpm"],
+          "help_args": "--help",
+          "parser": "xcode_runner_help_v1",
+          "default_mode": "unit",
+          "mode_flags": {
+            "swiftpm_all": "-t Packages"
+          },
+          "prefer_helper": true
+        }
+      ]
+    }
   },
   "loop": {
     "claude_timeout": 1800,

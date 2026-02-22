@@ -661,6 +661,9 @@ initialize_state() {
     STATUS="running"
     LOG_ENTRIES=""
 
+    # Record starting commit for cumulative diff in quality gates
+    LOOP_START_COMMIT="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")"
+
     write_state
 }
 
@@ -731,6 +734,11 @@ resume_state() {
     CONSECUTIVE_FAILURES=0
     START_EPOCH="$(now_epoch)"
     STATUS="running"
+
+    # Set starting commit for cumulative diff (approximate: use earliest tracked commit)
+    if [[ -z "${LOOP_START_COMMIT:-}" ]]; then
+        LOOP_START_COMMIT="$(git -C "$PROJECT_ROOT" rev-list --max-parents=0 HEAD 2>/dev/null | tail -1 || echo "")"
+    fi
 
     # If we hit max iterations before, warn user to extend
     if [[ "$ITERATION" -ge "$MAX_ITERATIONS" ]] && ! $MAX_ITERATIONS_EXPLICIT; then
@@ -1326,32 +1334,59 @@ run_audit_agent() {
     local log_file="$LOG_DIR/iteration-${ITERATION}.log"
     local audit_log="$LOG_DIR/audit-iter-${ITERATION}.log"
 
-    # Gather context: tail of implementer output + git diff
+    # Gather context: tail of implementer output + cumulative diff
     local impl_tail
     impl_tail="$(tail -100 "$log_file" 2>/dev/null || echo "(no output)")"
-    local diff_stat
-    diff_stat="$(git -C "$PROJECT_ROOT" diff --stat HEAD~1 2>/dev/null || echo "(no changes)")"
+
+    # Use cumulative diff from loop start so auditor sees ALL work, not just latest commit
+    local diff_stat cumulative_note=""
+    if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
+        diff_stat="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null || echo "(no changes)")"
+        cumulative_note="Note: This diff shows ALL changes since the loop started (iteration 1 through ${ITERATION}), not just the latest commit."
+    else
+        diff_stat="$(git -C "$PROJECT_ROOT" diff --stat HEAD~1 2>/dev/null || echo "(no changes)")"
+    fi
+
+    # Include verified test status so auditor doesn't have to guess
+    local test_context=""
+    if [[ -n "$TEST_CMD" ]]; then
+        if [[ "${TEST_PASSED:-}" == "true" ]]; then
+            test_context="## Verified Test Status (from harness, not from agent)
+Tests: ALL PASSING (command: ${TEST_CMD})"
+        else
+            test_context="## Verified Test Status (from harness)
+Tests: FAILING (command: ${TEST_CMD})
+$(echo "${TEST_OUTPUT:-}" | tail -10)"
+        fi
+    fi
 
     local audit_prompt
     read -r -d '' audit_prompt <<AUDIT_PROMPT || true
-You are an independent code auditor reviewing an autonomous coding agent.
+You are an independent code auditor reviewing an autonomous coding agent's CUMULATIVE work.
+This is iteration ${ITERATION}. The agent may have done most of the work in earlier iterations.
 
 ## Goal the agent was working toward
 ${GOAL}
 
-## Agent Output (last 100 lines)
+## Agent Output This Iteration (last 100 lines)
 ${impl_tail}
 
-## Changes Made (git diff --stat)
+## Cumulative Changes Made (git diff --stat)
+${cumulative_note}
 ${diff_stat}
 
+${test_context}
+
 ## Your Task
-Critically review the work:
-1. Did the agent make meaningful progress toward the goal?
-2. Are there obvious bugs, logic errors, or security issues?
+Critically review the CUMULATIVE work (not just the latest iteration):
+1. Has the agent made meaningful progress toward the goal across all iterations?
+2. Are there obvious bugs, logic errors, or security issues in the current codebase?
 3. Did the agent leave incomplete work (TODOs, placeholder code)?
 4. Are there any regressions or broken patterns?
 5. Is the code quality acceptable?
+
+IMPORTANT: If the current iteration made small or no code changes, that may be acceptable
+if earlier iterations already completed the substantive work. Judge the whole body of work.
 
 If the work is acceptable and moves toward the goal, output exactly: AUDIT_PASS
 Otherwise, list the specific issues that need fixing.
@@ -1438,21 +1473,52 @@ check_definition_of_done() {
 
     local dod_content
     dod_content="$(cat "$DOD_FILE")"
+
+    # Use cumulative diff from loop start (not just HEAD~1) so the evaluator
+    # can see ALL work done across every iteration, not just the latest commit.
     local diff_content
-    diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null || echo "(no diff)")"
+    if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
+        diff_content="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null || echo "(no diff)")"
+        diff_content="${diff_content}
+
+## Detailed Changes (cumulative diff, truncated to 200 lines)
+$(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -200 || echo "(no diff)")"
+    else
+        diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null || echo "(no diff)")"
+    fi
+
+    # Inject verified runtime facts so the evaluator doesn't have to guess
+    local runtime_facts=""
+    if [[ -n "$TEST_CMD" ]]; then
+        if [[ "${TEST_PASSED:-}" == "true" ]]; then
+            runtime_facts="## Verified Runtime Facts (from the loop harness, not from the agent)
+- Tests: ALL PASSING (verified by running '${TEST_CMD}' after this iteration)
+- Test output (last 10 lines):
+$(echo "${TEST_OUTPUT:-}" | tail -10)"
+        else
+            runtime_facts="## Verified Runtime Facts
+- Tests: FAILING (verified by running '${TEST_CMD}')
+- Test output (last 10 lines):
+$(echo "${TEST_OUTPUT:-}" | tail -10)"
+        fi
+    fi
 
     local dod_prompt
     read -r -d '' dod_prompt <<DOD_PROMPT || true
-You are evaluating whether code changes satisfy a Definition of Done checklist.
+You are evaluating whether a project satisfies a Definition of Done checklist.
+You are reviewing the CUMULATIVE work across all iterations, not just the latest commit.
 
 ## Definition of Done
 ${dod_content}
 
-## Changes Made (git diff)
+${runtime_facts}
+
+## Cumulative Changes Made (git diff from start of loop to now)
 ${diff_content}
 
 ## Your Task
-For each item in the Definition of Done, determine if the changes satisfy it.
+For each item in the Definition of Done, determine if the project satisfies it.
+The runtime facts above are verified by the harness — trust them as ground truth.
 If ALL items are satisfied, output exactly: DOD_PASS
 Otherwise, list which items are NOT satisfied and why.
 DOD_PROMPT
@@ -1506,6 +1572,14 @@ guard_completion() {
         rejection_reasons+=("tests failing")
     fi
 
+    # Holistic final gate: when all other gates pass, run a project-level assessment
+    # that evaluates the entire codebase against the goal (not just the latest diff)
+    if [[ ${#rejection_reasons[@]} -eq 0 ]]; then
+        if ! run_holistic_gate; then
+            rejection_reasons+=("holistic project assessment found gaps")
+        fi
+    fi
+
     if [[ ${#rejection_reasons[@]} -gt 0 ]]; then
         local reasons_str
         reasons_str="$(printf ', %s' "${rejection_reasons[@]}")"
@@ -1517,6 +1591,70 @@ guard_completion() {
 
     echo -e "  ${GREEN}${BOLD}✓ LOOP_COMPLETE accepted — all gates passed!${RESET}"
     return 0
+}
+
+# Holistic gate: evaluates the full project against the original goal.
+# Only runs when all other gates pass (final checkpoint before acceptance).
+run_holistic_gate() {
+    # Skip if no starting commit (can't compute cumulative diff)
+    [[ -z "${LOOP_START_COMMIT:-}" ]] && return 0
+
+    local holistic_log="$LOG_DIR/holistic-iter-${ITERATION}.log"
+
+    # Build a project summary: file tree, test count, cumulative diff stats
+    local file_count
+    file_count=$(git -C "$PROJECT_ROOT" ls-files | wc -l | tr -d ' ')
+    local cumulative_stat
+    cumulative_stat="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | tail -1 || echo "(no changes)")"
+    local test_summary=""
+    if [[ -n "${TEST_OUTPUT:-}" ]]; then
+        test_summary="$(echo "$TEST_OUTPUT" | tail -5)"
+    fi
+
+    local holistic_prompt
+    read -r -d '' holistic_prompt <<HOLISTIC_PROMPT || true
+You are a final quality gate evaluating whether an autonomous coding agent has FULLY achieved its goal.
+
+## Original Goal
+${GOAL}
+
+## Project Stats
+- Files in repo: ${file_count}
+- Iterations completed: ${ITERATION}
+- Cumulative changes: ${cumulative_stat}
+- Tests: ${TEST_PASSED:-unknown} (command: ${TEST_CMD:-none})
+${test_summary:+- Test output: ${test_summary}}
+
+## Cumulative Git Changes (diff --stat from start)
+$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -40 || echo "(none)")
+
+## Your Task
+Based on the goal and the cumulative work done:
+1. Has the goal been FULLY achieved (not partially)?
+2. Is there any critical gap that would make this unacceptable for production?
+
+If the goal is fully achieved, output exactly: HOLISTIC_PASS
+Otherwise, list the specific gaps remaining.
+HOLISTIC_PROMPT
+
+    echo -e "  ${PURPLE}▸${RESET} Running holistic project assessment..."
+
+    local hol_model
+    hol_model="$(select_audit_model)"
+    local hol_flags=("--model" "$hol_model")
+    if $SKIP_PERMISSIONS; then
+        hol_flags+=("--dangerously-skip-permissions")
+    fi
+
+    claude -p "$holistic_prompt" "${hol_flags[@]}" > "$holistic_log" 2>&1 || true
+
+    if grep -q "HOLISTIC_PASS" "$holistic_log" 2>/dev/null; then
+        echo -e "  ${GREEN}✓${RESET} Holistic assessment: passed"
+        return 0
+    else
+        echo -e "  ${YELLOW}⚠${RESET} Holistic assessment: gaps found"
+        return 1
+    fi
 }
 
 # ─── Context Window Management ───────────────────────────────────────────────
@@ -1819,12 +1957,25 @@ ${_test_tail}
         RESUMED_TEST_OUTPUT=""
     fi
 
+    # Build cumulative progress summary showing all iterations' work
+    local cumulative_section=""
+    if [[ -n "${LOOP_START_COMMIT:-}" ]] && [[ "$ITERATION" -gt 1 ]]; then
+        local cum_stat
+        cum_stat="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | tail -1 || true)"
+        if [[ -n "$cum_stat" ]]; then
+            cumulative_section="## Cumulative Progress (all iterations combined)
+${cum_stat}
+"
+        fi
+    fi
+
     cat <<PROMPT
 You are an autonomous coding agent on iteration ${ITERATION}/${MAX_ITERATIONS} of a continuous loop.
 ${resume_section}
 ## Your Goal
 ${GOAL}
 
+${cumulative_section}
 ## Current Progress
 ${recent_log}
 
@@ -1868,6 +2019,58 @@ ${stuckness_section}
 - If stuck on the same issue for 2+ iterations, try a different approach
 - Do NOT output LOOP_COMPLETE unless the goal is genuinely achieved
 PROMPT
+}
+
+# ─── Alternative Strategy Exploration ─────────────────────────────────────────
+# When stuckness is detected, generate a context-aware alternative strategy.
+# Uses pattern matching on error type + iteration count to suggest different approaches.
+
+explore_alternative_strategy() {
+    local last_error="${1:-unknown}"
+    local iteration="${2:-0}"
+    local diagnosis="${3:-}"
+
+    # Track attempted strategies to avoid repeating them
+    local strategy_file="${LOG_DIR:-/tmp}/strategy-attempts.txt"
+    local attempted
+    attempted=$(cat "$strategy_file" 2>/dev/null || true)
+
+    local strategy=""
+
+    # If quality gates are passing but evaluators disagree, suggest focusing on evaluator alignment
+    if [[ "${TEST_PASSED:-}" == "true" ]] && [[ "${QUALITY_GATE_PASSED:-}" == "true" || "${AUDIT_RESULT:-}" == "pass" ]]; then
+        if ! echo "$attempted" | grep -q "evaluator_alignment"; then
+            echo "evaluator_alignment" >> "$strategy_file"
+            strategy="## Alternative Strategy: Evaluator Alignment
+The code appears functionally complete (tests pass). Focus on satisfying the remaining
+quality gate evaluators. Check the DoD log and audit log for specific complaints, then
+address those exact points rather than adding new features."
+        fi
+    fi
+
+    # If no code changes in last iteration, suggest verifying existing work
+    if echo "$last_error" | grep -qi "no code changes" || [[ "$diagnosis" == *"no code"* ]]; then
+        if ! echo "$attempted" | grep -q "verify_existing"; then
+            echo "verify_existing" >> "$strategy_file"
+            strategy="## Alternative Strategy: Verify Existing Work
+Recent iterations made no code changes. The work may already be complete.
+Run the full test suite, verify all features work, and if everything passes,
+commit a verification message and declare LOOP_COMPLETE with evidence."
+        fi
+    fi
+
+    # Generic fallback: break the problem down
+    if [[ -z "$strategy" ]]; then
+        if ! echo "$attempted" | grep -q "decompose"; then
+            echo "decompose" >> "$strategy_file"
+            strategy="## Alternative Strategy: Decompose
+Break the remaining work into smaller, independent steps. Focus on one specific
+file or function at a time. Read error messages literally — the root cause may
+differ from your assumption."
+        fi
+    fi
+
+    echo "$strategy"
 }
 
 # ─── Stuckness Detection ─────────────────────────────────────────────────────
@@ -2001,6 +2204,17 @@ detect_stuckness() {
     if [[ "$progress_pct" -gt 70 ]] && [[ "${TEST_PASSED:-false}" != "true" ]]; then
         stuckness_signals=$((stuckness_signals + 1))
         stuckness_reasons+=("used ${progress_pct}% of iteration budget without passing tests")
+    fi
+
+    # Gate-aware dampening: if tests pass and the agent has made progress overall,
+    # reduce stuckness signal count. The "no code changes" and "identical diffs" signals
+    # fire when code is already complete and the agent is fighting evaluator quirks —
+    # that's not genuine stuckness, it's "done but gates disagree."
+    if [[ "${TEST_PASSED:-}" == "true" ]] && [[ "$stuckness_signals" -ge 2 ]]; then
+        # If at least one quality signal is positive, dampen by 1
+        if [[ "${AUDIT_RESULT:-}" == "pass" ]] || $QUALITY_GATE_PASSED 2>/dev/null; then
+            stuckness_signals=$((stuckness_signals - 1))
+        fi
     fi
 
     # Decision: 2+ signals = stuck
@@ -2726,6 +2940,11 @@ run_single_agent_loop() {
         resume_state
     else
         initialize_state
+    fi
+
+    # Ensure LOOP_START_COMMIT is set (may not be on resume/restart)
+    if [[ -z "${LOOP_START_COMMIT:-}" ]]; then
+        LOOP_START_COMMIT="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")"
     fi
 
     # Apply adaptive budget/model before showing banner

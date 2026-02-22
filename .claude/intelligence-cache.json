@@ -277,6 +277,242 @@
       },
       "timestamp": 1771463517,
       "ttl": 3600
+    },
+    "dce27dbb395347163aefb2c7fd90ac9f": {
+      "result": {
+        "complexity": 9,
+        "risk_level": "high",
+        "success_probability": 62,
+        "recommended_template": "full",
+        "key_risks": [
+          "Large scope with many interconnected features increases integration complexity",
+          "Drag-and-drop reorder requires careful state management and persistence logic",
+          "JWT authentication across frontend/backend requires coordinated implementation",
+          "E2E test suite with authentication flows is brittle and time-consuming to stabilize",
+          "SQLite with Drizzle ORM migrations need careful schema design upfront",
+          "Dark mode + responsive design across all components adds significant UI surface area"
+        ],
+        "implementation_hints": [
+          "Start with backend API and database schema - define all tables (users, todos) with Drizzle ORM before writing any frontend code",
+          "Implement auth (register/login/JWT middleware) as the first feature since all other routes depend on it",
+          "Use a monorepo structure with shared types between frontend and backend to prevent contract drift",
+          "Implement todo CRUD with filtering before adding drag-and-drop reorder - reorder requires a position/order column",
+          "Use @dnd-kit for drag-and-drop as it has better React 18+ support than react-beautiful-dnd",
+          "Add rate limiting (express-rate-limit) and input validation (zod) to all API routes from the start, not as an afterthought",
+          "Use Vitest for unit/integration tests (shared with Vite config) and Playwright for e2e tests",
+          "Store JWT in httpOnly cookies rather than localStorage for better security",
+          "Implement dark mode with CSS custom properties and a React context provider for theme state",
+          "Break the work into phases: 1) Backend API + DB, 2) Auth, 3) Todo CRUD + filtering, 4) UI polish (drag-drop, dark mode, responsive), 5) Tests"
+        ]
+      },
+      "timestamp": 1771758594,
+      "ttl": 3600
+    },
+    "78fc40fb52867dcd7dfffe99023f7c5c": {
+      "result": {
+        "estimated_iterations": 25
+      },
+      "timestamp": 1771758599,
+      "ttl": 1800
+    },
+    "56553f12e443ea2f00e941236a86d5b0": {
+      "result": {
+        "estimated_cost_usd": 12.50,
+        "estimated_iterations": 8,
+        "estimated_tokens": 2500000,
+        "likely_failure_stage": "test",
+        "confidence": 45
+      },
+      "timestamp": 1771758603,
+      "ttl": 3600
+    },
+    "fe4b98a0ca4e4caacb39c780526577c1": {
+      "result": {
+        "results": [
+          {
+            "file": "patterns.json",
+            "relevance": 45,
+            "summary": "Contains Node.js project patterns with Vitest test runner - relevant as the todo app will use a similar Node.js/TypeScript stack with Vitest for testing"
+          },
+          {
+            "file": "metrics.json",
+            "relevance": 20,
+            "summary": "Contains baseline build/test duration metrics that could inform pipeline expectations for the new project"
+          },
+          {
+            "file": "failures.json",
+            "relevance": 15,
+            "summary": "Empty failures log - no prior failure patterns to learn from, but the structure is relevant for tracking future build failures"
+          },
+          {
+            "file": "decisions.json",
+            "relevance": 10,
+            "summary": "Empty decisions log - no prior architectural decisions recorded, but relevant as a place to capture decisions made during this plan stage"
+          },
+          {
+            "file": "global.json",
+            "relevance": 5,
+            "summary": "Empty cross-repo learnings - no transferable patterns available yet"
+          }
+        ]
+      },
+      "timestamp": 1771758629,
+      "ttl": 1800
+    },
+    "a4d47a870dee9e8b05562ff322f8a348": {
+      "result": {
+        "results": [
+          {
+            "file": "patterns.json",
+            "relevance": 45,
+            "summary": "Contains project conventions for a Node.js project with Vitest test runner, which aligns with the todo app's likely test setup and JS/TS ecosystem"
+          },
+          {
+            "file": "metrics.json",
+            "relevance": 20,
+            "summary": "Contains baseline build/test duration metrics that could inform pipeline expectations for this build"
+          },
+          {
+            "file": "failures.json",
+            "relevance": 15,
+            "summary": "Empty failures list - no prior failure patterns to learn from, but relevant as a reference point for this new build"
+          }
+        ]
+      },
+      "timestamp": 1771758803,
+      "ttl": 1800
+    },
+    "76b0581c66f27ee1f9db38b25fae3896": {
+      "result": {
+        "results": [
+          {
+            "file": "patterns.json",
+            "relevance": 45,
+            "summary": "Contains Node.js project patterns with Vitest test runner - relevant since the todo app will use a similar Node/TypeScript stack with Vitest for testing"
+          },
+          {
+            "file": "patterns.json (project_type nodejs)",
+            "relevance": 30,
+            "summary": "Identifies Node.js project type - minimally relevant as the todo app backend will be Node.js/Express"
+          },
+          {
+            "file": "failures.json",
+            "relevance": 15,
+            "summary": "Empty failures list - no prior failure patterns to learn from for this build"
+          },
+          {
+            "file": "decisions.json",
+            "relevance": 10,
+            "summary": "Empty decisions list - no prior architectural decisions to reference"
+          },
+          {
+            "file": "metrics.json (baselines)",
+            "relevance": 10,
+            "summary": "Contains build/test duration baselines from a previous pipeline run - marginally useful for benchmarking"
+          }
+        ]
+      },
+      "timestamp": 1771758931,
+      "ttl": 1800
+    },
+    "3e39d3a5860a6c8ebd6dc07fe86f0eeb": {
+      "result": {
+        "results": [
+          {
+            "file": "patterns.json",
+            "relevance": 25,
+            "summary": "Contains Node.js project conventions (vitest, npm, commonjs) that partially overlap with the todo app's backend stack choices"
+          },
+          {
+            "file": "failures.json",
+            "relevance": 10,
+            "summary": "Empty failures list - no rejected approaches or anti-patterns recorded yet for this project"
+          },
+          {
+            "file": "decisions.json",
+            "relevance": 10,
+            "summary": "Empty decisions list - no prior design decisions recorded that could inform anti-patterns"
+          }
+        ]
+      },
+      "timestamp": 1771758937,
+      "ttl": 1800
+    },
+    "43d561f4a1efb0d294c453af42996886": {
+      "result": {
+        "results": [
+          {
+            "file": "patterns.json",
+            "relevance": 45,
+            "summary": "Node.js project patterns with Vitest test runner - relevant for setting up the test suite and project structure conventions"
+          },
+          {
+            "file": "metrics.json",
+            "relevance": 30,
+            "summary": "Build duration baseline of 147s provides context for expected build performance of a similar-scale project"
+          },
+          {
+            "file": "patterns.json (bootstrap)",
+            "relevance": 25,
+            "summary": "Node.js project type detection - minimally relevant as it confirms the ecosystem but lacks specifics"
+          },
+          {
+            "file": "failures.json",
+            "relevance": 10,
+            "summary": "Empty failures list - no prior failure patterns to learn from for this build"
+          },
+          {
+            "file": "decisions.json",
+            "relevance": 10,
+            "summary": "Empty decisions list - no prior architectural decisions to reference"
+          }
+        ]
+      },
+      "timestamp": 1771759525,
+      "ttl": 1800
+    },
+    "6c55f5d39e77d1257378a10ce18536ce": {
+      "result": {
+        "complexity": 7,
+        "risk_level": "medium",
+        "success_probability": 85,
+        "recommended_template": "full",
+        "key_risks": [
+          "Subtle security vulnerabilities may be missed without deep code tracing",
+          "Review scope is broad — adversarial, architecture, security — risk of shallow coverage across dimensions",
+          "No test framework detected in project config, limiting automated negative testing",
+          "Findings without remediation may give false sense of security"
+        ],
+        "implementation_hints": [
+          "Run compound_quality with all sub-checks: adversarial review, security audit, architecture validation",
+          "Focus security audit on OWASP top 10: injection, broken auth, XSS, CSRF, insecure dependencies",
+          "Validate authentication and authorization flows end-to-end",
+          "Check for hardcoded secrets, exposed API keys, and insecure default configurations",
+          "Review drag-and-drop and CRUD operations for race conditions and input sanitization",
+          "Assess dark mode and frontend for DOM-based XSS vectors",
+          "Produce actionable findings ranked by severity with concrete remediation steps"
+        ]
+      },
+      "timestamp": 1771762623,
+      "ttl": 3600
+    },
+    "050256cb4455e7dd012fbd8b788a8218": {
+      "result": {
+        "estimated_iterations": 3
+      },
+      "timestamp": 1771762631,
+      "ttl": 1800
+    },
+    "0038994f92f24d0e7524c187bcb697d2": {
+      "result": {
+        "estimated_cost_usd": 12.50,
+        "estimated_iterations": 3,
+        "estimated_tokens": 850000,
+        "likely_failure_stage": "compound_quality",
+        "confidence": 72
+      },
+      "timestamp": 1771762636,
+      "ttl": 3600
     }
   }
 }

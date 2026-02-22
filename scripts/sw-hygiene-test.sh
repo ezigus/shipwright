@@ -172,6 +172,32 @@ output=$(bash "$SCRIPT_DIR/sw-hygiene.sh" dead-code 2>&1) && rc=0 || rc=$?
 assert_eq "dead-code exits 0" "0" "$rc"
 assert_contains "dead-code shows scanning" "$output" "Scanning"
 
+# Force the timeout path deterministically by mocking date +%s progression.
+cat > "$TEMP_DIR/bin/date" <<'MOCK_DATE'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "+%s" ]]; then
+    counter_file="${TMPDIR:-/tmp}/sw-hygiene-date-counter"
+    count=0
+    if [[ -f "$counter_file" ]]; then
+        count=$(cat "$counter_file")
+    fi
+    count=$((count + 1))
+    echo "$count" > "$counter_file"
+    if [[ "$count" -eq 1 ]]; then
+        echo "100"
+    else
+        echo "200"
+    fi
+    exit 0
+fi
+/bin/date "$@"
+MOCK_DATE
+chmod +x "$TEMP_DIR/bin/date"
+output=$(SHIPWRIGHT_HYGIENE_DEAD_CODE_TIMEOUT_S=20 bash "$SCRIPT_DIR/sw-hygiene.sh" dead-code 2>&1) && rc=0 || rc=$?
+assert_eq "dead-code timeout still exits 0" "0" "$rc"
+assert_contains "dead-code timeout warns partial results" "$output" "partial"
+rm -f "${TMPDIR:-/tmp}/sw-hygiene-date-counter" "$TEMP_DIR/bin/date"
+
 # ─── Test 10: dependencies subcommand ─────────────────────────────────────
 echo ""
 echo -e "  ${CYAN}dependencies subcommand${RESET}"

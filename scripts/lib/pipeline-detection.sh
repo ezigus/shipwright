@@ -56,7 +56,9 @@ detect_repo_environments_json() {
     xc_project=$(find "$root" -maxdepth "$max_depth" -name "*.xcodeproj" 2>/dev/null | head -1 || true)
 
     if [[ -n "$xc_workspace" || -n "$xc_project" ]]; then
-        envs=$(_append_env_json "$envs" "ios_xcode" "${xc_workspace:-$xc_project}")
+        local ios_xcode_marker
+        ios_xcode_marker="${xc_workspace:-$xc_project}"
+        envs=$(_append_env_json "$envs" "ios_xcode" "${ios_xcode_marker#$root/}")
     fi
     local swiftpm_marker
     swiftpm_marker=$(find "$root" -maxdepth "$max_depth" -name "Package.swift" 2>/dev/null | head -1 || true)
@@ -109,6 +111,7 @@ detect_repo_environments_json() {
 
 default_test_cmd_for_environment() {
     local env_id="$1"
+    local marker="${2:-}"
     local root="${PROJECT_ROOT:-$(pwd)}"
     case "$env_id" in
         ios_xcode)
@@ -126,14 +129,28 @@ default_test_cmd_for_environment() {
             fi
             ;;
         node)
-            if [[ -f "$root/pnpm-lock.yaml" ]]; then
-                echo "pnpm test"
-            elif [[ -f "$root/yarn.lock" ]]; then
-                echo "yarn test"
-            elif [[ -f "$root/bun.lockb" ]]; then
-                echo "bun test"
+            local marker_dir lock_root cmd
+            marker_dir="."
+            [[ -n "$marker" ]] && marker_dir=$(dirname "$marker")
+            lock_root="$root"
+            if [[ "$marker_dir" != "." && -d "$root/$marker_dir" ]]; then
+                lock_root="$root/$marker_dir"
+            fi
+
+            if [[ -f "$lock_root/pnpm-lock.yaml" || -f "$root/pnpm-lock.yaml" ]]; then
+                cmd="pnpm test"
+            elif [[ -f "$lock_root/yarn.lock" || -f "$root/yarn.lock" ]]; then
+                cmd="yarn test"
+            elif [[ -f "$lock_root/bun.lockb" || -f "$root/bun.lockb" ]]; then
+                cmd="bun test"
             else
-                echo "npm test"
+                cmd="npm test"
+            fi
+
+            if [[ "$marker_dir" == "." ]]; then
+                echo "$cmd"
+            else
+                echo "(cd \"$marker_dir\" && $cmd)"
             fi
             ;;
         python) echo "pytest" ;;
@@ -208,8 +225,7 @@ collect_changed_files_json() {
     fi
     local files
     files=$( (git -C "$root" diff --name-only 2>/dev/null;
-              git -C "$root" diff --cached --name-only 2>/dev/null;
-              git -C "$root" diff --name-only HEAD~1 2>/dev/null) | awk 'NF' | sort -u )
+              git -C "$root" diff --cached --name-only 2>/dev/null) | awk 'NF' | sort -u )
     jq -Rsc 'split("\n") | map(select(length > 0))' <<<"$files"
 }
 
@@ -306,8 +322,9 @@ select_test_commands_for_context_json() {
     local env_id
     while IFS= read -r env_id; do
         [[ -z "$env_id" ]] && continue
-        local mode cmd helper
+        local mode cmd helper marker
         mode=$(resolve_test_mode_for_env "$env_id" "$changed_files_json")
+        marker=$(jq -r --arg env "$env_id" 'map(select(.id == $env)) | first | .marker // ""' <<<"$envs_json")
         helper=$(jq -c --arg env "$env_id" 'map(select((.prefer_helper // true) and (.environments // [] | index($env)))) | first // empty' <<<"$helpers_json")
         cmd=""
         if [[ -n "$helper" ]]; then
@@ -320,7 +337,7 @@ select_test_commands_for_context_json() {
             fi
         fi
         if [[ -z "$cmd" ]]; then
-            cmd=$(default_test_cmd_for_environment "$env_id")
+            cmd=$(default_test_cmd_for_environment "$env_id" "$marker")
         fi
         [[ -z "$cmd" ]] && continue
         out=$(jq -c --arg env "$env_id" --arg mode "$mode" --arg cmd "$cmd" '. + [{"env":$env,"mode":$mode,"cmd":$cmd}]' <<<"$out")

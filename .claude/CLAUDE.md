@@ -714,7 +714,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-remote-test.sh` | 406 | Validate machine registry, atomic writes, |
 | `scripts/sw-replay-test.sh` | 188 | Pipeline run replay & timeline viewing |
 | `scripts/sw-retro-test.sh` | 228 | Sprint retrospective engine tests |
-| `scripts/sw-review-rerun-test.sh` | 307 | SHA-deduped rerun comment writer |
+| `scripts/sw-review-rerun-test.sh` | 316 | SHA-deduped rerun comment writer |
 | `scripts/sw-scale-test.sh` | 172 | Dynamic agent team scaling |
 | `scripts/sw-security-audit-test.sh` | 219 | Security auditing tests |
 | `scripts/sw-self-optimize-test.sh` | 725 | Unit tests for learning & tuning system |

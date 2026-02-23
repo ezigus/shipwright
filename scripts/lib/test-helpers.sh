@@ -12,7 +12,7 @@
 #   Colors, counters, assert_pass/fail/eq/contains/contains_regex/gt/json_key
 #   setup_test_env / cleanup_test_env  (temp dir, mock PATH, mock HOME)
 #   print_test_header / print_test_results
-#   Mock helpers: mock_binary, mock_jq, mock_git, mock_gh, mock_claude
+#   Mock helpers: mock_binary, mock_jq, mock_git, mock_gh, mock_claude, mock_codex
 
 [[ -n "${_TEST_HELPERS_LOADED:-}" ]] && return 0
 _TEST_HELPERS_LOADED=1
@@ -210,6 +210,18 @@ exit 0'
 
 mock_claude() {
     mock_binary "claude" 'echo "Mock claude response"
+exit 0'
+}
+
+mock_codex() {
+    mock_binary "codex" 'if [[ "${1:-}" == "exec" ]]; then
+cat <<'"'"'JSON'"'"'
+{"type":"item.completed","item":{"type":"agent_message","text":"Mock codex response"}}
+{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}
+JSON
+exit 0
+fi
+echo "Mock codex response"
 exit 0'
 }
 

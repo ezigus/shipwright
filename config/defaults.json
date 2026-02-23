@@ -78,6 +78,47 @@
     "convergence_threshold": 3,
     "multi_agent_sleep": 5
   },
+  "ai": {
+    "provider": {
+      "default": "claude",
+      "allowed": "claude,codex,copilot",
+      "fallback": "none"
+    },
+    "models": {
+      "claude": {
+        "haiku": "haiku",
+        "sonnet": "sonnet",
+        "opus": "opus"
+      },
+      "codex": {
+        "haiku": "gpt-5.1-codex-mini",
+        "sonnet": "gpt-5.1-codex",
+        "opus": "gpt-5"
+      },
+      "copilot": {
+        "haiku": "claude-haiku-4.5",
+        "sonnet": "claude-sonnet-4.5",
+        "opus": "gpt-5"
+      }
+    },
+    "providers": {
+      "claude": {
+        "command": "claude",
+        "help_args": "--help"
+      },
+      "codex": {
+        "command": "codex",
+        "help_args": "exec --help"
+      },
+      "copilot": {
+        "command": "copilot",
+        "help_args": "--help"
+      }
+    },
+    "telemetry": {
+      "allow_estimated_cost": true
+    }
+  },
   "dashboard": {
     "port": 8767,
     "poll_interval_ms": 2000,

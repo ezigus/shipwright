@@ -2,6 +2,8 @@
 # Source from sw-pipeline.sh. Requires SCRIPT_DIR, REPO_DIR.
 [[ -n "${_PIPELINE_DETECTION_LOADED:-}" ]] && return 0
 _PIPELINE_DETECTION_LOADED=1
+_PIPELINE_DETECTION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "${_PIPELINE_DETECTION_DIR}/ai-provider.sh" ]] && source "${_PIPELINE_DETECTION_DIR}/ai-provider.sh"
 
 _pipeline_cd_get() {
     local key="$1" fallback="${2:-}"
@@ -14,6 +16,14 @@ _pipeline_cd_get() {
 
 _pipeline_cd_help_args() {
     _pipeline_cd_get "pipeline.command_discovery.help_args" "--help"
+}
+
+_pipeline_ai_provider() {
+    if [[ "$(type -t ai_provider_resolve 2>/dev/null)" == "function" ]]; then
+        ai_provider_resolve "${SHIPWRIGHT_AI_PROVIDER:-}" 2>/dev/null || echo "claude"
+    else
+        echo "claude"
+    fi
 }
 
 _pipeline_cd_helpers_json() {
@@ -390,14 +400,19 @@ detect_project_lang() {
     fi
 
     # Intelligence: holistic analysis for polyglot/monorepo detection
-    if [[ "$detected" == "unknown" ]] && type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
+    if [[ "$detected" == "unknown" ]] && type intelligence_search_memory >/dev/null 2>&1 && [[ "$(type -t ai_run_json 2>/dev/null)" == "function" ]]; then
         local config_files
         config_files=$(ls "$root" 2>/dev/null | grep -E '\.(json|toml|yaml|yml|xml|gradle|lock|mod)$' | head -15)
         if [[ -n "$config_files" ]]; then
-            local ai_lang
-            ai_lang=$(claude --print --output-format text -p "Based on these config files in a project root, what is the primary language/framework? Reply with ONE word (e.g., typescript, python, rust, go, java, ruby, nodejs):
+            local ai_lang ai_json ai_provider ai_out ai_err
+            ai_provider="$(_pipeline_ai_provider)"
+            ai_out=$(mktemp "${TMPDIR:-/tmp}/sw-detect-ai.XXXXXX")
+            ai_err=$(mktemp "${TMPDIR:-/tmp}/sw-detect-ai-err.XXXXXX")
+            ai_json=$(ai_run_json "$ai_provider" "Based on these config files in a project root, what is the primary language/framework? Reply with ONE word (e.g., typescript, python, rust, go, java, ruby, nodejs):
 
-Files: ${config_files}" --model haiku < /dev/null 2>/dev/null || true)
+Files: ${config_files}" "haiku" "1" "$ai_out" "$ai_err" 2>/dev/null || true)
+            rm -f "$ai_out" "$ai_err"
+            ai_lang=$(echo "$ai_json" | jq -r '.result_text // ""' 2>/dev/null || echo "")
             ai_lang=$(echo "$ai_lang" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
             case "$ai_lang" in
                 typescript|python|rust|go|java|ruby|nodejs|react|nextjs|kotlin|swift|elixir|scala)
@@ -510,13 +525,18 @@ detect_task_type() {
     local goal="$1"
 
     # Intelligence: Claude classification with confidence score
-    if type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
-        local ai_result
-        ai_result=$(claude --print --output-format text -p "Classify this task into exactly ONE category. Reply in format: CATEGORY|CONFIDENCE (0-100)
+    if type intelligence_search_memory >/dev/null 2>&1 && [[ "$(type -t ai_run_json 2>/dev/null)" == "function" ]]; then
+        local ai_result ai_json ai_provider ai_out ai_err
+        ai_provider="$(_pipeline_ai_provider)"
+        ai_out=$(mktemp "${TMPDIR:-/tmp}/sw-task-ai.XXXXXX")
+        ai_err=$(mktemp "${TMPDIR:-/tmp}/sw-task-ai-err.XXXXXX")
+        ai_json=$(ai_run_json "$ai_provider" "Classify this task into exactly ONE category. Reply in format: CATEGORY|CONFIDENCE (0-100)
 
 Categories: bug, refactor, testing, security, docs, devops, migration, architecture, feature
 
-Task: ${goal}" --model haiku < /dev/null 2>/dev/null || true)
+Task: ${goal}" "haiku" "1" "$ai_out" "$ai_err" 2>/dev/null || true)
+        rm -f "$ai_out" "$ai_err"
+        ai_result=$(echo "$ai_json" | jq -r '.result_text // ""' 2>/dev/null || echo "")
         if [[ -n "$ai_result" ]]; then
             local ai_type ai_conf
             ai_type=$(echo "$ai_result" | head -1 | cut -d'|' -f1 | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')

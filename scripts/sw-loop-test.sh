@@ -317,7 +317,8 @@ else
 fi
 
 # ─── Test 16: run_claude_iteration separates stdout/stderr ───────────────────
-if grep -q '2>"$err_file"' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -q '2>"$err_file"' "$SCRIPT_DIR/sw-loop.sh" || \
+   grep -q 'loop_ai_run_json .*"\$err_file"' "$SCRIPT_DIR/sw-loop.sh"; then
     assert_pass "run_claude_iteration separates stdout from stderr"
 else
     assert_fail "run_claude_iteration separates stdout from stderr"

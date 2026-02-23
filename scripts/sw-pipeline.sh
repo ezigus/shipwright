@@ -662,13 +662,16 @@ trap cleanup_on_exit SIGINT SIGTERM
 
 preflight_checks() {
     local errors=0
+    local ai_provider ai_cmd
+    ai_provider="$(ai_provider_resolve "${SHIPWRIGHT_AI_PROVIDER:-}" 2>/dev/null || echo "claude")"
+    ai_cmd="$(ai_provider_command "$ai_provider" 2>/dev/null || echo "$ai_provider")"
 
     echo -e "${PURPLE}${BOLD}━━━ Pre-flight Checks ━━━${RESET}"
     echo ""
 
     # 1. Required tools
     local required_tools=("git" "jq")
-    local optional_tools=("gh" "claude" "bc" "curl")
+    local optional_tools=("gh" "$ai_cmd" "bc" "curl")
 
     for tool in "${required_tools[@]}"; do
         if command -v "$tool" >/dev/null 2>&1; then
@@ -731,11 +734,11 @@ preflight_checks() {
         fi
     fi
 
-    # 4. Claude CLI
-    if command -v claude >/dev/null 2>&1; then
-        echo -e "  ${GREEN}✓${RESET} Claude CLI available"
+    # 4. AI provider readiness
+    if ai_provider_check_ready "$ai_provider" >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${RESET} AI provider ready (${ai_provider}: ${ai_cmd})"
     else
-        echo -e "  ${RED}✗${RESET} Claude CLI not found — plan/build stages will fail"
+        echo -e "  ${RED}✗${RESET} AI provider not ready (${ai_provider}: ${ai_cmd}) — plan/build stages will fail"
         errors=$((errors + 1))
     fi
 
@@ -1895,7 +1898,10 @@ run_dry_run() {
 
     local tool_errors=0
     local required_tools=("git" "jq")
-    local optional_tools=("gh" "claude" "bc")
+    local ai_provider ai_cmd
+    ai_provider="$(ai_provider_resolve "${SHIPWRIGHT_AI_PROVIDER:-}" 2>/dev/null || echo "claude")"
+    ai_cmd="$(ai_provider_command "$ai_provider" 2>/dev/null || echo "$ai_provider")"
+    local optional_tools=("gh" "$ai_cmd" "bc")
 
     for tool in "${required_tools[@]}"; do
         if command -v "$tool" >/dev/null 2>&1; then

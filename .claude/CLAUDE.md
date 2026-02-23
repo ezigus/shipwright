@@ -516,7 +516,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-fleet.sh` | 1373 | Multi-Repo Daemon Orchestrator |
 | `scripts/sw-guild.sh` | 552 | Knowledge Guilds & Cross-Team Learning |
 | `scripts/sw-heartbeat.sh` | 341 | File-based agent heartbeat protocol |
-| `scripts/sw-hygiene.sh` | 653 | Repository Organization & Cleanup |
+| `scripts/sw-hygiene.sh` | 721 | Repository Organization & Cleanup |
 | `scripts/sw-incident.sh` | 864 | Autonomous Incident Detection & Response |
 | `scripts/sw-init.sh` | 853 | Complete setup for Shipwright + Shipwright |
 | `scripts/sw-instrument.sh` | 683 | Pipeline Instrumentation & Feedback Loops |
@@ -529,12 +529,12 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-memory.sh` | 1869 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 468 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 597 | Intelligent Model Routing & Cost Optimization |
-| `scripts/sw-otel.sh` | 596 | OpenTelemetry Observability |
+| `scripts/sw-otel.sh` | 602 | OpenTelemetry Observability |
 | `scripts/sw-oversight.sh` | 748 | Quality Oversight Board |
 | `scripts/sw-patrol-meta.sh` | 442 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 438 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1070 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 2793 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 2794 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 741 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 684 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 822 | Predictive & Proactive Intelligence |
@@ -566,7 +566,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-testgen.sh` | 556 | Autonomous test generation and coverage maintenance |
 | `scripts/sw-tmux-pipeline.sh` | 535 | Spawn and manage pipelines in tmux windows |
 | `scripts/sw-tmux-role-color.sh` | 79 | Set pane border color by agent role |
-| `scripts/sw-tmux-status.sh` | 151 | Status bar widgets for tmux |
+| `scripts/sw-tmux-status.sh` | 152 | Status bar widgets for tmux |
 | `scripts/sw-tmux.sh` | 589 | tmux Health & Plugin Management |
 | `scripts/sw-trace.sh` | 478 | E2E Traceability (Issue → Commit → PR → Deploy) |
 | `scripts/sw-tracker.sh` | 515 | Provider Router for Issue Tracker Integration |
@@ -629,7 +629,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-checkpoint-test.sh` | 380 | Validate checkpoint save/restore |
 | `scripts/sw-ci-test.sh` | 237 | GitHub Actions CI/CD orchestration tests |
 | `scripts/sw-cleanup-test.sh` | 186 | Clean up orphaned sessions & artifacts |
-| `scripts/sw-code-review-test.sh` | 229 | Clean code & architecture analysis tests |
+| `scripts/sw-code-review-test.sh` | 236 | Clean code & architecture analysis tests |
 | `scripts/sw-connect-test.sh` | 837 | Validate dashboard connection, heartbeat |
 | `scripts/sw-context-test.sh` | 240 | Context Engine for Pipeline Stages tests |
 | `scripts/sw-cost-test.sh` | 230 | Validate token usage & cost intelligence |
@@ -650,7 +650,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-e2e-integration-test.sh` | 363 | Real Claude + Real GitHub |
 | `scripts/sw-e2e-orchestrator-test.sh` | 214 | Test suite registry & execution |
 | `scripts/sw-e2e-smoke-test.sh` | 843 | Pipeline orchestration without API keys |
-| `scripts/sw-e2e-system-test.sh` | 459 | Proves full daemon→pipeline→loop→PR flow |
+| `scripts/sw-e2e-system-test.sh` | 533 | Proves full daemon→pipeline→loop→PR flow |
 | `scripts/sw-eventbus-test.sh` | 176 | Durable event bus tests |
 | `scripts/sw-evidence-test.sh` | 213 | Unit tests for sw-evidence.sh |
 | `scripts/sw-feedback-test.sh` | 194 | Production Feedback Loop tests |
@@ -665,9 +665,9 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-github-graphql-test.sh` | 671 | Unit tests for GitHub GraphQL client |
 | `scripts/sw-guild-test.sh` | 206 | Knowledge guilds & cross-team learning tests |
 | `scripts/sw-heartbeat-test.sh` | 588 | Validate heartbeat lifecycle, |
-| `scripts/sw-hygiene-test.sh` | 217 | Repository Organization & Cleanup tests |
+| `scripts/sw-hygiene-test.sh` | 245 | Repository Organization & Cleanup tests |
 | `scripts/sw-incident-test.sh` | 277 | Validate incident detection & response |
-| `scripts/sw-init-test.sh` | 654 | E2E validation of init/setup flow |
+| `scripts/sw-init-test.sh` | 655 | E2E validation of init/setup flow |
 | `scripts/sw-instrument-test.sh` | 193 | Pipeline instrumentation & feedback loops |
 | `scripts/sw-integration-claude-test.sh` | 61 | Budget-limited real Claude smoke |
 | `scripts/sw-intelligence-test.sh` | 544 | Unit tests for intelligence core |
@@ -680,7 +680,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-daemon-state-test.sh` | 381 | Unit tests for state management |
 | `scripts/sw-lib-daemon-triage-test.sh` | 265 | Unit tests for triage scoring |
 | `scripts/sw-lib-helpers-test.sh` | 229 | Unit tests for shared helper functions |
-| `scripts/sw-lib-pipeline-detection-test.sh` | 358 | Unit tests for detection fns |
+| `scripts/sw-lib-pipeline-detection-test.sh` | 388 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 258 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 193 | Unit tests for quality |
 | `scripts/sw-lib-pipeline-stages-test.sh` | 289 | Unit tests for stage functions |

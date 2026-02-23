@@ -35,6 +35,9 @@ setup_e2e_env() {
 
     export HOME="$TEMP_DIR/home"
     export PATH="$TEMP_DIR/bin:$PATH"
+    export CI="${CI:-true}"
+    export NO_COLOR="${NO_COLOR:-1}"
+    unset ANTHROPIC_API_KEY CLAUDE_API_KEY CLAUDE_CODE_OAUTH_TOKEN 2>/dev/null || true
     # Allow gh for daemon poll test
     export NO_GITHUB="${NO_GITHUB:-false}"
 
@@ -72,6 +75,7 @@ create_mock_claude() {
 # Mock Claude: plan/review = text; loop = JSON + create files
 prompt=""
 use_json=false
+raw_args="$*"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -p) prompt="${2:-}"; shift 2 ;;
@@ -84,16 +88,22 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+log_dir="${HOME:-/tmp}/.shipwright"
+mkdir -p "$log_dir" 2>/dev/null || true
+echo "cwd=$(pwd) use_json=$use_json args=$raw_args" >> "$log_dir/mock-claude.log"
+
 if [[ "$use_json" == "true" ]]; then
     # Loop mode: create files, then output JSON with LOOP_COMPLETE
-    if [[ -d ".git" ]]; then
-        mkdir -p src
-        cat > src/helper.sh << 'HELPER'
+    local repo_root
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+    if [[ -n "$repo_root" && -d "$repo_root" ]]; then
+        mkdir -p "$repo_root/src"
+        cat > "$repo_root/src/helper.sh" << 'HELPER'
 #!/usr/bin/env bash
 helper_add() { echo $(( $1 + $2 )); }
 helper_greet() { echo "Hello, ${1:-World}"; }
 HELPER
-        cat > src/helper-test.sh << 'HELTEST'
+        cat > "$repo_root/src/helper-test.sh" << 'HELTEST'
 #!/usr/bin/env bash
 source src/helper.sh 2>/dev/null || . src/helper.sh
 r=$(helper_add 2 3)
@@ -102,9 +112,9 @@ r=$(helper_greet "Test")
 [[ "$r" == "Hello, Test" ]] && echo "PASS: greet" || echo "FAIL: greet"
 echo "LOOP_COMPLETE"
 HELTEST
-        chmod +x src/helper.sh src/helper-test.sh 2>/dev/null || true
-        git add -A 2>/dev/null || true
-        git commit -m "feat: add helper functions" --allow-empty -q 2>/dev/null || true
+        chmod +x "$repo_root/src/helper.sh" "$repo_root/src/helper-test.sh" 2>/dev/null || true
+        git -C "$repo_root" add -A 2>/dev/null || true
+        git -C "$repo_root" commit -m "feat: add helper functions" --allow-empty -q 2>/dev/null || true
     fi
     echo '[{"result":"Implemented helper functions. All tests pass. LOOP_COMPLETE","usage":{"input_tokens":100,"output_tokens":50},"total_cost_usd":0.01}]'
 elif echo "$prompt" | grep -qiE "implementation plan|task checklist|create a.*plan"; then
@@ -226,6 +236,41 @@ invoke_pipeline() {
         bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$@" 2>&1) || PIPELINE_EXIT=$?
 }
 
+dump_pipeline_debug() {
+    echo -e "  ${DIM}--- pipeline debug start ---${RESET}"
+    echo -e "  ${DIM}pipeline exit=${PIPELINE_EXIT}${RESET}"
+    echo -e "  ${DIM}pipeline output (tail):${RESET}"
+    echo "$PIPELINE_OUTPUT" | tail -n 80 | sed 's/^/    /'
+
+    local events_file="$HOME/.shipwright/events.jsonl"
+    if [[ -f "$events_file" ]]; then
+        echo -e "  ${DIM}events.jsonl (tail):${RESET}"
+        tail -n 30 "$events_file" | sed 's/^/    /'
+    fi
+
+    local claude_log="$HOME/.shipwright/mock-claude.log"
+    if [[ -f "$claude_log" ]]; then
+        echo -e "  ${DIM}mock-claude.log (tail):${RESET}"
+        tail -n 30 "$claude_log" | sed 's/^/    /'
+    fi
+
+    local loop_dir="$TEMP_DIR/project/.claude/loop-logs"
+    if [[ -d "$loop_dir" ]]; then
+        local last_json last_stderr
+        last_json=$(ls -1t "$loop_dir"/iteration-*.json 2>/dev/null | head -1 || true)
+        last_stderr=$(ls -1t "$loop_dir"/iteration-*.stderr 2>/dev/null | head -1 || true)
+        [[ -n "$last_json" && -f "$last_json" ]] && {
+            echo -e "  ${DIM}last iteration json:${RESET}"
+            tail -n 40 "$last_json" | sed 's/^/    /'
+        }
+        [[ -n "$last_stderr" && -f "$last_stderr" ]] && {
+            echo -e "  ${DIM}last iteration stderr:${RESET}"
+            tail -n 40 "$last_stderr" | sed 's/^/    /'
+        }
+    fi
+    echo -e "  ${DIM}--- pipeline debug end ---${RESET}"
+}
+
 cleanup_e2e_env() {
     [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
     [[ -n "${ORIG_HOME:-}" ]] && export HOME="$ORIG_HOME"
@@ -240,20 +285,36 @@ test_full_pipeline_flow() {
     print_test_header "Full Pipeline Flow"
 
     invoke_pipeline start --issue 42 --pipeline e2e-minimal --skip-gates --max-iterations 2
+    assert_eq "Pipeline exits successfully" "0" "$PIPELINE_EXIT"
 
     assert_contains "Pipeline ran intake" "$PIPELINE_OUTPUT" "intake"
     assert_contains "Pipeline ran build" "$PIPELINE_OUTPUT" "build"
-    assert_file_exists "helper.sh created by mock Claude" "$TEMP_DIR/project/src/helper.sh"
+    if [[ -f "$TEMP_DIR/project/src/helper.sh" ]]; then
+        assert_pass "helper.sh created by mock Claude"
+    else
+        assert_fail "helper.sh created by mock Claude" "file not found: $TEMP_DIR/project/src/helper.sh"
+        dump_pipeline_debug
+    fi
 
     # Events emitted
     local events_file="$HOME/.shipwright/events.jsonl"
     if [[ -f "$events_file" ]]; then
-        assert_contains "pipeline.started event" "$(cat "$events_file" 2>/dev/null)" "pipeline.started"
-        assert_contains "pipeline.completed event" "$(cat "$events_file" 2>/dev/null)" "pipeline.completed"
+        local events_blob
+        events_blob=$(cat "$events_file" 2>/dev/null || true)
+        assert_contains "pipeline.started event" "$events_blob" "pipeline.started"
+        if echo "$events_blob" | grep -q "pipeline.completed" 2>/dev/null; then
+            assert_pass "pipeline.completed event"
+        else
+            assert_fail "pipeline.completed event" "output missing: pipeline.completed"
+            dump_pipeline_debug
+        fi
         local completed
         completed=$(grep "pipeline.completed" "$events_file" 2>/dev/null | tail -1)
         assert_contains "Event has ts_epoch" "$completed" "ts_epoch"
         assert_contains "Event has duration_s" "$completed" "duration_s"
+    else
+        assert_fail "events file created" "file not found: $events_file"
+        dump_pipeline_debug
     fi
 
     # Test stage passed (helper-test runs)

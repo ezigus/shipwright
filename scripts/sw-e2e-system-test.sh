@@ -94,7 +94,7 @@ echo "cwd=$(pwd) use_json=$use_json args=$raw_args" >> "$log_dir/mock-claude.log
 
 if [[ "$use_json" == "true" ]]; then
     # Loop mode: create files, then output JSON with LOOP_COMPLETE
-    local repo_root
+    repo_root=""
     repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
     if [[ -n "$repo_root" && -d "$repo_root" ]]; then
         mkdir -p "$repo_root/src"

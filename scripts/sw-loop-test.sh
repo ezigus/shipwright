@@ -316,6 +316,12 @@ else
     assert_fail "check_budget_gate helper defined"
 fi
 
+if grep -q 'AI_PROVIDER="__AI_PROVIDER__"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "worker template is provider-aware"
+else
+    assert_fail "worker template is provider-aware"
+fi
+
 # ─── Test 16: run_claude_iteration separates stdout/stderr ───────────────────
 if grep -q '2>"$err_file"' "$SCRIPT_DIR/sw-loop.sh" || \
    grep -q 'loop_ai_run_json .*"\$err_file"' "$SCRIPT_DIR/sw-loop.sh"; then

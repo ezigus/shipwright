@@ -374,10 +374,6 @@ fi
 CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-$(_config_get_int "loop.claude_timeout" 1800 2>/dev/null || echo 1800)}"  # 30 min default
 
 if [[ "$AGENTS" -gt 1 ]]; then
-    if [[ "$AI_PROVIDER" != "claude" ]]; then
-        error "Multi-agent mode currently requires --ai-provider claude"
-        exit 1
-    fi
     if ! command -v tmux >/dev/null 2>&1; then
         error "tmux is required for multi-agent mode."
         echo -e "  ${DIM}brew install tmux${RESET}  (macOS)"
@@ -2490,13 +2486,11 @@ generate_worker_script() {
     local wt_path="$WORKTREE_DIR/agent-${agent_num}"
     local worker_script="$LOG_DIR/worker-${agent_num}.sh"
 
-    local claude_flags
-    claude_flags="$(build_claude_flags)"
-
     cat > "$worker_script" <<'WORKEREOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="__SCRIPT_DIR__"
 AGENT_NUM="__AGENT_NUM__"
 TOTAL_AGENTS="__TOTAL_AGENTS__"
 WORK_DIR="__WORK_DIR__"
@@ -2504,7 +2498,9 @@ LOG_DIR="__LOG_DIR__"
 MAX_ITERATIONS="__MAX_ITERATIONS__"
 GOAL="__GOAL__"
 TEST_CMD="__TEST_CMD__"
-CLAUDE_FLAGS="__CLAUDE_FLAGS__"
+AI_PROVIDER="__AI_PROVIDER__"
+MODEL="__MODEL__"
+MAX_TURNS="__MAX_TURNS__"
 
 CYAN='\033[38;2;0;212;255m'
 GREEN='\033[38;2;74;222;128m'
@@ -2513,6 +2509,10 @@ RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
 BOLD='\033[1m'
 RESET='\033[0m'
+
+[[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
+[[ -f "$SCRIPT_DIR/lib/ai-provider.sh" ]] && source "$SCRIPT_DIR/lib/ai-provider.sh"
 
 cd "$WORK_DIR"
 ITERATION=0
@@ -2577,17 +2577,25 @@ Focus on areas they haven't touched yet.
 PROMPT
 )"
 
-    # Run Claude (output is JSON due to --output-format json in CLAUDE_FLAGS)
-    local JSON_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.json"
-    local ERR_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.stderr"
+    # Run configured provider through normalized router output.
+    JSON_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.json"
+    ERR_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.stderr"
     LOG_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.log"
-    # shellcheck disable=SC2086
-    claude -p "$PROMPT" $CLAUDE_FLAGS > "$JSON_FILE" 2>"$ERR_FILE" || true
+    RAW_OUT=""
+    RAW_ERR=""
+    AI_JSON=""
+    turns=""
+    RAW_OUT="$(mktemp "${TMPDIR:-/tmp}/sw-loop-worker-raw.XXXXXX")"
+    RAW_ERR="$(mktemp "${TMPDIR:-/tmp}/sw-loop-worker-err.XXXXXX")"
+    turns="${MAX_TURNS:-25}"
+    AI_JSON="$(ai_run_json "$AI_PROVIDER" "$PROMPT" "$MODEL" "$turns" "$RAW_OUT" "$RAW_ERR" 2>/dev/null || true)"
+    [[ -z "$AI_JSON" ]] && AI_JSON='{"result_text":"","completion_signal_detected":false,"input_tokens":0,"output_tokens":0,"cost_usd":null}'
+    printf '%s\n' "$AI_JSON" > "$JSON_FILE"
+    cp "$RAW_ERR" "$ERR_FILE" 2>/dev/null || true
+    rm -f "$RAW_OUT" "$RAW_ERR"
+    jq -r '.result_text // ""' "$JSON_FILE" > "$LOG_FILE" 2>/dev/null || echo "" > "$LOG_FILE"
 
-    # Extract text result from JSON into .log for backwards compat
-    _extract_text_from_json "$JSON_FILE" "$LOG_FILE" "$ERR_FILE"
-
-    echo -e "  ${GREEN}✓${RESET} Claude session completed"
+    echo -e "  ${GREEN}✓${RESET} ${AI_PROVIDER} session completed"
 
     # Check completion
     if grep -q "LOOP_COMPLETE" "$LOG_FILE" 2>/dev/null; then
@@ -2644,7 +2652,11 @@ WORKEREOF
         && mv "${worker_script}.tmp" "$worker_script"
     awk -v val="$TEST_CMD" '{gsub(/__TEST_CMD__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
         && mv "${worker_script}.tmp" "$worker_script"
-    awk -v val="$claude_flags" '{gsub(/__CLAUDE_FLAGS__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
+    awk -v val="$AI_PROVIDER" '{gsub(/__AI_PROVIDER__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
+        && mv "${worker_script}.tmp" "$worker_script"
+    awk -v val="$MODEL" '{gsub(/__MODEL__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
+        && mv "${worker_script}.tmp" "$worker_script"
+    awk -v val="${MAX_TURNS:-}" '{gsub(/__MAX_TURNS__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
         && mv "${worker_script}.tmp" "$worker_script"
     awk -v val="$GOAL" '{gsub(/__GOAL__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
         && mv "${worker_script}.tmp" "$worker_script"

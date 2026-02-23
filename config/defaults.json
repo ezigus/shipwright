@@ -134,7 +134,8 @@
     "strategic_closed": 30,
     "dora_days": 30,
     "log_tail_lines": 100,
-    "function_scan_limit": 0,
+    "function_scan_limit": 1000,
+    "dead_code_timeout_seconds": 20,
     "dependency_scan_limit": 0
   }
 }

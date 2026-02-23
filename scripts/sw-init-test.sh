@@ -517,8 +517,9 @@ if [[ "${1:-}" == "clone" ]]; then
     mkdir -p "$target"
     exit 0
 fi
-# Pass through for other git commands
-command git "$@"
+# For this test we only care that clone paths are created; all other
+# git calls can be treated as successful no-ops.
+exit 0
 GITEOF
     chmod +x "$TEMP_DIR/mock-bin/git"
 

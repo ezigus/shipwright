@@ -197,6 +197,8 @@ envs=$(detect_repo_environments_json)
 assert_contains "Detects iOS environment" "$envs" "\"ios_xcode\""
 assert_contains "Detects SwiftPM environment" "$envs" "\"swiftpm\""
 assert_contains "Detects Node environment" "$envs" "\"node\""
+ios_marker=$(jq -r 'map(select(.id == "ios_xcode")) | first | .marker // ""' <<<"$envs")
+assert_eq "iOS marker is repo-relative" "App.xcodeproj" "$ios_marker"
 
 # Nested environments are detected (not root-only hierarchy)
 rm -f "$PROJECT_ROOT/Package.swift" "$PROJECT_ROOT/package.json"
@@ -209,6 +211,8 @@ JSON
 envs=$(detect_repo_environments_json)
 assert_contains "Detects nested SwiftPM environment" "$envs" "apps/mobile/Package.swift"
 assert_contains "Detects nested Node environment" "$envs" "apps/web/package.json"
+result=$(detect_test_cmd)
+assert_contains "Nested Node command executes in package directory" "$result" "(cd -- apps/web && npm test)"
 
 changed='["Package.swift","Sources/Foo.swift"]'
 relevant=$(resolve_relevant_environments_json "$envs" "$changed")
@@ -222,6 +226,32 @@ fi
 changed='["web/src/app.ts"]'
 relevant=$(resolve_relevant_environments_json "$envs" "$changed")
 assert_contains "Node selected for JS/TS changes" "$relevant" "\"node\""
+
+# collect_changed_files_json should not fall back to HEAD~1 history when tree is clean
+cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK_GIT'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-C" ]]; then
+    shift 2
+fi
+case "${1:-}" in
+    rev-parse)
+        if [[ "${2:-}" == "--is-inside-work-tree" ]]; then
+            echo "true"
+        else
+            echo "/tmp/mock-repo"
+        fi
+        ;;
+    diff)
+        if [[ "${2:-}" == "--name-only" && "${3:-}" == "HEAD~1" ]]; then
+            echo "historical-only-change.txt"
+        fi
+        ;;
+esac
+exit 0
+MOCK_GIT
+chmod +x "$TEST_TEMP_DIR/bin/git"
+changed_from_git=$(collect_changed_files_json)
+assert_eq "collect_changed_files_json ignores HEAD~1 fallback" "[]" "$changed_from_git"
 rm -rf "$PROJECT_ROOT/App.xcodeproj" "$PROJECT_ROOT/Package.swift" "$PROJECT_ROOT/package.json" "$PROJECT_ROOT/apps"
 
 # command_discovery.enabled=false disables auto command selection

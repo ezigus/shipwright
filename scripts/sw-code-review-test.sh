@@ -52,7 +52,14 @@ exit 0
 MOCK
     chmod +x "$TEMP_DIR/bin/git"
     # git mock needs TEMP_DIR — inject it
-    sed -i '' "s|\$TEMP_DIR|$TEMP_DIR|g" "$TEMP_DIR/bin/git"
+    python3 - "$TEMP_DIR/bin/git" "$TEMP_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+script_path = Path(sys.argv[1])
+temp_dir = sys.argv[2]
+script_path.write_text(script_path.read_text().replace("$TEMP_DIR", temp_dir))
+PY
 
     # Mock gh
     cat > "$TEMP_DIR/bin/gh" <<'MOCK'

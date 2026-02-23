@@ -91,7 +91,8 @@ fi
 if [[ -f "$SCRIPT_DIR/sw-durable.sh" ]]; then
     source "$SCRIPT_DIR/sw-durable.sh"
 fi
-# shellcheck source=sw-db.sh — for db_save_checkpoint/db_load_checkpoint (durable workflows)
+# shellcheck source=sw-db.sh
+# Durable workflows: db_save_checkpoint/db_load_checkpoint.
 [[ -f "$SCRIPT_DIR/sw-db.sh" ]] && source "$SCRIPT_DIR/sw-db.sh"
 
 # ─── GitHub API Modules (optional) ─────────────────────────────────────────

@@ -119,7 +119,7 @@ collect_script_metrics() {
     total_lines=$(find "$REPO_DIR/scripts" -maxdepth 1 -name "*.sh" -type f 2>/dev/null -exec wc -l {} + | awk '{sum+=$1} END {print sum}')
 
     # Count functions (grep for function definitions)
-    function_count=$(find "$REPO_DIR/scripts" -maxdepth 1 -name "*.sh" -type f 2>/dev/null -exec grep -h "^[a-z_][a-z0-9_]*() {" {} + 2>/dev/null | wc -l)
+    function_count=$(find "$REPO_DIR/scripts" -maxdepth 1 -name "*.sh" -type f -exec grep -h "^[a-z_][a-z0-9_]*() {" {} + 2>/dev/null | wc -l)
 
     # Check for syntax errors
     while IFS= read -r script; do

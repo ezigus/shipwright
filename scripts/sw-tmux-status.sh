@@ -140,7 +140,8 @@ case "${1:-pipeline}" in
     agents)   agent_widget ;;
     all)
         # Combine both widgets
-        local p a
+        p=""
+        a=""
         p="$(pipeline_widget)"
         a="$(agent_widget)"
         echo "${a}${p}"

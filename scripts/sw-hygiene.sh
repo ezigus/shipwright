@@ -68,6 +68,9 @@ show_help() {
     echo -e "  ${CYAN}--artifact-age${RESET}  Max age for artifacts in days (default: 7)"
     echo -e "  ${CYAN}--help, -h${RESET}      Show this help"
     echo ""
+    echo -e "${BOLD}ENVIRONMENT${RESET}"
+    echo -e "  ${CYAN}SHIPWRIGHT_HYGIENE_DEAD_CODE_TIMEOUT_S${RESET}  Dead-code scan timeout in seconds (default: 20)"
+    echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo -e "  ${DIM}shipwright hygiene scan${RESET}                # Full scan"
     echo -e "  ${DIM}shipwright hygiene dead-code${RESET}           # Find unused code"
@@ -85,11 +88,46 @@ detect_dead_code() {
     local unused_scripts=0
     local orphaned_tests=0
     local func_limit func_count=0
-    func_limit=$(_config_get_int "limits.function_scan_limit" 0)
+    local dead_code_timeout start_ts timed_out=false
+    local partial_reasons=""
+    func_limit=$(_config_get_int "limits.function_scan_limit" 1000)
+    dead_code_timeout="${SHIPWRIGHT_HYGIENE_DEAD_CODE_TIMEOUT_S:-$(_config_get_int "limits.dead_code_timeout_seconds" 20)}"
+    case "$dead_code_timeout" in
+        ''|*[!0-9-]*)
+            warn "Invalid dead-code timeout '$dead_code_timeout'; falling back to 20s."
+            dead_code_timeout=20
+            ;;
+    esac
+    start_ts=$(date +%s)
+
+    _dead_code_timed_out() {
+        if [[ "$dead_code_timeout" -le 0 ]]; then
+            return 1
+        fi
+        local now elapsed
+        now=$(date +%s)
+        elapsed=$((now - start_ts))
+        [[ "$elapsed" -ge "$dead_code_timeout" ]]
+    }
+
+    local script_index=""
+    if [[ -d "$REPO_DIR/scripts" ]]; then
+        while IFS= read -r script_file; do
+            script_index="${script_index}"$'\n'"$(cat "$script_file" 2>/dev/null || true)"
+        done < <(find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null)
+    fi
 
     # Find unused bash functions (simplified for Bash 3.2)
     while IFS= read -r func_file; do
-        [[ "$func_limit" -gt 0 && "$func_count" -ge "$func_limit" ]] && break
+        if _dead_code_timed_out; then
+            timed_out=true
+            partial_reasons="${partial_reasons} function_scan_timeout"
+            break
+        fi
+        [[ "$func_limit" -gt 0 && "$func_count" -ge "$func_limit" ]] && {
+            partial_reasons="${partial_reasons} function_scan_limit"
+            break
+        }
         # Extract function names
         local funcs
         funcs=$(grep -E '^[a-z_][a-z0-9_]*\(\)' "$func_file" 2>/dev/null | sed 's/()$//' | sed 's/^ *//' || true)
@@ -99,11 +137,20 @@ detect_dead_code() {
 
         while IFS= read -r func; do
             [[ -z "$func" ]] && continue
-            [[ "$func_limit" -gt 0 && "$func_count" -ge "$func_limit" ]] && break
+            if _dead_code_timed_out; then
+                timed_out=true
+                partial_reasons="${partial_reasons} function_scan_timeout"
+                break 2
+            fi
+            [[ "$func_limit" -gt 0 && "$func_count" -ge "$func_limit" ]] && {
+                partial_reasons="${partial_reasons} function_scan_limit"
+                break 2
+            }
 
-            # Check if function is used in other files (count lines with this function name)
+            # Use a prebuilt index so every function check is O(index) instead of O(repo scan).
             local usage_count
-            usage_count=$(grep -r "$func" "$REPO_DIR/scripts" --include="*.sh" 2>/dev/null | wc -l) || usage_count="0"
+            usage_count=$(printf '%s\n' "$script_index" | grep -F -w -c "$func" 2>/dev/null || true)
+            usage_count="${usage_count:-0}"
             usage_count=$(printf '%s' "$usage_count" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
             # Function definition counts as 1 usage; if only 1, it's unused
@@ -117,6 +164,11 @@ detect_dead_code() {
     # Find scripts referenced nowhere
     local script_count=0
     while IFS= read -r script; do
+        if _dead_code_timed_out; then
+            timed_out=true
+            partial_reasons="${partial_reasons} script_scan_timeout"
+            break
+        fi
         local basename_script ref_count
         basename_script=$(basename "$script")
 
@@ -137,6 +189,11 @@ detect_dead_code() {
 
     # Find test fixtures without corresponding tests
     while IFS= read -r fixture; do
+        if _dead_code_timed_out; then
+            timed_out=true
+            partial_reasons="${partial_reasons} fixture_scan_timeout"
+            break
+        fi
         local test_name
         test_name=$(basename "$fixture" .fixture)
 
@@ -149,6 +206,12 @@ detect_dead_code() {
     [[ $VERBOSE == true ]] && {
         info "Dead code summary: $unused_functions unused functions, $unused_scripts scripts, $orphaned_tests fixtures"
     }
+    if [[ "$timed_out" == true ]]; then
+        warn "Dead-code scan hit timeout (${dead_code_timeout}s); reported findings are partial."
+    fi
+    if [[ -n "$partial_reasons" && $VERBOSE == true ]]; then
+        info "Dead code partial reasons:${partial_reasons}"
+    fi
 
     return 0
 }
@@ -385,11 +448,11 @@ scan_platform_refactor() {
     local scripts_dir="${REPO_DIR}/scripts"
 
     local hardcoded_count fallback_count todo_count fixme_count hack_count
-    hardcoded_count=$(grep -rE "hardcoded|Hardcoded|HARDCODED" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
-    fallback_count=$(grep -rE "Fallback:|fallback:" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
-    todo_count=$(grep -rE "TODO" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
-    fixme_count=$(grep -rE "FIXME" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
-    hack_count=$(grep -rE "HACK|KLUDGE" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
+    hardcoded_count=$(grep -rE "hardcoded|Hardcoded|HARDCODED" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ' || true)
+    fallback_count=$(grep -rE "Fallback:|fallback:" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ' || true)
+    todo_count=$(grep -rE "TODO" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ' || true)
+    fixme_count=$(grep -rE "FIXME" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ' || true)
+    hack_count=$(grep -rE "HACK|KLUDGE" "$scripts_dir" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ' || true)
     hardcoded_count=${hardcoded_count:-0}
     fallback_count=${fallback_count:-0}
     todo_count=${todo_count:-0}
@@ -403,7 +466,10 @@ scan_platform_refactor() {
     grep -rnE "hardcoded|Hardcoded|Fallback:|fallback:|TODO|FIXME|HACK|KLUDGE" "$scripts_dir" --include="*.sh" 2>/dev/null > "$findings_raw" || true
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
-        local f="${line%%:*}" rest="${line#*:}" ln="${rest%%:*}"
+        local f rest ln
+        f="${line%%:*}"
+        rest="${line#*:}"
+        ln="${rest%%:*}"
         ln="${ln:-0}"
         printf '{"file":"%s","line":%s}\n' "${f#$REPO_DIR/}" "$ln"
     done < "$findings_raw" > "$findings_file.raw" 2>/dev/null || true
@@ -413,16 +479,18 @@ scan_platform_refactor() {
     rm -f "$findings_file" "$findings_file.raw" "$findings_raw"
 
     # Script sizes (lines) for hotspot detection
-    local sizes_file
+    local sizes_file sizes_raw
     sizes_file=$(mktemp)
-    find "$scripts_dir" -maxdepth 1 -name "*.sh" -type f 2>/dev/null | while read -r f; do
+    sizes_raw=$(mktemp)
+    while IFS= read -r f; do
         local lines
         lines=$(wc -l < "$f" 2>/dev/null || echo 0)
-        printf '{"script":"%s","lines":%s}\n' "$(basename "$f")" "$lines"
-    done | jq -s 'sort_by(-.lines) | .[0:15]' 2>/dev/null > "$sizes_file"
+        printf '{"script":"%s","lines":%s}\n' "$(basename "$f")" "$lines" >> "$sizes_raw"
+    done < <(find "$scripts_dir" -maxdepth 1 -name "*.sh" -type f 2>/dev/null)
+    jq -s 'sort_by(-.lines) | .[0:15]' "$sizes_raw" 2>/dev/null > "$sizes_file" || echo "[]" > "$sizes_file"
     local script_sizes
     script_sizes=$(cat "$sizes_file" 2>/dev/null || echo "[]")
-    rm -f "$sizes_file"
+    rm -f "$sizes_file" "$sizes_raw"
 
     local timestamp
     timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)

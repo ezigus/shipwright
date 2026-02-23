@@ -83,7 +83,20 @@ mock_binary "gh" 'case "${1:-}" in
     *) exit 0 ;;
 esac'
 
-mock_binary "claude" 'echo "# Implementation Plan
+mock_binary "claude" 'prompt=""
+use_json=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -p) prompt="${2:-}"; shift 2 ;;
+    --output-format) [[ "${2:-}" == "json" ]] && use_json=true; shift 2 ;;
+    --output-format=*) [[ "${1#*=}" == "json" ]] && use_json=true; shift ;;
+    --model|--max-turns|--print|--dangerously-skip-permissions) shift ;;
+    --*) shift ;;
+    *) prompt="${1:-}"; shift ;;
+  esac
+done
+
+plan="# Implementation Plan
 
 ## Files to Modify
 - src/auth.js
@@ -94,7 +107,13 @@ mock_binary "claude" 'echo "# Implementation Plan
 
 ### Definition of Done
 - [ ] All tests pass
-"'
+"
+
+if [[ "$use_json" == "true" ]]; then
+  jq -n --arg result "$plan" "{type:\"result\",result:\$result,usage:{input_tokens:10,output_tokens:20}}"
+else
+  printf "%s\n" "$plan"
+fi'
 
 # Use real git - we have a real project repo
 

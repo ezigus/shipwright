@@ -118,6 +118,7 @@ show_help() {
     echo -e "  ${CYAN}dashboard${RESET} <cmd>         Real-time WebSocket dashboard"
     echo -e "  ${CYAN}cost${RESET} <cmd>              Token usage, budgets, model routing"
     echo -e "  ${CYAN}memory${RESET} <cmd>            Persistent learning from pipeline runs"
+    echo -e "  ${CYAN}ai${RESET} <cmd>                AI provider management and diagnostics"
     echo ""
     echo -e "${BOLD}INTEGRATIONS${RESET}"
     echo -e "  ${CYAN}github${RESET}                 Repo context, security, blame"
@@ -152,20 +153,20 @@ show_help_all() {
     echo -e "  ${CYAN}loop${RESET}          ${CYAN}pipeline${RESET}      ${CYAN}daemon${RESET}        ${CYAN}prep${RESET}          ${CYAN}worktree${RESET}"
     echo -e "  ${CYAN}fleet${RESET}         ${CYAN}fleet-viz${RESET}     ${CYAN}fix${RESET}           ${CYAN}dashboard${RESET}     ${CYAN}public-dashboard${RESET}"
     echo -e "  ${CYAN}memory${RESET}        ${CYAN}cost${RESET}          ${CYAN}model${RESET}         ${CYAN}adaptive${RESET}      ${CYAN}regression${RESET}"
-    echo -e "  ${CYAN}incident${RESET}      ${CYAN}db${RESET}            ${CYAN}deps${RESET}          ${CYAN}instrument${RESET}    ${CYAN}scale${RESET}"
-    echo -e "  ${CYAN}swarm${RESET}         ${CYAN}recruit${RESET}       ${CYAN}standup${RESET}       ${CYAN}guild${RESET}         ${CYAN}oversight${RESET}"
-    echo -e "  ${CYAN}code-review${RESET}   ${CYAN}testgen${RESET}       ${CYAN}security-audit${RESET}  ${CYAN}hygiene${RESET}     ${CYAN}quality${RESET}"
-    echo -e "  ${CYAN}vitals${RESET}        ${CYAN}dora${RESET}          ${CYAN}retro${RESET}         ${CYAN}stream${RESET}        ${CYAN}replay${RESET}"
-    echo -e "  ${CYAN}release${RESET}       ${CYAN}release-manager${RESET}  ${CYAN}changelog${RESET}  ${CYAN}docs${RESET}          ${CYAN}docs-agent${RESET}"
-    echo -e "  ${CYAN}doc-fleet${RESET}     ${CYAN}pr${RESET}            ${CYAN}triage${RESET}        ${CYAN}decompose${RESET}     ${CYAN}discovery${RESET}"
-    echo -e "  ${CYAN}github${RESET}        ${CYAN}github-app${RESET}    ${CYAN}checks${RESET}        ${CYAN}ci${RESET}            ${CYAN}deploys${RESET}"
-    echo -e "  ${CYAN}auth${RESET}          ${CYAN}webhook${RESET}       ${CYAN}eventbus${RESET}      ${CYAN}otel${RESET}          ${CYAN}context${RESET}"
-    echo -e "  ${CYAN}trace${RESET}         ${CYAN}widgets${RESET}       ${CYAN}connect${RESET}       ${CYAN}remote${RESET}        ${CYAN}launchd${RESET}"
-    echo -e "  ${CYAN}jira${RESET}          ${CYAN}linear${RESET}        ${CYAN}tracker${RESET}       ${CYAN}heartbeat${RESET}     ${CYAN}checkpoint${RESET}"
-    echo -e "  ${CYAN}durable${RESET}       ${CYAN}autonomous${RESET}    ${CYAN}pm${RESET}            ${CYAN}strategic${RESET}     ${CYAN}team-stages${RESET}"
-    echo -e "  ${CYAN}ux${RESET}            ${CYAN}mission-control${RESET}  ${CYAN}tmux${RESET}       ${CYAN}reaper${RESET}        ${CYAN}e2e${RESET}"
-    echo -e "  ${CYAN}init${RESET}          ${CYAN}setup${RESET}         ${CYAN}doctor${RESET}        ${CYAN}cleanup${RESET}       ${CYAN}upgrade${RESET}"
-    echo -e "  ${CYAN}templates${RESET}     ${CYAN}version${RESET}"
+    echo -e "  ${CYAN}ai${RESET}            ${CYAN}incident${RESET}      ${CYAN}db${RESET}            ${CYAN}deps${RESET}          ${CYAN}instrument${RESET}"
+    echo -e "  ${CYAN}scale${RESET}         ${CYAN}swarm${RESET}         ${CYAN}recruit${RESET}       ${CYAN}standup${RESET}       ${CYAN}guild${RESET}"
+    echo -e "  ${CYAN}oversight${RESET}     ${CYAN}code-review${RESET}   ${CYAN}testgen${RESET}       ${CYAN}security-audit${RESET}  ${CYAN}hygiene${RESET}"
+    echo -e "  ${CYAN}quality${RESET}       ${CYAN}vitals${RESET}        ${CYAN}dora${RESET}          ${CYAN}retro${RESET}         ${CYAN}stream${RESET}"
+    echo -e "  ${CYAN}replay${RESET}        ${CYAN}release${RESET}       ${CYAN}release-manager${RESET}  ${CYAN}changelog${RESET}  ${CYAN}docs${RESET}"
+    echo -e "  ${CYAN}docs-agent${RESET}    ${CYAN}doc-fleet${RESET}     ${CYAN}pr${RESET}            ${CYAN}triage${RESET}        ${CYAN}decompose${RESET}"
+    echo -e "  ${CYAN}discovery${RESET}     ${CYAN}github${RESET}        ${CYAN}github-app${RESET}    ${CYAN}checks${RESET}        ${CYAN}ci${RESET}"
+    echo -e "  ${CYAN}deploys${RESET}       ${CYAN}auth${RESET}          ${CYAN}webhook${RESET}       ${CYAN}eventbus${RESET}      ${CYAN}otel${RESET}"
+    echo -e "  ${CYAN}context${RESET}       ${CYAN}trace${RESET}         ${CYAN}widgets${RESET}       ${CYAN}connect${RESET}       ${CYAN}remote${RESET}"
+    echo -e "  ${CYAN}launchd${RESET}       ${CYAN}jira${RESET}          ${CYAN}linear${RESET}        ${CYAN}tracker${RESET}       ${CYAN}heartbeat${RESET}"
+    echo -e "  ${CYAN}checkpoint${RESET}    ${CYAN}durable${RESET}       ${CYAN}autonomous${RESET}    ${CYAN}pm${RESET}            ${CYAN}strategic${RESET}"
+    echo -e "  ${CYAN}team-stages${RESET}   ${CYAN}ux${RESET}            ${CYAN}mission-control${RESET}  ${CYAN}tmux${RESET}       ${CYAN}reaper${RESET}"
+    echo -e "  ${CYAN}e2e${RESET}           ${CYAN}init${RESET}          ${CYAN}setup${RESET}         ${CYAN}doctor${RESET}        ${CYAN}cleanup${RESET}"
+    echo -e "  ${CYAN}upgrade${RESET}       ${CYAN}templates${RESET}     ${CYAN}version${RESET}"
     echo ""
     echo -e "${DIM}Run ${RESET}${CYAN}shipwright <command> --help${RESET}${DIM} for details on any command${RESET}"
 }
@@ -388,6 +389,9 @@ main() {
             ;;
         model)
             exec "$SCRIPT_DIR/sw-model-router.sh" "$@"
+            ;;
+        ai)
+            exec "$SCRIPT_DIR/sw-ai.sh" "$@"
             ;;
         tracker)
             exec "$SCRIPT_DIR/sw-tracker.sh" "$@"

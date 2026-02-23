@@ -53,6 +53,16 @@ setup_e2e_env() {
     # Link real jq and git
     command -v jq >/dev/null 2>&1 && ln -sf "$(command -v jq)" "$TEMP_DIR/bin/jq" 2>/dev/null || true
     command -v git >/dev/null 2>&1 && ln -sf "$(command -v git)" "$TEMP_DIR/bin/git" 2>/dev/null || true
+    cat > "$TEMP_DIR/bin/sw" <<EOF
+#!/usr/bin/env bash
+cmd="\${1:-}"
+shift || true
+case "\$cmd" in
+    loop) exec "$TEMP_DIR/scripts/sw-loop.sh" "\$@" ;;
+    *) echo "mock sw: unsupported command '\$cmd'" >&2; exit 1 ;;
+esac
+EOF
+    chmod +x "$TEMP_DIR/bin/sw"
 
     create_mock_claude
     create_mock_gh

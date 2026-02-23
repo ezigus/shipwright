@@ -6,6 +6,7 @@ _DAEMON_STATE_LOADED=1
 # SQLite persistence (DB as primary read path)
 _DAEMON_STATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -f "${_DAEMON_STATE_DIR}/../sw-db.sh" ]] && source "${_DAEMON_STATE_DIR}/../sw-db.sh"
+[[ -f "${_DAEMON_STATE_DIR}/ai-provider.sh" ]] && source "${_DAEMON_STATE_DIR}/ai-provider.sh"
 
 daemon_log() {
     local level="$1"
@@ -141,39 +142,23 @@ daemon_preflight_auth_check() {
         fi
     fi
 
-    # claude auth check with 15s timeout (macOS has no timeout command)
-    local claude_auth_ok=false
-    local _auth_tmp
-    _auth_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-auth.XXXXXX")
-    ( claude --print -p "ok" --max-turns 1 > "$_auth_tmp" 2>/dev/null ) &
-    local _auth_pid=$!
-    local _auth_waited=0
-    while kill -0 "$_auth_pid" 2>/dev/null && [[ "$_auth_waited" -lt 15 ]]; do
-        sleep 1
-        _auth_waited=$((_auth_waited + 1))
-    done
-    if kill -0 "$_auth_pid" 2>/dev/null; then
-        kill "$_auth_pid" 2>/dev/null || true
-        wait "$_auth_pid" 2>/dev/null || true
-    else
-        wait "$_auth_pid" 2>/dev/null || true
+    local provider provider_ok
+    provider="$(ai_provider_resolve "${SHIPWRIGHT_AI_PROVIDER:-}" 2>/dev/null || echo "claude")"
+    provider_ok=false
+    if [[ "$(type -t ai_provider_check_ready 2>/dev/null)" == "function" ]] && ai_provider_check_ready "$provider"; then
+        provider_ok=true
     fi
 
-    if [[ -s "$_auth_tmp" ]]; then
-        claude_auth_ok=true
-    fi
-    rm -f "$_auth_tmp"
-
-    if [[ "$claude_auth_ok" != "true" ]]; then
-        daemon_log ERROR "Claude auth check failed — auto-pausing daemon"
+    if [[ "$provider_ok" != "true" ]]; then
+        daemon_log ERROR "${provider} provider readiness check failed — auto-pausing daemon"
         local pause_json
-        pause_json=$(jq -n --arg reason "claude_auth_failure" --arg ts "$(now_iso)" \
+        pause_json=$(jq -n --arg reason "${provider}_auth_failure" --arg ts "$(now_iso)" \
             '{reason: $reason, timestamp: $ts}')
         local _tmp_pause
         _tmp_pause=$(mktemp "${TMPDIR:-/tmp}/sw-pause.XXXXXX")
         echo "$pause_json" > "$_tmp_pause"
         mv "$_tmp_pause" "$PAUSE_FLAG"
-        emit_event "daemon.auto_pause" "reason=claude_auth_failure"
+        emit_event "daemon.auto_pause" "reason=${provider}_auth_failure"
         return 1
     fi
 
@@ -184,12 +169,15 @@ daemon_preflight_auth_check() {
 
 preflight_checks() {
     local errors=0
+    local provider provider_cmd
+    provider="$(ai_provider_resolve "${SHIPWRIGHT_AI_PROVIDER:-}" 2>/dev/null || echo "claude")"
+    provider_cmd="$(ai_provider_command "$provider" 2>/dev/null || echo "$provider")"
 
     echo -e "${PURPLE}${BOLD}━━━ Pre-flight Checks ━━━${RESET}"
     echo ""
 
     # 1. Required tools
-    local required_tools=("git" "jq" "gh" "claude")
+    local required_tools=("git" "jq" "gh" "$provider_cmd")
     local optional_tools=("tmux" "curl")
 
     for tool in "${required_tools[@]}"; do

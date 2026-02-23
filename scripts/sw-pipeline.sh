@@ -249,6 +249,7 @@ PIPELINE_NAME="standard"
 PIPELINE_CONFIG=""
 TEST_CMD=""
 MODEL=""
+AI_PROVIDER_OVERRIDE=""
 AGENTS=""
 PIPELINE_AGENT_ID="${PIPELINE_AGENT_ID:-pipeline-$$}"
 SKIP_GATES=false
@@ -326,6 +327,7 @@ show_help() {
     echo -e "  ${DIM}--pipeline <name>${RESET}         Pipeline template (default: standard)"
     echo -e "  ${DIM}--test-cmd \"command\"${RESET}     Override test command (auto-detected if omitted)"
     echo -e "  ${DIM}--model <model>${RESET}           Override AI model (opus, sonnet, haiku)"
+    echo -e "  ${DIM}--ai-provider <name>${RESET}      AI provider (claude, codex, copilot)"
     echo -e "  ${DIM}--agents <n>${RESET}              Override agent count"
     echo -e "  ${DIM}--skip-gates${RESET}              Auto-approve all gates (fully autonomous)"
     echo -e "  ${DIM}--headless${RESET}                Full headless mode (skip gates, no prompts)"
@@ -412,6 +414,8 @@ parse_args() {
             --pipeline|--template) PIPELINE_NAME="$2"; shift 2 ;;
             --test-cmd)    TEST_CMD="$2"; shift 2 ;;
             --model)       MODEL="$2"; shift 2 ;;
+            --ai-provider) AI_PROVIDER_OVERRIDE="$2"; shift 2 ;;
+            --ai-provider=*) AI_PROVIDER_OVERRIDE="${1#--ai-provider=}"; shift ;;
             --agents)      AGENTS="$2"; shift 2 ;;
             --skip-gates)  SKIP_GATES=true; shift ;;
             --headless)    HEADLESS=true; SKIP_GATES=true; shift ;;
@@ -452,6 +456,10 @@ parse_args() {
 
 PIPELINE_NAME_ARG=""
 parse_args "$@"
+
+if [[ -n "$AI_PROVIDER_OVERRIDE" ]]; then
+    export SHIPWRIGHT_AI_PROVIDER="$AI_PROVIDER_OVERRIDE"
+fi
 
 # ─── Non-Interactive Detection ──────────────────────────────────────────────
 # When stdin is not a terminal (background, pipe, nohup, tmux send-keys),
@@ -837,14 +845,19 @@ classify_error() {
     elif echo "$log_tail" | grep -qiE 'error\[E[0-9]+\]|error: aborting|FAILED.*compile|build failed|tsc.*error|eslint.*error'; then
         classification="logic"
     # Intelligence fallback: Claude classification for unknown errors
-    elif [[ "$classification" == "unknown" ]] && type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
-        local ai_class
-        ai_class=$(claude --print --output-format text -p "Classify this error as exactly one of: infrastructure, configuration, logic, unknown.
+    elif [[ "$classification" == "unknown" ]] && type intelligence_search_memory >/dev/null 2>&1 && [[ "$(type -t ai_run_json 2>/dev/null)" == "function" ]]; then
+        local ai_class ai_json ai_provider ai_out ai_err
+        ai_provider="$(ai_provider_resolve "${SHIPWRIGHT_AI_PROVIDER:-}" 2>/dev/null || echo "claude")"
+        ai_out=$(mktemp "${TMPDIR:-/tmp}/sw-classify-ai.XXXXXX")
+        ai_err=$(mktemp "${TMPDIR:-/tmp}/sw-classify-ai-err.XXXXXX")
+        ai_json=$(ai_run_json "$ai_provider" "Classify this error as exactly one of: infrastructure, configuration, logic, unknown.
 
 Error output:
 $(echo "$log_tail" | tail -20)
 
-Reply with ONLY the classification word, nothing else." --model haiku < /dev/null 2>/dev/null || true)
+Reply with ONLY the classification word, nothing else." "haiku" "1" "$ai_out" "$ai_err" 2>/dev/null || true)
+        rm -f "$ai_out" "$ai_err"
+        ai_class=$(echo "$ai_json" | jq -r '.result_text // ""' 2>/dev/null || echo "")
         ai_class=$(echo "$ai_class" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
         case "$ai_class" in
             infrastructure|configuration|logic) classification="$ai_class" ;;

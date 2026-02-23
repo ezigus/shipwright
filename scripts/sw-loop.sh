@@ -52,6 +52,7 @@ FAST_TEST_CMD=""
 FAST_TEST_INTERVAL=5
 TEST_LOG_FILE=""
 MODEL="${SW_MODEL:-opus}"
+AI_PROVIDER_OVERRIDE=""
 AGENTS=1
 AGENT_ROLES=""
 USE_WORKTREE=false
@@ -104,7 +105,8 @@ show_help() {
     echo -e "  ${CYAN}--test-cmd${RESET} \"cmd\"         Test command to run between iterations"
     echo -e "  ${CYAN}--fast-test-cmd${RESET} \"cmd\"      Fast/subset test command (alternates with full)"
     echo -e "  ${CYAN}--fast-test-interval${RESET} N       Run full tests every N iterations (default: 5)"
-    echo -e "  ${CYAN}--model${RESET} MODEL             Claude model to use (default: opus)"
+    echo -e "  ${CYAN}--model${RESET} MODEL             AI model tier/name (default: opus)"
+    echo -e "  ${CYAN}--ai-provider${RESET} NAME        AI provider (claude, codex, copilot)"
     echo -e "  ${CYAN}--agents${RESET} N                Number of parallel agents (default: 1)"
     echo -e "  ${CYAN}--roles${RESET} \"r1,r2,...\"        Role per agent: builder,reviewer,tester,optimizer,docs,security"
     echo -e "  ${CYAN}--worktree${RESET}                Use git worktrees for isolation (auto if agents > 1)"
@@ -178,6 +180,12 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --model=*) MODEL="${1#--model=}"; shift ;;
+        --ai-provider)
+            AI_PROVIDER_OVERRIDE="${2:-}"
+            [[ -z "$AI_PROVIDER_OVERRIDE" ]] && { error "Missing value for --ai-provider"; exit 1; }
+            shift 2
+            ;;
+        --ai-provider=*) AI_PROVIDER_OVERRIDE="${1#--ai-provider=}"; shift ;;
         --agents)
             AGENTS="${2:-}"
             [[ -z "$AGENTS" ]] && { error "Missing value for --agents"; exit 1; }
@@ -262,6 +270,10 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -n "$AI_PROVIDER_OVERRIDE" ]]; then
+    export SHIPWRIGHT_AI_PROVIDER="$AI_PROVIDER_OVERRIDE"
+fi
 
 # Auto-enable worktree for multi-agent
 if [[ "$AGENTS" -gt 1 ]]; then

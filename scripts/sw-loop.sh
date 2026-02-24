@@ -708,6 +708,7 @@ resume_state() {
                 test_cmd:*)      [[ -z "$TEST_CMD" ]] && TEST_CMD="$(echo "${line#test_cmd:}" | sed 's/^ *"//;s/" *$//')" ;;
                 model:*)         MODEL="$(echo "${line#model:}" | tr -d ' ')" ;;
                 agents:*)        AGENTS="$(echo "${line#agents:}" | tr -d ' ')" ;;
+                loop_start_commit:*) LOOP_START_COMMIT="$(echo "${line#loop_start_commit:}" | tr -d ' ')" ;;
                 consecutive_failures:*) CONSECUTIVE_FAILURES="$(echo "${line#consecutive_failures:}" | tr -d ' ')" ;;
                 total_commits:*) TOTAL_COMMITS="$(echo "${line#total_commits:}" | tr -d ' ')" ;;
                 audit_enabled:*)         AUDIT_ENABLED="$(echo "${line#audit_enabled:}" | tr -d ' ')" ;;
@@ -744,9 +745,10 @@ resume_state() {
     START_EPOCH="$(now_epoch)"
     STATUS="running"
 
-    # Set starting commit for cumulative diff (approximate: use earliest tracked commit)
+    # Preserve original loop start commit across resume; fallback to current HEAD for
+    # older state files that did not persist loop_start_commit.
     if [[ -z "${LOOP_START_COMMIT:-}" ]]; then
-        LOOP_START_COMMIT="$(git -C "$PROJECT_ROOT" rev-list --max-parents=0 HEAD 2>/dev/null | tail -1 || echo "")"
+        LOOP_START_COMMIT="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")"
     fi
 
     # If we hit max iterations before, warn user to extend
@@ -786,6 +788,7 @@ write_state() {
         printf 'test_cmd: "%s"\n' "$TEST_CMD"
         printf 'model: %s\n' "$MODEL"
         printf 'agents: %s\n' "$AGENTS"
+        printf 'loop_start_commit: %s\n' "$LOOP_START_COMMIT"
         printf 'started_at: %s\n' "$(now_iso)"
         printf 'last_iteration_at: %s\n' "$(now_iso)"
         printf 'consecutive_failures: %s\n' "$CONSECUTIVE_FAILURES"
@@ -984,7 +987,7 @@ check_fatal_error() {
         local match
         match=$(grep -iE "$fatal_patterns" "$log_file" 2>/dev/null | head -1 | cut -c1-120)
         error "Fatal CLI error: $match"
-        return 1  # fatal error detected
+        return 0  # fatal error detected
     fi
 
     # Non-zero exit + tiny output = likely CLI crash

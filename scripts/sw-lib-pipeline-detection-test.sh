@@ -93,12 +93,11 @@ result=$(detect_test_cmd)
 assert_eq "iOS defaults to helper script" "bash ./scripts/run-xcode-tests.sh" "$result"
 rm -rf "$PROJECT_ROOT/App.xcodeproj"
 
-# Mixed iOS + SwiftPM returns both commands without hierarchy
+# Mixed iOS + SwiftPM: full run covers packages — swiftpm deduped
 mkdir -p "$PROJECT_ROOT/App.xcodeproj"
 touch "$PROJECT_ROOT/Package.swift"
 result=$(detect_test_cmd)
-assert_contains "Mixed env includes iOS command" "$result" "bash ./scripts/run-xcode-tests.sh"
-assert_contains "Mixed env includes SwiftPM packages command" "$result" "bash ./scripts/run-xcode-tests.sh -t Packages"
+assert_eq "Mixed env: full suite covers packages (swiftpm deduped)" "bash ./scripts/run-xcode-tests.sh" "$result"
 rm -rf "$PROJECT_ROOT/App.xcodeproj" "$PROJECT_ROOT/Package.swift"
 
 # Python with pyproject.toml + pytest
@@ -214,9 +213,9 @@ assert_contains "Detects nested Node environment" "$envs" "apps/web/package.json
 result=$(detect_test_cmd)
 assert_contains "Nested Node command executes in package directory" "$result" "(cd -- apps/web && npm test)"
 
-changed='["Package.swift","Sources/Foo.swift"]'
+changed='["Packages/CoreModels/Sources/CoreModels/Model.swift","Packages/CoreModels/Tests/CoreModelsTests/ModelTests.swift"]'
 relevant=$(resolve_relevant_environments_json "$envs" "$changed")
-assert_contains "SwiftPM selected for package changes" "$relevant" "\"swiftpm\""
+assert_contains "SwiftPM selected for Packages/ source changes" "$relevant" "\"swiftpm\""
 if echo "$relevant" | grep -q "\"node\""; then
     assert_fail "Node not selected for package-only changes" "unexpected node env: $relevant"
 else
@@ -384,5 +383,120 @@ assert_eq "Migration template" "migration" "$(template_for_type migration)"
 assert_eq "Architecture template" "architecture" "$(template_for_type architecture)"
 assert_eq "Feature template" "feature-dev" "$(template_for_type feature)"
 assert_eq "Unknown template" "feature-dev" "$(template_for_type other)"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# iOS smart test targeting
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "iOS smart test targeting"
+
+# Setup: project with both xcodeproj and Package.swift (mixed iOS+SwiftPM repo)
+mkdir -p "$PROJECT_ROOT/App.xcodeproj"
+touch "$PROJECT_ROOT/Package.swift"
+envs_mixed=$(detect_repo_environments_json)
+
+# ── resolve_relevant_environments_json: package source → swiftpm only ─────────
+changed_pkg='["Packages/PlaylistFeature/Sources/PlaylistFeature/Foo.swift"]'
+relevant=$(resolve_relevant_environments_json "$envs_mixed" "$changed_pkg")
+if echo "$relevant" | grep -q '"ios_xcode"'; then
+    assert_fail "Package source: ios_xcode not activated" "ios_xcode unexpectedly present: $relevant"
+else
+    assert_pass "Package source: ios_xcode not activated"
+fi
+assert_contains "Package source: swiftpm activated" "$relevant" '"swiftpm"'
+
+# ── resolve_relevant_environments_json: app source → ios_xcode, swiftpm deduped
+changed_app='["zpod/Views/SomeView.swift"]'
+relevant=$(resolve_relevant_environments_json "$envs_mixed" "$changed_app")
+assert_contains "App source: ios_xcode activated" "$relevant" '"ios_xcode"'
+if echo "$relevant" | grep -q '"swiftpm"'; then
+    assert_fail "App source: swiftpm deduped when ios_xcode present" "swiftpm unexpectedly present: $relevant"
+else
+    assert_pass "App source: swiftpm deduped when ios_xcode present"
+fi
+
+# ── detect_changed_non_package_classes ───────────────────────────────────────
+classes=$(detect_changed_non_package_classes '["zpod/Views/SomeView.swift"]')
+assert_eq "Single non-package class extracted" "SomeView" "$classes"
+
+classes=$(detect_changed_non_package_classes '["zpodUITests/BatchOperationUITests.swift","zpod/Views/BarView.swift"]')
+assert_eq "Multiple non-package classes (sorted,deduped)" "BarView,BatchOperationUITests" "$classes"
+
+classes=$(detect_changed_non_package_classes '["Packages/PlaylistFeature/Sources/Foo.swift"]')
+assert_eq "Package files excluded from class extraction" "" "$classes"
+
+classes=$(detect_changed_non_package_classes '[]')
+assert_eq "Empty changed list returns empty" "" "$classes"
+
+# ── detect_test_cmd: app source → class-targeted command ─────────────────────
+cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-C" ]]; then shift 2; fi
+case "${1:-}" in
+    rev-parse) echo "true" ;;
+    diff) printf 'zpod/Views/SomeView.swift\n' ;;
+esac
+exit 0
+MOCK
+chmod +x "$TEST_TEMP_DIR/bin/git"
+result=$(detect_test_cmd)
+assert_eq "App source: class-targeted command" "bash ./scripts/run-xcode-tests.sh -t SomeView" "$result"
+
+# ── detect_test_cmd: UITest file → class-targeted command ────────────────────
+cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-C" ]]; then shift 2; fi
+case "${1:-}" in
+    rev-parse) echo "true" ;;
+    diff) printf 'zpodUITests/BatchOperationUITests.swift\n' ;;
+esac
+exit 0
+MOCK
+chmod +x "$TEST_TEMP_DIR/bin/git"
+result=$(detect_test_cmd)
+assert_eq "UITest file: class-targeted command" "bash ./scripts/run-xcode-tests.sh -t BatchOperationUITests" "$result"
+
+# ── detect_test_cmd: multiple non-package files → comma-separated ─────────────
+cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-C" ]]; then shift 2; fi
+case "${1:-}" in
+    rev-parse) echo "true" ;;
+    diff) printf 'zpodUITests/FooTests.swift\nzpod/Views/BarView.swift\n' ;;
+esac
+exit 0
+MOCK
+chmod +x "$TEST_TEMP_DIR/bin/git"
+result=$(detect_test_cmd)
+assert_eq "Multiple non-package files: comma-separated targeting" "bash ./scripts/run-xcode-tests.sh -t BarView,FooTests" "$result"
+
+# ── detect_test_cmd: mixed package+app → ClassName,Packages ──────────────────
+cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-C" ]]; then shift 2; fi
+case "${1:-}" in
+    rev-parse) echo "true" ;;
+    diff) printf 'Packages/PlaylistFeature/Sources/Foo.swift\nzpod/AppDelegate.swift\n' ;;
+esac
+exit 0
+MOCK
+chmod +x "$TEST_TEMP_DIR/bin/git"
+result=$(detect_test_cmd)
+assert_eq "Mixed package+app: combined ClassName,Packages targeting" "bash ./scripts/run-xcode-tests.sh -t AppDelegate,Packages" "$result"
+
+# ── detect_test_cmd: package-only → -t Packages, no full Xcode suite ─────────
+cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-C" ]]; then shift 2; fi
+case "${1:-}" in
+    rev-parse) echo "true" ;;
+    diff) printf 'Packages/PlaylistFeature/Sources/PlaylistFeature/Foo.swift\n' ;;
+esac
+exit 0
+MOCK
+chmod +x "$TEST_TEMP_DIR/bin/git"
+result=$(detect_test_cmd)
+assert_eq "Package-only: run-xcode-tests.sh -t Packages" "bash ./scripts/run-xcode-tests.sh -t Packages" "$result"
+
+rm -rf "$PROJECT_ROOT/App.xcodeproj" "$PROJECT_ROOT/Package.swift"
 
 print_test_results

@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -142,9 +142,9 @@ cost_record() {
     local cost_usd
     cost_usd=$(cost_calculate "$input_tokens" "$output_tokens" "$model")
 
-    # Try SQLite first
+    # Try SQLite first (arg order must match db_record_cost signature: tokens, tokens, model, cost, stage, issue)
     if type db_record_cost >/dev/null 2>&1; then
-        db_record_cost "$input_tokens" "$output_tokens" "$model" "$stage" "$cost_usd" "$issue" 2>/dev/null || true
+        db_record_cost "$input_tokens" "$output_tokens" "$model" "$cost_usd" "$stage" "$issue" 2>/dev/null || true
     fi
 
     # Always write to JSON (dual-write period)
@@ -154,7 +154,7 @@ cost_record() {
         fi
         local tmp_file
         tmp_file=$(mktemp "${COST_FILE}.tmp.XXXXXX")
-        jq --argjson input "$input_tokens" \
+        if ! jq --argjson input "$input_tokens" \
            --argjson output "$output_tokens" \
            --arg model "$model" \
            --arg stage "$stage" \
@@ -172,7 +172,16 @@ cost_record() {
                ts: $ts,
                ts_epoch: $epoch
            }] | .entries = (.entries | .[-1000:])' \
-           "$COST_FILE" > "$tmp_file" && mv "$tmp_file" "$COST_FILE" || rm -f "$tmp_file"
+           "$COST_FILE" > "$tmp_file" 2>/dev/null; then
+            error "Cost jq transformation failed — entry may be lost"
+            rm -f "$tmp_file"
+            # Continue without updating cost file
+        else
+            mv "$tmp_file" "$COST_FILE" || {
+                error "Failed to update cost file"
+                rm -f "$tmp_file"
+            }
+        fi
     ) 200>"${COST_FILE}.lock"
 
     emit_event "cost.record" \
@@ -264,6 +273,11 @@ cost_remaining_budget() {
     budget_usd=$(jq -r '.daily_budget_usd' "$BUDGET_FILE" 2>/dev/null || echo "0")
 
     if [[ "$budget_enabled" != "true" || "$budget_usd" == "0" ]]; then
+        if [[ -z "${_BUDGET_UNCONFIGURED_WARNED:-}" ]]; then
+            info "Budget not configured — unlimited. Use 'shipwright cost budget set <amount>'"
+            emit_event "cost.budget_unconfigured" "status=unlimited"
+            _BUDGET_UNCONFIGURED_WARNED=1
+        fi
         echo "unlimited"
         return 0
     fi
@@ -894,6 +908,8 @@ show_help() {
 }
 
 # ─── Command Router ─────────────────────────────────────────────────────────
+# Only run CLI when executed directly (not when sourced by sw-pipeline.sh)
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 
 SUBCOMMAND="${1:-help}"
 shift 2>/dev/null || true
@@ -943,3 +959,5 @@ case "$SUBCOMMAND" in
         exit 1
         ;;
 esac
+
+fi  # end source guard

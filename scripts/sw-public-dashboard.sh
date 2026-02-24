@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -112,7 +112,8 @@ gather_pipeline_state() {
     # Read pipeline artifacts if available
     if [[ -d "$pipeline_artifacts" ]]; then
         local stage_count
-        stage_count=$(find "$pipeline_artifacts" -name "*.md" -o -name "*.json" | wc -l || echo "0")
+        stage_count=$(find "$pipeline_artifacts" -name "*.md" -o -name "*.json" | wc -l || true)
+        stage_count="${stage_count:-0}"
         pipeline_data=$(jq --arg count "$stage_count" '.artifact_count = $count' <<<"$pipeline_data")
     fi
 

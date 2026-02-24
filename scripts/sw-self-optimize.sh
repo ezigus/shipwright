@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -25,6 +25,14 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
+fi
+if [[ "$(type -t epoch_to_iso 2>/dev/null)" != "function" ]]; then
+  epoch_to_iso() {
+    local epoch="$1"
+    date -u -r "$epoch" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
+      date -u -d "@$epoch" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
+      now_iso
+  }
 fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
@@ -1103,7 +1111,7 @@ optimize_evolve_memory() {
 
         # Prune entries not seen within prune window
         local pruned_json
-        pruned_json=$(jq --arg cutoff "$(date -u -r "$prune_cutoff" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+        pruned_json=$(jq --arg cutoff "$(epoch_to_iso "$prune_cutoff")" \
             '[.failures[] | select(.last_seen >= $cutoff or .last_seen == null)]' \
             "$failures_file" 2>/dev/null || echo "[]")
 
@@ -1114,7 +1122,7 @@ optimize_evolve_memory() {
 
         # Strengthen entries seen N+ times within boost window (adaptive thresholds)
         pruned_json=$(echo "$pruned_json" | jq \
-            --arg cutoff_b "$(date -u -r "$boost_cutoff" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --arg cutoff_b "$(epoch_to_iso "$boost_cutoff")" \
             --argjson st "$strength_threshold" '
             [.[] | if (.seen_count >= $st and .last_seen >= $cutoff_b) then
                 .weight = ((.weight // 1.0) * 1.5)
@@ -1206,10 +1214,14 @@ optimize_track_quality_index() {
     [[ -z "$recent" ]] && return 0
 
     local total success_count
-    total=$(echo "$recent" | wc -l | tr -d ' ')
+    total=$(echo "$recent" | wc -l || true)
+    total="${total:-0}"
+    total=$(echo "$total" | tr -d ' ')
     [[ "$total" -lt 3 ]] && return 0
 
-    success_count=$(echo "$recent" | jq -c 'select(.result == "success" or .result == "completed")' 2>/dev/null | wc -l | tr -d ' ')
+    success_count=$(echo "$recent" | jq -c 'select(.result == "success" or .result == "completed")' 2>/dev/null | wc -l || true)
+    success_count="${success_count:-0}"
+    success_count=$(echo "$success_count" | tr -d ' ')
     success_count="${success_count:-0}"
 
     local avg_iterations avg_quality
@@ -1235,7 +1247,8 @@ optimize_track_quality_index() {
     # Detect trend
     if [[ -f "$quality_file" ]]; then
         local line_count
-        line_count=$(wc -l < "$quality_file" 2>/dev/null | tr -d ' ' || echo "0")
+        line_count=$(wc -l < "$quality_file" 2>/dev/null | tr -d ' ' || true)
+        line_count="${line_count:-0}"
         if [[ "$line_count" -ge 2 ]]; then
             local prev_index
             prev_index=$(tail -2 "$quality_file" | head -1 | jq -r '.quality_index // 0' 2>/dev/null || echo "0")
@@ -1327,7 +1340,7 @@ optimize_report() {
     now_e=$(now_epoch)
     seven_days_ago=$((now_e - 604800))
     local cutoff_iso
-    cutoff_iso=$(date -u -r "$seven_days_ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+    cutoff_iso=$(epoch_to_iso "$seven_days_ago")
 
     # Count outcomes in last 7 days
     local total_recent=0

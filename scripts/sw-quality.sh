@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -81,7 +81,8 @@ validate_quality() {
     local uncommitted_pass=true
     if [[ -d "$REPO_DIR/.git" ]]; then
         local dirty_count
-        dirty_count=$(cd "$REPO_DIR" && git status --short 2>/dev/null | wc -l || echo "0")
+        dirty_count=$(cd "$REPO_DIR" && git status --short 2>/dev/null | wc -l || true)
+        dirty_count="${dirty_count:-0}"
         if [[ "$dirty_count" -gt 0 ]]; then
             uncommitted_pass=false
             all_pass=false
@@ -93,7 +94,8 @@ validate_quality() {
     local todos_pass=true
     if [[ -d "$REPO_DIR/.git" ]]; then
         local todo_count
-        todo_count=$(cd "$REPO_DIR" && git diff --cached 2>/dev/null | grep -cE '^\+.*(TODO|FIXME)' || echo "0")
+        todo_count=$(cd "$REPO_DIR" && git diff --cached 2>/dev/null | grep -cE '^\+.*(TODO|FIXME)' || true)
+        todo_count="${todo_count:-0}"
         if [[ "$todo_count" -gt 0 ]]; then
             todos_pass=false
             all_pass=false
@@ -106,7 +108,8 @@ validate_quality() {
     local secret_patterns="(password|secret|token|api[_-]?key|aws_access|private_key)"
     if [[ -d "$REPO_DIR/.git" ]]; then
         local secret_count
-        secret_count=$(cd "$REPO_DIR" && git diff --cached 2>/dev/null | grep -ciE "$secret_patterns" || echo "0")
+        secret_count=$(cd "$REPO_DIR" && git diff --cached 2>/dev/null | grep -ciE "$secret_patterns" || true)
+        secret_count="${secret_count:-0}"
         if [[ "$secret_count" -gt 3 ]]; then
             secrets_pass=false
             all_pass=false
@@ -322,7 +325,8 @@ completion_detection() {
     # Check diminishing returns: < 10 lines changed in last 3 iterations
     local recent_changes=0
     if [[ -f "$ARTIFACTS_DIR/progress.md" ]]; then
-        recent_changes=$(grep -c "^### Iteration" "$ARTIFACTS_DIR/progress.md" || echo "0")
+        recent_changes=$(grep -c "^### Iteration" "$ARTIFACTS_DIR/progress.md" || true)
+        recent_changes="${recent_changes:-0}"
     fi
 
     # Check if tests went from failing to passing
@@ -339,7 +343,8 @@ completion_detection() {
     local subtasks_done=true
     if [[ -f ".claude/goal.md" ]]; then
         local unchecked_count
-        unchecked_count=$(grep -c "^- \[ \]" ".claude/goal.md" 2>/dev/null || echo "0")
+        unchecked_count=$(grep -c "^- \[ \]" ".claude/goal.md" 2>/dev/null || true)
+        unchecked_count="${unchecked_count:-0}"
         if [[ "$unchecked_count" -gt 0 ]]; then
             subtasks_done=false
         fi
@@ -399,14 +404,16 @@ calculate_quality_score() {
     # Security audit (20%)
     local security_files=0
     if [[ -d "$REPO_DIR" ]]; then
-        security_files=$(find "$REPO_DIR" -type f \( -name "*.js" -o -name "*.py" -o -name "*.go" \) 2>/dev/null | wc -l || echo "0")
+        security_files=$(find "$REPO_DIR" -type f \( -name "*.js" -o -name "*.py" -o -name "*.go" \) 2>/dev/null | wc -l || true)
+        security_files="${security_files:-0}"
         security_score=$((security_files > 0 ? 85 : 0))
     fi
 
     # Architecture audit (15%)
     local architecture_files=0
     if [[ -d "$REPO_DIR" ]]; then
-        architecture_files=$(find "$REPO_DIR" -type f \( -name "*.js" -o -name "*.py" \) 2>/dev/null | wc -l || echo "0")
+        architecture_files=$(find "$REPO_DIR" -type f \( -name "*.js" -o -name "*.py" \) 2>/dev/null | wc -l || true)
+        architecture_files="${architecture_files:-0}"
         architecture_score=$((architecture_files > 0 ? 80 : 0))
     fi
 

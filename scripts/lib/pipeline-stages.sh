@@ -1,7 +1,22 @@
-# pipeline-stages.sh — Stage implementations (intake, plan, build, test, review, pr, merge, deploy, validate, monitor) for sw-pipeline.sh
+# pipeline-stages.sh — Stage implementations (intake, plan, build, test, review, compound_quality, pr, merge, deploy, validate, monitor) for sw-pipeline.sh
 # Source from sw-pipeline.sh. Requires all pipeline globals and state/github/detection/quality modules.
 [[ -n "${_PIPELINE_STAGES_LOADED:-}" ]] && return 0
 _PIPELINE_STAGES_LOADED=1
+
+# ─── Safe git helpers ────────────────────────────────────────────────────────
+# BASE_BRANCH may not exist locally (e.g. --local mode with no remote).
+# These helpers return empty output instead of crashing under set -euo pipefail.
+_safe_base_log() {
+    local branch="${BASE_BRANCH:-main}"
+    git rev-parse --verify "$branch" >/dev/null 2>&1 || { echo ""; return 0; }
+    git log "$@" "${branch}..HEAD" 2>/dev/null || true
+}
+
+_safe_base_diff() {
+    local branch="${BASE_BRANCH:-main}"
+    git rev-parse --verify "$branch" >/dev/null 2>&1 || { git diff HEAD~5 "$@" 2>/dev/null || true; return 0; }
+    git diff "${branch}...HEAD" "$@" 2>/dev/null || true
+}
 
 show_stage_preview() {
     local stage_id="$1"
@@ -15,6 +30,7 @@ show_stage_preview() {
         test_first) echo -e "  Generate tests from requirements (TDD mode) before implementation" ;;
         test)     echo -e "  Run test suite and check coverage" ;;
         review)   echo -e "  AI code review on the diff, post findings" ;;
+        compound_quality) echo -e "  Adversarial review, negative tests, e2e, DoD audit" ;;
         pr)       echo -e "  Create GitHub PR with labels, reviewers, milestone" ;;
         merge)    echo -e "  Wait for CI checks, merge PR, optionally delete branch" ;;
         deploy)   echo -e "  Deploy to staging/production with rollback" ;;
@@ -300,9 +316,21 @@ Checklist of completion criteria.
     fi
 
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-plan.log"
-    claude --print --model "$plan_model" --max-turns 25 \
+    claude --print --model "$plan_model" --max-turns 25 --dangerously-skip-permissions \
         "$plan_prompt" < /dev/null > "$plan_file" 2>"$_token_log" || true
     parse_claude_tokens "$_token_log"
+
+    # Claude may write to disk via tools instead of stdout — rescue those files
+    local _plan_rescue
+    for _plan_rescue in "${PROJECT_ROOT}/PLAN.md" "${PROJECT_ROOT}/plan.md" \
+                         "${PROJECT_ROOT}/implementation-plan.md"; do
+        if [[ -s "$_plan_rescue" ]] && [[ $(wc -l < "$plan_file" 2>/dev/null | xargs) -lt 10 ]]; then
+            info "Plan written to ${_plan_rescue} via tools — adopting as plan artifact"
+            cat "$_plan_rescue" >> "$plan_file"
+            rm -f "$_plan_rescue"
+            break
+        fi
+    done
 
     if [[ ! -s "$plan_file" ]]; then
         error "Plan generation failed — empty output"
@@ -708,9 +736,21 @@ Be concrete and specific. Reference actual file paths in the codebase. Consider 
     fi
 
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-design.log"
-    claude --print --model "$design_model" --max-turns 25 \
+    claude --print --model "$design_model" --max-turns 25 --dangerously-skip-permissions \
         "$design_prompt" < /dev/null > "$design_file" 2>"$_token_log" || true
     parse_claude_tokens "$_token_log"
+
+    # Claude may write to disk via tools instead of stdout — rescue those files
+    local _design_rescue
+    for _design_rescue in "${PROJECT_ROOT}/design-adr.md" "${PROJECT_ROOT}/design.md" \
+                           "${PROJECT_ROOT}/ADR.md" "${PROJECT_ROOT}/DESIGN.md"; do
+        if [[ -s "$_design_rescue" ]] && [[ $(wc -l < "$design_file" 2>/dev/null | xargs) -lt 10 ]]; then
+            info "Design written to ${_design_rescue} via tools — adopting as design artifact"
+            cat "$_design_rescue" >> "$design_file"
+            rm -f "$_design_rescue"
+            break
+        fi
+    done
 
     if [[ ! -s "$design_file" ]]; then
         error "Design generation failed — empty output"
@@ -739,7 +779,7 @@ Be concrete and specific. Reference actual file paths in the codebase. Consider 
     files_to_modify=$(sed -n '/Files to modify/,/^-\|^#\|^$/p' "$design_file" 2>/dev/null | grep -E '^\s*-' | head -20 || true)
 
     if [[ -n "$files_to_create" || -n "$files_to_modify" ]]; then
-        info "Design scope: ${DIM}$(echo "$files_to_create $files_to_modify" | grep -c '^\s*-' || echo 0) file(s)${RESET}"
+        info "Design scope: ${DIM}$(echo "$files_to_create $files_to_modify" | grep -c '^\s*-' || true) file(s)${RESET}"
     fi
 
     # Post design to GitHub issue
@@ -1077,8 +1117,9 @@ ${prevention_text}"
         loop_args+=(--resume)
     fi
 
-    # Skip permissions in CI (no interactive terminal)
-    [[ "${CI_MODE:-false}" == "true" ]] && loop_args+=(--skip-permissions)
+    # Skip permissions — pipeline runs headlessly (claude -p) and has no terminal
+    # for interactive permission prompts. Without this flag, agents can't write files.
+    loop_args+=(--skip-permissions)
 
     info "Starting build loop: ${DIM}shipwright loop${RESET} (max ${max_iter} iterations, ${agents} agent(s))"
 
@@ -1131,13 +1172,13 @@ ${prevention_text}"
 
     # Count commits made during build
     local commit_count
-    commit_count=$(git log --oneline "${BASE_BRANCH}..HEAD" 2>/dev/null | wc -l | xargs)
+    commit_count=$(_safe_base_log --oneline | wc -l | xargs)
     info "Build produced ${BOLD}$commit_count${RESET} commit(s)"
 
     # Commit quality evaluation when intelligence is enabled
     if type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1 && [[ "${commit_count:-0}" -gt 0 ]]; then
         local commit_msgs
-        commit_msgs=$(git log --format="%s" "${BASE_BRANCH}..HEAD" 2>/dev/null | head -20)
+        commit_msgs=$(_safe_base_log --format="%s" | head -20)
         local quality_score
         quality_score=$(claude --print --output-format text -p "Rate the quality of these git commit messages on a scale of 0-100. Consider: focus (one thing per commit), clarity (describes the why), atomicity (small logical units). Reply with ONLY a number 0-100.
 
@@ -1201,7 +1242,8 @@ stage_test() {
         # Post failure to GitHub with more context
         if [[ -n "$ISSUE_NUMBER" ]]; then
             local log_lines
-            log_lines=$(wc -l < "$test_log" 2>/dev/null || echo "0")
+            log_lines=$(wc -l < "$test_log" 2>/dev/null || true)
+            log_lines="${log_lines:-0}"
             local log_excerpt
             if [[ "$log_lines" -lt 60 ]]; then
                 log_excerpt="$(cat "$test_log" 2>/dev/null || true)"
@@ -1276,8 +1318,7 @@ stage_review() {
     local diff_file="$ARTIFACTS_DIR/review-diff.patch"
     local review_file="$ARTIFACTS_DIR/review.md"
 
-    git diff "${BASE_BRANCH}...${GIT_BRANCH}" > "$diff_file" 2>/dev/null || \
-        git diff HEAD~5 > "$diff_file" 2>/dev/null || true
+    _safe_base_diff > "$diff_file" 2>/dev/null || true
 
     if [[ ! -s "$diff_file" ]]; then
         warn "No diff found — skipping review"
@@ -1290,13 +1331,13 @@ stage_review() {
     fi
 
     local diff_stats
-    diff_stats=$(git diff --stat "${BASE_BRANCH}...${GIT_BRANCH}" 2>/dev/null | tail -1 || echo "")
+    diff_stats=$(_safe_base_diff --stat | tail -1 || echo "")
     info "Running AI code review... ${DIM}($diff_stats)${RESET}"
 
     # Semantic risk scoring when intelligence is enabled
     if type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
         local diff_files
-        diff_files=$(git diff --name-only "${BASE_BRANCH}...${GIT_BRANCH}" 2>/dev/null || true)
+        diff_files=$(_safe_base_diff --name-only || true)
         local risk_score="low"
         # Fast heuristic: flag high-risk file patterns
         if echo "$diff_files" | grep -qiE 'migration|schema|auth|crypto|security|password|token|secret|\.env'; then
@@ -1390,11 +1431,9 @@ $(cat "$dod_file")
 ## Diff to Review
 $(cat "$diff_file")"
 
-    # Build claude args — add --dangerously-skip-permissions in CI
-    local review_args=(--print --model "$review_model" --max-turns 25)
-    if [[ "${CI_MODE:-false}" == "true" ]]; then
-        review_args+=(--dangerously-skip-permissions)
-    fi
+    # Skip permissions — pipeline runs headlessly (claude -p) and has no terminal
+    # for interactive permission prompts. Same rationale as build stage (line ~1083).
+    local review_args=(--print --model "$review_model" --max-turns 25 --dangerously-skip-permissions)
 
     claude "${review_args[@]}" "$review_prompt" < /dev/null > "$review_file" 2>"${ARTIFACTS_DIR}/.claude-tokens-review.log" || true
     parse_claude_tokens "${ARTIFACTS_DIR}/.claude-tokens-review.log"
@@ -1539,15 +1578,143 @@ ${review_summary}
     log_stage "review" "AI review complete ($total_issues issues: $critical_count critical, $bug_count bugs, $warning_count suggestions)"
 }
 
+# ─── Compound Quality (fallback) ────────────────────────────────────────────
+# Basic implementation: adversarial review, negative testing, e2e checks, DoD audit.
+# If pipeline-intelligence.sh was sourced first, its enhanced version takes priority.
+if ! type stage_compound_quality >/dev/null 2>&1; then
+stage_compound_quality() {
+    CURRENT_STAGE_ID="compound_quality"
+
+    # Read stage config from pipeline template
+    local cfg
+    cfg=$(jq -r '.stages[] | select(.id == "compound_quality") | .config // {}' "$PIPELINE_CONFIG" 2>/dev/null) || cfg="{}"
+
+    local do_adversarial do_negative do_e2e do_dod max_cycles blocking
+    do_adversarial=$(echo "$cfg" | jq -r '.adversarial // false')
+    do_negative=$(echo "$cfg" | jq -r '.negative // false')
+    do_e2e=$(echo "$cfg" | jq -r '.e2e // false')
+    do_dod=$(echo "$cfg" | jq -r '.dod_audit // false')
+    max_cycles=$(echo "$cfg" | jq -r '.max_cycles // 1')
+    blocking=$(echo "$cfg" | jq -r '.compound_quality_blocking // false')
+
+    local pass_count=0 fail_count=0 total=0
+    local compound_log="$ARTIFACTS_DIR/compound-quality.log"
+    : > "$compound_log"
+
+    # ── Adversarial review ──
+    if [[ "$do_adversarial" == "true" ]]; then
+        total=$((total + 1))
+        info "Running adversarial review..."
+        if [[ -x "$SCRIPT_DIR/sw-adversarial.sh" ]]; then
+            if bash "$SCRIPT_DIR/sw-adversarial.sh" --repo "${REPO_DIR:-.}" >> "$compound_log" 2>&1; then
+                pass_count=$((pass_count + 1))
+                success "Adversarial review passed"
+            else
+                fail_count=$((fail_count + 1))
+                warn "Adversarial review found issues"
+            fi
+        else
+            warn "sw-adversarial.sh not found, skipping"
+        fi
+    fi
+
+    # ── Negative / edge-case testing ──
+    if [[ "$do_negative" == "true" ]]; then
+        total=$((total + 1))
+        info "Running negative test pass..."
+        if [[ -n "${TEST_CMD:-}" ]]; then
+            if eval "$TEST_CMD" >> "$compound_log" 2>&1; then
+                pass_count=$((pass_count + 1))
+                success "Negative test pass passed"
+            else
+                fail_count=$((fail_count + 1))
+                warn "Negative test pass found failures"
+            fi
+        else
+            pass_count=$((pass_count + 1))
+            info "No test command configured, skipping negative tests"
+        fi
+    fi
+
+    # ── E2E checks ──
+    if [[ "$do_e2e" == "true" ]]; then
+        total=$((total + 1))
+        info "Running e2e checks..."
+        if [[ -x "$SCRIPT_DIR/sw-e2e-orchestrator.sh" ]]; then
+            if bash "$SCRIPT_DIR/sw-e2e-orchestrator.sh" run >> "$compound_log" 2>&1; then
+                pass_count=$((pass_count + 1))
+                success "E2E checks passed"
+            else
+                fail_count=$((fail_count + 1))
+                warn "E2E checks found issues"
+            fi
+        else
+            pass_count=$((pass_count + 1))
+            info "sw-e2e-orchestrator.sh not found, skipping e2e"
+        fi
+    fi
+
+    # ── Definition of Done audit ──
+    if [[ "$do_dod" == "true" ]]; then
+        total=$((total + 1))
+        info "Running definition-of-done audit..."
+        if [[ -x "$SCRIPT_DIR/sw-quality.sh" ]]; then
+            if bash "$SCRIPT_DIR/sw-quality.sh" validate >> "$compound_log" 2>&1; then
+                pass_count=$((pass_count + 1))
+                success "DoD audit passed"
+            else
+                fail_count=$((fail_count + 1))
+                warn "DoD audit found gaps"
+            fi
+        else
+            pass_count=$((pass_count + 1))
+            info "sw-quality.sh not found, skipping DoD audit"
+        fi
+    fi
+
+    # ── Summary ──
+    log_stage "compound_quality" "Compound quality: $pass_count/$total checks passed, $fail_count failed"
+
+    if [[ "$fail_count" -gt 0 && "$blocking" == "true" ]]; then
+        error "Compound quality gate failed: $fail_count of $total checks failed"
+        return 1
+    fi
+
+    return 0
+}
+fi  # end fallback stage_compound_quality
+
 stage_pr() {
     CURRENT_STAGE_ID="pr"
     local plan_file="$ARTIFACTS_DIR/plan.md"
     local test_log="$ARTIFACTS_DIR/test-results.log"
     local review_file="$ARTIFACTS_DIR/review.md"
 
+    # ── Skip PR in local/no-github mode ──
+    if [[ "${NO_GITHUB:-false}" == "true" || "${SHIPWRIGHT_LOCAL:-}" == "1" || "${LOCAL_MODE:-false}" == "true" ]]; then
+        info "Skipping PR stage — running in local/no-github mode"
+        # Save a PR draft locally for reference
+        local branch_name
+        branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+        local commit_count
+        commit_count=$(_safe_base_log --oneline | wc -l | xargs)
+        {
+            echo "# PR Draft (local mode)"
+            echo ""
+            echo "**Branch:** ${branch_name}"
+            echo "**Commits:** ${commit_count:-0}"
+            echo "**Goal:** ${GOAL:-N/A}"
+            echo ""
+            echo "## Changes"
+            _safe_base_diff --stat || true
+        } > ".claude/pr-draft.md" 2>/dev/null || true
+        emit_event "pr.skipped" "issue=${ISSUE_NUMBER:-0}" "reason=local_mode"
+        return 0
+    fi
+
     # ── PR Hygiene Checks (informational) ──
     local hygiene_commit_count
-    hygiene_commit_count=$(git log --oneline "${BASE_BRANCH}..HEAD" 2>/dev/null | wc -l | xargs)
+    hygiene_commit_count=$(_safe_base_log --oneline | wc -l | xargs)
     hygiene_commit_count="${hygiene_commit_count:-0}"
 
     if [[ "$hygiene_commit_count" -gt 20 ]]; then
@@ -1556,7 +1723,7 @@ stage_pr() {
 
     # Check for WIP/fixup/squash commits (expanded patterns)
     local wip_commits
-    wip_commits=$(git log --oneline "${BASE_BRANCH}..HEAD" 2>/dev/null | grep -ciE '^[0-9a-f]+ (WIP|fixup!|squash!|TODO|HACK|TEMP|BROKEN|wip[:-]|temp[:-]|broken[:-]|do not merge)' || true)
+    wip_commits=$(_safe_base_log --oneline | grep -ciE '^[0-9a-f]+ (WIP|fixup!|squash!|TODO|HACK|TEMP|BROKEN|wip[:-]|temp[:-]|broken[:-]|do not merge)' || true)
     wip_commits="${wip_commits:-0}"
     if [[ "$wip_commits" -gt 0 ]]; then
         warn "Branch has ${wip_commits} WIP/fixup/squash/temp commit(s) — consider cleaning up"
@@ -1564,7 +1731,7 @@ stage_pr() {
 
     # ── PR Quality Gate: reject PRs with no real code changes ──
     local real_files
-    real_files=$(git diff --name-only "${BASE_BRANCH}...HEAD" 2>/dev/null | grep -v '^\.claude/' | grep -v '^\.github/' || true)
+    real_files=$(_safe_base_diff --name-only | grep -v '^\.claude/' | grep -v '^\.github/' || true)
     if [[ -z "$real_files" ]]; then
         error "No real code changes detected — only pipeline artifacts (.claude/ logs)."
         error "The build agent did not produce meaningful changes. Skipping PR creation."
@@ -1614,7 +1781,7 @@ stage_pr() {
         if [[ "$sim_enabled" == "true" ]]; then
             info "Running developer simulation review..."
             local diff_for_sim
-            diff_for_sim=$(git diff "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+            diff_for_sim=$(_safe_base_diff || true)
             if [[ -n "$diff_for_sim" ]]; then
                 local sim_result
                 sim_result=$(simulation_review "$diff_for_sim" "${GOAL:-}" 2>/dev/null || echo "")
@@ -1644,7 +1811,7 @@ stage_pr() {
         if [[ "$arch_enabled" == "true" ]]; then
             info "Validating architecture..."
             local diff_for_arch
-            diff_for_arch=$(git diff "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+            diff_for_arch=$(_safe_base_diff || true)
             if [[ -n "$diff_for_arch" ]]; then
                 local arch_result
                 arch_result=$(architecture_validate_changes "$diff_for_arch" "" 2>/dev/null || echo "")
@@ -1668,10 +1835,11 @@ stage_pr() {
 
     # Pre-PR diff gate — verify meaningful code changes exist (not just bookkeeping)
     local real_changes
-    real_changes=$(git diff --name-only "origin/${BASE_BRANCH:-main}...HEAD" \
+    real_changes=$(_safe_base_diff --name-only \
         -- . ':!.claude/loop-state.md' ':!.claude/pipeline-state.md' \
         ':!.claude/pipeline-artifacts/*' ':!**/progress.md' \
-        ':!**/error-summary.json' 2>/dev/null | wc -l | xargs || echo "0")
+        ':!**/error-summary.json' | wc -l | xargs || true)
+    real_changes="${real_changes:-0}"
     if [[ "${real_changes:-0}" -eq 0 ]]; then
         error "No meaningful code changes detected — only bookkeeping files modified"
         error "Refusing to create PR with zero real changes"
@@ -1726,10 +1894,10 @@ stage_pr() {
     [[ -n "${GITHUB_ISSUE:-}" ]] && closes_line="Closes ${GITHUB_ISSUE}"
 
     local diff_stats
-    diff_stats=$(git diff --stat "${BASE_BRANCH}...${GIT_BRANCH}" 2>/dev/null | tail -1 || echo "")
+    diff_stats=$(_safe_base_diff --stat | tail -1 || echo "")
 
     local commit_count
-    commit_count=$(git log --oneline "${BASE_BRANCH}..HEAD" 2>/dev/null | wc -l | xargs)
+    commit_count=$(_safe_base_log --oneline | wc -l | xargs)
 
     local total_dur=""
     if [[ -n "$PIPELINE_START_EPOCH" ]]; then
@@ -1774,7 +1942,7 @@ EOF
     risk_tier="low"
     if [[ -f "$REPO_DIR/config/policy.json" ]]; then
         local changed_files
-        changed_files=$(git diff --name-only "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+        changed_files=$(_safe_base_diff --name-only || true)
         if [[ -n "$changed_files" ]]; then
             local policy_file="$REPO_DIR/config/policy.json"
             check_tier_match() {
@@ -1906,7 +2074,7 @@ EOF
             codeowners_json=$(gh_codeowners "$REPO_OWNER" "$REPO_NAME" 2>/dev/null || echo "[]")
             if [[ "$codeowners_json" != "[]" && -n "$codeowners_json" ]]; then
                 local changed_files
-                changed_files=$(git diff --name-only "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+                changed_files=$(_safe_base_diff --name-only || true)
                 if [[ -n "$changed_files" ]]; then
                     local co_reviewers
                     co_reviewers=$(echo "$codeowners_json" | jq -r '.[].owners[]' 2>/dev/null | sort -u | head -3 || true)
@@ -1980,13 +2148,14 @@ stage_merge() {
         local merge_diff_file="${ARTIFACTS_DIR}/review-diff.patch"
         local merge_review_file="${ARTIFACTS_DIR}/review.md"
         if [[ ! -s "$merge_diff_file" ]]; then
-            git diff "${BASE_BRANCH}...${GIT_BRANCH}" > "$merge_diff_file" 2>/dev/null || \
-                git diff HEAD~5 > "$merge_diff_file" 2>/dev/null || true
+            _safe_base_diff > "$merge_diff_file" 2>/dev/null || true
         fi
         if [[ -s "$merge_diff_file" ]]; then
             local _merge_critical _merge_sec _merge_blocking _merge_reject
-            _merge_critical=$(grep -ciE '\*\*\[?Critical\]?\*\*' "$merge_review_file" 2>/dev/null || echo "0")
-            _merge_sec=$(grep -ciE '\*\*\[?Security\]?\*\*' "$merge_review_file" 2>/dev/null || echo "0")
+            _merge_critical=$(grep -ciE '\*\*\[?Critical\]?\*\*' "$merge_review_file" 2>/dev/null || true)
+            _merge_critical="${_merge_critical:-0}"
+            _merge_sec=$(grep -ciE '\*\*\[?Security\]?\*\*' "$merge_review_file" 2>/dev/null || true)
+            _merge_sec="${_merge_sec:-0}"
             _merge_blocking=$((${_merge_critical:-0} + ${_merge_sec:-0}))
             [[ "$_merge_blocking" -gt 0 ]] && _merge_reject="Review found ${_merge_blocking} critical/security issue(s)"
             if ! bash "$SCRIPT_DIR/sw-oversight.sh" gate --diff "$merge_diff_file" --description "${GOAL:-Pipeline merge}" --reject-if "${_merge_reject:-}" >/dev/null 2>&1; then

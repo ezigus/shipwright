@@ -7,7 +7,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -251,7 +251,8 @@ cmd_status() {
         fi
     elif [[ -f "$EVENTS_FILE" ]]; then
         local total_events last_event_ts
-        total_events=$(wc -l < "$EVENTS_FILE" || echo 0)
+        total_events=$(wc -l < "$EVENTS_FILE" || true)
+        total_events="${total_events:-0}"
         last_event_ts=$(tail -1 "$EVENTS_FILE" | jq -r '.ts // "never"' 2>/dev/null || echo "never")
         echo -e "  ${CYAN}Event Store:${RESET} $EVENTS_FILE (file fallback)"
         echo -e "  ${CYAN}Total Events:${RESET} ${BOLD}${total_events}${RESET}"
@@ -290,7 +291,8 @@ cmd_clean() {
     elif [[ -f "$EVENTS_FILE" ]]; then
         info "Cleaning events older than ${ttl_days} days..."
         local old_count tmp_file new_count removed
-        old_count=$(grep -c "ts" "$EVENTS_FILE" 2>/dev/null || echo 0)
+        old_count=$(grep -c "ts" "$EVENTS_FILE" 2>/dev/null || true)
+        old_count="${old_count:-0}"
         tmp_file="$(mktemp)"
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
@@ -299,7 +301,8 @@ cmd_clean() {
             [[ -n "$ts" && "$ts" > "$cutoff_iso" ]] && echo "$line" >> "$tmp_file"
         done < "$EVENTS_FILE"
         mv "$tmp_file" "$EVENTS_FILE"
-        new_count=$(wc -l < "$EVENTS_FILE" || echo 0)
+        new_count=$(wc -l < "$EVENTS_FILE" || true)
+        new_count="${new_count:-0}"
         removed=$((old_count - new_count))
         success "Removed $removed old events. Remaining: $new_count"
     else

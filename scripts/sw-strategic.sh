@@ -7,7 +7,7 @@
 # When sourced, do NOT add set -euo pipefail — the parent handles that.
 # When run directly, main() sets up the error handling.
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 
 # ─── Paths (set defaults if not provided by parent) ──────────────────────────
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
@@ -821,12 +821,14 @@ strategic_status() {
 
     # Total issues created
     local total_created
-    total_created=$(grep '"strategic.issue_created"' "$events_file" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+    total_created=$(grep '"strategic.issue_created"' "$events_file" 2>/dev/null | wc -l | tr -d ' ' || true)
+    total_created="${total_created:-0}"
     echo -e "  Total created:   ${total_created} issues (all time)"
 
     # Total cycles
     local total_cycles
-    total_cycles=$(grep '"strategic.cycle_complete"' "$events_file" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+    total_cycles=$(grep '"strategic.cycle_complete"' "$events_file" 2>/dev/null | wc -l | tr -d ' ' || true)
+    total_cycles="${total_cycles:-0}"
     echo -e "  Total cycles:    ${total_cycles}"
 
     echo ""
@@ -845,9 +847,12 @@ strategic_outcomes() {
     fi
 
     local shipped_count failed_count pending_count
-    shipped_count=$(grep -c '"outcome":"shipped"' "$outcomes_file" 2>/dev/null || echo "0")
-    failed_count=$(grep -cE '"outcome":"closed_unshipped"' "$outcomes_file" 2>/dev/null || echo "0")
-    pending_count=$(grep -c '"outcome":"pending"' "$outcomes_file" 2>/dev/null || echo "0")
+    shipped_count=$(grep -c '"outcome":"shipped"' "$outcomes_file" 2>/dev/null || true)
+    shipped_count="${shipped_count:-0}"
+    failed_count=$(grep -cE '"outcome":"closed_unshipped"' "$outcomes_file" 2>/dev/null || true)
+    failed_count="${failed_count:-0}"
+    pending_count=$(grep -c '"outcome":"pending"' "$outcomes_file" 2>/dev/null || true)
+    pending_count="${pending_count:-0}"
 
     echo -e "  ${GREEN}Shipped:${RESET}       $shipped_count (closed with merged PR)"
     echo -e "  ${RED}Closed unshipped:${RESET} $failed_count (closed without merge)"

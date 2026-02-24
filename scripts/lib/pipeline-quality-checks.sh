@@ -441,7 +441,7 @@ ${spec_git_diff}" --model haiku < /dev/null 2>/dev/null || true)
     if [[ -n "$removed_endpoints" || -n "$param_changes" ]]; then
         local issue_count=0
         [[ -n "$removed_endpoints" ]] && issue_count=$((issue_count + $(echo "$removed_endpoints" | wc -l | xargs)))
-        [[ -n "$param_changes" ]] && issue_count=$((issue_count + $(echo "$param_changes" | grep -c '.' 2>/dev/null || echo "0")))
+        [[ -n "$param_changes" ]] && issue_count=$((issue_count + $(echo "$param_changes" | grep -c '.' 2>/dev/null || true)))
         warn "API breaking changes: ${issue_count} issue(s) found"
         return 1
     fi
@@ -990,7 +990,8 @@ run_atomic_write_check() {
 
         # Check for direct redirection writes (> file) in state/config paths
         local bad_writes
-        bad_writes=$(git show "HEAD:$filepath" 2>/dev/null | grep -c 'echo.*>' 2>/dev/null || echo "0")
+        bad_writes=$(git show "HEAD:$filepath" 2>/dev/null | grep -c 'echo.*>' 2>/dev/null || true)
+        bad_writes="${bad_writes:-0}"
 
         if [[ "$bad_writes" -gt 0 ]]; then
             violations=$((violations + bad_writes))

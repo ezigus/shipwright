@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -454,7 +454,8 @@ cmd_status() {
     # Show recent webhook events
     if [[ -f "$WEBHOOK_LOG" ]]; then
         local count
-        count=$(wc -l < "$WEBHOOK_LOG" 2>/dev/null || echo 0)
+        count=$(wc -l < "$WEBHOOK_LOG" 2>/dev/null || true)
+        count="${count:-0}"
         if [[ "$count" -gt 0 ]]; then
             echo -e "${BOLD}Recent Webhook Events (last 10):${RESET}"
             tail -10 "$WEBHOOK_LOG" | jq '{timestamp, event_type}' -c

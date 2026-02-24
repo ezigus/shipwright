@@ -3,6 +3,28 @@
 [[ -n "${_DAEMON_PATROL_LOADED:-}" ]] && return 0
 _DAEMON_PATROL_LOADED=1
 
+# ─── Decision Engine Signal Mode ─────────────────────────────────────────────
+# When DECISION_ENGINE_ENABLED=true, patrol writes candidates to the pending
+# signals file instead of creating GitHub issues directly. The decision engine
+# collects, scores, and acts on these signals with tiered autonomy.
+SIGNALS_PENDING_FILE="${HOME}/.shipwright/signals/pending.jsonl"
+
+_patrol_emit_signal() {
+    local id="$1" signal="$2" category="$3" title="$4" description="$5"
+    local risk="${6:-50}" confidence="${7:-0.80}" dedup_key="$8"
+    mkdir -p "$(dirname "$SIGNALS_PENDING_FILE")"
+    local ts
+    ts=$(now_iso)
+    local candidate
+    candidate=$(jq -n \
+        --arg id "$id" --arg signal "$signal" --arg category "$category" \
+        --arg title "$title" --arg desc "$description" \
+        --argjson risk "$risk" --arg conf "$confidence" \
+        --arg dedup "$dedup_key" --arg ts "$ts" \
+        '{id:$id, signal:$signal, category:$category, title:$title, description:$desc, evidence:{}, risk_score:$risk, confidence:$conf, dedup_key:$dedup, collected_at:$ts}')
+    echo "$candidate" >> "$SIGNALS_PENDING_FILE"
+}
+
 patrol_build_labels() {
     local check_label="$1"
     local labels="${PATROL_LABEL},${check_label}"
@@ -76,8 +98,16 @@ daemon_patrol() {
                     findings=$((findings + 1))
                     emit_event "patrol.finding" "check=security" "severity=$severity" "package=$name"
 
-                    # Check if issue already exists
-                    if [[ "$NO_GITHUB" != "true" ]] && [[ "$dry_run" != "true" ]]; then
+                    # Route to decision engine or create issue directly
+                    if [[ "${DECISION_ENGINE_ENABLED:-false}" == "true" ]]; then
+                        local _cat="security_patch"
+                        [[ "$severity" == "critical" ]] && _cat="security_critical"
+                        _patrol_emit_signal "sec-${name}" "security" "$_cat" \
+                            "Security: ${title} in ${name}" \
+                            "Fix ${severity} vulnerability in ${name}" \
+                            "$([[ "$severity" == "critical" ]] && echo 80 || echo 50)" \
+                            "0.95" "security:${name}:${title}"
+                    elif [[ "$NO_GITHUB" != "true" ]] && [[ "$dry_run" != "true" ]]; then
                         local existing
                         existing=$(gh issue list --label "$PATROL_LABEL" --label "security" \
                             --search "Security: $name" --json number -q 'length' 2>/dev/null || echo "0")
@@ -202,8 +232,13 @@ Auto-detected by \`shipwright daemon patrol\`." \
                     fi
                 done < <(echo "$outdated_json" | jq -c 'to_entries[]' 2>/dev/null)
 
-                # Create a single issue for all stale deps
-                if [[ "$findings" -gt 0 ]] && [[ "$NO_GITHUB" != "true" ]] && [[ "$dry_run" != "true" ]]; then
+                # Route to decision engine or create issue
+                if [[ "$findings" -gt 0 ]] && [[ "${DECISION_ENGINE_ENABLED:-false}" == "true" ]]; then
+                    _patrol_emit_signal "deps-stale-${findings}" "deps" "deps_major" \
+                        "Update ${findings} stale dependencies" \
+                        "Packages 2+ major versions behind" \
+                        45 "0.90" "deps:stale:${findings}"
+                elif [[ "$findings" -gt 0 ]] && [[ "$NO_GITHUB" != "true" ]] && [[ "$dry_run" != "true" ]]; then
                     local existing
                     existing=$(gh issue list --label "$PATROL_LABEL" --label "dependencies" \
                         --search "Stale dependencies" --json number -q 'length' 2>/dev/null || echo "0")
@@ -814,12 +849,12 @@ Auto-detected by \`shipwright daemon patrol\` on $(now_iso)." \
             if [[ ! -f "$scripts_dir/sw-${name}-test.sh" ]]; then
                 # Count usage across other scripts
                 local usage_count
-                usage_count=$(grep -rl "sw-${name}" "$scripts_dir"/sw-*.sh 2>/dev/null | grep -cv "$basename" 2>/dev/null || echo "0")
+                usage_count=$(grep -rl "sw-${name}" "$scripts_dir"/sw-*.sh 2>/dev/null | grep -cv "$basename" 2>/dev/null || true)
                 usage_count=${usage_count:-0}
 
                 local line_count
-                line_count=$(wc -l < "$script" 2>/dev/null | tr -d ' ' || echo "0")
-                line_count=${line_count:-0}
+                line_count=$(wc -l < "$script" 2>/dev/null | tr -d ' ' || true)
+                line_count="${line_count:-0}"
 
                 untested_entries="${untested_entries}${usage_count}|${basename}|${line_count}\n"
                 findings=$((findings + 1))

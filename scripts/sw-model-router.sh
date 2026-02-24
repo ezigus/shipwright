@@ -7,7 +7,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -416,7 +416,8 @@ show_report() {
 
     # Summary stats
     local total_runs
-    total_runs=$(wc -l < "$MODEL_USAGE_LOG" || echo "0")
+    total_runs=$(wc -l < "$MODEL_USAGE_LOG" || true)
+    total_runs="${total_runs:-0}"
 
     local haiku_runs
     haiku_runs=$(grep -c '"model":"haiku"' "$MODEL_USAGE_LOG" || true)

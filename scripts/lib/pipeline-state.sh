@@ -176,6 +176,13 @@ mark_stage_complete() {
     write_state
 
     record_stage_effectiveness "$stage_id" "complete"
+
+    # Record stage completion in SQLite pipeline_stages table
+    if type record_stage >/dev/null 2>&1; then
+        local _stage_secs
+        _stage_secs=$(get_stage_timing_seconds "$stage_id")
+        record_stage "${SHIPWRIGHT_PIPELINE_ID:-}" "$stage_id" "complete" "${_stage_secs:-0}" "" 2>/dev/null || true
+    fi
     # Update memory baselines and predictive baselines for stage durations
     if [[ "$stage_id" == "test" || "$stage_id" == "build" ]]; then
         local secs
@@ -353,6 +360,13 @@ mark_stage_failed() {
     timing=$(get_stage_timing "$stage_id")
     log_stage "$stage_id" "failed (${timing})"
     write_state
+
+    # Record stage failure in SQLite pipeline_stages table
+    if type record_stage >/dev/null 2>&1; then
+        local _stage_secs
+        _stage_secs=$(get_stage_timing_seconds "$stage_id")
+        record_stage "${SHIPWRIGHT_PIPELINE_ID:-}" "$stage_id" "failed" "${_stage_secs:-0}" "" 2>/dev/null || true
+    fi
 
     # Update GitHub progress + comment failure
     if [[ -n "$ISSUE_NUMBER" ]]; then

@@ -1196,6 +1196,23 @@ daemon_poll_loop() {
                 daemon_patrol --once || daemon_log WARN "daemon_patrol failed — continuing"
                 LAST_PATROL_EPOCH=$now_e
             fi
+
+            # Decision engine cycle (if enabled)
+            local _decision_enabled
+            _decision_enabled=$(policy_get ".decision.enabled" "false" 2>/dev/null || echo "false")
+            if [[ "$_decision_enabled" == "true" ]]; then
+                local _decision_interval
+                _decision_interval=$(policy_get ".decision.cycle_interval_seconds" "1800" 2>/dev/null || echo "1800")
+                local _last_decision_epoch="${_LAST_DECISION_EPOCH:-0}"
+                if [[ $((now_e - _last_decision_epoch)) -ge "$_decision_interval" ]]; then
+                    daemon_log INFO "Running decision engine cycle"
+                    if [[ -f "$SCRIPT_DIR/sw-decide.sh" ]]; then
+                        DECISION_ENGINE_ENABLED=true bash "$SCRIPT_DIR/sw-decide.sh" run --once 2>/dev/null || \
+                            daemon_log WARN "Decision engine cycle failed — continuing"
+                    fi
+                    _LAST_DECISION_EPOCH=$now_e
+                fi
+            fi
         fi
 
         # ── Adaptive poll interval: adjust sleep based on queue state ──

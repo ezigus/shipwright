@@ -7,7 +7,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -481,17 +481,21 @@ cmd_status() {
     locks_dir="${DURABLE_DIR}/locks"
 
     local log_events log_size
-    log_events=$(wc -l < "$log_file" 2>/dev/null || echo "0")
+    log_events=$(wc -l < "$log_file" 2>/dev/null || true)
+    log_events="${log_events:-0}"
     log_size=$(du -h "$log_file" 2>/dev/null | awk '{print $1}' || echo "0")
 
     local dlq_events
-    dlq_events=$(wc -l < "$dlq_file" 2>/dev/null || echo "0")
+    dlq_events=$(wc -l < "$dlq_file" 2>/dev/null || true)
+    dlq_events="${dlq_events:-0}"
 
     local consumer_count
-    consumer_count=$(find "$offsets_dir" -name "consumer-*.offset" 2>/dev/null | wc -l || echo "0")
+    consumer_count=$(find "$offsets_dir" -name "consumer-*.offset" 2>/dev/null | wc -l || true)
+    consumer_count="${consumer_count:-0}"
 
     local active_locks
-    active_locks=$(find "$locks_dir" -type d -mindepth 1 2>/dev/null | wc -l || echo "0")
+    active_locks=$(find "$locks_dir" -type d -mindepth 1 2>/dev/null | wc -l || true)
+    active_locks="${active_locks:-0}"
 
     echo ""
     echo -e "${CYAN}${BOLD}  Durable Workflow Status${RESET}  ${DIM}v${VERSION}${RESET}"

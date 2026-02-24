@@ -282,7 +282,30 @@ daemon_reap_completed() {
 
         # Check if process is still running
         if kill -0 "$pid" 2>/dev/null; then
-            continue
+            # Guard against PID reuse: if job has been running > 6 hours and
+            # the process tree doesn't contain sw-pipeline/sw-loop, it's stale
+            local _started_at _start_e _age_s
+            _started_at=$(echo "$job" | jq -r '.started_at // empty')
+            if [[ -n "$_started_at" ]]; then
+                _start_e=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$_started_at" +%s 2>/dev/null || date -d "$_started_at" +%s 2>/dev/null || echo "0")
+                _age_s=$(( $(now_epoch) - ${_start_e:-0} ))
+                if [[ "$_age_s" -gt 21600 ]]; then  # 6 hours
+                    # Verify this PID is actually our pipeline (not a reused PID)
+                    local _proc_cmd
+                    _proc_cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
+                    if [[ -z "$_proc_cmd" ]] || ! echo "$_proc_cmd" | grep -qE 'sw-pipeline|sw-loop|claude' 2>/dev/null; then
+                        daemon_log WARN "Stale job #${issue_num}: PID $pid running ${_age_s}s but not a pipeline process — force-reaping"
+                        emit_event "daemon.stale_dead" "issue=$issue_num" "pid=$pid" "elapsed_s=$_age_s"
+                        # Fall through to reap logic
+                    else
+                        continue
+                    fi
+                else
+                    continue
+                fi
+            else
+                continue
+            fi
         fi
 
         # Process is dead — determine exit code

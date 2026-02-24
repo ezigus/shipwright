@@ -10,8 +10,9 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 unset CLAUDECODE 2>/dev/null || true
 # Ignore SIGHUP so tmux attach/detach doesn't kill long-running plan/design/review stages
 trap '' HUP
+trap '' SIGPIPE
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -94,6 +95,12 @@ fi
 # shellcheck source=sw-db.sh
 # Durable workflows: db_save_checkpoint/db_load_checkpoint.
 [[ -f "$SCRIPT_DIR/sw-db.sh" ]] && source "$SCRIPT_DIR/sw-db.sh"
+# Ensure DB schema exists so emit_event → db_add_event can write rows (CREATE IF NOT EXISTS is idempotent)
+if type init_schema >/dev/null 2>&1 && type check_sqlite3 >/dev/null 2>&1 && check_sqlite3 2>/dev/null; then
+    init_schema 2>/dev/null || true
+fi
+# shellcheck source=sw-cost.sh
+[[ -f "$SCRIPT_DIR/sw-cost.sh" ]] && source "$SCRIPT_DIR/sw-cost.sh"
 
 # ─── GitHub API Modules (optional) ─────────────────────────────────────────
 # shellcheck source=sw-github-graphql.sh
@@ -144,7 +151,8 @@ rotate_event_log_if_needed() {
     local max_lines=10000
     [[ ! -f "$events_file" ]] && return
     local lines
-    lines=$(wc -l < "$events_file" 2>/dev/null || echo "0")
+    lines=$(wc -l < "$events_file" 2>/dev/null || true)
+    lines="${lines:-0}"
     if [[ "$lines" -gt "$max_lines" ]]; then
         local tmp="${events_file}.rotating"
         if tail -5000 "$events_file" > "$tmp" 2>/dev/null && mv "$tmp" "$events_file" 2>/dev/null; then
@@ -632,6 +640,11 @@ cleanup_on_exit() {
     # Restore stashed changes
     if [[ "$STASHED_CHANGES" == "true" ]]; then
         git stash pop --quiet 2>/dev/null || true
+    fi
+
+    # Release durable pipeline lock
+    if [[ -n "${_PIPELINE_LOCK_ID:-}" ]] && type release_lock >/dev/null 2>&1; then
+        release_lock "$_PIPELINE_LOCK_ID" 2>/dev/null || true
     fi
 
     # Cancel lingering in_progress GitHub Check Runs
@@ -1551,6 +1564,10 @@ run_pipeline() {
             stage_dur_s=$(( $(now_epoch) - stage_start_epoch ))
             success "Stage ${BOLD}$id${RESET} complete ${DIM}(${timing})${RESET}"
             emit_event "stage.completed" "issue=${ISSUE_NUMBER:-0}" "stage=$id" "duration_s=$stage_dur_s" "result=success"
+            # Emit vitals snapshot on every stage transition (not just build/test)
+            if type pipeline_emit_progress_snapshot >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
+                pipeline_emit_progress_snapshot "${ISSUE_NUMBER}" "$id" "0" "0" "0" "" 2>/dev/null || true
+            fi
             # Record model outcome for UCB1 learning
             type record_model_outcome >/dev/null 2>&1 && record_model_outcome "$stage_model_used" "$id" 1 "$stage_dur_s" 0 2>/dev/null || true
             # Broadcast discovery for cross-pipeline learning
@@ -1581,6 +1598,10 @@ run_pipeline() {
                 "duration_s=$stage_dur_s" \
                 "error=${LAST_STAGE_ERROR:-unknown}" \
                 "error_class=${LAST_STAGE_ERROR_CLASS:-unknown}"
+            # Emit vitals snapshot on failure too
+            if type pipeline_emit_progress_snapshot >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
+                pipeline_emit_progress_snapshot "${ISSUE_NUMBER}" "$id" "0" "0" "0" "${LAST_STAGE_ERROR:-unknown}" 2>/dev/null || true
+            fi
             # Log model used for prediction feedback
             echo "${id}|${stage_model_used}|false" >> "${ARTIFACTS_DIR}/model-routing.log"
             # Record model outcome for UCB1 learning
@@ -1773,10 +1794,14 @@ pipeline_cleanup_worktree() {
             # Extract branch name before removing worktree
             local _wt_branch=""
             _wt_branch=$(git worktree list --porcelain 2>/dev/null | grep -A1 "worktree ${worktree_path}$" | grep "^branch " | sed 's|^branch refs/heads/||' || true)
-            git worktree remove --force "$worktree_path" 2>/dev/null || true
+            if ! git worktree remove --force "$worktree_path" 2>/dev/null; then
+                warn "Failed to remove worktree at ${worktree_path} — may need manual cleanup"
+            fi
             # Clean up the local branch
             if [[ -n "$_wt_branch" ]]; then
-                git branch -D "$_wt_branch" 2>/dev/null || true
+                if ! git branch -D "$_wt_branch" 2>/dev/null; then
+                    warn "Failed to delete local branch ${_wt_branch}"
+                fi
             fi
             # Clean up the remote branch (if it was pushed)
             if [[ -n "$_wt_branch" && "${NO_GITHUB:-}" != "true" ]]; then
@@ -2104,6 +2129,19 @@ pipeline_start() {
 
     setup_dirs
 
+    # Acquire durable lock to prevent concurrent pipelines on the same issue/goal
+    _PIPELINE_LOCK_ID=""
+    if type acquire_lock >/dev/null 2>&1; then
+        _PIPELINE_LOCK_ID="pipeline-${ISSUE_NUMBER:-goal-$$}"
+        if ! acquire_lock "$_PIPELINE_LOCK_ID" 5 2>/dev/null; then
+            error "Another pipeline is already running for this issue/goal"
+            echo -e "  Wait for it to finish, or remove stale lock:"
+            echo -e "  ${DIM}rm -rf ~/.shipwright/durable/locks/${_PIPELINE_LOCK_ID}.lock${RESET}"
+            _PIPELINE_LOCK_ID=""
+            exit 1
+        fi
+    fi
+
     # Generate reasoning trace (complexity analysis, template selection, failure predictions)
     local user_specified_pipeline="$PIPELINE_NAME"
     generate_reasoning_trace 2>/dev/null || true
@@ -2227,11 +2265,15 @@ pipeline_start() {
         if [[ -z "$GIT_BRANCH" ]]; then
             local ci_branch="ci/issue-${ISSUE_NUMBER}"
             info "CI resume: creating branch ${ci_branch} from current HEAD"
-            git checkout -b "$ci_branch" 2>/dev/null || git checkout "$ci_branch" 2>/dev/null || true
+            if ! git checkout -b "$ci_branch" 2>/dev/null && ! git checkout "$ci_branch" 2>/dev/null; then
+                warn "CI resume: failed to create or checkout branch ${ci_branch}"
+            fi
             GIT_BRANCH="$ci_branch"
         elif [[ "$(git branch --show-current 2>/dev/null)" != "$GIT_BRANCH" ]]; then
             info "CI resume: checking out branch ${GIT_BRANCH}"
-            git checkout -b "$GIT_BRANCH" 2>/dev/null || git checkout "$GIT_BRANCH" 2>/dev/null || true
+            if ! git checkout -b "$GIT_BRANCH" 2>/dev/null && ! git checkout "$GIT_BRANCH" 2>/dev/null; then
+                warn "CI resume: failed to create or checkout branch ${GIT_BRANCH}"
+            fi
         fi
         write_state 2>/dev/null || true
     fi
@@ -2340,6 +2382,11 @@ pipeline_start() {
         "model=${MODEL:-opus}" \
         "goal=${GOAL}"
 
+    # Record pipeline run in SQLite for dashboard visibility
+    if type add_pipeline_run >/dev/null 2>&1; then
+        add_pipeline_run "${SHIPWRIGHT_PIPELINE_ID}" "${ISSUE_NUMBER:-0}" "${GOAL}" "${BRANCH:-}" "${PIPELINE_NAME}" 2>/dev/null || true
+    fi
+
     # Durable WAL: publish pipeline start event
     if type publish_event >/dev/null 2>&1; then
         publish_event "pipeline.started" "{\"issue\":\"${ISSUE_NUMBER:-0}\",\"pipeline\":\"${PIPELINE_NAME}\",\"goal\":\"${GOAL:0:200}\"}" 2>/dev/null || true
@@ -2386,9 +2433,34 @@ pipeline_start() {
             "total_cost=$total_cost" \
             "self_heal_count=$SELF_HEAL_COUNT"
 
+        # Update pipeline run status in SQLite
+        if type update_pipeline_status >/dev/null 2>&1; then
+            update_pipeline_status "${SHIPWRIGHT_PIPELINE_ID}" "completed" "${PIPELINE_SLOWEST_STAGE:-}" "complete" "${total_dur_s:-0}" 2>/dev/null || true
+        fi
+
         # Auto-ingest pipeline outcome into recruit profiles
         if [[ -x "$SCRIPT_DIR/sw-recruit.sh" ]]; then
             bash "$SCRIPT_DIR/sw-recruit.sh" ingest-pipeline 1 2>/dev/null || true
+        fi
+
+        # Capture success patterns to memory (learn what works — parallel the failure path)
+        if [[ -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
+            bash "$SCRIPT_DIR/sw-memory.sh" capture "$STATE_FILE" "$ARTIFACTS_DIR" 2>/dev/null || true
+        fi
+        # Update memory baselines with successful run metrics
+        if type memory_update_metrics >/dev/null 2>&1; then
+            memory_update_metrics "build_duration_s" "${total_dur_s:-0}" 2>/dev/null || true
+            memory_update_metrics "total_cost_usd" "${total_cost:-0}" 2>/dev/null || true
+            memory_update_metrics "iterations" "$((SELF_HEAL_COUNT + 1))" 2>/dev/null || true
+        fi
+
+        # Record positive fix outcome if self-healing succeeded
+        if [[ "$SELF_HEAL_COUNT" -gt 0 && -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
+            local _success_sig
+            _success_sig=$(tail -30 "$ARTIFACTS_DIR/test-results.log" 2>/dev/null | head -3 | tr '\n' ' ' | sed 's/^ *//;s/ *$//' || true)
+            if [[ -n "$_success_sig" ]]; then
+                bash "$SCRIPT_DIR/sw-memory.sh" fix-outcome "$_success_sig" "true" "true" 2>/dev/null || true
+            fi
         fi
     else
         notify "Pipeline Failed" "Goal: ${GOAL}\nFailed at: ${CURRENT_STAGE_ID:-unknown}" "error"
@@ -2406,6 +2478,11 @@ pipeline_start() {
             "output_tokens=$TOTAL_OUTPUT_TOKENS" \
             "total_cost=$total_cost" \
             "self_heal_count=$SELF_HEAL_COUNT"
+
+        # Update pipeline run status in SQLite
+        if type update_pipeline_status >/dev/null 2>&1; then
+            update_pipeline_status "${SHIPWRIGHT_PIPELINE_ID}" "failed" "${CURRENT_STAGE_ID:-unknown}" "failed" "${total_dur_s:-0}" 2>/dev/null || true
+        fi
 
         # Auto-ingest pipeline outcome into recruit profiles
         if [[ -x "$SCRIPT_DIR/sw-recruit.sh" ]]; then
@@ -2542,6 +2619,11 @@ pipeline_start() {
         "output_tokens=$TOTAL_OUTPUT_TOKENS" \
         "model=$model_key" \
         "cost_usd=$total_cost"
+
+    # Persist cost entry to costs.json + SQLite (was missing — tokens accumulated but never written)
+    if type cost_record >/dev/null 2>&1; then
+        cost_record "$TOTAL_INPUT_TOKENS" "$TOTAL_OUTPUT_TOKENS" "$model_key" "pipeline" "${ISSUE_NUMBER:-}" 2>/dev/null || true
+    fi
 
     # Record pipeline outcome for Thompson sampling / outcome-based learning
     if type db_record_outcome >/dev/null 2>&1; then

@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
@@ -395,7 +395,8 @@ _intelligence_fallback_analyze() {
     local outcomes_file="$HOME/.shipwright/optimization/outcomes.jsonl"
     if [[ -f "$outcomes_file" ]] && command -v jq &>/dev/null; then
         local sample_count
-        sample_count=$(wc -l < "$outcomes_file" 2>/dev/null || echo "0")
+        sample_count=$(wc -l < "$outcomes_file" 2>/dev/null || true)
+        sample_count="${sample_count:-0}"
 
         if [[ "$sample_count" -gt 5 ]]; then
             # Compute average complexity from past outcomes
@@ -552,7 +553,8 @@ intelligence_compose_pipeline() {
     if ! _intelligence_enabled; then
         local fallback
         fallback=$(_intelligence_fallback_compose "$issue_analysis")
-        echo "$fallback" | jq -c '. + {error: "intelligence_disabled"}' 2>/dev/null || echo '{"error":"intelligence_disabled","stages":[]}'
+        echo "$fallback" | jq -c '. + {status: "disabled", error: "intelligence_disabled"}' 2>/dev/null || echo '{"status":"disabled","error":"intelligence_disabled","stages":[]}'
+        [[ -z "${_INTEL_DISABLED_LOGGED:-}" ]] && { info "Intelligence disabled — using data-driven fallbacks"; _INTEL_DISABLED_LOGGED=1; }
         return 0
     fi
 
@@ -615,7 +617,8 @@ intelligence_predict_cost() {
     if ! _intelligence_enabled; then
         local fallback
         fallback=$(_intelligence_fallback_cost)
-        echo "$fallback" | jq -c '. + {error: "intelligence_disabled", estimated_iterations: 0, likely_failure_stage: "unknown"}' 2>/dev/null || echo '{"error":"intelligence_disabled","estimated_cost_usd":0,"estimated_iterations":0,"likely_failure_stage":"unknown"}'
+        echo "$fallback" | jq -c '. + {status: "disabled", error: "intelligence_disabled", estimated_iterations: 0, likely_failure_stage: "unknown"}' 2>/dev/null || echo '{"status":"disabled","error":"intelligence_disabled","estimated_cost_usd":0,"estimated_iterations":0,"likely_failure_stage":"unknown"}'
+        [[ -z "${_INTEL_DISABLED_LOGGED:-}" ]] && { info "Intelligence disabled — using data-driven fallbacks"; _INTEL_DISABLED_LOGGED=1; }
         return 0
     fi
 
@@ -671,7 +674,8 @@ intelligence_synthesize_findings() {
     local findings_json="${1:-"[]"}"
 
     if ! _intelligence_enabled; then
-        echo '{"error":"intelligence_disabled","priority_fixes":[],"root_causes":[],"recommended_approach":""}'
+        echo '{"status":"disabled","error":"intelligence_disabled","priority_fixes":[],"root_causes":[],"recommended_approach":""}'
+        [[ -z "${_INTEL_DISABLED_LOGGED:-}" ]] && { info "Intelligence disabled — using data-driven fallbacks"; _INTEL_DISABLED_LOGGED=1; }
         return 0
     fi
 
@@ -720,7 +724,8 @@ intelligence_search_memory() {
     local top_n="${3:-5}"
 
     if ! _intelligence_enabled; then
-        echo '{"error":"intelligence_disabled","results":[]}'
+        echo '{"status":"disabled","error":"intelligence_disabled","results":[]}'
+        [[ -z "${_INTEL_DISABLED_LOGGED:-}" ]] && { info "Intelligence disabled — using data-driven fallbacks"; _INTEL_DISABLED_LOGGED=1; }
         return 0
     fi
 

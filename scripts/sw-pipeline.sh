@@ -99,7 +99,7 @@ fi
 if type init_schema >/dev/null 2>&1 && type check_sqlite3 >/dev/null 2>&1 && check_sqlite3 2>/dev/null; then
     init_schema 2>/dev/null || true
 fi
-# shellcheck source=sw-cost.sh — for cost_record persistence to costs.json + DB
+# shellcheck source=sw-cost.sh
 [[ -f "$SCRIPT_DIR/sw-cost.sh" ]] && source "$SCRIPT_DIR/sw-cost.sh"
 
 # ─── GitHub API Modules (optional) ─────────────────────────────────────────

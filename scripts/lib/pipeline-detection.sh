@@ -182,6 +182,9 @@ parse_helper_help_output() {
             if echo "$output" | grep -q '\-p \[suite\]'; then
                 flags=$(jq -c '. + {"integration":"-p IntegrationTests","ui":"-p zpodUITests","smoke":"-p AppSmokeTests"}' <<<"$flags")
             fi
+            if echo "$output" | grep -qE '^\s+-s\b'; then
+                flags=$(jq -c '. + {"syntax":"-s","lint":"-l","fast":"-s -l"}' <<<"$flags")
+            fi
             ;;
         *)
             ;;
@@ -230,50 +233,68 @@ collect_changed_files_json() {
     jq -Rsc 'split("\n") | map(select(length > 0))' <<<"$files"
 }
 
+# Extract Swift class names from changed files outside Packages/ (filename without .swift extension).
+# Used to build targeted -t flags for the Xcode test runner.
+detect_changed_non_package_classes() {
+    local changed_files_json="${1:-}"
+    [[ -z "$changed_files_json" ]] && changed_files_json=$(collect_changed_files_json)
+    jq -r '[.[] | select(test("\\.swift$") and (test("^Packages/") | not)) | split("/") | last | sub("\\.swift$";"")] | unique | sort | join(",")' <<<"$changed_files_json"
+}
+
 resolve_relevant_environments_json() {
     local envs_json="$1" changed_files_json="$2"
     local changed_count
     changed_count=$(jq 'length' <<<"$changed_files_json" 2>/dev/null || echo 0)
+
+    local result
     if [[ "$changed_count" -eq 0 ]]; then
-        jq -c '[.[].id]' <<<"$envs_json"
-        return
-    fi
-
-    local relevant='[]'
-    local f
-    while IFS= read -r f; do
-        [[ -z "$f" ]] && continue
-        case "$f" in
-            *.swift|*.m|*.mm|*.h|*.xib|*.storyboard|*.xcworkspace/*|*.xcodeproj/*|*.pbxproj)
-                relevant=$(jq -c '. + ["ios_xcode"]' <<<"$relevant")
-                ;;
-        esac
-        case "$f" in
-            Package.swift|*/Package.swift|Sources/*|*/Sources/*|Tests/*|*/Tests/*)
-                relevant=$(jq -c '. + ["swiftpm"]' <<<"$relevant")
-                ;;
-        esac
-        case "$f" in
-            *.js|*.jsx|*.ts|*.tsx|package.json|pnpm-lock.yaml|yarn.lock|bun.lockb)
-                relevant=$(jq -c '. + ["node"]' <<<"$relevant")
-                ;;
-        esac
-        case "$f" in *.py|pyproject.toml|requirements.txt|setup.py|pytest.ini) relevant=$(jq -c '. + ["python"]' <<<"$relevant") ;; esac
-        case "$f" in *.go|go.mod) relevant=$(jq -c '. + ["go"]' <<<"$relevant") ;; esac
-        case "$f" in *.rs|Cargo.toml) relevant=$(jq -c '. + ["rust"]' <<<"$relevant") ;; esac
-        case "$f" in *.rb|Gemfile) relevant=$(jq -c '. + ["ruby"]' <<<"$relevant") ;; esac
-        case "$f" in pom.xml|*.java) relevant=$(jq -c '. + ["java_maven"]' <<<"$relevant") ;; esac
-        case "$f" in build.gradle|build.gradle.kts|*.kt) relevant=$(jq -c '. + ["java_gradle"]' <<<"$relevant") ;; esac
-        case "$f" in Makefile) relevant=$(jq -c '. + ["make"]' <<<"$relevant") ;; esac
-    done < <(jq -r '.[]' <<<"$changed_files_json")
-
-    local filtered
-    filtered=$(jq -c --argjson envs "$envs_json" 'unique | map(select(. as $id | any($envs[]; .id == $id)))' <<<"$relevant")
-    if [[ "$(jq 'length' <<<"$filtered")" -eq 0 ]]; then
-        jq -c '[.[].id]' <<<"$envs_json"
+        result=$(jq -c '[.[].id]' <<<"$envs_json")
     else
-        echo "$filtered"
+        local relevant='[]'
+        local f
+        while IFS= read -r f; do
+            [[ -z "$f" ]] && continue
+            case "$f" in
+                Packages/*/Sources/*|Packages/*/Tests/*)
+                    # Package-internal file: swiftpm covers this; full Xcode suite not needed
+                    ;;
+                *.swift|*.m|*.mm|*.h|*.xib|*.storyboard|*.xcworkspace/*|*.xcodeproj/*|*.pbxproj)
+                    relevant=$(jq -c '. + ["ios_xcode"]' <<<"$relevant")
+                    ;;
+            esac
+            case "$f" in
+                Package.swift|*/Package.swift|Sources/*|*/Sources/*|Tests/*|*/Tests/*)
+                    relevant=$(jq -c '. + ["swiftpm"]' <<<"$relevant")
+                    ;;
+            esac
+            case "$f" in
+                *.js|*.jsx|*.ts|*.tsx|package.json|pnpm-lock.yaml|yarn.lock|bun.lockb)
+                    relevant=$(jq -c '. + ["node"]' <<<"$relevant")
+                    ;;
+            esac
+            case "$f" in *.py|pyproject.toml|requirements.txt|setup.py|pytest.ini) relevant=$(jq -c '. + ["python"]' <<<"$relevant") ;; esac
+            case "$f" in *.go|go.mod) relevant=$(jq -c '. + ["go"]' <<<"$relevant") ;; esac
+            case "$f" in *.rs|Cargo.toml) relevant=$(jq -c '. + ["rust"]' <<<"$relevant") ;; esac
+            case "$f" in *.rb|Gemfile) relevant=$(jq -c '. + ["ruby"]' <<<"$relevant") ;; esac
+            case "$f" in pom.xml|*.java) relevant=$(jq -c '. + ["java_maven"]' <<<"$relevant") ;; esac
+            case "$f" in build.gradle|build.gradle.kts|*.kt) relevant=$(jq -c '. + ["java_gradle"]' <<<"$relevant") ;; esac
+            case "$f" in Makefile) relevant=$(jq -c '. + ["make"]' <<<"$relevant") ;; esac
+        done < <(jq -r '.[]' <<<"$changed_files_json")
+
+        local filtered
+        filtered=$(jq -c --argjson envs "$envs_json" 'unique | map(select(. as $id | any($envs[]; .id == $id)))' <<<"$relevant")
+        if [[ "$(jq 'length' <<<"$filtered")" -eq 0 ]]; then
+            result=$(jq -c '[.[].id]' <<<"$envs_json")
+        else
+            result="$filtered"
+        fi
     fi
+
+    # ios_xcode full run already covers package tests — drop swiftpm to avoid redundant run
+    if jq -e 'contains(["ios_xcode"])' <<<"$result" >/dev/null 2>&1; then
+        result=$(jq -c 'map(select(. != "swiftpm"))' <<<"$result")
+    fi
+    echo "$result"
 }
 
 resolve_test_mode_for_env() {
@@ -332,6 +353,16 @@ select_test_commands_for_context_json() {
             local script helper_flags
             script=$(jq -r '.script // ""' <<<"$helper")
             helper_flags=$(jq -r --arg mode "$mode" '.mode_flags[$mode] // ""' <<<"$helper")
+            if [[ "$env_id" == "ios_xcode" ]]; then
+                local classes pkg_count all_targets
+                classes=$(detect_changed_non_package_classes "$changed_files_json")
+                pkg_count=$(jq '[.[] | select(test("^Packages/"))] | length' <<<"$changed_files_json")
+                all_targets="$classes"
+                if [[ "$pkg_count" -gt 0 ]]; then
+                    [[ -n "$all_targets" ]] && all_targets="${all_targets},Packages" || all_targets="Packages"
+                fi
+                [[ -n "$all_targets" ]] && helper_flags="-t ${all_targets}"
+            fi
             if [[ -n "$script" ]]; then
                 cmd="bash ./${script}"
                 [[ -n "$helper_flags" ]] && cmd="${cmd} ${helper_flags}"

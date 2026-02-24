@@ -67,7 +67,7 @@ assert_contains() {
     local desc="$1"
     local haystack="$2"
     local needle="$3"
-    if echo "$haystack" | grep -qF "$needle" 2>/dev/null; then
+    if grep -qF "$needle" <<<"$haystack" 2>/dev/null; then
         assert_pass "$desc"
     else
         assert_fail "$desc" "output missing: $needle"
@@ -78,7 +78,7 @@ assert_contains_regex() {
     local desc="$1"
     local haystack="$2"
     local pattern="$3"
-    if echo "$haystack" | grep -qE "$pattern" 2>/dev/null; then
+    if grep -qE "$pattern" <<<"$haystack" 2>/dev/null; then
         assert_pass "$desc"
     else
         assert_fail "$desc" "output missing pattern: $pattern"

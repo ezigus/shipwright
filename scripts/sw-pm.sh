@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -121,7 +121,8 @@ analyze_issue() {
     # Count estimated files affected by analyzing body content
     local file_scope complexity risk estimated_hours
     local files_mentioned
-    files_mentioned=$(echo "$body" | grep -o '\b[a-zA-Z0-9_.-]*\.[a-z]*' | sort -u | wc -l || echo "0")
+    files_mentioned=$(echo "$body" | grep -o '\b[a-zA-Z0-9_.-]*\.[a-z]*' | sort -u | wc -l || true)
+    files_mentioned="${files_mentioned:-0}"
     files_mentioned=$((files_mentioned + 1))  # At least 1 file
 
     # Determine file scope

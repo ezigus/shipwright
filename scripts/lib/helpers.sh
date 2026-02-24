@@ -89,17 +89,31 @@ emit_event() {
     local _lock_file="${EVENTS_FILE}.lock"
     (
         if command -v flock >/dev/null 2>&1; then
-            flock -w 2 200 2>/dev/null || true
+            if ! flock -w 2 200 2>/dev/null; then
+                echo "WARN: emit_event lock timeout — concurrent write possible" >&2
+            fi
         fi
         echo "$_event_line" >> "$EVENTS_FILE"
     ) 200>"$_lock_file"
 
-    # Optional schema validation (dev mode only)
-    if [[ -n "${SHIPWRIGHT_DEV:-}" && -n "${_CONFIG_REPO_DIR:-}" && -f "${_CONFIG_REPO_DIR}/config/event-schema.json" ]]; then
+    # Schema validation — auto-detect config repo from BASH_SOURCE location
+    local _schema_dir="${_CONFIG_REPO_DIR:-}"
+    if [[ -z "$_schema_dir" ]]; then
+        local _helpers_dir
+        _helpers_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || true
+        if [[ -n "$_helpers_dir" && -f "${_helpers_dir}/../../config/event-schema.json" ]]; then
+            _schema_dir="$(cd "${_helpers_dir}/../.." && pwd)"
+        fi
+    fi
+    if [[ -n "$_schema_dir" && -f "${_schema_dir}/config/event-schema.json" ]]; then
         local known_types
-        known_types=$(jq -r '.event_types | keys[]' "${_CONFIG_REPO_DIR}/config/event-schema.json" 2>/dev/null || true)
+        known_types=$(jq -r '.event_types | keys[]' "${_schema_dir}/config/event-schema.json" 2>/dev/null || true)
         if [[ -n "$known_types" ]] && ! echo "$known_types" | grep -qx "$event_type"; then
-            echo "WARN: Unknown event type '$event_type'" >&2
+            # Warn-only: never reject events, just log to stderr on first unknown type per session
+            if [[ -z "${_SW_SCHEMA_WARNED:-}" ]]; then
+                echo "WARN: Unknown event type '$event_type' — update config/event-schema.json" >&2
+                _SW_SCHEMA_WARNED=1
+            fi
         fi
     fi
 }
@@ -198,16 +212,3 @@ _sw_github_url() {
     echo "https://github.com/${repo}"
 }
 
-# ─── Network Safe Wrappers (config-aware timeouts) ─────────────────────────────
-# Use SHIPWRIGHT_* env vars if set; otherwise _config_get_int when config.sh is loaded
-# Usage: _curl_safe [curl args...]  |  _gh_safe [gh args...]
-_curl_safe() {
-    local ct="${SHIPWRIGHT_CONNECT_TIMEOUT:-$(_config_get_int "network.connect_timeout" 10 2>/dev/null || echo 10)}"
-    local mt="${SHIPWRIGHT_MAX_TIME:-$(_config_get_int "network.max_time" 60 2>/dev/null || echo 60)}"
-    curl --connect-timeout "$ct" --max-time "$mt" "$@"
-}
-
-_gh_safe() {
-    local gh_timeout="${SHIPWRIGHT_GH_TIMEOUT:-$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)}"
-    GH_HTTP_TIMEOUT="$gh_timeout" _timeout "$gh_timeout" gh "$@"
-}

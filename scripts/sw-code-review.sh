@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -72,7 +72,8 @@ detect_code_smells() {
 
     # Check 1: Long functions (>60 lines in bash)
     local func_count
-    func_count=$(grep -c "^[a-zA-Z_][a-zA-Z0-9_]*().*{" "$target_file" 2>/dev/null || echo "0")
+    func_count=$(grep -c "^[a-zA-Z_][a-zA-Z0-9_]*().*{" "$target_file" 2>/dev/null || true)
+    func_count="${func_count:-0}"
     if [[ "$func_count" -gt 0 ]]; then
         while IFS= read -r line; do
             if [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*\(\).*\{ ]]; then
@@ -106,7 +107,8 @@ detect_code_smells() {
 
     # Check 3: Duplicate code patterns (repeated >3 times)
     local dup_count=0
-    dup_count=$(grep -c '^\s*\(cd\|cd\|mkdir\|rm\|echo\)' "$target_file" 2>/dev/null || echo "0")
+    dup_count=$(grep -c '^\s*\(cd\|cd\|mkdir\|rm\|echo\)' "$target_file" 2>/dev/null || true)
+    dup_count="${dup_count:-0}"
     if [[ $dup_count -gt 3 ]]; then
         issues+=("REPEATED_PATTERNS: Common operations appear $dup_count times (consider helper functions)")
     fi
@@ -139,7 +141,8 @@ check_solid_principles() {
 
     # Single Responsibility: Check if scripts do multiple unrelated things
     local sourced_count
-    sourced_count=$(grep -c '^\s*source\|^\s*\.\s' "$target_file" 2>/dev/null || echo "0")
+    sourced_count=$(grep -c '^\s*source\|^\s*\.\s' "$target_file" 2>/dev/null || true)
+    sourced_count="${sourced_count:-0}"
     if [[ $sourced_count -gt 3 ]]; then
         violations+=("SRP_VIOLATION: Script sources $sourced_count modules (too many responsibilities)")
     fi
@@ -159,7 +162,8 @@ check_solid_principles() {
         if [[ "$line" =~ ^[a-zA-Z_][a-zA-Z0-9_]*\(\) ]]; then
             local func_name="${line%%(*}"
             local body
-            body=$(awk "/^${func_name}\\(\\)/,/^}/" "$target_file" | grep -c '\$[0-9]' || echo "0")
+            body=$(awk "/^${func_name}\\(\\)/,/^}/" "$target_file" | grep -c '\$[0-9]' || true)
+            body="${body:-0}"
             if [[ $body -gt 5 ]]; then
                 violations+=("ISP_VIOLATION: Function $func_name uses >5 parameters")
             fi
@@ -227,7 +231,9 @@ analyze_complexity() {
 
             # Cyclomatic complexity: count decision points (if, elif, case, &&, ||)
             local cc=1
-            cc=$((cc + $(sed -n "${start_line},${end_line}p" "$target_file" | grep -cE '\s(if|elif|case|&&|\|\|)' || echo 0)))
+            local _cc_count
+            _cc_count=$(sed -n "${start_line},${end_line}p" "$target_file" | grep -cE '\s(if|elif|case|&&|\|\|)' || true)
+            cc=$((cc + ${_cc_count:-0}))
 
             # Lines of code
             local loc=$((end_line - start_line))
@@ -266,8 +272,12 @@ check_style_consistency() {
     local has_trap=false
     local has_set_e=false
 
-    [[ $(grep -c 'trap.*ERR' "$target_file" 2>/dev/null || echo 0) -gt 0 ]] && has_trap=true
-    [[ $(grep -c 'set -e' "$target_file" 2>/dev/null || echo 0) -gt 0 ]] && has_set_e=true
+    local _trap_count
+    _trap_count=$(grep -c 'trap.*ERR' "$target_file" 2>/dev/null || true)
+    [[ "${_trap_count:-0}" -gt 0 ]] && has_trap=true
+    local _set_e_count
+    _set_e_count=$(grep -c 'set -e' "$target_file" 2>/dev/null || true)
+    [[ "${_set_e_count:-0}" -gt 0 ]] && has_set_e=true
 
     if [[ "$has_set_e" == "true" ]] && [[ "$has_trap" == "false" ]]; then
         issues+=("STYLE: Missing ERR trap despite 'set -e' (inconsistent error handling)")
@@ -276,8 +286,10 @@ check_style_consistency() {
     # Check for inconsistent quote usage
     local single_quotes
     local double_quotes
-    single_quotes=$(grep -o "'" "$target_file" 2>/dev/null | wc -l || echo 0)
-    double_quotes=$(grep -o '"' "$target_file" 2>/dev/null | wc -l || echo 0)
+    single_quotes=$(grep -o "'" "$target_file" 2>/dev/null | wc -l || true)
+    single_quotes="${single_quotes:-0}"
+    double_quotes=$(grep -o '"' "$target_file" 2>/dev/null | wc -l || true)
+    double_quotes="${double_quotes:-0}"
     if [[ $single_quotes -gt $((double_quotes * 3)) ]] || [[ $double_quotes -gt $((single_quotes * 3)) ]]; then
         issues+=("STYLE: Inconsistent quote style (mix of single and double quotes)")
     fi
@@ -285,8 +297,10 @@ check_style_consistency() {
     # Check for inconsistent spacing/indentation
     local tab_count
     local space_count
-    tab_count=$(grep -c $'^\t' "$target_file" 2>/dev/null || echo 0)
-    space_count=$(grep -c '^  ' "$target_file" 2>/dev/null || echo 0)
+    tab_count=$(grep -c $'^\t' "$target_file" 2>/dev/null || true)
+    tab_count="${tab_count:-0}"
+    space_count=$(grep -c '^  ' "$target_file" 2>/dev/null || true)
+    space_count="${space_count:-0}"
     if [[ $tab_count -gt 0 ]] && [[ $space_count -gt 0 ]]; then
         issues+=("STYLE: Mixed tabs and spaces")
     fi
@@ -333,7 +347,8 @@ auto_fix() {
 
     # Fix 2: Trailing whitespace
     local trailing_ws
-    trailing_ws=$(grep -c '[[:space:]]$' "$target_file" 2>/dev/null || echo "0")
+    trailing_ws=$(grep -c '[[:space:]]$' "$target_file" 2>/dev/null || true)
+    trailing_ws="${trailing_ws:-0}"
     if [[ $trailing_ws -gt 0 ]]; then
         sed -i '' 's/[[:space:]]*$//' "$target_file"
         info "Removed $trailing_ws lines of trailing whitespace"
@@ -349,7 +364,8 @@ auto_fix() {
 
     # Fix 4: Consistent spacing around operators (simple cases)
     local spacing_fixes=0
-    spacing_fixes=$(grep -c '==' "$target_file" 2>/dev/null || echo "0")
+    spacing_fixes=$(grep -c '==' "$target_file" 2>/dev/null || true)
+    spacing_fixes="${spacing_fixes:-0}"
     if [[ $spacing_fixes -gt 0 ]]; then
         info "Flagged $spacing_fixes operator spacing cases (manual review recommended)"
     fi
@@ -507,9 +523,12 @@ scan_codebase() {
         local solids=0
         local arch_issues=0
 
-        smells=$(detect_code_smells "$file" 2>/dev/null | wc -l || echo 0)
-        solids=$(check_solid_principles "$file" 2>/dev/null | wc -l || echo 0)
-        arch_issues=$(check_architecture_boundaries "$file" 2>/dev/null | wc -l || echo 0)
+        smells=$(detect_code_smells "$file" 2>/dev/null | wc -l || true)
+        smells="${smells:-0}"
+        solids=$(check_solid_principles "$file" 2>/dev/null | wc -l || true)
+        solids="${solids:-0}"
+        arch_issues=$(check_architecture_boundaries "$file" 2>/dev/null | wc -l || true)
+        arch_issues="${arch_issues:-0}"
 
         local file_issues=$((smells + solids + arch_issues))
         total_issues=$((total_issues + file_issues))

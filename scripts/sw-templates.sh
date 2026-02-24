@@ -5,7 +5,7 @@
 # ║  Templates define reusable agent team configurations (roles, layout,    ║
 # ║  focus areas) that shipwright session --template can use to scaffold teams.    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="3.0.0"
+VERSION="3.1.0"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -82,8 +82,8 @@ json_agent_count() {
     if command -v jq >/dev/null 2>&1; then
         jq -r '.agents // [] | length' "$file" 2>/dev/null
     else
-        grep -c '"name"' "$file" 2>/dev/null || echo "0"
-    fi
+        grep -c '"name"' "$file" 2>/dev/null || true
+    fi | tr -d ' ' | sed 's/^$/0/'
 }
 
 # Print agent details from a template

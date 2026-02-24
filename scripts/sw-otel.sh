@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -77,6 +77,7 @@ cmd_metrics() {
 
     # Parse events.jsonl
     if [[ -f "$EVENTS_FILE" ]]; then
+        {
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
 
@@ -468,9 +469,12 @@ cmd_report() {
     local last_event_ts=""
 
     if [[ -f "$EVENTS_FILE" ]]; then
-        event_count=$(wc -l < "$EVENTS_FILE" || echo "0")
-        export_count=$(grep -c '"type":"otel_export"' "$EVENTS_FILE" 2>/dev/null || echo "0")
-        webhook_count=$(grep -c '"type":"webhook_sent"' "$EVENTS_FILE" 2>/dev/null || echo "0")
+        event_count=$(wc -l < "$EVENTS_FILE" || true)
+        event_count="${event_count:-0}"
+        export_count=$(grep -c '"type":"otel_export"' "$EVENTS_FILE" 2>/dev/null || true)
+        export_count="${export_count:-0}"
+        webhook_count=$(grep -c '"type":"webhook_sent"' "$EVENTS_FILE" 2>/dev/null || true)
+        webhook_count="${webhook_count:-0}"
         last_event_ts=$(tail -n1 "$EVENTS_FILE" | jq -r '.ts // "unknown"' 2>/dev/null || echo "unknown")
     fi
 

@@ -390,6 +390,16 @@ init_state() {
             atomic_write_state "$init_json"
         ) 200>"$lock_file"
     else
+        # Validate existing state file JSON before using it
+        if ! jq '.' "$STATE_FILE" >/dev/null 2>&1; then
+            daemon_log WARN "Corrupted state file detected — backing up and resetting"
+            cp "$STATE_FILE" "${STATE_FILE}.corrupted.$(date +%s)" 2>/dev/null || true
+            rm -f "$STATE_FILE"
+            # Re-initialize as fresh state (recursive call with file removed)
+            init_state
+            return
+        fi
+
         # Update PID and start time in existing state
         locked_state_update \
             --arg pid "$$" \
@@ -446,6 +456,13 @@ daemon_is_inflight() {
 get_active_count() {
     if [[ ! -f "$STATE_FILE" ]]; then
         echo 0
+        return
+    fi
+    # Validate state file JSON before parsing (mid-flight corruption check)
+    if ! jq empty "$STATE_FILE" 2>/dev/null; then
+        daemon_log WARN "State file corrupted mid-flight — backing up and resetting"
+        cp "$STATE_FILE" "${STATE_FILE}.corrupted.$(date +%s)" 2>/dev/null || true
+        init_state
         return
     fi
     jq -r '.active_jobs | length' "$STATE_FILE" 2>/dev/null || echo 0

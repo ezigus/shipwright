@@ -7,7 +7,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -46,6 +46,13 @@ DISCOVERIES_FILE="${HOME}/.shipwright/discoveries.jsonl"
 DISCOVERIES_DIR="${HOME}/.shipwright/discoveries"
 DISCOVERY_TTL_SECS=$((24 * 60 * 60))  # 24 hours default
 
+# ─── Remote Discovery Server (optional) ─────────────────────────────────────
+# Set via env var or daemon-config.json: "discovery_server_url"
+DISCOVERY_SERVER_URL="${DISCOVERY_SERVER_URL:-}"
+if [[ -z "$DISCOVERY_SERVER_URL" && -f ".claude/daemon-config.json" ]]; then
+    DISCOVERY_SERVER_URL=$(jq -r '.discovery_server_url // ""' ".claude/daemon-config.json" 2>/dev/null || true)
+fi
+
 ensure_discoveries_dir() {
     mkdir -p "$DISCOVERIES_DIR"
 }
@@ -82,6 +89,15 @@ broadcast_discovery() {
 
     echo "$entry" >> "$DISCOVERIES_FILE"
     type rotate_jsonl >/dev/null 2>&1 && rotate_jsonl "$DISCOVERIES_FILE" 5000
+
+    # Fire-and-forget POST to remote discovery server if configured
+    if [[ -n "${DISCOVERY_SERVER_URL:-}" ]]; then
+        curl -sS -X POST "${DISCOVERY_SERVER_URL}/api/discoveries" \
+            -H "Content-Type: application/json" \
+            -d "$entry" \
+            --max-time 5 >/dev/null 2>&1 &
+    fi
+
     success "Broadcast discovery: ${category} (${file_patterns})"
 }
 
@@ -92,6 +108,16 @@ query_discoveries() {
     local limit="${2:-10}"
 
     ensure_discoveries_dir
+
+    # Merge remote discoveries if server configured (best-effort)
+    if [[ -n "${DISCOVERY_SERVER_URL:-}" ]]; then
+        local remote_results
+        remote_results=$(curl -sS "${DISCOVERY_SERVER_URL}/api/discoveries?patterns=${file_patterns}" \
+            --max-time 5 2>/dev/null || true)
+        if [[ -n "$remote_results" ]] && echo "$remote_results" | jq -e '.' >/dev/null 2>&1; then
+            echo "$remote_results" | jq -cr '.[]' >> "$DISCOVERIES_FILE" 2>/dev/null || true
+        fi
+    fi
 
     [[ ! -f "$DISCOVERIES_FILE" ]] && {
         info "No discoveries yet"

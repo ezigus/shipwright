@@ -7,6 +7,45 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [3.1.0] — 2026-02-22
+
+### Loop Quality Intelligence
+
+- **Cumulative diff tracking**: Quality evaluators (DoD checker, audit agent, holistic gate) now see ALL work across every iteration, not just the latest commit. Eliminated the #1 cause of false rejections.
+- **Runtime fact injection**: DoD checker receives verified test results from the harness as ground truth — no more "I can't verify tests pass from a docs-only diff."
+- **Holistic final gate**: When all other gates pass, a project-level assessment evaluates the entire codebase against the original goal before accepting LOOP_COMPLETE.
+- **Gate-aware stuckness dampening**: When tests pass and a quality gate passes, stuckness signals are reduced. Prevents counterproductive "try a fundamentally different approach" when code is complete.
+- **`explore_alternative_strategy()` implemented**: Was called but never defined — caused `command not found` errors on every stuckness detection.
+
+### Pipeline Fixes
+
+- **Plan/design stage output rescue**: When Claude writes artifacts to disk via tools instead of stdout, the pipeline now rescues those files into the expected artifact path.
+- **Autonomous permissions**: `--dangerously-skip-permissions` added to plan, design, and review stages (was missing outside CI mode).
+- **`stage_compound_quality()` implemented**: Was missing — caused P0 pipeline crash when compound_quality stage ran.
+
+### Proven
+
+- **Production todo app built autonomously**: Full-stack TypeScript app (Express + React + SQLite + Drizzle ORM) with JWT auth, CRUD, drag-and-drop, dark mode — 154 tests, all passing.
+- **12-iteration hardening loop**: Security vulnerabilities found and fixed (timing attacks, JWT validation, CORS, rate limiting, cross-user isolation), all quality gates passed.
+
+### Added
+
+- Docker support with multi-stage build
+- Shell completions (bash, zsh, fish)
+- Decision engine signal routing in daemon patrol
+- 18 previously unregistered test suites wired into `npm test`
+
+### Fixed
+
+- Subshell variable mutation bugs in `sw-triage.sh` (pipe-to-while)
+- Unquoted variable in `sw-session.sh` heredoc
+- Dead code in `lib/helpers.sh`
+- SQL quote escaping on Bash 3.2 (macOS)
+- Homebrew formula SHA and postinstall path
+- CLI router missing command registrations
+
+---
+
 ## [3.0.0] — 2026-02-16
 
 ### Architecture Overhaul

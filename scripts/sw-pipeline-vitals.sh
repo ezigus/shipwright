@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -150,7 +150,8 @@ _compute_convergence() {
     fi
 
     local total_errors
-    total_errors=$(wc -l < "$error_log" 2>/dev/null | tr -d ' ' || echo "0")
+    total_errors=$(wc -l < "$error_log" 2>/dev/null | tr -d ' ' || true)
+    total_errors="${total_errors:-0}"
     total_errors=$(_safe_num "$total_errors")
 
     if [[ "$total_errors" -eq 0 ]]; then
@@ -270,7 +271,8 @@ _compute_error_maturity() {
     fi
 
     local total_errors
-    total_errors=$(wc -l < "$error_log" 2>/dev/null | tr -d ' ' || echo "0")
+    total_errors=$(wc -l < "$error_log" 2>/dev/null | tr -d ' ' || true)
+    total_errors="${total_errors:-0}"
     total_errors=$(_safe_num "$total_errors")
 
     if [[ "$total_errors" -eq 0 ]]; then
@@ -280,7 +282,8 @@ _compute_error_maturity() {
 
     # Count unique error signatures
     local unique_errors
-    unique_errors=$(jq -r '.signature // "unknown"' "$error_log" 2>/dev/null | sort -u | wc -l | tr -d ' ' || echo "0")
+    unique_errors=$(jq -r '.signature // "unknown"' "$error_log" 2>/dev/null | sort -u | wc -l | tr -d ' ' || true)
+    unique_errors="${unique_errors:-0}"
     unique_errors=$(_safe_num "$unique_errors")
 
     if [[ "$unique_errors" -eq 0 ]]; then
@@ -507,8 +510,10 @@ pipeline_compute_vitals() {
     # ── Error counts ──
     local total_errors=0 unique_errors=0
     if [[ -f "$error_log" ]]; then
-        total_errors=$(wc -l < "$error_log" 2>/dev/null | tr -d ' ' || echo "0")
-        unique_errors=$(jq -r '.signature // "unknown"' "$error_log" 2>/dev/null | sort -u | wc -l | tr -d ' ' || echo "0")
+        total_errors=$(wc -l < "$error_log" 2>/dev/null | tr -d ' ' || true)
+        total_errors="${total_errors:-0}"
+        unique_errors=$(jq -r '.signature // "unknown"' "$error_log" 2>/dev/null | sort -u | wc -l | tr -d ' ' || true)
+        unique_errors="${unique_errors:-0}"
     fi
 
     # ── Output JSON ──

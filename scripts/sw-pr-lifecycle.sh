@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -274,13 +274,16 @@ pr_review() {
     # Evaluate quality criteria
     local issues_found=0
     local file_count
-    file_count=$(echo "$diff_output" | grep -c '^diff --git' || echo "0")
+    file_count=$(echo "$diff_output" | grep -c '^diff --git' || true)
+    file_count="${file_count:-0}"
 
     local line_additions
-    line_additions=$(echo "$diff_output" | grep -c '^+' || echo "0")
+    line_additions=$(echo "$diff_output" | grep -c '^+' || true)
+    line_additions="${line_additions:-0}"
 
     local line_deletions
-    line_deletions=$(echo "$diff_output" | grep -c '^-' || echo "0")
+    line_deletions=$(echo "$diff_output" | grep -c '^-' || true)
+    line_deletions="${line_deletions:-0}"
 
     info "Diff analysis: ${file_count} files, +${line_additions}/-${line_deletions} lines"
 

@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -672,13 +672,13 @@ cmd_batch() {
     info "Found ${CYAN}${issue_count}${RESET} unlabeled issues"
 
     local success_count=0
-    echo "$issues_json" | jq -r '.[] | .number' | while IFS= read -r number; do
+    while IFS= read -r number; do
         if cmd_label "$number" >/dev/null 2>&1; then
             success_count=$((success_count + 1))
         fi
-    done
+    done < <(echo "$issues_json" | jq -r '.[] | .number')
 
-    success "Labeled ${CYAN}${issue_count}${RESET} issues"
+    success "Labeled ${CYAN}${success_count}${RESET} of ${CYAN}${issue_count}${RESET} issues"
     emit_event "triage_batch_complete" "issue_count=$issue_count"
 }
 
@@ -698,7 +698,7 @@ cmd_report() {
     complexity_counts='{}'
     priority_counts='{}'
 
-    echo "$issues_json" | jq -c '.[]' | while IFS= read -r issue_json; do
+    while IFS= read -r issue_json; do
         local labels
         labels=$(echo "$issue_json" | jq -r '.labels[].name' | tr '\n' ',')
 
@@ -716,7 +716,7 @@ cmd_report() {
         local priority
         priority=$(echo "$labels" | grep -oE "priority:[a-z-]+" | cut -d: -f2 | head -1 || echo "unknown")
         priority_counts=$(echo "$priority_counts" | jq --arg p "$priority" '.[$p] = (.[$p] // 0) + 1')
-    done
+    done < <(echo "$issues_json" | jq -c '.[]')
 
     # Output report
     echo ""

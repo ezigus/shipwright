@@ -38,6 +38,11 @@ setup_env() {
     mkdir -p "$TEMP_DIR/config"
     mkdir -p "$REPO_DIR/config"  # Ensure config exists for policy.json
 
+    # Back up policy.json so tests that delete it don't destroy the real config
+    if [[ -f "$REPO_DIR/config/policy.json" ]]; then
+        cp "$REPO_DIR/config/policy.json" "$TEMP_DIR/policy.json.bak"
+    fi
+
     # Mock gh — gh pr view uses --jq '.comments[].body' so we output that directly
     cat > "$TEMP_DIR/bin/gh" <<'GH_EOF'
 #!/usr/bin/env bash
@@ -91,6 +96,10 @@ GH_EOF
 }
 
 cleanup_env() {
+    # Restore policy.json if it was backed up
+    if [[ -n "${TEMP_DIR:-}" && -f "$TEMP_DIR/policy.json.bak" ]]; then
+        cp "$TEMP_DIR/policy.json.bak" "$REPO_DIR/config/policy.json"
+    fi
     if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
         rm -rf "$TEMP_DIR"
     fi

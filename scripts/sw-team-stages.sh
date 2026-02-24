@@ -123,7 +123,7 @@ cmd_compose() {
     emit_event "team_composed" \
         "stage=$stage" \
         "complexity=$complexity" \
-        "specialist_count=$spec_count"
+        "specialist_count=$spec_count" >/dev/null 2>&1 || true
 }
 
 # ─── Delegate: Break stage into agent tasks with file assignments ───────────
@@ -187,7 +187,7 @@ cmd_delegate() {
     emit_event "stage_delegated" \
         "stage=$stage" \
         "specialist_count=$specialist_count" \
-        "file_count=$file_count"
+        "file_count=$file_count" >/dev/null 2>&1 || true
 }
 
 # ─── Status: Show team member status for active stage ───────────────────────

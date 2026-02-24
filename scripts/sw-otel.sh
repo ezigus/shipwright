@@ -77,7 +77,6 @@ cmd_metrics() {
 
     # Parse events.jsonl
     if [[ -f "$EVENTS_FILE" ]]; then
-        {
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
 

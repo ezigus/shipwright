@@ -558,10 +558,10 @@ test_template_weights_format() {
 
     # Add enough outcomes to trigger weight calculation (multiple templates)
     for i in 1 2 3 4 5; do
-        add_mock_outcome "fast" "success" "5" "1.00" "low" "opus" "bug"
+        add_mock_outcome "fast" "success" "bug" "opus" 5 "1.00" 3
     done
     for i in 1 2 3 4 5; do
-        add_mock_outcome "standard" "failure" "15" "5.00" "medium" "opus" "feature"
+        add_mock_outcome "standard" "failure" "feature" "opus" 15 "5.00" 6
     done
 
     optimize_tune_templates > /dev/null 2>&1
@@ -585,10 +585,10 @@ test_iteration_model_format() {
 
     # Add outcomes across complexity buckets
     for i in 1 2 3 4 5; do
-        add_mock_outcome "standard" "success" "8" "2.00" "low" "opus" "bug"
+        add_mock_outcome "standard" "success" "bug" "opus" 8 "2.00" 3
     done
     for i in 1 2 3 4 5; do
-        add_mock_outcome "standard" "success" "15" "4.00" "medium" "opus" "feature"
+        add_mock_outcome "standard" "success" "feature" "opus" 15 "4.00" 6
     done
 
     optimize_learn_iterations > /dev/null 2>&1
@@ -615,10 +615,10 @@ test_model_routing_format() {
 
     # Add enough outcomes to build model routing
     for i in 1 2 3 4 5 6 7 8; do
-        add_mock_outcome "standard" "success" "10" "2.00" "medium" "sonnet" "bug"
+        add_mock_outcome "standard" "success" "bug" "sonnet" 10 "2.00" 5
     done
     for i in 1 2 3 4 5 6 7 8; do
-        add_mock_outcome "standard" "failure" "10" "5.00" "medium" "opus" "feature"
+        add_mock_outcome "standard" "failure" "feature" "opus" 10 "5.00" 5
     done
 
     optimize_route_models > /dev/null 2>&1
@@ -642,7 +642,7 @@ test_full_analysis_calls_report() {
 
     # Add minimal outcomes so full analysis can run
     for i in 1 2 3; do
-        add_mock_outcome "standard" "success" "10" "2.00" "medium" "opus" "bug"
+        add_mock_outcome "standard" "success" "bug" "opus" 10 "2.00" 5
     done
 
     optimize_full_analysis > /dev/null 2>&1

@@ -255,8 +255,8 @@ resolve_relevant_environments_json() {
         while IFS= read -r f; do
             [[ -z "$f" ]] && continue
             case "$f" in
-                Packages/*/Sources/*|Packages/*/Tests/*)
-                    # Package-internal file: swiftpm covers this; full Xcode suite not needed
+                Packages/*)
+                    # Any file under Packages/: swiftpm covers this; full Xcode suite not needed
                     ;;
                 *.swift|*.m|*.mm|*.h|*.xib|*.storyboard|*.xcworkspace/*|*.xcodeproj/*|*.pbxproj)
                     relevant=$(jq -c '. + ["ios_xcode"]' <<<"$relevant")

@@ -1255,30 +1255,40 @@ run_test_gate() {
         return
     fi
 
-    # Determine which test command to use this iteration
+    # Determine which test command to use this iteration.
+    # Schedule: iteration 1, every FAST_TEST_INTERVAL, and the final iteration → full suite
+    #           all other iterations → fast (targeted or explicit FAST_TEST_CMD)
     local active_test_cmd="$TEST_CMD"
     local test_mode="full"
-    if [[ -n "$FAST_TEST_CMD" ]]; then
-        # Use full test every FAST_TEST_INTERVAL iterations, on first iteration, and on final iteration
-        if [[ "$ITERATION" -eq 1 ]] || [[ $(( ITERATION % FAST_TEST_INTERVAL )) -eq 0 ]] || [[ "$ITERATION" -ge "$MAX_ITERATIONS" ]]; then
+
+    # Fast/full schedule activates when either an explicit FAST_TEST_CMD is set,
+    # or when the test command was auto-detected (enables per-iteration targeting).
+    local use_fast_schedule=false
+    [[ -n "$FAST_TEST_CMD" ]] && use_fast_schedule=true
+    if [[ "${TEST_CMD_AUTO:-false}" == "true" ]] \
+        && [[ "$(type -t detect_test_cmd_for_loop 2>/dev/null)" == "function" ]]; then
+        use_fast_schedule=true
+    fi
+
+    if [[ "$use_fast_schedule" == "true" ]]; then
+        if [[ "$ITERATION" -eq 1 ]] \
+            || [[ $(( ITERATION % FAST_TEST_INTERVAL )) -eq 0 ]] \
+            || [[ "$ITERATION" -ge "$MAX_ITERATIONS" ]]; then
+            # Full iteration: run the complete test suite to catch regressions
             active_test_cmd="$TEST_CMD"
             test_mode="full"
         else
-            active_test_cmd="$FAST_TEST_CMD"
+            # Fast iteration: targeted tests for files changed since loop start
             test_mode="fast"
-        fi
-    fi
-
-    # Re-target the full test command based on changes accumulated since loop start.
-    # Only applies to auto-detected commands; explicit --test-cmd is never overridden.
-    if [[ "$test_mode" == "full" ]] \
-        && [[ "${TEST_CMD_AUTO:-false}" == "true" ]] \
-        && [[ "$(type -t detect_test_cmd_for_loop 2>/dev/null)" == "function" ]] \
-        && [[ -n "${LOOP_START_COMMIT:-}" ]]; then
-        local retargeted
-        retargeted=$(detect_test_cmd_for_loop "$LOOP_START_COMMIT" 2>/dev/null || echo "")
-        if [[ -n "$retargeted" ]]; then
-            active_test_cmd="$retargeted"
+            if [[ -n "$FAST_TEST_CMD" ]]; then
+                # Explicit fast command takes precedence
+                active_test_cmd="$FAST_TEST_CMD"
+            elif [[ -n "${LOOP_START_COMMIT:-}" ]]; then
+                local retargeted
+                retargeted=$(detect_test_cmd_for_loop "$LOOP_START_COMMIT" 2>/dev/null || echo "")
+                # Fall back to full TEST_CMD if no targeting available yet (no commits)
+                active_test_cmd="${retargeted:-$TEST_CMD}"
+            fi
         fi
     fi
 

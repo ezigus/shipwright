@@ -451,7 +451,7 @@ detect_test_cmd_for_loop() {
             'map(select(.id == $env)) | first | .marker // ""' <<<"$envs_json")
         helper=$(jq -c --arg env "$env_id" \
             'map(select(.environments[]? == $env)) | first // empty' <<<"$helpers_json")
-        local prefer_helper script helper_flags
+        local prefer_helper script
         helper_flags=""
         if [[ -n "$helper" && "$helper" != "null" ]]; then
             helper_flags=$(jq -r --arg mode "$mode" '.mode_flags[$mode] // ""' <<<"$helper")

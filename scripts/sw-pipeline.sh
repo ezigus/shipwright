@@ -256,6 +256,7 @@ ISSUE_NUMBER=""
 PIPELINE_NAME="standard"
 PIPELINE_CONFIG=""
 TEST_CMD=""
+TEST_CMD_EXPLICIT=false  # true only when --test-cmd is explicitly provided via CLI
 MODEL=""
 AGENTS=""
 PIPELINE_AGENT_ID="${PIPELINE_AGENT_ID:-pipeline-$$}"
@@ -418,7 +419,7 @@ parse_args() {
             --repo)        REPO_OVERRIDE="$2"; shift 2 ;;
             --local)       NO_GITHUB=true; NO_GITHUB_LABEL=true; shift ;;
             --pipeline|--template) PIPELINE_NAME="$2"; shift 2 ;;
-            --test-cmd)    TEST_CMD="$2"; shift 2 ;;
+            --test-cmd)    TEST_CMD="$2"; TEST_CMD_EXPLICIT=true; shift 2 ;;
             --model)       MODEL="$2"; shift 2 ;;
             --agents)      AGENTS="$2"; shift 2 ;;
             --skip-gates)  SKIP_GATES=true; shift ;;

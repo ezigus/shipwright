@@ -1,18 +1,14 @@
 {
-  "timestamp": "2026-02-22T10:52:19Z",
+  "timestamp": "2026-02-25T20:28:18Z",
   "repository": "shipwright",
   "counts": {
     "hardcoded": 62,
-    "fallback": 60,
-    "todo": 41,
+    "fallback": 61,
+    "todo": 44,
     "fixme": 22,
     "hack": 18
   },
   "findings_sample": [
-    {
-      "file": "scripts/sw-adaptive.sh",
-      "line": 0
-    },
     {
       "file": "scripts/sw-adaptive.sh",
       "line": 4
@@ -34,164 +30,16 @@
       "line": 855
     },
     {
-      "file": "scripts/sw-e2e-integration-test.sh",
+      "file": "scripts/sw-adaptive.sh",
       "line": 879
     },
     {
-      "file": "scripts/sw-scale.sh",
-      "line": 233
-    },
-    {
-      "file": "scripts/sw-recruit.sh",
-      "line": 427
-    },
-    {
-      "file": "scripts/sw-recruit.sh",
-      "line": 1082
-    },
-    {
-      "file": "scripts/sw-recruit.sh",
-      "line": 1610
-    },
-    {
-      "file": "scripts/sw-recruit.sh",
-      "line": 1734
-    },
-    {
-      "file": "scripts/sw-checkpoint.sh",
-      "line": 2029
-    },
-    {
-      "file": "scripts/sw-intelligence-test.sh",
-      "line": 491
-    },
-    {
-      "file": "scripts/sw-regression.sh",
-      "line": 505
-    },
-    {
-      "file": "scripts/sw-adapters-test.sh",
-      "line": 86
-    },
-    {
-      "file": "scripts/sw-adapters-test.sh",
-      "line": 180
-    },
-    {
-      "file": "scripts/sw-adapters-test.sh",
-      "line": 183
-    },
-    {
-      "file": "scripts/sw-adapters-test.sh",
-      "line": 189
-    },
-    {
-      "file": "scripts/sw-daemon-test.sh",
-      "line": 192
-    },
-    {
-      "file": "scripts/sw-daemon-test.sh",
-      "line": 356
-    },
-    {
-      "file": "scripts/sw-predictive.sh",
-      "line": 1937
-    },
-    {
-      "file": "scripts/sw-predictive.sh",
-      "line": 386
-    },
-    {
-      "file": "scripts/sw-predictive.sh",
-      "line": 390
-    },
-    {
-      "file": "scripts/sw-discovery.sh",
-      "line": 419
-    },
-    {
-      "file": "scripts/sw-connect.sh",
-      "line": 135
-    },
-    {
-      "file": "scripts/sw-pipeline.sh",
-      "line": 520
-    },
-    {
-      "file": "scripts/sw-pipeline.sh",
-      "line": 844
-    },
-    {
-      "file": "scripts/sw-pipeline.sh",
-      "line": 1015
-    },
-    {
-      "file": "scripts/sw-pipeline.sh",
-      "line": 1030
-    },
-    {
-      "file": "scripts/sw-tracker-linear.sh",
-      "line": 2573
-    },
-    {
-      "file": "scripts/sw-tracker-linear.sh",
-      "line": 53
-    },
-    {
-      "file": "scripts/sw-tracker-linear.sh",
-      "line": 74
-    },
-    {
-      "file": "scripts/sw-tracker-linear.sh",
-      "line": 99
-    },
-    {
-      "file": "scripts/sw-db.sh",
-      "line": 147
-    },
-    {
-      "file": "scripts/sw-predictive-test.sh",
-      "line": 1615
+      "file": "scripts/sw-model-router.sh",
+      "line": 151
     },
     {
       "file": "scripts/sw-triage.sh",
-      "line": 73
-    },
-    {
-      "file": "scripts/sw-hygiene-test.sh",
       "line": 604
-    },
-    {
-      "file": "scripts/sw-doctor.sh",
-      "line": 187
-    },
-    {
-      "file": "scripts/sw-doctor.sh",
-      "line": 1152
-    },
-    {
-      "file": "scripts/sw-pm.sh",
-      "line": 1157
-    },
-    {
-      "file": "scripts/sw-pm.sh",
-      "line": 206
-    },
-    {
-      "file": "scripts/sw-eventbus.sh",
-      "line": 256
-    },
-    {
-      "file": "scripts/sw-security-audit-test.sh",
-      "line": 112
-    },
-    {
-      "file": "scripts/sw-daemon.sh",
-      "line": 170
-    },
-    {
-      "file": "scripts/sw-pr-lifecycle-test.sh",
-      "line": 557
     },
     {
       "file": "scripts/sw-pr-lifecycle-test.sh",
@@ -202,172 +50,48 @@
       "line": 330
     },
     {
-      "file": "scripts/sw-testgen.sh",
+      "file": "scripts/sw-pr-lifecycle-test.sh",
       "line": 332
     },
     {
-      "file": "scripts/sw-testgen.sh",
-      "line": 262
+      "file": "scripts/sw-linear.sh",
+      "line": 44
     },
     {
-      "file": "scripts/sw-ci.sh",
-      "line": 268
+      "file": "scripts/sw-linear.sh",
+      "line": 46
     },
     {
-      "file": "scripts/sw-pipeline-test.sh",
-      "line": 458
+      "file": "scripts/sw-linear.sh",
+      "line": 67
     },
     {
-      "file": "scripts/sw-evidence.sh",
-      "line": 954
+      "file": "scripts/sw-linear.sh",
+      "line": 152
     },
     {
-      "file": "scripts/sw-pipeline-composer.sh",
-      "line": 37
+      "file": "scripts/sw-linear.sh",
+      "line": 335
     },
     {
-      "file": "scripts/sw-pipeline-composer.sh",
-      "line": 140
+      "file": "scripts/sw-linear.sh",
+      "line": 536
     },
     {
-      "file": "scripts/adapters/tmux-adapter.sh",
-      "line": 298
+      "file": "scripts/signals/example-collector.sh",
+      "line": 29
     },
     {
-      "file": "scripts/adapters/tmux-adapter.sh",
-      "line": 88
+      "file": "scripts/signals/example-collector.sh",
+      "line": 30
     },
     {
-      "file": "scripts/sw-session-test.sh",
-      "line": 114
+      "file": "scripts/signals/example-collector.sh",
+      "line": 32
     },
     {
-      "file": "scripts/sw-autonomous.sh",
-      "line": 444
-    },
-    {
-      "file": "scripts/sw-autonomous.sh",
-      "line": 323
-    },
-    {
-      "file": "scripts/sw-autonomous.sh",
-      "line": 325
-    },
-    {
-      "file": "scripts/sw-doc-fleet.sh",
-      "line": 327
-    },
-    {
-      "file": "scripts/sw-doc-fleet.sh",
-      "line": 345
-    },
-    {
-      "file": "scripts/sw-memory.sh",
-      "line": 346
-    },
-    {
-      "file": "scripts/sw-security-audit.sh",
-      "line": 719
-    },
-    {
-      "file": "scripts/sw-security-audit.sh",
-      "line": 65
-    },
-    {
-      "file": "scripts/sw-security-audit.sh",
-      "line": 95
-    },
-    {
-      "file": "scripts/sw-strategic.sh",
-      "line": 109
-    },
-    {
-      "file": "scripts/sw-strategic.sh",
-      "line": 415
-    },
-    {
-      "file": "scripts/sw-strategic.sh",
-      "line": 448
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 476
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 59
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 378
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 381
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 387
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 388
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 389
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 390
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 391
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 392
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 393
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 403
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 433
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 440
-    },
-    {
-      "file": "scripts/sw-hygiene.sh",
-      "line": 447
-    },
-    {
-      "file": "scripts/lib/pipeline-detection.sh",
-      "line": 452
-    },
-    {
-      "file": "scripts/lib/pipeline-detection.sh",
-      "line": 151
-    },
-    {
-      "file": "scripts/lib/pipeline-detection.sh",
-      "line": 197
-    },
-    {
-      "file": "scripts/lib/daemon-state.sh",
-      "line": 247
-    },
-    {
-      "file": "scripts/lib/pipeline-intelligence.sh",
-      "line": 607
+      "file": "scripts/signals/example-collector.sh",
+      "line": 34
     },
     {
       "file": "scripts/lib/pipeline-intelligence.sh",
@@ -391,51 +115,11 @@
     },
     {
       "file": "scripts/lib/pipeline-intelligence.sh",
-      "line": 1154
+      "line": 1155
     },
     {
-      "file": "scripts/lib/pipeline-stages.sh",
-      "line": 1289
-    },
-    {
-      "file": "scripts/lib/pipeline-stages.sh",
-      "line": 48
-    },
-    {
-      "file": "scripts/lib/pipeline-stages.sh",
-      "line": 335
-    },
-    {
-      "file": "scripts/lib/pipeline-stages.sh",
-      "line": 797
-    },
-    {
-      "file": "scripts/lib/pipeline-stages.sh",
-      "line": 1687
-    },
-    {
-      "file": "scripts/lib/pipeline-stages.sh",
-      "line": 2054
-    },
-    {
-      "file": "scripts/lib/daemon-adaptive.sh",
-      "line": 2069
-    },
-    {
-      "file": "scripts/lib/daemon-adaptive.sh",
-      "line": 214
-    },
-    {
-      "file": "scripts/lib/daemon-adaptive.sh",
-      "line": 337
-    },
-    {
-      "file": "scripts/lib/compat.sh",
-      "line": 436
-    },
-    {
-      "file": "scripts/lib/pipeline-quality-checks.sh",
-      "line": 212
+      "file": "scripts/lib/pipeline-intelligence.sh",
+      "line": 1291
     },
     {
       "file": "scripts/lib/pipeline-quality-checks.sh",
@@ -466,28 +150,408 @@
       "line": 509
     },
     {
-      "file": "scripts/lib/daemon-poll.sh",
+      "file": "scripts/lib/pipeline-quality-checks.sh",
       "line": 604
     },
     {
-      "file": "scripts/sw-quality.sh",
+      "file": "scripts/lib/daemon-state.sh",
+      "line": 624
+    },
+    {
+      "file": "scripts/lib/daemon-poll.sh",
       "line": 483
     },
     {
-      "file": "scripts/sw-quality.sh",
-      "line": 92
+      "file": "scripts/lib/pipeline-detection.sh",
+      "line": 575
+    },
+    {
+      "file": "scripts/lib/pipeline-detection.sh",
+      "line": 621
+    },
+    {
+      "file": "scripts/lib/pipeline-detection.sh",
+      "line": 671
+    },
+    {
+      "file": "scripts/lib/compat.sh",
+      "line": 228
+    },
+    {
+      "file": "scripts/lib/daemon-adaptive.sh",
+      "line": 214
+    },
+    {
+      "file": "scripts/lib/daemon-adaptive.sh",
+      "line": 339
+    },
+    {
+      "file": "scripts/lib/daemon-adaptive.sh",
+      "line": 438
+    },
+    {
+      "file": "scripts/lib/pipeline-stages.sh",
+      "line": 63
+    },
+    {
+      "file": "scripts/lib/pipeline-stages.sh",
+      "line": 363
+    },
+    {
+      "file": "scripts/lib/pipeline-stages.sh",
+      "line": 837
+    },
+    {
+      "file": "scripts/lib/pipeline-stages.sh",
+      "line": 1767
+    },
+    {
+      "file": "scripts/lib/pipeline-stages.sh",
+      "line": 2135
+    },
+    {
+      "file": "scripts/lib/pipeline-stages.sh",
+      "line": 2150
+    },
+    {
+      "file": "scripts/sw-predictive.sh",
+      "line": 386
+    },
+    {
+      "file": "scripts/sw-predictive.sh",
+      "line": 390
+    },
+    {
+      "file": "scripts/sw-predictive.sh",
+      "line": 419
+    },
+    {
+      "file": "scripts/sw-recruit.sh",
+      "line": 1082
+    },
+    {
+      "file": "scripts/sw-recruit.sh",
+      "line": 1610
+    },
+    {
+      "file": "scripts/sw-recruit.sh",
+      "line": 1734
+    },
+    {
+      "file": "scripts/sw-recruit.sh",
+      "line": 2029
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 59
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 441
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 444
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 450
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 451
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 452
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 453
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 454
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 455
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 456
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 466
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 501
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 508
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 515
+    },
+    {
+      "file": "scripts/sw-hygiene.sh",
+      "line": 520
+    },
+    {
+      "file": "scripts/sw-trace.sh",
+      "line": 159
+    },
+    {
+      "file": "scripts/sw-loop.sh",
+      "line": 498
+    },
+    {
+      "file": "scripts/sw-loop.sh",
+      "line": 1071
+    },
+    {
+      "file": "scripts/sw-loop.sh",
+      "line": 1370
+    },
+    {
+      "file": "scripts/sw-loop.sh",
+      "line": 1435
+    },
+    {
+      "file": "scripts/sw-loop.sh",
+      "line": 1493
+    },
+    {
+      "file": "scripts/sw-loop.sh",
+      "line": 1495
+    },
+    {
+      "file": "scripts/sw-loop.sh",
+      "line": 1498
+    },
+    {
+      "file": "scripts/sw-loop.sh",
+      "line": 2126
+    },
+    {
+      "file": "scripts/sw-loop.sh",
+      "line": 2355
+    },
+    {
+      "file": "scripts/sw-loop.sh",
+      "line": 2426
+    },
+    {
+      "file": "scripts/sw-security-audit-test.sh",
+      "line": 170
+    },
+    {
+      "file": "scripts/sw-e2e-integration-test.sh",
+      "line": 233
+    },
+    {
+      "file": "scripts/sw-adapters-test.sh",
+      "line": 180
+    },
+    {
+      "file": "scripts/sw-adapters-test.sh",
+      "line": 183
+    },
+    {
+      "file": "scripts/sw-adapters-test.sh",
+      "line": 189
+    },
+    {
+      "file": "scripts/sw-adapters-test.sh",
+      "line": 192
+    },
+    {
+      "file": "scripts/sw-intelligence-test.sh",
+      "line": 505
+    },
+    {
+      "file": "scripts/sw-autonomous.sh",
+      "line": 323
+    },
+    {
+      "file": "scripts/sw-autonomous.sh",
+      "line": 325
+    },
+    {
+      "file": "scripts/sw-autonomous.sh",
+      "line": 327
+    },
+    {
+      "file": "scripts/sw-daemon.sh",
+      "line": 560
+    },
+    {
+      "file": "scripts/sw-security-audit.sh",
+      "line": 65
+    },
+    {
+      "file": "scripts/sw-security-audit.sh",
+      "line": 95
+    },
+    {
+      "file": "scripts/sw-security-audit.sh",
+      "line": 109
+    },
+    {
+      "file": "scripts/sw-connect.sh",
+      "line": 520
+    },
+    {
+      "file": "scripts/sw-evidence.sh",
+      "line": 37
+    },
+    {
+      "file": "scripts/sw-pipeline.sh",
+      "line": 853
+    },
+    {
+      "file": "scripts/sw-pipeline.sh",
+      "line": 1024
+    },
+    {
+      "file": "scripts/sw-pipeline.sh",
+      "line": 1039
+    },
+    {
+      "file": "scripts/sw-pipeline.sh",
+      "line": 2611
+    },
+    {
+      "file": "scripts/sw-hygiene-test.sh",
+      "line": 215
+    },
+    {
+      "file": "scripts/sw-strategic.sh",
+      "line": 415
+    },
+    {
+      "file": "scripts/sw-strategic.sh",
+      "line": 448
+    },
+    {
+      "file": "scripts/sw-strategic.sh",
+      "line": 476
+    },
+    {
+      "file": "scripts/sw-db.sh",
+      "line": 1619
+    },
+    {
+      "file": "scripts/sw-predictive-test.sh",
+      "line": 73
+    },
+    {
+      "file": "scripts/adapters/tmux-adapter.sh",
+      "line": 88
+    },
+    {
+      "file": "scripts/adapters/tmux-adapter.sh",
+      "line": 114
+    },
+    {
+      "file": "scripts/sw-ci.sh",
+      "line": 463
+    },
+    {
+      "file": "scripts/sw-discovery.sh",
+      "line": 161
+    },
+    {
+      "file": "scripts/sw-testgen.sh",
+      "line": 264
+    },
+    {
+      "file": "scripts/sw-testgen.sh",
+      "line": 270
+    },
+    {
+      "file": "scripts/sw-eventbus.sh",
+      "line": 112
+    },
+    {
+      "file": "scripts/sw-regression.sh",
+      "line": 86
+    },
+    {
+      "file": "scripts/sw-memory.sh",
+      "line": 728
+    },
+    {
+      "file": "scripts/sw-tracker-linear.sh",
+      "line": 53
+    },
+    {
+      "file": "scripts/sw-tracker-linear.sh",
+      "line": 74
+    },
+    {
+      "file": "scripts/sw-tracker-linear.sh",
+      "line": 99
+    },
+    {
+      "file": "scripts/sw-tracker-linear.sh",
+      "line": 147
+    },
+    {
+      "file": "scripts/sw-pipeline-vitals.sh",
+      "line": 194
+    },
+    {
+      "file": "scripts/sw-doc-fleet.sh",
+      "line": 345
+    },
+    {
+      "file": "scripts/sw-doc-fleet.sh",
+      "line": 346
+    },
+    {
+      "file": "scripts/sw-pipeline-test.sh",
+      "line": 954
+    },
+    {
+      "file": "scripts/sw-code-review.sh",
+      "line": 150
+    },
+    {
+      "file": "scripts/sw-code-review.sh",
+      "line": 152
+    },
+    {
+      "file": "scripts/sw-daemon-test.sh",
+      "line": 356
+    },
+    {
+      "file": "scripts/sw-daemon-test.sh",
+      "line": 1941
+    },
+    {
+      "file": "scripts/sw-doctor.sh",
+      "line": 1152
+    },
+    {
+      "file": "scripts/sw-doctor.sh",
+      "line": 1157
     },
     {
       "file": "scripts/sw-quality.sh",
-      "line": 96
+      "line": 93
     },
     {
       "file": "scripts/sw-quality.sh",
-      "line": 104
+      "line": 97
     },
     {
       "file": "scripts/sw-quality.sh",
-      "line": 209
+      "line": 106
     },
     {
       "file": "scripts/sw-quality.sh",
@@ -495,27 +559,43 @@
     },
     {
       "file": "scripts/sw-quality.sh",
-      "line": 216
+      "line": 215
     },
     {
       "file": "scripts/sw-quality.sh",
-      "line": 251
+      "line": 219
     },
     {
       "file": "scripts/sw-quality.sh",
-      "line": 252
+      "line": 254
     },
     {
       "file": "scripts/sw-quality.sh",
-      "line": 548
+      "line": 255
     },
     {
-      "file": "scripts/sw-pipeline-vitals.sh",
-      "line": 549
+      "file": "scripts/sw-quality.sh",
+      "line": 555
     },
     {
-      "file": "scripts/sw-agi-roadmap-test.sh",
-      "line": 193
+      "file": "scripts/sw-quality.sh",
+      "line": 556
+    },
+    {
+      "file": "scripts/sw-pm.sh",
+      "line": 207
+    },
+    {
+      "file": "scripts/sw-pm.sh",
+      "line": 257
+    },
+    {
+      "file": "scripts/sw-pipeline-composer.sh",
+      "line": 140
+    },
+    {
+      "file": "scripts/sw-pipeline-composer.sh",
+      "line": 298
     },
     {
       "file": "scripts/sw-agi-roadmap-test.sh",
@@ -530,98 +610,34 @@
       "line": 766
     },
     {
-      "file": "scripts/sw-code-review.sh",
+      "file": "scripts/sw-agi-roadmap-test.sh",
       "line": 847
     },
     {
-      "file": "scripts/sw-code-review.sh",
-      "line": 147
+      "file": "scripts/sw-checkpoint.sh",
+      "line": 491
     },
     {
-      "file": "scripts/sw-loop.sh",
-      "line": 149
-    },
-    {
-      "file": "scripts/sw-loop.sh",
-      "line": 475
-    },
-    {
-      "file": "scripts/sw-loop.sh",
-      "line": 1033
-    },
-    {
-      "file": "scripts/sw-loop.sh",
-      "line": 1308
-    },
-    {
-      "file": "scripts/sw-loop.sh",
-      "line": 1349
-    },
-    {
-      "file": "scripts/sw-loop.sh",
-      "line": 1404
-    },
-    {
-      "file": "scripts/sw-loop.sh",
-      "line": 1406
-    },
-    {
-      "file": "scripts/sw-loop.sh",
-      "line": 1409
-    },
-    {
-      "file": "scripts/sw-loop.sh",
-      "line": 2071
-    },
-    {
-      "file": "scripts/sw-linear.sh",
-      "line": 2142
-    },
-    {
-      "file": "scripts/sw-linear.sh",
-      "line": 44
-    },
-    {
-      "file": "scripts/sw-linear.sh",
-      "line": 46
-    },
-    {
-      "file": "scripts/sw-linear.sh",
-      "line": 67
-    },
-    {
-      "file": "scripts/sw-linear.sh",
-      "line": 152
-    },
-    {
-      "file": "scripts/sw-linear.sh",
-      "line": 335
+      "file": "scripts/sw-session-test.sh",
+      "line": 444
     },
     {
       "file": "scripts/sw-pr-lifecycle.sh",
-      "line": 536
+      "line": 292
     },
     {
       "file": "scripts/sw-pr-lifecycle.sh",
-      "line": 289
-    },
-    {
-      "file": "scripts/sw-trace.sh",
-      "line": 291
-    },
-    {
-      "file": "scripts/sw-model-router.sh",
-      "line": 159
+      "line": 294
     }
   ],
   "script_size_hotspots": [
     {
       "script": "sw-loop.sh",
-      "lines": 3072
+      "lines": 3361
     },
     {
       "script": "sw-pipeline.sh",
-      "lines": 2839
+      "lines": 2877
     },
     {
       "script": "sw-recruit.sh",
@@ -629,7 +645,7 @@
     },
     {
       "script": "sw-daemon-test.sh",
-      "lines": 1988
+      "lines": 1992
     },
     {
       "script": "sw-pipeline-test.sh",
@@ -637,11 +653,11 @@
     },
     {
       "script": "sw-db.sh",
-      "lines": 1888
+      "lines": 1896
     },
     {
       "script": "sw-memory.sh",
-      "lines": 1869
+      "lines": 1886
     },
     {
       "script": "sw-prep.sh",
@@ -649,31 +665,31 @@
     },
     {
       "script": "sw-self-optimize.sh",
-      "lines": 1523
+      "lines": 1536
     },
     {
       "script": "sw-intelligence.sh",
-      "lines": 1506
+      "lines": 1511
     },
     {
       "script": "sw-recruit-test.sh",
       "lines": 1399
     },
     {
-      "script": "sw-fleet.sh",
-      "lines": 1373
+      "script": "sw-daemon.sh",
+      "lines": 1379
     },
     {
-      "script": "sw-daemon.sh",
-      "lines": 1356
+      "script": "sw-fleet.sh",
+      "lines": 1373
     },
     {
       "script": "sw-doctor.sh",
       "lines": 1184
     },
     {
-      "script": "sw-pipeline-vitals.sh",
-      "lines": 1070
+      "script": "sw-pr-lifecycle.sh",
+      "lines": 1078
     }
   ]
 }

@@ -90,11 +90,12 @@ stage_intake() {
     suggested_template=$(template_for_type "$TASK_TYPE")
     info "Detected: ${BOLD}$TASK_TYPE${RESET} → team template: ${CYAN}$suggested_template${RESET}"
 
-    # 3. Auto-detect test command if not provided
+    # 3. Display detected test command — informational only; stage_build auto-detects per-iteration
     if [[ -z "$TEST_CMD" ]]; then
-        TEST_CMD=$(detect_test_cmd)
-        if [[ -n "$TEST_CMD" ]]; then
-            info "Auto-detected test: ${DIM}$TEST_CMD${RESET}"
+        local _detected_test_cmd
+        _detected_test_cmd=$(detect_test_cmd)
+        if [[ -n "$_detected_test_cmd" ]]; then
+            info "Auto-detected test: ${DIM}$_detected_test_cmd${RESET}"
         fi
     fi
 

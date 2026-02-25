@@ -1,7 +1,7 @@
 {
   "name": "tdd",
   "description": "Test-first pipeline: plan → design → generate tests → build → test → review → PR",
-  "defaults": { "test_cmd": "npm test", "model": "sonnet", "agents": 1 },
+  "defaults": { "model": "sonnet", "agents": 1 },
   "tdd": true,
   "intelligence": {
     "adversarial_enabled": true,

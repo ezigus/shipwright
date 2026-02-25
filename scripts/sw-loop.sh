@@ -718,7 +718,7 @@ resume_state() {
                 max_iterations:*) MAX_ITERATIONS="$(echo "${line#max_iterations:}" | tr -d ' ')" ;;
                 status:*)        STATUS="$(echo "${line#status:}" | tr -d ' ')" ;;
                 test_cmd:*)      [[ -z "$TEST_CMD" ]] && TEST_CMD="$(echo "${line#test_cmd:}" | sed 's/^ *"//;s/" *$//')" ;;
-                test_cmd_auto:*) TEST_CMD_AUTO="$(echo "${line#test_cmd_auto:}" | tr -d ' ')" ;;
+                test_cmd_auto:*) [[ -z "$TEST_CMD" ]] && TEST_CMD_AUTO="$(echo "${line#test_cmd_auto:}" | tr -d ' ')" ;;
                 model:*)         MODEL="$(echo "${line#model:}" | tr -d ' ')" ;;
                 agents:*)        AGENTS="$(echo "${line#agents:}" | tr -d ' ')" ;;
                 loop_start_commit:*) LOOP_START_COMMIT="$(echo "${line#loop_start_commit:}" | tr -d ' ')" ;;

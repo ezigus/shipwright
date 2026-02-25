@@ -386,6 +386,14 @@ if [[ -z "$TEST_CMD" ]] && [[ "$(type -t detect_test_cmd 2>/dev/null)" == "funct
     [[ -n "$TEST_CMD" ]] && info "Auto-detected test command: ${DIM}${TEST_CMD}${RESET}"
 fi
 
+# Warm detection caches for per-iteration re-targeting (cheap on subsequent calls)
+if [[ "$(type -t detect_repo_environments_json 2>/dev/null)" == "function" ]]; then
+    detect_repo_environments_json >/dev/null 2>&1 || true
+fi
+if [[ "$(type -t detect_helper_capabilities_json 2>/dev/null)" == "function" ]]; then
+    detect_helper_capabilities_json >/dev/null 2>&1 || true
+fi
+
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 
 # ─── Adaptive Model Selection ────────────────────────────────────────────────
@@ -1250,6 +1258,17 @@ run_test_gate() {
         else
             active_test_cmd="$FAST_TEST_CMD"
             test_mode="fast"
+        fi
+    fi
+
+    # Re-target the full test command based on changes accumulated since loop start
+    if [[ "$test_mode" == "full" ]] \
+        && [[ "$(type -t detect_test_cmd_for_loop 2>/dev/null)" == "function" ]] \
+        && [[ -n "${LOOP_START_COMMIT:-}" ]]; then
+        local retargeted
+        retargeted=$(detect_test_cmd_for_loop "$LOOP_START_COMMIT" 2>/dev/null || echo "")
+        if [[ -n "$retargeted" ]]; then
+            active_test_cmd="$retargeted"
         fi
     fi
 

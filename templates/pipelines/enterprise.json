@@ -2,7 +2,6 @@
   "name": "enterprise",
   "description": "Maximum safety pipeline: all stages enabled, all gates on approve, strict quality, auto-rollback",
   "defaults": {
-    "test_cmd": "npm test",
     "model": "opus",
     "agents": 1
   },

@@ -2,7 +2,6 @@
   "name": "full",
   "description": "Full deployment pipeline: all stages from intake to production monitoring",
   "defaults": {
-    "test_cmd": "npm test",
     "model": "opus",
     "agents": 1
   },

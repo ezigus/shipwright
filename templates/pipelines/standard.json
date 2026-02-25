@@ -2,7 +2,6 @@
   "name": "standard",
   "description": "Feature pipeline: intake → plan → design → build → test → review → PR",
   "defaults": {
-    "test_cmd": "npm test",
     "model": "opus",
     "agents": 1
   },

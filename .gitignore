@@ -15,6 +15,8 @@ demo/*.gif
 .claude/pipeline-artifacts/
 .claude/pipeline-state.md
 .claude/loop-logs/
+.claude/loop-state.md
+.claude/platform-hygiene.json
 .claude/intelligence-cache.json
 .claude/code-review.json
 .claude/hygiene-report.json

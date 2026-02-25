@@ -451,29 +451,33 @@ detect_test_cmd_for_loop() {
             'map(select(.id == $env)) | first | .marker // ""' <<<"$envs_json")
         helper=$(jq -c --arg env "$env_id" \
             'map(select(.environments[]? == $env)) | first // empty' <<<"$helpers_json")
-        if [[ -z "$helper" || "$helper" == "null" ]]; then
-            continue
-        fi
-        helper_flags=$(jq -r --arg mode "$mode" '.mode_flags[$mode] // ""' <<<"$helper")
-        # Apply class targeting for ios_xcode (same logic as select_test_commands_for_context_json)
-        if [[ "$env_id" == "ios_xcode" ]]; then
-            local classes pkg_count all_targets
-            classes=$(detect_changed_non_package_classes "$changed_files_json")
-            pkg_count=$(jq '[.[] | select(test("^Packages/"))] | length' <<<"$changed_files_json")
-            all_targets="$classes"
-            if [[ "$pkg_count" -gt 0 ]]; then
-                [[ -n "$all_targets" ]] && all_targets="${all_targets},Packages" \
-                    || all_targets="Packages"
+        local prefer_helper script helper_flags
+        helper_flags=""
+        if [[ -n "$helper" && "$helper" != "null" ]]; then
+            helper_flags=$(jq -r --arg mode "$mode" '.mode_flags[$mode] // ""' <<<"$helper")
+            # Apply class targeting for ios_xcode (same logic as select_test_commands_for_context_json)
+            if [[ "$env_id" == "ios_xcode" ]]; then
+                local classes pkg_count all_targets
+                classes=$(detect_changed_non_package_classes "$changed_files_json")
+                pkg_count=$(jq '[.[] | select(test("^Packages/"))] | length' <<<"$changed_files_json")
+                all_targets="$classes"
+                if [[ "$pkg_count" -gt 0 ]]; then
+                    [[ -n "$all_targets" ]] && all_targets="${all_targets},Packages" \
+                        || all_targets="Packages"
+                fi
+                [[ -n "$all_targets" ]] && helper_flags="-t ${all_targets}"
             fi
-            [[ -n "$all_targets" ]] && helper_flags="-t ${all_targets}"
+            prefer_helper=$(jq -r '.prefer_helper // false' <<<"$helper")
+            script=$(jq -r '.script // ""' <<<"$helper")
+        else
+            prefer_helper="false"
+            script=""
         fi
-        local prefer_helper script
-        prefer_helper=$(jq -r '.prefer_helper // false' <<<"$helper")
-        script=$(jq -r '.script // ""' <<<"$helper")
         if [[ "$prefer_helper" == "true" && -n "$script" ]]; then
             cmd="bash ./$script ${helper_flags}"
             cmd="${cmd%% }"
         else
+            # Fall back to the default command for this environment (matches select_test_commands_for_context_json)
             cmd=$(default_test_cmd_for_environment "$env_id" "$marker")
         fi
         out=$(jq -c --arg env "$env_id" --arg mode "$mode" --arg cmd "$cmd" \

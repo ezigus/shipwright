@@ -340,6 +340,176 @@ fi
 
 echo ""
 
+# ─── 12. Triage Function Existence ───────────────────────────────────────────
+echo -e "${BOLD}  Review Comment Triage${RESET}"
+
+if grep -q 'triage_review_comments' "$SRC"; then
+    assert_pass "triage_review_comments function defined"
+else
+    assert_fail "triage_review_comments function defined"
+fi
+
+if grep -q 'fetch_review_comments' "$SRC"; then
+    assert_pass "fetch_review_comments function defined"
+else
+    assert_fail "fetch_review_comments function defined"
+fi
+
+if grep -q 'classify_comment' "$SRC"; then
+    assert_pass "classify_comment function defined"
+else
+    assert_fail "classify_comment function defined"
+fi
+
+if grep -q 'inject_review_feedback' "$SRC"; then
+    assert_pass "inject_review_feedback function defined"
+else
+    assert_fail "inject_review_feedback function defined"
+fi
+
+if grep -q 'dismiss_comment' "$SRC"; then
+    assert_pass "dismiss_comment function defined"
+else
+    assert_fail "dismiss_comment function defined"
+fi
+
+echo ""
+
+# ─── 13. Bot Detection ──────────────────────────────────────────────────────
+echo -e "${BOLD}  Bot Detection${RESET}"
+
+if grep -qE 'is_bot|bot_pattern' "$SRC"; then
+    assert_pass "bot detection logic present"
+else
+    assert_fail "bot detection logic present"
+fi
+
+if grep -q 'botAuthorPatterns' "$SRC"; then
+    assert_pass "reads botAuthorPatterns from policy"
+else
+    assert_fail "reads botAuthorPatterns from policy"
+fi
+
+echo ""
+
+# ─── 14. NO_GITHUB Guard ───────────────────────────────────────────────────
+echo -e "${BOLD}  NO_GITHUB Guard${RESET}"
+
+if grep -q 'NO_GITHUB' "$SRC"; then
+    assert_pass "NO_GITHUB guard present in triage functions"
+else
+    assert_fail "NO_GITHUB guard present in triage functions"
+fi
+
+echo ""
+
+# ─── 15. Triage CLI Command ────────────────────────────────────────────────
+echo -e "${BOLD}  Triage CLI Command${RESET}"
+
+if ! bash "$SRC" triage 2>/dev/null; then
+    assert_pass "triage without PR number exits non-zero"
+else
+    assert_fail "triage without PR number exits non-zero"
+fi
+
+triage_no_arg=$(bash "$SRC" triage 2>&1) || true
+assert_contains "triage without arg shows error" "$triage_no_arg" "PR number required"
+
+help_output2=$(bash "$SRC" help 2>&1) || true
+assert_contains "help mentions triage command" "$help_output2" "triage"
+
+echo ""
+
+# ─── 16. Review Feedback File ──────────────────────────────────────────────
+echo -e "${BOLD}  Review Feedback Integration${RESET}"
+
+if grep -q 'review-feedback.json' "$SRC"; then
+    assert_pass "review-feedback.json referenced in source"
+else
+    assert_fail "review-feedback.json referenced in source"
+fi
+
+if grep -q 'review-triage.json' "$SRC"; then
+    assert_pass "review-triage.json referenced in source"
+else
+    assert_fail "review-triage.json referenced in source"
+fi
+
+echo ""
+
+# ─── 17. Event Emission (Triage) ───────────────────────────────────────────
+echo -e "${BOLD}  Triage Events${RESET}"
+
+if grep -q 'pr.comment_triaged' "$SRC"; then
+    assert_pass "emits pr.comment_triaged event"
+else
+    assert_fail "emits pr.comment_triaged event"
+fi
+
+if grep -q 'pr.comment_dismissed' "$SRC"; then
+    assert_pass "emits pr.comment_dismissed event"
+else
+    assert_fail "emits pr.comment_dismissed event"
+fi
+
+echo ""
+
+# ─── 18. Atomic Write Pattern ──────────────────────────────────────────────
+echo -e "${BOLD}  Atomic Writes${RESET}"
+
+if grep -qE '\.tmp\.\$\$' "$SRC"; then
+    assert_pass "atomic write pattern (tmp.$$) present"
+else
+    assert_fail "atomic write pattern (tmp.$$) present"
+fi
+
+echo ""
+
+# ─── 19. Classification Model Config ───────────────────────────────────────
+echo -e "${BOLD}  Classification Config${RESET}"
+
+if grep -qE 'classificationModel|classification_model' "$SRC"; then
+    assert_pass "classification model config referenced"
+else
+    assert_fail "classification model config referenced"
+fi
+
+if grep -q 'get_triage_policy' "$SRC"; then
+    assert_pass "get_triage_policy helper defined"
+else
+    assert_fail "get_triage_policy helper defined"
+fi
+
+echo ""
+
+# ─── 20. Heuristic Fallback ────────────────────────────────────────────────
+echo -e "${BOLD}  Heuristic Fallback${RESET}"
+
+if grep -qE 'Heuristic.*fallback|heuristic.*classification|Heuristic:' "$SRC"; then
+    assert_pass "heuristic fallback classification present"
+else
+    assert_fail "heuristic fallback classification present"
+fi
+
+echo ""
+
+# ─── 21. Dismiss Reply Template ────────────────────────────────────────────
+echo -e "${BOLD}  Dismiss Reply${RESET}"
+
+if grep -q 'dismissReplyTemplate' "$SRC"; then
+    assert_pass "dismiss reply template from policy referenced"
+else
+    assert_fail "dismiss reply template from policy referenced"
+fi
+
+if grep -q '{{reason}}' "$SRC"; then
+    assert_pass "dismiss template interpolates reason"
+else
+    assert_fail "dismiss template interpolates reason"
+fi
+
+echo ""
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Results
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -624,6 +624,391 @@ pr_patrol() {
     emit_event "pr_patrol.complete"
 }
 
+# ─── Review Comment Triage ────────────────────────────────────────────────────
+
+get_triage_policy() {
+    local key="$1"
+    local default="${2:-}"
+    local policy_file="${REPO_DIR}/config/policy.json"
+    if [[ -f "$policy_file" ]]; then
+        jq -r ".reviewTriage.${key} // \"${default}\"" "$policy_file" 2>/dev/null || echo "$default"
+    else
+        echo "$default"
+    fi
+}
+
+fetch_review_comments() {
+    local pr_number="$1"
+    local owner_repo
+
+    if [[ "${NO_GITHUB:-}" == "true" ]]; then
+        echo "[]"
+        return 0
+    fi
+
+    owner_repo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
+    if [[ -z "$owner_repo" ]]; then
+        warn "Could not detect repo — cannot fetch review comments"
+        echo "[]"
+        return 0
+    fi
+
+    local rerun_marker
+    rerun_marker=$(get_triage_policy "rerunMarker" "")
+    if [[ -z "$rerun_marker" ]]; then
+        rerun_marker=$(jq -r '.codeReviewAgent.rerunMarker // ""' "${REPO_DIR}/config/policy.json" 2>/dev/null || echo "")
+    fi
+
+    # Load bot author patterns from policy
+    local bot_patterns
+    bot_patterns=$(jq -r '.reviewTriage.botAuthorPatterns // [] | .[]' "${REPO_DIR}/config/policy.json" 2>/dev/null || echo "")
+
+    # Fetch inline review comments
+    local inline_comments
+    inline_comments=$(gh api "repos/${owner_repo}/pulls/${pr_number}/comments" 2>/dev/null || echo "[]")
+
+    # Fetch top-level reviews with body text
+    local reviews
+    reviews=$(gh api "repos/${owner_repo}/pulls/${pr_number}/reviews" 2>/dev/null || echo "[]")
+
+    # Fetch general PR comments
+    local general_comments
+    general_comments=$(gh pr view "$pr_number" --json comments --jq '.comments' 2>/dev/null || echo "[]")
+
+    # Normalize and merge all comments into a single JSON array
+    local merged
+    merged=$(jq -n \
+        --argjson inline "$inline_comments" \
+        --argjson reviews "$reviews" \
+        --argjson general "$general_comments" \
+        --arg marker "$rerun_marker" \
+        --arg bot_pats "$bot_patterns" '
+        def is_bot(author; pats):
+            if (pats | length) == 0 then false
+            else (pats | split("\n") | map(select(length > 0)) | any(. as $p | author | test($p; "i")))
+            end;
+        def skip_self(body; marker):
+            if (marker | length) == 0 then false
+            else (body | contains(marker))
+            end;
+
+        [
+            ($inline | map(select(.body != null and .body != "")) | map({
+                id: .id,
+                author: (.user.login // "unknown"),
+                body: .body,
+                path: (.path // ""),
+                line: (.line // .original_line // 0),
+                diff_hunk: (.diff_hunk // ""),
+                created_at: (.created_at // ""),
+                source: "inline",
+                is_bot: is_bot((.user.login // ""); $bot_pats)
+            }) | .[] | select(skip_self(.body; $marker) | not)),
+
+            ($reviews | map(select(.body != null and .body != "")) | map({
+                id: .id,
+                author: (.user.login // "unknown"),
+                body: .body,
+                path: "",
+                line: 0,
+                diff_hunk: "",
+                created_at: (.submitted_at // ""),
+                source: "review",
+                is_bot: is_bot((.user.login // ""); $bot_pats)
+            }) | .[] | select(skip_self(.body; $marker) | not)),
+
+            ($general | map(select(.body != null and .body != "")) | map({
+                id: (.id // 0),
+                author: (.author.login // "unknown"),
+                body: .body,
+                path: "",
+                line: 0,
+                diff_hunk: "",
+                created_at: (.createdAt // ""),
+                source: "general",
+                is_bot: is_bot((.author.login // ""); $bot_pats)
+            }) | .[] | select(skip_self(.body; $marker) | not))
+        ]
+    ' 2>/dev/null || echo "[]")
+
+    echo "$merged"
+}
+
+classify_comment() {
+    local comment_json="$1"
+    local classification_model
+    classification_model=$(get_triage_policy "classificationModel" "sonnet")
+
+    local body author is_bot path diff_hunk
+    body=$(echo "$comment_json" | jq -r '.body // ""')
+    author=$(echo "$comment_json" | jq -r '.author // "unknown"')
+    is_bot=$(echo "$comment_json" | jq -r '.is_bot // false')
+    path=$(echo "$comment_json" | jq -r '.path // ""')
+    diff_hunk=$(echo "$comment_json" | jq -r '.diff_hunk // ""')
+
+    # Try Claude classification first
+    if command -v claude >/dev/null 2>&1; then
+        local prompt="Classify this PR review comment as exactly one of: fix, dismiss, or human_required.
+
+- fix: The comment identifies a real bug, missing validation, security issue, or incorrect logic that should be changed.
+- dismiss: The comment is noise, a compliment, a question already answered, stylistic nitpick with no substance, or bot-generated boilerplate.
+- human_required: The comment raises a design question, requests a product decision, or needs human judgment.
+
+Comment by ${author} (bot: ${is_bot}):
+${body}"
+        if [[ -n "$path" && "$path" != "" ]]; then
+            prompt="${prompt}
+
+File: ${path}"
+        fi
+        if [[ -n "$diff_hunk" && "$diff_hunk" != "" ]]; then
+            prompt="${prompt}
+
+Diff context:
+${diff_hunk}"
+        fi
+
+        prompt="${prompt}
+
+Respond with ONLY valid JSON: {\"classification\": \"fix|dismiss|human_required\", \"reason\": \"brief explanation\", \"priority\": \"P1|P2|P3\"}"
+
+        local claude_response
+        claude_response=$(timeout 30 claude --print --model "$classification_model" "$prompt" 2>/dev/null || echo "")
+
+        if [[ -n "$claude_response" ]]; then
+            local parsed
+            parsed=$(echo "$claude_response" | jq -r 'select(.classification != null)' 2>/dev/null || echo "")
+            if [[ -n "$parsed" ]]; then
+                echo "$parsed"
+                return 0
+            fi
+            # Try extracting JSON from markdown code fence
+            parsed=$(echo "$claude_response" | sed -n 's/.*```json//;s/```.*//;p' | jq -r 'select(.classification != null)' 2>/dev/null || echo "")
+            if [[ -n "$parsed" ]]; then
+                echo "$parsed"
+                return 0
+            fi
+        fi
+    fi
+
+    # Heuristic fallback
+    local classification="human_required"
+    local reason="Heuristic: defaulting to human_required (conservative)"
+    local priority="P2"
+
+    if [[ "$is_bot" == "true" ]]; then
+        # Bot comments with no actionable language → dismiss
+        if echo "$body" | grep -qiE 'bug|error|uninitiali[sz]ed|wrong|incorrect|vulnerability|security|missing|undefined|null pointer|crash'; then
+            classification="fix"
+            reason="Heuristic: bot comment with actionable language"
+            priority="P1"
+        else
+            classification="dismiss"
+            reason="Heuristic: bot comment without actionable content"
+            priority="P3"
+        fi
+    elif echo "$body" | grep -qiE 'bug|error|uninitiali[sz]ed|wrong|incorrect|vulnerability|security|missing check|missing validation|null pointer|crash|race condition'; then
+        classification="fix"
+        reason="Heuristic: comment contains actionable language"
+        priority="P1"
+    fi
+
+    jq -n --arg c "$classification" --arg r "$reason" --arg p "$priority" \
+        '{"classification": $c, "reason": $r, "priority": $p}'
+}
+
+inject_review_feedback() {
+    local triage_file="$1"
+    local artifacts_dir
+    artifacts_dir=$(dirname "$triage_file")
+    local feedback_file="${artifacts_dir}/review-feedback.json"
+
+    local fix_comments
+    fix_comments=$(jq '[.comments[] | select(.classification == "fix")]' "$triage_file" 2>/dev/null || echo "[]")
+    local fix_count
+    fix_count=$(echo "$fix_comments" | jq 'length' 2>/dev/null || echo "0")
+
+    if [[ "$fix_count" -eq 0 ]]; then
+        return 0
+    fi
+
+    local pr_number
+    pr_number=$(jq -r '.pr_number' "$triage_file" 2>/dev/null || echo "0")
+
+    local tmp_feedback="${feedback_file}.tmp.$$"
+    jq -n \
+        --arg source "review_comments" \
+        --argjson pr "$pr_number" \
+        --arg ts "$(now_iso)" \
+        --argjson count "$fix_count" \
+        --argjson fixes "$fix_comments" '
+        {
+            source: $source,
+            pr_number: $pr,
+            timestamp: $ts,
+            fix_count: $count,
+            fixes: [$fixes[] | {
+                comment_id: .id,
+                author: .author,
+                file: .path,
+                line: .line,
+                body: .body,
+                priority: .priority,
+                diff_hunk: .diff_hunk
+            }]
+        }
+    ' > "$tmp_feedback" 2>/dev/null && mv "$tmp_feedback" "$feedback_file" || { rm -f "$tmp_feedback"; return 1; }
+
+    info "Wrote ${fix_count} fix item(s) to review-feedback.json"
+}
+
+dismiss_comment() {
+    local comment_id="$1"
+    local pr_number="$2"
+    local reason="$3"
+
+    if [[ "${NO_GITHUB:-}" == "true" ]]; then
+        return 0
+    fi
+
+    local owner_repo
+    owner_repo=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "")
+    if [[ -z "$owner_repo" ]]; then
+        return 0
+    fi
+
+    local template
+    template=$(get_triage_policy "dismissReplyTemplate" "No change needed: {{reason}}. Resolving thread.")
+    local reply_body="${template//\{\{reason\}\}/$reason}"
+
+    gh api "repos/${owner_repo}/pulls/comments/${comment_id}/replies" \
+        --method POST -f body="$reply_body" 2>/dev/null || true
+
+    emit_event "pr.comment_dismissed" "pr=${pr_number}" "id=${comment_id}"
+}
+
+triage_review_comments() {
+    local pr_number="$1"
+
+    if [[ "${NO_GITHUB:-}" == "true" ]]; then
+        info "Review comment triage skipped (NO_GITHUB)"
+        return 0
+    fi
+
+    local triage_enabled
+    triage_enabled=$(get_triage_policy "enabled" "true")
+    if [[ "$triage_enabled" != "true" ]]; then
+        info "Review comment triage disabled in policy"
+        return 0
+    fi
+
+    info "Triaging review comments on PR #${pr_number}..."
+
+    local comments
+    comments=$(fetch_review_comments "$pr_number")
+    local total
+    total=$(echo "$comments" | jq 'length' 2>/dev/null || echo "0")
+
+    if [[ "$total" -eq 0 ]]; then
+        info "No review comments to triage"
+        return 0
+    fi
+
+    local max_comments
+    max_comments=$(get_triage_policy "maxCommentsPerTriage" "50")
+
+    local fix_count=0
+    local dismiss_count=0
+    local human_required_count=0
+    local triaged_comments="[]"
+
+    local i=0
+    while [[ $i -lt $total && $i -lt $max_comments ]]; do
+        local comment
+        comment=$(echo "$comments" | jq ".[$i]")
+        local cid cauthor cbody
+        cid=$(echo "$comment" | jq -r '.id')
+        cauthor=$(echo "$comment" | jq -r '.author')
+        cbody=$(echo "$comment" | jq -r '.body' | head -1 | cut -c1-80)
+
+        local result
+        result=$(classify_comment "$comment")
+        local classification reason priority
+        classification=$(echo "$result" | jq -r '.classification // "human_required"')
+        reason=$(echo "$result" | jq -r '.reason // ""')
+        priority=$(echo "$result" | jq -r '.priority // "P2"')
+
+        info "Comment #${cid} by ${cauthor}: ${classification} — ${reason}"
+        emit_event "pr.comment_triaged" "pr=${pr_number}" "id=${cid}" "classification=${classification}"
+
+        # Merge classification into comment
+        local enriched
+        enriched=$(echo "$comment" | jq \
+            --arg cls "$classification" \
+            --arg rsn "$reason" \
+            --arg pri "$priority" \
+            '. + {classification: $cls, reason: $rsn, priority: $pri}')
+
+        triaged_comments=$(echo "$triaged_comments" | jq --argjson c "$enriched" '. + [$c]')
+
+        case "$classification" in
+            fix) fix_count=$((fix_count + 1)) ;;
+            dismiss)
+                dismiss_count=$((dismiss_count + 1))
+                local csource
+                csource=$(echo "$comment" | jq -r '.source')
+                # Only dismiss inline comments (they have reply endpoints)
+                if [[ "$csource" == "inline" ]]; then
+                    dismiss_comment "$cid" "$pr_number" "$reason"
+                fi
+                ;;
+            human_required) human_required_count=$((human_required_count + 1)) ;;
+        esac
+
+        i=$((i + 1))
+    done
+
+    # Write triage report (atomic write)
+    local artifacts_dir="${REPO_DIR}/.claude/pipeline-artifacts"
+    mkdir -p "$artifacts_dir"
+    local triage_file="${artifacts_dir}/review-triage.json"
+    local tmp_triage="${triage_file}.tmp.$$"
+
+    jq -n \
+        --argjson pr "$pr_number" \
+        --arg ts "$(now_iso)" \
+        --argjson total "$total" \
+        --argjson fix "$fix_count" \
+        --argjson dismiss "$dismiss_count" \
+        --argjson human "$human_required_count" \
+        --argjson comments "$triaged_comments" '
+        {
+            pr_number: $pr,
+            triaged_at: $ts,
+            total_comments: $total,
+            fix_count: $fix,
+            dismiss_count: $dismiss,
+            human_required_count: $human,
+            comments: $comments
+        }
+    ' > "$tmp_triage" 2>/dev/null && mv "$tmp_triage" "$triage_file" || { rm -f "$tmp_triage"; return 1; }
+
+    info "Triage complete: ${fix_count} fix, ${dismiss_count} dismiss, ${human_required_count} human_required"
+
+    # Inject fix feedback if any
+    if [[ $fix_count -gt 0 ]]; then
+        inject_review_feedback "$triage_file"
+    fi
+
+    # Return 1 if human_required comments exist (blocks merge gate)
+    if [[ $human_required_count -gt 0 ]]; then
+        warn "Review comments require human attention — ${human_required_count} comment(s)"
+        return 1
+    fi
+
+    return 0
+}
+
 # ─── Help ────────────────────────────────────────────────────────────────────
 
 show_help() {
@@ -633,6 +1018,7 @@ show_help() {
     echo -e "${BOLD}COMMANDS${RESET}"
     echo -e "  ${CYAN}review <number>${RESET}      Run review pass on a PR (checks code quality, posts findings)"
     echo -e "  ${CYAN}merge <number>${RESET}       Attempt auto-merge (checks CI, conflicts, reviews, then merges)"
+    echo -e "  ${CYAN}triage <number>${RESET}      Triage review comments (classify fix/dismiss/human_required)"
     echo -e "  ${CYAN}cleanup${RESET}               Close stale PRs (older than configured days, default 14)"
     echo -e "  ${CYAN}status${RESET}                Show all open Shipwright PRs with lifecycle state"
     echo -e "  ${CYAN}patrol${RESET}                Run full PR lifecycle patrol (review + merge + cleanup)"
@@ -641,6 +1027,7 @@ show_help() {
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo -e "  ${DIM}shipwright pr review 42${RESET}       # Review PR #42"
     echo -e "  ${DIM}shipwright pr merge 42${RESET}        # Try to merge PR #42"
+    echo -e "  ${DIM}shipwright pr triage 42${RESET}       # Triage review comments on PR #42"
     echo -e "  ${DIM}shipwright pr cleanup${RESET}         # Close stale PRs"
     echo -e "  ${DIM}shipwright pr status${RESET}          # Show all open PRs"
     echo -e "  ${DIM}shipwright pr patrol${RESET}          # Full lifecycle management"
@@ -661,6 +1048,10 @@ main() {
         merge)
             [[ -z "${1:-}" ]] && { error "PR number required"; show_help; exit 1; }
             pr_merge "$1"
+            ;;
+        triage)
+            [[ -z "${1:-}" ]] && { error "PR number required"; show_help; exit 1; }
+            triage_review_comments "$1"
             ;;
         cleanup)
             pr_cleanup

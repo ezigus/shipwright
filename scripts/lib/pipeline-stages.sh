@@ -996,6 +996,27 @@ ${build_alerts}"
         fi
     fi
 
+    # Inject review feedback from PR comment triage
+    local review_feedback_file="${ARTIFACTS_DIR}/review-feedback.json"
+    if [[ -f "$review_feedback_file" ]]; then
+        local rf_count
+        rf_count=$(jq -r '.fix_count // 0' "$review_feedback_file" 2>/dev/null || echo "0")
+        if [[ "$rf_count" -gt 0 ]]; then
+            local rf_items
+            rf_items=$(jq -r '.fixes[] | "[" + .priority + "] " + .file + ":" + (.line | tostring) + " — " + .body + " (by " + .author + ")"' "$review_feedback_file" 2>/dev/null || echo "")
+            if [[ -n "$rf_items" ]]; then
+                enriched_goal="${enriched_goal}
+
+## Review Comments Requiring Fixes
+The following code review comments on the PR must be addressed:
+${rf_items}
+Fix each issue. The PR cannot merge until these are resolved."
+            fi
+        fi
+        # Delete after consumption to prevent re-injection
+        rm -f "$review_feedback_file"
+    fi
+
     # Inject coverage baseline
     local repo_hash_build
     repo_hash_build=$(echo -n "$PROJECT_ROOT" | shasum -a 256 2>/dev/null | cut -c1-12 || echo "unknown")
@@ -1581,6 +1602,18 @@ _Pipeline will attempt self-healing rebuild._"
 ${review_summary}
 
 </details>"
+    fi
+
+    # ── Review comment triage (informational — does not block) ──
+    if [[ "${NO_GITHUB:-}" != "true" ]]; then
+        local review_pr_number
+        review_pr_number=$(gh pr list --head "$GIT_BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
+        if [[ -n "$review_pr_number" && "$review_pr_number" != "null" ]]; then
+            if [[ -f "$SCRIPT_DIR/sw-pr-lifecycle.sh" ]]; then
+                source "$SCRIPT_DIR/sw-pr-lifecycle.sh"
+                triage_review_comments "$review_pr_number" || info "Review triage found comments requiring attention"
+            fi
+        fi
     fi
 
     log_stage "review" "AI review complete ($total_issues issues: $critical_count critical, $bug_count bugs, $warning_count suggestions)"
@@ -2202,6 +2235,44 @@ stage_merge() {
                 emit_event "merge.approval_pending" "issue=${ISSUE_NUMBER:-0}"
                 log_stage "merge" "BLOCKED: approval gate pending"
                 return 1
+            fi
+        fi
+    fi
+
+    # ── Review comment triage gate — block merge on human_required comments ──
+    if [[ -f "$SCRIPT_DIR/sw-pr-lifecycle.sh" ]]; then
+        local merge_pr_number
+        merge_pr_number=$(gh pr list --head "$GIT_BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
+        if [[ -n "$merge_pr_number" && "$merge_pr_number" != "null" ]]; then
+            source "$SCRIPT_DIR/sw-pr-lifecycle.sh"
+            if ! triage_review_comments "$merge_pr_number"; then
+                # Check if there are fix items (re-enter build) vs human_required (block)
+                local triage_file="${ARTIFACTS_DIR}/review-triage.json"
+                local triage_human
+                triage_human=$(jq -r '.human_required_count // 0' "$triage_file" 2>/dev/null || echo "0")
+                local triage_fix
+                triage_fix=$(jq -r '.fix_count // 0' "$triage_file" 2>/dev/null || echo "0")
+
+                if [[ "$triage_human" -gt 0 ]]; then
+                    warn "Review comments require human attention — blocking merge"
+                    emit_event "merge.blocked" "reason=human_review_required" "issue=${ISSUE_NUMBER:-0}"
+                    log_stage "merge" "BLOCKED: ${triage_human} review comment(s) require human attention"
+                    return 1
+                fi
+
+                if [[ "$triage_fix" -gt 0 ]]; then
+                    info "Review comments require fixes — re-entering build loop"
+                    emit_event "merge.review_fix_loop" "issue=${ISSUE_NUMBER:-0}" "fixes=${triage_fix}"
+                    stage_build
+                    # Push changes after build
+                    git push origin "$GIT_BRANCH" 2>/dev/null || true
+                    # Re-triage once after build (max 1 re-entry)
+                    if ! triage_review_comments "$merge_pr_number"; then
+                        warn "Review comments still require attention after fix attempt — blocking merge"
+                        log_stage "merge" "BLOCKED: review comments still unresolved after fix attempt"
+                        return 1
+                    fi
+                fi
             fi
         fi
     fi

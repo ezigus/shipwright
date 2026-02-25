@@ -223,6 +223,21 @@
     "promote_threshold_tasks": 10,
     "promote_threshold_success_rate": 85
   },
+  "reviewTriage": {
+    "enabled": true,
+    "botAuthorPatterns": [
+      "-bot$",
+      "\\[bot\\]$",
+      "^copilot",
+      "^codex",
+      "^dependabot",
+      "^renovate"
+    ],
+    "maxCommentsPerTriage": 50,
+    "classificationModel": "sonnet",
+    "dismissReplyTemplate": "No change needed: {{reason}}. Resolving thread.",
+    "feedbackFile": "review-feedback.json"
+  },
   "decision": {
     "enabled": false,
     "cycle_interval_seconds": 1800,

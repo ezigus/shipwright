@@ -57,7 +57,8 @@ GOAL=""
 ORIGINAL_GOAL=""  # Preserved across restarts — GOAL gets appended to
 MAX_ITERATIONS="${SW_MAX_ITERATIONS:-20}"
 TEST_CMD=""
-TEST_CMD_AUTO=false  # true when TEST_CMD was auto-detected (not via --test-cmd)
+TEST_CMD_AUTO=false       # true when TEST_CMD was auto-detected (not via --test-cmd)
+_TEST_CMD_FROM_CLI=false  # true when --test-cmd was provided as a CLI argument
 FAST_TEST_CMD=""
 FAST_TEST_INTERVAL=5
 TEST_LOG_FILE=""
@@ -179,9 +180,10 @@ while [[ $# -gt 0 ]]; do
         --test-cmd)
             TEST_CMD="${2:-}"
             [[ -z "$TEST_CMD" ]] && { error "Missing value for --test-cmd"; exit 1; }
+            _TEST_CMD_FROM_CLI=true
             shift 2
             ;;
-        --test-cmd=*) TEST_CMD="${1#--test-cmd=}"; shift ;;
+        --test-cmd=*) TEST_CMD="${1#--test-cmd=}"; _TEST_CMD_FROM_CLI=true; shift ;;
         --model)
             MODEL="${2:-}"
             [[ -z "$MODEL" ]] && { error "Missing value for --model"; exit 1; }
@@ -718,7 +720,7 @@ resume_state() {
                 max_iterations:*) MAX_ITERATIONS="$(echo "${line#max_iterations:}" | tr -d ' ')" ;;
                 status:*)        STATUS="$(echo "${line#status:}" | tr -d ' ')" ;;
                 test_cmd:*)      [[ -z "$TEST_CMD" ]] && TEST_CMD="$(echo "${line#test_cmd:}" | sed 's/^ *"//;s/" *$//')" ;;
-                test_cmd_auto:*) [[ -z "$TEST_CMD" ]] && TEST_CMD_AUTO="$(echo "${line#test_cmd_auto:}" | tr -d ' ')" ;;
+                test_cmd_auto:*) [[ "${_TEST_CMD_FROM_CLI:-false}" != "true" ]] && TEST_CMD_AUTO="$(echo "${line#test_cmd_auto:}" | tr -d ' ')" ;;
                 model:*)         MODEL="$(echo "${line#model:}" | tr -d ' ')" ;;
                 agents:*)        AGENTS="$(echo "${line#agents:}" | tr -d ' ')" ;;
                 loop_start_commit:*) LOOP_START_COMMIT="$(echo "${line#loop_start_commit:}" | tr -d ' ')" ;;

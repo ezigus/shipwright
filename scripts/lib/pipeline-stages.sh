@@ -1028,15 +1028,15 @@ ${prevention_text}"
     CURRENT_STAGE_ID="build"
 
     local test_cmd="${TEST_CMD}"
-    local test_cmd_explicit=false
-    if [[ -n "$test_cmd" ]]; then
-        test_cmd_explicit=true
-    else
+    # TEST_CMD_EXPLICIT is true only when the pipeline received --test-cmd from the user CLI.
+    # Intake-auto-filled TEST_CMD is NOT explicit; pipeline config test_cmd IS explicit.
+    local test_cmd_explicit="${TEST_CMD_EXPLICIT:-false}"
+    if [[ -z "$test_cmd" ]]; then
         test_cmd=$(jq -r --arg id "build" '(.stages[] | select(.id == $id) | .config.test_cmd) // .defaults.test_cmd // ""' "$PIPELINE_CONFIG" 2>/dev/null) || true
         [[ "$test_cmd" == "null" ]] && test_cmd=""
         [[ -n "$test_cmd" ]] && test_cmd_explicit=true
     fi
-    # Auto-detect if still empty — but don't mark as explicit so the loop
+    # Auto-detect if still empty — don't mark as explicit so the loop
     # can do per-iteration smart targeting via detect_test_cmd_for_loop
     if [[ -z "$test_cmd" ]]; then
         test_cmd=$(detect_test_cmd)

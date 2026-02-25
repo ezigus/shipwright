@@ -1028,11 +1028,16 @@ ${prevention_text}"
     CURRENT_STAGE_ID="build"
 
     local test_cmd="${TEST_CMD}"
-    if [[ -z "$test_cmd" ]]; then
+    local test_cmd_explicit=false
+    if [[ -n "$test_cmd" ]]; then
+        test_cmd_explicit=true
+    else
         test_cmd=$(jq -r --arg id "build" '(.stages[] | select(.id == $id) | .config.test_cmd) // .defaults.test_cmd // ""' "$PIPELINE_CONFIG" 2>/dev/null) || true
         [[ "$test_cmd" == "null" ]] && test_cmd=""
+        [[ -n "$test_cmd" ]] && test_cmd_explicit=true
     fi
-    # Auto-detect if still empty
+    # Auto-detect if still empty — but don't mark as explicit so the loop
+    # can do per-iteration smart targeting via detect_test_cmd_for_loop
     if [[ -z "$test_cmd" ]]; then
         test_cmd=$(detect_test_cmd)
     fi
@@ -1091,7 +1096,9 @@ ${prevention_text}"
         fi
     fi
 
-    [[ -n "$test_cmd" && "$test_cmd" != "null" ]] && loop_args+=(--test-cmd "$test_cmd")
+    # Only pass explicit test commands to the loop; auto-detected commands are omitted so
+    # the loop's per-iteration detect_test_cmd_for_loop can target changed files precisely.
+    [[ -n "$test_cmd" && "$test_cmd" != "null" && "$test_cmd_explicit" == "true" ]] && loop_args+=(--test-cmd "$test_cmd")
     loop_args+=(--max-iterations "$max_iter")
     loop_args+=(--model "$build_model")
     [[ "$agents" -gt 1 ]] 2>/dev/null && loop_args+=(--agents "$agents")

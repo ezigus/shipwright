@@ -32,3 +32,4 @@
 {"ts":"2026-02-25T11:30:45Z","ts_epoch":1772019045,"type":"cost.budget_unconfigured","status":"unlimited"}
 {"ts":"2026-02-25T11:46:56Z","ts_epoch":1772020016,"type":"cost.budget_unconfigured","status":"unlimited"}
 {"ts":"2026-02-25T11:49:48Z","ts_epoch":1772020188,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-02-25T12:06:38Z","ts_epoch":1772021198,"type":"patrol.started","dry_run":"false"}

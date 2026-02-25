@@ -84,3 +84,11 @@
 {"ts":"2026-02-25T20:07:33Z","ts_epoch":1772050053,"type":"intelligence.model","stage":"plan","complexity":5,"model":"haiku","source":"heuristic"}
 {"ts":"2026-02-25T20:07:33Z","ts_epoch":1772050053,"type":"intelligence.model_ab","issue":4,"stage":"plan","recommended":"haiku","applied":"haiku","ab_group":"experiment","ab_ratio":20}
 {"ts":"2026-02-25T20:07:33Z","ts_epoch":1772050053,"type":"stage.started","issue":4,"stage":"plan"}
+{"ts":"2026-02-25T20:16:00Z","ts_epoch":1772050560,"type":"hygiene_platform_refactor","hardcoded":62,"fallback":61,"todo":44}
+{"ts":"2026-02-25T20:16:05Z","ts_epoch":1772050565,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-02-25T20:17:07Z","ts_epoch":1772050627,"type":"strategic.issue_created","title":"Pre-build validation gate to catch common failure modes before burning iterations","priority":"P0","complexity":"standard"}
+{"ts":"2026-02-25T20:17:10Z","ts_epoch":1772050630,"type":"strategic.issue_created","title":"First-run experience: guided quickstart with example issue and real-time progress","priority":"P1","complexity":"standard"}
+{"ts":"2026-02-25T20:17:13Z","ts_epoch":1772050633,"type":"strategic.issue_created","title":"Decompose sw-loop.sh monolith into focused modules (iteration, restart, progress, feedback)","priority":"P1","complexity":"full"}
+{"ts":"2026-02-25T20:17:16Z","ts_epoch":1772050636,"type":"strategic.issue_created","title":"Context exhaustion predictor: detect and adapt before session restarts fail","priority":"P0","complexity":"standard"}
+{"ts":"2026-02-25T20:17:20Z","ts_epoch":1772050640,"type":"strategic.issue_created","title":"Adaptive iteration budget: learn optimal --max-iterations from historical success/failure data","priority":"P2","complexity":"standard"}
+{"ts":"2026-02-25T20:17:20Z","ts_epoch":1772050640,"type":"strategic.cycle_complete","issues_created":5,"issues_skipped":0}

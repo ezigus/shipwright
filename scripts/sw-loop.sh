@@ -57,6 +57,7 @@ GOAL=""
 ORIGINAL_GOAL=""  # Preserved across restarts — GOAL gets appended to
 MAX_ITERATIONS="${SW_MAX_ITERATIONS:-20}"
 TEST_CMD=""
+TEST_CMD_AUTO=false  # true when TEST_CMD was auto-detected (not via --test-cmd)
 FAST_TEST_CMD=""
 FAST_TEST_INTERVAL=5
 TEST_LOG_FILE=""
@@ -383,7 +384,10 @@ WORKTREE_DIR="$PROJECT_ROOT/.worktrees"
 
 if [[ -z "$TEST_CMD" ]] && [[ "$(type -t detect_test_cmd 2>/dev/null)" == "function" ]]; then
     TEST_CMD="$(detect_test_cmd)"
-    [[ -n "$TEST_CMD" ]] && info "Auto-detected test command: ${DIM}${TEST_CMD}${RESET}"
+    if [[ -n "$TEST_CMD" ]]; then
+        TEST_CMD_AUTO=true
+        info "Auto-detected test command: ${DIM}${TEST_CMD}${RESET}"
+    fi
 fi
 
 # Warm detection caches for per-iteration re-targeting (cheap on subsequent calls)
@@ -714,6 +718,7 @@ resume_state() {
                 max_iterations:*) MAX_ITERATIONS="$(echo "${line#max_iterations:}" | tr -d ' ')" ;;
                 status:*)        STATUS="$(echo "${line#status:}" | tr -d ' ')" ;;
                 test_cmd:*)      [[ -z "$TEST_CMD" ]] && TEST_CMD="$(echo "${line#test_cmd:}" | sed 's/^ *"//;s/" *$//')" ;;
+                test_cmd_auto:*) [[ -z "$TEST_CMD" ]] && TEST_CMD_AUTO="$(echo "${line#test_cmd_auto:}" | tr -d ' ')" ;;
                 model:*)         MODEL="$(echo "${line#model:}" | tr -d ' ')" ;;
                 agents:*)        AGENTS="$(echo "${line#agents:}" | tr -d ' ')" ;;
                 loop_start_commit:*) LOOP_START_COMMIT="$(echo "${line#loop_start_commit:}" | tr -d ' ')" ;;
@@ -794,6 +799,7 @@ write_state() {
         printf 'max_iterations: %s\n' "$MAX_ITERATIONS"
         printf 'status: %s\n' "$STATUS"
         printf 'test_cmd: "%s"\n' "$TEST_CMD"
+        printf 'test_cmd_auto: %s\n' "${TEST_CMD_AUTO:-false}"
         printf 'model: %s\n' "$MODEL"
         printf 'agents: %s\n' "$AGENTS"
         printf 'loop_start_commit: %s\n' "$LOOP_START_COMMIT"
@@ -1261,8 +1267,10 @@ run_test_gate() {
         fi
     fi
 
-    # Re-target the full test command based on changes accumulated since loop start
+    # Re-target the full test command based on changes accumulated since loop start.
+    # Only applies to auto-detected commands; explicit --test-cmd is never overridden.
     if [[ "$test_mode" == "full" ]] \
+        && [[ "${TEST_CMD_AUTO:-false}" == "true" ]] \
         && [[ "$(type -t detect_test_cmd_for_loop 2>/dev/null)" == "function" ]] \
         && [[ -n "${LOOP_START_COMMIT:-}" ]]; then
         local retargeted
@@ -1274,7 +1282,7 @@ run_test_gate() {
 
     local test_log="$LOG_DIR/tests-iter-${ITERATION}.log"
     TEST_LOG_FILE="$test_log"
-    echo -e "  ${DIM}Running ${test_mode} tests...${RESET}"
+    echo -e "  ${DIM}Running ${test_mode} tests: ${active_test_cmd}${RESET}"
     # Wrap test command with timeout (5 min default) to prevent hanging
     local test_timeout="${SW_TEST_TIMEOUT:-300}"
     local test_wrapper="$active_test_cmd"

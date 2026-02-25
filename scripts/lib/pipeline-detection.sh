@@ -3,6 +3,9 @@
 [[ -n "${_PIPELINE_DETECTION_LOADED:-}" ]] && return 0
 _PIPELINE_DETECTION_LOADED=1
 
+_PIPELINE_DETECT_HELPER_CAPS_CACHE=""
+_PIPELINE_DETECT_REPO_ENVS_CACHE=""
+
 _pipeline_cd_get() {
     local key="$1" fallback="${2:-}"
     if [[ "$(type -t _config_get 2>/dev/null)" == "function" ]]; then
@@ -47,6 +50,10 @@ _append_env_json() {
 }
 
 detect_repo_environments_json() {
+    if [[ -n "$_PIPELINE_DETECT_REPO_ENVS_CACHE" ]]; then
+        echo "$_PIPELINE_DETECT_REPO_ENVS_CACHE"
+        return
+    fi
     local root="${PROJECT_ROOT:-$(pwd)}"
     local envs='[]'
     local max_depth
@@ -106,6 +113,7 @@ detect_repo_environments_json() {
         envs=$(_append_env_json "$envs" "make" "${make_marker#$root/}")
     fi
 
+    _PIPELINE_DETECT_REPO_ENVS_CACHE="$envs"
     echo "$envs"
 }
 
@@ -193,6 +201,10 @@ parse_helper_help_output() {
 }
 
 detect_helper_capabilities_json() {
+    if [[ -n "$_PIPELINE_DETECT_HELPER_CAPS_CACHE" ]]; then
+        echo "$_PIPELINE_DETECT_HELPER_CAPS_CACHE"
+        return
+    fi
     local root="${PROJECT_ROOT:-$(pwd)}"
     local helpers_json
     helpers_json=$(_pipeline_cd_helpers_json)
@@ -218,6 +230,7 @@ detect_helper_capabilities_json() {
         merged_flags=$(jq -c -s '.[0] * .[1]' <(echo "$mode_flags") <(echo "$parsed_flags"))
         out=$(jq -c --argjson helper "$(jq -c --arg h "$help_args" --arg m "$default_mode" --arg p "$prefer_helper" --argjson mf "$merged_flags" '. + {help_args:$h, default_mode:$m, prefer_helper:($p=="true"), mode_flags:$mf}' <<<"$helper")" '. + [$helper]' <<<"$out")
     done < <(jq -c '.[]?' <<<"$helpers_json")
+    _PIPELINE_DETECT_HELPER_CAPS_CACHE="$out"
     echo "$out"
 }
 
@@ -230,6 +243,32 @@ collect_changed_files_json() {
     local files
     files=$( (git -C "$root" diff --name-only 2>/dev/null;
               git -C "$root" diff --cached --name-only 2>/dev/null) | awk 'NF' | sort -u )
+    jq -Rsc 'split("\n") | map(select(length > 0))' <<<"$files"
+}
+
+# Collect files changed since a given start commit (for per-iteration loop re-targeting).
+# Falls back to staged/unstaged diff when no commits have been made yet.
+collect_loop_changed_files_json() {
+    local start_commit="${1:-}"
+    local root="${PROJECT_ROOT:-$(pwd)}"
+    if ! git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "[]"
+        return
+    fi
+    local files=""
+    if [[ -n "$start_commit" ]]; then
+        local cur_head
+        cur_head=$(git -C "$root" rev-parse HEAD 2>/dev/null || echo "")
+        if [[ -n "$cur_head" && "$cur_head" != "$start_commit" ]]; then
+            files=$(git -C "$root" diff --name-only "$start_commit" "$cur_head" 2>/dev/null \
+                    | awk 'NF' | sort -u)
+        fi
+    fi
+    # Fall back to unstaged/staged if no commits made yet
+    if [[ -z "$files" ]]; then
+        files=$( (git -C "$root" diff --name-only 2>/dev/null;
+                  git -C "$root" diff --cached --name-only 2>/dev/null) | awk 'NF' | sort -u)
+    fi
     jq -Rsc 'split("\n") | map(select(length > 0))' <<<"$files"
 }
 
@@ -382,6 +421,67 @@ detect_test_cmd() {
     selected=$(select_test_commands_for_context_json)
     separator=$(_pipeline_cd_get "pipeline.command_discovery.execution.separator" " && ")
     jq -r --arg sep "$separator" 'map(.cmd) | unique | join($sep)' <<<"$selected"
+}
+
+# Per-iteration variant of detect_test_cmd for use inside the build loop.
+# Uses cached env/helper data (populated at loop startup) with a fresh
+# changed-file list derived from git diff against the loop start commit.
+# Returns empty string when no changes are found (caller should keep existing TEST_CMD).
+detect_test_cmd_for_loop() {
+    local start_commit="${1:-}"
+    local changed_files_json
+    changed_files_json=$(collect_loop_changed_files_json "$start_commit")
+    # Empty → no changes yet, return empty so caller keeps existing TEST_CMD
+    if [[ -z "$changed_files_json" || "$changed_files_json" == "[]" ]]; then
+        echo ""
+        return
+    fi
+    local envs_json helpers_json relevant_envs separator
+    envs_json=$(detect_repo_environments_json)       # hits cache
+    helpers_json=$(detect_helper_capabilities_json)  # hits cache
+    relevant_envs=$(resolve_relevant_environments_json "$envs_json" "$changed_files_json")
+
+    local out='[]'
+    local env_id
+    while IFS= read -r env_id; do
+        [[ -z "$env_id" ]] && continue
+        local mode cmd helper marker helper_flags
+        mode=$(resolve_test_mode_for_env "$env_id" "$changed_files_json")
+        marker=$(jq -r --arg env "$env_id" \
+            'map(select(.id == $env)) | first | .marker // ""' <<<"$envs_json")
+        helper=$(jq -c --arg env "$env_id" \
+            'map(select(.environments[]? == $env)) | first // empty' <<<"$helpers_json")
+        if [[ -z "$helper" || "$helper" == "null" ]]; then
+            continue
+        fi
+        helper_flags=$(jq -r --arg mode "$mode" '.mode_flags[$mode] // ""' <<<"$helper")
+        # Apply class targeting for ios_xcode (same logic as select_test_commands_for_context_json)
+        if [[ "$env_id" == "ios_xcode" ]]; then
+            local classes pkg_count all_targets
+            classes=$(detect_changed_non_package_classes "$changed_files_json")
+            pkg_count=$(jq '[.[] | select(test("^Packages/"))] | length' <<<"$changed_files_json")
+            all_targets="$classes"
+            if [[ "$pkg_count" -gt 0 ]]; then
+                [[ -n "$all_targets" ]] && all_targets="${all_targets},Packages" \
+                    || all_targets="Packages"
+            fi
+            [[ -n "$all_targets" ]] && helper_flags="-t ${all_targets}"
+        fi
+        local prefer_helper script
+        prefer_helper=$(jq -r '.prefer_helper // false' <<<"$helper")
+        script=$(jq -r '.script // ""' <<<"$helper")
+        if [[ "$prefer_helper" == "true" && -n "$script" ]]; then
+            cmd="bash ./$script ${helper_flags}"
+            cmd="${cmd%% }"
+        else
+            cmd=$(default_test_cmd_for_environment "$env_id" "$marker")
+        fi
+        out=$(jq -c --arg env "$env_id" --arg mode "$mode" --arg cmd "$cmd" \
+            '. + [{"env":$env,"mode":$mode,"cmd":$cmd}]' <<<"$out")
+    done < <(jq -r '.[]?' <<<"$relevant_envs")
+
+    separator=$(_pipeline_cd_get "pipeline.command_discovery.execution.separator" " && ")
+    jq -r --arg sep "$separator" 'map(.cmd) | unique | join($sep)' <<<"$out"
 }
 
 # Detect project language/framework

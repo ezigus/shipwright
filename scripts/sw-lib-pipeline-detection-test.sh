@@ -499,4 +499,100 @@ assert_eq "Package-only: run-xcode-tests.sh -t Packages" "bash ./scripts/run-xco
 
 rm -rf "$PROJECT_ROOT/App.xcodeproj" "$PROJECT_ROOT/Package.swift"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Loop per-iteration re-detection
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_test_cmd_for_loop"
+
+# Setup: mixed iOS + SwiftPM repo with helper script
+mkdir -p "$PROJECT_ROOT/App.xcodeproj"
+touch "$PROJECT_ROOT/Package.swift"
+# Reset caches so the setup above is picked up
+_PIPELINE_DETECT_REPO_ENVS_CACHE=""
+_PIPELINE_DETECT_HELPER_CAPS_CACHE=""
+
+# ── 1. No commits since start → empty (caller keeps existing TEST_CMD) ────────
+# Mock git: HEAD == start_commit → no diff → returns ""
+cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-C" ]]; then shift 2; fi
+case "${1:-}" in
+    rev-parse)
+        if [[ "${2:-}" == "--is-inside-work-tree" ]]; then echo "true"
+        else echo "abc123"
+        fi ;;
+    diff) ;;   # no output for any diff
+esac
+exit 0
+MOCK
+chmod +x "$TEST_TEMP_DIR/bin/git"
+result=$(detect_test_cmd_for_loop "abc123")
+assert_eq "No commits since start → empty" "" "$result"
+
+# ── 2. Package commit since start → -t Packages ──────────────────────────────
+cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-C" ]]; then shift 2; fi
+case "${1:-}" in
+    rev-parse)
+        if [[ "${2:-}" == "--is-inside-work-tree" ]]; then echo "true"
+        elif [[ "${2:-}" == "HEAD" ]]; then echo "def456"
+        else echo "def456"
+        fi ;;
+    diff)
+        # diff --name-only <start> <cur> → package file
+        if [[ "${2:-}" == "--name-only" && "${4:-}" != "" ]]; then
+            printf 'Packages/PlaylistFeature/Sources/PlaylistFeature/Foo.swift\n'
+        fi ;;
+esac
+exit 0
+MOCK
+chmod +x "$TEST_TEMP_DIR/bin/git"
+result=$(detect_test_cmd_for_loop "abc123")
+assert_eq "Package commit since start → -t Packages" "bash ./scripts/run-xcode-tests.sh -t Packages" "$result"
+
+# ── 3. Non-package commit since start → class-targeted ───────────────────────
+cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-C" ]]; then shift 2; fi
+case "${1:-}" in
+    rev-parse)
+        if [[ "${2:-}" == "--is-inside-work-tree" ]]; then echo "true"
+        elif [[ "${2:-}" == "HEAD" ]]; then echo "def456"
+        else echo "def456"
+        fi ;;
+    diff)
+        if [[ "${2:-}" == "--name-only" && "${4:-}" != "" ]]; then
+            printf 'zpod/Views/SomeView.swift\n'
+        fi ;;
+esac
+exit 0
+MOCK
+chmod +x "$TEST_TEMP_DIR/bin/git"
+result=$(detect_test_cmd_for_loop "abc123")
+assert_eq "Non-package commit since start → class-targeted" "bash ./scripts/run-xcode-tests.sh -t SomeView" "$result"
+
+# ── 4. Mixed commits → combined targeting ─────────────────────────────────────
+cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-C" ]]; then shift 2; fi
+case "${1:-}" in
+    rev-parse)
+        if [[ "${2:-}" == "--is-inside-work-tree" ]]; then echo "true"
+        elif [[ "${2:-}" == "HEAD" ]]; then echo "def456"
+        else echo "def456"
+        fi ;;
+    diff)
+        if [[ "${2:-}" == "--name-only" && "${4:-}" != "" ]]; then
+            printf 'Packages/PlaylistFeature/Sources/PlaylistFeature/Foo.swift\nzpod/AppDelegate.swift\n'
+        fi ;;
+esac
+exit 0
+MOCK
+chmod +x "$TEST_TEMP_DIR/bin/git"
+result=$(detect_test_cmd_for_loop "abc123")
+assert_eq "Mixed commits → AppDelegate,Packages targeting" "bash ./scripts/run-xcode-tests.sh -t AppDelegate,Packages" "$result"
+
+rm -rf "$PROJECT_ROOT/App.xcodeproj" "$PROJECT_ROOT/Package.swift"
+
 print_test_results

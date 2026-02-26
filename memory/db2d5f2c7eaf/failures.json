@@ -5,8 +5,8 @@
       "pattern": "\u001b[38;2;0;212;255m▸\u001b[0m Insert into nonexistent stage fails... \u001b[38;2;74;222;128m✓\u001b[0m",
       "root_cause": "Log output was truncated mid-test before completion, no actual failure detected - all visible tests passed",
       "fix": "No fix needed; all visible test results show passing status with no failures in the log",
-      "seen_count": 2,
-      "last_seen": "2026-02-25T21:01:09Z",
+      "seen_count": 3,
+      "last_seen": "2026-02-26T01:02:44Z",
       "category": "unknown"
     }
   ]

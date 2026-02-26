@@ -49,3 +49,5 @@
 {"ts":"2026-02-26T01:02:45Z","ts_epoch":1772067765,"type":"memory.inject","stage":"build"}
 {"ts":"2026-02-26T01:02:50Z","ts_epoch":1772067770,"type":"pipeline.context_exhaustion","issue":29,"stage":"build"}
 {"ts":"2026-02-26T01:02:52Z","ts_epoch":1772067772,"type":"stage.failed","event_id":"evt-1772067772-2195611167","payload":"{\"stage\":\"build\",\"issue\":\"29\",\"timing\":\"25m 25s\"}"}
+{"ts":"2026-02-26T04:40:26Z","ts_epoch":1772080826,"type":"hygiene_platform_refactor","hardcoded":62,"fallback":61,"todo":44}
+{"ts":"2026-02-26T04:40:31Z","ts_epoch":1772080831,"type":"cost.budget_unconfigured","status":"unlimited"}

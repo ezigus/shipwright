@@ -222,3 +222,4 @@
 {"ts":"2026-02-25T21:01:09Z","ts_epoch":1772053269,"type":"memory.inject","stage":"build"}
 {"ts":"2026-02-25T21:01:14Z","ts_epoch":1772053274,"type":"pipeline.context_exhaustion","issue":24,"stage":"build"}
 {"ts":"2026-02-25T21:01:16Z","ts_epoch":1772053276,"type":"stage.failed","event_id":"evt-1772053276-326445741","payload":"{\"stage\":\"build\",\"issue\":\"24\",\"timing\":\"53m 19s\"}"}
+{"ts":"2026-02-26T00:04:37Z","ts_epoch":1772064277,"type":"patrol.started","dry_run":"false"}

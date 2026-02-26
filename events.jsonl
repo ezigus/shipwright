@@ -223,3 +223,22 @@
 {"ts":"2026-02-25T21:01:14Z","ts_epoch":1772053274,"type":"pipeline.context_exhaustion","issue":24,"stage":"build"}
 {"ts":"2026-02-25T21:01:16Z","ts_epoch":1772053276,"type":"stage.failed","event_id":"evt-1772053276-326445741","payload":"{\"stage\":\"build\",\"issue\":\"24\",\"timing\":\"53m 19s\"}"}
 {"ts":"2026-02-26T00:04:37Z","ts_epoch":1772064277,"type":"patrol.started","dry_run":"false"}
+{"ts":"2026-02-26T00:30:06Z","ts_epoch":1772065806,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-02-26T00:30:38Z","ts_epoch":1772065838,"type":"intelligence.analysis","complexity":6,"risk_level":"medium","success_probability":75,"recommended_template":"standard"}
+{"ts":"2026-02-26T00:30:38Z","ts_epoch":1772065838,"type":"reasoning.trace","job_id":"pipeline-3614-27","complexity":"medium","risk":50,"template":"standard"}
+{"ts":"2026-02-26T00:30:41Z","ts_epoch":1772065841,"type":"intelligence.cache_hit","cache_key":"analyze_issue_fb4a0050f6b0bb9a066f7fd191fa1fa6"}
+{"ts":"2026-02-26T00:30:41Z","ts_epoch":1772065841,"type":"intelligence.analysis","complexity":6,"risk_level":"medium","success_probability":75,"recommended_template":"standard"}
+{"ts":"2026-02-26T00:30:47Z","ts_epoch":1772065847,"type":"intelligence.estimate_iterations","estimate":8,"complexity":5,"source":"claude"}
+{"ts":"2026-02-26T00:30:58Z","ts_epoch":1772065858,"type":"intelligence.prediction","estimated_cost":5.50,"estimated_iterations":3,"complexity":5}
+{"ts":"2026-02-26T00:31:02Z","ts_epoch":1772065862,"type":"checks.pipeline_start","stages":10}
+{"ts":"2026-02-26T00:31:02Z","ts_epoch":1772065862,"type":"pipeline.started","issue":27,"template":"autonomous","complexity":0,"machine":"runnervmnay03","pipeline":"autonomous","model":"opus","goal":"First-run experience: guided quickstart with example issue and real-time progress"}
+{"ts":"2026-02-26T00:31:02Z","ts_epoch":1772065862,"type":"pipeline.started","event_id":"evt-1772065862-1040311518","payload":"{\"issue\":\"27\",\"pipeline\":\"autonomous\",\"goal\":\"First-run experience: guided quickstart with example issue and real-time progress\"}"}
+{"ts":"2026-02-26T00:31:02Z","ts_epoch":1772065862,"type":"stage.skipped","issue":27,"stage":"intake","reason":"ci_resume"}
+{"ts":"2026-02-26T00:31:02Z","ts_epoch":1772065862,"type":"stage.artifact_miss","issue":27,"stage":"plan"}
+{"ts":"2026-02-26T00:31:02Z","ts_epoch":1772065862,"type":"intelligence.model","stage":"plan","complexity":5,"model":"haiku","source":"heuristic"}
+{"ts":"2026-02-26T00:31:02Z","ts_epoch":1772065862,"type":"intelligence.model_ab","issue":27,"stage":"plan","recommended":"haiku","applied":"opus","ab_group":"control","ab_ratio":20}
+{"ts":"2026-02-26T00:31:02Z","ts_epoch":1772065862,"type":"stage.started","issue":27,"stage":"plan"}
+{"ts":"2026-02-26T00:32:41Z","ts_epoch":1772065961,"type":"pm.learn","issue":42,"outcome":"success"}
+{"ts":"2026-02-26T00:35:29Z","ts_epoch":1772066129,"type":"stage.failed","event_id":"evt-1772066129-4041522087","payload":"{\"stage\":\"plan\",\"issue\":\"27\",\"timing\":\"4m 25s\"}"}
+{"ts":"2026-02-26T00:35:30Z","ts_epoch":1772066130,"type":"stage.failed","issue":27,"stage":"plan","duration_s":267,"error":"unknown","error_class":"unknown"}
+{"ts":"2026-02-26T00:35:30Z","ts_epoch":1772066130,"type":"vitals.snapshot","issue":27,"stage":"plan","iteration":0,"diff_lines":0,"no_progress":0}

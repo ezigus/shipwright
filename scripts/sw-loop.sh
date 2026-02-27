@@ -1664,12 +1664,19 @@ HOLISTIC_PROMPT
 # Prevents prompt from exceeding Claude's context limit (~200K tokens).
 # Trims least-critical sections first when over budget.
 
-CONTEXT_BUDGET_CHARS="${CONTEXT_BUDGET_CHARS:-180000}"  # ~45K tokens at 4 chars/token
+CONTEXT_BUDGET_CHARS="${CONTEXT_BUDGET_CHARS:-$(_config_get_int "loop.context_budget_chars" 180000 2>/dev/null || echo 180000)}"  # ~45K tokens at 4 chars/token
 
 manage_context_window() {
     local prompt="$1"
     local budget="${CONTEXT_BUDGET_CHARS}"
     local current_len=${#prompt}
+
+    # Read trimming tunables from config (env > daemon-config > policy > defaults.json > hardcoded fallback)
+    local trim_memory_chars trim_git_entries trim_hotspot_files trim_test_lines
+    trim_memory_chars=$(_config_get_int "loop.context_trim_memory_chars" 20000 2>/dev/null || echo 20000)
+    trim_git_entries=$(_config_get_int "loop.context_trim_git_entries" 10 2>/dev/null || echo 10)
+    trim_hotspot_files=$(_config_get_int "loop.context_trim_hotspot_files" 5 2>/dev/null || echo 5)
+    trim_test_lines=$(_config_get_int "loop.context_trim_test_lines" 50 2>/dev/null || echo 50)
 
     if [[ "$current_len" -le "$budget" ]]; then
         echo "$prompt"
@@ -1684,19 +1691,19 @@ manage_context_window() {
         trimmed=$(echo "$trimmed" | awk '/^## Performance Baselines/{skip=1; next} skip && /^## [^#]/{skip=0} !skip{print}')
     fi
 
-    # 2. Trim file hotspots to top 5
+    # 2. Trim file hotspots to top N
     if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed=$(echo "$trimmed" | awk '/## File Hotspots/{p=1; c=0} p && /^- /{c++; if(c>5) next} {print}')
+        trimmed=$(echo "$trimmed" | awk -v max="$trim_hotspot_files" '/## File Hotspots/{p=1; c=0} p && /^- /{c++; if(c>max) next} {print}')
     fi
 
-    # 3. Trim git log to last 10 entries
+    # 3. Trim git log to last N entries
     if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed=$(echo "$trimmed" | awk '/## Recent Git Activity/{p=1; c=0} p && /^[a-f0-9]/{c++; if(c>10) next} {print}')
+        trimmed=$(echo "$trimmed" | awk -v max="$trim_git_entries" '/## Recent Git Activity/{p=1; c=0} p && /^[a-f0-9]/{c++; if(c>max) next} {print}')
     fi
 
-    # 4. Truncate memory context to first 20K chars
+    # 4. Truncate memory context to first N chars
     if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed=$(echo "$trimmed" | awk -v max=20000 '
+        trimmed=$(echo "$trimmed" | awk -v max="$trim_memory_chars" '
             /## Memory Context/{mem=1; skip_rest=0; chars=0; print; next}
             mem && /^## [^#]/{mem=0; print; next}
             mem{chars+=length($0)+1; if(chars>max){print "... (memory truncated for context budget)"; skip_rest=1; mem=0; next}}
@@ -1706,11 +1713,11 @@ manage_context_window() {
         ')
     fi
 
-    # 5. Truncate test output to last 50 lines
+    # 5. Truncate test output to last N lines
     if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed=$(echo "$trimmed" | awk '
+        trimmed=$(echo "$trimmed" | awk -v max="$trim_test_lines" '
             /## Test Results/{found=1; buf=""; print; next}
-            found && /^## [^#]/{found=0; n=split(buf,arr,"\n"); start=(n>50)?(n-49):1; for(i=start;i<=n;i++) if(arr[i]!="") print arr[i]; print; next}
+            found && /^## [^#]/{found=0; n=split(buf,arr,"\n"); start=(n>max)?(n-max+1):1; for(i=start;i<=n;i++) if(arr[i]!="") print arr[i]; print; next}
             found{buf=buf $0 "\n"; next}
             {print}
         ')
@@ -2438,9 +2445,32 @@ run_claude_iteration() {
     local final_prompt
     final_prompt=$(manage_context_window "$prompt")
 
+    local raw_prompt_chars=${#prompt}
     local prompt_chars=${#final_prompt}
     local approx_tokens=$((prompt_chars / 4))
     info "Prompt: ~${approx_tokens} tokens (${prompt_chars} chars)"
+
+    # Emit context efficiency metrics
+    if type emit_event >/dev/null 2>&1; then
+        local trim_ratio=0
+        local budget_utilization=0
+        if [[ "$raw_prompt_chars" -gt 0 ]]; then
+            trim_ratio=$(awk -v raw="$raw_prompt_chars" -v trimmed="$prompt_chars" \
+                'BEGIN { printf "%.1f", ((raw - trimmed) / raw) * 100 }')
+        fi
+        if [[ "${CONTEXT_BUDGET_CHARS:-0}" -gt 0 ]]; then
+            budget_utilization=$(awk -v used="$prompt_chars" -v budget="${CONTEXT_BUDGET_CHARS}" \
+                'BEGIN { printf "%.1f", (used / budget) * 100 }')
+        fi
+        emit_event "loop.context_efficiency" \
+            "iteration=$ITERATION" \
+            "raw_prompt_chars=$raw_prompt_chars" \
+            "trimmed_prompt_chars=$prompt_chars" \
+            "trim_ratio=$trim_ratio" \
+            "budget_utilization=$budget_utilization" \
+            "budget_chars=${CONTEXT_BUDGET_CHARS:-0}" \
+            "job_id=${PIPELINE_JOB_ID:-loop-$$}" 2>/dev/null || true
+    fi
 
     local flags
     flags="$(build_claude_flags)"

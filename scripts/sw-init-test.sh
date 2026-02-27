@@ -8,6 +8,7 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REAL_INIT_SCRIPT="$SCRIPT_DIR/sw-init.sh"
 
@@ -15,6 +16,7 @@ REAL_INIT_SCRIPT="$SCRIPT_DIR/sw-init.sh"
 CYAN='\033[38;2;0;212;255m'
 PURPLE='\033[38;2;124;58;237m'
 GREEN='\033[38;2;74;222;128m'
+# shellcheck disable=SC2034
 YELLOW='\033[38;2;250;204;21m'
 RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
@@ -245,6 +247,7 @@ test_idempotency() {
 
     # Capture state after first run
     local first_settings
+    # shellcheck disable=SC2034
     first_settings=$(cat "$TEMP_DIR/home/.claude/settings.json" 2>/dev/null || echo "")
 
     # Second run

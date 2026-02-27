@@ -14,8 +14,10 @@ if [[ -n "${_SW_DB_LOADED:-}" ]] && [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
 fi
 _SW_DB_LOADED=1
 
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -37,7 +39,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -50,6 +53,7 @@ SCHEMA_VERSION=6
 # JSON fallback paths
 EVENTS_FILE="${DB_DIR}/events.jsonl"
 DAEMON_STATE_FILE="${DB_DIR}/daemon-state.json"
+# shellcheck disable=SC2034
 DEVELOPER_REGISTRY_FILE="${DB_DIR}/developer-registry.json"
 COST_FILE_JSON="${DB_DIR}/costs.json"
 BUDGET_FILE_JSON="${DB_DIR}/budget.json"
@@ -1202,7 +1206,8 @@ db_update_decision_outcome() {
     local decision_id="$1" outcome="$2" confidence="${3:-}"
     if ! db_available; then return 1; fi
     outcome="${outcome//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
-    local set_clause="outcome = '$outcome', updated_at = '$(now_iso)'"
+    local set_clause
+    set_clause="outcome = '$outcome', updated_at = '$(now_iso)'"
     [[ -n "$confidence" ]] && set_clause="$set_clause, confidence = $confidence"
     _db_exec "UPDATE memory_decisions SET $set_clause WHERE id = $decision_id;"
 }
@@ -1368,8 +1373,10 @@ db_sync_push() {
     # Push via HTTP
     local response
     local auth_header=""
+    # shellcheck disable=SC2089
     [[ -n "${SYNC_TOKEN:-}" ]] && auth_header="-H 'Authorization: Bearer ${SYNC_TOKEN}'"
 
+    # shellcheck disable=SC2090
     response=$(curl -s --connect-timeout 10 --max-time 30 -w "%{http_code}" -o /dev/null \
         -X POST "${SYNC_URL}/api/sync/push" \
         -H "Content-Type: application/json" \
@@ -1400,9 +1407,11 @@ db_sync_pull() {
     last_sync=$(_db_query "SELECT value FROM _sync_metadata WHERE key = 'last_pull_epoch';" || echo "0")
 
     local auth_header=""
+    # shellcheck disable=SC2089
     [[ -n "${SYNC_TOKEN:-}" ]] && auth_header="-H 'Authorization: Bearer ${SYNC_TOKEN}'"
 
     local response_body
+    # shellcheck disable=SC2090
     response_body=$(curl -s --connect-timeout 10 --max-time 30 \
         "${SYNC_URL}/api/sync/pull?since=${last_sync}" \
         -H "Accept: application/json" \
@@ -1451,6 +1460,7 @@ migrate_json_data() {
         info "Importing events from ${EVENTS_FILE}..."
         local evt_count=0
         local evt_skipped=0
+        # shellcheck disable=SC2106
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             local e_ts e_epoch e_type e_job e_stage e_status
@@ -1484,7 +1494,8 @@ migrate_json_data() {
             j_result=$(echo "$job" | jq -r '.result // ""')
             j_dur=$(echo "$job" | jq -r '.duration // ""')
             j_at=$(echo "$job" | jq -r '.completed_at // ""')
-            local j_id="migrated-${j_issue}-$(echo "$j_at" | tr -dc '0-9' | tail -c 10)"
+            local j_id
+            j_id="migrated-${j_issue}-$(echo "$j_at" | tr -dc '0-9' | tail -c 10)"
             _db_exec "INSERT OR IGNORE INTO daemon_state (job_id, issue_number, status, result, duration, completed_at, started_at, updated_at) VALUES ('${j_id}', ${j_issue}, 'completed', '${j_result}', '${j_dur}', '${j_at}', '${j_at}', '$(now_iso)');" 2>/dev/null && job_count=$((job_count + 1))
         done < <(jq -c '.completed[]' "$DAEMON_STATE_FILE" 2>/dev/null)
 
@@ -1670,7 +1681,9 @@ show_status() {
     # Sync status
     local device_id last_push last_pull
     device_id=$(_db_query "SELECT value FROM _sync_metadata WHERE key = 'device_id';" || echo "not set")
+    # shellcheck disable=SC2034
     last_push=$(_db_query "SELECT value FROM _sync_metadata WHERE key = 'last_push_epoch';" || echo "never")
+    # shellcheck disable=SC2034
     last_pull=$(_db_query "SELECT value FROM _sync_metadata WHERE key = 'last_pull_epoch';" || echo "never")
     local unsynced_events unsynced_costs
     unsynced_events=$(_db_query "SELECT COUNT(*) FROM events WHERE synced = 0;" || echo "0")

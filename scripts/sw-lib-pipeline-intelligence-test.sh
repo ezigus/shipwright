@@ -241,6 +241,7 @@ print_test_section "pipeline_reassess_complexity"
 
 # Simpler than expected (small diff, first try pass)
 INTELLIGENCE_COMPLEXITY="5"
+# shellcheck disable=SC2034
 SELF_HEAL_COUNT="0"
 # Mock git diff to return small stat - our mock doesn't support this well
 # pipeline_reassess_complexity uses: git diff BASE...HEAD --name-only | wc -l

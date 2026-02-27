@@ -135,6 +135,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "verify"
 
+# shellcheck disable=SC2034
 verify_out=$(run_evidence verify 2>&1) || verify_exit=$?
 # Verify should pass when evidence is fresh
 assert_contains "verify checks evidence" "$verify_out" "evidence"

@@ -5,11 +5,13 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Colors
+# shellcheck disable=SC2034
 CYAN='\033[38;2;0;212;255m'
 GREEN='\033[38;2;74;222;128m'
 RED='\033[38;2;248;113;113m'
@@ -99,6 +101,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Wait for server
+# shellcheck disable=SC2034
 for i in $(seq 1 20); do
     if curl -s "http://localhost:$TEST_PORT/api/health" >/dev/null 2>&1; then break; fi
     sleep 0.3

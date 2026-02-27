@@ -6,8 +6,10 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -29,12 +31,14 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
 # ─── Structured Event Log ──────────────────────────────────────────────────
+# shellcheck disable=SC2034
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
 
 # ─── Cache Configuration ───────────────────────────────────────────────────
@@ -116,7 +120,9 @@ _gh_cache_stats() {
     _gh_cache_init
     local count=0
     local total_size=0
+    # shellcheck disable=SC2034
     local oldest=""
+    # shellcheck disable=SC2034
     local newest=""
 
     for f in "$GH_CACHE_DIR"/*.json; do
@@ -257,7 +263,8 @@ gh_file_change_frequency() {
         since=$(date -u -d "${days} days ago" +"%Y-%m-%dT%H:%M:%SZ")
     fi
 
-    local cache_key="freq_${owner}_${repo}_$(echo "$path" | tr '/' '_')_${days}d"
+    local cache_key
+    cache_key="freq_${owner}_${repo}_$(echo "$path" | tr '/' '_')_${days}d"
 
     local query='query($owner: String!, $repo: String!, $since: GitTimestamp!) {
   repository(owner: $owner, name: $repo) {
@@ -301,7 +308,8 @@ gh_blame_data() {
         return 0
     fi
 
-    local cache_key="blame_${owner}_${repo}_$(echo "$path" | tr '/' '_')"
+    local cache_key
+    cache_key="blame_${owner}_${repo}_$(echo "$path" | tr '/' '_')"
     local cached
     cached=$(_gh_cache_get "$cache_key" "14400" 2>/dev/null) && {
         emit_event "github.cache_hit" "key=$cache_key"
@@ -386,7 +394,8 @@ gh_similar_issues() {
     fi
 
     local search_query="repo:${owner}/${repo} is:issue is:closed ${search_text}"
-    local cache_key="similar_${owner}_${repo}_$(echo "$search_text" | tr ' /' '__' | head -c 50)"
+    local cache_key
+    cache_key="similar_${owner}_${repo}_$(echo "$search_text" | tr ' /' '__' | head -c 50)"
 
     local query='query($q: String!, $limit: Int!) {
   search(query: $q, type: ISSUE, first: $limit) {
@@ -436,7 +445,8 @@ gh_commit_history() {
         return 0
     fi
 
-    local cache_key="history_${owner}_${repo}_$(echo "$path" | tr '/' '_')_${limit}"
+    local cache_key
+    cache_key="history_${owner}_${repo}_$(echo "$path" | tr '/' '_')_${limit}"
     local cached
     cached=$(_gh_cache_get "$cache_key" "3600" 2>/dev/null) && {
         emit_event "github.cache_hit" "key=$cache_key"
@@ -701,7 +711,8 @@ gh_actions_runs() {
         return 0
     fi
 
-    local cache_key="actions_${owner}_${repo}_$(echo "$workflow" | tr '/' '_')_${limit}"
+    local cache_key
+    cache_key="actions_${owner}_${repo}_$(echo "$workflow" | tr '/' '_')_${limit}"
     local cached
     cached=$(_gh_cache_get "$cache_key" "900" 2>/dev/null) && {
         emit_event "github.cache_hit" "key=$cache_key"

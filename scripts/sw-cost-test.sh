@@ -132,7 +132,7 @@ echo ""
 echo -e "${DIM}  state management${RESET}"
 
 # Running 'show' should create cost files
-bash "$SCRIPT_DIR/sw-cost.sh" show 2>&1 >/dev/null || true
+bash "$SCRIPT_DIR/sw-cost.sh" show >/dev/null 2>&1 || true
 if [[ -f "$HOME/.shipwright/costs.json" ]]; then
     assert_pass "costs.json created on first use"
 else

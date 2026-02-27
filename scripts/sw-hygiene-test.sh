@@ -198,6 +198,7 @@ echo -e "  ${CYAN}policy read (policy_get from config)${RESET}"
 policy_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-policy-test.XXXXXX")
 mkdir -p "$policy_tmp/config"
 echo '{"hygiene":{"artifact_age_days":14}}' > "$policy_tmp/config/policy.json"
+# shellcheck disable=SC2097,SC2098
 got=$(REPO_DIR="$policy_tmp" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".hygiene.artifact_age_days\" \"7\"")
 rm -rf "$policy_tmp"
 assert_eq "policy_get returns value from config" "14" "$got"
@@ -205,6 +206,7 @@ assert_eq "policy_get returns value from config" "14" "$got"
 policy_tmp2=$(mktemp -d "${TMPDIR:-/tmp}/sw-policy-test.XXXXXX")
 mkdir -p "$policy_tmp2/config"
 echo '{}' > "$policy_tmp2/config/policy.json"
+# shellcheck disable=SC2097,SC2098
 got_default=$(REPO_DIR="$policy_tmp2" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".hygiene.artifact_age_days\" \"7\"")
 rm -rf "$policy_tmp2"
 assert_eq "policy_get returns default when key missing" "7" "$got_default"

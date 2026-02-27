@@ -19,6 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 # ─── State directories ──────────────────────────────────────────────────────
 E2E_DIR="${HOME}/.shipwright/e2e"
 SUITE_REGISTRY="$E2E_DIR/suite-registry.json"
+# shellcheck disable=SC2034
 FLAKY_CACHE="$E2E_DIR/flaky-cache.json"
 RESULTS_LOG="$E2E_DIR/results.jsonl"
 LATEST_REPORT="$E2E_DIR/latest-report.json"
@@ -123,7 +124,7 @@ cmd_register() {
     fi
 
     # Parse existing registry
-    local registry=$(load_registry)
+    local registry; registry=$(load_registry)
     local new_suite
 
     # Create feature array
@@ -179,7 +180,7 @@ cmd_quarantine() {
         init_registry
     fi
 
-    local registry=$(load_registry)
+    local registry; registry=$(load_registry)
 
     if [[ "$action" == "quarantine" ]]; then
         # Add to quarantine list if not already present
@@ -207,20 +208,20 @@ cmd_quarantine() {
 # ─── Run a single test suite ────────────────────────────────────────────────
 run_suite() {
     local suite_id="$1"
-    local registry=$(load_registry)
+    local registry; registry=$(load_registry)
 
     # Find suite
-    local suite=$(echo "$registry" | jq ".suites[] | select(.id == \"$suite_id\")")
+    local suite; suite=$(echo "$registry" | jq ".suites[] | select(.id == \"$suite_id\")")
 
     if [[ -z "$suite" ]]; then
         error "Suite not found: $suite_id"
         return 1
     fi
 
-    local suite_name=$(echo "$suite" | jq -r '.name')
-    local script=$(echo "$suite" | jq -r '.script')
-    local timeout=$(echo "$suite" | jq -r '.timeout_seconds')
-    local features=$(echo "$suite" | jq -r '.features | join(", ")')
+    local suite_name; suite_name=$(echo "$suite" | jq -r '.name')
+    local script; script=$(echo "$suite" | jq -r '.script')
+    local timeout; timeout=$(echo "$suite" | jq -r '.timeout_seconds')
+    local features; features=$(echo "$suite" | jq -r '.features | join(", ")')
 
     local test_script="$SCRIPT_DIR/$script"
 
@@ -230,7 +231,7 @@ run_suite() {
     fi
 
     info "Running: $suite_name ($features)"
-    local start_time=$(date +%s)
+    local start_time; start_time=$(date +%s)
 
     # Run with timeout (gtimeout on macOS, timeout on Linux)
     local timeout_cmd="timeout"
@@ -238,7 +239,7 @@ run_suite() {
     local exit_code=0
     "$timeout_cmd" "$timeout" bash "$test_script" || exit_code=$?
 
-    local end_time=$(date +%s)
+    local end_time; end_time=$(date +%s)
     local duration=$((end_time - start_time))
 
     # Log result
@@ -257,9 +258,9 @@ run_parallel() {
     local max_parallel=${2:-3}
 
     ensure_state_dir
-    > "$RESULTS_LOG"  # Clear results log
+    true > "$RESULTS_LOG"  # Clear results log
 
-    local registry=$(load_registry)
+    local registry; registry=$(load_registry)
 
     # Filter suites by category and enabled status
     local suites
@@ -341,7 +342,7 @@ cmd_report() {
     local skip=0
 
     while IFS= read -r line; do
-        local exit_code=$(echo "$line" | jq -r '.exit_code // 0')
+        local exit_code; exit_code=$(echo "$line" | jq -r '.exit_code // 0')
         if [[ $exit_code -eq 0 ]]; then
             pass=$((pass + 1))
         elif [[ $exit_code -eq 124 ]]; then
@@ -354,7 +355,7 @@ cmd_report() {
     local total=$((pass + fail + timeout + skip))
 
     # Create report
-    local report=$(jq -n \
+    local report; report=$(jq -n \
         --arg ts "$(date -Iseconds)" \
         --arg version "$VERSION" \
         --argjson p "$pass" \
@@ -409,7 +410,7 @@ cmd_flaky() {
     info "Analyzing flaky tests..."
 
     # Group by test name, count passes/fails
-    local flaky_analysis=$(jq -s 'group_by(.suite_id) | map({
+    local flaky_analysis; flaky_analysis=$(jq -s 'group_by(.suite_id) | map({
         test: .[0].suite_id,
         runs: length,
         passes: (map(select(.exit_code == 0)) | length),

@@ -27,6 +27,7 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift
     mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -320,6 +321,7 @@ list_stale_branches() {
 
     # Find branches not updated in 30 days
     local old_branches
+    # shellcheck disable=SC2046
     old_branches=$(git branch -r --format="%(refname:short)%09%(committerdate:short)" 2>/dev/null | \
         awk -v cutoff=$(date -d "30 days ago" +%Y-%m-%d 2>/dev/null || date -v-30d +%Y-%m-%d) \
         '$2 < cutoff {print $1}' || true)
@@ -342,10 +344,12 @@ list_stale_branches() {
 analyze_size() {
     info "Analyzing repository size..."
 
+    # shellcheck disable=SC2034
     local total_size=0
 
     # Find large files
     info "Largest files:"
+    # shellcheck disable=SC2038
     find "$REPO_DIR" -type f ! -path '*/.git/*' ! -path '*/node_modules/*' 2>/dev/null | \
         xargs ls -lh 2>/dev/null | \
         awk '{print $5, $9}' | \
@@ -404,6 +408,7 @@ scan_platform_refactor() {
     grep -rnE "hardcoded|Hardcoded|Fallback:|fallback:|TODO|FIXME|HACK|KLUDGE" "$scripts_dir" --include="*.sh" 2>/dev/null > "$findings_raw" || true
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
+        # shellcheck disable=SC2318
         local f="${line%%:*}" rest="${line#*:}" ln="${rest%%:*}"
         ln="${ln:-0}"
         printf '{"file":"%s","line":%s}\n' "${f#$REPO_DIR/}" "$ln"

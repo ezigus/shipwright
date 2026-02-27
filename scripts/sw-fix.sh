@@ -6,6 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -222,6 +223,7 @@ fix_start() {
     local sanitized
     sanitized=$(sanitize_branch "$GOAL")
     local branch_name="${BRANCH_PREFIX}${sanitized}"
+    # shellcheck disable=SC2155
     local session_id="fix-$(date +%s)"
     local state_file="$FIX_DIR/${session_id}.json"
     local log_dir="$FIX_DIR/${session_id}-logs"
@@ -289,6 +291,7 @@ fix_start() {
 
     # ─── Parallel Execution ─────────────────────────────────────────────────
     local pids=()
+    # shellcheck disable=SC2034
     local pid_to_idx=()
     local idx=0
 

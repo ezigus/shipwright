@@ -6,6 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -100,6 +101,7 @@ cmd_spawn() {
 
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
     cat > "$tmp_file" << EOF
 {
@@ -293,6 +295,7 @@ cmd_list() {
         [[ -z "$line" ]] && continue
 
         # Parse window line: "0: pipeline-42 (1 panes)"
+        # shellcheck disable=SC2034
         local window_num window_name status
         window_num=$(echo "$line" | cut -d: -f1)
         window_name=$(echo "$line" | cut -d' ' -f2)

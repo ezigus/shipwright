@@ -28,6 +28,7 @@ export WATCH_MODE="label"
 export BASE_BRANCH="main"
 export PRIORITY_LANE_LABELS="urgent,p0"
 export SLACK_WEBHOOK=""
+# shellcheck disable=SC2034
 DAEMON_LOG_WRITE_COUNT=0
 
 touch "$LOG_FILE"
@@ -119,6 +120,7 @@ result=$(jq -r '.completed | length' "$STATE_FILE")
 assert_eq "Completed initially empty" "0" "$result"
 
 # Re-init updates PID
+# shellcheck disable=SC2034
 old_pid=$(jq -r '.pid' "$STATE_FILE")
 init_state
 new_pid=$(jq -r '.pid' "$STATE_FILE")

@@ -27,6 +27,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -221,6 +222,7 @@ fi
 
 # Bash version
 BASH_MAJOR="${BASH_VERSINFO[0]:-0}"
+# shellcheck disable=SC2034
 BASH_MINOR="${BASH_VERSINFO[1]:-0}"
 if [[ "$BASH_MAJOR" -ge 5 ]]; then
     check_pass "bash ${BASH_VERSION}"
@@ -853,7 +855,7 @@ if [[ -f "$MACHINES_FILE" ]]; then
 
                 if [[ -n "$m_host" ]]; then
                     ssh_target="${m_user:+${m_user}@}${m_host}"
-                    if ssh -o ConnectTimeout=5 -o BatchMode=yes -p "$m_port" "$ssh_target" true 2>/dev/null; then
+                    if ssh -n -o ConnectTimeout=5 -o BatchMode=yes -p "$m_port" "$ssh_target" true 2>/dev/null; then
                         check_pass "SSH: ${m_name} (${ssh_target}) reachable"
                     else
                         check_warn "SSH: ${m_name} (${ssh_target}) unreachable"

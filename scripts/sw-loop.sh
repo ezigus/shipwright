@@ -45,6 +45,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -273,6 +274,7 @@ done
 
 # Auto-enable worktree for multi-agent
 if [[ "$AGENTS" -gt 1 ]]; then
+    # shellcheck disable=SC2034
     USE_WORKTREE=true
 fi
 
@@ -546,6 +548,7 @@ write_loop_tokens() {
     fi
     local tmp_file
     tmp_file=$(mktemp "${token_file}.XXXXXX" 2>/dev/null || mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
     cat > "$tmp_file" <<TOKJSON
 {"input_tokens":${LOOP_INPUT_TOKENS},"output_tokens":${LOOP_OUTPUT_TOKENS},"cost_usd":${cost_usd},"iterations":${ITERATION:-0}}
@@ -2652,6 +2655,7 @@ cleanup() {
     export SW_LOOP_STATUS="$STATUS"
     export SW_LOOP_TEST_OUTPUT="${TEST_OUTPUT:-}"
     export SW_LOOP_FINDINGS="${LOG_ENTRIES:-}"
+    # shellcheck disable=SC2155
     export SW_LOOP_MODIFIED="$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')"
     "$SCRIPT_DIR/sw-checkpoint.sh" save-context --stage build 2>/dev/null || true
 
@@ -3173,6 +3177,7 @@ ${GOAL}"
         export SW_LOOP_STATUS="${STATUS:-running}"
         export SW_LOOP_TEST_OUTPUT="${TEST_OUTPUT:-}"
         export SW_LOOP_FINDINGS="${LOG_ENTRIES:-}"
+        # shellcheck disable=SC2155
         export SW_LOOP_MODIFIED="$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')"
         "$SCRIPT_DIR/sw-checkpoint.sh" save-context --stage build 2>/dev/null || true
 

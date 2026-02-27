@@ -19,6 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 # ─── Colors (matches Seth's tmux theme) ─────────────────────────────────────
 CYAN='\033[38;2;0;212;255m'     # #00d4ff — primary accent
 PURPLE='\033[38;2;124;58;237m'  # #7c3aed — secondary
+# shellcheck disable=SC2034
 BLUE='\033[38;2;0;102;255m'     # #0066ff — tertiary
 GREEN='\033[38;2;74;222;128m'   # success
 YELLOW='\033[38;2;250;204;21m'  # warning
@@ -36,6 +37,7 @@ _sw_github_repo() {
         echo "${SHIPWRIGHT_GITHUB_REPO:-sethdford/shipwright}"
     fi
 }
+# shellcheck disable=SC2155
 _sw_github_owner() { local r="$(_sw_github_repo)"; echo "${r%%/*}"; }
 _sw_docs_url() { echo "${SHIPWRIGHT_DOCS_URL:-https://$(_sw_github_owner).github.io/shipwright}"; }
 _sw_github_url() { echo "https://github.com/$(_sw_github_repo)"; }
@@ -265,6 +267,7 @@ main() {
 
     shift 2>/dev/null || true
 
+    # shellcheck disable=SC2221,SC2222
     case "$cmd" in
         # Command groups
         agent)          route_agent "$@" ;;

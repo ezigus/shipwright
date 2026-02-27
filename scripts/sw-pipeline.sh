@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034  # config vars used by sourced scripts and subshells
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright pipeline — Autonomous Feature Delivery (Idea → Production)        ║
 # ║  Full GitHub integration · Auto-detection · Task tracking · Metrics    ║
@@ -92,13 +93,15 @@ fi
 if [[ -f "$SCRIPT_DIR/sw-durable.sh" ]]; then
     source "$SCRIPT_DIR/sw-durable.sh"
 fi
-# shellcheck source=sw-db.sh — for db_save_checkpoint/db_load_checkpoint (durable workflows)
+# shellcheck source=sw-db.sh
+# for db_save_checkpoint/db_load_checkpoint (durable workflows)
 [[ -f "$SCRIPT_DIR/sw-db.sh" ]] && source "$SCRIPT_DIR/sw-db.sh"
 # Ensure DB schema exists so emit_event → db_add_event can write rows (CREATE IF NOT EXISTS is idempotent)
 if type init_schema >/dev/null 2>&1 && type check_sqlite3 >/dev/null 2>&1 && check_sqlite3 2>/dev/null; then
     init_schema 2>/dev/null || true
 fi
-# shellcheck source=sw-cost.sh — for cost_record persistence to costs.json + DB
+# shellcheck source=sw-cost.sh
+# for cost_record persistence to costs.json + DB
 [[ -f "$SCRIPT_DIR/sw-cost.sh" ]] && source "$SCRIPT_DIR/sw-cost.sh"
 
 # ─── GitHub API Modules (optional) ─────────────────────────────────────────
@@ -886,6 +889,7 @@ Reply with ONLY the classification word, nothing else." --model haiku < /dev/nul
         mkdir -p "$class_dir" 2>/dev/null || true
         local tmp_class
         tmp_class="$(mktemp)"
+        # shellcheck disable=SC2064  # intentional expansion at definition time
         trap "rm -f '$tmp_class'" RETURN
         if [[ -f "$class_history" ]]; then
             jq --arg sig "$error_sig" --arg cls "$classification" --arg canon "$canonical_category" --arg stage "$stage_id" \
@@ -1327,6 +1331,7 @@ run_pipeline() {
                 # Remove this stage from the skip file
                 local tmp_skip
                 tmp_skip="$(mktemp)"
+                # shellcheck disable=SC2064  # intentional expansion at definition time
                 trap "rm -f '$tmp_skip'" RETURN
                 grep -vx "$id" "$ARTIFACTS_DIR/skip-stage.txt" > "$tmp_skip" 2>/dev/null || true
                 mv "$tmp_skip" "$ARTIFACTS_DIR/skip-stage.txt"
@@ -1702,6 +1707,7 @@ pipeline_post_completion_cleanup() {
         # Reset status to idle (preserves the file for reference but unblocks new runs)
         local tmp_state
         tmp_state=$(mktemp)
+        # shellcheck disable=SC2064  # intentional expansion at definition time
         trap "rm -f '$tmp_state'" RETURN
         sed 's/^status: .*/status: idle/' "$STATE_FILE" > "$tmp_state" 2>/dev/null || true
         mv "$tmp_state" "$STATE_FILE"

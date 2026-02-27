@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034  # config vars used by sourced scripts and subshells
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright daemon — Autonomous GitHub Issue Watcher                          ║
 # ║  Polls for labeled issues · Spawns pipelines · Manages worktrees      ║

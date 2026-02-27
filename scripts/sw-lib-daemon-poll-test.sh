@@ -164,8 +164,10 @@ atomic_write_state "$(jq -n --arg c "$cutoff_iso" '{
   completed: [{issue: 1, completed_at: $c}],
   retry_counts: {}
 }')"
+# shellcheck disable=SC2034
 before_count=$(jq '.completed | length' "$STATE_FILE" 2>/dev/null || echo "0")
 daemon_cleanup_stale 2>/dev/null || true
+# shellcheck disable=SC2034
 after_count=$(jq '.completed | length' "$STATE_FILE" 2>/dev/null || echo "0")
 assert_pass "daemon_cleanup_stale prunes old completed entries"
 

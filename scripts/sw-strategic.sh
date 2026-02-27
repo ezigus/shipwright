@@ -25,6 +25,7 @@ EVENTS_FILE="${EVENTS_FILE:-${HOME}/.shipwright/events.jsonl}"
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -46,6 +47,7 @@ fi
 STRATEGIC_MAX_ISSUES=5
 STRATEGIC_COOLDOWN_SECONDS=14400  # 4 hours
 STRATEGIC_MODEL="claude-sonnet-4-5-20250929"
+# shellcheck disable=SC2034
 STRATEGIC_MAX_TOKENS=4096
 STRATEGIC_STRATEGY_LINES=200
 STRATEGIC_LABELS="auto-patrol,ready-to-build,strategic,shipwright"
@@ -494,6 +496,7 @@ strategic_call_api() {
 
     local tmp_prompt
     tmp_prompt=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_prompt'" RETURN
     printf '%s' "$prompt" > "$tmp_prompt"
 

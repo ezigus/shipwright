@@ -204,6 +204,7 @@ echo ""
 echo -e "${BOLD}  Event Emission${RESET}"
 
 # Source the script to get emit_event function
+# shellcheck disable=SC1090
 source "$SRC"
 
 emit_event "test.event" "agent=test-agent" "count=5"

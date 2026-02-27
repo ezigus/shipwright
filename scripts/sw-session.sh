@@ -8,6 +8,7 @@
 # ║  Supports --template to scaffold from a team template and --terminal    ║
 # ║  to select a terminal adapter (tmux, iterm2, wezterm).                  ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
@@ -33,6 +34,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -206,8 +208,12 @@ if [[ -n "$TEMPLATE_NAME" ]]; then
                     case "$key" in
                         description)       TEMPLATE_DESC="$value" ;;
                         layout)            TEMPLATE_LAYOUT="$value" ;;
-                        layout_style)      TEMPLATE_LAYOUT_STYLE="$value" ;;
-                        main_pane_percent) TEMPLATE_MAIN_PANE_PERCENT="$value" ;;
+                        layout_style)
+                            # shellcheck disable=SC2034
+                            TEMPLATE_LAYOUT_STYLE="$value" ;;
+                        main_pane_percent)
+                            # shellcheck disable=SC2034
+                            TEMPLATE_MAIN_PANE_PERCENT="$value" ;;
                     esac
                     ;;
                 AGENT) [[ -n "$key" ]] && TEMPLATE_AGENTS+=("$key") ;;

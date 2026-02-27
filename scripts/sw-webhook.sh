@@ -6,6 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -235,6 +236,7 @@ webhook_server_bash() {
             {
                 read -r -u 3 request_line || break
                 local method path protocol
+                # shellcheck disable=SC2034
                 read -r method path protocol <<< "$request_line"
 
                 # Read headers until blank line (Bash 3.2 compatible — no associative arrays)

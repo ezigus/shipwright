@@ -8,6 +8,7 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -29,6 +30,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -357,6 +359,7 @@ fleet_rebalance() {
         # When intelligence weighting is active, use weighted demand
         local allocated_total=0
         local alloc_list=()
+        # shellcheck disable=SC2034
         local use_weight="$total_weight"
         local effective_total="$total_demand"
         if [[ "$intel_weighting" == "true" && "$total_weight" -gt 0 ]]; then
@@ -768,6 +771,7 @@ fleet_start() {
     default_max_parallel=$(jq -r '.defaults.max_parallel // 2' "$config_file")
     default_model=$(jq -r '.defaults.model // "opus"' "$config_file")
     local shared_events
+    # shellcheck disable=SC2034
     shared_events=$(jq -r '.shared_events // true' "$config_file")
 
     mkdir -p "$FLEET_DIR"

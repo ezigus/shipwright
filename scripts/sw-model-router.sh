@@ -7,8 +7,10 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -30,7 +32,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -243,6 +246,7 @@ set_config() {
     # Use jq to safely update the config
     local tmp_config
     tmp_config=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_config'" RETURN
 
     if [[ "$value" == "true" ]] || [[ "$value" == "false" ]]; then
@@ -353,7 +357,8 @@ record_usage() {
             ;;
     esac
 
-    local record="{\"ts\":\"$(now_iso)\",\"stage\":\"$stage\",\"model\":\"$model\",\"input_tokens\":$input_tokens,\"output_tokens\":$output_tokens,\"cost\":$cost}"
+    local record
+    record="{\"ts\":\"$(now_iso)\",\"stage\":\"$stage\",\"model\":\"$model\",\"input_tokens\":$input_tokens,\"output_tokens\":$output_tokens,\"cost\":$cost}"
     echo "$record" >> "$MODEL_USAGE_LOG"
 }
 
@@ -376,6 +381,7 @@ configure_ab_test() {
 
     local tmp_config
     tmp_config=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_config'" RETURN
 
     jq ".a_b_test = {\"enabled\": true, \"percentage\": $percentage, \"variant\": \"$variant\"}" \
@@ -395,7 +401,8 @@ log_ab_result() {
 
     mkdir -p "${HOME}/.shipwright"
 
-    local record="{\"ts\":\"$(now_iso)\",\"run_id\":\"$run_id\",\"variant\":\"$variant\",\"success\":$success_status,\"cost\":$cost,\"duration_seconds\":$duration}"
+    local record
+    record="{\"ts\":\"$(now_iso)\",\"run_id\":\"$run_id\",\"variant\":\"$variant\",\"success\":$success_status,\"cost\":$cost,\"duration_seconds\":$duration}"
     echo "$record" >> "$AB_RESULTS_FILE"
 }
 
@@ -563,6 +570,7 @@ main() {
                 if command -v jq >/dev/null 2>&1; then
                     local tmp_config
                     tmp_config=$(mktemp)
+    # shellcheck disable=SC2064
                     trap "rm -f '$tmp_config'" RETURN
                     jq ".a_b_test.enabled = false" "$MODEL_ROUTING_CONFIG" > "$tmp_config"
                     mv "$tmp_config" "$MODEL_ROUTING_CONFIG"

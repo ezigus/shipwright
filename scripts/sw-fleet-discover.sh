@@ -8,6 +8,7 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -29,6 +30,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -118,6 +120,7 @@ discover_repos() {
 
     # Paginate through org repos
     local page=1
+    # shellcheck disable=SC2034
     local per_page=100
     local total_found=0
     local has_more=true
@@ -150,6 +153,7 @@ discover_repos() {
 
             name=$(echo "$repo_data" | jq -r '.name // ""')
             full_name=$(echo "$repo_data" | jq -r '.full_name // ""')
+            # shellcheck disable=SC2034
             url=$(echo "$repo_data" | jq -r '.url // ""')
             archived=$(echo "$repo_data" | jq -r '.archived // false')
             disabled=$(echo "$repo_data" | jq -r '.disabled // false')
@@ -376,7 +380,7 @@ merge_into_config() {
 
     # Merge into config
     local tmp_config="${config_path}.tmp.$$"
-    local updated_config=$(cat "$config_path")
+    local updated_config; updated_config=$(cat "$config_path")
 
     for repo_path in "${repos_to_add[@]}"; do
         updated_config=$(echo "$updated_config" | jq \

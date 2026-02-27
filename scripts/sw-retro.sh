@@ -6,11 +6,13 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 _COMPAT="$SCRIPT_DIR/lib/compat.sh"
+# shellcheck disable=SC1090
 [[ -f "$_COMPAT" ]] && source "$_COMPAT"
 
 # Canonical helpers (colors, output, events)
@@ -356,6 +358,7 @@ generate_retro_report() {
     } >> "$report_file"
 
     # Capture full analysis to JSON
+    # shellcheck disable=SC2046
     jq -n \
         --argjson analysis "$analysis_json" \
         --argjson agents "$agent_json" \

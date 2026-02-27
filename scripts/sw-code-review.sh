@@ -6,6 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -431,7 +432,8 @@ review_changes() {
 
     mkdir -p "${REPO_DIR}/.claude/pipeline-artifacts"
 
-    local review_output="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"scope\":\"$review_scope\",\"findings\":{}}"
+    local review_output
+    review_output="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"scope\":\"$review_scope\",\"findings\":{}}"
     local total_issues=0
 
     # Get changed files (Bash 3.2 compatible — no mapfile)
@@ -514,9 +516,12 @@ review_changes() {
 scan_codebase() {
     info "Running full codebase quality scan..."
 
-    local scan_output="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"files\":[]}"
+    local scan_output
+    # shellcheck disable=SC2034
+    scan_output="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"files\":[]}"
     local total_issues=0
 
+    # shellcheck disable=SC2178,SC2128
     find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null | while read -r file; do
         local file_rel="${file#$REPO_DIR/}"
         local smells=0
@@ -547,7 +552,8 @@ scan_codebase() {
 complexity_report() {
     info "Analyzing code complexity metrics..."
 
-    local complexity_data="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"files\":[]}"
+    local complexity_data
+    complexity_data="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"files\":[]}"
 
     find "$REPO_DIR/scripts" -name "*.sh" -type f 2>/dev/null | while read -r file; do
         local file_metrics

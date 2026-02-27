@@ -8,6 +8,7 @@
 # ║                                                                          ║
 # ║  --deploy  Detect platform and generate deployed.json template          ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
@@ -343,6 +344,7 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qxF "$BIN_DIR"; then
     fi
     export PATH="$BIN_DIR:$PATH"
 else
+    # shellcheck disable=SC2088
     success "~/.local/bin already in PATH"
 fi
 
@@ -607,6 +609,7 @@ GLOBAL_CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
 if [[ "$SKIP_CLAUDE_MD" == "false" && -f "$CLAUDE_MD_SRC" ]]; then
     if [[ -f "$GLOBAL_CLAUDE_MD" ]]; then
         if grep -q "Shipwright" "$GLOBAL_CLAUDE_MD" 2>/dev/null; then
+            # shellcheck disable=SC2088
             info "~/.claude/CLAUDE.md already contains Shipwright instructions"
         else
             { echo ""; echo "---"; echo ""; cat "$CLAUDE_MD_SRC"; } >> "$GLOBAL_CLAUDE_MD"
@@ -722,6 +725,7 @@ detect_deploy_platform() {
     for adapter_file in "$ADAPTERS_DIR"/*-deploy.sh; do
         [[ -f "$adapter_file" ]] || continue
         # Source the adapter in a subshell to get detection
+        # shellcheck disable=SC1090
         if ( source "$adapter_file" && detect_platform ); then
             local name
             name=$(basename "$adapter_file" | sed 's/-deploy\.sh$//')
@@ -788,6 +792,7 @@ fi
 
 # Source the adapter to get command values
 ADAPTER_FILE="$ADAPTERS_DIR/${DEPLOY_PLATFORM}-deploy.sh"
+# shellcheck disable=SC1090
 source "$ADAPTER_FILE"
 
 staging_cmd=$(get_staging_cmd)

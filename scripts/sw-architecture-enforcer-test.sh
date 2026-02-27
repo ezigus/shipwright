@@ -304,6 +304,7 @@ echo -e "${BOLD}  Event Emission${RESET}"
 rm -f "$HOME/.shipwright/events.jsonl"
 
 # Source the mock script to get emit_event
+# shellcheck disable=SC1090
 source "$MOCK_SRC"
 
 emit_event "architecture.test" "layers=3"

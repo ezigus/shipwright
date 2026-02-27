@@ -31,6 +31,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -159,6 +160,7 @@ _intelligence_track_cache_access() {
 
     local tmp_file
     tmp_file=$(mktemp "${TMPDIR:-/tmp}/sw-cache-stats.XXXXXX")
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
     if [[ "$hit_or_miss" == "hit" ]]; then
         jq '.hits += 1 | .total += 1' "$CACHE_STATS_FILE" > "$tmp_file" && mv "$tmp_file" "$CACHE_STATS_FILE" || rm -f "$tmp_file"
@@ -179,6 +181,7 @@ _intelligence_adjust_cache_ttl() {
     [[ -f "$CACHE_STATS_FILE" ]] || return 0
 
     local hits misses total
+    # shellcheck disable=SC2034
     hits=$(jq '.hits // 0' "$CACHE_STATS_FILE" 2>/dev/null || echo "0")
     misses=$(jq '.misses // 0' "$CACHE_STATS_FILE" 2>/dev/null || echo "0")
     total=$(jq '.total // 0' "$CACHE_STATS_FILE" 2>/dev/null || echo "0")
@@ -203,6 +206,7 @@ _intelligence_adjust_cache_ttl() {
     if [[ "$new_ttl" != "$current_ttl" ]]; then
         local tmp_file
         tmp_file=$(mktemp "${TMPDIR:-/tmp}/sw-cache-ttl.XXXXXX")
+        # shellcheck disable=SC2064
         trap "rm -f '$tmp_file'" RETURN
         jq -n \
             --argjson ttl "$new_ttl" \
@@ -220,6 +224,7 @@ _intelligence_adjust_cache_ttl() {
     # Reset stats for next window
     local tmp_reset
     tmp_reset=$(mktemp "${TMPDIR:-/tmp}/sw-cache-reset.XXXXXX")
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_reset'" RETURN
     echo '{"hits":0,"misses":0,"total":0}' > "$tmp_reset" && mv "$tmp_reset" "$CACHE_STATS_FILE" || rm -f "$tmp_reset"
 }
@@ -306,6 +311,7 @@ _intelligence_cache_set() {
 
     local tmp_file
     tmp_file=$(mktemp "${TMPDIR:-/tmp}/sw-intel-cache.XXXXXX")
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
     jq --arg h "$hash" \
        --argjson result "$result" \

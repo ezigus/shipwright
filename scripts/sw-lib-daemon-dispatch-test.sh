@@ -347,6 +347,7 @@ result=0
 gh_rate_limited || result=1
 assert_eq "gh_rate_limited true when in backoff" "0" "$result"
 # Reset
+# shellcheck disable=SC2034
 GH_BACKOFF_UNTIL=0
 result=1
 gh_rate_limited || result=0

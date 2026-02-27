@@ -8,6 +8,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -187,6 +188,7 @@ collect_api() {
     local name="$1"
     local collector_json="$2"
 
+    # shellcheck disable=SC2034
     local url method expected_status headers_json body timeout
     url=$(echo "$collector_json" | jq -r '.url // ""')
     method=$(echo "$collector_json" | jq -r '.method // "GET"')

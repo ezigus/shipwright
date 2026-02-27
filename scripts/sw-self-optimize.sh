@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034,SC2064  # config vars used by sourced scripts; traps expand at definition time
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright self-optimize — Learning & Self-Tuning System               ║
 # ║  Outcome analysis · Template tuning · Model routing · Memory evolution  ║
@@ -29,7 +30,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -1389,7 +1391,8 @@ optimize_track_quality_index() {
     local quality_index
     quality_index=$(awk "BEGIN{printf \"%.0f\", ($success_rate * 0.4) + ($efficiency * 0.3) + ($avg_quality * 0.3)}" 2>/dev/null || echo "0")
 
-    local entry="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"window\":$window,\"total\":$total,\"success_rate\":$success_rate,\"avg_iterations\":$avg_iterations,\"avg_quality\":$avg_quality,\"efficiency\":$efficiency,\"quality_index\":$quality_index}"
+    local entry
+    entry="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"window\":$window,\"total\":$total,\"success_rate\":$success_rate,\"avg_iterations\":$avg_iterations,\"avg_quality\":$avg_quality,\"efficiency\":$efficiency,\"quality_index\":$quality_index}"
     echo "$entry" >> "$quality_file"
 
     # Detect trend

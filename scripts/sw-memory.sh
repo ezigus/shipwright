@@ -29,7 +29,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -217,6 +218,7 @@ memory_semantic_search() {
 
 # Inject relevant memories into agent prompts (goal-based)
 memory_inject_goal_context() {
+    # shellcheck disable=SC2034
     local goal="$1" repo_hash="${2:-}" max_tokens="${3:-2000}"
 
     local memories
@@ -330,6 +332,7 @@ memory_capture_pipeline() {
             # Record review patterns to global memory for cross-repo learning
             local tmp_global
             tmp_global=$(mktemp)
+    # shellcheck disable=SC2064
             trap "rm -f '$tmp_global'" RETURN
             jq --arg repo "$repo" \
                --arg ts "$captured_at" \
@@ -395,6 +398,7 @@ memory_capture_failure() {
         fi
         local tmp_file
         tmp_file=$(mktemp "${failures_file}.tmp.XXXXXX")
+    # shellcheck disable=SC2064
         trap "rm -f '$tmp_file'" EXIT
 
         if [[ "$existing_idx" != "-1" && "$existing_idx" != "null" ]]; then
@@ -471,6 +475,7 @@ memory_record_fix_outcome() {
         fi
         local tmp_file
         tmp_file=$(mktemp "${failures_file}.tmp.XXXXXX")
+    # shellcheck disable=SC2064
         trap "rm -f '$tmp_file'" EXIT
 
         jq --argjson idx "$match_idx" \
@@ -637,6 +642,7 @@ _memory_aggregate_global() {
         # Add to global, cap at 100 entries
         local tmp_global
         tmp_global=$(mktemp "${global_file}.tmp.XXXXXX")
+    # shellcheck disable=SC2064
         trap "rm -f '$tmp_global'" RETURN
         jq --arg p "$pattern" \
            --arg ts "$(now_iso)" \
@@ -789,6 +795,7 @@ Return JSON only, no markdown fences, no explanation."
     # Update the most recent failure entry with root_cause, fix, category
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
     jq --arg rc "$root_cause" \
        --arg fix "$fix" \
@@ -819,6 +826,7 @@ memory_capture_pattern() {
 
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     case "$pattern_type" in
@@ -1337,6 +1345,7 @@ memory_update_metrics() {
     # Update baseline using atomic write
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
     jq --arg m "$metric_name" \
        --argjson v "$value" \
@@ -1361,6 +1370,7 @@ memory_capture_decision() {
 
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
     jq --arg type "$dec_type" \
        --arg summary "$summary" \
@@ -1702,6 +1712,7 @@ memory_import() {
     # Extract and write each section
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     jq '.patterns // {}' "$import_file" > "$tmp_file" && mv "$tmp_file" "$mem_dir/patterns.json"

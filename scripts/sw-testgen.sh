@@ -33,6 +33,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -40,11 +41,14 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
 fi
 # ─── Configuration ───────────────────────────────────────────────────────────
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# shellcheck disable=SC2034
 SCRIPTS_DIR="$PROJECT_ROOT/scripts"
 TEST_SUITES_DIR="$PROJECT_ROOT/scripts"
 COVERAGE_THRESHOLD=70
 TESTGEN_DIR="${TESTGEN_DIR:-.claude/testgen}"
+# shellcheck disable=SC2034
 COVERAGE_DB="$TESTGEN_DIR/coverage.json"
+# shellcheck disable=SC2034
 QUALITY_DB="$TESTGEN_DIR/quality.json"
 REGRESSION_DB="$TESTGEN_DIR/regressions.json"
 
@@ -154,6 +158,7 @@ EOF
 
 generate_tests() {
     local target_script="${1:-.}"
+    # shellcheck disable=SC2034
     local threshold="${2:-$COVERAGE_THRESHOLD}"
 
     mkdir -p "$TESTGEN_DIR"
@@ -233,6 +238,7 @@ EOF
                 func_snippet=$(awk "/^${func}\(\\)/,/^[a-zA-Z_][a-zA-Z0-9_]*\(\)|^$/" "$target_script" 2>/dev/null | head -40 || true)
                 local prompt_file
                 prompt_file=$(mktemp "${TMPDIR:-/tmp}/sw-testgen-prompt.XXXXXX")
+                # shellcheck disable=SC2064
                 trap "rm -f '$prompt_file'" RETURN
                 {
                     echo "Generate a bash test function for the following shell function. Use real assertions (assert_equal, assert_contains, or test exit code). Test happy path and at least one edge or error case. Output only the bash function body."

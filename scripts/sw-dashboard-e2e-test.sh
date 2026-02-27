@@ -38,6 +38,7 @@ setup_mock_data() {
     local now_iso
     now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local today
+    # shellcheck disable=SC2034
     today=$(date -u +"%Y-%m-%d")
     local yesterday
     yesterday=$(date -u -v-1d +"%Y-%m-%d" 2>/dev/null || date -u -d "yesterday" +"%Y-%m-%d" 2>/dev/null || echo "2026-02-15")

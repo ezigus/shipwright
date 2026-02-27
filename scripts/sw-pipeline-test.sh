@@ -16,6 +16,7 @@ REAL_PIPELINE_SCRIPT="$SCRIPT_DIR/sw-pipeline.sh"
 CYAN='\033[38;2;0;212;255m'
 PURPLE='\033[38;2;124;58;237m'
 GREEN='\033[38;2;74;222;128m'
+# shellcheck disable=SC2034
 YELLOW='\033[38;2;250;204;21m'
 RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
@@ -681,6 +682,7 @@ test_resume() {
 
     # Step 2: Read back the branch name from state
     local branch_name
+    # shellcheck disable=SC2034
     branch_name=$(sed -n 's/^branch: *"*\([^"]*\)"*/\1/p' "$TEMP_DIR/project/.claude/pipeline-state.md" | head -1)
 
     # Step 3: Modify state to look like an interrupted pipeline with intake done
@@ -1154,6 +1156,7 @@ test_vitals_budget_trajectory() {
     (
         source "$SCRIPT_DIR/sw-pipeline-vitals.sh"
         # Without budget file, should return "ok"
+        # shellcheck disable=SC2034
         BUDGET_FILE="/tmp/nonexistent-budget-$$.json"
         local result
         result=$(pipeline_budget_trajectory "/tmp/nonexistent-state-$$.md")
@@ -1230,6 +1233,7 @@ test_vitals_progress_snapshot_creation() {
         HOME="$tmp_home"
         export HOME
         mkdir -p "$tmp_home/.shipwright"
+        # shellcheck disable=SC1090
         source "$vitals_script"
 
         # Override flock-based locking (not available on macOS by default)
@@ -1268,6 +1272,7 @@ test_vitals_momentum_from_snapshots() {
         HOME="$tmp_dir"
         export HOME
         mkdir -p "$tmp_dir/.shipwright"
+        # shellcheck disable=SC1090
         source "$vitals_script"
 
         # Create a progress file with 3 snapshots showing plan→build progression
@@ -1308,6 +1313,7 @@ test_vitals_convergence_decreasing_errors() {
         PROGRESS_DIR="$tmp_dir"
         HOME="$tmp_dir"
         export PROGRESS_DIR HOME
+        # shellcheck disable=SC1090
         source "$vitals_script"
 
         # Create error log with 6 lines
@@ -1361,6 +1367,7 @@ test_vitals_configurable_weights() {
         export VITALS_WEIGHT_CONVERGENCE=50
         export VITALS_WEIGHT_BUDGET=0
         export VITALS_WEIGHT_ERROR_MATURITY=0
+        # shellcheck disable=SC1090
         source "$vitals_script"
 
         rm -rf "$tmp_dir"
@@ -1388,6 +1395,7 @@ test_vitals_budget_trajectory_exhaustion() {
         echo '{"enabled":true,"daily_budget_usd":10}' > "$tmp_dir/.shipwright/budget.json"
         echo '{"entries":[{"ts_epoch":9999999999,"cost_usd":9.5}]}' > "$tmp_dir/.shipwright/costs.json"
 
+        # shellcheck disable=SC1090
         source "$vitals_script"
 
         local result
@@ -1523,6 +1531,7 @@ FEOF
 
     local result
     result=$(
+        # shellcheck disable=SC1090
         source "$fns_script" 2>/dev/null
         _pipeline_compact_goal "Add auth" "$plan_file" "$design_file"
     ) || result=""
@@ -1562,6 +1571,7 @@ FEOF
 
     local result
     result=$(
+        # shellcheck disable=SC1090
         source "$fns_script" 2>/dev/null
         load_composed_pipeline "$spec_file"
         echo "stages=$COMPOSED_STAGES|iters=$COMPOSED_BUILD_ITERATIONS"
@@ -1597,6 +1607,7 @@ FEOF
 
     local result
     result=$(
+        # shellcheck disable=SC1090
         source "$fns_script" 2>/dev/null
         _compute_momentum "$progress_file" "build" 2 20
     ) || result=""
@@ -1656,9 +1667,12 @@ test_persist_artifacts_exists() {
 test_persist_artifacts_ci_guard() {
     (
         # Source pipeline — sets ARTIFACTS_DIR="" so we must set vars AFTER source
+        # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
+        # shellcheck disable=SC2034
         CI_MODE=false
+        # shellcheck disable=SC2034
         ISSUE_NUMBER="99"
         ARTIFACTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-art-test.XXXXXX")
         echo "test plan" > "$ARTIFACTS_DIR/plan.md"
@@ -1676,6 +1690,7 @@ test_persist_artifacts_ci_guard() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_present() {
     (
+        # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
         ARTIFACTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-art-test.XXXXXX")
@@ -1693,6 +1708,7 @@ test_verify_artifacts_present() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_missing() {
     (
+        # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
         ARTIFACTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-art-test.XXXXXX")
@@ -1713,6 +1729,7 @@ test_verify_artifacts_missing() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_empty() {
     (
+        # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
         ARTIFACTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-art-test.XXXXXX")
@@ -1733,6 +1750,7 @@ test_verify_artifacts_empty() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_no_requirements() {
     (
+        # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
         ARTIFACTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-art-test.XXXXXX")
@@ -1750,6 +1768,7 @@ test_verify_artifacts_no_requirements() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_design_needs_plan() {
     (
+        # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
         ARTIFACTS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-art-test.XXXXXX")

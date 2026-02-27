@@ -11,6 +11,7 @@
 # ║    shipwright tmux fix           — Auto-fix common issues              ║
 # ║    shipwright tmux reload        — Reload tmux config                  ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
@@ -354,6 +355,7 @@ tmux_install() {
             cp "$REPO_DIR/tmux/tmux.conf" "$HOME/.tmux.conf"
             success "Installed ~/.tmux.conf"
         else
+            # shellcheck disable=SC2088
             info "~/.tmux.conf exists — run 'shipwright init' to update"
         fi
     fi

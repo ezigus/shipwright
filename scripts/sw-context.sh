@@ -387,6 +387,7 @@ gather_context() {
 
     local tmp_file
     tmp_file=$(mktemp "${TMPDIR:-/tmp}/sw-context-bundle.XXXXXX")
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     # Write bundle header

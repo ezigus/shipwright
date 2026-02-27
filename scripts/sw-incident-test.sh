@@ -241,6 +241,7 @@ echo -e "${DIM}  detect_pipeline_failures${RESET}"
 now_epoch=$(date +%s)
 event="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"ts_epoch\":$now_epoch,\"type\":\"stage.failed\",\"issue\":\"1\",\"stage\":\"build\",\"reason\":\"test\"}"
 echo "$event" >> "$HOME/.shipwright/events.jsonl"
+# shellcheck disable=SC2034
 detect_result=$(HOME="$HOME" bash -c "source \"$SCRIPT_DIR/sw-incident.sh\" 2>/dev/null; detect_pipeline_failures 86400" 2>/dev/null) || true
 assert_pass "detect_pipeline_failures defined and callable"
 

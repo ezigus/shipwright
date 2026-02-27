@@ -9,8 +9,10 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REAL_PIPELINE="$SCRIPT_DIR/sw-pipeline.sh"
+# shellcheck disable=SC2034
 REAL_LOOP="$SCRIPT_DIR/sw-loop.sh"
 
 # Source test-helpers for assertions (note: assert_contains(desc, haystack, needle))
@@ -218,7 +220,9 @@ TST
 
 invoke_pipeline() {
     PIPELINE_OUTPUT=""
+    # shellcheck disable=SC2034
     PIPELINE_EXIT=0
+    # shellcheck disable=SC2034
     PIPELINE_OUTPUT=$(cd "$TEMP_DIR/project" && PATH="$TEMP_DIR/bin:$PATH" HOME="$TEMP_DIR/home" \
         bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$@" 2>&1) || PIPELINE_EXIT=$?
 }

@@ -28,6 +28,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -118,8 +119,11 @@ scan_licenses() {
     local has_npm=false has_pip=false has_go=false has_cargo=false
 
     [[ -f "$REPO_DIR/package.json" ]] && has_npm=true
+    # shellcheck disable=SC2034
     [[ -f "$REPO_DIR/requirements.txt" || -f "$REPO_DIR/setup.py" ]] && has_pip=true
+    # shellcheck disable=SC2034
     [[ -f "$REPO_DIR/go.mod" ]] && has_go=true
+    # shellcheck disable=SC2034
     [[ -f "$REPO_DIR/Cargo.toml" ]] && has_cargo=true
 
     # Check npm licenses
@@ -202,6 +206,7 @@ generate_sbom() {
     # Add npm packages
     if [[ -f "$REPO_DIR/package.json" ]] && command -v npm >/dev/null 2>&1; then
         local npm_list
+        # shellcheck disable=SC2034
         npm_list=$(npm list --json 2>/dev/null || echo '{"dependencies":{}}')
         while IFS='=' read -r name version; do
             [[ -z "$name" || -z "$version" ]] && continue

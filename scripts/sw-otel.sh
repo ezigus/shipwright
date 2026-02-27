@@ -29,7 +29,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload; payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -61,23 +61,27 @@ cmd_metrics() {
     # Status breakdown
     local status_success=0
     local status_failed=0
+    # shellcheck disable=SC2034
     local status_running=0
 
     # Template counts
+    # shellcheck disable=SC2034
     declare -a templates
+    # shellcheck disable=SC2034
     declare -a template_counts
 
     # Stage timing
+    # shellcheck disable=SC2034
     declare -a stages
     declare -a stage_durations
 
     # Model costs
+    # shellcheck disable=SC2034
     declare -a models
     declare -a model_costs
 
     # Parse events.jsonl
     if [[ -f "$EVENTS_FILE" ]]; then
-        {
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
 
@@ -217,11 +221,13 @@ EOF
 # ─── OpenTelemetry Traces ────────────────────────────────────────────────────
 
 cmd_trace() {
+    # shellcheck disable=SC2034
     local pipeline_id="${1:-latest}"
 
     ensure_otel_dir
 
     # Build trace from events
+    # shellcheck disable=SC2034
     local traces='[]'
     local spans='[]'
     local root_span=""
@@ -263,7 +269,7 @@ EOF
                     ;;
                 stage_start)
                     stage=$(echo "$line" | jq -r '.stage // "unknown"' 2>/dev/null || true)
-                    local span_id="${stage:0:8}$(printf '%08x' $((RANDOM * 256 + RANDOM)))"
+                    local span_id; span_id="${stage:0:8}$(printf '%08x' $((RANDOM * 256 + RANDOM)))"
                     spans=$(echo "$spans" | jq --arg span_id "$span_id" --arg stage "$stage" --arg ts "$ts" \
                         '. += [{
                             "traceId": "'${pipeline:0:16}'",
@@ -317,6 +323,7 @@ cmd_export() {
     local auth_header=""
 
     if [[ -n "${OTEL_EXPORTER_OTLP_HEADERS:-}" ]]; then
+        # shellcheck disable=SC2089
         auth_header="-H '${OTEL_EXPORTER_OTLP_HEADERS}'"
     fi
 
@@ -326,6 +333,7 @@ cmd_export() {
     if [[ "$format" == "trace" ]]; then
         payload=$(cmd_trace)
         local response
+        # shellcheck disable=SC2090
         response=$(curl -s --connect-timeout 10 --max-time 30 -X POST \
             "$endpoint/v1/traces" \
             -H "Content-Type: application/json" \
@@ -341,6 +349,7 @@ cmd_export() {
     else
         payload=$(cmd_metrics text)
         local response
+        # shellcheck disable=SC2090
         response=$(curl -s --connect-timeout 10 --max-time 30 -X POST \
             "$endpoint/metrics" \
             -H "Content-Type: text/plain" \

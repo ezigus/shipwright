@@ -29,6 +29,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -40,6 +41,7 @@ if [[ -f "$SCRIPT_DIR/sw-intelligence.sh" ]]; then
 fi
 
 # ─── Configuration ───────────────────────────────────────────────────────
+# shellcheck disable=SC2034
 MAX_SIMULATION_ROUNDS="${SIMULATION_MAX_ROUNDS:-3}"
 
 _simulation_enabled() {
@@ -110,6 +112,7 @@ simulation_review() {
         local prompt
         prompt=$(_build_persona_prompt "$persona" "$pr_diff" "$pr_description")
 
+        # shellcheck disable=SC2155
         local cache_key="simulation_${persona}_$(echo -n "$pr_diff" | head -c 200 | _intelligence_md5)"
         local result
         if ! result=$(_intelligence_call_claude "$prompt" "$cache_key" 300); then

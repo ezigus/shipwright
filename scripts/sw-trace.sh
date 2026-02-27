@@ -6,6 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -112,6 +113,7 @@ trace_show() {
     echo -e "${BOLD}FEATURE BRANCH${RESET}"
 
     local feature_branch
+    # shellcheck disable=SC2034
     feature_branch="feat/issue-${issue}"
 
     # Check if worktree exists

@@ -33,7 +33,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -459,6 +460,7 @@ prep_scan_structure() {
     for d in docs doc documentation wiki; do
         [[ -d "$root/$d" ]] && ddirs+=("$d")
     done
+    # shellcheck disable=SC2034
     DOC_DIRS="${ddirs[*]:-}"
 
     # Config files
@@ -499,6 +501,7 @@ prep_scan_structure() {
         -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null | wc -l | tr -d ' ')
 
     # Total lines (approximation from source files)
+    # shellcheck disable=SC2227,SC2261
     TOTAL_LINES=$(find "$root" \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \
         -o -name "*.py" -o -name "*.rb" -o -name "*.go" -o -name "*.rs" -o -name "*.java" \) \
         -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/vendor/*" \
@@ -572,6 +575,7 @@ prep_extract_patterns() {
 
     # ── Middleware ──
     if grep -rq "app\.use(" "$root/src" "$root/app" "$root/lib" 2>/dev/null; then
+        # shellcheck disable=SC2034
         HAS_MIDDLEWARE=true
     fi
 
@@ -767,8 +771,11 @@ ${style_samples}"
         DB_PATTERNS="$smart_val"
     fi
 
+    # shellcheck disable=SC2034
     SEMICOLONS=$(echo "$analysis" | grep "^SEMICOLONS:" | sed 's/^SEMICOLONS:[[:space:]]*//' | head -1)
+    # shellcheck disable=SC2034
     QUOTE_STYLE=$(echo "$analysis" | grep "^QUOTE_STYLE:" | sed 's/^QUOTE_STYLE:[[:space:]]*//' | head -1)
+    # shellcheck disable=SC2034
     INDENT_STYLE=$(echo "$analysis" | grep "^INDENT:" | sed 's/^INDENT:[[:space:]]*//' | head -1)
 
     success "Smart detection: ${ARCHITECTURE_PATTERN:-unknown} architecture${FRAMEWORK:+, ${FRAMEWORK}}"
@@ -818,6 +825,7 @@ prep_learn_patterns() {
     # Write patterns file atomically
     local tmp_patterns
     tmp_patterns=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_patterns'" RETURN
     jq -n \
         --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \

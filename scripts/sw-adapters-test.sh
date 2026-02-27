@@ -48,6 +48,7 @@ print_test_section "Adapters source cleanly in subshell"
 for adapter in "${DEPLOY_ADAPTERS[@]}"; do
     fp="$ADAPTERS_DIR/$adapter"
     td=$(mktemp -d "$TEST_TEMP_DIR/source-${adapter%.sh}.XXXXXX")
+    # shellcheck disable=SC1090
     (cd "$td" && source "$fp" 2>/dev/null) && assert_pass "$adapter sources in subshell" || assert_fail "$adapter sources in subshell"
 done
 
@@ -59,6 +60,7 @@ mock_binary "osascript" 'echo ""; exit 0'
 export WINDOW_NAME="shipwright-test-$$"
 for adapter in tmux-adapter.sh wezterm-adapter.sh; do
     fp="$ADAPTERS_DIR/$adapter"
+    # shellcheck disable=SC1090
     (source "$fp" 2>/dev/null) && assert_pass "$adapter sources in subshell" || assert_fail "$adapter sources in subshell"
 done
 
@@ -149,6 +151,7 @@ test_deploy_adapter() {
     [[ -n "$detect_file" ]] && touch "$detect_file" 2>/dev/null || true
     [[ "$detect_file" == "fly.toml" ]] && echo 'app = "test"' > fly.toml
 
+    # shellcheck disable=SC1090
     source "$adapter_file" 2>/dev/null || true
 
     for fn in "${DEPLOY_FUNCS[@]}"; do

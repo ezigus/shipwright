@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CYAN='\033[38;2;0;212;255m'
 PURPLE='\033[38;2;124;58;237m'
 GREEN='\033[38;2;74;222;128m'
+# shellcheck disable=SC2034
 YELLOW='\033[38;2;250;204;21m'
 RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
@@ -347,6 +348,7 @@ test_iteration_model() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_model_routing() {
     local build_stages='[{"name":"build","status":"complete"},{"name":"test","status":"complete"}]'
+    # shellcheck disable=SC2034
     local fail_stages='[{"name":"build","status":"complete"},{"name":"test","status":"failed"}]'
 
     # Sonnet: 5 successes on build

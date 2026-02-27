@@ -6,6 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
+# shellcheck disable=SC2034
 VERSION="3.2.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -28,7 +29,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -38,6 +40,7 @@ SWARM_DIR="${HOME}/.shipwright/swarm"
 REGISTRY_FILE="${SWARM_DIR}/registry.json"
 CONFIG_FILE="${SWARM_DIR}/config.json"
 METRICS_FILE="${SWARM_DIR}/metrics.jsonl"
+# shellcheck disable=SC2034
 HEALTH_LOG="${SWARM_DIR}/health.jsonl"
 
 # ─── Ensure directories exist ──────────────────────────────────────────────
@@ -50,6 +53,7 @@ init_config() {
     if [[ ! -f "$CONFIG_FILE" ]]; then
         local tmp_file
         tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
         trap "rm -f '$tmp_file'" RETURN
         cat > "$tmp_file" << 'JSON'
 {
@@ -76,6 +80,7 @@ init_registry() {
     if [[ ! -f "$REGISTRY_FILE" ]]; then
         local tmp_file
         tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
         trap "rm -f '$tmp_file'" RETURN
         cat > "$tmp_file" << 'JSON'
 {
@@ -165,6 +170,7 @@ cmd_spawn() {
     # Add agent to registry
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     jq --arg agent_id "$agent_id" \
@@ -173,7 +179,7 @@ cmd_spawn() {
            id: $agent_id,
            type: $agent_type,
            status: "active",
-           spawned_at: "'$(now_iso)'",
+           spawned_at: "'"$(now_iso)"'",
            current_task: null,
            task_started_at: null,
            success_count: 0,
@@ -181,8 +187,8 @@ cmd_spawn() {
            avg_completion_time: 0,
            quality_score: 100,
            resource_usage: {cpu: 0, memory: 0},
-           last_heartbeat: "'$(now_iso)'"
-       }] | .active_count += 1 | .last_updated = "'$(now_iso)'"' \
+           last_heartbeat: "'"$(now_iso)"'"
+       }] | .active_count += 1 | .last_updated = "'"$(now_iso)"'"' \
         "$REGISTRY_FILE" > "$tmp_file" && [[ -s "$tmp_file" ]] && \
     mv "$tmp_file" "$REGISTRY_FILE" || { rm -f "$tmp_file"; error "Failed to update registry"; return 1; }
     record_metric "$agent_id" "spawn" "1" "$agent_type"
@@ -247,10 +253,12 @@ cmd_retire() {
     # Mark as retiring / remove from registry
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
+    # shellcheck disable=SC2046
     jq --arg aid "$agent_id" \
-       '.agents |= map(select(.id != $aid)) | .active_count = ([.agents[] | select(.status == "active")] | length) | .last_updated = "'$(now_iso)'"' \
+       '.agents |= map(select(.id != $aid)) | .active_count = ([.agents[] | select(.status == "active")] | length) | .last_updated = "'"$(now_iso)"'"' \
         "$REGISTRY_FILE" > "$tmp_file" && [[ -s "$tmp_file" ]] && \
     mv "$tmp_file" "$REGISTRY_FILE" || { rm -f "$tmp_file"; error "Failed to update registry"; return 1; }
     record_metric "$agent_id" "retire" "1" "graceful_shutdown"
@@ -334,9 +342,11 @@ cmd_health() {
 
 # ─── Swarm spawn helper (for cmd_scale) ───────────────────────────────────
 swarm_spawn_agent() {
+    # shellcheck disable=SC2034
     local role="${1:-builder}"
     local count="${2:-1}"
     local i
+    # shellcheck disable=SC2034
     for i in $(seq 1 "$count"); do
         cmd_spawn "standard" 2>/dev/null || true
     done
@@ -384,6 +394,7 @@ cmd_scale() {
                 local agent_id
                 agent_id=$(jq -r '.agents[0].id // empty' "$REGISTRY_FILE" 2>/dev/null)
                 if [[ -n "$agent_id" ]]; then
+                    # shellcheck disable=SC2034
                     cmd_retire "$agent_id" 2>/dev/null && retired=1 || true
                 fi
             fi
@@ -527,6 +538,7 @@ cmd_config() {
 
             local tmp_file
             tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
             trap "rm -f '$tmp_file'" RETURN
 
             jq --arg key "$key" --arg value "$value" \

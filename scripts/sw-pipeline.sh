@@ -508,14 +508,16 @@ load_pipeline_config() {
     # Check for intelligence-composed pipeline first
     local composed_pipeline="${ARTIFACTS_DIR}/composed-pipeline.json"
     if [[ -f "$composed_pipeline" ]] && type composer_validate_pipeline >/dev/null 2>&1; then
-        # Use composed pipeline if fresh (< 1 hour old)
+        # Use composed pipeline if fresh (within cache TTL)
+        local composed_cache_ttl
+        composed_cache_ttl=$(_config_get_int "pipeline.composed_cache_ttl" 3600 2>/dev/null || echo 3600)
         local composed_age=99999
         local composed_mtime
         composed_mtime=$(file_mtime "$composed_pipeline")
         if [[ "$composed_mtime" -gt 0 ]]; then
             composed_age=$(( $(now_epoch) - composed_mtime ))
         fi
-        if [[ "$composed_age" -lt 3600 ]]; then
+        if [[ "$composed_age" -lt "$composed_cache_ttl" ]]; then
             local validate_json
             validate_json=$(cat "$composed_pipeline" 2>/dev/null || echo "")
             if [[ -n "$validate_json" ]] && composer_validate_pipeline "$validate_json" 2>/dev/null; then

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright adaptive — data-driven pipeline tuning                       ║
-# ║  Replace 83+ hardcoded values with learned defaults from historical runs  ║
+# ║  Replace static defaults with learned values from historical runs         ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
@@ -712,10 +712,10 @@ cmd_compare() {
         esac
     done
 
-    info "Learned vs Hardcoded Values for ${CYAN}${repo}${RESET}"
+    info "Learned vs Default Values for ${CYAN}${repo}${RESET}"
     echo ""
 
-    printf "%-25s %-15s %-15s %-15s\n" "Metric" "Hardcoded" "Learned" "Difference"
+    printf "%-25s %-15s %-15s %-15s\n" "Metric" "Default" "Learned" "Difference"
     printf "%s\n" "$(printf '%.0s─' {1..70})"
 
     # Timeout
@@ -841,7 +841,7 @@ ${BOLD}USAGE${RESET}
 
 ${BOLD}SUBCOMMANDS${RESET}
   ${CYAN}get${RESET} <metric> [--stage S] [--repo R] [--complexity C] [--default V]
-    Return adaptive value for a metric (replaces hardcoded defaults)
+    Return adaptive value for a metric (replaces static defaults)
     Metrics: timeout, iterations, model, team_size, template, poll_interval,
              retry_limit, quality_threshold, coverage_min
 
@@ -852,7 +852,7 @@ ${BOLD}SUBCOMMANDS${RESET}
     Rebuild models from events.jsonl (run after significant pipeline activity)
 
   ${CYAN}compare${RESET} [--repo REPO]
-    Side-by-side table: learned vs hardcoded values
+    Side-by-side table: learned vs default values
 
   ${CYAN}recommend${RESET} --issue N [--repo REPO]
     Full JSON recommendation for an issue (template, model, team_size, etc.)
@@ -876,7 +876,7 @@ ${BOLD}EXAMPLES${RESET}
   # Get complete recommendation for issue #42
   sw adaptive recommend --issue 42
 
-  # Compare learned vs hardcoded
+  # Compare learned vs defaults
   sw adaptive compare
 
 ${BOLD}STORAGE${RESET}

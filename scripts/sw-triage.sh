@@ -601,7 +601,7 @@ cmd_team() {
         fi
     fi
 
-    # ── Fallback: hardcoded complexity/risk mapping ──
+    # ── Fallback: default complexity/risk mapping ──
     if [[ -z "$template" ]]; then
         case "${complexity}-${risk}" in
             trivial-low|simple-low)

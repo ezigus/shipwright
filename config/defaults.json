@@ -25,6 +25,7 @@
     "build_test_retries": 3,
     "claude_timeout": 1800,
     "heartbeat_interval": 30,
+    "composed_cache_ttl": 3600,
     "branch_pattern": "shipwright/issue-{issue}",
     "stage_order": [
       "intake",
@@ -82,6 +83,10 @@
     "ab_test_ratio": 0.2,
     "claude_timeout": 60
   },
+  "predictive": {
+    "default_risk_score": 50,
+    "keyword_risk_score": 70
+  },
   "api_optimization": {
     "programmatic_tool_calling": true,
     "tool_search_enabled": true,
@@ -98,7 +103,9 @@
     "secret_threshold": 3,
     "min_file_count": 10,
     "score_weight_per_file": 25,
-    "pass_rate_threshold": 5.0
+    "pass_rate_threshold": 5.0,
+    "bundle_growth_legacy_pct": 20,
+    "perf_regression_legacy_pct": 30
   },
   "cleanup": {
     "artifact_age_days": 7,

@@ -204,7 +204,7 @@ analyze_issue() {
 
 # ─── recommend_team <analysis_json> ──────────────────────────────────────────
 # Based on analysis, recommend team composition
-# Tries recruit's AI/heuristic team composition first, falls back to hardcoded rules.
+# Tries recruit's AI/heuristic team composition first, falls back to built-in rules.
 recommend_team() {
     local analysis="$1"
 
@@ -254,7 +254,7 @@ recommend_team() {
         fi
     fi
 
-    # ── Fallback: hardcoded heuristic team composition ──
+    # ── Fallback: heuristic team composition ──
     local complexity risk is_security is_perf file_scope
     complexity=$(echo "$analysis" | jq -r '.complexity')
     risk=$(echo "$analysis" | jq -r '.risk')

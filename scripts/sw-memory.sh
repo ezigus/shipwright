@@ -725,7 +725,7 @@ memory_analyze_failure() {
             "$failures_file" 2>/dev/null || true)
     fi
 
-    # Build valid categories list (from compat.sh if available, else hardcoded)
+    # Build valid categories list (from compat.sh if available, else built-in defaults)
     local valid_cats="test_failure, build_error, lint_error, timeout, dependency, flaky, config"
     if [[ -n "${SW_ERROR_CATEGORIES:-}" ]]; then
         valid_cats=$(echo "$SW_ERROR_CATEGORIES" | tr ' ' ', ')

@@ -1671,7 +1671,7 @@ manage_context_window() {
     local budget="${CONTEXT_BUDGET_CHARS}"
     local current_len=${#prompt}
 
-    # Read trimming tunables from config (env > daemon-config > policy > defaults.json > hardcoded fallback)
+    # Read trimming tunables from config (env > daemon-config > policy > defaults.json)
     local trim_memory_chars trim_git_entries trim_hotspot_files trim_test_lines
     trim_memory_chars=$(_config_get_int "loop.context_trim_memory_chars" 20000 2>/dev/null || echo 20000)
     trim_git_entries=$(_config_get_int "loop.context_trim_git_entries" 10 2>/dev/null || echo 10)
@@ -2389,7 +2389,7 @@ compose_worker_prompt() {
                     role_desc="$recruit_desc"
                 fi
             fi
-            # Fallback to hardcoded descriptions
+            # Fallback to built-in role descriptions
             if [[ -z "$role_desc" ]]; then
                 case "$role" in
                     builder)   role_desc="Focus on implementation — writing code, fixing bugs, building features. You are the primary builder." ;;

@@ -141,7 +141,9 @@ quality_check_bundle_size() {
             return 1
         fi
     else
-        # Fallback: legacy memory baseline with hardcoded 20% (not enough history)
+        # Fallback: legacy memory baseline (not enough history for statistical check)
+        local bundle_growth_limit
+        bundle_growth_limit=$(_config_get_int "quality.bundle_growth_legacy_pct" 20 2>/dev/null || echo 20)
         local baseline_size=""
         if [[ -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
             baseline_size=$(bash "$SCRIPT_DIR/sw-memory.sh" get "bundle_size_kb" 2>/dev/null) || true
@@ -150,7 +152,7 @@ quality_check_bundle_size() {
             local growth_pct
             growth_pct=$(awk -v cur="$bundle_size" -v base="$baseline_size" 'BEGIN{printf "%d", ((cur - base) / base) * 100}')
             echo "Baseline: ${baseline_size}KB | Growth: ${growth_pct}%" >> "$metrics_log"
-            if [[ "$growth_pct" -gt 20 ]]; then
+            if [[ "$growth_pct" -gt "$bundle_growth_limit" ]]; then
                 warn "Bundle size grew ${growth_pct}% (${baseline_size}KB → ${bundle_size}KB)"
                 return 1
             fi
@@ -299,7 +301,9 @@ $tail_output" < /dev/null 2>/dev/null | grep -oE '^[0-9.]+$' | head -1 || true)
             return 1
         fi
     else
-        # Fallback: legacy memory baseline with hardcoded 30% (not enough history)
+        # Fallback: legacy memory baseline (not enough history for statistical check)
+        local perf_regression_limit
+        perf_regression_limit=$(_config_get_int "quality.perf_regression_legacy_pct" 30 2>/dev/null || echo 30)
         local baseline_dur=""
         if [[ -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
             baseline_dur=$(bash "$SCRIPT_DIR/sw-memory.sh" get "test_duration_s" 2>/dev/null) || true
@@ -308,7 +312,7 @@ $tail_output" < /dev/null 2>/dev/null | grep -oE '^[0-9.]+$' | head -1 || true)
             local slowdown_pct
             slowdown_pct=$(awk -v cur="$duration_ms" -v base="$baseline_dur" 'BEGIN{printf "%d", ((cur - base) / base) * 100}')
             echo "Baseline: ${baseline_dur}s | Slowdown: ${slowdown_pct}%" >> "$metrics_log"
-            if [[ "$slowdown_pct" -gt 30 ]]; then
+            if [[ "$slowdown_pct" -gt "$perf_regression_limit" ]]; then
                 warn "Tests ${slowdown_pct}% slower (${baseline_dur}s → ${duration_ms}s)"
                 return 1
             fi

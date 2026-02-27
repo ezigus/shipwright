@@ -305,7 +305,7 @@ $content"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 3. Adaptive Cycle Limits
-# Replaces hardcoded max_cycles with convergence-driven limits.
+# Replaces default max_cycles with convergence-driven limits.
 # Takes the base limit, returns an adjusted limit based on:
 #   - Learned iteration model
 #   - Convergence/divergence signals

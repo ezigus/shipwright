@@ -194,7 +194,7 @@ branch_prefix_for_type() {
         fi
     fi
 
-    # Fallback: hardcoded mapping
+    # Fallback: default branch prefix mapping
     case "$task_type" in
         bug)          echo "fix" ;;
         refactor)     echo "refactor" ;;

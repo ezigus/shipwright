@@ -557,7 +557,7 @@ setup_dirs() {
 # ─── Adaptive Threshold Helpers ──────────────────────────────────────────────
 # When intelligence.adaptive_enabled=true, operational thresholds are learned
 # from historical data instead of using fixed defaults.
-# Every function falls back to the current hardcoded value when no data exists.
+# Every function falls back to the config default when no data exists.
 
 ADAPTIVE_THRESHOLDS_ENABLED="${ADAPTIVE_THRESHOLDS_ENABLED:-false}"
 PRIORITY_STRATEGY="${PRIORITY_STRATEGY:-quick-wins-first}"

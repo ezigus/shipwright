@@ -2026,7 +2026,7 @@ cmd_evaluate() {
     echo "  Tasks Completed:  $(echo "$profile" | jq -r '.tasks_completed // "0"')"
     echo ""
 
-    # Use population-aware thresholds instead of hardcoded ones
+    # Use population-aware thresholds for performance evaluation
     local pop_stats
     pop_stats=$(_recruit_compute_population_stats)
     local mean_success

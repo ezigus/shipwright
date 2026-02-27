@@ -538,16 +538,16 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-otel.sh` | 600 | OpenTelemetry Observability |
 | `scripts/sw-oversight.sh` | 748 | Quality Oversight Board |
 | `scripts/sw-patrol-meta.sh` | 442 | Shipwright Self-Improvement Patrol |
-| `scripts/sw-pipeline-composer.sh` | 438 | Dynamic Pipeline Composition |
+| `scripts/sw-pipeline-composer.sh` | 440 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1075 | Pipeline Vitals Engine |
 | `scripts/sw-pipeline.sh` | 2877 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 742 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 687 | Autonomous PR Management |
-| `scripts/sw-predictive.sh` | 822 | Predictive & Proactive Intelligence |
+| `scripts/sw-predictive.sh` | 828 | Predictive & Proactive Intelligence |
 | `scripts/sw-prep.sh` | 1648 | Repository Preparation for Agent Teams |
 | `scripts/sw-ps.sh` | 176 | Show running agent process status |
 | `scripts/sw-public-dashboard.sh` | 785 | Public real-time pipeline progress |
-| `scripts/sw-quality.sh` | 671 | Intelligent completion, audits, zero auto |
+| `scripts/sw-quality.sh` | 675 | Intelligent completion, audits, zero auto |
 | `scripts/sw-reaper.sh` | 401 | Automatic tmux pane cleanup when agents exit |
 | `scripts/sw-recruit.sh` | 2642 | AGI-Level Agent Recruitment & Talent Management |
 | `scripts/sw-regression.sh` | 625 | Regression Detection Pipeline |

@@ -505,7 +505,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-decompose.sh` | 521 | Intelligent Issue Decomposition |
 | `scripts/sw-deps.sh` | 530 | Automated Dependency Update Management |
 | `scripts/sw-developer-simulation.sh` | 236 | Multi-Persona Developer Simulation |
-| `scripts/sw-discovery.sh` | 537 | Cross-Pipeline Real-Time Learning |
+| `scripts/sw-discovery.sh` | 587 | Cross-Pipeline Real-Time Learning |
 | `scripts/sw-doc-fleet.sh` | 812 | Documentation Fleet Orchestrator |
 | `scripts/sw-docs-agent.sh` | 523 | Auto-sync README, wiki, API docs |
 | `scripts/sw-docs.sh` | 625 | Documentation Keeper |
@@ -559,7 +559,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-review-rerun.sh` | 220 | Canonical Rerun Comment Writer |
 | `scripts/sw-scale.sh` | 602 | Dynamic agent team scaling during pipeline execution |
 | `scripts/sw-security-audit.sh` | 505 | Comprehensive Security Auditing |
-| `scripts/sw-self-optimize.sh` | 1528 | Learning & Self-Tuning System |
+| `scripts/sw-self-optimize.sh` | 1687 | Learning & Self-Tuning System |
 | `scripts/sw-session.sh` | 547 | Launch a Claude Code team session in a new tmux window |
 | `scripts/sw-setup.sh` | 374 | Comprehensive onboarding wizard |
 | `scripts/sw-standup.sh` | 713 | Automated Daily Standups for AI Agent Teams |
@@ -641,7 +641,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-cost-test.sh` | 282 | Validate token usage & cost intelligence |
 | `scripts/sw-daemon-test.sh` | 1988 | Unit tests for daemon metrics, health, alerting |
 | `scripts/sw-dashboard-e2e-test.sh` | 600 | full live validation |
-| `scripts/sw-dashboard-test.sh` | 254 | validates dashboard structure |
+| `scripts/sw-dashboard-test.sh` | 260 | validates dashboard structure |
 | `scripts/sw-db-test.sh` | 980 | SQLite Persistence Layer Test Suite |
 | `scripts/sw-decide-test.sh` | 518 | Unit tests for the Autonomous Decision Engine |
 | `scripts/sw-decompose-test.sh` | 160 | Intelligent Issue Decomposition tests |
@@ -724,8 +724,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-review-rerun-test.sh` | 316 | SHA-deduped rerun comment writer |
 | `scripts/sw-scale-test.sh` | 172 | Dynamic agent team scaling |
 | `scripts/sw-security-audit-test.sh` | 219 | Security auditing tests |
-| `scripts/sw-self-optimize-test.sh` | 725 | Unit tests for learning & tuning system |
-| `scripts/sw-server-api-test.sh` | 699 | Dashboard Server API Test Suite |
+| `scripts/sw-self-optimize-test.sh` | 847 | Unit tests for learning & tuning system |
+| `scripts/sw-server-api-test.sh` | 719 | Dashboard Server API Test Suite |
 | `scripts/sw-session-test.sh` | 593 | E2E validation of session creation flow |
 | `scripts/sw-setup-test.sh` | 302 | Validate comprehensive onboarding wizard |
 | `scripts/sw-standup-test.sh` | 271 | Validate daily standup automation |

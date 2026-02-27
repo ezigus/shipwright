@@ -1182,6 +1182,162 @@ optimize_evolve_memory() {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
+# CONTEXT EFFICIENCY CLOSED LOOP
+# ═════════════════════════════════════════════════════════════════════════════
+
+# optimize_tune_context_efficiency
+# Read loop.context_efficiency events and recommend context budget adjustments.
+# If avg budget_utilization > 90%, recommend increasing context_budget_chars.
+# If avg trim_ratio > 30%, recommend reducing verbose context sections.
+optimize_tune_context_efficiency() {
+    local events_file="${EVENTS_FILE:-${HOME}/.shipwright/events.jsonl}"
+
+    if [[ ! -f "$events_file" ]]; then
+        info "No events file found — skipping context efficiency tuning"
+        return 0
+    fi
+
+    ensure_optimization_dir
+
+    info "Analyzing context efficiency..."
+
+    # Extract recent loop.context_efficiency events (last 200)
+    local ctx_events
+    ctx_events=$(grep '"loop.context_efficiency"' "$events_file" 2>/dev/null | tail -200 || true)
+
+    if [[ -z "$ctx_events" ]]; then
+        info "No context efficiency events found — skipping"
+        return 0
+    fi
+
+    local event_count
+    event_count=$(echo "$ctx_events" | wc -l | tr -d ' ')
+    event_count="${event_count:-0}"
+
+    if [[ "$event_count" -lt 3 ]]; then
+        info "Insufficient context efficiency events ($event_count) — need at least 3"
+        return 0
+    fi
+
+    # Calculate averages using jq (handles both string and numeric JSON values)
+    local stats
+    stats=$(echo "$ctx_events" | jq -rs '
+        if length == 0 then {u:0,r:0,raw:0,tr:0,b:0,n:0}
+        else {
+            u: ([.[] | .budget_utilization | tonumber] | add / length),
+            r: ([.[] | .trim_ratio | tonumber] | add / length),
+            raw: ([.[] | .raw_prompt_chars | tonumber] | add / length),
+            tr: ([.[] | .trimmed_prompt_chars | tonumber] | add / length),
+            b: ([.[] | .budget_chars | tonumber] | last // 0),
+            n: length
+        } end
+        | "\(.u) \(.r) \(.raw) \(.tr) \(.b) \(.n)"
+    ' 2>/dev/null || echo "0 0 0 0 0 0")
+
+    local avg_utilization avg_trim_ratio avg_raw avg_trimmed current_budget sample_count
+    avg_utilization=$(echo "$stats" | awk '{printf "%.1f", $1}')
+    avg_trim_ratio=$(echo "$stats" | awk '{printf "%.1f", $2}')
+    avg_raw=$(echo "$stats" | awk '{printf "%.0f", $3}')
+    avg_trimmed=$(echo "$stats" | awk '{printf "%.0f", $4}')
+    current_budget=$(echo "$stats" | awk '{printf "%.0f", $5}')
+    sample_count=$(echo "$stats" | awk '{printf "%d", $6}')
+
+    info "Context efficiency: avg_utilization=${avg_utilization}%, avg_trim_ratio=${avg_trim_ratio}%, samples=${sample_count}"
+
+    local recommendations=""
+    local rec_count=0
+
+    # Rule 1: If avg budget_utilization > 90%, recommend increasing context_budget_chars
+    if awk -v u="$avg_utilization" 'BEGIN { exit !(u > 90) }' 2>/dev/null; then
+        local new_budget
+        new_budget=$(awk -v b="$current_budget" 'BEGIN { printf "%.0f", b * 1.2 }')
+        # Cap at 300000
+        if awk -v nb="$new_budget" 'BEGIN { exit !(nb > 300000) }' 2>/dev/null; then
+            new_budget=300000
+        fi
+        recommendations="${recommendations}increase_budget:${new_budget} "
+        rec_count=$((rec_count + 1))
+        warn "Budget utilization high (${avg_utilization}%) — recommend increasing context_budget_chars from ${current_budget} to ${new_budget}"
+
+        emit_event "optimize.context_recommendation" \
+            "action=increase_budget" \
+            "current=${current_budget}" \
+            "recommended=${new_budget}" \
+            "avg_utilization=${avg_utilization}" \
+            "samples=${sample_count}"
+    fi
+
+    # Rule 2: If avg trim_ratio > 30%, recommend reducing verbose context sections
+    if awk -v r="$avg_trim_ratio" 'BEGIN { exit !(r > 30) }' 2>/dev/null; then
+        local avg_discarded
+        avg_discarded=$(awk -v raw="$avg_raw" -v trimmed="$avg_trimmed" 'BEGIN { printf "%.0f", raw - trimmed }')
+        recommendations="${recommendations}reduce_verbose:${avg_discarded} "
+        rec_count=$((rec_count + 1))
+        warn "Trim ratio high (${avg_trim_ratio}%) — avg ${avg_discarded} chars discarded per iteration"
+        warn "Recommend reducing verbose context: lower context_trim_memory_chars, context_trim_git_entries, or context_trim_test_lines"
+
+        emit_event "optimize.context_recommendation" \
+            "action=reduce_verbose" \
+            "avg_trim_ratio=${avg_trim_ratio}" \
+            "avg_discarded=${avg_discarded}" \
+            "samples=${sample_count}"
+    fi
+
+    # Rule 3: If budget utilization is very low (<50%), recommend decreasing budget to save tokens
+    if awk -v u="$avg_utilization" 'BEGIN { exit !(u < 50) }' 2>/dev/null && [[ "$sample_count" -ge 10 ]]; then
+        local smaller_budget
+        smaller_budget=$(awk -v b="$current_budget" 'BEGIN { printf "%.0f", b * 0.85 }')
+        # Floor at 100000
+        if awk -v sb="$smaller_budget" 'BEGIN { exit !(sb < 100000) }' 2>/dev/null; then
+            smaller_budget=100000
+        fi
+        recommendations="${recommendations}decrease_budget:${smaller_budget} "
+        rec_count=$((rec_count + 1))
+        info "Budget utilization low (${avg_utilization}%) — recommend decreasing context_budget_chars from ${current_budget} to ${smaller_budget} to save tokens"
+
+        emit_event "optimize.context_recommendation" \
+            "action=decrease_budget" \
+            "current=${current_budget}" \
+            "recommended=${smaller_budget}" \
+            "avg_utilization=${avg_utilization}" \
+            "samples=${sample_count}"
+    fi
+
+    # Write context efficiency summary to optimization dir
+    local summary_file="${OPTIMIZATION_DIR}/context-efficiency.json"
+    local tmp_summary
+    tmp_summary=$(mktemp "${summary_file}.tmp.XXXXXX")
+    trap "rm -f '$tmp_summary'" RETURN
+    jq -n \
+        --argjson avg_utilization "$avg_utilization" \
+        --argjson avg_trim_ratio "$avg_trim_ratio" \
+        --argjson avg_raw "$avg_raw" \
+        --argjson avg_trimmed "$avg_trimmed" \
+        --argjson current_budget "${current_budget:-0}" \
+        --argjson sample_count "$sample_count" \
+        --argjson rec_count "$rec_count" \
+        --arg recommendations "${recommendations}" \
+        --arg updated "$(now_iso)" \
+        '{
+            avg_budget_utilization: $avg_utilization,
+            avg_trim_ratio: $avg_trim_ratio,
+            avg_raw_chars: $avg_raw,
+            avg_trimmed_chars: $avg_trimmed,
+            current_budget_chars: $current_budget,
+            sample_count: $sample_count,
+            recommendation_count: $rec_count,
+            recommendations: $recommendations,
+            updated_at: $updated
+        }' > "$tmp_summary" && mv "$tmp_summary" "$summary_file" || rm -f "$tmp_summary"
+
+    if [[ "$rec_count" -eq 0 ]]; then
+        success "Context efficiency is healthy (utilization: ${avg_utilization}%, trim: ${avg_trim_ratio}%)"
+    else
+        success "Context efficiency analysis complete — $rec_count recommendation(s)"
+    fi
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
 # QUALITY INDEX (LONGITUDINAL TRACKING)
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -1300,6 +1456,7 @@ optimize_full_analysis() {
     optimize_route_models
     optimize_learn_risk_keywords
     optimize_evolve_memory
+    optimize_tune_context_efficiency 2>/dev/null || true
     optimize_track_quality_index 2>/dev/null || true
     optimize_report >> "${OPTIMIZATION_DIR}/last-report.txt" 2>/dev/null || true
     optimize_adjust_audit_intensity 2>/dev/null || true
@@ -1494,6 +1651,7 @@ show_help() {
     echo "  quality-index                  Show quality trend (last 10 snapshots)"
     echo "  ingest-retro                   Ingest most recent retro into optimization loop"
     echo "  evolve-memory                  Prune/strengthen/promote memory patterns"
+    echo "  context-efficiency             Analyze context budget usage and recommend tuning"
     echo "  help                           Show this help"
     echo ""
     echo -e "${CYAN}STORAGE${RESET}"
@@ -1518,6 +1676,7 @@ main() {
         report)          optimize_report ;;
         quality-index)   cmd_quality_index ;;
         evolve-memory)   optimize_evolve_memory ;;
+        context-efficiency) optimize_tune_context_efficiency ;;
         help|--help|-h)  show_help ;;
         *)               error "Unknown command: $cmd"; exit 1 ;;
     esac

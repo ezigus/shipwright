@@ -62,6 +62,8 @@ _TEST_CMD_FROM_CLI=false  # true when --test-cmd was provided as a CLI argument
 FAST_TEST_CMD=""
 FAST_TEST_INTERVAL=5
 TEST_LOG_FILE=""
+LAST_ACTIVE_TEST_CMD=""
+LAST_TEST_MODE=""
 MODEL="${SW_MODEL:-opus}"
 AGENTS=1
 AGENT_ROLES=""
@@ -134,6 +136,11 @@ show_help() {
     echo -e "  ${CYAN}--no-auto-extend${RESET}          Disable auto-extension when max iterations reached"
     echo -e "  ${CYAN}--extension-size${RESET} N         Additional iterations per extension (default: 5)"
     echo -e "  ${CYAN}--max-extensions${RESET} N         Max number of auto-extensions (default: 3)"
+    echo ""
+    echo -e "${BOLD}TIMEOUT OVERRIDES (ENV)${RESET}"
+    echo -e "  ${CYAN}SW_TEST_TIMEOUT${RESET}=SECONDS        Global test timeout (default: 300)"
+    echo -e "  ${CYAN}SW_FAST_TEST_TIMEOUT${RESET}=SECONDS   Timeout for fast/subset iterations"
+    echo -e "  ${CYAN}SW_FULL_TEST_TIMEOUT${RESET}=SECONDS   Timeout for full-suite iterations"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo -e "  ${DIM}shipwright loop \"Build user auth with JWT\"${RESET}"
@@ -1078,7 +1085,7 @@ check_circuit_breaker() {
 }
 
 check_max_iterations() {
-    if [[ "$ITERATION" -le "$MAX_ITERATIONS" ]]; then
+    if [[ "$ITERATION" -lt "$MAX_ITERATIONS" ]]; then
         return 0
     fi
 
@@ -1101,7 +1108,10 @@ check_max_iterations() {
     # Check 1: recent meaningful progress (not stuck)
     if [[ "${CONSECUTIVE_FAILURES:-0}" -lt 2 ]]; then
         # Check 2: agent hasn't signaled completion (if it did, guard_completion handles it)
-        local last_log="$LOG_DIR/iteration-$(( ITERATION - 1 )).log"
+        local last_log="$LOG_DIR/iteration-${ITERATION}.log"
+        if [[ ! -f "$last_log" ]] && [[ "$ITERATION" -gt 0 ]]; then
+            last_log="$LOG_DIR/iteration-$(( ITERATION - 1 )).log"
+        fi
         if [[ -f "$last_log" ]] && ! grep -q "LOOP_COMPLETE" "$last_log" 2>/dev/null; then
             should_extend=true
             extension_reason="work in progress with recent progress"
@@ -1294,9 +1304,28 @@ run_test_gate() {
 
     local test_log="$LOG_DIR/tests-iter-${ITERATION}.log"
     TEST_LOG_FILE="$test_log"
-    echo -e "  ${DIM}Running ${test_mode} tests: ${active_test_cmd}${RESET}"
-    # Wrap test command with timeout (5 min default) to prevent hanging
-    local test_timeout="${SW_TEST_TIMEOUT:-300}"
+    # Resolve timeout precedence:
+    # 1) SW_TEST_TIMEOUT (global override)
+    # 2) mode-specific env (SW_FAST_TEST_TIMEOUT / SW_FULL_TEST_TIMEOUT, aliases included)
+    # 3) config values (loop.test_timeout, loop.fast_test_timeout, loop.full_test_timeout)
+    # 4) hard default (300s)
+    local default_test_timeout
+    default_test_timeout="${SW_TEST_TIMEOUT:-$(_config_get_int "loop.test_timeout" 300 2>/dev/null || echo 300)}"
+    local mode_test_timeout="$default_test_timeout"
+    if [[ "$test_mode" == "fast" ]]; then
+        mode_test_timeout="${SW_FAST_TEST_TIMEOUT:-${SW_TEST_TIMEOUT_FAST:-$(_config_get_int "loop.fast_test_timeout" "$default_test_timeout" 2>/dev/null || echo "$default_test_timeout")}}"
+    else
+        mode_test_timeout="${SW_FULL_TEST_TIMEOUT:-${SW_TEST_TIMEOUT_FULL:-$(_config_get_int "loop.full_test_timeout" "$default_test_timeout" 2>/dev/null || echo "$default_test_timeout")}}"
+    fi
+    local test_timeout="$mode_test_timeout"
+
+    if [[ "${LAST_ACTIVE_TEST_CMD:-}" != "$active_test_cmd" ]] || [[ "${LAST_TEST_MODE:-}" != "$test_mode" ]]; then
+        echo -e "  ${CYAN}▸${RESET} ${BOLD}Test command changed:${RESET} ${DIM}${LAST_TEST_MODE:-none}${RESET} ${DIM}→${RESET} ${test_mode}"
+    fi
+    echo -e "  ${BOLD}Test cmd:${RESET} ${active_test_cmd}"
+    echo -e "  ${BOLD}Test log:${RESET} ${test_log} ${DIM}| timeout: ${test_timeout}s${RESET}"
+    LAST_ACTIVE_TEST_CMD="$active_test_cmd"
+    LAST_TEST_MODE="$test_mode"
     local test_wrapper="$active_test_cmd"
     if command -v timeout >/dev/null 2>&1; then
         test_wrapper="timeout ${test_timeout} bash -c $(printf '%q' "$active_test_cmd")"

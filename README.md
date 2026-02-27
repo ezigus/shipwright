@@ -77,7 +77,8 @@ Shipwright extends the Code Factory pattern with capabilities most implementatio
 - **12-stage pipeline** with self-healing builds, adversarial review, and compound quality gates
 - **Predictive risk scoring** using GitHub signals (security alerts, contributor expertise, file churn)
 - **Persistent memory** — failure patterns, fix effectiveness, and prediction accuracy compound over time
-- **Auto-learning** — self-optimize runs automatically after every pipeline completion
+- **Auto-learning** — self-optimize runs automatically after every pipeline completion, including context efficiency tuning
+- **Decision engine** — tiered autonomous decisions with outcome learning and deduplication
 - **Unified model routing** — single source of truth for model selection across all components
 - **Evidence-gated merges** — SHA discipline ensures all evidence validated against current PR head
 - **Semantic quality audits** — Claude-powered audits with grep fallback when Claude unavailable
@@ -282,7 +283,7 @@ Each stage is configurable with quality gates that auto-proceed or pause for app
 
 ### Intelligence Layer
 
-7 modules that make the pipeline smarter over time. **Auto mode**: intelligence is enabled when Claude CLI is available; set `intelligence.enabled=false` to disable. All modules degrade gracefully.
+7 modules that make the pipeline smarter over time. **Enabled by default**: intelligence is on when Claude CLI is available, with optimization and prediction active out of the box. Set `intelligence.enabled=false` to disable. All modules degrade gracefully.
 
 | Module                       | What It Does                                                                                                          |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
@@ -290,7 +291,7 @@ Each stage is configurable with quality gates that auto-proceed or pause for app
 | **Pipeline Composer**        | Generates custom pipeline configs from codebase analysis (file churn, test coverage, dependencies)                    |
 | **Predictive Risk**          | Scores issues for risk using GitHub signals (security alerts, similar past issues, contributor expertise)             |
 | **Adversarial Review**       | Red-team code review — finds security flaws, edge cases, failure modes. Cross-checks against CodeQL/Dependabot alerts |
-| **Self-Optimization**        | Reads DORA metrics and auto-tunes daemon config. Proportional template weighting, adaptive memory timescales          |
+| **Self-Optimization**        | Reads DORA metrics and auto-tunes daemon config. Includes context efficiency closed loop for token budget tuning      |
 | **Developer Simulation**     | 3-persona review (security, performance, maintainability) before PR creation                                          |
 | **Architecture Enforcement** | Living architectural model with violation detection and dependency direction rules                                    |
 
@@ -308,6 +309,19 @@ Native GitHub API integration enriches every intelligence module:
 | **Security**          | CodeQL + Dependabot alerts feed into risk scoring and adversarial review                 |
 | **Contributors**      | CODEOWNERS-based reviewer routing, top-contributor fallback, auto-approve as last resort |
 | **Branch Protection** | Checks required reviews and status checks before attempting auto-merge                   |
+
+### Decision Engine
+
+The autonomous decision engine (`config/policy.json` → `decision` section) handles routine operational decisions with outcome learning. Decisions are tiered by risk, with low-risk actions auto-approved and higher tiers escalated. The engine learns from outcomes to improve future decisions.
+
+### Context Engineering
+
+Intelligent context window management for pipeline agents:
+
+- **Budget-aware trimming** — Configurable character budgets for prompt composition (`context_budget_chars`)
+- **Section-level trimming** — Independent limits for memory, git history, hotspot files, and test output
+- **Context efficiency metrics** — Tracks budget utilization and trim ratios per iteration
+- **Self-tuning** — The self-optimization loop analyzes context efficiency events and recommends budget adjustments
 
 ### Autonomous Daemon
 
@@ -354,7 +368,7 @@ Per-pipeline cost tracking with model pricing, budget enforcement, and ROI analy
 shipwright dashboard start
 ```
 
-Web dashboard with live pipeline progress, GitHub context (security alerts, contributors, deployments), DORA metrics, and cost tracking. WebSocket-powered, updates in real-time.
+Web dashboard with live pipeline progress, GitHub context (security alerts, contributors, deployments), DORA metrics, cost tracking, and context efficiency metrics. WebSocket-powered, updates in real-time.
 
 ### Webhook Receiver
 

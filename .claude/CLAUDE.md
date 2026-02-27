@@ -540,7 +540,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 442 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 438 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1075 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 2875 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 2877 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 742 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 687 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 822 | Predictive & Proactive Intelligence |
@@ -573,7 +573,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-tmux-pipeline.sh` | 535 | Spawn and manage pipelines in tmux windows |
 | `scripts/sw-tmux-role-color.sh` | 79 | Set pane border color by agent role |
 | `scripts/sw-tmux-status.sh` | 151 | Status bar widgets for tmux |
-| `scripts/sw-tmux.sh` | 589 | tmux Health & Plugin Management |
+| `scripts/sw-tmux.sh` | 623 | tmux Health & Plugin Management |
 | `scripts/sw-trace.sh` | 478 | E2E Traceability (Issue → Commit → PR → Deploy) |
 | `scripts/sw-tracker.sh` | 515 | Provider Router for Issue Tracker Integration |
 | `scripts/sw-triage.sh` | 811 | Intelligent Issue Labeling & Prioritization |
@@ -737,7 +737,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-templates-test.sh` | 291 | Validate team template browser |
 | `scripts/sw-testgen-test.sh` | 217 | Test generation & coverage tests |
 | `scripts/sw-tmux-pipeline-test.sh` | 208 | Validate tmux pipeline management |
-| `scripts/sw-tmux-test.sh` | 752 | Validate tmux doctor, install, fix, reload, |
+| `scripts/sw-tmux-test.sh` | 755 | Validate tmux doctor, install, fix, reload, |
 | `scripts/sw-trace-test.sh` | 166 | E2E traceability (Issue → Commit → PR → Deploy) |
 | `scripts/sw-tracker-providers-test.sh` | 551 | Unit tests for GitHub, Linear, |
 | `scripts/sw-tracker-test.sh` | 543 | Validate tracker router, providers, and |

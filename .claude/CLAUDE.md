@@ -497,7 +497,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-code-review.sh` | 691 | Clean Code & Architecture Analysis |
 | `scripts/sw-connect.sh` | 623 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 599 | Context Engine for Pipeline Stages |
-| `scripts/sw-cost.sh` | 963 | Token Usage & Cost Intelligence |
+| `scripts/sw-cost.sh` | 1011 | Token Usage & Cost Intelligence |
 | `scripts/sw-daemon.sh` | 1359 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 508 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 1896 | SQLite Persistence Layer |
@@ -531,7 +531,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 702 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 640 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 350 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 3313 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 3350 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 1886 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 468 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 598 | Intelligent Model Routing & Cost Optimization |
@@ -601,13 +601,12 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 
 <!-- AUTO:tracker-adapters -->
 
-| File                           | Lines | Purpose                            |
-| ------------------------------ | ----: | ---------------------------------- |
-| `scripts/sw-linear.sh`         |   640 | Linear ↔ GitHub Bidirectional Sync |
-| `scripts/sw-jira.sh`           |   624 | Jira ↔ GitHub Bidirectional Sync   |
-| `scripts/sw-tracker-linear.sh` |   565 | do not call directly               |
-| `scripts/sw-tracker-jira.sh`   |   471 | do not call directly               |
-
+| File | Lines | Purpose |
+| --- | ---: | --- |
+| `scripts/sw-linear.sh` | 640 | Linear ↔ GitHub Bidirectional Sync |
+| `scripts/sw-jira.sh` | 624 | Jira ↔ GitHub Bidirectional Sync |
+| `scripts/sw-tracker-linear.sh` | 565 | do not call directly |
+| `scripts/sw-tracker-jira.sh` | 471 | do not call directly |
 <!-- /AUTO:tracker-adapters -->
 
 ### Shared Libraries
@@ -639,7 +638,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-code-review-test.sh` | 229 | Clean code & architecture analysis tests |
 | `scripts/sw-connect-test.sh` | 837 | Validate dashboard connection, heartbeat |
 | `scripts/sw-context-test.sh` | 240 | Context Engine for Pipeline Stages tests |
-| `scripts/sw-cost-test.sh` | 230 | Validate token usage & cost intelligence |
+| `scripts/sw-cost-test.sh` | 282 | Validate token usage & cost intelligence |
 | `scripts/sw-daemon-test.sh` | 1988 | Unit tests for daemon metrics, health, alerting |
 | `scripts/sw-dashboard-e2e-test.sh` | 600 | full live validation |
 | `scripts/sw-dashboard-test.sh` | 254 | validates dashboard structure |
@@ -695,7 +694,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-pipeline-state-test.sh` | 308 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 339 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 320 | Validate agent pane log viewing, searching, |
-| `scripts/sw-loop-test.sh` | 736 | Validate continuous agent loop harness |
+| `scripts/sw-loop-test.sh` | 770 | Validate continuous agent loop harness |
 | `scripts/sw-memory-discovery-e2e-test.sh` | 417 | Memory & Discovery E2E Test |
 | `scripts/sw-memory-test.sh` | 873 | Unit tests for memory system & cost tracking |
 | `scripts/sw-mission-control-test.sh` | 174 | Validate mission control dashboard |
@@ -818,17 +817,16 @@ Intelligence defaults to **auto** (enabled when Claude CLI is available). Config
 
 <!-- AUTO:feature-flags -->
 
-| Flag                                | Default | Purpose |
-| ----------------------------------- | ------- | ------- |
-| `intelligence.cache_ttl_seconds`    | `3600`  |         |
-| `intelligence.optimization_enabled` | `true`  |         |
-| `intelligence.prediction_enabled`   | `true`  |         |
-| `intelligence.adversarial_enabled`  | `false` |         |
-| `intelligence.simulation_enabled`   | `false` |         |
-| `intelligence.architecture_enabled` | `false` |         |
-| `intelligence.ab_test_ratio`        | `0.2`   |         |
-| `intelligence.anomaly_threshold`    | `3.0`   |         |
-
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `intelligence.cache_ttl_seconds` | `3600` | |
+| `intelligence.optimization_enabled` | `true` | |
+| `intelligence.prediction_enabled` | `true` | |
+| `intelligence.adversarial_enabled` | `false` | |
+| `intelligence.simulation_enabled` | `false` | |
+| `intelligence.architecture_enabled` | `false` | |
+| `intelligence.ab_test_ratio` | `0.2` | |
+| `intelligence.anomaly_threshold` | `3.0` | |
 <!-- /AUTO:feature-flags -->
 
 ### Modules

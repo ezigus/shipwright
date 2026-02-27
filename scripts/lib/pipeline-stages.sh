@@ -3,6 +3,108 @@
 [[ -n "${_PIPELINE_STAGES_LOADED:-}" ]] && return 0
 _PIPELINE_STAGES_LOADED=1
 
+# ─── Context pruning helpers ────────────────────────────────────────────────
+
+# prune_context_section — Intelligently truncate a context section to fit a char budget.
+#   $1: section name (for logging/markers)
+#   $2: content string
+#   $3: max_chars (default 5000)
+# For JSON content (starts with { or [): extracts summary fields via jq.
+# For text content: sandwich approach — keeps first + last N lines.
+# Outputs the (possibly truncated) content to stdout.
+prune_context_section() {
+    local section_name="${1:-section}"
+    local content="${2:-}"
+    local max_chars="${3:-5000}"
+
+    [[ -z "$content" ]] && return 0
+
+    local content_len=${#content}
+    if [[ "$content_len" -le "$max_chars" ]]; then
+        printf '%s' "$content"
+        return 0
+    fi
+
+    # JSON content — try jq summary extraction
+    local first_char="${content:0:1}"
+    if [[ "$first_char" == "{" || "$first_char" == "[" ]]; then
+        local summary=""
+        # Try extracting summary/results fields
+        summary=$(printf '%s' "$content" | jq -r '
+            if type == "object" then
+                to_entries | map(
+                    if (.value | type) == "array" then
+                        "\(.key): \(.value | length) items"
+                    elif (.value | type) == "object" then
+                        "\(.key): \(.value | keys | join(", "))"
+                    else
+                        "\(.key): \(.value)"
+                    end
+                ) | join("\n")
+            elif type == "array" then
+                .[:5] | map(tostring) | join("\n")
+            else . end
+        ' 2>/dev/null) || true
+
+        if [[ -n "$summary" && ${#summary} -le "$max_chars" ]]; then
+            printf '%s' "$summary"
+            return 0
+        fi
+        # jq failed or still too large — fall through to text truncation
+    fi
+
+    # Text content — sandwich approach (first N + last N lines)
+    local line_count=0
+    line_count=$(printf '%s\n' "$content" | wc -l | xargs)
+
+    # Calculate how many lines to keep from each end
+    # Approximate chars-per-line to figure out line budget
+    local avg_chars_per_line=80
+    if [[ "$line_count" -gt 0 ]]; then
+        avg_chars_per_line=$(( content_len / line_count ))
+        [[ "$avg_chars_per_line" -lt 20 ]] && avg_chars_per_line=20
+    fi
+    local total_lines_budget=$(( max_chars / avg_chars_per_line ))
+    [[ "$total_lines_budget" -lt 4 ]] && total_lines_budget=4
+    local half=$(( total_lines_budget / 2 ))
+
+    local head_part=""
+    local tail_part=""
+    head_part=$(printf '%s\n' "$content" | head -"$half")
+    tail_part=$(printf '%s\n' "$content" | tail -"$half")
+
+    printf '%s\n[... %s truncated: %d→%d chars ...]\n%s' \
+        "$head_part" "$section_name" "$content_len" "$max_chars" "$tail_part"
+}
+
+# guard_prompt_size — Warn and hard-truncate if prompt exceeds budget.
+#   $1: stage name (for logging)
+#   $2: prompt content
+#   $3: max_chars (default 100000)
+# Outputs the (possibly truncated) prompt to stdout.
+PIPELINE_PROMPT_BUDGET="${PIPELINE_PROMPT_BUDGET:-100000}"
+
+guard_prompt_size() {
+    local stage_name="${1:-stage}"
+    local prompt="${2:-}"
+    local max_chars="${3:-$PIPELINE_PROMPT_BUDGET}"
+
+    local prompt_len=${#prompt}
+    if [[ "$prompt_len" -le "$max_chars" ]]; then
+        printf '%s' "$prompt"
+        return 0
+    fi
+
+    warn "${stage_name} prompt too large (${prompt_len} chars, budget ${max_chars}) — truncating"
+    emit_event "pipeline.prompt_truncated" \
+        "stage=$stage_name" \
+        "original=$prompt_len" \
+        "budget=$max_chars" 2>/dev/null || true
+
+    printf '%s\n\n... [CONTEXT TRUNCATED: %s prompt exceeded %d char budget. Focus on the goal and requirements.]' \
+        "${prompt:0:$max_chars}" "$stage_name" "$max_chars"
+}
+
 # ─── Safe git helpers ────────────────────────────────────────────────────────
 # BASE_BRANCH may not exist locally (e.g. --local mode with no remote).
 # These helpers return empty output instead of crashing under set -euo pipefail.
@@ -178,6 +280,7 @@ ${ISSUE_BODY}
 
     # Inject architecture context (import graph, modules, test map)
     if [[ -n "$arch_context" ]]; then
+        arch_context=$(prune_context_section "architecture" "$arch_context" 5000)
         plan_prompt="${plan_prompt}
 ## Architecture Context
 ${arch_context}
@@ -189,6 +292,7 @@ ${arch_context}
     if [[ -f "$_context_bundle" ]]; then
         local _cb_content
         _cb_content=$(cat "$_context_bundle" 2>/dev/null | head -100 || true)
+        _cb_content=$(prune_context_section "context-bundle" "$_cb_content" 8000)
         if [[ -n "$_cb_content" ]]; then
             plan_prompt="${plan_prompt}
 ## Pipeline Context
@@ -204,6 +308,7 @@ ${_cb_content}
         if [[ -n "$plan_memory" && "$plan_memory" != *'"results":[]'* && "$plan_memory" != *'"error"'* ]]; then
             local memory_summary
             memory_summary=$(echo "$plan_memory" | jq -r '.results[]? | "- \(.)"' 2>/dev/null | head -10 || true)
+            memory_summary=$(prune_context_section "memory" "$memory_summary" 10000)
             if [[ -n "$memory_summary" ]]; then
                 plan_prompt="${plan_prompt}
 ## Historical Context (from previous pipelines)
@@ -228,6 +333,7 @@ ${plan_hint}
     if [[ -x "$SCRIPT_DIR/sw-discovery.sh" ]]; then
         local plan_discoveries
         plan_discoveries=$("$SCRIPT_DIR/sw-discovery.sh" inject "*.md,*.json" 2>/dev/null | head -20 || true)
+        plan_discoveries=$(prune_context_section "discoveries" "$plan_discoveries" 3000)
         if [[ -n "$plan_discoveries" ]]; then
             plan_prompt="${plan_prompt}
 ## Discoveries from Other Pipelines
@@ -248,6 +354,7 @@ ${plan_discoveries}
             "Patterns: \((.patterns // []) | join(", "))",
             "Rules: \((.rules // []) | join("; "))"
         ' "$arch_file_plan" 2>/dev/null || true)
+        arch_patterns=$(prune_context_section "intelligence" "$arch_patterns" 5000)
         if [[ -n "$arch_patterns" ]]; then
             plan_prompt="${plan_prompt}
 ## Architecture Patterns
@@ -311,6 +418,9 @@ How to verify the implementation works.
 ### Definition of Done
 Checklist of completion criteria.
 "
+
+    # Guard total prompt size
+    plan_prompt=$(guard_prompt_size "plan" "$plan_prompt")
 
     local plan_model
     plan_model=$(jq -r --arg id "plan" '(.stages[] | select(.id == $id) | .config.model) // .defaults.model // "opus"' "$PIPELINE_CONFIG" 2>/dev/null) || true
@@ -621,6 +731,7 @@ stage_design() {
     if type gather_architecture_context &>/dev/null; then
         arch_struct_context=$(gather_architecture_context "${PROJECT_ROOT:-.}" 2>/dev/null || true)
     fi
+    arch_struct_context=$(prune_context_section "architecture" "$arch_struct_context" 5000)
 
     # Memory integration — inject context if memory system available
     local memory_context=""
@@ -631,12 +742,14 @@ stage_design() {
     if [[ -z "$memory_context" ]] && [[ -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
         memory_context=$(bash "$SCRIPT_DIR/sw-memory.sh" inject "design" 2>/dev/null) || true
     fi
+    memory_context=$(prune_context_section "memory" "$memory_context" 10000)
 
     # Inject cross-pipeline discoveries for design stage
     local design_discoveries=""
     if [[ -x "$SCRIPT_DIR/sw-discovery.sh" ]]; then
         design_discoveries=$("$SCRIPT_DIR/sw-discovery.sh" inject "*.md,*.ts,*.tsx,*.js" 2>/dev/null | head -20 || true)
     fi
+    design_discoveries=$(prune_context_section "discoveries" "$design_discoveries" 3000)
 
     # Inject architecture model patterns if available
     local arch_context=""
@@ -660,6 +773,7 @@ ${arch_patterns}
 ${arch_layers}}"
         fi
     fi
+    arch_context=$(prune_context_section "intelligence" "$arch_context" 5000)
 
     # Inject rejected design approaches and anti-patterns from memory
     local design_antipatterns=""
@@ -667,6 +781,7 @@ ${arch_layers}}"
         local rejected_designs
         rejected_designs=$(intelligence_search_memory "rejected design approaches anti-patterns for: ${GOAL:-}" "${HOME}/.shipwright/memory" 3 2>/dev/null) || true
         if [[ -n "$rejected_designs" ]]; then
+            rejected_designs=$(prune_context_section "antipatterns" "$rejected_designs" 5000)
             design_antipatterns="
 ## Rejected Approaches (from past reviews)
 These design approaches were rejected in past reviews. Avoid repeating them:
@@ -731,6 +846,9 @@ Produce this EXACT format:
 - [ ] [Additional validation items]
 
 Be concrete and specific. Reference actual file paths in the codebase. Consider edge cases and failure modes."
+
+    # Guard total prompt size
+    design_prompt=$(guard_prompt_size "design" "$design_prompt")
 
     local design_model
     design_model=$(jq -r --arg id "design" '(.stages[] | select(.id == $id) | .config.model) // .defaults.model // "opus"' "$PIPELINE_CONFIG" 2>/dev/null) || true
@@ -1390,6 +1508,7 @@ If no issues are found, write: \"Review clean — no issues found.\"
     if type intelligence_search_memory >/dev/null 2>&1; then
         local review_memory
         review_memory=$(intelligence_search_memory "code review findings anti-patterns for: ${GOAL:-}" "${HOME}/.shipwright/memory" 5 2>/dev/null) || true
+        review_memory=$(prune_context_section "memory" "$review_memory" 10000)
         if [[ -n "$review_memory" ]]; then
             review_prompt+="
 ## Known Issues from Previous Reviews
@@ -1436,6 +1555,9 @@ $(cat "$dod_file")
     review_prompt+="
 ## Diff to Review
 $(cat "$diff_file")"
+
+    # Guard total prompt size
+    review_prompt=$(guard_prompt_size "review" "$review_prompt")
 
     # Skip permissions — pipeline runs headlessly (claude -p) and has no terminal
     # for interactive permission prompts. Same rationale as build stage (line ~1083).

@@ -284,6 +284,12 @@ Focus on: threat modeling, OWASP top 10, input validation, authentication/author
 - Test command: ${TEST_CMD:-not configured}
 - Task type: ${TASK_TYPE:-feature}
 
+## Context Efficiency
+- Batch independent tool calls in parallel when possible
+- Read specific file sections (offset/limit) instead of entire large files
+- Use targeted grep searches — avoid scanning entire codebases into context
+- Delegate multi-file analysis to subagents when available
+
 ## Required Output
 Create a Markdown plan with these sections:
 

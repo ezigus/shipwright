@@ -601,12 +601,13 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 
 <!-- AUTO:tracker-adapters -->
 
-| File | Lines | Purpose |
-| --- | ---: | --- |
-| `scripts/sw-linear.sh` | 640 | Linear ↔ GitHub Bidirectional Sync |
-| `scripts/sw-jira.sh` | 624 | Jira ↔ GitHub Bidirectional Sync |
-| `scripts/sw-tracker-linear.sh` | 565 | do not call directly |
-| `scripts/sw-tracker-jira.sh` | 471 | do not call directly |
+| File                           | Lines | Purpose                            |
+| ------------------------------ | ----: | ---------------------------------- |
+| `scripts/sw-linear.sh`         |   640 | Linear ↔ GitHub Bidirectional Sync |
+| `scripts/sw-jira.sh`           |   624 | Jira ↔ GitHub Bidirectional Sync   |
+| `scripts/sw-tracker-linear.sh` |   565 | do not call directly               |
+| `scripts/sw-tracker-jira.sh`   |   471 | do not call directly               |
+
 <!-- /AUTO:tracker-adapters -->
 
 ### Shared Libraries
@@ -817,16 +818,17 @@ Intelligence defaults to **auto** (enabled when Claude CLI is available). Config
 
 <!-- AUTO:feature-flags -->
 
-| Flag | Default | Purpose |
-| --- | --- | --- |
-| `intelligence.cache_ttl_seconds` | `3600` | |
-| `intelligence.optimization_enabled` | `true` | |
-| `intelligence.prediction_enabled` | `true` | |
-| `intelligence.adversarial_enabled` | `false` | |
-| `intelligence.simulation_enabled` | `false` | |
-| `intelligence.architecture_enabled` | `false` | |
-| `intelligence.ab_test_ratio` | `0.2` | |
-| `intelligence.anomaly_threshold` | `3.0` | |
+| Flag                                | Default | Purpose |
+| ----------------------------------- | ------- | ------- |
+| `intelligence.cache_ttl_seconds`    | `3600`  |         |
+| `intelligence.optimization_enabled` | `true`  |         |
+| `intelligence.prediction_enabled`   | `true`  |         |
+| `intelligence.adversarial_enabled`  | `false` |         |
+| `intelligence.simulation_enabled`   | `false` |         |
+| `intelligence.architecture_enabled` | `false` |         |
+| `intelligence.ab_test_ratio`        | `0.2`   |         |
+| `intelligence.anomaly_threshold`    | `3.0`   |         |
+
 <!-- /AUTO:feature-flags -->
 
 ### Modules
@@ -888,6 +890,44 @@ shipwright docs report     # Show documentation freshness report
 ```
 
 AUTO sections in `.claude/CLAUDE.md`: `core-scripts`, `github-modules`, `tracker-adapters`, `test-suites`, `feature-flags`, `runtime-state`. The daemon patrol auto-syncs stale sections. A GitHub Actions workflow (`shipwright-docs.yml`) runs on push to main and weekly.
+
+## Context Engineering & Token Optimization
+
+Efficient context window usage directly improves agent accuracy and reduces cost. These principles apply to all pipeline agents and interactive sessions.
+
+### Core Principles
+
+- **Filter before injecting** — Never dump raw tool output into context. Use `jq`, `grep`, `head`, or subagents to extract only relevant data before it enters the context window.
+- **Batch independent tool calls** — Make parallel tool calls in a single turn. Each sequential round-trip adds overhead tokens from tool definitions and call/response framing.
+- **Delegate data-heavy work to subagents** — Spawn Task subagents for large intermediate results (codebase searches, log analysis, multi-file reads). Only the final summary enters your context window.
+- **Prefer targeted reads** — Read specific line ranges (`offset`/`limit`) instead of entire files. Use Grep with narrow patterns instead of reading files and searching manually.
+- **Prune proactively** — Summarize completed work and discard intermediate artifacts before context gets tight. Don't wait for auto-compaction.
+- **Keep inter-agent messages concise** — Verbose status updates bloat teammate context. Use structured, brief task updates.
+
+### Pipeline-Specific Optimizations
+
+- **Prompt composition** — The `compose_prompt` and `manage_context_window` functions should produce focused prompts. Include only the context the agent needs for the current iteration, not the full history.
+- **Model routing** — Use `cost-aware` pipeline template to route cheaper models (haiku/sonnet) for simple stages (intake, formatting) and expensive models (opus) only for complex stages (design, review).
+- **Iteration context** — Each loop iteration should carry forward only the summary of previous work, not full outputs. The convergence detector already tracks this — lean on it.
+- **Memory injection** — The memory system injects learned patterns. Keep memory entries focused (root cause + fix), not verbose narratives.
+
+### Programmatic Tool Calling (API)
+
+When building features that call the Claude API directly (dashboard intelligence, recruit LLM calls), prefer programmatic tool calling over JSON tool definitions:
+
+- Set `"allowed_callers": ["code_execution_20260120"]` on tools to let Claude write code to invoke them in a sandbox
+- Intermediate results stay in the sandbox — only the final answer enters context
+- Reduces token usage by ~37% and improves accuracy on multi-tool workflows
+- Use `"type": "tool_search_tool_bm25_20251119"` with `"defer_loading": true` for large tool catalogs (85%+ token reduction)
+
+### Web Search Optimization (API)
+
+For any API calls using web search, use the dynamic filtering variant:
+
+- Use `"type": "web_search_20260209"` (not the older `web_search_20250305`)
+- Add beta header: `"anthropic-beta: code-execution-web-tools-2026-02-09"`
+- Claude writes post-processing code to filter search results before they enter context
+- 24% fewer input tokens, 11% accuracy improvement on search benchmarks
 
 ## Development Guidelines
 

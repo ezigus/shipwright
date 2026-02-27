@@ -2020,6 +2020,13 @@ ${restart_section:+$restart_section
 5. Commit your work with a descriptive message
 6. When the goal is FULLY achieved, output exactly: LOOP_COMPLETE
 
+## Context Efficiency
+- Batch independent tool calls in parallel — avoid sequential round-trips
+- Use targeted file reads (offset/limit) instead of reading entire large files
+- Delegate large searches to subagents — only import the summary
+- Filter tool results with grep/jq before reasoning over them
+- Keep working memory lean — summarize completed steps, don't preserve full outputs
+
 ${audit_section}
 
 ${audit_feedback_section}

@@ -156,10 +156,60 @@ query_discoveries() {
         fi
     done < "$DISCOVERIES_FILE"
 
-    # Optionally use Claude to rank when many candidates
+    # Use Claude to rank candidates by relevance when there are many
     if [[ "${INTELLIGENCE_ENABLED:-auto}" != "false" ]] && command -v claude &>/dev/null 2>&1 && [[ ${#candidates[@]} -gt 5 ]]; then
-        # TODO: batch Claude call to rank by relevance (future enhancement)
-        :
+        local ranked_json=""
+        local candidate_summaries=""
+        local idx=0
+        for line in "${candidates[@]+"${candidates[@]}"}"; do
+            local disc cat_name
+            disc=$(echo "$line" | jq -r '.discovery // ""' 2>/dev/null || echo "")
+            cat_name=$(echo "$line" | jq -r '.category // ""' 2>/dev/null || echo "")
+            candidate_summaries="${candidate_summaries}${idx}: [${cat_name}] ${disc}"$'\n'
+            idx=$((idx + 1))
+        done
+
+        local rank_prompt
+        rank_prompt="Given these discoveries and the query context '${query_context}', return a JSON array of indices sorted by relevance (most relevant first). Only return the JSON array, no explanation.
+
+Discoveries:
+${candidate_summaries}"
+
+        local _claude_timeout
+        _claude_timeout=30
+        local _timeout_cmd=""
+        if command -v gtimeout >/dev/null 2>&1; then _timeout_cmd="gtimeout $_claude_timeout"
+        elif command -v timeout >/dev/null 2>&1; then _timeout_cmd="timeout $_claude_timeout"
+        fi
+
+        ranked_json=$($_timeout_cmd claude -p "$rank_prompt" 2>/dev/null || true)
+
+        # Extract array from response (handle markdown fences)
+        local indices_str=""
+        if [[ -n "$ranked_json" ]]; then
+            indices_str=$(echo "$ranked_json" | sed -n 's/.*\(\[[ 0-9,]*\]\).*/\1/p' | head -1)
+        fi
+
+        if [[ -n "$indices_str" ]] && echo "$indices_str" | jq -e 'type == "array"' >/dev/null 2>&1; then
+            local reordered=()
+            local seen=""
+            while IFS= read -r rank_idx; do
+                [[ -z "$rank_idx" ]] && continue
+                if [[ "$rank_idx" -ge 0 && "$rank_idx" -lt "${#candidates[@]}" ]]; then
+                    # Avoid duplicates
+                    case " $seen " in *" $rank_idx "*) continue ;; esac
+                    seen="$seen $rank_idx"
+                    reordered+=("${candidates[$rank_idx]}")
+                fi
+            done < <(echo "$indices_str" | jq -r '.[]' 2>/dev/null)
+            # Append any candidates not in the ranking
+            idx=0
+            for line in "${candidates[@]+"${candidates[@]}"}"; do
+                case " $seen " in *" $idx "*) ;; *) reordered+=("$line") ;; esac
+                idx=$((idx + 1))
+            done
+            candidates=("${reordered[@]+"${reordered[@]}"}")
+        fi
     fi
 
     # Output up to limit

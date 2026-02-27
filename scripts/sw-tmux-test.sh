@@ -83,6 +83,7 @@ case "$1" in
             default-terminal)   echo "${MOCK_TMUX_TERM:-tmux-256color}" ;;
             pane-border-status) echo "${MOCK_TMUX_BORDER:-top}" ;;
             mouse)              echo "${MOCK_TMUX_MOUSE:-on}" ;;
+            pane-active-border-style) echo "${MOCK_TMUX_BORDER_STYLE:-fg=#00d4ff,bg=#1a1a2e}" ;;
             *)                  echo "unknown" ;;
         esac
         ;;
@@ -429,6 +430,8 @@ test_fix_applies_fixes() {
         "MOCK_TMUX_HOOKS=no" \
         "MOCK_TMUX_MOUSEKEYS=no" \
         "MOCK_TMUX_BORDER=off" \
+        "MOCK_TMUX_TERM=screen" \
+        "MOCK_TMUX_BORDER_STYLE=none" \
         fix 2>&1 || true)
 
     # Should mention "Fixed" in output

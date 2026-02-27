@@ -1,1 +1,13 @@
-{"intelligence":{"enabled":false}}
+{
+  "intelligence": {
+    "enabled": true,
+    "cache_ttl_seconds": 3600,
+    "optimization_enabled": true,
+    "prediction_enabled": true,
+    "adversarial_enabled": false,
+    "simulation_enabled": false,
+    "architecture_enabled": false,
+    "ab_test_ratio": 0.2,
+    "anomaly_threshold": 3.0
+  }
+}

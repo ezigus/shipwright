@@ -3690,6 +3690,57 @@ const server = Bun.serve({
       });
     }
 
+    // REST: Context efficiency metrics (from loop.context_efficiency events)
+    if (pathname === "/api/context-efficiency") {
+      const period = parseInt(url.searchParams.get("period") || "7");
+      const events = readEvents();
+      const now = Math.floor(Date.now() / 1000);
+      const cutoff = now - period * 86400;
+
+      let totalUtil = 0;
+      let totalRatio = 0;
+      let totalRaw = 0;
+      let totalTrimmed = 0;
+      let trimEvents = 0;
+      let count = 0;
+
+      for (const e of events) {
+        if ((e.ts_epoch || 0) < cutoff) continue;
+        if (e.type !== "loop.context_efficiency") continue;
+
+        const util = parseFloat(String(e.budget_utilization || 0));
+        const ratio = parseFloat(String(e.trim_ratio || 0));
+        const raw = parseInt(String(e.raw_prompt_chars || 0), 10);
+        const trimmed = parseInt(String(e.trimmed_prompt_chars || 0), 10);
+
+        totalUtil += util;
+        totalRatio += ratio;
+        totalRaw += raw;
+        totalTrimmed += trimmed;
+        if (ratio > 0) trimEvents++;
+        count++;
+      }
+
+      const avgUtilization =
+        count > 0 ? Math.round((totalUtil / count) * 10) / 10 : 0;
+      const avgTrimRatio =
+        count > 0 ? Math.round((totalRatio / count) * 10) / 10 : 0;
+      const totalDiscarded = totalRaw - totalTrimmed;
+
+      return new Response(
+        JSON.stringify({
+          avg_utilization: avgUtilization,
+          avg_trim_ratio: avgTrimRatio,
+          total_raw_chars: totalRaw,
+          total_trimmed_chars: totalTrimmed,
+          total_discarded_chars: totalDiscarded,
+          trim_events: trimEvents,
+          total_iterations: count,
+        }),
+        { headers: { "Content-Type": "application/json", ...CORS_HEADERS } },
+      );
+    }
+
     // REST: DORA trend (weekly sliding windows)
     if (pathname === "/api/metrics/dora-trend") {
       const period = parseInt(url.searchParams.get("period") || "30");

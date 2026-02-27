@@ -53,6 +53,8 @@ cat > "$MOCK_SW/events.jsonl" << 'EVENTS'
 {"ts":"2026-02-16T10:00:00Z","ts_epoch":1739696400,"type":"pipeline.started","issue":100}
 {"ts":"2026-02-16T10:30:00Z","ts_epoch":1739698200,"type":"pipeline.completed","issue":100,"result":"success","duration_s":1800}
 {"ts":"2026-02-16T11:00:00Z","ts_epoch":1739700000,"type":"pipeline.started","issue":200}
+{"ts":"2026-02-16T11:05:00Z","ts_epoch":1739700300,"type":"loop.context_efficiency","iteration":"1","raw_prompt_chars":"200000","trimmed_prompt_chars":"180000","trim_ratio":"10.0","budget_utilization":"90.0","budget_chars":"200000","job_id":"test-1"}
+{"ts":"2026-02-16T11:10:00Z","ts_epoch":1739700600,"type":"loop.context_efficiency","iteration":"2","raw_prompt_chars":"150000","trimmed_prompt_chars":"150000","trim_ratio":"0.0","budget_utilization":"75.0","budget_chars":"200000","job_id":"test-1"}
 EVENTS
 
 # Heartbeats
@@ -304,6 +306,23 @@ test_costs_breakdown() {
         test_pass "GET /api/costs/breakdown returns cost data"
     else
         test_fail "GET /api/costs/breakdown returns cost data" "Empty"
+    fi
+}
+
+# 16b. Context efficiency endpoint
+test_context_efficiency() {
+    local resp
+    resp=$(curl -s "$BASE/api/context-efficiency" 2>/dev/null)
+    if echo "$resp" | grep -q 'avg_utilization'; then
+        test_pass "GET /api/context-efficiency returns efficiency data"
+    else
+        test_fail "GET /api/context-efficiency returns efficiency data" "Got: $resp"
+    fi
+    # Verify expected fields
+    if echo "$resp" | grep -q 'total_iterations'; then
+        test_pass "Context efficiency includes total_iterations field"
+    else
+        test_fail "Context efficiency includes total_iterations field" "Got: $resp"
     fi
 }
 
@@ -649,6 +668,7 @@ test_logs
 test_queue_detailed
 test_predictions
 test_costs_breakdown
+test_context_efficiency
 test_patrol_recent
 test_stage_performance
 test_bottlenecks

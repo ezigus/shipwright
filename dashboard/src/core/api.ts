@@ -7,6 +7,7 @@ import type {
   MachineInfo,
   JoinToken,
   CostBreakdown,
+  ContextEfficiency,
   DaemonConfig,
   AlertInfo,
   InsightsData,
@@ -112,6 +113,10 @@ export const fetchCostTrend = (period = 30) =>
   request<{ points: Array<Record<string, number>> }>(
     `/api/costs/trend?period=${period}`,
   );
+
+// Context efficiency
+export const fetchContextEfficiency = (period = 7) =>
+  request<ContextEfficiency>(`/api/context-efficiency?period=${period}`);
 
 // Daemon
 export const fetchDaemonConfig = () =>

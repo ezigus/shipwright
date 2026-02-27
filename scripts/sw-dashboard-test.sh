@@ -159,6 +159,11 @@ test_server_exports_ws_route() {
     assert_file_matches_grep "$SERVER_TS" 'pathname === "/ws"' "exports /ws route"
 }
 
+test_server_exports_context_efficiency() {
+    assert_file_matches_grep "$SERVER_TS" '/api/context-efficiency' "exports /api/context-efficiency" &&
+    assert_file_matches_grep "$INDEX_HTML" 'context-efficiency-container' "index.html has context-efficiency container"
+}
+
 test_bun_check_passes() {
     if ! command -v bun &>/dev/null; then
         echo -e "    ${DIM}(bun not installed, skipping)${RESET}"
@@ -225,6 +230,7 @@ echo ""
 echo -e "${PURPLE}${BOLD}Routes${RESET}"
 run_test "Server exports /api/health and /api/status" test_server_exports_api_routes
 run_test "Server exports /ws WebSocket route" test_server_exports_ws_route
+run_test "Server exports /api/context-efficiency" test_server_exports_context_efficiency
 echo ""
 
 echo -e "${PURPLE}${BOLD}Integrity${RESET}"

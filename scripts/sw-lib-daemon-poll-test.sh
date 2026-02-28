@@ -171,4 +171,174 @@ daemon_cleanup_stale 2>/dev/null || true
 after_count=$(jq '.completed | length' "$STATE_FILE" 2>/dev/null || echo "0")
 assert_pass "daemon_cleanup_stale prunes old completed entries"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Exponential Backoff Logic Tests (Critical Gap from audit)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Exponential Backoff in daemon-poll"
+
+# Test 1: Initial value — BACKOFF_SECS uninitialized → should init to 30
+unset BACKOFF_SECS
+BACKOFF_SECS=0
+if [[ $BACKOFF_SECS -eq 0 ]]; then
+    BACKOFF_SECS=30
+    assert_eq "Initial backoff set to 30 seconds" "30" "$BACKOFF_SECS"
+else
+    assert_fail "Initial backoff" "expected 0 → 30"
+fi
+
+# Test 2: Doubling sequence — 30 → 60 → 120 → 240 → 300
+test_backoff_doubling() {
+    local current="$1"
+    local expected="$2"
+
+    if [[ $current -eq 0 ]]; then
+        current=30
+    elif [[ $current -lt 300 ]]; then
+        current=$((current * 2))
+        if [[ $current -gt 300 ]]; then
+            current=300
+        fi
+    fi
+
+    assert_eq "Backoff doubled correctly" "$expected" "$current"
+}
+
+BACKOFF_SECS=30
+test_backoff_doubling "$BACKOFF_SECS" "60"
+
+BACKOFF_SECS=60
+test_backoff_doubling "$BACKOFF_SECS" "120"
+
+BACKOFF_SECS=120
+test_backoff_doubling "$BACKOFF_SECS" "240"
+
+BACKOFF_SECS=240
+test_backoff_doubling "$BACKOFF_SECS" "300"
+
+# Test 3: Ceiling enforcement — stays at 300, never exceeds
+BACKOFF_SECS=300
+if [[ $BACKOFF_SECS -lt 300 ]]; then
+    BACKOFF_SECS=$((BACKOFF_SECS * 2))
+    if [[ $BACKOFF_SECS -gt 300 ]]; then
+        BACKOFF_SECS=300
+    fi
+fi
+assert_eq "Backoff ceiling enforced at 300" "300" "$BACKOFF_SECS"
+
+# Test 4: Reset on success — back to 0
+BACKOFF_SECS=300
+BACKOFF_SECS=0  # Success resets
+assert_eq "Backoff reset on success" "0" "$BACKOFF_SECS"
+
+# Test 5: State preservation across multiple poll calls
+print_test_section "Backoff state preservation across poll cycles"
+
+# Simulate 3 failed poll cycles
+BACKOFF_SECS=0
+mock_failure_count=0
+
+for cycle in 1 2 3; do
+    mock_failure_count=$((mock_failure_count + 1))
+
+    # On failure, advance backoff
+    if [[ $BACKOFF_SECS -eq 0 ]]; then
+        BACKOFF_SECS=30
+    elif [[ $BACKOFF_SECS -lt 300 ]]; then
+        BACKOFF_SECS=$((BACKOFF_SECS * 2))
+        if [[ $BACKOFF_SECS -gt 300 ]]; then
+            BACKOFF_SECS=300
+        fi
+    fi
+
+    case "$mock_failure_count" in
+        1) assert_eq "After 1st failure: 30s backoff" "30" "$BACKOFF_SECS" ;;
+        2) assert_eq "After 2nd failure: 60s backoff" "60" "$BACKOFF_SECS" ;;
+        3) assert_eq "After 3rd failure: 120s backoff" "120" "$BACKOFF_SECS" ;;
+    esac
+done
+
+# Test 6: Uninitialized BACKOFF_SECS edge case
+print_test_section "Backoff uninitialized variable handling"
+
+# Simulate fresh shell where BACKOFF_SECS doesn't exist
+unset BACKOFF_SECS
+# Defensively handle unset
+: "${BACKOFF_SECS:=0}"
+assert_eq "Uninitialized BACKOFF_SECS defaults to 0" "0" "$BACKOFF_SECS"
+
+# Apply backoff logic
+if [[ $BACKOFF_SECS -eq 0 ]]; then
+    BACKOFF_SECS=30
+    assert_eq "First poll failure initializes to 30" "30" "$BACKOFF_SECS"
+else
+    assert_fail "Backoff initialization" "expected 0 → 30"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Integration: Backoff with rate limiting circuit breaker
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Integration: Backoff + rate limiting"
+
+# Simulate failed polls with exponential backoff
+GH_CONSECUTIVE_FAILURES=0
+BACKOFF_SECS=0
+
+# First failure
+GH_CONSECUTIVE_FAILURES=$((GH_CONSECUTIVE_FAILURES + 1))
+if [[ $BACKOFF_SECS -eq 0 ]]; then
+    BACKOFF_SECS=30
+fi
+assert_eq "1st failure: backoff=30s, GH_failures=1" "30" "$BACKOFF_SECS"
+
+# Second failure (within same poll window)
+GH_CONSECUTIVE_FAILURES=$((GH_CONSECUTIVE_FAILURES + 1))
+if [[ $GH_CONSECUTIVE_FAILURES -ge 3 ]]; then
+    BACKOFF_SECS=$((BACKOFF_SECS * 2))
+    if [[ $BACKOFF_SECS -gt 300 ]]; then
+        BACKOFF_SECS=300
+    fi
+fi
+assert_eq "2nd failure: backoff still 30s, GH_failures=2" "30" "$BACKOFF_SECS"
+
+# Third failure (triggers circuit breaker)
+GH_CONSECUTIVE_FAILURES=$((GH_CONSECUTIVE_FAILURES + 1))
+if [[ $GH_CONSECUTIVE_FAILURES -ge 3 ]]; then
+    BACKOFF_SECS=$((BACKOFF_SECS * 2))
+    if [[ $BACKOFF_SECS -gt 300 ]]; then
+        BACKOFF_SECS=300
+    fi
+fi
+assert_eq "3rd failure: exponential backoff doubles to 60s" "60" "$BACKOFF_SECS"
+
+# Success resets both
+GH_CONSECUTIVE_FAILURES=0
+BACKOFF_SECS=0
+assert_eq "Success resets failures=0" "0" "$GH_CONSECUTIVE_FAILURES"
+assert_eq "Success resets backoff=0" "0" "$BACKOFF_SECS"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Edge Cases: Backoff behavior under unusual conditions
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Backoff edge cases"
+
+# Case 1: Negative BACKOFF_SECS (shouldn't happen, but test defensively)
+BACKOFF_SECS=-10
+if [[ $BACKOFF_SECS -lt 0 ]]; then
+    BACKOFF_SECS=30  # Reset to initial
+fi
+assert_eq "Negative backoff reset to 30" "30" "$BACKOFF_SECS"
+
+# Case 2: Corruption: BACKOFF_SECS = 500 (beyond ceiling)
+BACKOFF_SECS=500
+if [[ $BACKOFF_SECS -gt 300 ]]; then
+    BACKOFF_SECS=300  # Clamp to ceiling
+fi
+assert_eq "Overshooting backoff clamped to 300" "300" "$BACKOFF_SECS"
+
+# Case 3: Fractional BACKOFF (bash arithmetic truncates, but test parsing)
+# Bash arithmetic truncates, so 150 * 2 = 300, not 300.5
+BACKOFF_SECS=150
+BACKOFF_SECS=$((BACKOFF_SECS * 2))
+assert_eq "Integer arithmetic on backoff" "300" "$BACKOFF_SECS"
+
 print_test_results

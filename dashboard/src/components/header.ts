@@ -35,10 +35,10 @@ function setupSoundToggle(): void {
     btn.innerHTML = soundEnabled ? "\u{1F50A} Sound" : "\u{1F507} Mute";
   });
 
-  // Insert before user avatar if possible
-  const userAvatar = document.getElementById("user-avatar");
-  if (userAvatar) {
-    headerActions.insertBefore(btn, userAvatar);
+  // Insert before user menu if possible
+  const userMenu = document.getElementById("user-menu");
+  if (userMenu && userMenu.parentNode === headerActions) {
+    headerActions.insertBefore(btn, userMenu);
   } else {
     headerActions.appendChild(btn);
   }
@@ -71,11 +71,12 @@ function setupThemeToggle(): void {
   });
 
   const soundBtn = document.getElementById("sound-toggle");
-  if (soundBtn) {
+  if (soundBtn && soundBtn.parentNode === headerActions) {
     headerActions.insertBefore(btn, soundBtn);
   } else {
-    const userAvatar = document.getElementById("user-avatar");
-    if (userAvatar) headerActions.insertBefore(btn, userAvatar);
+    const userMenu = document.getElementById("user-menu");
+    if (userMenu && userMenu.parentNode === headerActions)
+      headerActions.insertBefore(btn, userMenu);
     else headerActions.appendChild(btn);
   }
 }

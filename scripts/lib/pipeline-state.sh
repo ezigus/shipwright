@@ -439,6 +439,12 @@ initialize_state() {
 write_state() {
     [[ -z "${STATE_FILE:-}" || -z "${ARTIFACTS_DIR:-}" ]] && return 0
     mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null || true
+
+    # Check disk space before write (100MB minimum)
+    if ! check_disk_space "$(dirname "$STATE_FILE")" 100; then
+        error "Cannot write state: insufficient disk space"
+        return 1
+    fi
     local stages_yaml=""
     while IFS=: read -r sid sstatus; do
         [[ -z "$sid" ]] && continue

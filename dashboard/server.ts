@@ -41,6 +41,10 @@ const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomUUID();
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const ALLOWED_PERMISSIONS = ["admin", "write"];
 
+// ─── WebSocket Security ──────────────────────────────────────────────
+const MAX_WS_CLIENTS = 50;
+const WS_CONNECTION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
 // ─── SQLite Database (optional) ──────────────────────────────────────
 const DB_FILE = join(HOME, ".shipwright", "shipwright.db");
 let db: Database | null = null;
@@ -331,6 +335,15 @@ function getSessionFromCookie(cookie: string | null): Session | null {
 
 function sessionCookie(sessionId: string): string {
   return `fleet_session=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
+}
+
+function isLocalConnection(req: Request): boolean {
+  const host = req.headers.get("host") || "";
+  return (
+    host.startsWith("localhost:") ||
+    host.startsWith("127.0.0.1:") ||
+    host.startsWith("[::1]:")
+  );
 }
 
 function clearSessionCookie(): string {
@@ -2689,15 +2702,43 @@ const server = Bun.serve({
       return handleAuthLogout(req);
     }
 
-    // ── Auth gate ─────────────────────────────────────────────────
-    // If auth is enabled, enforce it on all remaining routes
+    // ── WebSocket Auth gate ──────────────────────────────────────
+    // WebSocket always requires authentication (unless local connection)
+    if (pathname === "/ws" || pathname === "/ws/events") {
+      const isLocal = isLocalConnection(req);
+      if (!isLocal) {
+        const session = getSession(req);
+        if (!session) {
+          return new Response("Unauthorized", { status: 401 });
+        }
+      }
+
+      // Check connection limit
+      const totalClients = wsClients.size + eventClients.size;
+      if (totalClients >= MAX_WS_CLIENTS && !isLocal) {
+        return new Response("Too Many Connections", { status: 429 });
+      }
+
+      // WebSocket upgrade — /ws/events streams raw events, /ws streams aggregated state
+      if (pathname === "/ws/events") {
+        const upgraded = server.upgrade(req, {
+          data: { type: "events", lastEventId: 0 },
+        });
+        if (upgraded) return undefined as unknown as Response;
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+      if (pathname === "/ws") {
+        const upgraded = server.upgrade(req);
+        if (upgraded) return undefined as unknown as Response;
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+    }
+
+    // ── HTTP Auth gate ───────────────────────────────────────────
+    // If auth is enabled, enforce it on all other remaining routes
     if (isAuthEnabled()) {
       const session = getSession(req);
       if (!session) {
-        // WebSocket upgrade attempt without auth
-        if (pathname === "/ws" || pathname === "/ws/events") {
-          return new Response("Unauthorized", { status: 401 });
-        }
         return new Response(null, {
           status: 302,
           headers: { Location: "/login" },
@@ -2706,20 +2747,6 @@ const server = Bun.serve({
     }
 
     // ── Protected routes ──────────────────────────────────────────
-
-    // WebSocket upgrade — /ws/events streams raw events, /ws streams aggregated state
-    if (pathname === "/ws/events") {
-      const upgraded = server.upgrade(req, {
-        data: { type: "events", lastEventId: 0 },
-      });
-      if (upgraded) return undefined as unknown as Response;
-      return new Response("WebSocket upgrade failed", { status: 400 });
-    }
-    if (pathname === "/ws") {
-      const upgraded = server.upgrade(req);
-      if (upgraded) return undefined as unknown as Response;
-      return new Response("WebSocket upgrade failed", { status: 400 });
-    }
 
     // REST: fleet state
     if (pathname === "/api/status") {

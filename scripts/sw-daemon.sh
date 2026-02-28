@@ -548,7 +548,15 @@ setup_dirs() {
     STATE_FILE="$DAEMON_DIR/daemon-state.json"
     LOG_FILE="$DAEMON_DIR/daemon.log"
     LOG_DIR="$DAEMON_DIR/logs"
-    WORKTREE_DIR=".worktrees"
+
+    # ── Worktree Directory (must be absolute for security) ──
+    # Default to repo-level .claude/worktrees, falling back to DAEMON_DIR
+    if [[ -d "$(pwd)/.claude" ]]; then
+        WORKTREE_DIR="$(cd "$(pwd)" && pwd)/.claude/worktrees"
+    else
+        WORKTREE_DIR="${DAEMON_DIR}/worktrees"
+    fi
+
     PAUSE_FLAG="${HOME}/.shipwright/daemon-pause.flag"
 
     mkdir -p "$LOG_DIR"
@@ -938,6 +946,11 @@ daemon_init() {
 
     mkdir -p "$config_dir"
 
+    # Set restrictive umask for sensitive files (owner-only: 600)
+    local _old_umask
+    _old_umask=$(umask)
+    umask 0077
+
     cat > "$config_file" << 'CONFIGEOF'
 {
   "watch_label": "shipwright",
@@ -1015,6 +1028,10 @@ daemon_init() {
   }
 }
 CONFIGEOF
+
+    # Restore umask and ensure file has restricted permissions
+    umask "$_old_umask"
+    chmod 600 "$config_file"
 
     success "Generated config: ${config_file}"
     echo ""

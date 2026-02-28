@@ -96,6 +96,8 @@ cmd_subscribe() {
     while true; do
         if db_available 2>/dev/null; then
             local events batch_last_id=0
+            # Numeric validation for last_id
+            [[ ! "$last_id" =~ ^[0-9]+$ ]] && last_id=0
             events=$(sqlite3 -json "$DB_FILE" "SELECT * FROM events WHERE id > $last_id ORDER BY id ASC LIMIT 50;" 2>/dev/null || echo "[]")
             if [[ "$events" != "[]" && -n "$events" ]]; then
                 while IFS= read -r event; do

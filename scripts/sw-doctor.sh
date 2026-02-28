@@ -268,6 +268,33 @@ else
     echo -e "    ${DIM}Copy from settings.json.template${RESET}"
 fi
 
+# ─── File Permission Validation ───────────────────────────────────
+# Check sensitive config files have restrictive permissions (600)
+_perm_issues=0
+for config_file in "$HOME/.claude/settings.json" "$HOME/.shipwright/daemon-config.json" "$(pwd)/.claude/daemon-config.json"; do
+    if [[ -f "$config_file" ]]; then
+        # Get file permissions
+        local _perms
+        if command -v stat >/dev/null 2>&1; then
+            # GNU stat: stat -c %a, BSD stat: stat -f %OLp
+            if [[ "$(uname -s)" == "Darwin" ]]; then
+                _perms=$(stat -f %OLp "$config_file" 2>/dev/null | tail -c 4)
+            else
+                _perms=$(stat -c %a "$config_file" 2>/dev/null)
+            fi
+        fi
+
+        if [[ -n "${_perms:-}" && "$_perms" != "600" ]]; then
+            check_warn "File $config_file is world-readable (perms: $_perms, should be 600)"
+            _perm_issues=$((_perm_issues + 1))
+        fi
+    fi
+done
+
+if [[ $_perm_issues -eq 0 ]]; then
+    check_pass "File permissions: all sensitive configs restricted to owner-only"
+fi
+
 # Hooks directory
 HOOKS_DIR="$HOME/.claude/hooks"
 if [[ -d "$HOOKS_DIR" ]]; then
@@ -319,6 +346,40 @@ if [[ -d "$HOOKS_DIR" && -f "$HOME/.claude/settings.json" ]] && jq -e '.' "$HOME
         check_pass "Hooks wired in settings.json: ${wired}/${hook_total_check}"
     elif [[ $unwired -gt 0 ]]; then
         echo -e "    ${DIM}Run: shipwright init  to wire hooks${RESET}"
+    fi
+fi
+
+# Hook security validation — check for untrusted repo-level hooks
+# Warn if repo-level .claude/hooks/ contains unexpected commands
+if [[ -d "$(pwd)/.claude/hooks" ]]; then
+    local _repo_hook_dir="$(pwd)/.claude/hooks"
+    local _trusted_hooks_dir="${HOME}/.claude/hooks"
+    local _untrusted_hook_count=0
+
+    # Check if CLAUDE_CODE_VERIFY_HOOKS is enabled for extra caution
+    if [[ -n "${CLAUDE_CODE_VERIFY_HOOKS:-}" ]]; then
+        for repo_hook in "$_repo_hook_dir"/*.sh; do
+            [[ -f "$repo_hook" ]] || continue
+            local _hook_name
+            _hook_name="$(basename "$repo_hook")"
+            local _trusted_hook="$_trusted_hooks_dir/$_hook_name"
+
+            # If a trusted version exists, compare checksums
+            if [[ -f "$_trusted_hook" ]]; then
+                if ! cmp -s "$repo_hook" "$_trusted_hook"; then
+                    check_warn "Repo hook differs from trusted version: .claude/hooks/$_hook_name"
+                    _untrusted_hook_count=$((_untrusted_hook_count + 1))
+                fi
+            else
+                # No trusted version — this is an unknown hook
+                check_warn "Repo contains unknown hook: .claude/hooks/$_hook_name"
+                _untrusted_hook_count=$((_untrusted_hook_count + 1))
+            fi
+        done
+
+        if [[ $_untrusted_hook_count -gt 0 ]]; then
+            echo -e "    ${DIM}Enable hook verification with: export CLAUDE_CODE_VERIFY_HOOKS=1${RESET}"
+        fi
     fi
 fi
 

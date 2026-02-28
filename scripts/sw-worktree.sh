@@ -214,19 +214,30 @@ worktree_remove() {
     local worktree_path="$WORKTREE_DIR/$name"
     local branch="loop/$name"
 
+    # Log disk usage before removal
+    local size_before_mb=0
+    if [[ -d "$worktree_path" ]]; then
+        size_before_mb=$(du -sm "$worktree_path" 2>/dev/null | awk '{print $1}')
+    fi
+
     if [[ -d "$worktree_path" ]]; then
         git worktree remove "$worktree_path" --force 2>/dev/null || {
             warn "Could not cleanly remove worktree $name, forcing..."
+            # Validate path is under WORKTREE_DIR before rm -rf
             if [[ -n "$worktree_path" && "$worktree_path" == "$WORKTREE_DIR/"* ]]; then
                 rm -rf "$worktree_path"
+            else
+                error "Worktree path invalid (not under $WORKTREE_DIR): $worktree_path"
+                return 1
             fi
-            git worktree prune 2>/dev/null || true
         }
+        # Always run prune to clean up .git/config
+        git worktree prune 2>/dev/null || true
     fi
 
     git branch -D "$branch" 2>/dev/null || true
 
-    success "Removed worktree: ${BOLD}$name${RESET}"
+    success "Removed worktree: ${BOLD}$name${RESET}${DIM} (freed ${size_before_mb}MB)${RESET}"
 }
 
 worktree_cleanup() {

@@ -3,6 +3,15 @@
 [[ -n "${_PIPELINE_GITHUB_LOADED:-}" ]] && return 0
 _PIPELINE_GITHUB_LOADED=1
 
+# ─── Markdown Escaping ───────────────────────────────────────────────
+# Escape markdown special characters to prevent injection
+escape_markdown() {
+    local text="$1"
+    # Escape ], [, (, ), *, _, \, `, #, -, +, .
+    # This prevents markdown syntax injection in GitHub comments
+    echo "$text" | sed 's/\([\\`*_\[\]()#+\-\.!]\)/\\\1/g'
+}
+
 gh_init() {
     if [[ "$NO_GITHUB" == "true" ]]; then
         GH_AVAILABLE=false
@@ -107,9 +116,12 @@ gh_get_issue_meta() {
 # Build a progress table for GitHub comment
 # Usage: gh_build_progress_body
 gh_build_progress_body() {
+    local escaped_goal
+    escaped_goal=$(escape_markdown "${GOAL}")
+
     local body="## 🤖 Pipeline Progress — \`${PIPELINE_NAME}\`
 
-**Delivering:** ${GOAL}
+**Delivering:** ${escaped_goal}
 
 | Stage | Status | Duration | |
 |-------|--------|----------|-|"

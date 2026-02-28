@@ -511,6 +511,11 @@ elif [[ -f "$SETTINGS_TEMPLATE" ]]; then
     success "Installed ~/.claude/settings.json (with agent teams enabled)"
 else
     # Create minimal settings.json with agent teams
+    # Use restrictive umask for sensitive files (owner-only: 600)
+    local _old_umask_settings
+    _old_umask_settings=$(umask)
+    umask 0077
+
     cat > "$SETTINGS_FILE" << 'SETTINGS_EOF'
 {
   "hooks": {},
@@ -522,6 +527,10 @@ else
   }
 }
 SETTINGS_EOF
+
+    umask "$_old_umask_settings"
+    chmod 600 "$SETTINGS_FILE"
+
     success "Created ~/.claude/settings.json with agent teams enabled"
 fi
 

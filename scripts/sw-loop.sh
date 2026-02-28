@@ -2993,8 +2993,14 @@ cleanup_multi_agent() {
 # ─── Main: Single-Agent Loop ─────────────────────────────────────────────────
 
 run_single_agent_loop() {
+    # Save original environment variables before loop starts
+    local SAVED_CLAUDE_MODEL="${CLAUDE_MODEL:-}"
+    local SAVED_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
+
     if [[ "$SESSION_RESTART" == "true" ]]; then
         # Restart: state already reset by run_loop_with_restarts, skip init
+        # Restore environment variables for clean iteration state
+        [[ -n "$SAVED_CLAUDE_MODEL" ]] && export CLAUDE_MODEL="$SAVED_CLAUDE_MODEL"
         info "Session restart ${RESTART_COUNT}/${MAX_RESTARTS} — fresh context, reading progress"
     elif $RESUME; then
         resume_state
@@ -3021,6 +3027,11 @@ run_single_agent_loop() {
     show_banner
 
     while true; do
+        # Reset environment variables at start of each iteration
+        # Prevents previous iterations from affecting model selection or API keys
+        [[ -n "$SAVED_CLAUDE_MODEL" ]] && export CLAUDE_MODEL="$SAVED_CLAUDE_MODEL"
+        [[ -n "$SAVED_ANTHROPIC_API_KEY" ]] && export ANTHROPIC_API_KEY="$SAVED_ANTHROPIC_API_KEY"
+
         # Pre-checks (before incrementing — ITERATION tracks completed count)
         check_circuit_breaker || break
         check_max_iterations || break

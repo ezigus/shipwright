@@ -3,7 +3,7 @@
   "description": "Fully autonomous pipeline with compound quality — zero human gates",
   "defaults": {
     "test_cmd": "npm test",
-    "model": "opus",
+    "model": "claude-opus-4-6",
     "agents": 1
   },
   "intelligence": {
@@ -17,13 +17,13 @@
       "id": "plan",
       "enabled": true,
       "gate": "auto",
-      "config": { "model": "opus" }
+      "config": { "model": "claude-opus-4-6" }
     },
     {
       "id": "design",
       "enabled": true,
       "gate": "auto",
-      "config": { "model": "opus" }
+      "config": { "model": "claude-opus-4-6" }
     },
     {
       "id": "build",
@@ -50,6 +50,18 @@
         "max_cycles": 3,
         "audit_intensity": "auto",
         "compound_quality_blocking": true
+      }
+    },
+    {
+      "id": "audit",
+      "enabled": true,
+      "gate": "auto",
+      "config": {
+        "secret_scan": true,
+        "file_permissions": true,
+        "atomic_writes": true,
+        "coverage_delta": true,
+        "blocking": false
       }
     },
     {

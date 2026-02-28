@@ -1812,6 +1812,134 @@ stage_compound_quality() {
 }
 fi  # end fallback stage_compound_quality
 
+# ─── Audit Stage ───────────────────────────────────────────────────────────
+# Security and quality audits: secrets scan, file permissions, || true usage,
+# test coverage delta, atomic write checks.
+stage_audit() {
+    CURRENT_STAGE_ID="audit"
+
+    # Read stage config from pipeline template
+    local cfg
+    cfg=$(jq -r '.stages[] | select(.id == "audit") | .config // {}' "$PIPELINE_CONFIG" 2>/dev/null) || cfg="{}"
+
+    local do_secret_scan do_perms do_atomic_writes do_coverage blocking
+    do_secret_scan=$(echo "$cfg" | jq -r '.secret_scan // true')
+    do_perms=$(echo "$cfg" | jq -r '.file_permissions // true')
+    do_atomic_writes=$(echo "$cfg" | jq -r '.atomic_writes // true')
+    do_coverage=$(echo "$cfg" | jq -r '.coverage_delta // true')
+    blocking=$(echo "$cfg" | jq -r '.blocking // false')
+
+    local audit_log="$ARTIFACTS_DIR/audit.log"
+    : > "$audit_log"
+
+    local issues=0
+
+    # ── Secret Scanning ──
+    if [[ "$do_secret_scan" == "true" ]]; then
+        info "Scanning for secrets in changed files..."
+        local secret_patterns=(
+            "sk-ant-" "ANTHROPIC_API_KEY=" "GITHUB_TOKEN=" "OPENAI_API_KEY="
+            "AWS_SECRET_ACCESS_KEY=" "DATABASE_URL=" "PRIVATE_KEY="
+            "api_key=" "secret=" "password=" "token="
+        )
+
+        local changed_files
+        changed_files=$(git diff --name-only "${BASE_BRANCH:-main}..HEAD" 2>/dev/null || git diff --name-only HEAD~5 2>/dev/null || echo "")
+
+        for pattern in "${secret_patterns[@]}"; do
+            while IFS= read -r file; do
+                [[ -z "$file" ]] && continue
+                if grep -l "$pattern" "$file" 2>/dev/null | grep -qv node_modules; then
+                    echo "WARN: Potential secret found in $file: $pattern" >> "$audit_log"
+                    warn "Found potential secret: $pattern in $file"
+                    issues=$((issues + 1))
+                fi
+            done <<< "$changed_files"
+        done
+    fi
+
+    # ── File Permission Check ──
+    if [[ "$do_perms" == "true" ]]; then
+        info "Checking file permissions on sensitive files..."
+        local sensitive_patterns=(".env" "secret" "credential" "key" "token" "config")
+
+        for pattern in "${sensitive_patterns[@]}"; do
+            while IFS= read -r file; do
+                [[ -z "$file" ]] && continue
+                # Check for world-readable files
+                local perms
+                perms=$(stat -f "%OLp" "$file" 2>/dev/null || stat -c "%a" "$file" 2>/dev/null)
+                if [[ "$perms" =~ [4567]$ ]]; then  # world-readable
+                    echo "WARN: World-readable sensitive file: $file ($perms)" >> "$audit_log"
+                    warn "World-readable file: $file ($perms)"
+                    issues=$((issues + 1))
+                fi
+            done < <(find . -name "*${pattern}*" -type f 2>/dev/null | head -20)
+        done
+    fi
+
+    # ── || true Count (atomic write pattern) ──
+    if [[ "$do_atomic_writes" == "true" ]]; then
+        info "Checking for unprotected direct writes (|| true usage)..."
+        local baseline_true_count=0
+        local current_true_count=0
+
+        # Baseline (before changes)
+        if git rev-parse "${BASE_BRANCH:-main}" >/dev/null 2>&1; then
+            baseline_true_count=$(git show "${BASE_BRANCH:-main}:." 2>/dev/null | grep -r "|| true" 2>/dev/null | wc -l)
+        fi
+
+        # Current
+        current_true_count=$(grep -r "|| true" --include="*.sh" . 2>/dev/null | wc -l)
+
+        local true_delta=$((current_true_count - baseline_true_count))
+        if [[ $true_delta -gt 0 ]]; then
+            echo "WARN: Added $true_delta new '|| true' clauses (may mask errors)" >> "$audit_log"
+            warn "Added $true_delta new || true patterns"
+            issues=$((issues + 1))
+        fi
+    fi
+
+    # ── Test Coverage Delta ──
+    if [[ "$do_coverage" == "true" && -n "${COVERAGE_FILE:-}" ]]; then
+        info "Comparing test coverage..."
+        if [[ -f "$COVERAGE_FILE" ]]; then
+            local current_coverage
+            current_coverage=$(grep -oP 'Coverage: \K[0-9.]+' "$COVERAGE_FILE" | head -1)
+            if [[ -n "$current_coverage" ]]; then
+                # Try to get baseline coverage
+                local baseline_coverage=0
+                if git show "${BASE_BRANCH:-main}:.claude/coverage.txt" >/dev/null 2>&1; then
+                    baseline_coverage=$(git show "${BASE_BRANCH:-main}:.claude/coverage.txt" 2>/dev/null | \
+                        grep -oP 'Coverage: \K[0-9.]+' | head -1 || echo "0")
+                fi
+
+                local coverage_delta
+                coverage_delta=$(echo "$current_coverage - $baseline_coverage" | bc 2>/dev/null || echo "0")
+                if (( $(echo "$coverage_delta < -2" | bc -l 2>/dev/null || echo 0) )); then
+                    echo "WARN: Coverage decreased by ${coverage_delta}pp (from ${baseline_coverage}% to ${current_coverage}%)" >> "$audit_log"
+                    warn "Coverage delta: ${coverage_delta}pp"
+                    issues=$((issues + 1))
+                fi
+            fi
+        fi
+    fi
+
+    log_stage "audit" "Audit complete: $issues issue(s) found"
+
+    if [[ "$issues" -gt 0 && "$blocking" == "true" ]]; then
+        error "Audit gate failed: $issues issue(s) detected"
+        emit_event "pipeline.audit_failed" "issues=$issues"
+        return 1
+    fi
+
+    if [[ "$issues" -gt 0 ]]; then
+        emit_event "pipeline.audit_warnings" "issues=$issues"
+    fi
+
+    return 0
+}
+
 stage_pr() {
     CURRENT_STAGE_ID="pr"
     local plan_file="$ARTIFACTS_DIR/plan.md"

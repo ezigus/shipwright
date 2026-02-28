@@ -1798,6 +1798,219 @@ memory_stats() {
     echo ""
 }
 
+# ─── A/B Testing Framework ─────────────────────────────────────────────────
+# Test memory system effectiveness by randomly assigning control vs treatment.
+#   - Control: pipeline runs without memory injection
+#   - Treatment: pipeline runs with memory injection
+# Emits events to track metrics: iterations, cost, test_failures, completion_status
+
+AB_RESULTS_DIR="${HOME}/.shipwright/memory"
+AB_RESULTS_FILE="${AB_RESULTS_DIR}/ab-results.jsonl"
+
+# Assign control or treatment for this pipeline run
+#   Returns: "control" or "treatment"
+memory_ab_assign_group() {
+    local ab_ratio="${1:-0.2}"  # Read from daemon-config intelligence.ab_test_ratio
+
+    # Validate ratio is between 0 and 1
+    if ! echo "$ab_ratio" | grep -qE '^0(\.[0-9]+)?$|^1(\.0+)?$'; then
+        ab_ratio="0.2"
+    fi
+
+    # Generate random 0-100
+    local rand=$((RANDOM % 100))
+    local threshold=$(echo "$ab_ratio * 100" | bc 2>/dev/null || echo "20")
+    threshold=${threshold%.*}  # Remove decimal
+
+    if [[ "$rand" -lt "$threshold" ]]; then
+        echo "control"
+    else
+        echo "treatment"
+    fi
+}
+
+# Record A/B test assignment at pipeline start
+#   $1: pipeline_id
+#   $2: group (control|treatment)
+memory_ab_record_assignment() {
+    local pipeline_id="$1"
+    local group="${2:-}"
+
+    [[ -z "$pipeline_id" || -z "$group" ]] && return 1
+
+    # Emit event for tracking
+    emit_event "memory.ab_assigned" \
+        "pipeline_id=$pipeline_id" \
+        "group=$group" \
+        "timestamp=$(now_iso)"
+
+    return 0
+}
+
+# Record A/B test result after pipeline completion
+#   $1: pipeline_id
+#   $2: group (control|treatment)
+#   $3: iterations (number of build iterations)
+#   $4: cost (estimated token cost)
+#   $5: test_failures (number of test failures)
+#   $6: completion_status (success|failure)
+memory_ab_record_result() {
+    local pipeline_id="$1"
+    local group="$2"
+    local iterations="$3"
+    local cost="$4"
+    local test_failures="$5"
+    local completion_status="$6"
+
+    [[ -z "$pipeline_id" || -z "$group" ]] && return 1
+
+    mkdir -p "$AB_RESULTS_DIR"
+
+    # Record result as JSONL
+    local result_json
+    result_json=$(jq -n \
+        --arg pipeline_id "$pipeline_id" \
+        --arg group "$group" \
+        --arg timestamp "$(now_iso)" \
+        --arg iterations "$iterations" \
+        --arg cost "$cost" \
+        --arg test_failures "$test_failures" \
+        --arg completion_status "$completion_status" \
+        '{
+            pipeline_id: $pipeline_id,
+            group: $group,
+            timestamp: $timestamp,
+            iterations: ($iterations | tonumber? // 0),
+            cost: ($cost | tonumber? // 0),
+            test_failures: ($test_failures | tonumber? // 0),
+            completion_status: $completion_status
+        }')
+
+    echo "$result_json" >> "$AB_RESULTS_FILE"
+
+    # Emit event
+    emit_event "memory.ab_result" \
+        "pipeline_id=$pipeline_id" \
+        "group=$group" \
+        "iterations=$iterations" \
+        "cost=$cost" \
+        "test_failures=$test_failures" \
+        "completion_status=$completion_status"
+
+    return 0
+}
+
+# Generate A/B test report comparing control vs treatment
+cmd_memory_ab_report() {
+    if [[ ! -f "$AB_RESULTS_FILE" ]]; then
+        warn "No A/B test results found at $AB_RESULTS_FILE"
+        return 1
+    fi
+
+    if ! command -v jq >/dev/null 2>&1; then
+        error "jq required for A/B report generation"
+        return 1
+    fi
+
+    info "Memory A/B Test Report"
+    echo ""
+
+    local control_count treatment_count
+    control_count=$(grep -c '"control"' "$AB_RESULTS_FILE" 2>/dev/null || echo "0")
+    treatment_count=$(grep -c '"treatment"' "$AB_RESULTS_FILE" 2>/dev/null || echo "0")
+
+    echo -e "${BOLD}Sample Sizes${RESET}"
+    printf "  Control:   %3d pipelines\n" "$control_count"
+    printf "  Treatment: %3d pipelines\n" "$treatment_count"
+    echo ""
+
+    # Calculate metrics for control group
+    local control_data
+    control_data=$(grep '"control"' "$AB_RESULTS_FILE" 2>/dev/null | jq -s '
+        if length == 0 then
+            {count: 0, avg_iterations: 0, avg_cost: 0, success_rate: 0}
+        else
+            {
+                count: length,
+                avg_iterations: ([.[].iterations // 0] | add / length | floor),
+                avg_cost: ([.[].cost // 0] | add / length | floor),
+                success_rate: (([.[] | select(.completion_status == "success")] | length) / length * 100 | floor)
+            }
+        end
+    ' || echo '{"count": 0, "avg_iterations": 0, "avg_cost": 0, "success_rate": 0}')
+
+    # Calculate metrics for treatment group
+    local treatment_data
+    treatment_data=$(grep '"treatment"' "$AB_RESULTS_FILE" 2>/dev/null | jq -s '
+        if length == 0 then
+            {count: 0, avg_iterations: 0, avg_cost: 0, success_rate: 0}
+        else
+            {
+                count: length,
+                avg_iterations: ([.[].iterations // 0] | add / length | floor),
+                avg_cost: ([.[].cost // 0] | add / length | floor),
+                success_rate: (([.[] | select(.completion_status == "success")] | length) / length * 100 | floor)
+            }
+        end
+    ' || echo '{"count": 0, "avg_iterations": 0, "avg_cost": 0, "success_rate": 0}')
+
+    # Extract values
+    local c_iterations t_iterations c_cost t_cost c_success t_success
+    c_iterations=$(echo "$control_data" | jq -r '.avg_iterations // 0')
+    t_iterations=$(echo "$treatment_data" | jq -r '.avg_iterations // 0')
+    c_cost=$(echo "$control_data" | jq -r '.avg_cost // 0')
+    t_cost=$(echo "$treatment_data" | jq -r '.avg_cost // 0')
+    c_success=$(echo "$control_data" | jq -r '.success_rate // 0')
+    t_success=$(echo "$treatment_data" | jq -r '.success_rate // 0')
+
+    # Calculate deltas
+    local iter_delta cost_delta success_delta
+    iter_delta=$((c_iterations - t_iterations))
+    cost_delta=$((c_cost - t_cost))
+    success_delta=$((t_success - c_success))
+
+    # Direction indicators
+    local iter_dir cost_dir success_dir
+    [[ $iter_delta -gt 0 ]] && iter_dir="${GREEN}↓${RESET}" || iter_dir="${RED}↑${RESET}"
+    [[ $cost_delta -gt 0 ]] && cost_dir="${GREEN}↓${RESET}" || cost_dir="${RED}↑${RESET}"
+    [[ $success_delta -gt 0 ]] && success_dir="${GREEN}↑${RESET}" || success_dir="${RED}↓${RESET}"
+
+    echo -e "${BOLD}Metrics${RESET}"
+    echo ""
+    printf "  %-28s %10s %10s %10s\n" "Metric" "Control" "Treatment" "Delta"
+    printf "  %s\n" "$(printf '%.0s-' {1..60})"
+    printf "  %-28s %10d %10d %10s %s\n" "Avg Iterations" "$c_iterations" "$t_iterations" "$iter_delta" "$iter_dir"
+    printf "  %-28s %10d %10d %10s %s\n" "Avg Cost (tokens)" "$c_cost" "$t_cost" "$cost_delta" "$cost_dir"
+    printf "  %-28s %10d%% %10d%% %10s %s\n" "Success Rate" "$c_success" "$t_success" "$success_delta" "$success_dir"
+    echo ""
+
+    # Summary
+    echo -e "${BOLD}Summary${RESET}"
+    if [[ $iter_delta -gt 0 ]]; then
+        success "Memory injection reduces iterations by ${iter_delta} (${GREEN}$(echo "scale=1; $iter_delta * 100 / $c_iterations" | bc)% improvement${RESET})"
+    elif [[ $iter_delta -lt 0 ]]; then
+        warn "Memory injection increases iterations by $((iter_delta * -1)) (regression)"
+    else
+        info "No significant difference in iteration count"
+    fi
+
+    if [[ $cost_delta -gt 0 ]]; then
+        success "Memory injection reduces cost by ${cost_delta} tokens (${GREEN}$(echo "scale=1; $cost_delta * 100 / $c_cost" | bc)% savings${RESET})"
+    elif [[ $cost_delta -lt 0 ]]; then
+        warn "Memory injection increases cost by $((cost_delta * -1)) tokens (regression)"
+    fi
+
+    if [[ $success_delta -gt 0 ]]; then
+        success "Memory injection improves success rate by ${success_delta}pp (${GREEN}$(echo "scale=1; $success_delta" | bc)% better${RESET})"
+    elif [[ $success_delta -lt 0 ]]; then
+        warn "Memory injection reduces success rate by $((success_delta * -1))pp (regression)"
+    fi
+
+    echo ""
+    echo -e "${PURPLE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+}
+
 # ─── Help ──────────────────────────────────────────────────────────────────
 
 show_help() {
@@ -1824,6 +2037,7 @@ show_help() {
     echo -e "  ${CYAN}decision${RESET} <type> <summary>       Record a design decision"
     echo -e "  ${CYAN}analyze-failure${RESET} <log> <stage>    Analyze failure root cause via AI"
     echo -e "  ${CYAN}fix-outcome${RESET} <pattern> <applied> <resolved>  Record fix effectiveness"
+    echo -e "  ${CYAN}ab-report${RESET}                      Compare control vs treatment in A/B tests"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo -e "  ${DIM}shipwright memory show${RESET}                            # View repo memory"
@@ -1883,6 +2097,9 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
             ;;
         fix-outcome)
             memory_record_fix_outcome "$@"
+            ;;
+        ab-report)
+            cmd_memory_ab_report "$@"
             ;;
         help|--help|-h)
             show_help

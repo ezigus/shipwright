@@ -3,7 +3,7 @@
   "description": "Cost-optimized pipeline: budget limits, model routing (haiku→sonnet→opus), per-stage tracking",
   "defaults": {
     "test_cmd": "npm test",
-    "model": "sonnet",
+    "model": "claude-sonnet-4-6",
     "agents": 1,
     "cost_tracking": true,
     "budget_check": true
@@ -19,7 +19,7 @@
       "enabled": true,
       "gate": "auto",
       "config": {
-        "model": "haiku",
+        "model": "claude-haiku-4-5-20251001",
         "cost_tracking": true
       }
     },
@@ -28,7 +28,7 @@
       "enabled": true,
       "gate": "approve",
       "config": {
-        "model": "sonnet",
+        "model": "claude-sonnet-4-6",
         "cost_tracking": true
       }
     },
@@ -37,7 +37,7 @@
       "enabled": true,
       "gate": "auto",
       "config": {
-        "model": "sonnet",
+        "model": "claude-sonnet-4-6",
         "max_iterations": 20,
         "audit": true,
         "quality_gates": true,
@@ -51,7 +51,7 @@
       "gate": "auto",
       "config": {
         "coverage_min": 80,
-        "model": "haiku",
+        "model": "claude-haiku-4-5-20251001",
         "cost_tracking": true
       }
     },
@@ -60,7 +60,7 @@
       "enabled": true,
       "gate": "approve",
       "config": {
-        "model": "opus",
+        "model": "claude-opus-4-6",
         "cost_tracking": true
       }
     },
@@ -76,7 +76,21 @@
         "max_cycles": 2,
         "audit_intensity": "auto",
         "compound_quality_blocking": true,
-        "model": "sonnet",
+        "model": "claude-sonnet-4-6",
+        "cost_tracking": true
+      }
+    },
+    {
+      "id": "audit",
+      "enabled": true,
+      "gate": "auto",
+      "config": {
+        "secret_scan": true,
+        "file_permissions": true,
+        "atomic_writes": true,
+        "coverage_delta": true,
+        "blocking": false,
+        "model": "claude-haiku-4-5-20251001",
         "cost_tracking": true
       }
     },
@@ -86,7 +100,7 @@
       "gate": "approve",
       "config": {
         "wait_ci": false,
-        "model": "haiku",
+        "model": "claude-haiku-4-5-20251001",
         "cost_tracking": true
       }
     },

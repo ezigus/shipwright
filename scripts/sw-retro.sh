@@ -585,6 +585,155 @@ cmd_history() {
     done
 }
 
+# ─── Negative-Critical Retrospective ───────────────────────────────────────
+# Analyze pipelines for silent failures and quality gate skipping
+cmd_negative_audit() {
+    local from_date="${1:-}"
+    local to_date="${2:-}"
+
+    if [[ -z "$from_date" ]]; then
+        to_date=$(date -u +"%Y-%m-%d")
+        from_date=$(date_days_ago 7 2>/dev/null || python3 -c "from datetime import datetime, timedelta; print((datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d'))")
+    elif [[ -z "$to_date" ]]; then
+        to_date=$(date -u +"%Y-%m-%d")
+    fi
+
+    info "Negative Audit for ${from_date} to ${to_date}"
+    echo ""
+
+    if ! command -v jq >/dev/null 2>&1; then
+        error "jq required for negative audit"
+        return 1
+    fi
+
+    local from_epoch to_epoch
+    from_epoch=$(date_to_epoch "${from_date}T00:00:00Z")
+    to_epoch=$(date_to_epoch "${to_date}T23:59:59Z")
+
+    local findings='{"issues":[]}'
+    local issue_count=0
+
+    # Check for empty artifacts (silent stage failures)
+    echo ""
+    echo -e "${BOLD}1. Empty Artifacts Detection${RESET}"
+    local empty_count=0
+    if [[ -d ".claude/pipeline-artifacts" ]]; then
+        while IFS= read -r artifact_file; do
+            if [[ -f "$artifact_file" && ! -s "$artifact_file" ]]; then
+                local basename
+                basename=$(basename "$artifact_file")
+                warn "Empty artifact: $basename"
+                findings=$(echo "$findings" | jq --arg msg "Empty artifact: $basename" '.issues += [{"type": "empty_artifact", "message": $msg}]')
+                empty_count=$((empty_count + 1))
+                issue_count=$((issue_count + 1))
+            fi
+        done < <(find ".claude/pipeline-artifacts" -type f 2>/dev/null)
+    fi
+    [[ $empty_count -eq 0 ]] && echo "  ✓ No empty artifacts found"
+
+    # Check for skipped quality gates
+    echo ""
+    echo -e "${BOLD}2. Skipped Quality Gates${RESET}"
+    local skipped_count=0
+    if [[ -f ".claude/pipeline-artifacts/compound-quality.log" ]]; then
+        local skip_lines
+        skip_lines=$(grep -c "skipped\|SKIP" ".claude/pipeline-artifacts/compound-quality.log" 2>/dev/null || echo "0")
+        if [[ "$skip_lines" -gt 0 ]]; then
+            warn "Found $skip_lines skipped quality checks"
+            findings=$(echo "$findings" | jq --arg msg "Skipped $skip_lines quality gates" '.issues += [{"type": "skipped_gates", "message": $msg}]')
+            skipped_count=$skip_lines
+            issue_count=$((issue_count + skipped_count))
+        fi
+    fi
+    [[ $skipped_count -eq 0 ]] && echo "  ✓ No skipped quality gates"
+
+    # Check cost vs predicted
+    echo ""
+    echo -e "${BOLD}3. Cost Prediction Accuracy${RESET}"
+    if [[ -f ".claude/intelligence-cache.json" ]]; then
+        local predicted_cost actual_cost
+        predicted_cost=$(jq -r '.cost_estimate // 0' ".claude/intelligence-cache.json" 2>/dev/null)
+        if [[ -f ".claude/pipeline-artifacts/pipeline-state.md" ]]; then
+            actual_cost=$(grep -oP "Cost: \K[0-9]+" ".claude/pipeline-artifacts/pipeline-state.md" | tail -1 || echo "0")
+            if [[ -n "$predicted_cost" && "$predicted_cost" != "0" ]]; then
+                local cost_delta
+                cost_delta=$((actual_cost - predicted_cost))
+                local percent_error
+                percent_error=$((cost_delta * 100 / predicted_cost))
+                if [[ $percent_error -gt 30 || $percent_error -lt -30 ]]; then
+                    warn "Cost prediction off by ${percent_error}% (predicted: $predicted_cost, actual: $actual_cost)"
+                    findings=$(echo "$findings" | jq --arg msg "Cost off by ${percent_error}%" '.issues += [{"type": "cost_prediction", "message": $msg}]')
+                    issue_count=$((issue_count + 1))
+                fi
+            fi
+        fi
+    fi
+    [[ $issue_count -lt 4 ]] && echo "  ✓ Cost predictions accurate"
+
+    # Check loop iteration limit exhaustion
+    echo ""
+    echo -e "${BOLD}4. Loop Convergence Status${RESET}"
+    if [[ -f ".claude/pipeline-artifacts/pipeline-state.md" ]]; then
+        local loop_iter loop_limit
+        loop_iter=$(grep -oP "Iteration: \K[0-9]+" ".claude/pipeline-artifacts/pipeline-state.md" | tail -1 || echo "0")
+        loop_limit=$(grep -oP "Limit: \K[0-9]+" ".claude/pipeline-artifacts/pipeline-state.md" | tail -1 || echo "20")
+        if [[ "$loop_iter" -ge "$loop_limit" ]]; then
+            warn "Loop exhausted iterations ($loop_iter/$loop_limit)"
+            findings=$(echo "$findings" | jq --arg msg "Loop iteration limit exhausted: $loop_iter/$loop_limit" '.issues += [{"type": "loop_exhaustion", "message": $msg}]')
+            issue_count=$((issue_count + 1))
+        fi
+    fi
+    [[ $issue_count -lt 5 ]] && echo "  ✓ Loop convergence normal"
+
+    # Check for || true errors
+    echo ""
+    echo -e "${BOLD}5. Unsafe Error Suppression${RESET}"
+    if [[ -f ".claude/pipeline-artifacts/error-log.jsonl" ]]; then
+        local true_errors
+        true_errors=$(grep -c "|| true" ".claude/pipeline-artifacts/error-log.jsonl" 2>/dev/null || echo "0")
+        if [[ "$true_errors" -gt 0 ]]; then
+            warn "Found $true_errors errors suppressed with || true"
+            findings=$(echo "$findings" | jq --arg msg "Found $true_errors unsuppressed || true errors" '.issues += [{"type": "error_suppression", "message": $msg}]')
+            issue_count=$((issue_count + 1))
+        fi
+    fi
+    [[ $true_errors -eq 0 ]] && echo "  ✓ No unsafe error suppression"
+
+    # Summary
+    echo ""
+    echo -e "${PURPLE}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+
+    if [[ $issue_count -eq 0 ]]; then
+        success "Negative audit passed: no critical issues detected"
+    else
+        warn "Negative audit found $issue_count issue(s)"
+        echo "$findings" | jq '.issues[] | "\(.type): \(.message)"' -r
+    fi
+
+    # Store in memory as retrospective pattern
+    if type memory_capture_pattern >/dev/null 2>&1; then
+        local pattern_data
+        pattern_data=$(echo "$findings" | jq -n \
+            --argjson findings "$(echo "$findings" | jq '.issues | length')" \
+            --arg from_date "$from_date" \
+            --arg to_date "$to_date" \
+            '{
+                type: "negative_audit",
+                date_range: ($from_date + " to " + $to_date),
+                issues_found: $findings
+            }')
+        memory_capture_pattern "negative_audit" "$pattern_data" 2>/dev/null || true
+    fi
+
+    emit_event "retro.negative_audit" \
+        "from_date=$from_date" \
+        "to_date=$to_date" \
+        "issues=$issue_count"
+
+    echo ""
+}
+
 cmd_help() {
     cat << 'EOF'
 Usage: shipwright retro <subcommand> [options]
@@ -598,6 +747,7 @@ Subcommands:
   compare DATE1 DATE2             Compare two sprint periods
   history                         Show past retrospective reports
   quality                         Show quality index trend (longitudinal)
+  negative [--from DATE] [--to]   Negative audit: detect silent failures, skipped gates
   help                            Show this help message
 
 Options:
@@ -611,6 +761,7 @@ Examples:
   shipwright retro trends
   shipwright retro agents
   shipwright retro compare 2025-02-01 2025-01-25
+  shipwright retro negative                         # Last 7 days audit
 
 EOF
 }
@@ -653,6 +804,9 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
                 error "sw-self-optimize.sh not found"
                 exit 1
             fi
+            ;;
+        negative)
+            cmd_negative_audit "$@"
             ;;
         help|--help|-h)
             cmd_help

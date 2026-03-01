@@ -26,6 +26,9 @@ _skill_memory_ensure_file() {
 #   $3: skills_used (comma-separated skill names, not paths)
 #   $4: outcome (success|failure|retry)
 #   $5: attempt_number (1, 2, 3...)
+#   $6: verdict (optional — "effective"|"partially_effective"|"ineffective")
+#   $7: evidence (optional — why this verdict)
+#   $8: learning (optional — one-sentence takeaway)
 # Returns: 0 on success, 1 on error
 skill_memory_record() {
     local issue_type="${1:-backend}"
@@ -33,6 +36,9 @@ skill_memory_record() {
     local skills_used="${3:-}"
     local outcome="${4:-success}"
     local attempt="${5:-1}"
+    local verdict="${6:-}"
+    local evidence="${7:-}"
+    local learning="${8:-}"
 
     [[ -z "$skills_used" ]] && return 1
 
@@ -43,8 +49,11 @@ skill_memory_record() {
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
     local record
-    record=$(printf '{"issue_type":"%s","stage":"%s","skills":"%s","outcome":"%s","attempt":%d,"timestamp":"%s"}' \
-        "$issue_type" "$stage" "$skills_used" "$outcome" "$attempt" "$timestamp")
+    record=$(jq -n \
+        --arg it "$issue_type" --arg st "$stage" --arg sk "$skills_used" \
+        --arg oc "$outcome" --argjson at "$attempt" --arg ts "$timestamp" \
+        --arg vd "$verdict" --arg ev "$evidence" --arg lr "$learning" \
+        '{issue_type:$it, stage:$st, skills:$sk, outcome:$oc, attempt:$at, timestamp:$ts, verdict:$vd, evidence:$ev, learning:$lr}')
 
     # Append to records array, handling potential jq unavailability
     if ! command -v jq &>/dev/null; then

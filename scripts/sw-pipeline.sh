@@ -165,24 +165,18 @@ _pipeline_compact_goal() {
     local goal="$1"
     local plan_file="${2:-}"
     local design_file="${3:-}"
-    local compact="$goal"
+    local compact
+    compact="$(echo "$goal" | head -n 1 | sed 's/[[:space:]]\+$//')"
+    # Hard cap to keep loop prompts stable and avoid context bloat.
+    compact="${compact:0:240}"
 
-    # Include plan summary (first 20 lines only)
     if [[ -n "$plan_file" && -f "$plan_file" ]]; then
         compact="${compact}
-
-## Plan Summary
-$(head -20 "$plan_file" 2>/dev/null || true)
-[... full plan in .claude/pipeline-artifacts/plan.md]"
+Plan artifact: .claude/pipeline-artifacts/plan.md"
     fi
-
-    # Include design key decisions only (grep for headers)
     if [[ -n "$design_file" && -f "$design_file" ]]; then
         compact="${compact}
-
-## Key Design Decisions
-$(grep -E '^#{1,3} ' "$design_file" 2>/dev/null | head -10 || true)
-[... full design in .claude/pipeline-artifacts/design.md]"
+Design artifact: .claude/pipeline-artifacts/design.md"
     fi
 
     echo "$compact"
@@ -486,6 +480,8 @@ setup_dirs() {
     TASKS_FILE="$STATE_DIR/pipeline-tasks.md"
     mkdir -p "$STATE_DIR" "$ARTIFACTS_DIR"
     export SHIPWRIGHT_PIPELINE_ID="pipeline-$$-${ISSUE_NUMBER:-0}"
+    export SHIPWRIGHT_ACTIVE=1
+    export SHIPWRIGHT_SOURCE="${SHIPWRIGHT_SOURCE:-pipeline}"
 }
 
 # ─── Pipeline Config Loading ───────────────────────────────────────────────

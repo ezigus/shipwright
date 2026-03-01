@@ -510,7 +510,9 @@ Then explain your reasoning briefly."
             # Save validation result
             echo "$validation_result" > "$ARTIFACTS_DIR/plan-validation.md"
 
-            if echo "$validation_result" | head -5 | grep -qi "VALID: true"; then
+            local validation_head
+            validation_head=$(echo "$validation_result" | head -40 | tr -d '\r')
+            if echo "$validation_head" | grep -qiE '^[[:space:]]*VALID:[[:space:]]*true([[:space:]]|$)'; then
                 success "Plan validation passed"
                 plan_valid=true
                 break
@@ -572,12 +574,19 @@ GUIDANCE: ${failure_guidance}}
 
 Fix these issues in the new plan."
 
+                local regen_tmp
+                regen_tmp="$(mktemp "${ARTIFACTS_DIR}/plan.regen.XXXXXX.md")"
                 claude --print --model "$plan_model" --max-turns 25 \
-                    "$regen_prompt" < /dev/null > "$plan_file" 2>"$_token_log" || true
+                    "$regen_prompt" < /dev/null > "$regen_tmp" 2>"$_token_log" || true
                 parse_claude_tokens "$_token_log"
-
-                line_count=$(wc -l < "$plan_file" | xargs)
-                info "Regenerated plan: ${DIM}$plan_file${RESET} (${line_count} lines)"
+                if [[ -s "$regen_tmp" ]]; then
+                    mv "$regen_tmp" "$plan_file"
+                    line_count=$(wc -l < "$plan_file" | xargs)
+                    info "Regenerated plan: ${DIM}$plan_file${RESET} (${line_count} lines)"
+                else
+                    rm -f "$regen_tmp"
+                    warn "Regenerated plan was empty — preserving existing ${plan_file}"
+                fi
             fi
         done
 
@@ -933,7 +942,7 @@ stage_build() {
         memory_context=$(bash "$SCRIPT_DIR/sw-memory.sh" inject "build" 2>/dev/null) || true
     fi
 
-    # Build enriched goal with compact context (avoids prompt bloat)
+    # Build compact goal to keep loop prompts stable and avoid context exhaustion.
     local enriched_goal
     enriched_goal=$(_pipeline_compact_goal "$GOAL" "$plan_file" "$design_file")
 
@@ -944,71 +953,15 @@ stage_build() {
 IMPORTANT (TDD mode): Test files already exist and define the expected behavior. Write implementation code to make ALL tests pass. Do not delete or modify the test files."
     fi
 
-    # Inject memory context
-    if [[ -n "$memory_context" ]]; then
-        enriched_goal="${enriched_goal}
-
-Historical context (lessons from previous pipelines):
-${memory_context}"
-    fi
-
-    # Inject cross-pipeline discoveries for build stage
-    if [[ -x "$SCRIPT_DIR/sw-discovery.sh" ]]; then
-        local build_discoveries
-        build_discoveries=$("$SCRIPT_DIR/sw-discovery.sh" inject "src/*,*.ts,*.tsx,*.js" 2>/dev/null | head -20 || true)
-        if [[ -n "$build_discoveries" ]]; then
-            enriched_goal="${enriched_goal}
-
-Discoveries from other pipelines:
-${build_discoveries}"
-        fi
-    fi
-
-    # Add task list context
-    if [[ -s "$TASKS_FILE" ]]; then
-        enriched_goal="${enriched_goal}
-
-Task tracking (check off items as you complete them):
-$(cat "$TASKS_FILE")"
-    fi
-
-    # Inject file hotspots from GitHub intelligence
-    if [[ "${NO_GITHUB:-}" != "true" ]] && type gh_file_change_frequency >/dev/null 2>&1; then
-        local build_hotspots
-        build_hotspots=$(gh_file_change_frequency 2>/dev/null | head -5 || true)
-        if [[ -n "$build_hotspots" ]]; then
-            enriched_goal="${enriched_goal}
-
-File hotspots (most frequently changed — review these carefully):
-${build_hotspots}"
-        fi
-    fi
-
-    # Inject security alerts context
-    if [[ "${NO_GITHUB:-}" != "true" ]] && type gh_security_alerts >/dev/null 2>&1; then
-        local build_alerts
-        build_alerts=$(gh_security_alerts 2>/dev/null | head -3 || true)
-        if [[ -n "$build_alerts" ]]; then
-            enriched_goal="${enriched_goal}
-
-Active security alerts (do not introduce new vulnerabilities):
-${build_alerts}"
-        fi
-    fi
-
-    # Inject coverage baseline
-    local repo_hash_build
-    repo_hash_build=$(echo -n "$PROJECT_ROOT" | shasum -a 256 2>/dev/null | cut -c1-12 || echo "unknown")
-    local coverage_file_build="${HOME}/.shipwright/baselines/${repo_hash_build}/coverage.json"
-    if [[ -f "$coverage_file_build" ]]; then
-        local coverage_baseline
-        coverage_baseline=$(jq -r '.coverage_percent // empty' "$coverage_file_build" 2>/dev/null || true)
-        if [[ -n "$coverage_baseline" ]]; then
-            enriched_goal="${enriched_goal}
-
-Coverage baseline: ${coverage_baseline}% — do not decrease coverage."
-        fi
-    fi
+    # Keep detailed context in artifacts, not inline in goal text.
+    [[ -s "$TASKS_FILE" ]] && enriched_goal="${enriched_goal}
+Tasks artifact: .claude/pipeline-tasks.md"
+    [[ -s "$dod_file" ]] && enriched_goal="${enriched_goal}
+DoD artifact: .claude/pipeline-artifacts/dod.md"
+    [[ -n "${ISSUE_NUMBER:-}" ]] && enriched_goal="${enriched_goal}
+Issue: #${ISSUE_NUMBER}"
+    [[ -n "$memory_context" ]] && enriched_goal="${enriched_goal}
+Memory context available (auto-injected by runtime intelligence)"
 
     # Predictive: inject prevention hints when risk/memory patterns suggest build-stage failures
     if [[ -x "$SCRIPT_DIR/sw-predictive.sh" ]]; then
@@ -1018,7 +971,6 @@ Coverage baseline: ${coverage_baseline}% — do not decrease coverage."
         prevention_text=$(bash "$SCRIPT_DIR/sw-predictive.sh" inject-prevention "build" "$issue_json_build" 2>/dev/null || true)
         if [[ -n "$prevention_text" ]]; then
             enriched_goal="${enriched_goal}
-
 ${prevention_text}"
         fi
     fi
@@ -2955,4 +2907,3 @@ _Created automatically by \`shipwright pipeline\` monitor stage_" 2>/dev/null ||
 
 # ─── Multi-Dimensional Quality Checks ─────────────────────────────────────
 # Beyond tests: security, bundle size, perf regression, API compat, coverage
-

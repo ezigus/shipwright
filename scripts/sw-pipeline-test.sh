@@ -1527,10 +1527,10 @@ FEOF
         _pipeline_compact_goal "Add auth" "$plan_file" "$design_file"
     ) || result=""
 
-    # Should contain goal, plan summary, and design headers
+    # Should contain goal and artifact references (content inlined removed to reduce context bloat)
     echo "$result" | grep -q "Add auth" || { echo "Missing goal in compact output"; return 1; }
-    echo "$result" | grep -q "Plan Summary" || { echo "Missing Plan Summary in compact output"; return 1; }
-    echo "$result" | grep -q "Key Design Decisions" || { echo "Missing Key Design Decisions in compact output"; return 1; }
+    echo "$result" | grep -q "plan.md" || { echo "Missing plan artifact reference in compact output"; return 1; }
+    echo "$result" | grep -q "design.md" || { echo "Missing design artifact reference in compact output"; return 1; }
 }
 
 # ──────────────────────────────────────────────────────────────────────────────

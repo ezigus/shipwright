@@ -6,89 +6,49 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-# ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-vitals-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright/progress"
-    mkdir -p "$TEMP_DIR/home/.shipwright/optimization"
-    mkdir -p "$TEMP_DIR/home/.claude/pipeline-artifacts"
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright/progress"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright/optimization"
+    mkdir -p "$TEST_TEMP_DIR/home/.claude/pipeline-artifacts"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
     # Link real jq
     if command -v jq &>/dev/null; then
-        ln -sf "$(command -v jq)" "$TEMP_DIR/bin/jq"
+        ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
     fi
 
     # Mock git
-    cat > "$TEMP_DIR/bin/git" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCKEOF'
 #!/usr/bin/env bash
 echo "mock git"
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Create empty state files
-    echo '{"entries":[],"summary":{}}' > "$TEMP_DIR/home/.shipwright/costs.json"
-    echo '{"daily_budget_usd":0,"enabled":false}' > "$TEMP_DIR/home/.shipwright/budget.json"
+    echo '{"entries":[],"summary":{}}' > "$TEST_TEMP_DIR/home/.shipwright/costs.json"
+    echo '{"daily_budget_usd":0,"enabled":false}' > "$TEST_TEMP_DIR/home/.shipwright/budget.json"
 
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
 }
 
-cleanup_env() {
-    [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
-}
-trap cleanup_env EXIT
+trap cleanup_test_env EXIT
 
 assert_pass() {
     local desc="$1"
-    TOTAL=$((TOTAL + 1))
-    PASS=$((PASS + 1))
     echo -e "  ${GREEN}✓${RESET} ${desc}"
 }
 
 assert_fail() {
     local desc="$1"
     local detail="${2:-}"
-    TOTAL=$((TOTAL + 1))
-    FAIL=$((FAIL + 1))
     FAILURES+=("$desc")
     echo -e "  ${RED}✗${RESET} ${desc}"
     [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
-}
-
-assert_eq() {
-    local desc="$1" expected="$2" actual="$3"
-    if [[ "$expected" == "$actual" ]]; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "expected: $expected, got: $actual"
-    fi
-}
-
-assert_contains() {
-    local desc="$1" haystack="$2" needle="$3"
-    if printf '%s\n' "$haystack" | grep -qF -- "$needle" 2>/dev/null; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "output missing: $needle"
-    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -96,7 +56,7 @@ assert_contains() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo ""
-echo -e "${CYAN}${BOLD}  Shipwright Pipeline Vitals Tests${RESET}"
+print_test_header "Shipwright Pipeline Vitals Tests"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
 
@@ -190,7 +150,7 @@ fi
 echo ""
 echo -e "${DIM}  _compute_momentum${RESET}"
 # Create progress file with known snapshots
-progress_file="$TEMP_DIR/home/.shipwright/progress/issue-1.json"
+progress_file="$TEST_TEMP_DIR/home/.shipwright/progress/issue-1.json"
 mkdir -p "$(dirname "$progress_file")"
 cat > "$progress_file" <<'PROGEOF'
 {
@@ -203,7 +163,7 @@ cat > "$progress_file" <<'PROGEOF'
 }
 PROGEOF
 # Source script and call _compute_momentum (needs SCRIPT_DIR, compat, helpers)
-result=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEMP_DIR/home" bash -c '
+result=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEST_TEMP_DIR/home" bash -c '
 source "$SCRIPT_DIR/lib/compat.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/sw-pipeline-vitals.sh" 2>/dev/null || true
@@ -218,9 +178,9 @@ fi
 # ─── Test 8: _compute_convergence with known quality data ─────────────────────
 echo ""
 echo -e "${DIM}  _compute_convergence${RESET}"
-err_log="$TEMP_DIR/home/.shipwright/progress/issue-1-errors.log"
+err_log="$TEST_TEMP_DIR/home/.shipwright/progress/issue-1-errors.log"
 touch "$err_log"
-conv_result=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEMP_DIR/home" bash -c '
+conv_result=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEST_TEMP_DIR/home" bash -c '
 source "$SCRIPT_DIR/lib/compat.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null || true
 source "$SCRIPT_DIR/sw-pipeline-vitals.sh" 2>/dev/null || true
@@ -262,13 +222,5 @@ done
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
-if [[ $FAIL -eq 0 ]]; then
-    echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"
-else
-    echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"
-    for f in "${FAILURES[@]}"; do echo -e "  ${RED}✗${RESET} $f"; done
-fi
-echo ""
-exit "$FAIL"
+print_test_results

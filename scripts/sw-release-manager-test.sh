@@ -6,34 +6,19 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-# ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-rm-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright/releases"
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright/releases"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
     # Link real jq
     if command -v jq &>/dev/null; then
-        ln -sf "$(command -v jq)" "$TEMP_DIR/bin/jq"
+        ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
     fi
 
     # Mock git
-    cat > "$TEMP_DIR/bin/git" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCKEOF'
 #!/usr/bin/env bash
 case "${1:-}" in
     describe)
@@ -64,10 +49,10 @@ case "${1:-}" in
         ;;
 esac
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Mock gh
-    cat > "$TEMP_DIR/bin/gh" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'MOCKEOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "api" ]]; then
     echo "[]"
@@ -76,41 +61,34 @@ fi
 echo "mock gh"
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
     # Mock claude
-    cat > "$TEMP_DIR/bin/claude" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'MOCKEOF'
 #!/usr/bin/env bash
 echo "Release looks good."
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 
     # Create empty events file
-    touch "$TEMP_DIR/home/.shipwright/events.jsonl"
+    touch "$TEST_TEMP_DIR/home/.shipwright/events.jsonl"
 
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
 }
 
-cleanup_env() {
-    [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
-}
-trap cleanup_env EXIT
+trap cleanup_test_env EXIT
 
 assert_pass() {
     local desc="$1"
-    TOTAL=$((TOTAL + 1))
-    PASS=$((PASS + 1))
     echo -e "  ${GREEN}✓${RESET} ${desc}"
 }
 
 assert_fail() {
     local desc="$1"
     local detail="${2:-}"
-    TOTAL=$((TOTAL + 1))
-    FAIL=$((FAIL + 1))
     FAILURES+=("$desc")
     echo -e "  ${RED}✗${RESET} ${desc}"
     [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
@@ -132,7 +110,7 @@ assert_contains() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo ""
-echo -e "${CYAN}${BOLD}  Shipwright Release Manager Tests${RESET}"
+print_test_header "Shipwright Release Manager Tests"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
 
@@ -224,13 +202,5 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
-if [[ $FAIL -eq 0 ]]; then
-    echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"
-else
-    echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"
-    for f in "${FAILURES[@]}"; do echo -e "  ${RED}✗${RESET} $f"; done
-fi
-echo ""
-exit "$FAIL"
+print_test_results

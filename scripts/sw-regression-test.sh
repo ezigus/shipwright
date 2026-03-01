@@ -6,38 +6,23 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-# ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-regression-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/home/.shipwright/baselines"
-    mkdir -p "$TEMP_DIR/bin"
-    mkdir -p "$TEMP_DIR/repo/.git"
-    mkdir -p "$TEMP_DIR/repo/scripts"
-    mkdir -p "$TEMP_DIR/repo/.claude/pipeline-artifacts"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright/baselines"
+    mkdir -p "$TEST_TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/repo/.git"
+    mkdir -p "$TEST_TEMP_DIR/repo/scripts"
+    mkdir -p "$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
 
     # Link real utilities
     for cmd in jq date wc cat grep sed awk sort mkdir rm mv cp mktemp basename dirname printf tr cut head tail tee touch find ls ln readlink bc; do
-        command -v "$cmd" &>/dev/null && ln -sf "$(command -v "$cmd")" "$TEMP_DIR/bin/$cmd"
+        command -v "$cmd" &>/dev/null && ln -sf "$(command -v "$cmd")" "$TEST_TEMP_DIR/bin/$cmd"
     done
 
     # Mock git
-    cat > "$TEMP_DIR/bin/git" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCKEOF'
 #!/usr/bin/env bash
 case "${1:-}" in
     rev-parse)
@@ -50,45 +35,38 @@ case "${1:-}" in
 esac
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Mock gh, claude, tmux
     for mock in gh claude tmux; do
-        printf '#!/usr/bin/env bash\necho "mock %s: $*"\nexit 0\n' "$mock" > "$TEMP_DIR/bin/$mock"
-        chmod +x "$TEMP_DIR/bin/$mock"
+        printf '#!/usr/bin/env bash\necho "mock %s: $*"\nexit 0\n' "$mock" > "$TEST_TEMP_DIR/bin/$mock"
+        chmod +x "$TEST_TEMP_DIR/bin/$mock"
     done
 
     # Mock bash for syntax checks (always pass)
     # Note: we keep real bash but need scripts in the repo dir
     # Create a dummy script in the mock repo scripts dir
-    cat > "$TEMP_DIR/repo/scripts/dummy.sh" <<'EOF'
+    cat > "$TEST_TEMP_DIR/repo/scripts/dummy.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "hello"
 EOF
-    chmod +x "$TEMP_DIR/repo/scripts/dummy.sh"
+    chmod +x "$TEST_TEMP_DIR/repo/scripts/dummy.sh"
 
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
 }
 
-cleanup_env() {
-    [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
-}
-trap cleanup_env EXIT
+trap cleanup_test_env EXIT
 
 assert_pass() {
     local desc="$1"
-    TOTAL=$((TOTAL + 1))
-    PASS=$((PASS + 1))
     echo -e "  ${GREEN}✓${RESET} ${desc}"
 }
 
 assert_fail() {
     local desc="$1"
     local detail="${2:-}"
-    TOTAL=$((TOTAL + 1))
-    FAIL=$((FAIL + 1))
     FAILURES+=("$desc")
     echo -e "  ${RED}✗${RESET} ${desc}"
     [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
@@ -105,22 +83,12 @@ assert_contains() {
     fi
 }
 
-assert_eq() {
-    local desc="$1" expected="$2" actual="$3"
-    if [[ "$expected" == "$actual" ]]; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "expected: $expected, got: $actual"
-    fi
-}
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Tests
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo ""
-echo -e "${CYAN}${BOLD}  shipwright regression test suite${RESET}"
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+print_test_header "shipwright regression test suite"
 echo ""
 
 setup_env
@@ -199,14 +167,14 @@ echo ""
 
 echo -e "${BOLD}  Baseline Subcommand${RESET}"
 
-output=$(cd "$TEMP_DIR/repo" && bash "$SCRIPT_DIR/sw-regression.sh" baseline 2>&1) || true
+output=$(cd "$TEST_TEMP_DIR/repo" && bash "$SCRIPT_DIR/sw-regression.sh" baseline 2>&1) || true
 assert_contains "baseline shows metrics" "$output" "Metrics"
 assert_contains "baseline shows Test Count" "$output" "Test Count"
 assert_contains "baseline shows Pass Rate" "$output" "Pass Rate"
 assert_contains "baseline shows saved message" "$output" "Baseline saved"
 
 # Check baseline dir was populated
-baseline_count=$(find "$TEMP_DIR/home/.shipwright/baselines" -name "baseline-*.json" 2>/dev/null | wc -l | tr -d ' ')
+baseline_count=$(find "$TEST_TEMP_DIR/home/.shipwright/baselines" -name "baseline-*.json" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$baseline_count" -gt 0 ]]; then
     assert_pass "baseline JSON file created"
 else
@@ -214,7 +182,7 @@ else
 fi
 
 # Check latest symlink
-if [[ -L "$TEMP_DIR/home/.shipwright/baselines/latest.json" ]]; then
+if [[ -L "$TEST_TEMP_DIR/home/.shipwright/baselines/latest.json" ]]; then
     assert_pass "latest.json symlink created"
 else
     assert_fail "latest.json symlink created"
@@ -226,9 +194,9 @@ echo ""
 
 echo -e "${BOLD}  State Files${RESET}"
 
-if [[ -f "$TEMP_DIR/home/.shipwright/regression-thresholds.json" ]]; then
+if [[ -f "$TEST_TEMP_DIR/home/.shipwright/regression-thresholds.json" ]]; then
     assert_pass "regression-thresholds.json created"
-    threshold_content=$(cat "$TEMP_DIR/home/.shipwright/regression-thresholds.json")
+    threshold_content=$(cat "$TEST_TEMP_DIR/home/.shipwright/regression-thresholds.json")
     assert_contains "thresholds contain pass_rate_drop" "$threshold_content" "pass_rate_drop"
     assert_contains "thresholds contain test_count_decrease" "$threshold_content" "test_count_decrease"
 else
@@ -242,8 +210,8 @@ echo ""
 echo -e "${BOLD}  Check Subcommand${RESET}"
 
 # First check without baseline should fail
-rm -f "$TEMP_DIR/home/.shipwright/baselines/latest.json"
-rm -f "$TEMP_DIR/home/.shipwright/baselines"/baseline-*.json
+rm -f "$TEST_TEMP_DIR/home/.shipwright/baselines/latest.json"
+rm -f "$TEST_TEMP_DIR/home/.shipwright/baselines"/baseline-*.json
 if bash "$SCRIPT_DIR/sw-regression.sh" check 2>/dev/null; then
     assert_fail "check without baseline exits non-zero"
 else
@@ -270,10 +238,10 @@ echo ""
 echo -e "${BOLD}  Events Logging${RESET}"
 
 # Run baseline to generate events
-cd "$TEMP_DIR/repo" && bash "$SCRIPT_DIR/sw-regression.sh" baseline >/dev/null 2>&1 || true
-if [[ -f "$TEMP_DIR/home/.shipwright/events.jsonl" ]]; then
+cd "$TEST_TEMP_DIR/repo" && bash "$SCRIPT_DIR/sw-regression.sh" baseline >/dev/null 2>&1 || true
+if [[ -f "$TEST_TEMP_DIR/home/.shipwright/events.jsonl" ]]; then
     assert_pass "events.jsonl created after baseline"
-    events_content=$(cat "$TEMP_DIR/home/.shipwright/events.jsonl")
+    events_content=$(cat "$TEST_TEMP_DIR/home/.shipwright/events.jsonl")
     assert_contains "events contain regression.baseline" "$events_content" "regression.baseline"
 else
     assert_fail "events.jsonl created after baseline"
@@ -286,13 +254,5 @@ echo ""
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
-if [[ $FAIL -eq 0 ]]; then
-    echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"
-else
-    echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"
-    for f in "${FAILURES[@]}"; do echo -e "  ${RED}✗${RESET} $f"; done
-fi
-echo ""
-exit "$FAIL"
+print_test_results

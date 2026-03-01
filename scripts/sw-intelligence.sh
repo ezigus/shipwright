@@ -356,6 +356,8 @@ _intelligence_call_claude() {
     local _model_flag=""
     [[ -n "$model" ]] && _model_flag="--model $model"
 
+    type daemon_log &>/dev/null && daemon_log INFO "Intelligence: calling Claude (model=${model:-default}, timeout=${_claude_timeout}s)"
+
     local response
     if ! response=$($_timeout_cmd claude -p "$prompt" $_model_flag 2>/dev/null); then
         error "Claude call failed or timed out"

@@ -526,7 +526,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-incident.sh` | 873 | Autonomous Incident Detection & Response |
 | `scripts/sw-init.sh` | 867 | Complete setup for Shipwright + Shipwright |
 | `scripts/sw-instrument.sh` | 691 | Pipeline Instrumentation & Feedback Loops |
-| `scripts/sw-intelligence.sh` | 1521 | AI-Powered Analysis & Decision Engine |
+| `scripts/sw-intelligence.sh` | 1523 | AI-Powered Analysis & Decision Engine |
 | `scripts/sw-jira.sh` | 628 | Jira ↔ GitHub Bidirectional Sync |
 | `scripts/sw-launchd.sh` | 703 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 643 | Linear ↔ GitHub Bidirectional Sync |

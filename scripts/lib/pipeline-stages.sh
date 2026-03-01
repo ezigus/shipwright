@@ -252,6 +252,19 @@ stage_intake() {
           issue:$issue, language:$lang, test_cmd:$test_cmd,
           labels:$labels, milestone:$milestone, body:$body}')"
 
+    # 7. AI-powered skill analysis (replaces static classification when available)
+    if type skill_analyze_issue >/dev/null 2>&1; then
+        local _intel_json=""
+        [[ -f "$ARTIFACTS_DIR/intelligence-analysis.json" ]] && _intel_json=$(cat "$ARTIFACTS_DIR/intelligence-analysis.json" 2>/dev/null || true)
+
+        if skill_analyze_issue "$GOAL" "${ISSUE_BODY:-}" "${ISSUE_LABELS:-}" "$ARTIFACTS_DIR" "$_intel_json" 2>/dev/null; then
+            info "Skill analysis: AI-powered skill plan written to skill-plan.json"
+            # INTELLIGENCE_ISSUE_TYPE and INTELLIGENCE_COMPLEXITY are updated by skill_analyze_issue
+        else
+            info "Skill analysis: LLM unavailable — using label-based classification"
+        fi
+    fi
+
     log_stage "intake" "Goal: $GOAL
 Type: $TASK_TYPE → template: $suggested_template
 Branch: $GIT_BRANCH
@@ -437,6 +450,30 @@ How to verify the implementation works.
 ### Definition of Done
 Checklist of completion criteria.
 "
+
+    # Inject skill prompts — prefer AI-powered plan, fallback to adaptive, then static
+    local _skill_prompts=""
+    if type skill_load_from_plan >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_from_plan "plan" 2>/dev/null || true)
+    elif type skill_select_adaptive >/dev/null 2>&1; then
+        local _skill_files
+        _skill_files=$(skill_select_adaptive "${INTELLIGENCE_ISSUE_TYPE:-backend}" "plan" "${ISSUE_BODY:-}" "${INTELLIGENCE_COMPLEXITY:-5}" 2>/dev/null || true)
+        if [[ -n "$_skill_files" ]]; then
+            _skill_prompts=$(while IFS= read -r _path; do
+                [[ -z "$_path" || ! -f "$_path" ]] && continue
+                cat "$_path" 2>/dev/null
+            done <<< "$_skill_files")
+        fi
+    elif type skill_load_prompts >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "plan" 2>/dev/null || true)
+    fi
+    if [[ -n "$_skill_prompts" ]]; then
+        _skill_prompts=$(prune_context_section "skills" "$_skill_prompts" 8000)
+        plan_prompt="${plan_prompt}
+## Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue, AI-selected)
+${_skill_prompts}
+"
+    fi
 
     # Guard total prompt size
     plan_prompt=$(guard_prompt_size "plan" "$plan_prompt")
@@ -866,6 +903,30 @@ Produce this EXACT format:
 
 Be concrete and specific. Reference actual file paths in the codebase. Consider edge cases and failure modes."
 
+    # Inject skill prompts for design stage
+    local _skill_prompts=""
+    if type skill_load_from_plan >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_from_plan "design" 2>/dev/null || true)
+    elif type skill_select_adaptive >/dev/null 2>&1; then
+        local _skill_files
+        _skill_files=$(skill_select_adaptive "${INTELLIGENCE_ISSUE_TYPE:-backend}" "design" "${ISSUE_BODY:-}" "${INTELLIGENCE_COMPLEXITY:-5}" 2>/dev/null || true)
+        if [[ -n "$_skill_files" ]]; then
+            _skill_prompts=$(while IFS= read -r _path; do
+                [[ -z "$_path" || ! -f "$_path" ]] && continue
+                cat "$_path" 2>/dev/null
+            done <<< "$_skill_files")
+        fi
+    elif type skill_load_prompts >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "design" 2>/dev/null || true)
+    fi
+    if [[ -n "$_skill_prompts" ]]; then
+        _skill_prompts=$(prune_context_section "skills" "$_skill_prompts" 8000)
+        design_prompt="${design_prompt}
+## Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue, AI-selected)
+${_skill_prompts}
+"
+    fi
+
     # Guard total prompt size
     design_prompt=$(guard_prompt_size "design" "$design_prompt")
 
@@ -1163,6 +1224,31 @@ Coverage baseline: ${coverage_baseline}% — do not decrease coverage."
 
 ${prevention_text}"
         fi
+    fi
+
+    # Inject skill prompts for build stage
+    local _skill_prompts=""
+    if type skill_load_from_plan >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_from_plan "build" 2>/dev/null || true)
+    elif type skill_select_adaptive >/dev/null 2>&1; then
+        local _skill_files
+        _skill_files=$(skill_select_adaptive "${INTELLIGENCE_ISSUE_TYPE:-backend}" "build" "${ISSUE_BODY:-}" "${INTELLIGENCE_COMPLEXITY:-5}" 2>/dev/null || true)
+        if [[ -n "$_skill_files" ]]; then
+            _skill_prompts=$(while IFS= read -r _path; do
+                [[ -z "$_path" || ! -f "$_path" ]] && continue
+                cat "$_path" 2>/dev/null
+            done <<< "$_skill_files")
+        fi
+    elif type skill_load_prompts >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "build" 2>/dev/null || true)
+    fi
+    if [[ -n "$_skill_prompts" ]]; then
+        _skill_prompts=$(prune_context_section "skills" "$_skill_prompts" 8000)
+        enriched_goal="${enriched_goal}
+
+## Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue, AI-selected)
+${_skill_prompts}
+"
     fi
 
     loop_args+=("$enriched_goal")
@@ -1574,6 +1660,30 @@ $(cat "$dod_file")
     review_prompt+="
 ## Diff to Review
 $(cat "$diff_file")"
+
+    # Inject skill prompts for review stage
+    _skill_prompts=""
+    if type skill_load_from_plan >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_from_plan "review" 2>/dev/null || true)
+    elif type skill_select_adaptive >/dev/null 2>&1; then
+        local _skill_files
+        _skill_files=$(skill_select_adaptive "${INTELLIGENCE_ISSUE_TYPE:-backend}" "review" "${ISSUE_BODY:-}" "${INTELLIGENCE_COMPLEXITY:-5}" 2>/dev/null || true)
+        if [[ -n "$_skill_files" ]]; then
+            _skill_prompts=$(while IFS= read -r _path; do
+                [[ -z "$_path" || ! -f "$_path" ]] && continue
+                cat "$_path" 2>/dev/null
+            done <<< "$_skill_files")
+        fi
+    elif type skill_load_prompts >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "review" 2>/dev/null || true)
+    fi
+    if [[ -n "$_skill_prompts" ]]; then
+        _skill_prompts=$(prune_context_section "skills" "$_skill_prompts" 8000)
+        review_prompt="${review_prompt}
+## Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue, AI-selected)
+${_skill_prompts}
+"
+    fi
 
     # Guard total prompt size
     review_prompt=$(guard_prompt_size "review" "$review_prompt")

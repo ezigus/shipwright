@@ -47,6 +47,9 @@ fi
 [[ -f "$SCRIPT_DIR/lib/pipeline-intelligence.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-intelligence.sh"
 # shellcheck source=lib/pipeline-stages.sh
 [[ -f "$SCRIPT_DIR/lib/pipeline-stages.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-stages.sh"
+# Audit trail for compliance-grade pipeline traceability
+# shellcheck source=lib/audit-trail.sh
+[[ -f "$SCRIPT_DIR/lib/audit-trail.sh" ]] && source "$SCRIPT_DIR/lib/audit-trail.sh" 2>/dev/null || true
 PIPELINE_COVERAGE_THRESHOLD="${PIPELINE_COVERAGE_THRESHOLD:-60}"
 PIPELINE_QUALITY_GATE_THRESHOLD="${PIPELINE_QUALITY_GATE_THRESHOLD:-70}"
 
@@ -1375,6 +1378,11 @@ run_pipeline() {
     # Rotate event log if needed (standalone mode)
     rotate_event_log_if_needed
 
+    # Initialize audit trail for this pipeline run
+    if type audit_init >/dev/null 2>&1; then
+        audit_init || true
+    fi
+
     local stages
     stages=$(jq -c '.stages[]' "$PIPELINE_CONFIG")
 
@@ -1636,6 +1644,11 @@ run_pipeline() {
             gh_checks_stage_update "$id" "in_progress" "" "Stage $id started" 2>/dev/null || true
         fi
 
+        # Audit: stage start
+        if type audit_emit >/dev/null 2>&1; then
+            audit_emit "stage.start" "stage=$id" || true
+        fi
+
         local stage_model_used="${CLAUDE_MODEL:-${MODEL:-opus}}"
         if run_stage_with_retry "$id"; then
             mark_stage_complete "$id"
@@ -1649,6 +1662,11 @@ run_pipeline() {
             stage_dur_s=$(( $(now_epoch) - stage_start_epoch ))
             success "Stage ${BOLD}$id${RESET} complete ${DIM}(${timing})${RESET}"
             emit_event "stage.completed" "issue=${ISSUE_NUMBER:-0}" "stage=$id" "duration_s=$stage_dur_s" "result=success"
+            # Audit: stage complete
+            if type audit_emit >/dev/null 2>&1; then
+                audit_emit "stage.complete" "stage=$id" "verdict=pass" \
+                    "duration_s=${stage_dur_s:-0}" || true
+            fi
             # Emit vitals snapshot on every stage transition (not just build/test)
             if type pipeline_emit_progress_snapshot >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
                 pipeline_emit_progress_snapshot "${ISSUE_NUMBER}" "$id" "0" "0" "0" "" 2>/dev/null || true
@@ -1683,6 +1701,11 @@ run_pipeline() {
                 "duration_s=$stage_dur_s" \
                 "error=${LAST_STAGE_ERROR:-unknown}" \
                 "error_class=${LAST_STAGE_ERROR_CLASS:-unknown}"
+            # Audit: stage failed
+            if type audit_emit >/dev/null 2>&1; then
+                audit_emit "stage.complete" "stage=$id" "verdict=fail" \
+                    "duration_s=${stage_dur_s:-0}" || true
+            fi
             # Emit vitals snapshot on failure too
             if type pipeline_emit_progress_snapshot >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
                 pipeline_emit_progress_snapshot "${ISSUE_NUMBER}" "$id" "0" "0" "0" "${LAST_STAGE_ERROR:-unknown}" 2>/dev/null || true
@@ -2519,6 +2542,11 @@ pipeline_start() {
             "total_cost=$total_cost" \
             "self_heal_count=$SELF_HEAL_COUNT"
 
+        # Finalize audit trail
+        if type audit_finalize >/dev/null 2>&1; then
+            audit_finalize "success" || true
+        fi
+
         # Update pipeline run status in SQLite
         if type update_pipeline_status >/dev/null 2>&1; then
             update_pipeline_status "${SHIPWRIGHT_PIPELINE_ID}" "completed" "${PIPELINE_SLOWEST_STAGE:-}" "complete" "${total_dur_s:-0}" 2>/dev/null || true
@@ -2564,6 +2592,11 @@ pipeline_start() {
             "output_tokens=$TOTAL_OUTPUT_TOKENS" \
             "total_cost=$total_cost" \
             "self_heal_count=$SELF_HEAL_COUNT"
+
+        # Finalize audit trail
+        if type audit_finalize >/dev/null 2>&1; then
+            audit_finalize "failure" || true
+        fi
 
         # Update pipeline run status in SQLite
         if type update_pipeline_status >/dev/null 2>&1; then

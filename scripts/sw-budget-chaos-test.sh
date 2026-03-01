@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC2034
-VERSION="3.2.0"
+VERSION="3.2.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 

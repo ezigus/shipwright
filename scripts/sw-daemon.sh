@@ -13,7 +13,7 @@ unset CLAUDECODE 2>/dev/null || true
 trap '' HUP
 trap '' SIGPIPE
 
-VERSION="3.2.0"
+VERSION="3.2.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -681,7 +681,8 @@ daemon_start() {
         fi
 
         # Export current PATH so detached session finds claude, gh, etc.
-        local tmux_cmd="export PATH='${PATH}'; ${cmd_args[*]}"
+        # Unset CLAUDECODE so daemon works when started from inside Claude Code
+        local tmux_cmd="unset CLAUDECODE 2>/dev/null; export PATH='${PATH}'; ${cmd_args[*]}"
         tmux new-session -d -s "sw-daemon" "$tmux_cmd" 2>/dev/null || {
             # Session may already exist — try killing and recreating
             tmux kill-session -t "sw-daemon" 2>/dev/null || true

@@ -41,6 +41,9 @@ fi
 # Error actionability scoring and enhancement for better error context
 # shellcheck source=lib/error-actionability.sh
 [[ -f "$SCRIPT_DIR/lib/error-actionability.sh" ]] && source "$SCRIPT_DIR/lib/error-actionability.sh" 2>/dev/null || true
+# Audit trail for compliance-grade pipeline traceability
+# shellcheck source=lib/audit-trail.sh
+[[ -f "$SCRIPT_DIR/lib/audit-trail.sh" ]] && source "$SCRIPT_DIR/lib/audit-trail.sh" 2>/dev/null || true
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -987,6 +990,14 @@ run_test_gate() {
     # Write structured test evidence
     if command -v jq >/dev/null 2>&1; then
         echo "$test_results" > "${LOG_DIR}/test-evidence-iter-${ITERATION}.json"
+    fi
+
+    # Audit: emit test gate event
+    if type audit_emit >/dev/null 2>&1; then
+        local cmd_count=0
+        command -v jq >/dev/null 2>&1 && cmd_count=$(echo "$test_results" | jq 'length' 2>/dev/null || echo 0)
+        audit_emit "loop.test_gate" "iteration=$ITERATION" "commands=$cmd_count" \
+            "all_passed=$all_passed" "evidence_path=test-evidence-iter-${ITERATION}.json" || true
     fi
 
     TEST_PASSED=$all_passed
@@ -2233,10 +2244,18 @@ ${GOAL}"
                 AUDIT_RESULT="pass"
                 emit_event "loop.verification_gap_resolved" \
                     "iteration=$ITERATION" "action=override_audit"
+                if type audit_emit >/dev/null 2>&1; then
+                    audit_emit "loop.verification_gap" "iteration=$ITERATION" \
+                        "resolution=override" "tests_recheck=pass" || true
+                fi
             else
                 echo -e "  ${RED}✗${RESET} Verification failed — audit stands"
                 emit_event "loop.verification_gap_confirmed" \
                     "iteration=$ITERATION" "action=retry"
+                if type audit_emit >/dev/null 2>&1; then
+                    audit_emit "loop.verification_gap" "iteration=$ITERATION" \
+                        "resolution=retry" "tests_recheck=fail" || true
+                fi
             fi
         fi
 

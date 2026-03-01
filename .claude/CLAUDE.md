@@ -498,7 +498,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-connect.sh` | 624 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 600 | Context Engine for Pipeline Stages |
 | `scripts/sw-cost.sh` | 1013 | Token Usage & Cost Intelligence |
-| `scripts/sw-daemon.sh` | 1378 | Autonomous GitHub Issue Watcher |
+| `scripts/sw-daemon.sh` | 1406 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 510 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 1939 | SQLite Persistence Layer |
 | `scripts/sw-decide.sh` | 691 | Shipwright Autonomous Decision Engine |
@@ -526,7 +526,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-incident.sh` | 873 | Autonomous Incident Detection & Response |
 | `scripts/sw-init.sh` | 867 | Complete setup for Shipwright + Shipwright |
 | `scripts/sw-instrument.sh` | 691 | Pipeline Instrumentation & Feedback Loops |
-| `scripts/sw-intelligence.sh` | 1517 | AI-Powered Analysis & Decision Engine |
+| `scripts/sw-intelligence.sh` | 1521 | AI-Powered Analysis & Decision Engine |
 | `scripts/sw-jira.sh` | 628 | Jira ↔ GitHub Bidirectional Sync |
 | `scripts/sw-launchd.sh` | 703 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 643 | Linear ↔ GitHub Bidirectional Sync |
@@ -822,8 +822,6 @@ Intelligence defaults to **auto** (enabled when Claude CLI is available). Config
 | Flag | Default | Purpose |
 | --- | --- | --- |
 | `intelligence.cache_ttl_seconds` | `3600` | |
-| `intelligence.optimization_enabled` | `true` | |
-| `intelligence.prediction_enabled` | `true` | |
 | `intelligence.adversarial_enabled` | `false` | |
 | `intelligence.simulation_enabled` | `false` | |
 | `intelligence.architecture_enabled` | `false` | |

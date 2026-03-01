@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.2.2"
+VERSION="3.2.3"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
@@ -327,6 +327,7 @@ _intelligence_call_claude() {
     local prompt="$1"
     local cache_key="${2:-}"
     local ttl="${3:-$DEFAULT_CACHE_TTL}"
+    local model="${4:-${INTELLIGENCE_MODEL:-haiku}}"
 
     # Check cache first
     local cached
@@ -352,8 +353,11 @@ _intelligence_call_claude() {
     elif command -v timeout >/dev/null 2>&1; then _timeout_cmd="timeout $_claude_timeout"
     fi
 
+    local _model_flag=""
+    [[ -n "$model" ]] && _model_flag="--model $model"
+
     local response
-    if ! response=$($_timeout_cmd claude -p "$prompt" 2>/dev/null); then
+    if ! response=$($_timeout_cmd claude -p "$prompt" $_model_flag 2>/dev/null); then
         error "Claude call failed or timed out"
         echo '{"error":"claude_call_failed"}'
         return 1

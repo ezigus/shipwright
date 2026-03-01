@@ -9,7 +9,7 @@
 # ║  to select a terminal adapter (tmux, iterm2, wezterm).                  ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 # shellcheck disable=SC2034
-VERSION="3.2.2"
+VERSION="3.2.3"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 

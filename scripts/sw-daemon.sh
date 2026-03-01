@@ -13,7 +13,7 @@ unset CLAUDECODE 2>/dev/null || true
 trap '' HUP
 trap '' SIGPIPE
 
-VERSION="3.2.2"
+VERSION="3.2.3"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -445,6 +445,7 @@ load_config() {
     # intelligence engine settings (default "auto" = enable when Claude CLI available)
     INTELLIGENCE_ENABLED=$(jq -r '.intelligence.enabled // "auto"' "$config_file")
     INTELLIGENCE_CACHE_TTL=$(jq -r '.intelligence.cache_ttl_seconds // 3600' "$config_file")
+    INTELLIGENCE_MODEL=$(jq -r '.intelligence.model // "haiku"' "$config_file")
     COMPOSER_ENABLED=$(jq -r '.intelligence.composer_enabled // "auto"' "$config_file")
 
     # Auto-enable intelligence when Claude is available (unless explicitly disabled)
@@ -475,13 +476,25 @@ load_config() {
             COMPOSER_ENABLED=false
         fi
     fi
-    OPTIMIZATION_ENABLED=$(jq -r '.intelligence.optimization_enabled // false' "$config_file")
-    PREDICTION_ENABLED=$(jq -r '.intelligence.prediction_enabled // false' "$config_file")
+    OPTIMIZATION_ENABLED=$(jq -r '.intelligence.optimization_enabled // "auto"' "$config_file")
+    PREDICTION_ENABLED=$(jq -r '.intelligence.prediction_enabled // "auto"' "$config_file")
     ANOMALY_THRESHOLD=$(jq -r '.intelligence.anomaly_threshold // 3.0' "$config_file")
 
     # adaptive thresholds (intelligence-driven operational tuning)
-    ADAPTIVE_THRESHOLDS_ENABLED=$(jq -r '.intelligence.adaptive_enabled // false' "$config_file")
+    ADAPTIVE_THRESHOLDS_ENABLED=$(jq -r '.intelligence.adaptive_enabled // "auto"' "$config_file")
     PRIORITY_STRATEGY=$(jq -r '.intelligence.priority_strategy // "quick-wins-first"' "$config_file")
+
+    # Auto-resolve "auto" for prediction, optimization, adaptive (same pattern as intelligence/composer)
+    for _flag_var in OPTIMIZATION_ENABLED PREDICTION_ENABLED ADAPTIVE_THRESHOLDS_ENABLED; do
+        eval "local _flag_val=\"\${${_flag_var}}\""
+        if [[ "$_flag_val" == "auto" ]]; then
+            if command -v claude &>/dev/null; then
+                eval "${_flag_var}=true"
+            else
+                eval "${_flag_var}=false"
+            fi
+        fi
+    done
 
     # gh_retry: enable retry wrapper on critical GitHub API calls
     GH_RETRY_ENABLED=$(jq -r '.gh_retry // true' "$config_file")
@@ -568,7 +581,20 @@ setup_dirs() {
 # from historical data instead of using fixed defaults.
 # Every function falls back to the config default when no data exists.
 
-ADAPTIVE_THRESHOLDS_ENABLED="${ADAPTIVE_THRESHOLDS_ENABLED:-false}"
+# Auto-resolve intelligence defaults when no config file is loaded.
+# All three default to "auto" → true when Claude CLI is available.
+_auto_resolve_intelligence() {
+    local val="${1:-auto}"
+    if [[ "$val" == "auto" ]]; then
+        command -v claude &>/dev/null && echo "true" || echo "false"
+    else
+        echo "$val"
+    fi
+}
+INTELLIGENCE_MODEL="${INTELLIGENCE_MODEL:-haiku}"
+OPTIMIZATION_ENABLED=$(_auto_resolve_intelligence "${OPTIMIZATION_ENABLED:-auto}")
+PREDICTION_ENABLED=$(_auto_resolve_intelligence "${PREDICTION_ENABLED:-auto}")
+ADAPTIVE_THRESHOLDS_ENABLED=$(_auto_resolve_intelligence "${ADAPTIVE_THRESHOLDS_ENABLED:-auto}")
 PRIORITY_STRATEGY="${PRIORITY_STRATEGY:-quick-wins-first}"
 EMPTY_QUEUE_CYCLES=0
 
@@ -1017,10 +1043,12 @@ daemon_init() {
   "estimated_cost_per_job_usd": 5.0,
   "intelligence": {
     "enabled": "auto",
+    "model": "haiku",
     "cache_ttl_seconds": 3600,
     "composer_enabled": "auto",
-    "optimization_enabled": true,
-    "prediction_enabled": true,
+    "optimization_enabled": "auto",
+    "prediction_enabled": "auto",
+    "adaptive_enabled": "auto",
     "adversarial_enabled": false,
     "simulation_enabled": false,
     "architecture_enabled": false,

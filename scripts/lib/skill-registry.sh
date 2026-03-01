@@ -378,3 +378,154 @@ skill_build_catalog() {
 
     echo "$catalog"
 }
+
+# skill_analyze_issue — LLM-powered skill selection and gap detection.
+#   $1: issue_title
+#   $2: issue_body
+#   $3: issue_labels
+#   $4: artifacts_dir (where to write skill-plan.json)
+#   $5: intelligence_json (optional — reuse from intelligence_analyze_issue)
+# Returns: 0 on success (skill-plan.json written), 1 on failure (caller should fallback)
+# Requires: _intelligence_call_claude() from sw-intelligence.sh
+skill_analyze_issue() {
+    local title="${1:-}" body="${2:-}" labels="${3:-}"
+    local artifacts_dir="${4:-${ARTIFACTS_DIR:-.claude/pipeline-artifacts}}"
+    local intelligence_json="${5:-}"
+
+    # Verify we have the LLM call function
+    if ! type _intelligence_call_claude >/dev/null 2>&1; then
+        return 1
+    fi
+
+    # Build the skill catalog
+    local catalog
+    catalog=$(skill_build_catalog "" "" 2>/dev/null || true)
+    [[ -z "$catalog" ]] && return 1
+
+    # Build memory recommendations
+    local memory_context=""
+    if type skill_memory_get_recommendations >/dev/null 2>&1; then
+        local recs
+        recs=$(skill_memory_get_recommendations "backend" "plan" 2>/dev/null || true)
+        [[ -n "$recs" ]] && memory_context="Historical skill performance: $recs"
+    fi
+
+    # Build the prompt
+    local prompt
+    prompt="You are a pipeline skill router. Analyze this GitHub issue and select the best skills for each pipeline stage.
+
+## Issue
+Title: ${title}
+Labels: ${labels}
+Body:
+${body}
+
+## Available Skills
+${catalog}
+
+${memory_context:+## Historical Context
+$memory_context
+}
+${intelligence_json:+## Intelligence Analysis
+$intelligence_json
+}
+## Pipeline Stages
+Skills can be assigned to: plan, design, build, review, compound_quality, pr, deploy, validate, monitor
+
+## Instructions
+1. Classify the issue type (frontend|backend|api|database|infrastructure|documentation|security|performance|refactor|testing)
+2. Select 1-4 skills per stage from the catalog. Only select skills relevant to that stage.
+3. For each selected skill, write a one-sentence rationale explaining WHY this skill matters for THIS specific issue (not generic advice).
+4. If the issue needs expertise not covered by any existing skill, generate a new skill with focused, actionable content (200-400 words).
+5. Identify specific review focus areas and risk areas for this issue.
+
+## Response Format (JSON only, no markdown)
+{
+  \"issue_type\": \"frontend\",
+  \"confidence\": 0.92,
+  \"secondary_domains\": [\"accessibility\", \"real-time\"],
+  \"complexity_assessment\": {
+    \"score\": 6,
+    \"reasoning\": \"Brief explanation\"
+  },
+  \"skill_plan\": {
+    \"plan\": [\"skill-name-1\", \"skill-name-2\"],
+    \"design\": [\"skill-name\"],
+    \"build\": [\"skill-name\"],
+    \"review\": [\"skill-name\"],
+    \"compound_quality\": [\"skill-name\"],
+    \"pr\": [\"skill-name\"],
+    \"deploy\": [\"skill-name\"],
+    \"validate\": [],
+    \"monitor\": []
+  },
+  \"skill_rationale\": {
+    \"skill-name-1\": \"Why this skill matters for this specific issue\",
+    \"skill-name-2\": \"Why this skill matters\"
+  },
+  \"generated_skills\": [
+    {
+      \"name\": \"new-skill-name\",
+      \"reason\": \"Why no existing skill covers this\",
+      \"content\": \"## Skill Title\\n\\nActionable guidance...\"
+    }
+  ],
+  \"review_focus\": [\"specific area 1\", \"specific area 2\"],
+  \"risk_areas\": [\"specific risk 1\"]
+}"
+
+    # Call the LLM
+    local cache_key="skill_analysis_$(echo "${title}${body}" | md5sum 2>/dev/null | cut -c1-16 || echo "${RANDOM}")"
+    local result
+    if ! result=$(_intelligence_call_claude "$prompt" "$cache_key" 3600 "haiku"); then
+        return 1
+    fi
+
+    # Validate the response has required fields
+    local valid
+    valid=$(echo "$result" | jq 'has("issue_type") and has("skill_plan") and has("skill_rationale")' 2>/dev/null || echo "false")
+    if [[ "$valid" != "true" ]]; then
+        warn "Skill analysis returned invalid JSON — falling back to static selection"
+        return 1
+    fi
+
+    # Write skill-plan.json
+    mkdir -p "$artifacts_dir"
+    echo "$result" | jq '.' > "$artifacts_dir/skill-plan.json"
+
+    # Save any generated skills to disk
+    local gen_count
+    gen_count=$(echo "$result" | jq '.generated_skills | length' 2>/dev/null || echo "0")
+    if [[ "$gen_count" -gt 0 ]]; then
+        mkdir -p "$GENERATED_SKILLS_DIR"
+        local i
+        for i in $(seq 0 $((gen_count - 1))); do
+            local gen_name gen_content
+            gen_name=$(echo "$result" | jq -r ".generated_skills[$i].name" 2>/dev/null)
+            gen_content=$(echo "$result" | jq -r ".generated_skills[$i].content" 2>/dev/null)
+            if [[ -n "$gen_name" && "$gen_name" != "null" && -n "$gen_content" && "$gen_content" != "null" ]]; then
+                # Only write if doesn't already exist (don't overwrite improved versions)
+                if [[ ! -f "$GENERATED_SKILLS_DIR/${gen_name}.md" ]]; then
+                    printf '%b\n' "$gen_content" > "$GENERATED_SKILLS_DIR/${gen_name}.md"
+                    info "Generated new skill: ${gen_name}"
+                fi
+            fi
+        done
+    fi
+
+    # Update INTELLIGENCE_ISSUE_TYPE from analysis
+    local analyzed_type
+    analyzed_type=$(echo "$result" | jq -r '.issue_type // empty' 2>/dev/null)
+    if [[ -n "$analyzed_type" ]]; then
+        export INTELLIGENCE_ISSUE_TYPE="$analyzed_type"
+    fi
+
+    # Update INTELLIGENCE_COMPLEXITY from analysis
+    local analyzed_complexity
+    analyzed_complexity=$(echo "$result" | jq -r '.complexity_assessment.score // empty' 2>/dev/null)
+    if [[ -n "$analyzed_complexity" ]]; then
+        export INTELLIGENCE_COMPLEXITY="$analyzed_complexity"
+    fi
+
+    return 0
+}

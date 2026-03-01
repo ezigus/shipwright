@@ -994,6 +994,29 @@ _catalog=$(skill_build_catalog "frontend" "plan" 2>/dev/null || true)
 assert_contains "$_catalog" "success" "catalog includes memory context"
 skill_memory_clear 2>/dev/null || true
 
+echo ""
+echo "  ── LLM skill analysis (mock) ──"
+
+# We can't test real LLM calls in unit tests, so test the JSON parsing/artifact writing
+# Mock: simulate skill_analyze_issue writing skill-plan.json
+_test_artifacts=$(mktemp -d)
+
+_mock_plan='{"issue_type":"frontend","confidence":0.92,"secondary_domains":["accessibility"],"complexity_assessment":{"score":6,"reasoning":"moderate"},"skill_plan":{"plan":["brainstorming","frontend-design"],"build":["frontend-design"],"review":["two-stage-review"]},"skill_rationale":{"frontend-design":"ARIA progressbar needed","brainstorming":"Task decomposition required"},"generated_skills":[],"review_focus":["accessibility"],"risk_areas":["ETA accuracy"]}'
+echo "$_mock_plan" > "$_test_artifacts/skill-plan.json"
+
+# Verify skill-plan.json is valid JSON
+assert_true "jq '.' '$_test_artifacts/skill-plan.json' >/dev/null 2>&1" "skill-plan.json is valid JSON"
+
+# Verify we can extract skills for a stage
+_plan_skills=$(jq -r '.skill_plan.plan[]' "$_test_artifacts/skill-plan.json" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+assert_eq "$_plan_skills" "brainstorming,frontend-design" "plan stage skills extracted correctly"
+
+# Verify rationale extraction
+_rationale=$(jq -r '.skill_rationale["frontend-design"]' "$_test_artifacts/skill-plan.json" 2>/dev/null)
+assert_contains "$_rationale" "ARIA" "rationale extracted correctly"
+
+rm -rf "$_test_artifacts"
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS

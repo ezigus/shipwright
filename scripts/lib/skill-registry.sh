@@ -529,3 +529,78 @@ Skills can be assigned to: plan, design, build, review, compound_quality, pr, de
 
     return 0
 }
+
+# skill_load_from_plan — Load skill content for a stage from skill-plan.json artifact.
+#   $1: stage (plan|design|build|review|compound_quality|pr|deploy|validate|monitor)
+# Reads: $ARTIFACTS_DIR/skill-plan.json
+# Returns: combined prompt text with rationale + skill content + refinements.
+# Falls back to skill_select_adaptive() if skill-plan.json is missing.
+skill_load_from_plan() {
+    local stage="${1:-plan}"
+    local plan_file="${ARTIFACTS_DIR}/skill-plan.json"
+
+    # Fallback if no plan file
+    if [[ ! -f "$plan_file" ]]; then
+        if type skill_select_adaptive >/dev/null 2>&1; then
+            local _fallback_files _fallback_content
+            _fallback_files=$(skill_select_adaptive "${INTELLIGENCE_ISSUE_TYPE:-backend}" "$stage" "${ISSUE_BODY:-}" "${INTELLIGENCE_COMPLEXITY:-5}" 2>/dev/null || true)
+            if [[ -n "$_fallback_files" ]]; then
+                while IFS= read -r _path; do
+                    [[ -z "$_path" || ! -f "$_path" ]] && continue
+                    cat "$_path" 2>/dev/null
+                done <<< "$_fallback_files"
+            fi
+        fi
+        return 0
+    fi
+
+    # Extract skill names for this stage
+    local skill_names
+    skill_names=$(jq -r ".skill_plan.${stage}[]? // empty" "$plan_file" 2>/dev/null)
+    [[ -z "$skill_names" ]] && return 0
+
+    local issue_type
+    issue_type=$(jq -r '.issue_type // "unknown"' "$plan_file" 2>/dev/null)
+
+    # Build rationale header
+    local rationale_header=""
+    rationale_header="### Why these skills were selected (AI-analyzed):
+"
+    while IFS= read -r skill_name; do
+        [[ -z "$skill_name" ]] && continue
+        local rat
+        rat=$(jq -r ".skill_rationale[\"${skill_name}\"] // empty" "$plan_file" 2>/dev/null)
+        [[ -n "$rat" ]] && rationale_header="${rationale_header}- **${skill_name}**: ${rat}
+"
+    done <<< "$skill_names"
+
+    # Output rationale header
+    echo "$rationale_header"
+
+    # Load each skill's content
+    while IFS= read -r skill_name; do
+        [[ -z "$skill_name" ]] && continue
+
+        local skill_path=""
+        # Check curated directory first
+        if [[ -f "${SKILLS_DIR}/${skill_name}.md" ]]; then
+            skill_path="${SKILLS_DIR}/${skill_name}.md"
+        # Then check generated directory
+        elif [[ -f "${GENERATED_SKILLS_DIR}/${skill_name}.md" ]]; then
+            skill_path="${GENERATED_SKILLS_DIR}/${skill_name}.md"
+        fi
+
+        if [[ -n "$skill_path" ]]; then
+            cat "$skill_path" 2>/dev/null
+            echo ""
+
+            # Append refinement if exists
+            local refinement_path="${REFINEMENTS_DIR}/${skill_name}.patch.md"
+            if [[ -f "$refinement_path" ]]; then
+                echo ""
+                cat "$refinement_path" 2>/dev/null
+                echo ""
+            fi
+        fi
+    done <<< "$skill_names"
+}

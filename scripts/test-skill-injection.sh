@@ -1019,6 +1019,69 @@ rm -rf "$_test_artifacts"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# TEST SUITE 12: Plan-Based Skill Loading
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "═══ Suite 12: Plan-Based Skill Loading ═══"
+echo ""
+
+_test_artifacts=$(mktemp -d)
+
+# Write a mock skill-plan.json
+cat > "$_test_artifacts/skill-plan.json" << 'PLAN_EOF'
+{
+  "issue_type": "frontend",
+  "skill_plan": {
+    "plan": ["brainstorming", "frontend-design"],
+    "build": ["frontend-design"],
+    "review": ["two-stage-review"],
+    "deploy": []
+  },
+  "skill_rationale": {
+    "brainstorming": "Task decomposition for progress bar feature",
+    "frontend-design": "ARIA progressbar role and responsive CSS needed",
+    "two-stage-review": "Spec compliance check against plan.md"
+  },
+  "generated_skills": []
+}
+PLAN_EOF
+
+echo "  ── Loading skills from plan ──"
+
+# Test: load plan stage skills
+plan_content=$(ARTIFACTS_DIR="$_test_artifacts" skill_load_from_plan "plan" 2>/dev/null || true)
+assert_contains "$plan_content" "brainstorming" "plan stage loads brainstorming skill"
+assert_contains "$plan_content" "frontend-design" "plan stage loads frontend-design skill content"
+assert_contains "$plan_content" "ARIA progressbar" "plan stage includes rationale"
+assert_contains "$plan_content" "Task decomposition" "plan stage includes brainstorming rationale"
+
+# Test: load build stage skills
+build_content=$(ARTIFACTS_DIR="$_test_artifacts" skill_load_from_plan "build" 2>/dev/null || true)
+assert_contains "$build_content" "frontend-design" "build stage loads frontend-design"
+assert_not_contains "$build_content" "brainstorming" "build stage does NOT load brainstorming"
+
+# Test: empty stage returns empty
+deploy_content=$(ARTIFACTS_DIR="$_test_artifacts" skill_load_from_plan "deploy" 2>/dev/null || true)
+assert_eq "" "$(echo "$deploy_content" | tr -d '[:space:]')" "empty stage returns empty"
+
+# Test: missing skill-plan.json falls back to skill_select_adaptive
+_no_plan_dir=$(mktemp -d)
+fallback_content=$(ARTIFACTS_DIR="$_no_plan_dir" INTELLIGENCE_ISSUE_TYPE="frontend" skill_load_from_plan "plan" 2>/dev/null || true)
+assert_contains "$fallback_content" "brainstorming\|frontend\|Socratic" "fallback to adaptive when no plan"
+rm -rf "$_no_plan_dir"
+
+# Test: refinements are appended
+mkdir -p "$SKILLS_DIR/generated/_refinements"
+echo "REFINEMENT: Always check stat-bar CSS pattern reuse." > "$SKILLS_DIR/generated/_refinements/frontend-design.patch.md"
+plan_content=$(ARTIFACTS_DIR="$_test_artifacts" skill_load_from_plan "plan" 2>/dev/null || true)
+assert_contains "$plan_content" "REFINEMENT" "refinement patch appended to skill"
+rm -f "$SKILLS_DIR/generated/_refinements/frontend-design.patch.md"
+
+rm -rf "$_test_artifacts"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

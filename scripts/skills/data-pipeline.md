@@ -31,3 +31,14 @@ Apply these data engineering patterns:
 - Use dead letter queues for failed processing
 - Set timeouts on all external calls
 - Monitor queue depths and processing latency
+
+### Required Output (Mandatory)
+
+Your output MUST include these sections when this skill is active:
+
+1. **Schema Changes**: Full migration SQL with both forward and rollback scripts, plus data backfill strategy if required
+2. **Data Flow Diagram**: Text diagram showing data ingestion → processing → output with failure points marked
+3. **Idempotency Strategy**: How the system handles duplicate requests (idempotency keys, deduplication, side-effect safety)
+4. **Rollback Plan**: Step-by-step process to revert schema changes and restore data consistency
+
+If any section is not applicable, explicitly state why it's skipped.

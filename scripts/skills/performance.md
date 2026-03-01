@@ -35,3 +35,14 @@ Apply these optimization patterns:
 - Include before/after benchmarks for performance changes
 - Test with realistic data volumes (not just unit test fixtures)
 - Measure p50, p95, p99 latencies — not just averages
+
+### Required Output (Mandatory)
+
+Your output MUST include these sections when this skill is active:
+
+1. **Baseline Metrics**: Current performance metrics before optimization (p50/p95/p99 latency, throughput, resource usage)
+2. **Optimization Targets**: Specific targets (e.g., "reduce p95 latency from 250ms to <100ms") with rationale
+3. **Profiling Strategy**: Tools and methodology to identify bottlenecks (CPU profiler, memory profiler, query analyzer, benchmarks)
+4. **Benchmark Plan**: Before/after benchmarks with realistic data volume and success criteria for each optimization
+
+If any section is not applicable, explicitly state why it's skipped.

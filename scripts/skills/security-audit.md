@@ -36,3 +36,14 @@ Apply OWASP Top 10 and security best practices:
 - Check for known vulnerabilities in dependencies
 - Pin dependency versions to prevent supply chain attacks
 - Review new dependencies before adding them
+
+### Required Output (Mandatory)
+
+Your output MUST include these sections when this skill is active:
+
+1. **Threat Model (STRIDE)**: Identify threats across Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege
+2. **Auth Flow**: Step-by-step diagram of authentication/authorization flow with session/token handling
+3. **Input Validation Points**: List all places where user input enters the system and how each is validated/sanitized
+4. **Security Checklist**: Items verified (no secrets in code, secrets rotated, HTTPS enforced, CORS configured, rate limiting applied)
+
+If any section is not applicable, explicitly state why it's skipped.

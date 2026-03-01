@@ -276,4 +276,101 @@ assert_eq "Architecture template" "architecture" "$(template_for_type architectu
 assert_eq "Feature template" "feature-dev" "$(template_for_type feature)"
 assert_eq "Unknown template" "feature-dev" "$(template_for_type other)"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# _detect_package_manager
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "_detect_package_manager"
+
+# npm (default)
+rm -f "$PROJECT_ROOT"/*.lock "$PROJECT_ROOT"/*.lockb "$PROJECT_ROOT"/*.yaml
+result=$(_detect_package_manager "$PROJECT_ROOT")
+assert_eq "No lockfile defaults to npm" "npm" "$result"
+
+# pnpm
+touch "$PROJECT_ROOT/pnpm-lock.yaml"
+result=$(_detect_package_manager "$PROJECT_ROOT")
+assert_eq "pnpm-lock.yaml detected" "pnpm" "$result"
+rm -f "$PROJECT_ROOT/pnpm-lock.yaml"
+
+# bun
+touch "$PROJECT_ROOT/bun.lockb"
+result=$(_detect_package_manager "$PROJECT_ROOT")
+assert_eq "bun.lockb detected" "bun" "$result"
+rm -f "$PROJECT_ROOT/bun.lockb"
+
+# yarn
+touch "$PROJECT_ROOT/yarn.lock"
+result=$(_detect_package_manager "$PROJECT_ROOT")
+assert_eq "yarn.lock detected" "yarn" "$result"
+rm -f "$PROJECT_ROOT/yarn.lock"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# detect_test_commands (plural)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_test_commands"
+
+# Single test script returns just primary
+cat > "$PROJECT_ROOT/package.json" <<'JSON'
+{"scripts":{"test":"jest"}}
+JSON
+result=$(detect_test_commands)
+line_count=$(echo "$result" | wc -l | tr -d ' ')
+assert_eq "Single test script returns 1 command" "1" "$line_count"
+assert_eq "Primary command is npm test" "npm test" "$(echo "$result" | head -1)"
+
+# Multiple test:* scripts
+cat > "$PROJECT_ROOT/package.json" <<'JSON'
+{"scripts":{"test":"jest","test:e2e":"jest --config e2e.config.js","test:unit":"jest --testPathPattern unit"}}
+JSON
+result=$(detect_test_commands)
+line_count=$(echo "$result" | wc -l | tr -d ' ')
+assert_eq "Multiple test:* scripts returns 3 commands" "3" "$line_count"
+assert_eq "Primary command first" "npm test" "$(echo "$result" | head -1)"
+# Additional commands should be npm run test:e2e and npm run test:unit
+if echo "$result" | grep -q "npm run test:e2e"; then
+    assert_pass "test:e2e included"
+else
+    assert_fail "test:e2e included"
+fi
+if echo "$result" | grep -q "npm run test:unit"; then
+    assert_pass "test:unit included"
+else
+    assert_fail "test:unit included"
+fi
+
+# Subdirectory with package.json
+mkdir -p "$PROJECT_ROOT/dashboard"
+cat > "$PROJECT_ROOT/dashboard/package.json" <<'JSON'
+{"scripts":{"test":"bun test"}}
+JSON
+touch "$PROJECT_ROOT/dashboard/bun.lockb"
+cat > "$PROJECT_ROOT/package.json" <<'JSON'
+{"scripts":{"test":"jest"}}
+JSON
+result=$(detect_test_commands)
+if echo "$result" | grep -q 'cd.*dashboard.*test'; then
+    assert_pass "Subdirectory test runner discovered"
+else
+    assert_fail "Subdirectory test runner discovered" "got: $result"
+fi
+
+# Subdirectory with "no test specified" is excluded
+cat > "$PROJECT_ROOT/dashboard/package.json" <<'JSON'
+{"scripts":{"test":"echo \"Error: no test specified\" && exit 1"}}
+JSON
+result=$(detect_test_commands)
+if echo "$result" | grep -q 'dashboard'; then
+    assert_fail "Subdirectory with 'no test' excluded"
+else
+    assert_pass "Subdirectory with 'no test' excluded"
+fi
+
+# Cleanup
+rm -rf "$PROJECT_ROOT/dashboard"
+rm -f "$PROJECT_ROOT/package.json"
+
+# Empty project returns nothing
+result=$(detect_test_commands)
+assert_eq "Empty project returns empty" "" "$result"
+
 print_test_results

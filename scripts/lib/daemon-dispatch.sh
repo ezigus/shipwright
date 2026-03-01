@@ -242,6 +242,9 @@ daemon_spawn_pipeline() {
         pipeline_args+=("${extra_pipeline_args[@]}")
     fi
 
+    # Ensure issue type is available for skill injection in pipeline
+    export INTELLIGENCE_ISSUE_TYPE="${INTELLIGENCE_ISSUE_TYPE:-backend}"
+
     # Run pipeline in work directory (background)
     # Ignore SIGHUP so tmux attach/detach and process group changes don't kill the pipeline
     echo -e "\n\n===== Pipeline run $(date -u +%Y-%m-%dT%H:%M:%SZ) =====" >> "$LOG_DIR/issue-${issue_num}.log" 2>/dev/null || true

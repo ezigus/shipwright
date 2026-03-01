@@ -31,3 +31,14 @@ Apply these API design patterns:
 - Use principle of least privilege for authorization
 - Validate tokens/sessions on each request
 - Rate limit sensitive endpoints (login, password reset)
+
+### Required Output (Mandatory)
+
+Your output MUST include these sections when this skill is active:
+
+1. **Endpoint Specification**: For each endpoint: HTTP method, path, request body schema, response schema, success/error status codes
+2. **Error Codes**: Complete list of all possible error responses with status code and error message format
+3. **Rate Limiting**: If applicable, specify rate limit strategy (requests per minute, burst limits, throttle behavior)
+4. **Versioning**: API version number and deprecation policy if breaking changes are possible
+
+If any section is not applicable, explicitly state why it's skipped.

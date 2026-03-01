@@ -26,3 +26,13 @@ This is a documentation change. The following pipeline stages can be simplified:
 - **Build stage**: Focus on file edits only, no compilation needed
 - **Test stage**: Verify links work and examples are syntactically correct
 - **Review stage**: Focus on accuracy and clarity, not code patterns
+
+### Required Output (Mandatory)
+
+Your output MUST include these sections when this skill is active:
+
+1. **What to Document**: List of documentation files created/modified with specific sections added to each
+2. **What to Skip**: Explicitly state which topics are NOT documented and why (e.g., "Advanced topic X is out of scope for this issue")
+3. **Audience**: Who will read this documentation (developers, users, operators) and what level of detail is appropriate
+
+If any section is not applicable, explicitly state why it's skipped.

@@ -32,3 +32,14 @@ Apply these frontend patterns to your implementation:
 - Show loading indicators for operations > 300ms
 - Use optimistic updates where safe
 - Preserve user input on errors — never clear forms on failed submit
+
+### Required Output (Mandatory)
+
+Your output MUST include these sections when this skill is active:
+
+1. **Component Hierarchy**: Tree structure showing parent/child relationships and where state lives
+2. **State Management Approach**: How state flows (props, context, local state, external store) with explicit data flow
+3. **Accessibility Checklist**: WCAG AA compliance items checked (keyboard support, semantic HTML, color contrast, aria-labels)
+4. **Responsive Breakpoints**: Explicit breakpoints tested (320px, 768px, 1024px, 1440px) and how layout changes at each
+
+If any section is not applicable, explicitly state why it's skipped.

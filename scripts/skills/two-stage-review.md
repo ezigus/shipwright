@@ -34,3 +34,19 @@ For each issue found, use format:
 - **[SEVERITY]** file:line — description
 
 Severity: Critical, Bug, Security, Warning, Suggestion
+
+### Required Output (Mandatory)
+
+Your output MUST include these sections for EACH review pass:
+
+**Pass 1 Output:**
+- **Spec Compliance Verdict**: PASS or FAIL with explicit gaps found (if any)
+- **Unimplemented Tasks**: List any planned tasks NOT in the code
+- **Unplanned Code**: List any code added that was NOT in the plan
+
+**Pass 2 Output:**
+- **Code Quality Verdict**: PASS or list all findings by severity
+- **Critical/Security Issues Found**: Explicit count with file:line references
+- **Suggested Improvements**: Optional suggestions that don't block PASS
+
+If any finding is not applicable, explicitly state why it's skipped.

@@ -940,6 +940,25 @@ run_stage_with_retry() {
         fi
 
         attempt=$((attempt + 1))
+
+        # Critical fix: if plan stage already has a valid artifact, skip retry
+        if [[ "$stage_id" == "plan" ]]; then
+            local plan_artifact="${ARTIFACTS_DIR}/plan.md"
+            if [[ -s "$plan_artifact" ]]; then
+                local existing_lines
+                existing_lines=$(wc -l < "$plan_artifact" 2>/dev/null | xargs)
+                existing_lines="${existing_lines:-0}"
+                if [[ "$existing_lines" -gt 10 ]]; then
+                    info "Plan already exists (${existing_lines} lines) — skipping retry, advancing"
+                    emit_event "retry.skipped_existing_artifact" \
+                        "issue=${ISSUE_NUMBER:-0}" \
+                        "stage=$stage_id" \
+                        "artifact_lines=$existing_lines"
+                    return 0
+                fi
+            fi
+        fi
+
         if [[ "$attempt" -gt "$max_retries" ]]; then
             return 1
         fi
@@ -998,6 +1017,60 @@ run_stage_with_retry() {
         local total_sleep=$((backoff + jitter))
         info "Backing off ${total_sleep}s before retry..."
         sleep "$total_sleep"
+
+        # Write debugging context for the retry attempt to consume
+        local _retry_ctx_file="${ARTIFACTS_DIR}/.retry-context-${stage_id}.md"
+        {
+            echo "## Previous Attempt Failed"
+            echo ""
+            echo "**Error classification:** ${error_class}"
+            echo "**Attempt:** ${attempt} of $((max_retries + 1))"
+            echo ""
+            echo "### Error Output (last 30 lines)"
+            echo '```'
+            tail -30 "$_log_file" 2>/dev/null || echo "(no log available)"
+            echo '```'
+            echo ""
+            # Check for existing artifacts that should be preserved
+            local _existing_artifacts=""
+            for _af in plan.md design.md test-results.log; do
+                if [[ -s "${ARTIFACTS_DIR}/${_af}" ]]; then
+                    local _af_lines
+                    _af_lines=$(wc -l < "${ARTIFACTS_DIR}/${_af}" 2>/dev/null | xargs)
+                    _existing_artifacts="${_existing_artifacts}  - ${_af} (${_af_lines} lines)\n"
+                fi
+            done
+            if [[ -n "$_existing_artifacts" ]]; then
+                echo "### Existing Artifacts (PRESERVE these)"
+                echo -e "$_existing_artifacts"
+                echo "These artifacts exist from previous successful stages. Use them as-is unless they are the source of the problem."
+                echo ""
+            fi
+            # Adaptive: check if additional skills could help this retry
+            if type skill_memory_get_recommendations >/dev/null 2>&1; then
+                local _retry_skills
+                _retry_skills=$(skill_memory_get_recommendations "${INTELLIGENCE_ISSUE_TYPE:-backend}" "$stage_id" 2>/dev/null || true)
+                if [[ -n "$_retry_skills" ]]; then
+                    echo "### Skills Recommended by Learning System"
+                    echo "Based on historical success rates, these skills may improve the retry:"
+                    echo "- $(printf '%s' "$_retry_skills" | sed 's/,/\n- /g')"
+                    echo ""
+                fi
+            fi
+
+            echo "### Investigation Required"
+            echo "Before attempting a fix:"
+            echo "1. Read the error output above carefully"
+            echo "2. Identify the ROOT CAUSE — not just the symptom"
+            echo "3. If previous artifacts exist and are correct, build on them"
+            echo "4. If previous artifacts are flawed, explain what's wrong before fixing"
+        } > "$_retry_ctx_file" 2>/dev/null || true
+
+        emit_event "retry.context_written" \
+            "issue=${ISSUE_NUMBER:-0}" \
+            "stage=$stage_id" \
+            "attempt=$attempt" \
+            "context_file=$_retry_ctx_file"
     done
 }
 

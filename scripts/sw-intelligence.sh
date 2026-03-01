@@ -423,6 +423,28 @@ _intelligence_fallback_analyze() {
         fi
     fi
 
+    # Issue type classification from labels
+    local issue_type="backend"
+    if echo "$labels" | grep -qiE 'ui|frontend|css|design' 2>/dev/null; then
+        issue_type="frontend"
+    elif echo "$labels" | grep -qiE 'api|endpoint|rest|graphql' 2>/dev/null; then
+        issue_type="api"
+    elif echo "$labels" | grep -qiE 'db|migration|schema|database' 2>/dev/null; then
+        issue_type="database"
+    elif echo "$labels" | grep -qiE 'security|auth|cve' 2>/dev/null; then
+        issue_type="security"
+    elif echo "$labels" | grep -qiE 'perf|slow|latency|performance' 2>/dev/null; then
+        issue_type="performance"
+    elif echo "$labels" | grep -qiE 'test|coverage' 2>/dev/null; then
+        issue_type="testing"
+    elif echo "$labels" | grep -qiE 'docs|readme|documentation' 2>/dev/null; then
+        issue_type="documentation"
+    elif echo "$labels" | grep -qiE 'infra|ci|deploy|infrastructure' 2>/dev/null; then
+        issue_type="infrastructure"
+    elif echo "$labels" | grep -qiE 'refactor|cleanup' 2>/dev/null; then
+        issue_type="refactor"
+    fi
+
     # Label-based heuristics (better than nothing)
     if echo "$labels" | grep -qiE 'bug|fix|hotfix' 2>/dev/null; then
         complexity=$((complexity > 3 ? complexity - 2 : complexity))
@@ -448,7 +470,7 @@ _intelligence_fallback_analyze() {
         complexity=$((complexity + 2 > 10 ? 10 : complexity + 2))
     fi
 
-    echo "{\"complexity\":$complexity,\"risk_level\":\"$risk\",\"success_probability\":$probability,\"recommended_template\":\"$template\"}"
+    echo "{\"complexity\":$complexity,\"risk_level\":\"$risk\",\"success_probability\":$probability,\"recommended_template\":\"$template\",\"issue_type\":\"$issue_type\"}"
 }
 
 _intelligence_fallback_cost() {
@@ -500,7 +522,7 @@ intelligence_analyze_issue() {
         if [[ -n "${merged:-}" ]]; then
             echo "$merged"
         else
-            echo '{"error":"intelligence_disabled","complexity":5,"risk_level":"medium","success_probability":50,"recommended_template":"standard","key_risks":[],"implementation_hints":[]}'
+            echo '{"error":"intelligence_disabled","complexity":5,"risk_level":"medium","success_probability":50,"recommended_template":"standard","issue_type":"backend","key_risks":[],"implementation_hints":[]}'
         fi
         return 0
     fi
@@ -518,6 +540,7 @@ Return JSON with exactly these fields:
   \"risk_level\": \"<low|medium|high|critical>\",
   \"success_probability\": <number 0-100>,
   \"recommended_template\": \"<fast|standard|full|hotfix|autonomous|enterprise|cost-aware>\",
+  \"issue_type\": \"<frontend|backend|api|database|infrastructure|documentation|security|performance|refactor|testing>\",
   \"key_risks\": [\"risk1\", \"risk2\"],
   \"implementation_hints\": [\"hint1\", \"hint2\"]
 }"
@@ -540,7 +563,8 @@ Return JSON with exactly these fields:
             "complexity=$(echo "$result" | jq -r '.complexity')" \
             "risk_level=$(echo "$result" | jq -r '.risk_level')" \
             "success_probability=$(echo "$result" | jq -r '.success_probability')" \
-            "recommended_template=$(echo "$result" | jq -r '.recommended_template')"
+            "recommended_template=$(echo "$result" | jq -r '.recommended_template')" \
+            "issue_type=$(echo "$result" | jq -r '.issue_type // "backend"')"
 
         # Enrich with GitHub data if available
         result=$(intelligence_github_enrich "$result")
@@ -550,7 +574,7 @@ Return JSON with exactly these fields:
     else
         local fallback
         fallback=$(_intelligence_fallback_analyze "$title" "$body" "$labels")
-        echo "$fallback" | jq -c '. + {error: "analysis_failed", key_risks: ["analysis_failed"], implementation_hints: []}' 2>/dev/null || echo '{"error":"analysis_failed","complexity":5,"risk_level":"medium","success_probability":50,"recommended_template":"standard","key_risks":["analysis_failed"],"implementation_hints":[]}'
+        echo "$fallback" | jq -c '. + {error: "analysis_failed", key_risks: ["analysis_failed"], implementation_hints: []}' 2>/dev/null || echo '{"error":"analysis_failed","complexity":5,"risk_level":"medium","success_probability":50,"recommended_template":"standard","issue_type":"backend","key_risks":["analysis_failed"],"implementation_hints":[]}'
         return 0
     fi
 }

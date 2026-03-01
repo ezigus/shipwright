@@ -26,6 +26,16 @@ Consider the user perspective in your implementation:
 - Don't overwhelm with options — provide sensible defaults
 - Use contextual help instead of documentation
 
+### Required Output (Mandatory)
+
+Your output MUST include these sections when this skill is active:
+
+1. **User Stories**: In "As a..., I want..., So that..." format with at least one primary and one secondary user story
+2. **Acceptance Criteria**: Given/When/Then format for how to verify the feature works from the user's perspective
+3. **Edge Cases from User Perspective**: At least 3 specific scenarios (empty state, error state, overload state)
+
+If any section is not applicable, explicitly state why it's skipped.
+
 ### Feedback & Communication
 - Confirm successful actions immediately
 - Explain errors in plain language — not error codes

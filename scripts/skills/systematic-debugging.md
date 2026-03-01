@@ -27,3 +27,14 @@ A previous attempt at this stage FAILED. Do NOT blindly retry the same approach.
 - Document what went wrong and why the new approach is better
 
 IMPORTANT: If you find existing artifacts from a successful previous stage, USE them — don't regenerate from scratch.
+
+### Required Output (Mandatory)
+
+Your output MUST include these sections when this skill is active:
+
+1. **Root Cause Hypothesis**: List 3 possible root causes ranked by likelihood with specific evidence that would confirm/deny each
+2. **Evidence Gathered**: Exact file:line location of failure, error messages, logs, code examination results, artifact validation (plan.md, design.md correctness)
+3. **Fix Strategy**: Description of the ROOT CAUSE fix (not the symptom), with rationale for why this approach differs from the previous failed attempt
+4. **Verification Plan**: How to verify the fix works (test cases, specific checks, expected behavior confirmation)
+
+If any section is not applicable, explicitly state why it's skipped.

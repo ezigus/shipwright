@@ -35,3 +35,13 @@ Apply these testing patterns:
 - Write a failing test FIRST that reproduces the bug
 - Then fix the bug and verify the test passes
 - Keep regression tests — they prevent the bug from recurring
+
+### Required Output (Mandatory)
+
+Your output MUST include these sections when this skill is active:
+
+1. **Test Pyramid Breakdown**: Explicit count of unit/integration/E2E tests and their coverage targets (e.g., "70 unit tests covering business logic, 12 integration tests for API boundaries, 3 E2E tests for critical paths")
+2. **Coverage Targets**: Target coverage percentage per layer and which critical paths MUST be tested
+3. **Critical Paths to Test**: Specific test cases for the happy path, 2+ error cases, and 2+ edge cases
+
+If any section is not applicable, explicitly state why it's skipped.

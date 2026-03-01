@@ -104,6 +104,9 @@ AUDIT_RESULT=""
 COMPLETION_REJECTED=false
 QUALITY_GATE_PASSED=true
 
+# ─── Multi-Test Defaults ──────────────────────────────────────────────────
+ADDITIONAL_TEST_CMDS=()   # Array of extra test commands (from --additional-test-cmds)
+
 # ─── Parse Arguments ──────────────────────────────────────────────────────────
 show_help() {
     echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${VERSION}${RESET} — ${BOLD}Continuous Loop${RESET}"
@@ -118,6 +121,7 @@ show_help() {
     echo -e "  ${CYAN}--test-cmd${RESET} \"cmd\"         Test command to run between iterations"
     echo -e "  ${CYAN}--fast-test-cmd${RESET} \"cmd\"      Fast/subset test command (alternates with full)"
     echo -e "  ${CYAN}--fast-test-interval${RESET} N       Run full tests every N iterations (default: 5)"
+    echo -e "  ${CYAN}--additional-test-cmds${RESET} \"cmd\" Extra test command (repeatable)"
     echo -e "  ${CYAN}--model${RESET} MODEL             Claude model to use (default: opus)"
     echo -e "  ${CYAN}--agents${RESET} N                Number of parallel agents (default: 1)"
     echo -e "  ${CYAN}--roles${RESET} \"r1,r2,...\"        Role per agent: builder,reviewer,tester,optimizer,docs,security"
@@ -242,6 +246,12 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --fast-test-interval=*) FAST_TEST_INTERVAL="${1#--fast-test-interval=}"; shift ;;
+        --additional-test-cmds)
+            ADDITIONAL_TEST_CMDS+=("${2:-}")
+            [[ -z "${2:-}" ]] && { error "Missing value for --additional-test-cmds"; exit 1; }
+            shift 2
+            ;;
+        --additional-test-cmds=*) ADDITIONAL_TEST_CMDS+=("${1#--additional-test-cmds=}"); shift ;;
         --max-restarts)
             MAX_RESTARTS="${2:-}"
             [[ -z "$MAX_RESTARTS" ]] && { error "Missing value for --max-restarts"; exit 1; }
@@ -878,7 +888,7 @@ INSTRUCTION: This error has occurred $repeat_count times. The previous approach 
 # ─── Test Gate ────────────────────────────────────────────────────────────────
 
 run_test_gate() {
-    if [[ -z "$TEST_CMD" ]]; then
+    if [[ -z "$TEST_CMD" ]] && [[ ${#ADDITIONAL_TEST_CMDS[@]} -eq 0 ]]; then
         TEST_PASSED=""
         TEST_OUTPUT=""
         return
@@ -898,24 +908,81 @@ run_test_gate() {
         fi
     fi
 
-    local test_log="$LOG_DIR/tests-iter-${ITERATION}.log"
-    TEST_LOG_FILE="$test_log"
-    echo -e "  ${DIM}Running ${test_mode} tests...${RESET}"
-    # Wrap test command with timeout (5 min default) to prevent hanging
+    local all_passed=true
+    local test_results="[]"
+    local combined_output=""
     local test_timeout="${SW_TEST_TIMEOUT:-300}"
-    local test_wrapper="$active_test_cmd"
-    if command -v timeout >/dev/null 2>&1; then
-        test_wrapper="timeout ${test_timeout} bash -c $(printf '%q' "$active_test_cmd")"
-    elif command -v gtimeout >/dev/null 2>&1; then
-        test_wrapper="gtimeout ${test_timeout} bash -c $(printf '%q' "$active_test_cmd")"
+
+    # Run primary test command
+    if [[ -n "$active_test_cmd" ]]; then
+        local test_log="$LOG_DIR/tests-iter-${ITERATION}.log"
+        TEST_LOG_FILE="$test_log"
+        echo -e "  ${DIM}Running ${test_mode} tests...${RESET}"
+
+        local test_wrapper="$active_test_cmd"
+        if command -v timeout >/dev/null 2>&1; then
+            test_wrapper="timeout ${test_timeout} bash -c $(printf '%q' "$active_test_cmd")"
+        elif command -v gtimeout >/dev/null 2>&1; then
+            test_wrapper="gtimeout ${test_timeout} bash -c $(printf '%q' "$active_test_cmd")"
+        fi
+
+        local start_ts exit_code=0
+        start_ts=$(date +%s)
+        bash -c "$test_wrapper" > "$test_log" 2>&1 || exit_code=$?
+        local duration=$(( $(date +%s) - start_ts ))
+
+        if command -v jq >/dev/null 2>&1; then
+            test_results=$(echo "$test_results" | jq --arg cmd "$active_test_cmd" \
+                --argjson exit "$exit_code" --argjson dur "$duration" \
+                '. + [{"command": $cmd, "exit_code": $exit, "duration_s": $dur}]')
+        fi
+
+        [[ "$exit_code" -ne 0 ]] && all_passed=false
+        combined_output+="$(cat "$test_log" 2>/dev/null)"$'\n'
     fi
-    if bash -c "$test_wrapper" > "$test_log" 2>&1; then
-        TEST_PASSED=true
-        TEST_OUTPUT="All tests passed (${test_mode} mode)."
-    else
-        TEST_PASSED=false
-        TEST_OUTPUT="$(tail -50 "$test_log")"
+
+    # Run additional test commands (discovered or explicit)
+    # Mid-build discovery: find test files created since loop start
+    local mid_build_cmds=()
+    if [[ -n "${LOOP_START_COMMIT:-}" ]] && type detect_created_test_files >/dev/null 2>&1; then
+        readarray -t mid_build_cmds < <(detect_created_test_files "$LOOP_START_COMMIT" 2>/dev/null || true)
     fi
+    local all_extra=("${ADDITIONAL_TEST_CMDS[@]+"${ADDITIONAL_TEST_CMDS[@]}"}" "${mid_build_cmds[@]+"${mid_build_cmds[@]}"}")
+
+    for extra_cmd in "${all_extra[@]+"${all_extra[@]}"}"; do
+        [[ -z "$extra_cmd" ]] && continue
+        local extra_log="${LOG_DIR}/tests-extra-iter-${ITERATION}.log"
+        echo -e "  ${DIM}Running additional: ${extra_cmd}${RESET}"
+
+        local extra_wrapper="$extra_cmd"
+        if command -v timeout >/dev/null 2>&1; then
+            extra_wrapper="timeout ${test_timeout} bash -c $(printf '%q' "$extra_cmd")"
+        elif command -v gtimeout >/dev/null 2>&1; then
+            extra_wrapper="gtimeout ${test_timeout} bash -c $(printf '%q' "$extra_cmd")"
+        fi
+
+        local start_ts exit_code=0
+        start_ts=$(date +%s)
+        bash -c "$extra_wrapper" >> "$extra_log" 2>&1 || exit_code=$?
+        local duration=$(( $(date +%s) - start_ts ))
+
+        if command -v jq >/dev/null 2>&1; then
+            test_results=$(echo "$test_results" | jq --arg cmd "$extra_cmd" \
+                --argjson exit "$exit_code" --argjson dur "$duration" \
+                '. + [{"command": $cmd, "exit_code": $exit, "duration_s": $dur}]')
+        fi
+
+        [[ "$exit_code" -ne 0 ]] && all_passed=false
+        combined_output+="$(cat "$extra_log" 2>/dev/null)"$'\n'
+    done
+
+    # Write structured test evidence
+    if command -v jq >/dev/null 2>&1; then
+        echo "$test_results" > "${LOG_DIR}/test-evidence-iter-${ITERATION}.json"
+    fi
+
+    TEST_PASSED=$all_passed
+    TEST_OUTPUT="$(echo "$combined_output" | tail -50)"
 }
 
 write_error_summary() {
@@ -1006,7 +1073,18 @@ run_audit_agent() {
 
     # Include verified test status so auditor doesn't have to guess
     local test_context=""
-    if [[ -n "$TEST_CMD" ]]; then
+    local evidence_file="${LOG_DIR}/test-evidence-iter-${ITERATION}.json"
+    if [[ -f "$evidence_file" ]] && command -v jq >/dev/null 2>&1; then
+        local cmd_count total_cmds evidence_detail
+        cmd_count=$(jq 'length' "$evidence_file" 2>/dev/null || echo 0)
+        total_cmds=$(jq -r '[.[].command] | join(", ")' "$evidence_file" 2>/dev/null || echo "unknown")
+        evidence_detail=$(jq -r '.[] | "- \(.command): exit \(.exit_code) (\(.duration_s)s)"' "$evidence_file" 2>/dev/null || echo "")
+        test_context="## Verified Test Status (from harness, not from agent)
+Test commands run: ${cmd_count} (${total_cmds})
+${evidence_detail}
+Overall: $(if [[ "${TEST_PASSED:-}" == "true" ]]; then echo "ALL PASSING"; else echo "FAILING"; fi)"
+    elif [[ -n "$TEST_CMD" ]]; then
+        # Fallback to existing boolean
         if [[ "${TEST_PASSED:-}" == "true" ]]; then
             test_context="## Verified Test Status (from harness, not from agent)
 Tests: ALL PASSING (command: ${TEST_CMD})"
@@ -2118,6 +2196,41 @@ ${GOAL}"
 
         # Audit agent (reviews implementer's work)
         run_audit_agent
+
+        # Verification gap detection: audit failed but tests passed
+        # Instead of a full retry (which causes context bloat/timeout), run targeted verification
+        if [[ "${AUDIT_RESULT:-}" != "pass" ]] && [[ "${TEST_PASSED:-}" == "true" ]]; then
+            echo -e "  ${YELLOW}▸${RESET} Verification gap detected (tests pass, audit disagrees)"
+
+            local verification_passed=true
+
+            # 1. Re-run ALL test commands to double-check
+            local recheck_log="${LOG_DIR}/verification-iter-${ITERATION}.log"
+            if [[ -n "$TEST_CMD" ]]; then
+                eval "$TEST_CMD" > "$recheck_log" 2>&1 || verification_passed=false
+            fi
+            for _vg_cmd in "${ADDITIONAL_TEST_CMDS[@]+"${ADDITIONAL_TEST_CMDS[@]}"}"; do
+                [[ -z "$_vg_cmd" ]] && continue
+                eval "$_vg_cmd" >> "$recheck_log" 2>&1 || verification_passed=false
+            done
+
+            # 2. Check for uncommitted changes (quality gate)
+            if ! git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null; then
+                echo -e "  ${YELLOW}⚠${RESET} Uncommitted changes detected"
+                verification_passed=false
+            fi
+
+            if [[ "$verification_passed" == "true" ]]; then
+                echo -e "  ${GREEN}✓${RESET} Verification passed — overriding audit"
+                AUDIT_RESULT="pass"
+                emit_event "loop.verification_gap_resolved" \
+                    "iteration=$ITERATION" "action=override_audit"
+            else
+                echo -e "  ${RED}✗${RESET} Verification failed — audit stands"
+                emit_event "loop.verification_gap_confirmed" \
+                    "iteration=$ITERATION" "action=retry"
+            fi
+        fi
 
         # Quality gates (automated checks)
         run_quality_gates

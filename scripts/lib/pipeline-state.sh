@@ -193,6 +193,14 @@ mark_stage_complete() {
         _stage_secs=$(get_stage_timing_seconds "$stage_id")
         record_stage "${SHIPWRIGHT_PIPELINE_ID:-}" "$stage_id" "complete" "${_stage_secs:-0}" "" 2>/dev/null || true
     fi
+
+    # Record skill outcome for learning system
+    if type skill_memory_record >/dev/null 2>&1; then
+        local _used_skills
+        _used_skills=$(skill_get_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "$stage_id" 2>/dev/null | xargs -I{} basename {} .md | tr '\n' ',' | sed 's/,$//')
+        [[ -n "$_used_skills" ]] && skill_memory_record "${INTELLIGENCE_ISSUE_TYPE:-backend}" "$stage_id" "$_used_skills" "success" "1" 2>/dev/null || true
+    fi
+
     # Update memory baselines and predictive baselines for stage durations
     if [[ "$stage_id" == "test" || "$stage_id" == "build" ]]; then
         local secs
@@ -376,6 +384,13 @@ mark_stage_failed() {
         local _stage_secs
         _stage_secs=$(get_stage_timing_seconds "$stage_id")
         record_stage "${SHIPWRIGHT_PIPELINE_ID:-}" "$stage_id" "failed" "${_stage_secs:-0}" "" 2>/dev/null || true
+    fi
+
+    # Record skill failure for learning system
+    if type skill_memory_record >/dev/null 2>&1; then
+        local _used_skills
+        _used_skills=$(skill_get_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "$stage_id" 2>/dev/null | xargs -I{} basename {} .md | tr '\n' ',' | sed 's/,$//')
+        [[ -n "$_used_skills" ]] && skill_memory_record "${INTELLIGENCE_ISSUE_TYPE:-backend}" "$stage_id" "$_used_skills" "failure" "1" 2>/dev/null || true
     fi
 
     # Update GitHub progress + comment failure

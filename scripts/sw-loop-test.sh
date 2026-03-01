@@ -704,6 +704,95 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# MULTI-TEST GATE TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${DIM}  multi-test gate${RESET}"
+
+# Test: ADDITIONAL_TEST_CMDS appears in source
+if grep -q 'ADDITIONAL_TEST_CMDS' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "ADDITIONAL_TEST_CMDS variable defined"
+else
+    assert_fail "ADDITIONAL_TEST_CMDS variable defined"
+fi
+
+# Test: --additional-test-cmds flag in arg parser
+if grep -q '\-\-additional-test-cmds' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "--additional-test-cmds flag in arg parser"
+else
+    assert_fail "--additional-test-cmds flag in arg parser"
+fi
+
+# Test: --help mentions --additional-test-cmds
+output=$(bash "$SCRIPT_DIR/sw-loop.sh" --help 2>&1 | sed $'s/\033\[[0-9;]*m//g') && rc=0 || rc=$?
+if echo "$output" | grep -q 'additional-test-cmds'; then
+    assert_pass "--help documents --additional-test-cmds"
+else
+    assert_fail "--help documents --additional-test-cmds"
+fi
+
+# Test: test-evidence JSON file written
+if grep -q 'test-evidence-iter-' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "run_test_gate writes test-evidence JSON"
+else
+    assert_fail "run_test_gate writes test-evidence JSON"
+fi
+
+# Test: audit agent reads evidence file
+if grep -q 'evidence_file.*test-evidence' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "run_audit_agent reads structured test evidence"
+else
+    assert_fail "run_audit_agent reads structured test evidence"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VERIFICATION GAP TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${DIM}  verification gap handler${RESET}"
+
+# Test: verification gap detection exists in source
+if grep -q 'Verification gap detected' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Verification gap detection present"
+else
+    assert_fail "Verification gap detection present"
+fi
+
+# Test: verification gap emits events
+if grep -q 'loop.verification_gap_resolved' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Verification gap resolved event emitted"
+else
+    assert_fail "Verification gap resolved event emitted"
+fi
+
+if grep -q 'loop.verification_gap_confirmed' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Verification gap confirmed event emitted"
+else
+    assert_fail "Verification gap confirmed event emitted"
+fi
+
+# Test: verification gap overrides audit when tests pass
+if grep -q 'override_audit' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Verification gap can override audit result"
+else
+    assert_fail "Verification gap can override audit result"
+fi
+
+# Test: verification checks for uncommitted changes
+if grep -q 'verification-iter-' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Verification re-runs tests to dedicated log"
+else
+    assert_fail "Verification re-runs tests to dedicated log"
+fi
+
+# Test: mid-build test discovery uses detect_created_test_files
+if grep -q 'detect_created_test_files' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Mid-build test file discovery integrated"
+else
+    assert_fail "Mid-build test file discovery integrated"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

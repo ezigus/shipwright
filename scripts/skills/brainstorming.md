@@ -1,5 +1,7 @@
 ## Brainstorming: Socratic Design Refinement
 
+**IMPORTANT: You are in an autonomous pipeline. Do NOT ask questions or wait for answers. Instead, answer each question yourself based on the issue context, codebase analysis, and your best judgment. Document your reasoning directly in the plan.**
+
 Before writing the implementation plan, challenge your assumptions with these questions:
 
 ### Requirements Clarity
@@ -28,3 +30,14 @@ Before writing the implementation plan, challenge your assumptions with these qu
 - Would a simpler approach work for 90% of cases?
 
 Document your reasoning in the plan. Show the alternatives you considered and why you chose this approach.
+
+### Required Output (Mandatory)
+
+Your output MUST include these sections when this skill is active:
+
+1. **Task Decomposition**: Numbered list of concrete implementation tasks with explicit dependencies (e.g., "Task 3 blocks Task 5")
+2. **Risk Analysis**: For each identified risk, state what could break and your mitigation strategy
+3. **Definition of Done**: Specific, testable acceptance criteria that prove this issue is resolved
+4. **Alternatives Considered**: At least 2 approaches with explicit trade-offs (complexity, performance, maintainability, blast radius)
+
+If any section is not applicable, explicitly state why it's skipped.

@@ -93,18 +93,7 @@ MOCKEOF
 
 trap cleanup_test_env EXIT
 
-assert_pass() {
-    local desc="$1"
-    echo -e "  ${GREEN}✓${RESET} ${desc}"
-}
-
-assert_fail() {
-    local desc="$1"
-    local detail="${2:-}"
-    FAILURES+=("$desc")
-    echo -e "  ${RED}✗${RESET} ${desc}"
-    [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
-}
+# Use assert_pass/assert_fail from test-helpers.sh (they track TOTAL/PASS/FAIL counters)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TESTS
@@ -115,6 +104,7 @@ print_test_header "Shipwright Loop Tests"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
 
+setup_test_env "sw-loop-test"
 setup_env
 
 # ─── Test 1: --help flag ────────────────────────────────────────────────────
@@ -673,34 +663,31 @@ fi
 echo ""
 echo -e "${DIM}  context efficiency metrics${RESET}"
 
-if grep -q 'emit_event "loop.context_efficiency"' "$SCRIPT_DIR/sw-loop.sh"; then
+# context_efficiency was extracted to loop-iteration.sh sub-module
+_loop_files="$SCRIPT_DIR/sw-loop.sh $SCRIPT_DIR/lib/loop-iteration.sh"
+if grep -q 'emit_event "loop.context_efficiency"' $_loop_files 2>/dev/null; then
     assert_pass "loop.context_efficiency event exists in run_claude_iteration"
 else
     assert_fail "loop.context_efficiency event exists in run_claude_iteration"
 fi
 
-if grep -q 'raw_prompt_chars=' "$SCRIPT_DIR/sw-loop.sh" && grep -q 'trimmed_prompt_chars=' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -q 'raw_prompt_chars=' $_loop_files 2>/dev/null && grep -q 'trimmed_prompt_chars=' $_loop_files 2>/dev/null; then
     assert_pass "Context efficiency emits raw and trimmed char counts"
 else
     assert_fail "Context efficiency emits raw and trimmed char counts"
 fi
 
-if grep -q 'trim_ratio=' "$SCRIPT_DIR/sw-loop.sh" && grep -q 'budget_utilization=' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -q 'trim_ratio=' $_loop_files 2>/dev/null && grep -q 'budget_utilization=' $_loop_files 2>/dev/null; then
     assert_pass "Context efficiency emits trim_ratio and budget_utilization"
 else
     assert_fail "Context efficiency emits trim_ratio and budget_utilization"
 fi
 
 # Verify raw_prompt_chars is captured before manage_context_window trims
-if awk '/raw_prompt_chars=\$\{#prompt\}/' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'raw_prompt_chars'; then
+if grep -q 'raw_prompt_chars=${#prompt}' $_loop_files 2>/dev/null; then
     assert_pass "raw_prompt_chars measured from pre-trim prompt"
 else
-    # Fallback: check that raw_prompt_chars is set from the original prompt variable
-    if grep -q 'raw_prompt_chars=${#prompt}' "$SCRIPT_DIR/sw-loop.sh"; then
-        assert_pass "raw_prompt_chars measured from pre-trim prompt"
-    else
-        assert_fail "raw_prompt_chars measured from pre-trim prompt"
-    fi
+    assert_fail "raw_prompt_chars measured from pre-trim prompt"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

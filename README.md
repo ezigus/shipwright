@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/tests-141_suites_passing-4ade80?style=flat-square" alt="141 suites">
   <img src="https://img.shields.io/badge/version-3.2.4-00d4ff?style=flat-square" alt="v3.2.4">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License">
-  <img src="https://img.shields.io/badge/bash-3.2%2B-7c3aed?style=flat-square" alt="Bash 3.2+">
+  <img src="https://img.shields.io/badge/bash-3.2%2B-555a66?style=flat-square" alt="Bash 3.2+">
 </p>
 
 ---

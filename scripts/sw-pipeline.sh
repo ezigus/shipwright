@@ -166,9 +166,11 @@ _pipeline_compact_goal() {
     local plan_file="${2:-}"
     local design_file="${3:-}"
     local compact
-    compact="$(echo "$goal" | head -n 1 | sed 's/[[:space:]]\+$//')"
-    # Hard cap to keep loop prompts stable and avoid context bloat.
-    compact="${compact:0:240}"
+    compact="$(printf '%s\n' "$goal" | sed 's/[[:space:]]\+$//')"
+    # Cap to keep loop prompts stable; full requirements live in plan.md artifact.
+    if [[ ${#compact} -gt 500 ]]; then
+        compact="${compact:0:500}..."
+    fi
 
     if [[ -n "$plan_file" && -f "$plan_file" ]]; then
         compact="${compact}

@@ -932,15 +932,8 @@ stage_build() {
     local dod_file="$ARTIFACTS_DIR/dod.md"
     local loop_args=()
 
-    # Memory integration — inject context if memory system available
-    local memory_context=""
-    if type intelligence_search_memory >/dev/null 2>&1; then
-        local mem_dir="${HOME}/.shipwright/memory"
-        memory_context=$(intelligence_search_memory "build stage for: ${GOAL:-}" "$mem_dir" 5 2>/dev/null) || true
-    fi
-    if [[ -z "$memory_context" ]] && [[ -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
-        memory_context=$(bash "$SCRIPT_DIR/sw-memory.sh" inject "build" 2>/dev/null) || true
-    fi
+    # Memory is injected at runtime by sw-loop.sh; just note availability here
+    # to avoid an expensive fetch that would only produce a one-line hint.
 
     # Build compact goal to keep loop prompts stable and avoid context exhaustion.
     local enriched_goal
@@ -960,7 +953,7 @@ Tasks artifact: .claude/pipeline-tasks.md"
 DoD artifact: .claude/pipeline-artifacts/dod.md"
     [[ -n "${ISSUE_NUMBER:-}" ]] && enriched_goal="${enriched_goal}
 Issue: #${ISSUE_NUMBER}"
-    [[ -n "$memory_context" ]] && enriched_goal="${enriched_goal}
+    [[ -x "$SCRIPT_DIR/sw-memory.sh" ]] && enriched_goal="${enriched_goal}
 Memory context available (auto-injected by runtime intelligence)"
 
     # Predictive: inject prevention hints when risk/memory patterns suggest build-stage failures

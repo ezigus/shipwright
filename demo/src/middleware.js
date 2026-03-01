@@ -10,11 +10,13 @@ function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
+    res.set("WWW-Authenticate", "Bearer");
     return res.status(401).json({ error: "Authorization header required" });
   }
 
   const parts = authHeader.split(" ");
   if (parts.length !== 2 || parts[0] !== "Bearer") {
+    res.set("WWW-Authenticate", "Bearer");
     return res
       .status(401)
       .json({ error: "Invalid authorization format. Use: Bearer <token>" });
@@ -22,6 +24,7 @@ function authMiddleware(req, res, next) {
 
   const token = parts[1];
   if (!token || token.trim() === "") {
+    res.set("WWW-Authenticate", 'Bearer error="invalid_token"');
     return res.status(401).json({ error: "Token required" });
   }
 

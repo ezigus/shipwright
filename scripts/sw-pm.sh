@@ -26,19 +26,20 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
 fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
-    local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    local event_type="$1"; shift; mkdir -p "${PM_STATE_DIR:=${HOME}/.shipwright}"
     # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
-    echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
+    echo "${payload}}" >> "${PM_STATE_DIR:=${HOME}/.shipwright}/events.jsonl"
   }
 fi
 # ─── PM History Storage ──────────────────────────────────────────────────────
-PM_HISTORY="${HOME}/.shipwright/pm-history.json"
+# Use PM_STATE_DIR if set (for testing), otherwise use ~/.shipwright
+PM_HISTORY="${PM_STATE_DIR:=${HOME}/.shipwright}/pm-history.json"
 
 # ─── Ensure PM history file exists ───────────────────────────────────────────
 ensure_pm_history() {
-    mkdir -p "${HOME}/.shipwright"
+    mkdir -p "${PM_STATE_DIR:=${HOME}/.shipwright}"
     if [[ ! -f "$PM_HISTORY" ]]; then
         echo '{"decisions":[],"outcomes":[]}' > "$PM_HISTORY"
     fi

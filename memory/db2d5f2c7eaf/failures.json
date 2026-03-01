@@ -7,7 +7,8 @@
       "fix": "No fix needed; all visible test results show passing status with no failures in the log",
       "seen_count": 3,
       "last_seen": "2026-02-26T01:02:44Z",
-      "category": "unknown"
+      "category": "unknown",
+      "weight": 2.25
     }
   ]
 }

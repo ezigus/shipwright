@@ -604,3 +604,170 @@ skill_load_from_plan() {
         fi
     done <<< "$skill_names"
 }
+
+# skill_analyze_outcome — LLM-powered outcome analysis and learning.
+#   $1: pipeline_result ("success" or "failure")
+#   $2: artifacts_dir
+#   $3: failed_stage (optional — only for failures)
+#   $4: error_context (optional — last N lines of error output)
+# Reads: $artifacts_dir/skill-plan.json, review artifacts
+# Writes: $artifacts_dir/skill-outcome.json, refinement patches, lifecycle verdicts
+# Returns: 0 on success, 1 on failure (falls back to boolean recording)
+skill_analyze_outcome() {
+    local pipeline_result="${1:-success}"
+    local artifacts_dir="${2:-${ARTIFACTS_DIR:-.claude/pipeline-artifacts}}"
+    local failed_stage="${3:-}"
+    local error_context="${4:-}"
+
+    local plan_file="$artifacts_dir/skill-plan.json"
+    [[ ! -f "$plan_file" ]] && return 1
+
+    if ! type _intelligence_call_claude >/dev/null 2>&1; then
+        return 1
+    fi
+
+    # Gather context for analysis
+    local skill_plan
+    skill_plan=$(cat "$plan_file" 2>/dev/null)
+
+    local review_feedback=""
+    [[ -f "$artifacts_dir/review-results.log" ]] && review_feedback=$(tail -50 "$artifacts_dir/review-results.log" 2>/dev/null || true)
+
+    local prompt
+    prompt="You are a pipeline learning system. Analyze the outcome of this pipeline run and provide skill effectiveness feedback.
+
+## Skill Plan Used
+${skill_plan}
+
+## Pipeline Result: ${pipeline_result}
+${failed_stage:+Failed at stage: ${failed_stage}}
+${error_context:+Error context:
+${error_context}}
+${review_feedback:+## Review Feedback
+${review_feedback}}
+
+## Instructions
+1. For each skill in the plan, assess whether it was effective, partially effective, or ineffective.
+2. Provide evidence for each verdict (what in the output shows the skill helped or didn't help).
+3. Extract a one-sentence learning that would improve future use of this skill.
+4. If any skill content could be improved, provide a specific refinement (one sentence to append).
+5. For any generated skills, provide a lifecycle verdict: keep, keep_and_refine, or prune.
+
+## Response Format (JSON only, no markdown)
+{
+  \"skill_effectiveness\": {
+    \"skill-name\": {
+      \"verdict\": \"effective|partially_effective|ineffective\",
+      \"evidence\": \"What in the output shows this\",
+      \"learning\": \"One-sentence takeaway for future runs\"
+    }
+  },
+  \"refinements\": [
+    {
+      \"skill\": \"skill-name\",
+      \"addition\": \"One sentence to append to this skill for future use\"
+    }
+  ],
+  \"generated_skill_verdict\": {
+    \"generated-skill-name\": \"keep|keep_and_refine|prune\"
+  }
+}"
+
+    local cache_key="skill_outcome_$(echo "${skill_plan}${pipeline_result}" | md5sum 2>/dev/null | cut -c1-16 || echo "${RANDOM}")"
+    local result
+    if ! result=$(_intelligence_call_claude "$prompt" "$cache_key" 3600 "haiku"); then
+        return 1
+    fi
+
+    # Validate response
+    local valid
+    valid=$(echo "$result" | jq 'has("skill_effectiveness")' 2>/dev/null || echo "false")
+    if [[ "$valid" != "true" ]]; then
+        return 1
+    fi
+
+    # Write outcome artifact
+    echo "$result" | jq '.' > "$artifacts_dir/skill-outcome.json" 2>/dev/null || true
+
+    # Apply refinements
+    skill_apply_refinements "$artifacts_dir/skill-outcome.json" 2>/dev/null || true
+
+    # Apply lifecycle verdicts for generated skills
+    skill_apply_lifecycle_verdicts "$artifacts_dir/skill-outcome.json" 2>/dev/null || true
+
+    # Record enriched outcomes to skill memory
+    local issue_type
+    issue_type=$(jq -r '.issue_type // "backend"' "$plan_file" 2>/dev/null)
+
+    echo "$result" | jq -r '.skill_effectiveness | to_entries[] | "\(.key) \(.value.verdict)"' 2>/dev/null | while read -r skill_name verdict; do
+        [[ -z "$skill_name" ]] && continue
+        local outcome="success"
+        [[ "$verdict" == "ineffective" ]] && outcome="failure"
+        [[ "$verdict" == "partially_effective" ]] && outcome="retry"
+
+        # Record to all stages this skill was used in
+        jq -r ".skill_plan | to_entries[] | select(.value | index(\"$skill_name\")) | .key" "$plan_file" 2>/dev/null | while read -r stage; do
+            skill_memory_record "$issue_type" "$stage" "$skill_name" "$outcome" "1" 2>/dev/null || true
+        done
+    done
+
+    return 0
+}
+
+# skill_apply_refinements — Write refinement patches from outcome analysis.
+#   $1: path to skill-outcome.json
+skill_apply_refinements() {
+    local outcome_file="${1:-}"
+    [[ ! -f "$outcome_file" ]] && return 1
+
+    mkdir -p "$REFINEMENTS_DIR"
+
+    local ref_count
+    ref_count=$(jq '.refinements | length' "$outcome_file" 2>/dev/null || echo "0")
+    [[ "$ref_count" -eq 0 ]] && return 0
+
+    local i
+    for i in $(seq 0 $((ref_count - 1))); do
+        local skill_name addition
+        skill_name=$(jq -r ".refinements[$i].skill" "$outcome_file" 2>/dev/null)
+        addition=$(jq -r ".refinements[$i].addition" "$outcome_file" 2>/dev/null)
+        if [[ -n "$skill_name" && "$skill_name" != "null" && -n "$addition" && "$addition" != "null" ]]; then
+            local patch_file="$REFINEMENTS_DIR/${skill_name}.patch.md"
+            # Append (don't overwrite) — accumulate learnings
+            echo "" >> "$patch_file"
+            echo "### Learned ($(date -u +%Y-%m-%d))" >> "$patch_file"
+            echo "$addition" >> "$patch_file"
+        fi
+    done
+}
+
+# skill_apply_lifecycle_verdicts — Apply keep/prune verdicts for generated skills.
+#   $1: path to skill-outcome.json
+skill_apply_lifecycle_verdicts() {
+    local outcome_file="${1:-}"
+    [[ ! -f "$outcome_file" ]] && return 1
+
+    local verdicts
+    verdicts=$(jq -r '.generated_skill_verdict // {} | to_entries[] | "\(.key) \(.value)"' "$outcome_file" 2>/dev/null)
+    [[ -z "$verdicts" ]] && return 0
+
+    while read -r skill_name verdict; do
+        [[ -z "$skill_name" ]] && continue
+        local gen_path="$GENERATED_SKILLS_DIR/${skill_name}.md"
+
+        case "$verdict" in
+            prune)
+                if [[ -f "$gen_path" ]]; then
+                    rm -f "$gen_path"
+                    info "Pruned generated skill: ${skill_name}"
+                fi
+                ;;
+            keep)
+                # No action needed — skill stays
+                ;;
+            keep_and_refine)
+                # Refinement handled by skill_apply_refinements
+                ;;
+        esac
+    done <<< "$verdicts"
+}

@@ -1082,6 +1082,75 @@ rm -rf "$_test_artifacts"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# TEST SUITE 13: Outcome Learning Loop
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "═══ Suite 13: Outcome Learning Loop ═══"
+echo ""
+
+_test_artifacts=$(mktemp -d)
+
+# Write a mock skill-plan.json
+cat > "$_test_artifacts/skill-plan.json" << 'PLAN_EOF'
+{
+  "issue_type": "frontend",
+  "skill_plan": {
+    "plan": ["brainstorming", "frontend-design"],
+    "build": ["frontend-design"],
+    "review": ["two-stage-review"]
+  },
+  "skill_rationale": {
+    "frontend-design": "ARIA progressbar needed"
+  },
+  "generated_skills": []
+}
+PLAN_EOF
+
+echo "  ── Outcome JSON parsing ──"
+
+# Test: parse a mock outcome response
+_mock_outcome='{"skill_effectiveness":{"frontend-design":{"verdict":"effective","evidence":"ARIA section in plan","learning":"stat-bar reuse hint followed"}},"refinements":[{"skill":"frontend-design","addition":"For dashboard features, mention existing CSS patterns"}],"generated_skill_verdict":{}}'
+echo "$_mock_outcome" > "$_test_artifacts/skill-outcome.json"
+
+# Verify outcome JSON is valid
+assert_true "jq '.' '$_test_artifacts/skill-outcome.json' >/dev/null 2>&1" "outcome JSON is valid"
+
+# Verify verdict extraction
+_verdict=$(jq -r '.skill_effectiveness["frontend-design"].verdict' "$_test_artifacts/skill-outcome.json" 2>/dev/null)
+assert_eq "effective" "$_verdict" "verdict extracted correctly"
+
+# Verify refinement extraction
+_refinement_skill=$(jq -r '.refinements[0].skill' "$_test_artifacts/skill-outcome.json" 2>/dev/null)
+assert_eq "frontend-design" "$_refinement_skill" "refinement skill extracted"
+
+echo ""
+echo "  ── Refinement file writing ──"
+
+# Test: skill_apply_refinements writes patch files
+_ref_dir="${SKILLS_DIR}/generated/_refinements"
+mkdir -p "$_ref_dir"
+skill_apply_refinements "$_test_artifacts/skill-outcome.json" 2>/dev/null || true
+assert_true "[[ -f '$_ref_dir/frontend-design.patch.md' ]]" "refinement patch file created"
+_ref_content=$(cat "$_ref_dir/frontend-design.patch.md" 2>/dev/null || true)
+assert_contains "$_ref_content" "dashboard" "refinement content written"
+rm -f "$_ref_dir/frontend-design.patch.md"
+
+echo ""
+echo "  ── Generated skill lifecycle ──"
+
+# Test: prune verdict deletes generated skill
+mkdir -p "${SKILLS_DIR}/generated"
+echo "## Temp Skill" > "${SKILLS_DIR}/generated/temp-skill.md"
+_prune_outcome='{"skill_effectiveness":{},"refinements":[],"generated_skill_verdict":{"temp-skill":"prune"}}'
+echo "$_prune_outcome" > "$_test_artifacts/skill-outcome.json"
+skill_apply_lifecycle_verdicts "$_test_artifacts/skill-outcome.json" 2>/dev/null || true
+assert_true "[[ ! -f '${SKILLS_DIR}/generated/temp-skill.md' ]]" "pruned skill deleted"
+
+rm -rf "$_test_artifacts"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -8,52 +8,40 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 # shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REAL_INIT_SCRIPT="$SCRIPT_DIR/sw-init.sh"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-init-test.XXXXXX")
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-init-test.XXXXXX")
 
     # ── Sandboxed HOME ─────────────────────────────────────────────────────
-    mkdir -p "$TEMP_DIR/home"
+    mkdir -p "$TEST_TEMP_DIR/home"
 
     # ── Mock project directory ─────────────────────────────────────────────
-    mkdir -p "$TEMP_DIR/project/.claude"
+    mkdir -p "$TEST_TEMP_DIR/project/.claude"
 
     # ── Pre-create TPM directory to skip real git clone ───────────────────
     # Without this, init tries to git-clone tmux-plugins/tpm and run
     # install_plugins, which can hang on CI (no tmux server running).
-    mkdir -p "$TEMP_DIR/home/.tmux/plugins/tpm/bin"
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$TEMP_DIR/home/.tmux/plugins/tpm/bin/install_plugins"
-    chmod +x "$TEMP_DIR/home/.tmux/plugins/tpm/bin/install_plugins"
+    mkdir -p "$TEST_TEMP_DIR/home/.tmux/plugins/tpm/bin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$TEST_TEMP_DIR/home/.tmux/plugins/tpm/bin/install_plugins"
+    chmod +x "$TEST_TEMP_DIR/home/.tmux/plugins/tpm/bin/install_plugins"
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -80,8 +68,8 @@ invoke_init() {
     # read -rp under set -e returns exit 1 on EOF, so we must provide input.
     # Using a finite heredoc avoids SIGPIPE from `yes`.
     INIT_OUTPUT=$(
-        cd "$TEMP_DIR/project"
-        HOME="$TEMP_DIR/home" \
+        cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR/home" \
         TMUX="" \
         bash "$REAL_INIT_SCRIPT" "$@" 2>&1 <<'INPUT'
 y
@@ -194,8 +182,8 @@ run_test() {
 test_settings_json_created() {
     invoke_init --no-claude-md
     assert_exit_code 0 "init should succeed" &&
-    assert_file_exists "$TEMP_DIR/home/.claude/settings.json" "settings.json created" &&
-    assert_file_contains "$TEMP_DIR/home/.claude/settings.json" \
+    assert_file_exists "$TEST_TEMP_DIR/home/.claude/settings.json" "settings.json created" &&
+    assert_file_contains "$TEST_TEMP_DIR/home/.claude/settings.json" \
         "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" "agent teams env var"
 }
 
@@ -205,8 +193,8 @@ test_settings_json_created() {
 test_team_templates_installed() {
     invoke_init --no-claude-md
     assert_exit_code 0 "init should succeed" &&
-    assert_dir_exists "$TEMP_DIR/home/.shipwright/templates" "templates dir" &&
-    assert_file_count "$TEMP_DIR/home/.shipwright/templates" "*.json" 10 "at least 10 templates"
+    assert_dir_exists "$TEST_TEMP_DIR/home/.shipwright/templates" "templates dir" &&
+    assert_file_count "$TEST_TEMP_DIR/home/.shipwright/templates" "*.json" 10 "at least 10 templates"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -215,8 +203,8 @@ test_team_templates_installed() {
 test_pipeline_templates_installed() {
     invoke_init --no-claude-md
     assert_exit_code 0 "init should succeed" &&
-    assert_dir_exists "$TEMP_DIR/home/.shipwright/pipelines" "pipelines dir" &&
-    assert_file_count "$TEMP_DIR/home/.shipwright/pipelines" "*.json" 5 "at least 5 pipeline templates"
+    assert_dir_exists "$TEST_TEMP_DIR/home/.shipwright/pipelines" "pipelines dir" &&
+    assert_file_count "$TEST_TEMP_DIR/home/.shipwright/pipelines" "*.json" 5 "at least 5 pipeline templates"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -225,7 +213,7 @@ test_pipeline_templates_installed() {
 test_tmux_conf_installed() {
     invoke_init --no-claude-md
     assert_exit_code 0 "init should succeed" &&
-    assert_file_exists "$TEMP_DIR/home/.tmux.conf" "tmux.conf created"
+    assert_file_exists "$TEST_TEMP_DIR/home/.tmux.conf" "tmux.conf created"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -234,7 +222,7 @@ test_tmux_conf_installed() {
 test_overlay_installed() {
     invoke_init --no-claude-md
     assert_exit_code 0 "init should succeed" &&
-    assert_file_exists "$TEMP_DIR/home/.tmux/shipwright-overlay.conf" "overlay installed"
+    assert_file_exists "$TEST_TEMP_DIR/home/.tmux/shipwright-overlay.conf" "overlay installed"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -248,20 +236,20 @@ test_idempotency() {
     # Capture state after first run
     local first_settings
     # shellcheck disable=SC2034
-    first_settings=$(cat "$TEMP_DIR/home/.claude/settings.json" 2>/dev/null || echo "")
+    first_settings=$(cat "$TEST_TEMP_DIR/home/.claude/settings.json" 2>/dev/null || echo "")
 
     # Second run
     invoke_init --no-claude-md
     assert_exit_code 0 "second init should succeed"
 
     # Settings should still be valid JSON
-    if ! jq -e '.' "$TEMP_DIR/home/.claude/settings.json" >/dev/null 2>&1; then
+    if ! jq -e '.' "$TEST_TEMP_DIR/home/.claude/settings.json" >/dev/null 2>&1; then
         echo -e "    ${RED}✗${RESET} settings.json is invalid JSON after second run"
         return 1
     fi
 
     # Agent teams should still be present (not duplicated or removed)
-    assert_file_contains "$TEMP_DIR/home/.claude/settings.json" \
+    assert_file_contains "$TEST_TEMP_DIR/home/.claude/settings.json" \
         "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" "agent teams still present"
 }
 
@@ -270,8 +258,8 @@ test_idempotency() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_settings_merge() {
     # Create existing settings with custom content
-    mkdir -p "$TEMP_DIR/home/.claude"
-    cat > "$TEMP_DIR/home/.claude/settings.json" <<'EOF'
+    mkdir -p "$TEST_TEMP_DIR/home/.claude"
+    cat > "$TEST_TEMP_DIR/home/.claude/settings.json" <<'EOF'
 {
   "env": {
     "MY_CUSTOM_VAR": "keep-me"
@@ -281,9 +269,9 @@ EOF
 
     invoke_init --no-claude-md
     assert_exit_code 0 "init should succeed" &&
-    assert_file_contains "$TEMP_DIR/home/.claude/settings.json" \
+    assert_file_contains "$TEST_TEMP_DIR/home/.claude/settings.json" \
         "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" "agent teams added" &&
-    assert_file_contains "$TEMP_DIR/home/.claude/settings.json" \
+    assert_file_contains "$TEST_TEMP_DIR/home/.claude/settings.json" \
         "MY_CUSTOM_VAR" "custom var preserved"
 }
 
@@ -313,8 +301,8 @@ test_doctor_runs() {
 test_legacy_templates_path() {
     invoke_init --no-claude-md
     assert_exit_code 0 "init should succeed" &&
-    assert_dir_exists "$TEMP_DIR/home/.shipwright/templates" "legacy templates dir" &&
-    assert_file_count "$TEMP_DIR/home/.shipwright/templates" "*.json" 10 "legacy templates populated"
+    assert_dir_exists "$TEST_TEMP_DIR/home/.shipwright/templates" "legacy templates dir" &&
+    assert_file_count "$TEST_TEMP_DIR/home/.shipwright/templates" "*.json" 10 "legacy templates populated"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -323,16 +311,16 @@ test_legacy_templates_path() {
 test_jsonc_stripped() {
     invoke_init --no-claude-md
     assert_exit_code 0 "init should succeed" &&
-    assert_file_exists "$TEMP_DIR/home/.claude/settings.json" "settings.json exists"
+    assert_file_exists "$TEST_TEMP_DIR/home/.claude/settings.json" "settings.json exists"
 
     # The template has // comments — after init, settings.json must be valid JSON
-    if ! jq -e '.' "$TEMP_DIR/home/.claude/settings.json" >/dev/null 2>&1; then
+    if ! jq -e '.' "$TEST_TEMP_DIR/home/.claude/settings.json" >/dev/null 2>&1; then
         echo -e "    ${RED}✗${RESET} settings.json is not valid JSON (JSONC comments not stripped)"
         return 1
     fi
 
     # Ensure no // comment lines remain
-    if grep -q '^[[:space:]]*//' "$TEMP_DIR/home/.claude/settings.json" 2>/dev/null; then
+    if grep -q '^[[:space:]]*//' "$TEST_TEMP_DIR/home/.claude/settings.json" 2>/dev/null; then
         echo -e "    ${RED}✗${RESET} settings.json still contains // comment lines"
         return 1
     fi
@@ -347,7 +335,7 @@ test_hooks_wired() {
 
     # Check that hook events are configured in settings.json
     for event in TeammateIdle TaskCompleted Notification PreCompact SessionStart; do
-        if ! jq -e ".hooks.${event}" "$TEMP_DIR/home/.claude/settings.json" >/dev/null 2>&1; then
+        if ! jq -e ".hooks.${event}" "$TEST_TEMP_DIR/home/.claude/settings.json" >/dev/null 2>&1; then
             echo -e "    ${RED}✗${RESET} Hook event ${event} not found in settings.json"
             return 1
         fi
@@ -365,20 +353,20 @@ test_hook_wiring_preserves_existing() {
     # Add a custom hook event to settings.json
     tmp=$(mktemp)
     jq '.hooks.CustomHook = [{"hooks": [{"type": "command", "command": "echo custom"}]}]' \
-        "$TEMP_DIR/home/.claude/settings.json" > "$tmp" && mv "$tmp" "$TEMP_DIR/home/.claude/settings.json"
+        "$TEST_TEMP_DIR/home/.claude/settings.json" > "$tmp" && mv "$tmp" "$TEST_TEMP_DIR/home/.claude/settings.json"
 
     # Second init
     invoke_init --no-claude-md
     assert_exit_code 0 "second init should succeed"
 
     # Custom hook should survive
-    if ! jq -e '.hooks.CustomHook' "$TEMP_DIR/home/.claude/settings.json" >/dev/null 2>&1; then
+    if ! jq -e '.hooks.CustomHook' "$TEST_TEMP_DIR/home/.claude/settings.json" >/dev/null 2>&1; then
         echo -e "    ${RED}✗${RESET} Custom hook was removed by second init"
         return 1
     fi
 
     # Standard hooks should still be present
-    if ! jq -e '.hooks.TeammateIdle' "$TEMP_DIR/home/.claude/settings.json" >/dev/null 2>&1; then
+    if ! jq -e '.hooks.TeammateIdle' "$TEST_TEMP_DIR/home/.claude/settings.json" >/dev/null 2>&1; then
         echo -e "    ${RED}✗${RESET} TeammateIdle hook missing after second init"
         return 1
     fi
@@ -391,7 +379,7 @@ test_session_start_hook_installed() {
     invoke_init --no-claude-md
     assert_exit_code 0 "init should succeed"
 
-    local hook_file="$TEMP_DIR/home/.claude/hooks/session-start.sh"
+    local hook_file="$TEST_TEMP_DIR/home/.claude/hooks/session-start.sh"
     assert_file_exists "$hook_file" "session-start.sh exists"
 
     if [[ ! -x "$hook_file" ]]; then
@@ -405,8 +393,8 @@ test_session_start_hook_installed() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_hook_wiring_with_existing_settings() {
     # Create settings.json with env vars but no hooks
-    mkdir -p "$TEMP_DIR/home/.claude"
-    cat > "$TEMP_DIR/home/.claude/settings.json" <<'EOF'
+    mkdir -p "$TEST_TEMP_DIR/home/.claude"
+    cat > "$TEST_TEMP_DIR/home/.claude/settings.json" <<'EOF'
 {
   "env": {
     "MY_VAR": "keep-this",
@@ -419,13 +407,13 @@ EOF
     assert_exit_code 0 "init should succeed"
 
     # Env vars should be preserved
-    assert_file_contains "$TEMP_DIR/home/.claude/settings.json" \
+    assert_file_contains "$TEST_TEMP_DIR/home/.claude/settings.json" \
         "MY_VAR" "custom env var preserved" &&
-    assert_file_contains "$TEMP_DIR/home/.claude/settings.json" \
+    assert_file_contains "$TEST_TEMP_DIR/home/.claude/settings.json" \
         "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" "agent teams var preserved"
 
     # Hooks should be wired
-    if ! jq -e '.hooks.TeammateIdle' "$TEMP_DIR/home/.claude/settings.json" >/dev/null 2>&1; then
+    if ! jq -e '.hooks.TeammateIdle' "$TEST_TEMP_DIR/home/.claude/settings.json" >/dev/null 2>&1; then
         echo -e "    ${RED}✗${RESET} Hooks not wired into pre-existing settings"
         return 1
     fi
@@ -436,19 +424,19 @@ EOF
 # ──────────────────────────────────────────────────────────────────────────────
 test_legacy_overlay_cleanup() {
     # Plant a legacy claude-teams-overlay.conf
-    mkdir -p "$TEMP_DIR/home/.tmux"
-    echo "# old overlay" > "$TEMP_DIR/home/.tmux/claude-teams-overlay.conf"
-    echo "# old backup" > "$TEMP_DIR/home/.tmux/claude-teams-overlay.conf.pre-upgrade.bak"
+    mkdir -p "$TEST_TEMP_DIR/home/.tmux"
+    echo "# old overlay" > "$TEST_TEMP_DIR/home/.tmux/claude-teams-overlay.conf"
+    echo "# old backup" > "$TEST_TEMP_DIR/home/.tmux/claude-teams-overlay.conf.pre-upgrade.bak"
 
     invoke_init --no-claude-md
     assert_exit_code 0 "init should succeed"
 
     # Legacy files should be gone
-    if [[ -f "$TEMP_DIR/home/.tmux/claude-teams-overlay.conf" ]]; then
+    if [[ -f "$TEST_TEMP_DIR/home/.tmux/claude-teams-overlay.conf" ]]; then
         echo -e "    ${RED}✗${RESET} Legacy claude-teams-overlay.conf still exists"
         return 1
     fi
-    if [[ -f "$TEMP_DIR/home/.tmux/claude-teams-overlay.conf.pre-upgrade.bak" ]]; then
+    if [[ -f "$TEST_TEMP_DIR/home/.tmux/claude-teams-overlay.conf.pre-upgrade.bak" ]]; then
         echo -e "    ${RED}✗${RESET} Legacy backup still exists"
         return 1
     fi
@@ -459,10 +447,10 @@ test_legacy_overlay_cleanup() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_legacy_overlay_reference_stripped() {
     # Plant a custom tmux.conf with legacy source-file line
-    mkdir -p "$TEMP_DIR/home/.tmux/plugins/tpm/bin"
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$TEMP_DIR/home/.tmux/plugins/tpm/bin/install_plugins"
-    chmod +x "$TEMP_DIR/home/.tmux/plugins/tpm/bin/install_plugins"
-    cat > "$TEMP_DIR/home/.tmux.conf" <<'TMUXEOF'
+    mkdir -p "$TEST_TEMP_DIR/home/.tmux/plugins/tpm/bin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$TEST_TEMP_DIR/home/.tmux/plugins/tpm/bin/install_plugins"
+    chmod +x "$TEST_TEMP_DIR/home/.tmux/plugins/tpm/bin/install_plugins"
+    cat > "$TEST_TEMP_DIR/home/.tmux.conf" <<'TMUXEOF'
 set -g mouse on
 source-file -q ~/.tmux/claude-teams-overlay.conf
 set -g status on
@@ -472,7 +460,7 @@ TMUXEOF
     assert_exit_code 0 "init should succeed"
 
     # The legacy source line should be gone
-    if grep -q "claude-teams-overlay" "$TEMP_DIR/home/.tmux.conf" 2>/dev/null; then
+    if grep -q "claude-teams-overlay" "$TEST_TEMP_DIR/home/.tmux.conf" 2>/dev/null; then
         echo -e "    ${RED}✗${RESET} Legacy claude-teams-overlay reference still in tmux.conf"
         return 1
     fi
@@ -487,20 +475,20 @@ test_repair_mode() {
     assert_exit_code 0 "first init should succeed"
 
     # Plant stale artifacts
-    echo "# stale" > "$TEMP_DIR/home/.tmux/claude-teams-overlay.conf"
+    echo "# stale" > "$TEST_TEMP_DIR/home/.tmux/claude-teams-overlay.conf"
 
     # Second run: repair mode
     invoke_init --no-claude-md --repair
     assert_exit_code 0 "repair init should succeed"
 
     # Stale artifact should be cleaned
-    if [[ -f "$TEMP_DIR/home/.tmux/claude-teams-overlay.conf" ]]; then
+    if [[ -f "$TEST_TEMP_DIR/home/.tmux/claude-teams-overlay.conf" ]]; then
         echo -e "    ${RED}✗${RESET} Repair mode did not clean legacy overlay"
         return 1
     fi
 
     # Shipwright overlay should still be there
-    assert_file_exists "$TEMP_DIR/home/.tmux/shipwright-overlay.conf" "overlay survives repair"
+    assert_file_exists "$TEST_TEMP_DIR/home/.tmux/shipwright-overlay.conf" "overlay survives repair"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -508,11 +496,11 @@ test_repair_mode() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_plugin_direct_clone_fallback() {
     # Remove pre-created TPM mock to simulate fresh install
-    rm -rf "$TEMP_DIR/home/.tmux/plugins"
+    rm -rf "$TEST_TEMP_DIR/home/.tmux/plugins"
 
     # Mock git to pretend cloning works (create plugin dirs)
-    mkdir -p "$TEMP_DIR/mock-bin"
-    cat > "$TEMP_DIR/mock-bin/git" <<'GITEOF'
+    mkdir -p "$TEST_TEMP_DIR/mock-bin"
+    cat > "$TEST_TEMP_DIR/mock-bin/git" <<'GITEOF'
 #!/usr/bin/env bash
 # Mock git: for clone, just mkdir the target
 if [[ "${1:-}" == "clone" ]]; then
@@ -523,13 +511,13 @@ fi
 # Pass through for other git commands
 command git "$@"
 GITEOF
-    chmod +x "$TEMP_DIR/mock-bin/git"
+    chmod +x "$TEST_TEMP_DIR/mock-bin/git"
 
     INIT_OUTPUT=$(
-        cd "$TEMP_DIR/project"
-        HOME="$TEMP_DIR/home" \
+        cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR/home" \
         TMUX="" \
-        PATH="$TEMP_DIR/mock-bin:$PATH" \
+        PATH="$TEST_TEMP_DIR/mock-bin:$PATH" \
         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
 y
 y
@@ -540,7 +528,7 @@ INPUT
 
     # Should have the 5 plugin dirs
     local plugin_count
-    plugin_count=$(find "$TEMP_DIR/home/.tmux/plugins" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+    plugin_count=$(find "$TEST_TEMP_DIR/home/.tmux/plugins" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
     if [[ "$plugin_count" -lt 5 ]]; then
         echo -e "    ${RED}✗${RESET} Expected >= 5 plugin dirs, got $plugin_count"
         return 1
@@ -565,10 +553,10 @@ test_tmux_adapter_deployed() {
     invoke_init --no-claude-md
     assert_exit_code 0 "init should succeed"
 
-    assert_file_exists "$TEMP_DIR/home/.shipwright/adapters/tmux-adapter.sh" "adapter installed"
+    assert_file_exists "$TEST_TEMP_DIR/home/.shipwright/adapters/tmux-adapter.sh" "adapter installed"
 
     # Should be executable
-    if [[ ! -x "$TEMP_DIR/home/.shipwright/adapters/tmux-adapter.sh" ]]; then
+    if [[ ! -x "$TEST_TEMP_DIR/home/.shipwright/adapters/tmux-adapter.sh" ]]; then
         echo -e "    ${RED}✗${RESET} tmux adapter not executable"
         return 1
     fi
@@ -593,7 +581,7 @@ fi
 # Setup
 echo -e "${DIM}Setting up sandboxed environment...${RESET}"
 setup_env
-echo -e "${DIM}Temp dir: ${TEMP_DIR}${RESET}"
+echo -e "${DIM}Temp dir: ${TEST_TEMP_DIR}${RESET}"
 echo ""
 
 # Config generation tests

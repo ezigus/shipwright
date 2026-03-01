@@ -7,48 +7,36 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 FIX_SCRIPT="$SCRIPT_DIR/sw-fix.sh"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEST ENVIRONMENT SETUP
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-fix-test.XXXXXX")
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-fix-test.XXXXXX")
 
     # Create directory structure
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
     # Create mock repos with git
     for repo in api web mobile; do
-        mkdir -p "$TEMP_DIR/repos/$repo/.git/refs/remotes/origin"
-        echo "ref: refs/remotes/origin/main" > "$TEMP_DIR/repos/$repo/.git/refs/remotes/origin/HEAD"
-        echo "[core]" > "$TEMP_DIR/repos/$repo/.git/config"
-        echo "ref: refs/heads/main" > "$TEMP_DIR/repos/$repo/.git/HEAD"
-        mkdir -p "$TEMP_DIR/repos/$repo/.git/refs/heads"
+        mkdir -p "$TEST_TEMP_DIR/repos/$repo/.git/refs/remotes/origin"
+        echo "ref: refs/remotes/origin/main" > "$TEST_TEMP_DIR/repos/$repo/.git/refs/remotes/origin/HEAD"
+        echo "[core]" > "$TEST_TEMP_DIR/repos/$repo/.git/config"
+        echo "ref: refs/heads/main" > "$TEST_TEMP_DIR/repos/$repo/.git/HEAD"
+        mkdir -p "$TEST_TEMP_DIR/repos/$repo/.git/refs/heads"
     done
 
     # Create mock git binary
-    cat > "$TEMP_DIR/bin/git" << 'MOCK_GIT'
+    cat > "$TEST_TEMP_DIR/bin/git" << 'MOCK_GIT'
 #!/usr/bin/env bash
 MOCK_LOG="${MOCK_GIT_LOG:-/tmp/mock-git.log}"
 echo "git $*" >> "$MOCK_LOG"
@@ -65,10 +53,10 @@ case "$1" in
 esac
 exit 0
 MOCK_GIT
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Create mock sw-pipeline.sh
-    cat > "$TEMP_DIR/bin/sw-pipeline.sh" << 'MOCK_PIPELINE'
+    cat > "$TEST_TEMP_DIR/bin/sw-pipeline.sh" << 'MOCK_PIPELINE'
 #!/usr/bin/env bash
 MOCK_LOG="${MOCK_PIPELINE_LOG:-/tmp/mock-pipeline.log}"
 echo "pipeline $*" >> "$MOCK_LOG"
@@ -77,23 +65,23 @@ sleep 0.1
 echo "https://github.com/test/repo/pull/42"
 exit 0
 MOCK_PIPELINE
-    chmod +x "$TEMP_DIR/bin/sw-pipeline.sh"
+    chmod +x "$TEST_TEMP_DIR/bin/sw-pipeline.sh"
 
     # Also place it where fix_start looks for it ($SCRIPT_DIR/sw-pipeline.sh)
-    cp "$TEMP_DIR/bin/sw-pipeline.sh" "$SCRIPT_DIR/sw-pipeline.sh.mock" 2>/dev/null || true
+    cp "$TEST_TEMP_DIR/bin/sw-pipeline.sh" "$SCRIPT_DIR/sw-pipeline.sh.mock" 2>/dev/null || true
 
     # Set environment
-    export MOCK_GIT_LOG="$TEMP_DIR/git-calls.log"
-    export MOCK_PIPELINE_LOG="$TEMP_DIR/pipeline-calls.log"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
-    export EVENTS_FILE="$TEMP_DIR/home/.shipwright/events.jsonl"
+    export MOCK_GIT_LOG="$TEST_TEMP_DIR/git-calls.log"
+    export MOCK_PIPELINE_LOG="$TEST_TEMP_DIR/pipeline-calls.log"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
+    export EVENTS_FILE="$TEST_TEMP_DIR/home/.shipwright/events.jsonl"
     export NO_GITHUB=true
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
     # Clean up mock pipeline if we placed one
     rm -f "$SCRIPT_DIR/sw-pipeline.sh.mock" 2>/dev/null || true
@@ -105,8 +93,8 @@ reset_test() {
     rm -f "$MOCK_GIT_LOG"
     rm -f "$MOCK_PIPELINE_LOG"
     rm -f "$EVENTS_FILE"
-    rm -f "$TEMP_DIR/home/.shipwright"/fix-*.json
-    rm -rf "$TEMP_DIR/home/.shipwright"/fix-*-logs
+    rm -f "$TEST_TEMP_DIR/home/.shipwright"/fix-*.json
+    rm -rf "$TEST_TEMP_DIR/home/.shipwright"/fix-*-logs
     touch "$MOCK_GIT_LOG"
     touch "$MOCK_PIPELINE_LOG"
 }
@@ -240,7 +228,7 @@ test_help_flag() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_missing_goal() {
     local output exit_code=0
-    output=$(bash "$FIX_SCRIPT" --repos "$TEMP_DIR/repos/api" 2>&1) || exit_code=$?
+    output=$(bash "$FIX_SCRIPT" --repos "$TEST_TEMP_DIR/repos/api" 2>&1) || exit_code=$?
 
     assert_contains "$output" "Goal is required" "reports missing goal" &&
     assert_exit_code "1" "$exit_code" "exits with 1"
@@ -263,7 +251,7 @@ test_missing_repos() {
 test_arg_repos_comma() {
     local output
     output=$(bash "$FIX_SCRIPT" "Update deps" \
-        --repos "$TEMP_DIR/repos/api,$TEMP_DIR/repos/web" \
+        --repos "$TEST_TEMP_DIR/repos/api,$TEST_TEMP_DIR/repos/web" \
         --dry-run 2>&1) || true
 
     assert_contains "$output" "Repos:.*2" "parsed 2 repos" &&
@@ -275,9 +263,9 @@ test_arg_repos_comma() {
 # 6. Arg parsing — --repos-from file
 # ──────────────────────────────────────────────────────────────────────────────
 test_arg_repos_from_file() {
-    local repos_file="$TEMP_DIR/repos.txt"
-    echo "$TEMP_DIR/repos/api" > "$repos_file"
-    echo "$TEMP_DIR/repos/web" >> "$repos_file"
+    local repos_file="$TEST_TEMP_DIR/repos.txt"
+    echo "$TEST_TEMP_DIR/repos/api" > "$repos_file"
+    echo "$TEST_TEMP_DIR/repos/web" >> "$repos_file"
     echo "# this is a comment" >> "$repos_file"
     echo "" >> "$repos_file"
 
@@ -309,7 +297,7 @@ test_arg_repos_from_missing() {
 test_arg_pipeline() {
     local output
     output=$(bash "$FIX_SCRIPT" "Update deps" \
-        --repos "$TEMP_DIR/repos/api" \
+        --repos "$TEST_TEMP_DIR/repos/api" \
         --pipeline hotfix \
         --dry-run 2>&1) || true
 
@@ -322,7 +310,7 @@ test_arg_pipeline() {
 test_arg_max_parallel() {
     local output
     output=$(bash "$FIX_SCRIPT" "Update deps" \
-        --repos "$TEMP_DIR/repos/api" \
+        --repos "$TEST_TEMP_DIR/repos/api" \
         --max-parallel 5 \
         --dry-run 2>&1) || true
 
@@ -335,7 +323,7 @@ test_arg_max_parallel() {
 test_arg_branch_prefix() {
     local output
     output=$(bash "$FIX_SCRIPT" "Update deps" \
-        --repos "$TEMP_DIR/repos/api" \
+        --repos "$TEST_TEMP_DIR/repos/api" \
         --branch-prefix "hotfix/" \
         --dry-run 2>&1) || true
 
@@ -348,7 +336,7 @@ test_arg_branch_prefix() {
 test_dry_run() {
     local output
     output=$(bash "$FIX_SCRIPT" "Update lodash to 4.17.21" \
-        --repos "$TEMP_DIR/repos/api,$TEMP_DIR/repos/web" \
+        --repos "$TEST_TEMP_DIR/repos/api,$TEST_TEMP_DIR/repos/web" \
         --dry-run 2>&1) || true
 
     assert_contains "$output" "Dry run" "says dry run" &&
@@ -362,11 +350,11 @@ test_dry_run() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_dry_run_no_state() {
     bash "$FIX_SCRIPT" "Update deps" \
-        --repos "$TEMP_DIR/repos/api" \
+        --repos "$TEST_TEMP_DIR/repos/api" \
         --dry-run > /dev/null 2>&1 || true
 
     local fix_files
-    fix_files=$(find "$TEMP_DIR/home/.shipwright" -name 'fix-*.json' -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
+    fix_files=$(find "$TEST_TEMP_DIR/home/.shipwright" -name 'fix-*.json' -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
 
     assert_equals "0" "$fix_files" "no state file created in dry run"
 }
@@ -385,7 +373,7 @@ test_fix_status_empty() {
 # 14. Fix status — shows existing sessions
 # ──────────────────────────────────────────────────────────────────────────────
 test_fix_status_with_sessions() {
-    mkdir -p "$TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
     # Create a mock fix state file
     jq -n '{
         goal: "Update lodash",
@@ -398,7 +386,7 @@ test_fix_status_with_sessions() {
             {"name": "api", "path": "/tmp/api", "status": "pass", "pr_url": "https://github.com/test/api/pull/1", "duration": "5m"},
             {"name": "web", "path": "/tmp/web", "status": "fail", "pr_url": "-", "duration": "3m"}
         ]
-    }' > "$TEMP_DIR/home/.shipwright/fix-12345.json"
+    }' > "$TEST_TEMP_DIR/home/.shipwright/fix-12345.json"
 
     local output
     output=$(bash "$FIX_SCRIPT" --status 2>&1) || true
@@ -428,10 +416,10 @@ test_invalid_repo() {
 test_fix_start_state() {
     local output
     output=$(bash "$FIX_SCRIPT" "Update deps" \
-        --repos "$TEMP_DIR/repos/api" 2>&1) || true
+        --repos "$TEST_TEMP_DIR/repos/api" 2>&1) || true
 
     local fix_files
-    fix_files=$(find "$TEMP_DIR/home/.shipwright" -name 'fix-*.json' -maxdepth 1 2>/dev/null)
+    fix_files=$(find "$TEST_TEMP_DIR/home/.shipwright" -name 'fix-*.json' -maxdepth 1 2>/dev/null)
 
     if [[ -z "$fix_files" ]]; then
         echo -e "    ${RED}✗${RESET} No state file created"
@@ -451,7 +439,7 @@ test_fix_start_state() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_fix_start_events() {
     bash "$FIX_SCRIPT" "Update deps" \
-        --repos "$TEMP_DIR/repos/api" > /dev/null 2>&1 || true
+        --repos "$TEST_TEMP_DIR/repos/api" > /dev/null 2>&1 || true
 
     assert_file_exists "$EVENTS_FILE" "events file created" &&
     local events
@@ -466,7 +454,7 @@ test_fix_start_events() {
 test_fix_start_summary() {
     local output
     output=$(bash "$FIX_SCRIPT" "Update deps" \
-        --repos "$TEMP_DIR/repos/api" 2>&1) || true
+        --repos "$TEST_TEMP_DIR/repos/api" 2>&1) || true
 
     assert_contains "$output" "Fix Complete" "shows completion header" &&
     assert_contains "$output" "Success:" "shows success count" &&
@@ -479,7 +467,7 @@ test_fix_start_summary() {
 test_branch_sanitization() {
     local output
     output=$(bash "$FIX_SCRIPT" "Update lodash to 4.17.21!" \
-        --repos "$TEMP_DIR/repos/api" \
+        --repos "$TEST_TEMP_DIR/repos/api" \
         --dry-run 2>&1) || true
 
     # Branch should be lowercase, special chars replaced with hyphens
@@ -497,7 +485,7 @@ test_branch_sanitization() {
 test_fix_header() {
     local output
     output=$(bash "$FIX_SCRIPT" "Upgrade React" \
-        --repos "$TEMP_DIR/repos/api,$TEMP_DIR/repos/web" \
+        --repos "$TEST_TEMP_DIR/repos/api,$TEST_TEMP_DIR/repos/web" \
         --pipeline hotfix \
         --max-parallel 5 \
         --model sonnet \
@@ -514,12 +502,12 @@ test_fix_header() {
 # 21. Fix start — non-git repo warning
 # ──────────────────────────────────────────────────────────────────────────────
 test_non_git_repo_warning() {
-    mkdir -p "$TEMP_DIR/repos/nongit"
+    mkdir -p "$TEST_TEMP_DIR/repos/nongit"
     # No .git dir
 
     local output
     output=$(bash "$FIX_SCRIPT" "Update deps" \
-        --repos "$TEMP_DIR/repos/nongit" \
+        --repos "$TEST_TEMP_DIR/repos/nongit" \
         --dry-run 2>&1) || true
 
     assert_contains "$output" "Not a git repo" "warns about non-git dir"
@@ -530,7 +518,7 @@ test_non_git_repo_warning() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_fix_repo_events() {
     bash "$FIX_SCRIPT" "Update deps" \
-        --repos "$TEMP_DIR/repos/api,$TEMP_DIR/repos/web" > /dev/null 2>&1 || true
+        --repos "$TEST_TEMP_DIR/repos/api,$TEST_TEMP_DIR/repos/web" > /dev/null 2>&1 || true
 
     assert_file_exists "$EVENTS_FILE" "events file exists" &&
     local events
@@ -566,7 +554,7 @@ main() {
 
     echo -e "${DIM}Setting up test environment...${RESET}"
     setup_env
-    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEMP_DIR${RESET}"
+    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEST_TEMP_DIR${RESET}"
     echo ""
 
     # Define all tests

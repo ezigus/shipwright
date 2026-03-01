@@ -6,23 +6,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# ── Colors ────────────────────────────────────────────────────────────────────
-RED='\033[38;2;248;113;113m'
-GREEN='\033[38;2;74;222;128m'
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-PASS=0
-FAIL=0
-SKIP=0
-TOTAL=0
-
-# ── Test Harness ──────────────────────────────────────────────────────────────
+# ── Custom Test Harness (not in test-helpers.sh - has skip support) ──────────
 run_test() {
     local desc="$1" fn="$2"
     TOTAL=$((TOTAL + 1))
@@ -41,6 +28,8 @@ run_test() {
         FAIL=$((FAIL + 1))
     fi
 }
+
+SKIP=0
 
 # ── Temp dir for test artifacts ───────────────────────────────────────────────
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/sw-agi-test.XXXXXX")

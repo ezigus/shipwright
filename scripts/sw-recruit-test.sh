@@ -8,24 +8,16 @@ set -u
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 RECRUIT_SCRIPT="${SCRIPT_DIR}/sw-recruit.sh"
 
 # Disable LLM calls in tests — ensures fast, deterministic execution
 export SW_RECRUIT_NO_LLM=1
 
 # Colors
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-CYAN='\033[38;2;0;212;255m'
-RESET='\033[0m'
-BOLD='\033[1m'
 # shellcheck disable=SC2034
-DIM='\033[2m'
 
-PASS=0
-FAIL=0
 
 test_case() {
     local name="$1"

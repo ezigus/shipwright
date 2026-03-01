@@ -9,32 +9,20 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REAL_PIPELINE_SCRIPT="$SCRIPT_DIR/sw-pipeline.sh"
 REAL_DAEMON_SCRIPT="$SCRIPT_DIR/sw-daemon.sh"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT SETUP
 # Creates the complete temp structure that the real pipeline needs:
-#   $TEMP_DIR/
+#   $TEST_TEMP_DIR/
 #   ├── scripts/sw-pipeline.sh   (copy of real)
 #   ├── scripts/sw-loop.sh       (mock)
 #   ├── templates/pipelines/      (copies of real templates)
@@ -44,25 +32,25 @@ TEMP_DIR=""
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-e2e-smoke.XXXXXX")
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-e2e-smoke.XXXXXX")
 
     # ── Copy real pipeline script ─────────────────────────────────────────
-    mkdir -p "$TEMP_DIR/scripts"
-    cp "$REAL_PIPELINE_SCRIPT" "$TEMP_DIR/scripts/sw-pipeline.sh"
+    mkdir -p "$TEST_TEMP_DIR/scripts"
+    cp "$REAL_PIPELINE_SCRIPT" "$TEST_TEMP_DIR/scripts/sw-pipeline.sh"
 
     # ── Copy lib directory if present ─────────────────────────────────────
     if [[ -d "$SCRIPT_DIR/lib" ]]; then
-        mkdir -p "$TEMP_DIR/scripts/lib"
-        cp "$SCRIPT_DIR/lib"/*.sh "$TEMP_DIR/scripts/lib/" 2>/dev/null || true
+        mkdir -p "$TEST_TEMP_DIR/scripts/lib"
+        cp "$SCRIPT_DIR/lib"/*.sh "$TEST_TEMP_DIR/scripts/lib/" 2>/dev/null || true
     fi
 
     # ── Copy intelligence/composer scripts (pipeline sources them) ────────
     for dep in sw-intelligence.sh sw-pipeline-composer.sh sw-pipeline-vitals.sh sw-context.sh sw-github-graphql.sh sw-github-checks.sh sw-github-deploy.sh; do
-        [[ -f "$SCRIPT_DIR/$dep" ]] && cp "$SCRIPT_DIR/$dep" "$TEMP_DIR/scripts/$dep"
+        [[ -f "$SCRIPT_DIR/$dep" ]] && cp "$SCRIPT_DIR/$dep" "$TEST_TEMP_DIR/scripts/$dep"
     done
 
     # ── Mock sw-loop.sh (next to pipeline — preflight checks $SCRIPT_DIR/sw-loop.sh) ──
-    cat > "$TEMP_DIR/scripts/sw-loop.sh" <<'LOOP_EOF'
+    cat > "$TEST_TEMP_DIR/scripts/sw-loop.sh" <<'LOOP_EOF'
 #!/usr/bin/env bash
 # Mock sw-loop: simulate build by creating a feature file and committing
 mkdir -p src
@@ -73,20 +61,20 @@ FEAT
 git add src/feature.js
 git commit -m "feat: implement feature" --quiet --allow-empty 2>/dev/null || true
 LOOP_EOF
-    chmod +x "$TEMP_DIR/scripts/sw-loop.sh"
+    chmod +x "$TEST_TEMP_DIR/scripts/sw-loop.sh"
 
     # ── Copy pipeline templates ───────────────────────────────────────────
-    mkdir -p "$TEMP_DIR/templates/pipelines"
+    mkdir -p "$TEST_TEMP_DIR/templates/pipelines"
     if [[ -d "$REPO_DIR/templates/pipelines" ]]; then
-        cp "$REPO_DIR/templates/pipelines"/*.json "$TEMP_DIR/templates/pipelines/" 2>/dev/null || true
+        cp "$REPO_DIR/templates/pipelines"/*.json "$TEST_TEMP_DIR/templates/pipelines/" 2>/dev/null || true
     fi
     # Ensure at least a standard template exists
-    if [[ ! -f "$TEMP_DIR/templates/pipelines/standard.json" ]]; then
+    if [[ ! -f "$TEST_TEMP_DIR/templates/pipelines/standard.json" ]]; then
         write_standard_template
     fi
 
     # ── Mock binaries ─────────────────────────────────────────────────────
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/bin"
     create_mock_claude
     create_mock_gh
     create_mock_sw
@@ -95,20 +83,20 @@ LOOP_EOF
     create_mock_project
 
     # ── Bare repo for git push ────────────────────────────────────────────
-    git init --quiet --bare "$TEMP_DIR/remote.git" 2>/dev/null
+    git init --quiet --bare "$TEST_TEMP_DIR/remote.git" 2>/dev/null
 
     # ── Wire up git remotes ───────────────────────────────────────────────
     (
-        cd "$TEMP_DIR/project"
-        git remote add origin "$TEMP_DIR/remote.git"
+        cd "$TEST_TEMP_DIR/project"
+        git remote add origin "$TEST_TEMP_DIR/remote.git"
         git push -u origin main --quiet 2>/dev/null
         git remote set-url origin "https://github.com/test-org/test-repo.git"
-        git config remote.origin.pushurl "$TEMP_DIR/remote.git"
+        git config remote.origin.pushurl "$TEST_TEMP_DIR/remote.git"
     )
 }
 
 write_standard_template() {
-    cat > "$TEMP_DIR/templates/pipelines/standard.json" <<'TMPL'
+    cat > "$TEST_TEMP_DIR/templates/pipelines/standard.json" <<'TMPL'
 {
   "name": "standard",
   "description": "Standard pipeline for tests",
@@ -128,7 +116,7 @@ TMPL
 }
 
 create_mock_claude() {
-    cat > "$TEMP_DIR/bin/claude" <<'CLAUDE_EOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'CLAUDE_EOF'
 #!/usr/bin/env bash
 # Mock claude CLI — detects plan vs review from prompt content
 prompt=""
@@ -173,11 +161,11 @@ else
     echo "Mock claude: unrecognized prompt context"
 fi
 CLAUDE_EOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 }
 
 create_mock_gh() {
-    cat > "$TEMP_DIR/bin/gh" <<'GH_EOF'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'GH_EOF'
 #!/usr/bin/env bash
 # Mock gh CLI — routes by subcommand
 case "$1" in
@@ -233,11 +221,11 @@ ISSUE_JSON
         ;;
 esac
 GH_EOF
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 }
 
 create_mock_sw() {
-    cat > "$TEMP_DIR/bin/sw" <<MOCK_SW
+    cat > "$TEST_TEMP_DIR/bin/sw" <<MOCK_SW
 #!/usr/bin/env bash
 # Mock sw CLI — handles loop subcommand
 case "\$1" in
@@ -255,13 +243,13 @@ FEAT
         ;;
 esac
 MOCK_SW
-    chmod +x "$TEMP_DIR/bin/sw"
+    chmod +x "$TEST_TEMP_DIR/bin/sw"
 }
 
 create_mock_project() {
-    mkdir -p "$TEMP_DIR/project/src" "$TEMP_DIR/project/tests"
+    mkdir -p "$TEST_TEMP_DIR/project/src" "$TEST_TEMP_DIR/project/tests"
 
-    cat > "$TEMP_DIR/project/package.json" <<'PKG'
+    cat > "$TEST_TEMP_DIR/project/package.json" <<'PKG'
 {
   "name": "test-project",
   "version": "1.0.0",
@@ -270,21 +258,21 @@ create_mock_project() {
 }
 PKG
 
-    cat > "$TEMP_DIR/project/src/index.js" <<'SRC'
+    cat > "$TEST_TEMP_DIR/project/src/index.js" <<'SRC'
 const express = require('express');
 const app = express();
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 module.exports = app;
 SRC
 
-    cat > "$TEMP_DIR/project/tests/index.test.js" <<'TST'
+    cat > "$TEST_TEMP_DIR/project/tests/index.test.js" <<'TST'
 describe('health', () => {
   it('should return ok', () => { expect(true).toBe(true); });
 });
 TST
 
     (
-        cd "$TEMP_DIR/project"
+        cd "$TEST_TEMP_DIR/project"
         git init --quiet -b main
         git config user.email "test@test.com"
         git config user.name "Test User"
@@ -296,7 +284,7 @@ TST
 # Reset project state between tests (keeps the base env, resets git + artifacts)
 reset_test() {
     (
-        cd "$TEMP_DIR/project"
+        cd "$TEST_TEMP_DIR/project"
         # Remove pipeline artifacts
         rm -rf .claude 2>/dev/null || true
         # Reset to main branch, remove feature branches
@@ -312,18 +300,18 @@ reset_test() {
         git clean -fd --quiet 2>/dev/null || true
     )
     # Reset the remote bare repo
-    rm -rf "$TEMP_DIR/remote.git"
-    git init --quiet --bare "$TEMP_DIR/remote.git" 2>/dev/null
+    rm -rf "$TEST_TEMP_DIR/remote.git"
+    git init --quiet --bare "$TEST_TEMP_DIR/remote.git" 2>/dev/null
     (
-        cd "$TEMP_DIR/project"
-        git config remote.origin.pushurl "$TEMP_DIR/remote.git"
+        cd "$TEST_TEMP_DIR/project"
+        git config remote.origin.pushurl "$TEST_TEMP_DIR/remote.git"
         git push -u origin main --quiet 2>/dev/null || true
     )
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -343,9 +331,9 @@ invoke_pipeline() {
     PIPELINE_EXIT=0
 
     PIPELINE_OUTPUT=$(
-        cd "$TEMP_DIR/project"
-        PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
+        cd "$TEST_TEMP_DIR/project"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
     ) || PIPELINE_EXIT=$?
 }
 
@@ -395,7 +383,7 @@ assert_output_not_contains() {
 
 assert_file_exists() {
     local filepath="$1" label="${2:-file exists}"
-    local full_path="$TEMP_DIR/project/$filepath"
+    local full_path="$TEST_TEMP_DIR/project/$filepath"
     if [[ -f "$full_path" ]]; then
         return 0
     fi
@@ -405,7 +393,7 @@ assert_file_exists() {
 
 assert_dir_exists() {
     local dirpath="$1" label="${2:-dir exists}"
-    local full_path="$TEMP_DIR/project/$dirpath"
+    local full_path="$TEST_TEMP_DIR/project/$dirpath"
     if [[ -d "$full_path" ]]; then
         return 0
     fi
@@ -415,7 +403,7 @@ assert_dir_exists() {
 
 assert_file_contains() {
     local filepath="$1" pattern="$2" label="${3:-file content}"
-    local full_path="$TEMP_DIR/project/$filepath"
+    local full_path="$TEST_TEMP_DIR/project/$filepath"
     if [[ ! -f "$full_path" ]]; then
         echo -e "    ${RED}✗${RESET} File not found: $filepath ($label)"
         return 1
@@ -430,7 +418,7 @@ assert_file_contains() {
 assert_branch_exists() {
     local pattern="$1" label="${2:-branch exists}"
     local branches
-    branches=$(cd "$TEMP_DIR/project" && git branch --list 2>/dev/null)
+    branches=$(cd "$TEST_TEMP_DIR/project" && git branch --list 2>/dev/null)
     if printf '%s\n' "$branches" | grep -qE "$pattern" 2>/dev/null; then
         return 0
     fi
@@ -442,7 +430,7 @@ assert_branch_exists() {
 assert_no_feature_branches() {
     local label="${1:-no feature branches}"
     local branches
-    branches=$(cd "$TEMP_DIR/project" && git branch --list | grep -v main || true)
+    branches=$(cd "$TEST_TEMP_DIR/project" && git branch --list | grep -v main || true)
     if [[ -z "$branches" ]]; then
         return 0
     fi
@@ -520,7 +508,7 @@ test_fast_template_loads() {
     assert_exit_code 0 "fast dry-run should succeed" &&
     assert_output_contains "fast" "output mentions fast template" &&
     # Verify the fast template disables plan
-    local fast_tpl="$TEMP_DIR/templates/pipelines/fast.json"
+    local fast_tpl="$TEST_TEMP_DIR/templates/pipelines/fast.json"
     if [[ -f "$fast_tpl" ]]; then
         local plan_enabled
         plan_enabled=$(jq -r '.stages[] | select(.id == "plan") | .enabled' "$fast_tpl" 2>/dev/null || echo "unknown")
@@ -541,7 +529,7 @@ test_fast_template_loads() {
 # 5. All templates parse as valid JSON
 # ──────────────────────────────────────────────────────────────────────────────
 test_all_templates_parse() {
-    local template_dir="$TEMP_DIR/templates/pipelines"
+    local template_dir="$TEST_TEMP_DIR/templates/pipelines"
     local all_ok=true
     local count=0
     for tpl in "$template_dir"/*.json; do
@@ -624,7 +612,7 @@ test_no_branches_after_dryrun() {
     # running stages. If the pipeline creates a branch during init, that's
     # acceptable. We check that no feature branches (feat/) are created.
     local branches
-    branches=$(cd "$TEMP_DIR/project" && git branch --list | sed 's/^\* //' | tr -d ' ' || true)
+    branches=$(cd "$TEST_TEMP_DIR/project" && git branch --list | sed 's/^\* //' | tr -d ' ' || true)
     local has_feat=false
     while IFS= read -r b; do
         if echo "$b" | grep -qiE "^feat/"; then
@@ -633,7 +621,7 @@ test_no_branches_after_dryrun() {
     done <<< "$branches"
     if $has_feat; then
         echo -e "    ${RED}✗${RESET} Feature branches created during dry-run"
-        echo -e "    ${DIM}$(cd "$TEMP_DIR/project" && git branch --list)${RESET}"
+        echo -e "    ${DIM}$(cd "$TEST_TEMP_DIR/project" && git branch --list)${RESET}"
         return 1
     fi
 }
@@ -707,7 +695,7 @@ test_issue_number_in_state() {
         if printf '%s\n' "$PIPELINE_OUTPUT" | grep -q "42" 2>/dev/null; then
             return 0
         fi
-        if [[ -f "$TEMP_DIR/project/.claude/pipeline-state.md" ]] && grep -q "42" "$TEMP_DIR/project/.claude/pipeline-state.md"; then
+        if [[ -f "$TEST_TEMP_DIR/project/.claude/pipeline-state.md" ]] && grep -q "42" "$TEST_TEMP_DIR/project/.claude/pipeline-state.md"; then
             return 0
         fi
         echo -e "    ${RED}✗${RESET} Issue number 42 not found in output or state"
@@ -747,7 +735,7 @@ test_autonomous_template_all_auto() {
 test_pipeline_exit_code_default() {
     # Verify PIPELINE_EXIT_CODE is initialized to 1 (assume failure)
     local has_default
-    has_default=$(grep -c 'PIPELINE_EXIT_CODE=1' "$TEMP_DIR/scripts/sw-pipeline.sh" 2>/dev/null || echo "0")
+    has_default=$(grep -c 'PIPELINE_EXIT_CODE=1' "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" 2>/dev/null || echo "0")
     if [[ "$has_default" -gt 0 ]]; then
         return 0
     fi
@@ -782,7 +770,7 @@ main() {
 
     echo -e "${DIM}Setting up mock environment...${RESET}"
     setup_env
-    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEMP_DIR${RESET}"
+    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEST_TEMP_DIR${RESET}"
     echo ""
 
     # Define all tests

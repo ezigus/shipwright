@@ -7,40 +7,28 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 GRAPHQL_SCRIPT="$SCRIPT_DIR/sw-github-graphql.sh"
 
 # ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEST ENVIRONMENT SETUP
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-github-graphql-test.XXXXXX")
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-github-graphql-test.XXXXXX")
 
-    mkdir -p "$TEMP_DIR/.shipwright/github-cache"
-    mkdir -p "$TEMP_DIR/.claude"
-    mkdir -p "$TEMP_DIR/project/.git"
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/.shipwright/github-cache"
+    mkdir -p "$TEST_TEMP_DIR/.claude"
+    mkdir -p "$TEST_TEMP_DIR/project/.git"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
-    export HOME="$TEMP_DIR"
-    export EVENTS_FILE="$TEMP_DIR/.shipwright/events.jsonl"
+    export HOME="$TEST_TEMP_DIR"
+    export EVENTS_FILE="$TEST_TEMP_DIR/.shipwright/events.jsonl"
     touch "$EVENTS_FILE"
 
     # IMPORTANT: Do NOT set NO_GITHUB=true here — we need functions to proceed
@@ -48,7 +36,7 @@ setup_env() {
     export NO_GITHUB=false
 
     # Create mock gh binary
-    cat > "$TEMP_DIR/bin/gh" <<'MOCKBIN'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'MOCKBIN'
 #!/usr/bin/env bash
 # Mock gh CLI — reads MOCK_GH_RESPONSE env var
 # Supports: gh api graphql, gh api <path>, gh auth status
@@ -87,10 +75,10 @@ fi
 echo '{"error": "unexpected gh args: '"$*"'"}'
 exit 1
 MOCKBIN
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
     # Create mock git binary
-    cat > "$TEMP_DIR/bin/git" <<'MOCKGIT'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCKGIT'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "remote" && "${2:-}" == "get-url" ]]; then
     echo "${MOCK_GIT_REMOTE:-git@github.com:testowner/testrepo.git}"
@@ -99,14 +87,14 @@ fi
 # Pass through for other git commands
 /usr/bin/git "$@"
 MOCKGIT
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
-    export PATH="$TEMP_DIR/bin:$PATH"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -114,7 +102,7 @@ trap cleanup_env EXIT
 reset_test() {
     rm -f "$EVENTS_FILE"
     touch "$EVENTS_FILE"
-    rm -f "$TEMP_DIR/.shipwright/github-cache"/*.json 2>/dev/null || true
+    rm -f "$TEST_TEMP_DIR/.shipwright/github-cache"/*.json 2>/dev/null || true
     export MOCK_GH_RESPONSE=""
     export MOCK_GH_EXIT_CODE=0
     export NO_GITHUB=false
@@ -128,11 +116,11 @@ reset_test() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 source_graphql_functions() {
-    export REPO_DIR="$TEMP_DIR/project"
+    export REPO_DIR="$TEST_TEMP_DIR/project"
     # shellcheck disable=SC1090
     source "$GRAPHQL_SCRIPT"
-    REPO_DIR="$TEMP_DIR/project"
-    GH_CACHE_DIR="$TEMP_DIR/.shipwright/github-cache"
+    REPO_DIR="$TEST_TEMP_DIR/project"
+    GH_CACHE_DIR="$TEST_TEMP_DIR/.shipwright/github-cache"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

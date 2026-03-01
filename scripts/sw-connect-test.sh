@@ -7,47 +7,31 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 # shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-# ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-# ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-connect-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/bin"
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/project/.claude"
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-connect-test.XXXXXX")
+    mkdir -p "$TEST_TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/project/.claude"
 
     # Copy the script under test
-    cp "$SCRIPT_DIR/sw-connect.sh" "$TEMP_DIR/"
+    cp "$SCRIPT_DIR/sw-connect.sh" "$TEST_TEMP_DIR/"
 
     # Copy lib files so script can source helpers.sh and config.sh
-    mkdir -p "$TEMP_DIR/lib"
-    [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && cp "$SCRIPT_DIR/lib/compat.sh" "$TEMP_DIR/lib/" 2>/dev/null || true
-    [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && cp "$SCRIPT_DIR/lib/helpers.sh" "$TEMP_DIR/lib/" 2>/dev/null || true
-    [[ -f "$SCRIPT_DIR/lib/config.sh" ]] && cp "$SCRIPT_DIR/lib/config.sh" "$TEMP_DIR/lib/" 2>/dev/null || true
+    mkdir -p "$TEST_TEMP_DIR/lib"
+    [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && cp "$SCRIPT_DIR/lib/compat.sh" "$TEST_TEMP_DIR/lib/" 2>/dev/null || true
+    [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && cp "$SCRIPT_DIR/lib/helpers.sh" "$TEST_TEMP_DIR/lib/" 2>/dev/null || true
+    [[ -f "$SCRIPT_DIR/lib/config.sh" ]] && cp "$SCRIPT_DIR/lib/config.sh" "$TEST_TEMP_DIR/lib/" 2>/dev/null || true
 
     # Mock curl for dashboard requests
-    cat > "$TEMP_DIR/bin/curl" <<'EOF'
+    cat > "$TEST_TEMP_DIR/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 # Mock curl with configurable responses
 # Usage: curl [options] <url>
@@ -106,10 +90,10 @@ fi
 echo '{"error":"unknown endpoint"}'
 exit 1
 EOF
-    chmod +x "$TEMP_DIR/bin/curl"
+    chmod +x "$TEST_TEMP_DIR/bin/curl"
 
     # Mock hostname
-    cat > "$TEMP_DIR/bin/hostname" <<'EOF'
+    cat > "$TEST_TEMP_DIR/bin/hostname" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "-s" ]]; then
     echo "test-machine"
@@ -117,10 +101,10 @@ else
     echo "test-machine.local"
 fi
 EOF
-    chmod +x "$TEMP_DIR/bin/hostname"
+    chmod +x "$TEST_TEMP_DIR/bin/hostname"
 
     # Mock git
-    cat > "$TEMP_DIR/bin/git" <<'EOF'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "config" && "${2:-}" == "user.name" ]]; then
     if [[ "${GIT_TEST_ERROR:-}" == "true" ]]; then
@@ -131,13 +115,13 @@ if [[ "${1:-}" == "config" && "${2:-}" == "user.name" ]]; then
 fi
 echo "mock-git"
 EOF
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Don't mock jq - use the real one
     # (jq is a prerequisite)
 
     # Mock kill for process checking
-    cat > "$TEMP_DIR/bin/kill" <<'EOF'
+    cat > "$TEST_TEMP_DIR/bin/kill" <<'EOF'
 #!/usr/bin/env bash
 # Mock kill that checks test PID file
 if [[ "${1:-}" == "-0" ]]; then
@@ -151,10 +135,10 @@ if [[ "${1:-}" == "-0" ]]; then
 fi
 exit 0
 EOF
-    chmod +x "$TEMP_DIR/bin/kill"
+    chmod +x "$TEST_TEMP_DIR/bin/kill"
 
     # Mock ps for uptime
-    cat > "$TEMP_DIR/bin/ps" <<'EOF'
+    cat > "$TEST_TEMP_DIR/bin/ps" <<'EOF'
 #!/usr/bin/env bash
 # Mock ps for uptime information
 if [[ "${1:-}" == "-o" && "${2:-}" == "lstart=" ]]; then
@@ -163,10 +147,10 @@ if [[ "${1:-}" == "-o" && "${2:-}" == "lstart=" ]]; then
 fi
 echo "mock-ps"
 EOF
-    chmod +x "$TEMP_DIR/bin/ps"
+    chmod +x "$TEST_TEMP_DIR/bin/ps"
 
     # Mock date for ISO timestamps
-    cat > "$TEMP_DIR/bin/date" <<'EOF'
+    cat > "$TEST_TEMP_DIR/bin/date" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "-u" && "${2:-}" == "+%Y-%m-%dT%H:%M:%SZ" ]]; then
     echo "2026-02-09T10:30:45Z"
@@ -174,10 +158,10 @@ else
     /bin/date "$@"
 fi
 EOF
-    chmod +x "$TEMP_DIR/bin/date"
+    chmod +x "$TEST_TEMP_DIR/bin/date"
 
     # Mock uname for platform detection
-    cat > "$TEMP_DIR/bin/uname" <<'EOF'
+    cat > "$TEST_TEMP_DIR/bin/uname" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "-s" ]]; then
     echo "Darwin"
@@ -185,12 +169,12 @@ else
     /usr/bin/uname "$@"
 fi
 EOF
-    chmod +x "$TEMP_DIR/bin/uname"
+    chmod +x "$TEST_TEMP_DIR/bin/uname"
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -226,7 +210,7 @@ run_test() {
 # Extract function bodies from sw-connect.sh for direct testing
 extract_function() {
     local func_name="$1"
-    sed -n "/^${func_name}() {/,/^}/p" "$TEMP_DIR/sw-connect.sh"
+    sed -n "/^${func_name}() {/,/^}/p" "$TEST_TEMP_DIR/sw-connect.sh"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -237,12 +221,12 @@ extract_function() {
 # 1. Script defines resolve_developer_id function
 # ──────────────────────────────────────────────────────────────────────────────
 test_resolve_developer_id_from_env() {
-    if ! grep -q "resolve_developer_id()" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "resolve_developer_id()" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} resolve_developer_id() not defined"
         return 1
     fi
     # Check it uses DEVELOPER_ID env var
-    if ! grep -A 5 "resolve_developer_id()" "$TEMP_DIR/sw-connect.sh" | grep -q "DEVELOPER_ID"; then
+    if ! grep -A 5 "resolve_developer_id()" "$TEST_TEMP_DIR/sw-connect.sh" | grep -q "DEVELOPER_ID"; then
         echo -e "    ${RED}✗${RESET} Function doesn't check DEVELOPER_ID"
         return 1
     fi
@@ -253,7 +237,7 @@ test_resolve_developer_id_from_env() {
 # 2. resolve_developer_id falls back to git config user.name
 # ──────────────────────────────────────────────────────────────────────────────
 test_resolve_developer_id_from_git() {
-    if ! grep -q "git config user.name" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "git config user.name" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} git config user.name not checked"
         return 1
     fi
@@ -264,7 +248,7 @@ test_resolve_developer_id_from_git() {
 # 3. resolve_developer_id falls back to USER env var
 # ──────────────────────────────────────────────────────────────────────────────
 test_resolve_developer_id_from_user() {
-    if ! grep -q "USER" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "USER" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} USER environment variable not referenced"
         return 1
     fi
@@ -275,11 +259,11 @@ test_resolve_developer_id_from_user() {
 # 4. resolve_machine_name uses MACHINE_NAME env var
 # ──────────────────────────────────────────────────────────────────────────────
 test_resolve_machine_name_from_env() {
-    if ! grep -q "resolve_machine_name()" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "resolve_machine_name()" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} resolve_machine_name() not defined"
         return 1
     fi
-    if ! grep -A 5 "resolve_machine_name()" "$TEMP_DIR/sw-connect.sh" | grep -q "MACHINE_NAME"; then
+    if ! grep -A 5 "resolve_machine_name()" "$TEST_TEMP_DIR/sw-connect.sh" | grep -q "MACHINE_NAME"; then
         echo -e "    ${RED}✗${RESET} Function doesn't check MACHINE_NAME"
         return 1
     fi
@@ -290,7 +274,7 @@ test_resolve_machine_name_from_env() {
 # 5. resolve_machine_name falls back to hostname
 # ──────────────────────────────────────────────────────────────────────────────
 test_resolve_machine_name_from_hostname() {
-    if ! grep -q "hostname" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "hostname" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} hostname command not used"
         return 1
     fi
@@ -305,7 +289,7 @@ test_resolve_machine_name_from_hostname() {
 # 6. resolve_dashboard_url function is defined
 # ──────────────────────────────────────────────────────────────────────────────
 test_resolve_dashboard_url_from_flag() {
-    if ! grep -q "resolve_dashboard_url()" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "resolve_dashboard_url()" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} resolve_dashboard_url() not defined"
         return 1
     fi
@@ -316,7 +300,7 @@ test_resolve_dashboard_url_from_flag() {
 # 7. resolve_dashboard_url reads DASHBOARD_URL env var
 # ──────────────────────────────────────────────────────────────────────────────
 test_resolve_dashboard_url_from_env() {
-    if ! grep -q "DASHBOARD_URL" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "DASHBOARD_URL" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} DASHBOARD_URL env var not checked"
         return 1
     fi
@@ -327,11 +311,11 @@ test_resolve_dashboard_url_from_env() {
 # 8. resolve_dashboard_url reads team-config.json
 # ──────────────────────────────────────────────────────────────────────────────
 test_resolve_dashboard_url_from_config() {
-    if ! grep -q "TEAM_CONFIG" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "TEAM_CONFIG" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} TEAM_CONFIG not referenced"
         return 1
     fi
-    if ! grep -q "team-config.json" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "team-config.json" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} team-config.json not referenced"
         return 1
     fi
@@ -342,11 +326,11 @@ test_resolve_dashboard_url_from_config() {
 # 9. resolve_dashboard_url falls back to DEFAULT_URL
 # ──────────────────────────────────────────────────────────────────────────────
 test_resolve_dashboard_url_default() {
-    if ! grep -q "DEFAULT_URL" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "DEFAULT_URL" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} DEFAULT_URL constant not defined"
         return 1
     fi
-    if ! grep -q "localhost:8767" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "localhost:8767" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} Default URL not http://localhost:8767"
         return 1
     fi
@@ -361,11 +345,11 @@ test_resolve_dashboard_url_default() {
 # 10. cmd_start creates PID file
 # ──────────────────────────────────────────────────────────────────────────────
 test_start_creates_pid_file() {
-    HOME="$TEMP_DIR/home" \
-    PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/sw-connect.sh" start 2>/dev/null
+    HOME="$TEST_TEMP_DIR/home" \
+    PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/sw-connect.sh" start 2>/dev/null
 
-    local pid_file="$TEMP_DIR/home/.shipwright/connect.pid"
+    local pid_file="$TEST_TEMP_DIR/home/.shipwright/connect.pid"
     if [[ ! -f "$pid_file" ]]; then
         echo -e "    ${RED}✗${RESET} PID file not created at $pid_file"
         return 1
@@ -386,13 +370,13 @@ test_start_creates_pid_file() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_start_rejects_duplicate() {
     # Create a fake PID file with current shell PID (which is alive)
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    echo "$$" > "$TEMP_DIR/home/.shipwright/connect.pid"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    echo "$$" > "$TEST_TEMP_DIR/home/.shipwright/connect.pid"
 
     local exit_code=0
-    HOME="$TEMP_DIR/home" \
-    PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/sw-connect.sh" start 2>/dev/null || exit_code=$?
+    HOME="$TEST_TEMP_DIR/home" \
+    PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/sw-connect.sh" start 2>/dev/null || exit_code=$?
 
     if [[ "$exit_code" -eq 0 ]]; then
         echo -e "    ${RED}✗${RESET} Expected error when already running"
@@ -405,15 +389,15 @@ test_start_rejects_duplicate() {
 # 12. cmd_stop removes PID file
 # ──────────────────────────────────────────────────────────────────────────────
 test_stop_removes_pid() {
-    mkdir -p "$TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
     # Create a fake PID that doesn't exist
-    echo "99999" > "$TEMP_DIR/home/.shipwright/connect.pid"
+    echo "99999" > "$TEST_TEMP_DIR/home/.shipwright/connect.pid"
 
-    HOME="$TEMP_DIR/home" \
-    PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/sw-connect.sh" stop 2>/dev/null
+    HOME="$TEST_TEMP_DIR/home" \
+    PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/sw-connect.sh" stop 2>/dev/null
 
-    local pid_file="$TEMP_DIR/home/.shipwright/connect.pid"
+    local pid_file="$TEST_TEMP_DIR/home/.shipwright/connect.pid"
     if [[ -f "$pid_file" ]]; then
         echo -e "    ${RED}✗${RESET} PID file still exists after stop"
         return 1
@@ -426,12 +410,12 @@ test_stop_removes_pid() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_stop_missing_pid_graceful() {
     # No PID file exists
-    mkdir -p "$TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
 
     local exit_code=0
-    HOME="$TEMP_DIR/home" \
-    PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/sw-connect.sh" stop 2>/dev/null || exit_code=$?
+    HOME="$TEST_TEMP_DIR/home" \
+    PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/sw-connect.sh" stop 2>/dev/null || exit_code=$?
 
     # Should exit gracefully (0)
     if [[ "$exit_code" -ne 0 ]]; then
@@ -449,15 +433,15 @@ test_stop_missing_pid_graceful() {
 # 14. cmd_status shows connected when PID alive
 # ──────────────────────────────────────────────────────────────────────────────
 test_status_shows_connected() {
-    mkdir -p "$TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
     # Use current shell PID (alive)
-    echo "$$" > "$TEMP_DIR/home/.shipwright/connect.pid"
+    echo "$$" > "$TEST_TEMP_DIR/home/.shipwright/connect.pid"
 
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/sw-connect.sh" status 2>/dev/null
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/sw-connect.sh" status 2>/dev/null
     )
 
     if ! echo "$output" | grep -q "connected"; then
@@ -472,15 +456,15 @@ test_status_shows_connected() {
 # 15. cmd_status shows disconnected when no PID
 # ──────────────────────────────────────────────────────────────────────────────
 test_status_shows_disconnected() {
-    mkdir -p "$TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
     # No PID file - remote old PID files first to ensure clean state
-    rm -f "$TEMP_DIR/home/.shipwright/connect.pid"
+    rm -f "$TEST_TEMP_DIR/home/.shipwright/connect.pid"
 
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/sw-connect.sh" status 2>&1
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/sw-connect.sh" status 2>&1
     )
 
     # Check for either "disconnected" or RED colored status
@@ -500,17 +484,17 @@ test_status_shows_disconnected() {
 # 16. cmd_join verifies token against dashboard
 # ──────────────────────────────────────────────────────────────────────────────
 test_join_verifies_token() {
-    mkdir -p "$TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
 
     # Use valid-token which our mock curl recognizes
     local exit_code=0
-    HOME="$TEMP_DIR/home" \
-    PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/sw-connect.sh" join valid-token --url http://localhost:8767 >/dev/null 2>&1 || exit_code=$?
+    HOME="$TEST_TEMP_DIR/home" \
+    PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/sw-connect.sh" join valid-token --url http://localhost:8767 >/dev/null 2>&1 || exit_code=$?
 
     # Accept either 0 or 1 - the important thing is that it processes the token
     # It may fail at the start step if daemon is running
-    if [[ ! -f "$TEMP_DIR/home/.shipwright/team-config.json" ]]; then
+    if [[ ! -f "$TEST_TEMP_DIR/home/.shipwright/team-config.json" ]]; then
         echo -e "    ${RED}✗${RESET} Config file not created after join"
         return 1
     fi
@@ -521,13 +505,13 @@ test_join_verifies_token() {
 # 17. cmd_join saves team-config.json
 # ──────────────────────────────────────────────────────────────────────────────
 test_join_saves_config() {
-    mkdir -p "$TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
 
-    HOME="$TEMP_DIR/home" \
-    PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/sw-connect.sh" join valid-token --url http://localhost:8767 >/dev/null 2>&1
+    HOME="$TEST_TEMP_DIR/home" \
+    PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/sw-connect.sh" join valid-token --url http://localhost:8767 >/dev/null 2>&1
 
-    local config_file="$TEMP_DIR/home/.shipwright/team-config.json"
+    local config_file="$TEST_TEMP_DIR/home/.shipwright/team-config.json"
     if [[ ! -f "$config_file" ]]; then
         echo -e "    ${RED}✗${RESET} Config file not created"
         return 1
@@ -545,14 +529,14 @@ test_join_saves_config() {
 # 18. cmd_join rejects invalid token
 # ──────────────────────────────────────────────────────────────────────────────
 test_join_rejects_invalid_token() {
-    mkdir -p "$TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
 
     local exit_code=0
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/sw-connect.sh" join invalid-token --url http://localhost:8767 2>&1
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/sw-connect.sh" join invalid-token --url http://localhost:8767 2>&1
     ) || exit_code=$?
 
     # Should either return non-zero OR output an error
@@ -571,18 +555,18 @@ test_join_rejects_invalid_token() {
 # 19. cmd_join accepts --url and --token flags
 # ──────────────────────────────────────────────────────────────────────────────
 test_join_accepts_flags() {
-    mkdir -p "$TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
 
     # Should parse flags without error
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/sw-connect.sh" join --token valid-token --url http://localhost:8767 2>&1
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/sw-connect.sh" join --token valid-token --url http://localhost:8767 2>&1
     )
 
     # Should successfully join (config file created)
-    if [[ ! -f "$TEMP_DIR/home/.shipwright/team-config.json" ]]; then
+    if [[ ! -f "$TEST_TEMP_DIR/home/.shipwright/team-config.json" ]]; then
         echo -e "    ${RED}✗${RESET} Failed to parse flags or join"
         return 1
     fi
@@ -674,11 +658,11 @@ test_disconnect_sends_payload() {
 # 22. ensure_dir creates shipwright directory
 # ──────────────────────────────────────────────────────────────────────────────
 test_ensure_dir_creates_dir() {
-    if ! grep -q "ensure_dir()" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "ensure_dir()" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} ensure_dir() not defined"
         return 1
     fi
-    if ! grep -q "mkdir -p.*SHIPWRIGHT_DIR" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "mkdir -p.*SHIPWRIGHT_DIR" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} ensure_dir doesn't create SHIPWRIGHT_DIR"
         return 1
     fi
@@ -689,12 +673,12 @@ test_ensure_dir_creates_dir() {
 # 23. now_iso returns valid ISO timestamp
 # ──────────────────────────────────────────────────────────────────────────────
 test_now_iso_format() {
-    if ! grep -q "now_iso()" "$TEMP_DIR/sw-connect.sh"; then
+    if ! grep -q "now_iso()" "$TEST_TEMP_DIR/sw-connect.sh"; then
         echo -e "    ${RED}✗${RESET} now_iso() not defined"
         return 1
     fi
     # Check it uses date command with ISO format: %Y-%m-%dT%H:%M:%SZ
-    if ! grep "now_iso()" "$TEMP_DIR/sw-connect.sh" | grep -q "date.*%Y-%m-%dT%H:%M:%SZ"; then
+    if ! grep "now_iso()" "$TEST_TEMP_DIR/sw-connect.sh" | grep -q "date.*%Y-%m-%dT%H:%M:%SZ"; then
         echo -e "    ${RED}✗${RESET} now_iso doesn't use ISO date format"
         return 1
     fi
@@ -707,7 +691,7 @@ test_now_iso_format() {
 test_script_version() {
     # Dynamically read expected version from the source script
     local expected_version
-    expected_version=$(grep -m1 '^VERSION=' "$TEMP_DIR/sw-connect.sh" | sed 's/VERSION="//;s/"//')
+    expected_version=$(grep -m1 '^VERSION=' "$TEST_TEMP_DIR/sw-connect.sh" | sed 's/VERSION="//;s/"//')
     if [[ -z "$expected_version" ]] || ! [[ "$expected_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo -e "    ${RED}✗${RESET} Could not read version from script"
         return 1
@@ -723,9 +707,9 @@ test_script_version() {
 test_help_shows_commands() {
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/sw-connect.sh" help 2>/dev/null
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/sw-connect.sh" help 2>/dev/null
     )
 
     local has_start has_stop has_status has_join

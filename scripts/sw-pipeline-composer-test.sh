@@ -7,42 +7,30 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ───────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ───────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-composer-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/scripts"
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/project/.claude/pipeline-artifacts"
-    mkdir -p "$TEMP_DIR/templates/pipelines"
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-composer-test.XXXXXX")
+    mkdir -p "$TEST_TEMP_DIR/scripts"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
+    mkdir -p "$TEST_TEMP_DIR/templates/pipelines"
 
     # Copy script under test
-    cp "$SCRIPT_DIR/sw-pipeline-composer.sh" "$TEMP_DIR/scripts/"
+    cp "$SCRIPT_DIR/sw-pipeline-composer.sh" "$TEST_TEMP_DIR/scripts/"
 
     # Create mock standard template (fallback)
-    cat > "$TEMP_DIR/templates/pipelines/standard.json" <<'TMPL'
+    cat > "$TEST_TEMP_DIR/templates/pipelines/standard.json" <<'TMPL'
 {
   "name": "standard",
   "description": "Standard pipeline",
@@ -59,7 +47,7 @@ setup_env() {
 TMPL
 
     # Create mock sw-intelligence.sh that provides deterministic responses
-    cat > "$TEMP_DIR/scripts/sw-intelligence.sh" <<'INTEL'
+    cat > "$TEST_TEMP_DIR/scripts/sw-intelligence.sh" <<'INTEL'
 #!/usr/bin/env bash
 # Mock intelligence engine for testing
 
@@ -122,12 +110,12 @@ intelligence_estimate_iterations() {
     esac
 }
 INTEL
-    chmod +x "$TEMP_DIR/scripts/sw-intelligence.sh"
+    chmod +x "$TEST_TEMP_DIR/scripts/sw-intelligence.sh"
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -167,12 +155,12 @@ test_compose_valid_ordering() {
     local analysis='{"complexity":"medium","risk_flags":[]}'
     local output
     output=$(
-        cd "$TEMP_DIR/project"
-        HOME="$TEMP_DIR/home" \
-        SCRIPT_DIR="$TEMP_DIR/scripts" \
+        cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR/home" \
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts" \
         bash -c '
-            SCRIPT_DIR="'"$TEMP_DIR/scripts"'"
-            REPO_DIR="'"$TEMP_DIR"'"
+            SCRIPT_DIR="'"$TEST_TEMP_DIR/scripts"'"
+            REPO_DIR="'"$TEST_TEMP_DIR"'"
             source "$SCRIPT_DIR/sw-pipeline-composer.sh"
             composer_create_pipeline '"'"''"$analysis"''"'"' "" ""
         ' 2>/dev/null
@@ -184,14 +172,14 @@ test_compose_valid_ordering() {
     fi
 
     # Read the composed pipeline and validate ordering
-    local pipeline_file="$TEMP_DIR/project/${output}"
+    local pipeline_file="$TEST_TEMP_DIR/project/${output}"
     if [[ ! -f "$pipeline_file" ]]; then
         # output might be full path
         pipeline_file="$output"
     fi
     # Try relative to project dir
     if [[ ! -f "$pipeline_file" ]]; then
-        pipeline_file="$TEMP_DIR/project/.claude/pipeline-artifacts/composed-pipeline.json"
+        pipeline_file="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/composed-pipeline.json"
     fi
 
     if [[ ! -f "$pipeline_file" ]]; then
@@ -202,9 +190,9 @@ test_compose_valid_ordering() {
     # Validate via the script's own validator
     local valid=0
     (
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        REPO_DIR="$TEMP_DIR"
-        source "$TEMP_DIR/scripts/sw-pipeline-composer.sh"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        REPO_DIR="$TEST_TEMP_DIR"
+        source "$TEST_TEMP_DIR/scripts/sw-pipeline-composer.sh"
         composer_validate_pipeline "$pipeline_file"
     ) 2>/dev/null || valid=$?
 
@@ -223,19 +211,19 @@ test_compose_security_stages() {
     local analysis='{"complexity":"high","risk_flags":["security"]}'
 
     (
-        cd "$TEMP_DIR/project"
-        HOME="$TEMP_DIR/home" \
-        SCRIPT_DIR="$TEMP_DIR/scripts" \
-        REPO_DIR="$TEMP_DIR" \
+        cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR/home" \
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts" \
+        REPO_DIR="$TEST_TEMP_DIR" \
         bash -c '
-            SCRIPT_DIR="'"$TEMP_DIR/scripts"'"
-            REPO_DIR="'"$TEMP_DIR"'"
+            SCRIPT_DIR="'"$TEST_TEMP_DIR/scripts"'"
+            REPO_DIR="'"$TEST_TEMP_DIR"'"
             source "$SCRIPT_DIR/sw-pipeline-composer.sh"
             composer_create_pipeline '"'"''"$analysis"''"'"' "" ""
         ' 2>/dev/null
     )
 
-    local pipeline_file="$TEMP_DIR/project/.claude/pipeline-artifacts/composed-pipeline.json"
+    local pipeline_file="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/composed-pipeline.json"
     if [[ ! -f "$pipeline_file" ]]; then
         echo -e "    ${RED}✗${RESET} Composed pipeline file not found"
         return 1
@@ -257,14 +245,14 @@ test_compose_security_stages() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_downgrade_models() {
     local pipeline
-    pipeline=$(cat "$TEMP_DIR/templates/pipelines/standard.json")
+    pipeline=$(cat "$TEST_TEMP_DIR/templates/pipelines/standard.json")
 
     local result
     result=$(
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        REPO_DIR="$TEMP_DIR"
-        HOME="$TEMP_DIR/home"
-        source "$TEMP_DIR/scripts/sw-pipeline-composer.sh"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        REPO_DIR="$TEST_TEMP_DIR"
+        HOME="$TEST_TEMP_DIR/home"
+        source "$TEST_TEMP_DIR/scripts/sw-pipeline-composer.sh"
         composer_downgrade_models "$pipeline" "test" 2>/dev/null
     )
 
@@ -303,25 +291,25 @@ test_downgrade_models() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_fallback_to_template() {
     # Remove mock intelligence so fallback kicks in
-    local saved="$TEMP_DIR/scripts/sw-intelligence.sh.bak"
-    mv "$TEMP_DIR/scripts/sw-intelligence.sh" "$saved"
+    local saved="$TEST_TEMP_DIR/scripts/sw-intelligence.sh.bak"
+    mv "$TEST_TEMP_DIR/scripts/sw-intelligence.sh" "$saved"
 
     local output
     output=$(
-        cd "$TEMP_DIR/project"
-        HOME="$TEMP_DIR/home" \
+        cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR/home" \
         bash -c '
-            SCRIPT_DIR="'"$TEMP_DIR/scripts"'"
-            REPO_DIR="'"$TEMP_DIR"'"
+            SCRIPT_DIR="'"$TEST_TEMP_DIR/scripts"'"
+            REPO_DIR="'"$TEST_TEMP_DIR"'"
             source "$SCRIPT_DIR/sw-pipeline-composer.sh"
             composer_create_pipeline "" "" ""
         ' 2>/dev/null
     )
 
     # Restore
-    mv "$saved" "$TEMP_DIR/scripts/sw-intelligence.sh"
+    mv "$saved" "$TEST_TEMP_DIR/scripts/sw-intelligence.sh"
 
-    local pipeline_file="$TEMP_DIR/project/.claude/pipeline-artifacts/composed-pipeline.json"
+    local pipeline_file="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/composed-pipeline.json"
     if [[ ! -f "$pipeline_file" ]]; then
         echo -e "    ${RED}✗${RESET} Fallback pipeline file not created"
         return 1
@@ -343,16 +331,16 @@ test_fallback_to_template() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_insert_stage_position() {
     local pipeline
-    pipeline=$(cat "$TEMP_DIR/templates/pipelines/standard.json")
+    pipeline=$(cat "$TEST_TEMP_DIR/templates/pipelines/standard.json")
 
     local new_stage='{"id":"security_scan","enabled":true,"gate":"auto","config":{}}'
 
     local result
     result=$(
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        REPO_DIR="$TEMP_DIR"
-        HOME="$TEMP_DIR/home"
-        source "$TEMP_DIR/scripts/sw-pipeline-composer.sh"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        REPO_DIR="$TEST_TEMP_DIR"
+        HOME="$TEST_TEMP_DIR/home"
+        source "$TEST_TEMP_DIR/scripts/sw-pipeline-composer.sh"
         composer_insert_conditional_stage "$pipeline" "build" "$new_stage" 2>/dev/null
     )
 
@@ -391,9 +379,9 @@ test_validate_rejects_invalid() {
 
     local exit_code=0
     (
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        REPO_DIR="$TEMP_DIR"
-        source "$TEMP_DIR/scripts/sw-pipeline-composer.sh"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        REPO_DIR="$TEST_TEMP_DIR"
+        source "$TEST_TEMP_DIR/scripts/sw-pipeline-composer.sh"
         composer_validate_pipeline "$bad_pipeline"
     ) 2>/dev/null || exit_code=$?
 
@@ -418,9 +406,9 @@ test_validate_rejects_missing_ids() {
 
     local exit_code=0
     (
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        REPO_DIR="$TEMP_DIR"
-        source "$TEMP_DIR/scripts/sw-pipeline-composer.sh"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        REPO_DIR="$TEST_TEMP_DIR"
+        source "$TEST_TEMP_DIR/scripts/sw-pipeline-composer.sh"
         composer_validate_pipeline "$bad_pipeline"
     ) 2>/dev/null || exit_code=$?
 
@@ -437,13 +425,13 @@ test_validate_rejects_missing_ids() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_validate_accepts_valid() {
     local good_pipeline
-    good_pipeline=$(cat "$TEMP_DIR/templates/pipelines/standard.json")
+    good_pipeline=$(cat "$TEST_TEMP_DIR/templates/pipelines/standard.json")
 
     local exit_code=0
     (
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        REPO_DIR="$TEMP_DIR"
-        source "$TEMP_DIR/scripts/sw-pipeline-composer.sh"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        REPO_DIR="$TEST_TEMP_DIR"
+        source "$TEST_TEMP_DIR/scripts/sw-pipeline-composer.sh"
         composer_validate_pipeline "$good_pipeline"
     ) 2>/dev/null || exit_code=$?
 
@@ -465,21 +453,21 @@ test_estimate_iterations_reasonable() {
 
     local est_low est_high est_none
     est_low=$(
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        REPO_DIR="$TEMP_DIR"
-        source "$TEMP_DIR/scripts/sw-pipeline-composer.sh"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        REPO_DIR="$TEST_TEMP_DIR"
+        source "$TEST_TEMP_DIR/scripts/sw-pipeline-composer.sh"
         composer_estimate_iterations "$analysis_low" "" 2>/dev/null
     )
     est_high=$(
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        REPO_DIR="$TEMP_DIR"
-        source "$TEMP_DIR/scripts/sw-pipeline-composer.sh"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        REPO_DIR="$TEST_TEMP_DIR"
+        source "$TEST_TEMP_DIR/scripts/sw-pipeline-composer.sh"
         composer_estimate_iterations "$analysis_high" "" 2>/dev/null
     )
     est_none=$(
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        REPO_DIR="$TEMP_DIR"
-        source "$TEMP_DIR/scripts/sw-pipeline-composer.sh"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        REPO_DIR="$TEST_TEMP_DIR"
+        source "$TEST_TEMP_DIR/scripts/sw-pipeline-composer.sh"
         composer_estimate_iterations "$analysis_none" "" 2>/dev/null
     )
 
@@ -505,15 +493,15 @@ test_estimate_iterations_reasonable() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_insert_nonexistent_stage_fails() {
     local pipeline
-    pipeline=$(cat "$TEMP_DIR/templates/pipelines/standard.json")
+    pipeline=$(cat "$TEST_TEMP_DIR/templates/pipelines/standard.json")
     local new_stage='{"id":"extra","enabled":true,"gate":"auto","config":{}}'
 
     local exit_code=0
     (
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        REPO_DIR="$TEMP_DIR"
-        HOME="$TEMP_DIR/home"
-        source "$TEMP_DIR/scripts/sw-pipeline-composer.sh"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        REPO_DIR="$TEST_TEMP_DIR"
+        HOME="$TEST_TEMP_DIR/home"
+        source "$TEST_TEMP_DIR/scripts/sw-pipeline-composer.sh"
         composer_insert_conditional_stage "$pipeline" "nonexistent" "$new_stage"
     ) 2>/dev/null || exit_code=$?
 
@@ -530,14 +518,14 @@ test_insert_nonexistent_stage_fails() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_downgrade_nonexistent_stage_fails() {
     local pipeline
-    pipeline=$(cat "$TEMP_DIR/templates/pipelines/standard.json")
+    pipeline=$(cat "$TEST_TEMP_DIR/templates/pipelines/standard.json")
 
     local exit_code=0
     (
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        REPO_DIR="$TEMP_DIR"
-        HOME="$TEMP_DIR/home"
-        source "$TEMP_DIR/scripts/sw-pipeline-composer.sh"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        REPO_DIR="$TEST_TEMP_DIR"
+        HOME="$TEST_TEMP_DIR/home"
+        source "$TEST_TEMP_DIR/scripts/sw-pipeline-composer.sh"
         composer_downgrade_models "$pipeline" "nonexistent"
     ) 2>/dev/null || exit_code=$?
 
@@ -557,9 +545,9 @@ test_validate_rejects_no_stages() {
 
     local exit_code=0
     (
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        REPO_DIR="$TEMP_DIR"
-        source "$TEMP_DIR/scripts/sw-pipeline-composer.sh"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        REPO_DIR="$TEST_TEMP_DIR"
+        source "$TEST_TEMP_DIR/scripts/sw-pipeline-composer.sh"
         composer_validate_pipeline "$bad"
     ) 2>/dev/null || exit_code=$?
 

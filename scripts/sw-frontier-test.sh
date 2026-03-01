@@ -7,49 +7,37 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 # shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-frontier-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/scripts"
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/project/.claude"
-    mkdir -p "$TEMP_DIR/bin"
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-frontier-test.XXXXXX")
+    mkdir -p "$TEST_TEMP_DIR/scripts"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/project/.claude"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
     # Scripts live under project/scripts/ so REPO_DIR resolves to project/
-    mkdir -p "$TEMP_DIR/project/scripts"
+    mkdir -p "$TEST_TEMP_DIR/project/scripts"
 
     # Copy scripts under test
-    cp "$SCRIPT_DIR/sw-adversarial.sh" "$TEMP_DIR/project/scripts/"
-    cp "$SCRIPT_DIR/sw-developer-simulation.sh" "$TEMP_DIR/project/scripts/"
-    cp "$SCRIPT_DIR/sw-architecture-enforcer.sh" "$TEMP_DIR/project/scripts/"
-    cp "$SCRIPT_DIR/sw-intelligence.sh" "$TEMP_DIR/project/scripts/"
+    cp "$SCRIPT_DIR/sw-adversarial.sh" "$TEST_TEMP_DIR/project/scripts/"
+    cp "$SCRIPT_DIR/sw-developer-simulation.sh" "$TEST_TEMP_DIR/project/scripts/"
+    cp "$SCRIPT_DIR/sw-architecture-enforcer.sh" "$TEST_TEMP_DIR/project/scripts/"
+    cp "$SCRIPT_DIR/sw-intelligence.sh" "$TEST_TEMP_DIR/project/scripts/"
 
     # Create daemon-config with all flags enabled
-    cat > "$TEMP_DIR/project/.claude/daemon-config.json" <<'EOF'
+    cat > "$TEST_TEMP_DIR/project/.claude/daemon-config.json" <<'EOF'
 {
     "intelligence": {
         "enabled": true,
@@ -61,7 +49,7 @@ setup_env() {
 EOF
 
     # Mock git for repo_hash
-    cat > "$TEMP_DIR/bin/git" <<'GITEOF'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'GITEOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "config" && "${2:-}" == "--get" && "${3:-}" == "remote.origin.url" ]]; then
     echo "https://github.com/test/repo.git"
@@ -69,80 +57,80 @@ if [[ "${1:-}" == "config" && "${2:-}" == "--get" && "${3:-}" == "remote.origin.
 fi
 echo "mock-git"
 GITEOF
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Mock shasum
-    cat > "$TEMP_DIR/bin/shasum" <<'SHAEOF'
+    cat > "$TEST_TEMP_DIR/bin/shasum" <<'SHAEOF'
 #!/usr/bin/env bash
 echo "abcdef123456  -"
 SHAEOF
-    chmod +x "$TEMP_DIR/bin/shasum"
+    chmod +x "$TEST_TEMP_DIR/bin/shasum"
 
     # Mock md5 for _intelligence_md5
-    cat > "$TEMP_DIR/bin/md5" <<'MD5EOF'
+    cat > "$TEST_TEMP_DIR/bin/md5" <<'MD5EOF'
 #!/usr/bin/env bash
 echo "d41d8cd98f00b204e9800998ecf8427e"
 MD5EOF
-    chmod +x "$TEMP_DIR/bin/md5"
+    chmod +x "$TEST_TEMP_DIR/bin/md5"
 }
 
 # Create a mock claude that returns adversarial findings
 _setup_mock_claude_adversarial() {
-    cat > "$TEMP_DIR/bin/claude" <<'CLEOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'CLEOF'
 #!/usr/bin/env bash
 echo '[{"severity":"critical","category":"security","description":"SQL injection in user input","location":"src/db.ts:42","exploit_scenario":"Attacker sends malicious input"},{"severity":"high","category":"logic","description":"Off-by-one error in pagination","location":"src/api.ts:88","exploit_scenario":"Last page returns wrong results"},{"severity":"low","category":"edge_case","description":"Empty array not handled","location":"src/utils.ts:15","exploit_scenario":"Crash on empty input"}]'
 CLEOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 }
 
 # Mock claude that returns converged (no critical findings)
 _setup_mock_claude_converged() {
-    cat > "$TEMP_DIR/bin/claude" <<'CLEOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'CLEOF'
 #!/usr/bin/env bash
 echo '[{"severity":"low","category":"edge_case","description":"Minor style issue","location":"src/utils.ts:5","exploit_scenario":"N/A"}]'
 CLEOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 }
 
 # Mock claude for simulation (returns concerns from a persona)
 _setup_mock_claude_simulation() {
-    cat > "$TEMP_DIR/bin/claude" <<'CLEOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'CLEOF'
 #!/usr/bin/env bash
 echo '[{"concern":"Potential XSS in template rendering","severity":"high","suggestion":"Sanitize output with escape function"},{"concern":"Missing rate limiting on API endpoint","severity":"medium","suggestion":"Add rate limiter middleware"}]'
 CLEOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 }
 
 # Mock claude for architecture model
 _setup_mock_claude_architecture() {
-    cat > "$TEMP_DIR/bin/claude" <<'CLEOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'CLEOF'
 #!/usr/bin/env bash
 echo '{"layers":["presentation","business","data"],"patterns":["pipeline","provider","event-driven"],"conventions":["set -euo pipefail","atomic writes","jq for JSON"],"dependencies":["bash","jq","git","claude"]}'
 CLEOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 }
 
 # Mock claude for architecture violations
 _setup_mock_claude_violations() {
-    cat > "$TEMP_DIR/bin/claude" <<'CLEOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'CLEOF'
 #!/usr/bin/env bash
 echo '[{"violation":"Direct echo to file instead of atomic write","severity":"high","pattern_broken":"atomic writes","suggestion":"Use tmp file + mv pattern"}]'
 CLEOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 }
 
 # Mock claude that fails (simulates unavailable)
 _setup_mock_claude_unavailable() {
-    cat > "$TEMP_DIR/bin/claude" <<'CLEOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'CLEOF'
 #!/usr/bin/env bash
 exit 1
 CLEOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -182,13 +170,13 @@ test_adversarial_structured_findings() {
     _setup_mock_claude_adversarial
 
     # Clear intelligence cache to avoid stale results
-    rm -f "$TEMP_DIR/project/.claude/intelligence-cache.json"
+    rm -f "$TEST_TEMP_DIR/project/.claude/intelligence-cache.json"
 
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/project/scripts/sw-adversarial.sh" review "diff --git a/src/db.ts" "test context" 2>/dev/null
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/project/scripts/sw-adversarial.sh" review "diff --git a/src/db.ts" "test context" 2>/dev/null
     )
 
     # Should be valid JSON array
@@ -224,16 +212,16 @@ test_adversarial_structured_findings() {
 # ──────────────────────────────────────────────────────────────────────────
 test_adversarial_converges() {
     _setup_mock_claude_converged
-    rm -f "$TEMP_DIR/project/.claude/intelligence-cache.json"
+    rm -f "$TEST_TEMP_DIR/project/.claude/intelligence-cache.json"
 
     # Pass findings with no critical/high items
     local findings='[{"severity":"low","category":"edge_case","description":"minor issue"}]'
 
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/project/scripts/sw-adversarial.sh" iterate "some code" "$findings" 1 2>/dev/null
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/project/scripts/sw-adversarial.sh" iterate "some code" "$findings" 1 2>/dev/null
     )
 
     # Should return empty array (converged)
@@ -246,7 +234,7 @@ test_adversarial_converges() {
 
     # Check event was emitted
     local converged_events
-    converged_events=$(grep -c '"adversarial.converged"' "$TEMP_DIR/home/.shipwright/events.jsonl" 2>/dev/null || true)
+    converged_events=$(grep -c '"adversarial.converged"' "$TEST_TEMP_DIR/home/.shipwright/events.jsonl" 2>/dev/null || true)
     converged_events="${converged_events:-0}"
     if [[ "$converged_events" -lt 1 ]]; then
         echo -e "    ${RED}✗${RESET} No adversarial.converged event emitted"
@@ -265,13 +253,13 @@ test_adversarial_converges() {
 # ──────────────────────────────────────────────────────────────────────────
 test_simulation_three_personas() {
     _setup_mock_claude_simulation
-    rm -f "$TEMP_DIR/project/.claude/intelligence-cache.json"
+    rm -f "$TEST_TEMP_DIR/project/.claude/intelligence-cache.json"
 
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/project/scripts/sw-developer-simulation.sh" review "diff --git a/src/api.ts" "Add new endpoint" 2>/dev/null
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/project/scripts/sw-developer-simulation.sh" review "diff --git a/src/api.ts" "Add new endpoint" 2>/dev/null
     )
 
     # Should be valid JSON array
@@ -290,7 +278,7 @@ test_simulation_three_personas() {
 
     # Check for simulation.objection events
     local objection_events
-    objection_events=$(grep -c '"simulation.objection"' "$TEMP_DIR/home/.shipwright/events.jsonl" 2>/dev/null || true)
+    objection_events=$(grep -c '"simulation.objection"' "$TEST_TEMP_DIR/home/.shipwright/events.jsonl" 2>/dev/null || true)
     objection_events="${objection_events:-0}"
     if [[ "$objection_events" -lt 1 ]]; then
         echo -e "    ${RED}✗${RESET} No simulation.objection events emitted"
@@ -305,20 +293,20 @@ test_simulation_three_personas() {
 # ──────────────────────────────────────────────────────────────────────────
 test_simulation_address() {
     # Mock claude that returns addressed objections
-    cat > "$TEMP_DIR/bin/claude" <<'CLEOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'CLEOF'
 #!/usr/bin/env bash
 echo '[{"concern":"XSS risk","response":"Added sanitization","action":"will_fix","code_change":"escape(input)"},{"concern":"Rate limiting","response":"Already handled by middleware","action":"already_addressed","code_change":""}]'
 CLEOF
-    chmod +x "$TEMP_DIR/bin/claude"
-    rm -f "$TEMP_DIR/project/.claude/intelligence-cache.json"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
+    rm -f "$TEST_TEMP_DIR/project/.claude/intelligence-cache.json"
 
     local objections='[{"persona":"security","concern":"XSS risk","severity":"high"},{"persona":"performance","concern":"Rate limiting","severity":"medium"}]'
 
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/project/scripts/sw-developer-simulation.sh" address "$objections" "implementation context" 2>/dev/null
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/project/scripts/sw-developer-simulation.sh" address "$objections" "implementation context" 2>/dev/null
     )
 
     # Should have action items
@@ -339,7 +327,7 @@ CLEOF
 
     # Check simulation.complete event
     local complete_events
-    complete_events=$(grep -c '"simulation.complete"' "$TEMP_DIR/home/.shipwright/events.jsonl" 2>/dev/null || true)
+    complete_events=$(grep -c '"simulation.complete"' "$TEST_TEMP_DIR/home/.shipwright/events.jsonl" 2>/dev/null || true)
     complete_events="${complete_events:-0}"
     if [[ "$complete_events" -lt 1 ]]; then
         echo -e "    ${RED}✗${RESET} No simulation.complete event emitted"
@@ -358,17 +346,17 @@ CLEOF
 # ──────────────────────────────────────────────────────────────────────────
 test_architecture_model_schema() {
     _setup_mock_claude_architecture
-    rm -f "$TEMP_DIR/project/.claude/intelligence-cache.json"
+    rm -f "$TEST_TEMP_DIR/project/.claude/intelligence-cache.json"
 
     # Create minimal repo structure
-    echo "# Test Repo" > "$TEMP_DIR/project/README.md"
-    echo '{"name":"test"}' > "$TEMP_DIR/project/package.json"
+    echo "# Test Repo" > "$TEST_TEMP_DIR/project/README.md"
+    echo '{"name":"test"}' > "$TEST_TEMP_DIR/project/package.json"
 
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/project/scripts/sw-architecture-enforcer.sh" build "$TEMP_DIR/project" 2>/dev/null
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/project/scripts/sw-architecture-enforcer.sh" build "$TEST_TEMP_DIR/project" 2>/dev/null
     )
 
     # Check required arrays exist
@@ -391,7 +379,7 @@ test_architecture_model_schema() {
     fi
 
     # Check model was stored
-    local model_file="$TEMP_DIR/home/.shipwright/memory/abcdef123456/architecture.json"
+    local model_file="$TEST_TEMP_DIR/home/.shipwright/memory/abcdef123456/architecture.json"
     if [[ ! -f "$model_file" ]]; then
         echo -e "    ${RED}✗${RESET} Model file not stored at expected path"
         return 1
@@ -399,7 +387,7 @@ test_architecture_model_schema() {
 
     # Check architecture.model_built event
     local built_events
-    built_events=$(grep -c '"architecture.model_built"' "$TEMP_DIR/home/.shipwright/events.jsonl" 2>/dev/null || true)
+    built_events=$(grep -c '"architecture.model_built"' "$TEST_TEMP_DIR/home/.shipwright/events.jsonl" 2>/dev/null || true)
     built_events="${built_events:-0}"
     if [[ "$built_events" -lt 1 ]]; then
         echo -e "    ${RED}✗${RESET} No architecture.model_built event emitted"
@@ -414,10 +402,10 @@ test_architecture_model_schema() {
 # ──────────────────────────────────────────────────────────────────────────
 test_architecture_validates_changes() {
     _setup_mock_claude_violations
-    rm -f "$TEMP_DIR/project/.claude/intelligence-cache.json"
+    rm -f "$TEST_TEMP_DIR/project/.claude/intelligence-cache.json"
 
     # Create a model file for validation
-    local model_file="$TEMP_DIR/home/.shipwright/memory/abcdef123456/architecture.json"
+    local model_file="$TEST_TEMP_DIR/home/.shipwright/memory/abcdef123456/architecture.json"
     mkdir -p "$(dirname "$model_file")"
     cat > "$model_file" <<'EOF'
 {"layers":["presentation","data"],"patterns":["atomic writes"],"conventions":["set -euo pipefail"],"dependencies":["jq"]}
@@ -425,9 +413,9 @@ EOF
 
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/project/scripts/sw-architecture-enforcer.sh" validate "echo data > file.txt" "$model_file" 2>/dev/null
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/project/scripts/sw-architecture-enforcer.sh" validate "echo data > file.txt" "$model_file" 2>/dev/null
     )
 
     # Should return violations array
@@ -453,7 +441,7 @@ EOF
 
     # Check architecture.violation event
     local violation_events
-    violation_events=$(grep -c '"architecture.violation"' "$TEMP_DIR/home/.shipwright/events.jsonl" 2>/dev/null || true)
+    violation_events=$(grep -c '"architecture.violation"' "$TEST_TEMP_DIR/home/.shipwright/events.jsonl" 2>/dev/null || true)
     violation_events="${violation_events:-0}"
     if [[ "$violation_events" -lt 1 ]]; then
         echo -e "    ${RED}✗${RESET} No architecture.violation event emitted"
@@ -468,16 +456,16 @@ EOF
 # ──────────────────────────────────────────────────────────────────────────
 test_graceful_degradation() {
     _setup_mock_claude_unavailable
-    rm -f "$TEMP_DIR/project/.claude/intelligence-cache.json"
+    rm -f "$TEST_TEMP_DIR/project/.claude/intelligence-cache.json"
 
     # Adversarial should return empty array, not crash
     local adv_output
     local adv_exit=0
     # shellcheck disable=SC2034
     adv_output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/project/scripts/sw-adversarial.sh" review "some diff" "context" 2>/dev/null
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/project/scripts/sw-adversarial.sh" review "some diff" "context" 2>/dev/null
     ) || adv_exit=$?
 
     if [[ "$adv_exit" -ne 0 ]]; then
@@ -490,9 +478,9 @@ test_graceful_degradation() {
     local sim_exit=0
     # shellcheck disable=SC2034
     sim_output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/project/scripts/sw-developer-simulation.sh" review "some diff" "desc" 2>/dev/null
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/project/scripts/sw-developer-simulation.sh" review "some diff" "desc" 2>/dev/null
     ) || sim_exit=$?
 
     if [[ "$sim_exit" -ne 0 ]]; then
@@ -501,7 +489,7 @@ test_graceful_degradation() {
     fi
 
     # Architecture validate should return empty array, not crash
-    local model_file="$TEMP_DIR/home/.shipwright/memory/abcdef123456/architecture.json"
+    local model_file="$TEST_TEMP_DIR/home/.shipwright/memory/abcdef123456/architecture.json"
     mkdir -p "$(dirname "$model_file")"
     echo '{"layers":[],"patterns":[],"conventions":[],"dependencies":[]}' > "$model_file"
 
@@ -509,9 +497,9 @@ test_graceful_degradation() {
     local arch_exit=0
     # shellcheck disable=SC2034
     arch_output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-            bash "$TEMP_DIR/project/scripts/sw-architecture-enforcer.sh" validate "some diff" "$model_file" 2>/dev/null
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+            bash "$TEST_TEMP_DIR/project/scripts/sw-architecture-enforcer.sh" validate "some diff" "$model_file" 2>/dev/null
     ) || arch_exit=$?
 
     if [[ "$arch_exit" -ne 0 ]]; then

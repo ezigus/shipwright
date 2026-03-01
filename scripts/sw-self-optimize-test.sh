@@ -7,44 +7,32 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 # ─── Colors (matches shipwright theme) ────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═════════════════════════════════════════════════════════════════════════════
 # TEST ENVIRONMENT SETUP
 # ═════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-self-optimize-test.XXXXXX")
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-self-optimize-test.XXXXXX")
 
-    mkdir -p "$TEMP_DIR/.shipwright/optimization"
-    mkdir -p "$TEMP_DIR/.shipwright/memory/repo1"
-    mkdir -p "$TEMP_DIR/.shipwright/memory/repo2"
-    mkdir -p "$TEMP_DIR/.shipwright/memory/repo3"
+    mkdir -p "$TEST_TEMP_DIR/.shipwright/optimization"
+    mkdir -p "$TEST_TEMP_DIR/.shipwright/memory/repo1"
+    mkdir -p "$TEST_TEMP_DIR/.shipwright/memory/repo2"
+    mkdir -p "$TEST_TEMP_DIR/.shipwright/memory/repo3"
 
     # Redirect HOME so all scripts write to temp
-    export HOME="$TEMP_DIR"
-    export EVENTS_FILE="$TEMP_DIR/.shipwright/events.jsonl"
+    export HOME="$TEST_TEMP_DIR"
+    export EVENTS_FILE="$TEST_TEMP_DIR/.shipwright/events.jsonl"
     export NO_GITHUB=true
 
     # Override storage paths for the script under test
-    export OPTIMIZATION_DIR="$TEMP_DIR/.shipwright/optimization"
+    export OPTIMIZATION_DIR="$TEST_TEMP_DIR/.shipwright/optimization"
     export OUTCOMES_FILE="$OPTIMIZATION_DIR/outcomes.jsonl"
     export TEMPLATE_WEIGHTS_FILE="$OPTIMIZATION_DIR/template-weights.json"
     export MODEL_ROUTING_FILE="$OPTIMIZATION_DIR/model-routing.json"
@@ -52,8 +40,8 @@ setup_env() {
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -76,16 +64,16 @@ reset_test() {
 
 source_optimize_functions() {
     # Source the whole script — the BASH_SOURCE guard prevents main() from running.
-    # HOME is already set to TEMP_DIR by setup_env, so storage paths resolve there.
+    # HOME is already set to TEST_TEMP_DIR by setup_env, so storage paths resolve there.
     source "$SCRIPT_DIR/sw-self-optimize.sh"
 
     # Re-override storage paths with our test-specific locations
-    OPTIMIZATION_DIR="$TEMP_DIR/.shipwright/optimization"
+    OPTIMIZATION_DIR="$TEST_TEMP_DIR/.shipwright/optimization"
     OUTCOMES_FILE="$OPTIMIZATION_DIR/outcomes.jsonl"
     TEMPLATE_WEIGHTS_FILE="$OPTIMIZATION_DIR/template-weights.json"
     MODEL_ROUTING_FILE="$OPTIMIZATION_DIR/model-routing.json"
     ITERATION_MODEL_FILE="$OPTIMIZATION_DIR/iteration-model.json"
-    EVENTS_FILE="$TEMP_DIR/.shipwright/events.jsonl"
+    EVENTS_FILE="$TEST_TEMP_DIR/.shipwright/events.jsonl"
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -190,7 +178,7 @@ run_test() {
 # 1. Outcome analysis extracts correct metrics from mock pipeline state
 # ──────────────────────────────────────────────────────────────────────────────
 test_outcome_analysis() {
-    local state_file="$TEMP_DIR/mock-state.md"
+    local state_file="$TEST_TEMP_DIR/mock-state.md"
     create_mock_state "$state_file" "42" "standard" "success" "12" "5.25" "7" "opus" "bug,backend"
 
     optimize_analyze_outcome "$state_file" > /dev/null 2>&1
@@ -221,7 +209,7 @@ test_outcome_analysis() {
 # 2. Outcome analysis emits event
 # ──────────────────────────────────────────────────────────────────────────────
 test_outcome_emits_event() {
-    local state_file="$TEMP_DIR/mock-state.md"
+    local state_file="$TEST_TEMP_DIR/mock-state.md"
     create_mock_state "$state_file" "99" "fast" "completed" "5" "1.00" "2"
 
     optimize_analyze_outcome "$state_file" > /dev/null 2>&1
@@ -404,7 +392,7 @@ test_model_routing_insufficient_data() {
 # 10. Memory pruning removes old patterns (>30 days), keeps recent ones
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_pruning() {
-    local mem_dir="$TEMP_DIR/.shipwright/memory/repo1"
+    local mem_dir="$TEST_TEMP_DIR/.shipwright/memory/repo1"
     mkdir -p "$mem_dir"
 
     # Create failures.json with one old and one recent pattern
@@ -421,7 +409,7 @@ test_memory_pruning() {
         ]}' > "$mem_dir/failures.json"
 
     # Initialize global.json
-    echo '{"common_patterns":[],"cross_repo_learnings":[]}' > "$TEMP_DIR/.shipwright/memory/global.json"
+    echo '{"common_patterns":[],"cross_repo_learnings":[]}' > "$TEST_TEMP_DIR/.shipwright/memory/global.json"
 
     optimize_evolve_memory > /dev/null 2>&1
 
@@ -440,7 +428,7 @@ test_memory_pruning() {
 # 11. Memory strengthening increases weight for confirmed patterns
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_strengthening() {
-    local mem_dir="$TEMP_DIR/.shipwright/memory/repo1"
+    local mem_dir="$TEST_TEMP_DIR/.shipwright/memory/repo1"
     mkdir -p "$mem_dir"
 
     local recent_date
@@ -453,7 +441,7 @@ test_memory_strengthening() {
             {pattern: "flaky test", stage: "test", seen_count: 5, last_seen: $recent, weight: 1.0}
         ]}' > "$mem_dir/failures.json"
 
-    echo '{"common_patterns":[],"cross_repo_learnings":[]}' > "$TEMP_DIR/.shipwright/memory/global.json"
+    echo '{"common_patterns":[],"cross_repo_learnings":[]}' > "$TEST_TEMP_DIR/.shipwright/memory/global.json"
 
     optimize_evolve_memory > /dev/null 2>&1
 
@@ -473,15 +461,15 @@ test_memory_promotion() {
     # Same pattern in 3 different repos
     local repo_dir
     for repo_dir in repo1 repo2 repo3; do
-        mkdir -p "$TEMP_DIR/.shipwright/memory/$repo_dir"
+        mkdir -p "$TEST_TEMP_DIR/.shipwright/memory/$repo_dir"
         jq -n \
             --arg recent "$recent_date" \
             '{failures: [
                 {pattern: "shared error pattern", stage: "build", seen_count: 2, last_seen: $recent}
-            ]}' > "$TEMP_DIR/.shipwright/memory/$repo_dir/failures.json"
+            ]}' > "$TEST_TEMP_DIR/.shipwright/memory/$repo_dir/failures.json"
     done
 
-    local global_file="$TEMP_DIR/.shipwright/memory/global.json"
+    local global_file="$TEST_TEMP_DIR/.shipwright/memory/global.json"
     echo '{"common_patterns":[],"cross_repo_learnings":[]}' > "$global_file"
 
     optimize_evolve_memory > /dev/null 2>&1
@@ -501,7 +489,7 @@ test_memory_promotion() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_full_analysis_empty() {
     # Should complete without error even with no data
-    echo '{"common_patterns":[],"cross_repo_learnings":[]}' > "$TEMP_DIR/.shipwright/memory/global.json"
+    echo '{"common_patterns":[],"cross_repo_learnings":[]}' > "$TEST_TEMP_DIR/.shipwright/memory/global.json"
     optimize_full_analysis > /dev/null 2>&1
 }
 
@@ -536,7 +524,7 @@ test_report_empty() {
 # 16. Outcome analysis extracts stage data
 # ──────────────────────────────────────────────────────────────────────────────
 test_outcome_stages() {
-    local state_file="$TEMP_DIR/mock-state-stages.md"
+    local state_file="$TEST_TEMP_DIR/mock-state-stages.md"
     create_mock_state "$state_file" "55" "full" "success" "8" "4.00" "6"
 
     optimize_analyze_outcome "$state_file" > /dev/null 2>&1
@@ -762,7 +750,7 @@ test_full_analysis_includes_context_efficiency() {
         add_mock_outcome "standard" "success" "bug" "opus" 10 "2.00" 5
     done
 
-    echo '{"common_patterns":[],"cross_repo_learnings":[]}' > "$TEMP_DIR/.shipwright/memory/global.json"
+    echo '{"common_patterns":[],"cross_repo_learnings":[]}' > "$TEST_TEMP_DIR/.shipwright/memory/global.json"
 
     optimize_full_analysis > /dev/null 2>&1
 

@@ -7,27 +7,15 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 PREP_SCRIPT="$SCRIPT_DIR/sw-prep.sh"
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ENVIRONMENT SETUP
@@ -35,12 +23,12 @@ TEMP_DIR=""
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-prep-test.XXXXXX")
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-prep-test.XXXXXX")
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -268,7 +256,7 @@ run_test() {
 # 1. Node.js project detection
 # ──────────────────────────────────────────────────────────────────────────────
 test_nodejs_detection() {
-    local test_dir="$TEMP_DIR/nodejs"
+    local test_dir="$TEST_TEMP_DIR/nodejs"
     mkdir -p "$test_dir"
     create_node_project "$test_dir"
 
@@ -285,7 +273,7 @@ test_nodejs_detection() {
 # 2. Python project detection
 # ──────────────────────────────────────────────────────────────────────────────
 test_python_detection() {
-    local test_dir="$TEMP_DIR/python"
+    local test_dir="$TEST_TEMP_DIR/python"
     mkdir -p "$test_dir"
     create_python_project "$test_dir"
 
@@ -302,7 +290,7 @@ test_python_detection() {
 # 3. Go project detection
 # ──────────────────────────────────────────────────────────────────────────────
 test_go_detection() {
-    local test_dir="$TEMP_DIR/go"
+    local test_dir="$TEST_TEMP_DIR/go"
     mkdir -p "$test_dir"
     create_go_project "$test_dir"
 
@@ -318,7 +306,7 @@ test_go_detection() {
 # 4. Rust project detection
 # ──────────────────────────────────────────────────────────────────────────────
 test_rust_detection() {
-    local test_dir="$TEMP_DIR/rust"
+    local test_dir="$TEST_TEMP_DIR/rust"
     mkdir -p "$test_dir"
     create_rust_project "$test_dir"
 
@@ -334,7 +322,7 @@ test_rust_detection() {
 # 5. settings.json is valid JSON
 # ──────────────────────────────────────────────────────────────────────────────
 test_settings_json_valid() {
-    local test_dir="$TEMP_DIR/settings"
+    local test_dir="$TEST_TEMP_DIR/settings"
     mkdir -p "$test_dir"
     create_node_project "$test_dir"
 
@@ -362,7 +350,7 @@ test_settings_json_valid() {
 # 6. Hooks are executable
 # ──────────────────────────────────────────────────────────────────────────────
 test_hooks_executable() {
-    local test_dir="$TEMP_DIR/hooks-exec"
+    local test_dir="$TEST_TEMP_DIR/hooks-exec"
     mkdir -p "$test_dir"
     create_node_project "$test_dir"
 
@@ -390,7 +378,7 @@ test_hooks_executable() {
 # 7. Hooks have valid bash syntax
 # ──────────────────────────────────────────────────────────────────────────────
 test_hooks_syntax_valid() {
-    local test_dir="$TEMP_DIR/hooks-syntax"
+    local test_dir="$TEST_TEMP_DIR/hooks-syntax"
     mkdir -p "$test_dir"
     create_node_project "$test_dir"
 
@@ -411,7 +399,7 @@ test_hooks_syntax_valid() {
 # 8. CLAUDE.md has required sections
 # ──────────────────────────────────────────────────────────────────────────────
 test_claude_md_sections() {
-    local test_dir="$TEMP_DIR/sections"
+    local test_dir="$TEST_TEMP_DIR/sections"
     mkdir -p "$test_dir"
     create_node_project "$test_dir"
 
@@ -428,7 +416,7 @@ test_claude_md_sections() {
 # 9. Check mode outputs scoring without overwriting
 # ──────────────────────────────────────────────────────────────────────────────
 test_check_mode() {
-    local test_dir="$TEMP_DIR/check-mode"
+    local test_dir="$TEST_TEMP_DIR/check-mode"
     mkdir -p "$test_dir"
     create_node_project "$test_dir"
 
@@ -460,7 +448,7 @@ test_check_mode() {
 # 10. Idempotency — second run without --force doesn't overwrite
 # ──────────────────────────────────────────────────────────────────────────────
 test_idempotency() {
-    local test_dir="$TEMP_DIR/idempotent"
+    local test_dir="$TEST_TEMP_DIR/idempotent"
     mkdir -p "$test_dir"
     create_node_project "$test_dir"
 
@@ -501,7 +489,7 @@ test_idempotency() {
 # 11. --force overwrites modified files
 # ──────────────────────────────────────────────────────────────────────────────
 test_force_overwrites() {
-    local test_dir="$TEMP_DIR/force"
+    local test_dir="$TEST_TEMP_DIR/force"
     mkdir -p "$test_dir"
     create_node_project "$test_dir"
 
@@ -525,7 +513,7 @@ test_force_overwrites() {
 # 12. No eval in generated hooks
 # ──────────────────────────────────────────────────────────────────────────────
 test_no_eval_in_hooks() {
-    local test_dir="$TEMP_DIR/no-eval"
+    local test_dir="$TEST_TEMP_DIR/no-eval"
     mkdir -p "$test_dir"
     create_node_project "$test_dir"
 
@@ -552,7 +540,7 @@ test_no_eval_in_hooks() {
 # 13. Definition of Done is generated with checklist items
 # ──────────────────────────────────────────────────────────────────────────────
 test_dod_generated() {
-    local test_dir="$TEMP_DIR/dod"
+    local test_dir="$TEST_TEMP_DIR/dod"
     mkdir -p "$test_dir"
     create_node_project "$test_dir"
 
@@ -592,7 +580,7 @@ main() {
 
     echo -e "${DIM}Setting up test environment...${RESET}"
     setup_env
-    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEMP_DIR${RESET}"
+    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEST_TEMP_DIR${RESET}"
     echo ""
 
     # Define all tests

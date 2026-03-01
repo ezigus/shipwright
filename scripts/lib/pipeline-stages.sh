@@ -1344,7 +1344,9 @@ ${_skill_prompts}
     # Discover additional test commands (subdirectories, extra scripts)
     local additional_cmds=()
     if type detect_test_commands >/dev/null 2>&1; then
-        readarray -t additional_cmds < <(detect_test_commands 2>/dev/null | tail -n +2)
+        while IFS= read -r _cmd; do
+            [[ -n "$_cmd" ]] && additional_cmds+=("$_cmd")
+        done < <(detect_test_commands 2>/dev/null | tail -n +2)
     fi
 
     local max_iter

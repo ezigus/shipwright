@@ -110,6 +110,9 @@ QUALITY_GATE_PASSED=true
 # ─── Multi-Test Defaults ──────────────────────────────────────────────────
 ADDITIONAL_TEST_CMDS=()   # Array of extra test commands (from --additional-test-cmds)
 
+# ─── Context Budget ──────────────────────────────────────────────────────────
+CONTEXT_BUDGET_CHARS="${CONTEXT_BUDGET_CHARS:-200000}"  # Max prompt chars before trimming
+
 # ─── Parse Arguments ──────────────────────────────────────────────────────────
 show_help() {
     echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${VERSION}${RESET} — ${BOLD}Continuous Loop${RESET}"
@@ -948,7 +951,9 @@ run_test_gate() {
     # Mid-build discovery: find test files created since loop start
     local mid_build_cmds=()
     if [[ -n "${LOOP_START_COMMIT:-}" ]] && type detect_created_test_files >/dev/null 2>&1; then
-        readarray -t mid_build_cmds < <(detect_created_test_files "$LOOP_START_COMMIT" 2>/dev/null || true)
+        while IFS= read -r _cmd; do
+            [[ -n "$_cmd" ]] && mid_build_cmds+=("$_cmd")
+        done < <(detect_created_test_files "$LOOP_START_COMMIT" 2>/dev/null || true)
     fi
     local all_extra=("${ADDITIONAL_TEST_CMDS[@]+"${ADDITIONAL_TEST_CMDS[@]}"}" "${mid_build_cmds[@]+"${mid_build_cmds[@]}"}")
 

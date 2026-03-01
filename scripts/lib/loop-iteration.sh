@@ -7,7 +7,7 @@ _LOOP_ITERATION_LOADED=1
 
 manage_context_window() {
     local prompt="$1"
-    local budget="${CONTEXT_BUDGET_CHARS}"
+    local budget="${CONTEXT_BUDGET_CHARS:-200000}"
     local current_len=${#prompt}
 
     # Read trimming tunables from config (env > daemon-config > policy > defaults.json)

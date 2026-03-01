@@ -179,8 +179,9 @@ test_pm_recommend_json_flag() {
 
 # ── 1.7 PM: learn subcommand works ───────────────────────────────────────────
 test_pm_learn_functional() {
-    local out
-    out=$(PM_STATE_DIR="$TEST_TMP/pm" NO_GITHUB=true bash "$SCRIPT_DIR/sw-pm.sh" learn 42 success 2>&1 || true)
+    local out pm_home="$TEST_TMP/pm-home"
+    mkdir -p "$pm_home/.shipwright"
+    out=$(HOME="$pm_home" PM_STATE_DIR="$pm_home/.shipwright" NO_GITHUB=true bash "$SCRIPT_DIR/sw-pm.sh" learn 42 success 2>&1 || true)
     echo "$out" | grep -qi "recorded\|captured\|success" || { echo "learn should confirm recording: $out"; return 1; }
 }
 

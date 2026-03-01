@@ -34,12 +34,12 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   }
 fi
 # ─── PM History Storage ──────────────────────────────────────────────────────
-# Use PM_STATE_DIR if set (for testing), otherwise use ~/.shipwright
-PM_HISTORY="${PM_STATE_DIR:=${HOME}/.shipwright}/pm-history.json"
+PM_STATE_DIR="${PM_STATE_DIR:-${HOME}/.shipwright}"
+PM_HISTORY="${PM_STATE_DIR}/pm-history.json"
 
 # ─── Ensure PM history file exists ───────────────────────────────────────────
 ensure_pm_history() {
-    mkdir -p "${PM_STATE_DIR:=${HOME}/.shipwright}"
+    mkdir -p "${PM_STATE_DIR}"
     if [[ ! -f "$PM_HISTORY" ]]; then
         echo '{"decisions":[],"outcomes":[]}' > "$PM_HISTORY"
     fi

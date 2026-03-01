@@ -469,6 +469,15 @@ run_claude_iteration() {
     local approx_tokens=$((prompt_chars / 4))
     info "Prompt: ~${approx_tokens} tokens (${prompt_chars} chars)"
 
+    # Audit: save full prompt to disk for traceability
+    if type audit_save_prompt >/dev/null 2>&1; then
+        audit_save_prompt "$final_prompt" "$ITERATION" || true
+    fi
+    if type audit_emit >/dev/null 2>&1; then
+        audit_emit "loop.prompt" "iteration=$ITERATION" "chars=$prompt_chars" \
+            "raw_chars=$raw_prompt_chars" "path=iteration-${ITERATION}.prompt.txt" || true
+    fi
+
     # Emit context efficiency metrics
     if type emit_event >/dev/null 2>&1; then
         local trim_ratio=0
@@ -528,6 +537,15 @@ run_claude_iteration() {
 
     # Accumulate token usage from this iteration's JSON output
     accumulate_loop_tokens "$json_file"
+
+    # Audit: record response metadata
+    if type audit_emit >/dev/null 2>&1; then
+        local response_chars=0
+        [[ -f "$log_file" ]] && response_chars=$(wc -c < "$log_file" | tr -d ' ')
+        audit_emit "loop.response" "iteration=$ITERATION" "chars=$response_chars" \
+            "exit_code=$exit_code" "duration_s=$iter_duration" \
+            "path=iteration-${ITERATION}.json" || true
+    fi
 
     # Show verbose output if requested
     if $VERBOSE; then

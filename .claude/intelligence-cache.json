@@ -35,9 +35,15 @@
     },
     "d41d8cd98f00b204e9800998ecf8427e": {
       "result": {
-        "raw_response": "# Implementation Plan\n\n## Files to Modify\n- src/auth.js\n\n### Task Checklist\n- [ ] Create auth module\n- [ ] Add JWT validation\n\n### Definition of Done\n- [ ] All tests pass"
+        "team": [
+          "docs-writer",
+          "reviewer"
+        ],
+        "reasoning": "Stale documentation requires a Documentation Writer to identify and regenerate AUTO sections (shipwright docs sync) and update markdown files. A Code Reviewer adds quality assurance to verify documentation accuracy and completeness across Shipwright's complex multi-file structure (282 shell scripts, 54 markdown files). No security or architectural concerns—low risk maintenance task.",
+        "estimated_cost": 2.0,
+        "risk_level": "low"
       },
-      "timestamp": 1771767843,
+      "timestamp": 1772375290,
       "ttl": 3600
     },
     "efd5524ad1244fd20344bf3ff5d95233": {
@@ -512,6 +518,29 @@
         "confidence": 72
       },
       "timestamp": 1771762636,
+      "ttl": 3600
+    },
+    "a217ea85be1083c0d0131018091f5508": {
+      "result": {
+        "complexity": 4,
+        "risk_level": "low",
+        "success_probability": 85,
+        "recommended_template": "fast",
+        "key_risks": [
+          "Auto-sync might overwrite manual documentation improvements",
+          "Merge conflicts if docs were edited locally",
+          "Generated content needs verification for accuracy",
+          "Multiple AUTO sections may require coordination"
+        ],
+        "implementation_hints": [
+          "Run shipwright docs check to identify which specific sections are stale",
+          "Review the stale sections and source code before syncing",
+          "Use shipwright docs sync to regenerate AUTO sections",
+          "Verify all sections regenerated correctly with proper formatting",
+          "Test that documentation links and references still work"
+        ]
+      },
+      "timestamp": 1772375242,
       "ttl": 3600
     }
   }

@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC2034
-VERSION="3.2.3"
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Dependencies ─────────────────────────────────────────────────────────────

@@ -3,6 +3,16 @@
 [[ -n "${_PIPELINE_STATE_LOADED:-}" ]] && return 0
 _PIPELINE_STATE_LOADED=1
 
+# Defaults for variables normally set by sw-pipeline.sh (safe under set -u).
+ARTIFACTS_DIR="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
+STAGE_STATUSES="${STAGE_STATUSES:-}"
+STAGE_TIMINGS="${STAGE_TIMINGS:-}"
+LOG_ENTRIES="${LOG_ENTRIES:-}"
+ISSUE_NUMBER="${ISSUE_NUMBER:-}"
+GOAL="${GOAL:-}"
+PIPELINE_NAME="${PIPELINE_NAME:-pipeline}"
+PIPELINE_STATUS="${PIPELINE_STATUS:-pending}"
+
 save_artifact() {
     local name="$1" content="$2"
     mkdir -p "$ARTIFACTS_DIR" 2>/dev/null || true

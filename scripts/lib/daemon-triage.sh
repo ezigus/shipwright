@@ -3,6 +3,12 @@
 [[ -n "${_DAEMON_TRIAGE_LOADED:-}" ]] && return 0
 _DAEMON_TRIAGE_LOADED=1
 
+# Defaults for variables normally set by sw-daemon.sh (safe under set -u).
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+PIPELINE_TEMPLATE="${PIPELINE_TEMPLATE:-autonomous}"
+NO_GITHUB="${NO_GITHUB:-false}"
+
 # Extract dependency issue numbers from issue text
 extract_issue_dependencies() {
     local text="$1"

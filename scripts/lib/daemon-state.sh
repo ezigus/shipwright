@@ -3,6 +3,21 @@
 [[ -n "${_DAEMON_STATE_LOADED:-}" ]] && return 0
 _DAEMON_STATE_LOADED=1
 
+# Defaults for variables normally set by sw-daemon.sh (safe under set -u).
+DAEMON_DIR="${DAEMON_DIR:-${HOME}/.shipwright}"
+STATE_FILE="${STATE_FILE:-${DAEMON_DIR}/daemon-state.json}"
+LOG_FILE="${LOG_FILE:-${DAEMON_DIR}/daemon.log}"
+LOG_DIR="${LOG_DIR:-${DAEMON_DIR}/logs}"
+PAUSE_FLAG="${PAUSE_FLAG:-${DAEMON_DIR}/daemon-pause.flag}"
+DB_FILE="${DB_FILE:-${DAEMON_DIR}/shipwright.db}"
+BASE_BRANCH="${BASE_BRANCH:-main}"
+MAX_PARALLEL="${MAX_PARALLEL:-4}"
+POLL_INTERVAL="${POLL_INTERVAL:-60}"
+WATCH_LABEL="${WATCH_LABEL:-shipwright}"
+WATCH_MODE="${WATCH_MODE:-repo}"
+DASHBOARD_URL="${DASHBOARD_URL:-}"
+SLACK_WEBHOOK="${SLACK_WEBHOOK:-}"
+
 # SQLite persistence (DB as primary read path)
 _DAEMON_STATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -f "${_DAEMON_STATE_DIR}/../sw-db.sh" ]] && source "${_DAEMON_STATE_DIR}/../sw-db.sh"

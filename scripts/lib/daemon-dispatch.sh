@@ -3,6 +3,17 @@
 [[ -n "${_DAEMON_DISPATCH_LOADED:-}" ]] && return 0
 _DAEMON_DISPATCH_LOADED=1
 
+# Defaults for variables normally set by sw-daemon.sh (safe under set -u).
+DAEMON_DIR="${DAEMON_DIR:-${HOME}/.shipwright}"
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+STATE_FILE="${STATE_FILE:-${DAEMON_DIR}/daemon-state.json}"
+LOG_DIR="${LOG_DIR:-${DAEMON_DIR}/logs}"
+WORKTREE_DIR="${WORKTREE_DIR:-${REPO_DIR}/.worktrees}"
+BASE_BRANCH="${BASE_BRANCH:-main}"
+PIPELINE_TEMPLATE="${PIPELINE_TEMPLATE:-autonomous}"
+NO_GITHUB="${NO_GITHUB:-false}"
+
 # ─── Org-Wide Repo Management ─────────────────────────────────────────────
 
 daemon_ensure_repo() {

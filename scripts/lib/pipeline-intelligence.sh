@@ -3,6 +3,11 @@
 [[ -n "${_PIPELINE_INTELLIGENCE_LOADED:-}" ]] && return 0
 _PIPELINE_INTELLIGENCE_LOADED=1
 
+# Defaults for variables normally set by sw-pipeline.sh (safe under set -u).
+ARTIFACTS_DIR="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+NO_GITHUB="${NO_GITHUB:-false}"
+
 pipeline_should_skip_stage() {
     local stage_id="$1"
     local reason=""

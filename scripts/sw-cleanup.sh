@@ -6,7 +6,7 @@
 # ║  Use --force to actually kill sessions and remove files.                 ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 # shellcheck disable=SC2034
-VERSION="3.2.1"
+VERSION="3.2.2"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 

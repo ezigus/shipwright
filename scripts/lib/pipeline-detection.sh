@@ -3,6 +3,10 @@
 [[ -n "${_PIPELINE_DETECTION_LOADED:-}" ]] && return 0
 _PIPELINE_DETECTION_LOADED=1
 
+# Defaults for variables normally set by sw-pipeline.sh (safe under set -u).
+PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+
 detect_test_cmd() {
     local root="$PROJECT_ROOT"
 

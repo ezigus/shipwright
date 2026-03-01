@@ -3,6 +3,14 @@
 [[ -n "${_PIPELINE_QUALITY_CHECKS_LOADED:-}" ]] && return 0
 _PIPELINE_QUALITY_CHECKS_LOADED=1
 
+# Defaults for variables normally set by sw-pipeline.sh (safe under set -u).
+ARTIFACTS_DIR="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
+BASE_BRANCH="${BASE_BRANCH:-main}"
+PIPELINE_CONFIG="${PIPELINE_CONFIG:-}"
+TEST_CMD="${TEST_CMD:-}"
+
 quality_check_security() {
     info "Security audit..."
     local audit_log="$ARTIFACTS_DIR/security-audit.log"

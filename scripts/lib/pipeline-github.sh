@@ -3,6 +3,19 @@
 [[ -n "${_PIPELINE_GITHUB_LOADED:-}" ]] && return 0
 _PIPELINE_GITHUB_LOADED=1
 
+# Defaults for variables normally set by sw-pipeline.sh (safe under set -u).
+NO_GITHUB="${NO_GITHUB:-false}"
+GOAL="${GOAL:-}"
+PIPELINE_NAME="${PIPELINE_NAME:-pipeline}"
+PIPELINE_CONFIG="${PIPELINE_CONFIG:-}"
+GIT_BRANCH="${GIT_BRANCH:-}"
+PIPELINE_START_EPOCH="${PIPELINE_START_EPOCH:-}"
+ARTIFACTS_DIR="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
+GH_AVAILABLE="${GH_AVAILABLE:-false}"
+REPO_OWNER="${REPO_OWNER:-}"
+REPO_NAME="${REPO_NAME:-}"
+PROGRESS_COMMENT_ID="${PROGRESS_COMMENT_ID:-}"
+
 # ─── Markdown Escaping ───────────────────────────────────────────────
 # Escape markdown special characters to prevent injection
 escape_markdown() {

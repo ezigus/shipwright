@@ -424,6 +424,12 @@ assert_eq "Multiple non-package classes (sorted,deduped)" "BarView,BatchOperatio
 classes=$(detect_changed_non_package_classes '["Packages/PlaylistFeature/Sources/Foo.swift"]')
 assert_eq "Package files excluded from class extraction" "" "$classes"
 
+classes=$(detect_changed_non_package_classes '["zpodUITests/UITestHelpers.swift","zpodUITests/MiniPlayerPersistenceTests.swift"]')
+assert_eq "Helper files excluded from class extraction" "MiniPlayerPersistenceTests" "$classes"
+
+classes=$(detect_changed_non_package_classes '["zpodUITests/SwipeConfigurationTestSupport+SheetUtilities.swift","zpodUITests/BatchOperationUITests.swift"]')
+assert_eq "Extension/helper utility files excluded from class extraction" "BatchOperationUITests" "$classes"
+
 classes=$(detect_changed_non_package_classes '[]')
 assert_eq "Empty changed list returns empty" "" "$classes"
 

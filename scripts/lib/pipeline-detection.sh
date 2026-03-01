@@ -277,7 +277,21 @@ collect_loop_changed_files_json() {
 detect_changed_non_package_classes() {
     local changed_files_json="${1:-}"
     [[ -z "$changed_files_json" ]] && changed_files_json=$(collect_changed_files_json)
-    jq -r '[.[] | select(test("\\.swift$") and (test("^Packages/") | not)) | split("/") | last | sub("\\.swift$";"")] | unique | sort | join(",")' <<<"$changed_files_json"
+    jq -r '
+        [
+            .[]
+            | select(test("\\.swift$") and (test("^Packages/") | not))
+            | split("/") | last
+            | sub("\\.swift$"; "")
+            # Exclude helper/support files that are not directly runnable test classes/targets.
+            # Examples: UITestHelpers.swift, FooTestSupport.swift, Foo+SheetUtilities.swift
+            | select(test("\\+") | not)
+            | select(test("(Helper|Helpers|Support|Utilities|Utility|Fixture|Fixtures|Mock|Mocks|Stub|Stubs)$") | not)
+        ]
+        | unique
+        | sort
+        | join(",")
+    ' <<<"$changed_files_json"
 }
 
 resolve_relevant_environments_json() {

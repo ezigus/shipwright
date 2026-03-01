@@ -1151,6 +1151,68 @@ rm -rf "$_test_artifacts"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Suite 14: Full AI Integration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo "═══ Suite 14: Full AI Integration ═══"
+echo ""
+
+echo "  ── End-to-end skill flow ──"
+
+# Test: catalog → plan → load → outcome cycle
+_e2e_dir=$(mktemp -d)
+
+# 1. Build catalog (should include all 17 curated skills)
+_catalog=$(skill_build_catalog 2>/dev/null || true)
+_catalog_lines=$(echo "$_catalog" | grep -c '^-' 2>/dev/null || echo "0")
+assert_true "[[ $_catalog_lines -ge 17 ]]" "catalog has at least 17 skills (got $_catalog_lines)"
+
+# 2. Write a skill plan (simulating what skill_analyze_issue would produce)
+cat > "$_e2e_dir/skill-plan.json" << 'E2E_PLAN'
+{
+  "issue_type": "api",
+  "confidence": 0.88,
+  "skill_plan": {
+    "plan": ["brainstorming", "api-design"],
+    "build": ["api-design"],
+    "review": ["two-stage-review", "security-audit"]
+  },
+  "skill_rationale": {
+    "api-design": "REST endpoint versioning needed",
+    "brainstorming": "Multiple valid API approaches",
+    "two-stage-review": "Spec compliance for API contract",
+    "security-audit": "Auth endpoint requires security review"
+  },
+  "generated_skills": []
+}
+E2E_PLAN
+
+# 3. Load from plan for each stage
+ARTIFACTS_DIR="$_e2e_dir" _plan_out=$(skill_load_from_plan "plan" 2>/dev/null || true)
+ARTIFACTS_DIR="$_e2e_dir" _build_out=$(skill_load_from_plan "build" 2>/dev/null || true)
+ARTIFACTS_DIR="$_e2e_dir" _review_out=$(skill_load_from_plan "review" 2>/dev/null || true)
+
+assert_contains "$_plan_out" "api-design" "plan loads api-design skill"
+assert_contains "$_plan_out" "REST endpoint" "plan includes rationale"
+assert_contains "$_build_out" "api-design" "build loads api-design"
+assert_not_contains "$_build_out" "brainstorming" "build doesn't load plan-only skills"
+assert_contains "$_review_out" "two-stage-review" "review loads two-stage-review"
+assert_contains "$_review_out" "security-audit" "review loads security-audit"
+
+# 4. Test fallback chain (no plan → adaptive → static)
+_no_plan_dir=$(mktemp -d)
+_fallback_out=$(ARTIFACTS_DIR="$_no_plan_dir" INTELLIGENCE_ISSUE_TYPE="frontend" skill_load_from_plan "plan" 2>/dev/null || true)
+assert_contains "$_fallback_out" "brainstorming\|frontend\|Socratic" "fallback produces output when no plan exists"
+
+# 5. Verify generated skill directory structure
+assert_true "[[ -d '$SKILLS_DIR/generated' ]]" "generated skills directory exists"
+assert_true "[[ -d '$SKILLS_DIR/generated/_refinements' ]]" "refinements directory exists"
+
+rm -rf "$_e2e_dir" "$_no_plan_dir"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

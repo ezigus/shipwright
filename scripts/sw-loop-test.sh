@@ -270,7 +270,7 @@ fi
 # ─── Test 11: JSON output format in claude flags ────────────────────────────
 echo ""
 echo -e "${DIM}  json output format${RESET}"
-if grep -q 'output-format.*json' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -q 'output-format.*json' "$SCRIPT_DIR/sw-loop.sh" || grep -q 'output-format.*json' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
     assert_pass "build_claude_flags includes --output-format json"
 else
     assert_fail "build_claude_flags includes --output-format json"
@@ -317,7 +317,7 @@ else
 fi
 
 # ─── Test 16: run_claude_iteration separates stdout/stderr ───────────────────
-if grep -q '2>"$err_file"' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -q '2>"$err_file"' "$SCRIPT_DIR/sw-loop.sh" || grep -q '2>"$err_file"' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
     assert_pass "run_claude_iteration separates stdout from stderr"
 else
     assert_fail "run_claude_iteration separates stdout from stderr"
@@ -415,12 +415,12 @@ rm -rf "$tmpdir2"
 # ─── Test 22: Script structure — circuit breaker, stuckness, test gate ────────
 echo ""
 echo -e "${DIM}  script structure${RESET}"
-if grep -qE 'check_circuit_breaker|CIRCUIT_BREAKER' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -qE 'check_circuit_breaker|CIRCUIT_BREAKER' "$SCRIPT_DIR/sw-loop.sh" "$SCRIPT_DIR/lib/loop-convergence.sh"; then
     assert_pass "Script has circuit breaker logic"
 else
     assert_fail "Script has circuit breaker logic"
 fi
-if grep -qE 'detect_stuckness|stuckness' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -qE 'detect_stuckness|stuckness' "$SCRIPT_DIR/sw-loop.sh" "$SCRIPT_DIR/lib/loop-convergence.sh"; then
     assert_pass "Script has stuckness detection"
 else
     assert_fail "Script has stuckness detection"

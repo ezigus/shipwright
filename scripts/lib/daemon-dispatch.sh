@@ -9,7 +9,7 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 STATE_FILE="${STATE_FILE:-${DAEMON_DIR}/daemon-state.json}"
 LOG_DIR="${LOG_DIR:-${DAEMON_DIR}/logs}"
-WORKTREE_DIR="${WORKTREE_DIR:-${REPO_DIR}/.worktrees}"
+WORKTREE_DIR="${WORKTREE_DIR:-${REPO_DIR}/.claude/worktrees}"
 BASE_BRANCH="${BASE_BRANCH:-main}"
 PIPELINE_TEMPLATE="${PIPELINE_TEMPLATE:-autonomous}"
 NO_GITHUB="${NO_GITHUB:-false}"
@@ -73,6 +73,15 @@ daemon_spawn_pipeline() {
     if [[ -L "$WORKTREE_DIR" ]]; then
         daemon_log ERROR "WORKTREE_DIR is a symlink: ${WORKTREE_DIR}"
         return 1
+    fi
+
+    # Self-healing: ensure worktree directory exists before resolving
+    if [[ ! -d "$WORKTREE_DIR" ]]; then
+        daemon_log INFO "Auto-creating worktree directory: ${WORKTREE_DIR}"
+        mkdir -p "$WORKTREE_DIR" || {
+            daemon_log ERROR "Failed to create WORKTREE_DIR: ${WORKTREE_DIR}"
+            return 1
+        }
     fi
 
     # Verify resolved path is within repo/daemon directory

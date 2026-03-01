@@ -563,17 +563,22 @@ setup_dirs() {
     LOG_DIR="$DAEMON_DIR/logs"
 
     # ── Worktree Directory (must be absolute for security) ──
-    # Default to repo-level .claude/worktrees, falling back to DAEMON_DIR
-    if [[ -d "$(pwd)/.claude" ]]; then
-        WORKTREE_DIR="$(cd "$(pwd)" && pwd)/.claude/worktrees"
-    else
-        WORKTREE_DIR="${DAEMON_DIR}/worktrees"
-    fi
+    # Always use repo-level .claude/worktrees (self-healing: create .claude if missing)
+    local _abs_cwd
+    _abs_cwd="$(cd "$(pwd)" && pwd)"
+    WORKTREE_DIR="${_abs_cwd}/.claude/worktrees"
 
     PAUSE_FLAG="${HOME}/.shipwright/daemon-pause.flag"
 
     mkdir -p "$LOG_DIR"
     mkdir -p "$HOME/.shipwright/progress"
+    mkdir -p "$WORKTREE_DIR"
+
+    # Ensure worktrees are gitignored
+    local _gitignore="${_abs_cwd}/.gitignore"
+    if [[ -f "$_gitignore" ]] && ! grep -q '\.claude/worktrees' "$_gitignore" 2>/dev/null; then
+        echo ".claude/worktrees/" >> "$_gitignore"
+    fi
 }
 
 # ─── Adaptive Threshold Helpers ──────────────────────────────────────────────

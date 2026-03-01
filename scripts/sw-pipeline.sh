@@ -103,6 +103,12 @@ fi
 # shellcheck source=sw-cost.sh
 # for cost_record persistence to costs.json + DB
 [[ -f "$SCRIPT_DIR/sw-cost.sh" ]] && source "$SCRIPT_DIR/sw-cost.sh"
+# shellcheck source=lib/skill-registry.sh
+# for skill_analyze_outcome (AI outcome learning)
+[[ -f "$SCRIPT_DIR/lib/skill-registry.sh" ]] && source "$SCRIPT_DIR/lib/skill-registry.sh"
+# shellcheck source=lib/skill-memory.sh
+# for skill memory operations
+[[ -f "$SCRIPT_DIR/lib/skill-memory.sh" ]] && source "$SCRIPT_DIR/lib/skill-memory.sh"
 
 # ─── GitHub API Modules (optional) ─────────────────────────────────────────
 # shellcheck source=sw-github-graphql.sh
@@ -2510,6 +2516,22 @@ pipeline_start() {
                     bash "$SCRIPT_DIR/sw-memory.sh" fix-outcome "$_fail_sig" "true" "false" 2>/dev/null || true
                 fi
             fi
+        fi
+    fi
+
+    # AI-powered outcome learning
+    if type skill_analyze_outcome >/dev/null 2>&1; then
+        local _failed_stage=""
+        local _error_ctx=""
+        if [[ "$exit_code" -ne 0 ]]; then
+            _failed_stage="${CURRENT_STAGE_ID:-unknown}"
+            _error_ctx=$(tail -30 "$ARTIFACTS_DIR/errors-collected.json" 2>/dev/null || true)
+        fi
+        local _outcome_result="success"
+        [[ "$exit_code" -ne 0 ]] && _outcome_result="failure"
+
+        if skill_analyze_outcome "$_outcome_result" "$ARTIFACTS_DIR" "$_failed_stage" "$_error_ctx" 2>/dev/null; then
+            info "Skill outcome analysis complete — learnings recorded"
         fi
     fi
 

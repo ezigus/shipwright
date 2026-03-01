@@ -1,14 +1,14 @@
-# OpenFang-Shipwright Implementation Plan
+# Skipper-Shipwright Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Port Shipwright's complete autonomous software delivery system into a single `openfang-shipwright` crate within a fork of OpenFang, creating a "Software Engineering Hand."
+**Goal:** Port Shipwright's complete autonomous software delivery system into a single `skipper-shipwright` crate within a fork of Skipper, creating a "Software Engineering Hand."
 
-**Architecture:** Single Rust crate (`openfang-shipwright`) added to OpenFang's Cargo workspace. Contains 7 modules (pipeline, decision, memory, fleet, github, intelligence, config) plus Hand definition files. Integrates with OpenFang's kernel for scheduling/RBAC/metering, memory crate for vector search, and channels for notifications.
+**Architecture:** Single Rust crate (`skipper-shipwright`) added to Skipper's Cargo workspace. Contains 7 modules (pipeline, decision, memory, fleet, github, intelligence, config) plus Hand definition files. Integrates with Skipper's kernel for scheduling/RBAC/metering, memory crate for vector search, and channels for notifications.
 
 **Tech Stack:** Rust 1.75+, tokio async, serde/toml for config, reqwest for GitHub API, rusqlite for persistence, axum for API routes, clap for CLI, thiserror for errors.
 
-**Design Doc:** `docs/plans/2026-02-28-openfang-shipwright-integration-design.md`
+**Design Doc:** `docs/plans/2026-02-28-skipper-shipwright-integration-design.md`
 
 ---
 
@@ -17,11 +17,11 @@
 Before starting, complete these one-time setup steps:
 
 ```bash
-# 1. Fork OpenFang
-gh repo fork RightNow-AI/openfang --clone --remote
+# 1. Fork Skipper
+gh repo fork RightNow-AI/skipper --clone --remote
 
 # 2. Verify build
-cd openfang
+cd skipper
 cargo build --workspace --lib
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
@@ -36,20 +36,20 @@ git checkout -b feat/shipwright-hand
 
 **Files:**
 
-- Create: `crates/openfang-shipwright/Cargo.toml`
-- Create: `crates/openfang-shipwright/src/lib.rs`
-- Create: `crates/openfang-shipwright/src/config.rs`
+- Create: `crates/skipper-shipwright/Cargo.toml`
+- Create: `crates/skipper-shipwright/src/lib.rs`
+- Create: `crates/skipper-shipwright/src/config.rs`
 - Modify: `Cargo.toml` (workspace root — add member)
 
 **Step 1: Add crate to workspace**
 
-In the root `Cargo.toml`, add `"crates/openfang-shipwright"` to `workspace.members`.
+In the root `Cargo.toml`, add `"crates/skipper-shipwright"` to `workspace.members`.
 
 **Step 2: Create crate Cargo.toml**
 
 ```toml
 [package]
-name = "openfang-shipwright"
+name = "skipper-shipwright"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -57,9 +57,9 @@ license.workspace = true
 description = "Software Engineering Hand — autonomous delivery pipelines"
 
 [dependencies]
-openfang-types = { path = "../openfang-types" }
-openfang-memory = { path = "../openfang-memory" }
-openfang-runtime = { path = "../openfang-runtime" }
+skipper-types = { path = "../skipper-types" }
+skipper-memory = { path = "../skipper-memory" }
+skipper-runtime = { path = "../skipper-runtime" }
 
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -80,10 +80,10 @@ tokio = { workspace = true, features = ["test-util", "macros"] }
 **Step 3: Create lib.rs**
 
 ```rust
-//! OpenFang Shipwright — Software Engineering Hand
+//! Skipper Shipwright — Software Engineering Hand
 //!
 //! Autonomous delivery pipelines: Issue → Plan → Build → Test → PR → Deploy.
-//! Integrates with OpenFang kernel for scheduling, RBAC, metering,
+//! Integrates with Skipper kernel for scheduling, RBAC, metering,
 //! and cross-Hand intelligence via Collector, Researcher, and Predictor.
 
 pub mod config;
@@ -96,7 +96,7 @@ pub use config::ShipwrightConfig;
 ```rust
 //! Shipwright configuration types.
 //!
-//! Parsed from `[shipwright]` section in `openfang.toml`.
+//! Parsed from `[shipwright]` section in `skipper.toml`.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -323,23 +323,23 @@ mod tests {
 
 **Step 5: Verify it compiles**
 
-Run: `cargo build -p openfang-shipwright`
+Run: `cargo build -p skipper-shipwright`
 Expected: Compiles with zero warnings
 
 **Step 6: Run tests**
 
-Run: `cargo test -p openfang-shipwright`
+Run: `cargo test -p skipper-shipwright`
 Expected: 4 tests pass
 
 **Step 7: Clippy**
 
-Run: `cargo clippy -p openfang-shipwright -- -D warnings`
+Run: `cargo clippy -p skipper-shipwright -- -D warnings`
 Expected: Zero warnings
 
 **Step 8: Commit**
 
 ```bash
-git add crates/openfang-shipwright/ Cargo.toml
+git add crates/skipper-shipwright/ Cargo.toml
 git commit -m "feat(shipwright): scaffold crate with config module"
 ```
 
@@ -349,12 +349,12 @@ git commit -m "feat(shipwright): scaffold crate with config module"
 
 **Files:**
 
-- Create: `crates/openfang-shipwright/src/github/mod.rs`
-- Create: `crates/openfang-shipwright/src/github/graphql.rs`
-- Create: `crates/openfang-shipwright/src/github/checks.rs`
-- Create: `crates/openfang-shipwright/src/github/deployments.rs`
-- Create: `crates/openfang-shipwright/src/github/pr.rs`
-- Modify: `crates/openfang-shipwright/src/lib.rs` (add `pub mod github`)
+- Create: `crates/skipper-shipwright/src/github/mod.rs`
+- Create: `crates/skipper-shipwright/src/github/graphql.rs`
+- Create: `crates/skipper-shipwright/src/github/checks.rs`
+- Create: `crates/skipper-shipwright/src/github/deployments.rs`
+- Create: `crates/skipper-shipwright/src/github/pr.rs`
+- Modify: `crates/skipper-shipwright/src/lib.rs` (add `pub mod github`)
 
 **Step 1: Write tests for GitHub client**
 
@@ -384,13 +384,13 @@ Port from Shipwright's `scripts/lib/pipeline-github.sh` and `scripts/sw-github-g
 
 **Step 3: Verify tests pass**
 
-Run: `cargo test -p openfang-shipwright -- github`
+Run: `cargo test -p skipper-shipwright -- github`
 Expected: All tests pass
 
 **Step 4: Commit**
 
 ```bash
-git add crates/openfang-shipwright/src/github/
+git add crates/skipper-shipwright/src/github/
 git commit -m "feat(shipwright): GitHub API client with GraphQL, Checks, Deployments, PR"
 ```
 
@@ -400,11 +400,11 @@ git commit -m "feat(shipwright): GitHub API client with GraphQL, Checks, Deploym
 
 **Files:**
 
-- Create: `crates/openfang-shipwright/src/memory/mod.rs`
-- Create: `crates/openfang-shipwright/src/memory/patterns.rs`
-- Create: `crates/openfang-shipwright/src/memory/architecture.rs`
-- Create: `crates/openfang-shipwright/src/memory/learning.rs`
-- Modify: `crates/openfang-shipwright/src/lib.rs` (add `pub mod memory`)
+- Create: `crates/skipper-shipwright/src/memory/mod.rs`
+- Create: `crates/skipper-shipwright/src/memory/patterns.rs`
+- Create: `crates/skipper-shipwright/src/memory/architecture.rs`
+- Create: `crates/skipper-shipwright/src/memory/learning.rs`
+- Modify: `crates/skipper-shipwright/src/lib.rs` (add `pub mod memory`)
 
 **Step 1: Write tests for failure pattern storage**
 
@@ -436,7 +436,7 @@ In `memory/learning.rs`, write tests:
 
 Port from Shipwright's `scripts/sw-memory.sh`:
 
-- `ShipwrightMemory` wraps `openfang_memory::MemoryStore`
+- `ShipwrightMemory` wraps `skipper_memory::MemoryStore`
 - `FailurePattern` struct with all fields from design doc
 - `ArchitectureRule` struct with layers, dependency_rules, hotspots
 - `Outcome` struct for decision learning
@@ -445,13 +445,13 @@ Port from Shipwright's `scripts/sw-memory.sh`:
 
 **Step 5: Verify tests pass**
 
-Run: `cargo test -p openfang-shipwright -- memory`
+Run: `cargo test -p skipper-shipwright -- memory`
 Expected: All tests pass
 
 **Step 6: Commit**
 
 ```bash
-git add crates/openfang-shipwright/src/memory/
+git add crates/skipper-shipwright/src/memory/
 git commit -m "feat(shipwright): memory system with vector search, patterns, architecture, learning"
 ```
 
@@ -461,12 +461,12 @@ git commit -m "feat(shipwright): memory system with vector search, patterns, arc
 
 **Files:**
 
-- Create: `crates/openfang-shipwright/src/pipeline/mod.rs`
-- Create: `crates/openfang-shipwright/src/pipeline/stages.rs`
-- Create: `crates/openfang-shipwright/src/pipeline/templates.rs`
-- Create: `crates/openfang-shipwright/src/pipeline/composer.rs`
-- Create: `crates/openfang-shipwright/src/pipeline/self_healing.rs`
-- Modify: `crates/openfang-shipwright/src/lib.rs` (add `pub mod pipeline`)
+- Create: `crates/skipper-shipwright/src/pipeline/mod.rs`
+- Create: `crates/skipper-shipwright/src/pipeline/stages.rs`
+- Create: `crates/skipper-shipwright/src/pipeline/templates.rs`
+- Create: `crates/skipper-shipwright/src/pipeline/composer.rs`
+- Create: `crates/skipper-shipwright/src/pipeline/self_healing.rs`
+- Modify: `crates/skipper-shipwright/src/lib.rs` (add `pub mod pipeline`)
 
 **Step 1: Write tests for stage state machine**
 
@@ -519,13 +519,13 @@ Port from Shipwright's `scripts/sw-pipeline.sh`, `scripts/lib/pipeline-stages.sh
 
 **Step 6: Verify tests pass**
 
-Run: `cargo test -p openfang-shipwright -- pipeline`
+Run: `cargo test -p skipper-shipwright -- pipeline`
 Expected: All tests pass
 
 **Step 7: Commit**
 
 ```bash
-git add crates/openfang-shipwright/src/pipeline/
+git add crates/skipper-shipwright/src/pipeline/
 git commit -m "feat(shipwright): 12-stage pipeline engine with templates, self-healing, composition"
 ```
 
@@ -535,11 +535,11 @@ git commit -m "feat(shipwright): 12-stage pipeline engine with templates, self-h
 
 **Files:**
 
-- Create: `crates/openfang-shipwright/src/decision/mod.rs`
-- Create: `crates/openfang-shipwright/src/decision/signals.rs`
-- Create: `crates/openfang-shipwright/src/decision/scoring.rs`
-- Create: `crates/openfang-shipwright/src/decision/autonomy.rs`
-- Modify: `crates/openfang-shipwright/src/lib.rs` (add `pub mod decision`)
+- Create: `crates/skipper-shipwright/src/decision/mod.rs`
+- Create: `crates/skipper-shipwright/src/decision/signals.rs`
+- Create: `crates/skipper-shipwright/src/decision/scoring.rs`
+- Create: `crates/skipper-shipwright/src/decision/autonomy.rs`
+- Modify: `crates/skipper-shipwright/src/lib.rs` (add `pub mod decision`)
 
 **Step 1: Write tests for signal collection**
 
@@ -581,7 +581,7 @@ Port from Shipwright's `scripts/sw-decide.sh`, `scripts/lib/decide-*.sh`:
 
 - `SignalCollector` trait with `name()` and `collect()` methods
 - 10+ built-in collectors (Security, Dependency, Coverage, DeadCode, etc.)
-- `HandSignalCollector` that queries OpenFang kernel for Hand results
+- `HandSignalCollector` that queries Skipper kernel for Hand results
 - `Candidate` struct with all fields from design doc
 - `score_candidate()` function with configurable weights
 - `AutonomyTier` enum with tier resolution from category rules
@@ -591,13 +591,13 @@ Port from Shipwright's `scripts/sw-decide.sh`, `scripts/lib/decide-*.sh`:
 
 **Step 5: Verify tests pass**
 
-Run: `cargo test -p openfang-shipwright -- decision`
+Run: `cargo test -p skipper-shipwright -- decision`
 Expected: All tests pass
 
 **Step 6: Commit**
 
 ```bash
-git add crates/openfang-shipwright/src/decision/
+git add crates/skipper-shipwright/src/decision/
 git commit -m "feat(shipwright): decision engine with signals, scoring, autonomy tiers, Hand cross-pollination"
 ```
 
@@ -607,11 +607,11 @@ git commit -m "feat(shipwright): decision engine with signals, scoring, autonomy
 
 **Files:**
 
-- Create: `crates/openfang-shipwright/src/intelligence/mod.rs`
-- Create: `crates/openfang-shipwright/src/intelligence/prediction.rs`
-- Create: `crates/openfang-shipwright/src/intelligence/dora.rs`
-- Create: `crates/openfang-shipwright/src/intelligence/optimization.rs`
-- Modify: `crates/openfang-shipwright/src/lib.rs` (add `pub mod intelligence`)
+- Create: `crates/skipper-shipwright/src/intelligence/mod.rs`
+- Create: `crates/skipper-shipwright/src/intelligence/prediction.rs`
+- Create: `crates/skipper-shipwright/src/intelligence/dora.rs`
+- Create: `crates/skipper-shipwright/src/intelligence/optimization.rs`
+- Modify: `crates/skipper-shipwright/src/lib.rs` (add `pub mod intelligence`)
 
 **Step 1: Write tests for DORA metrics**
 
@@ -651,13 +651,13 @@ Port from Shipwright's `scripts/sw-intelligence.sh`, `scripts/sw-predictive.sh`,
 
 **Step 5: Verify tests pass**
 
-Run: `cargo test -p openfang-shipwright -- intelligence`
+Run: `cargo test -p skipper-shipwright -- intelligence`
 Expected: All tests pass
 
 **Step 6: Commit**
 
 ```bash
-git add crates/openfang-shipwright/src/intelligence/
+git add crates/skipper-shipwright/src/intelligence/
 git commit -m "feat(shipwright): intelligence layer with DORA, prediction, self-optimization"
 ```
 
@@ -667,11 +667,11 @@ git commit -m "feat(shipwright): intelligence layer with DORA, prediction, self-
 
 **Files:**
 
-- Create: `crates/openfang-shipwright/src/fleet/mod.rs`
-- Create: `crates/openfang-shipwright/src/fleet/daemon.rs`
-- Create: `crates/openfang-shipwright/src/fleet/dispatch.rs`
-- Create: `crates/openfang-shipwright/src/fleet/patrol.rs`
-- Modify: `crates/openfang-shipwright/src/lib.rs` (add `pub mod fleet`)
+- Create: `crates/skipper-shipwright/src/fleet/mod.rs`
+- Create: `crates/skipper-shipwright/src/fleet/daemon.rs`
+- Create: `crates/skipper-shipwright/src/fleet/dispatch.rs`
+- Create: `crates/skipper-shipwright/src/fleet/patrol.rs`
+- Modify: `crates/skipper-shipwright/src/lib.rs` (add `pub mod fleet`)
 
 **Step 1: Write tests for worker pool**
 
@@ -710,20 +710,20 @@ Port from Shipwright's `scripts/sw-daemon.sh`, `scripts/lib/daemon-*.sh`, `scrip
 - `FleetManager` struct with kernel handle, repos, worker pool
 - `poll_cycle()` as async kernel-scheduled job
 - `WorkerPool` with static and auto-scaling strategies
-- `Dispatcher` that spawns pipelines as OpenFang agents
+- `Dispatcher` that spawns pipelines as Skipper agents
 - `Patrol` that runs periodic checks and feeds decision engine
 - Replace bash PID/flock with kernel agent registry
 - Replace tmux with kernel agent management
 
 **Step 5: Verify tests pass**
 
-Run: `cargo test -p openfang-shipwright -- fleet`
+Run: `cargo test -p skipper-shipwright -- fleet`
 Expected: All tests pass
 
 **Step 6: Commit**
 
 ```bash
-git add crates/openfang-shipwright/src/fleet/
+git add crates/skipper-shipwright/src/fleet/
 git commit -m "feat(shipwright): fleet manager with daemon, auto-scaling, patrol"
 ```
 
@@ -733,11 +733,11 @@ git commit -m "feat(shipwright): fleet manager with daemon, auto-scaling, patrol
 
 **Files:**
 
-- Create: `crates/openfang-shipwright/src/hand.rs`
-- Create: `crates/openfang-shipwright/agents/shipwright/HAND.toml`
-- Create: `crates/openfang-shipwright/agents/shipwright/SKILL.md`
-- Create: `crates/openfang-shipwright/agents/shipwright/system_prompt.md`
-- Modify: `crates/openfang-shipwright/src/lib.rs` (add `pub mod hand`)
+- Create: `crates/skipper-shipwright/src/hand.rs`
+- Create: `crates/skipper-shipwright/agents/shipwright/HAND.toml`
+- Create: `crates/skipper-shipwright/agents/shipwright/SKILL.md`
+- Create: `crates/skipper-shipwright/agents/shipwright/system_prompt.md`
+- Modify: `crates/skipper-shipwright/src/lib.rs` (add `pub mod hand`)
 
 **Step 1: Create HAND.toml**
 
@@ -876,7 +876,7 @@ Multi-phase operational playbook:
 
 **Step 4: Implement hand.rs**
 
-Wire the Hand definition to load bundled files and register with OpenFang's hand registry:
+Wire the Hand definition to load bundled files and register with Skipper's hand registry:
 
 ```rust
 //! Shipwright Hand definition and registration.
@@ -888,22 +888,22 @@ pub const HAND_TOML: &str = include_str!("../agents/shipwright/HAND.toml");
 pub const SKILL_MD: &str = include_str!("../agents/shipwright/SKILL.md");
 pub const SYSTEM_PROMPT: &str = include_str!("../agents/shipwright/system_prompt.md");
 
-/// Register the Shipwright hand with OpenFang's hand registry.
+/// Register the Shipwright hand with Skipper's hand registry.
 pub fn register(/* registry: &mut HandRegistry */) {
     // Parse HAND.toml, attach SKILL.md, register definition
-    // Follows same pattern as openfang-hands/src/bundled.rs
+    // Follows same pattern as skipper-hands/src/bundled.rs
 }
 ```
 
 **Step 5: Verify compilation**
 
-Run: `cargo build -p openfang-shipwright`
+Run: `cargo build -p skipper-shipwright`
 Expected: Compiles, Hand files embedded
 
 **Step 6: Commit**
 
 ```bash
-git add crates/openfang-shipwright/src/hand.rs crates/openfang-shipwright/agents/
+git add crates/skipper-shipwright/src/hand.rs crates/skipper-shipwright/agents/
 git commit -m "feat(shipwright): Hand definition with HAND.toml, SKILL.md, system prompt"
 ```
 
@@ -913,11 +913,11 @@ git commit -m "feat(shipwright): Hand definition with HAND.toml, SKILL.md, syste
 
 **Files:**
 
-- Create: `crates/openfang-shipwright/src/cli.rs`
-- Create: `crates/openfang-shipwright/src/api.rs`
-- Modify: `crates/openfang-shipwright/src/lib.rs` (add `pub mod cli; pub mod api`)
-- Modify: `crates/openfang-api/src/server.rs` (register Shipwright routes)
-- Modify: `crates/openfang-cli/src/main.rs` (register `shipwright` subcommand)
+- Create: `crates/skipper-shipwright/src/cli.rs`
+- Create: `crates/skipper-shipwright/src/api.rs`
+- Modify: `crates/skipper-shipwright/src/lib.rs` (add `pub mod cli; pub mod api`)
+- Modify: `crates/skipper-api/src/server.rs` (register Shipwright routes)
+- Modify: `crates/skipper-cli/src/main.rs` (register `shipwright` subcommand)
 
 **Step 1: Implement CLI subcommands**
 
@@ -962,29 +962,29 @@ Using axum, define Shipwright routes:
 - `GET /api/shipwright/dora/:repo` → DORA metrics for repo
 - `GET /api/shipwright/memory/search` → semantic memory search
 
-**Step 3: Register routes in OpenFang API server**
+**Step 3: Register routes in Skipper API server**
 
 Add Shipwright router to `server.rs`:
 
 ```rust
-.nest("/api/shipwright", openfang_shipwright::api::router(state.clone()))
+.nest("/api/shipwright", skipper_shipwright::api::router(state.clone()))
 ```
 
-**Step 4: Register CLI in OpenFang CLI**
+**Step 4: Register CLI in Skipper CLI**
 
-Add `Shipwright` variant to main CLI enum, dispatch to `openfang_shipwright::cli::run()`.
+Add `Shipwright` variant to main CLI enum, dispatch to `skipper_shipwright::cli::run()`.
 
 **Step 5: Verify CLI works**
 
-Run: `cargo build --release -p openfang-cli`
-Run: `target/release/openfang shipwright --help`
+Run: `cargo build --release -p skipper-cli`
+Run: `target/release/skipper shipwright --help`
 Expected: Shows pipeline, decide, fleet, memory, dora, cost, doctor subcommands
 
 **Step 6: Commit**
 
 ```bash
-git add crates/openfang-shipwright/src/cli.rs crates/openfang-shipwright/src/api.rs
-git add crates/openfang-api/src/server.rs crates/openfang-cli/src/main.rs
+git add crates/skipper-shipwright/src/cli.rs crates/skipper-shipwright/src/api.rs
+git add crates/skipper-api/src/server.rs crates/skipper-cli/src/main.rs
 git commit -m "feat(shipwright): CLI subcommands and API routes"
 ```
 
@@ -994,8 +994,8 @@ git commit -m "feat(shipwright): CLI subcommands and API routes"
 
 **Files:**
 
-- Modify: `crates/openfang-api/static/index.html` (add Shipwright nav + pages)
-- Modify: `crates/openfang-api/static/app.js` (add Shipwright page logic)
+- Modify: `crates/skipper-api/static/index.html` (add Shipwright nav + pages)
+- Modify: `crates/skipper-api/static/app.js` (add Shipwright page logic)
 
 **Step 1: Add navigation**
 
@@ -1044,15 +1044,15 @@ Pipelines, Fleet, Decisions, DORA, Memory, Intelligence.
 
 **Step 8: Live integration test**
 
-Run: `cargo build --release -p openfang-cli`
-Run: `target/release/openfang start &`
+Run: `cargo build --release -p skipper-cli`
+Run: `target/release/skipper start &`
 Navigate to `http://localhost:4200/shipwright/pipelines`
 Verify: All 6 pages render, API calls succeed, WebSocket connects
 
 **Step 9: Commit**
 
 ```bash
-git add crates/openfang-api/static/
+git add crates/skipper-api/static/
 git commit -m "feat(shipwright): dashboard with 6 pages — pipelines, fleet, decisions, DORA, memory, intelligence"
 ```
 
@@ -1062,11 +1062,11 @@ git commit -m "feat(shipwright): dashboard with 6 pages — pipelines, fleet, de
 
 **Files:**
 
-- Create: `crates/openfang-shipwright/tests/pipeline_tests.rs`
-- Create: `crates/openfang-shipwright/tests/decision_tests.rs`
-- Create: `crates/openfang-shipwright/tests/memory_tests.rs`
-- Create: `crates/openfang-shipwright/tests/fleet_tests.rs`
-- Create: `crates/openfang-shipwright/tests/integration_tests.rs`
+- Create: `crates/skipper-shipwright/tests/pipeline_tests.rs`
+- Create: `crates/skipper-shipwright/tests/decision_tests.rs`
+- Create: `crates/skipper-shipwright/tests/memory_tests.rs`
+- Create: `crates/skipper-shipwright/tests/fleet_tests.rs`
+- Create: `crates/skipper-shipwright/tests/integration_tests.rs`
 
 **Step 1: Pipeline integration test**
 
@@ -1086,12 +1086,12 @@ Test: configure 2 repos → poll cycle → dispatch within worker limit → auto
 
 **Step 5: End-to-end integration test**
 
-Test: OpenFang Collector Hand finds CVE → Decision engine scores it → Pipeline spawned → Build loop runs → PR created → Outcome recorded → Weights adjusted.
+Test: Skipper Collector Hand finds CVE → Decision engine scores it → Pipeline spawned → Build loop runs → PR created → Outcome recorded → Weights adjusted.
 
 **Step 6: Run full test suite**
 
 Run: `cargo test --workspace`
-Expected: All existing OpenFang tests pass + all new Shipwright tests pass
+Expected: All existing Skipper tests pass + all new Shipwright tests pass
 
 Run: `cargo clippy --workspace --all-targets -- -D warnings`
 Expected: Zero warnings
@@ -1099,7 +1099,7 @@ Expected: Zero warnings
 **Step 7: Commit**
 
 ```bash
-git add crates/openfang-shipwright/tests/
+git add crates/skipper-shipwright/tests/
 git commit -m "test(shipwright): integration tests for pipeline, decision, memory, fleet, and e2e"
 ```
 
@@ -1125,12 +1125,12 @@ Add section describing the Shipwright Hand — what it does, how to activate, co
 
 - **Shipwright Hand**: Autonomous software delivery pipeline
   - 12-stage pipeline engine with 6 templates
-  - Decision engine with 18 signal collectors + OpenFang Hand cross-pollination
+  - Decision engine with 18 signal collectors + Skipper Hand cross-pollination
   - Vector memory with semantic failure pattern search
   - Fleet manager with auto-scaling worker pool
   - GitHub integration (GraphQL, Checks, Deployments, PR lifecycle)
   - Intelligence layer (DORA metrics, risk prediction, self-optimization)
-  - CLI subcommands: `openfang shipwright {pipeline,decide,fleet,memory,dora,cost,doctor}`
+  - CLI subcommands: `skipper shipwright {pipeline,decide,fleet,memory,dora,cost,doctor}`
   - 9 API endpoints with WebSocket real-time updates
   - 6 dashboard pages
 ```
@@ -1157,7 +1157,7 @@ git commit -m "docs(shipwright): README and CHANGELOG for Shipwright Hand"
 ```bash
 git push origin feat/shipwright-hand
 gh pr create --title "feat: Shipwright Hand — autonomous software delivery" \
-  --body "Ports Shipwright into openfang-shipwright crate. See docs/plans/2026-02-28-openfang-shipwright-integration-design.md"
+  --body "Ports Shipwright into skipper-shipwright crate. See docs/plans/2026-02-28-skipper-shipwright-integration-design.md"
 ```
 
 ---

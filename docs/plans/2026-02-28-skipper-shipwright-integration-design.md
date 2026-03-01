@@ -1,20 +1,20 @@
-# OpenFang + Shipwright Integration Design
+# Skipper + Shipwright Integration Design
 
 **Date**: 2026-02-28
 **Status**: Approved
-**Direction**: Shipwright as a native OpenFang Hand
+**Direction**: Shipwright as a native Skipper Hand
 **Depth**: Deep integration — full port to Rust
-**Location**: Fork of OpenFang
+**Location**: Fork of Skipper
 
 ## Context
 
-Shipwright orchestrates autonomous Claude Code agent teams for software delivery (Issue → Pipeline → PR → Deploy). OpenFang is a Rust-based Agent Operating System that runs autonomous Hands on schedules with WASM sandboxing, 40 channel adapters, and 16 security layers.
+Shipwright orchestrates autonomous Claude Code agent teams for software delivery (Issue → Pipeline → PR → Deploy). Skipper is a Rust-based Agent Operating System that runs autonomous Hands on schedules with WASM sandboxing, 40 channel adapters, and 16 security layers.
 
-This design ports Shipwright's complete feature set into a single `openfang-shipwright` crate within a fork of OpenFang, creating a "Software Engineering Hand" that leverages OpenFang's kernel, memory, channels, and existing Hands for cross-pollinated intelligence.
+This design ports Shipwright's complete feature set into a single `skipper-shipwright` crate within a fork of Skipper, creating a "Software Engineering Hand" that leverages Skipper's kernel, memory, channels, and existing Hands for cross-pollinated intelligence.
 
 ## Why This Combination
 
-| Shipwright Brings                                     | OpenFang Brings                                      |
+| Shipwright Brings                                     | Skipper Brings                                      |
 | ----------------------------------------------------- | ---------------------------------------------------- |
 | 12-stage delivery pipeline                            | Rust kernel with scheduling, RBAC, metering          |
 | Decision engine with autonomy tiers                   | WASM sandbox with dual metering                      |
@@ -24,14 +24,14 @@ This design ports Shipwright's complete feature set into a single `openfang-ship
 | Multi-repo fleet orchestration                        | A2A protocol for cross-instance agents               |
 | Build loop with self-healing                          | Loop guard detection (SHA256)                        |
 
-Key differentiator: OpenFang's Collector, Researcher, and Predictor Hands become first-class signal sources for Shipwright's decision engine — OSINT-grade analysis, cross-referenced research, and calibrated forecasting feeding directly into what-to-build decisions.
+Key differentiator: Skipper's Collector, Researcher, and Predictor Hands become first-class signal sources for Shipwright's decision engine — OSINT-grade analysis, cross-referenced research, and calibrated forecasting feeding directly into what-to-build decisions.
 
 ## Crate Structure
 
 ```
-openfang/
+skipper/
 ├── crates/
-│   └── openfang-shipwright/
+│   └── skipper-shipwright/
 │       ├── Cargo.toml
 │       ├── src/
 │       │   ├── lib.rs                 # Public API, re-exports
@@ -45,7 +45,7 @@ openfang/
 │       │   │   └── self_healing.rs    # Build loop with retry, backtrack, convergence
 │       │   ├── decision/
 │       │   │   ├── mod.rs             # Decision engine orchestrator
-│       │   │   ├── signals.rs         # 18 collectors + OpenFang Hand signals
+│       │   │   ├── signals.rs         # 18 collectors + Skipper Hand signals
 │       │   │   ├── scoring.rs         # Value scoring (impact, urgency, effort, confidence, risk)
 │       │   │   └── autonomy.rs        # Tier enforcement, rate limiting, halt/resume
 │       │   ├── memory/
@@ -86,7 +86,7 @@ openfang/
 
 ### Stage Mapping
 
-12 stages execute as OpenFang workflow steps with sequential, conditional, and loop support:
+12 stages execute as Skipper workflow steps with sequential, conditional, and loop support:
 
 ```
 intake → plan → design → build ⟲ test → review → compound_quality → pr → merge → deploy → validate → monitor
@@ -150,7 +150,7 @@ pub enum BuildOutcome {
 }
 ```
 
-Kernel's dual metering (fuel + epoch interruption) replaces bash timeouts. OpenFang's loop guard detection (SHA256 of tool calls) replaces manual convergence checking.
+Kernel's dual metering (fuel + epoch interruption) replaces bash timeouts. Skipper's loop guard detection (SHA256 of tool calls) replaces manual convergence checking.
 
 ### Templates
 
@@ -169,7 +169,7 @@ Six templates stored as Rust constants:
 
 ### Signal Collectors
 
-18 built-in collectors plus OpenFang Hand cross-pollination:
+18 built-in collectors plus Skipper Hand cross-pollination:
 
 ```rust
 pub trait SignalCollector: Send + Sync {
@@ -192,11 +192,11 @@ pub struct Candidate {
 pub enum SignalType {
     Security, Dependency, Coverage, DeadCode, Performance,
     Architecture, Dora, Documentation, Failure,
-    OpenFangHand,  // Signals from Collector, Researcher, Predictor
+    SkipperHand,  // Signals from Collector, Researcher, Predictor
 }
 ```
 
-### OpenFang Hand Cross-Pollination
+### Skipper Hand Cross-Pollination
 
 ```rust
 pub struct HandSignalCollector {
@@ -257,7 +257,7 @@ pub struct DecisionLimits {
 
 ### Outcome Learning
 
-EMA-based weight adjustment stored in OpenFang's SQLite:
+EMA-based weight adjustment stored in Skipper's SQLite:
 
 ```rust
 pub struct Outcome {
@@ -276,11 +276,11 @@ After 10+ outcomes, weights auto-adjust per signal source.
 
 ### Architecture
 
-Reuses OpenFang's `MemoryStore` (SQLite + sqlite-vec) instead of JSONL:
+Reuses Skipper's `MemoryStore` (SQLite + sqlite-vec) instead of JSONL:
 
 ```rust
 pub struct ShipwrightMemory {
-    store: Arc<openfang_memory::MemoryStore>,
+    store: Arc<skipper_memory::MemoryStore>,
 }
 
 pub struct FailurePattern {
@@ -391,7 +391,7 @@ impl FleetManager {
 
 ### What the Kernel Replaces
 
-| Shipwright Bash                 | OpenFang Kernel                 |
+| Shipwright Bash                 | Skipper Kernel                 |
 | ------------------------------- | ------------------------------- |
 | PID management + flock          | Agent registry (atomic)         |
 | tmux pane isolation             | WASM sandbox                    |
@@ -415,7 +415,7 @@ impl Pipeline {
 
 ## Configuration
 
-Single `[shipwright]` section in `openfang.toml`:
+Single `[shipwright]` section in `skipper.toml`:
 
 ```toml
 [shipwright]
@@ -454,26 +454,26 @@ Hot-reload via filesystem watcher — changes apply without restart.
 ## CLI
 
 ```
-openfang shipwright pipeline start --issue 42
-openfang shipwright pipeline resume
-openfang shipwright pipeline status
+skipper shipwright pipeline start --issue 42
+skipper shipwright pipeline resume
+skipper shipwright pipeline status
 
-openfang shipwright decide run [--dry-run]
-openfang shipwright decide candidates
-openfang shipwright decide halt / resume
+skipper shipwright decide run [--dry-run]
+skipper shipwright decide candidates
+skipper shipwright decide halt / resume
 
-openfang shipwright fleet start / status
-openfang shipwright fleet discover --org myorg
+skipper shipwright fleet start / status
+skipper shipwright fleet discover --org myorg
 
-openfang shipwright memory show / search / import
-openfang shipwright dora
-openfang shipwright cost show
-openfang shipwright doctor
+skipper shipwright memory show / search / import
+skipper shipwright dora
+skipper shipwright cost show
+skipper shipwright doctor
 ```
 
 ## Dashboard Pages
 
-6 pages added to OpenFang's SPA dashboard:
+6 pages added to Skipper's SPA dashboard:
 
 | Page         | Route                      | Content                                |
 | ------------ | -------------------------- | -------------------------------------- |
@@ -517,15 +517,15 @@ GET  /api/shipwright/memory/search?q=...
 
 - Unit tests per module with mock GitHub API and mock kernel
 - Integration tests for full pipeline lifecycle
-- Match OpenFang standards: zero Clippy warnings, doc comments on all public types
+- Match Skipper standards: zero Clippy warnings, doc comments on all public types
 - Test Hand cross-pollination (Collector → Decision → Pipeline)
 
 ## Migration Path
 
 1. Fork & build: `cargo build --release`
-2. Import memory: `openfang shipwright memory import --jsonl ~/.shipwright/memory/`
-3. Configure repos in `openfang.toml`
-4. Activate Hand: `openfang hand activate shipwright`
-5. Start: `openfang start`
+2. Import memory: `skipper shipwright memory import --jsonl ~/.shipwright/memory/`
+3. Configure repos in `skipper.toml`
+4. Activate Hand: `skipper hand activate shipwright`
+5. Start: `skipper start`
 
 Existing bash Shipwright continues to work independently.

@@ -6,8 +6,10 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -32,6 +34,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -89,6 +92,7 @@ cmd_list() {
     echo ""
 
     # Extract unique pipeline runs, sorted by start time
+    # shellcheck disable=SC2034
     echo "$events_json" | jq -r '.[] | select(.type == "pipeline.started") | [.ts, .issue, .pipeline, .model, .goal] | @tsv' 2>/dev/null | \
     sort -r | \
     while IFS=$'\t' read -r ts issue pipeline model goal; do
@@ -444,11 +448,13 @@ cmd_compare() {
 
     # Extract details
     local goal1 type1 model1
+    # shellcheck disable=SC2034
     goal1=$(echo "$run1" | cut -f1)
     type1=$(echo "$run1" | cut -f2)
     model1=$(echo "$run1" | cut -f3)
 
     local goal2 type2 model2
+    # shellcheck disable=SC2034
     goal2=$(echo "$run2" | cut -f1)
     type2=$(echo "$run2" | cut -f2)
     model2=$(echo "$run2" | cut -f3)

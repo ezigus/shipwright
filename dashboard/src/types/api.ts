@@ -255,6 +255,16 @@ export interface HeatmapData {
   heatmap: Record<string, Record<string, number>>;
 }
 
+export interface ContextEfficiency {
+  avg_utilization: number;
+  avg_trim_ratio: number;
+  total_raw_chars: number;
+  total_trimmed_chars: number;
+  total_discarded_chars: number;
+  trim_events: number;
+  total_iterations: number;
+}
+
 export interface DaemonConfig {
   paused?: boolean;
   config?: Record<string, unknown>;
@@ -328,7 +338,8 @@ export type TabId =
   | "team"
   | "fleet-map"
   | "pipeline-theater"
-  | "agent-cockpit";
+  | "agent-cockpit"
+  | "shipyard";
 
 export interface View {
   init(): void;

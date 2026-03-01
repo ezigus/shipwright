@@ -3,6 +3,17 @@
 [[ -n "${_DAEMON_DISPATCH_LOADED:-}" ]] && return 0
 _DAEMON_DISPATCH_LOADED=1
 
+# Defaults for variables normally set by sw-daemon.sh (safe under set -u).
+DAEMON_DIR="${DAEMON_DIR:-${HOME}/.shipwright}"
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+STATE_FILE="${STATE_FILE:-${DAEMON_DIR}/daemon-state.json}"
+LOG_DIR="${LOG_DIR:-${DAEMON_DIR}/logs}"
+WORKTREE_DIR="${WORKTREE_DIR:-${REPO_DIR}/.claude/worktrees}"
+BASE_BRANCH="${BASE_BRANCH:-main}"
+PIPELINE_TEMPLATE="${PIPELINE_TEMPLATE:-autonomous}"
+NO_GITHUB="${NO_GITHUB:-false}"
+
 # ─── Org-Wide Repo Management ─────────────────────────────────────────────
 
 daemon_ensure_repo() {
@@ -34,6 +45,51 @@ daemon_spawn_pipeline() {
     local repo_full_name="${3:-}"  # owner/repo (org mode only)
     shift 3 2>/dev/null || true
     local extra_pipeline_args=("$@")  # Optional extra args passed to sw-pipeline.sh
+
+    # ── Input validation: Validate issue number is strictly numeric ──
+    if [[ ! "$issue_num" =~ ^[0-9]+$ ]]; then
+        daemon_log ERROR "Invalid issue number format: ${issue_num}"
+        return 1
+    fi
+
+    # Ensure numeric conversion for safety
+    issue_num=$(printf '%d' "$issue_num" 2>/dev/null) || {
+        daemon_log ERROR "Issue number conversion failed: ${issue_num}"
+        return 1
+    }
+
+    # ── Worktree path validation ──
+    # Ensure WORKTREE_DIR is absolute and not a symlink
+    if [[ -z "$WORKTREE_DIR" ]]; then
+        daemon_log ERROR "WORKTREE_DIR is not set"
+        return 1
+    fi
+
+    if [[ ! "$WORKTREE_DIR" = /* ]]; then
+        daemon_log ERROR "WORKTREE_DIR is not absolute: ${WORKTREE_DIR}"
+        return 1
+    fi
+
+    if [[ -L "$WORKTREE_DIR" ]]; then
+        daemon_log ERROR "WORKTREE_DIR is a symlink: ${WORKTREE_DIR}"
+        return 1
+    fi
+
+    # Self-healing: ensure worktree directory exists before resolving
+    if [[ ! -d "$WORKTREE_DIR" ]]; then
+        daemon_log INFO "Auto-creating worktree directory: ${WORKTREE_DIR}"
+        mkdir -p "$WORKTREE_DIR" || {
+            daemon_log ERROR "Failed to create WORKTREE_DIR: ${WORKTREE_DIR}"
+            return 1
+        }
+    fi
+
+    # Verify resolved path is within repo/daemon directory
+    local resolved_wt_dir
+    resolved_wt_dir=$(cd "$WORKTREE_DIR" 2>/dev/null && pwd) || {
+        daemon_log ERROR "Could not resolve WORKTREE_DIR path: ${WORKTREE_DIR}"
+        return 1
+    }
 
     daemon_log INFO "Spawning pipeline for issue #${issue_num}: ${issue_title}"
 
@@ -282,27 +338,48 @@ daemon_reap_completed() {
 
         # Check if process is still running
         if kill -0 "$pid" 2>/dev/null; then
-            # Guard against PID reuse: if job has been running > 6 hours and
-            # the process tree doesn't contain sw-pipeline/sw-loop, it's stale
-            local _started_at _start_e _age_s
+            # Guard against PID reuse using two-tier detection:
+            #   Tier 1 (always): Verify PID command matches pipeline process
+            #   Tier 2 (>1 hour): Force-reap if process doesn't match
+            local _proc_cmd _is_pipeline=false
+            _proc_cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
+            if [[ -n "$_proc_cmd" ]] && echo "$_proc_cmd" | grep -qE 'sw-pipeline|sw-loop|claude|shipwright' 2>/dev/null; then
+                _is_pipeline=true
+            fi
+
+            # Also verify via process start time if available (detects PID reuse)
+            local _proc_start _started_at _start_e _age_s _pid_reused=false
             _started_at=$(echo "$job" | jq -r '.started_at // empty')
             if [[ -n "$_started_at" ]]; then
                 _start_e=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$_started_at" +%s 2>/dev/null || date -d "$_started_at" +%s 2>/dev/null || echo "0")
                 _age_s=$(( $(now_epoch) - ${_start_e:-0} ))
-                if [[ "$_age_s" -gt 21600 ]]; then  # 6 hours
-                    # Verify this PID is actually our pipeline (not a reused PID)
-                    local _proc_cmd
-                    _proc_cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
-                    if [[ -z "$_proc_cmd" ]] || ! echo "$_proc_cmd" | grep -qE 'sw-pipeline|sw-loop|claude' 2>/dev/null; then
-                        daemon_log WARN "Stale job #${issue_num}: PID $pid running ${_age_s}s but not a pipeline process — force-reaping"
-                        emit_event "daemon.stale_dead" "issue=$issue_num" "pid=$pid" "elapsed_s=$_age_s"
-                        # Fall through to reap logic
-                    else
-                        continue
+                # On macOS/Linux, check process start time to detect PID reuse
+                _proc_start=$(ps -p "$pid" -o lstart= 2>/dev/null || true)
+                if [[ -n "$_proc_start" && -n "$_started_at" ]]; then
+                    local _proc_start_epoch
+                    _proc_start_epoch=$(date -j -f "%a %b %d %H:%M:%S %Y" "$_proc_start" +%s 2>/dev/null || date -d "$_proc_start" +%s 2>/dev/null || echo "0")
+                    # If process started more than 60s after our job, PID was reused
+                    if [[ "${_proc_start_epoch:-0}" -gt 0 && "${_start_e:-0}" -gt 0 ]]; then
+                        local _start_diff=$(( _proc_start_epoch - _start_e ))
+                        if [[ "$_start_diff" -gt 60 || "$_start_diff" -lt -60 ]]; then
+                            _pid_reused=true
+                            daemon_log WARN "PID reuse detected for job #${issue_num}: PID $pid started ${_start_diff}s off from job start"
+                        fi
                     fi
-                else
-                    continue
                 fi
+            else
+                _age_s=0
+            fi
+
+            # Decision: reap if PID was reused OR (not a pipeline process AND running > 1 hour)
+            if [[ "$_pid_reused" == "true" ]]; then
+                daemon_log WARN "Stale job #${issue_num}: PID $pid reused by another process — force-reaping"
+                emit_event "daemon.stale_dead" "issue=$issue_num" "pid=$pid" "elapsed_s=${_age_s:-0}" "reason=pid_reuse"
+                # Fall through to reap logic
+            elif [[ "$_is_pipeline" == "false" && "${_age_s:-0}" -gt 3600 ]]; then
+                daemon_log WARN "Stale job #${issue_num}: PID $pid running ${_age_s}s but not a pipeline process — force-reaping"
+                emit_event "daemon.stale_dead" "issue=$issue_num" "pid=$pid" "elapsed_s=$_age_s" "reason=wrong_process"
+                # Fall through to reap logic
             else
                 continue
             fi

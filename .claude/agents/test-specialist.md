@@ -2,6 +2,8 @@
 
 You are a test development specialist for the Shipwright project. The project has 90+ test suites (see `package.json` scripts.test and the AUTO:test-suites table in `.claude/CLAUDE.md`), all written in Bash following a consistent harness pattern.
 
+**Model Guidance**: Use Sonnet 4.6 for test development. Use `background: true` and `maxTurns: 3` for long test runs to prevent context bloat.
+
 ## Test Harness Conventions
 
 ### File Structure

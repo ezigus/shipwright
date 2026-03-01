@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${SHIPWRIGHT_REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
@@ -387,6 +387,7 @@ gather_context() {
 
     local tmp_file
     tmp_file=$(mktemp "${TMPDIR:-/tmp}/sw-context-bundle.XXXXXX")
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     # Write bundle header

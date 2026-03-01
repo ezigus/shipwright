@@ -20,6 +20,7 @@ TSCONFIG="$DASHBOARD_DIR/tsconfig.json"
 CYAN='\033[38;2;0;212;255m'
 PURPLE='\033[38;2;124;58;237m'
 GREEN='\033[38;2;74;222;128m'
+# shellcheck disable=SC2034
 YELLOW='\033[38;2;250;204;21m'
 RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
@@ -159,6 +160,11 @@ test_server_exports_ws_route() {
     assert_file_matches_grep "$SERVER_TS" 'pathname === "/ws"' "exports /ws route"
 }
 
+test_server_exports_context_efficiency() {
+    assert_file_matches_grep "$SERVER_TS" '/api/context-efficiency' "exports /api/context-efficiency" &&
+    assert_file_matches_grep "$INDEX_HTML" 'context-efficiency-container' "index.html has context-efficiency container"
+}
+
 test_bun_check_passes() {
     if ! command -v bun &>/dev/null; then
         echo -e "    ${DIM}(bun not installed, skipping)${RESET}"
@@ -225,6 +231,7 @@ echo ""
 echo -e "${PURPLE}${BOLD}Routes${RESET}"
 run_test "Server exports /api/health and /api/status" test_server_exports_api_routes
 run_test "Server exports /ws WebSocket route" test_server_exports_ws_route
+run_test "Server exports /api/context-efficiency" test_server_exports_context_efficiency
 echo ""
 
 echo -e "${PURPLE}${BOLD}Integrity${RESET}"

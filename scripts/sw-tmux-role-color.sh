@@ -34,6 +34,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -48,6 +49,7 @@ TITLE_LOWER="$(echo "$PANE_TITLE" | tr '[:upper:]' '[:lower:]')"
 # Map role keywords to colors
 COLOR="#00d4ff"  # default: cyan
 
+# shellcheck disable=SC2221,SC2222
 case "$TITLE_LOWER" in
     *leader*|*lead*|*pm*|*manager*|*orchestrat*)
         COLOR="#00d4ff"  # cyan — command & control

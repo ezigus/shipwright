@@ -254,6 +254,7 @@ test_main_help() {
 }
 
 test_main_unknown_subcommand() {
+    # shellcheck disable=SC2034
     output=$(bash "$SCRIPT_DIR/sw-review-rerun.sh" unknown_cmd 2>&1) || ec=$?
     echo "$output" | grep -q "Unknown\|unknown" || return 1
 }

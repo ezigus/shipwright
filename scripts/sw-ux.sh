@@ -6,7 +6,8 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -27,10 +28,12 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_epoch() { date +%s; }
 fi
 # ─── Structured Event Log ──────────────────────────────────────────────────
+# shellcheck disable=SC2034
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
 
 # ─── UX Configuration ──────────────────────────────────────────────────────
 UX_CONFIG_GLOBAL="${HOME}/.shipwright/ux-config.json"
+# shellcheck disable=SC2034
 UX_CONFIG_REPO="./.claude/ux-config.json"
 
 # Detect accessibility modes
@@ -324,7 +327,7 @@ table_header() {
 
     # Print separator
     for w in "${widths[@]}"; do
-        printf '%*s' "$w" | tr ' ' '─'
+        printf '%*s' "$w" "" | tr ' ' '─'
     done
     echo ""
 }

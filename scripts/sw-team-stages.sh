@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -29,12 +29,14 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
 # ─── Structured Event Log ──────────────────────────────────────────────────
+# shellcheck disable=SC2034
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
 
 # ─── Team Configuration ─────────────────────────────────────────────────────
@@ -102,6 +104,7 @@ cmd_compose() {
     local spec_count
     spec_count=$(echo "$specialists" | wc -w)
 
+    # shellcheck disable=SC2046
     team_json=$(jq -n \
         --arg stage "$stage" \
         --arg complexity "$complexity" \
@@ -111,7 +114,7 @@ cmd_compose() {
         '{
             stage: $stage,
             complexity: $complexity,
-            created_at: "'$(now_iso)'",
+            created_at: "'"$(now_iso)"'",
             leader: $leader,
             specialists: ($specialists | split(" ")),
             specialist_count: $spec_count,
@@ -139,6 +142,7 @@ cmd_delegate() {
     # Read hotspots from intelligence cache if available
     local hotspots=""
     if [[ -f "$INTELLIGENCE_CACHE" ]]; then
+        # shellcheck disable=SC2034
         hotspots=$(jq -r '.hotspots[]? // empty' "$INTELLIGENCE_CACHE" 2>/dev/null | head -10 || true)
     fi
 
@@ -160,6 +164,7 @@ cmd_delegate() {
         [[ -z "$file" ]] && continue
         local spec_idx=$((file_count % specialist_count))
         local task_json
+        # shellcheck disable=SC2046
         task_json=$(jq -n \
             --arg file "$file" \
             --arg spec_idx "$spec_idx" \
@@ -168,7 +173,7 @@ cmd_delegate() {
                 file: $file,
                 specialist_idx: ($spec_idx | tonumber),
                 status: $status,
-                assigned_at: "'$(now_iso)'",
+                assigned_at: "'"$(now_iso)"'",
                 result: null
             }')
         tasks=$(echo "$tasks" | jq ". += [$task_json]")
@@ -303,6 +308,7 @@ cmd_vote() {
     fi
 
     local result
+    # shellcheck disable=SC2046
     result=$(jq -n \
         --argjson approve_count "$approve_count" \
         --argjson reject_count "$reject_count" \
@@ -315,7 +321,7 @@ cmd_vote() {
             neutral: $neutral_count,
             total: $total,
             consensus: $consensus,
-            decided_at: "'$(now_iso)'"
+            decided_at: "'"$(now_iso)"'"
         }')
 
     echo "$result"
@@ -370,6 +376,7 @@ cmd_aggregate() {
 
     # Build aggregated output
     local aggregated
+    # shellcheck disable=SC2046
     aggregated=$(jq -n \
         --arg stage "$stage" \
         --argjson results "$results" \
@@ -382,7 +389,7 @@ cmd_aggregate() {
             failure_count: $failure_count,
             success_rate: (if ($results | length) > 0 then ($success_count / ($results | length) * 100) | floor else 0 end),
             results: $results,
-            aggregated_at: "'$(now_iso)'"
+            aggregated_at: "'"$(now_iso)"'"
         }')
 
     echo "$aggregated"

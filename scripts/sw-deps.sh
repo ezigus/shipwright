@@ -6,7 +6,8 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -26,8 +27,10 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_epoch() { date +%s; }
 fi
 # ─── Defaults ───────────────────────────────────────────────────────────────
+# shellcheck disable=SC2034
 DEPS_DIR="${HOME}/.shipwright/deps"
 TEST_CMD=""
+# shellcheck disable=SC2034
 AUTO_MERGE=false
 DRY_RUN=false
 

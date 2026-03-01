@@ -7,12 +7,14 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
 CYAN='\033[38;2;0;212;255m'
 PURPLE='\033[38;2;124;58;237m'
 GREEN='\033[38;2;74;222;128m'
+# shellcheck disable=SC2034
 YELLOW='\033[38;2;250;204;21m'
 RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
@@ -52,6 +54,7 @@ setup_env() {
 
     # Mock jq — pass through to real jq
     if command -v jq &>/dev/null; then
+        # shellcheck disable=SC2034
         JQ_BIN="$(command -v jq)"
     else
         echo -e "${RED}${BOLD}✗${RESET} jq is required for tracker tests"

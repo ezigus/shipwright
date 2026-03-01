@@ -14,6 +14,7 @@ COST_SCRIPT="$SCRIPT_DIR/sw-cost.sh"
 CYAN='\033[38;2;0;212;255m'
 PURPLE='\033[38;2;124;58;237m'
 GREEN='\033[38;2;74;222;128m'
+# shellcheck disable=SC2034
 YELLOW='\033[38;2;250;204;21m'
 RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
@@ -246,6 +247,7 @@ test_failure_deduplication() {
         ".claude/pipeline-state.md" ".claude/pipeline-artifacts" 2>&1) >/dev/null
 
     # Record the same failure pattern directly
+    # shellcheck disable=SC2034
     local error_output="Error: Cannot find module './db'"
     (cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" capture \
         ".claude/pipeline-state.md" ".claude/pipeline-artifacts" 2>&1) >/dev/null
@@ -437,7 +439,7 @@ test_cost_calculation() {
 # 11. Cost recording writes to costs.json
 # ──────────────────────────────────────────────────────────────────────────────
 test_cost_record() {
-    bash "$COST_SCRIPT" record 50000 10000 sonnet build 42 2>&1 >/dev/null
+    bash "$COST_SCRIPT" record 50000 10000 sonnet build 42 >/dev/null 2>&1
 
     assert_file_exists "$HOME/.shipwright/costs.json" "costs.json exists" &&
     assert_json_gt "$HOME/.shipwright/costs.json" '.entries | length' "0" "has entries"
@@ -456,7 +458,7 @@ test_cost_record() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_budget_checking() {
     # Set a budget
-    bash "$COST_SCRIPT" budget set 10.00 2>&1 >/dev/null
+    bash "$COST_SCRIPT" budget set 10.00 >/dev/null 2>&1
 
     assert_file_exists "$HOME/.shipwright/budget.json" "budget.json exists" &&
     assert_json_field "$HOME/.shipwright/budget.json" '.enabled' "true" "budget enabled" || return 1
@@ -471,7 +473,7 @@ test_budget_checking() {
 
     # Check budget should pass (low estimated cost)
     local check_result=0
-    bash "$COST_SCRIPT" check-budget 1.00 2>&1 >/dev/null || check_result=$?
+    bash "$COST_SCRIPT" check-budget 1.00 >/dev/null 2>&1 || check_result=$?
     # 0=ok, 1=warning, 2=blocked — we just verify it doesn't crash
     if [[ "$check_result" -gt 2 ]]; then
         echo -e "    ${RED}✗${RESET} Budget check returned unexpected code: ${check_result}"
@@ -484,9 +486,9 @@ test_budget_checking() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_cost_dashboard() {
     # Record some costs first
-    bash "$COST_SCRIPT" record 50000 10000 sonnet intake 42 2>&1 >/dev/null
-    bash "$COST_SCRIPT" record 100000 30000 opus build 42 2>&1 >/dev/null
-    bash "$COST_SCRIPT" record 20000 5000 haiku review 42 2>&1 >/dev/null
+    bash "$COST_SCRIPT" record 50000 10000 sonnet intake 42 >/dev/null 2>&1
+    bash "$COST_SCRIPT" record 100000 30000 opus build 42 >/dev/null 2>&1
+    bash "$COST_SCRIPT" record 20000 5000 haiku review 42 >/dev/null 2>&1
 
     local output
     output=$(bash "$COST_SCRIPT" show --period 7 2>&1)
@@ -501,7 +503,7 @@ test_cost_dashboard() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_cost_json_output() {
     # Record some costs
-    bash "$COST_SCRIPT" record 50000 10000 sonnet build 42 2>&1 >/dev/null
+    bash "$COST_SCRIPT" record 50000 10000 sonnet build 42 >/dev/null 2>&1
 
     local output
     output=$(bash "$COST_SCRIPT" show --json 2>&1)
@@ -523,6 +525,7 @@ test_cost_json_output() {
 test_memory_get_actionable_failures() {
     (
         cd "$TEMP_DIR/project" || return 1
+        # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
         ensure_memory_dir
@@ -564,6 +567,7 @@ FAIL
 test_memory_get_actionable_failures_empty() {
     (
         cd "$TEMP_DIR/project" || return 1
+        # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
         ensure_memory_dir
@@ -586,6 +590,7 @@ test_memory_get_actionable_failures_empty() {
 test_memory_get_dora_baseline() {
     (
         cd "$TEMP_DIR/project" || return 1
+        # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
         # Write synthetic pipeline events
@@ -593,7 +598,7 @@ test_memory_get_dora_baseline() {
         now_e=$(date +%s)
         local events_file="$HOME/.shipwright/events.jsonl"
         mkdir -p "$(dirname "$events_file")"
-        > "$events_file"
+        true > "$events_file"
 
         # Write 3 successful pipeline events within last 7 days
         for i in 1 2 3; do
@@ -625,6 +630,7 @@ test_memory_get_dora_baseline() {
 test_error_log_to_failures() {
     (
         cd "$TEMP_DIR/project"
+        # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
         ensure_memory_dir
@@ -656,6 +662,7 @@ test_error_log_to_failures() {
 test_fix_outcome_tracking() {
     (
         cd "$TEMP_DIR/project"
+        # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
         ensure_memory_dir
@@ -686,6 +693,7 @@ JSON
 test_closed_loop_inject_with_effectiveness() {
     (
         cd "$TEMP_DIR/project"
+        # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
         ensure_memory_dir
@@ -715,6 +723,7 @@ JSON
 test_global_memory_aggregation() {
     (
         cd "$TEMP_DIR/project"
+        # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
         ensure_memory_dir
@@ -747,6 +756,7 @@ JSON
 test_memory_finalize_pipeline() {
     (
         cd "$TEMP_DIR/project"
+        # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
         ensure_memory_dir

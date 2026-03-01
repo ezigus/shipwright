@@ -216,6 +216,7 @@ assert_eq "style consistency check runs without crash" "0" "$?"
 
 # ─── Test 10: Architecture boundary check runs ───────────────────────────────
 (
+    # shellcheck disable=SC2034
     REPO_DIR="$TEMP_DIR/repo"
     source "$SCRIPT_DIR/sw-code-review.sh"
     output=$(check_architecture_boundaries "$TEMP_DIR/repo/scripts/sample.sh" 2>&1) || true

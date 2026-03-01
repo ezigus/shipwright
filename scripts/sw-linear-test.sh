@@ -263,6 +263,7 @@ echo ""
 echo -e "${BOLD}  Notify Integration${RESET}"
 
 # notify subcommand exists (used by daemon)
+# shellcheck disable=SC2034
 notify_output=$(bash "$SRC" notify spawn 2>&1) || true
 # Should not crash — silently skips if no matching issue
 assert_pass "notify subcommand executes without crash"

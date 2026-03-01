@@ -12,6 +12,7 @@ demo/*.gif
 *.pre-upgrade.bak
 
 # Pipeline runtime artifacts (created per-repo at runtime)
+.claude/worktrees/
 .claude/pipeline-artifacts/
 .claude/pipeline-state.md
 .claude/loop-logs/

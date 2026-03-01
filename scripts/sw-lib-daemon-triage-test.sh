@@ -25,6 +25,7 @@ export INTELLIGENCE_ENABLED=false
 export COMPOSER_ENABLED=false
 export TEMPLATE_MAP='"{}"'
 
+# shellcheck disable=SC2034
 DAEMON_LOG_WRITE_COUNT=0
 touch "$LOG_FILE"
 mock_git
@@ -238,6 +239,7 @@ exit 0'
 # Critical findings → enterprise
 repo_hash=$( echo "/tmp/mock-repo" | shasum -a 256 | cut -c1-16)
 quality_file="$HOME/.shipwright/optimization/quality-scores.jsonl"
+# shellcheck disable=SC2034
 for i in 1 2 3 4 5; do
     echo "{\"repo\":\"$repo_hash\",\"quality_score\":50,\"findings\":{\"critical\":1}}" >> "$quality_file"
 done

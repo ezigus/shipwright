@@ -5,7 +5,8 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Dependencies ─────────────────────────────────────────────────────────────
@@ -17,8 +18,10 @@ source "$SCRIPT_DIR/lib/decide-scoring.sh"
 source "$SCRIPT_DIR/lib/decide-autonomy.sh"
 
 # ─── Config ───────────────────────────────────────────────────────────────────
+# shellcheck disable=SC2034
 DECISION_ENABLED=$(policy_get ".decision.enabled" "false")
 DEDUP_WINDOW_DAYS=$(policy_get ".decision.dedup_window_days" "7")
+# shellcheck disable=SC2034
 OUTCOME_LEARNING=$(policy_get ".decision.outcome_learning_enabled" "true")
 OUTCOME_MIN_SAMPLES=$(policy_get ".decision.outcome_min_samples" "10")
 
@@ -227,7 +230,9 @@ decide_run() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --dry-run) dry_run=true; shift ;;
-            --once)    once=true; shift ;;
+            --once)
+                # shellcheck disable=SC2034
+                once=true; shift ;;
             *)         shift ;;
         esac
     done
@@ -432,6 +437,7 @@ decide_log() {
     local found=false
     for i in $(seq 0 $((days - 1))); do
         local date_str
+        # shellcheck disable=SC2106
         date_str=$(date -u -v-${i}d +%Y-%m-%d 2>/dev/null || date -u -d "${i} days ago" +%Y-%m-%d 2>/dev/null || continue)
         local log_file="${DECISIONS_DIR}/daily-log-${date_str}.jsonl"
         [[ ! -f "$log_file" ]] && continue

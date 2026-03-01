@@ -82,10 +82,12 @@ function renderMetrics(data: MetricsData): void {
     doraContainer.style.display = "none";
   }
 
-  // Cost breakdown/trend
+  // Cost breakdown/trend/context efficiency
   if (document.getElementById("cost-breakdown-container"))
     renderCostBreakdown();
   if (document.getElementById("cost-trend-container")) renderCostTrend();
+  if (document.getElementById("context-efficiency-container"))
+    renderContextEfficiency();
   if (document.getElementById("dora-trend-container")) renderDoraTrend();
   if (document.getElementById("stage-performance-container"))
     renderStagePerformance();
@@ -250,6 +252,72 @@ function renderCostTrend(): void {
         300,
         100,
       );
+    })
+    .catch((err) => {
+      container.innerHTML = `<div class="empty-state"><p>Failed to load: ${escapeHtml(String(err))}</p></div>`;
+    });
+}
+
+function renderContextEfficiency(): void {
+  const container = document.getElementById("context-efficiency-container");
+  if (!container) return;
+  api
+    .fetchContextEfficiency()
+    .then((data) => {
+      if (!data.total_iterations) {
+        container.innerHTML =
+          '<div class="empty-state"><p>No context efficiency data</p></div>';
+        return;
+      }
+      const utilPct = Math.min(data.avg_utilization, 100);
+      const utilClass =
+        utilPct >= 90
+          ? "ctx-eff-high"
+          : utilPct >= 60
+            ? "ctx-eff-mid"
+            : "ctx-eff-low";
+      const trimPct = Math.min(data.avg_trim_ratio, 100);
+
+      let html =
+        '<span class="metric-label">CONTEXT EFFICIENCY</span>' +
+        '<div class="ctx-eff-grid">';
+
+      // Budget utilization gauge
+      html +=
+        '<div class="ctx-eff-card">' +
+        '<span class="ctx-eff-card-label">Budget Utilization</span>' +
+        `<div class="ctx-eff-gauge"><div class="ctx-eff-gauge-fill ${utilClass}" style="width:${utilPct.toFixed(0)}%"></div></div>` +
+        `<span class="ctx-eff-value">${data.avg_utilization.toFixed(1)}%</span>` +
+        "</div>";
+
+      // Trim ratio
+      html +=
+        '<div class="ctx-eff-card">' +
+        '<span class="ctx-eff-card-label">Avg Trim Ratio</span>' +
+        `<div class="ctx-eff-gauge"><div class="ctx-eff-gauge-fill ctx-eff-trim" style="width:${trimPct.toFixed(0)}%"></div></div>` +
+        `<span class="ctx-eff-value">${data.avg_trim_ratio.toFixed(1)}%</span>` +
+        "</div>";
+
+      // Chars saved
+      const savedK = Math.round(data.total_discarded_chars / 1000);
+      const totalK = Math.round(data.total_raw_chars / 1000);
+      html +=
+        '<div class="ctx-eff-card">' +
+        '<span class="ctx-eff-card-label">Chars Discarded</span>' +
+        `<span class="ctx-eff-big">${fmtNum(savedK)}K</span>` +
+        `<span class="ctx-eff-sub">of ${fmtNum(totalK)}K generated</span>` +
+        "</div>";
+
+      // Trim events
+      html +=
+        '<div class="ctx-eff-card">' +
+        '<span class="ctx-eff-card-label">Trim Events</span>' +
+        `<span class="ctx-eff-big">${data.trim_events}</span>` +
+        `<span class="ctx-eff-sub">of ${data.total_iterations} iterations</span>` +
+        "</div>";
+
+      html += "</div>";
+      container.innerHTML = html;
     })
     .catch((err) => {
       container.innerHTML = `<div class="empty-state"><p>Failed to load: ${escapeHtml(String(err))}</p></div>`;

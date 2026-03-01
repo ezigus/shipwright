@@ -16,6 +16,7 @@ DAEMON_LIB_GLOB="${DAEMON_LIB_DIR}/daemon-*.sh"
 CYAN='\033[38;2;0;212;255m'
 PURPLE='\033[38;2;124;58;237m'
 GREEN='\033[38;2;74;222;128m'
+# shellcheck disable=SC2034
 YELLOW='\033[38;2;250;204;21m'
 RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
@@ -331,6 +332,7 @@ source_daemon_functions() {
                 pid=$(echo "$job" | jq -r '.pid')
                 started_at=$(echo "$job" | jq -r '.started_at // empty')
                 issue_num=$(echo "$job" | jq -r '.issue')
+                # shellcheck disable=SC2034
                 worktree=$(echo "$job" | jq -r '.worktree // ""')
 
                 if ! kill -0 "$pid" 2>/dev/null; then
@@ -869,6 +871,7 @@ test_patrol_recurring_failures() {
     # Set thresholds
     PATROL_FAILURES_THRESHOLD=3
     NO_GITHUB=true
+    # shellcheck disable=SC2034
     PATROL_DRY_RUN=true
 
     # The actual patrol_recurring_failures function requires sourcing sw-memory.sh
@@ -1130,6 +1133,7 @@ FEOF
     # Test 1: rapid convergence (10 issues → 3 issues, >50% drop) should extend by 1
     local result
     result=$(
+        # shellcheck disable=SC1090
         source "$fns_script" 2>/dev/null
         pipeline_adaptive_cycles 3 "compound_quality" 3 10
     ) || result=""
@@ -1168,6 +1172,7 @@ FEOF
     # Test: divergence (5 issues → 8 issues) should reduce limit by 1
     local result
     result=$(
+        # shellcheck disable=SC1090
         source "$fns_script" 2>/dev/null
         pipeline_adaptive_cycles 3 "compound_quality" 8 5
     ) || result=""
@@ -1206,6 +1211,7 @@ FEOF
     # Test: even with convergence, hard ceiling is 2x base (base=3 → max=6)
     local result
     result=$(
+        # shellcheck disable=SC1090
         source "$fns_script" 2>/dev/null
         pipeline_adaptive_cycles 3 "compound_quality" 1 10
     ) || result=""
@@ -1245,6 +1251,7 @@ FEOF
     # Test: on first cycle (no previous count), return base_limit unchanged
     local result
     result=$(
+        # shellcheck disable=SC1090
         source "$fns_script" 2>/dev/null
         pipeline_adaptive_cycles 3 "compound_quality" 5 -1
     ) || result=""
@@ -1558,6 +1565,7 @@ MEMJSON
     # Source memory.sh in a subshell with overridden paths
     local result
     result=$(
+        # shellcheck disable=SC2034
         MEMORY_ROOT="$mem_dir"
         repo_hash() { echo "test-repo-hash"; }
         repo_name() { echo "test/repo"; }
@@ -1566,6 +1574,7 @@ MEMJSON
 
         # Source just the function we need
         local mem_script
+        # shellcheck disable=SC2034
         mem_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sw-memory.sh"
         # Extract memory_query_fix_for_error
         memory_query_fix_for_error() {

@@ -7,7 +7,8 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -29,6 +30,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -53,6 +55,7 @@ STATE_DIR="${HOME}/.shipwright/autonomous"
 STATE_FILE="${STATE_DIR}/state.json"
 HISTORY_FILE="${STATE_DIR}/history.jsonl"
 CONFIG_FILE="${STATE_DIR}/config.json"
+# shellcheck disable=SC2034
 CYCLE_COUNTER="${STATE_DIR}/cycle-counter.txt"
 AUTONOMOUS_OVERLAP_FILE="${HOME}/.shipwright/autonomous-state.json"
 
@@ -581,6 +584,7 @@ record_finding_pending() {
     local issue_num="$1"
     local finding_title="$2"
     ensure_state_dir
+    # shellcheck disable=SC2034
     local state_file="${STATE_DIR}/state.json"
     local pending_file="${STATE_DIR}/pending_findings.jsonl"
     [[ ! -f "$pending_file" ]] && touch "$pending_file"

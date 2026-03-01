@@ -7,12 +7,14 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ────────────────────────────────────
 CYAN='\033[38;2;0;212;255m'
 PURPLE='\033[38;2;124;58;237m'
 GREEN='\033[38;2;74;222;128m'
+# shellcheck disable=SC2034
 YELLOW='\033[38;2;250;204;21m'
 RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
@@ -471,6 +473,7 @@ test_graceful_degradation() {
     # Adversarial should return empty array, not crash
     local adv_output
     local adv_exit=0
+    # shellcheck disable=SC2034
     adv_output=$(
         HOME="$TEMP_DIR/home" \
         PATH="$TEMP_DIR/bin:$PATH" \
@@ -485,6 +488,7 @@ test_graceful_degradation() {
     # Simulation should return empty array, not crash
     local sim_output
     local sim_exit=0
+    # shellcheck disable=SC2034
     sim_output=$(
         HOME="$TEMP_DIR/home" \
         PATH="$TEMP_DIR/bin:$PATH" \
@@ -503,6 +507,7 @@ test_graceful_degradation() {
 
     local arch_output
     local arch_exit=0
+    # shellcheck disable=SC2034
     arch_output=$(
         HOME="$TEMP_DIR/home" \
         PATH="$TEMP_DIR/bin:$PATH" \

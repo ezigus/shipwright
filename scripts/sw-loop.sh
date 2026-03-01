@@ -46,6 +46,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -77,7 +78,7 @@ MAX_RESTARTS=$(_config_get_int "loop.max_restarts" 0 2>/dev/null || echo 0)
 SESSION_RESTART=false
 RESTART_COUNT=0
 REPO_OVERRIDE=""
-VERSION="3.1.0"
+VERSION="3.2.4"
 
 # ─── Token Tracking ─────────────────────────────────────────────────────────
 LOOP_INPUT_TOKENS=0
@@ -284,6 +285,7 @@ done
 
 # Auto-enable worktree for multi-agent
 if [[ "$AGENTS" -gt 1 ]]; then
+    # shellcheck disable=SC2034
     USE_WORKTREE=true
 fi
 
@@ -578,6 +580,7 @@ write_loop_tokens() {
     fi
     local tmp_file
     tmp_file=$(mktemp "${token_file}.XXXXXX" 2>/dev/null || mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
     cat > "$tmp_file" <<TOKJSON
 {"input_tokens":${LOOP_INPUT_TOKENS},"output_tokens":${LOOP_OUTPUT_TOKENS},"cost_usd":${cost_usd},"iterations":${ITERATION:-0}}
@@ -1746,12 +1749,19 @@ HOLISTIC_PROMPT
 # Prevents prompt from exceeding Claude's context limit (~200K tokens).
 # Trims least-critical sections first when over budget.
 
-CONTEXT_BUDGET_CHARS="${CONTEXT_BUDGET_CHARS:-180000}"  # ~45K tokens at 4 chars/token
+CONTEXT_BUDGET_CHARS="${CONTEXT_BUDGET_CHARS:-$(_config_get_int "loop.context_budget_chars" 180000 2>/dev/null || echo 180000)}"  # ~45K tokens at 4 chars/token
 
 manage_context_window() {
     local prompt="$1"
     local budget="${CONTEXT_BUDGET_CHARS}"
     local current_len=${#prompt}
+
+    # Read trimming tunables from config (env > daemon-config > policy > defaults.json)
+    local trim_memory_chars trim_git_entries trim_hotspot_files trim_test_lines
+    trim_memory_chars=$(_config_get_int "loop.context_trim_memory_chars" 20000 2>/dev/null || echo 20000)
+    trim_git_entries=$(_config_get_int "loop.context_trim_git_entries" 10 2>/dev/null || echo 10)
+    trim_hotspot_files=$(_config_get_int "loop.context_trim_hotspot_files" 5 2>/dev/null || echo 5)
+    trim_test_lines=$(_config_get_int "loop.context_trim_test_lines" 50 2>/dev/null || echo 50)
 
     if [[ "$current_len" -le "$budget" ]]; then
         echo "$prompt"
@@ -1766,19 +1776,19 @@ manage_context_window() {
         trimmed=$(echo "$trimmed" | awk '/^## Performance Baselines/{skip=1; next} skip && /^## [^#]/{skip=0} !skip{print}')
     fi
 
-    # 2. Trim file hotspots to top 5
+    # 2. Trim file hotspots to top N
     if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed=$(echo "$trimmed" | awk '/## File Hotspots/{p=1; c=0} p && /^- /{c++; if(c>5) next} {print}')
+        trimmed=$(echo "$trimmed" | awk -v max="$trim_hotspot_files" '/## File Hotspots/{p=1; c=0} p && /^- /{c++; if(c>max) next} {print}')
     fi
 
-    # 3. Trim git log to last 10 entries
+    # 3. Trim git log to last N entries
     if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed=$(echo "$trimmed" | awk '/## Recent Git Activity/{p=1; c=0} p && /^[a-f0-9]/{c++; if(c>10) next} {print}')
+        trimmed=$(echo "$trimmed" | awk -v max="$trim_git_entries" '/## Recent Git Activity/{p=1; c=0} p && /^[a-f0-9]/{c++; if(c>max) next} {print}')
     fi
 
-    # 4. Truncate memory context to first 20K chars
+    # 4. Truncate memory context to first N chars
     if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed=$(echo "$trimmed" | awk -v max=20000 '
+        trimmed=$(echo "$trimmed" | awk -v max="$trim_memory_chars" '
             /## Memory Context/{mem=1; skip_rest=0; chars=0; print; next}
             mem && /^## [^#]/{mem=0; print; next}
             mem{chars+=length($0)+1; if(chars>max){print "... (memory truncated for context budget)"; skip_rest=1; mem=0; next}}
@@ -1788,11 +1798,11 @@ manage_context_window() {
         ')
     fi
 
-    # 5. Truncate test output to last 50 lines
+    # 5. Truncate test output to last N lines
     if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed=$(echo "$trimmed" | awk '
+        trimmed=$(echo "$trimmed" | awk -v max="$trim_test_lines" '
             /## Test Results/{found=1; buf=""; print; next}
-            found && /^## [^#]/{found=0; n=split(buf,arr,"\n"); start=(n>50)?(n-49):1; for(i=start;i<=n;i++) if(arr[i]!="") print arr[i]; print; next}
+            found && /^## [^#]/{found=0; n=split(buf,arr,"\n"); start=(n>max)?(n-max+1):1; for(i=start;i<=n;i++) if(arr[i]!="") print arr[i]; print; next}
             found{buf=buf $0 "\n"; next}
             {print}
         ')
@@ -2101,6 +2111,13 @@ ${restart_section:+$restart_section
 4. Run tests if a test command exists: ${TEST_CMD:-"(none)"}
 5. Commit your work with a descriptive message
 6. When the goal is FULLY achieved, output exactly: LOOP_COMPLETE
+
+## Context Efficiency
+- Batch independent tool calls in parallel — avoid sequential round-trips
+- Use targeted file reads (offset/limit) instead of reading entire large files
+- Delegate large searches to subagents — only import the summary
+- Filter tool results with grep/jq before reasoning over them
+- Keep working memory lean — summarize completed steps, don't preserve full outputs
 
 ${audit_section}
 
@@ -2457,7 +2474,7 @@ compose_worker_prompt() {
                     role_desc="$recruit_desc"
                 fi
             fi
-            # Fallback to hardcoded descriptions
+            # Fallback to built-in role descriptions
             if [[ -z "$role_desc" ]]; then
                 case "$role" in
                     builder)   role_desc="Focus on implementation — writing code, fixing bugs, building features. You are the primary builder." ;;
@@ -2513,9 +2530,32 @@ run_claude_iteration() {
     local final_prompt
     final_prompt=$(manage_context_window "$prompt")
 
+    local raw_prompt_chars=${#prompt}
     local prompt_chars=${#final_prompt}
     local approx_tokens=$((prompt_chars / 4))
     info "Prompt: ~${approx_tokens} tokens (${prompt_chars} chars)"
+
+    # Emit context efficiency metrics
+    if type emit_event >/dev/null 2>&1; then
+        local trim_ratio=0
+        local budget_utilization=0
+        if [[ "$raw_prompt_chars" -gt 0 ]]; then
+            trim_ratio=$(awk -v raw="$raw_prompt_chars" -v trimmed="$prompt_chars" \
+                'BEGIN { printf "%.1f", ((raw - trimmed) / raw) * 100 }')
+        fi
+        if [[ "${CONTEXT_BUDGET_CHARS:-0}" -gt 0 ]]; then
+            budget_utilization=$(awk -v used="$prompt_chars" -v budget="${CONTEXT_BUDGET_CHARS}" \
+                'BEGIN { printf "%.1f", (used / budget) * 100 }')
+        fi
+        emit_event "loop.context_efficiency" \
+            "iteration=$ITERATION" \
+            "raw_prompt_chars=$raw_prompt_chars" \
+            "trimmed_prompt_chars=$prompt_chars" \
+            "trim_ratio=$trim_ratio" \
+            "budget_utilization=$budget_utilization" \
+            "budget_chars=${CONTEXT_BUDGET_CHARS:-0}" \
+            "job_id=${PIPELINE_JOB_ID:-loop-$$}" 2>/dev/null || true
+    fi
 
     local flags
     flags="$(build_claude_flags)"
@@ -2697,6 +2737,7 @@ cleanup() {
     export SW_LOOP_STATUS="$STATUS"
     export SW_LOOP_TEST_OUTPUT="${TEST_OUTPUT:-}"
     export SW_LOOP_FINDINGS="${LOG_ENTRIES:-}"
+    # shellcheck disable=SC2155
     export SW_LOOP_MODIFIED="$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')"
     "$SCRIPT_DIR/sw-checkpoint.sh" save-context --stage build 2>/dev/null || true
 
@@ -3034,8 +3075,14 @@ cleanup_multi_agent() {
 # ─── Main: Single-Agent Loop ─────────────────────────────────────────────────
 
 run_single_agent_loop() {
+    # Save original environment variables before loop starts
+    local SAVED_CLAUDE_MODEL="${CLAUDE_MODEL:-}"
+    local SAVED_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
+
     if [[ "$SESSION_RESTART" == "true" ]]; then
         # Restart: state already reset by run_loop_with_restarts, skip init
+        # Restore environment variables for clean iteration state
+        [[ -n "$SAVED_CLAUDE_MODEL" ]] && export CLAUDE_MODEL="$SAVED_CLAUDE_MODEL"
         info "Session restart ${RESTART_COUNT}/${MAX_RESTARTS} — fresh context, reading progress"
     elif $RESUME; then
         resume_state
@@ -3062,6 +3109,11 @@ run_single_agent_loop() {
     show_banner
 
     while true; do
+        # Reset environment variables at start of each iteration
+        # Prevents previous iterations from affecting model selection or API keys
+        [[ -n "$SAVED_CLAUDE_MODEL" ]] && export CLAUDE_MODEL="$SAVED_CLAUDE_MODEL"
+        [[ -n "$SAVED_ANTHROPIC_API_KEY" ]] && export ANTHROPIC_API_KEY="$SAVED_ANTHROPIC_API_KEY"
+
         # Pre-checks (before incrementing — ITERATION tracks completed count)
         check_circuit_breaker || break
         check_max_iterations || break
@@ -3218,6 +3270,7 @@ ${GOAL}"
         export SW_LOOP_STATUS="${STATUS:-running}"
         export SW_LOOP_TEST_OUTPUT="${TEST_OUTPUT:-}"
         export SW_LOOP_FINDINGS="${LOG_ENTRIES:-}"
+        # shellcheck disable=SC2155
         export SW_LOOP_MODIFIED="$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')"
         "$SCRIPT_DIR/sw-checkpoint.sh" save-context --stage build 2>/dev/null || true
 

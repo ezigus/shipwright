@@ -67,6 +67,17 @@ Live DORA/DX metrics dashboard:
 - **Change Failure Rate** — percentage of pipelines that fail
 - **Mean Time to Recovery** — time from failure to successful retry
 
+### Context Efficiency
+
+The dashboard includes a context efficiency widget that visualizes how pipeline agents use their context budgets:
+
+- **Budget Utilization** — Gauge showing average percentage of context budget used per iteration
+- **Trim Ratio** — Average percentage of generated content trimmed by the context engineering layer
+- **Chars Discarded** — Total characters saved by intelligent trimming
+- **Trim Events** — Number of iterations where trimming occurred
+
+Data comes from `loop.context_efficiency` events emitted during build iterations. The `/api/context-efficiency` endpoint provides the raw metrics with a configurable time period (default: 7 days).
+
 ### Predictions
 
 When the intelligence layer is enabled, the dashboard displays prediction data for active pipelines:

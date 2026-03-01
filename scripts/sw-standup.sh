@@ -6,8 +6,9 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -29,7 +30,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -68,7 +70,8 @@ cmd_yesterday() {
     now_epoch="$(now_epoch)"
     local cutoff=$((now_epoch - SECONDS_24H))
 
-    local report_file="${STANDUP_DIR}/yesterday-$(date +%Y-%m-%d).txt"
+    local report_file
+    report_file="${STANDUP_DIR}/yesterday-$(date +%Y-%m-%d).txt"
 
     {
         echo "╔════════════════════════════════════════════════════════════════════╗"
@@ -143,7 +146,8 @@ cmd_yesterday() {
 cmd_today() {
     ensure_dirs
 
-    local report_file="${STANDUP_DIR}/today-$(date +%Y-%m-%d).txt"
+    local report_file
+    report_file="${STANDUP_DIR}/today-$(date +%Y-%m-%d).txt"
 
     {
         echo "╔════════════════════════════════════════════════════════════════════╗"
@@ -193,7 +197,8 @@ cmd_today() {
 cmd_blockers() {
     ensure_dirs
 
-    local report_file="${STANDUP_DIR}/blockers-$(date +%Y-%m-%d).txt"
+    local report_file
+    report_file="${STANDUP_DIR}/blockers-$(date +%Y-%m-%d).txt"
 
     {
         echo "╔════════════════════════════════════════════════════════════════════╗"
@@ -261,7 +266,8 @@ cmd_blockers() {
 cmd_velocity() {
     ensure_dirs
 
-    local report_file="${STANDUP_DIR}/velocity-$(date +%Y-%m-%d).txt"
+    local report_file
+    report_file="${STANDUP_DIR}/velocity-$(date +%Y-%m-%d).txt"
 
     {
         echo "╔════════════════════════════════════════════════════════════════════╗"
@@ -335,7 +341,8 @@ cmd_velocity() {
 cmd_digest() {
     ensure_dirs
 
-    local report_file="${STANDUP_DIR}/digest-$(date +%Y-%m-%d-%H%M%S).txt"
+    local report_file
+    report_file="${STANDUP_DIR}/digest-$(date +%Y-%m-%d-%H%M%S).txt"
 
     {
         echo ""
@@ -493,6 +500,7 @@ cmd_notify() {
     if [[ -z "$message_file" ]]; then
         # Generate a digest
         message_file=$(mktemp)
+        # shellcheck disable=SC2064
         trap "rm -f '$message_file'" RETURN
         cmd_digest > "$message_file" 2>&1 || true
     fi

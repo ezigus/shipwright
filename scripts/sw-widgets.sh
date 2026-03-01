@@ -8,7 +8,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -34,6 +34,7 @@ CONFIG_DIR="${HOME}/.shipwright"
 CONFIG_FILE="${CONFIG_DIR}/widgets-config.json"
 EVENTS_FILE="${CONFIG_DIR}/events.jsonl"
 PIPELINE_STATE="${REPO_DIR}/.claude/pipeline-state.md"
+# shellcheck disable=SC2034
 COSTS_FILE="${CONFIG_DIR}/costs.json"
 
 # ─── Helpers ───────────────────────────────────────────────────────────────
@@ -260,6 +261,7 @@ cmd_slack() {
 
     # Build Slack message
     local message_json
+    # shellcheck disable=SC2046
     message_json=$(jq -n \
         --arg channel "$channel" \
         --arg status "$status" \

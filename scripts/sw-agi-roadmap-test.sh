@@ -619,6 +619,7 @@ test_loop_multiagent_restarts() {
 # ── 4.1 Pipeline: record_stage_effectiveness functional test ─────────────────
 test_stage_effectiveness_recording() {
     local eff_file="$TEST_TMP/stage-effectiveness.jsonl"
+    # shellcheck disable=SC2034
     STAGE_EFFECTIVENESS_FILE="$eff_file"
     # Simulate recording
     mkdir -p "$TEST_TMP"

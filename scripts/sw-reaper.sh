@@ -11,7 +11,8 @@
 # ║    shipwright reaper --watch      Continuous loop (default: 5s)         ║
 # ║    shipwright reaper --dry-run    Preview what would be reaped          ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -32,6 +33,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -193,6 +195,8 @@ scan_and_reap() {
     local skipped=0
     local scanned=0
 
+    # shellcheck disable=SC2034
+    # shellcheck disable=SC2034
     while IFS='|' read -r window_name pane_title pane_pid cmd pane_active pane_idle pane_dead pane_ref; do
         [[ -z "$window_name" ]] && continue
 
@@ -291,6 +295,7 @@ cleanup_team_dirs() {
                     cleaned=$((cleaned + 1))
                 }
                 if [[ -d "${tasks_dir}/${team_name}" ]]; then
+                    # shellcheck disable=SC2115
                     rm -rf "${tasks_dir}/${team_name}" && {
                         echo -e "  ${RED}✗${RESET} Removed task dir: ${BOLD}${team_name}/${RESET}"
                         log "CLEAN_TASKS team=${team_name}"

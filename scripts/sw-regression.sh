@@ -6,7 +6,8 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -29,7 +30,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -46,6 +48,7 @@ format_duration() {
 }
 
 # ─── Structured Event Log ──────────────────────────────────────────────────
+# shellcheck disable=SC2034
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
 
 # ─── Regression Storage ────────────────────────────────────────────────────
@@ -116,7 +119,7 @@ collect_script_metrics() {
     script_count=$(find "$REPO_DIR/scripts" -maxdepth 1 -name "*.sh" -type f 2>/dev/null | wc -l)
 
     # Count total lines in all scripts
-    total_lines=$(find "$REPO_DIR/scripts" -maxdepth 1 -name "*.sh" -type f 2>/dev/null -exec wc -l {} + | awk '{sum+=$1} END {print sum}')
+    total_lines=$(find "$REPO_DIR/scripts" -maxdepth 1 -name "*.sh" -type f -exec wc -l {} + 2>/dev/null | awk '{sum+=$1} END {print sum}')
 
     # Count functions (grep for function definitions)
     function_count=$(find "$REPO_DIR/scripts" -maxdepth 1 -name "*.sh" -type f -exec grep -h "^[a-z_][a-z0-9_]*() {" {} + 2>/dev/null | wc -l)
@@ -138,17 +141,17 @@ collect_script_metrics() {
 collect_all_metrics() {
     local test_data
     test_data=$(collect_test_metrics)
-    local test_count=$(echo "$test_data" | sed -n '1p')
-    local pass_count=$(echo "$test_data" | sed -n '2p')
-    local fail_count=$(echo "$test_data" | sed -n '3p')
-    local pass_rate=$(echo "$test_data" | sed -n '4p')
+    local test_count; test_count=$(echo "$test_data" | sed -n '1p')
+    local pass_count; pass_count=$(echo "$test_data" | sed -n '2p')
+    local fail_count; fail_count=$(echo "$test_data" | sed -n '3p')
+    local pass_rate; pass_rate=$(echo "$test_data" | sed -n '4p')
 
     local script_data
     script_data=$(collect_script_metrics)
-    local script_count=$(echo "$script_data" | sed -n '1p')
-    local total_lines=$(echo "$script_data" | sed -n '2p')
-    local function_count=$(echo "$script_data" | sed -n '3p')
-    local syntax_errors=$(echo "$script_data" | sed -n '4p')
+    local script_count; script_count=$(echo "$script_data" | sed -n '1p')
+    local total_lines; total_lines=$(echo "$script_data" | sed -n '2p')
+    local function_count; function_count=$(echo "$script_data" | sed -n '3p')
+    local syntax_errors; syntax_errors=$(echo "$script_data" | sed -n '4p')
 
     cat <<METRICS
 {
@@ -180,6 +183,7 @@ cmd_baseline() {
     local timestamp
     timestamp=$(echo "$metrics" | jq -r '.timestamp')
     local epoch
+    # shellcheck disable=SC2034
     epoch=$(echo "$metrics" | jq -r '.epoch')
 
     # Create timestamped baseline file
@@ -188,6 +192,7 @@ cmd_baseline() {
 
     local tmp_file
     tmp_file=$(mktemp "${baseline_file}.tmp.XXXXXX")
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     echo "$metrics" > "$tmp_file"
@@ -260,6 +265,7 @@ cmd_check() {
         local name="$1"
         local baseline_val="$2"
         local current_val="$3"
+        # shellcheck disable=SC2034
         local threshold_key="$4"
         local threshold_val="$5"
         local direction="${6:-decrease}"  # decrease or increase
@@ -271,6 +277,7 @@ cmd_check() {
             return
         fi
 
+        # shellcheck disable=SC2034
         local diff
         local pct_diff=0
         if [[ "$baseline_val_num" != "0" ]]; then

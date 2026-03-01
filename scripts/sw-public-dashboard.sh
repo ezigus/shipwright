@@ -6,7 +6,8 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -29,7 +30,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -79,11 +81,13 @@ sanitize_for_privacy() {
 gather_pipeline_state() {
     local privacy="${1:-stages_only}"
 
+    # shellcheck disable=SC2034
     local state_file="${REPO_DIR}/.claude/pipeline-state.md"
     local daemon_state="${HOME}/.shipwright/daemon-state.json"
     local pipeline_artifacts="${REPO_DIR}/.claude/pipeline-artifacts"
 
-    local pipeline_data='{
+    local pipeline_data
+    pipeline_data='{
         "status":"unknown",
         "stages":[],
         "agents":[],
@@ -140,6 +144,7 @@ generate_html() {
 
     # Escape JSON for embedding in HTML
     local json_escaped
+    # shellcheck disable=SC2034
     json_escaped=$(echo "$data_json" | sed 's/"/\\"/g' | tr '\n' ' ')
 
     cat <<'EOF'
@@ -418,6 +423,7 @@ cmd_export() {
     # Atomic write
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" EXIT
     echo "$html" > "$tmp_file"
     mv "$tmp_file" "$output_file"
@@ -453,6 +459,7 @@ cmd_share() {
     # Append to share links file (atomic)
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" EXIT
     jq ".links += [$link_entry]" "$SHARE_LINKS_FILE" > "$tmp_file"
     mv "$tmp_file" "$SHARE_LINKS_FILE"
@@ -480,6 +487,7 @@ cmd_revoke() {
 
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" EXIT
 
     if jq ".links |= map(select(.token != \"$token\"))" "$SHARE_LINKS_FILE" > "$tmp_file"; then
@@ -545,6 +553,7 @@ cmd_config() {
             [[ -z "$value" ]] && error "Value required for privacy" && return 1
             local tmp_file
             tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
             trap "rm -f '$tmp_file'" EXIT
             jq ".privacy = \"$value\"" "$SHARE_CONFIG_FILE" > "$tmp_file"
             mv "$tmp_file" "$SHARE_CONFIG_FILE"
@@ -554,6 +563,7 @@ cmd_config() {
             [[ -z "$value" ]] && error "Value required for expiry (hours)" && return 1
             local tmp_file
             tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
             trap "rm -f '$tmp_file'" EXIT
             jq ".expiry_hours = $value" "$SHARE_CONFIG_FILE" > "$tmp_file"
             mv "$tmp_file" "$SHARE_CONFIG_FILE"
@@ -563,6 +573,7 @@ cmd_config() {
             [[ -z "$value" ]] && error "Value required for domain" && return 1
             local tmp_file
             tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
             trap "rm -f '$tmp_file'" EXIT
             jq ".custom_domain = \"$value\"" "$SHARE_CONFIG_FILE" > "$tmp_file"
             mv "$tmp_file" "$SHARE_CONFIG_FILE"
@@ -642,6 +653,7 @@ cmd_cleanup() {
 
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" EXIT
 
     jq ".links |= map(select((.expires | fromdateiso8601) > $now_epoch_val))" "$SHARE_LINKS_FILE" > "$tmp_file"

@@ -109,6 +109,23 @@
     "explanatory-output-style@claude-plugins-official": false
   },
   "alwaysThinkingEnabled": true,
+  "sandbox": {
+    "enabled": true,
+    "mode": "auto-allow",
+    "filesystem": {
+      "allowedPaths": ["./"],
+      "deniedPaths": ["/etc", "/System", "/Library"]
+    },
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "registry.npmjs.org",
+        "bun.sh"
+      ]
+    },
+    "allowUnsandboxedCommands": true
+  },
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY": "5",

@@ -3,6 +3,10 @@
 [[ -n "${_PIPELINE_DETECTION_LOADED:-}" ]] && return 0
 _PIPELINE_DETECTION_LOADED=1
 
+# Defaults for variables normally set by sw-pipeline.sh (safe under set -u).
+PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+
 _PIPELINE_DETECT_HELPER_CAPS_CACHE=""
 _PIPELINE_DETECT_REPO_ENVS_CACHE=""
 
@@ -632,7 +636,7 @@ branch_prefix_for_type() {
         fi
     fi
 
-    # Fallback: hardcoded mapping
+    # Fallback: default branch prefix mapping
     case "$task_type" in
         bug)          echo "fix" ;;
         refactor)     echo "refactor" ;;

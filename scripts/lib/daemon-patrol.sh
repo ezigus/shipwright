@@ -3,6 +3,25 @@
 [[ -n "${_DAEMON_PATROL_LOADED:-}" ]] && return 0
 _DAEMON_PATROL_LOADED=1
 
+# Ensure NO_GITHUB is set (parent sw-daemon.sh / sw-pipeline.sh normally sets it,
+# but under set -u bare references crash if this file is sourced standalone).
+NO_GITHUB="${NO_GITHUB:-false}"
+DAEMON_DIR="${DAEMON_DIR:-${HOME}/.shipwright}"
+EVENTS_FILE="${EVENTS_FILE:-${HOME}/.shipwright/events.jsonl}"
+
+# Defaults for patrol configuration (normally set by sw-daemon.sh, but must be
+# safe under set -u when this file is sourced in other contexts like tests).
+PATROL_INTERVAL="${PATROL_INTERVAL:-3600}"
+PATROL_MAX_ISSUES="${PATROL_MAX_ISSUES:-5}"
+PATROL_LABEL="${PATROL_LABEL:-auto-patrol}"
+PATROL_DRY_RUN="${PATROL_DRY_RUN:-false}"
+PATROL_AUTO_WATCH="${PATROL_AUTO_WATCH:-false}"
+PATROL_FAILURES_THRESHOLD="${PATROL_FAILURES_THRESHOLD:-3}"
+PATROL_DORA_ENABLED="${PATROL_DORA_ENABLED:-true}"
+PATROL_UNTESTED_ENABLED="${PATROL_UNTESTED_ENABLED:-true}"
+PATROL_RETRY_ENABLED="${PATROL_RETRY_ENABLED:-true}"
+PATROL_RETRY_THRESHOLD="${PATROL_RETRY_THRESHOLD:-2}"
+
 # ─── Decision Engine Signal Mode ─────────────────────────────────────────────
 # When DECISION_ENGINE_ENABLED=true, patrol writes candidates to the pending
 # signals file instead of creating GitHub issues directly. The decision engine
@@ -1154,7 +1173,9 @@ Patrol pre-filter findings to confirm: ${patrol_findings_summary}"
 
     daemon_log INFO "Patrol complete: ${total_findings} findings, ${issues_created} issues created"
 
-    # Adapt patrol limits based on hit rate
-    adapt_patrol_limits "$total_findings" "$PATROL_MAX_ISSUES"
+    # Adapt patrol limits based on hit rate (requires daemon-adaptive.sh)
+    if type adapt_patrol_limits >/dev/null 2>&1; then
+        adapt_patrol_limits "$total_findings" "$PATROL_MAX_ISSUES"
+    fi
 }
 

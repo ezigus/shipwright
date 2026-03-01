@@ -23,6 +23,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -95,7 +96,9 @@ provider_discover_statuses() {
     mkdir -p "$cache_dir"
     local tmp_cache
     tmp_cache=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_cache'" RETURN
+    # shellcheck disable=SC1010
     jq -n \
         --arg ts "$(date +%s)" \
         --arg in_progress "${discovered_in_progress:-}" \

@@ -182,6 +182,155 @@ rotate_jsonl() {
     fi
 }
 
+# ─── Atomic Write Helpers ────────────────────────────────────────
+# atomic_write: Write data to a file atomically (write to tmp, validate, mv)
+# Usage: atomic_write <target_file> <data>
+atomic_write() {
+    local target="$1"
+    local data="$2"
+
+    [[ -z "$target" ]] && { error "atomic_write: target file not specified"; return 1; }
+
+    local tmp
+    tmp=$(mktemp "${target}.tmp.XXXXXX") || return 1
+
+    # Write to tmp file
+    echo -n "$data" > "$tmp" || { rm -f "$tmp"; return 1; }
+
+    # Atomically move into place
+    mv "$tmp" "$target" || { rm -f "$tmp"; return 1; }
+
+    return 0
+}
+
+# atomic_append: Append a line to a JSONL file atomically
+# Usage: atomic_append <target_file> <json_line>
+# Thread-safe via flock; validates line before appending
+atomic_append() {
+    local target="$1"
+    local line="$2"
+
+    [[ -z "$target" ]] && { error "atomic_append: target file not specified"; return 1; }
+    [[ -z "$line" ]] && { error "atomic_append: line not specified"; return 1; }
+
+    # Validate JSON line
+    if ! echo "$line" | jq -e . >/dev/null 2>&1; then
+        error "atomic_append: invalid JSON: $line"
+        return 1
+    fi
+
+    local tmp lock_file
+    tmp=$(mktemp "${target}.tmp.XXXXXX") || return 1
+    lock_file="${target}.lock"
+
+    (
+        # Acquire exclusive lock with 5s timeout
+        if ! flock -w 5 200 2>/dev/null; then
+            error "atomic_append: failed to acquire lock on $target"
+            return 1
+        fi
+
+        # Append to tmp file
+        echo "$line" > "$tmp" || { rm -f "$tmp"; return 1; }
+
+        # Append tmp to target (atomic cat)
+        cat "$tmp" >> "$target" 2>/dev/null || { rm -f "$tmp"; return 1; }
+
+        rm -f "$tmp"
+        return 0
+    ) 200>"$lock_file"
+}
+
+# ─── Tmpfile Tracking & Cleanup ──────────────────────────────────
+# Registers a temp file for automatic cleanup on exit
+# Usage: register_tmpfile <tmpfile_path>
+# Set up trap handler: trap '_cleanup_tmpfiles' EXIT
+_REGISTERED_TMPFILES=()
+
+register_tmpfile() {
+    local tmpfile="$1"
+    [[ -z "$tmpfile" ]] && { error "register_tmpfile: path not specified"; return 1; }
+    _REGISTERED_TMPFILES+=("$tmpfile")
+}
+
+# Cleanup all registered temp files
+_cleanup_tmpfiles() {
+    for f in "${_REGISTERED_TMPFILES[@]}"; do
+        [[ -f "$f" ]] && rm -f "$f"
+        [[ -d "$f" ]] && rm -rf "$f"
+    done
+}
+
+# ─── Disk Space Check ───────────────────────────────────────────
+# Validates minimum free disk space before critical writes
+# Usage: check_disk_space <path> [min_mb]
+check_disk_space() {
+    local target_path="${1:-.}"
+    local min_mb="${2:-100}"  # Default 100MB minimum
+
+    # Get available space in KB
+    local free_kb
+    free_kb=$(df -k "$target_path" 2>/dev/null | tail -1 | awk '{print $4}')
+
+    if [[ -z "$free_kb" ]] || [[ ! "$free_kb" =~ ^[0-9]+$ ]]; then
+        warn "Could not determine free disk space — proceeding anyway"
+        return 0
+    fi
+
+    local free_mb=$((free_kb / 1024))
+    if [[ "$free_mb" -lt "$min_mb" ]]; then
+        error "Insufficient disk space: ${free_mb}MB free, need ${min_mb}MB minimum"
+        return 1
+    fi
+
+    return 0
+}
+
+# ─── GitHub API Retry Helper ────────────────────────────────────
+# Retries gh CLI calls with exponential backoff on 403 (rate limit)
+# Usage: gh_with_retry <max_attempts> gh issue view <args>
+# Returns: command output on success, empty on failure
+gh_with_retry() {
+    local max_attempts="${1:-4}"
+    shift
+    local attempt=1
+    local backoff_secs=30
+
+    while [[ "$attempt" -le "$max_attempts" ]]; do
+        # Execute gh command
+        local output result
+        output=$("$@" 2>&1)
+        result=$?
+
+        # Success
+        if [[ "$result" -eq 0 ]]; then
+            echo "$output"
+            return 0
+        fi
+
+        # Check for rate limit (403) or API error
+        if echo "$output" | grep -qE "HTTP 403|API rate limit|rate limited|You have exceeded"; then
+            if [[ "$attempt" -lt "$max_attempts" ]]; then
+                warn "GitHub API rate limit detected — backing off ${backoff_secs}s (attempt $attempt/$max_attempts)"
+                emit_event "github.rate_limited" "attempt=$attempt" "backoff=$backoff_secs"
+                sleep "$backoff_secs"
+                backoff_secs=$((backoff_secs * 2))
+                [[ "$backoff_secs" -gt 300 ]] && backoff_secs=300
+            fi
+        else
+            # Non-rate-limit error — fail immediately
+            return "$result"
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    # Exhausted all retries
+    error "GitHub API call failed after $max_attempts attempts: ${output##*$'\n'}"
+    emit_event "github.api_failed" "attempts=$max_attempts"
+    return 1
+}
+
 # ─── Project Identity ────────────────────────────────────────────
 # Auto-detect GitHub owner/repo from git remote, with fallbacks
 _sw_github_repo() {
@@ -210,5 +359,23 @@ _sw_github_url() {
     local repo
     repo="$(_sw_github_repo)"
     echo "https://github.com/${repo}"
+}
+
+# ─── Secret Sanitization ─────────────────────────────────────────────
+# Redacts sensitive data from strings before logging
+# Redacts: ANTHROPIC_API_KEY, GITHUB_TOKEN, sk-* patterns, Bearer tokens
+sanitize_secrets() {
+    local text="$1"
+    # Redact ANTHROPIC_API_KEY=... (until whitespace or quote)
+    text="$(echo "$text" | sed 's/ANTHROPIC_API_KEY=[^ "]*\|ANTHROPIC_API_KEY=[^ ]*/ANTHROPIC_API_KEY=***REDACTED***/g')"
+    # Redact GITHUB_TOKEN=... (until whitespace or quote)
+    text="$(echo "$text" | sed 's/GITHUB_TOKEN=[^ "]*\|GITHUB_TOKEN=[^ ]*/GITHUB_TOKEN=***REDACTED***/g')"
+    # Redact sk-* patterns (Anthropic API key format)
+    text="$(echo "$text" | sed 's/sk-[a-zA-Z0-9_-]*/sk-***REDACTED***/g')"
+    # Redact Bearer tokens
+    text="$(echo "$text" | sed 's/Bearer [a-zA-Z0-9_.-]*/Bearer ***REDACTED***/g')"
+    # Redact oauth tokens (gh_...)
+    text="$(echo "$text" | sed 's/gh_[a-zA-Z0-9_]*/gh_***REDACTED***/g')"
+    echo "$text"
 }
 

@@ -120,23 +120,28 @@ cat > "$tmp/config/policy.json" <<'POLICY'
 POLICY
 
 # Read coverage threshold (expect 85, not default 60)
+# shellcheck disable=SC2097,SC2098
 got=$(REPO_DIR="$tmp" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".pipeline.coverage_threshold_percent\" \"60\"")
 assert_eq "policy_get reads pipeline.coverage_threshold_percent" "85" "$got"
 
 # Read daemon poll interval (expect 120)
+# shellcheck disable=SC2097,SC2098
 got=$(REPO_DIR="$tmp" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".daemon.poll_interval_seconds\" \"60\"")
 assert_eq "policy_get reads daemon.poll_interval_seconds" "120" "$got"
 
 # Read hygiene artifact age (expect 21)
+# shellcheck disable=SC2097,SC2098
 got=$(REPO_DIR="$tmp" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".hygiene.artifact_age_days\" \"7\"")
 assert_eq "policy_get reads hygiene.artifact_age_days" "21" "$got"
 
 # Read missing key (expect default)
+# shellcheck disable=SC2097,SC2098
 got=$(REPO_DIR="$tmp" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".nonexistent.key\" \"fallback_val\"")
 assert_eq "policy_get returns default for missing key" "fallback_val" "$got"
 
 # Read with empty policy (expect default)
 echo '{}' > "$tmp/config/policy.json"
+# shellcheck disable=SC2097,SC2098
 got=$(REPO_DIR="$tmp" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".pipeline.coverage_threshold_percent\" \"60\"")
 assert_eq "policy_get returns default from empty policy" "60" "$got"
 
@@ -164,6 +169,7 @@ cat > "$tmp2/config/policy.json" <<'POLICY'
 POLICY
 
 # Source pipeline-quality.sh in a subshell with our mock policy
+# shellcheck disable=SC2097,SC2098
 got_cov=$(REPO_DIR="$tmp2" SCRIPT_DIR="$SCRIPT_DIR" bash -c '
   unset _PIPELINE_QUALITY_LOADED POLICY_LOADED 2>/dev/null
   source "'"$SCRIPT_DIR"'/lib/pipeline-quality.sh"
@@ -171,6 +177,7 @@ got_cov=$(REPO_DIR="$tmp2" SCRIPT_DIR="$SCRIPT_DIR" bash -c '
 ')
 assert_eq "pipeline-quality reads coverage threshold from policy" "75" "$got_cov"
 
+# shellcheck disable=SC2097,SC2098
 got_gate=$(REPO_DIR="$tmp2" SCRIPT_DIR="$SCRIPT_DIR" bash -c '
   unset _PIPELINE_QUALITY_LOADED POLICY_LOADED 2>/dev/null
   source "'"$SCRIPT_DIR"'/lib/pipeline-quality.sh"
@@ -179,6 +186,7 @@ got_gate=$(REPO_DIR="$tmp2" SCRIPT_DIR="$SCRIPT_DIR" bash -c '
 assert_eq "pipeline-quality reads gate threshold from policy" "80" "$got_gate"
 
 # Verify pipeline_quality_min_threshold function
+# shellcheck disable=SC2097,SC2098
 got_min=$(REPO_DIR="$tmp2" SCRIPT_DIR="$SCRIPT_DIR" bash -c '
   unset _PIPELINE_QUALITY_LOADED POLICY_LOADED 2>/dev/null
   source "'"$SCRIPT_DIR"'/lib/pipeline-quality.sh"
@@ -213,18 +221,22 @@ cat > "$tmp3/config/policy.json" <<'POLICY'
 POLICY
 
 # poll interval
+# shellcheck disable=SC2097,SC2098
 got=$(REPO_DIR="$tmp3" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".daemon.poll_interval_seconds\" \"60\"")
 assert_eq "daemon poll_interval from policy" "45" "$got"
 
 # heartbeat timeout
+# shellcheck disable=SC2097,SC2098
 got=$(REPO_DIR="$tmp3" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".daemon.health_heartbeat_timeout\" \"120\"")
 assert_eq "daemon heartbeat_timeout from policy" "200" "$got"
 
 # stage timeout for build
+# shellcheck disable=SC2097,SC2098
 got=$(REPO_DIR="$tmp3" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".daemon.stage_timeouts.build\" \"300\"")
 assert_eq "daemon stage_timeouts.build from policy" "600" "$got"
 
 # auto_scale_interval from policy
+# shellcheck disable=SC2097,SC2098
 got=$(REPO_DIR="$tmp3" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".daemon.auto_scale_interval_cycles\" \"5\"")
 assert_eq "daemon auto_scale_interval from policy" "3" "$got"
 
@@ -264,6 +276,7 @@ cat > "$tmp4/home/.shipwright/policy.json" <<'POLICY'
 {"hygiene":{"artifact_age_days":30}}
 POLICY
 # No config/policy.json in REPO_DIR — should fall back to HOME
+# shellcheck disable=SC2097,SC2098
 got=$(REPO_DIR="$tmp4/norepo" HOME="$tmp4/home" SCRIPT_DIR="$SCRIPT_DIR" bash -c "source \"$SCRIPT_DIR/lib/policy.sh\"; policy_get \".hygiene.artifact_age_days\" \"7\"")
 assert_eq "policy_get falls back to HOME policy.json" "30" "$got"
 

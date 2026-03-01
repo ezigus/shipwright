@@ -2,7 +2,7 @@
   "name": "full",
   "description": "Full deployment pipeline: all stages from intake to production monitoring",
   "defaults": {
-    "model": "opus",
+    "model": "claude-opus-4-6",
     "agents": 1
   },
   "intelligence": {
@@ -21,13 +21,13 @@
       "id": "plan",
       "enabled": true,
       "gate": "approve",
-      "config": { "model": "opus" }
+      "config": { "model": "claude-opus-4-6" }
     },
     {
       "id": "design",
       "enabled": true,
       "gate": "approve",
-      "config": { "model": "opus" }
+      "config": { "model": "claude-opus-4-6" }
     },
     {
       "id": "build",
@@ -64,6 +64,18 @@
         "strict_quality": true,
         "audit_intensity": "auto",
         "compound_quality_blocking": true
+      }
+    },
+    {
+      "id": "audit",
+      "enabled": true,
+      "gate": "auto",
+      "config": {
+        "secret_scan": true,
+        "file_permissions": true,
+        "atomic_writes": true,
+        "coverage_delta": true,
+        "blocking": true
       }
     },
     {

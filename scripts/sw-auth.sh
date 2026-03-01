@@ -6,8 +6,10 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -30,7 +32,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -40,6 +43,7 @@ AUTH_FILE="${HOME}/.shipwright/auth.json"
 DEVICE_FLOW_ENDPOINT="$(_config_get "urls.github_device_login" "https://github.com/login/device")"
 API_ENDPOINT="$(_config_get "urls.github_api" "https://api.github.com")"
 OAUTH_CLIENT_ID="${GITHUB_OAUTH_CLIENT_ID:-Iv1.d3f6a7e8c9b2a1d4}"  # Shipwright app ID
+# shellcheck disable=SC2034
 OAUTH_TIMEOUT=900  # 15 minutes
 
 # Ensure auth storage directory exists
@@ -202,6 +206,8 @@ store_user() {
 
     local temp_file
     temp_file=$(mktemp)
+    # shellcheck disable=SC2064
+    # shellcheck disable=SC2064
     trap "rm -f '$temp_file'" RETURN
 
     local updated
@@ -246,6 +252,8 @@ switch_user() {
 
     local temp_file
     temp_file=$(mktemp)
+    # shellcheck disable=SC2064
+    # shellcheck disable=SC2064
     trap "rm -f '$temp_file'" RETURN
 
     jq --arg login "$login" '.active_user = $login' "$AUTH_FILE" > "$temp_file"
@@ -261,6 +269,8 @@ remove_user() {
 
     local temp_file
     temp_file=$(mktemp)
+    # shellcheck disable=SC2064
+    # shellcheck disable=SC2064
     trap "rm -f '$temp_file'" RETURN
 
     jq --arg login "$login" \

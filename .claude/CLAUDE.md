@@ -625,7 +625,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-adapters-test.sh` | 197 | Structural/smoke tests for terminal & deploy |
 | `scripts/sw-adaptive-test.sh` | 206 | Validate data-driven pipeline tuning |
 | `scripts/sw-adversarial-test.sh` | 258 | Validate adversarial agent code review |
-| `scripts/sw-agi-roadmap-test.sh` | 867 | Tests every feature we implemented |
+| `scripts/sw-agi-roadmap-test.sh` | 868 | Tests every feature we implemented |
 | `scripts/sw-architecture-enforcer-test.sh` | 301 | Validate architecture model |
 | `scripts/sw-auth-test.sh` | 141 | Validate OAuth authentication commands |
 | `scripts/sw-autonomous-e2e-test.sh` | 306 | Autonomous Loop E2E Test |

@@ -454,7 +454,7 @@ test_install_calls_launchctl() {
     create_mock_sw
     create_mock_bun
 
-    > "$TEMP_DIR/launchctl-calls.log"
+    true > "$TEMP_DIR/launchctl-calls.log"
 
     OSTYPE="darwin19.6.0" bash "$TEMP_DIR/scripts/sw-launchd.sh" install 2>/dev/null || true
 
@@ -550,7 +550,7 @@ test_uninstall_calls_launchctl_unload() {
     # Install first
     OSTYPE="darwin19.6.0" bash "$TEMP_DIR/scripts/sw-launchd.sh" install 2>/dev/null || true
 
-    > "$TEMP_DIR/launchctl-calls.log"
+    true > "$TEMP_DIR/launchctl-calls.log"
 
     # Now uninstall
     OSTYPE="darwin19.6.0" bash "$TEMP_DIR/scripts/sw-launchd.sh" uninstall 2>/dev/null || true
@@ -646,6 +646,7 @@ test_status_shows_log_directory() {
 
     local log_dir="$HOME/.shipwright/logs"
 
+    # shellcheck disable=SC2076
     if [[ ! "$output" =~ "$log_dir" ]]; then
         echo -e "    ${RED}✗${RESET} Status output missing log directory"
         return 1

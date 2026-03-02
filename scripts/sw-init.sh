@@ -8,7 +8,8 @@
 # ║                                                                          ║
 # ║  --deploy  Detect platform and generate deployed.json template          ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 trap 'rm -f "${tmp:-}"' EXIT
@@ -343,6 +344,7 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qxF "$BIN_DIR"; then
     fi
     export PATH="$BIN_DIR:$PATH"
 else
+    # shellcheck disable=SC2088
     success "~/.local/bin already in PATH"
 fi
 
@@ -509,6 +511,10 @@ elif [[ -f "$SETTINGS_TEMPLATE" ]]; then
     success "Installed ~/.claude/settings.json (with agent teams enabled)"
 else
     # Create minimal settings.json with agent teams
+    # Use restrictive umask for sensitive files (owner-only: 600)
+    _old_umask_settings=$(umask)
+    umask 0077
+
     cat > "$SETTINGS_FILE" << 'SETTINGS_EOF'
 {
   "hooks": {},
@@ -520,6 +526,10 @@ else
   }
 }
 SETTINGS_EOF
+
+    umask "$_old_umask_settings"
+    chmod 600 "$SETTINGS_FILE"
+
     success "Created ~/.claude/settings.json with agent teams enabled"
 fi
 
@@ -607,6 +617,7 @@ GLOBAL_CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
 if [[ "$SKIP_CLAUDE_MD" == "false" && -f "$CLAUDE_MD_SRC" ]]; then
     if [[ -f "$GLOBAL_CLAUDE_MD" ]]; then
         if grep -q "Shipwright" "$GLOBAL_CLAUDE_MD" 2>/dev/null; then
+            # shellcheck disable=SC2088
             info "~/.claude/CLAUDE.md already contains Shipwright instructions"
         else
             { echo ""; echo "---"; echo ""; cat "$CLAUDE_MD_SRC"; } >> "$GLOBAL_CLAUDE_MD"
@@ -722,6 +733,7 @@ detect_deploy_platform() {
     for adapter_file in "$ADAPTERS_DIR"/*-deploy.sh; do
         [[ -f "$adapter_file" ]] || continue
         # Source the adapter in a subshell to get detection
+        # shellcheck disable=SC1090
         if ( source "$adapter_file" && detect_platform ); then
             local name
             name=$(basename "$adapter_file" | sed 's/-deploy\.sh$//')
@@ -788,6 +800,7 @@ fi
 
 # Source the adapter to get command values
 ADAPTER_FILE="$ADAPTERS_DIR/${DEPLOY_PLATFORM}-deploy.sh"
+# shellcheck disable=SC1090
 source "$ADAPTER_FILE"
 
 staging_cmd=$(get_staging_cmd)

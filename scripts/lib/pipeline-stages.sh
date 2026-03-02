@@ -3,6 +3,127 @@
 [[ -n "${_PIPELINE_STAGES_LOADED:-}" ]] && return 0
 _PIPELINE_STAGES_LOADED=1
 
+# Defaults for variables normally set by sw-pipeline.sh (safe under set -u).
+ARTIFACTS_DIR="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
+PIPELINE_CONFIG="${PIPELINE_CONFIG:-}"
+PIPELINE_NAME="${PIPELINE_NAME:-pipeline}"
+MODEL="${MODEL:-opus}"
+BASE_BRANCH="${BASE_BRANCH:-main}"
+NO_GITHUB="${NO_GITHUB:-false}"
+ISSUE_NUMBER="${ISSUE_NUMBER:-}"
+ISSUE_BODY="${ISSUE_BODY:-}"
+ISSUE_LABELS="${ISSUE_LABELS:-}"
+ISSUE_MILESTONE="${ISSUE_MILESTONE:-}"
+GOAL="${GOAL:-}"
+TASK_TYPE="${TASK_TYPE:-feature}"
+TEST_CMD="${TEST_CMD:-}"
+GIT_BRANCH="${GIT_BRANCH:-}"
+TASKS_FILE="${TASKS_FILE:-}"
+
+# ─── Context pruning helpers ────────────────────────────────────────────────
+
+# prune_context_section — Intelligently truncate a context section to fit a char budget.
+#   $1: section name (for logging/markers)
+#   $2: content string
+#   $3: max_chars (default 5000)
+# For JSON content (starts with { or [): extracts summary fields via jq.
+# For text content: sandwich approach — keeps first + last N lines.
+# Outputs the (possibly truncated) content to stdout.
+prune_context_section() {
+    local section_name="${1:-section}"
+    local content="${2:-}"
+    local max_chars="${3:-5000}"
+
+    [[ -z "$content" ]] && return 0
+
+    local content_len=${#content}
+    if [[ "$content_len" -le "$max_chars" ]]; then
+        printf '%s' "$content"
+        return 0
+    fi
+
+    # JSON content — try jq summary extraction
+    local first_char="${content:0:1}"
+    if [[ "$first_char" == "{" || "$first_char" == "[" ]]; then
+        local summary=""
+        # Try extracting summary/results fields
+        summary=$(printf '%s' "$content" | jq -r '
+            if type == "object" then
+                to_entries | map(
+                    if (.value | type) == "array" then
+                        "\(.key): \(.value | length) items"
+                    elif (.value | type) == "object" then
+                        "\(.key): \(.value | keys | join(", "))"
+                    else
+                        "\(.key): \(.value)"
+                    end
+                ) | join("\n")
+            elif type == "array" then
+                .[:5] | map(tostring) | join("\n")
+            else . end
+        ' 2>/dev/null) || true
+
+        if [[ -n "$summary" && ${#summary} -le "$max_chars" ]]; then
+            printf '%s' "$summary"
+            return 0
+        fi
+        # jq failed or still too large — fall through to text truncation
+    fi
+
+    # Text content — sandwich approach (first N + last N lines)
+    local line_count=0
+    line_count=$(printf '%s\n' "$content" | wc -l | xargs)
+
+    # Calculate how many lines to keep from each end
+    # Approximate chars-per-line to figure out line budget
+    local avg_chars_per_line=80
+    if [[ "$line_count" -gt 0 ]]; then
+        avg_chars_per_line=$(( content_len / line_count ))
+        [[ "$avg_chars_per_line" -lt 20 ]] && avg_chars_per_line=20
+    fi
+    local total_lines_budget=$(( max_chars / avg_chars_per_line ))
+    [[ "$total_lines_budget" -lt 4 ]] && total_lines_budget=4
+    local half=$(( total_lines_budget / 2 ))
+
+    local head_part=""
+    local tail_part=""
+    head_part=$(printf '%s\n' "$content" | head -"$half")
+    tail_part=$(printf '%s\n' "$content" | tail -"$half")
+
+    printf '%s\n[... %s truncated: %d→%d chars ...]\n%s' \
+        "$head_part" "$section_name" "$content_len" "$max_chars" "$tail_part"
+}
+
+# guard_prompt_size — Warn and hard-truncate if prompt exceeds budget.
+#   $1: stage name (for logging)
+#   $2: prompt content
+#   $3: max_chars (default 100000)
+# Outputs the (possibly truncated) prompt to stdout.
+PIPELINE_PROMPT_BUDGET="${PIPELINE_PROMPT_BUDGET:-100000}"
+
+guard_prompt_size() {
+    local stage_name="${1:-stage}"
+    local prompt="${2:-}"
+    local max_chars="${3:-$PIPELINE_PROMPT_BUDGET}"
+
+    local prompt_len=${#prompt}
+    if [[ "$prompt_len" -le "$max_chars" ]]; then
+        printf '%s' "$prompt"
+        return 0
+    fi
+
+    warn "${stage_name} prompt too large (${prompt_len} chars, budget ${max_chars}) — truncating"
+    emit_event "pipeline.prompt_truncated" \
+        "stage=$stage_name" \
+        "original=$prompt_len" \
+        "budget=$max_chars" 2>/dev/null || true
+
+    printf '%s\n\n... [CONTEXT TRUNCATED: %s prompt exceeded %d char budget. Focus on the goal and requirements.]' \
+        "${prompt:0:$max_chars}" "$stage_name" "$max_chars"
+}
+
 # ─── Safe git helpers ────────────────────────────────────────────────────────
 # BASE_BRANCH may not exist locally (e.g. --local mode with no remote).
 # These helpers return empty output instead of crashing under set -euo pipefail.
@@ -179,6 +300,7 @@ ${ISSUE_BODY}
 
     # Inject architecture context (import graph, modules, test map)
     if [[ -n "$arch_context" ]]; then
+        arch_context=$(prune_context_section "architecture" "$arch_context" 5000)
         plan_prompt="${plan_prompt}
 ## Architecture Context
 ${arch_context}
@@ -190,6 +312,7 @@ ${arch_context}
     if [[ -f "$_context_bundle" ]]; then
         local _cb_content
         _cb_content=$(cat "$_context_bundle" 2>/dev/null | head -100 || true)
+        _cb_content=$(prune_context_section "context-bundle" "$_cb_content" 8000)
         if [[ -n "$_cb_content" ]]; then
             plan_prompt="${plan_prompt}
 ## Pipeline Context
@@ -205,6 +328,7 @@ ${_cb_content}
         if [[ -n "$plan_memory" && "$plan_memory" != *'"results":[]'* && "$plan_memory" != *'"error"'* ]]; then
             local memory_summary
             memory_summary=$(echo "$plan_memory" | jq -r '.results[]? | "- \(.)"' 2>/dev/null | head -10 || true)
+            memory_summary=$(prune_context_section "memory" "$memory_summary" 10000)
             if [[ -n "$memory_summary" ]]; then
                 plan_prompt="${plan_prompt}
 ## Historical Context (from previous pipelines)
@@ -229,6 +353,7 @@ ${plan_hint}
     if [[ -x "$SCRIPT_DIR/sw-discovery.sh" ]]; then
         local plan_discoveries
         plan_discoveries=$("$SCRIPT_DIR/sw-discovery.sh" inject "*.md,*.json" 2>/dev/null | head -20 || true)
+        plan_discoveries=$(prune_context_section "discoveries" "$plan_discoveries" 3000)
         if [[ -n "$plan_discoveries" ]]; then
             plan_prompt="${plan_prompt}
 ## Discoveries from Other Pipelines
@@ -249,6 +374,7 @@ ${plan_discoveries}
             "Patterns: \((.patterns // []) | join(", "))",
             "Rules: \((.rules // []) | join("; "))"
         ' "$arch_file_plan" 2>/dev/null || true)
+        arch_patterns=$(prune_context_section "intelligence" "$arch_patterns" 5000)
         if [[ -n "$arch_patterns" ]]; then
             plan_prompt="${plan_prompt}
 ## Architecture Patterns
@@ -285,6 +411,12 @@ Focus on: threat modeling, OWASP top 10, input validation, authentication/author
 - Test command: ${TEST_CMD:-not configured}
 - Task type: ${TASK_TYPE:-feature}
 
+## Context Efficiency
+- Batch independent tool calls in parallel when possible
+- Read specific file sections (offset/limit) instead of entire large files
+- Use targeted grep searches — avoid scanning entire codebases into context
+- Delegate multi-file analysis to subagents when available
+
 ## Required Output
 Create a Markdown plan with these sections:
 
@@ -306,6 +438,9 @@ How to verify the implementation works.
 ### Definition of Done
 Checklist of completion criteria.
 "
+
+    # Guard total prompt size
+    plan_prompt=$(guard_prompt_size "plan" "$plan_prompt")
 
     local plan_model
     plan_model=$(jq -r --arg id "plan" '(.stages[] | select(.id == $id) | .config.model) // .defaults.model // "opus"' "$PIPELINE_CONFIG" 2>/dev/null) || true
@@ -625,6 +760,7 @@ stage_design() {
     if type gather_architecture_context &>/dev/null; then
         arch_struct_context=$(gather_architecture_context "${PROJECT_ROOT:-.}" 2>/dev/null || true)
     fi
+    arch_struct_context=$(prune_context_section "architecture" "$arch_struct_context" 5000)
 
     # Memory integration — inject context if memory system available
     local memory_context=""
@@ -635,12 +771,14 @@ stage_design() {
     if [[ -z "$memory_context" ]] && [[ -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
         memory_context=$(bash "$SCRIPT_DIR/sw-memory.sh" inject "design" 2>/dev/null) || true
     fi
+    memory_context=$(prune_context_section "memory" "$memory_context" 10000)
 
     # Inject cross-pipeline discoveries for design stage
     local design_discoveries=""
     if [[ -x "$SCRIPT_DIR/sw-discovery.sh" ]]; then
         design_discoveries=$("$SCRIPT_DIR/sw-discovery.sh" inject "*.md,*.ts,*.tsx,*.js" 2>/dev/null | head -20 || true)
     fi
+    design_discoveries=$(prune_context_section "discoveries" "$design_discoveries" 3000)
 
     # Inject architecture model patterns if available
     local arch_context=""
@@ -664,6 +802,7 @@ ${arch_patterns}
 ${arch_layers}}"
         fi
     fi
+    arch_context=$(prune_context_section "intelligence" "$arch_context" 5000)
 
     # Inject rejected design approaches and anti-patterns from memory
     local design_antipatterns=""
@@ -671,6 +810,7 @@ ${arch_layers}}"
         local rejected_designs
         rejected_designs=$(intelligence_search_memory "rejected design approaches anti-patterns for: ${GOAL:-}" "${HOME}/.shipwright/memory" 3 2>/dev/null) || true
         if [[ -n "$rejected_designs" ]]; then
+            rejected_designs=$(prune_context_section "antipatterns" "$rejected_designs" 5000)
             design_antipatterns="
 ## Rejected Approaches (from past reviews)
 These design approaches were rejected in past reviews. Avoid repeating them:
@@ -735,6 +875,9 @@ Produce this EXACT format:
 - [ ] [Additional validation items]
 
 Be concrete and specific. Reference actual file paths in the codebase. Consider edge cases and failure modes."
+
+    # Guard total prompt size
+    design_prompt=$(guard_prompt_size "design" "$design_prompt")
 
     local design_model
     design_model=$(jq -r --arg id "design" '(.stages[] | select(.id == $id) | .config.model) // .defaults.model // "opus"' "$PIPELINE_CONFIG" 2>/dev/null) || true
@@ -1337,6 +1480,7 @@ If no issues are found, write: \"Review clean — no issues found.\"
     if type intelligence_search_memory >/dev/null 2>&1; then
         local review_memory
         review_memory=$(intelligence_search_memory "code review findings anti-patterns for: ${GOAL:-}" "${HOME}/.shipwright/memory" 5 2>/dev/null) || true
+        review_memory=$(prune_context_section "memory" "$review_memory" 10000)
         if [[ -n "$review_memory" ]]; then
             review_prompt+="
 ## Known Issues from Previous Reviews
@@ -1383,6 +1527,9 @@ $(cat "$dod_file")
     review_prompt+="
 ## Diff to Review
 $(cat "$diff_file")"
+
+    # Guard total prompt size
+    review_prompt=$(guard_prompt_size "review" "$review_prompt")
 
     # Skip permissions — pipeline runs headlessly (claude -p) and has no terminal
     # for interactive permission prompts. Same rationale as build stage (line ~1083).
@@ -1636,6 +1783,134 @@ stage_compound_quality() {
     return 0
 }
 fi  # end fallback stage_compound_quality
+
+# ─── Audit Stage ───────────────────────────────────────────────────────────
+# Security and quality audits: secrets scan, file permissions, || true usage,
+# test coverage delta, atomic write checks.
+stage_audit() {
+    CURRENT_STAGE_ID="audit"
+
+    # Read stage config from pipeline template
+    local cfg
+    cfg=$(jq -r '.stages[] | select(.id == "audit") | .config // {}' "$PIPELINE_CONFIG" 2>/dev/null) || cfg="{}"
+
+    local do_secret_scan do_perms do_atomic_writes do_coverage blocking
+    do_secret_scan=$(echo "$cfg" | jq -r '.secret_scan // true')
+    do_perms=$(echo "$cfg" | jq -r '.file_permissions // true')
+    do_atomic_writes=$(echo "$cfg" | jq -r '.atomic_writes // true')
+    do_coverage=$(echo "$cfg" | jq -r '.coverage_delta // true')
+    blocking=$(echo "$cfg" | jq -r '.blocking // false')
+
+    local audit_log="$ARTIFACTS_DIR/audit.log"
+    : > "$audit_log"
+
+    local issues=0
+
+    # ── Secret Scanning ──
+    if [[ "$do_secret_scan" == "true" ]]; then
+        info "Scanning for secrets in changed files..."
+        local secret_patterns=(
+            "sk-ant-" "ANTHROPIC_API_KEY=" "GITHUB_TOKEN=" "OPENAI_API_KEY="
+            "AWS_SECRET_ACCESS_KEY=" "DATABASE_URL=" "PRIVATE_KEY="
+            "api_key=" "secret=" "password=" "token="
+        )
+
+        local changed_files
+        changed_files=$(git diff --name-only "${BASE_BRANCH:-main}..HEAD" 2>/dev/null || git diff --name-only HEAD~5 2>/dev/null || echo "")
+
+        for pattern in "${secret_patterns[@]}"; do
+            while IFS= read -r file; do
+                [[ -z "$file" ]] && continue
+                if grep -l "$pattern" "$file" 2>/dev/null | grep -qv node_modules; then
+                    echo "WARN: Potential secret found in $file: $pattern" >> "$audit_log"
+                    warn "Found potential secret: $pattern in $file"
+                    issues=$((issues + 1))
+                fi
+            done <<< "$changed_files"
+        done
+    fi
+
+    # ── File Permission Check ──
+    if [[ "$do_perms" == "true" ]]; then
+        info "Checking file permissions on sensitive files..."
+        local sensitive_patterns=(".env" "secret" "credential" "key" "token" "config")
+
+        for pattern in "${sensitive_patterns[@]}"; do
+            while IFS= read -r file; do
+                [[ -z "$file" ]] && continue
+                # Check for world-readable files
+                local perms
+                perms=$(stat -f "%OLp" "$file" 2>/dev/null || stat -c "%a" "$file" 2>/dev/null)
+                if [[ "$perms" =~ [4567]$ ]]; then  # world-readable
+                    echo "WARN: World-readable sensitive file: $file ($perms)" >> "$audit_log"
+                    warn "World-readable file: $file ($perms)"
+                    issues=$((issues + 1))
+                fi
+            done < <(find . -name "*${pattern}*" -type f 2>/dev/null | head -20)
+        done
+    fi
+
+    # ── || true Count (atomic write pattern) ──
+    if [[ "$do_atomic_writes" == "true" ]]; then
+        info "Checking for unprotected direct writes (|| true usage)..."
+        local baseline_true_count=0
+        local current_true_count=0
+
+        # Baseline (before changes) — use git grep against the base tree, not the working tree
+        if git rev-parse "${BASE_BRANCH:-main}" >/dev/null 2>&1; then
+            baseline_true_count=$(git grep -c "|| true" "${BASE_BRANCH:-main}" -- "*.sh" 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
+        fi
+
+        # Current
+        current_true_count=$(grep -r "|| true" --include="*.sh" . 2>/dev/null | wc -l)
+
+        local true_delta=$((current_true_count - baseline_true_count))
+        if [[ $true_delta -gt 0 ]]; then
+            echo "WARN: Added $true_delta new '|| true' clauses (may mask errors)" >> "$audit_log"
+            warn "Added $true_delta new || true patterns"
+            issues=$((issues + 1))
+        fi
+    fi
+
+    # ── Test Coverage Delta ──
+    if [[ "$do_coverage" == "true" && -n "${COVERAGE_FILE:-}" ]]; then
+        info "Comparing test coverage..."
+        if [[ -f "$COVERAGE_FILE" ]]; then
+            local current_coverage
+            current_coverage=$(grep -oP 'Coverage: \K[0-9.]+' "$COVERAGE_FILE" | head -1)
+            if [[ -n "$current_coverage" ]]; then
+                # Try to get baseline coverage
+                local baseline_coverage=0
+                if git show "${BASE_BRANCH:-main}:.claude/coverage.txt" >/dev/null 2>&1; then
+                    baseline_coverage=$(git show "${BASE_BRANCH:-main}:.claude/coverage.txt" 2>/dev/null | \
+                        grep -oP 'Coverage: \K[0-9.]+' | head -1 || echo "0")
+                fi
+
+                local coverage_delta
+                coverage_delta=$(echo "$current_coverage - $baseline_coverage" | bc 2>/dev/null || echo "0")
+                if (( $(echo "$coverage_delta < -2" | bc -l 2>/dev/null || echo 0) )); then
+                    echo "WARN: Coverage decreased by ${coverage_delta}pp (from ${baseline_coverage}% to ${current_coverage}%)" >> "$audit_log"
+                    warn "Coverage delta: ${coverage_delta}pp"
+                    issues=$((issues + 1))
+                fi
+            fi
+        fi
+    fi
+
+    log_stage "audit" "Audit complete: $issues issue(s) found"
+
+    if [[ "$issues" -gt 0 && "$blocking" == "true" ]]; then
+        error "Audit gate failed: $issues issue(s) detected"
+        emit_event "pipeline.audit_failed" "issues=$issues"
+        return 1
+    fi
+
+    if [[ "$issues" -gt 0 ]]; then
+        emit_event "pipeline.audit_warnings" "issues=$issues"
+    fi
+
+    return 0
+}
 
 stage_pr() {
     CURRENT_STAGE_ID="pr"
@@ -1994,10 +2269,11 @@ EOF
         pr_url="$existing_pr_url"
     else
         info "Creating PR..."
-        local pr_stderr pr_exit=0
-        pr_url=$(gh pr create "${pr_args[@]}" 2>/tmp/shipwright-pr-stderr.txt) || pr_exit=$?
-        pr_stderr=$(cat /tmp/shipwright-pr-stderr.txt 2>/dev/null || true)
-        rm -f /tmp/shipwright-pr-stderr.txt
+        local pr_stderr pr_exit=0 pr_stderr_file
+        pr_stderr_file=$(mktemp "${TMPDIR:-/tmp}/shipwright-pr-stderr.XXXXXX")
+        pr_url=$(gh pr create "${pr_args[@]}" 2>"$pr_stderr_file") || pr_exit=$?
+        pr_stderr=$(cat "$pr_stderr_file" 2>/dev/null || true)
+        rm -f "$pr_stderr_file"
 
         # gh pr create may return non-zero for reviewer issues but still create the PR
         if [[ "$pr_exit" -ne 0 ]]; then

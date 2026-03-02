@@ -6,7 +6,8 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -41,6 +42,7 @@ format_duration() {
 }
 
 # ─── Structured Event Log ──────────────────────────────────────────────────
+# shellcheck disable=SC2034
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
 
 # ─── State Directories ──────────────────────────────────────────────────────
@@ -130,6 +132,7 @@ classify_severity() {
 
 analyze_root_cause() {
     local failure_log="$1"
+    # shellcheck disable=SC2034
     local config="$2"
 
     local timeout_hits error_hits memory_hits dependency_hits
@@ -449,12 +452,14 @@ EOF
 cmd_stats() {
     local format="${1:-table}"
 
+    # shellcheck disable=SC2010
     if [[ ! -d "$INCIDENTS_DIR" ]] || [[ -z "$(ls -1 "$INCIDENTS_DIR"/*.json 2>/dev/null | grep -v postmortem)" ]]; then
         info "No incident data available"
         return 0
     fi
 
     local total_incidents
+    # shellcheck disable=SC2010
     total_incidents=$(ls -1 "$INCIDENTS_DIR"/*.json 2>/dev/null | grep -v postmortem | wc -l)
 
     local incident_files

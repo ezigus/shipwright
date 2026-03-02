@@ -6,7 +6,8 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -28,7 +29,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -39,7 +41,9 @@ FILTER_TYPE=""
 FILTER_AGENT=""
 FILTER_TEAM=""
 FILTER_STAGE=""
+# shellcheck disable=SC2034
 FILTER_START=""
+# shellcheck disable=SC2034
 FILTER_END=""
 
 # Event type icons for terminal display (bash 3.2 compatible)
@@ -223,7 +227,9 @@ cmd_snapshot() {
 
     # Group by agent, show last event for each
     local last_agent=""
+    # shellcheck disable=SC2034
     local last_time=""
+    # shellcheck disable=SC2034
     local last_event=""
 
     tac "$EVENTS_FILE" 2>/dev/null | while IFS= read -r line; do
@@ -443,6 +449,7 @@ main() {
     shift 2>/dev/null || true
 
     # Parse global options
+    # shellcheck disable=SC2034
     while [ $# -gt 0 ]; do
         case "$1" in
             --type)   FILTER_TYPE="$2"; shift 2 ;;

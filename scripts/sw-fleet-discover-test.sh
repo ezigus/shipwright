@@ -258,6 +258,7 @@ echo -e "${BOLD}Config Merge${RESET}"
     # Run in subshell to avoid polluting our env
     export PATH="$TEMP_DIR/bin:$PATH"
     export HOME="$TEMP_DIR/home"
+    # shellcheck disable=SC1090
     source "$SUT"
 
     # Test merge with new repo

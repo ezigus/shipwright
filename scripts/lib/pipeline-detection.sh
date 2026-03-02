@@ -3,6 +3,10 @@
 [[ -n "${_PIPELINE_DETECTION_LOADED:-}" ]] && return 0
 _PIPELINE_DETECTION_LOADED=1
 
+# Defaults for variables normally set by sw-pipeline.sh (safe under set -u).
+PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+
 _PIPELINE_DETECT_HELPER_CAPS_CACHE=""
 _PIPELINE_DETECT_REPO_ENVS_CACHE=""
 
@@ -72,10 +76,16 @@ detect_repo_environments_json() {
     if [[ -n "$swiftpm_marker" ]]; then
         envs=$(_append_env_json "$envs" "swiftpm" "${swiftpm_marker#$root/}")
     fi
-    local node_marker
-    node_marker=$(find "$root" -maxdepth "$max_depth" -name "package.json" -type f 2>/dev/null | head -1 || true)
+    local node_marker=""
+    if [[ -f "$root/package.json" ]]; then
+        node_marker="package.json"   # root wins — analogous to iOS .xcworkspace preference
+    else
+        node_marker=$(find "$root" -maxdepth "$max_depth" -name "package.json" -type f \
+            -not -path "*/node_modules/*" 2>/dev/null | head -1 || true)
+        node_marker="${node_marker#$root/}"
+    fi
     if [[ -n "$node_marker" ]]; then
-        envs=$(_append_env_json "$envs" "node" "${node_marker#$root/}")
+        envs=$(_append_env_json "$envs" "node" "$node_marker")
     fi
     local python_marker
     python_marker=$(find "$root" -maxdepth "$max_depth" \( -name "pyproject.toml" -o -name "setup.py" -o -name "requirements.txt" -o -name "pytest.ini" \) -type f 2>/dev/null | head -1 || true)
@@ -108,7 +118,8 @@ detect_repo_environments_json() {
         envs=$(_append_env_json "$envs" "java_gradle" "${gradle_marker#$root/}")
     fi
     local make_marker
-    make_marker=$(find "$root" -maxdepth "$max_depth" -name "Makefile" -type f 2>/dev/null | head -1 || true)
+    make_marker=$(find "$root" -maxdepth "$max_depth" -name "Makefile" -type f \
+        -not -path "*/node_modules/*" 2>/dev/null | head -1 || true)
     if [[ -n "$make_marker" ]] && grep -q "^test:" "$make_marker" 2>/dev/null; then
         envs=$(_append_env_json "$envs" "make" "${make_marker#$root/}")
     fi
@@ -632,7 +643,7 @@ branch_prefix_for_type() {
         fi
     fi
 
-    # Fallback: hardcoded mapping
+    # Fallback: default branch prefix mapping
     case "$task_type" in
         bug)          echo "fix" ;;
         refactor)     echo "refactor" ;;

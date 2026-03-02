@@ -5,7 +5,8 @@
 # ║  Streams tmux pane output in real-time to the dashboard or CLI.         ║
 # ║  Captures output periodically, tags by agent/team, supports replay.     ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -30,6 +31,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -48,6 +50,7 @@ load_config() {
     if [[ -f "$STREAM_CONFIG" ]]; then
         CAPTURE_INTERVAL=$(jq -r '.capture_interval_seconds // 1' "$STREAM_CONFIG" 2>/dev/null || echo 1)
         BUFFER_LINES=$(jq -r '.buffer_lines // 500' "$STREAM_CONFIG" 2>/dev/null || echo 500)
+        # shellcheck disable=SC2034
         OUTPUT_FORMAT=$(jq -r '.output_format // "jsonl"' "$STREAM_CONFIG" 2>/dev/null || echo "jsonl")
     fi
 }
@@ -97,6 +100,7 @@ capture_pane_output() {
     # Write JSONL entry with timestamp, pane_id, agent, team, content
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     {
@@ -116,6 +120,7 @@ capture_pane_output() {
     line_count=$(wc -l < "$pane_file" 2>/dev/null || true)
     line_count="${line_count:-0}"
     if [[ "$line_count" -gt "$BUFFER_LINES" ]]; then
+        # shellcheck disable=SC2034
         local skip=$((line_count - BUFFER_LINES))
         tail -n "$BUFFER_LINES" "$pane_file" > "${pane_file}.tmp"
         mv "${pane_file}.tmp" "$pane_file"
@@ -349,6 +354,7 @@ stream_config() {
     # Create tmp file for atomic write
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     case "$key" in

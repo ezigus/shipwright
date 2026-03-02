@@ -7,12 +7,14 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ────────────────────────────────────────
 CYAN='\033[38;2;0;212;255m'
 PURPLE='\033[38;2;124;58;237m'
 GREEN='\033[38;2;74;222;128m'
+# shellcheck disable=SC2034
 YELLOW='\033[38;2;250;204;21m'
 RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
@@ -83,6 +85,7 @@ case "$1" in
             default-terminal)   echo "${MOCK_TMUX_TERM:-tmux-256color}" ;;
             pane-border-status) echo "${MOCK_TMUX_BORDER:-top}" ;;
             mouse)              echo "${MOCK_TMUX_MOUSE:-on}" ;;
+            pane-active-border-style) echo "${MOCK_TMUX_BORDER_STYLE:-fg=#00d4ff,bg=#1a1a2e}" ;;
             *)                  echo "unknown" ;;
         esac
         ;;
@@ -197,6 +200,7 @@ run_tmux_env() {
         export MOCK_GIT_LOG="$TEMP_DIR/mock-log/git-calls.log"
         export LC_TERMINAL="Ghostty"
         for ev in "${env_vars[@]}"; do
+            # shellcheck disable=SC2163
             export "$ev"
         done
         bash "$TEMP_DIR/scripts/sw-tmux.sh" "$@"
@@ -416,7 +420,7 @@ test_install_copies_overlay() {
 # 12. tmux fix applies fixes for bad options
 # ──────────────────────────────────────────────────────────────────────────────
 test_fix_applies_fixes() {
-    > "$TEMP_DIR/mock-log/tmux-calls.log"
+    true > "$TEMP_DIR/mock-log/tmux-calls.log"
 
     local output
     output=$(run_tmux_env \
@@ -429,6 +433,8 @@ test_fix_applies_fixes() {
         "MOCK_TMUX_HOOKS=no" \
         "MOCK_TMUX_MOUSEKEYS=no" \
         "MOCK_TMUX_BORDER=off" \
+        "MOCK_TMUX_TERM=screen" \
+        "MOCK_TMUX_BORDER_STYLE=none" \
         fix 2>&1 || true)
 
     # Should mention "Fixed" in output
@@ -447,7 +453,7 @@ test_fix_applies_fixes() {
 # 13. tmux fix with all options already correct reports no fixes needed
 # ──────────────────────────────────────────────────────────────────────────────
 test_fix_no_fixes_needed() {
-    > "$TEMP_DIR/mock-log/tmux-calls.log"
+    true > "$TEMP_DIR/mock-log/tmux-calls.log"
 
     local output
     output=$(run_tmux fix 2>&1 || true)
@@ -487,7 +493,7 @@ test_fix_outside_tmux() {
 test_reload_calls_source_file() {
     # Ensure tmux.conf exists
     echo "# tmux config" > "$TEMP_DIR/home/.tmux.conf"
-    > "$TEMP_DIR/mock-log/tmux-calls.log"
+    true > "$TEMP_DIR/mock-log/tmux-calls.log"
 
     run_tmux reload >/dev/null 2>&1 || true
 

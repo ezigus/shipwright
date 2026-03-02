@@ -237,6 +237,7 @@ print_test_section "autonomy"
     # Exhaust budget
     log_file=$(_daily_log_file)
     mkdir -p "$(dirname "$log_file")"
+    # shellcheck disable=SC2034
     for i in $(seq 1 16); do
         echo '{"action":"issue_created","estimated_cost_usd":0.01}' >> "$log_file"
     done

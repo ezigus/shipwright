@@ -3634,6 +3634,82 @@ body::-webkit-scrollbar-thumb {
   text-align: center;
 }
 
+/* Context efficiency widget */
+.ctx-eff-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.ctx-eff-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ctx-eff-card-label {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.ctx-eff-gauge {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--glass-border);
+  overflow: hidden;
+}
+
+.ctx-eff-gauge-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+
+.ctx-eff-gauge-fill.ctx-eff-high {
+  background: #4ade80;
+}
+
+.ctx-eff-gauge-fill.ctx-eff-mid {
+  background: #00d4ff;
+}
+
+.ctx-eff-gauge-fill.ctx-eff-low {
+  background: #f43f5e;
+}
+
+.ctx-eff-gauge-fill.ctx-eff-trim {
+  background: #7c3aed;
+}
+
+.ctx-eff-value {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ctx-eff-big {
+  font-family: var(--font-mono);
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.ctx-eff-sub {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
 .dora-trend-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

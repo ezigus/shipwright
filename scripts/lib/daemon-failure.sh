@@ -3,6 +3,22 @@
 [[ -n "${_DAEMON_FAILURE_LOADED:-}" ]] && return 0
 _DAEMON_FAILURE_LOADED=1
 
+# Defaults for variables normally set by sw-daemon.sh (safe under set -u).
+DAEMON_DIR="${DAEMON_DIR:-${HOME}/.shipwright}"
+STATE_FILE="${STATE_FILE:-${DAEMON_DIR}/daemon-state.json}"
+PAUSE_FLAG="${PAUSE_FLAG:-${DAEMON_DIR}/daemon-pause.flag}"
+LOG_DIR="${LOG_DIR:-${DAEMON_DIR}/logs}"
+REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+PIPELINE_TEMPLATE="${PIPELINE_TEMPLATE:-autonomous}"
+MODEL="${MODEL:-opus}"
+WATCH_LABEL="${WATCH_LABEL:-shipwright}"
+ON_SUCCESS_REMOVE_LABEL="${ON_SUCCESS_REMOVE_LABEL:-shipwright}"
+ON_SUCCESS_ADD_LABEL="${ON_SUCCESS_ADD_LABEL:-pipeline/complete}"
+ON_FAILURE_ADD_LABEL="${ON_FAILURE_ADD_LABEL:-pipeline/failed}"
+ON_FAILURE_LOG_LINES="${ON_FAILURE_LOG_LINES:-50}"
+NO_GITHUB="${NO_GITHUB:-false}"
+EVENTS_FILE="${EVENTS_FILE:-${DAEMON_DIR}/events.jsonl}"
+
 classify_failure() {
     local issue_num="$1"
     if [[ -z "${LOG_DIR:-}" ]]; then

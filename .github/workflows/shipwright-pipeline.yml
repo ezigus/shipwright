@@ -397,24 +397,20 @@ jobs:
 
       - name: Pre-flight auth check
         run: |
+          if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+            echo "::warning::CLAUDE_CODE_OAUTH_TOKEN is not set — pipeline will be skipped"
+            echo "AUTH_SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
           echo "Verifying Claude Code authentication..."
           if claude -p "Reply with exactly: AUTH_OK" --max-turns 1 2>/tmp/auth-check-err.log | grep -q "AUTH_OK"; then
             echo "Claude Code authentication verified"
           else
-            echo "::error::Claude Code authentication failed — check CLAUDE_CODE_OAUTH_TOKEN secret"
+            echo "::warning::Claude Code authentication failed — check CLAUDE_CODE_OAUTH_TOKEN secret"
             echo "--- stderr ---"
             cat /tmp/auth-check-err.log 2>/dev/null || true
             echo "--- end ---"
-            # Post failure comment on issue
-            gh issue comment "$ISSUE_NUMBER" --body "$(cat <<'AUTHEOF'
-          ## Pipeline Auth Failure
-
-          Claude Code failed to authenticate. Check that `CLAUDE_CODE_OAUTH_TOKEN` is set and valid in repository secrets.
-
-          Run `claude setup-token` locally to generate a fresh token.
-          AUTHEOF
-            )" 2>/dev/null || true
-            exit 1
+            echo "AUTH_SKIP=true" >> "$GITHUB_ENV"
           fi
 
       - name: Check for partial work branch
@@ -553,7 +549,7 @@ jobs:
           fi
 
       - name: Run Shipwright pipeline
-        if: steps.claim_check.outputs.skip != 'true'
+        if: steps.claim_check.outputs.skip != 'true' && env.AUTH_SKIP != 'true'
         id: pipeline
         run: |
           set +e          # Don't abort on failure — we capture the exit code

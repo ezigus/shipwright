@@ -5,10 +5,12 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck disable=SC2034
 CYAN='\033[38;2;0;212;255m'
 GREEN='\033[38;2;74;222;128m'
 RED='\033[38;2;248;113;113m'
@@ -123,6 +125,7 @@ test_missing_daemon_state() {
     rm -f "$MOCK_SW/daemon-state.json"
     # Pipeline should handle missing daemon state gracefully
     local code
+    # shellcheck disable=SC2034
     code=$(bash "$SCRIPT_DIR/sw-pipeline.sh" status 2>/dev/null; echo $?) || code=0
     # Should not crash
     test_pass "Pipeline handles missing daemon state"

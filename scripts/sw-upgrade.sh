@@ -2,7 +2,8 @@
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  sw upgrade — Detect and apply updates from the repo                   ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -217,6 +218,7 @@ read_manifest_checksum() {
 
 write_manifest() {
     mkdir -p "$MANIFEST_DIR"
+    # shellcheck disable=SC2155
     local json='{\n  "schema": 1,\n  "version": "1.1.0",\n  "installed_at": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",\n  "repo_path": "'"$REPO_PATH"'",\n  "files": {'
     local first=true
 

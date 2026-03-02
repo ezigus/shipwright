@@ -7,6 +7,34 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [3.2.0] — 2026-02-27
+
+### Context Engineering & Intelligence
+
+- Sandbox mode enabled (auto-allow) for reduced permission prompts
+- Context engineering principles injected into all agent prompts
+- Configurable context trimming tunables in defaults.json
+- Intelligent context pruning with sandwich truncation in pipeline stages
+- Context efficiency metrics in event stream, CLI cost dashboard, and web dashboard
+- Intelligence engine enabled by default (optimization + prediction)
+- Decision engine enabled with outcome learning
+- Self-optimization closed loop — auto-tunes context budgets from efficiency data
+- Claude-based discovery ranking for cross-pipeline learning
+
+### Platform Quality
+
+- Platform hygiene: extracted hardcoded values to config, 33% reduction in code smells
+- tmux fix command now handles all 5 doctor warnings (default-terminal, pane borders)
+- Stale heartbeat and orphan cleanup
+- Resolved remaining actionable TODOs
+
+### Documentation
+
+- Updated README, website guides, and configuration reference for all new features
+- Auto-synced CLAUDE.md documentation sections
+
+---
+
 ## [3.1.0] — 2026-02-22
 
 ### Loop Quality Intelligence

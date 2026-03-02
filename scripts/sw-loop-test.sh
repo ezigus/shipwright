@@ -719,6 +719,40 @@ else
     assert_fail "Loop progress tracking" "setup failed"
 fi
 
+# ─── Test: context efficiency event emitted ────────────────────────────────
+echo ""
+echo -e "${DIM}  context efficiency metrics${RESET}"
+
+if grep -q 'emit_event "loop.context_efficiency"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "loop.context_efficiency event exists in run_claude_iteration"
+else
+    assert_fail "loop.context_efficiency event exists in run_claude_iteration"
+fi
+
+if grep -q 'raw_prompt_chars=' "$SCRIPT_DIR/sw-loop.sh" && grep -q 'trimmed_prompt_chars=' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Context efficiency emits raw and trimmed char counts"
+else
+    assert_fail "Context efficiency emits raw and trimmed char counts"
+fi
+
+if grep -q 'trim_ratio=' "$SCRIPT_DIR/sw-loop.sh" && grep -q 'budget_utilization=' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Context efficiency emits trim_ratio and budget_utilization"
+else
+    assert_fail "Context efficiency emits trim_ratio and budget_utilization"
+fi
+
+# Verify raw_prompt_chars is captured before manage_context_window trims
+if awk '/raw_prompt_chars=\$\{#prompt\}/' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'raw_prompt_chars'; then
+    assert_pass "raw_prompt_chars measured from pre-trim prompt"
+else
+    # Fallback: check that raw_prompt_chars is set from the original prompt variable
+    if grep -q 'raw_prompt_chars=${#prompt}' "$SCRIPT_DIR/sw-loop.sh"; then
+        assert_pass "raw_prompt_chars measured from pre-trim prompt"
+    else
+        assert_fail "raw_prompt_chars measured from pre-trim prompt"
+    fi
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

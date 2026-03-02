@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -29,7 +29,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -37,6 +38,7 @@ fi
 # ─── Storage Paths ──────────────────────────────────────────────────────────
 INCIDENTS_FILE="${HOME}/.shipwright/incidents.jsonl"
 ERROR_THRESHOLD=5          # Create issue if error count >= threshold
+# shellcheck disable=SC2034
 ERROR_LOG_DIR="${REPO_DIR}/.claude/pipeline-artifacts"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-${REPO_DIR}/.claude/pipeline-artifacts}"
 
@@ -61,6 +63,7 @@ parse_error_patterns() {
     local log_file="$1"
     local error_count=0
     local error_types=""
+    # shellcheck disable=SC2034
     local stack_traces=""
 
     if [[ ! -f "$log_file" ]]; then
@@ -72,24 +75,28 @@ parse_error_patterns() {
         if [[ "$line" =~ (Error|Exception|panic|fatal).*: ]]; then
             error_count=$((error_count + 1))
             # Extract error message
-            local err_msg=$(echo "$line" | sed -E 's/^.*\[.*\] //; s/:.*//')
+            local err_msg
+            err_msg=$(echo "$line" | sed -E 's/^.*\[.*\] //; s/:.*//')
             error_types="${error_types}${err_msg};"
         fi
     done < "$log_file"
 
     # Output CSV: count|types|first_stack_trace
-    local first_stack=$(head -50 "$log_file" | tail -20)
+    local first_stack
+    first_stack=$(head -50 "$log_file" | tail -20)
     echo "$error_count|$error_types|$first_stack"
 }
 
 # ─── Find commit that likely introduced regression ───────────────────────────
 find_regression_commit() {
+    # shellcheck disable=SC2034
     local error_pattern="$1"
     local max_commits="${2:-20}"
 
     # Search recent commits for changes that might have introduced the error
     # Pattern: look for commits touching error-related code
     local commit_hash
+    # shellcheck disable=SC2034
     commit_hash=$(cd "$REPO_DIR" && git log --all -n "$max_commits" --pretty=format:"%H %s" | \
         while read -r hash subject; do
             # Simple heuristic: commits that touched multiple files or had large diffs
@@ -127,6 +134,7 @@ cmd_collect() {
         while IFS= read -r file; do
             local result
             result=$(parse_error_patterns "$file") || continue
+            # shellcheck disable=SC2034
             IFS='|' read -r count types traces <<< "$result"
             total_errors=$((total_errors + count))
             error_summary="${error_summary}${types};"

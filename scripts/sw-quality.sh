@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -16,6 +16,8 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# shellcheck source=lib/config.sh
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -28,6 +30,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -103,14 +106,16 @@ validate_quality() {
         json_output=$(echo "$json_output" | jq --arg tp "$todos_pass" '.checks.todos=$tp' 2>/dev/null || true)
     fi
 
-    # Check 5: Hardcoded secrets patterns
+    # Check 5: Secrets patterns in diff
     local secrets_pass=true
     local secret_patterns="(password|secret|token|api[_-]?key|aws_access|private_key)"
+    local secret_threshold
+    secret_threshold=$(_config_get_int "quality.secret_threshold" 3 2>/dev/null || echo 3)
     if [[ -d "$REPO_DIR/.git" ]]; then
         local secret_count
         secret_count=$(cd "$REPO_DIR" && git diff --cached 2>/dev/null | grep -ciE "$secret_patterns" || true)
         secret_count="${secret_count:-0}"
-        if [[ "$secret_count" -gt 3 ]]; then
+        if [[ "$secret_count" -gt "$secret_threshold" ]]; then
             secrets_pass=false
             all_pass=false
         fi

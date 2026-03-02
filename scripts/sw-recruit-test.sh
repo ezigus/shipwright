@@ -16,10 +16,12 @@ export SW_RECRUIT_NO_LLM=1
 # Colors
 GREEN='\033[38;2;74;222;128m'
 RED='\033[38;2;248;113;113m'
+# shellcheck disable=SC2034
 YELLOW='\033[38;2;250;204;21m'
 CYAN='\033[38;2;0;212;255m'
 RESET='\033[0m'
 BOLD='\033[1m'
+# shellcheck disable=SC2034
 DIM='\033[2m'
 
 PASS=0
@@ -237,6 +239,7 @@ fi
 test_case "record-outcome calculates success rate"
 "$RECRUIT_SCRIPT" record-outcome agent-test-001 task-3 failure 3 20 >/dev/null 2>&1 || true
 sr=$(jq '."agent-test-001".success_rate' "${HOME}/.shipwright/recruitment/profiles.json" 2>/dev/null || echo "0")
+# shellcheck disable=SC2034
 expected="66.7"
 if echo "$sr" | grep -q "66"; then
     pass
@@ -990,6 +993,7 @@ test_case "e2e: pipeline event with agent_id ingests correctly"
 events_file="${HOME}/.shipwright/events.jsonl"
 now_e=$(date +%s)
 echo "{\"ts\":\"2026-02-15T18:00:00Z\",\"ts_epoch\":${now_e},\"type\":\"pipeline.completed\",\"result\":\"success\",\"agent_id\":\"e2e-agent-sec\",\"duration_s\":180}" >> "$events_file"
+# shellcheck disable=SC2034
 ingest_out=$("$RECRUIT_SCRIPT" ingest-pipeline 1 || true)
 # Verify the agent profile was created
 e2e_profile=$(jq '."e2e-agent-sec" // {}' "${HOME}/.shipwright/recruitment/profiles.json" 2>/dev/null || echo "{}")

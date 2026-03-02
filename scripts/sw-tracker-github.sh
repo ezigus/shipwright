@@ -23,6 +23,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -54,6 +55,7 @@ provider_discover_issues() {
     fi
 
     # Fetch as JSON: number, title, labels, state
+    # shellcheck disable=SC2054
     gh_args+=(--json number,title,labels,state)
 
     local response
@@ -198,6 +200,7 @@ provider_create_issue() {
 provider_notify() {
     local event="$1"
     local gh_issue="${2:-}"
+    # shellcheck disable=SC2034
     local detail="${3:-}"
 
     # GitHub is the native provider — no external sync needed

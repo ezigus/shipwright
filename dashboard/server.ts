@@ -41,6 +41,10 @@ const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomUUID();
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const ALLOWED_PERMISSIONS = ["admin", "write"];
 
+// ─── WebSocket Security ──────────────────────────────────────────────
+const MAX_WS_CLIENTS = 50;
+const WS_CONNECTION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
 // ─── SQLite Database (optional) ──────────────────────────────────────
 const DB_FILE = join(HOME, ".shipwright", "shipwright.db");
 let db: Database | null = null;
@@ -331,6 +335,16 @@ function getSessionFromCookie(cookie: string | null): Session | null {
 
 function sessionCookie(sessionId: string): string {
   return `fleet_session=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
+}
+
+function isLocalConnection(
+  req: Request,
+  server: ReturnType<typeof Bun.serve>,
+): boolean {
+  const ip = server.requestIP(req);
+  if (!ip) return false;
+  const addr = ip.address;
+  return addr === "127.0.0.1" || addr === "::1" || addr === "0.0.0.0";
 }
 
 function clearSessionCookie(): string {
@@ -2689,15 +2703,43 @@ const server = Bun.serve({
       return handleAuthLogout(req);
     }
 
-    // ── Auth gate ─────────────────────────────────────────────────
-    // If auth is enabled, enforce it on all remaining routes
+    // ── WebSocket Auth gate ──────────────────────────────────────
+    // WebSocket always requires authentication (unless local connection)
+    if (pathname === "/ws" || pathname === "/ws/events") {
+      const isLocal = isLocalConnection(req, server);
+      if (!isLocal) {
+        const session = getSession(req);
+        if (!session) {
+          return new Response("Unauthorized", { status: 401 });
+        }
+      }
+
+      // Check connection limit
+      const totalClients = wsClients.size + eventClients.size;
+      if (totalClients >= MAX_WS_CLIENTS && !isLocal) {
+        return new Response("Too Many Connections", { status: 429 });
+      }
+
+      // WebSocket upgrade — /ws/events streams raw events, /ws streams aggregated state
+      if (pathname === "/ws/events") {
+        const upgraded = server.upgrade(req, {
+          data: { type: "events", lastEventId: 0 },
+        });
+        if (upgraded) return undefined as unknown as Response;
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+      if (pathname === "/ws") {
+        const upgraded = server.upgrade(req);
+        if (upgraded) return undefined as unknown as Response;
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+    }
+
+    // ── HTTP Auth gate ───────────────────────────────────────────
+    // If auth is enabled, enforce it on all other remaining routes
     if (isAuthEnabled()) {
       const session = getSession(req);
       if (!session) {
-        // WebSocket upgrade attempt without auth
-        if (pathname === "/ws" || pathname === "/ws/events") {
-          return new Response("Unauthorized", { status: 401 });
-        }
         return new Response(null, {
           status: 302,
           headers: { Location: "/login" },
@@ -2706,20 +2748,6 @@ const server = Bun.serve({
     }
 
     // ── Protected routes ──────────────────────────────────────────
-
-    // WebSocket upgrade — /ws/events streams raw events, /ws streams aggregated state
-    if (pathname === "/ws/events") {
-      const upgraded = server.upgrade(req, {
-        data: { type: "events", lastEventId: 0 },
-      });
-      if (upgraded) return undefined as unknown as Response;
-      return new Response("WebSocket upgrade failed", { status: 400 });
-    }
-    if (pathname === "/ws") {
-      const upgraded = server.upgrade(req);
-      if (upgraded) return undefined as unknown as Response;
-      return new Response("WebSocket upgrade failed", { status: 400 });
-    }
 
     // REST: fleet state
     if (pathname === "/api/status") {
@@ -3688,6 +3716,57 @@ const server = Bun.serve({
       return new Response(JSON.stringify({ daily }), {
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
       });
+    }
+
+    // REST: Context efficiency metrics (from loop.context_efficiency events)
+    if (pathname === "/api/context-efficiency") {
+      const period = parseInt(url.searchParams.get("period") || "7");
+      const events = readEvents();
+      const now = Math.floor(Date.now() / 1000);
+      const cutoff = now - period * 86400;
+
+      let totalUtil = 0;
+      let totalRatio = 0;
+      let totalRaw = 0;
+      let totalTrimmed = 0;
+      let trimEvents = 0;
+      let count = 0;
+
+      for (const e of events) {
+        if ((e.ts_epoch || 0) < cutoff) continue;
+        if (e.type !== "loop.context_efficiency") continue;
+
+        const util = parseFloat(String(e.budget_utilization || 0));
+        const ratio = parseFloat(String(e.trim_ratio || 0));
+        const raw = parseInt(String(e.raw_prompt_chars || 0), 10);
+        const trimmed = parseInt(String(e.trimmed_prompt_chars || 0), 10);
+
+        totalUtil += util;
+        totalRatio += ratio;
+        totalRaw += raw;
+        totalTrimmed += trimmed;
+        if (ratio > 0) trimEvents++;
+        count++;
+      }
+
+      const avgUtilization =
+        count > 0 ? Math.round((totalUtil / count) * 10) / 10 : 0;
+      const avgTrimRatio =
+        count > 0 ? Math.round((totalRatio / count) * 10) / 10 : 0;
+      const totalDiscarded = totalRaw - totalTrimmed;
+
+      return new Response(
+        JSON.stringify({
+          avg_utilization: avgUtilization,
+          avg_trim_ratio: avgTrimRatio,
+          total_raw_chars: totalRaw,
+          total_trimmed_chars: totalTrimmed,
+          total_discarded_chars: totalDiscarded,
+          trim_events: trimEvents,
+          total_iterations: count,
+        }),
+        { headers: { "Content-Type": "application/json", ...CORS_HEADERS } },
+      );
     }
 
     // REST: DORA trend (weekly sliding windows)

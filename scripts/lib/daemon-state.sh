@@ -3,9 +3,26 @@
 [[ -n "${_DAEMON_STATE_LOADED:-}" ]] && return 0
 _DAEMON_STATE_LOADED=1
 
+# Defaults for variables normally set by sw-daemon.sh (safe under set -u).
+DAEMON_DIR="${DAEMON_DIR:-${HOME}/.shipwright}"
+STATE_FILE="${STATE_FILE:-${DAEMON_DIR}/daemon-state.json}"
+LOG_FILE="${LOG_FILE:-${DAEMON_DIR}/daemon.log}"
+LOG_DIR="${LOG_DIR:-${DAEMON_DIR}/logs}"
+PAUSE_FLAG="${PAUSE_FLAG:-${DAEMON_DIR}/daemon-pause.flag}"
+DB_FILE="${DB_FILE:-${DAEMON_DIR}/shipwright.db}"
+BASE_BRANCH="${BASE_BRANCH:-main}"
+MAX_PARALLEL="${MAX_PARALLEL:-4}"
+POLL_INTERVAL="${POLL_INTERVAL:-60}"
+WATCH_LABEL="${WATCH_LABEL:-shipwright}"
+WATCH_MODE="${WATCH_MODE:-repo}"
+DASHBOARD_URL="${DASHBOARD_URL:-}"
+SLACK_WEBHOOK="${SLACK_WEBHOOK:-}"
+
 # SQLite persistence (DB as primary read path)
 _DAEMON_STATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -f "${_DAEMON_STATE_DIR}/../sw-db.sh" ]] && source "${_DAEMON_STATE_DIR}/../sw-db.sh"
+
+DAEMON_LOG_WRITE_COUNT=0
 
 daemon_log() {
     local level="$1"
@@ -141,39 +158,29 @@ daemon_preflight_auth_check() {
         fi
     fi
 
-    # claude auth check with 15s timeout (macOS has no timeout command)
+    # claude auth check — verify CLI is available and responsive
+    # Note: `claude --print` hangs in non-interactive environments (tmux, background).
+    # Use `claude --version` (fast, non-interactive) to verify the binary works.
+    # Actual API auth is validated when pipelines run `claude` with real prompts.
     local claude_auth_ok=false
-    local _auth_tmp
-    _auth_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-auth.XXXXXX")
-    ( claude --print -p "ok" --max-turns 1 > "$_auth_tmp" 2>/dev/null ) &
-    local _auth_pid=$!
-    local _auth_waited=0
-    while kill -0 "$_auth_pid" 2>/dev/null && [[ "$_auth_waited" -lt 15 ]]; do
-        sleep 1
-        _auth_waited=$((_auth_waited + 1))
-    done
-    if kill -0 "$_auth_pid" 2>/dev/null; then
-        kill "$_auth_pid" 2>/dev/null || true
-        wait "$_auth_pid" 2>/dev/null || true
-    else
-        wait "$_auth_pid" 2>/dev/null || true
+    if command -v claude >/dev/null 2>&1; then
+        local _ver
+        _ver=$(unset CLAUDECODE; claude --version 2>/dev/null || true)
+        if [[ -n "$_ver" ]]; then
+            claude_auth_ok=true
+        fi
     fi
-
-    if [[ -s "$_auth_tmp" ]]; then
-        claude_auth_ok=true
-    fi
-    rm -f "$_auth_tmp"
 
     if [[ "$claude_auth_ok" != "true" ]]; then
-        daemon_log ERROR "Claude auth check failed — auto-pausing daemon"
+        daemon_log ERROR "Claude CLI not found or not working — auto-pausing daemon"
         local pause_json
-        pause_json=$(jq -n --arg reason "claude_auth_failure" --arg ts "$(now_iso)" \
+        pause_json=$(jq -n --arg reason "claude_cli_missing" --arg ts "$(now_iso)" \
             '{reason: $reason, timestamp: $ts}')
         local _tmp_pause
         _tmp_pause=$(mktemp "${TMPDIR:-/tmp}/sw-pause.XXXXXX")
         echo "$pause_json" > "$_tmp_pause"
         mv "$_tmp_pause" "$PAUSE_FLAG"
-        emit_event "daemon.auto_pause" "reason=claude_auth_failure"
+        emit_event "daemon.auto_pause" "reason=claude_cli_missing"
         return 1
     fi
 
@@ -599,47 +606,84 @@ claim_issue() {
 
     [[ "$NO_GITHUB" == "true" ]] && return 0  # No claiming in no-github mode
 
-    # Try dashboard-coordinated claim first (atomic label-based)
-    local resp
-    resp=$(curl -s --max-time 5 -X POST "${DASHBOARD_URL}/api/claim" \
-        -H "Content-Type: application/json" \
-        -d "$(jq -n --argjson issue "$issue_num" --arg machine "$machine_name" \
-            '{issue: $issue, machine: $machine}')" 2>/dev/null || echo "")
+    # Serialize claiming on this machine with flock to prevent local race conditions
+    local claim_lock_file="${STATE_DIR:-$HOME/.shipwright}/.claim-${issue_num}.lock"
+    mkdir -p "$(dirname "$claim_lock_file")"
+    local claim_result=1
+    (
+        if command -v flock >/dev/null 2>&1; then
+            flock -w 10 200 2>/dev/null || {
+                daemon_log WARN "claim_issue #${issue_num}: local lock timeout"
+                exit 1
+            }
+        fi
 
-    if [[ -n "$resp" ]] && echo "$resp" | jq -e '.approved == true' >/dev/null 2>&1; then
+        # Try dashboard-coordinated claim first (atomic label-based)
+        local resp
+        resp=$(curl -s --max-time 5 -X POST "${DASHBOARD_URL}/api/claim" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --argjson issue "$issue_num" --arg machine "$machine_name" \
+                '{issue: $issue, machine: $machine}')" 2>/dev/null || echo "")
+
+        if [[ -n "$resp" ]] && echo "$resp" | jq -e '.approved == true' >/dev/null 2>&1; then
+            # VERIFY: re-read labels after random backoff to detect races
+            local backoff_ms=$(( (RANDOM % 500) + 200 ))
+            sleep "0.${backoff_ms}"
+            if ! _verify_claim_exclusive "$issue_num" "$machine_name"; then
+                daemon_log INFO "Issue #${issue_num} claim race lost (competing claim) — removing our label"
+                gh issue edit "$issue_num" --remove-label "claimed:${machine_name}" 2>/dev/null || true
+                exit 1
+            fi
+            exit 0
+        elif [[ -n "$resp" ]] && echo "$resp" | jq -e '.approved == false' >/dev/null 2>&1; then
+            local claimed_by
+            claimed_by=$(echo "$resp" | jq -r '.claimed_by // "another machine"')
+            daemon_log INFO "Issue #${issue_num} claimed by ${claimed_by} (via dashboard)"
+            exit 1
+        fi
+
+        # Fallback: direct GitHub label check (dashboard unreachable)
+        daemon_log WARN "Dashboard unreachable — falling back to direct GitHub label claim"
+        local existing_claim
+        existing_claim=$(gh issue view "$issue_num" --json labels --jq \
+            '[.labels[].name | select(startswith("claimed:"))] | .[0] // ""' 2>/dev/null || true)
+
+        if [[ -n "$existing_claim" ]]; then
+            daemon_log INFO "Issue #${issue_num} already claimed: ${existing_claim}"
+            exit 1
+        fi
+
+        gh issue edit "$issue_num" --add-label "claimed:${machine_name}" 2>/dev/null || exit 1
+
+        # Random backoff before verification to desynchronize competing daemons
+        local backoff_ms=$(( (RANDOM % 800) + 300 ))
+        sleep "0.${backoff_ms}"
+
         # VERIFY: re-read labels, ensure only our claim exists
         if ! _verify_claim_exclusive "$issue_num" "$machine_name"; then
             daemon_log INFO "Issue #${issue_num} claim race lost (competing claim) — removing our label"
             gh issue edit "$issue_num" --remove-label "claimed:${machine_name}" 2>/dev/null || true
-            return 1
+            # Retry once after full backoff (break tie between two losers)
+            sleep "1.$(( RANDOM % 500 ))"
+            local retry_existing
+            retry_existing=$(gh issue view "$issue_num" --json labels --jq \
+                '[.labels[].name | select(startswith("claimed:"))] | length' 2>/dev/null || echo "1")
+            if [[ "$retry_existing" == "0" ]]; then
+                daemon_log INFO "Issue #${issue_num} unclaimed after race — retrying claim"
+                gh issue edit "$issue_num" --add-label "claimed:${machine_name}" 2>/dev/null || exit 1
+                sleep "0.$(( (RANDOM % 500) + 300 ))"
+                if _verify_claim_exclusive "$issue_num" "$machine_name"; then
+                    exit 0
+                fi
+                gh issue edit "$issue_num" --remove-label "claimed:${machine_name}" 2>/dev/null || true
+            fi
+            exit 1
         fi
-        return 0
-    elif [[ -n "$resp" ]] && echo "$resp" | jq -e '.approved == false' >/dev/null 2>&1; then
-        local claimed_by
-        claimed_by=$(echo "$resp" | jq -r '.claimed_by // "another machine"')
-        daemon_log INFO "Issue #${issue_num} claimed by ${claimed_by} (via dashboard)"
-        return 1
-    fi
-
-    # Fallback: direct GitHub label check (dashboard unreachable)
-    daemon_log WARN "Dashboard unreachable — falling back to direct GitHub label claim"
-    local existing_claim
-    existing_claim=$(gh issue view "$issue_num" --json labels --jq \
-        '[.labels[].name | select(startswith("claimed:"))] | .[0] // ""' 2>/dev/null || true)
-
-    if [[ -n "$existing_claim" ]]; then
-        daemon_log INFO "Issue #${issue_num} already claimed: ${existing_claim}"
-        return 1
-    fi
-
-    gh issue edit "$issue_num" --add-label "claimed:${machine_name}" 2>/dev/null || return 1
-    # VERIFY: re-read labels, ensure only our claim exists
-    if ! _verify_claim_exclusive "$issue_num" "$machine_name"; then
-        daemon_log INFO "Issue #${issue_num} claim race lost (competing claim) — removing our label"
-        gh issue edit "$issue_num" --remove-label "claimed:${machine_name}" 2>/dev/null || true
-        return 1
-    fi
-    return 0
+        exit 0
+    ) 200>"$claim_lock_file"
+    claim_result=$?
+    rm -f "$claim_lock_file" 2>/dev/null || true
+    return $claim_result
 }
 
 release_claim() {

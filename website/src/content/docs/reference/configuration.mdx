@@ -225,12 +225,12 @@ Automatically retries failed pipelines with optional model/template escalation.
 
 ### Self-Optimizing Metrics
 
-Automatically tunes daemon parameters based on DORA metric thresholds.
+Automatically tunes daemon parameters based on DORA metric thresholds. Enabled by default in the shipped daemon config.
 
-| Field               | Default | Description                             |
-| ------------------- | ------- | --------------------------------------- |
-| `self_optimize`     | `false` | Enable self-optimizing loop             |
-| `optimize_interval` | `10`    | Poll cycles between optimization checks |
+| Field               | Default | Description                                               |
+| ------------------- | ------- | --------------------------------------------------------- |
+| `self_optimize`     | `true`  | Enable self-optimizing loop (includes context efficiency) |
+| `optimize_interval` | `10`    | Poll cycles between optimization checks                   |
 
 Self-optimization adjustments:
 
@@ -323,6 +323,11 @@ Monitors pipeline success rates and alerts on quality declines.
   "retry_escalation": true,
   "self_optimize": true,
   "optimize_interval": 10,
+  "intelligence": {
+    "enabled": true,
+    "optimization_enabled": true,
+    "prediction_enabled": true
+  },
   "priority_lane": true,
   "priority_lane_labels": "hotfix,incident,p0,urgent",
   "priority_lane_max": 1,
@@ -373,8 +378,8 @@ The intelligence layer adds semantic codebase analysis, predictive risk assessme
 | Field                               | Default | Description                                                                     |
 | ----------------------------------- | ------- | ------------------------------------------------------------------------------- |
 | `intelligence.composer_enabled`     | `false` | Enable dynamic pipeline composition (replaces static template selection)        |
-| `intelligence.optimization_enabled` | `false` | Enable self-optimization (outcome analysis, template tuning, model A/B testing) |
-| `intelligence.prediction_enabled`   | `false` | Enable predictive analytics (risk assessment, anomaly detection, AI patrol)     |
+| `intelligence.optimization_enabled` | `true`  | Enable self-optimization (outcome analysis, template tuning, model A/B testing) |
+| `intelligence.prediction_enabled`   | `true`  | Enable predictive analytics (risk assessment, anomaly detection, AI patrol)     |
 | `intelligence.adversarial_enabled`  | `false` | Enable adversarial code review (red-team review after primary agent)            |
 | `intelligence.simulation_enabled`   | `false` | Enable developer simulation (simulated PR review with multiple personas)        |
 | `intelligence.architecture_enabled` | `false` | Enable architecture enforcer (living architectural model and validation)        |
@@ -383,10 +388,37 @@ The intelligence layer adds semantic codebase analysis, predictive risk assessme
 
 | Field                            | Default | Description                                               |
 | -------------------------------- | ------- | --------------------------------------------------------- |
-| `intelligence.ab_test_ratio`     | `0.1`   | Fraction of runs using composed pipelines for A/B testing |
+| `intelligence.ab_test_ratio`     | `0.2`   | Fraction of runs using composed pipelines for A/B testing |
 | `intelligence.anomaly_threshold` | `3.0`   | Standard deviations for anomaly detection                 |
 
 All intelligence features degrade gracefully when disabled or when Claude API calls fail. The system falls back to existing static behavior.
+
+## Decision Engine Configuration
+
+The decision engine handles autonomous operational decisions with risk-tiered approval. Configure in `config/policy.json` under the `decision` key.
+
+| Field                               | Default                      | Description                                          |
+| ----------------------------------- | ---------------------------- | ---------------------------------------------------- |
+| `decision.enabled`                  | `true`                       | Enable the autonomous decision engine                |
+| `decision.cycle_interval_seconds`   | `1800`                       | Seconds between decision cycles                      |
+| `decision.tiers_file`               | `config/decision-tiers.json` | Risk tier definitions for decisions                  |
+| `decision.outcome_learning_enabled` | `true`                       | Learn from decision outcomes to improve future calls |
+| `decision.outcome_min_samples`      | `10`                         | Minimum samples before applying learned adjustments  |
+| `decision.dedup_window_days`        | `7`                          | Window for deduplicating identical decisions         |
+
+## Context Engineering Configuration
+
+Context engineering controls how pipeline agents compose and trim their context window. Configure in `config/defaults.json` under the `loop` key.
+
+| Field                             | Default  | Description                             |
+| --------------------------------- | -------- | --------------------------------------- |
+| `loop.context_budget_chars`       | `180000` | Maximum characters for composed prompts |
+| `loop.context_trim_memory_chars`  | `20000`  | Max characters from memory injection    |
+| `loop.context_trim_git_entries`   | `10`     | Max git log entries included in context |
+| `loop.context_trim_hotspot_files` | `5`      | Max hotspot files included              |
+| `loop.context_trim_test_lines`    | `50`     | Max lines of test output included       |
+
+The self-optimization loop monitors context efficiency events (`loop.context_efficiency`) and recommends budget adjustments automatically. See the [Intelligence guide](/guides/intelligence/#context-efficiency-closed-loop) for details.
 
 ## Auto-Scaling Configuration
 

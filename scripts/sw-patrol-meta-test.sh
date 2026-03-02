@@ -230,9 +230,11 @@ now_epoch() { date +%s; }
 emit_event() { true; }
 export -f info success warn error now_iso now_epoch emit_event
 
+# shellcheck disable=SC2034
 EVENTS_FILE="$TEMP_DIR/home/.shipwright/events.jsonl"
 
 # Sourcing should not crash
+# shellcheck disable=SC1090
 if ( source "$SRC" 2>/dev/null ); then
     assert_pass "script can be sourced without error"
 else

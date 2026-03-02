@@ -7,8 +7,10 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -29,17 +31,20 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
 # ─── Structured Event Log ────────────────────────────────────────────────
+# shellcheck disable=SC2034
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
 
 # ─── State & Configuration ────────────────────────────────────────────────
 OVERSIGHT_ROOT="${HOME}/.shipwright/oversight"
 BOARD_CONFIG="${OVERSIGHT_ROOT}/config.json"
+# shellcheck disable=SC2034
 REVIEW_LOG="${OVERSIGHT_ROOT}/reviews.jsonl"
 HISTORY_DIR="${OVERSIGHT_ROOT}/history"
 MEMBERS_FILE="${OVERSIGHT_ROOT}/members.json"
@@ -206,6 +211,7 @@ cmd_vote() {
 
     # Update review with vote
     local tmp_file="${review_file}.tmp"
+    # shellcheck disable=SC2046
     jq --arg reviewer "$reviewer" \
        --arg decision "$decision" \
        --arg reasoning "${reasoning//\"/\\\"}" \
@@ -214,7 +220,7 @@ cmd_vote() {
            "decision": $decision,
            "reasoning": $reasoning,
            "confidence": ($confidence | tonumber),
-           "voted_at": "'$(now_iso)'"
+           "voted_at": "'"$(now_iso)"'"
        }' "$review_file" > "$tmp_file"
     mv "$tmp_file" "$review_file"
 
@@ -278,9 +284,11 @@ _update_verdict() {
             approve_ratio=$(echo "$approve_count / $active_votes" | bc -l 2>/dev/null || echo "0")
 
             local quorum_num
+            # shellcheck disable=SC2034
             quorum_num=$(echo "$quorum * 100" | bc 2>/dev/null || echo "50")
 
             local approve_pct
+            # shellcheck disable=SC2034
             approve_pct=$(echo "$approve_ratio * 100" | bc 2>/dev/null || echo "0")
 
             # Check if quorum met and decision reached
@@ -375,7 +383,7 @@ cmd_gate() {
            "decision": $decision,
            "reasoning": $reasoning,
            "confidence": ($confidence | tonumber),
-           "voted_at": "'$(now_iso)'"
+           "voted_at": "'"$(now_iso)"'"
        }' "$review_file" > "$tmp_file"
     mv "$tmp_file" "$review_file"
 
@@ -626,7 +634,8 @@ cmd_appeal() {
     fi
 
     local tmp_file="${review_file}.tmp"
-    jq --arg message "$message" '.appeals += [{"message": $message, "appealed_at": "'$(now_iso)'"}]' "$review_file" > "$tmp_file"
+    # shellcheck disable=SC2046
+    jq --arg message "$message" '.appeals += [{"message": $message, "appealed_at": "'"$(now_iso)"'"}]' "$review_file" > "$tmp_file"
     mv "$tmp_file" "$review_file"
 
     success "Appeal submitted ($((appeal_count + 1))/$max_appeals)"

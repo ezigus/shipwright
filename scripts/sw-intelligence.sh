@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
@@ -31,6 +31,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -159,6 +160,7 @@ _intelligence_track_cache_access() {
 
     local tmp_file
     tmp_file=$(mktemp "${TMPDIR:-/tmp}/sw-cache-stats.XXXXXX")
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
     if [[ "$hit_or_miss" == "hit" ]]; then
         jq '.hits += 1 | .total += 1' "$CACHE_STATS_FILE" > "$tmp_file" && mv "$tmp_file" "$CACHE_STATS_FILE" || rm -f "$tmp_file"
@@ -179,6 +181,7 @@ _intelligence_adjust_cache_ttl() {
     [[ -f "$CACHE_STATS_FILE" ]] || return 0
 
     local hits misses total
+    # shellcheck disable=SC2034
     hits=$(jq '.hits // 0' "$CACHE_STATS_FILE" 2>/dev/null || echo "0")
     misses=$(jq '.misses // 0' "$CACHE_STATS_FILE" 2>/dev/null || echo "0")
     total=$(jq '.total // 0' "$CACHE_STATS_FILE" 2>/dev/null || echo "0")
@@ -203,6 +206,7 @@ _intelligence_adjust_cache_ttl() {
     if [[ "$new_ttl" != "$current_ttl" ]]; then
         local tmp_file
         tmp_file=$(mktemp "${TMPDIR:-/tmp}/sw-cache-ttl.XXXXXX")
+        # shellcheck disable=SC2064
         trap "rm -f '$tmp_file'" RETURN
         jq -n \
             --argjson ttl "$new_ttl" \
@@ -220,6 +224,7 @@ _intelligence_adjust_cache_ttl() {
     # Reset stats for next window
     local tmp_reset
     tmp_reset=$(mktemp "${TMPDIR:-/tmp}/sw-cache-reset.XXXXXX")
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_reset'" RETURN
     echo '{"hits":0,"misses":0,"total":0}' > "$tmp_reset" && mv "$tmp_reset" "$CACHE_STATS_FILE" || rm -f "$tmp_reset"
 }
@@ -306,6 +311,7 @@ _intelligence_cache_set() {
 
     local tmp_file
     tmp_file=$(mktemp "${TMPDIR:-/tmp}/sw-intel-cache.XXXXXX")
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
     jq --arg h "$hash" \
        --argjson result "$result" \
@@ -321,6 +327,7 @@ _intelligence_call_claude() {
     local prompt="$1"
     local cache_key="${2:-}"
     local ttl="${3:-$DEFAULT_CACHE_TTL}"
+    local model="${4:-${INTELLIGENCE_MODEL:-haiku}}"
 
     # Check cache first
     local cached
@@ -346,8 +353,13 @@ _intelligence_call_claude() {
     elif command -v timeout >/dev/null 2>&1; then _timeout_cmd="timeout $_claude_timeout"
     fi
 
+    local _model_flag=""
+    [[ -n "$model" ]] && _model_flag="--model $model"
+
+    type daemon_log &>/dev/null && daemon_log INFO "Intelligence: calling Claude (model=${model:-default}, timeout=${_claude_timeout}s)"
+
     local response
-    if ! response=$($_timeout_cmd claude -p "$prompt" 2>/dev/null); then
+    if ! response=$($_timeout_cmd claude -p "$prompt" $_model_flag 2>/dev/null); then
         error "Claude call failed or timed out"
         echo '{"error":"claude_call_failed"}'
         return 1

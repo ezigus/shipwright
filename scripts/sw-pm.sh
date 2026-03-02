@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -27,6 +27,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -204,7 +205,7 @@ analyze_issue() {
 
 # ─── recommend_team <analysis_json> ──────────────────────────────────────────
 # Based on analysis, recommend team composition
-# Tries recruit's AI/heuristic team composition first, falls back to hardcoded rules.
+# Tries recruit's AI/heuristic team composition first, falls back to built-in rules.
 recommend_team() {
     local analysis="$1"
 
@@ -254,7 +255,7 @@ recommend_team() {
         fi
     fi
 
-    # ── Fallback: hardcoded heuristic team composition ──
+    # ── Fallback: heuristic team composition ──
     local complexity risk is_security is_perf file_scope
     complexity=$(echo "$analysis" | jq -r '.complexity')
     risk=$(echo "$analysis" | jq -r '.risk')
@@ -495,6 +496,7 @@ cmd_recommend() {
 
     # Combine into comprehensive recommendation
     local recommendation
+    # shellcheck disable=SC2046
     recommendation=$(jq -n \
         --argjson analysis "$analysis" \
         --argjson team "$team_rec" \
@@ -513,6 +515,7 @@ cmd_recommend() {
         ensure_pm_history
         local tmp_hist
         tmp_hist=$(mktemp)
+        # shellcheck disable=SC2064
         trap "rm -f '$tmp_hist'" RETURN
         jq --argjson rec "$recommendation" '.decisions += [$rec]' "$PM_HISTORY" > "$tmp_hist" && mv "$tmp_hist" "$PM_HISTORY"
         emit_event "pm.recommend" "issue=${issue_num}"
@@ -541,6 +544,7 @@ cmd_recommend() {
     ensure_pm_history
     local tmp_hist
     tmp_hist=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_hist'" RETURN
     jq --argjson rec "$recommendation" '.decisions += [$rec]' "$PM_HISTORY" > "$tmp_hist" && mv "$tmp_hist" "$PM_HISTORY"
 
@@ -605,6 +609,7 @@ cmd_learn() {
     # Save to history
     local tmp_hist
     tmp_hist=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_hist'" RETURN
     jq --argjson outcome "$outcome_record" '.outcomes += [$outcome]' "$PM_HISTORY" > "$tmp_hist" && mv "$tmp_hist" "$PM_HISTORY"
 
@@ -630,6 +635,7 @@ cmd_history() {
             local total_decisions success_count fail_count
             total_decisions=$(jq '.outcomes | length' "$PM_HISTORY")
             success_count=$(jq '[.outcomes[] | select(.outcome == "success")] | length' "$PM_HISTORY")
+            # shellcheck disable=SC2034
             fail_count=$(jq '[.outcomes[] | select(.outcome == "failure")] | length' "$PM_HISTORY")
 
             if [[ "$total_decisions" -gt 0 ]]; then

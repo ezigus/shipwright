@@ -6,8 +6,9 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -29,7 +30,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -190,6 +192,7 @@ cmd_start() {
     local run_file="${INSTRUMENT_ACTIVE}/${run_id}.json"
     local tmp_file
     tmp_file="$(mktemp "${INSTRUMENT_ACTIVE}/.tmp.XXXXXX")"
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     # Get repo info if not provided
@@ -257,6 +260,7 @@ cmd_record() {
 
     local tmp_file
     tmp_file="$(mktemp "${INSTRUMENT_ACTIVE}/.tmp.XXXXXX")"
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     # Parse value as number if it's numeric
@@ -320,6 +324,7 @@ cmd_stage_start() {
 
     local tmp_file
     tmp_file="$(mktemp "${INSTRUMENT_ACTIVE}/.tmp.XXXXXX")"
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     jq \
@@ -366,6 +371,7 @@ cmd_stage_end() {
 
     local tmp_file
     tmp_file="$(mktemp "${INSTRUMENT_ACTIVE}/.tmp.XXXXXX")"
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     jq \
@@ -416,6 +422,7 @@ cmd_finish() {
 
     local tmp_file
     tmp_file="$(mktemp "${INSTRUMENT_ACTIVE}/.tmp.XXXXXX")"
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     # Update run record with finish data
@@ -476,6 +483,7 @@ cmd_summary() {
         tmp_file="$(mktemp)"
         grep "\"run_id\":\"${run_id}\"" "$INSTRUMENT_COMPLETED" | head -1 > "$tmp_file"
         run_file="$tmp_file"
+    # shellcheck disable=SC2064
         trap "rm -f '$tmp_file'" RETURN
     fi
 

@@ -3,6 +3,24 @@
 [[ -n "${_DAEMON_POLL_LOADED:-}" ]] && return 0
 _DAEMON_POLL_LOADED=1
 
+# Defaults for variables normally set by sw-daemon.sh (safe under set -u).
+DAEMON_DIR="${DAEMON_DIR:-${HOME}/.shipwright}"
+STATE_FILE="${STATE_FILE:-${DAEMON_DIR}/daemon-state.json}"
+PAUSE_FLAG="${PAUSE_FLAG:-${DAEMON_DIR}/daemon-pause.flag}"
+SHUTDOWN_FLAG="${SHUTDOWN_FLAG:-${DAEMON_DIR}/daemon.shutdown}"
+EVENTS_FILE="${EVENTS_FILE:-${DAEMON_DIR}/events.jsonl}"
+SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+NO_GITHUB="${NO_GITHUB:-false}"
+POLL_INTERVAL="${POLL_INTERVAL:-60}"
+MAX_PARALLEL="${MAX_PARALLEL:-4}"
+WATCH_LABEL="${WATCH_LABEL:-shipwright}"
+WATCH_MODE="${WATCH_MODE:-repo}"
+PIPELINE_TEMPLATE="${PIPELINE_TEMPLATE:-autonomous}"
+ISSUE_LIMIT="${ISSUE_LIMIT:-100}"
+SLACK_WEBHOOK="${SLACK_WEBHOOK:-}"
+BACKOFF_SECS="${BACKOFF_SECS:-0}"
+POLL_CYCLE_COUNT="${POLL_CYCLE_COUNT:-0}"
+
 daemon_poll_issues() {
     if [[ "$NO_GITHUB" == "true" ]]; then
         daemon_log INFO "Polling skipped (--no-github)"

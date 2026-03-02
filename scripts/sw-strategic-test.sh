@@ -180,6 +180,7 @@ ACCEPTANCE: - Tests pass
 # NO_GITHUB=true means it will do dry-run
 result=$(strategic_parse_and_create "$mock_response" 2>/dev/null) || true
 created="${result%%:*}"
+# shellcheck disable=SC2034
 skipped="${result##*:}"
 assert_eq "parse creates 1 issue (dry-run)" "1" "$created"
 

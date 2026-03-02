@@ -11,7 +11,8 @@
 # ║    shipwright tmux fix           — Auto-fix common issues              ║
 # ║    shipwright tmux reload        — Reload tmux config                  ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -227,6 +228,16 @@ tmux_doctor() {
             check_warn "pane-border-status: ${border_status} — agent names won't show"
         fi
 
+        # Check pane-active-border-style for cyan accent
+        local border_style
+        border_style="$(tmux show-option -gv pane-active-border-style 2>/dev/null || echo "")"
+        if [[ "$border_style" == *"#00d4ff"* ]]; then
+            check_pass "pane-active-border-style: cyan accent applied"
+        else
+            check_warn "Pane border format missing cyan accent"
+            echo -e "    ${DIM}Fix: set -g pane-active-border-style 'fg=#00d4ff,bg=#1a1a2e'${RESET}"
+        fi
+
         # Check dark theme hooks
         if tmux show-hooks -g 2>/dev/null | grep -q "after-split-window"; then
             check_pass "Dark theme hooks active"
@@ -344,6 +355,7 @@ tmux_install() {
             cp "$REPO_DIR/tmux/tmux.conf" "$HOME/.tmux.conf"
             success "Installed ~/.tmux.conf"
         else
+            # shellcheck disable=SC2088
             info "~/.tmux.conf exists — run 'shipwright init' to update"
         fi
     fi
@@ -497,6 +509,30 @@ tmux_fix() {
         tmux set -g pane-border-status top 2>/dev/null
         success "Fixed: pane-border-status → top (agent names visible)"
         fixed=$((fixed + 1))
+    fi
+
+    # Fix 11: default-terminal
+    local term
+    term="$(tmux show-option -gv default-terminal 2>/dev/null || echo "unknown")"
+    if [[ "$term" != *"256color"* ]]; then
+        tmux set -g default-terminal "tmux-256color" 2>/dev/null
+        success "Fixed: default-terminal → tmux-256color (was ${term})"
+        fixed=$((fixed + 1))
+    fi
+
+    # Fix 12: pane-active-border-style (cyan accent)
+    local border_style
+    border_style="$(tmux show-option -gv pane-active-border-style 2>/dev/null || echo "")"
+    if [[ "$border_style" != *"#00d4ff"* ]]; then
+        tmux set -g pane-active-border-style "fg=#00d4ff,bg=#1a1a2e" 2>/dev/null
+        success "Fixed: pane-active-border-style → cyan accent (#00d4ff)"
+        fixed=$((fixed + 1))
+    fi
+
+    # Source overlay for complete styling (pane-border-format, hooks, etc.)
+    if [[ -f "$HOME/.tmux/shipwright-overlay.conf" ]]; then
+        tmux source-file "$HOME/.tmux/shipwright-overlay.conf" 2>/dev/null && \
+            success "Sourced: shipwright-overlay.conf" || true
     fi
 
     echo ""

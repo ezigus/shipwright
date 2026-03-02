@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034  # config vars used by sourced scripts and subshells
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright pipeline — Autonomous Feature Delivery (Idea → Production)        ║
 # ║  Full GitHub integration · Auto-detection · Task tracking · Metrics    ║
@@ -12,7 +13,7 @@ unset CLAUDECODE 2>/dev/null || true
 trap '' HUP
 trap '' SIGPIPE
 
-VERSION="3.1.0"
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -100,6 +101,7 @@ if type init_schema >/dev/null 2>&1 && type check_sqlite3 >/dev/null 2>&1 && che
     init_schema 2>/dev/null || true
 fi
 # shellcheck source=sw-cost.sh
+# for cost_record persistence to costs.json + DB
 [[ -f "$SCRIPT_DIR/sw-cost.sh" ]] && source "$SCRIPT_DIR/sw-cost.sh"
 
 # ─── GitHub API Modules (optional) ─────────────────────────────────────────
@@ -508,14 +510,16 @@ load_pipeline_config() {
     # Check for intelligence-composed pipeline first
     local composed_pipeline="${ARTIFACTS_DIR}/composed-pipeline.json"
     if [[ -f "$composed_pipeline" ]] && type composer_validate_pipeline >/dev/null 2>&1; then
-        # Use composed pipeline if fresh (< 1 hour old)
+        # Use composed pipeline if fresh (within cache TTL)
+        local composed_cache_ttl
+        composed_cache_ttl=$(_config_get_int "pipeline.composed_cache_ttl" 3600 2>/dev/null || echo 3600)
         local composed_age=99999
         local composed_mtime
         composed_mtime=$(file_mtime "$composed_pipeline")
         if [[ "$composed_mtime" -gt 0 ]]; then
             composed_age=$(( $(now_epoch) - composed_mtime ))
         fi
-        if [[ "$composed_age" -lt 3600 ]]; then
+        if [[ "$composed_age" -lt "$composed_cache_ttl" ]]; then
             local validate_json
             validate_json=$(cat "$composed_pipeline" 2>/dev/null || echo "")
             if [[ -n "$validate_json" ]] && composer_validate_pipeline "$validate_json" 2>/dev/null; then
@@ -884,6 +888,7 @@ Reply with ONLY the classification word, nothing else." --model haiku < /dev/nul
         mkdir -p "$class_dir" 2>/dev/null || true
         local tmp_class
         tmp_class="$(mktemp)"
+        # shellcheck disable=SC2064  # intentional expansion at definition time
         trap "rm -f '$tmp_class'" RETURN
         if [[ -f "$class_history" ]]; then
             jq --arg sig "$error_sig" --arg cls "$classification" --arg canon "$canonical_category" --arg stage "$stage_id" \
@@ -1325,6 +1330,7 @@ run_pipeline() {
                 # Remove this stage from the skip file
                 local tmp_skip
                 tmp_skip="$(mktemp)"
+                # shellcheck disable=SC2064  # intentional expansion at definition time
                 trap "rm -f '$tmp_skip'" RETURN
                 grep -vx "$id" "$ARTIFACTS_DIR/skip-stage.txt" > "$tmp_skip" 2>/dev/null || true
                 mv "$tmp_skip" "$ARTIFACTS_DIR/skip-stage.txt"
@@ -1700,6 +1706,7 @@ pipeline_post_completion_cleanup() {
         # Reset status to idle (preserves the file for reference but unblocks new runs)
         local tmp_state
         tmp_state=$(mktemp)
+        # shellcheck disable=SC2064  # intentional expansion at definition time
         trap "rm -f '$tmp_state'" RETURN
         sed 's/^status: .*/status: idle/' "$STATE_FILE" > "$tmp_state" 2>/dev/null || true
         mv "$tmp_state" "$STATE_FILE"

@@ -17,6 +17,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CYAN='\033[38;2;0;212;255m'
 PURPLE='\033[38;2;124;58;237m'
 GREEN='\033[38;2;74;222;128m'
+# shellcheck disable=SC2034
 YELLOW='\033[38;2;250;204;21m'
 RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
@@ -454,8 +455,10 @@ test_no_github_guard() {
     : > "$MOCK_GH_LOG"
 
     (
+        # shellcheck disable=SC2034
         REPO_DIR="$TEMP_DIR/repo"
         SCRIPT_DIR="$TEMP_DIR/repo/scripts"
+        # shellcheck disable=SC2034
         ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
         _GH_CHECKS_AVAILABLE=""
         source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"

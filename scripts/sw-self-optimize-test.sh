@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CYAN='\033[38;2;0;212;255m'
 PURPLE='\033[38;2;124;58;237m'
 GREEN='\033[38;2;74;222;128m'
+# shellcheck disable=SC2034
 YELLOW='\033[38;2;250;204;21m'
 RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
@@ -347,6 +348,7 @@ test_iteration_model() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_model_routing() {
     local build_stages='[{"name":"build","status":"complete"},{"name":"test","status":"complete"}]'
+    # shellcheck disable=SC2034
     local fail_stages='[{"name":"build","status":"complete"},{"name":"test","status":"failed"}]'
 
     # Sonnet: 5 successes on build
@@ -652,6 +654,123 @@ test_full_analysis_calls_report() {
     [[ -f "$report_file" ]] || { echo "Expected last-report.txt to exist"; return 1; }
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 21. Context efficiency with no events gracefully skips
+# ──────────────────────────────────────────────────────────────────────────────
+test_context_efficiency_no_events() {
+    reset_test
+    rm -f "$EVENTS_FILE"
+
+    local output
+    output=$(optimize_tune_context_efficiency 2>&1)
+    echo "$output" | grep -q "No events file\|No context efficiency\|skipping" || return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 22. Context efficiency detects high budget utilization (>90%)
+# ──────────────────────────────────────────────────────────────────────────────
+test_context_efficiency_high_utilization() {
+    reset_test
+    mkdir -p "$(dirname "$EVENTS_FILE")"
+
+    # Write 5 events with budget_utilization > 90%
+    local i
+    for i in 1 2 3 4 5; do
+        echo '{"ts":"2026-02-27T10:00:00Z","type":"loop.context_efficiency","iteration":"'$i'","raw_prompt_chars":"190000","trimmed_prompt_chars":"180000","trim_ratio":"5.3","budget_utilization":"95.0","budget_chars":"180000","job_id":"test-1"}' >> "$EVENTS_FILE"
+    done
+
+    local output
+    output=$(optimize_tune_context_efficiency 2>&1)
+
+    # Should recommend increasing budget
+    echo "$output" | grep -q "Budget utilization high" || { echo "Expected budget increase recommendation"; return 1; }
+
+    # Should emit recommendation event
+    grep -q "optimize.context_recommendation" "$EVENTS_FILE" || { echo "Expected recommendation event"; return 1; }
+
+    # Should write summary file
+    local summary_file="$OPTIMIZATION_DIR/context-efficiency.json"
+    [[ -f "$summary_file" ]] || { echo "Expected context-efficiency.json"; return 1; }
+
+    local rec_count
+    rec_count=$(jq '.recommendation_count' "$summary_file" 2>/dev/null)
+    [[ "$rec_count" -ge 1 ]] || { echo "Expected at least 1 recommendation, got $rec_count"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 23. Context efficiency detects high trim ratio (>30%)
+# ──────────────────────────────────────────────────────────────────────────────
+test_context_efficiency_high_trim() {
+    reset_test
+    mkdir -p "$(dirname "$EVENTS_FILE")"
+
+    # Write 5 events with trim_ratio > 30%
+    local i
+    for i in 1 2 3 4 5; do
+        echo '{"ts":"2026-02-27T10:00:00Z","type":"loop.context_efficiency","iteration":"'$i'","raw_prompt_chars":"260000","trimmed_prompt_chars":"180000","trim_ratio":"35.0","budget_utilization":"80.0","budget_chars":"180000","job_id":"test-2"}' >> "$EVENTS_FILE"
+    done
+
+    local output
+    output=$(optimize_tune_context_efficiency 2>&1)
+
+    # Should recommend reducing verbose context
+    echo "$output" | grep -q "Trim ratio high" || { echo "Expected trim reduction recommendation"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 24. Context efficiency healthy — no recommendations
+# ──────────────────────────────────────────────────────────────────────────────
+test_context_efficiency_healthy() {
+    reset_test
+    mkdir -p "$(dirname "$EVENTS_FILE")"
+
+    # Write 5 events with healthy metrics
+    local i
+    for i in 1 2 3 4 5; do
+        echo '{"ts":"2026-02-27T10:00:00Z","type":"loop.context_efficiency","iteration":"'$i'","raw_prompt_chars":"140000","trimmed_prompt_chars":"135000","trim_ratio":"3.6","budget_utilization":"75.0","budget_chars":"180000","job_id":"test-3"}' >> "$EVENTS_FILE"
+    done
+
+    local output
+    output=$(optimize_tune_context_efficiency 2>&1)
+
+    # Should report healthy
+    echo "$output" | grep -q "healthy" || { echo "Expected healthy status"; return 1; }
+
+    # Summary should have 0 recommendations
+    local summary_file="$OPTIMIZATION_DIR/context-efficiency.json"
+    [[ -f "$summary_file" ]] || { echo "Expected context-efficiency.json"; return 1; }
+    local rec_count
+    rec_count=$(jq '.recommendation_count' "$summary_file" 2>/dev/null)
+    [[ "$rec_count" -eq 0 ]] || { echo "Expected 0 recommendations, got $rec_count"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 25. Context efficiency is called during full analysis
+# ──────────────────────────────────────────────────────────────────────────────
+test_full_analysis_includes_context_efficiency() {
+    reset_test
+    mkdir -p "$(dirname "$EVENTS_FILE")"
+
+    # Add context efficiency events
+    local i
+    for i in 1 2 3 4 5; do
+        echo '{"ts":"2026-02-27T10:00:00Z","type":"loop.context_efficiency","iteration":"'$i'","raw_prompt_chars":"140000","trimmed_prompt_chars":"135000","trim_ratio":"3.6","budget_utilization":"75.0","budget_chars":"180000","job_id":"test-full"}' >> "$EVENTS_FILE"
+    done
+
+    # Add minimal outcomes
+    for i in 1 2 3; do
+        add_mock_outcome "standard" "success" "bug" "opus" 10 "2.00" 5
+    done
+
+    echo '{"common_patterns":[],"cross_repo_learnings":[]}' > "$TEMP_DIR/.shipwright/memory/global.json"
+
+    optimize_full_analysis > /dev/null 2>&1
+
+    # Context efficiency summary should exist
+    local summary_file="$OPTIMIZATION_DIR/context-efficiency.json"
+    [[ -f "$summary_file" ]] || { echo "Expected context-efficiency.json from full analysis"; return 1; }
+}
+
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
@@ -687,6 +806,11 @@ main() {
         "test_iteration_model_format:Iteration model output has flat format"
         "test_model_routing_format:Model routing output has .routes wrapper"
         "test_full_analysis_calls_report:Full analysis creates last-report.txt"
+        "test_context_efficiency_no_events:Context efficiency skips with no events"
+        "test_context_efficiency_high_utilization:Context efficiency detects high budget utilization"
+        "test_context_efficiency_high_trim:Context efficiency detects high trim ratio"
+        "test_context_efficiency_healthy:Context efficiency reports healthy when metrics normal"
+        "test_full_analysis_includes_context_efficiency:Full analysis includes context efficiency"
     )
 
     for entry in "${tests[@]}"; do

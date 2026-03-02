@@ -25,6 +25,7 @@ export NO_GITHUB=true
 export GH_AVAILABLE=true
 export REPO_OWNER="test-org"
 export REPO_NAME="test-repo"
+# shellcheck disable=SC2155
 export PIPELINE_START_EPOCH=$(date +%s)
 export CI_MODE=false
 export PIPELINE_NAME="test-pipeline"

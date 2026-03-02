@@ -4,7 +4,8 @@
 # ║                                                                          ║
 # ║  Captures tmux pane scrollback and provides log browsing/search.        ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -27,6 +28,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -111,6 +113,7 @@ capture_logs() {
     timestamp="$(date +%Y%m%d-%H%M%S)"
     local captured=0
 
+    # shellcheck disable=SC2034
     while IFS='|' read -r session_window window_name pane_id pane_title; do
         [[ -z "$window_name" ]] && continue
         echo "$window_name" | grep -qi "claude" || continue

@@ -6,7 +6,8 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -17,6 +18,8 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# shellcheck source=lib/config.sh
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -29,12 +32,14 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
 # ─── Structured Event Log ──────────────────────────────────────────────────
+# shellcheck disable=SC2034
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
 
 # ─── Intelligence Engine (optional) ────────────────────────────────────────
@@ -178,6 +183,7 @@ predictive_confirm_anomaly() {
     # Find the most recent unconfirmed anomaly for this stage+metric
     local tmp_file
     tmp_file=$(mktemp "${TMPDIR:-/tmp}/sw-anomaly-confirm.XXXXXX")
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
     local found=false
 
@@ -274,6 +280,7 @@ _predictive_update_alarm_rates() {
     # Atomic write
     local tmp_file
     tmp_file=$(mktemp "${TMPDIR:-/tmp}/sw-anomaly-thresh.XXXXXX")
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
     jq --arg m "$metric_name" \
        --argjson crit "$new_critical" \
@@ -384,10 +391,12 @@ Return JSON format:
     fi
 
     # Fallback: heuristic risk assessment
-    local risk=50
+    local default_risk
+    default_risk=$(_config_get_int "predictive.default_risk_score" 50 2>/dev/null || echo 50)
+    local risk=$default_risk
     local reason="Default medium risk — no AI analysis available"
 
-    # Check for learned keyword weights first, fall back to hardcoded
+    # Check for learned keyword weights first, fall back to config defaults
     local keywords_json
     keywords_json=$(_predictive_get_risk_keywords)
 
@@ -416,9 +425,11 @@ Return JSON format:
             reason="Learned keyword weights: ${matched_keywords%%, }"
         fi
     else
-        # Default hardcoded keyword check
+        # Config-driven keyword risk elevation
+        local keyword_risk
+        keyword_risk=$(_config_get_int "predictive.keyword_risk_score" 70 2>/dev/null || echo 70)
         if echo "$issue_json" | grep -qiE "refactor|migration|breaking|security|deploy"; then
-            risk=70
+            risk=$keyword_risk
             reason="Keywords suggest elevated complexity"
         fi
     fi
@@ -751,6 +762,7 @@ predict_update_baseline() {
     # Atomic write
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
     jq --arg key "$key" \
        --argjson val "$new_value" \

@@ -248,6 +248,7 @@ assert_contains "Hint for failed plans" "$hint" "plan"
 
 # No hint when mostly successful
 rm -f "$STAGE_EFFECTIVENESS_FILE"
+# shellcheck disable=SC2034
 for i in $(seq 1 8); do
     record_stage_effectiveness "test" "complete"
 done

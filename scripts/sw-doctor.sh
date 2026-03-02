@@ -4,7 +4,7 @@
 # ║                                                                          ║
 # ║  Checks prerequisites, installed files, PATH, and common issues.        ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="3.1.0"
+VERSION="3.2.4"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -27,6 +27,7 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
+    # shellcheck disable=SC2155
     local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
@@ -221,6 +222,7 @@ fi
 
 # Bash version
 BASH_MAJOR="${BASH_VERSINFO[0]:-0}"
+# shellcheck disable=SC2034
 BASH_MINOR="${BASH_VERSINFO[1]:-0}"
 if [[ "$BASH_MAJOR" -ge 5 ]]; then
     check_pass "bash ${BASH_VERSION}"
@@ -264,6 +266,33 @@ if [[ -f "$HOME/.claude/settings.json" ]]; then
 else
     check_warn "No ~/.claude/settings.json"
     echo -e "    ${DIM}Copy from settings.json.template${RESET}"
+fi
+
+# ─── File Permission Validation ───────────────────────────────────
+# Check sensitive config files have restrictive permissions (600)
+_perm_issues=0
+for config_file in "$HOME/.claude/settings.json" "$HOME/.shipwright/daemon-config.json" "$(pwd)/.claude/daemon-config.json"; do
+    if [[ -f "$config_file" ]]; then
+        # Get file permissions
+        _perms=""
+        if command -v stat >/dev/null 2>&1; then
+            # GNU stat: stat -c %a, BSD stat: stat -f %OLp
+            if [[ "$(uname -s)" == "Darwin" ]]; then
+                _perms=$(stat -f %OLp "$config_file" 2>/dev/null | tail -c 4)
+            else
+                _perms=$(stat -c %a "$config_file" 2>/dev/null)
+            fi
+        fi
+
+        if [[ -n "${_perms:-}" && "$_perms" != "600" ]]; then
+            check_warn "File $config_file is world-readable (perms: $_perms, should be 600)"
+            _perm_issues=$((_perm_issues + 1))
+        fi
+    fi
+done
+
+if [[ $_perm_issues -eq 0 ]]; then
+    check_pass "File permissions: all sensitive configs restricted to owner-only"
 fi
 
 # Hooks directory
@@ -317,6 +346,39 @@ if [[ -d "$HOOKS_DIR" && -f "$HOME/.claude/settings.json" ]] && jq -e '.' "$HOME
         check_pass "Hooks wired in settings.json: ${wired}/${hook_total_check}"
     elif [[ $unwired -gt 0 ]]; then
         echo -e "    ${DIM}Run: shipwright init  to wire hooks${RESET}"
+    fi
+fi
+
+# Hook security validation — check for untrusted repo-level hooks
+# Warn if repo-level .claude/hooks/ contains unexpected commands
+if [[ -d "$(pwd)/.claude/hooks" ]]; then
+    _repo_hook_dir="$(pwd)/.claude/hooks"
+    _trusted_hooks_dir="${HOME}/.claude/hooks"
+    _untrusted_hook_count=0
+
+    # Check if CLAUDE_CODE_VERIFY_HOOKS is enabled for extra caution
+    if [[ -n "${CLAUDE_CODE_VERIFY_HOOKS:-}" ]]; then
+        for repo_hook in "$_repo_hook_dir"/*.sh; do
+            [[ -f "$repo_hook" ]] || continue
+            _hook_name="$(basename "$repo_hook")"
+            _trusted_hook="$_trusted_hooks_dir/$_hook_name"
+
+            # If a trusted version exists, compare checksums
+            if [[ -f "$_trusted_hook" ]]; then
+                if ! cmp -s "$repo_hook" "$_trusted_hook"; then
+                    check_warn "Repo hook differs from trusted version: .claude/hooks/$_hook_name"
+                    _untrusted_hook_count=$((_untrusted_hook_count + 1))
+                fi
+            else
+                # No trusted version — this is an unknown hook
+                check_warn "Repo contains unknown hook: .claude/hooks/$_hook_name"
+                _untrusted_hook_count=$((_untrusted_hook_count + 1))
+            fi
+        done
+
+        if [[ $_untrusted_hook_count -gt 0 ]]; then
+            echo -e "    ${DIM}Enable hook verification with: export CLAUDE_CODE_VERIFY_HOOKS=1${RESET}"
+        fi
     fi
 fi
 
@@ -853,7 +915,7 @@ if [[ -f "$MACHINES_FILE" ]]; then
 
                 if [[ -n "$m_host" ]]; then
                     ssh_target="${m_user:+${m_user}@}${m_host}"
-                    if ssh -o ConnectTimeout=5 -o BatchMode=yes -p "$m_port" "$ssh_target" true 2>/dev/null; then
+                    if ssh -n -o ConnectTimeout=5 -o BatchMode=yes -p "$m_port" "$ssh_target" true 2>/dev/null; then
                         check_pass "SSH: ${m_name} (${ssh_target}) reachable"
                     else
                         check_warn "SSH: ${m_name} (${ssh_target}) unreachable"

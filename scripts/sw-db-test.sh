@@ -8,13 +8,16 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
 CYAN='\033[38;2;0;212;255m'
 PURPLE='\033[38;2;124;58;237m'
+# shellcheck disable=SC2034
 BLUE='\033[38;2;0;102;255m'
 GREEN='\033[38;2;74;222;128m'
+# shellcheck disable=SC2034
 YELLOW='\033[38;2;250;204;21m'
 RED='\033[38;2;248;113;113m'
 DIM='\033[2m'

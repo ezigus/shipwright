@@ -3,6 +3,16 @@
 [[ -n "${_DAEMON_ADAPTIVE_LOADED:-}" ]] && return 0
 _DAEMON_ADAPTIVE_LOADED=1
 
+# Defaults for variables normally set by sw-daemon.sh (safe under set -u).
+DAEMON_DIR="${DAEMON_DIR:-${HOME}/.shipwright}"
+STATE_FILE="${STATE_FILE:-${DAEMON_DIR}/daemon-state.json}"
+POLL_INTERVAL="${POLL_INTERVAL:-60}"
+MAX_PARALLEL="${MAX_PARALLEL:-4}"
+EMPTY_QUEUE_CYCLES="${EMPTY_QUEUE_CYCLES:-0}"
+EST_COST_PER_JOB="${EST_COST_PER_JOB:-5.0}"
+WORKER_MEM_GB="${WORKER_MEM_GB:-4}"
+EVENTS_FILE="${EVENTS_FILE:-${DAEMON_DIR}/events.jsonl}"
+
 # Adapt poll interval based on queue state
 # Empty queue 5+ cycles → 120s; queue has items → 30s; processing → 60s
 get_adaptive_poll_interval() {

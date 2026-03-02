@@ -6,7 +6,8 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Dependency check ─────────────────────────────────────────────────────────
@@ -34,7 +35,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -54,6 +56,7 @@ init_rules() {
     if [[ ! -f "$SCALE_RULES_FILE" ]]; then
         local tmp_file
         tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
         trap "rm -f '$tmp_file'" RETURN
         cat > "$tmp_file" << 'JSON'
 {
@@ -96,6 +99,7 @@ in_cooldown() {
 update_scale_state() {
     local tmp_file
     tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
     trap "rm -f '$tmp_file'" RETURN
 
     if [[ -f "$SCALE_STATE_FILE" ]]; then
@@ -194,7 +198,8 @@ cmd_up() {
     fi
 
     for i in $(seq 1 "$count"); do
-        local agent_name="sw-agent-${role}-$(date +%s)-${i}"
+        local agent_name
+        agent_name="sw-agent-${role}-$(date +%s)-${i}"
         local session_name="shipwright-${agent_name}"
 
         # Spawn a real agent in a tmux session
@@ -231,6 +236,7 @@ cmd_down() {
     # Backward compat: "down agent-42" -> treat as session/agent identifier
     if [[ -n "$count" ]] && [[ "$count" != *[0-9]* ]] || [[ "$count" == agent-* ]]; then
         # Specific agent/session id
+        # shellcheck disable=SC2034
         local session_pattern="*${count}*"
         local sessions
         sessions=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -E "shipwright|swarm" | grep -i "$count" || true)
@@ -320,6 +326,7 @@ cmd_rules() {
 
             local tmp_file
             tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
             trap "rm -f '$tmp_file'" RETURN
 
             jq --arg key "$key" --arg value "$value" \

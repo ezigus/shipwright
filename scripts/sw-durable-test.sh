@@ -130,6 +130,7 @@ fi
 echo ""
 echo -e "${DIM}  publish events${RESET}"
 
+# shellcheck disable=SC2034
 event_id=$(bash "$SCRIPT_DIR/sw-durable.sh" publish "test.event" '{"key":"value"}' 2>&1) && rc=0 || rc=$?
 if [[ $rc -eq 0 ]]; then
     assert_pass "publish exits 0"

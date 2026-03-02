@@ -14,8 +14,10 @@ if [[ -n "${_SW_DB_LOADED:-}" ]] && [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
 fi
 _SW_DB_LOADED=1
 
-VERSION="3.1.0"
+# shellcheck disable=SC2034
+VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -37,7 +39,8 @@ fi
 if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   emit_event() {
     local event_type="$1"; shift; mkdir -p "${HOME}/.shipwright"
-    local payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
+    local payload
+    payload="{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"$event_type\""
     while [[ $# -gt 0 ]]; do local key="${1%%=*}" val="${1#*=}"; payload="${payload},\"${key}\":\"${val}\""; shift; done
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
@@ -50,6 +53,7 @@ SCHEMA_VERSION=6
 # JSON fallback paths
 EVENTS_FILE="${DB_DIR}/events.jsonl"
 DAEMON_STATE_FILE="${DB_DIR}/daemon-state.json"
+# shellcheck disable=SC2034
 DEVELOPER_REGISTRY_FILE="${DB_DIR}/developer-registry.json"
 COST_FILE_JSON="${DB_DIR}/costs.json"
 BUDGET_FILE_JSON="${DB_DIR}/budget.json"
@@ -107,12 +111,12 @@ ensure_db_dir() {
 # ─── SQL Execution Helper ──────────────────────────────────────────────────
 # Runs SQL with proper error handling. Silent on success.
 _db_exec() {
-    sqlite3 "$DB_FILE" "$@" 2>/dev/null
+    sqlite3 -cmd ".timeout 5000" "$DB_FILE" "$@" 2>/dev/null
 }
 
 # Runs SQL and returns output. Returns 1 on failure.
 _db_query() {
-    sqlite3 "$DB_FILE" "$@" 2>/dev/null || return 1
+    sqlite3 -cmd ".timeout 5000" "$DB_FILE" "$@" 2>/dev/null || return 1
 }
 
 # ─── Initialize Database Schema ──────────────────────────────────────────────
@@ -700,7 +704,10 @@ db_query_events() {
 
     if [[ -f "$db_file" ]] && command -v sqlite3 &>/dev/null; then
         local where_clause=""
-        [[ -n "$filter" ]] && where_clause="WHERE type = '$filter'"
+        if [[ -n "$filter" ]]; then
+            filter="${filter//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+            where_clause="WHERE type = '$filter'"
+        fi
         local result
         result=$(sqlite3 -json "$db_file" "SELECT ts, ts_epoch, type, job_id, stage, status, duration_secs, metadata FROM events $where_clause ORDER BY ts_epoch DESC LIMIT $limit" 2>/dev/null) || true
         if [[ -n "$result" ]]; then
@@ -728,13 +735,19 @@ db_query_events_since() {
     local since_epoch="$1"
     local event_type="${2:-}"
     local to_epoch="${3:-}"
+    # Validate numeric epoch values
+    [[ ! "$since_epoch" =~ ^[0-9]+$ ]] && { echo "[]"; return 0; }
     local db_file="${DB_FILE:-$HOME/.shipwright/shipwright.db}"
 
     if [[ -f "$db_file" ]] && command -v sqlite3 &>/dev/null; then
         local type_filter=""
-        [[ -n "$event_type" ]] && type_filter="AND type = '$event_type'"
+        if [[ -n "$event_type" ]]; then
+            event_type="${event_type//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+            type_filter="AND type = '$event_type'"
+        fi
         local to_filter=""
-        [[ -n "$to_epoch" ]] && to_filter="AND ts_epoch <= $to_epoch"
+        # Numeric validation for epoch values
+        [[ -n "$to_epoch" && "$to_epoch" =~ ^[0-9]+$ ]] && to_filter="AND ts_epoch <= $to_epoch"
         local result
         result=$(sqlite3 -json "$db_file" "SELECT ts, ts_epoch, type, job_id, stage, status, duration_secs, metadata FROM events WHERE ts_epoch >= $since_epoch $type_filter $to_filter ORDER BY ts_epoch DESC" 2>/dev/null) || true
         if [[ -n "$result" ]]; then
@@ -1182,8 +1195,12 @@ db_save_pattern() {
 db_query_patterns() {
     local repo_hash="$1" pattern_type="${2:-}" limit="${3:-20}"
     if ! db_available; then echo "[]"; return 0; fi
+    repo_hash="${repo_hash//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     local where="WHERE repo_hash = '$repo_hash'"
-    [[ -n "$pattern_type" ]] && where="$where AND pattern_type = '$pattern_type'"
+    if [[ -n "$pattern_type" ]]; then
+        pattern_type="${pattern_type//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+        where="$where AND pattern_type = '$pattern_type'"
+    fi
     _db_query -json "SELECT * FROM memory_patterns $where ORDER BY frequency DESC, last_seen_at DESC LIMIT $limit;" || echo "[]"
 }
 
@@ -1191,6 +1208,8 @@ db_query_patterns() {
 db_save_decision() {
     local repo_hash="$1" decision_type="$2" context="$3" decision="$4" metadata="${5:-}"
     if ! db_available; then return 1; fi
+    repo_hash="${repo_hash//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    decision_type="${decision_type//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     context="${context//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     decision="${decision//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     metadata="${metadata//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
@@ -1201,17 +1220,24 @@ db_save_decision() {
 db_update_decision_outcome() {
     local decision_id="$1" outcome="$2" confidence="${3:-}"
     if ! db_available; then return 1; fi
+    # Validate numeric IDs to prevent injection
+    [[ ! "$decision_id" =~ ^[0-9]+$ ]] && return 1
     outcome="${outcome//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
-    local set_clause="outcome = '$outcome', updated_at = '$(now_iso)'"
-    [[ -n "$confidence" ]] && set_clause="$set_clause, confidence = $confidence"
+    local set_clause
+    set_clause="outcome = '$outcome', updated_at = '$(now_iso)'"
+    [[ -n "$confidence" && "$confidence" =~ ^[0-9.]+$ ]] && set_clause="$set_clause, confidence = $confidence"
     _db_exec "UPDATE memory_decisions SET $set_clause WHERE id = $decision_id;"
 }
 
 db_query_decisions() {
     local repo_hash="$1" decision_type="${2:-}" limit="${3:-20}"
     if ! db_available; then echo "[]"; return 0; fi
+    repo_hash="${repo_hash//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     local where="WHERE repo_hash = '$repo_hash'"
-    [[ -n "$decision_type" ]] && where="$where AND decision_type = '$decision_type'"
+    if [[ -n "$decision_type" ]]; then
+        decision_type="${decision_type//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+        where="$where AND decision_type = '$decision_type'"
+    fi
     _db_query -json "SELECT * FROM memory_decisions $where ORDER BY updated_at DESC LIMIT $limit;" || echo "[]"
 }
 
@@ -1219,7 +1245,10 @@ db_query_decisions() {
 db_save_embedding() {
     local content_hash="$1" source_type="$2" content_text="$3" repo_hash="${4:-}"
     if ! db_available; then return 1; fi
+    content_hash="${content_hash//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    source_type="${source_type//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     content_text="${content_text//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    repo_hash="${repo_hash//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     _db_exec "INSERT OR IGNORE INTO memory_embeddings (content_hash, source_type, content_text, repo_hash, created_at)
               VALUES ('$content_hash', '$source_type', '$content_text', '$repo_hash', '$(now_iso)');"
 }
@@ -1228,8 +1257,14 @@ db_query_embeddings() {
     local source_type="${1:-}" repo_hash="${2:-}" limit="${3:-50}"
     if ! db_available; then echo "[]"; return 0; fi
     local where="WHERE 1=1"
-    [[ -n "$source_type" ]] && where="$where AND source_type = '$source_type'"
-    [[ -n "$repo_hash" ]] && where="$where AND repo_hash = '$repo_hash'"
+    if [[ -n "$source_type" ]]; then
+        source_type="${source_type//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+        where="$where AND source_type = '$source_type'"
+    fi
+    if [[ -n "$repo_hash" ]]; then
+        repo_hash="${repo_hash//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+        where="$where AND repo_hash = '$repo_hash'"
+    fi
     _db_query -json "SELECT id, content_hash, source_type, content_text, repo_hash, created_at FROM memory_embeddings $where ORDER BY created_at DESC LIMIT $limit;" || echo "[]"
 }
 
@@ -1368,8 +1403,10 @@ db_sync_push() {
     # Push via HTTP
     local response
     local auth_header=""
+    # shellcheck disable=SC2089
     [[ -n "${SYNC_TOKEN:-}" ]] && auth_header="-H 'Authorization: Bearer ${SYNC_TOKEN}'"
 
+    # shellcheck disable=SC2090
     response=$(curl -s --connect-timeout 10 --max-time 30 -w "%{http_code}" -o /dev/null \
         -X POST "${SYNC_URL}/api/sync/push" \
         -H "Content-Type: application/json" \
@@ -1400,9 +1437,11 @@ db_sync_pull() {
     last_sync=$(_db_query "SELECT value FROM _sync_metadata WHERE key = 'last_pull_epoch';" || echo "0")
 
     local auth_header=""
+    # shellcheck disable=SC2089
     [[ -n "${SYNC_TOKEN:-}" ]] && auth_header="-H 'Authorization: Bearer ${SYNC_TOKEN}'"
 
     local response_body
+    # shellcheck disable=SC2090
     response_body=$(curl -s --connect-timeout 10 --max-time 30 \
         "${SYNC_URL}/api/sync/pull?since=${last_sync}" \
         -H "Accept: application/json" \
@@ -1451,6 +1490,7 @@ migrate_json_data() {
         info "Importing events from ${EVENTS_FILE}..."
         local evt_count=0
         local evt_skipped=0
+        # shellcheck disable=SC2106
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             local e_ts e_epoch e_type e_job e_stage e_status
@@ -1484,7 +1524,8 @@ migrate_json_data() {
             j_result=$(echo "$job" | jq -r '.result // ""')
             j_dur=$(echo "$job" | jq -r '.duration // ""')
             j_at=$(echo "$job" | jq -r '.completed_at // ""')
-            local j_id="migrated-${j_issue}-$(echo "$j_at" | tr -dc '0-9' | tail -c 10)"
+            local j_id
+            j_id="migrated-${j_issue}-$(echo "$j_at" | tr -dc '0-9' | tail -c 10)"
             _db_exec "INSERT OR IGNORE INTO daemon_state (job_id, issue_number, status, result, duration, completed_at, started_at, updated_at) VALUES ('${j_id}', ${j_issue}, 'completed', '${j_result}', '${j_dur}', '${j_at}', '${j_at}', '$(now_iso)');" 2>/dev/null && job_count=$((job_count + 1))
         done < <(jq -c '.completed[]' "$DAEMON_STATE_FILE" 2>/dev/null)
 
@@ -1670,7 +1711,9 @@ show_status() {
     # Sync status
     local device_id last_push last_pull
     device_id=$(_db_query "SELECT value FROM _sync_metadata WHERE key = 'device_id';" || echo "not set")
+    # shellcheck disable=SC2034
     last_push=$(_db_query "SELECT value FROM _sync_metadata WHERE key = 'last_push_epoch';" || echo "never")
+    # shellcheck disable=SC2034
     last_pull=$(_db_query "SELECT value FROM _sync_metadata WHERE key = 'last_pull_epoch';" || echo "never")
     local unsynced_events unsynced_costs
     unsynced_events=$(_db_query "SELECT COUNT(*) FROM events WHERE synced = 0;" || echo "0")

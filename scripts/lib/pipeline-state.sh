@@ -494,6 +494,7 @@ _SW_STATE_END_
         printf 'started_at: %s\n' "${STARTED_AT:-$(now_iso)}"
         printf 'updated_at: %s\n' "$(now_iso)"
         printf 'elapsed: %s\n' "${total_dur:-0s}"
+        printf 'test_cmd: "%s"\n' "${TEST_CMD:-}"
         printf 'pr_number: %s\n' "${PR_NUMBER:-}"
         printf 'progress_comment_id: %s\n' "${PROGRESS_COMMENT_ID:-}"
         printf 'stages:\n'
@@ -539,6 +540,7 @@ resume_state() {
                 current_stage_description:*) ;; # computed field — skip on resume
                 stage_progress:*)      ;; # computed field — skip on resume
                 started_at:*)          STARTED_AT="$(echo "${line#started_at:}" | xargs)" ;;
+                test_cmd:*)            TEST_CMD="$(echo "${line#test_cmd:}" | sed 's/^ *"//;s/" *$//')" ;;
                 pr_number:*)           PR_NUMBER="$(echo "${line#pr_number:}" | xargs)" ;;
                 progress_comment_id:*) PROGRESS_COMMENT_ID="$(echo "${line#progress_comment_id:}" | xargs)" ;;
                 "  "*)

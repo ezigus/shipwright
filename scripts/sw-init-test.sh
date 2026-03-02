@@ -575,6 +575,100 @@ test_tmux_adapter_deployed() {
     fi
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 22. Zsh completions installed
+# ──────────────────────────────────────────────────────────────────────────────
+test_zsh_completions_installed() {
+    INIT_OUTPUT=$(
+        cd "$TEMP_DIR/project"
+        HOME="$TEMP_DIR/home"         TMUX=""         SHELL="/bin/zsh"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
+y
+y
+y
+y
+INPUT
+    ) || INIT_EXIT=$?
+    assert_file_exists "$TEMP_DIR/home/.zsh/completions/_shipwright" "zsh completion file installed"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 23. Zsh fpath configured in .zshrc
+# ──────────────────────────────────────────────────────────────────────────────
+test_zsh_fpath_configured() {
+    INIT_OUTPUT=$(
+        cd "$TEMP_DIR/project"
+        HOME="$TEMP_DIR/home"         TMUX=""         SHELL="/bin/zsh"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
+y
+y
+y
+y
+INPUT
+    ) || INIT_EXIT=$?
+    assert_file_contains "$TEMP_DIR/home/.zshrc" "fpath" "fpath added to .zshrc"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 24. Bash completions installed
+# ──────────────────────────────────────────────────────────────────────────────
+test_bash_completions_installed() {
+    INIT_OUTPUT=$(
+        cd "$TEMP_DIR/project"
+        HOME="$TEMP_DIR/home"         TMUX=""         SHELL="/bin/bash"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
+y
+y
+y
+y
+INPUT
+    ) || INIT_EXIT=$?
+    assert_file_exists "$TEMP_DIR/home/.local/share/bash-completion/completions/shipwright" "bash completion file installed"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 25. Fish completions installed
+# ──────────────────────────────────────────────────────────────────────────────
+test_fish_completions_installed() {
+    INIT_OUTPUT=$(
+        cd "$TEMP_DIR/project"
+        HOME="$TEMP_DIR/home"         TMUX=""         SHELL="/usr/local/bin/fish"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
+y
+y
+y
+y
+INPUT
+    ) || INIT_EXIT=$?
+    assert_file_exists "$TEMP_DIR/home/.config/fish/completions/shipwright.fish" "fish completion file installed"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 26. Completions idempotent — double install doesn't corrupt
+# ──────────────────────────────────────────────────────────────────────────────
+test_completions_idempotent() {
+    # First run with zsh
+    INIT_OUTPUT=$(
+        cd "$TEMP_DIR/project"
+        HOME="$TEMP_DIR/home"         TMUX=""         SHELL="/bin/zsh"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
+y
+y
+y
+y
+INPUT
+    ) || INIT_EXIT=$?
+    assert_file_exists "$TEMP_DIR/home/.zsh/completions/_shipwright" "zsh completion installed first run"
+
+    # Second run — should succeed without duplication
+    INIT_OUTPUT=$(
+        cd "$TEMP_DIR/project"
+        HOME="$TEMP_DIR/home"         TMUX=""         SHELL="/bin/zsh"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
+y
+y
+y
+y
+INPUT
+    ) || INIT_EXIT=$?
+    assert_exit_code 0 "second init should succeed" &&
+    assert_file_exists "$TEMP_DIR/home/.zsh/completions/_shipwright" "completion still present after second run"
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RUN ALL TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -636,6 +730,15 @@ run_test "Repair mode forces clean reinstall" test_repair_mode
 run_test "Plugin direct-clone fallback (outside tmux)" test_plugin_direct_clone_fallback
 run_test "Post-install verification" test_post_install_verification
 run_test "tmux adapter deployed" test_tmux_adapter_deployed
+echo ""
+
+# Shell Completions tests
+echo -e "${PURPLE}${BOLD}Shell Completions${RESET}"
+run_test "Zsh completions installed" test_zsh_completions_installed
+run_test "Zsh fpath configured in .zshrc" test_zsh_fpath_configured
+run_test "Bash completions installed" test_bash_completions_installed
+run_test "Fish completions installed" test_fish_completions_installed
+run_test "Completions idempotent — double install safe" test_completions_idempotent
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════

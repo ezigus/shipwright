@@ -509,7 +509,7 @@ scan_platform_refactor() {
         --argjson hack "$hack_count" \
         --argjson findings "$findings" \
         --argjson script_sizes "$script_sizes" \
-        '{timestamp:$ts,repository:$repo,counts:{hardcoded:$hc,fallback:$fb,todo:$todo,fixme:$fixme,hack:$hack},findings_sample:$findings,script_size_hotspots:$script_sizes}' 2>/dev/null)
+        '{timestamp:$ts,repository:$repo,counts:{hardcoded:$hc,fallback:$fb,todo:$todo,fixme:$fixme,hack:$hack},findings_sample:$findings,script_size_hotspots:$script_sizes}' 2>/dev/null) || true
     if [[ -n "$report" ]]; then
         echo "$report" > "$out_file"
         success "Platform refactor scan saved to: $out_file"
@@ -521,7 +521,7 @@ scan_platform_refactor() {
     else
         warn "Could not build platform-hygiene JSON (jq missing?)"
     fi
-    emit_event "hygiene_platform_refactor" "hardcoded=$hardcoded_count" "fallback=$fallback_count" "todo=$todo_count"
+    emit_event "hygiene_platform_refactor" "hardcoded=$hardcoded_count" "fallback=$fallback_count" "todo=$todo_count" || true
     return 0
 }
 

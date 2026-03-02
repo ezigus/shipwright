@@ -4,33 +4,33 @@
       "result": {
         "results": [
           {
-            "file": "architecture.json",
-            "relevance": 98,
-            "summary": "Essential for build stage: shows Command Router CLI pattern (dispatch via case + exec), Bash 3.2 conventions, atomic file writes, ERR traps, and all architectural layers required to implement the hello command correctly"
+            "file": "failures.json",
+            "relevance": 95,
+            "summary": "Contains critical failure 'output missing: intake' with 13 occurrences and high weight. Root cause identifies that sw-hello.sh is missing or suppressing the 'intake' stage output, which is the exact bug blocking the hello command implementation. Most recent occurrence: 2026-03-02T01:23:09Z."
           },
           {
-            "file": "failures.json",
-            "relevance": 76,
-            "summary": "Important for avoiding build mistakes: captures common test failures related to ERR traps, PATH issues, Bash compatibility, and script sandbox problems that could break the new hello command implementation"
+            "file": "architecture.json",
+            "relevance": 72,
+            "summary": "Defines project architecture patterns, coding conventions (set -euo pipefail, Bash 3.2 compatibility, atomic writes, ERR traps), and standard output helpers that must be followed when building the hello command. Directly applicable to correct implementation."
           },
           {
             "file": "patterns.json",
-            "relevance": 42,
-            "summary": "Provides project metadata (node/commonjs/vitest) but limited relevance since Shipwright CLI is primarily bash scripts; mainly useful for understanding non-bash components if needed"
+            "relevance": 35,
+            "summary": "Documents project metadata (test_runner: vitest, language: javascript, package_manager: npm). Limited relevance since the hello command is a bash script within a bash-based CLI tool, but useful for understanding the broader Shipwright project structure."
           },
           {
             "file": "metrics.json",
-            "relevance": 8,
-            "summary": "Empty baselines provide no actionable information for the build stage"
+            "relevance": 5,
+            "summary": "Contains empty baselines object. No actionable information for the current build stage."
           },
           {
             "file": "decisions.json",
-            "relevance": 5,
-            "summary": "Empty decision log provides no relevant context"
+            "relevance": 0,
+            "summary": "Empty decisions array. Not relevant to current build work."
           }
         ]
       },
-      "timestamp": 1772410962,
+      "timestamp": 1772414730,
       "ttl": 1800
     },
     "d41d8cd98f00b204e9800998ecf8427e": {
@@ -268,7 +268,7 @@
           }
         }
       ],
-      "timestamp": 1772409128,
+      "timestamp": 1772414734,
       "ttl": 1800
     },
     "fdbb7bc340414cf938cecd4b790fa9e2": {

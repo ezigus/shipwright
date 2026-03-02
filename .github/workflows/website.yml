@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'website/**'
+      - "website/**"
   workflow_dispatch:
 
 permissions:
@@ -53,6 +53,25 @@ jobs:
       pages: write
       id-token: write
     steps:
+      - name: Check GitHub Pages is enabled
+        id: pages_check
+        run: |
+          if gh api "repos/${{ github.repository }}/pages" --silent 2>/dev/null; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::GitHub Pages is not enabled — deploy skipped. Enable it at https://github.com/${{ github.repository }}/settings/pages (Source: GitHub Actions)."
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Deploy to GitHub Pages
         id: deployment
+        if: steps.pages_check.outputs.enabled == 'true'
         uses: actions/deploy-pages@v4
+
+      - name: Deployment skipped — Pages not enabled
+        if: steps.pages_check.outputs.enabled != 'true'
+        run: |
+          echo "::notice::Website built successfully. Deployment skipped because GitHub Pages is not enabled."
+          echo "::notice::To deploy, go to https://github.com/${{ github.repository }}/settings/pages and set Source to 'GitHub Actions'."

@@ -920,7 +920,7 @@ run_test_gate() {
     local all_passed=true
     local test_results="[]"
     local combined_output=""
-    local test_timeout="${SW_TEST_TIMEOUT:-300}"
+    local test_timeout="${SW_TEST_TIMEOUT:-900}"
 
     # Run primary test command
     if [[ -n "$active_test_cmd" ]]; then

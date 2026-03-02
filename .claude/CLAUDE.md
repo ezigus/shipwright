@@ -685,6 +685,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd-test.sh` | 899 | Validate service management on |
 | `scripts/sw-lib-audit-trail-test.sh` | 311 |  |
 | `scripts/sw-lib-compat-test.sh` | 297 | Unit tests for cross-platform helpers |
+| `scripts/sw-lib-compound-audit-test.sh` | 281 |  |
 | `scripts/sw-lib-daemon-dispatch-test.sh` | 415 | Unit tests for spawn/reap/queue |
 | `scripts/sw-lib-daemon-failure-test.sh` | 213 | Unit tests for failure handling |
 | `scripts/sw-lib-daemon-patrol-test.sh` | 343 | Unit tests for all patrol functions |

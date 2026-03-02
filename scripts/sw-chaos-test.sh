@@ -350,9 +350,7 @@ assert_pass "Poison pill handling robust"
 print_test_section "Chaos Test 11: Memory exhaustion detection"
 
 # Simulate high memory usage by creating large state
-large_state=$(jq -n '{
-  "active_jobs": [' $(for i in {1..1000}; do echo '{"issue":'$i',"pid":'$((1000 + i))'}'; [[ $i -lt 1000 ]] && echo ","; done) ']
-}')
+large_state=$(jq -n '[range(1;1001)] | map({"issue": ., "pid": (. + 1000)}) | {"active_jobs": .}')
 
 echo "$large_state" > "$STATE_FILE"
 

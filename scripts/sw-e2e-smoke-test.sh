@@ -44,6 +44,9 @@ setup_env() {
         cp "$SCRIPT_DIR/lib"/*.sh "$TEST_TEMP_DIR/scripts/lib/" 2>/dev/null || true
     fi
 
+    # ── Copy skills directory (required by skill-registry.sh) ────────────
+    [[ -d "$SCRIPT_DIR/skills" ]] && cp -r "$SCRIPT_DIR/skills" "$TEST_TEMP_DIR/scripts/skills"
+
     # ── Copy intelligence/composer scripts (pipeline sources them) ────────
     for dep in sw-intelligence.sh sw-pipeline-composer.sh sw-pipeline-vitals.sh sw-context.sh sw-github-graphql.sh sw-github-checks.sh sw-github-deploy.sh; do
         [[ -f "$SCRIPT_DIR/$dep" ]] && cp "$SCRIPT_DIR/$dep" "$TEST_TEMP_DIR/scripts/$dep"

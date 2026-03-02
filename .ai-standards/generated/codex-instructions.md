@@ -558,6 +558,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-activity.sh` | 480 | Live agent activity stream |
 | `scripts/sw-adaptive.sh` | 941 | data-driven pipeline tuning |
 | `scripts/sw-adversarial.sh` | 259 | Adversarial Agent Code Review |
+| `scripts/sw-ai.sh` | 97 | set -euo pipefail |
 | `scripts/sw-architecture-enforcer.sh` | 319 | Living Architecture Model & Enforcer |
 | `scripts/sw-auth.sh` | 610 | GitHub OAuth Authentication |
 | `scripts/sw-autonomous.sh` | 1057 | Master controller for AI-building-AI loop |
@@ -569,7 +570,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-connect.sh` | 624 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 600 | Context Engine for Pipeline Stages |
 | `scripts/sw-cost.sh` | 1013 | Token Usage & Cost Intelligence |
-| `scripts/sw-daemon.sh` | 1431 | Autonomous GitHub Issue Watcher |
+| `scripts/sw-daemon.sh` | 1449 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 510 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 1939 | SQLite Persistence Layer |
 | `scripts/sw-decide.sh` | 691 | Shipwright Autonomous Decision Engine |
@@ -595,14 +596,14 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-heartbeat.sh` | 342 | File-based agent heartbeat protocol |
 | `scripts/sw-hygiene.sh` | 725 | Repository Organization & Cleanup |
 | `scripts/sw-incident.sh` | 873 | Autonomous Incident Detection & Response |
-| `scripts/sw-init.sh` | 866 | Complete setup for Shipwright + Shipwright |
+| `scripts/sw-init.sh` | 880 | Complete setup for Shipwright + Shipwright |
 | `scripts/sw-instrument.sh` | 691 | Pipeline Instrumentation & Feedback Loops |
 | `scripts/sw-intelligence.sh` | 1523 | AI-Powered Analysis & Decision Engine |
 | `scripts/sw-jira.sh` | 628 | Jira ↔ GitHub Bidirectional Sync |
 | `scripts/sw-launchd.sh` | 703 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 643 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 353 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 3448 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 3568 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 2114 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 473 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 606 | Intelligent Model Routing & Cost Optimization |
@@ -611,7 +612,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 445 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 444 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1076 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 2882 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 2920 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 748 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 688 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 834 | Predictive & Proactive Intelligence |
@@ -653,7 +654,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-webhook.sh` | 621 | GitHub Webhook Receiver for Instant Issue Processing |
 | `scripts/sw-widgets.sh` | 528 | Embeddable Status Widgets |
 | `scripts/sw-worktree.sh` | 421 | Git worktree management for multi-agent isolation |
-| `scripts/sw` | 617 | CLI router — dispatches subcommands via exec |
+| `scripts/sw` | 621 | CLI router — dispatches subcommands via exec |
 <!-- /AUTO:core-scripts -->
 
 ### GitHub API Modules
@@ -697,6 +698,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-adaptive-test.sh` | 273 | Validate data-driven pipeline tuning |
 | `scripts/sw-adversarial-test.sh` | 297 | Validate adversarial agent code review |
 | `scripts/sw-agi-roadmap-test.sh` | 867 | Tests every feature we implemented |
+| `scripts/sw-ai-provider-test.sh` | 86 | Router + adapter normalization tests |
+| `scripts/sw-ai-test.sh` | 68 |  |
 | `scripts/sw-architecture-enforcer-test.sh` | 340 | Validate architecture model |
 | `scripts/sw-auth-test.sh` | 168 | Validate OAuth authentication commands |
 | `scripts/sw-autonomous-e2e-test.sh` | 306 | Autonomous Loop E2E Test |
@@ -729,7 +732,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-e2e-integration-test.sh` | 363 | Real Claude + Real GitHub |
 | `scripts/sw-e2e-orchestrator-test.sh` | 214 | Test suite registry & execution |
 | `scripts/sw-e2e-smoke-test.sh` | 844 | Pipeline orchestration without API keys |
-| `scripts/sw-e2e-system-test.sh` | 537 | Proves full daemon→pipeline→loop→PR flow |
+| `scripts/sw-e2e-system-test.sh` | 545 | Proves full daemon→pipeline→loop→PR flow |
 | `scripts/sw-eventbus-test.sh` | 176 | Durable event bus tests |
 | `scripts/sw-evidence-test.sh` | 214 | Unit tests for sw-evidence.sh |
 | `scripts/sw-feedback-test.sh` | 194 | Production Feedback Loop tests |
@@ -746,7 +749,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-heartbeat-test.sh` | 590 | Validate heartbeat lifecycle, |
 | `scripts/sw-hygiene-test.sh` | 247 | Repository Organization & Cleanup tests |
 | `scripts/sw-incident-test.sh` | 278 | Validate incident detection & response |
-| `scripts/sw-init-test.sh` | 658 | E2E validation of init/setup flow |
+| `scripts/sw-init-test.sh` | 761 | E2E validation of init/setup flow |
 | `scripts/sw-instrument-test.sh` | 193 | Pipeline instrumentation & feedback loops |
 | `scripts/sw-integration-claude-test.sh` | 62 | Budget-limited real Claude smoke |
 | `scripts/sw-intelligence-test.sh` | 546 | Unit tests for intelligence core |
@@ -763,11 +766,11 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-pipeline-detection-test.sh` | 624 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 410 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 193 | Unit tests for quality |
-| `scripts/sw-lib-pipeline-stages-test.sh` | 290 | Unit tests for stage functions |
+| `scripts/sw-lib-pipeline-stages-test.sh` | 309 | Unit tests for stage functions |
 | `scripts/sw-lib-pipeline-state-test.sh` | 309 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 340 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 320 | Validate agent pane log viewing, searching, |
-| `scripts/sw-loop-test.sh` | 770 | Validate continuous agent loop harness |
+| `scripts/sw-loop-test.sh` | 777 | Validate continuous agent loop harness |
 | `scripts/sw-memory-discovery-e2e-test.sh` | 419 | Memory & Discovery E2E Test |
 | `scripts/sw-memory-test.sh` | 883 | Unit tests for memory system & cost tracking |
 | `scripts/sw-mission-control-test.sh` | 174 | Validate mission control dashboard |
@@ -776,7 +779,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-oversight-test.sh` | 221 | Quality oversight board tests |
 | `scripts/sw-patrol-meta-test.sh` | 346 | Validate self-improvement patrol |
 | `scripts/sw-pipeline-composer-test.sh` | 644 | Test Suite |
-| `scripts/sw-pipeline-test.sh` | 1925 | E2E validation invoking the REAL pipeline |
+| `scripts/sw-pipeline-test.sh` | 1937 | E2E validation invoking the REAL pipeline |
 | `scripts/sw-pipeline-vitals-test.sh` | 274 | Validate pipeline health scoring |
 | `scripts/sw-pm-test.sh` | 246 | Autonomous PM Agent test suite |
 | `scripts/sw-policy-e2e-test.sh` | 299 | Verify config/policy.json is honored |

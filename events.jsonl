@@ -161,3 +161,4 @@
 {"ts":"2026-03-02T10:19:00Z","ts_epoch":1772446740,"type":"cost.budget_unconfigured","status":"unlimited"}
 {"ts":"2026-03-02T10:20:43Z","ts_epoch":1772446843,"type":"cost.budget_unconfigured","status":"unlimited"}
 {"ts":"2026-03-02T10:47:37Z","ts_epoch":1772448457,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-02T11:17:19Z","ts_epoch":1772450239,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":62,"todo":43}

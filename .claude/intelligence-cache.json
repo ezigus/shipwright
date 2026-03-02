@@ -1514,23 +1514,22 @@
       "result": {
         "complexity": 1,
         "risk_level": "low",
-        "success_probability": 98,
+        "success_probability": 99,
         "recommended_template": "fast",
-        "issue_type": "infrastructure",
+        "issue_type": "backend",
         "key_risks": [
-          "ensure bash 3.2 compatibility",
-          "maintain CLI router consistency",
-          "follow naming conventions"
+          "CLI router integration",
+          "Test harness registration"
         ],
         "implementation_hints": [
-          "create scripts/sw-hello.sh following existing command pattern",
-          "add hello handler to scripts/sw router",
-          "use info() or success() output helper",
-          "include VERSION variable at script top",
-          "verify against existing command list to avoid collisions"
+          "Review existing sw-hello.sh pattern in scripts/",
+          "Follow bash 3.2 compatibility standards from CLAUDE.md",
+          "Use standard output helpers (info(), success())",
+          "Add command dispatch entry in scripts/sw router",
+          "Register test suite in package.json if needed"
         ]
       },
-      "timestamp": 1772410030,
+      "timestamp": 1772414918,
       "ttl": 3600
     },
     "a6a09d9d85385fb5cbac6ecf38ca74d6": {
@@ -1611,89 +1610,163 @@
       "result": {
         "results": [
           {
-            "file": "architecture.json",
+            "file": "failures.json",
             "relevance": 95,
-            "summary": "Essential reference for planning. Contains Shipwright's 7-layer architecture, key design patterns (Command Router, Pipeline Orchestrator), critical bash conventions (set -euo pipefail, VERSION variable, Bash 3.2 compatibility), and all dependencies needed to implement a new CLI command following established patterns."
+            "summary": "Contains 8 documented failure patterns from previous attempts, including the critical 'output missing: intake' failure (14 occurrences, highest weight) directly related to the hello command test. Shows what the test expects and what went wrong, essential for planning the correct implementation."
           },
           {
-            "file": "failures.json (comprehensive with 8 entries)",
-            "relevance": 38,
-            "summary": "Useful for understanding common test pitfalls and failure patterns. Shows ERR trap false-positives, PATH issues in test sandbox, and timeout patterns. Relevant for planning test strategy for the hello command."
+            "file": "architecture.json",
+            "relevance": 90,
+            "summary": "Describes the Command Router pattern (CLI dispatcher via case statement + exec to subcommand scripts) and all Shipwright conventions (bash 3.2 compatible, set -euo pipefail, VERSION variable at top, atomic writes, error handling patterns). Critical for planning proper implementation."
           },
           {
-            "file": "patterns.json (with repo/conventions data)",
-            "relevance": 22,
-            "summary": "Minimal useful data; mostly empty fields. Shows import_style convention (commonjs) but lacks detail on source_dir and test patterns. Low practical value for planning a CLI command."
+            "file": "patterns.json",
+            "relevance": 35,
+            "summary": "Documents project structure and conventions (import_style: commonjs, test patterns). Most fields are 'unknown' but shows baseline conventions that might apply to the hello command."
           },
           {
             "file": "metrics.json",
-            "relevance": 5,
-            "summary": "Empty baseline data. Not relevant for planning phase."
+            "relevance": 20,
+            "summary": "Shows baseline build_duration_s of 2826 seconds (~47 minutes) which could inform iteration and test expectations, but not directly relevant to feature planning."
           },
           {
-            "file": "global.json",
-            "relevance": 5,
-            "summary": "Empty cross-repo learnings and common patterns. No actionable content for planning."
+            "file": "failures.json",
+            "relevance": 15,
+            "summary": "Documents shell-init getcwd error in test environment. Potentially relevant to understanding environment setup issues but not specific to the hello command feature."
           }
         ]
       },
-      "timestamp": 1772410665,
+      "timestamp": 1772415183,
       "ttl": 1800
     },
     "7f1b7b3199e94234f28b5265553b0bd6": {
       "result": {
         "results": [
           {
-            "file": "architecture.json",
-            "relevance": 95,
-            "summary": "Contains shipwright's 7-layer architecture, Command Router CLI pattern, bash 3.2 conventions (set -euo pipefail), and atomic file write patterns essential for implementing the hello command correctly and passing architectural validation."
-          },
-          {
             "file": "failures.json",
-            "relevance": 65,
-            "summary": "Documents 8 past test/validation failures in shipwright (ERR trap false positives, timeout issues, PATH problems, fork limits) that inform what validation checks might reject a plan and how to structure the implementation to avoid them."
+            "relevance": 95,
+            "summary": "Contains 'output missing: intake' failure (14 occurrences, weight 127834.04) — directly explains plan validation rejection. Root cause: hello command test expects 'intake' in output but implementation is missing it. Last seen 2026-03-02T01:27:27Z during this exact feature work."
           },
           {
-            "file": "patterns.json",
-            "relevance": 22,
-            "summary": "Contains minimal project metadata (import style, repo type) with incomplete conventions; provides limited practical guidance for the implementation task."
+            "file": "architecture.json",
+            "relevance": 82,
+            "summary": "Documents Command Router pattern, script conventions (set -euo pipefail, VERSION constant, ERR traps), and Bash 3.2 compatibility rules. Defines what plan validation checks against for hello command implementation correctness."
+          },
+          {
+            "file": "metrics.json",
+            "relevance": 48,
+            "summary": "Baseline build_duration_s: 2826 provides performance expectations. Less directly relevant to plan validation failures but offers context on acceptable implementation metrics if timing is part of validation criteria."
           }
         ]
       },
-      "timestamp": 1772410794,
+      "timestamp": 1772415391,
       "ttl": 1800
     },
     "42ab65136e54db9a0d88c4ecd6ed5706": {
       "result": {
         "results": [
           {
-            "file": "architecture.json",
-            "relevance": 95,
-            "summary": "Defines Shipwright's 7-layer architecture, Command Router CLI pattern (case statement + exec), Bash 3.2 compatibility requirements, set -euo pipefail + atomic file write conventions, ERR trap patterns, and test harness patterns. Essential for implementing hello command following established patterns."
-          },
-          {
             "file": "failures.json",
-            "relevance": 72,
-            "summary": "Documents 7 failure patterns from recent pipeline runs: ERR trap false positives on intentional non-zero exits, test sandbox fork limits, error detection regex false-positives matching passing tests, and PATH issues with dirname. Directly applicable to avoiding similar test stage failures."
+            "relevance": 95,
+            "summary": "Contains 'output missing: intake' failure pattern (14 occurrences, weight 431439.88) — this is the exact blocker for the hello command build stage. Directly identifies the root cause: hello command implementation missing intake stage output that tests expect."
           },
           {
-            "file": "patterns.json",
-            "relevance": 28,
-            "summary": "Minimal local repo patterns captured on 2026-03-01, shows commonjs import style and empty source/test patterns. Provides baseline project structure context but lacks specifics for CLI command implementation."
+            "file": "architecture.json",
+            "relevance": 90,
+            "summary": "Documents the Command Router pattern and bash conventions required for all Shipwright commands: set -euo pipefail, VERSION variable, bash 3.2 compatibility, ERR trap, standard output helpers. Essential architectural context for correct hello command implementation."
           },
           {
             "file": "metrics.json",
-            "relevance": 8,
-            "summary": "Empty baselines offer no specific guidance but indicate the memory system is tracking performance data that could inform future iterations."
+            "relevance": 65,
+            "summary": "Baseline build_duration_s: 2826 seconds (~47 minutes). Provides performance expectations for the build stage; relevant for understanding timing targets and detecting regressions."
           },
           {
-            "file": "global.json",
-            "relevance": 5,
-            "summary": "Empty cross-repo learnings and common patterns. Indicates global learning system exists but no transferable patterns captured yet."
+            "file": "failures.json",
+            "relevance": 45,
+            "summary": "ERR trap false-positive in test output (sw-incident-test.sh:223). Shows a pattern of ERR trap issues in test files that could affect hello command test reliability; less directly relevant but contextual for build stage stability."
+          },
+          {
+            "file": "failures.json",
+            "relevance": 35,
+            "summary": "PATH/dirname issues in test sandbox (sw-db-test.sh). Shows environment configuration concerns; low direct relevance to hello command but useful context for test environment reliability."
           }
         ]
       },
-      "timestamp": 1772410908,
+      "timestamp": 1772415853,
+      "ttl": 1800
+    },
+    "27e22832993de5a6c43f9234fd7708d0": {
+      "result": {
+        "estimated_iterations": 1
+      },
+      "timestamp": 1772414967,
+      "ttl": 1800
+    },
+    "66d5576c2296018c5d99130f4d778b58": {
+      "result": {
+        "estimated_cost_usd": 0.05,
+        "estimated_iterations": 1,
+        "estimated_tokens": 45000,
+        "likely_failure_stage": "none",
+        "confidence": 95
+      },
+      "timestamp": 1772415016,
+      "ttl": 3600
+    },
+    "9900f804d8911e898806f7c6dbf60337": {
+      "result": {
+        "results": [
+          {
+            "file": "architecture.json",
+            "relevance": 95,
+            "summary": "Essential for design stage. Documents the Command Router pattern (case statement + exec), Bash 3.2 conventions (set -euo pipefail, VERSION constant, ERR traps), standard output helpers, and the modular script architecture that the hello command must follow."
+          },
+          {
+            "file": "failures.json",
+            "relevance": 88,
+            "summary": "Critical historical context. The 'output missing: intake' failure (weight 127834, 14 occurrences) shows the previous implementation failed because test expected 'intake' stage output. Directly informs design decisions for what output format is required."
+          },
+          {
+            "file": "metrics.json",
+            "relevance": 35,
+            "summary": "Provides baseline build_duration_s (2826s) for performance expectations, useful for understanding time constraints during design but not critical for architectural decisions."
+          },
+          {
+            "file": "patterns.json",
+            "relevance": 20,
+            "summary": "Captured project patterns for this repo are mostly empty (unknown project type, framework, language), providing minimal guidance for design stage. Relies instead on architecture.json for conventions."
+          },
+          {
+            "file": "decisions.json",
+            "relevance": 5,
+            "summary": "All decision records are empty, providing no historical design decisions or trade-offs to inform the current design stage."
+          }
+        ]
+      },
+      "timestamp": 1772415671,
+      "ttl": 1800
+    },
+    "fbb85f0dfd057f5eb6786271b07c5151": {
+      "result": {
+        "results": [
+          {
+            "file": "failures.json",
+            "relevance": 95,
+            "summary": "Contains 8 failure patterns including 'output missing: intake' (weight: 431439.88) from hello command test cycles. Shows actual rejected approaches: test output format mismatches, ERR trap false-positives, timeout issues. Directly documents what didn't work and root causes."
+          },
+          {
+            "file": "architecture.json",
+            "relevance": 88,
+            "summary": "Defines accepted design patterns (Command Router pattern, separate script files per command) and 10 mandatory conventions (set -euo pipefail, Bash 3.2 compatible, atomic writes). Implicitly rejects anti-patterns that violate these conventions."
+          },
+          {
+            "file": "metrics.json",
+            "relevance": 25,
+            "summary": "Provides baseline build_duration_s metric (2826s). Minimal relevance to design approach evaluation; primarily useful for performance benchmarking, not for understanding rejected patterns or anti-patterns."
+          }
+        ]
+      },
+      "timestamp": 1772415725,
       "ttl": 1800
     }
   }

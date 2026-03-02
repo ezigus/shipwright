@@ -381,9 +381,13 @@ invoke_pipeline() {
     PIPELINE_OUTPUT=""
     PIPELINE_EXIT=0
 
-    # Invoke the REAL pipeline script as a subprocess
+    # Invoke the REAL pipeline script as a subprocess.
+    # Redirect HOME so emit_event writes events.jsonl to the temp dir rather than
+    # the real ~/.shipwright/ (which may be outside sandbox write allowlists).
     PIPELINE_OUTPUT=$(
         cd "$TEMP_DIR/project"
+        HOME="$TEMP_DIR" \
+        EVENTS_FILE="$TEMP_DIR/events.jsonl" \
         PATH="$TEMP_DIR/bin:$PATH" \
         bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
     ) || PIPELINE_EXIT=$?

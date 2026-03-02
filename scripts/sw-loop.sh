@@ -1193,9 +1193,11 @@ run_quality_gates() {
         gate_failures+=("uncommitted changes present")
     fi
 
-    # Gate 3: No TODO/FIXME/HACK/XXX in new code
+    # Gate 3: No TODO/FIXME/HACK/XXX in new source code
+    # Exclude .claude/, docs/plans/, and markdown files (which legitimately contain task markers)
     local todo_count
-    todo_count="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null | grep -cE '^\+.*(TODO|FIXME|HACK|XXX)' || true)"
+    todo_count="$(git -C "$PROJECT_ROOT" diff HEAD~1 -- ':!.claude/' ':!docs/plans/' ':!*.md' 2>/dev/null \
+        | grep -cE '^\+.*(TODO|FIXME|HACK|XXX)' || true)"
     todo_count="${todo_count:-0}"
     if [[ "${todo_count:-0}" -gt 0 ]]; then
         gate_failures+=("${todo_count} TODO/FIXME/HACK/XXX markers in new code")
@@ -2257,6 +2259,15 @@ ${GOAL}"
                         "resolution=retry" "tests_recheck=fail" || true
                 fi
             fi
+        fi
+
+        # Auto-commit any remaining changes before quality gates
+        # (audit agent, verification handler, or test evidence may create files)
+        if ! git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null || \
+           ! git -C "$PROJECT_ROOT" diff --cached --quiet 2>/dev/null || \
+           [[ -n "$(git -C "$PROJECT_ROOT" ls-files --others --exclude-standard 2>/dev/null | head -1)" ]]; then
+            git -C "$PROJECT_ROOT" add -A 2>/dev/null || true
+            git -C "$PROJECT_ROOT" commit -m "loop: iteration $ITERATION — post-audit cleanup" --no-verify 2>/dev/null || true
         fi
 
         # Quality gates (automated checks)

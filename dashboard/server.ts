@@ -337,13 +337,14 @@ function sessionCookie(sessionId: string): string {
   return `fleet_session=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
 }
 
-function isLocalConnection(req: Request): boolean {
-  const host = req.headers.get("host") || "";
-  return (
-    host.startsWith("localhost:") ||
-    host.startsWith("127.0.0.1:") ||
-    host.startsWith("[::1]:")
-  );
+function isLocalConnection(
+  req: Request,
+  server: ReturnType<typeof Bun.serve>,
+): boolean {
+  const ip = server.requestIP(req);
+  if (!ip) return false;
+  const addr = ip.address;
+  return addr === "127.0.0.1" || addr === "::1" || addr === "0.0.0.0";
 }
 
 function clearSessionCookie(): string {
@@ -2705,7 +2706,7 @@ const server = Bun.serve({
     // ── WebSocket Auth gate ──────────────────────────────────────
     // WebSocket always requires authentication (unless local connection)
     if (pathname === "/ws" || pathname === "/ws/events") {
-      const isLocal = isLocalConnection(req);
+      const isLocal = isLocalConnection(req, server);
       if (!isLocal) {
         const session = getSession(req);
         if (!session) {

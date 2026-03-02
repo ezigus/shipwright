@@ -1856,9 +1856,9 @@ stage_audit() {
         local baseline_true_count=0
         local current_true_count=0
 
-        # Baseline (before changes)
+        # Baseline (before changes) — use git grep against the base tree, not the working tree
         if git rev-parse "${BASE_BRANCH:-main}" >/dev/null 2>&1; then
-            baseline_true_count=$(git show "${BASE_BRANCH:-main}:." 2>/dev/null | grep -r "|| true" 2>/dev/null | wc -l)
+            baseline_true_count=$(git grep -c "|| true" "${BASE_BRANCH:-main}" -- "*.sh" 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
         fi
 
         # Current

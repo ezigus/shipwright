@@ -580,7 +580,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-doc-fleet.sh` | 815 | Documentation Fleet Orchestrator |
 | `scripts/sw-docs-agent.sh` | 525 | Auto-sync README, wiki, API docs |
 | `scripts/sw-docs.sh` | 626 | Documentation Keeper |
-| `scripts/sw-doctor.sh` | 1247 | Validate Shipwright setup |
+| `scripts/sw-doctor.sh` | 1246 | Validate Shipwright setup |
 | `scripts/sw-dora.sh` | 605 | DORA Metrics Dashboard with Engineering Intelligence |
 | `scripts/sw-durable.sh` | 708 | Durable Workflow Engine |
 | `scripts/sw-e2e-orchestrator.sh` | 535 | Test suite registry & execution |
@@ -595,7 +595,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-heartbeat.sh` | 342 | File-based agent heartbeat protocol |
 | `scripts/sw-hygiene.sh` | 725 | Repository Organization & Cleanup |
 | `scripts/sw-incident.sh` | 873 | Autonomous Incident Detection & Response |
-| `scripts/sw-init.sh` | 867 | Complete setup for Shipwright + Shipwright |
+| `scripts/sw-init.sh` | 866 | Complete setup for Shipwright + Shipwright |
 | `scripts/sw-instrument.sh` | 691 | Pipeline Instrumentation & Feedback Loops |
 | `scripts/sw-intelligence.sh` | 1523 | AI-Powered Analysis & Decision Engine |
 | `scripts/sw-jira.sh` | 628 | Jira ↔ GitHub Bidirectional Sync |

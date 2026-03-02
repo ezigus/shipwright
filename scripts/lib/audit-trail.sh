@@ -240,6 +240,35 @@ EOF
     echo "- Iteration $iteration completed"
   done
 
+  # Compound audit findings section
+  local compound_events
+  compound_events=$(grep '"type":"compound.finding"' "$jsonl_file" 2>/dev/null || true)
+  if [[ -n "$compound_events" ]]; then
+    cat <<'EOF'
+
+## Compound Audit Findings
+
+EOF
+    echo "$compound_events" | while IFS= read -r line; do
+      local sev file desc
+      sev=$(echo "$line" | grep -o '"severity":"[^"]*' | cut -d'"' -f4)
+      file=$(echo "$line" | grep -o '"file":"[^"]*' | cut -d'"' -f4)
+      desc=$(echo "$line" | grep -o '"description":"[^"]*' | cut -d'"' -f4)
+      echo "- **[$sev]** \`$file\`: $desc"
+    done
+
+    # Convergence summary
+    local converge_line
+    converge_line=$(grep '"type":"compound.converged"' "$jsonl_file" 2>/dev/null | tail -1 || true)
+    if [[ -n "$converge_line" ]]; then
+      local reason cycles
+      reason=$(echo "$converge_line" | grep -o '"reason":"[^"]*' | cut -d'"' -f4)
+      cycles=$(echo "$converge_line" | grep -o '"total_cycles":"[^"]*' | cut -d'"' -f4)
+      echo ""
+      echo "**Converged** after ${cycles} cycle(s): ${reason}"
+    fi
+  fi
+
   cat <<'EOF'
 
 ---

@@ -81,6 +81,26 @@ result=$(detect_test_cmd)
 assert_eq "npm 'no test specified' defaults to npm test" "npm test" "$result"
 rm -f "$PROJECT_ROOT/package.json"
 
+# Regression: node_modules/dep/package.json must NOT be used when root package.json exists
+mkdir -p "$PROJECT_ROOT/node_modules/jest-runtime"
+echo '{"name":"jest-runtime","version":"29.0.0"}' > "$PROJECT_ROOT/node_modules/jest-runtime/package.json"
+cat > "$PROJECT_ROOT/package.json" <<'JSON'
+{"scripts":{"test":"jest --coverage"}}
+JSON
+result=$(detect_test_cmd)
+assert_eq "Root package.json wins over node_modules dep (no cd prefix)" "npm test" "$result"
+rm -f "$PROJECT_ROOT/package.json"
+rm -rf "$PROJECT_ROOT/node_modules"
+
+# Regression: nested package.json outside node_modules (no root package.json) → cd prefix
+mkdir -p "$PROJECT_ROOT/subapp"
+cat > "$PROJECT_ROOT/subapp/package.json" <<'JSON'
+{"scripts":{"test":"jest"}}
+JSON
+result=$(detect_test_cmd)
+assert_eq "Nested-only package.json produces cd prefix" "(cd -- subapp && npm test)" "$result"
+rm -rf "$PROJECT_ROOT/subapp"
+
 # SwiftPM defaults to helper script with Packages target
 touch "$PROJECT_ROOT/Package.swift"
 result=$(detect_test_cmd)

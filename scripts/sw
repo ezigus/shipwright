@@ -603,7 +603,7 @@ main() {
             show_version
             ;;
         hello)
-            echo "hello world"
+            exec "$SCRIPT_DIR/sw-hello.sh" "$@"
             ;;
         *)
             error "Unknown command: ${cmd}"

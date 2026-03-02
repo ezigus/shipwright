@@ -493,6 +493,7 @@ setup_dirs() {
     STATE_DIR="$PROJECT_ROOT/.claude"
     STATE_FILE="$STATE_DIR/pipeline-state.md"
     ARTIFACTS_DIR="$STATE_DIR/pipeline-artifacts"
+    export ARTIFACTS_DIR  # Export so child processes (sw-loop.sh) can write audit events
     TASKS_FILE="$STATE_DIR/pipeline-tasks.md"
     mkdir -p "$STATE_DIR" "$ARTIFACTS_DIR"
     export SHIPWRIGHT_PIPELINE_ID="pipeline-$$-${ISSUE_NUMBER:-0}"
@@ -1187,11 +1188,16 @@ Focus on fixing the failing tests while keeping all passing tests working."
 
             update_status "running" "build"
             record_stage_start "build"
+            type audit_emit >/dev/null 2>&1 && audit_emit "stage.start" "stage=build" || true
 
+            local build_start_epoch
+            build_start_epoch=$(date +%s)
             if run_stage_with_retry "build"; then
                 mark_stage_complete "build"
                 local timing
                 timing=$(get_stage_timing "build")
+                local build_dur_s=$(( $(date +%s) - build_start_epoch ))
+                type audit_emit >/dev/null 2>&1 && audit_emit "stage.complete" "stage=build" "verdict=pass" "duration_s=${build_dur_s}" || true
                 success "Stage ${BOLD}build${RESET} complete ${DIM}(${timing})${RESET}"
                 if type pipeline_emit_progress_snapshot >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
                     local _diff_count
@@ -1205,6 +1211,8 @@ Focus on fixing the failing tests while keeping all passing tests working."
                 fi
             else
                 mark_stage_failed "build"
+                local build_dur_s=$(( $(date +%s) - build_start_epoch ))
+                type audit_emit >/dev/null 2>&1 && audit_emit "stage.complete" "stage=build" "verdict=fail" "duration_s=${build_dur_s}" || true
                 GOAL="$original_goal"
                 return 1
             fi
@@ -1212,11 +1220,16 @@ Focus on fixing the failing tests while keeping all passing tests working."
         else
             update_status "running" "build"
             record_stage_start "build"
+            type audit_emit >/dev/null 2>&1 && audit_emit "stage.start" "stage=build" || true
 
+            local build_start_epoch
+            build_start_epoch=$(date +%s)
             if run_stage_with_retry "build"; then
                 mark_stage_complete "build"
                 local timing
                 timing=$(get_stage_timing "build")
+                local build_dur_s=$(( $(date +%s) - build_start_epoch ))
+                type audit_emit >/dev/null 2>&1 && audit_emit "stage.complete" "stage=build" "verdict=pass" "duration_s=${build_dur_s}" || true
                 success "Stage ${BOLD}build${RESET} complete ${DIM}(${timing})${RESET}"
                 if type pipeline_emit_progress_snapshot >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
                     local _diff_count
@@ -1230,6 +1243,8 @@ Focus on fixing the failing tests while keeping all passing tests working."
                 fi
             else
                 mark_stage_failed "build"
+                local build_dur_s=$(( $(date +%s) - build_start_epoch ))
+                type audit_emit >/dev/null 2>&1 && audit_emit "stage.complete" "stage=build" "verdict=fail" "duration_s=${build_dur_s}" || true
                 return 1
             fi
         fi

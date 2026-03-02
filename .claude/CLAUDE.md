@@ -659,7 +659,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-e2e-integration-test.sh` | 352 | Real Claude + Real GitHub |
 | `scripts/sw-e2e-orchestrator-test.sh` | 157 | Test suite registry & execution |
 | `scripts/sw-e2e-smoke-test.sh` | 835 | Pipeline orchestration without API keys |
-| `scripts/sw-e2e-system-test.sh` | 463 | Proves full daemon→pipeline→loop→PR flow |
+| `scripts/sw-e2e-system-test.sh` | 465 | Proves full daemon→pipeline→loop→PR flow |
 | `scripts/sw-eventbus-test.sh` | 155 | Durable event bus tests |
 | `scripts/sw-evidence-test.sh` | 214 | Unit tests for sw-evidence.sh |
 | `scripts/sw-feedback-test.sh` | 176 | Production Feedback Loop tests |

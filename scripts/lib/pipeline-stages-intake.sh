@@ -1,136 +1,7 @@
-#\!/usr/bin/env bash
-# pipeline-stages-intake.sh — Stage implementations
-# Source from sw-pipeline.sh. Requires all pipeline globals and state/github/detection/quality modules.
-set -euo pipefail
-
-# Module guard - prevent double-sourcing
-[[ -n "${PIPELINE_STAGES_INTAKE_LOADED:-}" ]] && return 0
-PIPELINE_STAGES_INTAKE_LOADED=1
-
-prune_context_section() {
-    local section_name="${1:-section}"
-    local content="${2:-}"
-    local max_chars="${3:-5000}"
-
-    [[ -z "$content" ]] && return 0
-
-    local content_len=${#content}
-    if [[ "$content_len" -le "$max_chars" ]]; then
-        printf '%s' "$content"
-        return 0
-    fi
-
-    # JSON content — try jq summary extraction
-    local first_char="${content:0:1}"
-    if [[ "$first_char" == "{" || "$first_char" == "[" ]]; then
-        local summary=""
-        # Try extracting summary/results fields
-        summary=$(printf '%s' "$content" | jq -r '
-            if type == "object" then
-                to_entries | map(
-                    if (.value | type) == "array" then
-                        "\(.key): \(.value | length) items"
-                    elif (.value | type) == "object" then
-                        "\(.key): \(.value | keys | join(", "))"
-                    else
-                        "\(.key): \(.value)"
-                    end
-                ) | join("\n")
-            elif type == "array" then
-                .[:5] | map(tostring) | join("\n")
-            else . end
-        ' 2>/dev/null) || true
-
-        if [[ -n "$summary" && ${#summary} -le "$max_chars" ]]; then
-            printf '%s' "$summary"
-            return 0
-        fi
-        # jq failed or still too large — fall through to text truncation
-    fi
-
-    # Text content — sandwich approach (first N + last N lines)
-    local line_count=0
-    line_count=$(printf '%s\n' "$content" | wc -l | xargs)
-
-    # Calculate how many lines to keep from each end
-    # Approximate chars-per-line to figure out line budget
-    local avg_chars_per_line=80
-    if [[ "$line_count" -gt 0 ]]; then
-        avg_chars_per_line=$(( content_len / line_count ))
-        [[ "$avg_chars_per_line" -lt 20 ]] && avg_chars_per_line=20
-    fi
-    local total_lines_budget=$(( max_chars / avg_chars_per_line ))
-    [[ "$total_lines_budget" -lt 4 ]] && total_lines_budget=4
-    local half=$(( total_lines_budget / 2 ))
-
-    local head_part=""
-    local tail_part=""
-    head_part=$(printf '%s\n' "$content" | head -"$half")
-    tail_part=$(printf '%s\n' "$content" | tail -"$half")
-
-    printf '%s\n[... %s truncated: %d→%d chars ...]\n%s' \
-        "$head_part" "$section_name" "$content_len" "$max_chars" "$tail_part"
-}
-
-
-guard_prompt_size() {
-    local stage_name="${1:-stage}"
-    local prompt="${2:-}"
-    local max_chars="${3:-$PIPELINE_PROMPT_BUDGET}"
-
-    local prompt_len=${#prompt}
-    if [[ "$prompt_len" -le "$max_chars" ]]; then
-        printf '%s' "$prompt"
-        return 0
-    fi
-
-    warn "${stage_name} prompt too large (${prompt_len} chars, budget ${max_chars}) — truncating"
-    emit_event "pipeline.prompt_truncated" \
-        "stage=$stage_name" \
-        "original=$prompt_len" \
-        "budget=$max_chars" 2>/dev/null || true
-
-    printf '%s\n\n... [CONTEXT TRUNCATED: %s prompt exceeded %d char budget. Focus on the goal and requirements.]' \
-        "${prompt:0:$max_chars}" "$stage_name" "$max_chars"
-}
-
-
-_safe_base_log() {
-    local branch="${BASE_BRANCH:-main}"
-    git rev-parse --verify "$branch" >/dev/null 2>&1 || { echo ""; return 0; }
-    git log "$@" "${branch}..HEAD" 2>/dev/null || true
-}
-
-
-_safe_base_diff() {
-    local branch="${BASE_BRANCH:-main}"
-    git rev-parse --verify "$branch" >/dev/null 2>&1 || { git diff HEAD~5 "$@" 2>/dev/null || true; return 0; }
-    git diff "${branch}...HEAD" "$@" 2>/dev/null || true
-}
-
-
-show_stage_preview() {
-    local stage_id="$1"
-    echo ""
-    echo -e "${PURPLE}${BOLD}━━━ Stage: ${stage_id} ━━━${RESET}"
-    case "$stage_id" in
-        intake)   echo -e "  Fetch issue, detect task type, create branch, self-assign" ;;
-        plan)     echo -e "  Generate plan via Claude, post task checklist to issue" ;;
-        design)   echo -e "  Generate Architecture Decision Record (ADR), evaluate alternatives" ;;
-        build)    echo -e "  Delegate to ${CYAN}shipwright loop${RESET} for autonomous building" ;;
-        test_first) echo -e "  Generate tests from requirements (TDD mode) before implementation" ;;
-        test)     echo -e "  Run test suite and check coverage" ;;
-        review)   echo -e "  AI code review on the diff, post findings" ;;
-        compound_quality) echo -e "  Adversarial review, negative tests, e2e, DoD audit" ;;
-        pr)       echo -e "  Create GitHub PR with labels, reviewers, milestone" ;;
-        merge)    echo -e "  Wait for CI checks, merge PR, optionally delete branch" ;;
-        deploy)   echo -e "  Deploy to staging/production with rollback" ;;
-        validate) echo -e "  Smoke tests, health checks, close issue" ;;
-        monitor)  echo -e "  Post-deploy monitoring, health checks, auto-rollback" ;;
-    esac
-    echo ""
-}
-
+# pipeline-stages-intake.sh — intake, plan, design stages
+# Source from pipeline-stages.sh. Requires all pipeline globals and dependencies.
+[[ -n "${_PIPELINE_STAGES_INTAKE_LOADED:-}" ]] && return 0
+_PIPELINE_STAGES_INTAKE_LOADED=1
 
 stage_intake() {
     CURRENT_STAGE_ID="intake"
@@ -223,11 +94,819 @@ stage_intake() {
           issue:$issue, language:$lang, test_cmd:$test_cmd,
           labels:$labels, milestone:$milestone, body:$body}')"
 
+    # 7. AI-powered skill analysis (replaces static classification when available)
+    if type skill_analyze_issue >/dev/null 2>&1; then
+        local _intel_json=""
+        [[ -f "$ARTIFACTS_DIR/intelligence-analysis.json" ]] && _intel_json=$(cat "$ARTIFACTS_DIR/intelligence-analysis.json" 2>/dev/null || true)
+
+        if skill_analyze_issue "$GOAL" "${ISSUE_BODY:-}" "${ISSUE_LABELS:-}" "$ARTIFACTS_DIR" "$_intel_json" 2>/dev/null; then
+            info "Skill analysis: AI-powered skill plan written to skill-plan.json"
+            # INTELLIGENCE_ISSUE_TYPE and INTELLIGENCE_COMPLEXITY are updated by skill_analyze_issue
+        else
+            info "Skill analysis: LLM unavailable — using label-based classification"
+        fi
+    fi
+
     log_stage "intake" "Goal: $GOAL
 Type: $TASK_TYPE → template: $suggested_template
 Branch: $GIT_BRANCH
 Language: $project_lang
-Test cmd: ${TEST_CMD:-none detected}"
+Test cmd: ${TEST_CMD:-none detected}
+Issue type: ${INTELLIGENCE_ISSUE_TYPE:-backend}"
 }
 
+stage_plan() {
+    CURRENT_STAGE_ID="plan"
+    # Consume retry context if this is a retry attempt
+    local _retry_ctx="${ARTIFACTS_DIR}/.retry-context-plan.md"
+    local _retry_hints=""
+    if [[ -s "$_retry_ctx" ]]; then
+        _retry_hints=$(cat "$_retry_ctx" 2>/dev/null || true)
+        rm -f "$_retry_ctx"  # consumed
+    fi
+    local plan_file="$ARTIFACTS_DIR/plan.md"
 
+    if ! command -v claude >/dev/null 2>&1; then
+        error "Claude CLI not found — cannot generate plan"
+        return 1
+    fi
+
+    info "Generating implementation plan..."
+
+    # ── Gather context bundle (if context engine available) ──
+    local context_script="${SCRIPT_DIR}/sw-context.sh"
+    if [[ -x "$context_script" ]]; then
+        "$context_script" gather --goal "$GOAL" --stage plan 2>/dev/null || true
+    fi
+
+    # Gather rich architecture context (call-graph, dependencies)
+    local arch_context=""
+    if type gather_architecture_context &>/dev/null; then
+        arch_context=$(gather_architecture_context "${PROJECT_ROOT:-.}" 2>/dev/null || true)
+    fi
+
+    # Build rich prompt with all available context
+    local plan_prompt="You are an autonomous development agent. Analyze this codebase and create a detailed implementation plan.
+
+## Goal
+${GOAL}
+"
+
+    # Add issue context
+    if [[ -n "$ISSUE_BODY" ]]; then
+        plan_prompt="${plan_prompt}
+## Issue Description
+${ISSUE_BODY}
+"
+    fi
+
+    # Inject architecture context (import graph, modules, test map)
+    if [[ -n "$arch_context" ]]; then
+        arch_context=$(prune_context_section "architecture" "$arch_context" 5000)
+        plan_prompt="${plan_prompt}
+## Architecture Context
+${arch_context}
+"
+    fi
+
+    # Inject context bundle from context engine (if available)
+    local _context_bundle="${ARTIFACTS_DIR}/context-bundle.md"
+    if [[ -f "$_context_bundle" ]]; then
+        local _cb_content
+        _cb_content=$(cat "$_context_bundle" 2>/dev/null | head -100 || true)
+        _cb_content=$(prune_context_section "context-bundle" "$_cb_content" 8000)
+        if [[ -n "$_cb_content" ]]; then
+            plan_prompt="${plan_prompt}
+## Pipeline Context
+${_cb_content}
+"
+        fi
+    fi
+
+    # Inject intelligence memory context for similar past plans
+    if type intelligence_search_memory >/dev/null 2>&1; then
+        local plan_memory
+        plan_memory=$(intelligence_search_memory "plan stage for ${TASK_TYPE:-feature}: ${GOAL:-}" "${HOME}/.shipwright/memory" 5 2>/dev/null) || true
+        if [[ -n "$plan_memory" && "$plan_memory" != *'"results":[]'* && "$plan_memory" != *'"error"'* ]]; then
+            local memory_summary
+            memory_summary=$(echo "$plan_memory" | jq -r '.results[]? | "- \(.)"' 2>/dev/null | head -10 || true)
+            memory_summary=$(prune_context_section "memory" "$memory_summary" 10000)
+            if [[ -n "$memory_summary" ]]; then
+                plan_prompt="${plan_prompt}
+## Historical Context (from previous pipelines)
+Previous similar issues were planned as:
+${memory_summary}
+"
+            fi
+        fi
+    fi
+
+    # Self-aware pipeline: inject hint when plan stage has been failing recently
+    local plan_hint
+    plan_hint=$(get_stage_self_awareness_hint "plan" 2>/dev/null || true)
+    if [[ -n "$plan_hint" ]]; then
+        plan_prompt="${plan_prompt}
+## Self-Assessment (recent plan stage performance)
+${plan_hint}
+"
+    fi
+
+    # Inject retry context from previous failed attempt
+    if [[ -n "$_retry_hints" ]]; then
+        plan_prompt="${plan_prompt}
+## Previous Attempt Analysis (RETRY)
+This stage previously failed. Analysis of the failure:
+${_retry_hints}
+
+Use this analysis to avoid repeating the same mistake. Address the root cause in your approach.
+"
+    fi
+
+    # Inject cross-pipeline discoveries (from other concurrent/similar pipelines)
+    if [[ -x "$SCRIPT_DIR/sw-discovery.sh" ]]; then
+        local plan_discoveries
+        plan_discoveries=$("$SCRIPT_DIR/sw-discovery.sh" inject "*.md,*.json" 2>/dev/null | head -20 || true)
+        plan_discoveries=$(prune_context_section "discoveries" "$plan_discoveries" 3000)
+        if [[ -n "$plan_discoveries" ]]; then
+            plan_prompt="${plan_prompt}
+## Discoveries from Other Pipelines
+${plan_discoveries}
+"
+        fi
+    fi
+
+    # Inject architecture patterns from intelligence layer
+    local repo_hash_plan
+    repo_hash_plan=$(echo -n "$PROJECT_ROOT" | shasum -a 256 2>/dev/null | cut -c1-12 || echo "unknown")
+    local arch_file_plan="${HOME}/.shipwright/memory/${repo_hash_plan}/architecture.json"
+    if [[ -f "$arch_file_plan" ]]; then
+        local arch_patterns
+        arch_patterns=$(jq -r '
+            "Language: \(.language // "unknown")",
+            "Framework: \(.framework // "unknown")",
+            "Patterns: \((.patterns // []) | join(", "))",
+            "Rules: \((.rules // []) | join("; "))"
+        ' "$arch_file_plan" 2>/dev/null || true)
+        arch_patterns=$(prune_context_section "intelligence" "$arch_patterns" 5000)
+        if [[ -n "$arch_patterns" ]]; then
+            plan_prompt="${plan_prompt}
+## Architecture Patterns
+${arch_patterns}
+"
+        fi
+    fi
+
+    # Inject skill prompts based on issue type classification
+    # Prefer adaptive selection when available (combines body analysis + complexity weighting)
+    if type skill_select_adaptive >/dev/null 2>&1; then
+        local _skill_files _skill_prompts
+        _skill_files=$(skill_select_adaptive "${INTELLIGENCE_ISSUE_TYPE:-backend}" "plan" "${ISSUE_BODY:-}" "${INTELLIGENCE_COMPLEXITY:-5}" 2>/dev/null || true)
+        if [[ -n "$_skill_files" ]]; then
+            # Load content from skill files
+            _skill_prompts=$(while IFS= read -r _path; do
+                [[ -z "$_path" ]] && continue
+                [[ -f "$_path" ]] && cat "$_path" 2>/dev/null
+            done <<< "$_skill_files")
+            if [[ -n "$_skill_prompts" ]]; then
+                _skill_prompts=$(prune_context_section "skills" "$_skill_prompts" 8000)
+                plan_prompt="${plan_prompt}
+## Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue)
+${_skill_prompts}
+"
+            fi
+        fi
+    elif type skill_load_prompts >/dev/null 2>&1; then
+        # Fallback to static selection
+        local _skill_prompts
+        _skill_prompts=$(skill_load_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "plan" 2>/dev/null || true)
+        if [[ -n "$_skill_prompts" ]]; then
+            _skill_prompts=$(prune_context_section "skills" "$_skill_prompts" 8000)
+            plan_prompt="${plan_prompt}
+## Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue)
+${_skill_prompts}
+"
+        fi
+    fi
+
+    # Task-type-specific guidance
+    case "${TASK_TYPE:-feature}" in
+        bug)
+            plan_prompt="${plan_prompt}
+## Task Type: Bug Fix
+Focus on: reproducing the bug, identifying root cause, minimal targeted fix, regression tests.
+" ;;
+        refactor)
+            plan_prompt="${plan_prompt}
+## Task Type: Refactor
+Focus on: preserving all existing behavior, incremental changes, comprehensive test coverage.
+" ;;
+        security)
+            plan_prompt="${plan_prompt}
+## Task Type: Security
+Focus on: threat modeling, OWASP top 10, input validation, authentication/authorization.
+" ;;
+    esac
+
+    # Add project context
+    local project_lang
+    project_lang=$(detect_project_lang)
+    plan_prompt="${plan_prompt}
+## Project Context
+- Language: ${project_lang}
+- Test command: ${TEST_CMD:-not configured}
+- Task type: ${TASK_TYPE:-feature}
+
+## Context Efficiency
+- Batch independent tool calls in parallel when possible
+- Read specific file sections (offset/limit) instead of entire large files
+- Use targeted grep searches — avoid scanning entire codebases into context
+- Delegate multi-file analysis to subagents when available
+
+## Required Output
+Create a Markdown plan with these sections:
+
+### Files to Modify
+List every file to create or modify with full paths.
+
+### Implementation Steps
+Numbered steps in order of execution. Be specific about what code to write.
+
+### Task Checklist
+A checkbox list of discrete tasks that can be tracked:
+- [ ] Task 1: Description
+- [ ] Task 2: Description
+(Include 5-15 tasks covering the full implementation)
+
+### Testing Approach
+How to verify the implementation works.
+
+### Definition of Done
+Checklist of completion criteria.
+"
+
+    # Inject skill prompts — prefer AI-powered plan, fallback to adaptive, then static
+    local _skill_prompts=""
+    if type skill_load_from_plan >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_from_plan "plan" 2>/dev/null || true)
+    elif type skill_select_adaptive >/dev/null 2>&1; then
+        local _skill_files
+        _skill_files=$(skill_select_adaptive "${INTELLIGENCE_ISSUE_TYPE:-backend}" "plan" "${ISSUE_BODY:-}" "${INTELLIGENCE_COMPLEXITY:-5}" 2>/dev/null || true)
+        if [[ -n "$_skill_files" ]]; then
+            _skill_prompts=$(while IFS= read -r _path; do
+                [[ -z "$_path" || ! -f "$_path" ]] && continue
+                cat "$_path" 2>/dev/null
+            done <<< "$_skill_files")
+        fi
+    elif type skill_load_prompts >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "plan" 2>/dev/null || true)
+    fi
+    if [[ -n "$_skill_prompts" ]]; then
+        _skill_prompts=$(prune_context_section "skills" "$_skill_prompts" 8000)
+        plan_prompt="${plan_prompt}
+## Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue, AI-selected)
+${_skill_prompts}
+"
+    fi
+
+    # Guard total prompt size
+    plan_prompt=$(guard_prompt_size "plan" "$plan_prompt")
+
+    local plan_model
+    plan_model=$(jq -r --arg id "plan" '(.stages[] | select(.id == $id) | .config.model) // .defaults.model // "opus"' "$PIPELINE_CONFIG" 2>/dev/null) || true
+    [[ -n "$MODEL" ]] && plan_model="$MODEL"
+    [[ -z "$plan_model" || "$plan_model" == "null" ]] && plan_model="opus"
+    # Intelligence model routing (when no explicit CLI --model override)
+    if [[ -z "$MODEL" && -n "${CLAUDE_MODEL:-}" ]]; then
+        plan_model="$CLAUDE_MODEL"
+    fi
+
+    local _token_log="${ARTIFACTS_DIR}/.claude-tokens-plan.log"
+    claude --print --model "$plan_model" --max-turns 25 --dangerously-skip-permissions \
+        "$plan_prompt" < /dev/null > "$plan_file" 2>"$_token_log" || true
+    parse_claude_tokens "$_token_log"
+
+    # Claude may write to disk via tools instead of stdout — rescue those files
+    local _plan_rescue
+    for _plan_rescue in "${PROJECT_ROOT}/PLAN.md" "${PROJECT_ROOT}/plan.md" \
+                         "${PROJECT_ROOT}/implementation-plan.md"; do
+        if [[ -s "$_plan_rescue" ]] && [[ $(wc -l < "$plan_file" 2>/dev/null | xargs) -lt 10 ]]; then
+            info "Plan written to ${_plan_rescue} via tools — adopting as plan artifact"
+            cat "$_plan_rescue" >> "$plan_file"
+            rm -f "$_plan_rescue"
+            break
+        fi
+    done
+
+    if [[ ! -s "$plan_file" ]]; then
+        error "Plan generation failed — empty output"
+        return 1
+    fi
+
+    # Validate plan content — detect API/CLI errors masquerading as plans
+    local _plan_fatal="Invalid API key|invalid_api_key|authentication_error|API key expired"
+    _plan_fatal="${_plan_fatal}|rate_limit_error|overloaded_error|Could not resolve host|ANTHROPIC_API_KEY"
+    if grep -qiE "$_plan_fatal" "$plan_file" 2>/dev/null; then
+        error "Plan stage produced API/CLI error instead of a plan: $(head -1 "$plan_file" | cut -c1-100)"
+        return 1
+    fi
+
+    local line_count
+    line_count=$(wc -l < "$plan_file" | xargs)
+    if [[ "$line_count" -lt 3 ]]; then
+        error "Plan too short (${line_count} lines) — likely an error, not a real plan"
+        return 1
+    fi
+    info "Plan saved: ${DIM}$plan_file${RESET} (${line_count} lines)"
+
+    # Extract task checklist for GitHub issue and task tracking
+    local checklist
+    checklist=$(sed -n '/### Task Checklist/,/^###/p' "$plan_file" 2>/dev/null | \
+        grep '^\s*- \[' | head -20)
+
+    if [[ -z "$checklist" ]]; then
+        # Fallback: extract any checkbox lines
+        checklist=$(grep '^\s*- \[' "$plan_file" 2>/dev/null | head -20)
+    fi
+
+    # Write local task file for Claude Code build stage
+    if [[ -n "$checklist" ]]; then
+        cat > "$TASKS_FILE" <<TASKS_EOF
+# Pipeline Tasks — ${GOAL}
+
+## Implementation Checklist
+${checklist}
+
+## Context
+- Pipeline: ${PIPELINE_NAME}
+- Branch: ${GIT_BRANCH}
+- Issue: ${GITHUB_ISSUE:-none}
+- Generated: $(now_iso)
+TASKS_EOF
+        info "Task list: ${DIM}$TASKS_FILE${RESET} ($(echo "$checklist" | wc -l | xargs) tasks)"
+    fi
+
+    # Post plan + task checklist to GitHub issue
+    if [[ -n "$ISSUE_NUMBER" ]]; then
+        local plan_summary
+        plan_summary=$(head -50 "$plan_file")
+        local gh_body="## 📋 Implementation Plan
+
+<details>
+<summary>Click to expand full plan (${line_count} lines)</summary>
+
+${plan_summary}
+
+</details>
+"
+        if [[ -n "$checklist" ]]; then
+            gh_body="${gh_body}
+## ✅ Task Checklist
+${checklist}
+"
+        fi
+
+        gh_body="${gh_body}
+---
+_Generated by \`shipwright pipeline\` at $(now_iso)_"
+
+        gh_comment_issue "$ISSUE_NUMBER" "$gh_body"
+        info "Plan posted to issue #$ISSUE_NUMBER"
+    fi
+
+    # Push plan to wiki
+    gh_wiki_page "Pipeline-Plan-${ISSUE_NUMBER:-inline}" "$(<"$plan_file")"
+
+    # Generate Claude Code task list
+    local cc_tasks_file="$PROJECT_ROOT/.claude/tasks.md"
+    if [[ -n "$checklist" ]]; then
+        cat > "$cc_tasks_file" <<CC_TASKS_EOF
+# Tasks — ${GOAL}
+
+## Status: In Progress
+Pipeline: ${PIPELINE_NAME} | Branch: ${GIT_BRANCH}
+
+## Checklist
+${checklist}
+
+## Notes
+- Generated from pipeline plan at $(now_iso)
+- Pipeline will update status as tasks complete
+CC_TASKS_EOF
+        info "Claude Code tasks: ${DIM}$cc_tasks_file${RESET}"
+    fi
+
+    # Extract definition of done for quality gates
+    sed -n '/[Dd]efinition [Oo]f [Dd]one/,/^#/p' "$plan_file" | head -20 > "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true
+
+    # ── Plan Validation Gate ──
+    # Ask Claude to validate the plan before proceeding
+    if command -v claude >/dev/null 2>&1 && [[ -s "$plan_file" ]]; then
+        local validation_attempts=0
+        local max_validation_attempts=2
+        local plan_valid=false
+
+        while [[ "$validation_attempts" -lt "$max_validation_attempts" ]]; do
+            validation_attempts=$((validation_attempts + 1))
+            info "Validating plan (attempt ${validation_attempts}/${max_validation_attempts})..."
+
+            # Build enriched validation prompt with learned context
+            local validation_extra=""
+
+            # Inject rejected plan history from memory
+            if type intelligence_search_memory >/dev/null 2>&1; then
+                local rejected_plans
+                rejected_plans=$(intelligence_search_memory "rejected plan validation failures for: ${GOAL:-}" "${HOME}/.shipwright/memory" 3 2>/dev/null) || true
+                if [[ -n "$rejected_plans" ]]; then
+                    validation_extra="${validation_extra}
+## Previously Rejected Plans
+These issues were found in past plan validations for similar tasks:
+${rejected_plans}
+"
+                fi
+            fi
+
+            # Inject repo conventions contextually
+            local claudemd="$PROJECT_ROOT/.claude/CLAUDE.md"
+            if [[ -f "$claudemd" ]]; then
+                local conventions_summary
+                conventions_summary=$(head -100 "$claudemd" 2>/dev/null | grep -E '^##|^-|^\*' | head -15 || true)
+                if [[ -n "$conventions_summary" ]]; then
+                    validation_extra="${validation_extra}
+## Repo Conventions
+${conventions_summary}
+"
+                fi
+            fi
+
+            # Inject complexity estimate
+            local complexity_hint=""
+            if [[ -n "${INTELLIGENCE_COMPLEXITY:-}" && "${INTELLIGENCE_COMPLEXITY:-0}" -gt 0 ]]; then
+                complexity_hint="This is estimated as complexity ${INTELLIGENCE_COMPLEXITY}/10. Plans for this complexity typically need ${INTELLIGENCE_COMPLEXITY} or more tasks."
+            fi
+
+            local validation_prompt="You are a plan validator. Review this implementation plan and determine if it is valid.
+
+## Goal
+${GOAL}
+${complexity_hint:+
+## Complexity Estimate
+${complexity_hint}
+}
+## Plan
+$(cat "$plan_file")
+${validation_extra}
+Evaluate:
+1. Are all requirements from the goal addressed?
+2. Is the plan decomposed into clear, achievable tasks?
+3. Are the implementation steps specific enough to execute?
+
+Respond with EXACTLY one of these on the first line:
+VALID: true
+VALID: false
+
+Then explain your reasoning briefly."
+
+            local validation_model="${plan_model:-opus}"
+            local validation_result
+            validation_result=$(claude --print --output-format text -p "$validation_prompt" --model "$validation_model" < /dev/null 2>"${ARTIFACTS_DIR}/.claude-tokens-plan-validate.log" || true)
+            parse_claude_tokens "${ARTIFACTS_DIR}/.claude-tokens-plan-validate.log"
+
+            # Save validation result
+            echo "$validation_result" > "$ARTIFACTS_DIR/plan-validation.md"
+
+            if echo "$validation_result" | head -5 | grep -qi "VALID: true"; then
+                success "Plan validation passed"
+                plan_valid=true
+                break
+            fi
+
+            warn "Plan validation failed (attempt ${validation_attempts}/${max_validation_attempts})"
+
+            # Analyze failure mode to decide how to recover
+            local failure_mode="unknown"
+            local validation_lower
+            validation_lower=$(echo "$validation_result" | tr '[:upper:]' '[:lower:]')
+            if echo "$validation_lower" | grep -qE 'requirements? unclear|goal.*vague|ambiguous|underspecified'; then
+                failure_mode="requirements_unclear"
+            elif echo "$validation_lower" | grep -qE 'insufficient detail|not specific|too high.level|missing.*steps|lacks.*detail'; then
+                failure_mode="insufficient_detail"
+            elif echo "$validation_lower" | grep -qE 'scope too (large|broad)|too many|overly complex|break.*down'; then
+                failure_mode="scope_too_large"
+            fi
+
+            emit_event "plan.validation_failure" \
+                "issue=${ISSUE_NUMBER:-0}" \
+                "attempt=$validation_attempts" \
+                "failure_mode=$failure_mode"
+
+            # Track repeated failures — escalate if stuck in a loop
+            if [[ -f "$ARTIFACTS_DIR/.plan-failure-sig.txt" ]]; then
+                local prev_sig
+                prev_sig=$(cat "$ARTIFACTS_DIR/.plan-failure-sig.txt" 2>/dev/null || true)
+                if [[ "$failure_mode" == "$prev_sig" && "$failure_mode" != "unknown" ]]; then
+                    warn "Same validation failure mode repeated ($failure_mode) — escalating"
+                    emit_event "plan.validation_escalated" \
+                        "issue=${ISSUE_NUMBER:-0}" \
+                        "failure_mode=$failure_mode"
+                    break
+                fi
+            fi
+            echo "$failure_mode" > "$ARTIFACTS_DIR/.plan-failure-sig.txt"
+
+            if [[ "$validation_attempts" -lt "$max_validation_attempts" ]]; then
+                info "Regenerating plan with validation feedback (mode: ${failure_mode})..."
+
+                # Tailor regeneration prompt based on failure mode
+                local failure_guidance=""
+                case "$failure_mode" in
+                    requirements_unclear)
+                        failure_guidance="The validator found the requirements unclear. Add more specific acceptance criteria, input/output examples, and concrete success metrics." ;;
+                    insufficient_detail)
+                        failure_guidance="The validator found the plan lacks detail. Break each task into smaller, more specific implementation steps with exact file paths and function names." ;;
+                    scope_too_large)
+                        failure_guidance="The validator found the scope too large. Focus on the minimal viable implementation and defer non-essential features to follow-up tasks." ;;
+                esac
+
+                local regen_prompt="${plan_prompt}
+
+IMPORTANT: A previous plan was rejected by validation. Issues found:
+$(echo "$validation_result" | tail -20)
+${failure_guidance:+
+GUIDANCE: ${failure_guidance}}
+
+Fix these issues in the new plan."
+
+                claude --print --model "$plan_model" --max-turns 25 \
+                    "$regen_prompt" < /dev/null > "$plan_file" 2>"$_token_log" || true
+                parse_claude_tokens "$_token_log"
+
+                line_count=$(wc -l < "$plan_file" | xargs)
+                info "Regenerated plan: ${DIM}$plan_file${RESET} (${line_count} lines)"
+            fi
+        done
+
+        if [[ "$plan_valid" != "true" ]]; then
+            warn "Plan validation did not pass after ${max_validation_attempts} attempts — proceeding anyway"
+        fi
+
+        emit_event "plan.validated" \
+            "issue=${ISSUE_NUMBER:-0}" \
+            "valid=${plan_valid}" \
+            "attempts=${validation_attempts}"
+    fi
+
+    log_stage "plan" "Generated plan.md (${line_count} lines, $(echo "$checklist" | wc -l | xargs) tasks)"
+}
+
+stage_design() {
+    CURRENT_STAGE_ID="design"
+    # Consume retry context if this is a retry attempt
+    local _retry_ctx="${ARTIFACTS_DIR}/.retry-context-design.md"
+    local _design_retry_hints=""
+    if [[ -s "$_retry_ctx" ]]; then
+        _design_retry_hints=$(cat "$_retry_ctx" 2>/dev/null || true)
+        rm -f "$_retry_ctx"
+    fi
+    local plan_file="$ARTIFACTS_DIR/plan.md"
+    local design_file="$ARTIFACTS_DIR/design.md"
+
+    if [[ ! -s "$plan_file" ]]; then
+        warn "No plan found — skipping design stage"
+        return 0
+    fi
+
+    if ! command -v claude >/dev/null 2>&1; then
+        error "Claude CLI not found — cannot generate design"
+        return 1
+    fi
+
+    info "Generating Architecture Decision Record..."
+
+    # Gather rich architecture context (call-graph, dependencies)
+    local arch_struct_context=""
+    if type gather_architecture_context &>/dev/null; then
+        arch_struct_context=$(gather_architecture_context "${PROJECT_ROOT:-.}" 2>/dev/null || true)
+    fi
+    arch_struct_context=$(prune_context_section "architecture" "$arch_struct_context" 5000)
+
+    # Memory integration — inject context if memory system available
+    local memory_context=""
+    if type intelligence_search_memory >/dev/null 2>&1; then
+        local mem_dir="${HOME}/.shipwright/memory"
+        memory_context=$(intelligence_search_memory "design stage architecture patterns for: ${GOAL:-}" "$mem_dir" 5 2>/dev/null) || true
+    fi
+    if [[ -z "$memory_context" ]] && [[ -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
+        memory_context=$(bash "$SCRIPT_DIR/sw-memory.sh" inject "design" 2>/dev/null) || true
+    fi
+    memory_context=$(prune_context_section "memory" "$memory_context" 10000)
+
+    # Inject cross-pipeline discoveries for design stage
+    local design_discoveries=""
+    if [[ -x "$SCRIPT_DIR/sw-discovery.sh" ]]; then
+        design_discoveries=$("$SCRIPT_DIR/sw-discovery.sh" inject "*.md,*.ts,*.tsx,*.js" 2>/dev/null | head -20 || true)
+    fi
+    design_discoveries=$(prune_context_section "discoveries" "$design_discoveries" 3000)
+
+    # Inject architecture model patterns if available
+    local arch_context=""
+    local repo_hash
+    repo_hash=$(echo -n "$PROJECT_ROOT" | shasum -a 256 2>/dev/null | cut -c1-12 || echo "unknown")
+    local arch_model_file="${HOME}/.shipwright/memory/${repo_hash}/architecture.json"
+    if [[ -f "$arch_model_file" ]]; then
+        local arch_patterns
+        arch_patterns=$(jq -r '
+            [.patterns // [] | .[] | "- \(.name // "unnamed"): \(.description // "no description")"] | join("\n")
+        ' "$arch_model_file" 2>/dev/null) || true
+        local arch_layers
+        arch_layers=$(jq -r '
+            [.layers // [] | .[] | "- \(.name // "unnamed"): \(.path // "")"] | join("\n")
+        ' "$arch_model_file" 2>/dev/null) || true
+        if [[ -n "$arch_patterns" || -n "$arch_layers" ]]; then
+            arch_context="Previous designs in this repo follow these patterns:
+${arch_patterns:+Patterns:
+${arch_patterns}
+}${arch_layers:+Layers:
+${arch_layers}}"
+        fi
+    fi
+    arch_context=$(prune_context_section "intelligence" "$arch_context" 5000)
+
+    # Inject rejected design approaches and anti-patterns from memory
+    local design_antipatterns=""
+    if type intelligence_search_memory >/dev/null 2>&1; then
+        local rejected_designs
+        rejected_designs=$(intelligence_search_memory "rejected design approaches anti-patterns for: ${GOAL:-}" "${HOME}/.shipwright/memory" 3 2>/dev/null) || true
+        if [[ -n "$rejected_designs" ]]; then
+            rejected_designs=$(prune_context_section "antipatterns" "$rejected_designs" 5000)
+            design_antipatterns="
+## Rejected Approaches (from past reviews)
+These design approaches were rejected in past reviews. Avoid repeating them:
+${rejected_designs}
+"
+        fi
+    fi
+
+    # Build design prompt with plan + project context
+    local project_lang
+    project_lang=$(detect_project_lang)
+
+    local design_prompt="You are a senior software architect. Review the implementation plan below and produce an Architecture Decision Record (ADR).
+
+## Goal
+${GOAL}
+
+## Implementation Plan
+$(cat "$plan_file")
+
+## Project Context
+- Language: ${project_lang}
+- Test command: ${TEST_CMD:-not configured}
+- Task type: ${TASK_TYPE:-feature}
+${arch_struct_context:+
+## Architecture Context (import graph, modules, test map)
+${arch_struct_context}
+}${memory_context:+
+## Historical Context (from memory)
+${memory_context}
+}${arch_context:+
+## Architecture Model (from previous designs)
+${arch_context}
+}${design_antipatterns}${design_discoveries:+
+## Discoveries from Other Pipelines
+${design_discoveries}
+}
+## Required Output — Architecture Decision Record
+
+Produce this EXACT format:
+
+# Design: ${GOAL}
+
+## Context
+[What problem we're solving, constraints from the codebase]
+
+## Decision
+[The chosen approach — be specific about patterns, data flow, error handling]
+
+## Alternatives Considered
+1. [Alternative A] — Pros: ... / Cons: ...
+2. [Alternative B] — Pros: ... / Cons: ...
+
+## Implementation Plan
+- Files to create: [list with full paths]
+- Files to modify: [list with full paths]
+- Dependencies: [new deps if any]
+- Risk areas: [fragile code, performance concerns]
+
+## Validation Criteria
+- [ ] [How we'll know the design is correct — testable criteria]
+- [ ] [Additional validation items]
+
+Be concrete and specific. Reference actual file paths in the codebase. Consider edge cases and failure modes."
+
+    # Inject skill prompts for design stage
+    local _skill_prompts=""
+    if type skill_load_from_plan >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_from_plan "design" 2>/dev/null || true)
+    elif type skill_select_adaptive >/dev/null 2>&1; then
+        local _skill_files
+        _skill_files=$(skill_select_adaptive "${INTELLIGENCE_ISSUE_TYPE:-backend}" "design" "${ISSUE_BODY:-}" "${INTELLIGENCE_COMPLEXITY:-5}" 2>/dev/null || true)
+        if [[ -n "$_skill_files" ]]; then
+            _skill_prompts=$(while IFS= read -r _path; do
+                [[ -z "$_path" || ! -f "$_path" ]] && continue
+                cat "$_path" 2>/dev/null
+            done <<< "$_skill_files")
+        fi
+    elif type skill_load_prompts >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "design" 2>/dev/null || true)
+    fi
+    if [[ -n "$_skill_prompts" ]]; then
+        _skill_prompts=$(prune_context_section "skills" "$_skill_prompts" 8000)
+        design_prompt="${design_prompt}
+## Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue, AI-selected)
+${_skill_prompts}
+"
+    fi
+
+    # Guard total prompt size
+    design_prompt=$(guard_prompt_size "design" "$design_prompt")
+
+    local design_model
+    design_model=$(jq -r --arg id "design" '(.stages[] | select(.id == $id) | .config.model) // .defaults.model // "opus"' "$PIPELINE_CONFIG" 2>/dev/null) || true
+    [[ -n "$MODEL" ]] && design_model="$MODEL"
+    [[ -z "$design_model" || "$design_model" == "null" ]] && design_model="opus"
+    # Intelligence model routing (when no explicit CLI --model override)
+    if [[ -z "$MODEL" && -n "${CLAUDE_MODEL:-}" ]]; then
+        design_model="$CLAUDE_MODEL"
+    fi
+
+    local _token_log="${ARTIFACTS_DIR}/.claude-tokens-design.log"
+    claude --print --model "$design_model" --max-turns 25 --dangerously-skip-permissions \
+        "$design_prompt" < /dev/null > "$design_file" 2>"$_token_log" || true
+    parse_claude_tokens "$_token_log"
+
+    # Claude may write to disk via tools instead of stdout — rescue those files
+    local _design_rescue
+    for _design_rescue in "${PROJECT_ROOT}/design-adr.md" "${PROJECT_ROOT}/design.md" \
+                           "${PROJECT_ROOT}/ADR.md" "${PROJECT_ROOT}/DESIGN.md"; do
+        if [[ -s "$_design_rescue" ]] && [[ $(wc -l < "$design_file" 2>/dev/null | xargs) -lt 10 ]]; then
+            info "Design written to ${_design_rescue} via tools — adopting as design artifact"
+            cat "$_design_rescue" >> "$design_file"
+            rm -f "$_design_rescue"
+            break
+        fi
+    done
+
+    if [[ ! -s "$design_file" ]]; then
+        error "Design generation failed — empty output"
+        return 1
+    fi
+
+    # Validate design content — detect API/CLI errors masquerading as designs
+    local _design_fatal="Invalid API key|invalid_api_key|authentication_error|API key expired"
+    _design_fatal="${_design_fatal}|rate_limit_error|overloaded_error|Could not resolve host|ANTHROPIC_API_KEY"
+    if grep -qiE "$_design_fatal" "$design_file" 2>/dev/null; then
+        error "Design stage produced API/CLI error instead of a design: $(head -1 "$design_file" | cut -c1-100)"
+        return 1
+    fi
+
+    local line_count
+    line_count=$(wc -l < "$design_file" | xargs)
+    if [[ "$line_count" -lt 3 ]]; then
+        error "Design too short (${line_count} lines) — likely an error, not a real design"
+        return 1
+    fi
+    info "Design saved: ${DIM}$design_file${RESET} (${line_count} lines)"
+
+    # Extract file lists for build stage awareness
+    local files_to_create files_to_modify
+    files_to_create=$(sed -n '/Files to create/,/^-\|^#\|^$/p' "$design_file" 2>/dev/null | grep -E '^\s*-' | head -20 || true)
+    files_to_modify=$(sed -n '/Files to modify/,/^-\|^#\|^$/p' "$design_file" 2>/dev/null | grep -E '^\s*-' | head -20 || true)
+
+    if [[ -n "$files_to_create" || -n "$files_to_modify" ]]; then
+        info "Design scope: ${DIM}$(echo "$files_to_create $files_to_modify" | grep -c '^\s*-' || true) file(s)${RESET}"
+    fi
+
+    # Post design to GitHub issue
+    if [[ -n "$ISSUE_NUMBER" ]]; then
+        local design_summary
+        design_summary=$(head -60 "$design_file")
+        gh_comment_issue "$ISSUE_NUMBER" "## 📐 Architecture Decision Record
+
+<details>
+<summary>Click to expand ADR (${line_count} lines)</summary>
+
+${design_summary}
+
+</details>
+
+---
+_Generated by \`shipwright pipeline\` design stage at $(now_iso)_"
+    fi
+
+    # Push design to wiki
+    gh_wiki_page "Pipeline-Design-${ISSUE_NUMBER:-inline}" "$(<"$design_file")"
+
+    log_stage "design" "Generated design.md (${line_count} lines)"
+}
+
+# ─── TDD: Generate tests before implementation ─────────────────────────────────

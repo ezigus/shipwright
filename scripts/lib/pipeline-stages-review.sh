@@ -1,14 +1,17 @@
-#\!/usr/bin/env bash
-# pipeline-stages-review.sh — Stage implementations
-# Source from sw-pipeline.sh. Requires all pipeline globals and state/github/detection/quality modules.
-set -euo pipefail
-
-# Module guard - prevent double-sourcing
-[[ -n "${PIPELINE_STAGES_REVIEW_LOADED:-}" ]] && return 0
-PIPELINE_STAGES_REVIEW_LOADED=1
+# pipeline-stages-review.sh — review, compound_quality, audit stages
+# Source from pipeline-stages.sh. Requires all pipeline globals and dependencies.
+[[ -n "${_PIPELINE_STAGES_REVIEW_LOADED:-}" ]] && return 0
+_PIPELINE_STAGES_REVIEW_LOADED=1
 
 stage_review() {
     CURRENT_STAGE_ID="review"
+    # Consume retry context if this is a retry attempt
+    local _retry_ctx="${ARTIFACTS_DIR}/.retry-context-review.md"
+    if [[ -s "$_retry_ctx" ]]; then
+        local _review_retry_hints
+        _review_retry_hints=$(cat "$_retry_ctx" 2>/dev/null || true)
+        rm -f "$_retry_ctx"
+    fi
     local diff_file="$ARTIFACTS_DIR/review-diff.patch"
     local review_file="$ARTIFACTS_DIR/review.md"
 
@@ -122,9 +125,64 @@ $(cat "$dod_file")
 "
     fi
 
+    # Inject skill prompts for review stage
+    # Prefer adaptive selection when available
+    if type skill_select_adaptive >/dev/null 2>&1; then
+        local _review_skill_files _review_skills
+        _review_skill_files=$(skill_select_adaptive "${INTELLIGENCE_ISSUE_TYPE:-backend}" "review" "${ISSUE_BODY:-}" "${INTELLIGENCE_COMPLEXITY:-5}" 2>/dev/null || true)
+        if [[ -n "$_review_skill_files" ]]; then
+            _review_skills=$(while IFS= read -r _path; do
+                [[ -z "$_path" ]] && continue
+                [[ -f "$_path" ]] && cat "$_path" 2>/dev/null
+            done <<< "$_review_skill_files")
+            if [[ -n "$_review_skills" ]]; then
+                _review_skills=$(prune_context_section "review-skills" "$_review_skills" 5000)
+                review_prompt+="
+## Review Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue)
+${_review_skills}
+"
+            fi
+        fi
+    elif type skill_load_prompts >/dev/null 2>&1; then
+        # Fallback to static selection
+        local _review_skills
+        _review_skills=$(skill_load_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "review" 2>/dev/null || true)
+        if [[ -n "$_review_skills" ]]; then
+            _review_skills=$(prune_context_section "review-skills" "$_review_skills" 5000)
+            review_prompt+="
+## Review Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue)
+${_review_skills}
+"
+        fi
+    fi
+
     review_prompt+="
 ## Diff to Review
 $(cat "$diff_file")"
+
+    # Inject skill prompts for review stage
+    _skill_prompts=""
+    if type skill_load_from_plan >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_from_plan "review" 2>/dev/null || true)
+    elif type skill_select_adaptive >/dev/null 2>&1; then
+        local _skill_files
+        _skill_files=$(skill_select_adaptive "${INTELLIGENCE_ISSUE_TYPE:-backend}" "review" "${ISSUE_BODY:-}" "${INTELLIGENCE_COMPLEXITY:-5}" 2>/dev/null || true)
+        if [[ -n "$_skill_files" ]]; then
+            _skill_prompts=$(while IFS= read -r _path; do
+                [[ -z "$_path" || ! -f "$_path" ]] && continue
+                cat "$_path" 2>/dev/null
+            done <<< "$_skill_files")
+        fi
+    elif type skill_load_prompts >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "review" 2>/dev/null || true)
+    fi
+    if [[ -n "$_skill_prompts" ]]; then
+        _skill_prompts=$(prune_context_section "skills" "$_skill_prompts" 8000)
+        review_prompt="${review_prompt}
+## Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue, AI-selected)
+${_skill_prompts}
+"
+    fi
 
     # Guard total prompt size
     review_prompt=$(guard_prompt_size "review" "$review_prompt")
@@ -132,6 +190,56 @@ $(cat "$diff_file")"
     # Skip permissions — pipeline runs headlessly (claude -p) and has no terminal
     # for interactive permission prompts. Same rationale as build stage (line ~1083).
     local review_args=(--print --model "$review_model" --max-turns 25 --dangerously-skip-permissions)
+
+    # ── Two-Stage Review: Pass 1 (Spec Compliance) ──
+    local _two_stage=false
+    if type skill_has_two_stage_review >/dev/null 2>&1 && skill_has_two_stage_review "${INTELLIGENCE_ISSUE_TYPE:-backend}"; then
+        _two_stage=true
+        local spec_review_file="$ARTIFACTS_DIR/review-spec.md"
+        local plan_file="$ARTIFACTS_DIR/plan.md"
+
+        if [[ -s "$plan_file" ]]; then
+            info "Two-stage review: Pass 1 — Spec compliance"
+            local spec_prompt="You are a spec compliance reviewer. Compare the implementation against the plan.
+
+## Plan
+$(cat "$plan_file" 2>/dev/null | head -200)
+
+## Implementation Diff
+$(cat "$diff_file" 2>/dev/null)
+
+## Task
+Compare the diff against the plan:
+1. Does the code implement every task from the plan's checklist?
+2. Were all planned files actually modified?
+3. Is anything from the plan NOT implemented?
+4. Was anything added that WASN'T in the plan?
+
+For each gap found:
+- **[SPEC-GAP]** description — what was planned vs what was implemented
+
+If all requirements are met, write: \"Spec compliance: PASS — all planned tasks implemented.\"
+"
+            spec_prompt=$(guard_prompt_size "spec-review" "$spec_prompt")
+            claude "${review_args[@]}" "$spec_prompt" < /dev/null > "$spec_review_file" 2>"${ARTIFACTS_DIR}/.claude-tokens-spec-review.log" || true
+            parse_claude_tokens "${ARTIFACTS_DIR}/.claude-tokens-spec-review.log"
+
+            if [[ -s "$spec_review_file" ]]; then
+                local spec_gaps
+                spec_gaps=$(grep -c 'SPEC-GAP' "$spec_review_file" 2>/dev/null || true)
+                spec_gaps="${spec_gaps:-0}"
+                if [[ "$spec_gaps" -gt 0 ]]; then
+                    warn "Spec review found $spec_gaps gap(s) — see $spec_review_file"
+                else
+                    success "Spec compliance: PASS"
+                fi
+                emit_event "review.spec_complete" \
+                    "issue=${ISSUE_NUMBER:-0}" \
+                    "gaps=$spec_gaps"
+            fi
+            info "Two-stage review: Pass 2 — Code quality"
+        fi
+    fi
 
     claude "${review_args[@]}" "$review_prompt" < /dev/null > "$review_file" 2>"${ARTIFACTS_DIR}/.claude-tokens-review.log" || true
     parse_claude_tokens "${ARTIFACTS_DIR}/.claude-tokens-review.log"
@@ -276,9 +384,32 @@ ${review_summary}
     log_stage "review" "AI review complete ($total_issues issues: $critical_count critical, $bug_count bugs, $warning_count suggestions)"
 }
 
+# ─── Compound Quality (fallback) ────────────────────────────────────────────
+# Basic implementation: adversarial review, negative testing, e2e checks, DoD audit.
+# If pipeline-intelligence.sh was sourced first, its enhanced version takes priority.
 if ! type stage_compound_quality >/dev/null 2>&1; then
 stage_compound_quality() {
     CURRENT_STAGE_ID="compound_quality"
+    # Consume retry context if this is a retry attempt
+    local _retry_ctx="${ARTIFACTS_DIR}/.retry-context-compound_quality.md"
+    if [[ -s "$_retry_ctx" ]]; then
+        local _cq_retry_hints
+        _cq_retry_hints=$(cat "$_retry_ctx" 2>/dev/null || true)
+        rm -f "$_retry_ctx"
+    fi
+
+    # Load skill prompts for compound quality (used by adversarial review)
+    local _cq_skills=""
+    if type skill_load_prompts >/dev/null 2>&1; then
+        _cq_skills=$(skill_load_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "compound_quality" 2>/dev/null || true)
+    fi
+    # Write skill guidance to artifact for sw-adversarial.sh to consume
+    if [[ -n "$_cq_skills" ]]; then
+        echo "$_cq_skills" > "${ARTIFACTS_DIR}/.compound-quality-skills.md" 2>/dev/null || true
+    fi
+    if [[ -n "${_cq_retry_hints:-}" ]]; then
+        echo "$_cq_retry_hints" >> "${ARTIFACTS_DIR}/.compound-quality-skills.md" 2>/dev/null || true
+    fi
 
     # Read stage config from pipeline template
     local cfg
@@ -379,6 +510,9 @@ stage_compound_quality() {
 }
 fi  # end fallback stage_compound_quality
 
+# ─── Audit Stage ───────────────────────────────────────────────────────────
+# Security and quality audits: secrets scan, file permissions, || true usage,
+# test coverage delta, atomic write checks.
 stage_audit() {
     CURRENT_STAGE_ID="audit"
 
@@ -503,5 +637,4 @@ stage_audit() {
 
     return 0
 }
-
 

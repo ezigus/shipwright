@@ -1,14 +1,25 @@
-#\!/usr/bin/env bash
-# pipeline-stages-delivery.sh — Stage implementations
-# Source from sw-pipeline.sh. Requires all pipeline globals and state/github/detection/quality modules.
-set -euo pipefail
-
-# Module guard - prevent double-sourcing
-[[ -n "${PIPELINE_STAGES_DELIVERY_LOADED:-}" ]] && return 0
-PIPELINE_STAGES_DELIVERY_LOADED=1
+# pipeline-stages-delivery.sh — pr, merge, deploy stages
+# Source from pipeline-stages.sh. Requires all pipeline globals and dependencies.
+[[ -n "${_PIPELINE_STAGES_DELIVERY_LOADED:-}" ]] && return 0
+_PIPELINE_STAGES_DELIVERY_LOADED=1
 
 stage_pr() {
     CURRENT_STAGE_ID="pr"
+    # Consume retry context if this is a retry attempt
+    local _retry_ctx="${ARTIFACTS_DIR}/.retry-context-pr.md"
+    if [[ -s "$_retry_ctx" ]]; then
+        local _pr_retry_hints
+        _pr_retry_hints=$(cat "$_retry_ctx" 2>/dev/null || true)
+        rm -f "$_retry_ctx"
+    fi
+    # Load PR quality skills (used as guidance for hygiene checks)
+    local _pr_skills=""
+    if type skill_load_prompts >/dev/null 2>&1; then
+        _pr_skills=$(skill_load_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "pr" 2>/dev/null || true)
+        if [[ -n "$_pr_skills" ]]; then
+            echo "$_pr_skills" > "${ARTIFACTS_DIR}/.pr-quality-skills.md" 2>/dev/null || true
+        fi
+    fi
     local plan_file="$ARTIFACTS_DIR/plan.md"
     local test_log="$ARTIFACTS_DIR/test-results.log"
     local review_file="$ARTIFACTS_DIR/review.md"
@@ -702,9 +713,23 @@ stage_merge() {
     log_stage "merge" "PR #${pr_number} merged (strategy: ${merge_method}, auto_merge: ${auto_merge})"
 }
 
-
 stage_deploy() {
     CURRENT_STAGE_ID="deploy"
+    # Consume retry context if this is a retry attempt
+    local _retry_ctx="${ARTIFACTS_DIR}/.retry-context-deploy.md"
+    if [[ -s "$_retry_ctx" ]]; then
+        local _deploy_retry_hints
+        _deploy_retry_hints=$(cat "$_retry_ctx" 2>/dev/null || true)
+        rm -f "$_retry_ctx"
+    fi
+    # Load deploy safety skills
+    if type skill_load_prompts >/dev/null 2>&1; then
+        local _deploy_skills
+        _deploy_skills=$(skill_load_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "deploy" 2>/dev/null || true)
+        if [[ -n "$_deploy_skills" ]]; then
+            echo "$_deploy_skills" > "${ARTIFACTS_DIR}/.deploy-safety-skills.md" 2>/dev/null || true
+        fi
+    fi
     local staging_cmd
     staging_cmd=$(jq -r --arg id "deploy" '(.stages[] | select(.id == $id) | .config.staging_cmd) // ""' "$PIPELINE_CONFIG" 2>/dev/null) || true
     [[ "$staging_cmd" == "null" ]] && staging_cmd=""
@@ -899,5 +924,4 @@ stage_deploy() {
 
     log_stage "deploy" "Deploy complete"
 }
-
 

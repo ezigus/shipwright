@@ -1,11 +1,7 @@
-#\!/usr/bin/env bash
-# pipeline-stages-build.sh — Stage implementations
-# Source from sw-pipeline.sh. Requires all pipeline globals and state/github/detection/quality modules.
-set -euo pipefail
-
-# Module guard - prevent double-sourcing
-[[ -n "${PIPELINE_STAGES_BUILD_LOADED:-}" ]] && return 0
-PIPELINE_STAGES_BUILD_LOADED=1
+# pipeline-stages-build.sh — test_first, build, test stages
+# Source from pipeline-stages.sh. Requires all pipeline globals and dependencies.
+[[ -n "${_PIPELINE_STAGES_BUILD_LOADED:-}" ]] && return 0
+_PIPELINE_STAGES_BUILD_LOADED=1
 
 stage_test_first() {
     CURRENT_STAGE_ID="test_first"
@@ -117,8 +113,15 @@ Create files in the appropriate project directories (e.g. tests/, __tests__/, sr
     return 0
 }
 
-
 stage_build() {
+    CURRENT_STAGE_ID="build"
+    # Consume retry context if this is a retry attempt
+    local _retry_ctx="${ARTIFACTS_DIR}/.retry-context-build.md"
+    if [[ -s "$_retry_ctx" ]]; then
+        local _build_retry_hints
+        _build_retry_hints=$(cat "$_retry_ctx" 2>/dev/null || true)
+        rm -f "$_retry_ctx"
+    fi
     local plan_file="$ARTIFACTS_DIR/plan.md"
     local design_file="$ARTIFACTS_DIR/design.md"
     local dod_file="$ARTIFACTS_DIR/dod.md"
@@ -224,6 +227,31 @@ ${prevention_text}"
         fi
     fi
 
+    # Inject skill prompts for build stage
+    local _skill_prompts=""
+    if type skill_load_from_plan >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_from_plan "build" 2>/dev/null || true)
+    elif type skill_select_adaptive >/dev/null 2>&1; then
+        local _skill_files
+        _skill_files=$(skill_select_adaptive "${INTELLIGENCE_ISSUE_TYPE:-backend}" "build" "${ISSUE_BODY:-}" "${INTELLIGENCE_COMPLEXITY:-5}" 2>/dev/null || true)
+        if [[ -n "$_skill_files" ]]; then
+            _skill_prompts=$(while IFS= read -r _path; do
+                [[ -z "$_path" || ! -f "$_path" ]] && continue
+                cat "$_path" 2>/dev/null
+            done <<< "$_skill_files")
+        fi
+    elif type skill_load_prompts >/dev/null 2>&1; then
+        _skill_prompts=$(skill_load_prompts "${INTELLIGENCE_ISSUE_TYPE:-backend}" "build" 2>/dev/null || true)
+    fi
+    if [[ -n "$_skill_prompts" ]]; then
+        _skill_prompts=$(prune_context_section "skills" "$_skill_prompts" 8000)
+        enriched_goal="${enriched_goal}
+
+## Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue, AI-selected)
+${_skill_prompts}
+"
+    fi
+
     loop_args+=("$enriched_goal")
 
     # Build loop args from pipeline config + CLI overrides
@@ -237,6 +265,14 @@ ${prevention_text}"
     # Auto-detect if still empty
     if [[ -z "$test_cmd" ]]; then
         test_cmd=$(detect_test_cmd)
+    fi
+
+    # Discover additional test commands (subdirectories, extra scripts)
+    local additional_cmds=()
+    if type detect_test_commands >/dev/null 2>&1; then
+        while IFS= read -r _cmd; do
+            [[ -n "$_cmd" ]] && additional_cmds+=("$_cmd")
+        done < <(detect_test_commands 2>/dev/null | tail -n +2)
     fi
 
     local max_iter
@@ -294,6 +330,9 @@ ${prevention_text}"
     fi
 
     [[ -n "$test_cmd" && "$test_cmd" != "null" ]] && loop_args+=(--test-cmd "$test_cmd")
+    for _extra_tc in "${additional_cmds[@]+"${additional_cmds[@]}"}"; do
+        [[ -n "$_extra_tc" ]] && loop_args+=(--additional-test-cmds "$_extra_tc")
+    done
     loop_args+=(--max-iterations "$max_iter")
     loop_args+=(--model "$build_model")
     [[ "$agents" -gt 1 ]] 2>/dev/null && loop_args+=(--agents "$agents")
@@ -402,7 +441,6 @@ ${commit_msgs}" --model haiku < /dev/null 2>/dev/null || true)
 
     log_stage "build" "Build loop completed ($commit_count commits)"
 }
-
 
 stage_test() {
     CURRENT_STAGE_ID="test"
@@ -515,5 +553,4 @@ ${test_summary}
 
     log_stage "test" "Tests passed${coverage:+ (coverage: ${coverage}%)}"
 }
-
 

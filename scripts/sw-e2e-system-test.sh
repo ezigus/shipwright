@@ -105,17 +105,18 @@ mkdir -p "$log_dir" 2>/dev/null || true
 echo "cwd=$(pwd) use_json=$use_json args=$raw_args" >> "$log_dir/mock-claude.log"
 
 if [[ "$use_json" == "true" ]]; then
-    # Loop mode: create files, then output JSON with LOOP_COMPLETE
-    repo_root=""
-    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-    if [[ -n "$repo_root" && -d "$repo_root" ]]; then
-        mkdir -p "$repo_root/src"
-        cat > "$repo_root/src/helper.sh" << 'HELPER'
+    if echo "$prompt" | grep -qi "autonomous coding agent on iteration"; then
+        # Loop mode: create files, then output JSON with LOOP_COMPLETE.
+        repo_root=""
+        repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+        if [[ -n "$repo_root" && -d "$repo_root" ]]; then
+            mkdir -p "$repo_root/src"
+            cat > "$repo_root/src/helper.sh" << 'HELPER'
 #!/usr/bin/env bash
 helper_add() { echo $(( $1 + $2 )); }
 helper_greet() { echo "Hello, ${1:-World}"; }
 HELPER
-        cat > "$repo_root/src/helper-test.sh" << 'HELTEST'
+            cat > "$repo_root/src/helper-test.sh" << 'HELTEST'
 #!/usr/bin/env bash
 source src/helper.sh 2>/dev/null || . src/helper.sh
 r=$(helper_add 2 3)
@@ -124,11 +125,18 @@ r=$(helper_greet "Test")
 [[ "$r" == "Hello, Test" ]] && echo "PASS: greet" || echo "FAIL: greet"
 echo "LOOP_COMPLETE"
 HELTEST
-        chmod +x "$repo_root/src/helper.sh" "$repo_root/src/helper-test.sh" 2>/dev/null || true
-        git -C "$repo_root" add -A 2>/dev/null || true
-        git -C "$repo_root" commit -m "feat: add helper functions" --allow-empty -q 2>/dev/null || true
+            chmod +x "$repo_root/src/helper.sh" "$repo_root/src/helper-test.sh" 2>/dev/null || true
+            git -C "$repo_root" add -A 2>/dev/null || true
+            git -C "$repo_root" commit -m "feat: add helper functions" --allow-empty -q 2>/dev/null || true
+        fi
+        echo '[{"result":"Implemented helper functions. All tests pass. LOOP_COMPLETE","usage":{"input_tokens":100,"output_tokens":50},"total_cost_usd":0.01}]'
+    elif echo "$prompt" | grep -qi "Rate the quality of these git commit messages"; then
+        echo '[{"result":"88","usage":{"input_tokens":20,"output_tokens":5},"total_cost_usd":0.001}]'
+    elif echo "$prompt" | grep -qi "Classify this error as exactly one of"; then
+        echo '[{"result":"logic","usage":{"input_tokens":20,"output_tokens":5},"total_cost_usd":0.001}]'
+    else
+        echo '[{"result":"OK","usage":{"input_tokens":10,"output_tokens":5},"total_cost_usd":0.001}]'
     fi
-    echo '[{"result":"Implemented helper functions. All tests pass. LOOP_COMPLETE","usage":{"input_tokens":100,"output_tokens":50},"total_cost_usd":0.01}]'
 elif echo "$prompt" | grep -qiE "implementation plan|task checklist|create a.*plan"; then
     echo "# Plan
 

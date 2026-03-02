@@ -143,19 +143,22 @@ pipeline_config_with_stages() {
 create_mock_claude() {
     cat > "$TEMP_DIR/bin/claude" <<'CLAUDE_EOF'
 #!/usr/bin/env bash
-# Mock claude CLI — detects plan vs review from prompt content
+# Mock claude CLI — supports text/json output and detects plan vs review prompts.
 prompt=""
+output_format="text"
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --print|--output-format) shift ;;
+        --print)                 shift ;;
+        --output-format)         output_format="${2:-text}"; shift 2 ;;
         --model|--max-turns)     shift 2 ;;
-        -p)                      shift 2 ;;
+        -p)                      prompt="${2:-}"; shift 2 ;;
         *)                       prompt="$1"; shift ;;
     esac
 done
 
+response=""
 if echo "$prompt" | grep -qiE "implementation plan|task checklist|create a.*plan"; then
-    cat <<'PLAN'
+    response=$(cat <<'PLAN'
 # Implementation Plan
 
 ## Files to Modify
@@ -182,8 +185,9 @@ Run the test suite to verify auth works end to end.
 - [ ] Code reviewed
 - [ ] No security vulnerabilities
 PLAN
+)
 elif echo "$prompt" | grep -qiE "review|reviewer|diff"; then
-    cat <<'REVIEW'
+    response=$(cat <<'REVIEW'
 # Code Review
 
 ## Findings
@@ -196,8 +200,16 @@ elif echo "$prompt" | grep -qiE "review|reviewer|diff"; then
 3 issues found: 0 critical, 1 bug, 1 warning, 1 suggestion.
 Code is generally acceptable with minor improvements recommended.
 REVIEW
+)
 else
-    echo "Mock claude: unrecognized prompt context"
+    response="Mock claude: unrecognized prompt context"
+fi
+
+if [[ "$output_format" == "json" ]]; then
+    jq -n --arg result "$response" \
+      '{type:"result", result:$result, usage:{input_tokens:50, output_tokens:100}}'
+else
+    printf '%s\n' "$response"
 fi
 CLAUDE_EOF
     chmod +x "$TEMP_DIR/bin/claude"

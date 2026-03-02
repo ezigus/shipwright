@@ -2,6 +2,29 @@
 # Source from sw-pipeline.sh. Requires pipeline-quality.sh, ARTIFACTS_DIR, SCRIPT_DIR.
 [[ -n "${_PIPELINE_QUALITY_CHECKS_LOADED:-}" ]] && return 0
 _PIPELINE_QUALITY_CHECKS_LOADED=1
+_PIPELINE_QUALITY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "${_PIPELINE_QUALITY_DIR}/ai-provider.sh" ]] && source "${_PIPELINE_QUALITY_DIR}/ai-provider.sh"
+
+_pipeline_quality_ai_provider() {
+    ai_provider_resolve "${SHIPWRIGHT_AI_PROVIDER:-}" 2>/dev/null || echo "claude"
+}
+
+_pipeline_quality_ai_ready() {
+    local provider
+    provider="$(_pipeline_quality_ai_provider)"
+    ai_provider_check_ready "$provider" 2>/dev/null
+}
+
+_pipeline_quality_ai_text() {
+    local prompt="$1" tier="${2:-haiku}" max_turns="${3:-6}"
+    local provider out_file err_file ai_json
+    provider="$(_pipeline_quality_ai_provider)"
+    out_file=$(mktemp "${TMPDIR:-/tmp}/sw-quality-ai.XXXXXX")
+    err_file=$(mktemp "${TMPDIR:-/tmp}/sw-quality-ai-err.XXXXXX")
+    ai_json=$(ai_run_json "$provider" "$prompt" "$tier" "$max_turns" "$out_file" "$err_file" 2>/dev/null || true)
+    rm -f "$out_file" "$err_file"
+    echo "$ai_json" | jq -r '.result_text // ""' 2>/dev/null || echo ""
+}
 
 # Defaults for variables normally set by sw-pipeline.sh (safe under set -u).
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
@@ -247,13 +270,13 @@ quality_check_perf_regression() {
         if [[ -f "$daemon_cfg" ]]; then
             intel_enabled=$(jq -r '.intelligence.enabled // false' "$daemon_cfg" 2>/dev/null || echo "false")
         fi
-        if [[ "$intel_enabled" == "true" ]] && command -v claude >/dev/null 2>&1; then
+        if [[ "$intel_enabled" == "true" ]] && _pipeline_quality_ai_ready; then
             local tail_output
             tail_output=$(tail -30 "$test_log" 2>/dev/null || true)
             if [[ -n "$tail_output" ]]; then
-                duration_ms=$(claude --print -p "Extract ONLY the total test suite duration in seconds from this output. Reply with ONLY a number (e.g. 12.34). If no duration found, reply NONE.
+                duration_ms=$(_pipeline_quality_ai_text "Extract ONLY the total test suite duration in seconds from this output. Reply with ONLY a number (e.g. 12.34). If no duration found, reply NONE.
 
-$tail_output" < /dev/null 2>/dev/null | grep -oE '^[0-9.]+$' | head -1 || true)
+$tail_output" "haiku" "4" | grep -oE '^[0-9.]+$' | head -1 || true)
                 [[ "$duration_ms" == "NONE" ]] && duration_ms=""
             fi
         fi
@@ -419,13 +442,13 @@ quality_check_api_compat() {
 
     # Intelligence: semantic API diff for complex changes
     local semantic_diff=""
-    if type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
+    if type intelligence_search_memory >/dev/null 2>&1 && _pipeline_quality_ai_ready; then
         local spec_git_diff
         spec_git_diff=$(git diff "${BASE_BRANCH}...HEAD" -- "$spec_file" 2>/dev/null | head -200 || true)
         if [[ -n "$spec_git_diff" ]]; then
-            semantic_diff=$(claude --print --output-format text -p "Analyze this API spec diff for breaking changes. List: removed endpoints, changed parameters, altered response schemas, auth changes. Be concise.
+            semantic_diff=$(_pipeline_quality_ai_text "Analyze this API spec diff for breaking changes. List: removed endpoints, changed parameters, altered response schemas, auth changes. Be concise.
 
-${spec_git_diff}" --model haiku < /dev/null 2>/dev/null || true)
+${spec_git_diff}" "haiku" "4")
         fi
     fi
 
@@ -482,13 +505,13 @@ quality_check_coverage() {
         if [[ -f "$daemon_cfg_cov" ]]; then
             intel_enabled_cov=$(jq -r '.intelligence.enabled // false' "$daemon_cfg_cov" 2>/dev/null || echo "false")
         fi
-        if [[ "$intel_enabled_cov" == "true" ]] && command -v claude >/dev/null 2>&1; then
+        if [[ "$intel_enabled_cov" == "true" ]] && _pipeline_quality_ai_ready; then
             local tail_cov_output
             tail_cov_output=$(tail -40 "$test_log" 2>/dev/null || true)
             if [[ -n "$tail_cov_output" ]]; then
-                coverage=$(claude --print -p "Extract ONLY the overall code coverage percentage from this test output. Reply with ONLY a number (e.g. 85.5). If no coverage found, reply NONE.
+                coverage=$(_pipeline_quality_ai_text "Extract ONLY the overall code coverage percentage from this test output. Reply with ONLY a number (e.g. 85.5). If no coverage found, reply NONE.
 
-$tail_cov_output" < /dev/null 2>/dev/null | grep -oE '^[0-9.]+$' | head -1 || true)
+$tail_cov_output" "haiku" "4" | grep -oE '^[0-9.]+$' | head -1 || true)
                 [[ "$coverage" == "NONE" ]] && coverage=""
             fi
         fi
@@ -642,8 +665,7 @@ Diff:
 $diff_content"
 
     local review_output
-    review_output=$(claude --print "$prompt" < /dev/null 2>"${ARTIFACTS_DIR}/.claude-tokens-adversarial.log" || true)
-    parse_claude_tokens "${ARTIFACTS_DIR}/.claude-tokens-adversarial.log"
+    review_output=$(_pipeline_quality_ai_text "$prompt" "haiku" "8")
 
     echo "$review_output" > "$ARTIFACTS_DIR/adversarial-review.md"
 
@@ -713,8 +735,7 @@ Files changed: $changed_files
 $file_contents"
 
     local review_output
-    review_output=$(claude --print "$prompt" < /dev/null 2>"${ARTIFACTS_DIR}/.claude-tokens-negative.log" || true)
-    parse_claude_tokens "${ARTIFACTS_DIR}/.claude-tokens-negative.log"
+    review_output=$(_pipeline_quality_ai_text "$prompt" "haiku" "8")
 
     echo "$review_output" > "$ARTIFACTS_DIR/negative-review.md"
 

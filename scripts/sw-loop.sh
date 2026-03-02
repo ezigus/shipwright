@@ -34,6 +34,7 @@ if [[ -f "$SCRIPT_DIR/sw-db.sh" ]]; then
 fi
 # Cross-pipeline discovery (learnings from other pipeline runs)
 [[ -f "$SCRIPT_DIR/sw-discovery.sh" ]] && source "$SCRIPT_DIR/sw-discovery.sh" 2>/dev/null || true
+[[ -f "$SCRIPT_DIR/lib/ai-provider.sh" ]] && source "$SCRIPT_DIR/lib/ai-provider.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -66,6 +67,8 @@ TEST_LOG_FILE=""
 LAST_ACTIVE_TEST_CMD=""
 LAST_TEST_MODE=""
 MODEL="${SW_MODEL:-opus}"
+AI_PROVIDER_OVERRIDE=""
+AI_PROVIDER=""
 AGENTS=1
 AGENT_ROLES=""
 USE_WORKTREE=false
@@ -118,7 +121,8 @@ show_help() {
     echo -e "  ${CYAN}--test-cmd${RESET} \"cmd\"         Test command to run between iterations"
     echo -e "  ${CYAN}--fast-test-cmd${RESET} \"cmd\"      Fast/subset test command (alternates with full)"
     echo -e "  ${CYAN}--fast-test-interval${RESET} N       Run full tests every N iterations (default: 5)"
-    echo -e "  ${CYAN}--model${RESET} MODEL             Claude model to use (default: opus)"
+    echo -e "  ${CYAN}--model${RESET} MODEL             AI model tier/name (default: opus)"
+    echo -e "  ${CYAN}--ai-provider${RESET} NAME        AI provider (claude, codex, copilot)"
     echo -e "  ${CYAN}--agents${RESET} N                Number of parallel agents (default: 1)"
     echo -e "  ${CYAN}--roles${RESET} \"r1,r2,...\"        Role per agent: builder,reviewer,tester,optimizer,docs,security"
     echo -e "  ${CYAN}--worktree${RESET}                Use git worktrees for isolation (auto if agents > 1)"
@@ -198,6 +202,12 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --model=*) MODEL="${1#--model=}"; shift ;;
+        --ai-provider)
+            AI_PROVIDER_OVERRIDE="${2:-}"
+            [[ -z "$AI_PROVIDER_OVERRIDE" ]] && { error "Missing value for --ai-provider"; exit 1; }
+            shift 2
+            ;;
+        --ai-provider=*) AI_PROVIDER_OVERRIDE="${1#--ai-provider=}"; shift ;;
         --agents)
             AGENTS="${2:-}"
             [[ -z "$AGENTS" ]] && { error "Missing value for --agents"; exit 1; }
@@ -283,6 +293,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ -n "$AI_PROVIDER_OVERRIDE" ]]; then
+    export SHIPWRIGHT_AI_PROVIDER="$AI_PROVIDER_OVERRIDE"
+fi
+
 # Auto-enable worktree for multi-agent
 if [[ "$AGENTS" -gt 1 ]]; then
     # shellcheck disable=SC2034
@@ -349,9 +363,17 @@ if [[ -n "$REPO_OVERRIDE" ]]; then
     info "Using repository: $(pwd)"
 fi
 
-if ! command -v claude >/dev/null 2>&1; then
-    error "Claude Code CLI not found. Install it first:"
-    echo -e "  ${DIM}npm install -g @anthropic-ai/claude-code${RESET}"
+AI_PROVIDER="$(ai_provider_resolve "$AI_PROVIDER_OVERRIDE" 2>/dev/null || true)"
+if [[ -z "$AI_PROVIDER" ]]; then
+    error "Invalid --ai-provider value: ${AI_PROVIDER_OVERRIDE:-<empty>}"
+    exit 1
+fi
+if ! ai_provider_check_ready "$AI_PROVIDER"; then
+    local_provider_cmd="$(ai_provider_command "$AI_PROVIDER" 2>/dev/null || echo "$AI_PROVIDER")"
+    error "AI provider not ready: ${AI_PROVIDER} (${local_provider_cmd})"
+    if [[ "$AI_PROVIDER" == "claude" ]]; then
+        echo -e "  ${DIM}npm install -g @anthropic-ai/claude-code${RESET}"
+    fi
     exit 1
 fi
 
@@ -476,15 +498,18 @@ accumulate_loop_tokens() {
     local log_file="$1"
     [[ ! -f "$log_file" ]] && return 0
 
-    # If jq is available and the file looks like JSON, parse structured output
-    if command -v jq >/dev/null 2>&1 && head -c1 "$log_file" 2>/dev/null | grep -q '\['; then
+    # If jq is available and the file looks like JSON, parse structured output.
+    # Supports both legacy Claude arrays and normalized provider objects.
+    local first_char
+    first_char=$(head -c1 "$log_file" 2>/dev/null || true)
+    if command -v jq >/dev/null 2>&1 && [[ "$first_char" == "[" || "$first_char" == "{" ]]; then
         local input_tok output_tok cache_read cache_create cost_usd
-        # The result object is the last element in the JSON array
-        input_tok=$(jq -r '.[-1].usage.input_tokens // 0' "$log_file" 2>/dev/null || echo "0")
-        output_tok=$(jq -r '.[-1].usage.output_tokens // 0' "$log_file" 2>/dev/null || echo "0")
-        cache_read=$(jq -r '.[-1].usage.cache_read_input_tokens // 0' "$log_file" 2>/dev/null || echo "0")
-        cache_create=$(jq -r '.[-1].usage.cache_creation_input_tokens // 0' "$log_file" 2>/dev/null || echo "0")
-        cost_usd=$(jq -r '.[-1].total_cost_usd // 0' "$log_file" 2>/dev/null || echo "0")
+        # Keep legacy jq paths to preserve existing behavior/tests, then support object fields.
+        input_tok=$(jq -r 'if type=="array" then .[-1].usage.input_tokens // 0 else .input_tokens // 0 end' "$log_file" 2>/dev/null || echo "0")
+        output_tok=$(jq -r 'if type=="array" then .[-1].usage.output_tokens // 0 else .output_tokens // 0 end' "$log_file" 2>/dev/null || echo "0")
+        cache_read=$(jq -r 'if type=="array" then .[-1].usage.cache_read_input_tokens // 0 else 0 end' "$log_file" 2>/dev/null || echo "0")
+        cache_create=$(jq -r 'if type=="array" then .[-1].usage.cache_creation_input_tokens // 0 else 0 end' "$log_file" 2>/dev/null || echo "0")
+        cost_usd=$(jq -r 'if type=="array" then .[-1].total_cost_usd // 0 else .cost_usd // 0 end' "$log_file" 2>/dev/null || echo "0")
 
         LOOP_INPUT_TOKENS=$(( LOOP_INPUT_TOKENS + ${input_tok:-0} + ${cache_read:-0} + ${cache_create:-0} ))
         LOOP_OUTPUT_TOKENS=$(( LOOP_OUTPUT_TOKENS + ${output_tok:-0} ))
@@ -539,7 +564,19 @@ _extract_text_from_json() {
     local first_char
     first_char=$(head -c1 "$json_file" 2>/dev/null || true)
 
-    # Case 2: Valid JSON (array or object) — extract .result with jq
+    # Case 2: Normalized provider object — extract .result_text (multi-AI provider format)
+    if [[ "$first_char" == "{" ]] && command -v jq >/dev/null 2>&1; then
+        local obj_result
+        obj_result=$(jq -r '.result_text // empty' "$json_file" 2>/dev/null) || true
+        if [[ -n "$obj_result" ]]; then
+            echo "$obj_result" > "$log_file"
+            return 0
+        fi
+        cp "$json_file" "$log_file"
+        return 0
+    fi
+
+    # Case 3: Valid JSON (array or object) — extract .result with jq
     if [[ "$first_char" == "[" || "$first_char" == "{" ]] && command -v jq >/dev/null 2>&1; then
         local extracted
         if [[ "$first_char" == "[" ]]; then
@@ -569,14 +606,14 @@ _extract_text_from_json() {
         return 0
     fi
 
-    # Case 3: Looks like JSON but no jq — can't parse, use raw
+    # Case 4: Looks like JSON but no jq — can't parse, use raw
     if [[ "$first_char" == "[" || "$first_char" == "{" ]]; then
         warn "JSON output but jq not available — using raw output"
         cp "$json_file" "$log_file"
         return 0
     fi
 
-    # Case 4: Not JSON at all (plain text, error message, etc.) — use as-is
+    # Case 5: Not JSON at all (plain text, error message, etc.) — use as-is
     cp "$json_file" "$log_file"
     return 0
 }
@@ -1501,8 +1538,9 @@ AUDIT_PROMPT
         audit_flags+=("--dangerously-skip-permissions")
     fi
 
-    local exit_code=0
-    claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>&1 || exit_code=$?
+    local audit_output
+    audit_output=$(loop_ai_run_text "$audit_prompt" "$audit_model" "8")
+    printf '%s\n' "$audit_output" > "$audit_log"
 
     if grep -q "AUDIT_PASS" "$audit_log" 2>/dev/null; then
         AUDIT_RESULT="pass"
@@ -1630,7 +1668,9 @@ DOD_PROMPT
         dod_flags+=("--dangerously-skip-permissions")
     fi
 
-    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>&1 || true
+    local dod_output
+    dod_output=$(loop_ai_run_text "$dod_prompt" "$dod_model" "8")
+    printf '%s\n' "$dod_output" > "$dod_log"
 
     if grep -q "DOD_PASS" "$dod_log" 2>/dev/null; then
         echo -e "  ${GREEN}✓${RESET} Definition of Done: satisfied"
@@ -2538,6 +2578,30 @@ build_claude_flags() {
     echo "${flags[*]}"
 }
 
+loop_ai_run_json() {
+    local prompt="$1" model_tier="$2" max_turns="$3" json_file="$4" err_file="$5"
+    local raw_out raw_err ai_json
+    raw_out=$(mktemp "${TMPDIR:-/tmp}/sw-loop-ai-raw.XXXXXX")
+    raw_err=$(mktemp "${TMPDIR:-/tmp}/sw-loop-ai-err.XXXXXX")
+    ai_json=$(ai_run_json "$AI_PROVIDER" "$prompt" "$model_tier" "$max_turns" "$raw_out" "$raw_err" 2>/dev/null || true)
+    cat "$raw_err" > "$err_file" 2>/dev/null || true
+    rm -f "$raw_out" "$raw_err"
+    if [[ -z "$ai_json" ]]; then
+        ai_json='{"ai_provider":"'"$AI_PROVIDER"'","result_text":"","completion_signal_detected":false,"input_tokens":0,"output_tokens":0,"cost_usd":null,"usage_source":"none","raw_payload_ref":""}'
+    fi
+    printf '%s\n' "$ai_json" > "$json_file"
+}
+
+loop_ai_run_text() {
+    local prompt="$1" model_tier="$2" max_turns="$3"
+    local json_file err_file
+    json_file=$(mktemp "${TMPDIR:-/tmp}/sw-loop-ai-json.XXXXXX")
+    err_file=$(mktemp "${TMPDIR:-/tmp}/sw-loop-ai-stderr.XXXXXX")
+    loop_ai_run_json "$prompt" "$model_tier" "$max_turns" "$json_file" "$err_file"
+    jq -r '.result_text // ""' "$json_file" 2>/dev/null || true
+    rm -f "$json_file" "$err_file"
+}
+
 run_claude_iteration() {
     local log_file="$LOG_DIR/iteration-${ITERATION}.log"
     local json_file="$LOG_DIR/iteration-${ITERATION}.json"
@@ -2573,40 +2637,25 @@ run_claude_iteration() {
             "job_id=${PIPELINE_JOB_ID:-loop-$$}" 2>/dev/null || true
     fi
 
-    local flags
-    flags="$(build_claude_flags)"
 
     local iter_start
     iter_start="$(now_epoch)"
 
     echo -e "\n${CYAN}${BOLD}▸${RESET} ${BOLD}Iteration ${ITERATION}/${MAX_ITERATIONS}${RESET} — Starting..."
 
-    # Run Claude headless (with timeout + PID capture for signal handling)
-    # Output goes to .json first, then we extract text into .log for compat
-    local exit_code=0
-    # shellcheck disable=SC2086
     local err_file="${json_file%.json}.stderr"
-    if [[ -n "$TIMEOUT_CMD" ]]; then
-        $TIMEOUT_CMD "$CLAUDE_TIMEOUT" claude -p "$final_prompt" $flags > "$json_file" 2>"$err_file" &
-    else
-        claude -p "$final_prompt" $flags > "$json_file" 2>"$err_file" &
-    fi
-    CHILD_PID=$!
-    wait "$CHILD_PID" 2>/dev/null || exit_code=$?
-    CHILD_PID=""
-    if [[ "$exit_code" -eq 124 ]]; then
-        warn "Claude CLI timed out after ${CLAUDE_TIMEOUT}s"
-    fi
+    local iter_turns="${MAX_TURNS:-25}"
+    local exit_code=0
+    loop_ai_run_json "$final_prompt" "$MODEL" "$iter_turns" "$json_file" "$err_file" || exit_code=$?
 
-    # Extract text result from JSON into .log for backwards compatibility
-    # With --output-format json, stdout is a JSON array; .[-1].result has the text
+    # Extract text result from normalized JSON into .log for backwards compatibility
     _extract_text_from_json "$json_file" "$log_file" "$err_file"
 
     local iter_end
     iter_end="$(now_epoch)"
     local iter_duration=$(( iter_end - iter_start ))
 
-    echo -e "  ${GREEN}✓${RESET} Claude session completed ($(format_duration "$iter_duration"), exit $exit_code)"
+    echo -e "  ${GREEN}✓${RESET} ${AI_PROVIDER} session completed ($(format_duration "$iter_duration"), exit $exit_code)"
 
     # Accumulate token usage from this iteration's JSON output
     accumulate_loop_tokens "$json_file"
@@ -2651,7 +2700,7 @@ show_banner() {
     if $AUTO_EXTEND; then
         extend_info=" ${DIM}(auto-extend: +${EXTENSION_SIZE} x${MAX_EXTENSIONS})${RESET}"
     fi
-    echo -e "  ${BOLD}Model:${RESET} $MODEL ${DIM}|${RESET} ${BOLD}Max:${RESET} $MAX_ITERATIONS iterations${extend_info} ${DIM}|${RESET} ${BOLD}Test:${RESET} ${TEST_CMD:-"(none)"}"
+    echo -e "  ${BOLD}Model:${RESET} $MODEL ${DIM}|${RESET} ${BOLD}Provider:${RESET} ${AI_PROVIDER:-claude} ${DIM}|${RESET} ${BOLD}Max:${RESET} $MAX_ITERATIONS iterations${extend_info} ${DIM}|${RESET} ${BOLD}Test:${RESET} ${TEST_CMD:-"(none)"}"
     if [[ "$AGENTS" -gt 1 ]]; then
         echo -e "  ${BOLD}Agents:${RESET} $AGENTS ${DIM}(parallel worktree mode)${RESET}"
     fi
@@ -2813,13 +2862,11 @@ generate_worker_script() {
     local wt_path="$WORKTREE_DIR/agent-${agent_num}"
     local worker_script="$LOG_DIR/worker-${agent_num}.sh"
 
-    local claude_flags
-    claude_flags="$(build_claude_flags)"
-
     cat > "$worker_script" <<'WORKEREOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="__SCRIPT_DIR__"
 AGENT_NUM="__AGENT_NUM__"
 TOTAL_AGENTS="__TOTAL_AGENTS__"
 WORK_DIR="__WORK_DIR__"
@@ -2827,7 +2874,9 @@ LOG_DIR="__LOG_DIR__"
 MAX_ITERATIONS="__MAX_ITERATIONS__"
 GOAL="__GOAL__"
 TEST_CMD="__TEST_CMD__"
-CLAUDE_FLAGS="__CLAUDE_FLAGS__"
+AI_PROVIDER="__AI_PROVIDER__"
+MODEL="__MODEL__"
+MAX_TURNS="__MAX_TURNS__"
 
 CYAN='\033[38;2;0;212;255m'
 GREEN='\033[38;2;74;222;128m'
@@ -2836,6 +2885,10 @@ RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
 BOLD='\033[1m'
 RESET='\033[0m'
+
+[[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
+[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
+[[ -f "$SCRIPT_DIR/lib/ai-provider.sh" ]] && source "$SCRIPT_DIR/lib/ai-provider.sh"
 
 cd "$WORK_DIR"
 ITERATION=0
@@ -2900,17 +2953,25 @@ Focus on areas they haven't touched yet.
 PROMPT
 )"
 
-    # Run Claude (output is JSON due to --output-format json in CLAUDE_FLAGS)
-    local JSON_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.json"
-    local ERR_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.stderr"
+    # Run configured provider through normalized router output.
+    JSON_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.json"
+    ERR_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.stderr"
     LOG_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.log"
-    # shellcheck disable=SC2086
-    claude -p "$PROMPT" $CLAUDE_FLAGS > "$JSON_FILE" 2>"$ERR_FILE" || true
+    RAW_OUT=""
+    RAW_ERR=""
+    AI_JSON=""
+    turns=""
+    RAW_OUT="$(mktemp "${TMPDIR:-/tmp}/sw-loop-worker-raw.XXXXXX")"
+    RAW_ERR="$(mktemp "${TMPDIR:-/tmp}/sw-loop-worker-err.XXXXXX")"
+    turns="${MAX_TURNS:-25}"
+    AI_JSON="$(ai_run_json "$AI_PROVIDER" "$PROMPT" "$MODEL" "$turns" "$RAW_OUT" "$RAW_ERR" 2>/dev/null || true)"
+    [[ -z "$AI_JSON" ]] && AI_JSON='{"result_text":"","completion_signal_detected":false,"input_tokens":0,"output_tokens":0,"cost_usd":null}'
+    printf '%s\n' "$AI_JSON" > "$JSON_FILE"
+    cp "$RAW_ERR" "$ERR_FILE" 2>/dev/null || true
+    rm -f "$RAW_OUT" "$RAW_ERR"
+    jq -r '.result_text // ""' "$JSON_FILE" > "$LOG_FILE" 2>/dev/null || echo "" > "$LOG_FILE"
 
-    # Extract text result from JSON into .log for backwards compat
-    _extract_text_from_json "$JSON_FILE" "$LOG_FILE" "$ERR_FILE"
-
-    echo -e "  ${GREEN}✓${RESET} Claude session completed"
+    echo -e "  ${GREEN}✓${RESET} ${AI_PROVIDER} session completed"
 
     # Check completion
     if grep -q "LOOP_COMPLETE" "$LOG_FILE" 2>/dev/null; then
@@ -2967,7 +3028,11 @@ WORKEREOF
         && mv "${worker_script}.tmp" "$worker_script"
     awk -v val="$TEST_CMD" '{gsub(/__TEST_CMD__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
         && mv "${worker_script}.tmp" "$worker_script"
-    awk -v val="$claude_flags" '{gsub(/__CLAUDE_FLAGS__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
+    awk -v val="$AI_PROVIDER" '{gsub(/__AI_PROVIDER__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
+        && mv "${worker_script}.tmp" "$worker_script"
+    awk -v val="$MODEL" '{gsub(/__MODEL__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
+        && mv "${worker_script}.tmp" "$worker_script"
+    awk -v val="${MAX_TURNS:-}" '{gsub(/__MAX_TURNS__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
         && mv "${worker_script}.tmp" "$worker_script"
     awk -v val="$GOAL" '{gsub(/__GOAL__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
         && mv "${worker_script}.tmp" "$worker_script"

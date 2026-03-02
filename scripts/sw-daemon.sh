@@ -255,6 +255,7 @@ CONFIG_PATH=""
 DETACH=false
 FOLLOW=false
 BACKOFF_SECS=0
+AI_PROVIDER_OVERRIDE=""
 
 # ─── CLI Argument Parsing ──────────────────────────────────────────────────
 
@@ -281,6 +282,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-github)
             NO_GITHUB=true
+            shift
+            ;;
+        --ai-provider)
+            AI_PROVIDER_OVERRIDE="${2:-}"
+            shift 2
+            ;;
+        --ai-provider=*)
+            AI_PROVIDER_OVERRIDE="${1#--ai-provider=}"
             shift
             ;;
         --help|-h)
@@ -319,12 +328,14 @@ show_help() {
     echo -e "  ${CYAN}--detach${RESET}, ${CYAN}-d${RESET}     Run in a detached tmux session"
     echo -e "  ${CYAN}--follow${RESET}, ${CYAN}-f${RESET}     Follow log output (with ${CYAN}logs${RESET} command)"
     echo -e "  ${CYAN}--no-github${RESET}       Disable GitHub API calls (dry-run mode)"
+    echo -e "  ${CYAN}--ai-provider${RESET} <name>  AI provider for spawned pipeline runs"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo -e "  ${DIM}shipwright daemon init${RESET}                        # Generate config file"
     echo -e "  ${DIM}shipwright daemon start${RESET}                       # Start watching in foreground"
     echo -e "  ${DIM}shipwright daemon start --detach${RESET}               # Start in background tmux session"
     echo -e "  ${DIM}shipwright daemon start --config my-config.json${RESET} # Custom config"
+    echo -e "  ${DIM}shipwright daemon start --ai-provider codex${RESET}     # Use codex for AI calls"
     echo -e "  ${DIM}shipwright daemon status${RESET}                      # Show active jobs and queue"
     echo -e "  ${DIM}shipwright daemon stop${RESET}                        # Graceful shutdown"
     echo -e "  ${DIM}shipwright daemon logs --follow${RESET}               # Tail the daemon log"
@@ -688,6 +699,10 @@ daemon_start() {
     # Load config
     load_config
 
+    if [[ -n "$AI_PROVIDER_OVERRIDE" ]]; then
+        export SHIPWRIGHT_AI_PROVIDER="$AI_PROVIDER_OVERRIDE"
+    fi
+
     # Pre-flight
     if ! preflight_checks; then
         exit 1
@@ -709,6 +724,9 @@ daemon_start() {
         fi
         if [[ "$NO_GITHUB" == "true" ]]; then
             cmd_args+=("--no-github")
+        fi
+        if [[ -n "$AI_PROVIDER_OVERRIDE" ]]; then
+            cmd_args+=("--ai-provider" "$AI_PROVIDER_OVERRIDE")
         fi
 
         # Export current PATH so detached session finds claude, gh, etc.

@@ -8,6 +8,54 @@
     "$schema": { "type": "string" },
     "description": { "type": "string" },
     "version": { "type": "string" },
+    "ai": {
+      "type": "object",
+      "description": "Universal AI provider configuration for daemon and non-daemon execution paths.",
+      "properties": {
+        "provider": {
+          "type": "object",
+          "properties": {
+            "default": { "type": "string" },
+            "allowed": { "type": "string" },
+            "fallback": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "models": {
+          "type": "object",
+          "description": "Canonical tier mapping per provider (haiku/sonnet/opus).",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "haiku": { "type": "string" },
+              "sonnet": { "type": "string" },
+              "opus": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "providers": {
+          "type": "object",
+          "description": "Per-provider executable command and help probe args.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "command": { "type": "string" },
+              "help_args": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "telemetry": {
+          "type": "object",
+          "properties": {
+            "allow_estimated_cost": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "riskTierRules": {
       "type": "object",
       "description": "Path-based risk classification. Tiers: critical, high, medium, low. Glob patterns matched against changed files.",

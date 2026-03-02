@@ -2,6 +2,29 @@
 # Source from sw-pipeline.sh. Requires all pipeline globals and state/github/detection/quality modules.
 [[ -n "${_PIPELINE_STAGES_LOADED:-}" ]] && return 0
 _PIPELINE_STAGES_LOADED=1
+_PIPELINE_STAGES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "${_PIPELINE_STAGES_DIR}/ai-provider.sh" ]] && source "${_PIPELINE_STAGES_DIR}/ai-provider.sh"
+
+_pipeline_stage_ai_provider() {
+    ai_provider_resolve "${SHIPWRIGHT_AI_PROVIDER:-}" 2>/dev/null || echo "claude"
+}
+
+_pipeline_stage_ai_ready() {
+    local provider
+    provider="$(_pipeline_stage_ai_provider)"
+    ai_provider_check_ready "$provider" 2>/dev/null
+}
+
+_pipeline_stage_ai_prompt_text() {
+    local prompt="$1" tier="${2:-sonnet}" max_turns="${3:-25}"
+    local provider out_file err_file ai_json
+    provider="$(_pipeline_stage_ai_provider)"
+    out_file=$(mktemp "${TMPDIR:-/tmp}/sw-stage-ai.XXXXXX")
+    err_file=$(mktemp "${TMPDIR:-/tmp}/sw-stage-ai-err.XXXXXX")
+    ai_json=$(ai_run_json "$provider" "$prompt" "$tier" "$max_turns" "$out_file" "$err_file" 2>/dev/null || true)
+    rm -f "$out_file" "$err_file"
+    echo "$ai_json" | jq -r '.result_text // ""' 2>/dev/null || echo ""
+}
 
 # Defaults for variables normally set by sw-pipeline.sh (safe under set -u).
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
@@ -264,8 +287,8 @@ stage_plan() {
     CURRENT_STAGE_ID="plan"
     local plan_file="$ARTIFACTS_DIR/plan.md"
 
-    if ! command -v claude >/dev/null 2>&1; then
-        error "Claude CLI not found — cannot generate plan"
+    if ! _pipeline_stage_ai_ready; then
+        error "Configured AI provider not ready — cannot generate plan"
         return 1
     fi
 
@@ -451,10 +474,9 @@ Checklist of completion criteria.
         plan_model="$CLAUDE_MODEL"
     fi
 
-    local _token_log="${ARTIFACTS_DIR}/.claude-tokens-plan.log"
-    claude --print --model "$plan_model" --max-turns 25 --dangerously-skip-permissions \
-        "$plan_prompt" < /dev/null > "$plan_file" 2>"$_token_log" || true
-    parse_claude_tokens "$_token_log"
+    local plan_output
+    plan_output=$(_pipeline_stage_ai_prompt_text "$plan_prompt" "$plan_model" "25")
+    printf '%s\n' "$plan_output" > "$plan_file"
 
     # Claude may write to disk via tools instead of stdout — rescue those files
     local _plan_rescue
@@ -570,8 +592,8 @@ CC_TASKS_EOF
     sed -n '/[Dd]efinition [Oo]f [Dd]one/,/^#/p' "$plan_file" | head -20 > "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true
 
     # ── Plan Validation Gate ──
-    # Ask Claude to validate the plan before proceeding
-    if command -v claude >/dev/null 2>&1 && [[ -s "$plan_file" ]]; then
+    # Ask selected provider to validate the plan before proceeding
+    if _pipeline_stage_ai_ready && [[ -s "$plan_file" ]]; then
         local validation_attempts=0
         local max_validation_attempts=2
         local plan_valid=false
@@ -639,8 +661,7 @@ Then explain your reasoning briefly."
 
             local validation_model="${plan_model:-opus}"
             local validation_result
-            validation_result=$(claude --print --output-format text -p "$validation_prompt" --model "$validation_model" < /dev/null 2>"${ARTIFACTS_DIR}/.claude-tokens-plan-validate.log" || true)
-            parse_claude_tokens "${ARTIFACTS_DIR}/.claude-tokens-plan-validate.log"
+            validation_result=$(_pipeline_stage_ai_prompt_text "$validation_prompt" "$validation_model" "8")
 
             # Save validation result
             echo "$validation_result" > "$ARTIFACTS_DIR/plan-validation.md"
@@ -709,17 +730,13 @@ GUIDANCE: ${failure_guidance}}
 
 Fix these issues in the new plan."
 
-                local regen_tmp
-                regen_tmp="$(mktemp "${ARTIFACTS_DIR}/plan.regen.XXXXXX.md")"
-                claude --print --model "$plan_model" --max-turns 25 \
-                    "$regen_prompt" < /dev/null > "$regen_tmp" 2>"$_token_log" || true
-                parse_claude_tokens "$_token_log"
-                if [[ -s "$regen_tmp" ]]; then
-                    mv "$regen_tmp" "$plan_file"
+                local regen_output
+                regen_output=$(_pipeline_stage_ai_prompt_text "$regen_prompt" "$plan_model" "25")
+                if [[ -n "$regen_output" ]]; then
+                    printf '%s\n' "$regen_output" > "$plan_file"
                     line_count=$(wc -l < "$plan_file" | xargs)
                     info "Regenerated plan: ${DIM}$plan_file${RESET} (${line_count} lines)"
                 else
-                    rm -f "$regen_tmp"
                     warn "Regenerated plan was empty — preserving existing ${plan_file}"
                 fi
             fi
@@ -748,8 +765,8 @@ stage_design() {
         return 0
     fi
 
-    if ! command -v claude >/dev/null 2>&1; then
-        error "Claude CLI not found — cannot generate design"
+    if ! _pipeline_stage_ai_ready; then
+        error "Configured AI provider not ready — cannot generate design"
         return 1
     fi
 
@@ -888,10 +905,9 @@ Be concrete and specific. Reference actual file paths in the codebase. Consider 
         design_model="$CLAUDE_MODEL"
     fi
 
-    local _token_log="${ARTIFACTS_DIR}/.claude-tokens-design.log"
-    claude --print --model "$design_model" --max-turns 25 --dangerously-skip-permissions \
-        "$design_prompt" < /dev/null > "$design_file" 2>"$_token_log" || true
-    parse_claude_tokens "$_token_log"
+    local design_output
+    design_output=$(_pipeline_stage_ai_prompt_text "$design_prompt" "$design_model" "25")
+    printf '%s\n' "$design_output" > "$design_file"
 
     # Claude may write to disk via tools instead of stdout — rescue those files
     local _design_rescue
@@ -1000,7 +1016,7 @@ Create files in the appropriate project directories (e.g. tests/, __tests__/, sr
     [[ -z "$model" || "$model" == "null" ]] && model="sonnet"
 
     local output=""
-    output=$(echo "$tdd_prompt" | timeout 120 claude --print --model "$model" 2>/dev/null) || {
+    output=$(_pipeline_stage_ai_prompt_text "$tdd_prompt" "$model" "8") || {
         warn "TDD test generation failed, falling back to standard build"
         return 1
     }
@@ -1272,14 +1288,14 @@ ${prevention_text}"
     info "Build produced ${BOLD}$commit_count${RESET} commit(s)"
 
     # Commit quality evaluation when intelligence is enabled
-    if type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1 && [[ "${commit_count:-0}" -gt 0 ]]; then
+    if type intelligence_search_memory >/dev/null 2>&1 && _pipeline_stage_ai_ready && [[ "${commit_count:-0}" -gt 0 ]]; then
         local commit_msgs
         commit_msgs=$(_safe_base_log --format="%s" | head -20)
         local quality_score
-        quality_score=$(claude --print --output-format text -p "Rate the quality of these git commit messages on a scale of 0-100. Consider: focus (one thing per commit), clarity (describes the why), atomicity (small logical units). Reply with ONLY a number 0-100.
+        quality_score=$(_pipeline_stage_ai_prompt_text "Rate the quality of these git commit messages on a scale of 0-100. Consider: focus (one thing per commit), clarity (describes the why), atomicity (small logical units). Reply with ONLY a number 0-100.
 
 Commit messages:
-${commit_msgs}" --model haiku < /dev/null 2>/dev/null || true)
+${commit_msgs}" "haiku" "4")
         quality_score=$(echo "$quality_score" | grep -oE '^[0-9]+' | head -1 || true)
         if [[ -n "$quality_score" ]]; then
             emit_event "build.commit_quality" \
@@ -1422,8 +1438,8 @@ stage_review() {
         return 0
     fi
 
-    if ! command -v claude >/dev/null 2>&1; then
-        warn "Claude CLI not found — skipping AI review"
+    if ! _pipeline_stage_ai_ready; then
+        warn "Configured AI provider not ready — skipping AI review"
         return 0
     fi
 
@@ -1432,7 +1448,7 @@ stage_review() {
     info "Running AI code review... ${DIM}($diff_stats)${RESET}"
 
     # Semantic risk scoring when intelligence is enabled
-    if type intelligence_search_memory >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
+    if type intelligence_search_memory >/dev/null 2>&1 && _pipeline_stage_ai_ready; then
         local diff_files
         diff_files=$(_safe_base_diff --name-only || true)
         local risk_score="low"
@@ -1532,15 +1548,12 @@ $(cat "$diff_file")"
     # Guard total prompt size
     review_prompt=$(guard_prompt_size "review" "$review_prompt")
 
-    # Skip permissions — pipeline runs headlessly (claude -p) and has no terminal
-    # for interactive permission prompts. Same rationale as build stage (line ~1083).
-    local review_args=(--print --model "$review_model" --max-turns 25 --dangerously-skip-permissions)
-
-    claude "${review_args[@]}" "$review_prompt" < /dev/null > "$review_file" 2>"${ARTIFACTS_DIR}/.claude-tokens-review.log" || true
-    parse_claude_tokens "${ARTIFACTS_DIR}/.claude-tokens-review.log"
+    local review_output
+    review_output=$(_pipeline_stage_ai_prompt_text "$review_prompt" "$review_model" "25")
+    printf '%s\n' "$review_output" > "$review_file"
 
     if [[ ! -s "$review_file" ]]; then
-        warn "Review produced no output — check ${ARTIFACTS_DIR}/.claude-tokens-review.log for errors"
+        warn "Review produced no output"
         return 0
     fi
 

@@ -21,6 +21,7 @@ SLACK_WEBHOOK="${SLACK_WEBHOOK:-}"
 # SQLite persistence (DB as primary read path)
 _DAEMON_STATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -f "${_DAEMON_STATE_DIR}/../sw-db.sh" ]] && source "${_DAEMON_STATE_DIR}/../sw-db.sh"
+[[ -f "${_DAEMON_STATE_DIR}/ai-provider.sh" ]] && source "${_DAEMON_STATE_DIR}/ai-provider.sh"
 
 DAEMON_LOG_WRITE_COUNT=0
 
@@ -158,29 +159,23 @@ daemon_preflight_auth_check() {
         fi
     fi
 
-    # claude auth check — verify CLI is available and responsive
-    # Note: `claude --print` hangs in non-interactive environments (tmux, background).
-    # Use `claude --version` (fast, non-interactive) to verify the binary works.
-    # Actual API auth is validated when pipelines run `claude` with real prompts.
-    local claude_auth_ok=false
-    if command -v claude >/dev/null 2>&1; then
-        local _ver
-        _ver=$(unset CLAUDECODE; claude --version 2>/dev/null || true)
-        if [[ -n "$_ver" ]]; then
-            claude_auth_ok=true
-        fi
+    local provider provider_ok
+    provider="$(ai_provider_resolve "${SHIPWRIGHT_AI_PROVIDER:-}" 2>/dev/null || echo "claude")"
+    provider_ok=false
+    if [[ "$(type -t ai_provider_check_ready 2>/dev/null)" == "function" ]] && ai_provider_check_ready "$provider"; then
+        provider_ok=true
     fi
 
-    if [[ "$claude_auth_ok" != "true" ]]; then
-        daemon_log ERROR "Claude CLI not found or not working — auto-pausing daemon"
+    if [[ "$provider_ok" != "true" ]]; then
+        daemon_log ERROR "${provider} provider readiness check failed — auto-pausing daemon"
         local pause_json
-        pause_json=$(jq -n --arg reason "claude_cli_missing" --arg ts "$(now_iso)" \
+        pause_json=$(jq -n --arg reason "${provider}_auth_failure" --arg ts "$(now_iso)" \
             '{reason: $reason, timestamp: $ts}')
         local _tmp_pause
         _tmp_pause=$(mktemp "${TMPDIR:-/tmp}/sw-pause.XXXXXX")
         echo "$pause_json" > "$_tmp_pause"
         mv "$_tmp_pause" "$PAUSE_FLAG"
-        emit_event "daemon.auto_pause" "reason=claude_cli_missing"
+        emit_event "daemon.auto_pause" "reason=${provider}_auth_failure"
         return 1
     fi
 
@@ -191,12 +186,15 @@ daemon_preflight_auth_check() {
 
 preflight_checks() {
     local errors=0
+    local provider provider_cmd
+    provider="$(ai_provider_resolve "${SHIPWRIGHT_AI_PROVIDER:-}" 2>/dev/null || echo "claude")"
+    provider_cmd="$(ai_provider_command "$provider" 2>/dev/null || echo "$provider")"
 
     echo -e "${PURPLE}${BOLD}━━━ Pre-flight Checks ━━━${RESET}"
     echo ""
 
     # 1. Required tools
-    local required_tools=("git" "jq" "gh" "claude")
+    local required_tools=("git" "jq" "gh" "$provider_cmd")
     local optional_tools=("tmux" "curl")
 
     for tool in "${required_tools[@]}"; do

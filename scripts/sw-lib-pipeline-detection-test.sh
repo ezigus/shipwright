@@ -338,8 +338,8 @@ else
     assert_fail "test:unit included"
 fi
 
-# Subdirectory with package.json
-mkdir -p "$PROJECT_ROOT/dashboard"
+# Subdirectory with package.json (must have node_modules installed)
+mkdir -p "$PROJECT_ROOT/dashboard" "$PROJECT_ROOT/dashboard/node_modules"
 cat > "$PROJECT_ROOT/dashboard/package.json" <<'JSON'
 {"scripts":{"test":"bun test"}}
 JSON

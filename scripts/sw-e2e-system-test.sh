@@ -43,6 +43,8 @@ setup_e2e_env() {
     # Copy real pipeline and dependencies
     cp "$REAL_PIPELINE" "$TEMP_DIR/scripts/sw-pipeline.sh"
     [[ -d "$SCRIPT_DIR/lib" ]] && cp -r "$SCRIPT_DIR/lib" "$TEMP_DIR/scripts/lib"
+    # Copy skills directory (required by skill-registry.sh)
+    [[ -d "$SCRIPT_DIR/skills" ]] && cp -r "$SCRIPT_DIR/skills" "$TEMP_DIR/scripts/skills"
     for dep in sw-intelligence.sh sw-pipeline-composer.sh sw-pipeline-vitals.sh sw-context.sh \
                sw-github-graphql.sh sw-github-checks.sh sw-github-deploy.sh sw-checkpoint.sh \
                sw-loop.sh sw-self-optimize.sh sw-memory.sh sw-discovery.sh sw-durable.sh; do

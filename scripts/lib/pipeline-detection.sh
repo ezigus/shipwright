@@ -116,6 +116,8 @@ detect_test_commands() {
         local sub_test
         sub_test=$(jq -r '.scripts.test // ""' "$sub_pkg" 2>/dev/null) || true
         if [[ -n "$sub_test" && "$sub_test" != "null" && "$sub_test" != *"no test"* ]]; then
+            # Skip subdirectories without installed dependencies
+            [[ ! -d "$sub_dir/node_modules" ]] && continue
             local sub_pm
             sub_pm=$(_detect_package_manager "$sub_dir")
             echo "(cd \"$sub_dir\" && ${sub_pm} test)"

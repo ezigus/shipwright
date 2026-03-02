@@ -37,6 +37,7 @@ setup_env() {
     mkdir -p "$TEST_TEMP_DIR/scripts"
     cp "$REAL_PIPELINE_SCRIPT" "$TEST_TEMP_DIR/scripts/sw-pipeline.sh"
     [[ -d "$SCRIPT_DIR/lib" ]] && cp -r "$SCRIPT_DIR/lib" "$TEST_TEMP_DIR/scripts/lib"
+    [[ -d "$SCRIPT_DIR/skills" ]] && cp -r "$SCRIPT_DIR/skills" "$TEST_TEMP_DIR/scripts/skills"
 
     # ── Mock sw-loop.sh (next to pipeline — preflight checks $SCRIPT_DIR/sw-loop.sh) ──
     cat > "$TEST_TEMP_DIR/scripts/sw-loop.sh" <<'LOOP_EOF'
@@ -142,7 +143,21 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if echo "$prompt" | grep -qiE "implementation plan|task checklist|create a.*plan"; then
+if echo "$prompt" | grep -qiE "code review|reviewer|senior.*review|spec compliance"; then
+    cat <<'REVIEW'
+# Code Review
+
+## Findings
+
+- **[Warning]** src/feature.js:3 — Missing input validation for empty strings
+- **[Bug]** src/feature.js:1 — Function name could be more descriptive
+- **[Suggestion]** src/feature.js:2 — Consider using strict equality check
+
+## Summary
+3 issues found: 0 critical, 1 bug, 1 warning, 1 suggestion.
+Code is generally acceptable with minor improvements recommended.
+REVIEW
+elif echo "$prompt" | grep -qiE "implementation plan|task checklist|create a.*plan"; then
     cat <<'PLAN'
 # Implementation Plan
 
@@ -170,20 +185,6 @@ Run the test suite to verify auth works end to end.
 - [ ] Code reviewed
 - [ ] No security vulnerabilities
 PLAN
-elif echo "$prompt" | grep -qiE "review|reviewer|diff"; then
-    cat <<'REVIEW'
-# Code Review
-
-## Findings
-
-- **[Warning]** src/feature.js:3 — Missing input validation for empty strings
-- **[Bug]** src/feature.js:1 — Function name could be more descriptive
-- **[Suggestion]** src/feature.js:2 — Consider using strict equality check
-
-## Summary
-3 issues found: 0 critical, 1 bug, 1 warning, 1 suggestion.
-Code is generally acceptable with minor improvements recommended.
-REVIEW
 else
     echo "Mock claude: unrecognized prompt context"
 fi

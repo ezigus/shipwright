@@ -1335,23 +1335,24 @@ stage_test() {
         fi
         echo "$relevant_output"
 
-        # Post failure to GitHub with more context
+        # Post failure to GitHub — filter out noisy simulator lists
         if [[ -n "$ISSUE_NUMBER" ]]; then
             local log_lines
             log_lines=$(wc -l < "$test_log" 2>/dev/null || true)
             log_lines="${log_lines:-0}"
             local log_excerpt
-            if [[ "$log_lines" -lt 60 ]]; then
-                log_excerpt="$(cat "$test_log" 2>/dev/null || true)"
-            else
-                log_excerpt="$(head -20 "$test_log" 2>/dev/null || true)
-... (${log_lines} lines total, showing head + tail) ...
-$(tail -30 "$test_log" 2>/dev/null || true)"
+            log_excerpt=$(grep -vE '^\s*\{ platform:|Available destinations|The requested device|no available devices' "$test_log" 2>/dev/null || true)
+            local filtered_lines
+            filtered_lines=$(echo "$log_excerpt" | wc -l | tr -d ' ')
+            if [[ "$filtered_lines" -gt 50 ]]; then
+                log_excerpt="$(echo "$log_excerpt" | head -20)
+... (${filtered_lines} lines, showing head + tail) ...
+$(echo "$log_excerpt" | tail -20)"
             fi
             gh_comment_issue "$ISSUE_NUMBER" "❌ **Tests failed** (exit code: $test_exit, ${log_lines} lines)
 \`\`\`
 ${log_excerpt}
-\`\`\`"
+\`\`\`" >/dev/null 2>&1 || true
         fi
         return 1
     fi

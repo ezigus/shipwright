@@ -545,6 +545,10 @@ detect_project_lang() {
         detected="ruby"
     elif [[ -f "$root/pom.xml" || -f "$root/build.gradle" ]]; then
         detected="java"
+    elif ls "$root"/*.xcworkspace 1>/dev/null 2>&1 || ls "$root"/*.xcodeproj 1>/dev/null 2>&1; then
+        detected="swift"
+    elif [[ -f "$root/Package.swift" ]]; then
+        detected="swift"
     else
         detected="unknown"
     fi

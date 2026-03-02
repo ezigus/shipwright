@@ -318,24 +318,39 @@ line_count=$(echo "$result" | wc -l | tr -d ' ')
 assert_eq "Single test script returns 1 command" "1" "$line_count"
 assert_eq "Primary command is npm test" "npm test" "$(echo "$result" | head -1)"
 
-# Multiple test:* scripts
+# Multiple test:* scripts (integration/e2e/system excluded)
 cat > "$PROJECT_ROOT/package.json" <<'JSON'
-{"scripts":{"test":"jest","test:e2e":"jest --config e2e.config.js","test:unit":"jest --testPathPattern unit"}}
+{"scripts":{"test":"jest","test:e2e":"jest --config e2e.config.js","test:unit":"jest --testPathPattern unit","test:smoke":"jest --smoke","test:integration":"bash integration.sh","test:system":"bash system.sh"}}
 JSON
 result=$(detect_test_commands)
 line_count=$(echo "$result" | wc -l | tr -d ' ')
-assert_eq "Multiple test:* scripts returns 3 commands" "3" "$line_count"
+assert_eq "Heavyweight tests filtered: returns 3 commands" "3" "$line_count"
 assert_eq "Primary command first" "npm test" "$(echo "$result" | head -1)"
-# Additional commands should be npm run test:e2e and npm run test:unit
-if echo "$result" | grep -q "npm run test:e2e"; then
-    assert_pass "test:e2e included"
-else
-    assert_fail "test:e2e included"
-fi
 if echo "$result" | grep -q "npm run test:unit"; then
     assert_pass "test:unit included"
 else
     assert_fail "test:unit included"
+fi
+if echo "$result" | grep -q "npm run test:smoke"; then
+    assert_pass "test:smoke included"
+else
+    assert_fail "test:smoke included"
+fi
+# Integration/e2e/system should be excluded
+if echo "$result" | grep -q "npm run test:e2e"; then
+    assert_fail "test:e2e excluded (heavyweight)"
+else
+    assert_pass "test:e2e excluded (heavyweight)"
+fi
+if echo "$result" | grep -q "npm run test:integration"; then
+    assert_fail "test:integration excluded (heavyweight)"
+else
+    assert_pass "test:integration excluded (heavyweight)"
+fi
+if echo "$result" | grep -q "npm run test:system"; then
+    assert_fail "test:system excluded (heavyweight)"
+else
+    assert_pass "test:system excluded (heavyweight)"
 fi
 
 # Subdirectory with package.json (must have node_modules installed)

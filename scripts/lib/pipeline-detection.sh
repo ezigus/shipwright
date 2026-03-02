@@ -93,10 +93,12 @@ detect_test_commands() {
     [[ -n "$primary" ]] && echo "$primary"
 
     # Scan package.json for additional test scripts (test:*, test.*)
+    # Skip heavyweight integration/e2e scripts — those belong in the pipeline test stage
     if [[ -f "$root/package.json" ]] && command -v jq >/dev/null 2>&1; then
         local extra_scripts
         extra_scripts=$(jq -r '.scripts // {} | to_entries[]
             | select(.key | test("^test[:.].") and . != "test")
+            | select(.key | test("integration|e2e|system") | not)
             | .key' "$root/package.json" 2>/dev/null) || true
         if [[ -n "$extra_scripts" ]]; then
             local pm

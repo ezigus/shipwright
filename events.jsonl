@@ -129,3 +129,4 @@
 {"ts":"2026-03-02T00:02:07Z","ts_epoch":1772409727,"type":"patrol.started","dry_run":"false"}
 {"ts":"2026-03-02T00:25:29Z","ts_epoch":1772411129,"type":"cost.budget_unconfigured","status":"unlimited"}
 {"ts":"2026-03-02T00:31:21Z","ts_epoch":1772411481,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-02T00:41:09Z","ts_epoch":1772412069,"type":"hygiene_platform_refactor","hardcoded":62,"fallback":61,"todo":44}

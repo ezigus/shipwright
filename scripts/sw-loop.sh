@@ -59,8 +59,7 @@ GOAL=""
 ORIGINAL_GOAL=""  # Preserved across restarts — GOAL gets appended to
 MAX_ITERATIONS="${SW_MAX_ITERATIONS:-20}"
 TEST_CMD=""
-TEST_CMD_AUTO=false       # true when TEST_CMD was auto-detected (not via --test-cmd)
-_TEST_CMD_FROM_CLI=false  # true when --test-cmd was provided as a CLI argument
+TEST_CMD_AUTO=false  # true when TEST_CMD was auto-detected (not via --test-cmd)
 FAST_TEST_CMD=""
 FAST_TEST_INTERVAL=5
 TEST_LOG_FILE=""
@@ -782,7 +781,7 @@ resume_state() {
                 max_iterations:*) MAX_ITERATIONS="$(echo "${line#max_iterations:}" | tr -d ' ')" ;;
                 status:*)        STATUS="$(echo "${line#status:}" | tr -d ' ')" ;;
                 test_cmd:*)      [[ -z "$TEST_CMD" ]] && TEST_CMD="$(echo "${line#test_cmd:}" | sed 's/^ *"//;s/" *$//')" ;;
-                test_cmd_auto:*) [[ "${_TEST_CMD_FROM_CLI:-false}" != "true" ]] && TEST_CMD_AUTO="$(echo "${line#test_cmd_auto:}" | tr -d ' ')" ;;
+                test_cmd_auto:*) [[ -z "$TEST_CMD" ]] && TEST_CMD_AUTO="$(echo "${line#test_cmd_auto:}" | tr -d ' ')" ;;
                 model:*)         MODEL="$(echo "${line#model:}" | tr -d ' ')" ;;
                 agents:*)        AGENTS="$(echo "${line#agents:}" | tr -d ' ')" ;;
                 loop_start_commit:*) LOOP_START_COMMIT="$(echo "${line#loop_start_commit:}" | tr -d ' ')" ;;
@@ -1377,42 +1376,27 @@ run_test_gate() {
         else
             # Fast iteration: targeted tests for files changed since loop start
             test_mode="fast"
-            if [[ -n "$FAST_TEST_CMD" ]]; then
-                # Explicit fast command takes precedence
-                active_test_cmd="$FAST_TEST_CMD"
-            elif [[ -n "${LOOP_START_COMMIT:-}" ]]; then
-                local retargeted
-                retargeted=$(detect_test_cmd_for_loop "$LOOP_START_COMMIT" 2>/dev/null || echo "")
-                # Fall back to full TEST_CMD if no targeting available yet (no commits)
-                active_test_cmd="${retargeted:-$TEST_CMD}"
-            fi
+        fi
+    fi
+
+    # Re-target the full test command based on changes accumulated since loop start.
+    # Only applies to auto-detected commands; explicit --test-cmd is never overridden.
+    if [[ "$test_mode" == "full" ]] \
+        && [[ "${TEST_CMD_AUTO:-false}" == "true" ]] \
+        && [[ "$(type -t detect_test_cmd_for_loop 2>/dev/null)" == "function" ]] \
+        && [[ -n "${LOOP_START_COMMIT:-}" ]]; then
+        local retargeted
+        retargeted=$(detect_test_cmd_for_loop "$LOOP_START_COMMIT" 2>/dev/null || echo "")
+        if [[ -n "$retargeted" ]]; then
+            active_test_cmd="$retargeted"
         fi
     fi
 
     local test_log="$LOG_DIR/tests-iter-${ITERATION}.log"
     TEST_LOG_FILE="$test_log"
-    # Resolve timeout precedence:
-    # 1) SW_TEST_TIMEOUT (global override)
-    # 2) mode-specific env (SW_FAST_TEST_TIMEOUT / SW_FULL_TEST_TIMEOUT, aliases included)
-    # 3) config values (loop.test_timeout, loop.fast_test_timeout, loop.full_test_timeout)
-    # 4) hard default (300s)
-    local default_test_timeout
-    default_test_timeout="${SW_TEST_TIMEOUT:-$(_config_get_int "loop.test_timeout" 300 2>/dev/null || echo 300)}"
-    local mode_test_timeout="$default_test_timeout"
-    if [[ "$test_mode" == "fast" ]]; then
-        mode_test_timeout="${SW_FAST_TEST_TIMEOUT:-${SW_TEST_TIMEOUT_FAST:-$(_config_get_int "loop.fast_test_timeout" "$default_test_timeout" 2>/dev/null || echo "$default_test_timeout")}}"
-    else
-        mode_test_timeout="${SW_FULL_TEST_TIMEOUT:-${SW_TEST_TIMEOUT_FULL:-$(_config_get_int "loop.full_test_timeout" "$default_test_timeout" 2>/dev/null || echo "$default_test_timeout")}}"
-    fi
-    local test_timeout="$mode_test_timeout"
-
-    if [[ "${LAST_ACTIVE_TEST_CMD:-}" != "$active_test_cmd" ]] || [[ "${LAST_TEST_MODE:-}" != "$test_mode" ]]; then
-        echo -e "  ${CYAN}▸${RESET} ${BOLD}Test command changed:${RESET} ${DIM}${LAST_TEST_MODE:-none}${RESET} ${DIM}→${RESET} ${test_mode}"
-    fi
-    echo -e "  ${BOLD}Test cmd:${RESET} ${active_test_cmd}"
-    echo -e "  ${BOLD}Test log:${RESET} ${test_log} ${DIM}| timeout: ${test_timeout}s${RESET}"
-    LAST_ACTIVE_TEST_CMD="$active_test_cmd"
-    LAST_TEST_MODE="$test_mode"
+    echo -e "  ${DIM}Running ${test_mode} tests: ${active_test_cmd}${RESET}"
+    # Wrap test command with timeout (5 min default) to prevent hanging
+    local test_timeout="${SW_TEST_TIMEOUT:-300}"
     local test_wrapper="$active_test_cmd"
     if command -v timeout >/dev/null 2>&1; then
         test_wrapper="timeout ${test_timeout} bash -c $(printf '%q' "$active_test_cmd")"

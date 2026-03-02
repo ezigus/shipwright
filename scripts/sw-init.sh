@@ -512,7 +512,6 @@ elif [[ -f "$SETTINGS_TEMPLATE" ]]; then
 else
     # Create minimal settings.json with agent teams
     # Use restrictive umask for sensitive files (owner-only: 600)
-    local _old_umask_settings
     _old_umask_settings=$(umask)
     umask 0077
 

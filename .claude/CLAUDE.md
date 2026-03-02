@@ -629,11 +629,11 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-agi-roadmap-test.sh` | 857 | Tests every feature we implemented |
 | `scripts/sw-architecture-enforcer-test.sh` | 301 | Validate architecture model |
 | `scripts/sw-auth-test.sh` | 141 | Validate OAuth authentication commands |
-| `scripts/sw-autonomous-e2e-test.sh` | 290 | Autonomous Loop E2E Test |
+| `scripts/sw-autonomous-e2e-test.sh` | 292 | Autonomous Loop E2E Test |
 | `scripts/sw-autonomous-test.sh` | 207 | AI-building-AI master controller tests |
 | `scripts/sw-budget-chaos-test.sh` | 251 | Budget Exhaustion & Chaos Tests |
 | `scripts/sw-changelog-test.sh` | 201 | Validate release notes generation |
-| `scripts/sw-chaos-test.sh` | 386 | Fault injection & recovery validation |
+| `scripts/sw-chaos-test.sh` | 384 | Fault injection & recovery validation |
 | `scripts/sw-checkpoint-test.sh` | 341 | Validate checkpoint save/restore |
 | `scripts/sw-ci-test.sh` | 198 | GitHub Actions CI/CD orchestration tests |
 | `scripts/sw-cleanup-test.sh` | 168 | Clean up orphaned sessions & artifacts |
@@ -658,7 +658,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-durable-test.sh` | 221 | Validate durable workflow engine |
 | `scripts/sw-e2e-integration-test.sh` | 352 | Real Claude + Real GitHub |
 | `scripts/sw-e2e-orchestrator-test.sh` | 157 | Test suite registry & execution |
-| `scripts/sw-e2e-smoke-test.sh` | 832 | Pipeline orchestration without API keys |
+| `scripts/sw-e2e-smoke-test.sh` | 835 | Pipeline orchestration without API keys |
 | `scripts/sw-e2e-system-test.sh` | 463 | Proves full daemon→pipeline→loop→PR flow |
 | `scripts/sw-eventbus-test.sh` | 155 | Durable event bus tests |
 | `scripts/sw-evidence-test.sh` | 214 | Unit tests for sw-evidence.sh |

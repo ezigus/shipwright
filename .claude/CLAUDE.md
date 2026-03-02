@@ -522,6 +522,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-fleet.sh` | 1377 | Multi-Repo Daemon Orchestrator |
 | `scripts/sw-guild.sh` | 556 | Knowledge Guilds & Cross-Team Learning |
 | `scripts/sw-heartbeat.sh` | 342 | File-based agent heartbeat protocol |
+| `scripts/sw-hello.sh` | 67 | Hello World Command |
 | `scripts/sw-hygiene.sh` | 660 | Repository Organization & Cleanup |
 | `scripts/sw-incident.sh` | 873 | Autonomous Incident Detection & Response |
 | `scripts/sw-init.sh` | 867 | Complete setup for Shipwright + Shipwright |
@@ -540,7 +541,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 445 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 444 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1076 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 3011 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 3026 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 749 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 688 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 834 | Predictive & Proactive Intelligence |
@@ -673,6 +674,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-github-graphql-test.sh` | 661 | Unit tests for GitHub GraphQL client |
 | `scripts/sw-guild-test.sh` | 149 | Knowledge guilds & cross-team learning tests |
 | `scripts/sw-heartbeat-test.sh` | 578 | Validate heartbeat lifecycle, |
+| `scripts/sw-hello-test.sh` | 108 | Hello Command Test Suite |
 | `scripts/sw-hygiene-test.sh` | 198 | Repository Organization & Cleanup tests |
 | `scripts/sw-incident-test.sh` | 248 | Validate incident detection & response |
 | `scripts/sw-init-test.sh` | 645 | E2E validation of init/setup flow |

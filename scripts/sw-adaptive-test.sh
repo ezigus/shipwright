@@ -6,98 +6,41 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-# ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-adaptive-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/bin"
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-adaptive-test.XXXXXX")
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
     # Link real jq
     if command -v jq &>/dev/null; then
-        ln -sf "$(command -v jq)" "$TEMP_DIR/bin/jq"
+        ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
     fi
 
     # Mock git
-    cat > "$TEMP_DIR/bin/git" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCKEOF'
 #!/usr/bin/env bash
 echo "mock git"
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Create empty events file
-    touch "$TEMP_DIR/home/.shipwright/events.jsonl"
+    touch "$TEST_TEMP_DIR/home/.shipwright/events.jsonl"
 
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
 }
 
-cleanup_env() {
-    [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
-}
-trap cleanup_env EXIT
-
-assert_pass() {
-    local desc="$1"
-    TOTAL=$((TOTAL + 1))
-    PASS=$((PASS + 1))
-    echo -e "  ${GREEN}✓${RESET} ${desc}"
-}
-
-assert_fail() {
-    local desc="$1"
-    local detail="${2:-}"
-    TOTAL=$((TOTAL + 1))
-    FAIL=$((FAIL + 1))
-    FAILURES+=("$desc")
-    echo -e "  ${RED}✗${RESET} ${desc}"
-    [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
-}
-
-assert_eq() {
-    local desc="$1" expected="$2" actual="$3"
-    if [[ "$expected" == "$actual" ]]; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "expected: $expected, got: $actual"
-    fi
-}
-
-assert_contains() {
-    local desc="$1" haystack="$2" needle="$3"
-    local _count
-    _count=$(printf '%s\n' "$haystack" | grep -cF -- "$needle" 2>/dev/null) || true
-    if [[ "${_count:-0}" -gt 0 ]]; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "output missing: $needle"
-    fi
-}
+trap cleanup_test_env EXIT
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-echo ""
-echo -e "${CYAN}${BOLD}  Shipwright Adaptive Tests${RESET}"
-echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
-echo ""
+print_test_header "Shipwright Adaptive Tests"
 
 setup_env
 
@@ -194,7 +137,7 @@ if grep -qE '^percentile\(\)|^mean\(\)|^median\(\)' "$SCRIPT_DIR/sw-adaptive.sh"
 else
     assert_fail "percentile, mean, median functions defined in source"
 fi
-m=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEMP_DIR/home" bash -c '
+m=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEST_TEMP_DIR/home" bash -c '
 source "$SCRIPT_DIR/sw-adaptive.sh" 2>/dev/null
 mean "[1, 2, 3, 4, 5]"
 ' 2>/dev/null)
@@ -208,7 +151,7 @@ fi
 # ─── Test 9: get_timeout with and without event data ──────────────────────────
 echo ""
 echo -e "${DIM}  get_timeout / get_iterations / get_model${RESET}"
-timeout_def=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEMP_DIR/home" bash -c '
+timeout_def=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEST_TEMP_DIR/home" bash -c '
 source "$SCRIPT_DIR/sw-adaptive.sh" 2>/dev/null
 get_timeout "build" "." "1800"
 ' 2>/dev/null)
@@ -217,7 +160,7 @@ if [[ -n "$timeout_def" && "$timeout_def" =~ ^[0-9]+$ ]]; then
 else
     assert_fail "get_timeout returns number" "got: $timeout_def"
 fi
-iter_val=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEMP_DIR/home" bash -c '
+iter_val=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEST_TEMP_DIR/home" bash -c '
 source "$SCRIPT_DIR/sw-adaptive.sh" 2>/dev/null
 get_iterations 5 "build" "10"
 ' 2>/dev/null)
@@ -226,7 +169,7 @@ if [[ -n "$iter_val" && "$iter_val" =~ ^[0-9]+$ ]]; then
 else
     assert_fail "get_iterations returns number" "got: $iter_val"
 fi
-model_val=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEMP_DIR/home" bash -c '
+model_val=$(cd "$SCRIPT_DIR" && SCRIPT_DIR="$SCRIPT_DIR" HOME="$TEST_TEMP_DIR/home" bash -c '
 source "$SCRIPT_DIR/sw-adaptive.sh" 2>/dev/null
 get_model "build" "opus"
 ' 2>/dev/null)
@@ -242,15 +185,15 @@ echo -e "${DIM}  train subcommand${RESET}"
 # Add mock events matching pipeline schema (stage.completed, pipeline.completed, model.outcome)
 for i in 1 2 3 4 5; do
     echo "{\"ts\":\"2024-01-0${i}T12:00:00Z\",\"type\":\"stage.completed\",\"stage\":\"build\",\"duration_s\":$((i * 120)),\"issue\":1}"
-done >> "$TEMP_DIR/home/.shipwright/events.jsonl"
+done >> "$TEST_TEMP_DIR/home/.shipwright/events.jsonl"
 for i in 1 2 3 4 5; do
     echo "{\"ts\":\"2024-01-0${i}T12:05:00Z\",\"type\":\"pipeline.completed\",\"issue\":1,\"result\":\"success\",\"duration_s\":600,\"self_heal_count\":$((i-1)),\"iterations\":$i}"
-done >> "$TEMP_DIR/home/.shipwright/events.jsonl"
+done >> "$TEST_TEMP_DIR/home/.shipwright/events.jsonl"
 for i in 1 2 3 4 5; do
     echo "{\"ts\":\"2024-01-0${i}T12:06:00Z\",\"type\":\"model.outcome\",\"stage\":\"build\",\"model\":\"opus\",\"success\":true,\"issue\":1}"
-done >> "$TEMP_DIR/home/.shipwright/events.jsonl"
+done >> "$TEST_TEMP_DIR/home/.shipwright/events.jsonl"
 train_out=$(bash "$SCRIPT_DIR/sw-adaptive.sh" train --repo "$SCRIPT_DIR" 2>&1) || true
-if [[ "$train_out" == *"trained"* ]] || [[ "$train_out" == *"Models"* ]] || [[ "$train_out" == *"Training"* ]] || [[ -f "$TEMP_DIR/home/.shipwright/adaptive-models.json" ]]; then
+if [[ "$train_out" == *"trained"* ]] || [[ "$train_out" == *"Models"* ]] || [[ "$train_out" == *"Training"* ]] || [[ -f "$TEST_TEMP_DIR/home/.shipwright/adaptive-models.json" ]]; then
     assert_pass "train subcommand runs with mock events"
 else
     assert_fail "train subcommand runs with mock events" "out: ${train_out:0:100}"
@@ -260,14 +203,4 @@ fi
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
-echo ""
-if [[ $FAIL -eq 0 ]]; then
-    echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"
-else
-    echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"
-    for f in "${FAILURES[@]}"; do echo -e "  ${RED}✗${RESET} $f"; done
-fi
-echo ""
-exit "$FAIL"
+print_test_results

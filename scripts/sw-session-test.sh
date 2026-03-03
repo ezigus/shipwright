@@ -8,26 +8,14 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REAL_SESSION_SCRIPT="$SCRIPT_DIR/sw-session.sh"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 TEST_TMUX_SESSION=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -35,22 +23,22 @@ TEST_TMUX_SESSION=""
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-session-test.XXXXXX")
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-session-test.XXXXXX")
 
     # ── Copy real session script and helpers for color/output ───────────────
-    mkdir -p "$TEMP_DIR/scripts/adapters"
-    cp "$REAL_SESSION_SCRIPT" "$TEMP_DIR/scripts/sw-session.sh"
-    mkdir -p "$TEMP_DIR/scripts/lib"
-    [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && cp "$SCRIPT_DIR/lib/helpers.sh" "$TEMP_DIR/scripts/lib/"
+    mkdir -p "$TEST_TEMP_DIR/scripts/adapters"
+    cp "$REAL_SESSION_SCRIPT" "$TEST_TEMP_DIR/scripts/sw-session.sh"
+    mkdir -p "$TEST_TEMP_DIR/scripts/lib"
+    [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && cp "$SCRIPT_DIR/lib/helpers.sh" "$TEST_TEMP_DIR/scripts/lib/"
 
     # ── Copy tmux templates ────────────────────────────────────────────────
     if [[ -d "$REPO_DIR/tmux/templates" ]]; then
-        mkdir -p "$TEMP_DIR/tmux/templates"
-        cp "$REPO_DIR/tmux/templates"/*.json "$TEMP_DIR/tmux/templates/" 2>/dev/null || true
+        mkdir -p "$TEST_TEMP_DIR/tmux/templates"
+        cp "$REPO_DIR/tmux/templates"/*.json "$TEST_TEMP_DIR/tmux/templates/" 2>/dev/null || true
     fi
 
     # ── Mock binaries ──────────────────────────────────────────────────────
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/bin"
     create_mock_claude
 
     # ── Create a headless tmux session for testing ─────────────────────────
@@ -63,13 +51,13 @@ setup_env() {
 }
 
 create_mock_claude() {
-    cat > "$TEMP_DIR/bin/claude" <<'CLAUDE_EOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'CLAUDE_EOF'
 #!/usr/bin/env bash
 # Mock claude — captures args to a file and exits
 echo "$@" > "${MOCK_CLAUDE_LOG:-/dev/null}"
 exit 0
 CLAUDE_EOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 }
 
 cleanup_env() {
@@ -81,8 +69,8 @@ cleanup_env() {
     for w in $(tmux list-windows -F '#W' 2>/dev/null | grep '^claude-test-' || true); do
         tmux kill-window -t "$w" 2>/dev/null || true
     done
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -102,9 +90,9 @@ invoke_session() {
     SESSION_OUTPUT=$(
         TMUX="$(tmux display-message -p '#{socket_path}' 2>/dev/null || echo '/tmp/tmux-test')"
         export TMUX
-        PATH="$TEMP_DIR/bin:$PATH" \
-        TMPDIR="$TEMP_DIR" \
-        bash "$TEMP_DIR/scripts/sw-session.sh" "$@" 2>&1
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        TMPDIR="$TEST_TEMP_DIR" \
+        bash "$TEST_TEMP_DIR/scripts/sw-session.sh" "$@" 2>&1
     ) || SESSION_EXIT=$?
 }
 
@@ -248,7 +236,7 @@ test_template_missing() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_all_templates_load() {
     local templates=()
-    for tpl_file in "$TEMP_DIR/tmux/templates"/*.json; do
+    for tpl_file in "$TEST_TEMP_DIR/tmux/templates"/*.json; do
         [[ -f "$tpl_file" ]] || continue
         local name
         name="$(basename "$tpl_file" .json)"
@@ -291,7 +279,7 @@ test_no_launch_creates_window() {
 # 6. Launcher script generated with prompt file
 # ──────────────────────────────────────────────────────────────────────────────
 test_launcher_script_generation() {
-    local mock_log="$TEMP_DIR/claude-args.log"
+    local mock_log="$TEST_TEMP_DIR/claude-args.log"
     export MOCK_CLAUDE_LOG="$mock_log"
 
     invoke_session "test-launch-1" --template feature-dev --goal "Build auth"
@@ -317,7 +305,7 @@ test_prompt_includes_agents() {
     local prompt
     # shellcheck disable=SC2034
     prompt=$(
-        SCRIPT_DIR="$TEMP_DIR/scripts"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
         # shellcheck disable=SC2034
         TEMPLATE_AGENTS=("backend|API routes|src/api/" "frontend|UI components|apps/web/" "tests|Unit tests|*.test.ts")
         # shellcheck disable=SC2034
@@ -447,7 +435,7 @@ test_auto_generated_name() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_tmpdir_usage() {
     # Verify the script uses secure temp dir (mktemp -d) instead of hardcoded /tmp
-    if grep -q 'SECURE_TMPDIR=$(mktemp -d)' "$TEMP_DIR/scripts/sw-session.sh"; then
+    if grep -q 'SECURE_TMPDIR=$(mktemp -d)' "$TEST_TEMP_DIR/scripts/sw-session.sh"; then
         return 0
     fi
     echo -e "    ${RED}✗${RESET} Script missing SECURE_TMPDIR with mktemp -d"
@@ -477,11 +465,11 @@ test_no_suggestion_without_goal() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_injection_in_prompt() {
     # Create a mock sw-memory.sh that echoes test content
-    cat > "$TEMP_DIR/scripts/sw-memory.sh" <<'MOCK_MEM'
+    cat > "$TEST_TEMP_DIR/scripts/sw-memory.sh" <<'MOCK_MEM'
 #!/usr/bin/env bash
 echo "Lesson: always run tests before committing"
 MOCK_MEM
-    chmod +x "$TEMP_DIR/scripts/sw-memory.sh"
+    chmod +x "$TEST_TEMP_DIR/scripts/sw-memory.sh"
 
     invoke_session "test-mem-1" --template feature-dev --goal "Build auth" --dry-run
     assert_exit_code 0 "should succeed" &&
@@ -503,7 +491,7 @@ test_claude_md_reminder_in_prompt() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_secure_tmpdir_in_source() {
     # Verify the script uses mktemp -d for secure temp directory
-    if grep -q 'SECURE_TMPDIR=$(mktemp -d)' "$TEMP_DIR/scripts/sw-session.sh"; then
+    if grep -q 'SECURE_TMPDIR=$(mktemp -d)' "$TEST_TEMP_DIR/scripts/sw-session.sh"; then
         return 0
     fi
     echo -e "    ${RED}✗${RESET} Script missing SECURE_TMPDIR with mktemp -d"

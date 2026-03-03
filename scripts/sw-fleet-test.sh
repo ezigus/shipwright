@@ -7,50 +7,38 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 FLEET_SCRIPT="$SCRIPT_DIR/sw-fleet.sh"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEST ENVIRONMENT SETUP
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-fleet-test.XXXXXX")
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-fleet-test.XXXXXX")
 
     # Create directory structure
-    mkdir -p "$TEMP_DIR/.shipwright"
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/bin"
-    mkdir -p "$TEMP_DIR/project/.claude"
-    mkdir -p "$TEMP_DIR/project/.git"
+    mkdir -p "$TEST_TEMP_DIR/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/project/.claude"
+    mkdir -p "$TEST_TEMP_DIR/project/.git"
 
     # Create mock repos
     for repo in api web mobile; do
-        mkdir -p "$TEMP_DIR/repos/$repo/.git"
-        mkdir -p "$TEMP_DIR/repos/$repo/.claude"
+        mkdir -p "$TEST_TEMP_DIR/repos/$repo/.git"
+        mkdir -p "$TEST_TEMP_DIR/repos/$repo/.claude"
         # Minimal git config so git doesn't complain
-        echo "[core]" > "$TEMP_DIR/repos/$repo/.git/config"
+        echo "[core]" > "$TEST_TEMP_DIR/repos/$repo/.git/config"
     done
 
     # Create mock tmux binary
-    cat > "$TEMP_DIR/bin/tmux" << 'MOCK_TMUX'
+    cat > "$TEST_TEMP_DIR/bin/tmux" << 'MOCK_TMUX'
 #!/usr/bin/env bash
 # Mock tmux — records calls for verification
 MOCK_LOG="${MOCK_TMUX_LOG:-/tmp/mock-tmux.log}"
@@ -79,30 +67,30 @@ case "$1" in
 esac
 exit 0
 MOCK_TMUX
-    chmod +x "$TEMP_DIR/bin/tmux"
+    chmod +x "$TEST_TEMP_DIR/bin/tmux"
 
     # Create mock jq (use real jq but log calls)
     # We rely on real jq being installed
 
     # Create mock sw-daemon.sh
-    cat > "$TEMP_DIR/bin/sw-daemon.sh" << 'MOCK_DAEMON'
+    cat > "$TEST_TEMP_DIR/bin/sw-daemon.sh" << 'MOCK_DAEMON'
 #!/usr/bin/env bash
 echo "daemon $*"
 exit 0
 MOCK_DAEMON
-    chmod +x "$TEMP_DIR/bin/sw-daemon.sh"
+    chmod +x "$TEST_TEMP_DIR/bin/sw-daemon.sh"
 
     # Set environment
-    export MOCK_TMUX_LOG="$TEMP_DIR/tmux-calls.log"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
-    export EVENTS_FILE="$TEMP_DIR/home/.shipwright/events.jsonl"
+    export MOCK_TMUX_LOG="$TEST_TEMP_DIR/tmux-calls.log"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
+    export EVENTS_FILE="$TEST_TEMP_DIR/home/.shipwright/events.jsonl"
     export NO_GITHUB=true
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -111,7 +99,7 @@ trap cleanup_env EXIT
 reset_test() {
     rm -f "$MOCK_TMUX_LOG"
     rm -f "$EVENTS_FILE"
-    rm -f "$TEMP_DIR/home/.shipwright/fleet-state.json"
+    rm -f "$TEST_TEMP_DIR/home/.shipwright/fleet-state.json"
     export MOCK_TMUX_HAS_SESSION=""
     touch "$MOCK_TMUX_LOG"
 }
@@ -201,8 +189,8 @@ create_fleet_config() {
 
     if [[ -z "$repos_json" ]]; then
         repos_json=$(jq -n \
-            --arg api "$TEMP_DIR/repos/api" \
-            --arg web "$TEMP_DIR/repos/web" \
+            --arg api "$TEST_TEMP_DIR/repos/api" \
+            --arg web "$TEST_TEMP_DIR/repos/web" \
             '[{"path": $api, "template": "autonomous", "max_parallel": 2},
               {"path": $web, "template": "standard"}]')
     fi
@@ -222,8 +210,8 @@ create_fleet_config() {
 create_fleet_state() {
     local state_path="$1"
     jq -n \
-        --arg api_path "$TEMP_DIR/repos/api" \
-        --arg web_path "$TEMP_DIR/repos/web" \
+        --arg api_path "$TEST_TEMP_DIR/repos/api" \
+        --arg web_path "$TEST_TEMP_DIR/repos/web" \
         '{
             started_at: "2025-01-01T00:00:00Z",
             repos: {
@@ -294,7 +282,7 @@ test_help_flag() {
 # 3. Config parsing — valid config
 # ──────────────────────────────────────────────────────────────────────────────
 test_config_valid() {
-    local config_path="$TEMP_DIR/fleet-config.json"
+    local config_path="$TEST_TEMP_DIR/fleet-config.json"
     create_fleet_config "$config_path"
 
     # Verify config is valid JSON
@@ -326,7 +314,7 @@ test_config_missing() {
 # 5. Config parsing — invalid JSON
 # ──────────────────────────────────────────────────────────────────────────────
 test_config_invalid_json() {
-    local config_path="$TEMP_DIR/bad-config.json"
+    local config_path="$TEST_TEMP_DIR/bad-config.json"
     echo "not valid json {{{" > "$config_path"
 
     local output exit_code=0
@@ -340,7 +328,7 @@ test_config_invalid_json() {
 # 6. Config parsing — empty repos array
 # ──────────────────────────────────────────────────────────────────────────────
 test_config_empty_repos() {
-    local config_path="$TEMP_DIR/empty-repos.json"
+    local config_path="$TEST_TEMP_DIR/empty-repos.json"
     echo '{"repos":[],"defaults":{}}' > "$config_path"
 
     local output exit_code=0
@@ -354,10 +342,10 @@ test_config_empty_repos() {
 # 7. Config defaults applied to repos without overrides
 # ──────────────────────────────────────────────────────────────────────────────
 test_config_defaults() {
-    local config_path="$TEMP_DIR/defaults-config.json"
+    local config_path="$TEST_TEMP_DIR/defaults-config.json"
     # web repo has no template/max_parallel — should get defaults
     local repos_json
-    repos_json=$(jq -n --arg web "$TEMP_DIR/repos/web" \
+    repos_json=$(jq -n --arg web "$TEST_TEMP_DIR/repos/web" \
         '[{"path": $web}]')
     create_fleet_config "$config_path" "$repos_json"
 
@@ -374,7 +362,7 @@ test_config_defaults() {
 # 8. Fleet init generates config template
 # ──────────────────────────────────────────────────────────────────────────────
 test_fleet_init() {
-    local work_dir="$TEMP_DIR/init-test"
+    local work_dir="$TEST_TEMP_DIR/init-test"
     mkdir -p "$work_dir/.claude"
 
     local output
@@ -397,7 +385,7 @@ test_fleet_init() {
 # 9. Fleet init skips when config already exists
 # ──────────────────────────────────────────────────────────────────────────────
 test_fleet_init_existing() {
-    local work_dir="$TEMP_DIR/init-existing"
+    local work_dir="$TEST_TEMP_DIR/init-existing"
     mkdir -p "$work_dir/.claude"
     echo '{"repos":[]}' > "$work_dir/.claude/fleet-config.json"
 
@@ -411,7 +399,7 @@ test_fleet_init_existing() {
 # 10. Fleet start spawns tmux sessions per repo
 # ──────────────────────────────────────────────────────────────────────────────
 test_fleet_start() {
-    local config_path="$TEMP_DIR/start-config.json"
+    local config_path="$TEST_TEMP_DIR/start-config.json"
     create_fleet_config "$config_path"
 
     local output
@@ -431,9 +419,9 @@ test_fleet_start() {
 # 11. Fleet start skips missing repos
 # ──────────────────────────────────────────────────────────────────────────────
 test_fleet_start_missing_repo() {
-    local config_path="$TEMP_DIR/missing-repo-config.json"
+    local config_path="$TEST_TEMP_DIR/missing-repo-config.json"
     local repos_json
-    repos_json=$(jq -n --arg valid "$TEMP_DIR/repos/api" \
+    repos_json=$(jq -n --arg valid "$TEST_TEMP_DIR/repos/api" \
         '[{"path": $valid}, {"path": "/nonexistent/repo"}]')
     create_fleet_config "$config_path" "$repos_json"
 
@@ -449,7 +437,7 @@ test_fleet_start_missing_repo() {
 # 12. Fleet start skips already-running sessions
 # ──────────────────────────────────────────────────────────────────────────────
 test_fleet_start_already_running() {
-    local config_path="$TEMP_DIR/running-config.json"
+    local config_path="$TEST_TEMP_DIR/running-config.json"
     create_fleet_config "$config_path"
 
     # Tell mock tmux that sessions already exist
@@ -466,12 +454,12 @@ test_fleet_start_already_running() {
 # 13. Fleet start creates fleet state file
 # ──────────────────────────────────────────────────────────────────────────────
 test_fleet_start_state() {
-    local config_path="$TEMP_DIR/state-config.json"
+    local config_path="$TEST_TEMP_DIR/state-config.json"
     create_fleet_config "$config_path"
 
     bash "$FLEET_SCRIPT" start --config "$config_path" > /dev/null 2>&1 || true
 
-    local state_file="$TEMP_DIR/home/.shipwright/fleet-state.json"
+    local state_file="$TEST_TEMP_DIR/home/.shipwright/fleet-state.json"
     assert_file_exists "$state_file" "fleet state created" &&
     # Verify state has repos
     local has_api has_web
@@ -485,7 +473,7 @@ test_fleet_start_state() {
 # 14. Fleet start emits fleet.started event
 # ──────────────────────────────────────────────────────────────────────────────
 test_fleet_start_event() {
-    local config_path="$TEMP_DIR/event-config.json"
+    local config_path="$TEST_TEMP_DIR/event-config.json"
     create_fleet_config "$config_path"
 
     bash "$FLEET_SCRIPT" start --config "$config_path" > /dev/null 2>&1 || true
@@ -500,16 +488,16 @@ test_fleet_start_event() {
 # 15. Fleet start — repo-level overrides in config
 # ──────────────────────────────────────────────────────────────────────────────
 test_fleet_start_overrides() {
-    local config_path="$TEMP_DIR/overrides-config.json"
+    local config_path="$TEST_TEMP_DIR/overrides-config.json"
     local repos_json
-    repos_json=$(jq -n --arg api "$TEMP_DIR/repos/api" \
+    repos_json=$(jq -n --arg api "$TEST_TEMP_DIR/repos/api" \
         '[{"path": $api, "template": "hotfix", "max_parallel": 5, "watch_label": "deploy-me"}]')
     create_fleet_config "$config_path" "$repos_json"
 
     bash "$FLEET_SCRIPT" start --config "$config_path" > /dev/null 2>&1 || true
 
     # Check the generated fleet-managed config for the repo
-    local managed_config="$TEMP_DIR/repos/api/.claude/.fleet-daemon-config.json"
+    local managed_config="$TEST_TEMP_DIR/repos/api/.claude/.fleet-daemon-config.json"
     assert_file_exists "$managed_config" "fleet-managed config created" &&
     local tpl max_p label
     tpl=$(jq -r '.pipeline_template' "$managed_config")
@@ -524,7 +512,7 @@ test_fleet_start_overrides() {
 # 16. Fleet stop kills sessions and cleans state
 # ──────────────────────────────────────────────────────────────────────────────
 test_fleet_stop() {
-    local state_file="$TEMP_DIR/home/.shipwright/fleet-state.json"
+    local state_file="$TEST_TEMP_DIR/home/.shipwright/fleet-state.json"
     create_fleet_state "$state_file"
 
     # Mock tmux returns true for has-session (sessions exist)
@@ -552,7 +540,7 @@ test_fleet_stop_no_state() {
 # 18. Fleet stop emits fleet.stopped event
 # ──────────────────────────────────────────────────────────────────────────────
 test_fleet_stop_event() {
-    local state_file="$TEMP_DIR/home/.shipwright/fleet-state.json"
+    local state_file="$TEST_TEMP_DIR/home/.shipwright/fleet-state.json"
     create_fleet_state "$state_file"
     export MOCK_TMUX_HAS_SESSION=true
 
@@ -578,7 +566,7 @@ test_fleet_status_no_state() {
 # 20. Fleet status — shows dashboard
 # ──────────────────────────────────────────────────────────────────────────────
 test_fleet_status_dashboard() {
-    local state_file="$TEMP_DIR/home/.shipwright/fleet-state.json"
+    local state_file="$TEST_TEMP_DIR/home/.shipwright/fleet-state.json"
     create_fleet_state "$state_file"
 
     local output
@@ -691,9 +679,9 @@ test_fleet_metrics_period() {
 test_session_name() {
     # Test that session names are generated correctly
     # by inspecting tmux calls from a start command
-    local config_path="$TEMP_DIR/session-config.json"
+    local config_path="$TEST_TEMP_DIR/session-config.json"
     local repos_json
-    repos_json=$(jq -n --arg api "$TEMP_DIR/repos/api" \
+    repos_json=$(jq -n --arg api "$TEST_TEMP_DIR/repos/api" \
         '[{"path": $api}]')
     create_fleet_config "$config_path" "$repos_json"
 
@@ -710,12 +698,12 @@ test_session_name() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_fleet_start_non_git() {
     # Create a non-git directory
-    mkdir -p "$TEMP_DIR/repos/not-git"
+    mkdir -p "$TEST_TEMP_DIR/repos/not-git"
     # No .git dir
 
-    local config_path="$TEMP_DIR/nongit-config.json"
+    local config_path="$TEST_TEMP_DIR/nongit-config.json"
     local repos_json
-    repos_json=$(jq -n --arg ng "$TEMP_DIR/repos/not-git" --arg api "$TEMP_DIR/repos/api" \
+    repos_json=$(jq -n --arg ng "$TEST_TEMP_DIR/repos/not-git" --arg api "$TEST_TEMP_DIR/repos/api" \
         '[{"path": $ng}, {"path": $api}]')
     create_fleet_config "$config_path" "$repos_json"
 
@@ -764,7 +752,7 @@ main() {
 
     echo -e "${DIM}Setting up test environment...${RESET}"
     setup_env
-    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEMP_DIR${RESET}"
+    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEST_TEMP_DIR${RESET}"
     echo ""
 
     # Define all tests

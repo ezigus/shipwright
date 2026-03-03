@@ -523,6 +523,100 @@ detect_test_cmd_for_loop() {
     jq -r --arg sep "$separator" 'map(.cmd) | unique | join($sep)' <<<"$out"
 }
 
+# Helper: detect package manager for a directory
+_detect_package_manager() {
+    local dir="$1"
+    if [[ -f "$dir/pnpm-lock.yaml" ]]; then echo "pnpm"
+    elif [[ -f "$dir/bun.lockb" ]]; then echo "bun"
+    elif [[ -f "$dir/yarn.lock" ]]; then echo "yarn"
+    else echo "npm"; fi
+}
+
+# Returns newline-separated test commands (primary + additional)
+# First line is always the primary test command from detect_test_cmd()
+detect_test_commands() {
+    local root="${PROJECT_ROOT:-.}"
+    local primary
+    primary=$(detect_test_cmd)
+
+    [[ -n "$primary" ]] && echo "$primary"
+
+    # Scan package.json for additional test scripts (test:*, test.*)
+    # Skip heavyweight integration/e2e scripts — those belong in the pipeline test stage
+    if [[ -f "$root/package.json" ]] && command -v jq >/dev/null 2>&1; then
+        local extra_scripts
+        extra_scripts=$(jq -r '.scripts // {} | to_entries[]
+            | select(.key | test("^test[:.].") and . != "test")
+            | select(.key | test("integration|e2e|system") | not)
+            | .key' "$root/package.json" 2>/dev/null) || true
+        if [[ -n "$extra_scripts" ]]; then
+            local pm
+            pm=$(_detect_package_manager "$root")
+            while IFS= read -r script; do
+                [[ -z "$script" ]] && continue
+                echo "${pm} run ${script}"
+            done <<< "$extra_scripts"
+        fi
+    fi
+
+    # Scan for subdirectory test runners (dashboard/, apps/*, etc.)
+    while IFS= read -r sub_pkg; do
+        [[ -z "$sub_pkg" ]] && continue
+        local sub_dir
+        sub_dir=$(dirname "$sub_pkg")
+        local sub_test
+        sub_test=$(jq -r '.scripts.test // ""' "$sub_pkg" 2>/dev/null) || true
+        if [[ -n "$sub_test" && "$sub_test" != "null" && "$sub_test" != *"no test"* ]]; then
+            # Skip subdirectories without installed dependencies
+            [[ ! -d "$sub_dir/node_modules" ]] && continue
+            local sub_pm
+            sub_pm=$(_detect_package_manager "$sub_dir")
+            echo "(cd \"$sub_dir\" && ${sub_pm} test)"
+        fi
+    done < <(find "$root" -maxdepth 3 -name "package.json" \
+        -not -path "*/node_modules/*" -not -path "$root/package.json" 2>/dev/null || true)
+}
+
+# Detect test files created since a given commit
+# Returns additional test commands for newly created test files
+detect_created_test_files() {
+    local since_commit="${1:-HEAD~1}"
+    local root="${PROJECT_ROOT:-.}"
+    local new_test_files
+    new_test_files=$(git -C "$root" diff --name-only --diff-filter=A "$since_commit" 2>/dev/null \
+        | grep -E '\.(test|spec)\.(ts|js|tsx|jsx)$' || true)
+
+    [[ -z "$new_test_files" ]] && return
+
+    # Group by directory, determine runner for each
+    local seen_dirs=()
+    while IFS= read -r test_file; do
+        [[ -z "$test_file" ]] && continue
+        local dir
+        dir=$(dirname "$test_file")
+        # Skip if already seen
+        local already_seen=false
+        local sd
+        for sd in "${seen_dirs[@]+"${seen_dirs[@]}"}"; do
+            [[ "$sd" == "$dir" ]] && already_seen=true && break
+        done
+        $already_seen && continue
+        seen_dirs+=("$dir")
+
+        # Find nearest package.json to determine runner
+        local pkg_dir="$dir"
+        while [[ "$pkg_dir" != "." && "$pkg_dir" != "/" ]]; do
+            if [[ -f "$root/$pkg_dir/package.json" ]]; then
+                local pm
+                pm=$(_detect_package_manager "$root/$pkg_dir")
+                echo "${pm} test -- ${dir}/"
+                break
+            fi
+            pkg_dir=$(dirname "$pkg_dir")
+        done
+    done <<< "$new_test_files"
+}
+
 # Detect project language/framework
 detect_project_lang() {
     local root="$PROJECT_ROOT"

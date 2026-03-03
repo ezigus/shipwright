@@ -6,39 +6,24 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-# ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/home/.claude"
-    mkdir -p "$TEMP_DIR/bin"
-    mkdir -p "$TEMP_DIR/repo/.git"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.claude"
+    mkdir -p "$TEST_TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/repo/.git"
 
     # Mock claude CLI
-    cat > "$TEMP_DIR/bin/claude" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'MOCKEOF'
 #!/usr/bin/env bash
 echo "Mock claude executed"
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 
     # Mock git
-    cat > "$TEMP_DIR/bin/git" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCKEOF'
 #!/usr/bin/env bash
 case "${1:-}" in
     rev-parse)
@@ -72,98 +57,54 @@ case "${1:-}" in
 esac
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Mock gh
-    cat > "$TEMP_DIR/bin/gh" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'MOCKEOF'
 #!/usr/bin/env bash
 echo "mock gh output"
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
     # Mock tmux
-    cat > "$TEMP_DIR/bin/tmux" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/tmux" <<'MOCKEOF'
 #!/usr/bin/env bash
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/tmux"
+    chmod +x "$TEST_TEMP_DIR/bin/tmux"
 
     # Link real jq
     if command -v jq &>/dev/null; then
-        ln -sf "$(command -v jq)" "$TEMP_DIR/bin/jq"
+        ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
     fi
 
     # Link real date, wc, etc.
     for cmd in date wc cat grep sed awk sort mkdir rm mv cp mktemp basename dirname printf od tr cut head tail tee touch; do
         if command -v "$cmd" &>/dev/null; then
-            ln -sf "$(command -v "$cmd")" "$TEMP_DIR/bin/$cmd"
+            ln -sf "$(command -v "$cmd")" "$TEST_TEMP_DIR/bin/$cmd"
         fi
     done
 
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
 }
 
-cleanup_env() {
-    [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
-}
-trap cleanup_env EXIT
+trap cleanup_test_env EXIT
 
-assert_pass() {
-    local desc="$1"
-    TOTAL=$((TOTAL + 1))
-    PASS=$((PASS + 1))
-    echo -e "  ${GREEN}✓${RESET} ${desc}"
-}
-
-assert_fail() {
-    local desc="$1"
-    local detail="${2:-}"
-    TOTAL=$((TOTAL + 1))
-    FAIL=$((FAIL + 1))
-    FAILURES+=("$desc")
-    echo -e "  ${RED}✗${RESET} ${desc}"
-    [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
-}
-
-assert_eq() {
-    local desc="$1" expected="$2" actual="$3"
-    if [[ "$expected" == "$actual" ]]; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "expected: $expected, got: $actual"
-    fi
-}
-
-assert_contains() {
-    local desc="$1" haystack="$2" needle="$3"
-    if printf '%s\n' "$haystack" | grep -qF -- "$needle" 2>/dev/null; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "output missing: $needle"
-    fi
-}
-
-assert_contains_regex() {
-    local desc="$1" haystack="$2" pattern="$3"
-    if printf '%s\n' "$haystack" | grep -qE -- "$pattern" 2>/dev/null; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "output missing pattern: $pattern"
-    fi
-}
+# Use assert_pass/assert_fail from test-helpers.sh (they track TOTAL/PASS/FAIL counters)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo ""
-echo -e "${CYAN}${BOLD}  Shipwright Loop Tests${RESET}"
+print_test_header "Shipwright Loop Tests"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
 
+setup_test_env "sw-loop-test"
 setup_env
 
 # ─── Test 1: --help flag ────────────────────────────────────────────────────
@@ -270,7 +211,7 @@ fi
 # ─── Test 11: JSON output format in claude flags ────────────────────────────
 echo ""
 echo -e "${DIM}  json output format${RESET}"
-if grep -q 'output-format.*json' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -q 'output-format.*json' "$SCRIPT_DIR/sw-loop.sh" || grep -q 'output-format.*json' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
     assert_pass "build_claude_flags includes --output-format json"
 else
     assert_fail "build_claude_flags includes --output-format json"
@@ -316,15 +257,8 @@ else
     assert_fail "check_budget_gate helper defined"
 fi
 
-if grep -q 'AI_PROVIDER="__AI_PROVIDER__"' "$SCRIPT_DIR/sw-loop.sh"; then
-    assert_pass "worker template is provider-aware"
-else
-    assert_fail "worker template is provider-aware"
-fi
-
 # ─── Test 16: run_claude_iteration separates stdout/stderr ───────────────────
-if grep -q '2>"$err_file"' "$SCRIPT_DIR/sw-loop.sh" || \
-   grep -q 'loop_ai_run_json .*"\$err_file"' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -q '2>"$err_file"' "$SCRIPT_DIR/sw-loop.sh" || grep -q '2>"$err_file"' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
     assert_pass "run_claude_iteration separates stdout from stderr"
 else
     assert_fail "run_claude_iteration separates stdout from stderr"
@@ -422,12 +356,12 @@ rm -rf "$tmpdir2"
 # ─── Test 22: Script structure — circuit breaker, stuckness, test gate ────────
 echo ""
 echo -e "${DIM}  script structure${RESET}"
-if grep -qE 'check_circuit_breaker|CIRCUIT_BREAKER' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -qE 'check_circuit_breaker|CIRCUIT_BREAKER' "$SCRIPT_DIR/sw-loop.sh" "$SCRIPT_DIR/lib/loop-convergence.sh"; then
     assert_pass "Script has circuit breaker logic"
 else
     assert_fail "Script has circuit breaker logic"
 fi
-if grep -qE 'detect_stuckness|stuckness' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -qE 'detect_stuckness|stuckness' "$SCRIPT_DIR/sw-loop.sh" "$SCRIPT_DIR/lib/loop-convergence.sh"; then
     assert_pass "Script has stuckness detection"
 else
     assert_fail "Script has stuckness detection"
@@ -457,8 +391,7 @@ fi
 
 # Setup for loop behavior tests: real git repo, mock claude only
 setup_loop_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright" "$TEMP_DIR/home/.claude" "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright" "$TEST_TEMP_DIR/home/.claude" "$TEST_TEMP_DIR/bin"
 
     # Create real git repo (use system git, not mock from PATH)
     local _git
@@ -467,29 +400,29 @@ setup_loop_env() {
         echo "WARN: git not found — skipping loop behavior tests"
         return 1
     fi
-    mkdir -p "$TEMP_DIR/repo"
-    (cd "$TEMP_DIR/repo" && "$_git" init -q && "$_git" config user.email "t@t" && "$_git" config user.name "T")
-    echo "init" > "$TEMP_DIR/repo/file.txt"
-    (cd "$TEMP_DIR/repo" && "$_git" add . && "$_git" commit -q -m "init")
+    mkdir -p "$TEST_TEMP_DIR/repo"
+    (cd "$TEST_TEMP_DIR/repo" && "$_git" init -q && "$_git" config user.email "t@t" && "$_git" config user.name "T")
+    echo "init" > "$TEST_TEMP_DIR/repo/file.txt"
+    (cd "$TEST_TEMP_DIR/repo" && "$_git" add . && "$_git" commit -q -m "init")
 
     # Mock gh
-    cat > "$TEMP_DIR/bin/gh" <<'GHMOCK'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'GHMOCK'
 #!/usr/bin/env bash
 echo '[]'
 exit 0
 GHMOCK
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
     # Link real jq, git, date, seq, etc. (use clean PATH to avoid mock from setup_env)
     for cmd in jq git date seq wc cat grep sed awk sort mkdir rm mv cp mktemp basename dirname printf od tr cut head tail tee touch bash; do
         if PATH=/usr/local/bin:/usr/bin:/bin command -v "$cmd" &>/dev/null; then
-            ln -sf "$(PATH=/usr/local/bin:/usr/bin:/bin command -v "$cmd")" "$TEMP_DIR/bin/$cmd" 2>/dev/null || true
+            ln -sf "$(PATH=/usr/local/bin:/usr/bin:/bin command -v "$cmd")" "$TEST_TEMP_DIR/bin/$cmd" 2>/dev/null || true
         fi
     done
 
     # Use our mocks (claude, gh) + real git/jq from our bin
-    export PATH="$TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin"
-    export HOME="$TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
     return 0
 }
@@ -500,16 +433,16 @@ echo -e "${DIM}  loop behavior: LOOP_COMPLETE${RESET}"
 
 if setup_loop_env 2>/dev/null; then
     # Mock claude that says LOOP_COMPLETE on first iteration (valid JSON for --output-format json)
-    cat > "$TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
 #!/usr/bin/env bash
 echo '[{"type":"result","result":"Done. LOOP_COMPLETE","usage":{"input_tokens":0,"output_tokens":0}}]'
 exit 0
 CLAUDE_EOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    output=$(env PATH="$TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEMP_DIR/home" NO_GITHUB=true \
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
         bash "$SCRIPT_DIR/sw-loop.sh" \
-        --repo "$TEMP_DIR/repo" \
+        --repo "$TEST_TEMP_DIR/repo" \
         "Do nothing" \
         --max-iterations 5 \
         --test-cmd "true" \
@@ -533,7 +466,7 @@ echo -e "${DIM}  loop behavior: iterations on test failure${RESET}"
 
 if setup_loop_env 2>/dev/null; then
     # Mock claude that makes a change, then says LOOP_COMPLETE on iteration 2
-    cat > "$TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
 #!/usr/bin/env bash
 if [[ ! -f iter2.txt ]]; then
     echo "Adding file" > iter2.txt
@@ -543,11 +476,11 @@ else
 fi
 exit 0
 CLAUDE_EOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    output=$(env PATH="$TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEMP_DIR/home" NO_GITHUB=true \
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
         bash "$SCRIPT_DIR/sw-loop.sh" \
-        --repo "$TEMP_DIR/repo" \
+        --repo "$TEST_TEMP_DIR/repo" \
         "Add iter2.txt" \
         --max-iterations 5 \
         --test-cmd "test -f iter2.txt" \
@@ -573,16 +506,16 @@ echo -e "${DIM}  loop behavior: max iterations${RESET}"
 
 if setup_loop_env 2>/dev/null; then
     # Mock claude that never says LOOP_COMPLETE (valid JSON)
-    cat > "$TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
 #!/usr/bin/env bash
 echo '[{"type":"result","result":"Still working...","usage":{"input_tokens":0,"output_tokens":0}}]'
 exit 0
 CLAUDE_EOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    output=$(env PATH="$TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEMP_DIR/home" NO_GITHUB=true \
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
         bash "$SCRIPT_DIR/sw-loop.sh" \
-        --repo "$TEMP_DIR/repo" \
+        --repo "$TEST_TEMP_DIR/repo" \
         "Never finish" \
         --max-iterations 3 \
         --test-cmd "true" \
@@ -605,16 +538,16 @@ echo -e "${DIM}  loop behavior: stuckness detection${RESET}"
 
 if setup_loop_env 2>/dev/null; then
     # Mock claude that produces identical output every iteration (no file changes)
-    cat > "$TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
 #!/usr/bin/env bash
 echo '[{"type":"result","result":"I am trying the same approach again.","usage":{"input_tokens":0,"output_tokens":0}}]'
 exit 0
 CLAUDE_EOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    output=$(env PATH="$TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEMP_DIR/home" NO_GITHUB=true \
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
         bash "$SCRIPT_DIR/sw-loop.sh" \
-        --repo "$TEMP_DIR/repo" \
+        --repo "$TEST_TEMP_DIR/repo" \
         "Fix something" \
         --max-iterations 5 \
         --test-cmd "false" \
@@ -641,19 +574,19 @@ echo -e "${DIM}  loop behavior: budget gate${RESET}"
 
 # sw-cost reads from ~/.shipwright. Set budget=0.01 and spent>=budget via costs.json.
 if setup_loop_env 2>/dev/null && [[ -x "$SCRIPT_DIR/sw-cost.sh" ]]; then
-    mkdir -p "$TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
     _epoch=$(date +%s)
-    echo "{\"daily_budget_usd\":0.01,\"enabled\":true}" > "$TEMP_DIR/home/.shipwright/budget.json"
-    echo "{\"entries\":[{\"ts_epoch\":$_epoch,\"cost_usd\":1.0,\"input_tokens\":0,\"output_tokens\":0,\"model\":\"test\",\"stage\":\"test\",\"issue\":\"\"}],\"summary\":{}}" > "$TEMP_DIR/home/.shipwright/costs.json"
+    echo "{\"daily_budget_usd\":0.01,\"enabled\":true}" > "$TEST_TEMP_DIR/home/.shipwright/budget.json"
+    echo "{\"entries\":[{\"ts_epoch\":$_epoch,\"cost_usd\":1.0,\"input_tokens\":0,\"output_tokens\":0,\"model\":\"test\",\"stage\":\"test\",\"issue\":\"\"}],\"summary\":{}}" > "$TEST_TEMP_DIR/home/.shipwright/costs.json"
     # Add claude mock (loop exits before running it, but ensures consistent env)
     echo '#!/usr/bin/env bash
 echo '"'"'[{"type":"result","result":"Done","usage":{"input_tokens":0,"output_tokens":0}}]'"'"'
-exit 0' > "$TEMP_DIR/bin/claude"
-    chmod +x "$TEMP_DIR/bin/claude"
+exit 0' > "$TEST_TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    output=$(env PATH="$TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEMP_DIR/home" NO_GITHUB=true \
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
         bash "$SCRIPT_DIR/sw-loop.sh" \
-        --repo "$TEMP_DIR/repo" \
+        --repo "$TEST_TEMP_DIR/repo" \
         "Do nothing" \
         --max-iterations 2 \
         --test-cmd "true" \
@@ -700,17 +633,17 @@ echo -e "${DIM}  loop behavior: progress tracking${RESET}"
 
 if setup_loop_env 2>/dev/null; then
     # Mock claude that adds a file (simulates progress)
-    cat > "$TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
 #!/usr/bin/env bash
 echo "new content" > progress.txt
 echo '[{"type":"result","result":"Added progress.txt. LOOP_COMPLETE","usage":{"input_tokens":0,"output_tokens":0}}]'
 exit 0
 CLAUDE_EOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    output=$(env PATH="$TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEMP_DIR/home" NO_GITHUB=true \
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
         bash "$SCRIPT_DIR/sw-loop.sh" \
-        --repo "$TEMP_DIR/repo" \
+        --repo "$TEST_TEMP_DIR/repo" \
         "Add progress.txt" \
         --max-iterations 3 \
         --test-cmd "true" \
@@ -730,34 +663,120 @@ fi
 echo ""
 echo -e "${DIM}  context efficiency metrics${RESET}"
 
-if grep -q 'emit_event "loop.context_efficiency"' "$SCRIPT_DIR/sw-loop.sh"; then
+# context_efficiency was extracted to loop-iteration.sh sub-module
+_loop_files="$SCRIPT_DIR/sw-loop.sh $SCRIPT_DIR/lib/loop-iteration.sh"
+if grep -q 'emit_event "loop.context_efficiency"' $_loop_files 2>/dev/null; then
     assert_pass "loop.context_efficiency event exists in run_claude_iteration"
 else
     assert_fail "loop.context_efficiency event exists in run_claude_iteration"
 fi
 
-if grep -q 'raw_prompt_chars=' "$SCRIPT_DIR/sw-loop.sh" && grep -q 'trimmed_prompt_chars=' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -q 'raw_prompt_chars=' $_loop_files 2>/dev/null && grep -q 'trimmed_prompt_chars=' $_loop_files 2>/dev/null; then
     assert_pass "Context efficiency emits raw and trimmed char counts"
 else
     assert_fail "Context efficiency emits raw and trimmed char counts"
 fi
 
-if grep -q 'trim_ratio=' "$SCRIPT_DIR/sw-loop.sh" && grep -q 'budget_utilization=' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -q 'trim_ratio=' $_loop_files 2>/dev/null && grep -q 'budget_utilization=' $_loop_files 2>/dev/null; then
     assert_pass "Context efficiency emits trim_ratio and budget_utilization"
 else
     assert_fail "Context efficiency emits trim_ratio and budget_utilization"
 fi
 
 # Verify raw_prompt_chars is captured before manage_context_window trims
-if awk '/raw_prompt_chars=\$\{#prompt\}/' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'raw_prompt_chars'; then
+if grep -q 'raw_prompt_chars=${#prompt}' $_loop_files 2>/dev/null; then
     assert_pass "raw_prompt_chars measured from pre-trim prompt"
 else
-    # Fallback: check that raw_prompt_chars is set from the original prompt variable
-    if grep -q 'raw_prompt_chars=${#prompt}' "$SCRIPT_DIR/sw-loop.sh"; then
-        assert_pass "raw_prompt_chars measured from pre-trim prompt"
-    else
-        assert_fail "raw_prompt_chars measured from pre-trim prompt"
-    fi
+    assert_fail "raw_prompt_chars measured from pre-trim prompt"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MULTI-TEST GATE TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${DIM}  multi-test gate${RESET}"
+
+# Test: ADDITIONAL_TEST_CMDS appears in source
+if grep -q 'ADDITIONAL_TEST_CMDS' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "ADDITIONAL_TEST_CMDS variable defined"
+else
+    assert_fail "ADDITIONAL_TEST_CMDS variable defined"
+fi
+
+# Test: --additional-test-cmds flag in arg parser
+if grep -q '\-\-additional-test-cmds' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "--additional-test-cmds flag in arg parser"
+else
+    assert_fail "--additional-test-cmds flag in arg parser"
+fi
+
+# Test: --help mentions --additional-test-cmds
+output=$(bash "$SCRIPT_DIR/sw-loop.sh" --help 2>&1 | sed $'s/\033\[[0-9;]*m//g') && rc=0 || rc=$?
+if echo "$output" | grep -q 'additional-test-cmds'; then
+    assert_pass "--help documents --additional-test-cmds"
+else
+    assert_fail "--help documents --additional-test-cmds"
+fi
+
+# Test: test-evidence JSON file written
+if grep -q 'test-evidence-iter-' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "run_test_gate writes test-evidence JSON"
+else
+    assert_fail "run_test_gate writes test-evidence JSON"
+fi
+
+# Test: audit agent reads evidence file
+if grep -q 'evidence_file.*test-evidence' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "run_audit_agent reads structured test evidence"
+else
+    assert_fail "run_audit_agent reads structured test evidence"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VERIFICATION GAP TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${DIM}  verification gap handler${RESET}"
+
+# Test: verification gap detection exists in source
+if grep -q 'Verification gap detected' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Verification gap detection present"
+else
+    assert_fail "Verification gap detection present"
+fi
+
+# Test: verification gap emits events
+if grep -q 'loop.verification_gap_resolved' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Verification gap resolved event emitted"
+else
+    assert_fail "Verification gap resolved event emitted"
+fi
+
+if grep -q 'loop.verification_gap_confirmed' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Verification gap confirmed event emitted"
+else
+    assert_fail "Verification gap confirmed event emitted"
+fi
+
+# Test: verification gap overrides audit when tests pass
+if grep -q 'override_audit' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Verification gap can override audit result"
+else
+    assert_fail "Verification gap can override audit result"
+fi
+
+# Test: verification checks for uncommitted changes
+if grep -q 'verification-iter-' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Verification re-runs tests to dedicated log"
+else
+    assert_fail "Verification re-runs tests to dedicated log"
+fi
+
+# Test: mid-build test discovery uses detect_created_test_files
+if grep -q 'detect_created_test_files' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Mid-build test file discovery integrated"
+else
+    assert_fail "Mid-build test file discovery integrated"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -765,13 +784,5 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
-if [[ $FAIL -eq 0 ]]; then
-    echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"
-else
-    echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"
-    for f in "${FAILURES[@]}"; do echo -e "  ${RED}✗${RESET} $f"; done
-fi
-echo ""
-exit "$FAIL"
+print_test_results

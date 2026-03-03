@@ -7,44 +7,32 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 INTELLIGENCE_SCRIPT="$SCRIPT_DIR/sw-intelligence.sh"
 
 # ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEST ENVIRONMENT SETUP
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-intelligence-test.XXXXXX")
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-intelligence-test.XXXXXX")
 
-    mkdir -p "$TEMP_DIR/.shipwright"
-    mkdir -p "$TEMP_DIR/.claude"
-    mkdir -p "$TEMP_DIR/project/.claude"
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/.claude"
+    mkdir -p "$TEST_TEMP_DIR/project/.claude"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
-    export HOME="$TEMP_DIR"
-    export EVENTS_FILE="$TEMP_DIR/.shipwright/events.jsonl"
+    export HOME="$TEST_TEMP_DIR"
+    export EVENTS_FILE="$TEST_TEMP_DIR/.shipwright/events.jsonl"
     export NO_GITHUB=true
 
     # Enable intelligence in mock config
-    cat > "$TEMP_DIR/project/.claude/daemon-config.json" <<'DAEMONCFG'
+    cat > "$TEST_TEMP_DIR/project/.claude/daemon-config.json" <<'DAEMONCFG'
 {
   "intelligence": {
     "enabled": true
@@ -53,7 +41,7 @@ setup_env() {
 DAEMONCFG
 
     # Create mock claude binary that returns pre-defined JSON
-    cat > "$TEMP_DIR/bin/claude" <<'MOCKBIN'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'MOCKBIN'
 #!/usr/bin/env bash
 # Mock claude CLI — reads MOCK_CLAUDE_RESPONSE env var and outputs it
 # Simulates: claude -p "..." (plain text mode, returns raw text/JSON)
@@ -68,20 +56,20 @@ fi
 echo '{"error": "unexpected args"}'
 exit 1
 MOCKBIN
-    chmod +x "$TEMP_DIR/bin/claude"
-    export PATH="$TEMP_DIR/bin:$PATH"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
 
 reset_test() {
     rm -f "$EVENTS_FILE"
-    rm -f "$TEMP_DIR/project/.claude/intelligence-cache.json"
+    rm -f "$TEST_TEMP_DIR/project/.claude/intelligence-cache.json"
     touch "$EVENTS_FILE"
     # Reset mock response to default analyze response
     export MOCK_CLAUDE_RESPONSE='{"complexity": 5, "risk_level": "medium", "success_probability": 50, "recommended_template": "standard", "key_risks": ["unknown"], "implementation_hints": ["review code"]}'
@@ -93,15 +81,15 @@ reset_test() {
 
 source_intelligence_functions() {
     # Override REPO_DIR so feature flag and cache paths point to our mock project
-    export REPO_DIR="$TEMP_DIR/project"
+    export REPO_DIR="$TEST_TEMP_DIR/project"
 
     # Source the intelligence script (it won't run main because BASH_SOURCE != $0)
     # shellcheck disable=SC1090
     source "$INTELLIGENCE_SCRIPT"
 
     # Re-set paths after sourcing (they get set at script top level)
-    REPO_DIR="$TEMP_DIR/project"
-    INTELLIGENCE_CACHE="$TEMP_DIR/project/.claude/intelligence-cache.json"
+    REPO_DIR="$TEST_TEMP_DIR/project"
+    INTELLIGENCE_CACHE="$TEST_TEMP_DIR/project/.claude/intelligence-cache.json"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -245,8 +233,8 @@ test_cache_hit() {
 test_graceful_no_claude() {
     # Remove claude from PATH by overriding with a dir that has no claude
     local save_path="$PATH"
-    mkdir -p "$TEMP_DIR/empty_bin"
-    export PATH="$TEMP_DIR/empty_bin"
+    mkdir -p "$TEST_TEMP_DIR/empty_bin"
+    export PATH="$TEST_TEMP_DIR/empty_bin"
 
     local issue='{"title":"Test issue","body":"Test body","labels":[]}'
     local result
@@ -339,7 +327,7 @@ test_cache_ttl_expiry() {
     export MOCK_CLAUDE_RESPONSE='{"complexity": 4, "risk_level": "low", "success_probability": 80, "recommended_template": "fast", "key_risks": [], "implementation_hints": []}'
 
     # Manually write a cache entry with expired timestamp
-    local cache_file="$TEMP_DIR/project/.claude/intelligence-cache.json"
+    local cache_file="$TEST_TEMP_DIR/project/.claude/intelligence-cache.json"
     mkdir -p "$(dirname "$cache_file")"
     local old_ts=1000000  # very old timestamp
     local hash
@@ -371,7 +359,7 @@ test_search_memory() {
     export MOCK_CLAUDE_RESPONSE='{"results": [{"file": "auth_fix.json", "relevance": 95, "summary": "Fixed OAuth token refresh"}, {"file": "db_migration.json", "relevance": 40, "summary": "Database schema changes"}]}'
 
     # Create mock memory files
-    local mem_dir="$TEMP_DIR/.shipwright/memory/test_repo"
+    local mem_dir="$TEST_TEMP_DIR/.shipwright/memory/test_repo"
     mkdir -p "$mem_dir"
     echo '{"type": "fix", "issue": "OAuth token expired", "fix": "added refresh logic"}' > "$mem_dir/auth_fix.json"
     echo '{"type": "fix", "issue": "DB migration failed", "fix": "added rollback"}' > "$mem_dir/db_migration.json"
@@ -394,7 +382,7 @@ test_search_memory() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_disabled_returns_fallback() {
     # Disable intelligence
-    cat > "$TEMP_DIR/project/.claude/daemon-config.json" <<'CFG'
+    cat > "$TEST_TEMP_DIR/project/.claude/daemon-config.json" <<'CFG'
 {
   "intelligence": {
     "enabled": false
@@ -411,7 +399,7 @@ CFG
     assert_json_key "$result" ".recommended_template" "standard" "fallback template"
 
     # Re-enable for other tests
-    cat > "$TEMP_DIR/project/.claude/daemon-config.json" <<'CFG'
+    cat > "$TEST_TEMP_DIR/project/.claude/daemon-config.json" <<'CFG'
 {
   "intelligence": {
     "enabled": true
@@ -491,7 +479,7 @@ main() {
     echo -e "${DIM}Setting up test environment...${RESET}"
     setup_env
     source_intelligence_functions
-    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEMP_DIR${RESET}"
+    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEST_TEMP_DIR${RESET}"
     echo ""
 
     # Define all tests

@@ -25,7 +25,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
 [[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
-[[ -f "$SCRIPT_DIR/lib/pipeline-detection.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-detection.sh"
 # Source DB for dual-write (emit_event → JSONL + SQLite).
 # Note: do NOT call init_schema here — the pipeline (sw-pipeline.sh) owns schema
 # initialization. Calling it here would create an empty DB that shadows JSON cost data.
@@ -34,7 +33,17 @@ if [[ -f "$SCRIPT_DIR/sw-db.sh" ]]; then
 fi
 # Cross-pipeline discovery (learnings from other pipeline runs)
 [[ -f "$SCRIPT_DIR/sw-discovery.sh" ]] && source "$SCRIPT_DIR/sw-discovery.sh" 2>/dev/null || true
-[[ -f "$SCRIPT_DIR/lib/ai-provider.sh" ]] && source "$SCRIPT_DIR/lib/ai-provider.sh"
+# Source loop sub-modules for modular iteration management
+[[ -f "$SCRIPT_DIR/lib/loop-iteration.sh" ]] && source "$SCRIPT_DIR/lib/loop-iteration.sh"
+[[ -f "$SCRIPT_DIR/lib/loop-convergence.sh" ]] && source "$SCRIPT_DIR/lib/loop-convergence.sh"
+[[ -f "$SCRIPT_DIR/lib/loop-restart.sh" ]] && source "$SCRIPT_DIR/lib/loop-restart.sh"
+[[ -f "$SCRIPT_DIR/lib/loop-progress.sh" ]] && source "$SCRIPT_DIR/lib/loop-progress.sh"
+# Error actionability scoring and enhancement for better error context
+# shellcheck source=lib/error-actionability.sh
+[[ -f "$SCRIPT_DIR/lib/error-actionability.sh" ]] && source "$SCRIPT_DIR/lib/error-actionability.sh" 2>/dev/null || true
+# Audit trail for compliance-grade pipeline traceability
+# shellcheck source=lib/audit-trail.sh
+[[ -f "$SCRIPT_DIR/lib/audit-trail.sh" ]] && source "$SCRIPT_DIR/lib/audit-trail.sh" 2>/dev/null || true
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -59,15 +68,10 @@ GOAL=""
 ORIGINAL_GOAL=""  # Preserved across restarts — GOAL gets appended to
 MAX_ITERATIONS="${SW_MAX_ITERATIONS:-20}"
 TEST_CMD=""
-TEST_CMD_AUTO=false  # true when TEST_CMD was auto-detected (not via --test-cmd)
 FAST_TEST_CMD=""
 FAST_TEST_INTERVAL=5
 TEST_LOG_FILE=""
-LAST_ACTIVE_TEST_CMD=""
-LAST_TEST_MODE=""
 MODEL="${SW_MODEL:-opus}"
-AI_PROVIDER_OVERRIDE=""
-AI_PROVIDER=""
 AGENTS=1
 AGENT_ROLES=""
 USE_WORKTREE=false
@@ -80,7 +84,7 @@ MAX_RESTARTS=$(_config_get_int "loop.max_restarts" 0 2>/dev/null || echo 0)
 SESSION_RESTART=false
 RESTART_COUNT=0
 REPO_OVERRIDE=""
-VERSION="3.2.4"
+VERSION="3.4.0"
 
 # ─── Token Tracking ─────────────────────────────────────────────────────────
 LOOP_INPUT_TOKENS=0
@@ -106,6 +110,12 @@ AUDIT_RESULT=""
 COMPLETION_REJECTED=false
 QUALITY_GATE_PASSED=true
 
+# ─── Multi-Test Defaults ──────────────────────────────────────────────────
+ADDITIONAL_TEST_CMDS=()   # Array of extra test commands (from --additional-test-cmds)
+
+# ─── Context Budget ──────────────────────────────────────────────────────────
+CONTEXT_BUDGET_CHARS="${CONTEXT_BUDGET_CHARS:-200000}"  # Max prompt chars before trimming
+
 # ─── Parse Arguments ──────────────────────────────────────────────────────────
 show_help() {
     echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${VERSION}${RESET} — ${BOLD}Continuous Loop${RESET}"
@@ -120,8 +130,8 @@ show_help() {
     echo -e "  ${CYAN}--test-cmd${RESET} \"cmd\"         Test command to run between iterations"
     echo -e "  ${CYAN}--fast-test-cmd${RESET} \"cmd\"      Fast/subset test command (alternates with full)"
     echo -e "  ${CYAN}--fast-test-interval${RESET} N       Run full tests every N iterations (default: 5)"
-    echo -e "  ${CYAN}--model${RESET} MODEL             AI model tier/name (default: opus)"
-    echo -e "  ${CYAN}--ai-provider${RESET} NAME        AI provider (claude, codex, copilot)"
+    echo -e "  ${CYAN}--additional-test-cmds${RESET} \"cmd\" Extra test command (repeatable)"
+    echo -e "  ${CYAN}--model${RESET} MODEL             Claude model to use (default: opus)"
     echo -e "  ${CYAN}--agents${RESET} N                Number of parallel agents (default: 1)"
     echo -e "  ${CYAN}--roles${RESET} \"r1,r2,...\"        Role per agent: builder,reviewer,tester,optimizer,docs,security"
     echo -e "  ${CYAN}--worktree${RESET}                Use git worktrees for isolation (auto if agents > 1)"
@@ -140,11 +150,6 @@ show_help() {
     echo -e "  ${CYAN}--no-auto-extend${RESET}          Disable auto-extension when max iterations reached"
     echo -e "  ${CYAN}--extension-size${RESET} N         Additional iterations per extension (default: 5)"
     echo -e "  ${CYAN}--max-extensions${RESET} N         Max number of auto-extensions (default: 3)"
-    echo ""
-    echo -e "${BOLD}TIMEOUT OVERRIDES (ENV)${RESET}"
-    echo -e "  ${CYAN}SW_TEST_TIMEOUT${RESET}=SECONDS        Global test timeout (default: 300)"
-    echo -e "  ${CYAN}SW_FAST_TEST_TIMEOUT${RESET}=SECONDS   Timeout for fast/subset iterations"
-    echo -e "  ${CYAN}SW_FULL_TEST_TIMEOUT${RESET}=SECONDS   Timeout for full-suite iterations"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo -e "  ${DIM}shipwright loop \"Build user auth with JWT\"${RESET}"
@@ -191,22 +196,15 @@ while [[ $# -gt 0 ]]; do
         --test-cmd)
             TEST_CMD="${2:-}"
             [[ -z "$TEST_CMD" ]] && { error "Missing value for --test-cmd"; exit 1; }
-            _TEST_CMD_FROM_CLI=true
             shift 2
             ;;
-        --test-cmd=*) TEST_CMD="${1#--test-cmd=}"; _TEST_CMD_FROM_CLI=true; shift ;;
+        --test-cmd=*) TEST_CMD="${1#--test-cmd=}"; shift ;;
         --model)
             MODEL="${2:-}"
             [[ -z "$MODEL" ]] && { error "Missing value for --model"; exit 1; }
             shift 2
             ;;
         --model=*) MODEL="${1#--model=}"; shift ;;
-        --ai-provider)
-            AI_PROVIDER_OVERRIDE="${2:-}"
-            [[ -z "$AI_PROVIDER_OVERRIDE" ]] && { error "Missing value for --ai-provider"; exit 1; }
-            shift 2
-            ;;
-        --ai-provider=*) AI_PROVIDER_OVERRIDE="${1#--ai-provider=}"; shift ;;
         --agents)
             AGENTS="${2:-}"
             [[ -z "$AGENTS" ]] && { error "Missing value for --agents"; exit 1; }
@@ -257,6 +255,12 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --fast-test-interval=*) FAST_TEST_INTERVAL="${1#--fast-test-interval=}"; shift ;;
+        --additional-test-cmds)
+            ADDITIONAL_TEST_CMDS+=("${2:-}")
+            [[ -z "${2:-}" ]] && { error "Missing value for --additional-test-cmds"; exit 1; }
+            shift 2
+            ;;
+        --additional-test-cmds=*) ADDITIONAL_TEST_CMDS+=("${1#--additional-test-cmds=}"); shift ;;
         --max-restarts)
             MAX_RESTARTS="${2:-}"
             [[ -z "$MAX_RESTARTS" ]] && { error "Missing value for --max-restarts"; exit 1; }
@@ -291,10 +295,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-if [[ -n "$AI_PROVIDER_OVERRIDE" ]]; then
-    export SHIPWRIGHT_AI_PROVIDER="$AI_PROVIDER_OVERRIDE"
-fi
 
 # Auto-enable worktree for multi-agent
 if [[ "$AGENTS" -gt 1 ]]; then
@@ -362,17 +362,9 @@ if [[ -n "$REPO_OVERRIDE" ]]; then
     info "Using repository: $(pwd)"
 fi
 
-AI_PROVIDER="$(ai_provider_resolve "$AI_PROVIDER_OVERRIDE" 2>/dev/null || true)"
-if [[ -z "$AI_PROVIDER" ]]; then
-    error "Invalid --ai-provider value: ${AI_PROVIDER_OVERRIDE:-<empty>}"
-    exit 1
-fi
-if ! ai_provider_check_ready "$AI_PROVIDER"; then
-    local_provider_cmd="$(ai_provider_command "$AI_PROVIDER" 2>/dev/null || echo "$AI_PROVIDER")"
-    error "AI provider not ready: ${AI_PROVIDER} (${local_provider_cmd})"
-    if [[ "$AI_PROVIDER" == "claude" ]]; then
-        echo -e "  ${DIM}npm install -g @anthropic-ai/claude-code${RESET}"
-    fi
+if ! command -v claude >/dev/null 2>&1; then
+    error "Claude Code CLI not found. Install it first:"
+    echo -e "  ${DIM}npm install -g @anthropic-ai/claude-code${RESET}"
     exit 1
 fi
 
@@ -392,11 +384,6 @@ elif command -v gtimeout >/dev/null 2>&1; then
     TIMEOUT_CMD="gtimeout"
 fi
 CLAUDE_TIMEOUT="${CLAUDE_TIMEOUT:-$(_config_get_int "loop.claude_timeout" 1800 2>/dev/null || echo 1800)}"  # 30 min default
-
-# Signal to Claude that it is running inside a Shipwright build loop.
-# This activates the shipwright-operations profile in CLAUDE.md (detection contract).
-export SHIPWRIGHT_ACTIVE=1
-export SHIPWRIGHT_SOURCE="${SHIPWRIGHT_SOURCE:-loop}"
 
 if [[ "$AGENTS" -gt 1 ]]; then
     if ! command -v tmux >/dev/null 2>&1; then
@@ -418,22 +405,6 @@ STATE_DIR="$PROJECT_ROOT/.claude"
 STATE_FILE="$STATE_DIR/loop-state.md"
 LOG_DIR="$STATE_DIR/loop-logs"
 WORKTREE_DIR="$PROJECT_ROOT/.worktrees"
-
-if [[ -z "$TEST_CMD" ]] && [[ "$(type -t detect_test_cmd 2>/dev/null)" == "function" ]]; then
-    TEST_CMD="$(detect_test_cmd)"
-    if [[ -n "$TEST_CMD" ]]; then
-        TEST_CMD_AUTO=true
-        info "Auto-detected test command: ${DIM}${TEST_CMD}${RESET}"
-    fi
-fi
-
-# Warm detection caches for per-iteration re-targeting (cheap on subsequent calls)
-if [[ "$(type -t detect_repo_environments_json 2>/dev/null)" == "function" ]]; then
-    detect_repo_environments_json >/dev/null 2>&1 || true
-fi
-if [[ "$(type -t detect_helper_capabilities_json 2>/dev/null)" == "function" ]]; then
-    detect_helper_capabilities_json >/dev/null 2>&1 || true
-fi
 
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 
@@ -497,18 +468,15 @@ accumulate_loop_tokens() {
     local log_file="$1"
     [[ ! -f "$log_file" ]] && return 0
 
-    # If jq is available and the file looks like JSON, parse structured output.
-    # Supports both legacy Claude arrays and normalized provider objects.
-    local first_char
-    first_char=$(head -c1 "$log_file" 2>/dev/null || true)
-    if command -v jq >/dev/null 2>&1 && [[ "$first_char" == "[" || "$first_char" == "{" ]]; then
+    # If jq is available and the file looks like JSON, parse structured output
+    if command -v jq >/dev/null 2>&1 && head -c1 "$log_file" 2>/dev/null | grep -q '\['; then
         local input_tok output_tok cache_read cache_create cost_usd
-        # Keep legacy jq paths to preserve existing behavior/tests, then support object fields.
-        input_tok=$(jq -r 'if type=="array" then .[-1].usage.input_tokens // 0 else .input_tokens // 0 end' "$log_file" 2>/dev/null || echo "0")
-        output_tok=$(jq -r 'if type=="array" then .[-1].usage.output_tokens // 0 else .output_tokens // 0 end' "$log_file" 2>/dev/null || echo "0")
-        cache_read=$(jq -r 'if type=="array" then .[-1].usage.cache_read_input_tokens // 0 else 0 end' "$log_file" 2>/dev/null || echo "0")
-        cache_create=$(jq -r 'if type=="array" then .[-1].usage.cache_creation_input_tokens // 0 else 0 end' "$log_file" 2>/dev/null || echo "0")
-        cost_usd=$(jq -r 'if type=="array" then .[-1].total_cost_usd // 0 else .cost_usd // 0 end' "$log_file" 2>/dev/null || echo "0")
+        # The result object is the last element in the JSON array
+        input_tok=$(jq -r '.[-1].usage.input_tokens // 0' "$log_file" 2>/dev/null || echo "0")
+        output_tok=$(jq -r '.[-1].usage.output_tokens // 0' "$log_file" 2>/dev/null || echo "0")
+        cache_read=$(jq -r '.[-1].usage.cache_read_input_tokens // 0' "$log_file" 2>/dev/null || echo "0")
+        cache_create=$(jq -r '.[-1].usage.cache_creation_input_tokens // 0' "$log_file" 2>/dev/null || echo "0")
+        cost_usd=$(jq -r '.[-1].total_cost_usd // 0' "$log_file" 2>/dev/null || echo "0")
 
         LOOP_INPUT_TOKENS=$(( LOOP_INPUT_TOKENS + ${input_tok:-0} + ${cache_read:-0} + ${cache_create:-0} ))
         LOOP_OUTPUT_TOKENS=$(( LOOP_OUTPUT_TOKENS + ${output_tok:-0} ))
@@ -563,38 +531,16 @@ _extract_text_from_json() {
     local first_char
     first_char=$(head -c1 "$json_file" 2>/dev/null || true)
 
-    # Case 2: Normalized provider object — extract .result_text (multi-AI provider format)
-    if [[ "$first_char" == "{" ]] && command -v jq >/dev/null 2>&1; then
-        local obj_result
-        obj_result=$(jq -r '.result_text // empty' "$json_file" 2>/dev/null) || true
-        if [[ -n "$obj_result" ]]; then
-            echo "$obj_result" > "$log_file"
-            return 0
-        fi
-        cp "$json_file" "$log_file"
-        return 0
-    fi
-
-    # Case 3: Valid JSON (array or object) — extract .result with jq
-    if [[ "$first_char" == "[" || "$first_char" == "{" ]] && command -v jq >/dev/null 2>&1; then
+    # Case 2: Valid JSON array — extract .result from last element
+    if [[ "$first_char" == "[" ]] && command -v jq >/dev/null 2>&1; then
         local extracted
-        if [[ "$first_char" == "[" ]]; then
-            # Array: extract .result from last element
-            extracted=$(jq -r '.[-1].result // empty' "$json_file" 2>/dev/null) || true
-        else
-            # Object: extract .result directly
-            extracted=$(jq -r '.result // empty' "$json_file" 2>/dev/null) || true
-        fi
+        extracted=$(jq -r '.[-1].result // empty' "$json_file" 2>/dev/null) || true
         if [[ -n "$extracted" ]]; then
             echo "$extracted" > "$log_file"
             return 0
         fi
         # jq succeeded but result was null/empty — try .content or raw text
-        if [[ "$first_char" == "[" ]]; then
-            extracted=$(jq -r '.[].content // empty' "$json_file" 2>/dev/null | head -500) || true
-        else
-            extracted=$(jq -r '.content // empty' "$json_file" 2>/dev/null | head -500) || true
-        fi
+        extracted=$(jq -r '.[].content // empty' "$json_file" 2>/dev/null | head -500) || true
         if [[ -n "$extracted" ]]; then
             echo "$extracted" > "$log_file"
             return 0
@@ -605,14 +551,14 @@ _extract_text_from_json() {
         return 0
     fi
 
-    # Case 4: Looks like JSON but no jq — can't parse, use raw
+    # Case 3: Looks like JSON but no jq — can't parse, use raw
     if [[ "$first_char" == "[" || "$first_char" == "{" ]]; then
         warn "JSON output but jq not available — using raw output"
         cp "$json_file" "$log_file"
         return 0
     fi
 
-    # Case 5: Not JSON at all (plain text, error message, etc.) — use as-is
+    # Case 4: Not JSON at all (plain text, error message, etc.) — use as-is
     cp "$json_file" "$log_file"
     return 0
 }
@@ -680,38 +626,8 @@ apply_adaptive_budget() {
 ITERATION_LINES_CHANGED=""
 VELOCITY_HISTORY=""
 
-track_iteration_velocity() {
-    local changes
-    changes="$(git -C "$PROJECT_ROOT" diff --stat HEAD~1 2>/dev/null | tail -1 || echo "")"
-    local insertions
-    insertions="$(echo "$changes" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)"
-    ITERATION_LINES_CHANGED="${insertions:-0}"
-    if [[ -n "$VELOCITY_HISTORY" ]]; then
-        VELOCITY_HISTORY="${VELOCITY_HISTORY},${ITERATION_LINES_CHANGED}"
-    else
-        VELOCITY_HISTORY="${ITERATION_LINES_CHANGED}"
-    fi
-}
 
 # Compute average lines/iteration from recent history
-compute_velocity_avg() {
-    if [[ -z "$VELOCITY_HISTORY" ]]; then
-        echo "0"
-        return 0
-    fi
-    local total=0 count=0
-    local IFS=','
-    local val
-    for val in $VELOCITY_HISTORY; do
-        total=$((total + val))
-        count=$((count + 1))
-    done
-    if [[ "$count" -gt 0 ]]; then
-        echo $((total / count))
-    else
-        echo "0"
-    fi
-}
 
 # ─── Timing Helpers ───────────────────────────────────────────────────────────
 
@@ -737,196 +653,10 @@ TEST_PASSED=""
 TEST_OUTPUT=""
 LOG_ENTRIES=""
 
-initialize_state() {
-    ITERATION=0
-    CONSECUTIVE_FAILURES=0
-    TOTAL_COMMITS=0
-    START_EPOCH="$(now_epoch)"
-    STATUS="running"
-    LOG_ENTRIES=""
 
-    # Record starting commit for cumulative diff in quality gates
-    LOOP_START_COMMIT="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")"
 
-    write_state
-}
 
-resume_state() {
-    if [[ ! -f "$STATE_FILE" ]]; then
-        error "No state file found at $STATE_FILE"
-        echo -e "  Start a new loop instead: ${DIM}shipwright loop \"<goal>\"${RESET}"
-        exit 1
-    fi
 
-    info "Resuming from $STATE_FILE"
-
-    # Save CLI values before parsing state (CLI takes precedence)
-    local cli_max_iterations="$MAX_ITERATIONS"
-
-    # Parse YAML front matter
-    local in_frontmatter=false
-    while IFS= read -r line; do
-        if [[ "$line" == "---" ]]; then
-            if $in_frontmatter; then
-                break
-            else
-                in_frontmatter=true
-                continue
-            fi
-        fi
-        if $in_frontmatter; then
-            case "$line" in
-                goal:*)          [[ -z "$GOAL" ]] && GOAL="$(echo "${line#goal:}" | sed 's/^ *"//;s/" *$//')" ;;
-                iteration:*)     ITERATION="$(echo "${line#iteration:}" | tr -d ' ')" ;;
-                max_iterations:*) MAX_ITERATIONS="$(echo "${line#max_iterations:}" | tr -d ' ')" ;;
-                status:*)        STATUS="$(echo "${line#status:}" | tr -d ' ')" ;;
-                test_cmd:*)      [[ -z "$TEST_CMD" ]] && TEST_CMD="$(echo "${line#test_cmd:}" | sed 's/^ *"//;s/" *$//')" ;;
-                test_cmd_auto:*) [[ -z "$TEST_CMD" ]] && TEST_CMD_AUTO="$(echo "${line#test_cmd_auto:}" | tr -d ' ')" ;;
-                model:*)         MODEL="$(echo "${line#model:}" | tr -d ' ')" ;;
-                agents:*)        AGENTS="$(echo "${line#agents:}" | tr -d ' ')" ;;
-                loop_start_commit:*) LOOP_START_COMMIT="$(echo "${line#loop_start_commit:}" | tr -d ' ')" ;;
-                consecutive_failures:*) CONSECUTIVE_FAILURES="$(echo "${line#consecutive_failures:}" | tr -d ' ')" ;;
-                total_commits:*) TOTAL_COMMITS="$(echo "${line#total_commits:}" | tr -d ' ')" ;;
-                audit_enabled:*)         AUDIT_ENABLED="$(echo "${line#audit_enabled:}" | tr -d ' ')" ;;
-                audit_agent_enabled:*)   AUDIT_AGENT_ENABLED="$(echo "${line#audit_agent_enabled:}" | tr -d ' ')" ;;
-                quality_gates_enabled:*) QUALITY_GATES_ENABLED="$(echo "${line#quality_gates_enabled:}" | tr -d ' ')" ;;
-                dod_file:*)              DOD_FILE="$(echo "${line#dod_file:}" | sed 's/^ *"//;s/" *$//')" ;;
-                auto_extend:*)           AUTO_EXTEND="$(echo "${line#auto_extend:}" | tr -d ' ')" ;;
-                extension_count:*)       EXTENSION_COUNT="$(echo "${line#extension_count:}" | tr -d ' ')" ;;
-                max_extensions:*)        MAX_EXTENSIONS="$(echo "${line#max_extensions:}" | tr -d ' ')" ;;
-            esac
-        fi
-    done < "$STATE_FILE"
-
-    # CLI --max-iterations overrides state file
-    if $MAX_ITERATIONS_EXPLICIT; then
-        MAX_ITERATIONS="$cli_max_iterations"
-    fi
-
-    # Extract the log section (everything after ## Log)
-    LOG_ENTRIES="$(sed -n '/^## Log$/,$ { /^## Log$/d; p; }' "$STATE_FILE" 2>/dev/null || true)"
-
-    if [[ -z "$GOAL" ]]; then
-        error "Could not parse goal from state file."
-        exit 1
-    fi
-
-    if [[ "$STATUS" == "complete" ]]; then
-        warn "Previous loop completed. Start a new one or edit the state file."
-        exit 0
-    fi
-
-    # Reset circuit breaker on resume
-    CONSECUTIVE_FAILURES=0
-    START_EPOCH="$(now_epoch)"
-    STATUS="running"
-
-    # Preserve original loop start commit across resume; fallback to current HEAD for
-    # older state files that did not persist loop_start_commit.
-    if [[ -z "${LOOP_START_COMMIT:-}" ]]; then
-        LOOP_START_COMMIT="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")"
-    fi
-
-    # If we hit max iterations before, warn user to extend
-    if [[ "$ITERATION" -ge "$MAX_ITERATIONS" ]] && ! $MAX_ITERATIONS_EXPLICIT; then
-        warn "Previous run stopped at iteration $ITERATION/$MAX_ITERATIONS."
-        echo -e "  Extend with: ${DIM}shipwright loop --resume --max-iterations $(( MAX_ITERATIONS + 10 ))${RESET}"
-        exit 0
-    fi
-
-    # Restore Claude context for meaningful resume (source so exports persist to this shell)
-    if [[ -f "$SCRIPT_DIR/sw-checkpoint.sh" ]] && [[ -d "${PROJECT_ROOT:-}" ]]; then
-        source "$SCRIPT_DIR/sw-checkpoint.sh"
-        local _orig_pwd="$PWD"
-        cd "$PROJECT_ROOT" 2>/dev/null || true
-        if checkpoint_restore_context "build" 2>/dev/null; then
-            RESUMED_FROM_ITERATION="${RESTORED_ITERATION:-}"
-            RESUMED_MODIFIED="${RESTORED_MODIFIED:-}"
-            RESUMED_FINDINGS="${RESTORED_FINDINGS:-}"
-            RESUMED_TEST_OUTPUT="${RESTORED_TEST_OUTPUT:-}"
-            [[ -n "${RESTORED_ITERATION:-}" && "${RESTORED_ITERATION:-0}" -gt 0 ]] && info "Restored context from iteration ${RESTORED_ITERATION}"
-        fi
-        cd "$_orig_pwd" 2>/dev/null || true
-    fi
-
-    success "Resumed: iteration $ITERATION/$MAX_ITERATIONS"
-}
-
-write_state() {
-    local tmp_state="${STATE_FILE}.tmp.$$"
-    # Use printf instead of heredoc to avoid delimiter injection from GOAL
-    {
-        printf -- '---\n'
-        printf 'goal: "%s"\n' "$GOAL"
-        printf 'iteration: %s\n' "$ITERATION"
-        printf 'max_iterations: %s\n' "$MAX_ITERATIONS"
-        printf 'status: %s\n' "$STATUS"
-        printf 'test_cmd: "%s"\n' "$TEST_CMD"
-        printf 'test_cmd_auto: %s\n' "${TEST_CMD_AUTO:-false}"
-        printf 'model: %s\n' "$MODEL"
-        printf 'agents: %s\n' "$AGENTS"
-        printf 'loop_start_commit: %s\n' "$LOOP_START_COMMIT"
-        printf 'started_at: %s\n' "$(now_iso)"
-        printf 'last_iteration_at: %s\n' "$(now_iso)"
-        printf 'consecutive_failures: %s\n' "$CONSECUTIVE_FAILURES"
-        printf 'total_commits: %s\n' "$TOTAL_COMMITS"
-        printf 'audit_enabled: %s\n' "$AUDIT_ENABLED"
-        printf 'audit_agent_enabled: %s\n' "$AUDIT_AGENT_ENABLED"
-        printf 'quality_gates_enabled: %s\n' "$QUALITY_GATES_ENABLED"
-        printf 'dod_file: "%s"\n' "$DOD_FILE"
-        printf 'auto_extend: %s\n' "$AUTO_EXTEND"
-        printf 'extension_count: %s\n' "$EXTENSION_COUNT"
-        printf 'max_extensions: %s\n' "$MAX_EXTENSIONS"
-        printf -- '---\n\n'
-        printf '## Log\n'
-        printf '%s\n' "$LOG_ENTRIES"
-    } > "$tmp_state"
-    if ! mv "$tmp_state" "$STATE_FILE" 2>/dev/null; then
-        warn "Failed to write state file: $STATE_FILE"
-    fi
-}
-
-write_progress() {
-    local progress_file="$LOG_DIR/progress.md"
-    local recent_commits
-    recent_commits=$(git -C "$PROJECT_ROOT" log --oneline -5 2>/dev/null || echo "(no commits)")
-    local changed_files
-    changed_files=$(git -C "$PROJECT_ROOT" diff --name-only HEAD~3 2>/dev/null | head -20 || echo "(none)")
-    local last_error=""
-    local prev_test_log="$LOG_DIR/tests-iter-${ITERATION}.log"
-    if [[ -f "$prev_test_log" ]] && [[ "${TEST_PASSED:-}" == "false" ]]; then
-        last_error=$(tail -10 "$prev_test_log" 2>/dev/null || true)
-    fi
-
-    # Use printf to avoid heredoc delimiter injection from GOAL content
-    local tmp_progress="${progress_file}.tmp.$$"
-    {
-        printf '# Session Progress (Auto-Generated)\n\n'
-        printf '## Goal\n%s\n\n' "${GOAL}"
-        printf '## Status\n'
-        printf -- '- Iteration: %s/%s\n' "${ITERATION}" "${MAX_ITERATIONS}"
-        printf -- '- Session restart: %s/%s\n' "${RESTART_COUNT:-0}" "${MAX_RESTARTS:-0}"
-        printf -- '- Tests passing: %s\n' "${TEST_PASSED:-unknown}"
-        printf -- '- Status: %s\n\n' "${STATUS:-running}"
-        printf '## Recent Commits\n%s\n\n' "${recent_commits}"
-        printf '## Changed Files\n%s\n\n' "${changed_files}"
-        if [[ -n "$last_error" ]]; then
-            printf '## Last Error\n%s\n\n' "$last_error"
-        fi
-        printf '## Timestamp\n%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-    } > "$tmp_progress" 2>/dev/null
-    mv "$tmp_progress" "$progress_file" 2>/dev/null || rm -f "$tmp_progress" 2>/dev/null
-}
-
-append_log_entry() {
-    local entry="$1"
-    if [[ -n "$LOG_ENTRIES" ]]; then
-        LOG_ENTRIES="${LOG_ENTRIES}
-${entry}"
-    else
-        LOG_ENTRIES="$entry"
-    fi
-}
 
 # ─── Semantic Validation for Claude Output ─────────────────────────────────────
 # Validates changed files before commit to catch syntax errors and API error leakage.
@@ -1049,158 +779,12 @@ git_auto_commit() {
 
 # ─── Fatal Error Detection ────────────────────────────────────────────────────
 
-check_fatal_error() {
-    local log_file="$1"
-    local cli_exit_code="${2:-0}"
-    [[ -f "$log_file" ]] || return 1
-
-    # Known fatal error patterns from Claude CLI / Anthropic API
-    local fatal_patterns="Invalid API key|invalid_api_key|authentication_error|API key expired"
-    fatal_patterns="${fatal_patterns}|rate_limit_error|overloaded_error|billing"
-    fatal_patterns="${fatal_patterns}|Could not resolve host|connection refused|ECONNREFUSED"
-    fatal_patterns="${fatal_patterns}|ANTHROPIC_API_KEY.*not set|No API key"
-
-    if grep -qiE "$fatal_patterns" "$log_file" 2>/dev/null; then
-        local match
-        match=$(grep -iE "$fatal_patterns" "$log_file" 2>/dev/null | head -1 | cut -c1-120)
-        error "Fatal CLI error: $match"
-        return 0  # fatal error detected
-    fi
-
-    # Non-zero exit + tiny output = likely CLI crash
-    if [[ "$cli_exit_code" -ne 0 ]]; then
-        local line_count
-        line_count=$(grep -cv '^$' "$log_file" 2>/dev/null || true)
-        line_count="${line_count:-0}"
-        if [[ "$line_count" -lt 3 ]]; then
-            local content
-            content=$(head -3 "$log_file" 2>/dev/null | cut -c1-120)
-            error "CLI exited $cli_exit_code with minimal output: $content"
-            return 0
-        fi
-    fi
-
-    return 1  # no fatal error
-}
 
 # ─── Progress & Circuit Breaker ───────────────────────────────────────────────
 
-check_progress() {
-    local changes
-    # Exclude loop bookkeeping files — only count real code changes as progress
-    changes="$(git -C "$PROJECT_ROOT" diff --stat HEAD~1 \
-        -- . ':!.claude/loop-state.md' ':!.claude/pipeline-state.md' \
-        ':!**/progress.md' ':!**/error-summary.json' \
-        2>/dev/null | tail -1 || echo "")"
-    local insertions
-    insertions="$(echo "$changes" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)"
-    if [[ "${insertions:-0}" -lt "$MIN_PROGRESS_LINES" ]]; then
-        return 1  # No meaningful progress
-    fi
-    return 0
-}
 
-check_completion() {
-    local log_file="$1"
-    grep -q "LOOP_COMPLETE" "$log_file" 2>/dev/null
-}
 
-check_circuit_breaker() {
-    # Vitals-driven circuit breaker (preferred over static threshold)
-    if type pipeline_compute_vitals >/dev/null 2>&1 && type pipeline_health_verdict >/dev/null 2>&1; then
-        local _vitals_json _verdict
-        local _loop_state="${STATE_FILE:-}"
-        local _loop_artifacts="${ARTIFACTS_DIR:-}"
-        local _loop_issue="${ISSUE_NUMBER:-}"
-        _vitals_json=$(pipeline_compute_vitals "$_loop_state" "$_loop_artifacts" "$_loop_issue" 2>/dev/null) || true
-        if [[ -n "$_vitals_json" && "$_vitals_json" != "{}" ]]; then
-            _verdict=$(echo "$_vitals_json" | jq -r '.verdict // "continue"' 2>/dev/null || echo "continue")
-            if [[ "$_verdict" == "abort" ]]; then
-                local _health_score
-                _health_score=$(echo "$_vitals_json" | jq -r '.health_score // 0' 2>/dev/null || echo "0")
-                error "Vitals circuit breaker: health score ${_health_score}/100 — aborting (${CONSECUTIVE_FAILURES} stagnant iterations)"
-                STATUS="circuit_breaker"
-                return 1
-            fi
-            # Vitals say continue/warn/intervene — don't trip circuit breaker yet
-            if [[ "$_verdict" == "continue" || "$_verdict" == "warn" ]]; then
-                return 0
-            fi
-        fi
-    fi
 
-    # Fallback: static threshold circuit breaker
-    if [[ "$CONSECUTIVE_FAILURES" -ge "$CIRCUIT_BREAKER_THRESHOLD" ]]; then
-        error "Circuit breaker tripped: ${CIRCUIT_BREAKER_THRESHOLD} consecutive iterations with no meaningful progress."
-        STATUS="circuit_breaker"
-        return 1
-    fi
-    return 0
-}
-
-check_max_iterations() {
-    if [[ "$ITERATION" -lt "$MAX_ITERATIONS" ]]; then
-        return 0
-    fi
-
-    # Hit the cap — check if we should auto-extend
-    if ! $AUTO_EXTEND || [[ "$EXTENSION_COUNT" -ge "$MAX_EXTENSIONS" ]]; then
-        if [[ "$EXTENSION_COUNT" -ge "$MAX_EXTENSIONS" ]]; then
-            warn "Hard cap reached: ${EXTENSION_COUNT} extensions applied (max ${MAX_EXTENSIONS})."
-        fi
-        warn "Max iterations ($MAX_ITERATIONS) reached."
-        STATUS="max_iterations"
-        return 1
-    fi
-
-    # Checkpoint audit: is there meaningful progress worth extending for?
-    echo -e "\n  ${CYAN}${BOLD}▸ Checkpoint${RESET} — max iterations ($MAX_ITERATIONS) reached, evaluating progress..."
-
-    local should_extend=false
-    local extension_reason=""
-
-    # Check 1: recent meaningful progress (not stuck)
-    if [[ "${CONSECUTIVE_FAILURES:-0}" -lt 2 ]]; then
-        # Check 2: agent hasn't signaled completion (if it did, guard_completion handles it)
-        local last_log="$LOG_DIR/iteration-${ITERATION}.log"
-        if [[ ! -f "$last_log" ]] && [[ "$ITERATION" -gt 0 ]]; then
-            last_log="$LOG_DIR/iteration-$(( ITERATION - 1 )).log"
-        fi
-        if [[ -f "$last_log" ]] && ! grep -q "LOOP_COMPLETE" "$last_log" 2>/dev/null; then
-            should_extend=true
-            extension_reason="work in progress with recent progress"
-        fi
-    fi
-
-    # Check 3: if quality gates or tests are failing, extend to let agent fix them
-    if [[ "$TEST_PASSED" == "false" ]] || ! $QUALITY_GATE_PASSED; then
-        should_extend=true
-        extension_reason="quality gates or tests not yet passing"
-    fi
-
-    if $should_extend; then
-        # Scale extension size by velocity — good progress earns more iterations
-        local velocity_avg
-        velocity_avg="$(compute_velocity_avg)"
-        local effective_extension="$EXTENSION_SIZE"
-        if [[ "$velocity_avg" -gt 20 ]]; then
-            # High velocity: grant more iterations
-            effective_extension=$(( EXTENSION_SIZE + 3 ))
-        elif [[ "$velocity_avg" -lt 5 ]]; then
-            # Low velocity: grant fewer iterations
-            effective_extension=$(( EXTENSION_SIZE > 2 ? EXTENSION_SIZE - 2 : 1 ))
-        fi
-        EXTENSION_COUNT=$(( EXTENSION_COUNT + 1 ))
-        MAX_ITERATIONS=$(( MAX_ITERATIONS + effective_extension ))
-        echo -e "  ${GREEN}✓${RESET} Auto-extending: +${effective_extension} iterations (now ${MAX_ITERATIONS} max, extension ${EXTENSION_COUNT}/${MAX_EXTENSIONS})"
-        echo -e "  ${DIM}Reason: ${extension_reason} | velocity: ~${velocity_avg} lines/iter${RESET}"
-        return 0
-    fi
-
-    warn "Max iterations reached — no recent progress detected."
-    STATUS="max_iterations"
-    return 1
-}
 
 # ─── Failure Diagnosis ─────────────────────────────────────────────────────────
 # Pattern-based root-cause classification for smarter retries (no Claude needed).
@@ -1310,113 +894,114 @@ INSTRUCTION: This error has occurred $repeat_count times. The previous approach 
     echo "$diagnosis_context"
 }
 
-# ─── iOS Test Helpers (inline — sw-loop.sh is standalone) ────────────────────
-
-_ios_pre_test_cleanup() {
-    pkill -f "xcodebuild.*test" 2>/dev/null || true
-    sleep 2
-    xcrun simctl shutdown all 2>/dev/null || true
-    sleep 1
-}
-
-_ios_acquire_test_lock() {
-    local lock_file="/tmp/shipwright-xcodebuild.lock"
-    local max_wait=120 waited=0
-    while [[ -f "$lock_file" ]]; do
-        local lock_pid
-        lock_pid=$(cat "$lock_file" 2>/dev/null || echo "")
-        if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
-            rm -f "$lock_file"; break
-        fi
-        if [[ "$waited" -ge "$max_wait" ]]; then
-            warn "xcodebuild lock wait timeout (${max_wait}s) — forcing"
-            rm -f "$lock_file"; break
-        fi
-        sleep 5; waited=$((waited + 5))
-    done
-    echo $$ > "$lock_file"
-}
-
-_ios_release_test_lock() {
-    local lock_file="/tmp/shipwright-xcodebuild.lock"
-    [[ "$(cat "$lock_file" 2>/dev/null)" == "$$" ]] && rm -f "$lock_file" || true
-}
-
 # ─── Test Gate ────────────────────────────────────────────────────────────────
 
 run_test_gate() {
-    if [[ -z "$TEST_CMD" ]]; then
+    if [[ -z "$TEST_CMD" ]] && [[ ${#ADDITIONAL_TEST_CMDS[@]} -eq 0 ]]; then
         TEST_PASSED=""
         TEST_OUTPUT=""
         return
     fi
 
-    # Determine which test command to use this iteration.
-    # Schedule: iteration 1, every FAST_TEST_INTERVAL, and the final iteration → full suite
-    #           all other iterations → fast (targeted or explicit FAST_TEST_CMD)
+    # Determine which test command to use this iteration
     local active_test_cmd="$TEST_CMD"
     local test_mode="full"
-
-    # Fast/full schedule activates when either an explicit FAST_TEST_CMD is set,
-    # or when the test command was auto-detected (enables per-iteration targeting).
-    local use_fast_schedule=false
-    [[ -n "$FAST_TEST_CMD" ]] && use_fast_schedule=true
-    if [[ "${TEST_CMD_AUTO:-false}" == "true" ]] \
-        && [[ "$(type -t detect_test_cmd_for_loop 2>/dev/null)" == "function" ]]; then
-        use_fast_schedule=true
-    fi
-
-    if [[ "$use_fast_schedule" == "true" ]]; then
-        if [[ "$ITERATION" -eq 1 ]] \
-            || [[ $(( ITERATION % FAST_TEST_INTERVAL )) -eq 0 ]] \
-            || [[ "$ITERATION" -ge "$MAX_ITERATIONS" ]]; then
-            # Full iteration: run the complete test suite to catch regressions
+    if [[ -n "$FAST_TEST_CMD" ]]; then
+        # Use full test every FAST_TEST_INTERVAL iterations, on first iteration, and on final iteration
+        if [[ "$ITERATION" -eq 1 ]] || [[ $(( ITERATION % FAST_TEST_INTERVAL )) -eq 0 ]] || [[ "$ITERATION" -ge "$MAX_ITERATIONS" ]]; then
             active_test_cmd="$TEST_CMD"
             test_mode="full"
         else
-            # Fast iteration: targeted tests for files changed since loop start
+            active_test_cmd="$FAST_TEST_CMD"
             test_mode="fast"
         fi
     fi
 
-    # Re-target the full test command based on changes accumulated since loop start.
-    # Only applies to auto-detected commands; explicit --test-cmd is never overridden.
-    if [[ "$test_mode" == "full" ]] \
-        && [[ "${TEST_CMD_AUTO:-false}" == "true" ]] \
-        && [[ "$(type -t detect_test_cmd_for_loop 2>/dev/null)" == "function" ]] \
-        && [[ -n "${LOOP_START_COMMIT:-}" ]]; then
-        local retargeted
-        retargeted=$(detect_test_cmd_for_loop "$LOOP_START_COMMIT" 2>/dev/null || echo "")
-        if [[ -n "$retargeted" ]]; then
-            active_test_cmd="$retargeted"
+    local all_passed=true
+    local test_results="[]"
+    local combined_output=""
+    local test_timeout="${SW_TEST_TIMEOUT:-900}"
+
+    # Run primary test command
+    if [[ -n "$active_test_cmd" ]]; then
+        local test_log="$LOG_DIR/tests-iter-${ITERATION}.log"
+        TEST_LOG_FILE="$test_log"
+        echo -e "  ${DIM}Running ${test_mode} tests...${RESET}"
+
+        local test_wrapper="$active_test_cmd"
+        if command -v timeout >/dev/null 2>&1; then
+            test_wrapper="timeout ${test_timeout} bash -c $(printf '%q' "$active_test_cmd")"
+        elif command -v gtimeout >/dev/null 2>&1; then
+            test_wrapper="gtimeout ${test_timeout} bash -c $(printf '%q' "$active_test_cmd")"
         fi
+
+        local start_ts exit_code=0
+        start_ts=$(date +%s)
+        bash -c "$test_wrapper" > "$test_log" 2>&1 || exit_code=$?
+        local duration=$(( $(date +%s) - start_ts ))
+
+        if command -v jq >/dev/null 2>&1; then
+            test_results=$(echo "$test_results" | jq --arg cmd "$active_test_cmd" \
+                --argjson exit "$exit_code" --argjson dur "$duration" \
+                '. + [{"command": $cmd, "exit_code": $exit, "duration_s": $dur}]')
+        fi
+
+        [[ "$exit_code" -ne 0 ]] && all_passed=false
+        combined_output+="$(cat "$test_log" 2>/dev/null)"$'\n'
     fi
 
-    local test_log="$LOG_DIR/tests-iter-${ITERATION}.log"
-    TEST_LOG_FILE="$test_log"
-    echo -e "  ${DIM}Running ${test_mode} tests: ${active_test_cmd}${RESET}"
-    # Wrap test command with timeout (5 min default) to prevent hanging
-    local test_timeout="${SW_TEST_TIMEOUT:-300}"
-    local test_wrapper="$active_test_cmd"
-    if command -v timeout >/dev/null 2>&1; then
-        test_wrapper="timeout ${test_timeout} bash -c $(printf '%q' "$active_test_cmd")"
-    elif command -v gtimeout >/dev/null 2>&1; then
-        test_wrapper="gtimeout ${test_timeout} bash -c $(printf '%q' "$active_test_cmd")"
+    # Run additional test commands (discovered or explicit)
+    # Mid-build discovery: find test files created since loop start
+    local mid_build_cmds=()
+    if [[ -n "${LOOP_START_COMMIT:-}" ]] && type detect_created_test_files >/dev/null 2>&1; then
+        while IFS= read -r _cmd; do
+            [[ -n "$_cmd" ]] && mid_build_cmds+=("$_cmd")
+        done < <(detect_created_test_files "$LOOP_START_COMMIT" 2>/dev/null || true)
     fi
-    if echo "$active_test_cmd" | grep -qE "xcodebuild|run-xcode-tests"; then
-        _ios_pre_test_cleanup
-        _ios_acquire_test_lock
+    local all_extra=("${ADDITIONAL_TEST_CMDS[@]+"${ADDITIONAL_TEST_CMDS[@]}"}" "${mid_build_cmds[@]+"${mid_build_cmds[@]}"}")
+
+    for extra_cmd in "${all_extra[@]+"${all_extra[@]}"}"; do
+        [[ -z "$extra_cmd" ]] && continue
+        local extra_log="${LOG_DIR}/tests-extra-iter-${ITERATION}.log"
+        echo -e "  ${DIM}Running additional: ${extra_cmd}${RESET}"
+
+        local extra_wrapper="$extra_cmd"
+        if command -v timeout >/dev/null 2>&1; then
+            extra_wrapper="timeout ${test_timeout} bash -c $(printf '%q' "$extra_cmd")"
+        elif command -v gtimeout >/dev/null 2>&1; then
+            extra_wrapper="gtimeout ${test_timeout} bash -c $(printf '%q' "$extra_cmd")"
+        fi
+
+        local start_ts exit_code=0
+        start_ts=$(date +%s)
+        bash -c "$extra_wrapper" >> "$extra_log" 2>&1 || exit_code=$?
+        local duration=$(( $(date +%s) - start_ts ))
+
+        if command -v jq >/dev/null 2>&1; then
+            test_results=$(echo "$test_results" | jq --arg cmd "$extra_cmd" \
+                --argjson exit "$exit_code" --argjson dur "$duration" \
+                '. + [{"command": $cmd, "exit_code": $exit, "duration_s": $dur}]')
+        fi
+
+        [[ "$exit_code" -ne 0 ]] && all_passed=false
+        combined_output+="$(cat "$extra_log" 2>/dev/null)"$'\n'
+    done
+
+    # Write structured test evidence
+    if command -v jq >/dev/null 2>&1; then
+        echo "$test_results" > "${LOG_DIR}/test-evidence-iter-${ITERATION}.json"
     fi
-    if bash -c "$test_wrapper" > "$test_log" 2>&1; then
-        TEST_PASSED=true
-        TEST_OUTPUT="All tests passed (${test_mode} mode)."
-    else
-        TEST_PASSED=false
-        TEST_OUTPUT="$(tail -50 "$test_log")"
+
+    # Audit: emit test gate event
+    if type audit_emit >/dev/null 2>&1; then
+        local cmd_count=0
+        command -v jq >/dev/null 2>&1 && cmd_count=$(echo "$test_results" | jq 'length' 2>/dev/null || echo 0)
+        audit_emit "loop.test_gate" "iteration=$ITERATION" "commands=$cmd_count" \
+            "all_passed=$all_passed" "evidence_path=test-evidence-iter-${ITERATION}.json" || true
     fi
-    if echo "$active_test_cmd" | grep -qE "xcodebuild|run-xcode-tests"; then
-        _ios_release_test_lock
-    fi
+
+    TEST_PASSED=$all_passed
+    TEST_OUTPUT="$(echo "$combined_output" | tail -50)"
 }
 
 write_error_summary() {
@@ -1507,7 +1092,18 @@ run_audit_agent() {
 
     # Include verified test status so auditor doesn't have to guess
     local test_context=""
-    if [[ -n "$TEST_CMD" ]]; then
+    local evidence_file="${LOG_DIR}/test-evidence-iter-${ITERATION}.json"
+    if [[ -f "$evidence_file" ]] && command -v jq >/dev/null 2>&1; then
+        local cmd_count total_cmds evidence_detail
+        cmd_count=$(jq 'length' "$evidence_file" 2>/dev/null || echo 0)
+        total_cmds=$(jq -r '[.[].command] | join(", ")' "$evidence_file" 2>/dev/null || echo "unknown")
+        evidence_detail=$(jq -r '.[] | "- \(.command): exit \(.exit_code) (\(.duration_s)s)"' "$evidence_file" 2>/dev/null || echo "")
+        test_context="## Verified Test Status (from harness, not from agent)
+Test commands run: ${cmd_count} (${total_cmds})
+${evidence_detail}
+Overall: $(if [[ "${TEST_PASSED:-}" == "true" ]]; then echo "ALL PASSING"; else echo "FAILING"; fi)"
+    elif [[ -n "$TEST_CMD" ]]; then
+        # Fallback to existing boolean
         if [[ "${TEST_PASSED:-}" == "true" ]]; then
             test_context="## Verified Test Status (from harness, not from agent)
 Tests: ALL PASSING (command: ${TEST_CMD})"
@@ -1561,9 +1157,8 @@ AUDIT_PROMPT
         audit_flags+=("--dangerously-skip-permissions")
     fi
 
-    local audit_output
-    audit_output=$(loop_ai_run_text "$audit_prompt" "$audit_model" "8")
-    printf '%s\n' "$audit_output" > "$audit_log"
+    local exit_code=0
+    claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>&1 || exit_code=$?
 
     if grep -q "AUDIT_PASS" "$audit_log" 2>/dev/null; then
         AUDIT_RESULT="pass"
@@ -1598,9 +1193,11 @@ run_quality_gates() {
         gate_failures+=("uncommitted changes present")
     fi
 
-    # Gate 3: No TODO/FIXME/HACK/XXX in new code
+    # Gate 3: No TODO/FIXME/HACK/XXX in new source code
+    # Exclude .claude/, docs/plans/, and markdown files (which legitimately contain task markers)
     local todo_count
-    todo_count="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null | grep -cE '^\+.*(TODO|FIXME|HACK|XXX)' || true)"
+    todo_count="$(git -C "$PROJECT_ROOT" diff HEAD~1 -- ':!.claude/' ':!docs/plans/' ':!*.md' 2>/dev/null \
+        | grep -cE '^\+.*(TODO|FIXME|HACK|XXX)' || true)"
     todo_count="${todo_count:-0}"
     if [[ "${todo_count:-0}" -gt 0 ]]; then
         gate_failures+=("${todo_count} TODO/FIXME/HACK/XXX markers in new code")
@@ -1691,9 +1288,7 @@ DOD_PROMPT
         dod_flags+=("--dangerously-skip-permissions")
     fi
 
-    local dod_output
-    dod_output=$(loop_ai_run_text "$dod_prompt" "$dod_model" "8")
-    printf '%s\n' "$dod_output" > "$dod_log"
+    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>&1 || true
 
     if grep -q "DOD_PASS" "$dod_log" 2>/dev/null; then
         echo -e "  ${GREEN}✓${RESET} Definition of Done: satisfied"
@@ -1819,449 +1414,14 @@ HOLISTIC_PROMPT
 }
 
 # ─── Context Window Management ───────────────────────────────────────────────
-# Prevents prompt from exceeding Claude's context limit (~200K tokens).
-# Trims least-critical sections first when over budget.
-
-CONTEXT_BUDGET_CHARS="${CONTEXT_BUDGET_CHARS:-$(_config_get_int "loop.context_budget_chars" 180000 2>/dev/null || echo 180000)}"  # ~45K tokens at 4 chars/token
-
-manage_context_window() {
-    local prompt="$1"
-    local budget="${CONTEXT_BUDGET_CHARS}"
-    local current_len=${#prompt}
-
-    # Read trimming tunables from config (env > daemon-config > policy > defaults.json)
-    local trim_memory_chars trim_git_entries trim_hotspot_files trim_test_lines
-    trim_memory_chars=$(_config_get_int "loop.context_trim_memory_chars" 20000 2>/dev/null || echo 20000)
-    trim_git_entries=$(_config_get_int "loop.context_trim_git_entries" 10 2>/dev/null || echo 10)
-    trim_hotspot_files=$(_config_get_int "loop.context_trim_hotspot_files" 5 2>/dev/null || echo 5)
-    trim_test_lines=$(_config_get_int "loop.context_trim_test_lines" 50 2>/dev/null || echo 50)
-
-    if [[ "$current_len" -le "$budget" ]]; then
-        echo "$prompt"
-        return
-    fi
-
-    # Over budget — progressively trim sections (least important first)
-    local trimmed="$prompt"
-
-    # 1. Trim DORA/Performance baselines (least critical for code generation)
-    if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed=$(echo "$trimmed" | awk '/^## Performance Baselines/{skip=1; next} skip && /^## [^#]/{skip=0} !skip{print}')
-    fi
-
-    # 2. Trim file hotspots to top N
-    if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed=$(echo "$trimmed" | awk -v max="$trim_hotspot_files" '/## File Hotspots/{p=1; c=0} p && /^- /{c++; if(c>max) next} {print}')
-    fi
-
-    # 3. Trim git log to last N entries
-    if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed=$(echo "$trimmed" | awk -v max="$trim_git_entries" '/## Recent Git Activity/{p=1; c=0} p && /^[a-f0-9]/{c++; if(c>max) next} {print}')
-    fi
-
-    # 4. Truncate memory context to first N chars
-    if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed=$(echo "$trimmed" | awk -v max="$trim_memory_chars" '
-            /## Memory Context/{mem=1; skip_rest=0; chars=0; print; next}
-            mem && /^## [^#]/{mem=0; print; next}
-            mem{chars+=length($0)+1; if(chars>max){print "... (memory truncated for context budget)"; skip_rest=1; mem=0; next}}
-            skip_rest && /^## [^#]/{skip_rest=0; print; next}
-            skip_rest{next}
-            {print}
-        ')
-    fi
-
-    # 5. Truncate test output to last N lines
-    if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed=$(echo "$trimmed" | awk -v max="$trim_test_lines" '
-            /## Test Results/{found=1; buf=""; print; next}
-            found && /^## [^#]/{found=0; n=split(buf,arr,"\n"); start=(n>max)?(n-max+1):1; for(i=start;i<=n;i++) if(arr[i]!="") print arr[i]; print; next}
-            found{buf=buf $0 "\n"; next}
-            {print}
-        ')
-    fi
-
-    # 6. Last resort: hard truncate with notice
-    if [[ "${#trimmed}" -gt "$budget" ]]; then
-        trimmed="${trimmed:0:$budget}
-
-... [CONTEXT TRUNCATED: prompt exceeded ${budget} char budget. Focus on the goal and most recent errors.]"
-    fi
-
-    # Log the trimming
-    local final_len=${#trimmed}
-    if [[ "$final_len" -lt "$current_len" ]]; then
-        warn "Context trimmed from ${current_len} to ${final_len} chars (budget: ${budget})"
-        emit_event "loop.context_trimmed" "original=$current_len" "trimmed=$final_len" "budget=$budget" 2>/dev/null || true
-    fi
-
-    echo "$trimmed"
-}
 
 # ─── Prompt Composition ──────────────────────────────────────────────────────
-
-compose_prompt() {
-    local recent_log
-    # Get last 3 iteration summaries from log entries
-    recent_log="$(echo "$LOG_ENTRIES" | tail -15)"
-    if [[ -z "$recent_log" ]]; then
-        recent_log="(first iteration — no previous progress)"
-    fi
-
-    local git_log
-    git_log="$(git_recent_log)"
-
-    local test_section
-    if [[ -z "$TEST_CMD" ]]; then
-        test_section="No test command configured."
-    elif [[ -z "$TEST_PASSED" ]]; then
-        test_section="No test results yet (first iteration). Test command: $TEST_CMD"
-    elif $TEST_PASSED; then
-        test_section="$TEST_OUTPUT"
-    else
-        test_section="TESTS FAILED — fix these before proceeding:
-$TEST_OUTPUT"
-    fi
-
-    # Structured error context (machine-readable)
-    local error_summary_section=""
-    local error_json="$LOG_DIR/error-summary.json"
-    if [[ -f "$error_json" ]]; then
-        local err_count err_lines
-        err_count=$(jq -r '.error_count // 0' "$error_json" 2>/dev/null || echo "0")
-        err_lines=$(jq -r '.error_lines[]? // empty' "$error_json" 2>/dev/null | head -10 || true)
-        if [[ "$err_count" -gt 0 ]] && [[ -n "$err_lines" ]]; then
-            error_summary_section="## Structured Error Summary (${err_count} errors detected)
-${err_lines}
-
-Fix these specific errors. Each line above is one distinct error from the test output."
-        fi
-    fi
-
-    # Build audit sections (captured before heredoc to avoid nested heredoc issues)
-    local audit_section
-    audit_section="$(compose_audit_section)"
-    local audit_feedback_section
-    audit_feedback_section="$(compose_audit_feedback_section)"
-    local rejection_notice_section
-    rejection_notice_section="$(compose_rejection_notice_section)"
-
-    # Memory context injection (failure patterns + past learnings)
-    local memory_section=""
-    if type memory_inject_context >/dev/null 2>&1; then
-        memory_section="$(memory_inject_context "build" 2>/dev/null || true)"
-    elif [[ -f "$SCRIPT_DIR/sw-memory.sh" ]]; then
-        memory_section="$("$SCRIPT_DIR/sw-memory.sh" inject build 2>/dev/null || true)"
-    fi
-
-    # Cross-pipeline discovery injection (learnings from other pipeline runs)
-    local discovery_section=""
-    if type inject_discoveries >/dev/null 2>&1; then
-        local disc_output
-        disc_output="$(inject_discoveries "${GOAL:-}" 2>/dev/null || true)"
-        if [[ -n "$disc_output" ]]; then
-            discovery_section="$disc_output"
-        fi
-    fi
-
-    # DORA baselines for context
-    local dora_section=""
-    if type memory_get_dora_baseline >/dev/null 2>&1; then
-        local dora_json
-        dora_json="$(memory_get_dora_baseline 7 2>/dev/null || echo "{}")"
-        local dora_total
-        dora_total=$(echo "$dora_json" | jq -r '.total // 0' 2>/dev/null || echo "0")
-        if [[ "$dora_total" -gt 0 ]]; then
-            local dora_df dora_cfr
-            dora_df=$(echo "$dora_json" | jq -r '.deploy_freq // 0' 2>/dev/null || echo "0")
-            dora_cfr=$(echo "$dora_json" | jq -r '.cfr // 0' 2>/dev/null || echo "0")
-            dora_section="## Performance Baselines (Last 7 Days)
-- Deploy frequency: ${dora_df}/week
-- Change failure rate: ${dora_cfr}%
-- Total pipeline runs: ${dora_total}"
-        fi
-    fi
-
-    # Append mid-loop memory refresh if available
-    local memory_refresh_file="$LOG_DIR/memory-refresh-$(( ITERATION - 1 )).txt"
-    if [[ -f "$memory_refresh_file" ]]; then
-        memory_section="${memory_section}
-
-## Fresh Context (from iteration $(( ITERATION - 1 )) analysis)
-$(cat "$memory_refresh_file")"
-    fi
-
-    # GitHub intelligence context (gated by availability)
-    local intelligence_section=""
-    if [[ "${NO_GITHUB:-}" != "true" ]]; then
-        # File hotspots — top 5 most-changed files
-        if type gh_file_change_frequency >/dev/null 2>&1; then
-            local hotspots
-            hotspots=$(gh_file_change_frequency 2>/dev/null | head -5 || true)
-            if [[ -n "$hotspots" ]]; then
-                intelligence_section="${intelligence_section}
-## File Hotspots (most frequently changed)
-${hotspots}"
-            fi
-        fi
-
-        # CODEOWNERS context
-        if type gh_codeowners >/dev/null 2>&1; then
-            local owners
-            owners=$(gh_codeowners 2>/dev/null | head -10 || true)
-            if [[ -n "$owners" ]]; then
-                intelligence_section="${intelligence_section}
-## Code Owners
-${owners}"
-            fi
-        fi
-
-        # Active security alerts
-        if type gh_security_alerts >/dev/null 2>&1; then
-            local alerts
-            alerts=$(gh_security_alerts 2>/dev/null | head -5 || true)
-            if [[ -n "$alerts" ]]; then
-                intelligence_section="${intelligence_section}
-## Active Security Alerts
-${alerts}"
-            fi
-        fi
-    fi
-
-    # Architecture rules (from intelligence layer)
-    local repo_hash
-    repo_hash=$(echo -n "$(pwd)" | shasum -a 256 2>/dev/null | cut -c1-12 || echo "unknown")
-    local arch_file="${HOME}/.shipwright/memory/${repo_hash}/architecture.json"
-    if [[ -f "$arch_file" ]]; then
-        local arch_rules
-        arch_rules=$(jq -r '.rules[]? // empty' "$arch_file" 2>/dev/null | head -10 || true)
-        if [[ -n "$arch_rules" ]]; then
-            intelligence_section="${intelligence_section}
-## Architecture Rules
-${arch_rules}"
-        fi
-    fi
-
-    # Coverage baseline
-    local coverage_file="${HOME}/.shipwright/baselines/${repo_hash}/coverage.json"
-    if [[ -f "$coverage_file" ]]; then
-        local coverage_pct
-        coverage_pct=$(jq -r '.coverage_percent // empty' "$coverage_file" 2>/dev/null || true)
-        if [[ -n "$coverage_pct" ]]; then
-            intelligence_section="${intelligence_section}
-## Coverage Baseline
-Current coverage: ${coverage_pct}% — do not decrease this."
-        fi
-    fi
-
-    # Error classification from last failure
-    local error_log=".claude/pipeline-artifacts/error-log.jsonl"
-    if [[ -f "$error_log" ]]; then
-        local last_error
-        last_error=$(tail -1 "$error_log" 2>/dev/null | jq -r '"Type: \(.type), Exit: \(.exit_code), Error: \(.error | split("\n") | first)"' 2>/dev/null || true)
-        if [[ -n "$last_error" ]]; then
-            intelligence_section="${intelligence_section}
-## Last Error Context
-${last_error}"
-        fi
-    fi
-
-    # Stuckness detection — compare last 3 iteration outputs
-    local stuckness_section=""
-    stuckness_section="$(detect_stuckness)"
-    local _stuck_ret=$?
-    local stuckness_detected=false
-    [[ "$_stuck_ret" -eq 0 ]] && stuckness_detected=true
-
-    # Strategy exploration when stuck — append alternative strategy to GOAL
-    if [[ "$stuckness_detected" == "true" ]]; then
-        local last_error diagnosis
-        last_error=$(tail -1 "${ARTIFACTS_DIR:-${PROJECT_ROOT:-.}/.claude/pipeline-artifacts}/error-log.jsonl" 2>/dev/null | jq -r '"Type: \(.type), Exit: \(.exit_code), Error: \(.error | split("\n") | first)"' 2>/dev/null || true)
-        [[ -z "$last_error" || "$last_error" == "null" ]] && last_error="unknown"
-        diagnosis="${STUCKNESS_DIAGNOSIS:-}"
-        local alt_strategy
-        alt_strategy=$(explore_alternative_strategy "$last_error" "${ITERATION:-0}" "$diagnosis")
-        GOAL="${GOAL}
-
-${alt_strategy}"
-
-        # Handle model escalation
-        if [[ "${ESCALATE_MODEL:-}" == "true" ]]; then
-            if [[ -f "$SCRIPT_DIR/sw-model-router.sh" ]]; then
-                source "$SCRIPT_DIR/sw-model-router.sh" 2>/dev/null || true
-            fi
-            if type escalate_model &>/dev/null; then
-                MODEL=$(escalate_model "${MODEL:-sonnet}")
-                info "Escalated to model: $MODEL"
-            fi
-            unset ESCALATE_MODEL
-        fi
-    fi
-
-    # Session restart context — inject previous session progress
-    local restart_section=""
-    if [[ "$SESSION_RESTART" == "true" ]] && [[ -f "$LOG_DIR/progress.md" ]]; then
-        restart_section="## Previous Session Progress
-$(cat "$LOG_DIR/progress.md")
-
-You are starting a FRESH session after the previous one exhausted its iterations.
-Read the progress above and continue from where it left off. Do NOT repeat work already done."
-    fi
-
-    # Resume-from-checkpoint context — reconstruct Claude context for meaningful resume
-    local resume_section=""
-    if [[ -n "${RESUMED_FROM_ITERATION:-}" && "${RESUMED_FROM_ITERATION:-0}" -gt 0 ]]; then
-        local _test_tail="  (none recorded)"
-        [[ -n "${RESUMED_TEST_OUTPUT:-}" ]] && _test_tail="$(echo "$RESUMED_TEST_OUTPUT" | tail -20)"
-        resume_section="## RESUMING FROM ITERATION ${RESUMED_FROM_ITERATION}
-
-Continue from where you left off. Do NOT repeat work already done.
-
-Previous work modified these files:
-${RESUMED_MODIFIED:-  (none recorded)}
-
-Previous findings/errors from earlier iterations:
-${RESUMED_FINDINGS:-  (none recorded)}
-
-Last test output (fix any failures, tail):
-${_test_tail}
-
----
-"
-        # Clear after first use so we don't keep injecting on every iteration
-        RESUMED_FROM_ITERATION=""
-        RESUMED_MODIFIED=""
-        RESUMED_FINDINGS=""
-        RESUMED_TEST_OUTPUT=""
-    fi
-
-    # Build cumulative progress summary showing all iterations' work
-    local cumulative_section=""
-    if [[ -n "${LOOP_START_COMMIT:-}" ]] && [[ "$ITERATION" -gt 1 ]]; then
-        local cum_stat
-        cum_stat="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | tail -1 || true)"
-        if [[ -n "$cum_stat" ]]; then
-            cumulative_section="## Cumulative Progress (all iterations combined)
-${cum_stat}
-"
-        fi
-    fi
-
-    cat <<PROMPT
-You are an autonomous coding agent on iteration ${ITERATION}/${MAX_ITERATIONS} of a continuous loop.
-${resume_section}
-## Your Goal
-${GOAL}
-
-${cumulative_section}
-## Current Progress
-${recent_log}
-
-## Recent Git Activity
-${git_log}
-
-## Test Results (Previous Iteration)
-${test_section}
-
-${error_summary_section:+$error_summary_section
-}
-${memory_section:+## Memory Context
-$memory_section
-}
-${discovery_section:+## Cross-Pipeline Learnings
-$discovery_section
-}
-${dora_section:+$dora_section
-}
-${intelligence_section:+$intelligence_section
-}
-${restart_section:+$restart_section
-}
-## Instructions
-1. Read the codebase and understand the current state
-2. Identify the highest-priority remaining work toward the goal
-3. Implement ONE meaningful chunk of progress
-4. Run tests if a test command exists: ${TEST_CMD:-"(none)"}
-5. Commit your work with a descriptive message
-6. When the goal is FULLY achieved, output exactly: LOOP_COMPLETE
-
-## Context Efficiency
-- Batch independent tool calls in parallel — avoid sequential round-trips
-- Use targeted file reads (offset/limit) instead of reading entire large files
-- Delegate large searches to subagents — only import the summary
-- Filter tool results with grep/jq before reasoning over them
-- Keep working memory lean — summarize completed steps, don't preserve full outputs
-
-${audit_section}
-
-${audit_feedback_section}
-
-${rejection_notice_section}
-
-${stuckness_section}
-
-## Rules
-- Focus on ONE task per iteration — do it well
-- Always commit with descriptive messages
-- If tests fail, fix them before ending
-- If stuck on the same issue for 2+ iterations, try a different approach
-- Do NOT output LOOP_COMPLETE unless the goal is genuinely achieved
-- Do NOT use the Task tool to spawn sub-agents — work directly in this session
-- If tests are slow, run them once per iteration (not repeatedly)
-PROMPT
-}
+# NOTE: compose_prompt() is now in lib/loop-iteration.sh (extracted upstream)
 
 # ─── Alternative Strategy Exploration ─────────────────────────────────────────
 # When stuckness is detected, generate a context-aware alternative strategy.
 # Uses pattern matching on error type + iteration count to suggest different approaches.
 
-explore_alternative_strategy() {
-    local last_error="${1:-unknown}"
-    local iteration="${2:-0}"
-    local diagnosis="${3:-}"
-
-    # Track attempted strategies to avoid repeating them
-    local strategy_file="${LOG_DIR:-/tmp}/strategy-attempts.txt"
-    local attempted
-    attempted=$(cat "$strategy_file" 2>/dev/null || true)
-
-    local strategy=""
-
-    # If quality gates are passing but evaluators disagree, suggest focusing on evaluator alignment
-    if [[ "${TEST_PASSED:-}" == "true" ]] && [[ "${QUALITY_GATE_PASSED:-}" == "true" || "${AUDIT_RESULT:-}" == "pass" ]]; then
-        if ! echo "$attempted" | grep -q "evaluator_alignment"; then
-            echo "evaluator_alignment" >> "$strategy_file"
-            strategy="## Alternative Strategy: Evaluator Alignment
-The code appears functionally complete (tests pass). Focus on satisfying the remaining
-quality gate evaluators. Check the DoD log and audit log for specific complaints, then
-address those exact points rather than adding new features."
-        fi
-    fi
-
-    # If no code changes in last iteration, suggest verifying existing work
-    if echo "$last_error" | grep -qi "no code changes" || [[ "$diagnosis" == *"no code"* ]]; then
-        if ! echo "$attempted" | grep -q "verify_existing"; then
-            echo "verify_existing" >> "$strategy_file"
-            strategy="## Alternative Strategy: Verify Existing Work
-Recent iterations made no code changes. The work may already be complete.
-Run the full test suite, verify all features work, and if everything passes,
-commit a verification message and declare LOOP_COMPLETE with evidence."
-        fi
-    fi
-
-    # Generic fallback: break the problem down
-    if [[ -z "$strategy" ]]; then
-        if ! echo "$attempted" | grep -q "decompose"; then
-            echo "decompose" >> "$strategy_file"
-            strategy="## Alternative Strategy: Decompose
-Break the remaining work into smaller, independent steps. Focus on one specific
-file or function at a time. Read error messages literally — the root cause may
-differ from your assumption."
-        fi
-    fi
-
-    echo "$strategy"
-}
 
 # ─── Stuckness Detection ─────────────────────────────────────────────────────
 # Multi-signal detection: text overlap, git diff hash, error repetition, exit code pattern, iteration budget.
@@ -2270,189 +1430,7 @@ differ from your assumption."
 STUCKNESS_COUNT=0
 STUCKNESS_TRACKING_FILE=""
 
-record_iteration_stuckness_data() {
-    local exit_code="${1:-0}"
-    [[ -z "$LOG_DIR" ]] && return 0
-    local tracking_file="${STUCKNESS_TRACKING_FILE:-$LOG_DIR/stuckness-tracking.txt}"
-    local diff_hash error_hash
-    diff_hash=$(git -C "${PROJECT_ROOT:-.}" diff HEAD 2>/dev/null | (md5 -q 2>/dev/null || md5sum 2>/dev/null | cut -d' ' -f1) || echo "none")
-    local error_log="${ARTIFACTS_DIR:-${STATE_DIR:-${PROJECT_ROOT:-.}/.claude}/pipeline-artifacts}/error-log.jsonl"
-    if [[ -f "$error_log" ]]; then
-        error_hash=$(tail -5 "$error_log" 2>/dev/null | sort -u | (md5 -q 2>/dev/null || md5sum 2>/dev/null | cut -d' ' -f1) || echo "none")
-    else
-        error_hash="none"
-    fi
-    echo "${diff_hash}|${error_hash}|${exit_code}" >> "$tracking_file"
-}
 
-detect_stuckness() {
-    STUCKNESS_HINT=""
-    local iteration="${ITERATION:-0}"
-    local stuckness_signals=0
-    local stuckness_reasons=()
-    local tracking_file="${STUCKNESS_TRACKING_FILE:-$LOG_DIR/stuckness-tracking.txt}"
-    local tracking_lines
-    tracking_lines=$(wc -l < "$tracking_file" 2>/dev/null || true)
-    tracking_lines="${tracking_lines:-0}"
-
-    # Signal 1: Text overlap (existing logic) — compare last 2 iteration logs
-    if [[ "$iteration" -ge 3 ]]; then
-        local log1="$LOG_DIR/iteration-$(( iteration - 1 )).log"
-        local log2="$LOG_DIR/iteration-$(( iteration - 2 )).log"
-        local log3="$LOG_DIR/iteration-$(( iteration - 3 )).log"
-
-        if [[ -f "$log1" && -f "$log2" ]]; then
-            local lines1 lines2 common total overlap_pct
-            lines1=$(tail -50 "$log1" 2>/dev/null | grep -v '^$' | sort || true)
-            lines2=$(tail -50 "$log2" 2>/dev/null | grep -v '^$' | sort || true)
-
-            if [[ -n "$lines1" && -n "$lines2" ]]; then
-                total=$(echo "$lines1" | wc -l | tr -d ' ')
-                common=$(comm -12 <(echo "$lines1") <(echo "$lines2") 2>/dev/null | wc -l | tr -d ' ' || true)
-                common="${common:-0}"
-                if [[ "$total" -gt 0 ]]; then
-                    overlap_pct=$(( common * 100 / total ))
-                else
-                    overlap_pct=0
-                fi
-                if [[ "${overlap_pct:-0}" -ge 90 ]]; then
-                    stuckness_signals=$((stuckness_signals + 1))
-                    stuckness_reasons+=("high text overlap (${overlap_pct}%) between iterations")
-                fi
-            fi
-        fi
-    fi
-
-    # Signal 2: Git diff hash — last 3 iterations produced zero or identical diffs
-    if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 3 ]]; then
-        local last_three
-        last_three=$(tail -3 "$tracking_file" 2>/dev/null | cut -d'|' -f1 || true)
-        local unique_hashes
-        unique_hashes=$(echo "$last_three" | sort -u | grep -v '^$' | wc -l | tr -d ' ')
-        if [[ "$unique_hashes" -le 1 ]] && [[ -n "$last_three" ]]; then
-            stuckness_signals=$((stuckness_signals + 1))
-            stuckness_reasons+=("identical or zero git diffs in last 3 iterations")
-        fi
-    fi
-
-    # Signal 3: Error repetition — same error hash in last 3 iterations
-    if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 3 ]]; then
-        local last_three_errors
-        last_three_errors=$(tail -3 "$tracking_file" 2>/dev/null | cut -d'|' -f2 || true)
-        local unique_error_hashes
-        unique_error_hashes=$(echo "$last_three_errors" | sort -u | grep -v '^none$' | grep -v '^$' | wc -l | tr -d ' ')
-        if [[ "$unique_error_hashes" -eq 1 ]] && [[ -n "$(echo "$last_three_errors" | grep -v '^none$')" ]]; then
-            stuckness_signals=$((stuckness_signals + 1))
-            stuckness_reasons+=("same error in last 3 iterations")
-        fi
-    fi
-
-    # Signal 4: Same error repeating 3+ times (legacy check on error-log content)
-    local error_log
-    error_log="${ARTIFACTS_DIR:-$PROJECT_ROOT/.claude/pipeline-artifacts}/error-log.jsonl"
-    if [[ -f "$error_log" ]]; then
-        local last_errors
-        last_errors=$(tail -5 "$error_log" 2>/dev/null | jq -r '.error // .message // .error_hash // empty' 2>/dev/null | sort | uniq -c | sort -rn | head -1 || true)
-        local repeat_count
-        repeat_count=$(echo "$last_errors" | awk '{print $1}' 2>/dev/null || echo "0")
-        if [[ "${repeat_count:-0}" -ge 3 ]]; then
-            stuckness_signals=$((stuckness_signals + 1))
-            stuckness_reasons+=("same error repeated ${repeat_count} times")
-        fi
-    fi
-
-    # Signal 5: Exit code pattern — last 3 iterations had same non-zero exit code
-    if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 3 ]]; then
-        local last_three_exits
-        last_three_exits=$(tail -3 "$tracking_file" 2>/dev/null | cut -d'|' -f3 || true)
-        local first_exit
-        first_exit=$(echo "$last_three_exits" | head -1)
-        if [[ "$first_exit" =~ ^[0-9]+$ ]] && [[ "$first_exit" -ne 0 ]]; then
-            local all_same=true
-            while IFS= read -r ex; do
-                [[ "$ex" != "$first_exit" ]] && all_same=false
-            done <<< "$last_three_exits"
-            if [[ "$all_same" == true ]]; then
-                stuckness_signals=$((stuckness_signals + 1))
-                stuckness_reasons+=("same non-zero exit code (${first_exit}) in last 3 iterations")
-            fi
-        fi
-    fi
-
-    # Signal 6: Git diff size — no or minimal code changes (existing)
-    local diff_lines
-    diff_lines=$(git -C "${PROJECT_ROOT:-.}" diff HEAD 2>/dev/null | wc -l | tr -d ' ' || true)
-    diff_lines="${diff_lines:-0}"
-    if [[ "${diff_lines:-0}" -lt 5 ]] && [[ "$iteration" -gt 2 ]]; then
-        stuckness_signals=$((stuckness_signals + 1))
-        stuckness_reasons+=("no code changes in last iteration")
-    fi
-
-    # Signal 7: Iteration budget — used >70% without passing tests
-    local max_iter="${MAX_ITERATIONS:-20}"
-    local progress_pct=0
-    if [[ "$max_iter" -gt 0 ]]; then
-        progress_pct=$(( iteration * 100 / max_iter ))
-    fi
-    if [[ "$progress_pct" -gt 70 ]] && [[ "${TEST_PASSED:-false}" != "true" ]]; then
-        stuckness_signals=$((stuckness_signals + 1))
-        stuckness_reasons+=("used ${progress_pct}% of iteration budget without passing tests")
-    fi
-
-    # Gate-aware dampening: if tests pass and the agent has made progress overall,
-    # reduce stuckness signal count. The "no code changes" and "identical diffs" signals
-    # fire when code is already complete and the agent is fighting evaluator quirks —
-    # that's not genuine stuckness, it's "done but gates disagree."
-    if [[ "${TEST_PASSED:-}" == "true" ]] && [[ "$stuckness_signals" -ge 2 ]]; then
-        # If at least one quality signal is positive, dampen by 1
-        if [[ "${AUDIT_RESULT:-}" == "pass" ]] || $QUALITY_GATE_PASSED 2>/dev/null; then
-            stuckness_signals=$((stuckness_signals - 1))
-        fi
-    fi
-
-    # Decision: 2+ signals = stuck
-    if [[ "$stuckness_signals" -ge 2 ]]; then
-        STUCKNESS_COUNT=$(( STUCKNESS_COUNT + 1 ))
-        STUCKNESS_DIAGNOSIS="${stuckness_reasons[*]}"
-        if type emit_event >/dev/null 2>&1; then
-            emit_event "loop.stuckness_detected" "signals=$stuckness_signals" "count=$STUCKNESS_COUNT" "iteration=$iteration" "reasons=${stuckness_reasons[*]}"
-        fi
-        STUCKNESS_HINT="IMPORTANT: The loop appears stuck. Previous approaches have not worked. You MUST try a fundamentally different strategy. Reasons: ${stuckness_reasons[*]}"
-        warn "Stuckness detected (${stuckness_signals} signals, count ${STUCKNESS_COUNT}): ${stuckness_reasons[*]}"
-
-        local diff_summary=""
-        local log1="$LOG_DIR/iteration-$(( iteration - 1 )).log"
-        local log3="$LOG_DIR/iteration-$(( iteration - 3 )).log"
-        if [[ -f "$log3" && -f "$log1" ]]; then
-            diff_summary=$(diff <(tail -30 "$log3" 2>/dev/null) <(tail -30 "$log1" 2>/dev/null) 2>/dev/null | head -10 || true)
-        fi
-
-        local alternatives=""
-        if type memory_inject_context >/dev/null 2>&1; then
-            alternatives=$(memory_inject_context "build" 2>/dev/null | grep -i "fix:" | head -3 || true)
-        fi
-
-        cat <<STUCK_SECTION
-## Stuckness Detected
-${STUCKNESS_HINT}
-
-${diff_summary:+Changes between recent iterations:
-$diff_summary
-}
-${alternatives:+Consider these alternative approaches from past fixes:
-$alternatives
-}
-Try a fundamentally different approach:
-- Break the problem into smaller steps
-- Look for an entirely different implementation strategy
-- Check if there's a dependency or configuration issue blocking progress
-- Read error messages more carefully — the root cause may differ from your assumption
-STUCK_SECTION
-        return 0
-    fi
-
-    return 1
-}
 
 compose_audit_section() {
     if ! $AUDIT_ENABLED; then
@@ -2581,135 +1559,10 @@ PROMPT
 
 # ─── Claude Execution ────────────────────────────────────────────────────────
 
-build_claude_flags() {
-    local flags=()
-    flags+=("--model" "$MODEL")
-    flags+=("--output-format" "json")
 
-    if $SKIP_PERMISSIONS; then
-        flags+=("--dangerously-skip-permissions")
-    fi
-
-    if [[ -n "$MAX_TURNS" ]]; then
-        flags+=("--max-turns" "$MAX_TURNS")
-    fi
-
-    # Prevent sub-agent spawning — child agents inherit default permissions
-    # and cannot get user approval in non-interactive mode, causing hangs
-    flags+=("--disallowedTools" "Task")
-
-    echo "${flags[*]}"
-}
-
-loop_ai_run_json() {
-    local prompt="$1" model_tier="$2" max_turns="$3" json_file="$4" err_file="$5"
-    local raw_out raw_err ai_json
-    raw_out=$(mktemp "${TMPDIR:-/tmp}/sw-loop-ai-raw.XXXXXX")
-    raw_err=$(mktemp "${TMPDIR:-/tmp}/sw-loop-ai-err.XXXXXX")
-    ai_json=$(ai_run_json "$AI_PROVIDER" "$prompt" "$model_tier" "$max_turns" "$raw_out" "$raw_err" 2>/dev/null || true)
-    cat "$raw_err" > "$err_file" 2>/dev/null || true
-    rm -f "$raw_out" "$raw_err"
-    if [[ -z "$ai_json" ]]; then
-        ai_json='{"ai_provider":"'"$AI_PROVIDER"'","result_text":"","completion_signal_detected":false,"input_tokens":0,"output_tokens":0,"cost_usd":null,"usage_source":"none","raw_payload_ref":""}'
-    fi
-    printf '%s\n' "$ai_json" > "$json_file"
-}
-
-loop_ai_run_text() {
-    local prompt="$1" model_tier="$2" max_turns="$3"
-    local json_file err_file
-    json_file=$(mktemp "${TMPDIR:-/tmp}/sw-loop-ai-json.XXXXXX")
-    err_file=$(mktemp "${TMPDIR:-/tmp}/sw-loop-ai-stderr.XXXXXX")
-    loop_ai_run_json "$prompt" "$model_tier" "$max_turns" "$json_file" "$err_file"
-    jq -r '.result_text // ""' "$json_file" 2>/dev/null || true
-    rm -f "$json_file" "$err_file"
-}
-
-run_claude_iteration() {
-    local log_file="$LOG_DIR/iteration-${ITERATION}.log"
-    local json_file="$LOG_DIR/iteration-${ITERATION}.json"
-    local prompt
-    prompt="$(compose_prompt)"
-    local final_prompt
-    final_prompt=$(manage_context_window "$prompt")
-
-    local raw_prompt_chars=${#prompt}
-    local prompt_chars=${#final_prompt}
-    local approx_tokens=$((prompt_chars / 4))
-    info "Prompt: ~${approx_tokens} tokens (${prompt_chars} chars)"
-
-    # Emit context efficiency metrics
-    if type emit_event >/dev/null 2>&1; then
-        local trim_ratio=0
-        local budget_utilization=0
-        if [[ "$raw_prompt_chars" -gt 0 ]]; then
-            trim_ratio=$(awk -v raw="$raw_prompt_chars" -v trimmed="$prompt_chars" \
-                'BEGIN { printf "%.1f", ((raw - trimmed) / raw) * 100 }')
-        fi
-        if [[ "${CONTEXT_BUDGET_CHARS:-0}" -gt 0 ]]; then
-            budget_utilization=$(awk -v used="$prompt_chars" -v budget="${CONTEXT_BUDGET_CHARS}" \
-                'BEGIN { printf "%.1f", (used / budget) * 100 }')
-        fi
-        emit_event "loop.context_efficiency" \
-            "iteration=$ITERATION" \
-            "raw_prompt_chars=$raw_prompt_chars" \
-            "trimmed_prompt_chars=$prompt_chars" \
-            "trim_ratio=$trim_ratio" \
-            "budget_utilization=$budget_utilization" \
-            "budget_chars=${CONTEXT_BUDGET_CHARS:-0}" \
-            "job_id=${PIPELINE_JOB_ID:-loop-$$}" 2>/dev/null || true
-    fi
-
-
-    local iter_start
-    iter_start="$(now_epoch)"
-
-    echo -e "\n${CYAN}${BOLD}▸${RESET} ${BOLD}Iteration ${ITERATION}/${MAX_ITERATIONS}${RESET} — Starting..."
-
-    local err_file="${json_file%.json}.stderr"
-    local iter_turns="${MAX_TURNS:-25}"
-    local exit_code=0
-    loop_ai_run_json "$final_prompt" "$MODEL" "$iter_turns" "$json_file" "$err_file" || exit_code=$?
-
-    # Extract text result from normalized JSON into .log for backwards compatibility
-    _extract_text_from_json "$json_file" "$log_file" "$err_file"
-
-    local iter_end
-    iter_end="$(now_epoch)"
-    local iter_duration=$(( iter_end - iter_start ))
-
-    echo -e "  ${GREEN}✓${RESET} ${AI_PROVIDER} session completed ($(format_duration "$iter_duration"), exit $exit_code)"
-
-    # Accumulate token usage from this iteration's JSON output
-    accumulate_loop_tokens "$json_file"
-
-    # Show verbose output if requested
-    if $VERBOSE; then
-        echo -e "  ${DIM}─── Claude Output ───${RESET}"
-        sed 's/^/  /' "$log_file" | head -100
-        echo -e "  ${DIM}─────────────────────${RESET}"
-    fi
-
-    return $exit_code
-}
 
 # ─── Iteration Summary Extraction ────────────────────────────────────────────
 
-extract_summary() {
-    local log_file="$1"
-    # Grab last meaningful lines from Claude output, skipping empty lines
-    local summary
-    summary="$(grep -v '^$' "$log_file" | tail -5 | head -3 2>/dev/null || echo "(no output)")"
-    # Truncate long lines
-    summary="$(echo "$summary" | cut -c1-120)"
-
-    # Sanitize: if summary is just a CLI/API error, replace with generic text
-    if echo "$summary" | grep -qiE 'Invalid API key|authentication_error|rate_limit|API key expired|ANTHROPIC_API_KEY'; then
-        summary="(CLI error — no useful output this iteration)"
-    fi
-
-    echo "$summary"
-}
 
 # ─── Display Helpers ─────────────────────────────────────────────────────────
 
@@ -2723,7 +1576,7 @@ show_banner() {
     if $AUTO_EXTEND; then
         extend_info=" ${DIM}(auto-extend: +${EXTENSION_SIZE} x${MAX_EXTENSIONS})${RESET}"
     fi
-    echo -e "  ${BOLD}Model:${RESET} $MODEL ${DIM}|${RESET} ${BOLD}Provider:${RESET} ${AI_PROVIDER:-claude} ${DIM}|${RESET} ${BOLD}Max:${RESET} $MAX_ITERATIONS iterations${extend_info} ${DIM}|${RESET} ${BOLD}Test:${RESET} ${TEST_CMD:-"(none)"}"
+    echo -e "  ${BOLD}Model:${RESET} $MODEL ${DIM}|${RESET} ${BOLD}Max:${RESET} $MAX_ITERATIONS iterations${extend_info} ${DIM}|${RESET} ${BOLD}Test:${RESET} ${TEST_CMD:-"(none)"}"
     if [[ "$AGENTS" -gt 1 ]]; then
         echo -e "  ${BOLD}Agents:${RESET} $AGENTS ${DIM}(parallel worktree mode)${RESET}"
     fi
@@ -2885,11 +1738,13 @@ generate_worker_script() {
     local wt_path="$WORKTREE_DIR/agent-${agent_num}"
     local worker_script="$LOG_DIR/worker-${agent_num}.sh"
 
+    local claude_flags
+    claude_flags="$(build_claude_flags)"
+
     cat > "$worker_script" <<'WORKEREOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="__SCRIPT_DIR__"
 AGENT_NUM="__AGENT_NUM__"
 TOTAL_AGENTS="__TOTAL_AGENTS__"
 WORK_DIR="__WORK_DIR__"
@@ -2897,9 +1752,7 @@ LOG_DIR="__LOG_DIR__"
 MAX_ITERATIONS="__MAX_ITERATIONS__"
 GOAL="__GOAL__"
 TEST_CMD="__TEST_CMD__"
-AI_PROVIDER="__AI_PROVIDER__"
-MODEL="__MODEL__"
-MAX_TURNS="__MAX_TURNS__"
+CLAUDE_FLAGS="__CLAUDE_FLAGS__"
 
 CYAN='\033[38;2;0;212;255m'
 GREEN='\033[38;2;74;222;128m'
@@ -2908,10 +1761,6 @@ RED='\033[38;2;248;113;113m'
 DIM='\033[2m'
 BOLD='\033[1m'
 RESET='\033[0m'
-
-[[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
-[[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
-[[ -f "$SCRIPT_DIR/lib/ai-provider.sh" ]] && source "$SCRIPT_DIR/lib/ai-provider.sh"
 
 cd "$WORK_DIR"
 ITERATION=0
@@ -2976,25 +1825,17 @@ Focus on areas they haven't touched yet.
 PROMPT
 )"
 
-    # Run configured provider through normalized router output.
-    JSON_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.json"
-    ERR_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.stderr"
+    # Run Claude (output is JSON due to --output-format json in CLAUDE_FLAGS)
+    local JSON_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.json"
+    local ERR_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.stderr"
     LOG_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.log"
-    RAW_OUT=""
-    RAW_ERR=""
-    AI_JSON=""
-    turns=""
-    RAW_OUT="$(mktemp "${TMPDIR:-/tmp}/sw-loop-worker-raw.XXXXXX")"
-    RAW_ERR="$(mktemp "${TMPDIR:-/tmp}/sw-loop-worker-err.XXXXXX")"
-    turns="${MAX_TURNS:-25}"
-    AI_JSON="$(ai_run_json "$AI_PROVIDER" "$PROMPT" "$MODEL" "$turns" "$RAW_OUT" "$RAW_ERR" 2>/dev/null || true)"
-    [[ -z "$AI_JSON" ]] && AI_JSON='{"result_text":"","completion_signal_detected":false,"input_tokens":0,"output_tokens":0,"cost_usd":null}'
-    printf '%s\n' "$AI_JSON" > "$JSON_FILE"
-    cp "$RAW_ERR" "$ERR_FILE" 2>/dev/null || true
-    rm -f "$RAW_OUT" "$RAW_ERR"
-    jq -r '.result_text // ""' "$JSON_FILE" > "$LOG_FILE" 2>/dev/null || echo "" > "$LOG_FILE"
+    # shellcheck disable=SC2086
+    claude -p "$PROMPT" $CLAUDE_FLAGS > "$JSON_FILE" 2>"$ERR_FILE" || true
 
-    echo -e "  ${GREEN}✓${RESET} ${AI_PROVIDER} session completed"
+    # Extract text result from JSON into .log for backwards compat
+    _extract_text_from_json "$JSON_FILE" "$LOG_FILE" "$ERR_FILE"
+
+    echo -e "  ${GREEN}✓${RESET} Claude session completed"
 
     # Check completion
     if grep -q "LOOP_COMPLETE" "$LOG_FILE" 2>/dev/null; then
@@ -3051,11 +1892,7 @@ WORKEREOF
         && mv "${worker_script}.tmp" "$worker_script"
     awk -v val="$TEST_CMD" '{gsub(/__TEST_CMD__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
         && mv "${worker_script}.tmp" "$worker_script"
-    awk -v val="$AI_PROVIDER" '{gsub(/__AI_PROVIDER__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
-        && mv "${worker_script}.tmp" "$worker_script"
-    awk -v val="$MODEL" '{gsub(/__MODEL__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
-        && mv "${worker_script}.tmp" "$worker_script"
-    awk -v val="${MAX_TURNS:-}" '{gsub(/__MAX_TURNS__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
+    awk -v val="$claude_flags" '{gsub(/__CLAUDE_FLAGS__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
         && mv "${worker_script}.tmp" "$worker_script"
     awk -v val="$GOAL" '{gsub(/__GOAL__/, val); print}' "$worker_script" > "${worker_script}.tmp" \
         && mv "${worker_script}.tmp" "$worker_script"
@@ -3380,6 +2217,58 @@ ${GOAL}"
 
         # Audit agent (reviews implementer's work)
         run_audit_agent
+
+        # Verification gap detection: audit failed but tests passed
+        # Instead of a full retry (which causes context bloat/timeout), run targeted verification
+        if [[ "${AUDIT_RESULT:-}" != "pass" ]] && [[ "${TEST_PASSED:-}" == "true" ]]; then
+            echo -e "  ${YELLOW}▸${RESET} Verification gap detected (tests pass, audit disagrees)"
+
+            local verification_passed=true
+
+            # 1. Re-run ALL test commands to double-check
+            local recheck_log="${LOG_DIR}/verification-iter-${ITERATION}.log"
+            if [[ -n "$TEST_CMD" ]]; then
+                eval "$TEST_CMD" > "$recheck_log" 2>&1 || verification_passed=false
+            fi
+            for _vg_cmd in "${ADDITIONAL_TEST_CMDS[@]+"${ADDITIONAL_TEST_CMDS[@]}"}"; do
+                [[ -z "$_vg_cmd" ]] && continue
+                eval "$_vg_cmd" >> "$recheck_log" 2>&1 || verification_passed=false
+            done
+
+            # 2. Check for uncommitted changes (quality gate)
+            if ! git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null; then
+                echo -e "  ${YELLOW}⚠${RESET} Uncommitted changes detected"
+                verification_passed=false
+            fi
+
+            if [[ "$verification_passed" == "true" ]]; then
+                echo -e "  ${GREEN}✓${RESET} Verification passed — overriding audit"
+                AUDIT_RESULT="pass"
+                emit_event "loop.verification_gap_resolved" \
+                    "iteration=$ITERATION" "action=override_audit"
+                if type audit_emit >/dev/null 2>&1; then
+                    audit_emit "loop.verification_gap" "iteration=$ITERATION" \
+                        "resolution=override" "tests_recheck=pass" || true
+                fi
+            else
+                echo -e "  ${RED}✗${RESET} Verification failed — audit stands"
+                emit_event "loop.verification_gap_confirmed" \
+                    "iteration=$ITERATION" "action=retry"
+                if type audit_emit >/dev/null 2>&1; then
+                    audit_emit "loop.verification_gap" "iteration=$ITERATION" \
+                        "resolution=retry" "tests_recheck=fail" || true
+                fi
+            fi
+        fi
+
+        # Auto-commit any remaining changes before quality gates
+        # (audit agent, verification handler, or test evidence may create files)
+        if ! git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null || \
+           ! git -C "$PROJECT_ROOT" diff --cached --quiet 2>/dev/null || \
+           [[ -n "$(git -C "$PROJECT_ROOT" ls-files --others --exclude-standard 2>/dev/null | head -1)" ]]; then
+            git -C "$PROJECT_ROOT" add -A 2>/dev/null || true
+            git -C "$PROJECT_ROOT" commit -m "loop: iteration $ITERATION — post-audit cleanup" --no-verify 2>/dev/null || true
+        fi
 
         # Quality gates (automated checks)
         run_quality_gates

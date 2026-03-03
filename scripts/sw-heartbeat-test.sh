@@ -7,44 +7,32 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 # shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-heartbeat-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/scripts"
-    mkdir -p "$TEMP_DIR/home/.shipwright/heartbeats"
-    mkdir -p "$TEMP_DIR/project/.claude/pipeline-artifacts/checkpoints"
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-heartbeat-test.XXXXXX")
+    mkdir -p "$TEST_TEMP_DIR/scripts"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright/heartbeats"
+    mkdir -p "$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/checkpoints"
 
     # Copy scripts under test
-    cp "$SCRIPT_DIR/sw-heartbeat.sh" "$TEMP_DIR/scripts/"
-    cp "$SCRIPT_DIR/sw-checkpoint.sh" "$TEMP_DIR/scripts/"
+    cp "$SCRIPT_DIR/sw-heartbeat.sh" "$TEST_TEMP_DIR/scripts/"
+    cp "$SCRIPT_DIR/sw-checkpoint.sh" "$TEST_TEMP_DIR/scripts/"
 
     # Mock git for checkpoint tests
-    mkdir -p "$TEMP_DIR/bin"
-    cat > "$TEMP_DIR/bin/git" <<'EOF'
+    mkdir -p "$TEST_TEMP_DIR/bin"
+    cat > "$TEST_TEMP_DIR/bin/git" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "rev-parse" && "${2:-}" == "HEAD" ]]; then
     echo "abc1234567890"
@@ -56,12 +44,12 @@ if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--show-toplevel" ]]; then
 fi
 echo "mock-git"
 EOF
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -98,15 +86,15 @@ run_test() {
 # 1. Write heartbeat creates JSON file
 # ──────────────────────────────────────────────────────────────────────────────
 test_heartbeat_write() {
-    HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-heartbeat.sh" write "test-job-1" \
+    HOME="$TEST_TEMP_DIR/home" \
+        bash "$TEST_TEMP_DIR/scripts/sw-heartbeat.sh" write "test-job-1" \
             --pid $$ \
             --issue 42 \
             --stage "build" \
             --iteration 3 \
             --activity "Running tests" 2>/dev/null
 
-    local hb_file="$TEMP_DIR/home/.shipwright/heartbeats/test-job-1.json"
+    local hb_file="$TEST_TEMP_DIR/home/.shipwright/heartbeats/test-job-1.json"
     if [[ ! -f "$hb_file" ]]; then
         echo -e "    ${RED}✗${RESET} Heartbeat file not created"
         return 1
@@ -135,13 +123,13 @@ test_heartbeat_write() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_heartbeat_check_alive() {
     # Write a fresh heartbeat
-    HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-heartbeat.sh" write "test-job-alive" \
+    HOME="$TEST_TEMP_DIR/home" \
+        bash "$TEST_TEMP_DIR/scripts/sw-heartbeat.sh" write "test-job-alive" \
             --pid $$ --stage "build" 2>/dev/null
 
     local exit_code=0
-    HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-heartbeat.sh" check "test-job-alive" \
+    HOME="$TEST_TEMP_DIR/home" \
+        bash "$TEST_TEMP_DIR/scripts/sw-heartbeat.sh" check "test-job-alive" \
             --timeout 120 2>/dev/null || exit_code=$?
 
     if [[ "$exit_code" -ne 0 ]]; then
@@ -156,14 +144,14 @@ test_heartbeat_check_alive() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_heartbeat_check_stale() {
     # Create a heartbeat with an old timestamp
-    local hb_file="$TEMP_DIR/home/.shipwright/heartbeats/test-job-stale.json"
+    local hb_file="$TEST_TEMP_DIR/home/.shipwright/heartbeats/test-job-stale.json"
     cat > "$hb_file" <<'EOF'
 {"pid":99999,"issue":null,"stage":"build","iteration":1,"memory_mb":0,"cpu_pct":0,"last_activity":"test","updated_at":"2020-01-01T00:00:00Z"}
 EOF
 
     local exit_code=0
-    HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-heartbeat.sh" check "test-job-stale" \
+    HOME="$TEST_TEMP_DIR/home" \
+        bash "$TEST_TEMP_DIR/scripts/sw-heartbeat.sh" check "test-job-stale" \
             --timeout 120 2>/dev/null || exit_code=$?
 
     if [[ "$exit_code" -eq 0 ]]; then
@@ -178,19 +166,19 @@ EOF
 # ──────────────────────────────────────────────────────────────────────────────
 test_heartbeat_clear() {
     # Ensure a heartbeat exists
-    HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-heartbeat.sh" write "test-job-clear" \
+    HOME="$TEST_TEMP_DIR/home" \
+        bash "$TEST_TEMP_DIR/scripts/sw-heartbeat.sh" write "test-job-clear" \
             --pid $$ --stage "test" 2>/dev/null
 
-    local hb_file="$TEMP_DIR/home/.shipwright/heartbeats/test-job-clear.json"
+    local hb_file="$TEST_TEMP_DIR/home/.shipwright/heartbeats/test-job-clear.json"
     if [[ ! -f "$hb_file" ]]; then
         echo -e "    ${RED}✗${RESET} Heartbeat file not created for clear test"
         return 1
     fi
 
     # Clear it
-    HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-heartbeat.sh" clear "test-job-clear" 2>/dev/null
+    HOME="$TEST_TEMP_DIR/home" \
+        bash "$TEST_TEMP_DIR/scripts/sw-heartbeat.sh" clear "test-job-clear" 2>/dev/null
 
     if [[ -f "$hb_file" ]]; then
         echo -e "    ${RED}✗${RESET} Heartbeat file still exists after clear"
@@ -204,16 +192,16 @@ test_heartbeat_clear() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_heartbeat_list() {
     # Write two heartbeats
-    HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-heartbeat.sh" write "list-job-1" \
+    HOME="$TEST_TEMP_DIR/home" \
+        bash "$TEST_TEMP_DIR/scripts/sw-heartbeat.sh" write "list-job-1" \
             --pid $$ --stage "build" --issue 10 2>/dev/null
-    HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-heartbeat.sh" write "list-job-2" \
+    HOME="$TEST_TEMP_DIR/home" \
+        bash "$TEST_TEMP_DIR/scripts/sw-heartbeat.sh" write "list-job-2" \
             --pid $$ --stage "test" --issue 20 2>/dev/null
 
     local output
-    output=$(HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-heartbeat.sh" list 2>/dev/null)
+    output=$(HOME="$TEST_TEMP_DIR/home" \
+        bash "$TEST_TEMP_DIR/scripts/sw-heartbeat.sh" list 2>/dev/null)
 
     # Should be valid JSON array
     local count
@@ -238,15 +226,15 @@ test_heartbeat_list() {
 # 6. Heartbeat updates overwrite existing file
 # ──────────────────────────────────────────────────────────────────────────────
 test_heartbeat_update_overwrites() {
-    HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-heartbeat.sh" write "test-overwrite" \
+    HOME="$TEST_TEMP_DIR/home" \
+        bash "$TEST_TEMP_DIR/scripts/sw-heartbeat.sh" write "test-overwrite" \
             --pid $$ --stage "build" --iteration 1 2>/dev/null
 
-    HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-heartbeat.sh" write "test-overwrite" \
+    HOME="$TEST_TEMP_DIR/home" \
+        bash "$TEST_TEMP_DIR/scripts/sw-heartbeat.sh" write "test-overwrite" \
             --pid $$ --stage "test" --iteration 5 2>/dev/null
 
-    local hb_file="$TEMP_DIR/home/.shipwright/heartbeats/test-overwrite.json"
+    local hb_file="$TEST_TEMP_DIR/home/.shipwright/heartbeats/test-overwrite.json"
     local stage iteration
     stage=$(jq -r '.stage' "$hb_file")
     iteration=$(jq -r '.iteration' "$hb_file")
@@ -263,8 +251,8 @@ test_heartbeat_update_overwrites() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_heartbeat_check_missing() {
     local exit_code=0
-    HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-heartbeat.sh" check "nonexistent-job" 2>/dev/null || exit_code=$?
+    HOME="$TEST_TEMP_DIR/home" \
+        bash "$TEST_TEMP_DIR/scripts/sw-heartbeat.sh" check "nonexistent-job" 2>/dev/null || exit_code=$?
 
     if [[ "$exit_code" -eq 0 ]]; then
         echo -e "    ${RED}✗${RESET} Expected error for missing heartbeat"
@@ -277,12 +265,12 @@ test_heartbeat_check_missing() {
 # 8. Heartbeat dir auto-created when missing
 # ──────────────────────────────────────────────────────────────────────────────
 test_heartbeat_dir_autocreate() {
-    local fresh_home="$TEMP_DIR/fresh-home"
+    local fresh_home="$TEST_TEMP_DIR/fresh-home"
     mkdir -p "$fresh_home"
     # No heartbeats dir exists
 
     HOME="$fresh_home" \
-        bash "$TEMP_DIR/scripts/sw-heartbeat.sh" write "auto-create-test" \
+        bash "$TEST_TEMP_DIR/scripts/sw-heartbeat.sh" write "auto-create-test" \
             --pid $$ --stage "build" 2>/dev/null
 
     if [[ ! -d "$fresh_home/.shipwright/heartbeats" ]]; then
@@ -301,16 +289,16 @@ test_heartbeat_dir_autocreate() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_checkpoint_save() {
     (
-        cd "$TEMP_DIR/project"
-        PATH="$TEMP_DIR/bin:$PATH" \
-        GIT_TOPLEVEL="$TEMP_DIR/project" \
-            bash "$TEMP_DIR/scripts/sw-checkpoint.sh" save \
+        cd "$TEST_TEMP_DIR/project"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        GIT_TOPLEVEL="$TEST_TEMP_DIR/project" \
+            bash "$TEST_TEMP_DIR/scripts/sw-checkpoint.sh" save \
                 --stage "build" \
                 --iteration 5 \
                 --git-sha "abc123" 2>/dev/null
     )
 
-    local cp_file="$TEMP_DIR/project/.claude/pipeline-artifacts/checkpoints/build-checkpoint.json"
+    local cp_file="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/checkpoints/build-checkpoint.json"
     if [[ ! -f "$cp_file" ]]; then
         echo -e "    ${RED}✗${RESET} Checkpoint file not created"
         return 1
@@ -333,10 +321,10 @@ test_checkpoint_save() {
 test_checkpoint_restore() {
     # Save first
     (
-        cd "$TEMP_DIR/project"
-        PATH="$TEMP_DIR/bin:$PATH" \
-        GIT_TOPLEVEL="$TEMP_DIR/project" \
-            bash "$TEMP_DIR/scripts/sw-checkpoint.sh" save \
+        cd "$TEST_TEMP_DIR/project"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        GIT_TOPLEVEL="$TEST_TEMP_DIR/project" \
+            bash "$TEST_TEMP_DIR/scripts/sw-checkpoint.sh" save \
                 --stage "test" \
                 --iteration 3 \
                 --tests-passing \
@@ -345,8 +333,8 @@ test_checkpoint_restore() {
 
     local output
     output=$(
-        cd "$TEMP_DIR/project"
-        bash "$TEMP_DIR/scripts/sw-checkpoint.sh" restore --stage "test" 2>/dev/null
+        cd "$TEST_TEMP_DIR/project"
+        bash "$TEST_TEMP_DIR/scripts/sw-checkpoint.sh" restore --stage "test" 2>/dev/null
     )
 
     # Should be valid JSON with expected fields
@@ -365,8 +353,8 @@ test_checkpoint_restore() {
 test_checkpoint_restore_missing() {
     local exit_code=0
     (
-        cd "$TEMP_DIR/project"
-        bash "$TEMP_DIR/scripts/sw-checkpoint.sh" restore --stage "nonexistent" 2>/dev/null
+        cd "$TEST_TEMP_DIR/project"
+        bash "$TEST_TEMP_DIR/scripts/sw-checkpoint.sh" restore --stage "nonexistent" 2>/dev/null
     ) || exit_code=$?
 
     if [[ "$exit_code" -eq 0 ]]; then
@@ -382,24 +370,24 @@ test_checkpoint_restore_missing() {
 test_checkpoint_clear() {
     # Save a checkpoint
     (
-        cd "$TEMP_DIR/project"
-        PATH="$TEMP_DIR/bin:$PATH" \
-        GIT_TOPLEVEL="$TEMP_DIR/project" \
-            bash "$TEMP_DIR/scripts/sw-checkpoint.sh" save \
+        cd "$TEST_TEMP_DIR/project"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        GIT_TOPLEVEL="$TEST_TEMP_DIR/project" \
+            bash "$TEST_TEMP_DIR/scripts/sw-checkpoint.sh" save \
                 --stage "review" \
                 --iteration 1 \
                 --git-sha "ghi789" 2>/dev/null
     )
 
-    local cp_file="$TEMP_DIR/project/.claude/pipeline-artifacts/checkpoints/review-checkpoint.json"
+    local cp_file="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/checkpoints/review-checkpoint.json"
     if [[ ! -f "$cp_file" ]]; then
         echo -e "    ${RED}✗${RESET} Checkpoint not created for clear test"
         return 1
     fi
 
     (
-        cd "$TEMP_DIR/project"
-        bash "$TEMP_DIR/scripts/sw-checkpoint.sh" clear --stage "review" 2>/dev/null
+        cd "$TEST_TEMP_DIR/project"
+        bash "$TEST_TEMP_DIR/scripts/sw-checkpoint.sh" clear --stage "review" 2>/dev/null
     )
 
     if [[ -f "$cp_file" ]]; then
@@ -415,20 +403,20 @@ test_checkpoint_clear() {
 test_checkpoint_clear_all() {
     # Save multiple checkpoints
     (
-        cd "$TEMP_DIR/project"
-        PATH="$TEMP_DIR/bin:$PATH" \
-        GIT_TOPLEVEL="$TEMP_DIR/project" \
-            bash "$TEMP_DIR/scripts/sw-checkpoint.sh" save --stage "build" --iteration 1 --git-sha "a" 2>/dev/null
-        bash "$TEMP_DIR/scripts/sw-checkpoint.sh" save --stage "test" --iteration 2 --git-sha "b" 2>/dev/null
+        cd "$TEST_TEMP_DIR/project"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        GIT_TOPLEVEL="$TEST_TEMP_DIR/project" \
+            bash "$TEST_TEMP_DIR/scripts/sw-checkpoint.sh" save --stage "build" --iteration 1 --git-sha "a" 2>/dev/null
+        bash "$TEST_TEMP_DIR/scripts/sw-checkpoint.sh" save --stage "test" --iteration 2 --git-sha "b" 2>/dev/null
     )
 
     (
-        cd "$TEMP_DIR/project"
-        bash "$TEMP_DIR/scripts/sw-checkpoint.sh" clear --all 2>/dev/null
+        cd "$TEST_TEMP_DIR/project"
+        bash "$TEST_TEMP_DIR/scripts/sw-checkpoint.sh" clear --all 2>/dev/null
     )
 
     local remaining=0
-    for f in "$TEMP_DIR/project/.claude/pipeline-artifacts/checkpoints"/*-checkpoint.json; do
+    for f in "$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/checkpoints"/*-checkpoint.json; do
         [[ -f "$f" ]] && remaining=$((remaining + 1))
     done
 
@@ -444,17 +432,17 @@ test_checkpoint_clear_all() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_checkpoint_files_modified() {
     (
-        cd "$TEMP_DIR/project"
-        PATH="$TEMP_DIR/bin:$PATH" \
-        GIT_TOPLEVEL="$TEMP_DIR/project" \
-            bash "$TEMP_DIR/scripts/sw-checkpoint.sh" save \
+        cd "$TEST_TEMP_DIR/project"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        GIT_TOPLEVEL="$TEST_TEMP_DIR/project" \
+            bash "$TEST_TEMP_DIR/scripts/sw-checkpoint.sh" save \
                 --stage "build" \
                 --iteration 7 \
                 --files-modified "src/auth.ts,src/middleware.ts" \
                 --git-sha "xyz" 2>/dev/null
     )
 
-    local cp_file="$TEMP_DIR/project/.claude/pipeline-artifacts/checkpoints/build-checkpoint.json"
+    local cp_file="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/checkpoints/build-checkpoint.json"
     local file_count
     file_count=$(jq '.files_modified | length' "$cp_file" 2>/dev/null || echo 0)
 

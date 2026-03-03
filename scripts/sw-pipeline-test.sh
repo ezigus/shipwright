@@ -9,31 +9,19 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REAL_PIPELINE_SCRIPT="$SCRIPT_DIR/sw-pipeline.sh"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT SETUP
 # Creates the complete temp structure that the real pipeline needs:
-#   $TEMP_DIR/
+#   $TEST_TEMP_DIR/
 #   ├── scripts/sw-pipeline.sh   (copy of real)
 #   ├── scripts/sw-loop.sh       (mock)
 #   ├── templates/pipelines/      (default template + per-test overrides)
@@ -43,15 +31,16 @@ TEMP_DIR=""
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-pipeline-test.XXXXXX")
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-pipeline-test.XXXXXX")
 
     # ── Copy real pipeline script and libs (pipeline sources lib/*.sh) ──────
-    mkdir -p "$TEMP_DIR/scripts"
-    cp "$REAL_PIPELINE_SCRIPT" "$TEMP_DIR/scripts/sw-pipeline.sh"
-    [[ -d "$SCRIPT_DIR/lib" ]] && cp -r "$SCRIPT_DIR/lib" "$TEMP_DIR/scripts/lib"
+    mkdir -p "$TEST_TEMP_DIR/scripts"
+    cp "$REAL_PIPELINE_SCRIPT" "$TEST_TEMP_DIR/scripts/sw-pipeline.sh"
+    [[ -d "$SCRIPT_DIR/lib" ]] && cp -r "$SCRIPT_DIR/lib" "$TEST_TEMP_DIR/scripts/lib"
+    [[ -d "$SCRIPT_DIR/skills" ]] && cp -r "$SCRIPT_DIR/skills" "$TEST_TEMP_DIR/scripts/skills"
 
     # ── Mock sw-loop.sh (next to pipeline — preflight checks $SCRIPT_DIR/sw-loop.sh) ──
-    cat > "$TEMP_DIR/scripts/sw-loop.sh" <<'LOOP_EOF'
+    cat > "$TEST_TEMP_DIR/scripts/sw-loop.sh" <<'LOOP_EOF'
 #!/usr/bin/env bash
 # Mock sw-loop: simulate build by creating a feature file and committing
 mkdir -p src
@@ -62,20 +51,20 @@ FEAT
 git add src/feature.js
 git commit -m "feat: implement feature" --quiet --allow-empty 2>/dev/null || true
 LOOP_EOF
-    chmod +x "$TEMP_DIR/scripts/sw-loop.sh"
+    chmod +x "$TEST_TEMP_DIR/scripts/sw-loop.sh"
 
     # ── Copy pipeline templates ───────────────────────────────────────────
-    mkdir -p "$TEMP_DIR/templates/pipelines"
+    mkdir -p "$TEST_TEMP_DIR/templates/pipelines"
     if [[ -d "$REPO_DIR/templates/pipelines" ]]; then
-        cp "$REPO_DIR/templates/pipelines"/*.json "$TEMP_DIR/templates/pipelines/" 2>/dev/null || true
+        cp "$REPO_DIR/templates/pipelines"/*.json "$TEST_TEMP_DIR/templates/pipelines/" 2>/dev/null || true
     fi
     # Ensure at least a standard template exists
-    if [[ ! -f "$TEMP_DIR/templates/pipelines/standard.json" ]]; then
+    if [[ ! -f "$TEST_TEMP_DIR/templates/pipelines/standard.json" ]]; then
         write_standard_template
     fi
 
     # ── Mock binaries ─────────────────────────────────────────────────────
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/bin"
     create_mock_claude
     create_mock_gh
     create_mock_sw
@@ -84,22 +73,22 @@ LOOP_EOF
     create_mock_project
 
     # ── Bare repo for git push ────────────────────────────────────────────
-    git init --quiet --bare "$TEMP_DIR/remote.git" 2>/dev/null
+    git init --quiet --bare "$TEST_TEMP_DIR/remote.git" 2>/dev/null
 
     # ── Wire up git remotes ───────────────────────────────────────────────
     # Push URL → local bare repo (so git push works)
     # Fetch URL → fake GitHub URL (so gh_init() detects REPO_OWNER/REPO_NAME)
     (
-        cd "$TEMP_DIR/project"
-        git remote add origin "$TEMP_DIR/remote.git"
+        cd "$TEST_TEMP_DIR/project"
+        git remote add origin "$TEST_TEMP_DIR/remote.git"
         git push -u origin main --quiet 2>/dev/null
         git remote set-url origin "https://github.com/test-org/test-repo.git"
-        git config remote.origin.pushurl "$TEMP_DIR/remote.git"
+        git config remote.origin.pushurl "$TEST_TEMP_DIR/remote.git"
     )
 }
 
 write_standard_template() {
-    cat > "$TEMP_DIR/templates/pipelines/standard.json" <<'TMPL'
+    cat > "$TEST_TEMP_DIR/templates/pipelines/standard.json" <<'TMPL'
 {
   "name": "standard",
   "description": "Standard pipeline for tests",
@@ -141,24 +130,35 @@ pipeline_config_with_stages() {
 }
 
 create_mock_claude() {
-    cat > "$TEMP_DIR/bin/claude" <<'CLAUDE_EOF'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'CLAUDE_EOF'
 #!/usr/bin/env bash
-# Mock claude CLI — supports text/json output and detects plan vs review prompts.
+# Mock claude CLI — detects plan vs review from prompt content
 prompt=""
-output_format="text"
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --print)                 shift ;;
-        --output-format)         output_format="${2:-text}"; shift 2 ;;
+        --print|--output-format) shift ;;
         --model|--max-turns)     shift 2 ;;
-        -p)                      prompt="${2:-}"; shift 2 ;;
+        -p)                      shift 2 ;;
         *)                       prompt="$1"; shift ;;
     esac
 done
 
-response=""
-if echo "$prompt" | grep -qiE "implementation plan|task checklist|create a.*plan"; then
-    response=$(cat <<'PLAN'
+if echo "$prompt" | grep -qiE "code review|reviewer|senior.*review|spec compliance"; then
+    cat <<'REVIEW'
+# Code Review
+
+## Findings
+
+- **[Warning]** src/feature.js:3 — Missing input validation for empty strings
+- **[Bug]** src/feature.js:1 — Function name could be more descriptive
+- **[Suggestion]** src/feature.js:2 — Consider using strict equality check
+
+## Summary
+3 issues found: 0 critical, 1 bug, 1 warning, 1 suggestion.
+Code is generally acceptable with minor improvements recommended.
+REVIEW
+elif echo "$prompt" | grep -qiE "implementation plan|task checklist|create a.*plan"; then
+    cat <<'PLAN'
 # Implementation Plan
 
 ## Files to Modify
@@ -185,38 +185,15 @@ Run the test suite to verify auth works end to end.
 - [ ] Code reviewed
 - [ ] No security vulnerabilities
 PLAN
-)
-elif echo "$prompt" | grep -qiE "review|reviewer|diff"; then
-    response=$(cat <<'REVIEW'
-# Code Review
-
-## Findings
-
-- **[Warning]** src/feature.js:3 — Missing input validation for empty strings
-- **[Bug]** src/feature.js:1 — Function name could be more descriptive
-- **[Suggestion]** src/feature.js:2 — Consider using strict equality check
-
-## Summary
-3 issues found: 0 critical, 1 bug, 1 warning, 1 suggestion.
-Code is generally acceptable with minor improvements recommended.
-REVIEW
-)
 else
-    response="Mock claude: unrecognized prompt context"
-fi
-
-if [[ "$output_format" == "json" ]]; then
-    jq -n --arg result "$response" \
-      '{type:"result", result:$result, usage:{input_tokens:50, output_tokens:100}}'
-else
-    printf '%s\n' "$response"
+    echo "Mock claude: unrecognized prompt context"
 fi
 CLAUDE_EOF
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 }
 
 create_mock_gh() {
-    cat > "$TEMP_DIR/bin/gh" <<'GH_EOF'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'GH_EOF'
 #!/usr/bin/env bash
 # Mock gh CLI — routes by subcommand
 case "$1" in
@@ -276,12 +253,12 @@ ISSUE_JSON
         ;;
 esac
 GH_EOF
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 }
 
 create_mock_sw() {
     # The pipeline calls `sw loop "${loop_args[@]}"` in stage_build
-    cat > "$TEMP_DIR/bin/sw" <<MOCK_SW
+    cat > "$TEST_TEMP_DIR/bin/sw" <<MOCK_SW
 #!/usr/bin/env bash
 # Mock sw CLI — handles loop subcommand
 case "\$1" in
@@ -300,14 +277,14 @@ FEAT
         ;;
 esac
 MOCK_SW
-    chmod +x "$TEMP_DIR/bin/sw"
+    chmod +x "$TEST_TEMP_DIR/bin/sw"
 }
 
 create_mock_project() {
-    mkdir -p "$TEMP_DIR/project/src" "$TEMP_DIR/project/tests"
+    mkdir -p "$TEST_TEMP_DIR/project/src" "$TEST_TEMP_DIR/project/tests"
 
     # package.json (so detect_test_cmd returns "npm test")
-    cat > "$TEMP_DIR/project/package.json" <<'PKG'
+    cat > "$TEST_TEMP_DIR/project/package.json" <<'PKG'
 {
   "name": "test-project",
   "version": "1.0.0",
@@ -316,21 +293,21 @@ create_mock_project() {
 }
 PKG
 
-    cat > "$TEMP_DIR/project/src/index.js" <<'SRC'
+    cat > "$TEST_TEMP_DIR/project/src/index.js" <<'SRC'
 const express = require('express');
 const app = express();
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 module.exports = app;
 SRC
 
-    cat > "$TEMP_DIR/project/tests/index.test.js" <<'TST'
+    cat > "$TEST_TEMP_DIR/project/tests/index.test.js" <<'TST'
 describe('health', () => {
   it('should return ok', () => { expect(true).toBe(true); });
 });
 TST
 
     (
-        cd "$TEMP_DIR/project"
+        cd "$TEST_TEMP_DIR/project"
         git init --quiet -b main
         git config user.email "test@test.com"
         git config user.name "Test User"
@@ -342,7 +319,7 @@ TST
 # Reset project state between tests (keeps the base env, resets git + artifacts)
 reset_test() {
     (
-        cd "$TEMP_DIR/project"
+        cd "$TEST_TEMP_DIR/project"
         # Remove pipeline artifacts
         rm -rf .claude 2>/dev/null || true
         # Reset to main branch, remove feature branches
@@ -358,20 +335,20 @@ reset_test() {
         git clean -fd --quiet 2>/dev/null || true
     )
     # Reset the remote bare repo
-    rm -rf "$TEMP_DIR/remote.git"
-    git init --quiet --bare "$TEMP_DIR/remote.git" 2>/dev/null
+    rm -rf "$TEST_TEMP_DIR/remote.git"
+    git init --quiet --bare "$TEST_TEMP_DIR/remote.git" 2>/dev/null
     (
-        cd "$TEMP_DIR/project"
-        git config remote.origin.pushurl "$TEMP_DIR/remote.git"
+        cd "$TEST_TEMP_DIR/project"
+        git config remote.origin.pushurl "$TEST_TEMP_DIR/remote.git"
         git push -u origin main --quiet 2>/dev/null || true
     )
     # Remove self-healing markers
-    rm -f "$TEMP_DIR/self-heal-marker" 2>/dev/null || true
+    rm -f "$TEST_TEMP_DIR/self-heal-marker" 2>/dev/null || true
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR" 2>/dev/null || true
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -393,16 +370,11 @@ invoke_pipeline() {
     PIPELINE_OUTPUT=""
     PIPELINE_EXIT=0
 
-    # Invoke the REAL pipeline script as a subprocess.
-    # Redirect HOME so emit_event writes events.jsonl to the temp dir rather than
-    # the real ~/.shipwright/ (which may be outside sandbox write allowlists).
+    # Invoke the REAL pipeline script as a subprocess
     PIPELINE_OUTPUT=$(
-        cd "$TEMP_DIR/project"
-        HOME="$TEMP_DIR" \
-        EVENTS_FILE="$TEMP_DIR/events.jsonl" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-        GIT_TERMINAL_PROMPT=0 \
-        bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
+        cd "$TEST_TEMP_DIR/project"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
     ) || PIPELINE_EXIT=$?
 }
 
@@ -441,7 +413,7 @@ assert_output_not_contains() {
 
 assert_file_exists() {
     local filepath="$1" label="${2:-file exists}"
-    local full_path="$TEMP_DIR/project/$filepath"
+    local full_path="$TEST_TEMP_DIR/project/$filepath"
     if [[ -f "$full_path" ]]; then
         return 0
     fi
@@ -451,7 +423,7 @@ assert_file_exists() {
 
 assert_file_not_exists() {
     local filepath="$1" label="${2:-file absent}"
-    local full_path="$TEMP_DIR/project/$filepath"
+    local full_path="$TEST_TEMP_DIR/project/$filepath"
     if [[ ! -f "$full_path" ]]; then
         return 0
     fi
@@ -461,7 +433,7 @@ assert_file_not_exists() {
 
 assert_file_contains() {
     local filepath="$1" pattern="$2" label="${3:-file content}"
-    local full_path="$TEMP_DIR/project/$filepath"
+    local full_path="$TEST_TEMP_DIR/project/$filepath"
     if [[ ! -f "$full_path" ]]; then
         echo -e "    ${RED}✗${RESET} File not found: $filepath ($label)"
         return 1
@@ -476,7 +448,7 @@ assert_file_contains() {
 assert_branch_exists() {
     local pattern="$1" label="${2:-branch exists}"
     local branches
-    branches=$(cd "$TEMP_DIR/project" && git branch --list 2>/dev/null)
+    branches=$(cd "$TEST_TEMP_DIR/project" && git branch --list 2>/dev/null)
     if printf '%s\n' "$branches" | grep -qE "$pattern" 2>/dev/null; then
         return 0
     fi
@@ -533,12 +505,12 @@ test_preflight_passes() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_preflight_fails_missing_loop() {
     # Temporarily remove sw-loop.sh
-    mv "$TEMP_DIR/scripts/sw-loop.sh" "$TEMP_DIR/scripts/sw-loop.sh.bak"
+    mv "$TEST_TEMP_DIR/scripts/sw-loop.sh" "$TEST_TEMP_DIR/scripts/sw-loop.sh.bak"
 
     invoke_pipeline start --goal "Test missing loop" --skip-gates --dry-run
 
     # Restore
-    mv "$TEMP_DIR/scripts/sw-loop.sh.bak" "$TEMP_DIR/scripts/sw-loop.sh"
+    mv "$TEST_TEMP_DIR/scripts/sw-loop.sh.bak" "$TEST_TEMP_DIR/scripts/sw-loop.sh"
 
     assert_exit_code 1 "should fail preflight" &&
     assert_output_contains "sw-loop" "should mention sw-loop"
@@ -558,7 +530,7 @@ test_start_requires_goal_or_issue() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_intake_inline() {
     # Use intake-only template so pipeline stops after intake
-    pipeline_config_with_stages "intake" > "$TEMP_DIR/templates/pipelines/standard.json"
+    pipeline_config_with_stages "intake" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
 
     invoke_pipeline start --goal "Add JWT auth" --skip-gates --test-cmd "echo passed"
 
@@ -573,7 +545,7 @@ test_intake_inline() {
 # 5. Intake with --issue fetches from mock gh
 # ──────────────────────────────────────────────────────────────────────────────
 test_intake_issue() {
-    pipeline_config_with_stages "intake" > "$TEMP_DIR/templates/pipelines/standard.json"
+    pipeline_config_with_stages "intake" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
 
     invoke_pipeline start --issue 42 --skip-gates --test-cmd "echo passed"
 
@@ -588,7 +560,7 @@ test_intake_issue() {
 # 6. Plan stage generates plan.md, dod.md, and pipeline-tasks.md
 # ──────────────────────────────────────────────────────────────────────────────
 test_plan_generates_artifacts() {
-    pipeline_config_with_stages "intake,plan" > "$TEMP_DIR/templates/pipelines/standard.json"
+    pipeline_config_with_stages "intake,plan" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
 
     invoke_pipeline start --goal "Add auth module" --skip-gates --test-cmd "echo passed"
 
@@ -606,7 +578,7 @@ test_plan_generates_artifacts() {
 # 7. Build stage invokes sw loop and produces commits
 # ──────────────────────────────────────────────────────────────────────────────
 test_build_invokes_sw() {
-    pipeline_config_with_stages "intake,plan,build" > "$TEMP_DIR/templates/pipelines/standard.json"
+    pipeline_config_with_stages "intake,plan,build" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
 
     invoke_pipeline start --goal "Add auth" --skip-gates --test-cmd "echo passed"
 
@@ -616,7 +588,7 @@ test_build_invokes_sw() {
 
     # Verify a commit exists with "feat:" prefix (from mock sw loop)
     local commits
-    commits=$(cd "$TEMP_DIR/project" && git log --oneline 2>/dev/null)
+    commits=$(cd "$TEST_TEMP_DIR/project" && git log --oneline 2>/dev/null)
     if ! printf '%s\n' "$commits" | grep -q "feat:" 2>/dev/null; then
         echo -e "    ${RED}✗${RESET} No 'feat:' commit found"
         return 1
@@ -627,7 +599,7 @@ test_build_invokes_sw() {
 # 8. Test stage captures results to log file
 # ──────────────────────────────────────────────────────────────────────────────
 test_test_captures_results() {
-    pipeline_config_with_stages "intake,plan,build,test" > "$TEMP_DIR/templates/pipelines/standard.json"
+    pipeline_config_with_stages "intake,plan,build,test" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
 
     invoke_pipeline start --goal "Add auth" --skip-gates --test-cmd "echo 'All 8 tests passed'"
 
@@ -641,7 +613,7 @@ test_test_captures_results() {
 # 9. Review stage generates review.md with severity markers
 # ──────────────────────────────────────────────────────────────────────────────
 test_review_generates_report() {
-    pipeline_config_with_stages "intake,plan,build,test,review" > "$TEMP_DIR/templates/pipelines/standard.json"
+    pipeline_config_with_stages "intake,plan,build,test,review" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
 
     invoke_pipeline start --goal "Add auth" --skip-gates --test-cmd "echo passed"
 
@@ -655,7 +627,7 @@ test_review_generates_report() {
 # 10. PR stage creates PR URL artifact
 # ──────────────────────────────────────────────────────────────────────────────
 test_pr_creates_url() {
-    pipeline_config_with_stages "intake,plan,build,test,review,pr" > "$TEMP_DIR/templates/pipelines/standard.json"
+    pipeline_config_with_stages "intake,plan,build,test,review,pr" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
 
     invoke_pipeline start --goal "Add auth" --skip-gates --test-cmd "echo passed"
 
@@ -689,7 +661,7 @@ test_full_pipeline_e2e() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_resume() {
     # Step 1: Run intake-only pipeline to create real state + branch
-    pipeline_config_with_stages "intake" > "$TEMP_DIR/templates/pipelines/standard.json"
+    pipeline_config_with_stages "intake" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
     invoke_pipeline start --goal "Resume test feature" --skip-gates --test-cmd "echo passed"
 
     if [[ "$PIPELINE_EXIT" -ne 0 ]]; then
@@ -700,17 +672,17 @@ test_resume() {
     # Step 2: Read back the branch name from state
     local branch_name
     # shellcheck disable=SC2034
-    branch_name=$(sed -n 's/^branch: *"*\([^"]*\)"*/\1/p' "$TEMP_DIR/project/.claude/pipeline-state.md" | head -1)
+    branch_name=$(sed -n 's/^branch: *"*\([^"]*\)"*/\1/p' "$TEST_TEMP_DIR/project/.claude/pipeline-state.md" | head -1)
 
     # Step 3: Modify state to look like an interrupted pipeline with intake done
     # and update the template to include plan stage
-    pipeline_config_with_stages "intake,plan" > "$TEMP_DIR/templates/pipelines/standard.json"
+    pipeline_config_with_stages "intake,plan" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
 
     # Rewrite status from "complete" to "interrupted" so resume will continue
     if [[ "$(uname)" == "Darwin" ]]; then
-        sed -i '' 's/^status: complete$/status: interrupted/' "$TEMP_DIR/project/.claude/pipeline-state.md"
+        sed -i '' 's/^status: complete$/status: interrupted/' "$TEST_TEMP_DIR/project/.claude/pipeline-state.md"
     else
-        sed -i 's/^status: complete$/status: interrupted/' "$TEMP_DIR/project/.claude/pipeline-state.md"
+        sed -i 's/^status: complete$/status: interrupted/' "$TEST_TEMP_DIR/project/.claude/pipeline-state.md"
     fi
 
     # Step 4: Resume — should skip intake, run plan
@@ -727,8 +699,8 @@ test_resume() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_abort() {
     # Create a state file that looks like a running pipeline
-    mkdir -p "$TEMP_DIR/project/.claude/pipeline-artifacts"
-    cat > "$TEMP_DIR/project/.claude/pipeline-state.md" <<'STATE'
+    mkdir -p "$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
+    cat > "$TEST_TEMP_DIR/project/.claude/pipeline-state.md" <<'STATE'
 ---
 pipeline: standard
 goal: "Abort test feature"
@@ -772,7 +744,7 @@ test_dry_run() {
 
     # Verify no feature branches were created
     local branches
-    branches=$(cd "$TEMP_DIR/project" && git branch --list | grep -v main || true)
+    branches=$(cd "$TEST_TEMP_DIR/project" && git branch --list | grep -v main || true)
     if [[ -n "$branches" ]]; then
         echo -e "    ${RED}✗${RESET} Feature branches created during dry-run: $branches"
         return 1
@@ -784,12 +756,12 @@ test_dry_run() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_self_healing() {
     # Use a template with build + test enabled (triggers self-healing loop)
-    pipeline_config_with_stages "intake,plan,build,test" > "$TEMP_DIR/templates/pipelines/standard.json"
+    pipeline_config_with_stages "intake,plan,build,test" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
 
     # Test script that fails first, then passes (using marker file).
     # Must be a separate script file — `eval "...exit 1..."` would kill the pipeline.
-    local marker="$TEMP_DIR/self-heal-marker"
-    cat > "$TEMP_DIR/bin/fail-then-pass-test" <<HEAL_EOF
+    local marker="$TEST_TEMP_DIR/self-heal-marker"
+    cat > "$TEST_TEMP_DIR/bin/fail-then-pass-test" <<HEAL_EOF
 #!/usr/bin/env bash
 if [ -f "$marker" ]; then
     echo "All tests passed"
@@ -800,9 +772,9 @@ else
     exit 1
 fi
 HEAL_EOF
-    chmod +x "$TEMP_DIR/bin/fail-then-pass-test"
+    chmod +x "$TEST_TEMP_DIR/bin/fail-then-pass-test"
 
-    invoke_pipeline start --goal "Fix auth bug" --skip-gates --test-cmd "$TEMP_DIR/bin/fail-then-pass-test" --self-heal 2
+    invoke_pipeline start --goal "Fix auth bug" --skip-gates --test-cmd "$TEST_TEMP_DIR/bin/fail-then-pass-test" --self-heal 2
 
     assert_exit_code 0 "self-healing should eventually succeed" &&
     assert_output_contains "Self-[Hh]ealing" "shows self-healing message" &&
@@ -814,7 +786,7 @@ HEAL_EOF
 # ──────────────────────────────────────────────────────────────────────────────
 test_intelligent_skip_docs_label() {
     # Create a custom mock gh that returns documentation label
-    cat > "$TEMP_DIR/bin/gh" <<'GH_EOF'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'GH_EOF'
 #!/usr/bin/env bash
 case "$1" in
     auth) exit 0 ;;
@@ -855,10 +827,10 @@ ISSUE_JSON
     *) exit 0 ;;
 esac
 GH_EOF
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
     # Use a pipeline with review and test stages to verify they are skipped
-    pipeline_config_with_stages "intake,plan,build,test,review,pr" > "$TEMP_DIR/templates/pipelines/standard.json"
+    pipeline_config_with_stages "intake,plan,build,test,review,pr" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
 
     # Run with an issue that has documentation label
     invoke_pipeline start --issue 99 --skip-gates
@@ -873,7 +845,7 @@ GH_EOF
 # ──────────────────────────────────────────────────────────────────────────────
 test_intelligent_skip_low_complexity() {
     # Pipeline with design, compound_quality, and review (to test skipping)
-    cat > "$TEMP_DIR/templates/pipelines/standard.json" <<'CONFIG'
+    cat > "$TEST_TEMP_DIR/templates/pipelines/standard.json" <<'CONFIG'
 {
   "name": "test-complex",
   "description": "Custom pipeline with design stage",
@@ -921,7 +893,7 @@ test_finding_classification() {
     fi
 
     # Create artifacts directory with mock findings files
-    local artifacts="$TEMP_DIR/project/.claude/pipeline-artifacts"
+    local artifacts="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
     mkdir -p "$artifacts"
 
     # Pre-create mock findings to simulate what compound stages would create
@@ -945,7 +917,7 @@ SEC
     # Verify pipeline succeeded
     assert_exit_code 0 "pipeline should complete" &&
     # Verify the function is callable (exists in script)
-    ( grep -q "classify_quality_findings" "$TEMP_DIR/scripts/sw-pipeline.sh" || grep -q "classify_quality_findings" "$TEMP_DIR/scripts/lib"/pipeline-*.sh 2>/dev/null ) && return 0 || return 1
+    ( grep -q "classify_quality_findings" "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" || grep -q "classify_quality_findings" "$TEST_TEMP_DIR/scripts/lib"/pipeline-*.sh 2>/dev/null ) && return 0 || return 1
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -961,7 +933,7 @@ test_complexity_reassessment() {
     # reassessment.json is cleaned by post-completion cleanup, so check output
     # or the learning log (complexity-actuals.jsonl) which is NOT cleaned
     (
-        local actuals="$TEMP_DIR/project/.claude/pipeline-artifacts/complexity-actuals.jsonl"
+        local actuals="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/complexity-actuals.jsonl"
         if [[ -f "$actuals" ]]; then
             # Learning log should have at least one entry
             local line_count
@@ -989,13 +961,13 @@ test_backtrack_limit_enforced() {
 
     # We'll test by simulating the scenario:
     # Create a temp script that calls pipeline_backtrack_to_stage twice
-    cat > "$TEMP_DIR/bin/test-backtrack" <<'BACKTRACK_TEST'
+    cat > "$TEST_TEMP_DIR/bin/test-backtrack" <<'BACKTRACK_TEST'
 #!/usr/bin/env bash
 set -uo pipefail
 
 # Minimal environment setup
-export SCRIPT_DIR="$TEMP_DIR/scripts"
-export ARTIFACTS_DIR="$TEMP_DIR/project/.claude/pipeline-artifacts"
+export SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+export ARTIFACTS_DIR="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
 export ISSUE_NUMBER="42"
 export PIPELINE_BACKTRACK_USED=false
 
@@ -1006,9 +978,6 @@ warn()    { echo "⚠ $*" >&2; }
 error()   { echo "✗ $*" >&2; }
 emit_event() { true; }
 
-CYAN='\033[38;2;0;212;255m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # Extract the backtracking function from the pipeline script
 # by sourcing and calling directly
@@ -1031,11 +1000,11 @@ else
     exit 0
 fi
 BACKTRACK_TEST
-    chmod +x "$TEMP_DIR/bin/test-backtrack"
+    chmod +x "$TEST_TEMP_DIR/bin/test-backtrack"
 
     # Since full integration is complex, verify via output that the
     # backtrack limit is documented in output when running a complex pipeline
-    pipeline_config_with_stages "intake,plan,build,test" > "$TEMP_DIR/templates/pipelines/standard.json"
+    pipeline_config_with_stages "intake,plan,build,test" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
 
     invoke_pipeline start --goal "Test backtrack limits" --skip-gates
 
@@ -1048,7 +1017,7 @@ BACKTRACK_TEST
 # ──────────────────────────────────────────────────────────────────────────────
 test_post_completion_cleanup() {
     # Pre-create checkpoint and transient artifacts that should be cleaned
-    local artifacts="$TEMP_DIR/project/.claude/pipeline-artifacts"
+    local artifacts="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
     mkdir -p "$artifacts/checkpoints"
     echo '{"stage":"build","iteration":3}' > "$artifacts/checkpoints/build-checkpoint.json"
     echo '{"stage":"test","iteration":1}' > "$artifacts/checkpoints/test-checkpoint.json"
@@ -1525,7 +1494,7 @@ test_coverage_json_created() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_compact_goal() {
     # Extract and test _pipeline_compact_goal
-    local fns_script="$TEMP_DIR/compact-goal-fns.sh"
+    local fns_script="$TEST_TEMP_DIR/compact-goal-fns.sh"
     cat > "$fns_script" <<'FEOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -1541,8 +1510,8 @@ FEOF
     sed -n '/^_pipeline_compact_goal()/,/^}/p' "$REAL_PIPELINE_SCRIPT" >> "$fns_script" 2>/dev/null
 
     # Create mock plan and design files
-    local plan_file="$TEMP_DIR/plan.md"
-    local design_file="$TEMP_DIR/design.md"
+    local plan_file="$TEST_TEMP_DIR/plan.md"
+    local design_file="$TEST_TEMP_DIR/design.md"
     printf '%s\n' "# Plan" "Step 1: Do thing" "Step 2: Do other thing" > "$plan_file"
     printf '%s\n' "# Architecture" "## Database" "## API Layer" > "$design_file"
 
@@ -1553,10 +1522,10 @@ FEOF
         _pipeline_compact_goal "Add auth" "$plan_file" "$design_file"
     ) || result=""
 
-    # Should contain goal and artifact references (content inlined removed to reduce context bloat)
+    # Should contain goal, plan summary, and design headers
     echo "$result" | grep -q "Add auth" || { echo "Missing goal in compact output"; return 1; }
-    echo "$result" | grep -q "plan.md" || { echo "Missing plan artifact reference in compact output"; return 1; }
-    echo "$result" | grep -q "design.md" || { echo "Missing design artifact reference in compact output"; return 1; }
+    echo "$result" | grep -q "Plan Summary" || { echo "Missing Plan Summary in compact output"; return 1; }
+    echo "$result" | grep -q "Key Design Decisions" || { echo "Missing Key Design Decisions in compact output"; return 1; }
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1564,13 +1533,13 @@ FEOF
 # ──────────────────────────────────────────────────────────────────────────────
 test_load_composed_pipeline() {
     # Create a composed pipeline spec
-    local spec_file="$TEMP_DIR/composed-pipeline.json"
+    local spec_file="$TEST_TEMP_DIR/composed-pipeline.json"
     cat > "$spec_file" <<'JSON'
 {"stages":[{"id":"intake"},{"id":"build","max_iterations":25},{"id":"test"},{"id":"pr"}]}
 JSON
 
     # Extract the function
-    local fns_script="$TEMP_DIR/composed-fns.sh"
+    local fns_script="$TEST_TEMP_DIR/composed-fns.sh"
     cat > "$fns_script" <<'FEOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -1609,7 +1578,7 @@ test_momentum_bootstrap_single_snapshot() {
     [[ -f "$vitals_script" ]] || { echo "Vitals script not found"; return 1; }
 
     # Extract _compute_momentum and _safe_num
-    local fns_script="$TEMP_DIR/momentum-fns.sh"
+    local fns_script="$TEST_TEMP_DIR/momentum-fns.sh"
     cat > "$fns_script" <<'FEOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -1619,7 +1588,7 @@ FEOF
     sed -n '/^_compute_momentum()/,/^}$/p' "$vitals_script" >> "$fns_script" 2>/dev/null
 
     # Create a progress file with 1 snapshot past intake
-    local progress_file="$TEMP_DIR/progress.json"
+    local progress_file="$TEST_TEMP_DIR/progress.json"
     echo '{"snapshots":[{"stage":"build","iteration":1,"diff_lines":10}]}' > "$progress_file"
 
     local result
@@ -1837,7 +1806,7 @@ main() {
 
     echo -e "${DIM}Setting up mock environment...${RESET}"
     setup_env
-    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEMP_DIR${RESET}"
+    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEST_TEMP_DIR${RESET}"
     echo ""
 
     # Define all tests

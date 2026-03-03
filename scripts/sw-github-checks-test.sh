@@ -11,49 +11,37 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 unset NO_GITHUB 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-github-checks-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/repo/scripts/lib"
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/repo/.claude/pipeline-artifacts"
-    mkdir -p "$TEMP_DIR/bin"
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-github-checks-test.XXXXXX")
+    mkdir -p "$TEST_TEMP_DIR/repo/scripts/lib"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
     # Copy the script under test into repo/scripts/ so REPO_DIR auto-resolves to repo/
-    cp "$SCRIPT_DIR/sw-github-checks.sh" "$TEMP_DIR/repo/scripts/"
+    cp "$SCRIPT_DIR/sw-github-checks.sh" "$TEST_TEMP_DIR/repo/scripts/"
 
     # Create compat.sh stub
-    touch "$TEMP_DIR/repo/scripts/lib/compat.sh"
+    touch "$TEST_TEMP_DIR/repo/scripts/lib/compat.sh"
 
     # Create a mock git config for _gh_detect_repo
-    git -C "$TEMP_DIR/repo" init --quiet 2>/dev/null || true
-    git -C "$TEMP_DIR/repo" remote add origin "https://github.com/testowner/testrepo.git" 2>/dev/null || true
+    git -C "$TEST_TEMP_DIR/repo" init --quiet 2>/dev/null || true
+    git -C "$TEST_TEMP_DIR/repo" remote add origin "https://github.com/testowner/testrepo.git" 2>/dev/null || true
 
     # Create mock gh binary — default: success with a check run response
-    cat > "$TEMP_DIR/bin/gh" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'MOCKEOF'
 #!/usr/bin/env bash
 # Mock gh — logs calls and returns configurable responses
 echo "$@" >> "${MOCK_GH_LOG:-/dev/null}"
@@ -77,7 +65,7 @@ else
 fi
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
     # Mock jq — use real jq
     if ! command -v jq &>/dev/null; then
@@ -87,8 +75,8 @@ MOCKEOF
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -96,10 +84,10 @@ trap cleanup_env EXIT
 # Helper: source the checks script in test context
 source_checks() {
     # Override paths so the script uses our temp dirs
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
-    export MOCK_GH_STDIN="$TEMP_DIR/gh-stdin.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
+    export MOCK_GH_STDIN="$TEST_TEMP_DIR/gh-stdin.log"
 
     # Reset logs
     : > "$MOCK_GH_LOG"
@@ -107,10 +95,10 @@ source_checks() {
 
     # Source with overridden REPO_DIR
     (
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/repo/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/repo/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/repo/scripts/sw-github-checks.sh"
     )
 }
 
@@ -146,19 +134,19 @@ run_test() {
 # 1. _gh_checks_available: returns true when API accessible
 # ──────────────────────────────────────────────────────────────────────────────
 test_checks_available_success() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export MOCK_GH_FAIL=""
     export MOCK_GH_RESPONSE='{"check_runs":[],"total_count":0}'
     : > "$MOCK_GH_LOG"
 
     (
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/repo/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/repo/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
         _GH_CHECKS_AVAILABLE=""
-        source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"
+        source "$TEST_TEMP_DIR/repo/scripts/sw-github-checks.sh"
         _gh_checks_available "testowner" "testrepo"
     )
 }
@@ -167,19 +155,19 @@ test_checks_available_success() {
 # 2. _gh_checks_available: returns false on 403
 # ──────────────────────────────────────────────────────────────────────────────
 test_checks_available_fail() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export MOCK_GH_FAIL="true"
     : > "$MOCK_GH_LOG"
 
     local result=0
     (
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/repo/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/repo/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
         _GH_CHECKS_AVAILABLE=""
-        source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"
+        source "$TEST_TEMP_DIR/repo/scripts/sw-github-checks.sh"
         _gh_checks_available "testowner" "testrepo"
     ) || result=$?
 
@@ -191,20 +179,20 @@ test_checks_available_fail() {
 # 3. gh_checks_create_run: returns run ID from response
 # ──────────────────────────────────────────────────────────────────────────────
 test_create_run_returns_id() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
-    export MOCK_GH_STDIN="$TEMP_DIR/gh-stdin.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
+    export MOCK_GH_STDIN="$TEST_TEMP_DIR/gh-stdin.log"
     export MOCK_GH_FAIL=""
     export MOCK_GH_RESPONSE='{"id": 99887, "name": "shipwright/build", "status": "in_progress"}'
     : > "$MOCK_GH_LOG"
 
     local run_id
     run_id=$(
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/repo/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/repo/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/repo/scripts/sw-github-checks.sh"
         gh_checks_create_run "testowner" "testrepo" "abc123" "shipwright/build" "in_progress"
     )
 
@@ -215,18 +203,18 @@ test_create_run_returns_id() {
 # 4. gh_checks_create_run: handles 403 gracefully
 # ──────────────────────────────────────────────────────────────────────────────
 test_create_run_handles_403() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export MOCK_GH_FAIL="true"
     : > "$MOCK_GH_LOG"
 
     local run_id
     run_id=$(
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/repo/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/repo/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/repo/scripts/sw-github-checks.sh"
         gh_checks_create_run "testowner" "testrepo" "abc123" "test-check" "in_progress"
     )
 
@@ -238,20 +226,20 @@ test_create_run_handles_403() {
 # 5. gh_checks_update_run: sends correct PATCH request
 # ──────────────────────────────────────────────────────────────────────────────
 test_update_run_sends_patch() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
-    export MOCK_GH_STDIN="$TEMP_DIR/gh-stdin.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
+    export MOCK_GH_STDIN="$TEST_TEMP_DIR/gh-stdin.log"
     export MOCK_GH_FAIL=""
     export MOCK_GH_RESPONSE='{}'
     : > "$MOCK_GH_LOG"
     : > "$MOCK_GH_STDIN"
 
     (
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/repo/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/repo/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/repo/scripts/sw-github-checks.sh"
         gh_checks_update_run "testowner" "testrepo" "12345" "completed" "success" "Build passed" "All tests green" ""
     ) >/dev/null 2>&1
 
@@ -264,17 +252,17 @@ test_update_run_sends_patch() {
 # 6. gh_checks_update_run: skips when run_id empty
 # ──────────────────────────────────────────────────────────────────────────────
 test_update_run_skips_empty_id() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export MOCK_GH_FAIL=""
     : > "$MOCK_GH_LOG"
 
     (
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/repo/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/repo/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/repo/scripts/sw-github-checks.sh"
         gh_checks_update_run "testowner" "testrepo" "" "completed" "success"
     ) >/dev/null 2>&1
 
@@ -288,10 +276,10 @@ test_update_run_skips_empty_id() {
 # 7. gh_checks_annotate: respects 50-annotation limit
 # ──────────────────────────────────────────────────────────────────────────────
 test_annotate_batches_at_50() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
-    export MOCK_GH_STDIN="$TEMP_DIR/gh-stdin.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
+    export MOCK_GH_STDIN="$TEST_TEMP_DIR/gh-stdin.log"
     export MOCK_GH_FAIL=""
     export MOCK_GH_RESPONSE='{}'
     : > "$MOCK_GH_LOG"
@@ -306,10 +294,10 @@ test_annotate_batches_at_50() {
     annotations="${annotations}]"
 
     (
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/repo/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/repo/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/repo/scripts/sw-github-checks.sh"
         gh_checks_annotate "testowner" "testrepo" "12345" "$annotations"
     ) >/dev/null 2>&1
 
@@ -323,19 +311,19 @@ test_annotate_batches_at_50() {
 # 8. gh_checks_list_runs: parses response correctly
 # ──────────────────────────────────────────────────────────────────────────────
 test_list_runs_parses() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export MOCK_GH_FAIL=""
     export MOCK_GH_RESPONSE='{"check_runs":[{"id":111,"name":"build","status":"completed","conclusion":"success","started_at":"2026-01-01T00:00:00Z","completed_at":"2026-01-01T00:05:00Z"},{"id":222,"name":"test","status":"in_progress","conclusion":null,"started_at":"2026-01-01T00:00:00Z","completed_at":null}]}'
     : > "$MOCK_GH_LOG"
 
     local result
     result=$(
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/repo/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/repo/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/repo/scripts/sw-github-checks.sh"
         gh_checks_list_runs "testowner" "testrepo" "abc123"
     )
 
@@ -352,19 +340,19 @@ test_list_runs_parses() {
 # 9. gh_checks_complete: convenience wrapper works
 # ──────────────────────────────────────────────────────────────────────────────
 test_complete_wrapper() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
-    export MOCK_GH_STDIN="$TEMP_DIR/gh-stdin.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
+    export MOCK_GH_STDIN="$TEST_TEMP_DIR/gh-stdin.log"
     export MOCK_GH_FAIL=""
     export MOCK_GH_RESPONSE='{}'
     : > "$MOCK_GH_LOG"
 
     (
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/repo/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/repo/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/repo/scripts/sw-github-checks.sh"
         gh_checks_complete "testowner" "testrepo" "12345" "success" "All good"
     ) >/dev/null 2>&1
 
@@ -377,12 +365,12 @@ test_complete_wrapper() {
 # 10. gh_checks_pipeline_start: creates runs for all stages
 # ──────────────────────────────────────────────────────────────────────────────
 test_pipeline_start_creates_all() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export MOCK_GH_FAIL=""
     # Each create call returns a unique ID based on a counter file
-    cat > "$TEMP_DIR/bin/gh" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'MOCKEOF'
 #!/usr/bin/env bash
 echo "$@" >> "${MOCK_GH_LOG:-/dev/null}"
 if [[ " $* " == *" --input "* ]]; then
@@ -396,17 +384,17 @@ echo "$(( ID + 1 ))" > "$COUNTER_FILE"
 echo "{\"id\": ${ID}, \"name\": \"test\", \"status\": \"queued\"}"
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
-    export MOCK_COUNTER_FILE="$TEMP_DIR/counter"
+    export MOCK_COUNTER_FILE="$TEST_TEMP_DIR/counter"
     echo "1000" > "$MOCK_COUNTER_FILE"
     : > "$MOCK_GH_LOG"
 
     local result
     result=$(
-        source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"
-        REPO_DIR="$TEMP_DIR/repo"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/repo/scripts/sw-github-checks.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
         gh_checks_pipeline_start "testowner" "testrepo" "abc123" '["build","test","review"]'
     )
 
@@ -416,27 +404,27 @@ MOCKEOF
     [[ "$count" -eq 3 ]]
 
     # check-run-ids.json should exist
-    [[ -f "$TEMP_DIR/repo/.claude/pipeline-artifacts/check-run-ids.json" ]]
+    [[ -f "$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts/check-run-ids.json" ]]
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 11. gh_checks_stage_update: looks up stored run IDs
 # ──────────────────────────────────────────────────────────────────────────────
 test_stage_update_uses_stored_ids() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export MOCK_GH_FAIL=""
     export MOCK_GH_RESPONSE='{}'
     : > "$MOCK_GH_LOG"
 
     # Pre-create the check-run-ids.json
-    echo '{"build":"55555","test":"66666","review":"77777"}' > "$TEMP_DIR/repo/.claude/pipeline-artifacts/check-run-ids.json"
+    echo '{"build":"55555","test":"66666","review":"77777"}' > "$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts/check-run-ids.json"
 
     (
-        source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"
-        REPO_DIR="$TEMP_DIR/repo"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/repo/scripts/sw-github-checks.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
         gh_checks_stage_update "test" "completed" "success" "Tests passed"
     ) >/dev/null 2>&1
 
@@ -448,20 +436,20 @@ test_stage_update_uses_stored_ids() {
 # 12. NO_GITHUB: all functions return early
 # ──────────────────────────────────────────────────────────────────────────────
 test_no_github_guard() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export NO_GITHUB="true"
     : > "$MOCK_GH_LOG"
 
     (
         # shellcheck disable=SC2034
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/repo/scripts"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/repo/scripts"
         # shellcheck disable=SC2034
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
         _GH_CHECKS_AVAILABLE=""
-        source "$TEMP_DIR/repo/scripts/sw-github-checks.sh"
+        source "$TEST_TEMP_DIR/repo/scripts/sw-github-checks.sh"
 
         # All of these should return early without calling gh
         gh_checks_create_run "testowner" "testrepo" "abc123" "test" "in_progress"

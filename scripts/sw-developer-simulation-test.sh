@@ -7,46 +7,31 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-# ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-developer-simulation-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/bin"
-    mkdir -p "$TEMP_DIR/repo/.git"
-    mkdir -p "$TEMP_DIR/repo/.claude"
-    mkdir -p "$TEMP_DIR/repo/scripts"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/repo/.git"
+    mkdir -p "$TEST_TEMP_DIR/repo/.claude"
+    mkdir -p "$TEST_TEMP_DIR/repo/scripts"
 
     # Link real utilities
     for cmd in jq date wc cat grep sed awk sort mkdir rm mv cp mktemp basename dirname printf tr cut head tail tee touch find ls bc; do
-        command -v "$cmd" &>/dev/null && ln -sf "$(command -v "$cmd")" "$TEMP_DIR/bin/$cmd"
+        command -v "$cmd" &>/dev/null && ln -sf "$(command -v "$cmd")" "$TEST_TEMP_DIR/bin/$cmd"
     done
 
     # Copy script under test and intelligence dependency
-    cp "$SCRIPT_DIR/sw-developer-simulation.sh" "$TEMP_DIR/repo/scripts/"
-    cp "$SCRIPT_DIR/sw-intelligence.sh" "$TEMP_DIR/repo/scripts/"
+    cp "$SCRIPT_DIR/sw-developer-simulation.sh" "$TEST_TEMP_DIR/repo/scripts/"
+    cp "$SCRIPT_DIR/sw-intelligence.sh" "$TEST_TEMP_DIR/repo/scripts/"
 
     # Create compat.sh stub and copy helpers for color/output
-    mkdir -p "$TEMP_DIR/repo/scripts/lib"
-    touch "$TEMP_DIR/repo/scripts/lib/compat.sh"
-    [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && cp "$SCRIPT_DIR/lib/helpers.sh" "$TEMP_DIR/repo/scripts/lib/"
+    mkdir -p "$TEST_TEMP_DIR/repo/scripts/lib"
+    touch "$TEST_TEMP_DIR/repo/scripts/lib/compat.sh"
+    [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && cp "$SCRIPT_DIR/lib/helpers.sh" "$TEST_TEMP_DIR/repo/scripts/lib/"
 
     # Mock git
-    cat > "$TEMP_DIR/bin/git" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCKEOF'
 #!/usr/bin/env bash
 case "${1:-}" in
     rev-parse)
@@ -63,30 +48,30 @@ case "${1:-}" in
 esac
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Mock shasum for intelligence
-    cat > "$TEMP_DIR/bin/shasum" <<'SHAEOF'
+    cat > "$TEST_TEMP_DIR/bin/shasum" <<'SHAEOF'
 #!/usr/bin/env bash
 echo "abcdef123456  -"
 SHAEOF
-    chmod +x "$TEMP_DIR/bin/shasum"
+    chmod +x "$TEST_TEMP_DIR/bin/shasum"
 
     # Mock md5
-    cat > "$TEMP_DIR/bin/md5" <<'MD5EOF'
+    cat > "$TEST_TEMP_DIR/bin/md5" <<'MD5EOF'
 #!/usr/bin/env bash
 echo "abcdef123456"
 MD5EOF
-    chmod +x "$TEMP_DIR/bin/md5"
+    chmod +x "$TEST_TEMP_DIR/bin/md5"
 
     # Mock claude, gh, tmux
     for mock in gh claude tmux; do
-        printf '#!/usr/bin/env bash\necho "mock %s: $*"\nexit 0\n' "$mock" > "$TEMP_DIR/bin/$mock"
-        chmod +x "$TEMP_DIR/bin/$mock"
+        printf '#!/usr/bin/env bash\necho "mock %s: $*"\nexit 0\n' "$mock" > "$TEST_TEMP_DIR/bin/$mock"
+        chmod +x "$TEST_TEMP_DIR/bin/$mock"
     done
 
     # Daemon config with simulation enabled
-    cat > "$TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
+    cat > "$TEST_TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
 {
     "intelligence": {
         "enabled": true,
@@ -95,28 +80,21 @@ MD5EOF
 }
 EOF
 
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
 }
 
-cleanup_env() {
-    [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
-}
-trap cleanup_env EXIT
+trap cleanup_test_env EXIT
 
 assert_pass() {
     local desc="$1"
-    TOTAL=$((TOTAL + 1))
-    PASS=$((PASS + 1))
     echo -e "  ${GREEN}✓${RESET} ${desc}"
 }
 
 assert_fail() {
     local desc="$1"
     local detail="${2:-}"
-    TOTAL=$((TOTAL + 1))
-    FAIL=$((FAIL + 1))
     FAILURES+=("$desc")
     echo -e "  ${RED}✗${RESET} ${desc}"
     [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
@@ -133,25 +111,16 @@ assert_contains() {
     fi
 }
 
-assert_eq() {
-    local desc="$1" expected="$2" actual="$3"
-    if [[ "$expected" == "$actual" ]]; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "expected: $expected, got: $actual"
-    fi
-}
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env
 
-SUT="$TEMP_DIR/repo/scripts/sw-developer-simulation.sh"
+SUT="$TEST_TEMP_DIR/repo/scripts/sw-developer-simulation.sh"
 
 echo ""
-echo -e "${CYAN}${BOLD}  shipwright developer-simulation test${RESET}"
+print_test_header "shipwright developer-simulation test"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
 
@@ -224,7 +193,7 @@ echo ""
 echo -e "${BOLD}Review Subcommand${RESET}"
 
 # Review without simulation disabled should warn
-cat > "$TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
+cat > "$TEST_TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
 {
     "intelligence": {
         "enabled": true,
@@ -243,7 +212,7 @@ echo ""
 echo -e "${BOLD}Address Subcommand${RESET}"
 
 # Re-enable simulation
-cat > "$TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
+cat > "$TEST_TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
 {
     "intelligence": {
         "enabled": true,
@@ -289,13 +258,5 @@ echo ""
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
-if [[ $FAIL -eq 0 ]]; then
-    echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"
-else
-    echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"
-    for f in "${FAILURES[@]}"; do echo -e "  ${RED}✗${RESET} $f"; done
-fi
-echo ""
-exit "$FAIL"
+print_test_results

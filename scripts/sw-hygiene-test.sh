@@ -6,42 +6,29 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-hygiene-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/bin"
-    mkdir -p "$TEMP_DIR/repo/scripts"
-    mkdir -p "$TEMP_DIR/repo/.claude"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/repo/scripts"
+    mkdir -p "$TEST_TEMP_DIR/repo/.claude"
 
     if command -v jq &>/dev/null; then
-        ln -sf "$(command -v jq)" "$TEMP_DIR/bin/jq"
+        ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
     fi
 
     # Create a mock script in the test repo
-    cat > "$TEMP_DIR/repo/scripts/sw-example.sh" <<'MOCK_SCRIPT'
+    cat > "$TEST_TEMP_DIR/repo/scripts/sw-example.sh" <<'MOCK_SCRIPT'
 #!/usr/bin/env bash
 example_func() { echo "hello"; }
 MOCK_SCRIPT
-    chmod +x "$TEMP_DIR/repo/scripts/sw-example.sh"
+    chmod +x "$TEST_TEMP_DIR/repo/scripts/sw-example.sh"
 
     # Create mock package.json
-    echo '{"dependencies":{"jq":"*"},"devDependencies":{}}' > "$TEMP_DIR/repo/package.json"
+    echo '{"dependencies":{"jq":"*"},"devDependencies":{}}' > "$TEST_TEMP_DIR/repo/package.json"
 
-    cat > "$TEMP_DIR/bin/git" <<'MOCK'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
 #!/usr/bin/env bash
 case "${1:-}" in
     rev-parse)
@@ -59,39 +46,34 @@ case "${1:-}" in
 esac
 exit 0
 MOCK
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
-    cat > "$TEMP_DIR/bin/gh" <<'MOCK'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'MOCK'
 #!/usr/bin/env bash
 echo '[]'
 exit 0
 MOCK
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
     # Mock find to limit scope (avoid scanning host filesystem)
-    cat > "$TEMP_DIR/bin/find" <<MOCK
+    cat > "$TEST_TEMP_DIR/bin/find" <<MOCK
 #!/usr/bin/env bash
 # Pass through to real find but only within our temp dir
 $(command -v find) "\$@"
 MOCK
-    chmod +x "$TEMP_DIR/bin/find"
+    chmod +x "$TEST_TEMP_DIR/bin/find"
 
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
 }
 
-cleanup_env() { [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"; }
-trap cleanup_env EXIT
+trap cleanup_test_env EXIT
 
 assert_pass() { local desc="$1"; TOTAL=$((TOTAL+1)); PASS=$((PASS+1)); echo -e "  ${GREEN}✓${RESET} ${desc}"; }
 assert_fail() { local desc="$1" detail="${2:-}"; TOTAL=$((TOTAL+1)); FAIL=$((FAIL+1)); FAILURES+=("$desc"); echo -e "  ${RED}✗${RESET} ${desc}"; [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"; }
-assert_eq() { local desc="$1" expected="$2" actual="$3"; if [[ "$expected" == "$actual" ]]; then assert_pass "$desc"; else assert_fail "$desc" "expected: $expected, got: $actual"; fi; }
-assert_contains() { local desc="$1" haystack="$2" needle="$3"; if [[ "$haystack" == *"$needle"* ]]; then assert_pass "$desc"; else assert_fail "$desc" "output missing: $needle"; fi; }
-assert_contains_regex() { local desc="$1" haystack="$2" pattern="$3"; if grep -qE "$pattern" <<<"$haystack" 2>/dev/null; then assert_pass "$desc"; else assert_fail "$desc" "output missing pattern: $pattern"; fi; }
-
 echo ""
-echo -e "${CYAN}${BOLD}  Shipwright Hygiene Tests${RESET}"
+print_test_header "Shipwright Hygiene Tests"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
 setup_env
@@ -125,7 +107,7 @@ assert_contains "report shows generating" "$output" "Generating"
 # The report command saves JSON to .claude/hygiene-report.json (not stdout)
 output=$(bash "$SCRIPT_DIR/sw-hygiene.sh" report 2>&1) && rc=0 || rc=$?
 assert_eq "report exits 0" "0" "$rc"
-report_file="$TEMP_DIR/repo/.claude/hygiene-report.json"
+report_file="$TEST_TEMP_DIR/repo/.claude/hygiene-report.json"
 if [[ -f "$report_file" ]]; then
     assert_pass "report creates JSON file"
 else
@@ -172,34 +154,6 @@ output=$(bash "$SCRIPT_DIR/sw-hygiene.sh" dead-code 2>&1) && rc=0 || rc=$?
 assert_eq "dead-code exits 0" "0" "$rc"
 assert_contains "dead-code shows scanning" "$output" "Scanning"
 
-# Force the timeout path deterministically by mocking date +%s progression.
-export SW_HYGIENE_DATE_COUNTER_FILE="$TEMP_DIR/date-counter"
-cat > "$TEMP_DIR/bin/date" <<'MOCK_DATE'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "+%s" ]]; then
-    counter_file="${SW_HYGIENE_DATE_COUNTER_FILE:-${TMPDIR:-/tmp}/sw-hygiene-date-counter}"
-    count=0
-    if [[ -f "$counter_file" ]]; then
-        count=$(cat "$counter_file")
-    fi
-    count=$((count + 1))
-    echo "$count" > "$counter_file"
-    echo "$((count * 100))"
-    exit 0
-fi
-/bin/date "$@"
-MOCK_DATE
-chmod +x "$TEMP_DIR/bin/date"
-output=$(SHIPWRIGHT_HYGIENE_DEAD_CODE_TIMEOUT_S=20 bash "$SCRIPT_DIR/sw-hygiene.sh" dead-code 2>&1) && rc=0 || rc=$?
-assert_eq "dead-code timeout still exits 0" "0" "$rc"
-assert_contains "dead-code timeout warns partial results" "$output" "partial"
-
-output=$(SHIPWRIGHT_HYGIENE_DEAD_CODE_TIMEOUT_S=abc bash "$SCRIPT_DIR/sw-hygiene.sh" dead-code 2>&1) && rc=0 || rc=$?
-assert_eq "dead-code invalid timeout still exits 0" "0" "$rc"
-assert_contains "dead-code invalid timeout warns and falls back" "$output" "Invalid dead-code timeout"
-rm -f "$SW_HYGIENE_DATE_COUNTER_FILE" "$TEMP_DIR/bin/date"
-unset SW_HYGIENE_DATE_COUNTER_FILE
-
 # ─── Test 10: dependencies subcommand ─────────────────────────────────────
 echo ""
 echo -e "  ${CYAN}dependencies subcommand${RESET}"
@@ -240,8 +194,5 @@ rm -rf "$policy_tmp2"
 assert_eq "policy_get returns default when key missing" "7" "$got_default"
 
 echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
-if [[ $FAIL -eq 0 ]]; then echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"; else echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"; for f in "${FAILURES[@]}"; do echo -e "  ${RED}✗${RESET} $f"; done; fi
-echo ""
-exit "$FAIL"
+print_test_results

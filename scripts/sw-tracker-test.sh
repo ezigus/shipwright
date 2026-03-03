@@ -7,50 +7,38 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 # shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-tracker-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/scripts"
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/home/.claude"
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-tracker-test.XXXXXX")
+    mkdir -p "$TEST_TEMP_DIR/scripts"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.claude"
 
     # Copy tracker scripts
-    cp "$SCRIPT_DIR/sw-tracker.sh" "$TEMP_DIR/scripts/"
-    cp "$SCRIPT_DIR/sw-tracker-linear.sh" "$TEMP_DIR/scripts/"
-    cp "$SCRIPT_DIR/sw-tracker-jira.sh" "$TEMP_DIR/scripts/"
-    cp "$SCRIPT_DIR/sw-tracker-github.sh" "$TEMP_DIR/scripts/"
-    cp "$SCRIPT_DIR/sw-pipeline.sh" "$TEMP_DIR/scripts/"
+    cp "$SCRIPT_DIR/sw-tracker.sh" "$TEST_TEMP_DIR/scripts/"
+    cp "$SCRIPT_DIR/sw-tracker-linear.sh" "$TEST_TEMP_DIR/scripts/"
+    cp "$SCRIPT_DIR/sw-tracker-jira.sh" "$TEST_TEMP_DIR/scripts/"
+    cp "$SCRIPT_DIR/sw-tracker-github.sh" "$TEST_TEMP_DIR/scripts/"
+    cp "$SCRIPT_DIR/sw-pipeline.sh" "$TEST_TEMP_DIR/scripts/"
     # Copy lib directory (pipeline-*.sh contain extracted functions)
     if [[ -d "$SCRIPT_DIR/lib" ]]; then
-        cp -r "$SCRIPT_DIR/lib" "$TEMP_DIR/scripts/lib"
+        cp -r "$SCRIPT_DIR/lib" "$TEST_TEMP_DIR/scripts/lib"
     fi
 
     # Mock binaries directory
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
     # Mock jq — pass through to real jq
     if command -v jq &>/dev/null; then
@@ -62,7 +50,7 @@ setup_env() {
     fi
 
     # Mock gh — returns canned issue body
-    cat > "$TEMP_DIR/bin/gh" <<'GH_EOF'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'GH_EOF'
 #!/usr/bin/env bash
 # Mock gh — returns issue body with Linear ID or Jira key
 if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
@@ -75,22 +63,22 @@ if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
 fi
 echo "{}"
 GH_EOF
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
     # Mock curl — logs calls, returns success
-    cat > "$TEMP_DIR/bin/curl" <<'CURL_EOF'
+    cat > "$TEST_TEMP_DIR/bin/curl" <<'CURL_EOF'
 #!/usr/bin/env bash
 # Mock curl — capture and log
 echo "$@" >> "${MOCK_CURL_LOG:-/dev/null}"
 # Return a successful response
 echo '{"data":{"issueUpdate":{"issue":{"id":"abc","identifier":"TEST-1"}}}}'
 CURL_EOF
-    chmod +x "$TEMP_DIR/bin/curl"
+    chmod +x "$TEST_TEMP_DIR/bin/curl"
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -127,16 +115,16 @@ run_test() {
 # 1. Provider loads from config (linear)
 # ──────────────────────────────────────────────────────────────────────────────
 test_provider_loads_linear() {
-    local config="$TEMP_DIR/home/.shipwright/tracker-config.json"
+    local config="$TEST_TEMP_DIR/home/.shipwright/tracker-config.json"
     cat > "$config" <<'EOF'
 {"provider":"linear","linear":{"api_key":"lin_test_key","team_id":"tid","project_id":"pid"}}
 EOF
 
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/scripts/sw-tracker.sh" available 2>&1
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/scripts/sw-tracker.sh" available 2>&1
     ) || true
 
     if printf '%s\n' "$output" | grep -q "true" 2>/dev/null; then
@@ -150,16 +138,16 @@ EOF
 # 2. Provider loads jira
 # ──────────────────────────────────────────────────────────────────────────────
 test_provider_loads_jira() {
-    local config="$TEMP_DIR/home/.shipwright/tracker-config.json"
+    local config="$TEST_TEMP_DIR/home/.shipwright/tracker-config.json"
     cat > "$config" <<'EOF'
 {"provider":"jira","jira":{"base_url":"https://test.atlassian.net","email":"a@b.com","api_token":"tok","project_key":"PROJ"}}
 EOF
 
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/scripts/sw-tracker.sh" available 2>&1
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/scripts/sw-tracker.sh" available 2>&1
     ) || true
 
     if printf '%s\n' "$output" | grep -q "true" 2>/dev/null; then
@@ -173,7 +161,7 @@ EOF
 # 3. Graceful skip when no provider
 # ──────────────────────────────────────────────────────────────────────────────
 test_graceful_skip_no_provider() {
-    local config="$TEMP_DIR/home/.shipwright/tracker-config.json"
+    local config="$TEST_TEMP_DIR/home/.shipwright/tracker-config.json"
     cat > "$config" <<'EOF'
 {"provider":"none"}
 EOF
@@ -181,9 +169,9 @@ EOF
     local exit_code=0
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/scripts/sw-tracker.sh" notify spawn 42 2>&1
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/scripts/sw-tracker.sh" notify spawn 42 2>&1
     ) || exit_code=$?
 
     # Should exit cleanly (0) even with no provider
@@ -198,13 +186,13 @@ EOF
 # 4. Stage descriptions exist for all 12 stages
 # ──────────────────────────────────────────────────────────────────────────────
 test_stage_descriptions_all_12() {
-    local pipeline_script="$TEMP_DIR/scripts/sw-pipeline.sh"
+    local pipeline_script="$TEST_TEMP_DIR/scripts/sw-pipeline.sh"
     local stages=(intake plan design build test review compound_quality pr merge deploy validate monitor)
     local missing=0
 
     # Check across pipeline and lib files
     local all_sources="$pipeline_script"
-    [[ -d "$TEMP_DIR/scripts/lib" ]] && all_sources="$all_sources $TEMP_DIR/scripts/lib/pipeline-*.sh"
+    [[ -d "$TEST_TEMP_DIR/scripts/lib" ]] && all_sources="$all_sources $TEST_TEMP_DIR/scripts/lib/pipeline-*.sh"
 
     for stage in "${stages[@]}"; do
         if ! grep -q "^        ${stage})" $all_sources 2>/dev/null; then
@@ -226,9 +214,9 @@ test_stage_descriptions_all_12() {
 # 5. Enriched progress body has Delivering line
 # ──────────────────────────────────────────────────────────────────────────────
 test_enriched_progress_delivering() {
-    local pipeline_script="$TEMP_DIR/scripts/sw-pipeline.sh"
+    local pipeline_script="$TEST_TEMP_DIR/scripts/sw-pipeline.sh"
     local all_sources="$pipeline_script"
-    [[ -d "$TEMP_DIR/scripts/lib" ]] && all_sources="$all_sources $TEMP_DIR/scripts/lib/pipeline-*.sh"
+    [[ -d "$TEST_TEMP_DIR/scripts/lib" ]] && all_sources="$all_sources $TEST_TEMP_DIR/scripts/lib/pipeline-*.sh"
 
     if grep -q '^\*\*Delivering:\*\*' $all_sources 2>/dev/null; then
         return 0
@@ -241,9 +229,9 @@ test_enriched_progress_delivering() {
 # 6. Enriched progress body has stage descriptions
 # ──────────────────────────────────────────────────────────────────────────────
 test_enriched_progress_stage_descriptions() {
-    local pipeline_script="$TEMP_DIR/scripts/sw-pipeline.sh"
+    local pipeline_script="$TEST_TEMP_DIR/scripts/sw-pipeline.sh"
     local all_sources="$pipeline_script"
-    [[ -d "$TEMP_DIR/scripts/lib" ]] && all_sources="$all_sources $TEMP_DIR/scripts/lib/pipeline-*.sh"
+    [[ -d "$TEST_TEMP_DIR/scripts/lib" ]] && all_sources="$all_sources $TEST_TEMP_DIR/scripts/lib/pipeline-*.sh"
 
     # The progress body should call get_stage_description
     if grep -q 'get_stage_description' $all_sources 2>/dev/null; then
@@ -257,9 +245,9 @@ test_enriched_progress_stage_descriptions() {
 # 7. Pipeline state includes stage_progress
 # ──────────────────────────────────────────────────────────────────────────────
 test_pipeline_state_stage_progress() {
-    local pipeline_script="$TEMP_DIR/scripts/sw-pipeline.sh"
+    local pipeline_script="$TEST_TEMP_DIR/scripts/sw-pipeline.sh"
     local all_sources="$pipeline_script"
-    [[ -d "$TEMP_DIR/scripts/lib" ]] && all_sources="$all_sources $TEMP_DIR/scripts/lib/pipeline-*.sh"
+    [[ -d "$TEST_TEMP_DIR/scripts/lib" ]] && all_sources="$all_sources $TEST_TEMP_DIR/scripts/lib/pipeline-*.sh"
 
     if grep -q 'stage_progress:' $all_sources 2>/dev/null; then
         return 0
@@ -272,9 +260,9 @@ test_pipeline_state_stage_progress() {
 # 8. Pipeline state includes stage description
 # ──────────────────────────────────────────────────────────────────────────────
 test_pipeline_state_stage_description() {
-    local pipeline_script="$TEMP_DIR/scripts/sw-pipeline.sh"
+    local pipeline_script="$TEST_TEMP_DIR/scripts/sw-pipeline.sh"
     local all_sources="$pipeline_script"
-    [[ -d "$TEMP_DIR/scripts/lib" ]] && all_sources="$all_sources $TEMP_DIR/scripts/lib/pipeline-*.sh"
+    [[ -d "$TEST_TEMP_DIR/scripts/lib" ]] && all_sources="$all_sources $TEST_TEMP_DIR/scripts/lib/pipeline-*.sh"
 
     if grep -q 'current_stage_description:' $all_sources 2>/dev/null; then
         return 0
@@ -287,13 +275,13 @@ test_pipeline_state_stage_description() {
 # 9. Tracker notify routes to provider (mock provider)
 # ──────────────────────────────────────────────────────────────────────────────
 test_tracker_notify_routes() {
-    local config="$TEMP_DIR/home/.shipwright/tracker-config.json"
+    local config="$TEST_TEMP_DIR/home/.shipwright/tracker-config.json"
     cat > "$config" <<'EOF'
 {"provider":"linear","linear":{"api_key":"lin_test_key","team_id":"tid","project_id":"pid"}}
 EOF
 
-    local curl_log="$TEMP_DIR/curl-notify.log"
-    local events_file="$TEMP_DIR/home/.shipwright/events.jsonl"
+    local curl_log="$TEST_TEMP_DIR/curl-notify.log"
+    local events_file="$TEST_TEMP_DIR/home/.shipwright/events.jsonl"
     rm -f "$curl_log" "$events_file"
 
     # Set up mock gh to return body with Linear ID
@@ -303,9 +291,9 @@ EOF
     local exit_code=0
     local output
     output=$(
-        HOME="$TEMP_DIR/home" \
-        PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/scripts/sw-tracker.sh" notify spawn 42 2>&1
+        HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/scripts/sw-tracker.sh" notify spawn 42 2>&1
     ) || exit_code=$?
 
     unset MOCK_GH_BODY MOCK_CURL_LOG
@@ -335,7 +323,7 @@ EOF
 # ──────────────────────────────────────────────────────────────────────────────
 test_dashboard_reads_goal() {
     # Create a mock pipeline state file
-    local state_dir="$TEMP_DIR/home/.claude"
+    local state_dir="$TEST_TEMP_DIR/home/.claude"
     mkdir -p "$state_dir"
     cat > "$state_dir/pipeline-state.md" <<'EOF'
 ---
@@ -362,7 +350,7 @@ EOF
 # 11. Jira config validation
 # ──────────────────────────────────────────────────────────────────────────────
 test_jira_config_validation() {
-    local config="$TEMP_DIR/home/.shipwright/tracker-config.json"
+    local config="$TEST_TEMP_DIR/home/.shipwright/tracker-config.json"
 
     # Write complete Jira config
     cat > "$config" <<'EOF'
@@ -402,13 +390,13 @@ EOF
 # ──────────────────────────────────────────────────────────────────────────────
 test_linear_config_migration() {
     # Create a legacy linear-config.json (old format used by sw-linear.sh)
-    local legacy_config="$TEMP_DIR/home/.shipwright/linear-config.json"
+    local legacy_config="$TEST_TEMP_DIR/home/.shipwright/linear-config.json"
     cat > "$legacy_config" <<'EOF'
 {"api_key":"lin_legacy_key_123","team_id":"legacy-tid","project_id":"legacy-pid"}
 EOF
 
     # Create a tracker config that points to linear but has no api_key
-    local config="$TEMP_DIR/home/.shipwright/tracker-config.json"
+    local config="$TEST_TEMP_DIR/home/.shipwright/tracker-config.json"
     cat > "$config" <<'EOF'
 {"provider":"linear","linear":{"api_key":"","team_id":"","project_id":""}}
 EOF
@@ -416,9 +404,9 @@ EOF
     # The Linear provider should fall back to legacy config for API key
     local api_key
     api_key=$(
-        HOME="$TEMP_DIR/home" \
+        HOME="$TEST_TEMP_DIR/home" \
         bash -c '
-            source "'"$TEMP_DIR/scripts/sw-tracker-linear.sh"'"
+            source "'"$TEST_TEMP_DIR/scripts/sw-tracker-linear.sh"'"
             provider_load_config
             echo "$LINEAR_API_KEY"
         ' 2>/dev/null
@@ -480,30 +468,30 @@ echo ""
 echo -e "${PURPLE}${BOLD}GitHub Adapter${RESET}"
 
 test_github_adapter_exists() {
-    [[ -f "$TEMP_DIR/scripts/sw-tracker-github.sh" ]]
+    [[ -f "$TEST_TEMP_DIR/scripts/sw-tracker-github.sh" ]]
 }
 
 test_github_adapter_has_provider_discover() {
-    grep -q "provider_discover_issues" "$TEMP_DIR/scripts/sw-tracker-github.sh"
+    grep -q "provider_discover_issues" "$TEST_TEMP_DIR/scripts/sw-tracker-github.sh"
 }
 
 test_github_adapter_has_provider_get_issue() {
-    grep -q "provider_get_issue" "$TEMP_DIR/scripts/sw-tracker-github.sh"
+    grep -q "provider_get_issue" "$TEST_TEMP_DIR/scripts/sw-tracker-github.sh"
 }
 
 test_github_adapter_has_provider_comment() {
-    grep -q "provider_comment" "$TEMP_DIR/scripts/sw-tracker-github.sh"
+    grep -q "provider_comment" "$TEST_TEMP_DIR/scripts/sw-tracker-github.sh"
 }
 
 test_github_adapter_has_provider_create_issue() {
-    grep -q "provider_create_issue" "$TEMP_DIR/scripts/sw-tracker-github.sh"
+    grep -q "provider_create_issue" "$TEST_TEMP_DIR/scripts/sw-tracker-github.sh"
 }
 
 test_github_adapter_no_github_guard() {
     # provider_discover_issues should return empty when NO_GITHUB=1
     (
         export NO_GITHUB=1
-        source "$TEMP_DIR/scripts/sw-tracker-github.sh"
+        source "$TEST_TEMP_DIR/scripts/sw-tracker-github.sh"
         local result
         result=$(provider_discover_issues "shipwright" "open" 10 2>/dev/null)
         [[ -z "$result" || "$result" == "" ]]

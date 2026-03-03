@@ -8,51 +8,39 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 # shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
 # shellcheck disable=SC2034
 BLUE='\033[38;2;0;102;255m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-db-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright/heartbeats"
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/project"
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-db-test.XXXXXX")
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright/heartbeats"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/project"
 
     # Copy sw-db.sh under test
-    cp "$SCRIPT_DIR/sw-db.sh" "$TEMP_DIR/"
+    cp "$SCRIPT_DIR/sw-db.sh" "$TEST_TEMP_DIR/"
 
     # Set up mock environment
-    export HOME="$TEMP_DIR/home"
-    export DB_DIR="$TEMP_DIR/home/.shipwright"
+    export HOME="$TEST_TEMP_DIR/home"
+    export DB_DIR="$TEST_TEMP_DIR/home/.shipwright"
     export DB_FILE="$DB_DIR/shipwright.db"
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -88,7 +76,7 @@ run_test() {
 source_db() {
     # Reset the double-source guard so we can re-source
     _SW_DB_LOADED=""
-    source "$TEMP_DIR/sw-db.sh"
+    source "$TEST_TEMP_DIR/sw-db.sh"
 }
 
 # Clean all data from tables (but keep schema) for test isolation
@@ -213,7 +201,7 @@ test_db_available() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_db_available_fallback() {
     # Create an empty directory to use as PATH (no sqlite3)
-    local empty_bin="$TEMP_DIR/empty_bin"
+    local empty_bin="$TEST_TEMP_DIR/empty_bin"
     mkdir -p "$empty_bin"
 
     local old_path="$PATH"

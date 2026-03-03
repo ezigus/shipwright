@@ -7,47 +7,35 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 # shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-docs-test.XXXXXX")
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-docs-test.XXXXXX")
 
     # Create repo structure
-    mkdir -p "$TEMP_DIR/scripts/lib"
-    mkdir -p "$TEMP_DIR/.claude"
-    mkdir -p "$TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/scripts/lib"
+    mkdir -p "$TEST_TEMP_DIR/.claude"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
 
     # Copy the docs script under test
-    cp "$SCRIPT_DIR/sw-docs.sh" "$TEMP_DIR/scripts/"
+    cp "$SCRIPT_DIR/sw-docs.sh" "$TEST_TEMP_DIR/scripts/"
 
     # Create compat.sh stub
-    touch "$TEMP_DIR/scripts/lib/compat.sh"
+    touch "$TEST_TEMP_DIR/scripts/lib/compat.sh"
 
     # Create fake shell scripts with proper headers for purpose extraction
-    cat > "$TEMP_DIR/scripts/sw-alpha.sh" <<'SCRIPT'
+    cat > "$TEST_TEMP_DIR/scripts/sw-alpha.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright alpha — Alpha Feature Module                                ║
@@ -56,7 +44,7 @@ set -euo pipefail
 echo "alpha"
 SCRIPT
 
-    cat > "$TEMP_DIR/scripts/sw-beta.sh" <<'SCRIPT'
+    cat > "$TEST_TEMP_DIR/scripts/sw-beta.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright beta — Beta Feature Module                                  ║
@@ -66,7 +54,7 @@ echo "beta"
 SCRIPT
 
     # A test file that should be excluded from core-scripts
-    cat > "$TEMP_DIR/scripts/sw-alpha-test.sh" <<'SCRIPT'
+    cat > "$TEST_TEMP_DIR/scripts/sw-alpha-test.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright alpha test — Validate alpha module                          ║
@@ -76,7 +64,7 @@ echo "test"
 SCRIPT
 
     # A github module that should be excluded from core-scripts
-    cat > "$TEMP_DIR/scripts/sw-github-thing.sh" <<'SCRIPT'
+    cat > "$TEST_TEMP_DIR/scripts/sw-github-thing.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright github thing — GitHub Thing Integration                     ║
@@ -86,13 +74,13 @@ echo "github"
 SCRIPT
 
     # CLI router
-    cat > "$TEMP_DIR/scripts/sw" <<'SCRIPT'
+    cat > "$TEST_TEMP_DIR/scripts/sw" <<'SCRIPT'
 #!/usr/bin/env bash
 echo "CLI router"
 SCRIPT
 
     # Create mock sw-daemon.sh with intelligence config
-    cat > "$TEMP_DIR/scripts/sw-daemon.sh" <<'DAEMON'
+    cat > "$TEST_TEMP_DIR/scripts/sw-daemon.sh" <<'DAEMON'
 #!/usr/bin/env bash
 # some daemon code above
 cat <<CONFIGEOF
@@ -111,7 +99,7 @@ CONFIGEOF
 DAEMON
 
     # Create .claude/CLAUDE.md with AUTO markers
-    cat > "$TEMP_DIR/.claude/CLAUDE.md" <<'MARKDOWN'
+    cat > "$TEST_TEMP_DIR/.claude/CLAUDE.md" <<'MARKDOWN'
 # Test Docs
 
 ## Core Scripts
@@ -136,10 +124,10 @@ End of doc.
 MARKDOWN
 
     # Mock binaries
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
     # Mock git (needed by docs_report for file freshness)
-    cat > "$TEMP_DIR/bin/git" <<'GITEOF'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'GITEOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "log" ]]; then
     echo "2 days ago"
@@ -151,25 +139,25 @@ if [[ "${1:-}" == "-C" ]]; then
 fi
 echo "mock-git"
 GITEOF
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Mock gh
-    cat > "$TEMP_DIR/bin/gh" <<'GHEOF'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
 echo ""
 exit 1
 GHEOF
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
     # Mock jq (pass through to real jq if available)
     if command -v jq &>/dev/null; then
-        ln -sf "$(command -v jq)" "$TEMP_DIR/bin/jq"
+        ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
     fi
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -177,11 +165,11 @@ trap cleanup_env EXIT
 # Helper to run sw-docs.sh in the temp repo context
 run_docs() {
     (
-        cd "$TEMP_DIR"
-        PATH="$TEMP_DIR/bin:$PATH" \
-        HOME="$TEMP_DIR/home" \
+        cd "$TEST_TEMP_DIR"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        HOME="$TEST_TEMP_DIR/home" \
         NO_GITHUB=true \
-            bash "$TEMP_DIR/scripts/sw-docs.sh" "$@"
+            bash "$TEST_TEMP_DIR/scripts/sw-docs.sh" "$@"
     )
 }
 
@@ -232,7 +220,7 @@ test_find_auto_files() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_get_sections() {
     local sections
-    sections=$(grep -oE '<!-- AUTO:[a-z0-9_-]+ -->' "$TEMP_DIR/.claude/CLAUDE.md" | sed 's/<!-- AUTO://;s/ -->//')
+    sections=$(grep -oE '<!-- AUTO:[a-z0-9_-]+ -->' "$TEST_TEMP_DIR/.claude/CLAUDE.md" | sed 's/<!-- AUTO://;s/ -->//')
 
     local found_core=false found_test=false found_flags=false
     while IFS= read -r s; do
@@ -266,7 +254,7 @@ test_gen_architecture_table() {
         /<!-- AUTO:core-scripts -->/ { capture=1; next }
         /<!-- \/AUTO:core-scripts -->/ { capture=0 }
         capture { print }
-    ' "$TEMP_DIR/.claude/CLAUDE.md")
+    ' "$TEST_TEMP_DIR/.claude/CLAUDE.md")
 
     # Should have table headers
     if ! echo "$content" | grep -q "| File | Lines | Purpose |"; then
@@ -303,7 +291,7 @@ test_gen_table_includes_cli_router() {
         /<!-- AUTO:core-scripts -->/ { capture=1; next }
         /<!-- \/AUTO:core-scripts -->/ { capture=0 }
         capture { print }
-    ' "$TEMP_DIR/.claude/CLAUDE.md")
+    ' "$TEST_TEMP_DIR/.claude/CLAUDE.md")
 
     if ! echo "$content" | grep -q "scripts/sw"; then
         return 1
@@ -325,7 +313,7 @@ test_gen_feature_flags() {
         /<!-- AUTO:feature-flags -->/ { capture=1; next }
         /<!-- \/AUTO:feature-flags -->/ { capture=0 }
         capture { print }
-    ' "$TEMP_DIR/.claude/CLAUDE.md")
+    ' "$TEST_TEMP_DIR/.claude/CLAUDE.md")
 
     # Should have table header
     if ! echo "$content" | grep -q "| Flag | Default | Purpose |"; then
@@ -357,7 +345,7 @@ test_gen_test_suites_table() {
         /<!-- AUTO:test-suites -->/ { capture=1; next }
         /<!-- \/AUTO:test-suites -->/ { capture=0 }
         capture { print }
-    ' "$TEMP_DIR/.claude/CLAUDE.md")
+    ' "$TEST_TEMP_DIR/.claude/CLAUDE.md")
 
     # Should have sw-alpha-test.sh in the test suites section
     if ! echo "$content" | grep -q "sw-alpha-test.sh"; then
@@ -375,7 +363,7 @@ test_gen_test_suites_table() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_check_section_fresh_and_stale() {
     # Create a simple test file with AUTO markers
-    local test_md="$TEMP_DIR/test-check.md"
+    local test_md="$TEST_TEMP_DIR/test-check.md"
     cat > "$test_md" <<'MD'
 # Test
 <!-- AUTO:sample -->
@@ -407,7 +395,7 @@ MD
 # 8. docs_replace_section updates content between markers
 # ──────────────────────────────────────────────────────────────────────────────
 test_replace_section() {
-    local test_md="$TEMP_DIR/test-replace.md"
+    local test_md="$TEST_TEMP_DIR/test-replace.md"
     cat > "$test_md" <<'MD'
 # Before
 <!-- AUTO:widget -->
@@ -469,10 +457,10 @@ MD
 # ──────────────────────────────────────────────────────────────────────────────
 test_docs_check_stale() {
     # Clean up any .md files created by earlier tests (they have AUTO markers that confuse docs_find_auto_files)
-    rm -f "$TEMP_DIR/test-check.md" "$TEMP_DIR/test-replace.md"
+    rm -f "$TEST_TEMP_DIR/test-check.md" "$TEST_TEMP_DIR/test-replace.md"
 
     # Reset the CLAUDE.md with stale content
-    cat > "$TEMP_DIR/.claude/CLAUDE.md" <<'MARKDOWN'
+    cat > "$TEST_TEMP_DIR/.claude/CLAUDE.md" <<'MARKDOWN'
 # Test Docs
 
 ## Core Scripts
@@ -498,10 +486,10 @@ MARKDOWN
 # ──────────────────────────────────────────────────────────────────────────────
 test_docs_sync_then_fresh() {
     # Clean up stray .md files from earlier tests
-    rm -f "$TEMP_DIR/test-check.md" "$TEMP_DIR/test-replace.md"
+    rm -f "$TEST_TEMP_DIR/test-check.md" "$TEST_TEMP_DIR/test-replace.md"
 
     # Reset with stale content
-    cat > "$TEMP_DIR/.claude/CLAUDE.md" <<'MARKDOWN'
+    cat > "$TEST_TEMP_DIR/.claude/CLAUDE.md" <<'MARKDOWN'
 # Test Docs
 
 ## Core Scripts
@@ -543,7 +531,7 @@ MARKDOWN
 # ──────────────────────────────────────────────────────────────────────────────
 test_docs_sync_idempotent() {
     # Clean up stray .md files from earlier tests
-    rm -f "$TEMP_DIR/test-check.md" "$TEMP_DIR/test-replace.md"
+    rm -f "$TEST_TEMP_DIR/test-check.md" "$TEST_TEMP_DIR/test-replace.md"
 
     # First sync
     run_docs sync >/dev/null 2>&1 || true
@@ -617,10 +605,10 @@ test_default_shows_help() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_no_auto_markers() {
     # Clean up any .md files from earlier tests that have AUTO markers
-    rm -f "$TEMP_DIR/test-check.md" "$TEMP_DIR/test-replace.md"
+    rm -f "$TEST_TEMP_DIR/test-check.md" "$TEST_TEMP_DIR/test-replace.md"
 
     # Overwrite CLAUDE.md with no markers
-    cat > "$TEMP_DIR/.claude/CLAUDE.md" <<'MARKDOWN'
+    cat > "$TEST_TEMP_DIR/.claude/CLAUDE.md" <<'MARKDOWN'
 # Plain Docs
 No auto markers here.
 MARKDOWN
@@ -638,7 +626,7 @@ MARKDOWN
 # 16. Multiple sections in one file all get processed
 # ──────────────────────────────────────────────────────────────────────────────
 test_multiple_sections() {
-    cat > "$TEMP_DIR/.claude/CLAUDE.md" <<'MARKDOWN'
+    cat > "$TEST_TEMP_DIR/.claude/CLAUDE.md" <<'MARKDOWN'
 # Multi Section Doc
 
 <!-- AUTO:core-scripts -->
@@ -660,9 +648,9 @@ MARKDOWN
 
     # Verify each section was updated
     local core_content test_content flag_content
-    core_content=$(awk '/<!-- AUTO:core-scripts -->/{c=1;next}/<!-- \/AUTO:core-scripts -->/{c=0}c' "$TEMP_DIR/.claude/CLAUDE.md")
-    test_content=$(awk '/<!-- AUTO:test-suites -->/{c=1;next}/<!-- \/AUTO:test-suites -->/{c=0}c' "$TEMP_DIR/.claude/CLAUDE.md")
-    flag_content=$(awk '/<!-- AUTO:feature-flags -->/{c=1;next}/<!-- \/AUTO:feature-flags -->/{c=0}c' "$TEMP_DIR/.claude/CLAUDE.md")
+    core_content=$(awk '/<!-- AUTO:core-scripts -->/{c=1;next}/<!-- \/AUTO:core-scripts -->/{c=0}c' "$TEST_TEMP_DIR/.claude/CLAUDE.md")
+    test_content=$(awk '/<!-- AUTO:test-suites -->/{c=1;next}/<!-- \/AUTO:test-suites -->/{c=0}c' "$TEST_TEMP_DIR/.claude/CLAUDE.md")
+    flag_content=$(awk '/<!-- AUTO:feature-flags -->/{c=1;next}/<!-- \/AUTO:feature-flags -->/{c=0}c' "$TEST_TEMP_DIR/.claude/CLAUDE.md")
 
     # None should still say "stale"
     if echo "$core_content" | grep -q "^stale$"; then
@@ -676,7 +664,7 @@ MARKDOWN
     fi
 
     # Verify middle text preserved
-    if ! grep -q "Middle text." "$TEMP_DIR/.claude/CLAUDE.md"; then
+    if ! grep -q "Middle text." "$TEST_TEMP_DIR/.claude/CLAUDE.md"; then
         return 1
     fi
     return 0
@@ -689,7 +677,7 @@ test_purpose_extraction() {
     run_docs sync >/dev/null 2>&1 || true
 
     local content
-    content=$(awk '/<!-- AUTO:core-scripts -->/{c=1;next}/<!-- \/AUTO:core-scripts -->/{c=0}c' "$TEMP_DIR/.claude/CLAUDE.md")
+    content=$(awk '/<!-- AUTO:core-scripts -->/{c=1;next}/<!-- \/AUTO:core-scripts -->/{c=0}c' "$TEST_TEMP_DIR/.claude/CLAUDE.md")
 
     # sw-alpha.sh header says "Alpha Feature Module"
     if ! echo "$content" | grep -q "Alpha Feature Module"; then
@@ -707,7 +695,7 @@ test_purpose_extraction() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_wiki_dry_run() {
     # Create a minimal README
-    echo "# Shipwright" > "$TEMP_DIR/README.md"
+    echo "# Shipwright" > "$TEST_TEMP_DIR/README.md"
 
     local exit_code=0
     run_docs wiki --dry-run >/dev/null 2>&1 || exit_code=$?

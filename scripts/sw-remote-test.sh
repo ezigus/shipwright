@@ -7,50 +7,38 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 # shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-remote-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/scripts"
-    mkdir -p "$TEMP_DIR/home/.shipwright"
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-remote-test.XXXXXX")
+    mkdir -p "$TEST_TEMP_DIR/scripts"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
 
     # Copy remote script and helpers for color/output
-    cp "$SCRIPT_DIR/sw-remote.sh" "$TEMP_DIR/scripts/"
-    mkdir -p "$TEMP_DIR/scripts/lib"
-    [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && cp "$SCRIPT_DIR/lib/helpers.sh" "$TEMP_DIR/scripts/lib/"
+    cp "$SCRIPT_DIR/sw-remote.sh" "$TEST_TEMP_DIR/scripts/"
+    mkdir -p "$TEST_TEMP_DIR/scripts/lib"
+    [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && cp "$SCRIPT_DIR/lib/helpers.sh" "$TEST_TEMP_DIR/scripts/lib/"
 
     # Create a mock shipwright installation structure for localhost checks
-    mkdir -p "$TEMP_DIR/mock-install/scripts"
-    touch "$TEMP_DIR/mock-install/scripts/sw"
+    mkdir -p "$TEST_TEMP_DIR/mock-install/scripts"
+    touch "$TEST_TEMP_DIR/mock-install/scripts/sw"
 
     # Mock binaries directory
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
     # Mock ssh — always succeeds
-    cat > "$TEMP_DIR/bin/ssh" <<'EOF'
+    cat > "$TEST_TEMP_DIR/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 # Mock ssh — log call and return success
 echo "$@" >> "${MOCK_SSH_LOG:-/dev/null}"
@@ -71,7 +59,7 @@ if echo "$@" | grep -q "free\|vm_stat\|sysctl.*memsize"; then
 fi
 exit 0
 EOF
-    chmod +x "$TEMP_DIR/bin/ssh"
+    chmod +x "$TEST_TEMP_DIR/bin/ssh"
 
     # Mock jq — use real jq
     if ! command -v jq &>/dev/null; then
@@ -81,8 +69,8 @@ EOF
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -119,17 +107,17 @@ run_test() {
 # 1. Add machine creates machines.json
 # ──────────────────────────────────────────────────────────────────────────────
 test_add_machine() {
-    rm -f "$TEMP_DIR/home/.shipwright/machines.json"
+    rm -f "$TEST_TEMP_DIR/home/.shipwright/machines.json"
 
-    HOME="$TEMP_DIR/home" \
-    PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/scripts/sw-remote.sh" add "builder-1" \
+    HOME="$TEST_TEMP_DIR/home" \
+    PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/scripts/sw-remote.sh" add "builder-1" \
             --host "localhost" \
-            --path "$TEMP_DIR/mock-install" \
+            --path "$TEST_TEMP_DIR/mock-install" \
             --user "deploy" \
             --max-workers 4 2>/dev/null
 
-    local machines_file="$TEMP_DIR/home/.shipwright/machines.json"
+    local machines_file="$TEST_TEMP_DIR/home/.shipwright/machines.json"
     if [[ ! -f "$machines_file" ]]; then
         echo -e "    ${RED}✗${RESET} machines.json not created"
         return 1
@@ -149,14 +137,14 @@ test_add_machine() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_add_second_machine() {
     # First machine should still be there
-    HOME="$TEMP_DIR/home" \
-    PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/scripts/sw-remote.sh" add "builder-2" \
+    HOME="$TEST_TEMP_DIR/home" \
+    PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/scripts/sw-remote.sh" add "builder-2" \
             --host "localhost" \
-            --path "$TEMP_DIR/mock-install" \
+            --path "$TEST_TEMP_DIR/mock-install" \
             --max-workers 8 2>/dev/null
 
-    local machines_file="$TEMP_DIR/home/.shipwright/machines.json"
+    local machines_file="$TEST_TEMP_DIR/home/.shipwright/machines.json"
     local count
     count=$(jq '.machines | length' "$machines_file")
     if [[ "$count" -ne 2 ]]; then
@@ -170,11 +158,11 @@ test_add_second_machine() {
 # 3. Remove machine by name
 # ──────────────────────────────────────────────────────────────────────────────
 test_remove_machine() {
-    HOME="$TEMP_DIR/home" \
-    PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/scripts/sw-remote.sh" remove "builder-2" 2>/dev/null
+    HOME="$TEST_TEMP_DIR/home" \
+    PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/scripts/sw-remote.sh" remove "builder-2" 2>/dev/null
 
-    local machines_file="$TEMP_DIR/home/.shipwright/machines.json"
+    local machines_file="$TEST_TEMP_DIR/home/.shipwright/machines.json"
     local count
     count=$(jq '.machines | length' "$machines_file")
     if [[ "$count" -ne 1 ]]; then
@@ -197,8 +185,8 @@ test_remove_machine() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_list_machines() {
     local output
-    output=$(HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-remote.sh" list 2>/dev/null)
+    output=$(HOME="$TEST_TEMP_DIR/home" \
+        bash "$TEST_TEMP_DIR/scripts/sw-remote.sh" list 2>/dev/null)
 
     # Should contain machine info
     if printf '%s\n' "$output" | grep -q "builder-1" 2>/dev/null; then
@@ -213,7 +201,7 @@ test_list_machines() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_atomic_write() {
     # The remote script should use atomic writes (look for tmp_file + mv pattern)
-    local script="$TEMP_DIR/scripts/sw-remote.sh"
+    local script="$TEST_TEMP_DIR/scripts/sw-remote.sh"
     if grep -q "tmp_file" "$script" 2>/dev/null && grep -q "mv " "$script" 2>/dev/null; then
         return 0
     fi
@@ -226,16 +214,16 @@ test_atomic_write() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_duplicate_machine_prevented() {
     local exit_code=0
-    HOME="$TEMP_DIR/home" \
-    PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/scripts/sw-remote.sh" add "builder-1" \
+    HOME="$TEST_TEMP_DIR/home" \
+    PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/scripts/sw-remote.sh" add "builder-1" \
             --host "localhost" \
-            --path "$TEMP_DIR/mock-install" 2>/dev/null || exit_code=$?
+            --path "$TEST_TEMP_DIR/mock-install" 2>/dev/null || exit_code=$?
 
     # Should fail because builder-1 already exists
     if [[ "$exit_code" -eq 0 ]]; then
         # Check that it didn't add a duplicate
-        local machines_file="$TEMP_DIR/home/.shipwright/machines.json"
+        local machines_file="$TEST_TEMP_DIR/home/.shipwright/machines.json"
         local count
         count=$(jq '[.machines[] | select(.name == "builder-1")] | length' "$machines_file" 2>/dev/null || echo 0)
         if [[ "$count" -gt 1 ]]; then
@@ -252,7 +240,7 @@ test_duplicate_machine_prevented() {
 test_remote_help() {
     local exit_code=0
     local output
-    output=$(bash "$TEMP_DIR/scripts/sw-remote.sh" help 2>&1) || exit_code=$?
+    output=$(bash "$TEST_TEMP_DIR/scripts/sw-remote.sh" help 2>&1) || exit_code=$?
 
     if printf '%s\n' "$output" | grep -qi "usage\|remote\|machine" 2>/dev/null; then
         return 0

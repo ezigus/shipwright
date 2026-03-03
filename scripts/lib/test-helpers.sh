@@ -12,7 +12,7 @@
 #   Colors, counters, assert_pass/fail/eq/contains/contains_regex/gt/json_key
 #   setup_test_env / cleanup_test_env  (temp dir, mock PATH, mock HOME)
 #   print_test_header / print_test_results
-#   Mock helpers: mock_binary, mock_jq, mock_git, mock_gh, mock_claude, mock_codex
+#   Mock helpers: mock_binary, mock_jq, mock_git, mock_gh, mock_claude
 
 [[ -n "${_TEST_HELPERS_LOADED:-}" ]] && return 0
 _TEST_HELPERS_LOADED=1
@@ -22,6 +22,7 @@ CYAN='\033[38;2;0;212;255m'
 GREEN='\033[38;2;74;222;128m'
 RED='\033[38;2;248;113;113m'
 YELLOW='\033[38;2;250;204;21m'
+PURPLE='\033[38;2;168;85;247m'
 DIM='\033[2m'
 BOLD='\033[1m'
 RESET='\033[0m'
@@ -31,7 +32,16 @@ PASS=0
 FAIL=0
 TOTAL=0
 FAILURES=()
-TEST_TEMP_DIR=""
+
+# ─── Auto-initialize TEST_TEMP_DIR ──────────────────────────────────────────
+# Many test files use TEST_TEMP_DIR in their setup_env() without calling
+# setup_test_env(). Auto-create a temp dir so $TEST_TEMP_DIR is never empty.
+# Save originals now so cleanup_test_env() can always restore them.
+ORIG_HOME="${HOME}"
+ORIG_PATH="${PATH}"
+TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-test-auto.XXXXXX")
+mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+mkdir -p "$TEST_TEMP_DIR/bin"
 
 # ─── Assertions ──────────────────────────────────────────────────────────────
 
@@ -67,7 +77,7 @@ assert_contains() {
     local desc="$1"
     local haystack="$2"
     local needle="$3"
-    if grep -qF "$needle" <<<"$haystack" 2>/dev/null; then
+    if grep -qF -- "$needle" <<< "$haystack" 2>/dev/null; then
         assert_pass "$desc"
     else
         assert_fail "$desc" "output missing: $needle"
@@ -78,7 +88,7 @@ assert_contains_regex() {
     local desc="$1"
     local haystack="$2"
     local pattern="$3"
-    if grep -qE "$pattern" <<<"$haystack" 2>/dev/null; then
+    if grep -qE -- "$pattern" <<< "$haystack" 2>/dev/null; then
         assert_pass "$desc"
     else
         assert_fail "$desc" "output missing pattern: $pattern"
@@ -145,14 +155,15 @@ assert_file_not_exists() {
 
 setup_test_env() {
     local test_name="${1:-sw-test}"
+    # Clean up auto-created temp dir and create a named one
+    [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]] && rm -rf "$TEST_TEMP_DIR"
     TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/${test_name}.XXXXXX")
     mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
     mkdir -p "$TEST_TEMP_DIR/bin"
     mkdir -p "$TEST_TEMP_DIR/project"
     mkdir -p "$TEST_TEMP_DIR/logs"
 
-    ORIG_HOME="${HOME}"
-    ORIG_PATH="${PATH}"
+    # ORIG_HOME/ORIG_PATH already saved at source time
     export HOME="$TEST_TEMP_DIR/home"
     export PATH="$TEST_TEMP_DIR/bin:$PATH"
     export NO_GITHUB=true
@@ -167,8 +178,8 @@ cleanup_test_env() {
     if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
         rm -rf "$TEST_TEMP_DIR"
     fi
-    [[ -n "${ORIG_HOME:-}" ]] && export HOME="$ORIG_HOME"
-    [[ -n "${ORIG_PATH:-}" ]] && export PATH="$ORIG_PATH"
+    [[ -n "${ORIG_HOME:-}" ]] && export HOME="$ORIG_HOME" || true
+    [[ -n "${ORIG_PATH:-}" ]] && export PATH="$ORIG_PATH" || true
 }
 
 # ─── Mock Helpers ────────────────────────────────────────────────────────────
@@ -210,18 +221,6 @@ exit 0'
 
 mock_claude() {
     mock_binary "claude" 'echo "Mock claude response"
-exit 0'
-}
-
-mock_codex() {
-    mock_binary "codex" 'if [[ "${1:-}" == "exec" ]]; then
-cat <<'"'"'JSON'"'"'
-{"type":"item.completed","item":{"type":"agent_message","text":"Mock codex response"}}
-{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}
-JSON
-exit 0
-fi
-echo "Mock codex response"
 exit 0'
 }
 

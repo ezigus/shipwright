@@ -176,20 +176,24 @@ _pipeline_compact_goal() {
     local goal="$1"
     local plan_file="${2:-}"
     local design_file="${3:-}"
-    local compact
-    compact="$(printf '%s\n' "$goal" | sed 's/[[:space:]]\+$//')"
-    # Cap to keep loop prompts stable; full requirements live in plan.md artifact.
-    if [[ ${#compact} -gt 500 ]]; then
-        compact="${compact:0:500}..."
-    fi
+    local compact="$goal"
 
+    # Include plan summary (first 20 lines only)
     if [[ -n "$plan_file" && -f "$plan_file" ]]; then
         compact="${compact}
-Plan artifact: .claude/pipeline-artifacts/plan.md"
+
+## Plan Summary
+$(head -20 "$plan_file" 2>/dev/null || true)
+[... full plan in .claude/pipeline-artifacts/plan.md]"
     fi
+
+    # Include design key decisions only (grep for headers)
     if [[ -n "$design_file" && -f "$design_file" ]]; then
         compact="${compact}
-Design artifact: .claude/pipeline-artifacts/design.md"
+
+## Key Design Decisions
+$(grep -E '^#{1,3} ' "$design_file" 2>/dev/null | head -10 || true)
+[... full design in .claude/pipeline-artifacts/design.md]"
     fi
 
     echo "$compact"

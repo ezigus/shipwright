@@ -1,25 +1,30 @@
-# Tasks — Add shell completion installation to shipwright init
+# Tasks — chore: close issue #45 - merge goal complete
 
 ## Status: In Progress
-Pipeline: autonomous | Branch: feat/add-shell-completion-installation-to-shi-1
+Pipeline: standard | Branch: ci/chore-close-issue-45-merge-goal-complete
 
 ## Checklist
-- [x] Task 1: Verify `completions/` directory exists with `_shipwright`, `shipwright.bash`, `shipwright.fish`
-- [x] Task 2: Add Shell Completions section header comment to `sw-init.sh`
-- [x] Task 3: Implement shell type detection from `$SHELL` (not `$BASH_VERSION`)
-- [x] Task 4: Implement zsh completion copy to `~/.zsh/completions/_shipwright`
-- [x] Task 5: Implement `fpath` injection into `~/.zshrc` (idempotent, checks before appending)
-- [x] Task 6: Implement `compinit` line injection into `~/.zshrc` (idempotent)
-- [x] Task 7: Implement bash completion copy to `~/.local/share/bash-completion/completions/shipwright`
-- [x] Task 8: Implement bash `source` line injection into `~/.bashrc` (idempotent)
-- [x] Task 9: Implement fish completion copy to `~/.config/fish/completions/shipwright.fish`
-- [x] Task 10: Print reload hint after successful installation
-- [x] Task 11: Add `test_zsh_completions_installed` test with `SHELL=/bin/zsh`
-- [x] Task 12: Add `test_zsh_fpath_configured` test asserting `.zshrc` fpath entry
-- [x] Task 13: Add `test_bash_completions_installed` test with `SHELL=/bin/bash`
-- [x] Task 14: Add `test_fish_completions_installed` test with `SHELL=/usr/local/bin/fish`
-- [x] Task 15: Add `test_completions_idempotent` test running init twice and verifying no corruption
+- [ ] Task 1: Verify branch working tree is clean
+- [ ] Task 2: Verify recent commit history (5 iterations)
+- [ ] Task 3: Create PR from feature branch to main with comprehensive description
+- [ ] Task 4: Wait for GitHub Actions status checks to complete
+- [ ] Task 5: Verify all PR checks pass
+- [ ] Task 6: Request code review approval (if branch protection requires)
+- [ ] Task 7: Merge PR to main (squash merge recommended)
+- [ ] Task 8: Delete feature branch after merge
+- [ ] Task 9: Verify merge completed on main with `git pull`
+- [ ] Task 10: Close GitHub issue #45 with merge reference
+- [ ] Task 11: Sync local main with remote
+- [ ] Task 12: Verify merged commits are functional
+- [ ] Task 13: Update MEMORY.md with completion status
+- [ ] Task 14: Document lessons learned for future pipelines
+- [ ] Task 15: Archive pipeline artifacts and logs
+- [x] Branch is clean and ready
+- [x] Autonomous iterations 3-5 complete
+- [x] Git credential fix implemented
+- [x] Chaos test fix implemented
+- [x] Documentation auto-sync configured
 
 ## Notes
-- Generated from pipeline plan at 2026-02-21T17:07:59Z
+- Generated from pipeline plan at 2026-03-03T01:01:39Z
 - Pipeline will update status as tasks complete

@@ -278,15 +278,18 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "Chaos Test 8: Large file operation interruption"
 
+# Use an isolated directory — never reuse $REPO_DIR which may point to the real repo
+CHAOS_CLONE_DIR="$TEST_TEMP_DIR/chaos-clone"
+
 # Simulate interrupted gh clone by creating partial .git directory
-mkdir -p "$REPO_DIR/.git/objects"
-echo "partial clone" > "$REPO_DIR/.git/HEAD"
+mkdir -p "$CHAOS_CLONE_DIR/.git/objects"
+echo "partial clone" > "$CHAOS_CLONE_DIR/.git/HEAD"
 
 # Verify repo is incomplete
-if [[ ! -f "$REPO_DIR/.git/config" ]]; then
+if [[ ! -f "$CHAOS_CLONE_DIR/.git/config" ]]; then
     assert_pass "Incomplete clone detected"
     # Recovery: validate repo integrity or re-clone
-    rm -rf "$REPO_DIR/.git"
+    rm -rf "$CHAOS_CLONE_DIR/.git"
     assert_pass "Repo cleanup after partial clone"
 fi
 

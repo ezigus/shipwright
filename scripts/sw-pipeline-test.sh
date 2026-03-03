@@ -371,7 +371,7 @@ reset_test() {
 
 cleanup_env() {
     if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+        rm -rf "$TEMP_DIR" 2>/dev/null || true
     fi
 }
 trap cleanup_env EXIT
@@ -401,6 +401,7 @@ invoke_pipeline() {
         HOME="$TEMP_DIR" \
         EVENTS_FILE="$TEMP_DIR/events.jsonl" \
         PATH="$TEMP_DIR/bin:$PATH" \
+        GIT_TERMINAL_PROMPT=0 \
         bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
     ) || PIPELINE_EXIT=$?
 }

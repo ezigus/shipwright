@@ -1294,8 +1294,8 @@ Focus on fixing the failing tests while keeping all passing tests working."
 auto_rebase() {
     info "Syncing with ${BASE_BRANCH}..."
 
-    # Fetch latest
-    git fetch origin "$BASE_BRANCH" --quiet 2>/dev/null || {
+    # Fetch latest — GIT_TERMINAL_PROMPT=0 prevents blocking on HTTPS credential prompts
+    GIT_TERMINAL_PROMPT=0 git fetch origin "$BASE_BRANCH" --quiet 2>/dev/null || {
         warn "Could not fetch origin/${BASE_BRANCH}"
         return 0
     }

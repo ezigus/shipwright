@@ -345,7 +345,7 @@ invoke_pipeline() {
     PIPELINE_OUTPUT=$(
         cd "$TEMP_DIR/project"
         PATH="$TEMP_DIR/bin:$PATH" \
-        bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
+        bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" < /dev/null 2>&1
     ) || PIPELINE_EXIT=$?
 }
 

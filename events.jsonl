@@ -212,3 +212,4 @@
 {"ts":"2026-03-03T00:04:27Z","ts_epoch":1772496267,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-role-color.sh","lines":81,"usage":1}
 {"ts":"2026-03-03T00:04:28Z","ts_epoch":1772496268,"type":"patrol.issue_created","check":"untested_scripts","count":5}
 {"ts":"2026-03-03T00:26:58Z","ts_epoch":1772497618,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":43}
+{"ts":"2026-03-03T00:31:42Z","ts_epoch":1772497902,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":43}

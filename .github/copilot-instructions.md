@@ -735,7 +735,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-autonomous-test.sh` | 264 | AI-building-AI master controller tests |
 | `scripts/sw-budget-chaos-test.sh` | 265 | Budget Exhaustion & Chaos Tests |
 | `scripts/sw-changelog-test.sh` | 231 | Validate release notes generation |
-| `scripts/sw-chaos-test.sh` | 384 | Fault injection & recovery validation |
+| `scripts/sw-chaos-test.sh` | 387 | Fault injection & recovery validation |
 | `scripts/sw-checkpoint-test.sh` | 380 | Validate checkpoint save/restore |
 | `scripts/sw-ci-test.sh` | 237 | GitHub Actions CI/CD orchestration tests |
 | `scripts/sw-cleanup-test.sh` | 186 | Clean up orphaned sessions & artifacts |

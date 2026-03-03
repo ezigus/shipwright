@@ -232,3 +232,13 @@
 {"ts":"2026-03-03T06:11:15Z","ts_epoch":1772518275,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-role-color.sh","lines":81,"usage":1}
 {"ts":"2026-03-03T06:11:15Z","ts_epoch":1772518275,"type":"patrol.issue_created","check":"untested_scripts","count":5}
 {"ts":"2026-03-03T08:18:12Z","ts_epoch":1772525892,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":43}
+{"ts":"2026-03-03T12:03:52Z","ts_epoch":1772539432,"type":"patrol.started","dry_run":"false"}
+{"ts":"2026-03-03T12:03:55Z","ts_epoch":1772539435,"type":"patrol.issue_created","check":"dead_code","count":1}
+{"ts":"2026-03-03T12:04:11Z","ts_epoch":1772539451,"type":"patrol.finding","check":"recurring_failure","pattern":"[38;2;0;212;255m▸[0m Insert into nonexistent stage fails","seen_count":3}
+{"ts":"2026-03-03T12:04:12Z","ts_epoch":1772539452,"type":"patrol.issue_created","check":"recurring_failure","pattern":"[38;2;0;212;255m▸[0m Insert into nonexistent stage fails"}
+{"ts":"2026-03-03T12:04:13Z","ts_epoch":1772539453,"type":"patrol.finding","check":"untested_script","script":"sw-tracker-linear.sh","lines":568,"usage":7}
+{"ts":"2026-03-03T12:04:13Z","ts_epoch":1772539453,"type":"patrol.finding","check":"untested_script","script":"sw-tracker-jira.sh","lines":474,"usage":7}
+{"ts":"2026-03-03T12:04:13Z","ts_epoch":1772539453,"type":"patrol.finding","check":"untested_script","script":"sw-tracker-github.sh","lines":212,"usage":3}
+{"ts":"2026-03-03T12:04:13Z","ts_epoch":1772539453,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-status.sh","lines":153,"usage":1}
+{"ts":"2026-03-03T12:04:13Z","ts_epoch":1772539453,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-role-color.sh","lines":81,"usage":1}
+{"ts":"2026-03-03T12:04:14Z","ts_epoch":1772539454,"type":"patrol.issue_created","check":"untested_scripts","count":5}

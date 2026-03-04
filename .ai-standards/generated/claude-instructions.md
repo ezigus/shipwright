@@ -553,7 +553,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | File | Lines | Purpose |
 | --- | ---: | --- |
 | `scripts/sw-activity.sh` | 480 | Live agent activity stream |
-| `scripts/sw-adaptive.sh` | 941 | data-driven pipeline tuning |
+| `scripts/sw-adaptive.sh` | 948 | data-driven pipeline tuning |
 | `scripts/sw-adversarial.sh` | 259 | Adversarial Agent Code Review |
 | `scripts/sw-ai.sh` | 97 | set -euo pipefail |
 | `scripts/sw-architecture-enforcer.sh` | 319 | Living Architecture Model & Enforcer |
@@ -569,7 +569,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-cost.sh` | 1013 | Token Usage & Cost Intelligence |
 | `scripts/sw-daemon.sh` | 1449 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 510 | Fleet Command Dashboard |
-| `scripts/sw-db.sh` | 1939 | SQLite Persistence Layer |
+| `scripts/sw-db.sh` | 2034 | SQLite Persistence Layer |
 | `scripts/sw-decide.sh` | 691 | Shipwright Autonomous Decision Engine |
 | `scripts/sw-decompose.sh` | 529 | Intelligent Issue Decomposition |
 | `scripts/sw-deps.sh` | 533 | Automated Dependency Update Management |
@@ -610,7 +610,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 445 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 444 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1076 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 3067 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 3151 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 749 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 688 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 834 | Predictive & Proactive Intelligence |
@@ -619,6 +619,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-public-dashboard.sh` | 797 | Public real-time pipeline progress |
 | `scripts/sw-quality.sh` | 676 | Intelligent completion, audits, zero auto |
 | `scripts/sw-reaper.sh` | 406 | Automatic tmux pane cleanup when agents exit |
+| `scripts/sw-recommend.sh` | 702 | intelligent template auto-recommendation engine |
 | `scripts/sw-recruit.sh` | 2644 | AGI-Level Agent Recruitment & Talent Management |
 | `scripts/sw-regression.sh` | 632 | Regression Detection Pipeline |
 | `scripts/sw-release-manager.sh` | 721 | Autonomous Release Pipeline |
@@ -652,7 +653,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-webhook.sh` | 621 | GitHub Webhook Receiver for Instant Issue Processing |
 | `scripts/sw-widgets.sh` | 528 | Embeddable Status Widgets |
 | `scripts/sw-worktree.sh` | 421 | Git worktree management for multi-agent isolation |
-| `scripts/sw` | 621 | CLI router — dispatches subcommands via exec |
+| `scripts/sw` | 624 | CLI router — dispatches subcommands via exec |
 <!-- /AUTO:core-scripts -->
 
 ### GitHub API Modules
@@ -792,6 +793,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-public-dashboard-test.sh` | 165 | Validate public dashboard generation |
 | `scripts/sw-quality-test.sh` | 227 | Validate ruthless quality validation engine |
 | `scripts/sw-reaper-test.sh` | 232 | Validate automatic tmux pane cleanup |
+| `scripts/sw-recommend-test.sh` | 477 | Intelligent template recommendation engine |
 | `scripts/sw-recruit-test.sh` | 1395 | Test suite for AGI-level agent recruitment system |
 | `scripts/sw-regression-test.sh` | 258 | Validate regression detection pipeline |
 | `scripts/sw-release-manager-test.sh` | 206 | Validate release pipeline |

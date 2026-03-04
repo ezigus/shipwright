@@ -626,7 +626,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-hello.sh` | 67 | Hello World Command |
 | `scripts/sw-hygiene.sh` | 725 | Repository Organization & Cleanup |
 | `scripts/sw-incident.sh` | 873 | Autonomous Incident Detection & Response |
-| `scripts/sw-init.sh` | 880 | Complete setup for Shipwright + Shipwright |
+| `scripts/sw-init.sh` | 891 | Complete setup for Shipwright + Shipwright |
 | `scripts/sw-instrument.sh` | 691 | Pipeline Instrumentation & Feedback Loops |
 | `scripts/sw-intelligence.sh` | 1547 | AI-Powered Analysis & Decision Engine |
 | `scripts/sw-jira.sh` | 628 | Jira ↔ GitHub Bidirectional Sync |
@@ -679,7 +679,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-trace.sh` | 480 | E2E Traceability (Issue → Commit → PR → Deploy) |
 | `scripts/sw-tracker.sh` | 517 | Provider Router for Issue Tracker Integration |
 | `scripts/sw-triage.sh` | 812 | Intelligent Issue Labeling & Prioritization |
-| `scripts/sw-upgrade.sh` | 477 | Detect and apply updates from the repo |
+| `scripts/sw-upgrade.sh` | 491 | Detect and apply updates from the repo |
 | `scripts/sw-ux.sh` | 685 | Premium UX Enhancement Layer |
 | `scripts/sw-webhook.sh` | 621 | GitHub Webhook Receiver for Instant Issue Processing |
 | `scripts/sw-widgets.sh` | 528 | Embeddable Status Widgets |
@@ -780,7 +780,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-hello-test.sh` | 108 | Hello Command Test Suite |
 | `scripts/sw-hygiene-test.sh` | 198 | Repository Organization & Cleanup tests |
 | `scripts/sw-incident-test.sh` | 248 | Validate incident detection & response |
-| `scripts/sw-init-test.sh` | 749 | E2E validation of init/setup flow |
+| `scripts/sw-init-test.sh` | 788 | E2E validation of init/setup flow |
 | `scripts/sw-instrument-test.sh` | 172 | Pipeline instrumentation & feedback loops |
 | `scripts/sw-integration-claude-test.sh` | 63 | Budget-limited real Claude smoke |
 | `scripts/sw-intelligence-test.sh` | 534 | Unit tests for intelligence core |

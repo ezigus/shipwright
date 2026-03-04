@@ -568,15 +568,15 @@ test_tmux_adapter_deployed() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_zsh_completions_installed() {
     INIT_OUTPUT=$(
-        cd "$TEMP_DIR/project"
-        HOME="$TEMP_DIR/home"         TMUX=""         SHELL="/bin/zsh"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
+        cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR/home"         TMUX=""         SHELL="/bin/zsh"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
 y
 y
 y
 y
 INPUT
     ) || INIT_EXIT=$?
-    assert_file_exists "$TEMP_DIR/home/.zsh/completions/_shipwright" "zsh completion file installed"
+    assert_file_exists "$TEST_TEMP_DIR/home/.zsh/completions/_shipwright" "zsh completion file installed"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -584,15 +584,15 @@ INPUT
 # ──────────────────────────────────────────────────────────────────────────────
 test_zsh_fpath_configured() {
     INIT_OUTPUT=$(
-        cd "$TEMP_DIR/project"
-        HOME="$TEMP_DIR/home"         TMUX=""         SHELL="/bin/zsh"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
+        cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR/home"         TMUX=""         SHELL="/bin/zsh"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
 y
 y
 y
 y
 INPUT
     ) || INIT_EXIT=$?
-    assert_file_contains "$TEMP_DIR/home/.zshrc" "fpath" "fpath added to .zshrc"
+    assert_file_contains "$TEST_TEMP_DIR/home/.zshrc" "fpath" "fpath added to .zshrc"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -600,15 +600,15 @@ INPUT
 # ──────────────────────────────────────────────────────────────────────────────
 test_bash_completions_installed() {
     INIT_OUTPUT=$(
-        cd "$TEMP_DIR/project"
-        HOME="$TEMP_DIR/home"         TMUX=""         SHELL="/bin/bash"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
+        cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR/home"         TMUX=""         SHELL="/bin/bash"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
 y
 y
 y
 y
 INPUT
     ) || INIT_EXIT=$?
-    assert_file_exists "$TEMP_DIR/home/.local/share/bash-completion/completions/shipwright" "bash completion file installed"
+    assert_file_exists "$TEST_TEMP_DIR/home/.local/share/bash-completion/completions/shipwright" "bash completion file installed"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -616,15 +616,15 @@ INPUT
 # ──────────────────────────────────────────────────────────────────────────────
 test_fish_completions_installed() {
     INIT_OUTPUT=$(
-        cd "$TEMP_DIR/project"
-        HOME="$TEMP_DIR/home"         TMUX=""         SHELL="/usr/local/bin/fish"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
+        cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR/home"         TMUX=""         SHELL="/usr/local/bin/fish"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
 y
 y
 y
 y
 INPUT
     ) || INIT_EXIT=$?
-    assert_file_exists "$TEMP_DIR/home/.config/fish/completions/shipwright.fish" "fish completion file installed"
+    assert_file_exists "$TEST_TEMP_DIR/home/.config/fish/completions/shipwright.fish" "fish completion file installed"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -633,20 +633,20 @@ INPUT
 test_completions_idempotent() {
     # First run with zsh
     INIT_OUTPUT=$(
-        cd "$TEMP_DIR/project"
-        HOME="$TEMP_DIR/home"         TMUX=""         SHELL="/bin/zsh"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
+        cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR/home"         TMUX=""         SHELL="/bin/zsh"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
 y
 y
 y
 y
 INPUT
     ) || INIT_EXIT=$?
-    assert_file_exists "$TEMP_DIR/home/.zsh/completions/_shipwright" "zsh completion installed first run"
+    assert_file_exists "$TEST_TEMP_DIR/home/.zsh/completions/_shipwright" "zsh completion installed first run"
 
     # Second run — should succeed without duplication
     INIT_OUTPUT=$(
-        cd "$TEMP_DIR/project"
-        HOME="$TEMP_DIR/home"         TMUX=""         SHELL="/bin/zsh"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
+        cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR/home"         TMUX=""         SHELL="/bin/zsh"         bash "$REAL_INIT_SCRIPT" --no-claude-md 2>&1 <<'INPUT'
 y
 y
 y
@@ -654,7 +654,7 @@ y
 INPUT
     ) || INIT_EXIT=$?
     assert_exit_code 0 "second init should succeed" &&
-    assert_file_exists "$TEMP_DIR/home/.zsh/completions/_shipwright" "completion still present after second run"
+    assert_file_exists "$TEST_TEMP_DIR/home/.zsh/completions/_shipwright" "completion still present after second run"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

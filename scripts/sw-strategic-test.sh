@@ -86,22 +86,24 @@ echo ""
 print_test_header "Shipwright Strategic Tests"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
+# Save real script dir before setup_env overrides SCRIPT_DIR
+REAL_SCRIPT_DIR="$SCRIPT_DIR"
 setup_env
 
 # ─── Test 1: Help ────────────────────────────────────────────────────
 echo -e "${BOLD}  Help${RESET}"
-output=$(bash "$SCRIPT_DIR/sw-strategic.sh" help 2>&1) || true
+output=$(bash "$REAL_SCRIPT_DIR/sw-strategic.sh" help 2>&1) || true
 assert_contains "help shows usage" "$output" "Usage"
 assert_contains "help shows commands" "$output" "Commands"
 
 # ─── Test 2: Unknown command ─────────────────────────────────────────
-output=$(bash "$SCRIPT_DIR/sw-strategic.sh" nonexistent 2>&1) || true
+output=$(bash "$REAL_SCRIPT_DIR/sw-strategic.sh" nonexistent 2>&1) || true
 assert_contains "unknown command shows error" "$output" "Unknown command"
 
 # ─── Test 3: Source the script for function testing ──────────────────
 echo -e "${BOLD}  Sourced Functions${RESET}"
 # Source the strategic script for function testing
-source "$SCRIPT_DIR/sw-strategic.sh" 2>/dev/null || true
+source "$REAL_SCRIPT_DIR/sw-strategic.sh" 2>/dev/null || true
 
 # ─── Test 4: strategic_check_cooldown with no events ────────────────
 if strategic_check_cooldown 2>/dev/null; then
@@ -190,7 +192,7 @@ assert_contains "status with fixture shows Cooldown" "$output" "Cooldown"
 
 # ─── Test 11c: strategic outcomes command ───────────────────────────
 echo -e "${BOLD}  Outcomes${RESET}"
-output=$(bash "$SCRIPT_DIR/sw-strategic.sh" outcomes 2>&1) || true
+output=$(bash "$REAL_SCRIPT_DIR/sw-strategic.sh" outcomes 2>&1) || true
 assert_contains "outcomes shows header" "$output" "Strategic Outcomes"
 assert_contains "outcomes with no data shows message" "$output" "No outcomes"
 
@@ -198,7 +200,7 @@ assert_contains "outcomes with no data shows message" "$output" "No outcomes"
 mkdir -p "$HOME/.shipwright/strategic"
 echo '{"issue":1,"title":"Shipped improvement","outcome":"shipped","success":true,"tracked_at":"2026-02-18T00:00:00Z"}' >> "$HOME/.shipwright/strategic/outcomes.jsonl"
 echo '{"issue":2,"title":"Failed attempt","outcome":"closed_unshipped","success":false,"tracked_at":"2026-02-18T00:00:00Z"}' >> "$HOME/.shipwright/strategic/outcomes.jsonl"
-output=$(bash "$SCRIPT_DIR/sw-strategic.sh" outcomes 2>&1) || true
+output=$(bash "$REAL_SCRIPT_DIR/sw-strategic.sh" outcomes 2>&1) || true
 assert_contains "outcomes with fixture shows shipped" "$output" "Shipped"
 assert_contains "outcomes with fixture shows failed" "$output" "Closed unshipped"
 
@@ -206,7 +208,7 @@ assert_contains "outcomes with fixture shows failed" "$output" "Closed unshipped
 echo -e "${BOLD}  Run Guard${RESET}"
 echo "" > "$EVENTS_FILE"  # Clear cooldown so token check is reached
 unset CLAUDE_CODE_OAUTH_TOKEN 2>/dev/null || true
-output=$(bash "$SCRIPT_DIR/sw-strategic.sh" run 2>&1) || true
+output=$(bash "$REAL_SCRIPT_DIR/sw-strategic.sh" run 2>&1) || true
 assert_contains "run without token shows error" "$output" "CLAUDE_CODE_OAUTH_TOKEN"
 
 echo ""

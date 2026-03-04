@@ -158,12 +158,23 @@ default_test_cmd_for_environment() {
             fi
             ;;
         node)
-            local marker_dir lock_root cmd escaped_marker_dir
+            local marker_dir lock_root cmd escaped_marker_dir pkg_file test_script
             marker_dir="."
             [[ -n "$marker" ]] && marker_dir=$(dirname "$marker")
             lock_root="$root"
             if [[ "$marker_dir" != "." && -d "$root/$marker_dir" ]]; then
                 lock_root="$root/$marker_dir"
+            fi
+
+            # Skip if package.json has no test script or only the "no test specified" placeholder
+            pkg_file="$lock_root/package.json"
+            [[ ! -f "$pkg_file" ]] && pkg_file="$root/package.json"
+            if [[ -f "$pkg_file" ]] && command -v jq >/dev/null 2>&1; then
+                test_script=$(jq -r '.scripts.test // ""' "$pkg_file" 2>/dev/null) || true
+                if [[ -z "$test_script" || "$test_script" == *"no test specified"* ]]; then
+                    echo ""
+                    return
+                fi
             fi
 
             if [[ -f "$lock_root/pnpm-lock.yaml" || -f "$root/pnpm-lock.yaml" ]]; then

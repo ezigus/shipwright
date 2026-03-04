@@ -546,7 +546,7 @@ detect_test_commands() {
     if [[ -f "$root/package.json" ]] && command -v jq >/dev/null 2>&1; then
         local extra_scripts
         extra_scripts=$(jq -r '.scripts // {} | to_entries[]
-            | select(.key | test("^test[:.].") and . != "test")
+            | select(.key | test("^test[:.].+"))
             | select(.key | test("integration|e2e|system") | not)
             | .key' "$root/package.json" 2>/dev/null) || true
         if [[ -n "$extra_scripts" ]]; then

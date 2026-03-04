@@ -48,6 +48,11 @@ skill_memory_record() {
     local timestamp
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+    # Guard jq availability before any jq invocation
+    if ! command -v jq &>/dev/null; then
+        return 1
+    fi
+
     local record
     record=$(jq -n \
         --arg it "$issue_type" --arg st "$stage" --arg sk "$skills_used" \
@@ -55,28 +60,20 @@ skill_memory_record() {
         --arg vd "$verdict" --arg ev "$evidence" --arg lr "$learning" \
         '{issue_type:$it, stage:$st, skills:$sk, outcome:$oc, attempt:$at, timestamp:$ts, verdict:$vd, evidence:$ev, learning:$lr}')
 
-    # Append to records array, handling potential jq unavailability
-    if ! command -v jq &>/dev/null; then
-        return 1
-    fi
-
-    # Use portable file locking (flock on Linux, simple wait on macOS)
-    local lockfile="${SKILL_MEMORY_FILE}.lock"
+    # Use atomic mkdir as lock (works on macOS and Linux without flock)
+    local lockdir="${SKILL_MEMORY_FILE}.lock.d"
     local lock_attempts=0
     local max_lock_attempts=50  # ~5 seconds with 100ms waits
 
-    # Acquire lock
-    while [[ -f "$lockfile" ]] && [[ $lock_attempts -lt $max_lock_attempts ]]; do
+    while ! mkdir "$lockdir" 2>/dev/null; do
         lock_attempts=$((lock_attempts + 1))
+        if [[ $lock_attempts -ge $max_lock_attempts ]]; then
+            return 1  # Lock timeout
+        fi
         sleep 0.1
     done
-
-    if [[ $lock_attempts -ge $max_lock_attempts ]]; then
-        return 1  # Lock timeout
-    fi
-
-    # Create lock file
-    echo "$$" > "$lockfile"
+    # Release lock on exit/error
+    trap "rmdir '$lockdir' 2>/dev/null || true" RETURN
 
     # Read current records (don't use subshell to preserve variables)
     local current_records
@@ -93,8 +90,8 @@ skill_memory_record() {
     # Write back atomically
     printf '{"records":%s}\n' "$updated" > "$SKILL_MEMORY_FILE"
 
-    # Release lock
-    rm -f "$lockfile"
+    # Release lock (trap also handles this on error)
+    rmdir "$lockdir" 2>/dev/null || true
 
     return 0
 }

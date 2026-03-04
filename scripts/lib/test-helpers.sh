@@ -39,9 +39,13 @@ FAILURES=()
 # Save originals now so cleanup_test_env() can always restore them.
 ORIG_HOME="${HOME}"
 ORIG_PATH="${PATH}"
-TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-test-auto.XXXXXX")
+# Track the auto-created temp dir separately so cleanup always removes it,
+# even if individual tests later reassign TEST_TEMP_DIR in their own setup_env.
+AUTO_TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-test-auto.XXXXXX")
+TEST_TEMP_DIR="$AUTO_TEST_TEMP_DIR"
 mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
 mkdir -p "$TEST_TEMP_DIR/bin"
+trap 'if [[ -n "${AUTO_TEST_TEMP_DIR:-}" && -d "$AUTO_TEST_TEMP_DIR" ]]; then rm -rf "$AUTO_TEST_TEMP_DIR"; fi' EXIT
 
 # ─── Assertions ──────────────────────────────────────────────────────────────
 

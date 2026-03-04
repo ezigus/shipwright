@@ -23,23 +23,23 @@ DAEMON_LIB_GLOB="${DAEMON_LIB_DIR}/daemon-*.sh"
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEST_TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-daemon-test.XXXXXX")
+    DAEMON_TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-daemon-test.XXXXXX")
 
     # Create events directory (daemon uses $HOME/.shipwright)
-    mkdir -p "$TEST_TEST_TEMP_DIR/.shipwright"
-    mkdir -p "$TEST_TEST_TEMP_DIR/logs"
-    mkdir -p "$TEST_TEST_TEMP_DIR/project/.claude"
+    mkdir -p "$DAEMON_TEST_TEMP_DIR/.shipwright"
+    mkdir -p "$DAEMON_TEST_TEMP_DIR/logs"
+    mkdir -p "$DAEMON_TEST_TEMP_DIR/project/.claude"
 
     # Set env vars to redirect daemon state
-    export HOME="$TEST_TEST_TEMP_DIR"
-    export EVENTS_FILE="$TEST_TEST_TEMP_DIR/.shipwright/events.jsonl"
-    export DAEMON_DIR="$TEST_TEST_TEMP_DIR/.shipwright"
-    export STATE_FILE="$TEST_TEST_TEMP_DIR/.shipwright/daemon-state.json"
-    export LOG_FILE="$TEST_TEST_TEMP_DIR/.shipwright/daemon.log"
-    export LOG_DIR="$TEST_TEST_TEMP_DIR/logs"
-    export WORKTREE_DIR="$TEST_TEST_TEMP_DIR/project/.worktrees"
-    export PID_FILE="$TEST_TEST_TEMP_DIR/shipwright/daemon.pid"
-    export SHUTDOWN_FLAG="$TEST_TEST_TEMP_DIR/shipwright/daemon.shutdown"
+    export HOME="$DAEMON_TEST_TEMP_DIR"
+    export EVENTS_FILE="$DAEMON_TEST_TEMP_DIR/.shipwright/events.jsonl"
+    export DAEMON_DIR="$DAEMON_TEST_TEMP_DIR/.shipwright"
+    export STATE_FILE="$DAEMON_TEST_TEMP_DIR/.shipwright/daemon-state.json"
+    export LOG_FILE="$DAEMON_TEST_TEMP_DIR/.shipwright/daemon.log"
+    export LOG_DIR="$DAEMON_TEST_TEMP_DIR/logs"
+    export WORKTREE_DIR="$DAEMON_TEST_TEMP_DIR/project/.worktrees"
+    export PID_FILE="$DAEMON_TEST_TEMP_DIR/shipwright/daemon.pid"
+    export SHUTDOWN_FLAG="$DAEMON_TEST_TEMP_DIR/shipwright/daemon.shutdown"
     export NO_GITHUB=true
 
     # Defaults for config vars
@@ -65,8 +65,8 @@ setup_env() {
 }
 
 cleanup_env() {
-    if [[ -n "$TEST_TEST_TEMP_DIR" && -d "$TEST_TEST_TEMP_DIR" ]]; then
-        rm -rf "$TEST_TEST_TEMP_DIR"
+    if [[ -n "$DAEMON_TEST_TEMP_DIR" && -d "$DAEMON_TEST_TEMP_DIR" ]]; then
+        rm -rf "$DAEMON_TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -193,7 +193,7 @@ source_daemon_functions() {
     }
 
     # Progress monitoring directory for tests
-    PROGRESS_DIR="$TEST_TEST_TEMP_DIR/progress"
+    PROGRESS_DIR="$DAEMON_TEST_TEMP_DIR/progress"
     mkdir -p "$PROGRESS_DIR"
 
     # daemon_clear_progress — clean up progress state
@@ -798,7 +798,7 @@ test_metrics_json_output() {
 
     # Run the real daemon metrics command and capture JSON
     local output
-    output=$(cd "$TEST_TEST_TEMP_DIR/project" && bash "$DAEMON_SCRIPT" metrics --json --period 1 2>&1) || true
+    output=$(cd "$DAEMON_TEST_TEMP_DIR/project" && bash "$DAEMON_SCRIPT" metrics --json --period 1 2>&1) || true
 
     # Validate it's valid JSON
     if ! echo "$output" | jq empty 2>/dev/null; then
@@ -932,7 +932,7 @@ test_patrol_retry_exhaustion_events() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_patrol_untested_detection() {
     # Create a mock scripts directory
-    local mock_scripts="$TEST_TEST_TEMP_DIR/scripts"
+    local mock_scripts="$DAEMON_TEST_TEMP_DIR/scripts"
     mkdir -p "$mock_scripts"
 
     # Create mock scripts (some with tests, some without)
@@ -1099,7 +1099,7 @@ test_hard_limit_override() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_adaptive_cycles_convergence() {
     # Create a minimal script with the pipeline_adaptive_cycles function
-    local fns_script="$TEST_TEST_TEMP_DIR/adaptive-cycles-fns.sh"
+    local fns_script="$DAEMON_TEST_TEMP_DIR/adaptive-cycles-fns.sh"
     cat > "$fns_script" <<'FEOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -1140,7 +1140,7 @@ FEOF
 # ──────────────────────────────────────────────────────────────────────────────
 test_adaptive_cycles_divergence() {
     # Create a minimal script with the pipeline_adaptive_cycles function
-    local fns_script="$TEST_TEST_TEMP_DIR/adaptive-cycles-div-fns.sh"
+    local fns_script="$DAEMON_TEST_TEMP_DIR/adaptive-cycles-div-fns.sh"
     cat > "$fns_script" <<'FEOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -1179,7 +1179,7 @@ FEOF
 # ──────────────────────────────────────────────────────────────────────────────
 test_adaptive_cycles_hard_ceiling() {
     # Create a minimal script with the pipeline_adaptive_cycles function
-    local fns_script="$TEST_TEST_TEMP_DIR/adaptive-cycles-ceil-fns.sh"
+    local fns_script="$DAEMON_TEST_TEMP_DIR/adaptive-cycles-ceil-fns.sh"
     cat > "$fns_script" <<'FEOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -1219,7 +1219,7 @@ FEOF
 # ──────────────────────────────────────────────────────────────────────────────
 test_adaptive_cycles_first_cycle() {
     # Create a minimal script with the pipeline_adaptive_cycles function
-    local fns_script="$TEST_TEST_TEMP_DIR/adaptive-cycles-first-fns.sh"
+    local fns_script="$DAEMON_TEST_TEMP_DIR/adaptive-cycles-first-fns.sh"
     cat > "$fns_script" <<'FEOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -1257,7 +1257,7 @@ FEOF
 # 28. Checkpoint expire removes old checkpoints
 # ──────────────────────────────────────────────────────────────────────────────
 test_checkpoint_expire() {
-    local cp_dir="$TEST_TEST_TEMP_DIR/project/.claude/pipeline-artifacts/checkpoints"
+    local cp_dir="$DAEMON_TEST_TEMP_DIR/project/.claude/pipeline-artifacts/checkpoints"
     mkdir -p "$cp_dir"
 
     # Create a checkpoint with a very old created_at
@@ -1281,7 +1281,7 @@ EOF
         return 1
     fi
 
-    (cd "$TEST_TEST_TEMP_DIR/project" && bash "$checkpoint_script" expire --hours 1 2>/dev/null) || true
+    (cd "$DAEMON_TEST_TEMP_DIR/project" && bash "$checkpoint_script" expire --hours 1 2>/dev/null) || true
 
     # Old checkpoint should be removed
     if [[ -f "$cp_dir/build-checkpoint.json" ]]; then
@@ -1541,7 +1541,7 @@ test_vitals_progress_fallback() {
 # 38. Memory: query fix for error returns matching fix
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_query_fix() {
-    local mem_dir="$TEST_TEST_TEMP_DIR/.shipwright/memory"
+    local mem_dir="$DAEMON_TEST_TEMP_DIR/.shipwright/memory"
     # Create a fake repo hash directory
     local repo_dir="$mem_dir/test-repo-hash"
     mkdir -p "$repo_dir"
@@ -1894,7 +1894,7 @@ main() {
     echo -e "${DIM}Setting up test environment...${RESET}"
     setup_env
     source_daemon_functions
-    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEST_TEST_TEMP_DIR${RESET}"
+    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$DAEMON_TEST_TEMP_DIR${RESET}"
     echo ""
 
     # Define all tests

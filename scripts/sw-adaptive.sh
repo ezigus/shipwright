@@ -765,29 +765,37 @@ cmd_compare() {
 
 # ─── Main: recommend subcommand ─────────────────────────────────────────────
 cmd_recommend() {
-    # recommend takes --issue as required option
-    local issue=""
-    local repo="${REPO_DIR}"
+    local issue="" goal="" repo="${REPO_DIR}" json_mode=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --issue) issue="$2"; shift 2 ;;
-            --repo) repo="$2"; shift 2 ;;
+            --goal)  goal="$2"; shift 2 ;;
+            --repo)  repo="$2"; shift 2 ;;
+            --json)  json_mode=true; shift ;;
             *) shift ;;
         esac
     done
 
+    # Delegate to the recommendation engine if available
+    if [[ -f "$SCRIPT_DIR/sw-recommend.sh" ]]; then
+        local args=()
+        [[ -n "$issue" ]] && args+=(--issue "$issue")
+        [[ -n "$goal" ]]  && args+=(--goal "$goal")
+        [[ -n "$repo" ]]  && args+=(--repo "$repo")
+        [[ "$json_mode" == "true" ]] && args+=(--json)
+        bash "$SCRIPT_DIR/sw-recommend.sh" "${args[@]}"
+        return
+    fi
+
+    # Fallback: legacy recommendation when engine not available
     if [[ -z "$issue" ]]; then
-        error "Missing --issue argument"
+        error "Missing --issue or --goal argument"
         return 1
     fi
 
     info "Generating recommendation for issue ${CYAN}#${issue}${RESET}..."
-
-    # Simulate complexity score (in real implementation, query GitHub API)
     local complexity=5
-
-    # Build JSON recommendation
     local recommendation
     recommendation=$(jq -n "{
         issue: ${issue},
@@ -802,7 +810,6 @@ cmd_recommend() {
         confidence: \"high\",
         reasoning: \"Based on $(db_query_events "" 5000 | jq 'length' 2>/dev/null || echo 0) historical events\"
     }")
-
     echo "$recommendation" | jq .
 }
 

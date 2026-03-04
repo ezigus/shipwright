@@ -842,7 +842,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-setup-test.sh` | 262 | Validate comprehensive onboarding wizard |
 | `scripts/sw-standup-test.sh` | 241 | Validate daily standup automation |
 | `scripts/sw-status-test.sh` | 294 | Validate status dashboard and --json output |
-| `scripts/sw-strategic-test.sh` | 214 | Validate strategic intelligence agent |
+| `scripts/sw-strategic-test.sh` | 216 | Validate strategic intelligence agent |
 | `scripts/sw-stream-test.sh` | 140 | Live terminal output streaming |
 | `scripts/sw-swarm-test.sh` | 153 | Dynamic agent swarm management tests |
 | `scripts/sw-team-stages-test.sh` | 148 | Validate multi-agent stage execution |

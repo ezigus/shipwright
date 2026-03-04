@@ -41,6 +41,9 @@ triage_score_issue() {
             # Store analysis for downstream use (composer, predictions)
             export INTELLIGENCE_ANALYSIS="$analysis"
             export INTELLIGENCE_COMPLEXITY="$ai_complexity"
+            local ai_issue_type
+            ai_issue_type=$(echo "$analysis" | jq -r '.issue_type // "backend"' 2>/dev/null || echo "backend")
+            export INTELLIGENCE_ISSUE_TYPE="$ai_issue_type"
 
             # Convert AI analysis to triage score:
             # Higher success probability + lower complexity = higher score (process sooner)
@@ -61,6 +64,7 @@ triage_score_issue() {
                 "complexity=$ai_complexity" \
                 "risk=$ai_risk" \
                 "success_prob=$ai_success_prob" \
+                "issue_type=$ai_issue_type" \
                 "score=$ai_score"
 
             echo "$ai_score"

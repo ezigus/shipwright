@@ -7,54 +7,42 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 # shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-tmux-test.XXXXXX")
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-tmux-test.XXXXXX")
 
     # Create repo structure
-    mkdir -p "$TEMP_DIR/scripts/lib"
-    mkdir -p "$TEMP_DIR/tmux"
-    mkdir -p "$TEMP_DIR/home/.tmux/plugins"
-    mkdir -p "$TEMP_DIR/bin"
-    mkdir -p "$TEMP_DIR/mock-log"
+    mkdir -p "$TEST_TEMP_DIR/scripts/lib"
+    mkdir -p "$TEST_TEMP_DIR/tmux"
+    mkdir -p "$TEST_TEMP_DIR/home/.tmux/plugins"
+    mkdir -p "$TEST_TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/mock-log"
 
     # Copy the tmux script under test and helpers for color/output
-    cp "$SCRIPT_DIR/sw-tmux.sh" "$TEMP_DIR/scripts/"
-    mkdir -p "$TEMP_DIR/scripts/lib"
-    touch "$TEMP_DIR/scripts/lib/compat.sh"
-    [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && cp "$SCRIPT_DIR/lib/helpers.sh" "$TEMP_DIR/scripts/lib/"
+    cp "$SCRIPT_DIR/sw-tmux.sh" "$TEST_TEMP_DIR/scripts/"
+    mkdir -p "$TEST_TEMP_DIR/scripts/lib"
+    touch "$TEST_TEMP_DIR/scripts/lib/compat.sh"
+    [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && cp "$SCRIPT_DIR/lib/helpers.sh" "$TEST_TEMP_DIR/scripts/lib/"
 
     # Create fake tmux.conf and overlay for install tests
-    echo "# fake tmux.conf" > "$TEMP_DIR/tmux/tmux.conf"
-    echo "# fake overlay" > "$TEMP_DIR/tmux/shipwright-overlay.conf"
+    echo "# fake tmux.conf" > "$TEST_TEMP_DIR/tmux/tmux.conf"
+    echo "# fake overlay" > "$TEST_TEMP_DIR/tmux/shipwright-overlay.conf"
 
     # Create mock tmux binary with controllable responses
     # The mock reads MOCK_TMUX_* env vars for option values
-    cat > "$TEMP_DIR/bin/tmux" <<'TMUXMOCK'
+    cat > "$TEST_TEMP_DIR/bin/tmux" <<'TMUXMOCK'
 #!/usr/bin/env bash
 LOGFILE="${MOCK_TMUX_LOG:-/dev/null}"
 echo "tmux $*" >> "$LOGFILE"
@@ -132,10 +120,10 @@ case "$1" in
 esac
 exit 0
 TMUXMOCK
-    chmod +x "$TEMP_DIR/bin/tmux"
+    chmod +x "$TEST_TEMP_DIR/bin/tmux"
 
     # Create mock git binary (for TPM clone)
-    cat > "$TEMP_DIR/bin/git" <<'GITMOCK'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'GITMOCK'
 #!/usr/bin/env bash
 LOGFILE="${MOCK_GIT_LOG:-/dev/null}"
 echo "git $*" >> "$LOGFILE"
@@ -151,59 +139,59 @@ if [[ "${1:-}" == "clone" ]]; then
 fi
 echo "mock-git"
 GITMOCK
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Create mock gh
-    cat > "$TEMP_DIR/bin/gh" <<'GHMOCK'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'GHMOCK'
 #!/usr/bin/env bash
 exit 1
 GHMOCK
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
 
 # Helper to run sw-tmux.sh in mock environment with tmux session simulated
 run_tmux() {
-    local log_file="$TEMP_DIR/mock-log/tmux-calls.log"
+    local log_file="$TEST_TEMP_DIR/mock-log/tmux-calls.log"
     (
-        cd "$TEMP_DIR"
-        PATH="$TEMP_DIR/bin:$PATH" \
-        HOME="$TEMP_DIR/home" \
+        cd "$TEST_TEMP_DIR"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        HOME="$TEST_TEMP_DIR/home" \
         TMUX="/tmp/tmux-test/default,12345,0" \
         MOCK_TMUX_LOG="$log_file" \
-        MOCK_GIT_LOG="$TEMP_DIR/mock-log/git-calls.log" \
+        MOCK_GIT_LOG="$TEST_TEMP_DIR/mock-log/git-calls.log" \
         LC_TERMINAL="Ghostty" \
-            bash "$TEMP_DIR/scripts/sw-tmux.sh" "$@"
+            bash "$TEST_TEMP_DIR/scripts/sw-tmux.sh" "$@"
     )
 }
 
 # Helper to run with custom env overrides (pass env vars as leading KEY=VALUE args)
 run_tmux_env() {
-    local log_file="$TEMP_DIR/mock-log/tmux-calls.log"
+    local log_file="$TEST_TEMP_DIR/mock-log/tmux-calls.log"
     local env_vars=()
     while [[ $# -gt 0 && "$1" == *=* ]]; do
         env_vars+=("$1")
         shift
     done
     (
-        cd "$TEMP_DIR"
-        export PATH="$TEMP_DIR/bin:$PATH"
-        export HOME="$TEMP_DIR/home"
+        cd "$TEST_TEMP_DIR"
+        export PATH="$TEST_TEMP_DIR/bin:$PATH"
+        export HOME="$TEST_TEMP_DIR/home"
         export TMUX="/tmp/tmux-test/default,12345,0"
         export MOCK_TMUX_LOG="$log_file"
-        export MOCK_GIT_LOG="$TEMP_DIR/mock-log/git-calls.log"
+        export MOCK_GIT_LOG="$TEST_TEMP_DIR/mock-log/git-calls.log"
         export LC_TERMINAL="Ghostty"
         for ev in "${env_vars[@]}"; do
             # shellcheck disable=SC2163
             export "$ev"
         done
-        bash "$TEMP_DIR/scripts/sw-tmux.sh" "$@"
+        bash "$TEST_TEMP_DIR/scripts/sw-tmux.sh" "$@"
     )
 }
 
@@ -273,14 +261,14 @@ test_doctor_output_counts() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_doctor_all_pass() {
     # Install fake overlay and TPM
-    mkdir -p "$TEMP_DIR/home/.tmux/plugins/tpm"
-    mkdir -p "$TEMP_DIR/home/.tmux/plugins/tmux-sensible"
-    mkdir -p "$TEMP_DIR/home/.tmux/plugins/tmux-resurrect"
-    mkdir -p "$TEMP_DIR/home/.tmux/plugins/tmux-continuum"
-    mkdir -p "$TEMP_DIR/home/.tmux/plugins/tmux-yank"
-    mkdir -p "$TEMP_DIR/home/.tmux/plugins/tmux-fzf"
-    echo "source-file shipwright-overlay.conf" > "$TEMP_DIR/home/.tmux.conf"
-    echo "# overlay" > "$TEMP_DIR/home/.tmux/shipwright-overlay.conf"
+    mkdir -p "$TEST_TEMP_DIR/home/.tmux/plugins/tpm"
+    mkdir -p "$TEST_TEMP_DIR/home/.tmux/plugins/tmux-sensible"
+    mkdir -p "$TEST_TEMP_DIR/home/.tmux/plugins/tmux-resurrect"
+    mkdir -p "$TEST_TEMP_DIR/home/.tmux/plugins/tmux-continuum"
+    mkdir -p "$TEST_TEMP_DIR/home/.tmux/plugins/tmux-yank"
+    mkdir -p "$TEST_TEMP_DIR/home/.tmux/plugins/tmux-fzf"
+    echo "source-file shipwright-overlay.conf" > "$TEST_TEMP_DIR/home/.tmux.conf"
+    echo "# overlay" > "$TEST_TEMP_DIR/home/.tmux/shipwright-overlay.conf"
 
     local output
     output=$(run_tmux doctor 2>&1 || true)
@@ -371,12 +359,12 @@ test_doctor_terminal_detect() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_install_tpm() {
     # Ensure TPM not already there
-    rm -rf "$TEMP_DIR/home/.tmux/plugins/tpm"
+    rm -rf "$TEST_TEMP_DIR/home/.tmux/plugins/tpm"
 
     local exit_code=0
     run_tmux install >/dev/null 2>&1 || exit_code=$?
 
-    if [[ ! -d "$TEMP_DIR/home/.tmux/plugins/tpm" ]]; then
+    if [[ ! -d "$TEST_TEMP_DIR/home/.tmux/plugins/tpm" ]]; then
         return 1
     fi
     return 0
@@ -387,7 +375,7 @@ test_install_tpm() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_install_tpm_already_exists() {
     # Ensure TPM exists
-    mkdir -p "$TEMP_DIR/home/.tmux/plugins/tpm"
+    mkdir -p "$TEST_TEMP_DIR/home/.tmux/plugins/tpm"
 
     local output
     output=$(run_tmux install 2>&1 || true)
@@ -402,11 +390,11 @@ test_install_tpm_already_exists() {
 # 11. tmux install copies overlay file
 # ──────────────────────────────────────────────────────────────────────────────
 test_install_copies_overlay() {
-    rm -f "$TEMP_DIR/home/.tmux/shipwright-overlay.conf"
+    rm -f "$TEST_TEMP_DIR/home/.tmux/shipwright-overlay.conf"
 
     run_tmux install >/dev/null 2>&1 || true
 
-    if [[ ! -f "$TEMP_DIR/home/.tmux/shipwright-overlay.conf" ]]; then
+    if [[ ! -f "$TEST_TEMP_DIR/home/.tmux/shipwright-overlay.conf" ]]; then
         return 1
     fi
     return 0
@@ -420,7 +408,7 @@ test_install_copies_overlay() {
 # 12. tmux fix applies fixes for bad options
 # ──────────────────────────────────────────────────────────────────────────────
 test_fix_applies_fixes() {
-    true > "$TEMP_DIR/mock-log/tmux-calls.log"
+    true > "$TEST_TEMP_DIR/mock-log/tmux-calls.log"
 
     local output
     output=$(run_tmux_env \
@@ -443,7 +431,7 @@ test_fix_applies_fixes() {
     fi
 
     # Should have called tmux set commands (check log)
-    if ! grep -q "tmux set" "$TEMP_DIR/mock-log/tmux-calls.log" 2>/dev/null; then
+    if ! grep -q "tmux set" "$TEST_TEMP_DIR/mock-log/tmux-calls.log" 2>/dev/null; then
         return 1
     fi
     return 0
@@ -453,7 +441,7 @@ test_fix_applies_fixes() {
 # 13. tmux fix with all options already correct reports no fixes needed
 # ──────────────────────────────────────────────────────────────────────────────
 test_fix_no_fixes_needed() {
-    true > "$TEMP_DIR/mock-log/tmux-calls.log"
+    true > "$TEST_TEMP_DIR/mock-log/tmux-calls.log"
 
     local output
     output=$(run_tmux fix 2>&1 || true)
@@ -470,11 +458,11 @@ test_fix_no_fixes_needed() {
 test_fix_outside_tmux() {
     local exit_code=0
     (
-        cd "$TEMP_DIR"
-        PATH="$TEMP_DIR/bin:$PATH" \
-        HOME="$TEMP_DIR/home" \
+        cd "$TEST_TEMP_DIR"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        HOME="$TEST_TEMP_DIR/home" \
         TMUX="" \
-            bash "$TEMP_DIR/scripts/sw-tmux.sh" fix 2>/dev/null
+            bash "$TEST_TEMP_DIR/scripts/sw-tmux.sh" fix 2>/dev/null
     ) || exit_code=$?
 
     if [[ "$exit_code" -eq 0 ]]; then
@@ -492,12 +480,12 @@ test_fix_outside_tmux() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_reload_calls_source_file() {
     # Ensure tmux.conf exists
-    echo "# tmux config" > "$TEMP_DIR/home/.tmux.conf"
-    true > "$TEMP_DIR/mock-log/tmux-calls.log"
+    echo "# tmux config" > "$TEST_TEMP_DIR/home/.tmux.conf"
+    true > "$TEST_TEMP_DIR/mock-log/tmux-calls.log"
 
     run_tmux reload >/dev/null 2>&1 || true
 
-    if ! grep -q "source-file" "$TEMP_DIR/mock-log/tmux-calls.log" 2>/dev/null; then
+    if ! grep -q "source-file" "$TEST_TEMP_DIR/mock-log/tmux-calls.log" 2>/dev/null; then
         return 1
     fi
     return 0
@@ -509,11 +497,11 @@ test_reload_calls_source_file() {
 test_reload_outside_tmux() {
     local exit_code=0
     (
-        cd "$TEMP_DIR"
-        PATH="$TEMP_DIR/bin:$PATH" \
-        HOME="$TEMP_DIR/home" \
+        cd "$TEST_TEMP_DIR"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        HOME="$TEST_TEMP_DIR/home" \
         TMUX="" \
-            bash "$TEMP_DIR/scripts/sw-tmux.sh" reload 2>/dev/null
+            bash "$TEST_TEMP_DIR/scripts/sw-tmux.sh" reload 2>/dev/null
     ) || exit_code=$?
 
     if [[ "$exit_code" -eq 0 ]]; then
@@ -526,7 +514,7 @@ test_reload_outside_tmux() {
 # 17. tmux reload with missing .tmux.conf prints error
 # ──────────────────────────────────────────────────────────────────────────────
 test_reload_no_conf() {
-    rm -f "$TEMP_DIR/home/.tmux.conf"
+    rm -f "$TEST_TEMP_DIR/home/.tmux.conf"
 
     local output
     output=$(run_tmux reload 2>&1 || true)
@@ -627,18 +615,18 @@ test_cli_aliases() {
 # 23. Doctor outside tmux checks config file instead
 # ──────────────────────────────────────────────────────────────────────────────
 test_doctor_outside_tmux() {
-    echo "set -g allow-passthrough on" > "$TEMP_DIR/home/.tmux.conf"
-    echo "set -g extended-keys on" >> "$TEMP_DIR/home/.tmux.conf"
+    echo "set -g allow-passthrough on" > "$TEST_TEMP_DIR/home/.tmux.conf"
+    echo "set -g extended-keys on" >> "$TEST_TEMP_DIR/home/.tmux.conf"
 
     local exit_code=0
     local output
     output=$(
-        cd "$TEMP_DIR"
-        PATH="$TEMP_DIR/bin:$PATH" \
-        HOME="$TEMP_DIR/home" \
+        cd "$TEST_TEMP_DIR"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        HOME="$TEST_TEMP_DIR/home" \
         TMUX="" \
         LC_TERMINAL="Ghostty" \
-            bash "$TEMP_DIR/scripts/sw-tmux.sh" doctor 2>&1
+            bash "$TEST_TEMP_DIR/scripts/sw-tmux.sh" doctor 2>&1
     ) || exit_code=$?
 
     # Should mention checking config file
@@ -652,7 +640,7 @@ test_doctor_outside_tmux() {
 # 24. Doctor with missing TPM reports fail
 # ──────────────────────────────────────────────────────────────────────────────
 test_doctor_missing_tpm() {
-    rm -rf "$TEMP_DIR/home/.tmux/plugins/tpm"
+    rm -rf "$TEST_TEMP_DIR/home/.tmux/plugins/tpm"
 
     local output
     output=$(run_tmux doctor 2>&1 || true)

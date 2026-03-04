@@ -8,6 +8,12 @@ ARTIFACTS_DIR="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 NO_GITHUB="${NO_GITHUB:-false}"
 
+# Source compound audit cascade library (fail-open)
+if [[ -f "${SCRIPT_DIR}/lib/compound-audit.sh" ]]; then
+    _COMPOUND_AUDIT_LOADED=""
+    source "${SCRIPT_DIR}/lib/compound-audit.sh"
+fi
+
 pipeline_should_skip_stage() {
     local stage_id="$1"
     local reason=""
@@ -1310,6 +1316,16 @@ stage_compound_quality() {
     # Convergence tracking
     local prev_issue_count=-1
 
+    # Compound audit cascade state (persists across cycles)
+    local _cascade_all_findings="[]"
+    local _cascade_active_agents="logic integration completeness"
+    local _cascade_diff=""
+    _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" 2>/dev/null | head -5000) || _cascade_diff=""
+    local _cascade_plan=""
+    if [[ -f "$ARTIFACTS_DIR/plan.md" ]]; then
+        _cascade_plan=$(head -200 "$ARTIFACTS_DIR/plan.md" 2>/dev/null) || true
+    fi
+
     local cycle=0
     while [[ "$cycle" -lt "$max_cycles" ]]; do
         cycle=$((cycle + 1))
@@ -1495,6 +1511,67 @@ stage_compound_quality() {
             success "Multi-dimensional quality: all checks passed"
         fi
 
+        # 8. Compound Audit Cascade (adaptive multi-agent probing)
+        if type compound_audit_run_cycle >/dev/null 2>&1; then
+            echo ""
+            info "Running compound audit cascade (agents: $_cascade_active_agents)..."
+
+            local cascade_findings
+            cascade_findings=$(compound_audit_run_cycle "$_cascade_active_agents" "$_cascade_diff" "$_cascade_plan" "$_cascade_all_findings" "$cycle") || cascade_findings="[]"
+
+            # Dedup within this cycle
+            if type compound_audit_dedup_structural >/dev/null 2>&1; then
+                cascade_findings=$(compound_audit_dedup_structural "$cascade_findings") || cascade_findings="[]"
+            fi
+
+            local cascade_count
+            cascade_count=$(echo "$cascade_findings" | jq 'length' 2>/dev/null || echo "0")
+            local cascade_crit
+            cascade_crit=$(echo "$cascade_findings" | jq '[.[] | select(.severity == "critical" or .severity == "high")] | length' 2>/dev/null || echo "0")
+
+            if [[ "$cascade_count" -gt 0 ]]; then
+                warn "Compound audit: ${cascade_count} findings (${cascade_crit} critical/high)"
+                total_critical=$((total_critical + $(echo "$cascade_findings" | jq '[.[] | select(.severity == "critical")] | length' 2>/dev/null || echo "0")))
+                total_major=$((total_major + $(echo "$cascade_findings" | jq '[.[] | select(.severity == "high")] | length' 2>/dev/null || echo "0")))
+                total_minor=$((total_minor + $(echo "$cascade_findings" | jq '[.[] | select(.severity == "medium" or .severity == "low")] | length' 2>/dev/null || echo "0")))
+                [[ "$cascade_crit" -gt 0 ]] && all_passed=false
+            else
+                success "Compound audit: no findings"
+            fi
+
+            # Check cascade convergence
+            local cascade_converge=""
+            if type compound_audit_converged >/dev/null 2>&1; then
+                cascade_converge=$(compound_audit_converged "$cascade_findings" "$_cascade_all_findings" "$cycle" "$max_cycles") || cascade_converge=""
+            fi
+
+            type audit_emit >/dev/null 2>&1 && \
+                audit_emit "compound.cycle_complete" "cycle=$cycle" "findings=$cascade_count" \
+                    "critical_high=$cascade_crit" "converged=$cascade_converge" || true
+
+            if [[ -n "$cascade_converge" ]]; then
+                success "Compound audit converged: $cascade_converge"
+                type audit_emit >/dev/null 2>&1 && \
+                    audit_emit "compound.converged" "reason=$cascade_converge" "total_cycles=$cycle" || true
+            fi
+
+            # Merge findings for next cycle's context
+            _cascade_all_findings=$(echo "$_cascade_all_findings" "$cascade_findings" | jq -s '.[0] + .[1]' 2>/dev/null || echo "$_cascade_all_findings")
+
+            # Escalate: trigger specialists for next cycle
+            if type compound_audit_escalate >/dev/null 2>&1; then
+                local cascade_specialists
+                cascade_specialists=$(compound_audit_escalate "$cascade_findings") || cascade_specialists=""
+                if [[ -n "$cascade_specialists" ]]; then
+                    info "Compound audit escalation: adding $cascade_specialists"
+                    _cascade_active_agents="logic integration completeness $cascade_specialists"
+                fi
+            fi
+
+            # Save all findings to artifact
+            echo "$_cascade_all_findings" > "$ARTIFACTS_DIR/compound-audit-findings.json" 2>/dev/null || true
+        fi
+
         # ── Convergence Detection ──
         # Count critical/high issues from all review artifacts
         local current_issue_count=0
@@ -1514,6 +1591,14 @@ stage_compound_quality() {
             current_issue_count=$((current_issue_count + ${neg_issues:-0}))
         fi
         current_issue_count=$((current_issue_count + quality_failures))
+
+        # Add compound audit cascade findings to convergence count
+        if [[ -f "$ARTIFACTS_DIR/compound-audit-findings.json" ]]; then
+            local cascade_crit_count
+            cascade_crit_count=$(jq '[.[] | select(.severity == "critical" or .severity == "high")] | length' \
+                "$ARTIFACTS_DIR/compound-audit-findings.json" 2>/dev/null || echo "0")
+            current_issue_count=$((current_issue_count + ${cascade_crit_count:-0}))
+        fi
 
         emit_event "compound.cycle" \
             "issue=${ISSUE_NUMBER:-0}" \

@@ -6,28 +6,15 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-pm-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/bin"
     if command -v jq &>/dev/null; then
-        ln -sf "$(command -v jq)" "$TEMP_DIR/bin/jq"
+        ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
     fi
-    cat > "$TEMP_DIR/bin/git" <<'MOCK'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
 #!/usr/bin/env bash
 case "${1:-}" in
     rev-parse) echo "/tmp/mock-repo" ;;
@@ -37,35 +24,30 @@ case "${1:-}" in
 esac
 exit 0
 MOCK
-    chmod +x "$TEMP_DIR/bin/git"
-    cat > "$TEMP_DIR/bin/gh" <<'MOCK'
+    chmod +x "$TEST_TEMP_DIR/bin/git"
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'MOCK'
 #!/usr/bin/env bash
 echo '[]'
 exit 0
 MOCK
-    chmod +x "$TEMP_DIR/bin/gh"
-    cat > "$TEMP_DIR/bin/claude" <<'MOCK'
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'MOCK'
 #!/usr/bin/env bash
 echo "Mock claude response"
 exit 0
 MOCK
-    chmod +x "$TEMP_DIR/bin/claude"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
 }
 
-cleanup_env() { [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"; }
-trap cleanup_env EXIT
+trap cleanup_test_env EXIT
 
 assert_pass() { local desc="$1"; TOTAL=$((TOTAL+1)); PASS=$((PASS+1)); echo -e "  ${GREEN}✓${RESET} ${desc}"; }
 assert_fail() { local desc="$1" detail="${2:-}"; TOTAL=$((TOTAL+1)); FAIL=$((FAIL+1)); FAILURES+=("$desc"); echo -e "  ${RED}✗${RESET} ${desc}"; [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"; }
-assert_eq() { local desc="$1" expected="$2" actual="$3"; if [[ "$expected" == "$actual" ]]; then assert_pass "$desc"; else assert_fail "$desc" "expected: $expected, got: $actual"; fi; }
-assert_contains() { local desc="$1" haystack="$2" needle="$3"; if grep -qF "$needle" <<<"$haystack" 2>/dev/null; then assert_pass "$desc"; else assert_fail "$desc" "output missing: $needle"; fi; }
-assert_contains_regex() { local desc="$1" haystack="$2" pattern="$3"; if grep -qE "$pattern" <<<"$haystack" 2>/dev/null; then assert_pass "$desc"; else assert_fail "$desc" "output missing pattern: $pattern"; fi; }
-
 echo ""
-echo -e "${CYAN}${BOLD}  Shipwright PM Tests${RESET}"
+print_test_header "Shipwright PM Tests"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
 setup_env
@@ -102,8 +84,8 @@ echo -e "  ${CYAN}analyze subcommand${RESET}"
             echo "ANALYZE_FAIL:$(echo "$result" | head -3)"
         fi
     fi
-) > "$TEMP_DIR/analyze_out" 2>/dev/null
-analyze_result=$(cat "$TEMP_DIR/analyze_out")
+) > "$TEST_TEMP_DIR/analyze_out" 2>/dev/null
+analyze_result=$(cat "$TEST_TEMP_DIR/analyze_out")
 if echo "$analyze_result" | grep -qF "ANALYZE_OK"; then
     assert_pass "analyze_issue returns JSON with issue field"
 else
@@ -130,8 +112,8 @@ output=$(bash "$SCRIPT_DIR/sw-pm.sh" team 42 2>&1) && rc=0 || rc=$?
     else
         echo "TEAM_FAIL"
     fi
-) > "$TEMP_DIR/team_out" 2>/dev/null
-team_result=$(cat "$TEMP_DIR/team_out")
+) > "$TEST_TEMP_DIR/team_out" 2>/dev/null
+team_result=$(cat "$TEST_TEMP_DIR/team_out")
 if echo "$team_result" | grep -qF "TEAM_OK"; then
     assert_pass "recommend_team returns JSON with roles"
 else
@@ -151,8 +133,8 @@ echo -e "  ${CYAN}orchestrate subcommand${RESET}"
     else
         echo "ORCH_FAIL"
     fi
-) > "$TEMP_DIR/orch_out" 2>/dev/null
-orch_result=$(cat "$TEMP_DIR/orch_out")
+) > "$TEST_TEMP_DIR/orch_out" 2>/dev/null
+orch_result=$(cat "$TEST_TEMP_DIR/orch_out")
 if echo "$orch_result" | grep -qF "ORCH_OK"; then
     assert_pass "orchestrate_stages returns JSON with stages"
 else
@@ -173,8 +155,8 @@ echo -e "  ${CYAN}recommend combined${RESET}"
     else
         echo "RECOMMEND_FAIL"
     fi
-) > "$TEMP_DIR/rec_out" 2>/dev/null
-rec_result=$(cat "$TEMP_DIR/rec_out")
+) > "$TEST_TEMP_DIR/rec_out" 2>/dev/null
+rec_result=$(cat "$TEST_TEMP_DIR/rec_out")
 if echo "$rec_result" | grep -qF "RECOMMEND_OK"; then
     assert_pass "recommend pipeline produces valid team + stages"
 else
@@ -239,8 +221,5 @@ else
 fi
 
 echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
-if [[ $FAIL -eq 0 ]]; then echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"; else echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"; for f in "${FAILURES[@]}"; do echo -e "  ${RED}✗${RESET} $f"; done; fi
-echo ""
-exit "$FAIL"
+print_test_results

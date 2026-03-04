@@ -6,39 +6,26 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-doc-fleet-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright/doc-fleet"
-    mkdir -p "$TEMP_DIR/bin"
-    mkdir -p "$TEMP_DIR/repo/scripts/lib"
-    mkdir -p "$TEMP_DIR/repo/.claude/agents"
-    mkdir -p "$TEMP_DIR/repo/.claude/pipeline-artifacts"
-    mkdir -p "$TEMP_DIR/repo/docs/strategy"
-    mkdir -p "$TEMP_DIR/repo/docs/patterns"
-    mkdir -p "$TEMP_DIR/repo/docs/tmux-research"
-    mkdir -p "$TEMP_DIR/repo/claude-code"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright/doc-fleet"
+    mkdir -p "$TEST_TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/repo/scripts/lib"
+    mkdir -p "$TEST_TEMP_DIR/repo/.claude/agents"
+    mkdir -p "$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+    mkdir -p "$TEST_TEMP_DIR/repo/docs/strategy"
+    mkdir -p "$TEST_TEMP_DIR/repo/docs/patterns"
+    mkdir -p "$TEST_TEMP_DIR/repo/docs/tmux-research"
+    mkdir -p "$TEST_TEMP_DIR/repo/claude-code"
 
     # Link real jq if available
     if command -v jq &>/dev/null; then
-        ln -sf "$(command -v jq)" "$TEMP_DIR/bin/jq"
+        ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
     fi
 
     # Mock binaries
-    cat > "$TEMP_DIR/bin/git" <<'MOCK'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
 #!/usr/bin/env bash
 case "${1:-}" in
     rev-parse) echo "abc1234" ;;
@@ -47,9 +34,9 @@ case "${1:-}" in
 esac
 exit 0
 MOCK
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
-    cat > "$TEMP_DIR/bin/tmux" <<'MOCK'
+    cat > "$TEST_TEMP_DIR/bin/tmux" <<'MOCK'
 #!/usr/bin/env bash
 case "${1:-}" in
     has-session) exit 1 ;;
@@ -58,17 +45,17 @@ case "${1:-}" in
     *) exit 0 ;;
 esac
 MOCK
-    chmod +x "$TEMP_DIR/bin/tmux"
+    chmod +x "$TEST_TEMP_DIR/bin/tmux"
 
-    cat > "$TEMP_DIR/bin/claude" <<'MOCK'
+    cat > "$TEST_TEMP_DIR/bin/claude" <<'MOCK'
 #!/usr/bin/env bash
 echo "Mock claude response"
 exit 0
 MOCK
-    chmod +x "$TEMP_DIR/bin/claude"
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
 
     # Mock stat to return a recent modification time
-    cat > "$TEMP_DIR/bin/stat" <<'MOCK'
+    cat > "$TEST_TEMP_DIR/bin/stat" <<'MOCK'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "-f" ]]; then
     echo "$(date +%s)"
@@ -79,16 +66,16 @@ else
 fi
 exit 0
 MOCK
-    chmod +x "$TEMP_DIR/bin/stat"
+    chmod +x "$TEST_TEMP_DIR/bin/stat"
 
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
 
     # Create mock documentation files
-    echo "# Test README" > "$TEMP_DIR/repo/README.md"
-    echo "# Strategy" > "$TEMP_DIR/repo/STRATEGY.md"
-    cat > "$TEMP_DIR/repo/STRATEGY.md" <<'DOC'
+    echo "# Test README" > "$TEST_TEMP_DIR/repo/README.md"
+    echo "# Strategy" > "$TEST_TEMP_DIR/repo/STRATEGY.md"
+    cat > "$TEST_TEMP_DIR/repo/STRATEGY.md" <<'DOC'
 # Strategy
 
 This is the Shipwright strategy document with enough content
@@ -134,16 +121,16 @@ More lines here to pad it out sufficiently for the test suite
 to verify that the health audit does not flag it as too thin.
 DOC
 
-    echo "# Changelog" > "$TEMP_DIR/repo/CHANGELOG.md"
-    echo "# Tips" > "$TEMP_DIR/repo/docs/TIPS.md"
-    echo "# Known Issues" > "$TEMP_DIR/repo/docs/KNOWN-ISSUES.md"
-    echo "# Config Policy" > "$TEMP_DIR/repo/docs/config-policy.md"
-    echo "# Strategy Index" > "$TEMP_DIR/repo/docs/strategy/README.md"
-    echo "# Patterns Index" > "$TEMP_DIR/repo/docs/patterns/README.md"
-    echo "# tmux Index" > "$TEMP_DIR/repo/docs/tmux-research/TMUX-RESEARCH-INDEX.md"
+    echo "# Changelog" > "$TEST_TEMP_DIR/repo/CHANGELOG.md"
+    echo "# Tips" > "$TEST_TEMP_DIR/repo/docs/TIPS.md"
+    echo "# Known Issues" > "$TEST_TEMP_DIR/repo/docs/KNOWN-ISSUES.md"
+    echo "# Config Policy" > "$TEST_TEMP_DIR/repo/docs/config-policy.md"
+    echo "# Strategy Index" > "$TEST_TEMP_DIR/repo/docs/strategy/README.md"
+    echo "# Patterns Index" > "$TEST_TEMP_DIR/repo/docs/patterns/README.md"
+    echo "# tmux Index" > "$TEST_TEMP_DIR/repo/docs/tmux-research/TMUX-RESEARCH-INDEX.md"
 
     # Create CLAUDE.md and agent definitions
-    cat > "$TEMP_DIR/repo/.claude/CLAUDE.md" <<'DOC'
+    cat > "$TEST_TEMP_DIR/repo/.claude/CLAUDE.md" <<'DOC'
 # Shipwright
 Commands and documentation
 <!-- AUTO:test-section -->
@@ -152,63 +139,59 @@ test content
 DOC
 
     for agent in pipeline-agent code-reviewer test-specialist devops-engineer shell-script-specialist doc-fleet-agent; do
-        echo "# ${agent}" > "$TEMP_DIR/repo/.claude/agents/${agent}.md"
+        echo "# ${agent}" > "$TEST_TEMP_DIR/repo/.claude/agents/${agent}.md"
     done
 
     # Create sw-docs.sh mock that succeeds
-    cat > "$TEMP_DIR/repo/scripts/sw-docs.sh" <<'MOCK'
+    cat > "$TEST_TEMP_DIR/repo/scripts/sw-docs.sh" <<'MOCK'
 #!/usr/bin/env bash
 case "${1:-}" in
     check) exit 0 ;;
     *) exit 0 ;;
 esac
 MOCK
-    chmod +x "$TEMP_DIR/repo/scripts/sw-docs.sh"
+    chmod +x "$TEST_TEMP_DIR/repo/scripts/sw-docs.sh"
 
     # Create sw-loop.sh mock
-    cat > "$TEMP_DIR/repo/scripts/sw-loop.sh" <<'MOCK'
+    cat > "$TEST_TEMP_DIR/repo/scripts/sw-loop.sh" <<'MOCK'
 #!/usr/bin/env bash
 echo "Mock loop"
 exit 0
 MOCK
-    chmod +x "$TEMP_DIR/repo/scripts/sw-loop.sh"
+    chmod +x "$TEST_TEMP_DIR/repo/scripts/sw-loop.sh"
 
     # Create some scripts for ratio check
     for s in sw-pipeline sw-daemon sw-loop sw-status sw-doctor; do
-        echo "#!/usr/bin/env bash" > "$TEMP_DIR/repo/scripts/${s}.sh"
+        echo "#!/usr/bin/env bash" > "$TEST_TEMP_DIR/repo/scripts/${s}.sh"
     done
 }
 
-cleanup_env() { [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"; }
-trap cleanup_env EXIT
+trap cleanup_test_env EXIT
 
 assert_pass() { local desc="$1"; TOTAL=$((TOTAL+1)); PASS=$((PASS+1)); echo -e "  ${GREEN}✓${RESET} ${desc}"; }
 assert_fail() { local desc="$1" detail="${2:-}"; TOTAL=$((TOTAL+1)); FAIL=$((FAIL+1)); FAILURES+=("$desc"); echo -e "  ${RED}✗${RESET} ${desc}"; [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"; }
-assert_eq() { local desc="$1" expected="$2" actual="$3"; if [[ "$expected" == "$actual" ]]; then assert_pass "$desc"; else assert_fail "$desc" "expected: $expected, got: $actual"; fi; }
 assert_contains() { local desc="$1" haystack="$2" needle="$3"; local _count; _count=$(printf '%s\n' "$haystack" | grep -cF -- "$needle" 2>/dev/null) || true; if [[ "${_count:-0}" -gt 0 ]]; then assert_pass "$desc"; else assert_fail "$desc" "output missing: $needle"; fi; }
-assert_contains_regex() { local desc="$1" haystack="$2" pattern="$3"; if grep -qE "$pattern" <<<"$haystack" 2>/dev/null; then assert_pass "$desc"; else assert_fail "$desc" "output missing pattern: $pattern"; fi; }
-
 echo ""
-echo -e "${CYAN}${BOLD}  Shipwright Doc Fleet Tests${RESET}"
+print_test_header "Shipwright Doc Fleet Tests"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
 setup_env
 
 # Copy the script under test to the mock repo's scripts dir so SCRIPT_DIR
 # resolves to the mock environment (finding mock sw-docs.sh, sw-loop.sh)
-cp "$SCRIPT_DIR/sw-doc-fleet.sh" "$TEMP_DIR/repo/scripts/sw-doc-fleet.sh"
-chmod +x "$TEMP_DIR/repo/scripts/sw-doc-fleet.sh"
+cp "$SCRIPT_DIR/sw-doc-fleet.sh" "$TEST_TEMP_DIR/repo/scripts/sw-doc-fleet.sh"
+chmod +x "$TEST_TEMP_DIR/repo/scripts/sw-doc-fleet.sh"
 # Also copy lib files if they exist
 if [[ -f "$SCRIPT_DIR/lib/compat.sh" ]]; then
-    cp "$SCRIPT_DIR/lib/compat.sh" "$TEMP_DIR/repo/scripts/lib/compat.sh" 2>/dev/null || true
+    cp "$SCRIPT_DIR/lib/compat.sh" "$TEST_TEMP_DIR/repo/scripts/lib/compat.sh" 2>/dev/null || true
 fi
 if [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]]; then
-    cp "$SCRIPT_DIR/lib/helpers.sh" "$TEMP_DIR/repo/scripts/lib/helpers.sh" 2>/dev/null || true
+    cp "$SCRIPT_DIR/lib/helpers.sh" "$TEST_TEMP_DIR/repo/scripts/lib/helpers.sh" 2>/dev/null || true
 fi
 
 # Use the copy in the mock environment for all tests
-TEST_SCRIPT="$TEMP_DIR/repo/scripts/sw-doc-fleet.sh"
-export REPO_DIR="$TEMP_DIR/repo"
+TEST_SCRIPT="$TEST_TEMP_DIR/repo/scripts/sw-doc-fleet.sh"
+export REPO_DIR="$TEST_TEMP_DIR/repo"
 
 # ─── Test 1: Help ────────────────────────────────────────────────────
 echo -e "${BOLD}  Help${RESET}"
@@ -357,8 +340,5 @@ output=$(bash "$TEST_SCRIPT" stop 2>&1) || true
 assert_contains "stop alias works" "$output" "Retiring"
 
 echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
-if [[ $FAIL -eq 0 ]]; then echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"; else echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"; for f in "${FAILURES[@]}"; do echo -e "  ${RED}✗${RESET} $f"; done; fi
-echo ""
-exit "$FAIL"
+print_test_results

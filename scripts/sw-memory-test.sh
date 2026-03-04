@@ -7,38 +7,26 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 MEMORY_SCRIPT="$SCRIPT_DIR/sw-memory.sh"
 COST_SCRIPT="$SCRIPT_DIR/sw-cost.sh"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT SETUP
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-memory-test.XXXXXX")
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-memory-test.XXXXXX")
 
     # Create a mock git repo so repo_hash() and repo_name() work
-    mkdir -p "$TEMP_DIR/project"
+    mkdir -p "$TEST_TEMP_DIR/project"
     (
-        cd "$TEMP_DIR/project"
+        cd "$TEST_TEMP_DIR/project"
         git init --quiet
         git config user.email "test@test.com"
         git config user.name "Test User"
@@ -63,13 +51,13 @@ PKG
 
     # Override HOME so memory writes go to temp dir
     export ORIG_HOME="$HOME"
-    export HOME="$TEMP_DIR/home"
-    export REPO_DIR="$TEMP_DIR/project"
+    export HOME="$TEST_TEMP_DIR/home"
+    export REPO_DIR="$TEST_TEMP_DIR/project"
     mkdir -p "$HOME/.shipwright"
 
     # Create mock pipeline state file
-    mkdir -p "$TEMP_DIR/project/.claude/pipeline-artifacts"
-    cat > "$TEMP_DIR/project/.claude/pipeline-state.md" <<'STATE'
+    mkdir -p "$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
+    cat > "$TEST_TEMP_DIR/project/.claude/pipeline-state.md" <<'STATE'
 ---
 pipeline: standard
 goal: "Add JWT auth"
@@ -95,7 +83,7 @@ Goal: Add JWT auth
 STATE
 
     # Create mock test results
-    cat > "$TEMP_DIR/project/.claude/pipeline-artifacts/test-results.log" <<'TESTS'
+    cat > "$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/test-results.log" <<'TESTS'
 PASS tests/auth.test.js
   ✓ validates token (5ms)
   ✓ rejects invalid token (3ms)
@@ -106,7 +94,7 @@ Tests:       3 passed, 3 total
 TESTS
 
     # Create mock review
-    cat > "$TEMP_DIR/project/.claude/pipeline-artifacts/review.md" <<'REVIEW'
+    cat > "$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/review.md" <<'REVIEW'
 # Code Review
 
 ## Findings
@@ -124,8 +112,8 @@ cleanup_env() {
         export HOME="$ORIG_HOME"
     fi
     unset REPO_DIR 2>/dev/null || true
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -211,7 +199,7 @@ compute_repo_hash() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_capture_pipeline() {
     local output
-    output=$(cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" capture \
+    output=$(cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" capture \
         ".claude/pipeline-state.md" ".claude/pipeline-artifacts" 2>&1)
 
     assert_contains "$output" "Captured pipeline learnings" "capture success message"
@@ -222,14 +210,14 @@ test_memory_capture_pipeline() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_inject_stages() {
     # First capture some data
-    (cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" capture \
+    (cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" capture \
         ".claude/pipeline-state.md" ".claude/pipeline-artifacts" 2>&1) >/dev/null
 
     local plan_ctx build_ctx test_ctx review_ctx
-    plan_ctx=$(cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" inject plan 2>&1)
-    build_ctx=$(cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" inject build 2>&1)
-    test_ctx=$(cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" inject test 2>&1)
-    review_ctx=$(cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" inject review 2>&1)
+    plan_ctx=$(cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" inject plan 2>&1)
+    build_ctx=$(cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" inject build 2>&1)
+    test_ctx=$(cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" inject test 2>&1)
+    review_ctx=$(cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" inject review 2>&1)
 
     assert_contains "$plan_ctx" "Memory Context" "plan has header" &&
     assert_contains "$plan_ctx" "Stage: plan" "plan has stage" &&
@@ -243,13 +231,13 @@ test_memory_inject_stages() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_failure_deduplication() {
     # Capture same failure twice
-    (cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" capture \
+    (cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" capture \
         ".claude/pipeline-state.md" ".claude/pipeline-artifacts" 2>&1) >/dev/null
 
     # Record the same failure pattern directly
     # shellcheck disable=SC2034
     local error_output="Error: Cannot find module './db'"
-    (cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" capture \
+    (cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" capture \
         ".claude/pipeline-state.md" ".claude/pipeline-artifacts" 2>&1) >/dev/null
 
     local mem_dir="$HOME/.shipwright/memory"
@@ -265,7 +253,7 @@ test_failure_deduplication() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_pattern_detection() {
     local output
-    output=$(cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" pattern project 2>&1)
+    output=$(cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" pattern project 2>&1)
 
     assert_contains "$output" "node" "detects node project" &&
     assert_contains "$output" "express" "detects express framework"
@@ -288,12 +276,12 @@ test_pattern_detection() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_repo_isolation() {
     # Capture for project 1
-    (cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" pattern project 2>&1) >/dev/null
+    (cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" pattern project 2>&1) >/dev/null
 
     # Create a second project with different origin
-    mkdir -p "$TEMP_DIR/project2"
+    mkdir -p "$TEST_TEMP_DIR/project2"
     (
-        cd "$TEMP_DIR/project2"
+        cd "$TEST_TEMP_DIR/project2"
         git init --quiet
         git config user.email "test@test.com"
         git config user.name "Test User"
@@ -304,7 +292,7 @@ test_repo_isolation() {
     )
 
     # Capture for project 2
-    (cd "$TEMP_DIR/project2" && bash "$MEMORY_SCRIPT" pattern project 2>&1) >/dev/null
+    (cd "$TEST_TEMP_DIR/project2" && bash "$MEMORY_SCRIPT" pattern project 2>&1) >/dev/null
 
     # Verify they're in separate directories
     local hash1 hash2
@@ -327,12 +315,12 @@ test_repo_isolation() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_show() {
     # Capture some data first
-    (cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" pattern project 2>&1) >/dev/null
-    (cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" capture \
+    (cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" pattern project 2>&1) >/dev/null
+    (cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" capture \
         ".claude/pipeline-state.md" ".claude/pipeline-artifacts" 2>&1) >/dev/null
 
     local output
-    output=$(cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" show 2>&1)
+    output=$(cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" show 2>&1)
 
     assert_contains "$output" "Memory:" "show has header" &&
     assert_contains "$output" "PROJECT" "show has project section" &&
@@ -344,10 +332,10 @@ test_memory_show() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_search() {
     # Capture project patterns
-    (cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" pattern project 2>&1) >/dev/null
+    (cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" pattern project 2>&1) >/dev/null
 
     local output
-    output=$(cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" search "express" 2>&1)
+    output=$(cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" search "express" 2>&1)
 
     assert_contains "$output" "express" "search finds express"
 }
@@ -357,10 +345,10 @@ test_memory_search() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_export() {
     # Capture some data first
-    (cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" pattern project 2>&1) >/dev/null
+    (cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" pattern project 2>&1) >/dev/null
 
     local output
-    output=$(cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" export 2>&1)
+    output=$(cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" export 2>&1)
 
     # Should be valid JSON
     if ! echo "$output" | jq empty 2>/dev/null; then
@@ -377,7 +365,7 @@ test_memory_export() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_forget() {
     # Capture some data first
-    (cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" pattern project 2>&1) >/dev/null
+    (cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" pattern project 2>&1) >/dev/null
 
     # Verify memory exists
     local hash
@@ -385,7 +373,7 @@ test_memory_forget() {
     assert_file_exists "$HOME/.shipwright/memory/$hash/patterns.json" "memory exists before forget" || return 1
 
     # Forget
-    (cd "$TEMP_DIR/project" && bash "$MEMORY_SCRIPT" forget --all 2>&1) >/dev/null
+    (cd "$TEST_TEMP_DIR/project" && bash "$MEMORY_SCRIPT" forget --all 2>&1) >/dev/null
 
     # Verify memory is gone
     if [[ -d "$HOME/.shipwright/memory/$hash" ]]; then
@@ -524,7 +512,7 @@ test_cost_json_output() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_get_actionable_failures() {
     (
-        cd "$TEMP_DIR/project" || return 1
+        cd "$TEST_TEMP_DIR/project" || return 1
         # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
@@ -566,7 +554,7 @@ FAIL
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_get_actionable_failures_empty() {
     (
-        cd "$TEMP_DIR/project" || return 1
+        cd "$TEST_TEMP_DIR/project" || return 1
         # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
@@ -589,7 +577,7 @@ test_memory_get_actionable_failures_empty() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_get_dora_baseline() {
     (
-        cd "$TEMP_DIR/project" || return 1
+        cd "$TEST_TEMP_DIR/project" || return 1
         # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
@@ -629,7 +617,7 @@ test_memory_get_dora_baseline() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_error_log_to_failures() {
     (
-        cd "$TEMP_DIR/project"
+        cd "$TEST_TEMP_DIR/project"
         # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
@@ -642,7 +630,7 @@ test_error_log_to_failures() {
         echo '{"failures":[]}' > "$failures_file"
 
         # Create error-log.jsonl with 2 entries
-        local artifacts_dir="$TEMP_DIR/project/.claude/pipeline-artifacts"
+        local artifacts_dir="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
         mkdir -p "$artifacts_dir"
         echo '{"type":"test","error":"TypeError: Cannot read property foo of undefined"}' > "$artifacts_dir/error-log.jsonl"
         echo '{"type":"syntax","error":"SyntaxError: Unexpected token }"}' >> "$artifacts_dir/error-log.jsonl"
@@ -661,7 +649,7 @@ test_error_log_to_failures() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_fix_outcome_tracking() {
     (
-        cd "$TEMP_DIR/project"
+        cd "$TEST_TEMP_DIR/project"
         # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
@@ -692,7 +680,7 @@ JSON
 # ──────────────────────────────────────────────────────────────────────────────
 test_closed_loop_inject_with_effectiveness() {
     (
-        cd "$TEMP_DIR/project"
+        cd "$TEST_TEMP_DIR/project"
         # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
@@ -722,7 +710,7 @@ JSON
 # ──────────────────────────────────────────────────────────────────────────────
 test_global_memory_aggregation() {
     (
-        cd "$TEMP_DIR/project"
+        cd "$TEST_TEMP_DIR/project"
         # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
@@ -755,7 +743,7 @@ JSON
 # ──────────────────────────────────────────────────────────────────────────────
 test_memory_finalize_pipeline() {
     (
-        cd "$TEMP_DIR/project"
+        cd "$TEST_TEMP_DIR/project"
         # shellcheck disable=SC1090
         source "$MEMORY_SCRIPT" > /dev/null 2>&1
 
@@ -765,8 +753,8 @@ test_memory_finalize_pipeline() {
         local failures_file="$mem_dir/failures.json"
         echo '{"failures":[]}' > "$failures_file"
 
-        local state_file="$TEMP_DIR/project/.claude/pipeline-state.md"
-        local artifacts_dir="$TEMP_DIR/project/.claude/pipeline-artifacts"
+        local state_file="$TEST_TEMP_DIR/project/.claude/pipeline-state.md"
+        local artifacts_dir="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
         mkdir -p "$artifacts_dir"
 
         # Create error log for the from_log step
@@ -818,7 +806,7 @@ main() {
 
     echo -e "${DIM}Setting up mock environment...${RESET}"
     setup_env
-    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEMP_DIR${RESET}"
+    echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEST_TEMP_DIR${RESET}"
     echo ""
 
     # Define all tests

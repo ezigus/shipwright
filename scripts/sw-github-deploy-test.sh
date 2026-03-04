@@ -11,49 +11,37 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 unset NO_GITHUB 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-github-deploy-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/scripts/lib"
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/repo/.claude/pipeline-artifacts"
-    mkdir -p "$TEMP_DIR/bin"
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-github-deploy-test.XXXXXX")
+    mkdir -p "$TEST_TEMP_DIR/scripts/lib"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
     # Copy the script under test
-    cp "$SCRIPT_DIR/sw-github-deploy.sh" "$TEMP_DIR/scripts/"
+    cp "$SCRIPT_DIR/sw-github-deploy.sh" "$TEST_TEMP_DIR/scripts/"
 
     # Create compat.sh stub
-    touch "$TEMP_DIR/scripts/lib/compat.sh"
+    touch "$TEST_TEMP_DIR/scripts/lib/compat.sh"
 
     # Create a mock git repo for _gh_detect_repo
-    git -C "$TEMP_DIR/repo" init --quiet 2>/dev/null || true
-    git -C "$TEMP_DIR/repo" remote add origin "https://github.com/testowner/testrepo.git" 2>/dev/null || true
+    git -C "$TEST_TEMP_DIR/repo" init --quiet 2>/dev/null || true
+    git -C "$TEST_TEMP_DIR/repo" remote add origin "https://github.com/testowner/testrepo.git" 2>/dev/null || true
 
     # Create mock gh binary — default: success with deployment response
-    cat > "$TEMP_DIR/bin/gh" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'MOCKEOF'
 #!/usr/bin/env bash
 # Mock gh — logs calls and returns configurable responses
 echo "$@" >> "${MOCK_GH_LOG:-/dev/null}"
@@ -77,7 +65,7 @@ else
 fi
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
     # Mock jq — use real jq
     if ! command -v jq &>/dev/null; then
@@ -87,8 +75,8 @@ MOCKEOF
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
 }
 trap cleanup_env EXIT
@@ -125,20 +113,20 @@ run_test() {
 # 1. gh_deploy_create: returns deployment ID
 # ──────────────────────────────────────────────────────────────────────────────
 test_deploy_create_returns_id() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
-    export MOCK_GH_STDIN="$TEMP_DIR/gh-stdin.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
+    export MOCK_GH_STDIN="$TEST_TEMP_DIR/gh-stdin.log"
     export MOCK_GH_FAIL=""
     export MOCK_GH_RESPONSE='{"id": 77001, "ref": "feat-branch", "environment": "staging"}'
     : > "$MOCK_GH_LOG"
 
     local deploy_id
     deploy_id=$(
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/scripts/sw-github-deploy.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/scripts/sw-github-deploy.sh"
         gh_deploy_create "testowner" "testrepo" "feat-branch" "staging" "Test deployment"
     )
 
@@ -149,18 +137,18 @@ test_deploy_create_returns_id() {
 # 2. gh_deploy_create: handles 403 gracefully
 # ──────────────────────────────────────────────────────────────────────────────
 test_deploy_create_handles_403() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export MOCK_GH_FAIL="true"
     : > "$MOCK_GH_LOG"
 
     local deploy_id
     deploy_id=$(
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/scripts/sw-github-deploy.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/scripts/sw-github-deploy.sh"
         gh_deploy_create "testowner" "testrepo" "main" "production" "Test"
     )
 
@@ -172,20 +160,20 @@ test_deploy_create_handles_403() {
 # 3. gh_deploy_update_status: sends correct POST
 # ──────────────────────────────────────────────────────────────────────────────
 test_deploy_update_status_post() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
-    export MOCK_GH_STDIN="$TEMP_DIR/gh-stdin.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
+    export MOCK_GH_STDIN="$TEST_TEMP_DIR/gh-stdin.log"
     export MOCK_GH_FAIL=""
     export MOCK_GH_RESPONSE='{}'
     : > "$MOCK_GH_LOG"
     : > "$MOCK_GH_STDIN"
 
     (
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/scripts/sw-github-deploy.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/scripts/sw-github-deploy.sh"
         gh_deploy_update_status "testowner" "testrepo" "77001" "success" "https://app.example.com" "Deployed successfully"
     ) >/dev/null 2>&1
 
@@ -198,17 +186,17 @@ test_deploy_update_status_post() {
 # 4. gh_deploy_update_status: skips when deploy_id empty
 # ──────────────────────────────────────────────────────────────────────────────
 test_deploy_update_status_skips_empty() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export MOCK_GH_FAIL=""
     : > "$MOCK_GH_LOG"
 
     (
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/scripts/sw-github-deploy.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/scripts/sw-github-deploy.sh"
         gh_deploy_update_status "testowner" "testrepo" "" "success"
     ) >/dev/null 2>&1
 
@@ -222,19 +210,19 @@ test_deploy_update_status_skips_empty() {
 # 5. gh_deploy_list: parses deployment list
 # ──────────────────────────────────────────────────────────────────────────────
 test_deploy_list_parses() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export MOCK_GH_FAIL=""
     export MOCK_GH_RESPONSE='[{"id":100,"ref":"main","environment":"production","description":"Deploy 1","created_at":"2026-01-01T00:00:00Z"},{"id":101,"ref":"feat","environment":"staging","description":"Deploy 2","created_at":"2026-01-02T00:00:00Z"}]'
     : > "$MOCK_GH_LOG"
 
     local result
     result=$(
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/scripts/sw-github-deploy.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/scripts/sw-github-deploy.sh"
         gh_deploy_list "testowner" "testrepo" "" 10
     )
 
@@ -251,19 +239,19 @@ test_deploy_list_parses() {
 # 6. gh_deploy_latest: returns first result
 # ──────────────────────────────────────────────────────────────────────────────
 test_deploy_latest_returns_first() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export MOCK_GH_FAIL=""
     export MOCK_GH_RESPONSE='[{"id":200,"ref":"v2.0","environment":"production","description":"Latest","created_at":"2026-02-01T00:00:00Z"}]'
     : > "$MOCK_GH_LOG"
 
     local result
     result=$(
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/scripts/sw-github-deploy.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/scripts/sw-github-deploy.sh"
         gh_deploy_latest "testowner" "testrepo" "production"
     )
 
@@ -280,16 +268,16 @@ test_deploy_latest_returns_first() {
 # 7. gh_deploy_rollback: creates new deployment with prev ref
 # ──────────────────────────────────────────────────────────────────────────────
 test_deploy_rollback() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
-    export MOCK_GH_STDIN="$TEMP_DIR/gh-stdin.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
+    export MOCK_GH_STDIN="$TEST_TEMP_DIR/gh-stdin.log"
     export MOCK_GH_FAIL=""
     : > "$MOCK_GH_LOG"
     : > "$MOCK_GH_STDIN"
 
     # Create a smart mock that returns different responses per call
-    cat > "$TEMP_DIR/bin/gh" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'MOCKEOF'
 #!/usr/bin/env bash
 echo "$@" >> "${MOCK_GH_LOG:-/dev/null}"
 if [[ " $* " == *" --input "* ]]; then
@@ -316,17 +304,17 @@ elif [[ "$CALL_NUM" -eq 3 ]]; then
 fi
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
-    export MOCK_CALL_COUNTER="$TEMP_DIR/call-counter"
+    export MOCK_CALL_COUNTER="$TEST_TEMP_DIR/call-counter"
     echo "0" > "$MOCK_CALL_COUNTER"
 
     local result
     result=$(
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/scripts/sw-github-deploy.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/scripts/sw-github-deploy.sh"
         gh_deploy_rollback "testowner" "testrepo" "production" "Rolling back"
     )
 
@@ -343,15 +331,15 @@ MOCKEOF
 # 8. gh_deploy_pipeline_start: stores deployment ID
 # ──────────────────────────────────────────────────────────────────────────────
 test_deploy_pipeline_start() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
-    export MOCK_GH_STDIN="$TEMP_DIR/gh-stdin.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
+    export MOCK_GH_STDIN="$TEST_TEMP_DIR/gh-stdin.log"
     export MOCK_GH_FAIL=""
     : > "$MOCK_GH_LOG"
 
     # Smart mock: first call creates deployment, second updates status
-    cat > "$TEMP_DIR/bin/gh" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'MOCKEOF'
 #!/usr/bin/env bash
 echo "$@" >> "${MOCK_GH_LOG:-/dev/null}"
 if [[ " $* " == *" --input "* ]]; then
@@ -370,27 +358,27 @@ else
 fi
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
-    export MOCK_CALL_COUNTER="$TEMP_DIR/call-counter2"
+    export MOCK_CALL_COUNTER="$TEST_TEMP_DIR/call-counter2"
     echo "0" > "$MOCK_CALL_COUNTER"
 
     local deploy_id
     deploy_id=$(
-        source "$TEMP_DIR/scripts/sw-github-deploy.sh"
-        REPO_DIR="$TEMP_DIR/repo"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/scripts/sw-github-deploy.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
         gh_deploy_pipeline_start "testowner" "testrepo" "main" "staging"
     )
 
     [[ "$deploy_id" == "88888" ]]
 
     # deployment.json should exist
-    [[ -f "$TEMP_DIR/repo/.claude/pipeline-artifacts/deployment.json" ]]
+    [[ -f "$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts/deployment.json" ]]
 
     # Verify contents
     local stored_id
-    stored_id=$(jq -r '.deploy_id' "$TEMP_DIR/repo/.claude/pipeline-artifacts/deployment.json" 2>/dev/null || true)
+    stored_id=$(jq -r '.deploy_id' "$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts/deployment.json" 2>/dev/null || true)
     [[ "$stored_id" == "88888" ]]
 }
 
@@ -398,15 +386,15 @@ MOCKEOF
 # 9. gh_deploy_pipeline_complete: updates status correctly
 # ──────────────────────────────────────────────────────────────────────────────
 test_deploy_pipeline_complete() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export MOCK_GH_FAIL=""
     export MOCK_GH_RESPONSE='{}'
     : > "$MOCK_GH_LOG"
 
     # Restore default mock
-    cat > "$TEMP_DIR/bin/gh" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'MOCKEOF'
 #!/usr/bin/env bash
 echo "$@" >> "${MOCK_GH_LOG:-/dev/null}"
 if [[ " $* " == *" --input "* ]]; then
@@ -415,16 +403,16 @@ fi
 echo '{}'
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/gh"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
 
     # Pre-create the deployment.json
     echo '{"deploy_id":"99999","environment":"production","ref":"main","started_at":"2026-01-01T00:00:00Z"}' \
-        > "$TEMP_DIR/repo/.claude/pipeline-artifacts/deployment.json"
+        > "$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts/deployment.json"
 
     (
-        source "$TEMP_DIR/scripts/sw-github-deploy.sh"
-        REPO_DIR="$TEMP_DIR/repo"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/scripts/sw-github-deploy.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
         gh_deploy_pipeline_complete "testowner" "testrepo" "production" "true" "https://app.example.com"
     ) >/dev/null 2>&1
 
@@ -436,21 +424,21 @@ MOCKEOF
 # 10. NO_GITHUB: all functions return early
 # ──────────────────────────────────────────────────────────────────────────────
 test_no_github_guard() {
-    export HOME="$TEMP_DIR/home"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export MOCK_GH_LOG="$TEMP_DIR/gh-calls.log"
+    export HOME="$TEST_TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export MOCK_GH_LOG="$TEST_TEMP_DIR/gh-calls.log"
     export NO_GITHUB="true"
     : > "$MOCK_GH_LOG"
 
     # Pre-create deployment.json for pipeline_complete test
     echo '{"deploy_id":"11111","environment":"production","ref":"main","started_at":"2026-01-01T00:00:00Z"}' \
-        > "$TEMP_DIR/repo/.claude/pipeline-artifacts/deployment.json"
+        > "$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts/deployment.json"
 
     (
-        REPO_DIR="$TEMP_DIR/repo"
-        SCRIPT_DIR="$TEMP_DIR/scripts"
-        ARTIFACTS_DIR="$TEMP_DIR/repo/.claude/pipeline-artifacts"
-        source "$TEMP_DIR/scripts/sw-github-deploy.sh"
+        REPO_DIR="$TEST_TEMP_DIR/repo"
+        SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        ARTIFACTS_DIR="$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts"
+        source "$TEST_TEMP_DIR/scripts/sw-github-deploy.sh"
 
         # All of these should return early without calling gh
         gh_deploy_create "testowner" "testrepo" "main" "production" "Test"

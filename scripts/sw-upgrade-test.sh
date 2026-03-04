@@ -6,45 +6,30 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-# ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-upgrade-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/home/.local/bin"
-    mkdir -p "$TEMP_DIR/home/.local/bin/lib"
-    mkdir -p "$TEMP_DIR/home/.tmux"
-    mkdir -p "$TEMP_DIR/home/.claude"
-    mkdir -p "$TEMP_DIR/bin"
-    mkdir -p "$TEMP_DIR/repo/.git"
-    mkdir -p "$TEMP_DIR/repo/scripts/lib"
-    mkdir -p "$TEMP_DIR/repo/tmux"
-    mkdir -p "$TEMP_DIR/repo/claude-code"
-    mkdir -p "$TEMP_DIR/repo/templates/pipelines"
-    mkdir -p "$TEMP_DIR/repo/tmux/templates"
-    mkdir -p "$TEMP_DIR/repo/docs"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.local/bin"
+    mkdir -p "$TEST_TEMP_DIR/home/.local/bin/lib"
+    mkdir -p "$TEST_TEMP_DIR/home/.tmux"
+    mkdir -p "$TEST_TEMP_DIR/home/.claude"
+    mkdir -p "$TEST_TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/repo/.git"
+    mkdir -p "$TEST_TEMP_DIR/repo/scripts/lib"
+    mkdir -p "$TEST_TEMP_DIR/repo/tmux"
+    mkdir -p "$TEST_TEMP_DIR/repo/claude-code"
+    mkdir -p "$TEST_TEMP_DIR/repo/templates/pipelines"
+    mkdir -p "$TEST_TEMP_DIR/repo/tmux/templates"
+    mkdir -p "$TEST_TEMP_DIR/repo/docs"
 
     # Link real utilities
     for cmd in jq date wc cat grep sed awk sort mkdir rm mv cp mktemp basename dirname printf tr cut head tail tee touch find ls md5 md5sum chmod; do
-        command -v "$cmd" &>/dev/null && ln -sf "$(command -v "$cmd")" "$TEMP_DIR/bin/$cmd"
+        command -v "$cmd" &>/dev/null && ln -sf "$(command -v "$cmd")" "$TEST_TEMP_DIR/bin/$cmd"
     done
 
     # Mock git
-    cat > "$TEMP_DIR/bin/git" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCKEOF'
 #!/usr/bin/env bash
 case "${1:-}" in
     rev-parse)
@@ -57,44 +42,37 @@ case "${1:-}" in
 esac
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Mock gh, claude, tmux
     for mock in gh claude tmux; do
-        printf '#!/usr/bin/env bash\necho "mock %s: $*"\nexit 0\n' "$mock" > "$TEMP_DIR/bin/$mock"
-        chmod +x "$TEMP_DIR/bin/$mock"
+        printf '#!/usr/bin/env bash\necho "mock %s: $*"\nexit 0\n' "$mock" > "$TEST_TEMP_DIR/bin/$mock"
+        chmod +x "$TEST_TEMP_DIR/bin/$mock"
     done
 
     # Create a minimal install.sh and scripts/sw to make find_repo work
-    touch "$TEMP_DIR/repo/install.sh"
-    printf '#!/usr/bin/env bash\necho "mock sw"\n' > "$TEMP_DIR/repo/scripts/sw"
-    chmod +x "$TEMP_DIR/repo/scripts/sw"
+    touch "$TEST_TEMP_DIR/repo/install.sh"
+    printf '#!/usr/bin/env bash\necho "mock sw"\n' > "$TEST_TEMP_DIR/repo/scripts/sw"
+    chmod +x "$TEST_TEMP_DIR/repo/scripts/sw"
 
     # Create a minimal compat.sh
-    touch "$TEMP_DIR/repo/scripts/lib/compat.sh"
+    touch "$TEST_TEMP_DIR/repo/scripts/lib/compat.sh"
 
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
 }
 
-cleanup_env() {
-    [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
-}
-trap cleanup_env EXIT
+trap cleanup_test_env EXIT
 
 assert_pass() {
     local desc="$1"
-    TOTAL=$((TOTAL + 1))
-    PASS=$((PASS + 1))
     echo -e "  ${GREEN}✓${RESET} ${desc}"
 }
 
 assert_fail() {
     local desc="$1"
     local detail="${2:-}"
-    TOTAL=$((TOTAL + 1))
-    FAIL=$((FAIL + 1))
     FAILURES+=("$desc")
     echo -e "  ${RED}✗${RESET} ${desc}"
     [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
@@ -111,19 +89,9 @@ assert_contains() {
     fi
 }
 
-assert_eq() {
-    local desc="$1" expected="$2" actual="$3"
-    if [[ "$expected" == "$actual" ]]; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "expected: $expected, got: $actual"
-    fi
-}
-
 # ─── Tests ────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${CYAN}${BOLD}shipwright upgrade${RESET} ${DIM}— test suite${RESET}"
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
 
 # ─── 1. VERSION defined ──────────────────────────────────────────────────────
@@ -177,22 +145,22 @@ echo -e "${BOLD}Upgrade check (dry run)${RESET}"
 setup_env
 
 # Create some repo source files so diff detection has something to compare
-echo "#!/usr/bin/env bash" > "$TEMP_DIR/repo/scripts/sw-doctor.sh"
-echo "v1" > "$TEMP_DIR/repo/scripts/sw-status.sh"
-echo "v1" > "$TEMP_DIR/repo/scripts/sw-loop.sh"
-echo "tmux config" > "$TEMP_DIR/repo/tmux/tmux.conf"
+echo "#!/usr/bin/env bash" > "$TEST_TEMP_DIR/repo/scripts/sw-doctor.sh"
+echo "v1" > "$TEST_TEMP_DIR/repo/scripts/sw-status.sh"
+echo "v1" > "$TEST_TEMP_DIR/repo/scripts/sw-loop.sh"
+echo "tmux config" > "$TEST_TEMP_DIR/repo/tmux/tmux.conf"
 
 # Install mock files so bootstrap_manifest finds them
-mkdir -p "$TEMP_DIR/home/.local/bin"
-cp "$TEMP_DIR/repo/scripts/sw-doctor.sh" "$TEMP_DIR/home/.local/bin/sw-doctor.sh"
-cp "$TEMP_DIR/repo/scripts/sw-status.sh" "$TEMP_DIR/home/.local/bin/sw-status.sh"
-cp "$TEMP_DIR/repo/scripts/sw-loop.sh" "$TEMP_DIR/home/.local/bin/sw-loop.sh"
+mkdir -p "$TEST_TEMP_DIR/home/.local/bin"
+cp "$TEST_TEMP_DIR/repo/scripts/sw-doctor.sh" "$TEST_TEMP_DIR/home/.local/bin/sw-doctor.sh"
+cp "$TEST_TEMP_DIR/repo/scripts/sw-status.sh" "$TEST_TEMP_DIR/home/.local/bin/sw-status.sh"
+cp "$TEST_TEMP_DIR/repo/scripts/sw-loop.sh" "$TEST_TEMP_DIR/home/.local/bin/sw-loop.sh"
 
-output=$(bash "$SCRIPT_DIR/sw-upgrade.sh" --repo-path "$TEMP_DIR/repo" 2>&1) || true
+output=$(bash "$SCRIPT_DIR/sw-upgrade.sh" --repo-path "$TEST_TEMP_DIR/repo" 2>&1) || true
 assert_contains "Dry run shows comparing text" "$output" "Comparing installed"
 
 # ─── 7. Manifest bootstrapped on first run ────────────────────────────────────
-if [[ -f "$TEMP_DIR/home/.shipwright/manifest.json" ]]; then
+if [[ -f "$TEST_TEMP_DIR/home/.shipwright/manifest.json" ]]; then
     assert_pass "Manifest file created on first run"
 else
     # Manifest may not be created if no installed files found — that's OK
@@ -200,8 +168,8 @@ else
 fi
 
 # ─── 8. Manifest is valid JSON (if exists) ───────────────────────────────────
-if [[ -f "$TEMP_DIR/home/.shipwright/manifest.json" ]]; then
-    if jq . "$TEMP_DIR/home/.shipwright/manifest.json" &>/dev/null; then
+if [[ -f "$TEST_TEMP_DIR/home/.shipwright/manifest.json" ]]; then
+    if jq . "$TEST_TEMP_DIR/home/.shipwright/manifest.json" &>/dev/null; then
         assert_pass "Manifest is valid JSON"
     else
         assert_fail "Manifest is valid JSON"
@@ -211,17 +179,17 @@ else
 fi
 
 # ─── 9. Manifest contains schema field ──────────────────────────────────────
-if [[ -f "$TEMP_DIR/home/.shipwright/manifest.json" ]]; then
-    schema=$(jq -r '.schema' "$TEMP_DIR/home/.shipwright/manifest.json" 2>/dev/null || echo "")
+if [[ -f "$TEST_TEMP_DIR/home/.shipwright/manifest.json" ]]; then
+    schema=$(jq -r '.schema' "$TEST_TEMP_DIR/home/.shipwright/manifest.json" 2>/dev/null || echo "")
     assert_eq "Manifest has schema field" "1" "$schema"
 else
     assert_pass "Manifest has schema field (skipped — no manifest)"
 fi
 
 # ─── 10. Manifest contains repo_path ─────────────────────────────────────────
-if [[ -f "$TEMP_DIR/home/.shipwright/manifest.json" ]]; then
-    repo_path_val=$(jq -r '.repo_path' "$TEMP_DIR/home/.shipwright/manifest.json" 2>/dev/null || echo "")
-    assert_eq "Manifest has repo_path" "$TEMP_DIR/repo" "$repo_path_val"
+if [[ -f "$TEST_TEMP_DIR/home/.shipwright/manifest.json" ]]; then
+    repo_path_val=$(jq -r '.repo_path' "$TEST_TEMP_DIR/home/.shipwright/manifest.json" 2>/dev/null || echo "")
+    assert_eq "Manifest has repo_path" "$TEST_TEMP_DIR/repo" "$repo_path_val"
 else
     assert_pass "Manifest has repo_path (skipped — no manifest)"
 fi
@@ -231,11 +199,11 @@ echo -e "${BOLD}Upgrade detection${RESET}"
 
 # ─── 11. Detects up-to-date files ────────────────────────────────────────────
 # Install a file that matches the repo version (simulating an up-to-date install)
-mkdir -p "$TEMP_DIR/home/.local/bin"
-cp "$TEMP_DIR/repo/scripts/sw-doctor.sh" "$TEMP_DIR/home/.local/bin/sw-doctor.sh"
+mkdir -p "$TEST_TEMP_DIR/home/.local/bin"
+cp "$TEST_TEMP_DIR/repo/scripts/sw-doctor.sh" "$TEST_TEMP_DIR/home/.local/bin/sw-doctor.sh"
 
 # Write manifest with current checksums matching both sides
-output2=$(bash "$SCRIPT_DIR/sw-upgrade.sh" --repo-path "$TEMP_DIR/repo" 2>&1) || true
+output2=$(bash "$SCRIPT_DIR/sw-upgrade.sh" --repo-path "$TEST_TEMP_DIR/repo" 2>&1) || true
 assert_contains "Detects up-to-date files" "$output2" "UP TO DATE"
 
 # ─── 12. Detects missing files as MISSING ────────────────────────────────────
@@ -252,17 +220,17 @@ echo -e "${BOLD}Apply mode${RESET}"
 # ─── 14. Apply installs missing files ────────────────────────────────────────
 setup_env
 
-echo "#!/usr/bin/env bash" > "$TEMP_DIR/repo/scripts/sw-doctor.sh"
-echo "v1" > "$TEMP_DIR/repo/scripts/sw-loop.sh"
-echo "tmux config" > "$TEMP_DIR/repo/tmux/tmux.conf"
+echo "#!/usr/bin/env bash" > "$TEST_TEMP_DIR/repo/scripts/sw-doctor.sh"
+echo "v1" > "$TEST_TEMP_DIR/repo/scripts/sw-loop.sh"
+echo "tmux config" > "$TEST_TEMP_DIR/repo/tmux/tmux.conf"
 
 # First run to bootstrap manifest
-bash "$SCRIPT_DIR/sw-upgrade.sh" --repo-path "$TEMP_DIR/repo" &>/dev/null || true
+bash "$SCRIPT_DIR/sw-upgrade.sh" --repo-path "$TEST_TEMP_DIR/repo" &>/dev/null || true
 
 # Modify the repo version so it differs from the manifest
-echo "#!/usr/bin/env bash\n# updated" > "$TEMP_DIR/repo/scripts/sw-doctor.sh"
+echo "#!/usr/bin/env bash\n# updated" > "$TEST_TEMP_DIR/repo/scripts/sw-doctor.sh"
 
-apply_output=$(bash "$SCRIPT_DIR/sw-upgrade.sh" --repo-path "$TEMP_DIR/repo" --apply 2>&1) || true
+apply_output=$(bash "$SCRIPT_DIR/sw-upgrade.sh" --repo-path "$TEST_TEMP_DIR/repo" --apply 2>&1) || true
 assert_contains "Apply mode shows Applying" "$apply_output" "Applying"
 
 # ─── 15. Apply completes without error ────────────────────────────────────────
@@ -314,16 +282,16 @@ echo -e "${BOLD}Repo location logic${RESET}"
 # ─── 20. find_repo respects --repo-path ──────────────────────────────────────
 setup_env
 
-echo "test" > "$TEMP_DIR/repo/scripts/sw-doctor.sh"
-output_rp=$(bash "$SCRIPT_DIR/sw-upgrade.sh" --repo-path "$TEMP_DIR/repo" 2>&1) || true
-assert_contains "find_repo uses --repo-path" "$output_rp" "$TEMP_DIR/repo"
+echo "test" > "$TEST_TEMP_DIR/repo/scripts/sw-doctor.sh"
+output_rp=$(bash "$SCRIPT_DIR/sw-upgrade.sh" --repo-path "$TEST_TEMP_DIR/repo" 2>&1) || true
+assert_contains "find_repo uses --repo-path" "$output_rp" "$TEST_TEMP_DIR/repo"
 
 # ─── 21. find_repo respects SHIPWRIGHT_REPO_PATH env ──────────────────────────
 setup_env
 
-echo "test" > "$TEMP_DIR/repo/scripts/sw-doctor.sh"
-output_env=$(SHIPWRIGHT_REPO_PATH="$TEMP_DIR/repo" bash "$SCRIPT_DIR/sw-upgrade.sh" 2>&1) || true
-assert_contains "find_repo uses SHIPWRIGHT_REPO_PATH" "$output_env" "$TEMP_DIR/repo"
+echo "test" > "$TEST_TEMP_DIR/repo/scripts/sw-doctor.sh"
+output_env=$(SHIPWRIGHT_REPO_PATH="$TEST_TEMP_DIR/repo" bash "$SCRIPT_DIR/sw-upgrade.sh" 2>&1) || true
+assert_contains "find_repo uses SHIPWRIGHT_REPO_PATH" "$output_env" "$TEST_TEMP_DIR/repo"
 
 echo ""
 echo -e "${BOLD}Checksum logic${RESET}"
@@ -362,13 +330,5 @@ fi
 
 # ─── Results ──────────────────────────────────────────────────────────────────
 echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
-if [[ $FAIL -eq 0 ]]; then
-    echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"
-else
-    echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"
-    for f in "${FAILURES[@]}"; do echo -e "  ${RED}✗${RESET} $f"; done
-fi
-echo ""
-exit "$FAIL"
+print_test_results

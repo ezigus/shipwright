@@ -6,37 +6,22 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-# ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-architecture-enforcer-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright/memory"
-    mkdir -p "$TEMP_DIR/bin"
-    mkdir -p "$TEMP_DIR/repo/.git"
-    mkdir -p "$TEMP_DIR/repo/.claude"
-    mkdir -p "$TEMP_DIR/repo/scripts"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright/memory"
+    mkdir -p "$TEST_TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/repo/.git"
+    mkdir -p "$TEST_TEMP_DIR/repo/.claude"
+    mkdir -p "$TEST_TEMP_DIR/repo/scripts"
 
     # Link real utilities
     for cmd in jq date wc cat grep sed awk sort mkdir rm mv cp mktemp basename dirname printf tr cut head tail tee touch find ls shasum; do
-        command -v "$cmd" &>/dev/null && ln -sf "$(command -v "$cmd")" "$TEMP_DIR/bin/$cmd"
+        command -v "$cmd" &>/dev/null && ln -sf "$(command -v "$cmd")" "$TEST_TEMP_DIR/bin/$cmd"
     done
 
     # Mock git
-    cat > "$TEMP_DIR/bin/git" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCKEOF'
 #!/usr/bin/env bash
 case "${1:-}" in
     rev-parse)
@@ -50,46 +35,39 @@ case "${1:-}" in
 esac
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Mock gh, claude, tmux
     for mock in gh claude tmux; do
-        printf '#!/usr/bin/env bash\necho "mock %s: $*"\nexit 0\n' "$mock" > "$TEMP_DIR/bin/$mock"
-        chmod +x "$TEMP_DIR/bin/$mock"
+        printf '#!/usr/bin/env bash\necho "mock %s: $*"\nexit 0\n' "$mock" > "$TEST_TEMP_DIR/bin/$mock"
+        chmod +x "$TEST_TEMP_DIR/bin/$mock"
     done
 
     # Copy script under test into mock repo with a stub intelligence
-    cp "$SCRIPT_DIR/sw-architecture-enforcer.sh" "$TEMP_DIR/repo/scripts/"
+    cp "$SCRIPT_DIR/sw-architecture-enforcer.sh" "$TEST_TEMP_DIR/repo/scripts/"
 
     # Create a stub sw-intelligence.sh
-    cat > "$TEMP_DIR/repo/scripts/sw-intelligence.sh" <<'STUBEOF'
+    cat > "$TEST_TEMP_DIR/repo/scripts/sw-intelligence.sh" <<'STUBEOF'
 #!/usr/bin/env bash
 _intelligence_call_claude() { echo '{"layers":["core","scripts"],"patterns":["pipeline"],"conventions":["bash3.2"],"dependencies":["jq"]}'; return 0; }
 _intelligence_md5() { echo "mock-md5"; }
 STUBEOF
 
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
 }
 
-cleanup_env() {
-    [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
-}
-trap cleanup_env EXIT
+trap cleanup_test_env EXIT
 
 assert_pass() {
     local desc="$1"
-    TOTAL=$((TOTAL + 1))
-    PASS=$((PASS + 1))
     echo -e "  ${GREEN}✓${RESET} ${desc}"
 }
 
 assert_fail() {
     local desc="$1"
     local detail="${2:-}"
-    TOTAL=$((TOTAL + 1))
-    FAIL=$((FAIL + 1))
     FAILURES+=("$desc")
     echo -e "  ${RED}✗${RESET} ${desc}"
     if [[ -n "$detail" ]]; then echo -e "    ${DIM}${detail}${RESET}"; fi
@@ -106,23 +84,14 @@ assert_contains() {
     fi
 }
 
-assert_eq() {
-    local desc="$1" expected="$2" actual="$3"
-    if [[ "$expected" == "$actual" ]]; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "expected: $expected, got: $actual"
-    fi
-}
-
 # ─── Setup ────────────────────────────────────────────────────────────────────
 setup_env
 
 SRC="$SCRIPT_DIR/sw-architecture-enforcer.sh"
-MOCK_SRC="$TEMP_DIR/repo/scripts/sw-architecture-enforcer.sh"
+MOCK_SRC="$TEST_TEMP_DIR/repo/scripts/sw-architecture-enforcer.sh"
 
 echo ""
-echo -e "${CYAN}${BOLD}  shipwright architecture-enforcer test${RESET}"
+print_test_header "shipwright architecture-enforcer test"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
 
@@ -193,11 +162,11 @@ OUT=$(bash "$MOCK_SRC" build 2>/dev/null) || true
 assert_contains "build disabled returns empty JSON object" "$OUT" "{}"
 
 # Enable architecture and build
-cat > "$TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
+cat > "$TEST_TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
 {"intelligence":{"architecture_enabled":true}}
 EOF
 
-OUT=$(bash "$MOCK_SRC" build "$TEMP_DIR/repo" 2>/dev/null) || true
+OUT=$(bash "$MOCK_SRC" build "$TEST_TEMP_DIR/repo" 2>/dev/null) || true
 
 # Should produce JSON with layers array
 if echo "$OUT" | jq -e '.layers' >/dev/null 2>&1; then
@@ -224,14 +193,14 @@ echo ""
 echo -e "${BOLD}  Validate Subcommand${RESET}"
 
 # validate with disabled returns "[]"
-cat > "$TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
+cat > "$TEST_TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
 {"intelligence":{"architecture_enabled":false}}
 EOF
 OUT=$(bash "$MOCK_SRC" validate "some diff" 2>/dev/null) || true
 assert_contains "validate disabled returns empty array" "$OUT" "[]"
 
 # validate without diff arg exits non-zero
-cat > "$TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
+cat > "$TEST_TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
 {"intelligence":{"architecture_enabled":true}}
 EOF
 if bash "$MOCK_SRC" validate 2>/dev/null; then
@@ -250,7 +219,7 @@ echo ""
 echo -e "${BOLD}  Evolve Subcommand${RESET}"
 
 # evolve with disabled exits gracefully
-cat > "$TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
+cat > "$TEST_TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
 {"intelligence":{"architecture_enabled":false}}
 EOF
 if bash "$MOCK_SRC" evolve 2>/dev/null; then
@@ -260,7 +229,7 @@ else
 fi
 
 # evolve without model file exits gracefully
-cat > "$TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
+cat > "$TEST_TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
 {"intelligence":{"architecture_enabled":true}}
 EOF
 if bash "$MOCK_SRC" evolve "/nonexistent/model.json" 2>/dev/null; then
@@ -275,10 +244,10 @@ echo ""
 echo -e "${BOLD}  Model Storage${RESET}"
 
 # After a build, the model should be stored in memory dir
-cat > "$TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
+cat > "$TEST_TEMP_DIR/repo/.claude/daemon-config.json" <<'EOF'
 {"intelligence":{"architecture_enabled":true}}
 EOF
-bash "$MOCK_SRC" build "$TEMP_DIR/repo" >/dev/null 2>&1 || true
+bash "$MOCK_SRC" build "$TEST_TEMP_DIR/repo" >/dev/null 2>&1 || true
 
 # Check that some architecture.json was created under memory dir
 ARCH_FILES=$(find "$HOME/.shipwright/memory" -name "architecture.json" 2>/dev/null | wc -l | tr -d ' ')
@@ -328,13 +297,5 @@ echo ""
 
 # ─── Results ─────────────────────────────────────────────────────────────────
 echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
-if [[ $FAIL -eq 0 ]]; then
-    echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"
-else
-    echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"
-    for f in "${FAILURES[@]}"; do echo -e "  ${RED}✗${RESET} $f"; done
-fi
-echo ""
-exit "$FAIL"
+print_test_results

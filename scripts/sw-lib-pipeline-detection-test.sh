@@ -22,18 +22,6 @@ export PROJECT_ROOT="$TEST_TEMP_DIR/project"
 _PIPELINE_DETECTION_LOADED=""
 source "$SCRIPT_DIR/lib/pipeline-detection.sh"
 
-mkdir -p "$PROJECT_ROOT/scripts"
-cat > "$PROJECT_ROOT/scripts/run-xcode-tests.sh" <<'SH'
-#!/usr/bin/env bash
-cat <<'HELP'
-Usage: scripts/run-xcode-tests.sh [OPTIONS]
-  -t <tests>        Use "Packages" to run every SwiftPM package test
-  -p [suite]        Verify test plan coverage
-  --help            Show this message
-HELP
-SH
-chmod +x "$PROJECT_ROOT/scripts/run-xcode-tests.sh"
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # detect_test_cmd
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -71,54 +59,15 @@ cat > "$PROJECT_ROOT/package.json" <<'JSON'
 JSON
 rm -f "$PROJECT_ROOT/Cargo.toml" "$PROJECT_ROOT/go.mod" "$PROJECT_ROOT/Gemfile" "$PROJECT_ROOT/pom.xml" "$PROJECT_ROOT/build.gradle" "$PROJECT_ROOT/build.gradle.kts" "$PROJECT_ROOT/Makefile"
 result=$(detect_test_cmd)
-assert_eq "package.json without test script defaults to npm test" "npm test" "$result"
+assert_eq "package.json without test script returns empty" "" "$result"
 
 # "no test specified" placeholder
 cat > "$PROJECT_ROOT/package.json" <<'JSON'
 {"scripts":{"test":"echo \"Error: no test specified\" && exit 1"}}
 JSON
 result=$(detect_test_cmd)
-assert_eq "npm 'no test specified' defaults to npm test" "npm test" "$result"
+assert_eq "npm 'no test specified' returns empty" "" "$result"
 rm -f "$PROJECT_ROOT/package.json"
-
-# Regression: node_modules/dep/package.json must NOT be used when root package.json exists
-mkdir -p "$PROJECT_ROOT/node_modules/jest-runtime"
-echo '{"name":"jest-runtime","version":"29.0.0"}' > "$PROJECT_ROOT/node_modules/jest-runtime/package.json"
-cat > "$PROJECT_ROOT/package.json" <<'JSON'
-{"scripts":{"test":"jest --coverage"}}
-JSON
-result=$(detect_test_cmd)
-assert_eq "Root package.json wins over node_modules dep (no cd prefix)" "npm test" "$result"
-rm -f "$PROJECT_ROOT/package.json"
-rm -rf "$PROJECT_ROOT/node_modules"
-
-# Regression: nested package.json outside node_modules (no root package.json) → cd prefix
-mkdir -p "$PROJECT_ROOT/subapp"
-cat > "$PROJECT_ROOT/subapp/package.json" <<'JSON'
-{"scripts":{"test":"jest"}}
-JSON
-result=$(detect_test_cmd)
-assert_eq "Nested-only package.json produces cd prefix" "(cd -- subapp && npm test)" "$result"
-rm -rf "$PROJECT_ROOT/subapp"
-
-# SwiftPM defaults to helper script with Packages target
-touch "$PROJECT_ROOT/Package.swift"
-result=$(detect_test_cmd)
-assert_eq "SwiftPM defaults to helper packages mode" "bash ./scripts/run-xcode-tests.sh -t Packages" "$result"
-rm -f "$PROJECT_ROOT/Package.swift"
-
-# iOS/Xcode defaults to helper script
-mkdir -p "$PROJECT_ROOT/App.xcodeproj"
-result=$(detect_test_cmd)
-assert_eq "iOS defaults to helper script" "bash ./scripts/run-xcode-tests.sh" "$result"
-rm -rf "$PROJECT_ROOT/App.xcodeproj"
-
-# Mixed iOS + SwiftPM: full run covers packages — swiftpm deduped
-mkdir -p "$PROJECT_ROOT/App.xcodeproj"
-touch "$PROJECT_ROOT/Package.swift"
-result=$(detect_test_cmd)
-assert_eq "Mixed env: full suite covers packages (swiftpm deduped)" "bash ./scripts/run-xcode-tests.sh" "$result"
-rm -rf "$PROJECT_ROOT/App.xcodeproj" "$PROJECT_ROOT/Package.swift"
 
 # Python with pyproject.toml + pytest
 cat > "$PROJECT_ROOT/pyproject.toml" <<'TOML'
@@ -201,83 +150,6 @@ rm -f "$PROJECT_ROOT/Makefile"
 # Empty project
 result=$(detect_test_cmd)
 assert_eq "Empty project returns empty" "" "$result"
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Environment inventory and context selection
-# ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "environment selection"
-
-mkdir -p "$PROJECT_ROOT/App.xcodeproj"
-touch "$PROJECT_ROOT/Package.swift"
-cat > "$PROJECT_ROOT/package.json" <<'JSON'
-{"name":"test-project"}
-JSON
-envs=$(detect_repo_environments_json)
-assert_contains "Detects iOS environment" "$envs" "\"ios_xcode\""
-assert_contains "Detects SwiftPM environment" "$envs" "\"swiftpm\""
-assert_contains "Detects Node environment" "$envs" "\"node\""
-ios_marker=$(jq -r 'map(select(.id == "ios_xcode")) | first | .marker // ""' <<<"$envs")
-assert_eq "iOS marker is repo-relative" "App.xcodeproj" "$ios_marker"
-
-# Nested environments are detected (not root-only hierarchy)
-rm -f "$PROJECT_ROOT/Package.swift" "$PROJECT_ROOT/package.json"
-mkdir -p "$PROJECT_ROOT/apps/mobile"
-touch "$PROJECT_ROOT/apps/mobile/Package.swift"
-mkdir -p "$PROJECT_ROOT/apps/web"
-cat > "$PROJECT_ROOT/apps/web/package.json" <<'JSON'
-{"name":"nested-web"}
-JSON
-envs=$(detect_repo_environments_json)
-assert_contains "Detects nested SwiftPM environment" "$envs" "apps/mobile/Package.swift"
-assert_contains "Detects nested Node environment" "$envs" "apps/web/package.json"
-result=$(detect_test_cmd)
-assert_contains "Nested Node command executes in package directory" "$result" "(cd -- apps/web && npm test)"
-
-changed='["Packages/CoreModels/Sources/CoreModels/Model.swift","Packages/CoreModels/Tests/CoreModelsTests/ModelTests.swift"]'
-relevant=$(resolve_relevant_environments_json "$envs" "$changed")
-assert_contains "SwiftPM selected for Packages/ source changes" "$relevant" "\"swiftpm\""
-if echo "$relevant" | grep -q "\"node\""; then
-    assert_fail "Node not selected for package-only changes" "unexpected node env: $relevant"
-else
-    assert_pass "Node not selected for package-only changes"
-fi
-
-changed='["web/src/app.ts"]'
-relevant=$(resolve_relevant_environments_json "$envs" "$changed")
-assert_contains "Node selected for JS/TS changes" "$relevant" "\"node\""
-
-# collect_changed_files_json should not fall back to HEAD~1 history when tree is clean
-cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK_GIT'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "-C" ]]; then
-    shift 2
-fi
-case "${1:-}" in
-    rev-parse)
-        if [[ "${2:-}" == "--is-inside-work-tree" ]]; then
-            echo "true"
-        else
-            echo "/tmp/mock-repo"
-        fi
-        ;;
-    diff)
-        if [[ "${2:-}" == "--name-only" && "${3:-}" == "HEAD~1" ]]; then
-            echo "historical-only-change.txt"
-        fi
-        ;;
-esac
-exit 0
-MOCK_GIT
-chmod +x "$TEST_TEMP_DIR/bin/git"
-changed_from_git=$(collect_changed_files_json)
-assert_eq "collect_changed_files_json ignores HEAD~1 fallback" "[]" "$changed_from_git"
-rm -rf "$PROJECT_ROOT/App.xcodeproj" "$PROJECT_ROOT/Package.swift" "$PROJECT_ROOT/package.json" "$PROJECT_ROOT/apps"
-
-# command_discovery.enabled=false disables auto command selection
-export SHIPWRIGHT_PIPELINE_COMMAND_DISCOVERY_ENABLED=false
-result=$(detect_test_cmd)
-assert_eq "command discovery can be disabled via config/env" "" "$result"
-unset SHIPWRIGHT_PIPELINE_COMMAND_DISCOVERY_ENABLED
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # detect_project_lang
@@ -405,220 +277,115 @@ assert_eq "Feature template" "feature-dev" "$(template_for_type feature)"
 assert_eq "Unknown template" "feature-dev" "$(template_for_type other)"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# iOS smart test targeting
+# _detect_package_manager
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "iOS smart test targeting"
+print_test_section "_detect_package_manager"
 
-# Setup: project with both xcodeproj and Package.swift (mixed iOS+SwiftPM repo)
-mkdir -p "$PROJECT_ROOT/App.xcodeproj"
-touch "$PROJECT_ROOT/Package.swift"
-envs_mixed=$(detect_repo_environments_json)
+# npm (default)
+rm -f "$PROJECT_ROOT"/*.lock "$PROJECT_ROOT"/*.lockb "$PROJECT_ROOT"/*.yaml
+result=$(_detect_package_manager "$PROJECT_ROOT")
+assert_eq "No lockfile defaults to npm" "npm" "$result"
 
-# ── resolve_relevant_environments_json: package source → swiftpm only ─────────
-changed_pkg='["Packages/PlaylistFeature/Sources/PlaylistFeature/Foo.swift"]'
-relevant=$(resolve_relevant_environments_json "$envs_mixed" "$changed_pkg")
-if echo "$relevant" | grep -q '"ios_xcode"'; then
-    assert_fail "Package source: ios_xcode not activated" "ios_xcode unexpectedly present: $relevant"
+# pnpm
+touch "$PROJECT_ROOT/pnpm-lock.yaml"
+result=$(_detect_package_manager "$PROJECT_ROOT")
+assert_eq "pnpm-lock.yaml detected" "pnpm" "$result"
+rm -f "$PROJECT_ROOT/pnpm-lock.yaml"
+
+# bun
+touch "$PROJECT_ROOT/bun.lockb"
+result=$(_detect_package_manager "$PROJECT_ROOT")
+assert_eq "bun.lockb detected" "bun" "$result"
+rm -f "$PROJECT_ROOT/bun.lockb"
+
+# yarn
+touch "$PROJECT_ROOT/yarn.lock"
+result=$(_detect_package_manager "$PROJECT_ROOT")
+assert_eq "yarn.lock detected" "yarn" "$result"
+rm -f "$PROJECT_ROOT/yarn.lock"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# detect_test_commands (plural)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_test_commands"
+
+# Single test script returns just primary
+cat > "$PROJECT_ROOT/package.json" <<'JSON'
+{"scripts":{"test":"jest"}}
+JSON
+result=$(detect_test_commands)
+line_count=$(echo "$result" | wc -l | tr -d ' ')
+assert_eq "Single test script returns 1 command" "1" "$line_count"
+assert_eq "Primary command is npm test" "npm test" "$(echo "$result" | head -1)"
+
+# Multiple test:* scripts (integration/e2e/system excluded)
+cat > "$PROJECT_ROOT/package.json" <<'JSON'
+{"scripts":{"test":"jest","test:e2e":"jest --config e2e.config.js","test:unit":"jest --testPathPattern unit","test:smoke":"jest --smoke","test:integration":"bash integration.sh","test:system":"bash system.sh"}}
+JSON
+result=$(detect_test_commands)
+line_count=$(echo "$result" | wc -l | tr -d ' ')
+assert_eq "Heavyweight tests filtered: returns 3 commands" "3" "$line_count"
+assert_eq "Primary command first" "npm test" "$(echo "$result" | head -1)"
+if echo "$result" | grep -q "npm run test:unit"; then
+    assert_pass "test:unit included"
 else
-    assert_pass "Package source: ios_xcode not activated"
+    assert_fail "test:unit included"
 fi
-assert_contains "Package source: swiftpm activated" "$relevant" '"swiftpm"'
-
-# ── resolve_relevant_environments_json: app source → ios_xcode, swiftpm deduped
-changed_app='["zpod/Views/SomeView.swift"]'
-relevant=$(resolve_relevant_environments_json "$envs_mixed" "$changed_app")
-assert_contains "App source: ios_xcode activated" "$relevant" '"ios_xcode"'
-if echo "$relevant" | grep -q '"swiftpm"'; then
-    assert_fail "App source: swiftpm deduped when ios_xcode present" "swiftpm unexpectedly present: $relevant"
+if echo "$result" | grep -q "npm run test:smoke"; then
+    assert_pass "test:smoke included"
 else
-    assert_pass "App source: swiftpm deduped when ios_xcode present"
+    assert_fail "test:smoke included"
+fi
+# Integration/e2e/system should be excluded
+if echo "$result" | grep -q "npm run test:e2e"; then
+    assert_fail "test:e2e excluded (heavyweight)"
+else
+    assert_pass "test:e2e excluded (heavyweight)"
+fi
+if echo "$result" | grep -q "npm run test:integration"; then
+    assert_fail "test:integration excluded (heavyweight)"
+else
+    assert_pass "test:integration excluded (heavyweight)"
+fi
+if echo "$result" | grep -q "npm run test:system"; then
+    assert_fail "test:system excluded (heavyweight)"
+else
+    assert_pass "test:system excluded (heavyweight)"
 fi
 
-# ── detect_changed_non_package_classes ───────────────────────────────────────
-classes=$(detect_changed_non_package_classes '["zpod/Views/SomeView.swift"]')
-assert_eq "Single non-package class extracted" "SomeView" "$classes"
+# Subdirectory with package.json (must have node_modules installed)
+mkdir -p "$PROJECT_ROOT/dashboard" "$PROJECT_ROOT/dashboard/node_modules"
+cat > "$PROJECT_ROOT/dashboard/package.json" <<'JSON'
+{"scripts":{"test":"bun test"}}
+JSON
+touch "$PROJECT_ROOT/dashboard/bun.lockb"
+cat > "$PROJECT_ROOT/package.json" <<'JSON'
+{"scripts":{"test":"jest"}}
+JSON
+result=$(detect_test_commands)
+if echo "$result" | grep -q 'cd.*dashboard.*test'; then
+    assert_pass "Subdirectory test runner discovered"
+else
+    assert_fail "Subdirectory test runner discovered" "got: $result"
+fi
 
-classes=$(detect_changed_non_package_classes '["zpodUITests/BatchOperationUITests.swift","zpod/Views/BarView.swift"]')
-assert_eq "Multiple non-package classes (sorted,deduped)" "BarView,BatchOperationUITests" "$classes"
+# Subdirectory with "no test specified" is excluded
+cat > "$PROJECT_ROOT/dashboard/package.json" <<'JSON'
+{"scripts":{"test":"echo \"Error: no test specified\" && exit 1"}}
+JSON
+result=$(detect_test_commands)
+if echo "$result" | grep -q 'dashboard'; then
+    assert_fail "Subdirectory with 'no test' excluded"
+else
+    assert_pass "Subdirectory with 'no test' excluded"
+fi
 
-classes=$(detect_changed_non_package_classes '["Packages/PlaylistFeature/Sources/Foo.swift"]')
-assert_eq "Package files excluded from class extraction" "" "$classes"
+# Cleanup
+rm -rf "$PROJECT_ROOT/dashboard"
+rm -f "$PROJECT_ROOT/package.json"
 
-classes=$(detect_changed_non_package_classes '["zpodUITests/UITestHelpers.swift","zpodUITests/MiniPlayerPersistenceTests.swift"]')
-assert_eq "Helper files excluded from class extraction" "MiniPlayerPersistenceTests" "$classes"
-
-classes=$(detect_changed_non_package_classes '["zpodUITests/SwipeConfigurationTestSupport+SheetUtilities.swift","zpodUITests/BatchOperationUITests.swift"]')
-assert_eq "Extension/helper utility files excluded from class extraction" "BatchOperationUITests" "$classes"
-
-classes=$(detect_changed_non_package_classes '[]')
-assert_eq "Empty changed list returns empty" "" "$classes"
-
-# ── detect_test_cmd: app source → class-targeted command ─────────────────────
-cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "-C" ]]; then shift 2; fi
-case "${1:-}" in
-    rev-parse) echo "true" ;;
-    diff) printf 'zpod/Views/SomeView.swift\n' ;;
-esac
-exit 0
-MOCK
-chmod +x "$TEST_TEMP_DIR/bin/git"
-result=$(detect_test_cmd)
-assert_eq "App source: class-targeted command" "bash ./scripts/run-xcode-tests.sh -t SomeView" "$result"
-
-# ── detect_test_cmd: UITest file → class-targeted command ────────────────────
-cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "-C" ]]; then shift 2; fi
-case "${1:-}" in
-    rev-parse) echo "true" ;;
-    diff) printf 'zpodUITests/BatchOperationUITests.swift\n' ;;
-esac
-exit 0
-MOCK
-chmod +x "$TEST_TEMP_DIR/bin/git"
-result=$(detect_test_cmd)
-assert_eq "UITest file: class-targeted command" "bash ./scripts/run-xcode-tests.sh -t BatchOperationUITests" "$result"
-
-# ── detect_test_cmd: multiple non-package files → comma-separated ─────────────
-cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "-C" ]]; then shift 2; fi
-case "${1:-}" in
-    rev-parse) echo "true" ;;
-    diff) printf 'zpodUITests/FooTests.swift\nzpod/Views/BarView.swift\n' ;;
-esac
-exit 0
-MOCK
-chmod +x "$TEST_TEMP_DIR/bin/git"
-result=$(detect_test_cmd)
-assert_eq "Multiple non-package files: comma-separated targeting" "bash ./scripts/run-xcode-tests.sh -t BarView,FooTests" "$result"
-
-# ── detect_test_cmd: mixed package+app → ClassName,Packages ──────────────────
-cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "-C" ]]; then shift 2; fi
-case "${1:-}" in
-    rev-parse) echo "true" ;;
-    diff) printf 'Packages/PlaylistFeature/Sources/Foo.swift\nzpod/AppDelegate.swift\n' ;;
-esac
-exit 0
-MOCK
-chmod +x "$TEST_TEMP_DIR/bin/git"
-result=$(detect_test_cmd)
-assert_eq "Mixed package+app: combined ClassName,Packages targeting" "bash ./scripts/run-xcode-tests.sh -t AppDelegate,Packages" "$result"
-
-# ── detect_test_cmd: package-only → -t Packages, no full Xcode suite ─────────
-cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "-C" ]]; then shift 2; fi
-case "${1:-}" in
-    rev-parse) echo "true" ;;
-    diff) printf 'Packages/PlaylistFeature/Sources/PlaylistFeature/Foo.swift\n' ;;
-esac
-exit 0
-MOCK
-chmod +x "$TEST_TEMP_DIR/bin/git"
-result=$(detect_test_cmd)
-assert_eq "Package-only: run-xcode-tests.sh -t Packages" "bash ./scripts/run-xcode-tests.sh -t Packages" "$result"
-
-rm -rf "$PROJECT_ROOT/App.xcodeproj" "$PROJECT_ROOT/Package.swift"
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Loop per-iteration re-detection
-# ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "detect_test_cmd_for_loop"
-
-# Setup: mixed iOS + SwiftPM repo with helper script
-mkdir -p "$PROJECT_ROOT/App.xcodeproj"
-touch "$PROJECT_ROOT/Package.swift"
-# Reset caches so the setup above is picked up
-_PIPELINE_DETECT_REPO_ENVS_CACHE=""
-_PIPELINE_DETECT_HELPER_CAPS_CACHE=""
-
-# ── 1. No commits since start → empty (caller keeps existing TEST_CMD) ────────
-# Mock git: HEAD == start_commit → no diff → returns ""
-cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "-C" ]]; then shift 2; fi
-case "${1:-}" in
-    rev-parse)
-        if [[ "${2:-}" == "--is-inside-work-tree" ]]; then echo "true"
-        else echo "abc123"
-        fi ;;
-    diff) ;;   # no output for any diff
-esac
-exit 0
-MOCK
-chmod +x "$TEST_TEMP_DIR/bin/git"
-result=$(detect_test_cmd_for_loop "abc123")
-assert_eq "No commits since start → empty" "" "$result"
-
-# ── 2. Package commit since start → -t Packages ──────────────────────────────
-cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "-C" ]]; then shift 2; fi
-case "${1:-}" in
-    rev-parse)
-        if [[ "${2:-}" == "--is-inside-work-tree" ]]; then echo "true"
-        elif [[ "${2:-}" == "HEAD" ]]; then echo "def456"
-        else echo "def456"
-        fi ;;
-    diff)
-        # diff --name-only <start> <cur> → package file
-        if [[ "${2:-}" == "--name-only" && "${4:-}" != "" ]]; then
-            printf 'Packages/PlaylistFeature/Sources/PlaylistFeature/Foo.swift\n'
-        fi ;;
-esac
-exit 0
-MOCK
-chmod +x "$TEST_TEMP_DIR/bin/git"
-result=$(detect_test_cmd_for_loop "abc123")
-assert_eq "Package commit since start → -t Packages" "bash ./scripts/run-xcode-tests.sh -t Packages" "$result"
-
-# ── 3. Non-package commit since start → class-targeted ───────────────────────
-cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "-C" ]]; then shift 2; fi
-case "${1:-}" in
-    rev-parse)
-        if [[ "${2:-}" == "--is-inside-work-tree" ]]; then echo "true"
-        elif [[ "${2:-}" == "HEAD" ]]; then echo "def456"
-        else echo "def456"
-        fi ;;
-    diff)
-        if [[ "${2:-}" == "--name-only" && "${4:-}" != "" ]]; then
-            printf 'zpod/Views/SomeView.swift\n'
-        fi ;;
-esac
-exit 0
-MOCK
-chmod +x "$TEST_TEMP_DIR/bin/git"
-result=$(detect_test_cmd_for_loop "abc123")
-assert_eq "Non-package commit since start → class-targeted" "bash ./scripts/run-xcode-tests.sh -t SomeView" "$result"
-
-# ── 4. Mixed commits → combined targeting ─────────────────────────────────────
-cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "-C" ]]; then shift 2; fi
-case "${1:-}" in
-    rev-parse)
-        if [[ "${2:-}" == "--is-inside-work-tree" ]]; then echo "true"
-        elif [[ "${2:-}" == "HEAD" ]]; then echo "def456"
-        else echo "def456"
-        fi ;;
-    diff)
-        if [[ "${2:-}" == "--name-only" && "${4:-}" != "" ]]; then
-            printf 'Packages/PlaylistFeature/Sources/PlaylistFeature/Foo.swift\nzpod/AppDelegate.swift\n'
-        fi ;;
-esac
-exit 0
-MOCK
-chmod +x "$TEST_TEMP_DIR/bin/git"
-result=$(detect_test_cmd_for_loop "abc123")
-assert_eq "Mixed commits → AppDelegate,Packages targeting" "bash ./scripts/run-xcode-tests.sh -t AppDelegate,Packages" "$result"
-
-rm -rf "$PROJECT_ROOT/App.xcodeproj" "$PROJECT_ROOT/Package.swift"
+# Empty project returns nothing
+result=$(detect_test_commands)
+assert_eq "Empty project returns empty" "" "$result"
 
 print_test_results

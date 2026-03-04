@@ -7,47 +7,35 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 # ─── Colors (matches shipwright theme) ──────────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-PURPLE='\033[38;2;124;58;237m'
-GREEN='\033[38;2;74;222;128m'
 # shellcheck disable=SC2034
-YELLOW='\033[38;2;250;204;21m'
-RED='\033[38;2;248;113;113m'
 # shellcheck disable=SC2034
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
 # ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-predictive-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright/baselines"
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/scripts"
-    mkdir -p "$TEMP_DIR/bin"
-    mkdir -p "$TEMP_DIR/repo/src"
-    mkdir -p "$TEMP_DIR/repo/tests"
+    TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-predictive-test.XXXXXX")
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright/baselines"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/scripts"
+    mkdir -p "$TEST_TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/repo/src"
+    mkdir -p "$TEST_TEMP_DIR/repo/tests"
 
     # Copy script under test and lib directory
-    cp "$SCRIPT_DIR/sw-predictive.sh" "$TEMP_DIR/scripts/"
+    cp "$SCRIPT_DIR/sw-predictive.sh" "$TEST_TEMP_DIR/scripts/"
     if [[ -d "$SCRIPT_DIR/lib" ]]; then
-        cp -r "$SCRIPT_DIR/lib" "$TEMP_DIR/scripts/lib"
+        cp -r "$SCRIPT_DIR/lib" "$TEST_TEMP_DIR/scripts/lib"
     fi
 
     # Create mock intelligence engine (claude unavailable by default)
-    cat > "$TEMP_DIR/scripts/sw-intelligence.sh" <<'INTEOF'
+    cat > "$TEST_TEMP_DIR/scripts/sw-intelligence.sh" <<'INTEOF'
 #!/usr/bin/env bash
 # Mock intelligence engine — _intelligence_call_claude returns nothing by default
 _intelligence_call_claude() {
@@ -56,7 +44,7 @@ _intelligence_call_claude() {
 INTEOF
 
     # Create mock memory script
-    cat > "$TEMP_DIR/scripts/sw-memory.sh" <<'MEMEOF'
+    cat > "$TEST_TEMP_DIR/scripts/sw-memory.sh" <<'MEMEOF'
 #!/usr/bin/env bash
 # Mock memory — inject returns known patterns
 if [[ "${1:-}" == "inject" ]]; then
@@ -66,10 +54,10 @@ if [[ "${1:-}" == "inject" ]]; then
     echo "  Fix: Run npm install before build"
 fi
 MEMEOF
-    chmod +x "$TEMP_DIR/scripts/sw-memory.sh"
+    chmod +x "$TEST_TEMP_DIR/scripts/sw-memory.sh"
 
     # Create sample source files for patrol tests
-    cat > "$TEMP_DIR/repo/src/app.js" <<'SRCEOF'
+    cat > "$TEST_TEMP_DIR/repo/src/app.js" <<'SRCEOF'
 const express = require('express');
 const app = express();
 // TODO: add input validation
@@ -79,7 +67,7 @@ app.get('/api/users', (req, res) => {
 });
 SRCEOF
 
-    cat > "$TEMP_DIR/repo/tests/app.test.js" <<'TSTEOF'
+    cat > "$TEST_TEMP_DIR/repo/tests/app.test.js" <<'TSTEOF'
 describe('app', () => {
     it('should respond', () => {
         expect(true).toBe(true);
@@ -88,8 +76,8 @@ describe('app', () => {
 TSTEOF
 
     # Create mock compat.sh (minimal — must include compute_md5 for predictive)
-    mkdir -p "$TEMP_DIR/scripts/lib"
-    cat > "$TEMP_DIR/scripts/lib/compat.sh" <<'COMPATEOF'
+    mkdir -p "$TEST_TEMP_DIR/scripts/lib"
+    cat > "$TEST_TEMP_DIR/scripts/lib/compat.sh" <<'COMPATEOF'
 #!/usr/bin/env bash
 # Mock compat
 compute_md5() {
@@ -104,13 +92,13 @@ compute_md5() {
 COMPATEOF
 
     export ORIG_HOME="$HOME"
-    export HOME="$TEMP_DIR/home"
-    export EVENTS_FILE="$TEMP_DIR/home/.shipwright/events.jsonl"
+    export HOME="$TEST_TEMP_DIR/home"
+    export EVENTS_FILE="$TEST_TEMP_DIR/home/.shipwright/events.jsonl"
 }
 
 cleanup_env() {
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
+    if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
     fi
     if [[ -n "${ORIG_HOME:-}" ]]; then
         export HOME="$ORIG_HOME"
@@ -121,8 +109,8 @@ trap cleanup_env EXIT
 # Reset between tests
 reset_test() {
     rm -f "$EVENTS_FILE"
-    rm -f "$TEMP_DIR/home/.shipwright/baselines/default.json"
-    rm -f "$TEMP_DIR/home/.shipwright/baselines/test.json"
+    rm -f "$TEST_TEMP_DIR/home/.shipwright/baselines/default.json"
+    rm -f "$TEST_TEMP_DIR/home/.shipwright/baselines/test.json"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -160,7 +148,7 @@ test_risk_valid_schema() {
     reset_test
 
     local output
-    output=$(bash "$TEMP_DIR/scripts/sw-predictive.sh" risk '{"title":"Add login page"}' 2>/dev/null)
+    output=$(bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" risk '{"title":"Add login page"}' 2>/dev/null)
 
     # Must be valid JSON
     if ! echo "$output" | jq -e '.' &>/dev/null; then
@@ -206,8 +194,8 @@ test_risk_elevated_keywords() {
     reset_test
 
     local output_normal output_complex
-    output_normal=$(bash "$TEMP_DIR/scripts/sw-predictive.sh" risk '{"title":"Fix typo"}' 2>/dev/null)
-    output_complex=$(bash "$TEMP_DIR/scripts/sw-predictive.sh" risk '{"title":"Refactor authentication with breaking changes"}' 2>/dev/null)
+    output_normal=$(bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" risk '{"title":"Fix typo"}' 2>/dev/null)
+    output_complex=$(bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" risk '{"title":"Refactor authentication with breaking changes"}' 2>/dev/null)
 
     local risk_normal risk_complex
     risk_normal=$(echo "$output_normal" | jq '.overall_risk')
@@ -231,14 +219,14 @@ test_risk_elevated_keywords() {
 test_anomaly_critical_at_3x() {
     reset_test
 
-    local baseline_file="$TEMP_DIR/home/.shipwright/baselines/test.json"
+    local baseline_file="$TEST_TEMP_DIR/home/.shipwright/baselines/test.json"
     # Create baseline: build.duration = 60
     echo '{"build.duration": {"value": 60, "count": 10, "updated": "2026-01-01T00:00:00Z"}}' > "$baseline_file"
 
     # 180s = exactly 3x baseline → should trigger critical (> 3x check)
     # Use 181 to be safely above threshold
     local result
-    result=$(bash "$TEMP_DIR/scripts/sw-predictive.sh" anomaly "build" "duration" "181" "$baseline_file" 2>/dev/null)
+    result=$(bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" anomaly "build" "duration" "181" "$baseline_file" 2>/dev/null)
 
     if [[ "$result" != "critical" ]]; then
         echo -e "    ${RED}✗${RESET} Expected 'critical' for 181s vs 60s baseline (3x=180), got: $result"
@@ -254,12 +242,12 @@ test_anomaly_critical_at_3x() {
 test_anomaly_normal_at_2x() {
     reset_test
 
-    local baseline_file="$TEMP_DIR/home/.shipwright/baselines/test.json"
+    local baseline_file="$TEST_TEMP_DIR/home/.shipwright/baselines/test.json"
     echo '{"build.duration": {"value": 60, "count": 10, "updated": "2026-01-01T00:00:00Z"}}' > "$baseline_file"
 
     # 119s = just under 2x baseline (120) → should be normal
     local result
-    result=$(bash "$TEMP_DIR/scripts/sw-predictive.sh" anomaly "build" "duration" "119" "$baseline_file" 2>/dev/null)
+    result=$(bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" anomaly "build" "duration" "119" "$baseline_file" 2>/dev/null)
 
     if [[ "$result" != "normal" ]]; then
         echo -e "    ${RED}✗${RESET} Expected 'normal' for 119s vs 60s baseline, got: $result"
@@ -275,12 +263,12 @@ test_anomaly_normal_at_2x() {
 test_anomaly_warning_between() {
     reset_test
 
-    local baseline_file="$TEMP_DIR/home/.shipwright/baselines/test.json"
+    local baseline_file="$TEST_TEMP_DIR/home/.shipwright/baselines/test.json"
     echo '{"build.duration": {"value": 60, "count": 10, "updated": "2026-01-01T00:00:00Z"}}' > "$baseline_file"
 
     # 150s = 2.5x baseline → should be warning (> 2x but <= 3x)
     local result
-    result=$(bash "$TEMP_DIR/scripts/sw-predictive.sh" anomaly "build" "duration" "150" "$baseline_file" 2>/dev/null)
+    result=$(bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" anomaly "build" "duration" "150" "$baseline_file" 2>/dev/null)
 
     if [[ "$result" != "warning" ]]; then
         echo -e "    ${RED}✗${RESET} Expected 'warning' for 150s vs 60s baseline, got: $result"
@@ -296,11 +284,11 @@ test_anomaly_warning_between() {
 test_anomaly_no_baseline() {
     reset_test
 
-    local baseline_file="$TEMP_DIR/home/.shipwright/baselines/empty.json"
+    local baseline_file="$TEST_TEMP_DIR/home/.shipwright/baselines/empty.json"
     echo '{}' > "$baseline_file"
 
     local result
-    result=$(bash "$TEMP_DIR/scripts/sw-predictive.sh" anomaly "build" "duration" "999" "$baseline_file" 2>/dev/null)
+    result=$(bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" anomaly "build" "duration" "999" "$baseline_file" 2>/dev/null)
 
     if [[ "$result" != "normal" ]]; then
         echo -e "    ${RED}✗${RESET} Expected 'normal' with no baseline, got: $result"
@@ -316,11 +304,11 @@ test_anomaly_no_baseline() {
 test_anomaly_emits_event() {
     reset_test
 
-    local baseline_file="$TEMP_DIR/home/.shipwright/baselines/test.json"
+    local baseline_file="$TEST_TEMP_DIR/home/.shipwright/baselines/test.json"
     echo '{"test.failures": {"value": 5, "count": 10, "updated": "2026-01-01T00:00:00Z"}}' > "$baseline_file"
 
     # 16 = > 3x of 5 → critical
-    bash "$TEMP_DIR/scripts/sw-predictive.sh" anomaly "test" "failures" "16" "$baseline_file" >/dev/null 2>&1
+    bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" anomaly "test" "failures" "16" "$baseline_file" >/dev/null 2>&1
 
     if [[ ! -f "$EVENTS_FILE" ]]; then
         echo -e "    ${RED}✗${RESET} No events file created"
@@ -349,10 +337,10 @@ test_anomaly_emits_event() {
 test_baseline_first_value() {
     reset_test
 
-    local baseline_file="$TEMP_DIR/home/.shipwright/baselines/test.json"
+    local baseline_file="$TEST_TEMP_DIR/home/.shipwright/baselines/test.json"
     echo '{}' > "$baseline_file"
 
-    bash "$TEMP_DIR/scripts/sw-predictive.sh" baseline "build" "duration" "60" "$baseline_file" 2>/dev/null
+    bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" baseline "build" "duration" "60" "$baseline_file" 2>/dev/null
 
     local stored_value
     stored_value=$(jq -r '.["build.duration"].value' "$baseline_file" 2>/dev/null)
@@ -379,12 +367,12 @@ test_baseline_first_value() {
 test_baseline_ema_calculation() {
     reset_test
 
-    local baseline_file="$TEMP_DIR/home/.shipwright/baselines/test.json"
+    local baseline_file="$TEST_TEMP_DIR/home/.shipwright/baselines/test.json"
     # Start with known baseline
     echo '{"build.duration": {"value": 100, "count": 5, "updated": "2026-01-01T00:00:00Z"}}' > "$baseline_file"
 
     # Update with value 200 → EMA: 0.9 * 100 + 0.1 * 200 = 90 + 20 = 110
-    bash "$TEMP_DIR/scripts/sw-predictive.sh" baseline "build" "duration" "200" "$baseline_file" 2>/dev/null
+    bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" baseline "build" "duration" "200" "$baseline_file" 2>/dev/null
 
     local stored_value
     stored_value=$(jq -r '.["build.duration"].value' "$baseline_file" 2>/dev/null)
@@ -411,10 +399,10 @@ test_baseline_ema_calculation() {
 test_baseline_creates_file() {
     reset_test
 
-    local baseline_file="$TEMP_DIR/home/.shipwright/baselines/new.json"
+    local baseline_file="$TEST_TEMP_DIR/home/.shipwright/baselines/new.json"
     rm -f "$baseline_file"
 
-    bash "$TEMP_DIR/scripts/sw-predictive.sh" baseline "deploy" "time" "300" "$baseline_file" 2>/dev/null
+    bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" baseline "deploy" "time" "300" "$baseline_file" 2>/dev/null
 
     if [[ ! -f "$baseline_file" ]]; then
         echo -e "    ${RED}✗${RESET} Baseline file not created"
@@ -448,14 +436,14 @@ test_prevention_with_patterns() {
   Fix: Increase timeout"
 
     local output
-    output=$(bash "$TEMP_DIR/scripts/sw-predictive.sh" risk '{}' >/dev/null 2>&1; true)
+    output=$(bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" risk '{}' >/dev/null 2>&1; true)
 
     # Test the prevention function directly via sourcing
     # Use a subshell to avoid polluting our environment
     output=$(
-        export HOME="$TEMP_DIR/home"
-        export SCRIPT_DIR="$TEMP_DIR/scripts"
-        source "$TEMP_DIR/scripts/sw-predictive.sh" 2>/dev/null
+        export HOME="$TEST_TEMP_DIR/home"
+        export SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        source "$TEST_TEMP_DIR/scripts/sw-predictive.sh" 2>/dev/null
         predict_inject_prevention "build" '{}' "$memory_context"
     )
 
@@ -484,22 +472,22 @@ test_prevention_empty_no_match() {
     reset_test
 
     # Remove mock memory script so fallback path also finds nothing
-    local mem_backup="$TEMP_DIR/scripts/sw-memory.sh.bak"
-    mv "$TEMP_DIR/scripts/sw-memory.sh" "$mem_backup"
+    local mem_backup="$TEST_TEMP_DIR/scripts/sw-memory.sh.bak"
+    mv "$TEST_TEMP_DIR/scripts/sw-memory.sh" "$mem_backup"
 
     local memory_context="## Failure Patterns to Avoid
 - [deploy] Server timeout (seen 1x)"
 
     local output
     output=$(
-        export HOME="$TEMP_DIR/home"
-        export SCRIPT_DIR="$TEMP_DIR/scripts"
-        source "$TEMP_DIR/scripts/sw-predictive.sh" 2>/dev/null
+        export HOME="$TEST_TEMP_DIR/home"
+        export SCRIPT_DIR="$TEST_TEMP_DIR/scripts"
+        source "$TEST_TEMP_DIR/scripts/sw-predictive.sh" 2>/dev/null
         predict_inject_prevention "build" '{}' "$memory_context"
     )
 
     # Restore mock memory
-    mv "$mem_backup" "$TEMP_DIR/scripts/sw-memory.sh"
+    mv "$mem_backup" "$TEST_TEMP_DIR/scripts/sw-memory.sh"
 
     # Should be empty since no [build] patterns exist in context and no memory script
     if [[ -n "$output" ]]; then
@@ -521,11 +509,11 @@ test_graceful_degradation() {
     reset_test
 
     # Remove intelligence engine to simulate unavailability
-    rm -f "$TEMP_DIR/scripts/sw-intelligence.sh"
+    rm -f "$TEST_TEMP_DIR/scripts/sw-intelligence.sh"
 
     # Risk assessment should still work (heuristic fallback)
     local output
-    output=$(bash "$TEMP_DIR/scripts/sw-predictive.sh" risk '{"title":"Simple fix"}' 2>/dev/null)
+    output=$(bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" risk '{"title":"Simple fix"}' 2>/dev/null)
 
     if ! echo "$output" | jq -e '.overall_risk' &>/dev/null; then
         echo -e "    ${RED}✗${RESET} Risk assessment failed without intelligence engine"
@@ -534,7 +522,7 @@ test_graceful_degradation() {
 
     # Patrol should return empty array
     local patrol_output
-    patrol_output=$(bash "$TEMP_DIR/scripts/sw-predictive.sh" patrol "$TEMP_DIR/repo/src/app.js" 2>/dev/null)
+    patrol_output=$(bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" patrol "$TEST_TEMP_DIR/repo/src/app.js" 2>/dev/null)
 
     if [[ "$patrol_output" != "[]" ]]; then
         echo -e "    ${RED}✗${RESET} Expected empty patrol results without AI, got: $patrol_output"
@@ -542,7 +530,7 @@ test_graceful_degradation() {
     fi
 
     # Restore for other tests
-    cat > "$TEMP_DIR/scripts/sw-intelligence.sh" <<'INTEOF'
+    cat > "$TEST_TEMP_DIR/scripts/sw-intelligence.sh" <<'INTEOF'
 #!/usr/bin/env bash
 _intelligence_call_claude() { echo ""; }
 INTEOF
@@ -556,7 +544,7 @@ INTEOF
 test_risk_emits_event() {
     reset_test
 
-    bash "$TEMP_DIR/scripts/sw-predictive.sh" risk '{"title":"test"}' >/dev/null 2>&1
+    bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" risk '{"title":"test"}' >/dev/null 2>&1
 
     if [[ ! -f "$EVENTS_FILE" ]]; then
         echo -e "    ${RED}✗${RESET} No events file created"
@@ -582,7 +570,7 @@ test_patrol_with_ai() {
     reset_test
 
     # Create an intelligence engine that returns findings
-    cat > "$TEMP_DIR/scripts/sw-intelligence.sh" <<'INTEOF'
+    cat > "$TEST_TEMP_DIR/scripts/sw-intelligence.sh" <<'INTEOF'
 #!/usr/bin/env bash
 _intelligence_call_claude() {
     echo '[{"severity":"high","category":"security","finding":"SQL injection in query","recommendation":"Use parameterized queries"}]'
@@ -590,7 +578,7 @@ _intelligence_call_claude() {
 INTEOF
 
     local output
-    output=$(bash "$TEMP_DIR/scripts/sw-predictive.sh" patrol "$TEMP_DIR/repo/src/app.js" 2>/dev/null)
+    output=$(bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" patrol "$TEST_TEMP_DIR/repo/src/app.js" 2>/dev/null)
 
     if ! echo "$output" | jq -e 'type == "array"' &>/dev/null; then
         echo -e "    ${RED}✗${RESET} Output is not a JSON array: $output"
@@ -623,7 +611,7 @@ INTEOF
     fi
 
     # Restore default mock
-    cat > "$TEMP_DIR/scripts/sw-intelligence.sh" <<'INTEOF'
+    cat > "$TEST_TEMP_DIR/scripts/sw-intelligence.sh" <<'INTEOF'
 #!/usr/bin/env bash
 _intelligence_call_claude() { echo ""; }
 INTEOF

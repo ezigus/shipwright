@@ -8,22 +8,13 @@ set -euo pipefail
 # shellcheck disable=SC2034
 VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Colors
 # shellcheck disable=SC2034
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-YELLOW='\033[38;2;250;204;21m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
-PASS=0
-FAIL=0
 SKIP=0
-TOTAL=0
 
 test_pass() { PASS=$((PASS + 1)); TOTAL=$((TOTAL + 1)); echo -e "  ${GREEN}✓${RESET} $1"; }
 test_fail() { FAIL=$((FAIL + 1)); TOTAL=$((TOTAL + 1)); echo -e "  ${RED}✗${RESET} $1"; echo -e "    ${DIM}$2${RESET}"; }
@@ -121,9 +112,9 @@ test_health_endpoint() {
     local resp
     resp=$(curl -s "$BASE/api/health" 2>/dev/null)
     if echo "$resp" | grep -q '"status"'; then
-        test_pass "GET /api/health returns status field"
+        assert_pass "GET /api/health returns status field"
     else
-        test_fail "GET /api/health returns status field" "Got: $resp"
+        assert_fail "GET /api/health returns status field" "Got: $resp"
     fi
 }
 
@@ -132,9 +123,9 @@ test_status_endpoint() {
     local resp
     resp=$(curl -s "$BASE/api/status" 2>/dev/null)
     if echo "$resp" | grep -q 'pipelines\|daemon\|active'; then
-        test_pass "GET /api/status returns fleet state"
+        assert_pass "GET /api/status returns fleet state"
     else
-        test_fail "GET /api/status returns fleet state" "Got: $resp"
+        assert_fail "GET /api/status returns fleet state" "Got: $resp"
     fi
 }
 
@@ -143,9 +134,9 @@ test_404_unknown_route() {
     local code
     code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/nonexistent" 2>/dev/null) || true
     if [[ "$code" == "404" ]]; then
-        test_pass "GET /api/nonexistent returns 404"
+        assert_pass "GET /api/nonexistent returns 404"
     else
-        test_fail "GET /api/nonexistent returns 404" "Got: HTTP $code"
+        assert_fail "GET /api/nonexistent returns 404" "Got: HTTP $code"
     fi
 }
 
@@ -154,9 +145,9 @@ test_static_html() {
     local resp
     resp=$(curl -s "$BASE/" 2>/dev/null)
     if echo "$resp" | grep -q '<!DOCTYPE html\|<html'; then
-        test_pass "GET / serves index.html"
+        assert_pass "GET / serves index.html"
     else
-        test_fail "GET / serves index.html" "Response does not contain HTML"
+        assert_fail "GET / serves index.html" "Response does not contain HTML"
     fi
 }
 
@@ -165,9 +156,9 @@ test_json_content_type() {
     local ctype
     ctype=$(curl -s -D- "$BASE/api/health" 2>/dev/null | grep -i "content-type" | head -1)
     if echo "$ctype" | grep -qi "application/json"; then
-        test_pass "API responses have application/json content-type"
+        assert_pass "API responses have application/json content-type"
     else
-        test_fail "API responses have application/json content-type" "Got: $ctype"
+        assert_fail "API responses have application/json content-type" "Got: $ctype"
     fi
 }
 
@@ -176,9 +167,9 @@ test_metrics_history() {
     local resp
     resp=$(curl -s "$BASE/api/metrics/history" 2>/dev/null)
     if [[ -n "$resp" ]] && echo "$resp" | python3 -m json.tool >/dev/null 2>&1; then
-        test_pass "GET /api/metrics/history returns valid JSON"
+        assert_pass "GET /api/metrics/history returns valid JSON"
     else
-        test_fail "GET /api/metrics/history returns valid JSON" "Response: $resp"
+        assert_fail "GET /api/metrics/history returns valid JSON" "Response: $resp"
     fi
 }
 
@@ -187,9 +178,9 @@ test_metrics_history_custom_period() {
     local resp
     resp=$(curl -s "$BASE/api/metrics/history?period=7" 2>/dev/null)
     if [[ -n "$resp" ]]; then
-        test_pass "GET /api/metrics/history?period=7 works"
+        assert_pass "GET /api/metrics/history?period=7 works"
     else
-        test_fail "GET /api/metrics/history?period=7 works" "Empty response"
+        assert_fail "GET /api/metrics/history?period=7 works" "Empty response"
     fi
 }
 
@@ -198,9 +189,9 @@ test_timeline() {
     local resp
     resp=$(curl -s "$BASE/api/timeline" 2>/dev/null)
     if [[ -n "$resp" ]]; then
-        test_pass "GET /api/timeline returns data"
+        assert_pass "GET /api/timeline returns data"
     else
-        test_fail "GET /api/timeline returns data" "Empty"
+        assert_fail "GET /api/timeline returns data" "Empty"
     fi
 }
 
@@ -209,9 +200,9 @@ test_activity_params() {
     local resp
     resp=$(curl -s "$BASE/api/activity?limit=5&offset=0&type=pipeline.completed" 2>/dev/null)
     if echo "$resp" | grep -q 'events'; then
-        test_pass "GET /api/activity with params returns events"
+        assert_pass "GET /api/activity with params returns events"
     else
-        test_fail "GET /api/activity with params returns events" "Got: $resp"
+        assert_fail "GET /api/activity with params returns events" "Got: $resp"
     fi
 }
 
@@ -220,9 +211,9 @@ test_machines() {
     local resp
     resp=$(curl -s "$BASE/api/machines" 2>/dev/null)
     if [[ -n "$resp" ]]; then
-        test_pass "GET /api/machines returns machine list"
+        assert_pass "GET /api/machines returns machine list"
     else
-        test_fail "GET /api/machines returns machine list" "Got: $resp"
+        assert_fail "GET /api/machines returns machine list" "Got: $resp"
     fi
 }
 
@@ -231,9 +222,9 @@ test_alerts() {
     local resp
     resp=$(curl -s "$BASE/api/alerts" 2>/dev/null)
     if echo "$resp" | grep -q 'alerts'; then
-        test_pass "GET /api/alerts returns alerts array"
+        assert_pass "GET /api/alerts returns alerts array"
     else
-        test_fail "GET /api/alerts returns alerts array" "Got: $resp"
+        assert_fail "GET /api/alerts returns alerts array" "Got: $resp"
     fi
 }
 
@@ -242,9 +233,9 @@ test_daemon_config() {
     local resp
     resp=$(curl -s "$BASE/api/daemon/config" 2>/dev/null)
     if echo "$resp" | grep -q 'poll_interval\|config'; then
-        test_pass "GET /api/daemon/config returns configuration"
+        assert_pass "GET /api/daemon/config returns configuration"
     else
-        test_fail "GET /api/daemon/config returns configuration" "Got: $resp"
+        assert_fail "GET /api/daemon/config returns configuration" "Got: $resp"
     fi
 }
 
@@ -253,9 +244,9 @@ test_pipeline_detail() {
     local resp
     resp=$(curl -s "$BASE/api/pipeline/100" 2>/dev/null)
     if [[ -n "$resp" ]]; then
-        test_pass "GET /api/pipeline/100 returns pipeline detail"
+        assert_pass "GET /api/pipeline/100 returns pipeline detail"
     else
-        test_fail "GET /api/pipeline/100 returns pipeline detail" "Empty"
+        assert_fail "GET /api/pipeline/100 returns pipeline detail" "Empty"
     fi
 }
 
@@ -264,9 +255,9 @@ test_pipeline_detail_missing() {
     local code
     code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/pipeline/99999" 2>/dev/null) || true
     if [[ "$code" == "200" || "$code" == "404" ]]; then
-        test_pass "GET /api/pipeline/99999 handles missing pipeline"
+        assert_pass "GET /api/pipeline/99999 handles missing pipeline"
     else
-        test_fail "GET /api/pipeline/99999 handles missing pipeline" "HTTP $code"
+        assert_fail "GET /api/pipeline/99999 handles missing pipeline" "HTTP $code"
     fi
 }
 
@@ -275,9 +266,9 @@ test_memory_failures() {
     local resp
     resp=$(curl -s "$BASE/api/memory/failures" 2>/dev/null) || true
     if [[ -n "$resp" ]] && ! echo "$resp" | grep -q 'Cannot GET'; then
-        test_pass "GET /api/memory/failures returns failure data"
+        assert_pass "GET /api/memory/failures returns failure data"
     else
-        test_fail "GET /api/memory/failures returns failure data" "Got: $resp"
+        assert_fail "GET /api/memory/failures returns failure data" "Got: $resp"
     fi
 }
 
@@ -285,9 +276,9 @@ test_memory_patterns() {
     local resp
     resp=$(curl -s "$BASE/api/memory/patterns" 2>/dev/null)
     if echo "$resp" | grep -q 'pattern'; then
-        test_pass "GET /api/memory/patterns returns pattern data"
+        assert_pass "GET /api/memory/patterns returns pattern data"
     else
-        test_fail "GET /api/memory/patterns returns pattern data" "Got: $resp"
+        assert_fail "GET /api/memory/patterns returns pattern data" "Got: $resp"
     fi
 }
 
@@ -295,9 +286,9 @@ test_memory_global() {
     local resp
     resp=$(curl -s "$BASE/api/memory/global" 2>/dev/null)
     if echo "$resp" | grep -q 'learnings\|lesson'; then
-        test_pass "GET /api/memory/global returns global learnings"
+        assert_pass "GET /api/memory/global returns global learnings"
     else
-        test_fail "GET /api/memory/global returns global learnings" "Got: $resp"
+        assert_fail "GET /api/memory/global returns global learnings" "Got: $resp"
     fi
 }
 
@@ -306,9 +297,9 @@ test_costs_breakdown() {
     local resp
     resp=$(curl -s "$BASE/api/costs/breakdown" 2>/dev/null)
     if [[ -n "$resp" ]]; then
-        test_pass "GET /api/costs/breakdown returns cost data"
+        assert_pass "GET /api/costs/breakdown returns cost data"
     else
-        test_fail "GET /api/costs/breakdown returns cost data" "Empty"
+        assert_fail "GET /api/costs/breakdown returns cost data" "Empty"
     fi
 }
 
@@ -317,15 +308,15 @@ test_context_efficiency() {
     local resp
     resp=$(curl -s "$BASE/api/context-efficiency" 2>/dev/null)
     if echo "$resp" | grep -q 'avg_utilization'; then
-        test_pass "GET /api/context-efficiency returns efficiency data"
+        assert_pass "GET /api/context-efficiency returns efficiency data"
     else
-        test_fail "GET /api/context-efficiency returns efficiency data" "Got: $resp"
+        assert_fail "GET /api/context-efficiency returns efficiency data" "Got: $resp"
     fi
     # Verify expected fields
     if echo "$resp" | grep -q 'total_iterations'; then
-        test_pass "Context efficiency includes total_iterations field"
+        assert_pass "Context efficiency includes total_iterations field"
     else
-        test_fail "Context efficiency includes total_iterations field" "Got: $resp"
+        assert_fail "Context efficiency includes total_iterations field" "Got: $resp"
     fi
 }
 
@@ -334,9 +325,9 @@ test_intervention_pause() {
     local resp code
     code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/intervention/100/pause" 2>/dev/null) || true
     if [[ "$code" == "200" || "$code" == "404" ]]; then
-        test_pass "POST /api/intervention/100/pause accepted"
+        assert_pass "POST /api/intervention/100/pause accepted"
     else
-        test_fail "POST /api/intervention/100/pause accepted" "HTTP $code"
+        assert_fail "POST /api/intervention/100/pause accepted" "HTTP $code"
     fi
 }
 
@@ -345,9 +336,9 @@ test_emergency_brake() {
     local resp
     resp=$(curl -s -X POST "$BASE/api/emergency-brake" 2>/dev/null)
     if [[ -n "$resp" ]] && echo "$resp" | python3 -m json.tool >/dev/null 2>&1; then
-        test_pass "POST /api/emergency-brake returns response"
+        assert_pass "POST /api/emergency-brake returns response"
     else
-        test_fail "POST /api/emergency-brake returns response" "Got: $resp"
+        assert_fail "POST /api/emergency-brake returns response" "Got: $resp"
     fi
 }
 
@@ -356,9 +347,9 @@ test_logs() {
     local resp
     resp=$(curl -s "$BASE/api/logs/100" 2>/dev/null)
     if echo "$resp" | grep -q 'content\|log'; then
-        test_pass "GET /api/logs/100 returns log content"
+        assert_pass "GET /api/logs/100 returns log content"
     else
-        test_fail "GET /api/logs/100 returns log content" "Got: $resp"
+        assert_fail "GET /api/logs/100 returns log content" "Got: $resp"
     fi
 }
 
@@ -367,9 +358,9 @@ test_queue_detailed() {
     local resp
     resp=$(curl -s "$BASE/api/queue/detailed" 2>/dev/null)
     if echo "$resp" | grep -q 'queue'; then
-        test_pass "GET /api/queue/detailed returns queue data"
+        assert_pass "GET /api/queue/detailed returns queue data"
     else
-        test_fail "GET /api/queue/detailed returns queue data" "Got: $resp"
+        assert_fail "GET /api/queue/detailed returns queue data" "Got: $resp"
     fi
 }
 
@@ -378,9 +369,9 @@ test_notifications_config() {
     local resp
     resp=$(curl -s "$BASE/api/notifications/config" 2>/dev/null)
     if echo "$resp" | grep -q 'enabled\|webhooks'; then
-        test_pass "GET /api/notifications/config returns defaults"
+        assert_pass "GET /api/notifications/config returns defaults"
     else
-        test_fail "GET /api/notifications/config returns defaults" "Got: $resp"
+        assert_fail "GET /api/notifications/config returns defaults" "Got: $resp"
     fi
 }
 
@@ -389,9 +380,9 @@ test_approval_gates() {
     local resp
     resp=$(curl -s "$BASE/api/approval-gates" 2>/dev/null)
     if echo "$resp" | grep -q 'enabled\|stages'; then
-        test_pass "GET /api/approval-gates returns config"
+        assert_pass "GET /api/approval-gates returns config"
     else
-        test_fail "GET /api/approval-gates returns config" "Got: $resp"
+        assert_fail "GET /api/approval-gates returns config" "Got: $resp"
     fi
 }
 
@@ -400,9 +391,9 @@ test_quality_gates() {
     local resp
     resp=$(curl -s "$BASE/api/quality-gates" 2>/dev/null)
     if echo "$resp" | grep -q 'enabled\|rules'; then
-        test_pass "GET /api/quality-gates returns config"
+        assert_pass "GET /api/quality-gates returns config"
     else
-        test_fail "GET /api/quality-gates returns config" "Got: $resp"
+        assert_fail "GET /api/quality-gates returns config" "Got: $resp"
     fi
 }
 
@@ -411,9 +402,9 @@ test_audit_log() {
     local resp
     resp=$(curl -s "$BASE/api/audit-log" 2>/dev/null)
     if echo "$resp" | grep -q 'entries'; then
-        test_pass "GET /api/audit-log returns entries array"
+        assert_pass "GET /api/audit-log returns entries array"
     else
-        test_fail "GET /api/audit-log returns entries array" "Got: $resp"
+        assert_fail "GET /api/audit-log returns entries array" "Got: $resp"
     fi
 }
 
@@ -422,9 +413,9 @@ test_rbac() {
     local resp
     resp=$(curl -s "$BASE/api/rbac" 2>/dev/null)
     if echo "$resp" | grep -q 'role\|users\|enabled'; then
-        test_pass "GET /api/rbac returns role config"
+        assert_pass "GET /api/rbac returns role config"
     else
-        test_fail "GET /api/rbac returns role config" "Got: $resp"
+        assert_fail "GET /api/rbac returns role config" "Got: $resp"
     fi
 }
 
@@ -433,9 +424,9 @@ test_db_health() {
     local resp
     resp=$(curl -s "$BASE/api/db/health" 2>/dev/null)
     if [[ -n "$resp" ]]; then
-        test_pass "GET /api/db/health returns health info"
+        assert_pass "GET /api/db/health returns health info"
     else
-        test_fail "GET /api/db/health returns health info" "Empty"
+        assert_fail "GET /api/db/health returns health info" "Empty"
     fi
 }
 
@@ -444,9 +435,9 @@ test_linear_status() {
     local resp
     resp=$(curl -s "$BASE/api/linear/status" 2>/dev/null)
     if echo "$resp" | grep -q 'configured\|connected\|status'; then
-        test_pass "GET /api/linear/status returns connection status"
+        assert_pass "GET /api/linear/status returns connection status"
     else
-        test_fail "GET /api/linear/status returns connection status" "Got: $resp"
+        assert_fail "GET /api/linear/status returns connection status" "Got: $resp"
     fi
 }
 
@@ -455,9 +446,9 @@ test_predictions() {
     local resp
     resp=$(curl -s "$BASE/api/predictions/100" 2>/dev/null)
     if [[ -n "$resp" ]]; then
-        test_pass "GET /api/predictions/100 returns prediction data"
+        assert_pass "GET /api/predictions/100 returns prediction data"
     else
-        test_fail "GET /api/predictions/100 returns prediction data" "Empty"
+        assert_fail "GET /api/predictions/100 returns prediction data" "Empty"
     fi
 }
 
@@ -469,12 +460,12 @@ test_webhook_lifecycle() {
         local del_resp
         del_resp=$(curl -s -X DELETE -H "Content-Type: application/json" -d '{"url":"https://example.com/hook"}' "$BASE/api/notifications/webhook" 2>/dev/null)
         if echo "$del_resp" | grep -q 'ok'; then
-            test_pass "Webhook add + remove lifecycle works"
+            assert_pass "Webhook add + remove lifecycle works"
         else
-            test_fail "Webhook add + remove lifecycle works" "Delete failed: $del_resp"
+            assert_fail "Webhook add + remove lifecycle works" "Delete failed: $del_resp"
         fi
     else
-        test_fail "Webhook add + remove lifecycle works" "Add failed: $add_resp"
+        assert_fail "Webhook add + remove lifecycle works" "Add failed: $add_resp"
     fi
 }
 
@@ -483,9 +474,9 @@ test_approval_gate_update() {
     local resp
     resp=$(curl -s -X POST -H "Content-Type: application/json" -d '{"enabled":true,"stages":["deploy"]}' "$BASE/api/approval-gates" 2>/dev/null)
     if echo "$resp" | grep -q 'ok'; then
-        test_pass "POST /api/approval-gates updates config"
+        assert_pass "POST /api/approval-gates updates config"
     else
-        test_fail "POST /api/approval-gates updates config" "Got: $resp"
+        assert_fail "POST /api/approval-gates updates config" "Got: $resp"
     fi
 }
 
@@ -494,9 +485,9 @@ test_pipeline_diff() {
     local code
     code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/pipeline/100/diff" 2>/dev/null) || true
     if [[ "$code" == "200" ]]; then
-        test_pass "GET /api/pipeline/100/diff returns 200"
+        assert_pass "GET /api/pipeline/100/diff returns 200"
     else
-        test_fail "GET /api/pipeline/100/diff returns 200" "HTTP $code"
+        assert_fail "GET /api/pipeline/100/diff returns 200" "HTTP $code"
     fi
 }
 
@@ -504,9 +495,9 @@ test_pipeline_files() {
     local code
     code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/pipeline/100/files" 2>/dev/null) || true
     if [[ "$code" == "200" ]]; then
-        test_pass "GET /api/pipeline/100/files returns 200"
+        assert_pass "GET /api/pipeline/100/files returns 200"
     else
-        test_fail "GET /api/pipeline/100/files returns 200" "HTTP $code"
+        assert_fail "GET /api/pipeline/100/files returns 200" "HTTP $code"
     fi
 }
 
@@ -514,9 +505,9 @@ test_pipeline_reasoning() {
     local code
     code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/pipeline/100/reasoning" 2>/dev/null) || true
     if [[ "$code" == "200" ]]; then
-        test_pass "GET /api/pipeline/100/reasoning returns 200"
+        assert_pass "GET /api/pipeline/100/reasoning returns 200"
     else
-        test_fail "GET /api/pipeline/100/reasoning returns 200" "HTTP $code"
+        assert_fail "GET /api/pipeline/100/reasoning returns 200" "HTTP $code"
     fi
 }
 
@@ -524,9 +515,9 @@ test_pipeline_failures() {
     local code
     code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/pipeline/100/failures" 2>/dev/null) || true
     if [[ "$code" == "200" ]]; then
-        test_pass "GET /api/pipeline/100/failures returns 200"
+        assert_pass "GET /api/pipeline/100/failures returns 200"
     else
-        test_fail "GET /api/pipeline/100/failures returns 200" "HTTP $code"
+        assert_fail "GET /api/pipeline/100/failures returns 200" "HTTP $code"
     fi
 }
 
@@ -534,9 +525,9 @@ test_pipeline_quality() {
     local code
     code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/pipeline/100/quality" 2>/dev/null) || true
     if [[ "$code" == "200" ]]; then
-        test_pass "GET /api/pipeline/100/quality returns 200"
+        assert_pass "GET /api/pipeline/100/quality returns 200"
     else
-        test_fail "GET /api/pipeline/100/quality returns 200" "HTTP $code"
+        assert_fail "GET /api/pipeline/100/quality returns 200" "HTTP $code"
     fi
 }
 
@@ -545,7 +536,7 @@ test_cors_headers() {
     local headers
     headers=$(curl -s -D- "$BASE/api/health" 2>/dev/null)
     if echo "$headers" | grep -qi "access-control\|x-content-type"; then
-        test_pass "Response includes security headers"
+        assert_pass "Response includes security headers"
     else
         # Not critical - may not be configured
         test_skip "Response includes security headers"
@@ -557,9 +548,9 @@ test_invalid_json_body() {
     local code
     code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Content-Type: application/json" -d 'not-json' "$BASE/api/notifications/webhook" 2>/dev/null) || true
     if [[ "$code" -ge 400 ]]; then
-        test_pass "POST with invalid JSON returns error status"
+        assert_pass "POST with invalid JSON returns error status"
     else
-        test_fail "POST with invalid JSON returns error status" "HTTP $code"
+        assert_fail "POST with invalid JSON returns error status" "HTTP $code"
     fi
 }
 
@@ -571,12 +562,12 @@ test_claim_lifecycle() {
         local release_resp
         release_resp=$(curl -s -X POST -H "Content-Type: application/json" -d '{"issue":100,"machine":"local"}' "$BASE/api/claim/release" 2>/dev/null)
         if [[ -n "$release_resp" ]]; then
-            test_pass "Claim + release lifecycle works"
+            assert_pass "Claim + release lifecycle works"
         else
-            test_fail "Claim + release lifecycle works" "Release failed"
+            assert_fail "Claim + release lifecycle works" "Release failed"
         fi
     else
-        test_fail "Claim + release lifecycle works" "Claim failed"
+        assert_fail "Claim + release lifecycle works" "Claim failed"
     fi
 }
 
@@ -585,9 +576,9 @@ test_patrol_recent() {
     local resp
     resp=$(curl -s "$BASE/api/patrol/recent" 2>/dev/null)
     if echo "$resp" | grep -q 'findings'; then
-        test_pass "GET /api/patrol/recent returns findings"
+        assert_pass "GET /api/patrol/recent returns findings"
     else
-        test_fail "GET /api/patrol/recent returns findings" "Got: $resp"
+        assert_fail "GET /api/patrol/recent returns findings" "Got: $resp"
     fi
 }
 
@@ -596,9 +587,9 @@ test_db_events() {
     local resp
     resp=$(curl -s "$BASE/api/db/events" 2>/dev/null)
     if echo "$resp" | grep -q 'events\|source'; then
-        test_pass "GET /api/db/events returns event data"
+        assert_pass "GET /api/db/events returns event data"
     else
-        test_fail "GET /api/db/events returns event data" "Got: $resp"
+        assert_fail "GET /api/db/events returns event data" "Got: $resp"
     fi
 }
 
@@ -607,9 +598,9 @@ test_stage_performance() {
     local resp
     resp=$(curl -s "$BASE/api/metrics/stage-performance" 2>/dev/null)
     if echo "$resp" | grep -q 'stages'; then
-        test_pass "GET /api/metrics/stage-performance returns stages"
+        assert_pass "GET /api/metrics/stage-performance returns stages"
     else
-        test_fail "GET /api/metrics/stage-performance returns stages" "Got: $resp"
+        assert_fail "GET /api/metrics/stage-performance returns stages" "Got: $resp"
     fi
 }
 
@@ -618,9 +609,9 @@ test_bottlenecks() {
     local resp
     resp=$(curl -s "$BASE/api/metrics/bottlenecks" 2>/dev/null)
     if echo "$resp" | grep -q 'bottlenecks'; then
-        test_pass "GET /api/metrics/bottlenecks returns data"
+        assert_pass "GET /api/metrics/bottlenecks returns data"
     else
-        test_fail "GET /api/metrics/bottlenecks returns data" "Got: $resp"
+        assert_fail "GET /api/metrics/bottlenecks returns data" "Got: $resp"
     fi
 }
 
@@ -629,9 +620,9 @@ test_capacity() {
     local resp
     resp=$(curl -s "$BASE/api/metrics/capacity" 2>/dev/null)
     if echo "$resp" | grep -q 'Rate\|rate\|capacity\|queueDepth\|Clear'; then
-        test_pass "GET /api/metrics/capacity returns capacity info"
+        assert_pass "GET /api/metrics/capacity returns capacity info"
     else
-        test_fail "GET /api/metrics/capacity returns capacity info" "Got: $resp"
+        assert_fail "GET /api/metrics/capacity returns capacity info" "Got: $resp"
     fi
 }
 
@@ -640,9 +631,9 @@ test_notification_test() {
     local code
     code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/api/notifications/test" 2>/dev/null) || true
     if [[ "$code" == "200" ]]; then
-        test_pass "POST /api/notifications/test returns 200"
+        assert_pass "POST /api/notifications/test returns 200"
     else
-        test_fail "POST /api/notifications/test returns 200" "HTTP $code"
+        assert_fail "POST /api/notifications/test returns 200" "HTTP $code"
     fi
 }
 

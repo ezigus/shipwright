@@ -9,19 +9,11 @@ set -euo pipefail
 # shellcheck disable=SC2034
 VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck disable=SC2034
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
 
-PASS=0
-FAIL=0
-TOTAL=0
 
 test_pass() { PASS=$((PASS + 1)); TOTAL=$((TOTAL + 1)); echo -e "  ${GREEN}✓${RESET} $1"; }
 test_fail() { FAIL=$((FAIL + 1)); TOTAL=$((TOTAL + 1)); echo -e "  ${RED}✗${RESET} $1"; echo -e "    ${DIM}$2${RESET}"; }
@@ -43,9 +35,9 @@ echo -e "${BOLD}1. Memory Lifecycle${RESET}"
 test_memory_dir_creation() {
     mkdir -p "$MOCK_SW/memory"
     if [[ -d "$MOCK_SW/memory" ]]; then
-        test_pass "Memory directory exists"
+        assert_pass "Memory directory exists"
     else
-        test_fail "Memory directory exists" "Not created"
+        assert_fail "Memory directory exists" "Not created"
     fi
 }
 test_memory_dir_creation
@@ -82,9 +74,9 @@ FAIL_JSON
     local count
     count=$(python3 -c "import json; d=json.load(open('$MOCK_SW/memory/failures.json')); print(len(d['failures']))" 2>/dev/null) || count=0
     if [[ "$count" == "2" ]]; then
-        test_pass "Failure patterns stored ($count patterns)"
+        assert_pass "Failure patterns stored ($count patterns)"
     else
-        test_fail "Failure patterns stored" "Got $count, expected 2"
+        assert_fail "Failure patterns stored" "Got $count, expected 2"
     fi
 }
 test_failure_recording
@@ -99,9 +91,9 @@ f = d['failures'][0]
 print(f['fix_effectiveness_rate'])
 " 2>/dev/null) || effective=0
     if [[ "$effective" == "1.0" ]]; then
-        test_pass "Fix effectiveness rate tracked (${effective})"
+        assert_pass "Fix effectiveness rate tracked (${effective})"
     else
-        test_fail "Fix effectiveness rate tracked" "Got: $effective"
+        assert_fail "Fix effectiveness rate tracked" "Got: $effective"
     fi
 }
 test_fix_effectiveness
@@ -117,9 +109,9 @@ for f in d['failures']:
         print(f'Known fix for \"{f[\"pattern\"]}\": {f[\"fix\"]} (effectiveness: {f[\"fix_effectiveness_rate\"]})')
 " 2>/dev/null) || inject=""
     if echo "$inject" | grep -q 'Known fix'; then
-        test_pass "Memory injection provides known fixes"
+        assert_pass "Memory injection provides known fixes"
     else
-        test_fail "Memory injection provides known fixes" "No fixes found"
+        assert_fail "Memory injection provides known fixes" "No fixes found"
     fi
 }
 test_memory_injection_data
@@ -137,9 +129,9 @@ PATTERNS
     local count
     count=$(python3 -c "import json; d=json.load(open('$MOCK_SW/memory/patterns.json')); print(len(d['patterns']))" 2>/dev/null) || count=0
     if [[ "$count" == "2" ]]; then
-        test_pass "Patterns stored and deduplicated ($count unique)"
+        assert_pass "Patterns stored and deduplicated ($count unique)"
     else
-        test_fail "Patterns stored and deduplicated" "Got $count"
+        assert_fail "Patterns stored and deduplicated" "Got $count"
     fi
 }
 test_pattern_deduplication
@@ -160,9 +152,9 @@ GLOBAL
     local count
     count=$(python3 -c "import json; d=json.load(open('$MOCK_SW/memory/global.json')); print(len(d['learnings']))" 2>/dev/null) || count=0
     if [[ "$count" -ge 3 ]]; then
-        test_pass "Global learnings stored ($count lessons)"
+        assert_pass "Global learnings stored ($count lessons)"
     else
-        test_fail "Global learnings stored" "Got $count, expected >=3"
+        assert_fail "Global learnings stored" "Got $count, expected >=3"
     fi
 }
 test_global_learnings
@@ -176,9 +168,9 @@ matches = [l for l in d['learnings'] if 'lint' in l['lesson'].lower()]
 print(len(matches))
 " 2>/dev/null) || found=0
     if [[ "$found" -ge 1 ]]; then
-        test_pass "Global memory is searchable ($found matches for 'lint')"
+        assert_pass "Global memory is searchable ($found matches for 'lint')"
     else
-        test_fail "Global memory is searchable" "No matches found"
+        assert_fail "Global memory is searchable" "No matches found"
     fi
 }
 test_global_memory_searchable
@@ -200,9 +192,9 @@ DISC
     local count
     count=$(wc -l < "$MOCK_SW/discoveries.jsonl" | tr -d ' ')
     if [[ "$count" -eq 4 ]]; then
-        test_pass "Discovery file has $count entries"
+        assert_pass "Discovery file has $count entries"
     else
-        test_fail "Discovery file has 4 entries" "Got $count"
+        assert_fail "Discovery file has 4 entries" "Got $count"
     fi
 }
 test_discovery_file
@@ -222,9 +214,9 @@ for line in open('$MOCK_SW/discoveries.jsonl'):
 print(len(matches))
 " 2>/dev/null) || matches=0
     if [[ "$matches" -ge 2 ]]; then
-        test_pass "Discovery query by file pattern finds $matches matches"
+        assert_pass "Discovery query by file pattern finds $matches matches"
     else
-        test_fail "Discovery query by file pattern" "Got $matches, expected >=2"
+        assert_fail "Discovery query by file pattern" "Got $matches, expected >=2"
     fi
 }
 test_discovery_query_by_file_pattern
@@ -243,9 +235,9 @@ for line in open('$MOCK_SW/discoveries.jsonl'):
 print(len(matches))
 " 2>/dev/null) || matches=0
     if [[ "$matches" -eq 2 ]]; then
-        test_pass "Discovery query by pipeline finds $matches entries"
+        assert_pass "Discovery query by pipeline finds $matches entries"
     else
-        test_fail "Discovery query by pipeline" "Got $matches, expected 2"
+        assert_fail "Discovery query by pipeline" "Got $matches, expected 2"
     fi
 }
 test_discovery_query_by_pipeline
@@ -273,9 +265,9 @@ for line in open('$MOCK_SW/discoveries.jsonl'):
 print(active)
 " 2>/dev/null) || active=0
     if [[ "$active" -eq 4 ]]; then
-        test_pass "Discovery TTL filters expired entries ($active active)"
+        assert_pass "Discovery TTL filters expired entries ($active active)"
     else
-        test_fail "Discovery TTL filters expired entries" "Got $active active, expected 4"
+        assert_fail "Discovery TTL filters expired entries" "Got $active active, expected 4"
     fi
 }
 test_discovery_ttl_expiry
@@ -295,9 +287,9 @@ for line in open('$MOCK_SW/discoveries.jsonl'):
 print('\n'.join(lines))
 " 2>/dev/null) || inject=""
     if echo "$inject" | grep -q 'Discovery from'; then
-        test_pass "Discovery injection produces readable context"
+        assert_pass "Discovery injection produces readable context"
     else
-        test_fail "Discovery injection produces readable context" "Empty output"
+        assert_fail "Discovery injection produces readable context" "Empty output"
     fi
 }
 test_discovery_injection_format
@@ -328,9 +320,9 @@ for line in open('$MOCK_SW/discoveries.jsonl'):
     except: pass
 " 2>/dev/null) || found=""
     if echo "$found" | grep -q 'vitest'; then
-        test_pass "Cross-pipeline learning: Pipeline B finds A's discovery"
+        assert_pass "Cross-pipeline learning: Pipeline B finds A's discovery"
     else
-        test_fail "Cross-pipeline learning" "Discovery not found: $found"
+        assert_fail "Cross-pipeline learning" "Discovery not found: $found"
     fi
 }
 test_full_learning_cycle
@@ -352,9 +344,9 @@ for line in open('$MOCK_SW/discoveries.jsonl'):
 print(f'failures={len(failures)},discoveries={len(discoveries)}')
 " 2>/dev/null) || chain_result="error"
     if echo "$chain_result" | grep -q 'failures=2.*discoveries='; then
-        test_pass "Memory-Discovery chain: both systems have data"
+        assert_pass "Memory-Discovery chain: both systems have data"
     else
-        test_fail "Memory-Discovery chain" "Got: $chain_result"
+        assert_fail "Memory-Discovery chain" "Got: $chain_result"
     fi
 }
 test_memory_to_discovery_chain
@@ -377,9 +369,9 @@ successes = sum(1 for o in outcomes if o['result'] == 'success')
 print(f'{(successes/len(outcomes)*100):.0f}')
 " 2>/dev/null) || success_rate=0
     if [[ "$success_rate" == "67" ]]; then
-        test_pass "Outcome tracking: ${success_rate}% success rate"
+        assert_pass "Outcome tracking: ${success_rate}% success rate"
     else
-        test_fail "Outcome tracking" "Got ${success_rate}%, expected 67%"
+        assert_fail "Outcome tracking" "Got ${success_rate}%, expected 67%"
     fi
 }
 test_outcome_tracking
@@ -400,9 +392,9 @@ result = {t: round(v['success']/v['total'], 2) for t, v in by_template.items()}
 print(json.dumps(result))
 " 2>/dev/null) || weights="{}"
     if echo "$weights" | grep -q 'standard\|fast'; then
-        test_pass "Template weights computable from outcomes"
+        assert_pass "Template weights computable from outcomes"
     else
-        test_fail "Template weights computable from outcomes" "Got: $weights"
+        assert_fail "Template weights computable from outcomes" "Got: $weights"
     fi
 }
 test_template_weight_data

@@ -6,28 +6,15 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-release-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/bin"
     if command -v jq &>/dev/null; then
-        ln -sf "$(command -v jq)" "$TEMP_DIR/bin/jq"
+        ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
     fi
-    cat > "$TEMP_DIR/bin/git" <<'MOCK'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCK'
 #!/usr/bin/env bash
 case "${1:-}" in
     rev-parse)
@@ -50,29 +37,24 @@ case "${1:-}" in
 esac
 exit 0
 MOCK
-    chmod +x "$TEMP_DIR/bin/git"
-    cat > "$TEMP_DIR/bin/gh" <<'MOCK'
+    chmod +x "$TEST_TEMP_DIR/bin/git"
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'MOCK'
 #!/usr/bin/env bash
 echo '[]'
 exit 0
 MOCK
-    chmod +x "$TEMP_DIR/bin/gh"
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
 }
 
-cleanup_env() { [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"; }
-trap cleanup_env EXIT
+trap cleanup_test_env EXIT
 
 assert_pass() { local desc="$1"; TOTAL=$((TOTAL+1)); PASS=$((PASS+1)); echo -e "  ${GREEN}✓${RESET} ${desc}"; }
 assert_fail() { local desc="$1" detail="${2:-}"; TOTAL=$((TOTAL+1)); FAIL=$((FAIL+1)); FAILURES+=("$desc"); echo -e "  ${RED}✗${RESET} ${desc}"; [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"; }
-assert_eq() { local desc="$1" expected="$2" actual="$3"; if [[ "$expected" == "$actual" ]]; then assert_pass "$desc"; else assert_fail "$desc" "expected: $expected, got: $actual"; fi; }
-assert_contains() { local desc="$1" haystack="$2" needle="$3"; if grep -qF "$needle" <<<"$haystack" 2>/dev/null; then assert_pass "$desc"; else assert_fail "$desc" "output missing: $needle"; fi; }
-assert_contains_regex() { local desc="$1" haystack="$2" pattern="$3"; if grep -qE "$pattern" <<<"$haystack" 2>/dev/null; then assert_pass "$desc"; else assert_fail "$desc" "output missing pattern: $pattern"; fi; }
-
 echo ""
-echo -e "${CYAN}${BOLD}  Shipwright Release Tests${RESET}"
+print_test_header "Shipwright Release Tests"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
 setup_env
@@ -92,16 +74,16 @@ echo ""
 echo -e "${BOLD}  Version Parsing${RESET}"
 # Test parse_version
 result=$(bash -c '
-    export PATH="'"$TEMP_DIR/bin"':$PATH"
-    export HOME="'"$TEMP_DIR/home"'"
+    export PATH="'"$TEST_TEMP_DIR/bin"':$PATH"
+    export HOME="'"$TEST_TEMP_DIR/home"'"
     source "'"$SCRIPT_DIR/sw-release.sh"'" 2>/dev/null
     parse_version "v1.2.3"
 ')
 assert_eq "parse_version v1.2.3" "1|2|3" "$result"
 
 result=$(bash -c '
-    export PATH="'"$TEMP_DIR/bin"':$PATH"
-    export HOME="'"$TEMP_DIR/home"'"
+    export PATH="'"$TEST_TEMP_DIR/bin"':$PATH"
+    export HOME="'"$TEST_TEMP_DIR/home"'"
     source "'"$SCRIPT_DIR/sw-release.sh"'" 2>/dev/null
     parse_version "v10.20.30"
 ')
@@ -111,24 +93,24 @@ assert_eq "parse_version v10.20.30" "10|20|30" "$result"
 echo ""
 echo -e "${BOLD}  Version Bumping${RESET}"
 result=$(bash -c '
-    export PATH="'"$TEMP_DIR/bin"':$PATH"
-    export HOME="'"$TEMP_DIR/home"'"
+    export PATH="'"$TEST_TEMP_DIR/bin"':$PATH"
+    export HOME="'"$TEST_TEMP_DIR/home"'"
     source "'"$SCRIPT_DIR/sw-release.sh"'" 2>/dev/null
     bump_version "v1.2.3" "patch"
 ')
 assert_eq "bump patch v1.2.3 -> v1.2.4" "v1.2.4" "$result"
 
 result=$(bash -c '
-    export PATH="'"$TEMP_DIR/bin"':$PATH"
-    export HOME="'"$TEMP_DIR/home"'"
+    export PATH="'"$TEST_TEMP_DIR/bin"':$PATH"
+    export HOME="'"$TEST_TEMP_DIR/home"'"
     source "'"$SCRIPT_DIR/sw-release.sh"'" 2>/dev/null
     bump_version "v1.2.3" "minor"
 ')
 assert_eq "bump minor v1.2.3 -> v1.3.0" "v1.3.0" "$result"
 
 result=$(bash -c '
-    export PATH="'"$TEMP_DIR/bin"':$PATH"
-    export HOME="'"$TEMP_DIR/home"'"
+    export PATH="'"$TEST_TEMP_DIR/bin"':$PATH"
+    export HOME="'"$TEST_TEMP_DIR/home"'"
     source "'"$SCRIPT_DIR/sw-release.sh"'" 2>/dev/null
     bump_version "v1.2.3" "major"
 ')
@@ -138,24 +120,24 @@ assert_eq "bump major v1.2.3 -> v2.0.0" "v2.0.0" "$result"
 echo ""
 echo -e "${BOLD}  Version Comparison${RESET}"
 result=$(bash -c '
-    export PATH="'"$TEMP_DIR/bin"':$PATH"
-    export HOME="'"$TEMP_DIR/home"'"
+    export PATH="'"$TEST_TEMP_DIR/bin"':$PATH"
+    export HOME="'"$TEST_TEMP_DIR/home"'"
     source "'"$SCRIPT_DIR/sw-release.sh"'" 2>/dev/null
     compare_versions "v1.2.3" "v1.2.3"
 ')
 assert_eq "compare v1.2.3 == v1.2.3" "0" "$result"
 
 result=$(bash -c '
-    export PATH="'"$TEMP_DIR/bin"':$PATH"
-    export HOME="'"$TEMP_DIR/home"'"
+    export PATH="'"$TEST_TEMP_DIR/bin"':$PATH"
+    export HOME="'"$TEST_TEMP_DIR/home"'"
     source "'"$SCRIPT_DIR/sw-release.sh"'" 2>/dev/null
     compare_versions "v1.2.3" "v1.3.0"
 ')
 assert_eq "compare v1.2.3 < v1.3.0" "-1" "$result"
 
 result=$(bash -c '
-    export PATH="'"$TEMP_DIR/bin"':$PATH"
-    export HOME="'"$TEMP_DIR/home"'"
+    export PATH="'"$TEST_TEMP_DIR/bin"':$PATH"
+    export HOME="'"$TEST_TEMP_DIR/home"'"
     source "'"$SCRIPT_DIR/sw-release.sh"'" 2>/dev/null
     compare_versions "v2.0.0" "v1.9.9"
 ')
@@ -165,16 +147,16 @@ assert_eq "compare v2.0.0 > v1.9.9" "1" "$result"
 echo ""
 echo -e "${BOLD}  Commit Type Extraction${RESET}"
 result=$(bash -c '
-    export PATH="'"$TEMP_DIR/bin"':$PATH"
-    export HOME="'"$TEMP_DIR/home"'"
+    export PATH="'"$TEST_TEMP_DIR/bin"':$PATH"
+    export HOME="'"$TEST_TEMP_DIR/home"'"
     source "'"$SCRIPT_DIR/sw-release.sh"'" 2>/dev/null
     get_commit_type "feat: add authentication"
 ')
 assert_eq "get_commit_type feat" "feat" "$result"
 
 result=$(bash -c '
-    export PATH="'"$TEMP_DIR/bin"':$PATH"
-    export HOME="'"$TEMP_DIR/home"'"
+    export PATH="'"$TEST_TEMP_DIR/bin"':$PATH"
+    export HOME="'"$TEST_TEMP_DIR/home"'"
     source "'"$SCRIPT_DIR/sw-release.sh"'" 2>/dev/null
     get_commit_type "fix: prevent data loss"
 ')
@@ -214,8 +196,5 @@ assert_eq "unknown command exits non-zero" "1" "$rc"
 assert_contains "unknown command shows error" "$output" "Unknown command"
 
 echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
-if [[ $FAIL -eq 0 ]]; then echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"; else echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"; for f in "${FAILURES[@]}"; do echo -e "  ${RED}✗${RESET} $f"; done; fi
-echo ""
-exit "$FAIL"
+print_test_results

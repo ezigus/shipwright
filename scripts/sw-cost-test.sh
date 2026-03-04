@@ -6,91 +6,51 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-# ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-cost-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
     # Link real jq
     if command -v jq &>/dev/null; then
-        ln -sf "$(command -v jq)" "$TEMP_DIR/bin/jq"
+        ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
     fi
 
     # Mock git
-    cat > "$TEMP_DIR/bin/git" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/git" <<'MOCKEOF'
 #!/usr/bin/env bash
 echo "mock git"
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/git"
+    chmod +x "$TEST_TEMP_DIR/bin/git"
 
     # Mock sqlite3
-    cat > "$TEMP_DIR/bin/sqlite3" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/sqlite3" <<'MOCKEOF'
 #!/usr/bin/env bash
 echo ""
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/sqlite3"
+    chmod +x "$TEST_TEMP_DIR/bin/sqlite3"
 
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
 }
 
-cleanup_env() {
-    [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
-}
-trap cleanup_env EXIT
+trap cleanup_test_env EXIT
 
 assert_pass() {
     local desc="$1"
-    TOTAL=$((TOTAL + 1))
-    PASS=$((PASS + 1))
     echo -e "  ${GREEN}✓${RESET} ${desc}"
 }
 
 assert_fail() {
     local desc="$1"
     local detail="${2:-}"
-    TOTAL=$((TOTAL + 1))
-    FAIL=$((FAIL + 1))
     FAILURES+=("$desc")
     echo -e "  ${RED}✗${RESET} ${desc}"
     [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
-}
-
-assert_eq() {
-    local desc="$1" expected="$2" actual="$3"
-    if [[ "$expected" == "$actual" ]]; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "expected: $expected, got: $actual"
-    fi
-}
-
-assert_contains() {
-    local desc="$1" haystack="$2" needle="$3"
-    if printf '%s\n' "$haystack" | grep -qF -- "$needle" 2>/dev/null; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "output missing: $needle"
-    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -98,7 +58,7 @@ assert_contains() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo ""
-echo -e "${CYAN}${BOLD}  Shipwright Cost Tests${RESET}"
+print_test_header "Shipwright Cost Tests"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
 
@@ -236,21 +196,21 @@ else
 fi
 
 # Functional test: write mock events and verify dashboard parses them
-mkdir -p "$TEMP_DIR/home/.shipwright"
-cat > "$TEMP_DIR/home/.shipwright/events.jsonl" <<'EVTEOF'
+mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+cat > "$TEST_TEMP_DIR/home/.shipwright/events.jsonl" <<'EVTEOF'
 {"ts":"2026-02-27T10:00:00Z","type":"loop.context_efficiency","iteration":"1","raw_prompt_chars":"200000","trimmed_prompt_chars":"180000","trim_ratio":"10.0","budget_utilization":"100.0","budget_chars":"180000","job_id":"test-1"}
 {"ts":"2026-02-27T10:01:00Z","type":"loop.context_efficiency","iteration":"2","raw_prompt_chars":"150000","trimmed_prompt_chars":"150000","trim_ratio":"0.0","budget_utilization":"83.3","budget_chars":"180000","job_id":"test-1"}
 EVTEOF
 
 # Also need cost data for the dashboard to run
-cat > "$TEMP_DIR/home/.shipwright/costs.json" <<'COSTEOF'
+cat > "$TEST_TEMP_DIR/home/.shipwright/costs.json" <<'COSTEOF'
 {"entries":[{"ts":"2026-02-27T10:00:00Z","ts_epoch":1772125200,"input_tokens":50000,"output_tokens":10000,"cost_usd":1.50,"model":"opus","stage":"build","issue":"1"}],"summary":{}}
 COSTEOF
-cat > "$TEMP_DIR/home/.shipwright/budget.json" <<'BUDEOF'
+cat > "$TEST_TEMP_DIR/home/.shipwright/budget.json" <<'BUDEOF'
 {"daily_budget_usd":0,"enabled":false}
 BUDEOF
 
-dash_output=$(env HOME="$TEMP_DIR/home" PATH="$TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" \
+dash_output=$(env HOME="$TEST_TEMP_DIR/home" PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" \
     bash "$SCRIPT_DIR/sw-cost.sh" show --period 30 2>&1) || true
 
 if echo "$dash_output" | grep -q "CONTEXT EFFICIENCY"; then
@@ -270,13 +230,5 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
-if [[ $FAIL -eq 0 ]]; then
-    echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"
-else
-    echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"
-    for f in "${FAILURES[@]}"; do echo -e "  ${RED}✗${RESET} $f"; done
-fi
-echo ""
-exit "$FAIL"
+print_test_results

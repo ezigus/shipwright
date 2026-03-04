@@ -6,36 +6,21 @@ set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# ─── Colors (matches shipwright theme) ────────────────────────────────────────
-CYAN='\033[38;2;0;212;255m'
-GREEN='\033[38;2;74;222;128m'
-RED='\033[38;2;248;113;113m'
-DIM='\033[2m'
-BOLD='\033[1m'
-RESET='\033[0m'
-
-# ─── Counters ─────────────────────────────────────────────────────────────────
-PASS=0
-FAIL=0
-TOTAL=0
-FAILURES=()
-TEMP_DIR=""
+source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK ENVIRONMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 setup_env() {
-    TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-status-test.XXXXXX")
-    mkdir -p "$TEMP_DIR/home/.shipwright"
-    mkdir -p "$TEMP_DIR/home/.claude/teams"
-    mkdir -p "$TEMP_DIR/home/.claude/tasks"
-    mkdir -p "$TEMP_DIR/home/.shipwright/heartbeats"
-    mkdir -p "$TEMP_DIR/bin"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+    mkdir -p "$TEST_TEMP_DIR/home/.claude/teams"
+    mkdir -p "$TEST_TEMP_DIR/home/.claude/tasks"
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright/heartbeats"
+    mkdir -p "$TEST_TEMP_DIR/bin"
 
     # Mock tmux — return test windows
-    cat > "$TEMP_DIR/bin/tmux" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/tmux" <<'MOCKEOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "list-windows" ]]; then
     echo "main:1|claude-team-alpha|3|1"
@@ -45,30 +30,30 @@ if [[ "${1:-}" == "list-windows" ]]; then
 fi
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/tmux"
+    chmod +x "$TEST_TEMP_DIR/bin/tmux"
 
     # Mock jq — use real jq
     if command -v jq &>/dev/null; then
-        ln -sf "$(command -v jq)" "$TEMP_DIR/bin/jq"
+        ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
     fi
 
     # Mock kill — always fails (daemon not running)
-    cat > "$TEMP_DIR/bin/kill" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/kill" <<'MOCKEOF'
 #!/usr/bin/env bash
 exit 1
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/kill"
+    chmod +x "$TEST_TEMP_DIR/bin/kill"
 
     # Mock curl — return developer data
-    cat > "$TEMP_DIR/bin/curl" <<'MOCKEOF'
+    cat > "$TEST_TEMP_DIR/bin/curl" <<'MOCKEOF'
 #!/usr/bin/env bash
 echo '{"total_online":1,"developers":[{"id":"dev1","machine":"laptop","status":"online","active_jobs":1,"queued":0}]}'
 exit 0
 MOCKEOF
-    chmod +x "$TEMP_DIR/bin/curl"
+    chmod +x "$TEST_TEMP_DIR/bin/curl"
 
     # Create fixture: daemon-state.json
-    cat > "$TEMP_DIR/home/.shipwright/daemon-state.json" <<'FIXTURE'
+    cat > "$TEST_TEMP_DIR/home/.shipwright/daemon-state.json" <<'FIXTURE'
 {
     "active_jobs": [
         {"issue":42,"pid":12345,"worktree":".worktrees/issue-42","title":"Live terminal streaming","started_at":"2026-02-12T10:00:00Z"}
@@ -86,49 +71,46 @@ MOCKEOF
 FIXTURE
 
     # Create fixture: daemon.pid (non-running process)
-    echo "99999" > "$TEMP_DIR/home/.shipwright/daemon.pid"
+    echo "99999" > "$TEST_TEMP_DIR/home/.shipwright/daemon.pid"
 
     # Create fixture: team config
-    mkdir -p "$TEMP_DIR/home/.claude/teams/alpha"
-    cat > "$TEMP_DIR/home/.claude/teams/alpha/config.json" <<'FIXTURE'
+    mkdir -p "$TEST_TEMP_DIR/home/.claude/teams/alpha"
+    cat > "$TEST_TEMP_DIR/home/.claude/teams/alpha/config.json" <<'FIXTURE'
 {"members":[{"name":"lead"},{"name":"builder"},{"name":"tester"}]}
 FIXTURE
 
     # Create fixture: task list
-    mkdir -p "$TEMP_DIR/home/.claude/tasks/alpha"
-    echo '{"status":"completed"}' > "$TEMP_DIR/home/.claude/tasks/alpha/task-1.json"
-    echo '{"status":"completed"}' > "$TEMP_DIR/home/.claude/tasks/alpha/task-2.json"
-    echo '{"status":"in_progress"}' > "$TEMP_DIR/home/.claude/tasks/alpha/task-3.json"
-    echo '{"status":"pending"}' > "$TEMP_DIR/home/.claude/tasks/alpha/task-4.json"
+    mkdir -p "$TEST_TEMP_DIR/home/.claude/tasks/alpha"
+    echo '{"status":"completed"}' > "$TEST_TEMP_DIR/home/.claude/tasks/alpha/task-1.json"
+    echo '{"status":"completed"}' > "$TEST_TEMP_DIR/home/.claude/tasks/alpha/task-2.json"
+    echo '{"status":"in_progress"}' > "$TEST_TEMP_DIR/home/.claude/tasks/alpha/task-3.json"
+    echo '{"status":"pending"}' > "$TEST_TEMP_DIR/home/.claude/tasks/alpha/task-4.json"
 
     # Create fixture: heartbeat
-    cat > "$TEMP_DIR/home/.shipwright/heartbeats/pipeline-42.json" <<'FIXTURE'
+    cat > "$TEST_TEMP_DIR/home/.shipwright/heartbeats/pipeline-42.json" <<'FIXTURE'
 {"stage":"build","timestamp":"2026-02-12T10:00:30Z","iteration":3}
 FIXTURE
 
     # Create fixture: machines
-    cat > "$TEMP_DIR/home/.shipwright/machines.json" <<'FIXTURE'
+    cat > "$TEST_TEMP_DIR/home/.shipwright/machines.json" <<'FIXTURE'
 {"machines":[{"name":"localhost","host":"127.0.0.1","role":"primary","workers":4}]}
 FIXTURE
 
     # Create fixture: tracker config
-    cat > "$TEMP_DIR/home/.shipwright/tracker-config.json" <<'FIXTURE'
+    cat > "$TEST_TEMP_DIR/home/.shipwright/tracker-config.json" <<'FIXTURE'
 {"provider":"linear"}
 FIXTURE
 
     # Create fixture: team config for dashboard
-    cat > "$TEMP_DIR/home/.shipwright/team-config.json" <<'FIXTURE'
+    cat > "$TEST_TEMP_DIR/home/.shipwright/team-config.json" <<'FIXTURE'
 {"dashboard_url":"http://localhost:8767"}
 FIXTURE
 
-    export PATH="$TEMP_DIR/bin:$PATH"
-    export HOME="$TEMP_DIR/home"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+    export HOME="$TEST_TEMP_DIR/home"
 }
 
-cleanup_env() {
-    [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
-}
-trap cleanup_env EXIT
+trap cleanup_test_env EXIT
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEST HELPERS
@@ -136,30 +118,15 @@ trap cleanup_env EXIT
 
 assert_pass() {
     local desc="$1"
-    TOTAL=$((TOTAL + 1))
-    PASS=$((PASS + 1))
     echo -e "  ${GREEN}✓${RESET} ${desc}"
 }
 
 assert_fail() {
     local desc="$1"
     local detail="${2:-}"
-    TOTAL=$((TOTAL + 1))
-    FAIL=$((FAIL + 1))
     FAILURES+=("$desc")
     echo -e "  ${RED}✗${RESET} ${desc}"
     [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
-}
-
-assert_eq() {
-    local desc="$1"
-    local expected="$2"
-    local actual="$3"
-    if [[ "$expected" == "$actual" ]]; then
-        assert_pass "$desc"
-    else
-        assert_fail "$desc" "expected: $expected, got: $actual"
-    fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -167,7 +134,7 @@ assert_eq() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo ""
-echo -e "${CYAN}${BOLD}  Shipwright Status Tests${RESET}"
+print_test_header "Shipwright Status Tests"
 echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
 echo ""
 
@@ -323,17 +290,5 @@ assert_eq "daemon.queued queryable" "[35,36]" "$(echo "$queued_list" | tr -d ' \
 # ═══════════════════════════════════════════════════════════════════════════════
 
 echo ""
-echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
-if [[ $FAIL -eq 0 ]]; then
-    echo -e "  ${GREEN}${BOLD}All $TOTAL tests passed${RESET}"
-else
-    echo -e "  ${RED}${BOLD}$FAIL of $TOTAL tests failed${RESET}"
-    echo ""
-    for f in "${FAILURES[@]}"; do
-        echo -e "  ${RED}✗${RESET} $f"
-    done
-fi
-echo ""
-
-exit "$FAIL"
+print_test_results

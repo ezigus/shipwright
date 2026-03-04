@@ -628,7 +628,40 @@ INPUT
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 26. Completions idempotent — double install doesn't corrupt
+# 26. Stable scripts install directory created
+# ──────────────────────────────────────────────────────────────────────────────
+test_stable_install_dir_created() {
+    invoke_init --no-claude-md
+    assert_exit_code 0 "init should succeed" &&
+    assert_dir_exists "$TEST_TEMP_DIR/home/.local/share/shipwright/scripts" "stable install dir exists" &&
+    assert_file_exists "$TEST_TEMP_DIR/home/.local/share/shipwright/scripts/sw" "sw script in stable dir"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 27. CLI symlinks point to stable copy, not live repo
+# ──────────────────────────────────────────────────────────────────────────────
+test_cli_symlinks_stable() {
+    invoke_init --no-claude-md
+    assert_exit_code 0 "init should succeed"
+
+    local sw_link="$TEST_TEMP_DIR/home/.local/bin/sw"
+    local stable_sw="$TEST_TEMP_DIR/home/.local/share/shipwright/scripts/sw"
+
+    if [[ ! -L "$sw_link" ]]; then
+        echo -e "    ${RED}✗${RESET} $sw_link is not a symlink"
+        return 1
+    fi
+
+    local target
+    target="$(readlink "$sw_link")"
+    if [[ "$target" != "$stable_sw" ]]; then
+        echo -e "    ${RED}✗${RESET} symlink target '$target' != stable copy '$stable_sw'"
+        return 1
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 28. Completions idempotent — double install doesn't corrupt
 # ──────────────────────────────────────────────────────────────────────────────
 test_completions_idempotent() {
     # First run with zsh
@@ -718,6 +751,12 @@ run_test "Repair mode forces clean reinstall" test_repair_mode
 run_test "Plugin direct-clone fallback (outside tmux)" test_plugin_direct_clone_fallback
 run_test "Post-install verification" test_post_install_verification
 run_test "tmux adapter deployed" test_tmux_adapter_deployed
+echo ""
+
+# Stable install tests
+echo -e "${PURPLE}${BOLD}Stable Install${RESET}"
+run_test "Stable scripts dir created" test_stable_install_dir_created
+run_test "CLI symlinks point to stable copy" test_cli_symlinks_stable
 echo ""
 
 # Shell Completions tests

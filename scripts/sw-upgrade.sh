@@ -462,6 +462,20 @@ echo ""
 write_manifest
 success "Manifest updated: $MANIFEST"
 
+# Re-sync stable install directory so it stays current with the repo
+STABLE_INSTALL="$HOME/.local/share/shipwright/scripts"
+if [[ -d "$STABLE_INSTALL" && -d "$REPO_PATH/scripts" ]]; then
+    info "Syncing stable install at $STABLE_INSTALL..."
+    if command -v rsync &>/dev/null; then
+        rsync -a --delete "$REPO_PATH/scripts/" "$STABLE_INSTALL/" 2>/dev/null \
+            || cp -R "$REPO_PATH/scripts/." "$STABLE_INSTALL/"
+    else
+        cp -R "$REPO_PATH/scripts/." "$STABLE_INSTALL/"
+    fi
+    chmod +x "$STABLE_INSTALL/sw" 2>/dev/null || true
+    success "Stable install synced"
+fi
+
 # Self-upgrade warning
 if $SW_SELF_UPGRADED; then
     echo ""

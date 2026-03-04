@@ -289,20 +289,31 @@ if [[ $_verify_fail -eq 0 ]]; then
     success "Verified: tmux config, overlay, TPM, and plugins all deployed"
 fi
 
-# ─── CLI Bootstrap (symlinks + PATH) ─────────────────────────────────────────
-# Install sw/shipwright symlinks so the CLI works from anywhere
+# ─── CLI Bootstrap (stable install + PATH) ───────────────────────────────────
+# Copy all scripts to a stable install dir so autonomous pipelines can edit
+# the live repo's scripts/ without affecting the running CLI.
 BIN_DIR="$HOME/.local/bin"
-mkdir -p "$BIN_DIR"
+INSTALL_DIR="$HOME/.local/share/shipwright/scripts"
+mkdir -p "$BIN_DIR" "$INSTALL_DIR"
 
-SW_SRC="$SCRIPT_DIR/sw"
-if [[ -f "$SW_SRC" ]]; then
+if [[ -f "$SCRIPT_DIR/sw" ]]; then
+    # Copy all scripts to stable install directory
+    if command -v rsync &>/dev/null; then
+        rsync -a --delete "$SCRIPT_DIR/" "$INSTALL_DIR/" 2>/dev/null \
+            || cp -R "$SCRIPT_DIR/." "$INSTALL_DIR/"
+    else
+        cp -R "$SCRIPT_DIR/." "$INSTALL_DIR/"
+    fi
+    chmod +x "$INSTALL_DIR/sw"
+
     _cli_changed=false
+    STABLE_SW="$INSTALL_DIR/sw"
     for _cmd in sw shipwright; do
         _dest="$BIN_DIR/$_cmd"
-        if [[ -L "$_dest" ]] && [[ "$(readlink "$_dest")" == "$SW_SRC" ]]; then
+        if [[ -L "$_dest" ]] && [[ "$(readlink "$_dest")" == "$STABLE_SW" ]]; then
             continue
         fi
-        ln -sf "$SW_SRC" "$_dest"
+        ln -sf "$STABLE_SW" "$_dest"
         _cli_changed=true
     done
     # Clean up legacy cct symlink if present
@@ -311,9 +322,9 @@ if [[ -f "$SW_SRC" ]]; then
         _cli_changed=true
     fi
     if [[ "$_cli_changed" == "true" ]]; then
-        success "CLI symlinks: sw, shipwright → $BIN_DIR"
+        success "CLI installed: sw, shipwright → $INSTALL_DIR"
     else
-        success "CLI symlinks already correct"
+        success "CLI install already correct"
     fi
 fi
 

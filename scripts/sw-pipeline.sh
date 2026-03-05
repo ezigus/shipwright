@@ -2858,6 +2858,8 @@ pipeline_start() {
             optimize_learn_iterations 2>/dev/null
             optimize_route_models 2>/dev/null
             optimize_learn_risk_keywords 2>/dev/null
+            type optimize_update_recommendation_model &>/dev/null && \
+                optimize_update_recommendation_model 2>/dev/null || true
         ) &
     fi
 

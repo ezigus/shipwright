@@ -63,6 +63,9 @@ LOOP_EOF
         write_standard_template
     fi
 
+    # ── Mock home directory (isolates events.jsonl from real ~/.shipwright) ──
+    mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
+
     # ── Mock binaries ─────────────────────────────────────────────────────
     mkdir -p "$TEST_TEMP_DIR/bin"
     create_mock_claude
@@ -370,9 +373,13 @@ invoke_pipeline() {
     PIPELINE_OUTPUT=""
     PIPELINE_EXIT=0
 
-    # Invoke the REAL pipeline script as a subprocess
+    # Invoke the REAL pipeline script as a subprocess.
+    # Redirect HOME so emit_event writes events.jsonl to the temp dir rather than
+    # the real ~/.shipwright/ (which may be outside sandbox write allowlists).
     PIPELINE_OUTPUT=$(
         cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR/home" \
+        EVENTS_FILE="$TEST_TEMP_DIR/home/events.jsonl" \
         PATH="$TEST_TEMP_DIR/bin:$PATH" \
         bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
     ) || PIPELINE_EXIT=$?

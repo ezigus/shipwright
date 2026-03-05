@@ -310,6 +310,59 @@ Native GitHub API integration enriches every intelligence module:
 | **Contributors**      | CODEOWNERS-based reviewer routing, top-contributor fallback, auto-approve as last resort |
 | **Branch Protection** | Checks required reviews and status checks before attempting auto-merge                   |
 
+### Intelligent Template Auto-Recommendation
+
+When you run `shipwright pipeline start` without `--template`, the engine automatically recommends the best pipeline template based on 8 signal sources ranked by reliability:
+
+| Priority | Signal                    | Trigger                                                                          |
+| -------- | ------------------------- | -------------------------------------------------------------------------------- |
+| 1        | **Label overrides**       | `hotfix` → `hotfix`, `security` → `enterprise`, `epic` → `full`, `docs` → `fast` |
+| 2        | **DORA escalation**       | CFR > 40% in last 10 runs → `enterprise` (safety gate)                           |
+| 3        | **Quality memory**        | 3+ critical failures in last 7 days → `enterprise`                               |
+| 4        | **Thompson sampling**     | Historical success rates by template + complexity (5+ runs)                      |
+| 5        | **Learned weights**       | Tuned from pipeline outcomes via `shipwright optimize update-rec-model`          |
+| 6        | **Intelligence analysis** | Codebase analysis from `intelligence-cache.json`                                 |
+| 7        | **Repo heuristics**       | Language + complexity keywords in goal/labels                                    |
+| 8        | **Fallback**              | `standard` at 30% confidence                                                     |
+
+Each recommendation includes a confidence score (0.0–1.0), reasoning, and alternative templates.
+
+```
+▸ Template Recommendation
+  ┌─────────────────────────────────────────────────┐
+  │  Recommended:  standard                          │
+  │  Confidence:   medium (0.65)                     │
+  │  Reasoning:    Thompson sampling: standard has   │
+  │                highest success rate for medium   │
+  │                complexity (12 historical runs)   │
+  └─────────────────────────────────────────────────┘
+```
+
+**CLI commands:**
+
+```bash
+# Show recommendation for current repo
+shipwright recommend
+
+# Recommendation for a specific issue
+shipwright recommend --issue 42
+
+# Recommendation for a goal description
+shipwright recommend --goal "Migrate user database to Postgres"
+
+# JSON output (for scripting)
+shipwright recommend --json
+
+# Show acceptance/success rate statistics
+shipwright recommend stats
+shipwright recommend stats --days 7
+
+# Manually update learned weights from historical data
+shipwright optimize update-rec-model
+```
+
+The feedback loop runs automatically: every pipeline completion records the outcome (success/failure) to the `pipeline_outcomes` DB table, and `optimize_update_recommendation_model` recalculates template weights for future recommendations.
+
 ### Decision Engine
 
 The autonomous decision engine (`config/policy.json` → `decision` section) handles routine operational decisions with outcome learning. Decisions are tiered by risk, with low-risk actions auto-approved and higher tiers escalated. The engine learns from outcomes to improve future decisions.
@@ -489,7 +542,7 @@ shipwright templates list
 
 | File                          | Purpose                                                                                     |
 | ----------------------------- | ------------------------------------------------------------------------------------------- |
-| `config/defaults.json`        | Default runtime config (including pipeline command discovery and fallback behavior)          |
+| `config/defaults.json`        | Default runtime config (including pipeline command discovery and fallback behavior)         |
 | `config/policy.json`          | **Central contract** — risk tiers, merge policy, docs drift, browser evidence, harness SLAs |
 | `config/policy.schema.json`   | JSON Schema validation for the policy contract                                              |
 | `.claude/daemon-config.json`  | Daemon settings, intelligence flags, patrol config                                          |
@@ -502,6 +555,7 @@ shipwright templates list
 | `~/.shipwright/github-cache/` | Cached GitHub API responses                                                                 |
 
 Pipeline command discovery notes:
+
 - Shipwright scans repository markers recursively (default depth: `6`) via `pipeline.command_discovery.search_max_depth`.
 - If `scripts/run-xcode-tests.sh` is unavailable, iOS/SwiftPM test commands fall back to `xcodebuild test` and `swift test`.
 

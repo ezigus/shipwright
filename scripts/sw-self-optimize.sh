@@ -1448,6 +1448,122 @@ cmd_quality_index() {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
+# RECOMMENDATION MODEL UPDATE
+# ═════════════════════════════════════════════════════════════════════════════
+
+# optimize_update_recommendation_model
+# Update template weights for sw-recommend.sh based on historical pipeline_outcomes
+# and template_recommendations DB data.
+# Writes to ~/.shipwright/template-weights.json (the path sw-recommend.sh reads).
+optimize_update_recommendation_model() {
+    local weights_file="${HOME}/.shipwright/template-weights.json"
+
+    if ! db_available 2>/dev/null; then
+        warn "DB not available — skipping recommendation model update"
+        return 0
+    fi
+
+    info "Updating recommendation model weights..."
+
+    # Query pipeline outcomes grouped by template and complexity
+    local outcomes
+    outcomes=$(_db_query "SELECT template, complexity,
+        SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) as wins,
+        COUNT(*) as total
+        FROM pipeline_outcomes
+        WHERE template IS NOT NULL AND template != ''
+          AND complexity IS NOT NULL AND complexity != ''
+        GROUP BY template, complexity;" 2>/dev/null || echo "")
+
+    # Build per-complexity weight maps using temp files (Bash 3.2 compatible)
+    local tmp_low tmp_med tmp_high
+    tmp_low=$(mktemp "${TMPDIR:-/tmp}/rec-weights-low.XXXXXX")
+    tmp_med=$(mktemp "${TMPDIR:-/tmp}/rec-weights-med.XXXXXX")
+    tmp_high=$(mktemp "${TMPDIR:-/tmp}/rec-weights-high.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -f '$tmp_low' '$tmp_med' '$tmp_high'" RETURN
+
+    echo '{}' > "$tmp_low"
+    echo '{}' > "$tmp_med"
+    echo '{}' > "$tmp_high"
+
+    if [[ -n "$outcomes" ]]; then
+        while IFS='|' read -r template complexity wins total; do
+            [[ -z "$template" || -z "$complexity" ]] && continue
+            template=$(echo "$template" | xargs)
+            complexity=$(echo "$complexity" | xargs)
+            wins="${wins:-0}"; total="${total:-0}"
+
+            local weight=0.5
+            if [[ "$total" -gt 0 ]]; then
+                weight=$(awk -v w="$wins" -v t="$total" 'BEGIN{ printf "%.3f", (w+1)/(t+2) }')
+            fi
+
+            case "$complexity" in
+                low)    jq --arg t "$template" --argjson w "$weight" '.[$t] = $w' "$tmp_low"  > "${tmp_low}.new"  && mv "${tmp_low}.new"  "$tmp_low" ;;
+                medium) jq --arg t "$template" --argjson w "$weight" '.[$t] = $w' "$tmp_med"  > "${tmp_med}.new"  && mv "${tmp_med}.new"  "$tmp_med" ;;
+                high)   jq --arg t "$template" --argjson w "$weight" '.[$t] = $w' "$tmp_high" > "${tmp_high}.new" && mv "${tmp_high}.new" "$tmp_high" ;;
+            esac
+        done <<< "$outcomes"
+    fi
+
+    # Also boost weights when recommendation was accepted + succeeded
+    local rec_outcomes
+    rec_outcomes=$(_db_query "SELECT recommended_template,
+        SUM(CASE WHEN accepted=1 AND outcome='success' THEN 1 ELSE 0 END) as accepted_wins,
+        SUM(CASE WHEN accepted=1 THEN 1 ELSE 0 END) as accepted_total
+        FROM template_recommendations
+        WHERE recommended_template IS NOT NULL AND recommended_template != ''
+          AND outcome IS NOT NULL
+        GROUP BY recommended_template;" 2>/dev/null || echo "")
+
+    if [[ -n "$rec_outcomes" ]]; then
+        while IFS='|' read -r template accepted_wins accepted_total; do
+            [[ -z "$template" ]] && continue
+            template=$(echo "$template" | xargs)
+            accepted_wins="${accepted_wins:-0}"; accepted_total="${accepted_total:-0}"
+            [[ "$accepted_total" -lt 3 ]] && continue
+
+            local accept_rate
+            accept_rate=$(awk -v w="$accepted_wins" -v t="$accepted_total" 'BEGIN{ printf "%.3f", (w+1)/(t+2) }')
+
+            # Boost medium complexity weight based on acceptance/success rate
+            local cur_med
+            cur_med=$(jq -r --arg t "$template" '.[$t] // 0.5' "$tmp_med" 2>/dev/null || echo "0.5")
+            local new_med
+            new_med=$(awk -v c="$cur_med" -v a="$accept_rate" 'BEGIN{ w = (c + a) / 2; if (w > 1.0) w = 1.0; if (w < 0.1) w = 0.1; printf "%.3f", w }')
+            jq --arg t "$template" --argjson w "$new_med" '.[$t] = $w' "$tmp_med" > "${tmp_med}.new" && mv "${tmp_med}.new" "$tmp_med"
+        done <<< "$rec_outcomes"
+    fi
+
+    # Merge into final weights file
+    local low_obj med_obj high_obj
+    low_obj=$(cat "$tmp_low")
+    med_obj=$(cat "$tmp_med")
+    high_obj=$(cat "$tmp_high")
+
+    # Add defaults for complexities with no data
+    [[ "$low_obj" == "{}" ]]  && low_obj='{"fast":0.7,"standard":0.5,"full":0.3}'
+    [[ "$med_obj" == "{}" ]]  && med_obj='{"standard":0.7,"fast":0.4,"full":0.5}'
+    [[ "$high_obj" == "{}" ]] && high_obj='{"full":0.7,"enterprise":0.6,"standard":0.4}'
+
+    local tmp_out
+    tmp_out=$(mktemp "${weights_file}.tmp.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -f '$tmp_out'" RETURN
+
+    jq -n \
+        --argjson low  "$low_obj" \
+        --argjson med  "$med_obj" \
+        --argjson high "$high_obj" \
+        '{"low": $low, "medium": $med, "high": $high}' > "$tmp_out" \
+        && mv "$tmp_out" "$weights_file" || rm -f "$tmp_out"
+
+    emit_event "optimize.recommendation_model_updated"
+    success "Recommendation model weights updated → $weights_file"
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
 # FULL ANALYSIS (DAILY)
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -1469,6 +1585,7 @@ optimize_full_analysis() {
     optimize_evolve_memory
     optimize_tune_context_efficiency 2>/dev/null || true
     optimize_track_quality_index 2>/dev/null || true
+    optimize_update_recommendation_model 2>/dev/null || true
     optimize_report >> "${OPTIMIZATION_DIR}/last-report.txt" 2>/dev/null || true
     optimize_adjust_audit_intensity 2>/dev/null || true
 
@@ -1681,15 +1798,16 @@ main() {
     local cmd="${1:-help}"
     shift 2>/dev/null || true
     case "$cmd" in
-        analyze-outcome) optimize_analyze_outcome "$@" ;;
-        tune)            optimize_full_analysis ;;
-        ingest-retro)    optimize_ingest_retro ;;
-        report)          optimize_report ;;
-        quality-index)   cmd_quality_index ;;
-        evolve-memory)   optimize_evolve_memory ;;
+        analyze-outcome)    optimize_analyze_outcome "$@" ;;
+        tune)               optimize_full_analysis ;;
+        ingest-retro)       optimize_ingest_retro ;;
+        report)             optimize_report ;;
+        quality-index)      cmd_quality_index ;;
+        evolve-memory)      optimize_evolve_memory ;;
         context-efficiency) optimize_tune_context_efficiency ;;
-        help|--help|-h)  show_help ;;
-        *)               error "Unknown command: $cmd"; exit 1 ;;
+        update-rec-model)   optimize_update_recommendation_model ;;
+        help|--help|-h)     show_help ;;
+        *)                  error "Unknown command: $cmd"; exit 1 ;;
     esac
 }
 

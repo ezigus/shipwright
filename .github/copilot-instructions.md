@@ -606,7 +606,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-decompose.sh` | 529 | Intelligent Issue Decomposition |
 | `scripts/sw-deps.sh` | 533 | Automated Dependency Update Management |
 | `scripts/sw-developer-simulation.sh` | 239 | Multi-Persona Developer Simulation |
-| `scripts/sw-discovery.sh` | 590 | Cross-Pipeline Real-Time Learning |
+| `scripts/sw-discovery.sh` | 595 | Cross-Pipeline Real-Time Learning |
 | `scripts/sw-doc-fleet.sh` | 815 | Documentation Fleet Orchestrator |
 | `scripts/sw-docs-agent.sh` | 525 | Auto-sync README, wiki, API docs |
 | `scripts/sw-docs.sh` | 626 | Documentation Keeper |

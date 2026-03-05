@@ -470,6 +470,376 @@ else
     assert_fail "empty issue JSON handled gracefully" "got: $output"
 fi
 
+# ─── Group 11: Additional repo type detection ────────────────────────────────
+echo ""
+echo -e "${DIM}  additional repo types${RESET}"
+
+# Test 29: python repo (pyproject.toml)
+mkdir -p "$TEST_TEMP_DIR/py-repo"
+touch "$TEST_TEMP_DIR/py-repo/pyproject.toml"
+output=$(bash -c "source '$SCRIPT_DIR/sw-recommend.sh'; _repo_type '$TEST_TEMP_DIR/py-repo'" 2>&1)
+if [[ "$output" == "python" ]]; then
+    assert_pass "python repo (pyproject.toml) detected"
+else
+    assert_fail "python repo (pyproject.toml) detected" "got: $output"
+fi
+
+# Test 30: python repo (requirements.txt)
+mkdir -p "$TEST_TEMP_DIR/py2-repo"
+touch "$TEST_TEMP_DIR/py2-repo/requirements.txt"
+output=$(bash -c "source '$SCRIPT_DIR/sw-recommend.sh'; _repo_type '$TEST_TEMP_DIR/py2-repo'" 2>&1)
+if [[ "$output" == "python" ]]; then
+    assert_pass "python repo (requirements.txt) detected"
+else
+    assert_fail "python repo (requirements.txt) detected" "got: $output"
+fi
+
+# Test 31: ruby repo
+mkdir -p "$TEST_TEMP_DIR/rb-repo"
+touch "$TEST_TEMP_DIR/rb-repo/Gemfile"
+output=$(bash -c "source '$SCRIPT_DIR/sw-recommend.sh'; _repo_type '$TEST_TEMP_DIR/rb-repo'" 2>&1)
+if [[ "$output" == "ruby" ]]; then
+    assert_pass "ruby repo detected"
+else
+    assert_fail "ruby repo detected" "got: $output"
+fi
+
+# Test 32: rust repo
+mkdir -p "$TEST_TEMP_DIR/rs-repo"
+touch "$TEST_TEMP_DIR/rs-repo/Cargo.toml"
+output=$(bash -c "source '$SCRIPT_DIR/sw-recommend.sh'; _repo_type '$TEST_TEMP_DIR/rs-repo'" 2>&1)
+if [[ "$output" == "rust" ]]; then
+    assert_pass "rust repo detected"
+else
+    assert_fail "rust repo detected" "got: $output"
+fi
+
+# Test 33: java repo (pom.xml)
+mkdir -p "$TEST_TEMP_DIR/java-repo"
+touch "$TEST_TEMP_DIR/java-repo/pom.xml"
+output=$(bash -c "source '$SCRIPT_DIR/sw-recommend.sh'; _repo_type '$TEST_TEMP_DIR/java-repo'" 2>&1)
+if [[ "$output" == "java" ]]; then
+    assert_pass "java repo (pom.xml) detected"
+else
+    assert_fail "java repo (pom.xml) detected" "got: $output"
+fi
+
+# Test 34: swift repo
+mkdir -p "$TEST_TEMP_DIR/swift-repo"
+touch "$TEST_TEMP_DIR/swift-repo/Package.swift"
+output=$(bash -c "source '$SCRIPT_DIR/sw-recommend.sh'; _repo_type '$TEST_TEMP_DIR/swift-repo'" 2>&1)
+if [[ "$output" == "swift" ]]; then
+    assert_pass "swift repo detected"
+else
+    assert_fail "swift repo detected" "got: $output"
+fi
+
+# ─── Group 12: Label overrides — additional cases ────────────────────────────
+echo ""
+echo -e "${DIM}  additional label overrides${RESET}"
+
+# Test 35: cost label → cost-aware template
+output=$(HOME="$TEST_TEMP_DIR/home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    issue_json='{\"title\":\"Budget tracking\",\"body\":\"\",\"labels\":[{\"name\":\"cost\"}]}'
+    result=\$(recommend_template \"\$issue_json\" '$TEST_TEMP_DIR/repo' 'test-job')
+    echo \"\$result\" | jq -r '.template'
+" 2>&1)
+if [[ "$output" == "cost-aware" ]]; then
+    assert_pass "cost label → cost-aware template"
+else
+    assert_fail "cost label → cost-aware template" "got: $output"
+fi
+
+# Test 36: epic label → full template
+output=$(HOME="$TEST_TEMP_DIR/home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    issue_json='{\"title\":\"Platform migration\",\"body\":\"\",\"labels\":[{\"name\":\"epic\"}]}'
+    result=\$(recommend_template \"\$issue_json\" '$TEST_TEMP_DIR/repo' 'test-job')
+    echo \"\$result\" | jq -r '.template'
+" 2>&1)
+if [[ "$output" == "full" ]]; then
+    assert_pass "epic label → full template"
+else
+    assert_fail "epic label → full template" "got: $output"
+fi
+
+# Test 37: architecture label → full template
+output=$(HOME="$TEST_TEMP_DIR/home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    issue_json='{\"title\":\"Redesign auth module\",\"body\":\"\",\"labels\":[{\"name\":\"architecture\"}]}'
+    result=\$(recommend_template \"\$issue_json\" '$TEST_TEMP_DIR/repo' 'test-job')
+    echo \"\$result\" | jq -r '.template'
+" 2>&1)
+if [[ "$output" == "full" ]]; then
+    assert_pass "architecture label → full template"
+else
+    assert_fail "architecture label → full template" "got: $output"
+fi
+
+# Test 38: label overrides set signal_used = label_override in factors
+output=$(HOME="$TEST_TEMP_DIR/home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    issue_json='{\"title\":\"Fix critical bug\",\"body\":\"\",\"labels\":[{\"name\":\"hotfix\"}]}'
+    result=\$(recommend_template \"\$issue_json\" '$TEST_TEMP_DIR/repo' 'test-job')
+    echo \"\$result\" | jq -r '.factors.signal_used'
+" 2>&1)
+if [[ "$output" == "label_override" ]]; then
+    assert_pass "label override uses signal_used=label_override in factors"
+else
+    assert_fail "label override uses signal_used=label_override in factors" "got: $output"
+fi
+
+# ─── Group 13: Heuristic template mapping ────────────────────────────────────
+echo ""
+echo -e "${DIM}  heuristic template mapping${RESET}"
+
+# Test 39: low complexity → fast template from heuristics
+output=$(bash -c "source '$SCRIPT_DIR/sw-recommend.sh'; _heuristic_template 'low' 'node'" 2>&1)
+if [[ "$output" == "fast" ]]; then
+    assert_pass "_heuristic_template: low complexity → fast"
+else
+    assert_fail "_heuristic_template: low complexity → fast" "got: $output"
+fi
+
+# Test 40: high complexity → full template from heuristics
+output=$(bash -c "source '$SCRIPT_DIR/sw-recommend.sh'; _heuristic_template 'high' 'go'" 2>&1)
+if [[ "$output" == "full" ]]; then
+    assert_pass "_heuristic_template: high complexity → full"
+else
+    assert_fail "_heuristic_template: high complexity → full" "got: $output"
+fi
+
+# Test 41: medium complexity → standard template from heuristics
+output=$(bash -c "source '$SCRIPT_DIR/sw-recommend.sh'; _heuristic_template 'medium' 'node'" 2>&1)
+if [[ "$output" == "standard" ]]; then
+    assert_pass "_heuristic_template: medium complexity → standard"
+else
+    assert_fail "_heuristic_template: medium complexity → standard" "got: $output"
+fi
+
+# ─── Group 14: Confidence thresholds ─────────────────────────────────────────
+echo ""
+echo -e "${DIM}  confidence thresholds${RESET}"
+
+# Test 42: high confidence (>= 0.8) → label 'high'
+output=$(HOME="$TEST_TEMP_DIR/home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    issue_json='{\"title\":\"Fix incident\",\"body\":\"\",\"labels\":[{\"name\":\"hotfix\"}]}'
+    result=\$(recommend_template \"\$issue_json\" '$TEST_TEMP_DIR/repo' 'test-job')
+    echo \"\$result\" | jq -r '.confidence_label'
+" 2>&1)
+if [[ "$output" == "high" ]]; then
+    assert_pass "confidence >= 0.95 → confidence_label=high"
+else
+    assert_fail "confidence >= 0.95 → confidence_label=high" "got: $output"
+fi
+
+# Test 43: heuristic-only (no data) → confidence_label is low or medium
+# Use isolated HOME with no events so DORA does not fire
+mkdir -p "$TEST_TEMP_DIR/clean-home/.shipwright"
+touch "$TEST_TEMP_DIR/clean-home/.shipwright/events.jsonl"
+output=$(HOME="$TEST_TEMP_DIR/clean-home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    issue_json='{\"title\":\"Add feature\",\"body\":\"\",\"labels\":[]}'
+    result=\$(recommend_template \"\$issue_json\" '$TEST_TEMP_DIR/repo' 'test-job')
+    echo \"\$result\" | jq -r '.confidence_label'
+" 2>&1)
+if [[ "$output" == "low" || "$output" == "medium" ]]; then
+    assert_pass "heuristic-only → confidence_label is low or medium: $output"
+else
+    assert_fail "heuristic-only → confidence_label is low or medium" "got: $output"
+fi
+
+# ─── Group 15: JSON output completeness ──────────────────────────────────────
+echo ""
+echo -e "${DIM}  JSON output completeness${RESET}"
+
+# Test 44: JSON has .factors field
+output=$(HOME="$TEST_TEMP_DIR/home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    result=\$(recommend_template '{}' '$TEST_TEMP_DIR/repo' 'test-job')
+    echo \"\$result\" | jq -e '.factors' >/dev/null 2>&1 && echo 'ok' || echo 'missing'
+" 2>&1)
+if [[ "$output" == "ok" ]]; then
+    assert_pass "recommend_template JSON has .factors field"
+else
+    assert_fail "recommend_template JSON has .factors field" "got: $output"
+fi
+
+# Test 45: JSON .factors has .repo_type
+output=$(HOME="$TEST_TEMP_DIR/home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    result=\$(recommend_template '{}' '$TEST_TEMP_DIR/repo' 'test-job')
+    echo \"\$result\" | jq -r '.factors.repo_type'
+" 2>&1)
+if [[ -n "$output" && "$output" != "null" ]]; then
+    assert_pass "JSON .factors.repo_type is present: $output"
+else
+    assert_fail "JSON .factors.repo_type is present" "got: $output"
+fi
+
+# Test 46: JSON .factors has .complexity
+output=$(HOME="$TEST_TEMP_DIR/home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    result=\$(recommend_template '{}' '$TEST_TEMP_DIR/repo' 'test-job')
+    echo \"\$result\" | jq -r '.factors.complexity'
+" 2>&1)
+if [[ "$output" == "low" || "$output" == "medium" || "$output" == "high" ]]; then
+    assert_pass "JSON .factors.complexity is low/medium/high: $output"
+else
+    assert_fail "JSON .factors.complexity is low/medium/high" "got: $output"
+fi
+
+# Test 47: JSON .alternatives is an array
+output=$(HOME="$TEST_TEMP_DIR/home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    result=\$(recommend_template '{}' '$TEST_TEMP_DIR/repo' 'test-job')
+    echo \"\$result\" | jq -e 'if .alternatives | type == \"array\" then \"ok\" else \"bad\" end'
+" 2>&1)
+if echo "$output" | grep -q "ok"; then
+    assert_pass "JSON .alternatives is an array"
+else
+    assert_fail "JSON .alternatives is an array" "got: $output"
+fi
+
+# Test 48: reasoning is non-empty string
+output=$(HOME="$TEST_TEMP_DIR/home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    result=\$(recommend_template '{}' '$TEST_TEMP_DIR/repo' 'test-job')
+    echo \"\$result\" | jq -r '.reasoning'
+" 2>&1)
+if [[ -n "$output" && "$output" != "null" ]]; then
+    assert_pass "JSON .reasoning is non-empty: ${output:0:50}..."
+else
+    assert_fail "JSON .reasoning is non-empty" "got: $output"
+fi
+
+# ─── Group 16: Weights file ───────────────────────────────────────────────────
+echo ""
+echo -e "${DIM}  learned weights${RESET}"
+
+# Test 49: weights file → correct template selected
+cat > "$TEST_TEMP_DIR/home/.shipwright/template-weights.json" <<'WEIGHTSEOF'
+{"medium":{"fast":0.1,"standard":0.3,"full":0.8,"hotfix":0.05}}
+WEIGHTSEOF
+
+output=$(HOME="$TEST_TEMP_DIR/home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    _weights_template 'medium'
+" 2>&1)
+if [[ "$output" == "full" ]]; then
+    assert_pass "_weights_template selects highest-weight template: $output"
+else
+    assert_fail "_weights_template selects highest-weight template" "got: $output"
+fi
+rm -f "$TEST_TEMP_DIR/home/.shipwright/template-weights.json"
+
+# Test 50: missing weights file → empty string
+output=$(HOME="$TEST_TEMP_DIR/home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    _weights_template 'medium'
+" 2>&1)
+if [[ -z "$output" ]]; then
+    assert_pass "_weights_template returns empty when no weights file"
+else
+    assert_fail "_weights_template returns empty when no weights file" "got: $output"
+fi
+
+# ─── Group 17: _labels_template direct tests ─────────────────────────────────
+echo ""
+echo -e "${DIM}  _labels_template direct${RESET}"
+
+# Test 51: vulnerability label → enterprise
+output=$(bash -c "source '$SCRIPT_DIR/sw-recommend.sh'; _labels_template 'vulnerability'" 2>&1)
+if [[ "$output" == "enterprise" ]]; then
+    assert_pass "_labels_template: vulnerability → enterprise"
+else
+    assert_fail "_labels_template: vulnerability → enterprise" "got: $output"
+fi
+
+# Test 52: breaking label → full
+output=$(bash -c "source '$SCRIPT_DIR/sw-recommend.sh'; _labels_template 'breaking'" 2>&1)
+if [[ "$output" == "full" ]]; then
+    assert_pass "_labels_template: breaking → full"
+else
+    assert_fail "_labels_template: breaking → full" "got: $output"
+fi
+
+# Test 53: empty label → empty (no override)
+output=$(bash -c "source '$SCRIPT_DIR/sw-recommend.sh'; _labels_template ''" 2>&1)
+if [[ -z "$output" ]]; then
+    assert_pass "_labels_template: empty labels → no override"
+else
+    assert_fail "_labels_template: empty labels → no override" "got: $output"
+fi
+
+# Test 54: unrecognized label → empty (no override)
+output=$(bash -c "source '$SCRIPT_DIR/sw-recommend.sh'; _labels_template 'enhancement'" 2>&1)
+if [[ -z "$output" ]]; then
+    assert_pass "_labels_template: generic label → no override"
+else
+    assert_fail "_labels_template: generic label → no override" "got: $output"
+fi
+
+# ─── Group 18: heuristic complexity medium case ──────────────────────────────
+echo ""
+echo -e "${DIM}  complexity medium case${RESET}"
+
+# Test 55: no special keywords in small repo → medium or low complexity
+output=$(bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    _heuristic_complexity '$TEST_TEMP_DIR/repo' 'Add new feature' ''
+" 2>&1)
+if [[ "$output" == "medium" || "$output" == "low" ]]; then
+    assert_pass "_heuristic_complexity: generic feature → medium or low: $output"
+else
+    assert_fail "_heuristic_complexity: generic feature → medium or low" "got: $output"
+fi
+
+# Test 56: migration keyword → high complexity
+output=$(bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    _heuristic_complexity '$TEST_TEMP_DIR/repo' 'Database migration for users table' ''
+" 2>&1)
+if [[ "$output" == "high" ]]; then
+    assert_pass "_heuristic_complexity: migration keyword → high"
+else
+    assert_fail "_heuristic_complexity: migration keyword → high" "got: $output"
+fi
+
+# ─── Group 19: _dora_template direct tests ───────────────────────────────────
+echo ""
+echo -e "${DIM}  _dora_template direct${RESET}"
+
+# Test 57: empty events file → no DORA signal
+# Use isolated HOME with truly empty events file
+mkdir -p "$TEST_TEMP_DIR/dora-empty-home/.shipwright"
+touch "$TEST_TEMP_DIR/dora-empty-home/.shipwright/events.jsonl"
+output=$(HOME="$TEST_TEMP_DIR/dora-empty-home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    _dora_template
+" 2>&1)
+if [[ -z "$output" ]]; then
+    assert_pass "_dora_template: empty events → no signal"
+else
+    assert_fail "_dora_template: empty events → no signal" "got: $output"
+fi
+
+# Test 58: < 3 events → no DORA signal (insufficient data)
+mkdir -p "$TEST_TEMP_DIR/dora-sparse-home/.shipwright"
+echo '{"type":"pipeline.completed","result":"failure"}' > "$TEST_TEMP_DIR/dora-sparse-home/.shipwright/events.jsonl"
+echo '{"type":"pipeline.completed","result":"success"}' >> "$TEST_TEMP_DIR/dora-sparse-home/.shipwright/events.jsonl"
+output=$(HOME="$TEST_TEMP_DIR/dora-sparse-home" bash -c "
+    source '$SCRIPT_DIR/sw-recommend.sh'
+    _dora_template
+" 2>&1)
+if [[ -z "$output" ]]; then
+    assert_pass "_dora_template: < 3 events → no signal (insufficient data)"
+else
+    assert_fail "_dora_template: < 3 events → no signal" "got: $output"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

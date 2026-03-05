@@ -137,7 +137,7 @@ Fix these specific errors. Each line above is one distinct error from the test o
     local discovery_section=""
     if type inject_discoveries >/dev/null 2>&1; then
         local disc_output
-        disc_output="$(inject_discoveries "${GOAL:-}" 2>/dev/null || true)"
+        disc_output="$(inject_discoveries "${GOAL:-}" 2>/dev/null | head -10 || true)"
         if [[ -n "$disc_output" ]]; then
             discovery_section="$disc_output"
         fi

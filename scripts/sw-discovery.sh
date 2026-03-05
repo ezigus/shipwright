@@ -273,6 +273,11 @@ inject_discoveries() {
             fi
         fi
 
+        # Skip entries with empty resolutions — they have no actionable value
+        local disc_resolution
+        disc_resolution=$(echo "$line" | jq -r '.resolution // ""' 2>/dev/null || echo "")
+        [[ -z "${disc_resolution// }" ]] && continue
+
         # Check if relevant: path overlap OR semantic similarity > 30
         local disc_patterns discovery_desc
         disc_patterns=$(echo "$line" | jq -r '.file_patterns // ""' 2>/dev/null || echo "")

@@ -574,6 +574,7 @@ NOTIFICATION_ENABLED=false
 
 # Self-healing
 BUILD_TEST_RETRIES=$(_config_get_int "pipeline.build_test_retries" 3 2>/dev/null || echo 3)
+REVIEW_BUILD_RETRIES=$(_config_get_int "pipeline.review_build_retries" 2 2>/dev/null || echo 2)
 STASHED_CHANGES=false
 SELF_HEAL_COUNT=0
 
@@ -1392,6 +1393,82 @@ Focus on fixing the failing tests while keeping all passing tests working."
     return 1
 }
 
+# ─── Review Self-Healing ──────────────────────────────────────────────────
+# When the review stage blocks on critical/security issues, inject the review
+# findings back into the build loop goal and re-run build→test→review until
+# all issues are resolved or retry cycles are exhausted.
+
+self_healing_review_build_test() {
+    local cycle=0
+    local max_cycles="$REVIEW_BUILD_RETRIES"
+    local blockers_file="$ARTIFACTS_DIR/review-blockers.md"
+
+    while [[ "$cycle" -lt "$max_cycles" ]]; do
+        cycle=$((cycle + 1))
+        SELF_HEAL_COUNT=$((SELF_HEAL_COUNT + 1))
+        echo ""
+        echo -e "${YELLOW}${BOLD}━━━ Review Self-Healing Cycle ${cycle}/${max_cycles} ━━━${RESET}"
+        info "Injecting review findings into build loop..."
+
+        if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+            gh_comment_issue "$ISSUE_NUMBER" \
+                "🔄 **Review self-healing cycle ${cycle}** — rebuilding to address review blockers" 2>/dev/null || true
+        fi
+
+        # Load review blockers
+        local review_context=""
+        if [[ -f "$blockers_file" ]]; then
+            review_context=$(cat "$blockers_file")
+        fi
+        if [[ -z "${review_context// }" ]]; then
+            review_context="Code review found critical/security issues that must be fixed."
+        fi
+
+        # Inject review blockers into goal for the build loop
+        local original_goal="$GOAL"
+        GOAL="$GOAL
+
+IMPORTANT — Code review found critical/security issues that MUST be fixed:
+${review_context}
+
+Fix ALL of the above issues completely. Do not introduce any new critical or security issues."
+
+        # Re-run build→test loop with the review context in goal
+        if ! self_healing_build_test; then
+            GOAL="$original_goal"
+            error "Build loop failed during review self-healing cycle ${cycle}"
+            return 1
+        fi
+        GOAL="$original_goal"
+
+        # Build+test passed — re-run review to check if blockers are resolved
+        echo ""
+        echo -e "${CYAN}${BOLD}▸ Re-running review (self-healing cycle ${cycle})${RESET}"
+        CURRENT_STAGE_ID="review"
+        update_status "running" "review"
+        record_stage_start "review"
+        set_stage_status "review" "pending"
+
+        if run_stage_with_retry "review"; then
+            mark_stage_complete "review"
+            local timing
+            timing=$(get_stage_timing "review")
+            success "Stage ${BOLD}review${RESET} complete after self-healing ${DIM}(${timing})${RESET}"
+            emit_event "review.self_healed" "issue=${ISSUE_NUMBER:-0}" "cycle=$cycle"
+            return 0
+        fi
+
+        # Review still blocked — refresh blockers for next cycle
+        grep -iE '\*\*\[?(Critical|Security)\]?\*\*' "$ARTIFACTS_DIR/review.md" \
+            > "$blockers_file" 2>/dev/null || true
+        warn "Review still blocked after cycle ${cycle}"
+        emit_event "review.still_blocked" "issue=${ISSUE_NUMBER:-0}" "cycle=$cycle"
+    done
+
+    error "Review self-healing exhausted after ${max_cycles} cycle(s)"
+    return 1
+}
+
 # ─── Auto-Rebase ──────────────────────────────────────────────────────────
 
 auto_rebase() {
@@ -1745,6 +1822,20 @@ run_pipeline() {
             # Log model used for prediction feedback
             echo "${id}|${stage_model_used}|true" >> "${ARTIFACTS_DIR}/model-routing.log"
         else
+            # Self-healing: review blocked → rebuild with review findings
+            if [[ "$id" == "review" && "$use_self_healing" == "true" ]] \
+                && [[ -f "$ARTIFACTS_DIR/review-blockers.md" ]] \
+                && [[ -s "$ARTIFACTS_DIR/review-blockers.md" ]]; then
+                info "Review blocked — attempting review self-healing rebuild..."
+                if self_healing_review_build_test; then
+                    mark_stage_complete "$id"
+                    completed=$((completed + 1))
+                    echo "${id}|${stage_model_used:-opus}|true" >> "${ARTIFACTS_DIR}/model-routing.log"
+                    continue
+                fi
+                # Self-healing exhausted — fall through to normal failure
+            fi
+
             mark_stage_failed "$id"
             local stage_dur_s
             stage_dur_s=$(( $(now_epoch) - stage_start_epoch ))

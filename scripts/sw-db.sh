@@ -48,7 +48,7 @@ fi
 # ─── Database Configuration ──────────────────────────────────────────────────
 DB_DIR="${HOME}/.shipwright"
 DB_FILE="${DB_DIR}/shipwright.db"
-SCHEMA_VERSION=6
+SCHEMA_VERSION=7
 
 # JSON fallback paths
 EVENTS_FILE="${DB_DIR}/events.jsonl"
@@ -479,6 +479,24 @@ CREATE TABLE IF NOT EXISTS reasoning_traces (
     FOREIGN KEY (job_id) REFERENCES pipeline_runs(job_id)
 );
 CREATE INDEX IF NOT EXISTS idx_reasoning_traces_job ON reasoning_traces(job_id);
+
+-- Template recommendation tracking (acceptance rate, outcome feedback)
+CREATE TABLE IF NOT EXISTS template_recommendations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT,
+    issue_number TEXT,
+    repo_hash TEXT,
+    recommended_template TEXT NOT NULL,
+    actual_template TEXT,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    reasoning TEXT,
+    factors TEXT,
+    accepted INTEGER,
+    outcome TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_recommendations_repo ON template_recommendations(repo_hash);
+CREATE INDEX IF NOT EXISTS idx_recommendations_template ON template_recommendations(recommended_template);
 SCHEMA
 }
 
@@ -651,6 +669,31 @@ CREATE INDEX IF NOT EXISTS idx_reasoning_traces_job ON reasoning_traces(job_id);
 "
         _db_exec "INSERT OR REPLACE INTO _schema (version, created_at, applied_at) VALUES (6, '$(now_iso)', '$(now_iso)');"
         success "Migrated to schema v6"
+    fi
+
+    # Migration from v6 → v7: template_recommendations for acceptance + outcome tracking
+    if [[ "$current_version" -lt 7 ]]; then
+        info "Migrating schema v${current_version} → v7..."
+        sqlite3 "$DB_FILE" "
+CREATE TABLE IF NOT EXISTS template_recommendations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT,
+    issue_number TEXT,
+    repo_hash TEXT,
+    recommended_template TEXT NOT NULL,
+    actual_template TEXT,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    reasoning TEXT,
+    factors TEXT,
+    accepted INTEGER,
+    outcome TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_recommendations_repo ON template_recommendations(repo_hash);
+CREATE INDEX IF NOT EXISTS idx_recommendations_template ON template_recommendations(recommended_template);
+"
+        _db_exec "INSERT OR REPLACE INTO _schema (version, created_at, applied_at) VALUES (7, '$(now_iso)', '$(now_iso)');"
+        success "Migrated to schema v7"
     fi
 }
 
@@ -1287,6 +1330,58 @@ db_query_reasoning_traces() {
     job_id="${job_id//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
     if ! db_available; then echo "[]"; return 0; fi
     _db_query -json "SELECT * FROM reasoning_traces WHERE job_id = '$job_id' ORDER BY id ASC;" || echo "[]"
+}
+
+# db_save_recommendation <job_id> <issue> <repo_hash> <recommended> <confidence> <reasoning> <factors_json>
+db_save_recommendation() {
+    local job_id="$1" issue="${2:-}" repo_hash="${3:-}" recommended="$4"
+    local confidence="${5:-0.5}" reasoning="${6:-}" factors="${7:-{}}"
+    if ! db_available; then return 1; fi
+    job_id="${job_id//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    issue="${issue//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    repo_hash="${repo_hash//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    recommended="${recommended//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    local escaped_reasoning escaped_factors
+    escaped_reasoning=$(echo "$reasoning" | sed "s/'/''/g")
+    escaped_factors=$(echo "$factors" | sed "s/'/''/g")
+    _db_exec "INSERT INTO template_recommendations
+        (job_id, issue_number, repo_hash, recommended_template, confidence, reasoning, factors, created_at)
+        VALUES ('$job_id', '$issue', '$repo_hash', '$recommended', $confidence, '$escaped_reasoning', '$escaped_factors', '$(now_iso)');"
+}
+
+# db_update_recommendation_outcome <job_id> <actual_template> <accepted> <outcome>
+db_update_recommendation_outcome() {
+    local job_id="$1" actual="$2" accepted="${3:-1}" outcome="${4:-}"
+    if ! db_available; then return 1; fi
+    job_id="${job_id//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    actual="${actual//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    outcome="${outcome//$_SQL_SQ/$_SQL_SQ$_SQL_SQ}"
+    _db_exec "UPDATE template_recommendations
+        SET actual_template='$actual', accepted=$accepted, outcome='$outcome'
+        WHERE job_id='$job_id' AND outcome IS NULL
+        ORDER BY id DESC LIMIT 1;"
+}
+
+# db_query_recommendation_stats [days]
+db_query_recommendation_stats() {
+    local days="${1:-30}"
+    if ! db_available; then echo "{}"; return 0; fi
+    local since
+    since=$(date -u -v"-${days}d" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+        || date -u -d "${days} days ago" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+        || echo "1970-01-01T00:00:00Z")
+    _db_query -json "
+SELECT
+  COUNT(*) as total,
+  SUM(CASE WHEN accepted=1 THEN 1 ELSE 0 END) as accepted,
+  SUM(CASE WHEN accepted=0 THEN 1 ELSE 0 END) as overridden,
+  SUM(CASE WHEN accepted=1 AND outcome='success' THEN 1 ELSE 0 END) as accepted_success,
+  SUM(CASE WHEN accepted=0 AND outcome='success' THEN 1 ELSE 0 END) as overridden_success,
+  recommended_template as template,
+  AVG(confidence) as avg_confidence
+FROM template_recommendations
+WHERE created_at >= '$since' AND outcome IS NOT NULL
+GROUP BY recommended_template;" 2>/dev/null || echo "[]"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -11,6 +11,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/test-helpers.sh"
 RECRUIT_SCRIPT="${SCRIPT_DIR}/sw-recruit.sh"
 
+# ─── Isolate all writes to a temp HOME so the real ~/.shipwright is not touched ──
+_RECRUIT_TEST_HOME=$(mktemp -d "${TMPDIR:-/tmp}/sw-recruit-test-home.XXXXXX")
+mkdir -p "$_RECRUIT_TEST_HOME/.shipwright"
+export HOME="$_RECRUIT_TEST_HOME"
+trap 'rm -rf "$_RECRUIT_TEST_HOME"' EXIT
+
 # Disable LLM calls in tests — ensures fast, deterministic execution
 export SW_RECRUIT_NO_LLM=1
 

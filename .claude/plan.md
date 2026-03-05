@@ -1,71 +1,274 @@
-# Design: Add --json output flag to shipwright status command
+# Implementation Plan: Intelligent Template Auto-Recommendation Engine
 
-## Context
+## Socratic Design Analysis
 
-The `shipwright status` command (`scripts/sw-status.sh`) provides a human-readable dashboard showing tmux windows, team configs, task lists, daemon state, heartbeats, remote machines, connected developers, and database health. Issue #4 requests a `--json` flag that emits the same data as machine-readable JSON so other tools (CI scripts, dashboards, fleet orchestrators, monitoring) can consume it programmatically.
+### Requirements Clarity
 
-Constraints:
+- **Minimum viable change**: When `shipwright pipeline start` runs without `--template`, analyze the repo + issue and display a recommendation with confidence score and reasoning. User can accept (default) or override. Track acceptance and outcome.
+- **Implicit requirements**: The recommendation must be fast (<5s), must not break existing `--template` override, and must work offline (without Claude CLI).
+- **Acceptance criteria** (from issue): recommend template with confidence + reasoning, track acceptance rate, update model from outcomes.
 
-- Bash 3.2 compatible (no associative arrays, no `${var,,}`)
-- `set -euo pipefail` required
-- `jq` is a project prerequisite (used broadly across Shipwright)
-- JSON assembly must avoid string interpolation for values (use `jq --arg`/`--argjson`)
-- The human-readable path must remain unchanged when `--json` is not passed
+### Alternatives Considered
 
-## Decision
+**Approach A: New standalone script `sw-recommend.sh`**
 
-Implement `--json` as an early-exit code path in `scripts/sw-status.sh`. When the flag is set:
+- Pros: Clean separation, standalone CLI command, testable in isolation
+- Cons: Duplicates logic already in `sw-adaptive.sh` and `sw-self-optimize.sh`, another script to maintain
+- Blast radius: Low (new file only) but high maintenance burden
 
-1. **Argument parsing** (lines 57-71): A `JSON_OUTPUT` flag is set by `--json`. Unknown flags error with exit 1. `--help` documents the new flag.
+**Approach B: Enhance existing infrastructure (CHOSEN)**
 
-2. **Guard clause** (lines 74-78): If `jq` is not installed, emit a clear error to stderr and exit 1 — the human-readable path does not require `jq`, so this is JSON-specific.
+- Pros: Builds on `select_pipeline_template()`, `thompson_select_template()`, `adaptive recommend`, and `generate_reasoning_trace()` — all already exist. Minimal new code. Connects existing dots.
+- Cons: Touches multiple files, but each change is small
+- Blast radius: Medium — modifies existing functions but only adds new code paths
 
-3. **Data collection** (lines 80-238): Each of the 11 data sections is collected independently into shell variables (`WINDOWS_JSON`, `TEAMS_JSON`, `TASKS_JSON`, `DAEMON_JSON`, `TRACKER_JSON`, `HEARTBEATS_JSON`, `MACHINES_JSON`, `DEVELOPERS_JSON`, `DATABASE_JSON`). Each section:
-   - Defaults to a safe empty value (`[]` for arrays, `null` for optional objects)
-   - Falls back to the default on any `jq` or I/O error (`|| SECTION_JSON="[]"`)
-   - Uses `jq -n --arg`/`--argjson` for safe JSON construction — never raw string interpolation for values
+**Why Approach B**: The infrastructure for recommendation already exists in fragments across `lib/daemon-triage.sh`, `sw-self-optimize.sh`, `sw-adaptive.sh`, and `sw-pipeline.sh`. The issue is that these pieces aren't connected into a user-facing recommendation flow. We need to wire them together, add display formatting, and add tracking — not build from scratch.
 
-4. **Assembly** (lines 240-265): A single `jq -n` call assembles all sections into the final JSON envelope with keys: `version`, `timestamp`, `tmux_windows`, `teams`, `task_lists`, `daemon`, `issue_tracker`, `heartbeats`, `remote_machines`, `connected_developers`, `database`.
+### Risk Analysis
 
-5. **Early exit** (line 266): `exit 0` prevents any human-readable output from being emitted.
+| Risk                                              | Impact                                    | Mitigation                                                                                  |
+| ------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Breaking `--template` override                    | High — users lose explicit control        | Template flag takes absolute priority; recommendation only fires when no `--template` given |
+| Slow startup from recommendation                  | Medium — adds latency to `pipeline start` | Use cached intelligence data, set 5s timeout on analysis                                    |
+| Inaccurate recommendations with insufficient data | Medium — misleads users                   | Show confidence level ("low" when <10 samples), default to "standard" with low confidence   |
+| DB schema migration breaks existing installs      | High — corrupts pipeline tracking         | Use `IF NOT EXISTS` for new table/columns, schema version bump                              |
 
-**Key design properties:**
+---
 
-- **No shared code path with human-readable output.** The JSON branch collects data independently, so changes to the human-readable formatting cannot break JSON output and vice versa.
-- **Graceful degradation per section.** If any single data source (heartbeat dir, daemon state file, sqlite DB) is missing or corrupted, that section defaults to `[]` or `null` — the envelope is always valid JSON.
-- **No new dependencies.** `jq` is already required by the project.
-- **Schema:** Top-level keys are stable. `version` (string, semver), `timestamp` (string, ISO-8601 UTC), `tmux_windows` (array), `teams` (array), `task_lists` (array), `daemon` (object|null), `issue_tracker` (object|null), `heartbeats` (array), `remote_machines` (array), `connected_developers` (object|null), `database` (object|null).
+## Files to Modify
 
-## Alternatives Considered
+### New Files
 
-1. **Shared data collection with format switch at output time** — Pros: eliminates ~190 lines of duplication between JSON and human-readable paths / Cons: couples the two paths tightly; changes to human-readable formatting could break JSON assembly; harder to reason about error handling when one path needs `jq` and the other doesn't; the human-readable path uses shell variables and printf, not structured data. Rejected in favor of independent paths for robustness.
+1. **`scripts/sw-recommend.sh`** — Template recommendation engine (main logic + CLI)
+2. **`scripts/sw-recommend-test.sh`** — Test suite
 
-2. **Output as line-delimited JSON (JSONL) per section** — Pros: streamable, each section independently parseable / Cons: not a single queryable document (can't do `jq '.daemon.active_jobs'` in one pass); breaks user expectation of `--json` producing a JSON object; no ecosystem precedent in Shipwright. Rejected.
+### Modified Files
 
-3. **Python/Node helper for JSON assembly** — Pros: richer JSON manipulation, eliminates `jq` dependency in the critical path / Cons: adds a runtime dependency; all other Shipwright scripts are pure bash + `jq`; inconsistent with project architecture. Rejected.
+3. **`scripts/sw-pipeline.sh`** — Hook recommendation into `pipeline_start()`, display recommendation, track acceptance
+4. **`scripts/sw-db.sh`** — Add `template_recommendations` table, bump schema version
+5. **`scripts/lib/daemon-triage.sh`** — Call recommendation engine from `select_pipeline_template()`
+6. **`scripts/sw-adaptive.sh`** — Enhance `recommend` subcommand to use new engine
+7. **`package.json`** — Register test suite
 
-## Implementation Plan
+---
 
-- Files to create: none (all files already exist)
-- Files to modify: `scripts/sw-status.sh` (lines 57-267 — already modified), `scripts/sw-status-test.sh` (30 tests — already written)
-- Dependencies: none new (`jq` already required)
-- Risk areas:
-  - **`cmd | while read` subshell variable loss** (lines 83-91, 184-192): The tmux windows and heartbeats sections pipe into `while read` loops. Variables set inside the loop are lost, but this is handled correctly — JSON fragments are emitted via `printf` to stdout and collected by `jq -s '.'`.
-  - **Dashboard curl timeout** (line 208): The connected developers section calls `curl --max-time 3` to the dashboard API. If the dashboard is slow, the 3-second timeout prevents the JSON output from hanging, but adds up to 3s of latency. Acceptable for a status command that a user invokes interactively or a monitor polls infrequently.
-  - **Large daemon state** (line 154): `recent_completions` is capped at 20 entries via `jq` slice (`reverse | .[:20]`), preventing unbounded output growth.
-  - **Task list `find` in subshell** (lines 116-132): Task counting uses `while read` from a process substitution (`< <(find ...)`), which correctly preserves variable state in the parent shell. This is the right pattern per project conventions.
+## Implementation Steps
 
-## Validation Criteria
+### Step 1: Database Schema — `template_recommendations` table
 
-- [x] `shipwright status --json` produces valid JSON (`jq empty` succeeds)
-- [x] All 11 top-level keys are present in output
-- [x] `version` field matches semver pattern `X.Y.Z`
-- [x] `timestamp` is ISO-8601 UTC format
-- [x] No ANSI escape codes appear in JSON output
-- [x] Empty state (no daemon, no teams, no heartbeats) produces valid JSON with safe defaults (`[]`, `null`)
-- [x] Human-readable output (`shipwright status` without `--json`) is unaffected
-- [x] `--help` documents the `--json` flag
-- [x] Unknown flags produce error and exit 1
-- [x] Missing `jq` produces clear error to stderr and exit 1
-- [x] Subsections are independently queryable (e.g., `jq '.daemon.active_jobs[].issue'`)
-- [x] All 30 tests in `scripts/sw-status-test.sh` pass
+In `sw-db.sh`, add a new table to track recommendations and their outcomes:
+
+```sql
+CREATE TABLE IF NOT EXISTS template_recommendations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT,
+    issue_number TEXT,
+    repo_hash TEXT,
+    recommended_template TEXT NOT NULL,
+    actual_template TEXT,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    reasoning TEXT,
+    factors TEXT,           -- JSON: {complexity, labels, historical_rate, repo_type}
+    accepted INTEGER,       -- 1=user accepted recommendation, 0=overrode
+    outcome TEXT,           -- success/failure (filled post-pipeline)
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_recommendations_repo ON template_recommendations(repo_hash);
+CREATE INDEX IF NOT EXISTS idx_recommendations_template ON template_recommendations(recommended_template);
+```
+
+Bump `SCHEMA_VERSION` from 6 to 7.
+
+### Step 2: Recommendation Engine — `sw-recommend.sh`
+
+Core function: `recommend_template()` that combines all existing signals:
+
+```
+recommend_template(issue_json, repo_dir) → JSON {
+    template: "fast",
+    confidence: 0.89,
+    reasoning: "89% success rate for similar issues in Node.js repos",
+    factors: {
+        repo_type: "node",
+        complexity: "low",
+        labels: ["enhancement"],
+        historical_success_rates: {"fast": 0.89, "standard": 0.75, ...},
+        sample_size: 42
+    },
+    alternatives: [
+        {template: "standard", confidence: 0.75, reason: "..."},
+    ]
+}
+```
+
+**Signal hierarchy** (ordered by priority):
+
+1. **Label overrides** — `hotfix`/`incident` → hotfix, `security` → enterprise (hard rules)
+2. **DORA escalation** — CFR > 40% → enterprise (safety override)
+3. **Quality memory** — Critical findings → enterprise (safety override)
+4. **Historical success rate** — Thompson sampling from `pipeline_outcomes` table
+5. **Template weights** — Learned weights from `template-weights.json`
+6. **Intelligence analysis** — `recommended_template` from AI analysis
+7. **Repo heuristics** — Language, framework, test setup → baseline template
+8. **Fallback** — "standard" at 0.5 confidence
+
+**Confidence scoring**:
+
+- `sample_size >= 50` → high confidence (0.8-1.0)
+- `sample_size >= 10` → medium confidence (0.5-0.8)
+- `sample_size < 10` → low confidence (0.3-0.5)
+- No data → minimum confidence (0.3), use heuristics only
+
+**CLI interface**:
+
+```bash
+shipwright recommend [--issue N] [--goal "..."] [--json]
+```
+
+### Step 3: Display in Pipeline Start
+
+In `pipeline_start()` in `sw-pipeline.sh`, after `generate_reasoning_trace()`:
+
+```
+╭─────────────────────────────────────────────╮
+│  Template Recommendation                    │
+│                                             │
+│  ✦ fast (89% confidence)                    │
+│    89% success rate for similar issues       │
+│    Based on 42 historical runs              │
+│                                             │
+│  Override: --template <name>                │
+╰─────────────────────────────────────────────╝
+```
+
+Logic:
+
+- If `--template` was explicitly passed → skip recommendation, use specified template
+- If no `--template` → run recommendation, display it, use recommended template
+- Record whether recommendation was accepted (user didn't override) or rejected
+
+### Step 4: Outcome Tracking
+
+After pipeline completes (in existing `optimize_analyze_outcome` flow or pipeline completion handler):
+
+- Update `template_recommendations` row with `outcome = success/failure` and `actual_template`
+- This feeds back into Thompson sampling for future recommendations
+
+### Step 5: Acceptance Rate Reporting
+
+Add `shipwright recommend stats` subcommand:
+
+```
+Template Recommendation Stats (last 30 days)
+─────────────────────────────────────────────
+Acceptance rate:  78% (39/50 recommendations accepted)
+Success when accepted:  92% (36/39)
+Success when overridden:  73% (8/11)
+
+Per-template accuracy:
+  fast        92% success (24 runs, 87% confidence avg)
+  standard    85% success (18 runs, 72% confidence avg)
+  full        78% success (6 runs, 65% confidence avg)
+  hotfix      100% success (2 runs, 95% confidence avg)
+```
+
+### Step 6: Wire Into Daemon Triage
+
+In `select_pipeline_template()` in `lib/daemon-triage.sh`, add a call to `recommend_template()` as an additional signal source. The daemon already has auto-template logic; the recommendation engine provides better signal.
+
+### Step 7: Test Suite
+
+`sw-recommend-test.sh` — 20+ tests covering:
+
+**Unit tests (14)**:
+
+- Recommendation with no historical data → "standard" at low confidence
+- Recommendation with strong historical data → highest success rate template
+- Label override takes precedence (hotfix, security, incident)
+- DORA escalation overrides recommendation
+- Quality memory overrides recommendation
+- Confidence scoring: high/medium/low based on sample size
+- Repo type detection (node, python, go, etc.)
+- JSON output format validation
+- Recommendation with intelligence analysis available
+- Recommendation caching (same issue returns cached result)
+- Acceptance tracking (accepted=1 when no override)
+- Acceptance tracking (accepted=0 when --template overrides)
+- Stats subcommand output format
+- Empty DB graceful handling
+
+**Integration tests (4)**:
+
+- Full pipeline start with recommendation display
+- Recommendation → pipeline completion → outcome recorded
+- Daemon triage uses recommendation
+- `adaptive recommend` uses recommendation engine
+
+**Edge cases (3)**:
+
+- All templates have 0% success rate → fallback to "standard"
+- Single template dominates (exploration vs exploitation)
+- Concurrent recommendations don't corrupt DB
+
+---
+
+## Task Checklist
+
+- [ ] Task 1: Add `template_recommendations` table to `sw-db.sh` (bump schema to v7)
+- [ ] Task 2: Create `scripts/sw-recommend.sh` with core `recommend_template()` function
+- [ ] Task 3: Add repo analysis helpers (language detection, complexity heuristics) to `sw-recommend.sh`
+- [ ] Task 4: Add confidence scoring logic based on sample size and signal strength
+- [ ] Task 5: Add formatted display output (boxed recommendation with confidence + reasoning)
+- [ ] Task 6: Add CLI interface (`shipwright recommend [--issue N] [--goal "..."] [--json]`)
+- [ ] Task 7: Hook recommendation into `pipeline_start()` in `sw-pipeline.sh`
+- [ ] Task 8: Add acceptance tracking (detect `--template` override vs default acceptance)
+- [ ] Task 9: Add outcome tracking (update recommendation record on pipeline completion)
+- [ ] Task 10: Add `recommend stats` subcommand for acceptance/success rate reporting
+- [ ] Task 11: Wire recommendation into `select_pipeline_template()` in daemon triage
+- [ ] Task 12: Update `sw-adaptive.sh` recommend subcommand to use new engine
+- [ ] Task 13: Register `sw-recommend-test.sh` in `package.json`
+- [ ] Task 14: Create `sw-recommend-test.sh` test suite (20+ tests)
+- [ ] Task 15: Run full test suite (`npm test`) and fix any regressions
+
+**Dependencies**: Task 1 blocks Tasks 2-9. Task 2 blocks Tasks 6-12. Task 14 depends on Tasks 1-12.
+
+---
+
+## Testing Approach
+
+### Test Pyramid Breakdown
+
+- **Unit tests (14)**: Core recommendation logic, confidence scoring, signal hierarchy, label overrides, repo detection, output formatting, DB operations
+- **Integration tests (4)**: Pipeline start flow, daemon triage flow, outcome tracking loop, adaptive recommend integration
+- **Edge case tests (3)**: Empty data, single-template dominance, concurrent access
+
+### Coverage Targets
+
+- Recommendation logic: 90%+ branch coverage
+- Signal hierarchy: All 8 priority levels tested
+- Confidence scoring: All 4 tiers tested (high/medium/low/minimum)
+- Display formatting: Validated output structure
+
+### Critical Paths to Test
+
+- **Happy path**: Issue with 50+ historical runs → confident recommendation → accepted → succeeds → updates model
+- **Error case 1**: No DB available → graceful fallback to heuristic recommendation
+- **Error case 2**: Intelligence analysis fails → skip AI signal, use remaining signals
+- **Edge case 1**: Brand new repo with zero history → "standard" at 0.3 confidence with explanation
+- **Edge case 2**: All templates historically fail → still recommend "standard" but flag low confidence
+
+---
+
+## Definition of Done
+
+- [ ] `shipwright pipeline start --issue N` (without `--template`) shows template recommendation with confidence score and reasoning
+- [ ] `--template` flag overrides recommendation (existing behavior preserved)
+- [ ] Recommendation considers: repo type, issue complexity, historical success rates, labels, DORA metrics, quality memory
+- [ ] Confidence score displayed: high (≥0.8), medium (0.5-0.8), low (<0.5)
+- [ ] Acceptance tracked: whether user accepted or overrode the recommendation
+- [ ] Outcome tracked: whether the pipeline succeeded with the recommended/chosen template
+- [ ] `shipwright recommend stats` shows acceptance rate and success rate per template
+- [ ] `shipwright recommend --issue N` works as standalone CLI command
+- [ ] All existing tests pass (`npm test`)
+- [ ] New test suite has 20+ tests with PASS/FAIL tracking
+- [ ] Works offline (no Claude CLI or GitHub required for basic recommendations)

@@ -760,6 +760,132 @@ test_full_analysis_includes_context_efficiency() {
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
+# RECOMMENDATION MODEL TESTS
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 26. Recommendation model exits 0 when DB not available
+# ──────────────────────────────────────────────────────────────────────────────
+test_rec_model_no_db() {
+    reset_test
+    local weights_file="$TEST_TEMP_DIR/.shipwright/template-weights.json"
+    rm -f "$weights_file"
+
+    # Override db_available to return failure (DB not available)
+    db_available() { return 1; }
+
+    local output
+    output=$(optimize_update_recommendation_model 2>&1)
+    local rc=$?
+
+    # Restore db_available
+    unset -f db_available
+
+    [[ $rc -eq 0 ]] || { echo "Expected exit 0 when no DB, got $rc"; return 1; }
+    echo "$output" | grep -qi "skip\|not available\|warn" || { echo "Expected warning about DB; got: $output"; return 1; }
+    # No weights file should be written
+    [[ ! -f "$weights_file" ]] || { echo "Did not expect weights file to be created without DB"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 27. Recommendation model writes default weights when no pipeline_outcomes data
+# ──────────────────────────────────────────────────────────────────────────────
+test_rec_model_writes_defaults() {
+    reset_test
+    local weights_file="$TEST_TEMP_DIR/.shipwright/template-weights.json"
+    rm -f "$weights_file"
+
+    # Override db_available + _db_query to simulate empty DB
+    db_available() { return 0; }
+    _db_query() { echo ""; }
+
+    optimize_update_recommendation_model > /dev/null 2>&1
+    local rc=$?
+
+    unset -f db_available _db_query
+
+    [[ $rc -eq 0 ]] || { echo "Expected exit 0, got $rc"; return 1; }
+    [[ -f "$weights_file" ]] || { echo "Expected weights file to be created"; return 1; }
+
+    local low_fast
+    low_fast=$(jq -r '.low.fast // ""' "$weights_file" 2>/dev/null)
+    [[ -n "$low_fast" ]] || { echo "Expected .low.fast key in weights file"; return 1; }
+
+    local med_standard
+    med_standard=$(jq -r '.medium.standard // ""' "$weights_file" 2>/dev/null)
+    [[ -n "$med_standard" ]] || { echo "Expected .medium.standard key in weights file"; return 1; }
+
+    local high_full
+    high_full=$(jq -r '.high.full // ""' "$weights_file" 2>/dev/null)
+    [[ -n "$high_full" ]] || { echo "Expected .high.full key in weights file"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 28. Recommendation model calculates weights from pipeline outcomes data
+# ──────────────────────────────────────────────────────────────────────────────
+test_rec_model_calculates_weights() {
+    reset_test
+    local weights_file="$TEST_TEMP_DIR/.shipwright/template-weights.json"
+    rm -f "$weights_file"
+
+    # Mock DB returning: fast|low had 9 wins out of 10 total, standard|medium 2/10
+    db_available() { return 0; }
+    _db_query() {
+        # First call: pipeline_outcomes, second call: template_recommendations
+        if echo "$*" | grep -q "pipeline_outcomes"; then
+            printf "fast|low|9|10\nstandard|medium|2|10\nfull|high|8|10\n"
+        else
+            echo ""
+        fi
+    }
+
+    optimize_update_recommendation_model > /dev/null 2>&1
+    local rc=$?
+
+    unset -f db_available _db_query
+
+    [[ $rc -eq 0 ]] || { echo "Expected exit 0, got $rc"; return 1; }
+    [[ -f "$weights_file" ]] || { echo "Expected weights file to be created"; return 1; }
+
+    local fast_low
+    fast_low=$(jq -r '.low.fast // 0' "$weights_file" 2>/dev/null)
+    # fast had 9/10 wins → weight ~0.833 (Laplace smoothed)
+    local is_high
+    is_high=$(awk -v w="$fast_low" 'BEGIN { exit !(w > 0.7) }' && echo yes || echo no)
+    [[ "$is_high" == "yes" ]] || { echo "Expected fast/low weight > 0.7, got $fast_low"; return 1; }
+
+    local full_high
+    full_high=$(jq -r '.high.full // 0' "$weights_file" 2>/dev/null)
+    local is_high_full
+    is_high_full=$(awk -v w="$full_high" 'BEGIN { exit !(w > 0.6) }' && echo yes || echo no)
+    [[ "$is_high_full" == "yes" ]] || { echo "Expected full/high weight > 0.6, got $full_high"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 29. Full analysis includes recommendation model update
+# ──────────────────────────────────────────────────────────────────────────────
+test_full_analysis_includes_rec_model() {
+    reset_test
+    mkdir -p "$(dirname "$EVENTS_FILE")"
+
+    # Add minimal data
+    for i in 1 2 3; do
+        add_mock_outcome "standard" "success" "bug" "opus" 10 "2.00" 5
+    done
+    echo '{"common_patterns":[],"cross_repo_learnings":[]}' > "$TEST_TEMP_DIR/.shipwright/memory/global.json"
+
+    local called=0
+    # Patch optimize_update_recommendation_model for this test
+    optimize_update_recommendation_model() { called=1; return 0; }
+
+    optimize_full_analysis > /dev/null 2>&1
+
+    unset -f optimize_update_recommendation_model
+
+    [[ "$called" -eq 1 ]] || { echo "Expected optimize_update_recommendation_model to be called by full analysis"; return 1; }
+}
+
+# ═════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -799,6 +925,10 @@ main() {
         "test_context_efficiency_high_trim:Context efficiency detects high trim ratio"
         "test_context_efficiency_healthy:Context efficiency reports healthy when metrics normal"
         "test_full_analysis_includes_context_efficiency:Full analysis includes context efficiency"
+        "test_rec_model_no_db:Recommendation model exits 0 when DB not available"
+        "test_rec_model_writes_defaults:Recommendation model writes default weights when no data"
+        "test_rec_model_calculates_weights:Recommendation model calculates weights from outcomes"
+        "test_full_analysis_includes_rec_model:Full analysis includes recommendation model update"
     )
 
     for entry in "${tests[@]}"; do

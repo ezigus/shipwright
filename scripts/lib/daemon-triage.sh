@@ -400,6 +400,31 @@ select_pipeline_template() {
         fi
     fi
 
+    # ── Recommendation engine (intelligent multi-signal selector) ──
+    if type recommend_template >/dev/null 2>&1; then
+        local _rec_complexity="medium"
+        [[ "$score" -ge 70 ]] && _rec_complexity="low"
+        [[ "$score" -lt 40 ]] && _rec_complexity="high"
+        local _rec_issue_json
+        _rec_issue_json=$(jq -n \
+            --arg labels "$labels" \
+            --argjson score "$score" \
+            '{title:"", body:"", labels: ($labels | split(",") | map({name:ltrimstr(" ")|rtrimstr(" ")}) )}' 2>/dev/null \
+            || echo "{}")
+        local _rec_json
+        _rec_json=$(recommend_template "$_rec_issue_json" "${REPO_DIR:-$PWD}" "" 2>/dev/null || echo "")
+        if [[ -n "$_rec_json" ]]; then
+            local _rec_tmpl _rec_conf_label
+            _rec_tmpl=$(echo "$_rec_json" | jq -r '.template // ""' 2>/dev/null || echo "")
+            _rec_conf_label=$(echo "$_rec_json" | jq -r '.confidence_label // "low"' 2>/dev/null || echo "low")
+            if [[ -n "$_rec_tmpl" && "$_rec_conf_label" != "low" ]]; then
+                daemon_log INFO "Recommendation engine: $_rec_tmpl (${_rec_conf_label} confidence)" >&2
+                echo "$_rec_tmpl"
+                return
+            fi
+        fi
+    fi
+
     # ── Thompson sampling (outcome-based learning, when DB available) ──
     if type thompson_select_template >/dev/null 2>&1; then
         local _complexity="medium"

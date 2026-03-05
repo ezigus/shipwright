@@ -12,6 +12,8 @@ unset CLAUDECODE 2>/dev/null || true
 # Ignore SIGHUP so tmux attach/detach doesn't kill long-running plan/design/review stages
 trap '' HUP
 trap '' SIGPIPE
+# Prevent git from blocking on HTTPS credential prompts in any pipeline stage
+export GIT_TERMINAL_PROMPT=0
 
 VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,6 +79,10 @@ fi
 # shellcheck source=sw-pipeline-vitals.sh
 if [[ -f "$SCRIPT_DIR/sw-pipeline-vitals.sh" ]]; then
     source "$SCRIPT_DIR/sw-pipeline-vitals.sh"
+fi
+# shellcheck source=sw-recommend.sh
+if [[ -f "$SCRIPT_DIR/sw-recommend.sh" ]]; then
+    source "$SCRIPT_DIR/sw-recommend.sh"
 fi
 
 # ─── Memory, Optimization & Discovery (optional) ─────────────────────────
@@ -2314,6 +2320,77 @@ pipeline_start() {
         PIPELINE_NAME="$PIPELINE_TEMPLATE"
     fi
 
+    # ── Intelligent template recommendation ──────────────────────────────────
+    # Show recommendation when user did not explicitly specify a template.
+    # user_specified_pipeline == "standard" means no --template flag was given.
+    local _rec_job_id="${SHIPWRIGHT_PIPELINE_ID:-$$}"
+    if [[ "$user_specified_pipeline" == "standard" ]] && type recommend_template >/dev/null 2>&1; then
+        local _rec_issue_json="{}"
+        if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+            _rec_issue_json=$(gh issue view "${ISSUE_NUMBER}" --json number,title,body,labels 2>/dev/null \
+                || jq -n --arg n "${ISSUE_NUMBER}" '{number:($n|tonumber),title:"",body:"",labels:[]}')
+        elif [[ -n "${GOAL:-}" ]]; then
+            _rec_issue_json=$(jq -n --arg t "${GOAL}" '{title:$t,body:"",labels:[]}')
+        fi
+        local _rec_result
+        _rec_result=$(recommend_template "$_rec_issue_json" "${PWD}" "$_rec_job_id" 2>/dev/null || echo "")
+        if [[ -n "$_rec_result" ]]; then
+            local _rec_template _rec_conf _rec_factors
+            _rec_template=$(echo "$_rec_result" | jq -r '.template // "standard"' 2>/dev/null || echo "standard")
+            _rec_conf=$(echo "$_rec_result" | jq -r '.confidence // 0.5' 2>/dev/null || echo "0.5")
+            _rec_factors=$(echo "$_rec_result" | jq -c '.factors // {}' 2>/dev/null || echo "{}")
+            # Display recommendation box
+            show_recommendation "$_rec_result" 2>/dev/null || true
+            # Use recommended template (overrides default "standard")
+            PIPELINE_NAME="$_rec_template"
+            # Save recommendation to DB for acceptance tracking (accepted=1 since no override)
+            if type db_save_recommendation >/dev/null 2>&1; then
+                local _repo_hash=""
+                _repo_hash=$(git rev-parse --show-toplevel 2>/dev/null | md5sum 2>/dev/null | cut -c1-8 \
+                    || git rev-parse --show-toplevel 2>/dev/null | shasum 2>/dev/null | cut -c1-8 \
+                    || echo "unknown")
+                local _rec_reasoning
+                _rec_reasoning=$(echo "$_rec_result" | jq -r '.reasoning // ""' 2>/dev/null || echo "")
+                db_save_recommendation "$_rec_job_id" "${ISSUE_NUMBER:-}" "$_repo_hash" \
+                    "$_rec_template" "$_rec_conf" "$_rec_reasoning" "$_rec_factors" 2>/dev/null || true
+            fi
+            emit_event "recommend.shown" \
+                "job_id=${_rec_job_id}" \
+                "template=${_rec_template}" \
+                "accepted=1" 2>/dev/null || true
+        fi
+    elif [[ "$user_specified_pipeline" != "standard" ]] && type db_save_recommendation >/dev/null 2>&1; then
+        # User explicitly set --template — record as override (accepted=0)
+        # We still run recommendation silently for outcome tracking
+        local _rec_issue_json_ov="{}"
+        if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+            _rec_issue_json_ov=$(gh issue view "${ISSUE_NUMBER}" --json number,title,body,labels 2>/dev/null \
+                || jq -n --arg n "${ISSUE_NUMBER}" '{number:($n|tonumber),title:"",body:"",labels:[]}')
+        elif [[ -n "${GOAL:-}" ]]; then
+            _rec_issue_json_ov=$(jq -n --arg t "${GOAL}" '{title:$t,body:"",labels:[]}')
+        fi
+        local _rec_result_ov
+        _rec_result_ov=$(recommend_template "$_rec_issue_json_ov" "${PWD}" "$_rec_job_id" 2>/dev/null || echo "")
+        if [[ -n "$_rec_result_ov" ]]; then
+            local _rec_tmpl_ov _rec_conf_ov _rec_factors_ov _rec_reasoning_ov _repo_hash_ov
+            _rec_tmpl_ov=$(echo "$_rec_result_ov" | jq -r '.template // "standard"' 2>/dev/null || echo "standard")
+            _rec_conf_ov=$(echo "$_rec_result_ov" | jq -r '.confidence // 0.5' 2>/dev/null || echo "0.5")
+            _rec_factors_ov=$(echo "$_rec_result_ov" | jq -c '.factors // {}' 2>/dev/null || echo "{}")
+            _rec_reasoning_ov=$(echo "$_rec_result_ov" | jq -r '.reasoning // ""' 2>/dev/null || echo "")
+            _repo_hash_ov=$(git rev-parse --show-toplevel 2>/dev/null | md5sum 2>/dev/null | cut -c1-8 \
+                || git rev-parse --show-toplevel 2>/dev/null | shasum 2>/dev/null | cut -c1-8 \
+                || echo "unknown")
+            db_save_recommendation "$_rec_job_id" "${ISSUE_NUMBER:-}" "$_repo_hash_ov" \
+                "$_rec_tmpl_ov" "$_rec_conf_ov" "$_rec_reasoning_ov" "$_rec_factors_ov" 2>/dev/null || true
+            # Immediately mark as overridden
+            db_update_recommendation_outcome "$_rec_job_id" "$user_specified_pipeline" 0 "" 2>/dev/null || true
+            emit_event "recommend.overridden" \
+                "job_id=${_rec_job_id}" \
+                "recommended=${_rec_tmpl_ov}" \
+                "actual=${user_specified_pipeline}" 2>/dev/null || true
+        fi
+    fi
+
     # Check for existing pipeline
     if [[ -f "$STATE_FILE" ]]; then
         local existing_status
@@ -2767,6 +2844,15 @@ pipeline_start() {
         optimize_analyze_outcome "$STATE_FILE" 2>/dev/null || true
     fi
 
+    # Update recommendation outcome for Thompson sampling feedback
+    if type db_update_recommendation_outcome >/dev/null 2>&1; then
+        local _final_status
+        _final_status=$(sed -n 's/^status: *//p' "$STATE_FILE" 2>/dev/null | head -1 || echo "")
+        local _rec_outcome="failure"
+        [[ "$_final_status" == "complete" || "$_final_status" == "success" ]] && _rec_outcome="success"
+        db_update_recommendation_outcome "${_rec_job_id:-$$}" "${PIPELINE_NAME}" 1 "$_rec_outcome" 2>/dev/null || true
+    fi
+
     # Auto-learn after pipeline completion (non-blocking)
     if type optimize_tune_templates &>/dev/null; then
         (
@@ -2774,6 +2860,8 @@ pipeline_start() {
             optimize_learn_iterations 2>/dev/null
             optimize_route_models 2>/dev/null
             optimize_learn_risk_keywords 2>/dev/null
+            type optimize_update_recommendation_model &>/dev/null && \
+                optimize_update_recommendation_model 2>/dev/null || true
         ) &
     fi
 

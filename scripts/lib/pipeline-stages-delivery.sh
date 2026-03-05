@@ -376,9 +376,11 @@ EOF
     else
         info "Creating PR..."
         local pr_stderr pr_exit=0
-        pr_url=$(gh pr create "${pr_args[@]}" 2>/tmp/shipwright-pr-stderr.txt) || pr_exit=$?
-        pr_stderr=$(cat /tmp/shipwright-pr-stderr.txt 2>/dev/null || true)
-        rm -f /tmp/shipwright-pr-stderr.txt
+        local _pr_stderr_tmp
+        _pr_stderr_tmp=$(mktemp "${TMPDIR:-/tmp}/shipwright-pr-stderr.XXXXXX")
+        pr_url=$(gh pr create "${pr_args[@]}" 2>"$_pr_stderr_tmp") || pr_exit=$?
+        pr_stderr=$(cat "$_pr_stderr_tmp" 2>/dev/null || true)
+        rm -f "$_pr_stderr_tmp"
 
         # gh pr create may return non-zero for reviewer issues but still create the PR
         if [[ "$pr_exit" -ne 0 ]]; then

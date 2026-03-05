@@ -352,6 +352,9 @@ main() {
         adaptive)
             exec "$SCRIPT_DIR/sw-adaptive.sh" "$@"
             ;;
+        recommend)
+            exec "$SCRIPT_DIR/sw-recommend.sh" "$@"
+            ;;
         regression)
             exec "$SCRIPT_DIR/sw-regression.sh" "$@"
             ;;

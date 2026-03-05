@@ -794,7 +794,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-public-dashboard-test.sh` | 165 | Validate public dashboard generation |
 | `scripts/sw-quality-test.sh` | 227 | Validate ruthless quality validation engine |
 | `scripts/sw-reaper-test.sh` | 232 | Validate automatic tmux pane cleanup |
-| `scripts/sw-recommend-test.sh` | 847 | Intelligent template recommendation engine |
+| `scripts/sw-recommend-test.sh` | 1123 | Intelligent template recommendation engine |
 | `scripts/sw-recruit-test.sh` | 1401 | Test suite for AGI-level agent recruitment system |
 | `scripts/sw-regression-test.sh` | 258 | Validate regression detection pipeline |
 | `scripts/sw-release-manager-test.sh` | 206 | Validate release pipeline |

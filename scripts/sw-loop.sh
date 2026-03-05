@@ -17,7 +17,6 @@ trap '' HUP
 trap '' SIGPIPE
 # Prevent git from blocking on HTTPS credential prompts during headless runs
 export GIT_TERMINAL_PROMPT=0
-export GIT_ASKPASS=/bin/echo
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

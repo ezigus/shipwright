@@ -12,6 +12,8 @@ unset CLAUDECODE 2>/dev/null || true
 # Ignore SIGHUP so tmux attach/detach doesn't kill long-running plan/design/review stages
 trap '' HUP
 trap '' SIGPIPE
+# Prevent git from blocking on HTTPS credential prompts in any pipeline stage
+export GIT_TERMINAL_PROMPT=0
 
 VERSION="3.2.4"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -171,6 +171,7 @@ setup_test_env() {
     export HOME="$TEST_TEMP_DIR/home"
     export PATH="$TEST_TEMP_DIR/bin:$PATH"
     export NO_GITHUB=true
+    export GIT_TERMINAL_PROMPT=0
 
     # Link real jq if available
     if command -v jq >/dev/null 2>&1; then

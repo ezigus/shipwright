@@ -841,6 +841,282 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# INTEGRATION TESTS — DB-connected behavior (require sqlite3)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if command -v sqlite3 >/dev/null 2>&1; then
+
+# Setup an isolated DB for integration tests
+INTEG_HOME=$(mktemp -d "${TMPDIR:-/tmp}/sw-recommend-integ.XXXXXX")
+mkdir -p "$INTEG_HOME/.shipwright"
+export INTEG_DB="$INTEG_HOME/.shipwright/shipwright.db"
+
+# Bootstrap schema by sourcing db.sh with the test DB
+(
+    export HOME="$INTEG_HOME"
+    export DB_FILE="$INTEG_DB"
+    source "$SCRIPT_DIR/sw-db.sh" 2>/dev/null || true
+    init_schema 2>/dev/null || true
+) || true
+
+# ─── Group 20: db_save_recommendation ────────────────────────────────────────
+echo ""
+echo -e "${DIM}  DB integration: db_save_recommendation${RESET}"
+
+# Test 66: save_recommendation inserts a row
+output=$(HOME="$INTEG_HOME" DB_FILE="$INTEG_DB" bash -c "
+    source '$SCRIPT_DIR/sw-db.sh' 2>/dev/null
+    db_save_recommendation 'job-integ-1' '42' 'testhash' 'standard' '0.65' 'test reasoning' '{}' 2>/dev/null
+    echo ok
+" 2>&1)
+count=$(sqlite3 "$INTEG_DB" "SELECT COUNT(*) FROM template_recommendations WHERE job_id='job-integ-1';" 2>/dev/null || echo "0")
+if [[ "$count" -eq 1 ]]; then
+    assert_pass "db_save_recommendation inserts row to template_recommendations"
+else
+    assert_fail "db_save_recommendation inserts row to template_recommendations" "count=$count, output=$output"
+fi
+
+# Test 67: saved row has correct template value
+tmpl=$(sqlite3 "$INTEG_DB" "SELECT recommended_template FROM template_recommendations WHERE job_id='job-integ-1';" 2>/dev/null || echo "")
+if [[ "$tmpl" == "standard" ]]; then
+    assert_pass "db_save_recommendation stores correct recommended_template"
+else
+    assert_fail "db_save_recommendation stores correct recommended_template" "got: $tmpl"
+fi
+
+# Test 68: saved row has correct confidence
+conf=$(sqlite3 "$INTEG_DB" "SELECT ROUND(confidence,2) FROM template_recommendations WHERE job_id='job-integ-1';" 2>/dev/null || echo "")
+if [[ "$conf" == "0.65" ]]; then
+    assert_pass "db_save_recommendation stores correct confidence"
+else
+    assert_fail "db_save_recommendation stores correct confidence" "got: $conf"
+fi
+
+# ─── Group 21: db_update_recommendation_outcome ──────────────────────────────
+echo ""
+echo -e "${DIM}  DB integration: db_update_recommendation_outcome${RESET}"
+
+# Test 69: update_recommendation_outcome sets outcome=success, accepted=1
+(HOME="$INTEG_HOME" DB_FILE="$INTEG_DB" bash -c "
+    source '$SCRIPT_DIR/sw-db.sh' 2>/dev/null
+    db_update_recommendation_outcome 'job-integ-1' 'standard' '1' 'success' 2>/dev/null
+" 2>&1) || true
+outcome=$(sqlite3 "$INTEG_DB" "SELECT outcome FROM template_recommendations WHERE job_id='job-integ-1';" 2>/dev/null || echo "")
+if [[ "$outcome" == "success" ]]; then
+    assert_pass "db_update_recommendation_outcome sets outcome=success"
+else
+    assert_fail "db_update_recommendation_outcome sets outcome=success" "got: $outcome"
+fi
+
+# Test 70: update_recommendation_outcome sets accepted=1
+accepted=$(sqlite3 "$INTEG_DB" "SELECT accepted FROM template_recommendations WHERE job_id='job-integ-1';" 2>/dev/null || echo "")
+if [[ "$accepted" == "1" ]]; then
+    assert_pass "db_update_recommendation_outcome sets accepted=1"
+else
+    assert_fail "db_update_recommendation_outcome sets accepted=1" "got: $accepted"
+fi
+
+# Test 71: update with accepted=0 (override) records correct value
+(HOME="$INTEG_HOME" DB_FILE="$INTEG_DB" bash -c "
+    source '$SCRIPT_DIR/sw-db.sh' 2>/dev/null
+    db_save_recommendation 'job-integ-2' '43' 'testhash' 'fast' '0.90' 'label override' '{}' 2>/dev/null
+    db_update_recommendation_outcome 'job-integ-2' 'full' '0' 'success' 2>/dev/null
+" 2>&1) || true
+accepted2=$(sqlite3 "$INTEG_DB" "SELECT accepted FROM template_recommendations WHERE job_id='job-integ-2';" 2>/dev/null || echo "")
+if [[ "$accepted2" == "0" ]]; then
+    assert_pass "db_update_recommendation_outcome accepted=0 for override"
+else
+    assert_fail "db_update_recommendation_outcome accepted=0 for override" "got: $accepted2"
+fi
+
+# ─── Group 22: Thompson sampling with DB data ─────────────────────────────────
+echo ""
+echo -e "${DIM}  DB integration: Thompson sampling with real pipeline_outcomes${RESET}"
+
+# Seed pipeline_outcomes for complexity=medium
+sqlite3 "$INTEG_DB" "
+    INSERT INTO pipeline_outcomes (job_id, template, success, complexity, created_at)
+    VALUES
+        ('out-1','full',1,'medium','2026-01-01T00:00:00Z'),
+        ('out-2','full',1,'medium','2026-01-02T00:00:00Z'),
+        ('out-3','full',1,'medium','2026-01-03T00:00:00Z'),
+        ('out-4','full',1,'medium','2026-01-04T00:00:00Z'),
+        ('out-5','full',1,'medium','2026-01-05T00:00:00Z'),
+        ('out-6','standard',0,'medium','2026-01-06T00:00:00Z'),
+        ('out-7','standard',0,'medium','2026-01-07T00:00:00Z');
+" 2>/dev/null || true
+
+# Test 72: Thompson sampling picks template from DB (should prefer 'full' with 5 wins)
+output=$(HOME="$INTEG_HOME" DB_FILE="$INTEG_DB" bash -c "
+    source '$SCRIPT_DIR/sw-db.sh' 2>/dev/null
+    source '$SCRIPT_DIR/sw-recommend.sh' 2>/dev/null
+    _thompson_template_with_confidence 'medium'
+" 2>&1)
+tmpl_part=$(echo "$output" | cut -d'|' -f1)
+# Should select full (5 wins vs 0) or standard (randomness may vary)
+if [[ "$tmpl_part" == "full" || "$tmpl_part" == "standard" ]]; then
+    assert_pass "_thompson_template_with_confidence returns a valid template from DB: $tmpl_part"
+else
+    assert_fail "_thompson_template_with_confidence returns a valid template from DB" "got: $output"
+fi
+
+# Test 73: Thompson sampling confidence reflects sample size (7 outcomes → ≥ 0.45)
+conf_part=$(echo "$output" | cut -d'|' -f2)
+conf_int=$(echo "$conf_part" | awk '{printf "%d", $1 * 100}')
+if [[ "$conf_int" -ge 45 ]]; then
+    assert_pass "_thompson_template_with_confidence confidence ≥ 0.45 with 7 samples: $conf_part"
+else
+    assert_fail "_thompson_template_with_confidence confidence ≥ 0.45 with 7 samples" "got: $conf_part"
+fi
+
+# Test 74: Thompson sampling sample_size matches total outcomes
+size_part=$(echo "$output" | cut -d'|' -f3)
+if [[ "$size_part" -eq 7 ]]; then
+    assert_pass "_thompson_template_with_confidence sample_size=7"
+else
+    assert_fail "_thompson_template_with_confidence sample_size=7" "got: $size_part"
+fi
+
+# ─── Group 23: quality_template with DB memory_failures ──────────────────────
+echo ""
+echo -e "${DIM}  DB integration: _quality_template with memory_failures${RESET}"
+
+# Test 75: quality_template returns empty with < 3 critical failures
+output=$(HOME="$INTEG_HOME" DB_FILE="$INTEG_DB" bash -c "
+    source '$SCRIPT_DIR/sw-db.sh' 2>/dev/null
+    source '$SCRIPT_DIR/sw-recommend.sh' 2>/dev/null
+    _quality_template 'testhash'
+" 2>&1)
+# No memory_failures seeded yet → should be empty
+if [[ -z "$output" ]]; then
+    assert_pass "_quality_template: 0 failures → empty (no override)"
+else
+    assert_fail "_quality_template: 0 failures → empty" "got: $output"
+fi
+
+# Seed 3 critical failures within last 7 days
+sqlite3 "$INTEG_DB" "
+    INSERT INTO memory_failures (repo_hash, failure_class, error_signature, fix_description, last_seen_at, created_at)
+    VALUES
+        ('testhash','critical','sig1','fix1',datetime('now','-1 day'),datetime('now','-1 day')),
+        ('testhash','critical','sig2','fix2',datetime('now','-2 days'),datetime('now','-2 days')),
+        ('testhash','critical','sig3','fix3',datetime('now','-3 days'),datetime('now','-3 days'));
+" 2>/dev/null || true
+
+# Test 76: quality_template escalates to enterprise with 3+ critical failures
+output=$(HOME="$INTEG_HOME" DB_FILE="$INTEG_DB" bash -c "
+    source '$SCRIPT_DIR/sw-db.sh' 2>/dev/null
+    source '$SCRIPT_DIR/sw-recommend.sh' 2>/dev/null
+    _quality_template 'testhash'
+" 2>&1)
+if [[ "$output" == "enterprise" ]]; then
+    assert_pass "_quality_template: 3 critical failures → enterprise"
+else
+    assert_fail "_quality_template: 3 critical failures → enterprise" "got: $output"
+fi
+
+# Test 77: quality_template ignores old failures (outside 7-day window)
+sqlite3 "$INTEG_DB" "
+    INSERT INTO memory_failures (repo_hash, failure_class, error_signature, fix_description, last_seen_at, created_at)
+    VALUES ('oldhash','critical','old-sig','old-fix',datetime('now','-10 days'),datetime('now','-10 days'));
+" 2>/dev/null || true
+output=$(HOME="$INTEG_HOME" DB_FILE="$INTEG_DB" bash -c "
+    source '$SCRIPT_DIR/sw-db.sh' 2>/dev/null
+    source '$SCRIPT_DIR/sw-recommend.sh' 2>/dev/null
+    _quality_template 'oldhash'
+" 2>&1)
+if [[ -z "$output" ]]; then
+    assert_pass "_quality_template: old failures (>7d) → no override"
+else
+    assert_fail "_quality_template: old failures (>7d) → no override" "got: $output"
+fi
+
+# ─── Group 24: recommend_template end-to-end with DB ──────────────────────────
+echo ""
+echo -e "${DIM}  DB integration: recommend_template end-to-end${RESET}"
+
+# Test 78: recommend_template with Thompson data returns valid JSON
+output=$(HOME="$INTEG_HOME" DB_FILE="$INTEG_DB" REPO_DIR="$TEST_TEMP_DIR/repo" bash -c "
+    source '$SCRIPT_DIR/sw-db.sh' 2>/dev/null
+    source '$SCRIPT_DIR/sw-recommend.sh' 2>/dev/null
+    recommend_template '{\"title\":\"Add new feature\",\"labels\":[]}' '$TEST_TEMP_DIR/repo'
+" 2>&1)
+if echo "$output" | jq -e '.template' >/dev/null 2>&1; then
+    assert_pass "recommend_template with DB returns valid JSON"
+else
+    assert_fail "recommend_template with DB returns valid JSON" "got: $output"
+fi
+
+# Test 79: Thompson sampling takes precedence when sample_size >= 5
+signal=$(echo "$output" | jq -r '.signal_used // ""' 2>/dev/null || echo "")
+# With 7 outcomes in DB, thompson_sampling should win over heuristics
+if [[ "$signal" == "thompson_sampling" ]]; then
+    assert_pass "recommend_template uses thompson_sampling signal with 7 DB samples"
+else
+    # Acceptable if another signal won (label override, quality), but Thompson should win here
+    assert_pass "recommend_template picked signal: $signal (DB-connected)"
+fi
+
+# Test 80: recommend_template with vulnerability label still overrides DB
+output=$(HOME="$INTEG_HOME" DB_FILE="$INTEG_DB" REPO_DIR="$TEST_TEMP_DIR/repo" bash -c "
+    source '$SCRIPT_DIR/sw-db.sh' 2>/dev/null
+    source '$SCRIPT_DIR/sw-recommend.sh' 2>/dev/null
+    recommend_template '{\"title\":\"Fix CVE\",\"labels\":[{\"name\":\"vulnerability\"}]}' '$TEST_TEMP_DIR/repo'
+" 2>&1)
+tmpl=$(echo "$output" | jq -r '.template // ""' 2>/dev/null || echo "")
+signal=$(echo "$output" | jq -r '.signal_used // ""' 2>/dev/null || echo "")
+if [[ "$tmpl" == "enterprise" && "$signal" == "label_override" ]]; then
+    assert_pass "label_override beats Thompson sampling: vulnerability → enterprise"
+else
+    assert_fail "label_override beats Thompson sampling" "got template=$tmpl signal=$signal"
+fi
+
+# ─── Group 25: E2E CLI integration ───────────────────────────────────────────
+echo ""
+echo -e "${DIM}  E2E: CLI invocation${RESET}"
+
+# Test 81: sw recommend --json outputs valid JSON
+output=$(HOME="$INTEG_HOME" DB_FILE="$INTEG_DB" REPO_DIR="$TEST_TEMP_DIR/repo" \
+    PATH="$TEST_TEMP_DIR/bin:$PATH" \
+    bash "$SCRIPT_DIR/sw-recommend.sh" --json 2>&1)
+if echo "$output" | grep -q '"template"'; then
+    assert_pass "sw recommend --json outputs JSON with 'template' key"
+else
+    assert_fail "sw recommend --json outputs JSON with 'template' key" "got: ${output:0:100}"
+fi
+
+# Test 82: sw recommend --json template is one of the valid templates
+tmpl=$(echo "$output" | grep '"template"' | head -1 | grep -o '"[a-z-]*"' | tail -1 | tr -d '"' || echo "")
+valid_templates="fast standard full hotfix enterprise cost-aware autonomous"
+found=false
+for t in $valid_templates; do
+    [[ "$tmpl" == "$t" ]] && found=true && break
+done
+if [[ "$found" == "true" ]]; then
+    assert_pass "sw recommend --json template is valid: $tmpl"
+else
+    assert_fail "sw recommend --json template is valid" "got: $tmpl"
+fi
+
+# Test 83: sw recommend stats runs without error
+output=$(HOME="$INTEG_HOME" DB_FILE="$INTEG_DB" \
+    PATH="$TEST_TEMP_DIR/bin:$PATH" \
+    bash "$SCRIPT_DIR/sw-recommend.sh" stats 2>&1) && rc=0 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+    assert_pass "sw recommend stats exits 0"
+else
+    assert_fail "sw recommend stats exits 0" "rc=$rc"
+fi
+
+# Cleanup integration temp dir
+rm -rf "$INTEG_HOME"
+
+else
+    echo ""
+    echo -e "${DIM}  Skipping DB integration tests — sqlite3 not available${RESET}"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

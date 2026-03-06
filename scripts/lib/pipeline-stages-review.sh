@@ -287,13 +287,17 @@ If all requirements are met, write: \"Spec compliance: PASS — all planned task
     fi
 
     # ── Oversight gate: pipeline review/quality stages block on verdict ──
+    # Compute blocking issues and save blockers early (for self-healing, independent of gates)
+    local _sec_count _blocking reject_reason=""
+    _sec_count=$(grep -ciE '\*\*\[?Security\]?\*\*' "$review_file" 2>/dev/null || true)
+    _sec_count="${_sec_count:-0}"
+    _blocking=$((critical_count + _sec_count))
+    [[ "$_blocking" -gt 0 ]] && reject_reason="Review found ${_blocking} critical/security issue(s)"
+    if [[ "$_blocking" -gt 0 ]]; then
+        grep -iE '\*\*\[?(Critical|Security)\]?\*\*' "$review_file" \
+            > "$ARTIFACTS_DIR/review-blockers.md" 2>/dev/null || true
+    fi
     if [[ -x "$SCRIPT_DIR/sw-oversight.sh" ]] && [[ "${SKIP_GATES:-false}" != "true" ]]; then
-        local reject_reason=""
-        local _sec_count
-        _sec_count=$(grep -ciE '\*\*\[?Security\]?\*\*' "$review_file" 2>/dev/null || true)
-        _sec_count="${_sec_count:-0}"
-        local _blocking=$((critical_count + _sec_count))
-        [[ "$_blocking" -gt 0 ]] && reject_reason="Review found ${_blocking} critical/security issue(s)"
         if ! bash "$SCRIPT_DIR/sw-oversight.sh" gate --diff "$diff_file" --description "${GOAL:-Pipeline review}" --reject-if "$reject_reason" >/dev/null 2>&1; then
             error "Oversight gate rejected — blocking pipeline"
             emit_event "review.oversight_blocked" "issue=${ISSUE_NUMBER:-0}"

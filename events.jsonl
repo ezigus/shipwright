@@ -370,3 +370,4 @@
 {"ts":"2026-03-06T00:09:34Z","ts_epoch":1772755774,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-role-color.sh","lines":81,"usage":1}
 {"ts":"2026-03-06T00:09:36Z","ts_epoch":1772755776,"type":"patrol.issue_created","check":"untested_scripts","count":5}
 {"ts":"2026-03-06T00:44:10Z","ts_epoch":1772757850,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}
+{"ts":"2026-03-06T04:38:24Z","ts_epoch":1772771904,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}

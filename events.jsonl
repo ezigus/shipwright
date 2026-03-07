@@ -427,3 +427,4 @@
 {"ts":"2026-03-07T06:05:01Z","ts_epoch":1772863501,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-status.sh","lines":153,"usage":1}
 {"ts":"2026-03-07T06:05:01Z","ts_epoch":1772863501,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-role-color.sh","lines":81,"usage":1}
 {"ts":"2026-03-07T06:05:01Z","ts_epoch":1772863501,"type":"patrol.issue_created","check":"untested_scripts","count":5}
+{"ts":"2026-03-07T08:11:28Z","ts_epoch":1772871088,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}

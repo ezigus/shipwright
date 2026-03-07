@@ -1003,7 +1003,7 @@ run_test_gate() {
     fi
 
     TEST_PASSED=$all_passed
-    TEST_OUTPUT="$(echo "$combined_output" | tail -50)"
+    TEST_OUTPUT="$(echo "$combined_output" | tail -"${SW_TEST_OUTPUT_LINES:-200}")"
 }
 
 write_error_summary() {
@@ -1036,7 +1036,7 @@ write_error_summary() {
 
     # Extract error lines (last 30 lines, grep for error patterns)
     local error_lines_raw
-    error_lines_raw=$(tail -30 "$source_log" 2>/dev/null | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' | head -10 || true)
+    error_lines_raw=$(tail -"${SW_TEST_OUTPUT_LINES:-200}" "$source_log" 2>/dev/null | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' | head -10 || true)
 
     local error_count=0
     if [[ -n "$error_lines_raw" ]]; then

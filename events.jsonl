@@ -2711,3 +2711,4 @@
 {"ts":"2026-03-07T18:01:50Z","ts_epoch":1772906510,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-status.sh","lines":153,"usage":1}
 {"ts":"2026-03-07T18:01:50Z","ts_epoch":1772906510,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-role-color.sh","lines":81,"usage":1}
 {"ts":"2026-03-07T18:01:51Z","ts_epoch":1772906511,"type":"patrol.issue_created","check":"untested_scripts","count":5}
+{"ts":"2026-03-07T20:01:10Z","ts_epoch":1772913670,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}

@@ -25,6 +25,10 @@ if ! command -v claude &>/dev/null; then
     exit 0
 fi
 
+# ─── Pre-flight: verify auth status ──────────────────────────────────────────
+echo "Checking claude auth status..."
+claude auth status 2>&1 || true
+
 # ─── Single minimal Claude call (tiny prompt, one turn) ────────────────────────
 # Target: stay under ~$0.25; one short exchange is well under that.
 echo "Running budget-limited Claude smoke (target ~\$${BUDGET_TARGET_USD}/run, one minimal request)..."
@@ -34,13 +38,15 @@ cleanup() { rm -f "$out_file" "$err_file"; }
 trap cleanup EXIT
 
 run_claude() {
+    local timeout_cmd=""
     if command -v gtimeout &>/dev/null; then
-        gtimeout "$SCRIPT_TIMEOUT" claude -p "Reply with exactly: OK" --max-turns 1 2>"$err_file" | head -c 4096 > "$out_file"
+        timeout_cmd="gtimeout $SCRIPT_TIMEOUT"
     elif command -v timeout &>/dev/null; then
-        timeout "$SCRIPT_TIMEOUT" claude -p "Reply with exactly: OK" --max-turns 1 2>"$err_file" | head -c 4096 > "$out_file"
-    else
-        claude -p "Reply with exactly: OK" --max-turns 1 2>"$err_file" | head -c 4096 > "$out_file"
+        timeout_cmd="timeout $SCRIPT_TIMEOUT"
     fi
+    # Avoid pipe to preserve exit code; use --output-format to suppress TUI output
+    $timeout_cmd claude -p "Reply with exactly: OK" --max-turns 1 \
+        > "$out_file" 2>"$err_file"
 }
 set +e
 run_claude
@@ -58,6 +64,11 @@ if [[ "$exit_code" -ne 0 ]]; then
     echo "--- stdout ---"
     cat "$out_file"
     exit 1
+fi
+
+# Truncate to avoid processing excessive output
+if [[ "$(wc -c < "$out_file")" -gt 4096 ]]; then
+    head -c 4096 "$out_file" > "${out_file}.tmp" && mv "${out_file}.tmp" "$out_file"
 fi
 
 if ! grep -q "OK" "$out_file" 2>/dev/null; then

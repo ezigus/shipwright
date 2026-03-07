@@ -218,7 +218,7 @@ jobs:
           # Parse response (strip leading whitespace, backticks, asterisks from Claude markdown)
           APPROVED=$(echo "$RESPONSE" | sed 's/^[ \t`*]*//' | grep -i "^APPROVED:" | head -1 | awk '{print $2}' | tr -d '`*' | tr '[:upper:]' '[:lower:]')
           COMPLEXITY=$(echo "$RESPONSE" | sed 's/^[ \t`*]*//' | grep -i "^COMPLEXITY:" | head -1 | awk '{print $2}' | tr -d '`*' | tr '[:upper:]' '[:lower:]')
-          REASON=$(echo "$RESPONSE" | sed 's/^[ \t`*]*//' | grep -i "^REASON:" | head -1 | sed 's/^REASON: *//i' | tr -d '`')
+          REASON=$(echo "$RESPONSE" | sed 's/^[ \t`*]*//' | grep -i "^REASON:" | head -1 | sed 's/^REASON: *//i' | tr -d '`*')
 
           # Fail-safe defaults: never auto-approve on parse failure
           APPROVED="${APPROVED:-false}"

@@ -42,20 +42,30 @@ run_claude() {
         claude -p "Reply with exactly: OK" --max-turns 1 2>"$err_file" | head -c 4096 > "$out_file"
     fi
 }
-if ! run_claude; then
-    exit_code=$?
+set +e
+run_claude
+exit_code=$?
+set -e
+
+if [[ "$exit_code" -ne 0 ]]; then
     if [[ "$exit_code" -eq 124 ]]; then
         echo "FAIL: Claude smoke timed out after ${SCRIPT_TIMEOUT}s"
     else
         echo "FAIL: Claude call failed (exit $exit_code)"
-        cat "$err_file" >&2
     fi
+    echo "--- stderr ---"
+    cat "$err_file" >&2
+    echo "--- stdout ---"
+    cat "$out_file"
     exit 1
 fi
 
 if ! grep -q "OK" "$out_file" 2>/dev/null; then
     echo "FAIL: Unexpected response (expected to contain OK):"
+    echo "--- stdout ---"
     head -20 "$out_file"
+    echo "--- stderr ---"
+    cat "$err_file" >&2
     exit 1
 fi
 

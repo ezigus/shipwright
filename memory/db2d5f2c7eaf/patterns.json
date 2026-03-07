@@ -1,6 +1,6 @@
 {
   "repo": "ezigus/shipwright",
-  "captured_at": "2026-02-25T19:59:55Z",
+  "captured_at": "2026-03-07T20:27:01Z",
   "project": {
     "type": "node",
     "framework": "",
@@ -9,7 +9,7 @@
     "language": "javascript"
   },
   "conventions": {
-    "source_dir": "",
+    "source_dir": "src/",
     "test_pattern": "*.test.js",
     "import_style": "commonjs"
   }

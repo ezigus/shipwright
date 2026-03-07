@@ -2055,3 +2055,5 @@
 {"ts":"2026-03-07T14:40:46Z","ts_epoch":1772894446,"type":"model.outcome","issue":0,"stage":"plan","model":"opus","success":"true"}
 {"ts":"2026-03-07T14:40:46Z","ts_epoch":1772894446,"type":"pipeline.cost","input_tokens":0,"output_tokens":0,"model":"sonnet","cost_usd":0.0000}
 {"ts":"2026-03-07T14:40:51Z","ts_epoch":1772894451,"type":"regression.baseline","timestamp":"2026-03-07T14:40:51Z","test_count":0,"pass_rate":0,"script_count":248,"total_lines":255070}
+{"ts":"2026-03-07T14:56:34Z","ts_epoch":1772895394,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-07T14:56:39Z","ts_epoch":1772895399,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}

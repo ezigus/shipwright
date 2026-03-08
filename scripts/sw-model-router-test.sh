@@ -64,7 +64,7 @@ assert_eq "route test at 50 = sonnet" "sonnet" "$output"
 
 # ─── Test 5: Route model with low complexity override ─────────────────────
 output=$(bash "$SCRIPT_DIR/sw-model-router.sh" route build 10 2>&1)
-assert_eq "route build at 10 (low) = sonnet" "sonnet" "$output"
+assert_eq "route build at 10 (low) = haiku" "haiku" "$output"
 
 # ─── Test 6: Route model with high complexity override ────────────────────
 output=$(bash "$SCRIPT_DIR/sw-model-router.sh" route intake 90 2>&1)
@@ -157,7 +157,7 @@ for stage in intake plan design build test review compound_quality validate moni
 done
 out_low=$(bash "$SCRIPT_DIR/sw-model-router.sh" route plan 10 2>&1)
 out_high=$(bash "$SCRIPT_DIR/sw-model-router.sh" route plan 95 2>&1)
-assert_eq "route plan at low complexity = sonnet" "sonnet" "$out_low"
+assert_eq "route plan at low complexity = haiku" "haiku" "$out_low"
 assert_eq "route plan at high complexity = opus" "opus" "$out_high"
 
 # ─── Test 17: Config set and config show cycle ───────────────────────────
@@ -209,7 +209,7 @@ if [[ "$(type -t route_model_auto 2>/dev/null)" == "function" ]]; then
     # With low cached score, routing should give a simpler model than opus for build
     export PIPELINE_COMPLEXITY_SCORE="10"
     output3=$(route_model_auto "test" "" "" "" "0" 2>/dev/null)
-    assert_eq "route_model_auto with low cached score routes to sonnet" "sonnet" "$output3"
+    assert_eq "route_model_auto with low cached score routes to haiku" "haiku" "$output3"
     unset PIPELINE_COMPLEXITY_SCORE 2>/dev/null || true
 else
     assert_fail "route_model_auto function exists"
@@ -246,6 +246,48 @@ if [[ "$output" =~ ^[0-9]+$ ]]; then
     assert_pass "model-router classify returns numeric score (got $output)"
 else
     assert_fail "model-router classify returns numeric score" "got: $output"
+fi
+
+# ─── Test 23: ab_test_should_use_classifier function ──────────────────────
+echo ""
+echo -e "${BOLD}  A/B Test Classifier Gate${RESET}"
+source "$SCRIPT_DIR/sw-model-router.sh" 2>/dev/null || true
+if [[ "$(type -t ab_test_should_use_classifier 2>/dev/null)" == "function" ]]; then
+    assert_pass "ab_test_should_use_classifier function exists"
+
+    # With no config file, should return 1 (false)
+    ab_test_should_use_classifier && rc=0 || rc=$?
+    assert_eq "ab_test_should_use_classifier returns 1 with no config" "1" "$rc"
+
+    # With A/B test enabled at 100%, should return 0 (true)
+    ensure_config 2>/dev/null || true
+    ab_tmp=$(mktemp)
+    jq '.a_b_test = {"enabled": true, "percentage": 100, "variant": "cost-optimized"}' \
+        "$HOME/.shipwright/optimization/model-routing.json" > "$ab_tmp" && \
+        mv "$ab_tmp" "$HOME/.shipwright/optimization/model-routing.json"
+    _resolve_routing_config
+    ab_test_should_use_classifier && rc=0 || rc=$?
+    assert_eq "ab_test_should_use_classifier returns 0 at 100%" "0" "$rc"
+
+    # With A/B test disabled, should return 1 (false)
+    ab_tmp2=$(mktemp)
+    jq '.a_b_test.enabled = false' \
+        "$HOME/.shipwright/optimization/model-routing.json" > "$ab_tmp2" && \
+        mv "$ab_tmp2" "$HOME/.shipwright/optimization/model-routing.json"
+    _resolve_routing_config
+    ab_test_should_use_classifier && rc=0 || rc=$?
+    assert_eq "ab_test_should_use_classifier returns 1 when disabled" "1" "$rc"
+
+    # With A/B test at 0%, should return 1 (false)
+    ab_tmp3=$(mktemp)
+    jq '.a_b_test = {"enabled": true, "percentage": 0, "variant": "cost-optimized"}' \
+        "$HOME/.shipwright/optimization/model-routing.json" > "$ab_tmp3" && \
+        mv "$ab_tmp3" "$HOME/.shipwright/optimization/model-routing.json"
+    _resolve_routing_config
+    ab_test_should_use_classifier && rc=0 || rc=$?
+    assert_eq "ab_test_should_use_classifier returns 1 at 0%" "1" "$rc"
+else
+    assert_fail "ab_test_should_use_classifier function exists"
 fi
 
 echo ""

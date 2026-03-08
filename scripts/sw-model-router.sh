@@ -170,7 +170,7 @@ route_model() {
     # Strategy 2: Built-in defaults (complexity + stage rules)
     if [[ -z "$model" ]]; then
         if [[ "$complexity" -lt "$COMPLEXITY_LOW" ]]; then
-            model="sonnet"
+            model="haiku"
         elif [[ "$complexity" -gt "$COMPLEXITY_HIGH" ]]; then
             model="opus"
         else
@@ -188,7 +188,9 @@ route_model() {
 
     # Complexity override: upgrade/downgrade based on complexity even when config says otherwise
     if [[ "$complexity" -lt "$COMPLEXITY_LOW" && "$model" == "opus" ]]; then
-        model="sonnet"
+        model="haiku"
+    elif [[ "$complexity" -lt "$COMPLEXITY_LOW" && "$model" == "sonnet" ]]; then
+        model="haiku"
     elif [[ "$complexity" -gt "$COMPLEXITY_HIGH" && "$model" == "haiku" ]]; then
         model="opus"
     elif [[ "$complexity" -gt "$COMPLEXITY_HIGH" ]]; then
@@ -236,9 +238,15 @@ route_model_auto() {
         return
     fi
 
-    # Check for cached complexity score
+    # Check for cached complexity score (set on first classification in this pipeline run)
     if [[ -n "${PIPELINE_COMPLEXITY_SCORE:-}" ]]; then
         route_model "$stage" "$PIPELINE_COMPLEXITY_SCORE"
+        return
+    fi
+
+    # A/B test gate: if classifier not enabled and this run is not in A/B experimental group, use defaults
+    if ! is_classifier_enabled && ! ab_test_should_use_classifier; then
+        route_model "$stage" 50
         return
     fi
 
@@ -254,6 +262,33 @@ route_model_auto() {
     emit_event "classifier" "score=$score" "stage=$stage" || true
 
     route_model "$stage" "$score"
+}
+
+# ─── A/B Test: Should This Pipeline Use the Classifier? ────────────────────
+# Returns 0 (true) if this pipeline run should use classifier-based routing.
+# Uses configured percentage and a random draw for assignment.
+ab_test_should_use_classifier() {
+    _resolve_routing_config
+    if [[ -z "$MODEL_ROUTING_CONFIG" || ! -f "$MODEL_ROUTING_CONFIG" ]]; then
+        return 1
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        return 1
+    fi
+
+    local enabled percentage
+    enabled=$(jq -r '.a_b_test.enabled // false' "$MODEL_ROUTING_CONFIG" 2>/dev/null || echo "false")
+    if [[ "$enabled" != "true" ]]; then
+        return 1
+    fi
+
+    percentage=$(jq -r '.a_b_test.percentage // 0' "$MODEL_ROUTING_CONFIG" 2>/dev/null || echo "0")
+    if ! [[ "$percentage" =~ ^[0-9]+$ ]]; then
+        percentage=0
+    fi
+
+    local rand=$((RANDOM % 100))
+    [[ "$rand" -lt "$percentage" ]]
 }
 
 # ─── Check if Classifier Routing is Enabled ────────────────────────────────

@@ -1,29 +1,29 @@
-# Pipeline Tasks — chore: close issue #45 - merge goal complete
+# Pipeline Tasks — Pipeline stage timeout enforcement and auto-recovery
 
 ## Implementation Checklist
-- [ ] Task 1: Verify branch working tree is clean
-- [ ] Task 2: Verify recent commit history (5 iterations)
-- [ ] Task 3: Create PR from feature branch to main with comprehensive description
-- [ ] Task 4: Wait for GitHub Actions status checks to complete
-- [ ] Task 5: Verify all PR checks pass
-- [ ] Task 6: Request code review approval (if branch protection requires)
-- [ ] Task 7: Merge PR to main (squash merge recommended)
-- [ ] Task 8: Delete feature branch after merge
-- [ ] Task 9: Verify merge completed on main with `git pull`
-- [ ] Task 10: Close GitHub issue #45 with merge reference
-- [ ] Task 11: Sync local main with remote
-- [ ] Task 12: Verify merged commits are functional
-- [ ] Task 13: Update MEMORY.md with completion status
-- [ ] Task 14: Document lessons learned for future pipelines
-- [ ] Task 15: Archive pipeline artifacts and logs
-- [x] Branch is clean and ready
-- [x] Autonomous iterations 3-5 complete
-- [x] Git credential fix implemented
-- [x] Chaos test fix implemented
-- [x] Documentation auto-sync configured
+- [ ] Task 1: Add `pipeline.stage_timeouts` section to `config/policy.json` with per-stage values
+- [ ] Task 2: Add `pipeline.stage_timeouts` defaults to `config/defaults.json`
+- [ ] Task 3: Add `stage.timeout` event type to `config/event-schema.json`
+- [ ] Task 4: Implement `get_stage_timeout()` function in `scripts/sw-pipeline.sh`
+- [ ] Task 5: Implement `capture_timeout_diagnostics()` function in `scripts/sw-pipeline.sh`
+- [ ] Task 6: Implement `run_with_stage_timeout()` function in `scripts/sw-pipeline.sh`
+- [ ] Task 7: Modify `run_stage_with_retry()` to call `run_with_stage_timeout()` instead of direct stage function
+- [ ] Task 8: Add `timeout_seconds` config to pipeline templates (standard, autonomous, full, hotfix, fast, cost-aware)
+- [ ] Task 9: Write test file `scripts/sw-pipeline-timeout-test.sh` with 8+ test cases
+- [ ] Task 10: Run `npm test` and verify all existing tests still pass
+- [ ] Task 11: Manually verify timeout enforcement with a mock slow stage
+- [ ] `get_stage_timeout()` resolves timeout from template config > policy > defaults > hardcoded
+- [ ] Stages that exceed their timeout are terminated with SIGTERM (then SIGKILL after 30s)
+- [ ] Diagnostic context (process tree, log tail, git status) captured before kill
+- [ ] `stage.timeout` event emitted to events.jsonl with stage, timeout_s, elapsed_s
+- [ ] Timed-out stages classified as `infrastructure` and retried per existing retry logic
+- [ ] All 9 pipeline templates have appropriate `timeout_seconds` (or rely on defaults)
+- [ ] 8+ test cases covering timeout trigger, diagnostics, events, retry, config resolution
+- [ ] `npm test` passes with no regressions
+- [ ] Build stage default timeout is 90min (5400s), all others default to 30min (1800s)
 
 ## Context
 - Pipeline: standard
-- Branch: ci/chore-close-issue-45-merge-goal-complete
-- Issue: none
-- Generated: 2026-03-03T01:01:38Z
+- Branch: ci/pipeline-stage-timeout-enforcement-and-a-62
+- Issue: #62
+- Generated: 2026-03-08T08:14:15Z

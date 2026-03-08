@@ -15,19 +15,19 @@
       "id": "intake",
       "enabled": true,
       "gate": "auto",
-      "config": {}
+      "config": { "timeout_seconds": 1800 }
     },
     {
       "id": "plan",
       "enabled": true,
       "gate": "approve",
-      "config": { "model": "opus" }
+      "config": { "model": "opus", "timeout_seconds": 1800 }
     },
     {
       "id": "design",
       "enabled": true,
       "gate": "approve",
-      "config": { "model": "opus" }
+      "config": { "model": "opus", "timeout_seconds": 1800 }
     },
     {
       "id": "build",
@@ -36,20 +36,21 @@
       "config": {
         "max_iterations": 20,
         "audit": true,
-        "quality_gates": true
+        "quality_gates": true,
+        "timeout_seconds": 5400
       }
     },
     {
       "id": "test",
       "enabled": true,
       "gate": "auto",
-      "config": { "coverage_min": 80 }
+      "config": { "coverage_min": 80, "timeout_seconds": 1800 }
     },
     {
       "id": "review",
       "enabled": true,
       "gate": "approve",
-      "config": {}
+      "config": { "timeout_seconds": 1800 }
     },
     {
       "id": "compound_quality",
@@ -62,14 +63,15 @@
         "dod_audit": true,
         "max_cycles": 3,
         "audit_intensity": "auto",
-        "compound_quality_blocking": true
+        "compound_quality_blocking": true,
+        "timeout_seconds": 1800
       }
     },
     {
       "id": "pr",
       "enabled": true,
       "gate": "approve",
-      "config": { "wait_ci": false }
+      "config": { "wait_ci": false, "timeout_seconds": 1800 }
     },
     {
       "id": "merge",
@@ -80,7 +82,8 @@
         "wait_ci_timeout_s": 600,
         "auto_delete_branch": true,
         "auto_merge": true,
-        "auto_approve": true
+        "auto_approve": true,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -90,7 +93,8 @@
       "config": {
         "staging_cmd": "",
         "production_cmd": "",
-        "rollback_cmd": ""
+        "rollback_cmd": "",
+        "timeout_seconds": 1800
       }
     },
     {
@@ -100,7 +104,8 @@
       "config": {
         "smoke_cmd": "",
         "health_url": "",
-        "close_issue": true
+        "close_issue": true,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -114,7 +119,8 @@
         "log_pattern": "ERROR|FATAL|PANIC",
         "log_cmd": "",
         "rollback_cmd": "",
-        "auto_rollback": false
+        "auto_rollback": false,
+        "timeout_seconds": 1800
       }
     }
   ]

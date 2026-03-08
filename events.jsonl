@@ -60,3 +60,10 @@
 {"ts":"2026-03-08T01:20:53Z","ts_epoch":1772932853,"type":"reasoning.trace","job_id":"pipeline-1438324-42","complexity":"medium","risk":50,"template":"standard"}
 {"ts":"2026-03-08T03:48:56Z","ts_epoch":1772941736,"type":"optimize.memory_pruned","pruned":0,"strengthened":1,"promoted":0}
 {"ts":"2026-03-08T03:48:56Z","ts_epoch":1772941736,"type":"optimize.memory_pruned","pruned":0,"strengthened":1,"promoted":0}
+{"ts":"2026-03-08T04:37:53Z","ts_epoch":1772944673,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}
+{"ts":"2026-03-08T04:37:57Z","ts_epoch":1772944677,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-08T04:39:40Z","ts_epoch":1772944780,"type":"strategic.issue_created","title":"Pipeline stage timeout enforcement and auto-recovery","priority":"P0","complexity":"standard"}
+{"ts":"2026-03-08T04:39:43Z","ts_epoch":1772944783,"type":"strategic.issue_created","title":"Pipeline health analytics dashboard with success rate trending","priority":"P4","complexity":"standard"}
+{"ts":"2026-03-08T04:39:46Z","ts_epoch":1772944786,"type":"strategic.issue_created","title":"Interactive diagnostic mode for failed pipeline troubleshooting","priority":"P1","complexity":"fast"}
+{"ts":"2026-03-08T04:39:49Z","ts_epoch":1772944789,"type":"strategic.issue_created","title":"Cost-aware model routing: Haiku for simple tasks, Opus for complex","priority":"P3","complexity":"standard"}
+{"ts":"2026-03-08T04:39:49Z","ts_epoch":1772944789,"type":"strategic.cycle_complete","issues_created":4,"issues_skipped":1}

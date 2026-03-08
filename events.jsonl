@@ -62,3 +62,11 @@
 {"ts":"2026-03-08T07:55:26Z","ts_epoch":1772956526,"type":"loop.iteration_complete","iteration":1,"max":20,"job_id":"standard","agent":1,"test_passed":"true","commits":0,"status":"running"}
 {"ts":"2026-03-08T07:55:28Z","ts_epoch":1772956528,"type":"loop.iteration_start","iteration":2,"max":20,"job_id":"standard","agent":1,"test_passed":"true"}
 {"ts":"2026-03-08T07:55:38Z","ts_epoch":1772956538,"type":"loop.context_efficiency","iteration":2,"raw_prompt_chars":26449,"trimmed_prompt_chars":26449,"trim_ratio":0.0,"budget_utilization":13.2,"budget_chars":200000,"job_id":"standard"}
+{"ts":"2026-03-08T08:12:00Z","ts_epoch":1772957520,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}
+{"ts":"2026-03-08T08:12:04Z","ts_epoch":1772957524,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-08T08:13:45Z","ts_epoch":1772957625,"type":"strategic.issue_created","title":"Pipeline-level intelligent retry with failure classification","priority":"P0","complexity":"standard"}
+{"ts":"2026-03-08T08:13:47Z","ts_epoch":1772957627,"type":"strategic.issue_created","title":"Build iteration quality scoring with adaptive prompting","priority":"P0","complexity":"standard"}
+{"ts":"2026-03-08T08:13:50Z","ts_epoch":1772957630,"type":"strategic.issue_created","title":"Test flakiness detection and isolated auto-retry","priority":"P0","complexity":"standard"}
+{"ts":"2026-03-08T08:13:53Z","ts_epoch":1772957633,"type":"strategic.issue_created","title":"Quick validation workflow for rapid pre-pipeline feedback","priority":"P1","complexity":"fast"}
+{"ts":"2026-03-08T08:13:56Z","ts_epoch":1772957636,"type":"strategic.issue_created","title":"Refactor sw-pipeline.sh monolith into modular stage architecture","priority":"P6","complexity":"full"}
+{"ts":"2026-03-08T08:13:56Z","ts_epoch":1772957636,"type":"strategic.cycle_complete","issues_created":5,"issues_skipped":0}

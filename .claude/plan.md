@@ -1,39 +1,70 @@
 # Implementation Plan: Cost-Aware Model Routing
 
+## Status Assessment
+
+**Iteration 1 (commit e77d6d2) completed ~80% of the feature.** The task classifier, model router integration, policy config, pipeline/loop wiring, cost-aware template, and test suites are all implemented and passing (40 classifier tests + 51 router tests = 91 total, all green).
+
+### What's Done
+
+- [x] Task 1: `scripts/sw-task-classifier.sh` — 4-signal weighted classifier (322 LOC)
+- [x] Task 2: `config/policy.json` — `modelRouting` section with weights, thresholds, stage overrides
+- [x] Task 3: `scripts/sw-model-router.sh` — `route_model_auto()`, classifier sourcing, `is_classifier_enabled()`, caching
+- [x] Task 4: `scripts/sw-pipeline.sh` — Classifier wired into stage execution (lines 1701-1715)
+- [x] Task 5: `scripts/sw-loop.sh` — `classify_task_from_git()` integration (line 437)
+- [x] Task 6: `templates/pipelines/cost-aware.json` — `classify_complexity: true` on adaptive stages
+- [x] Task 8: `scripts/sw-task-classifier-test.sh` — 40 tests (all passing)
+- [x] Task 9: `scripts/sw-model-router-test.sh` — 51 tests including auto-classify integration (all passing)
+- [x] Task 10 (partial): `scripts/skills/generated/cost-aware-model-routing.md` — exists but outdated
+
+### What Remains
+
+- [ ] Task 7: A/B testing enhancement — `ab_test_should_use_classifier()` not implemented
+- [ ] Task 10: Documentation needs update to reflect actual implementation
+- [ ] Gap: Cost-aware template still has some hardcoded models that should use dynamic routing
+- [ ] Gap: `route_model()` complexity-low threshold routes to `sonnet` instead of `haiku`
+- [ ] Gap: No `line_count` parameter passed from pipeline classifier call (line 1703 passes `"0"`)
+- [ ] Gap: Budget enforcement doesn't factor in model tier cost differential
+
+---
+
 ## Brainstorming: Design Analysis
 
 ### Requirements Clarity
-**Minimum viable change**: A task complexity classifier that scores tasks based on file count, change size, and error context, then feeds that score into the existing `route_model()` function. The existing model router, A/B testing, cost tracking, and cost-aware template already exist — the missing piece is **dynamic complexity classification at runtime**.
 
-**Implicit requirements**:
-- The classifier must run fast (< 1s) — it's called before every stage
-- Must not break existing pipelines that don't use cost-aware routing
-- Must integrate with the existing `INTELLIGENCE_COMPLEXITY` variable used by `pipeline-intelligence.sh`
+**Minimum viable change**: Fix the remaining gaps and add the A/B testing function. The core infrastructure is solid — the classifier scores correctly, the router selects tiers, caching works, and pipeline/loop integration exists.
+
+**Implicit requirements discovered during analysis**:
+
+- The `route_model()` function routes `complexity < 30` to **sonnet** (line 172), not haiku. This contradicts the classifier design where score < 30 should map to haiku. The issue title says "Haiku for simple tasks" — this is a bug.
+- Pipeline classifier call at `sw-pipeline.sh:1703` passes `"0"` for line_count, missing the actual change size signal. Should use `git diff --stat` to get real line count.
+- The cost-aware template hardcodes `model: "claude-haiku-4-5-20251001"` on intake/test/audit/pr stages. These should either be removed (let classifier decide) or documented as intentional overrides.
 
 ### Alternatives Considered
 
-**Approach A: Enhance existing `route_model()` with inline classifier**
-- Pros: Single file change, minimal blast radius
-- Cons: Mixes concerns (routing + classification), harder to test independently
-- Blast radius: 1 file
+**Approach A: Fix route_model() threshold + add A/B function** (CHOSEN)
 
-**Approach B: Separate classifier module + policy config integration** (CHOSEN)
-- Pros: Clean separation of concerns, testable independently, configurable via policy.json, reusable by other systems (triage, intelligence)
-- Cons: 2-3 new files, slightly more complexity
-- Blast radius: 3-4 files modified, 2 new files created
+- Pros: Minimal changes (~100 LOC), builds on solid foundation, all tests already exist
+- Cons: Doesn't address all gaps in one sweep
+- Blast radius: 4-5 files modified
 
-**Approach C: LLM-powered classifier (use Claude to assess complexity)**
-- Pros: Most accurate classification
-- Cons: Adds latency, costs money to classify (defeats purpose), requires API key
-- Rejected: Too expensive and slow for a cost-saving feature
+**Approach B: Rewrite router with full tier-aware budget enforcement**
 
-**Decision**: Approach B — separate classifier module that `route_model()` calls when no explicit complexity is provided.
+- Pros: More complete solution, budget decisions account for model cost differences
+- Cons: Scope creep, existing budget enforcement works at pipeline level, over-engineering for P3
+- Rejected: Can be a follow-up issue
+
+**Decision**: Approach A — fix the critical routing bug (sonnet→haiku for simple tasks), implement `ab_test_should_use_classifier()`, enhance pipeline line_count detection, and update documentation.
 
 ### Risk Analysis
-1. **Misclassification routes complex tasks to Haiku → failures**: Mitigated by escalation on failure (already exists), and uncertainty threshold routing to next tier up
-2. **Breaking existing pipelines**: Mitigated by making classifier opt-in via `cost_aware_mode` flag (already in config)
-3. **Performance overhead of file analysis**: Mitigated by caching classifier results per pipeline run
-4. **Bash 3.2 compatibility**: Must avoid associative arrays, `readarray`, etc.
+
+1. **Changing `route_model()` low-complexity behavior from sonnet→haiku**: Could cause regressions if any code depends on sonnet being the minimum tier.
+   - **Mitigation**: Existing escalation (`escalate_model()`) handles haiku→sonnet→opus on failure. The cost-aware template already assigns haiku to several stages. Risk is low.
+
+2. **A/B testing splitting pipelines**: Could introduce non-determinism if A/B state leaks between test runs.
+   - **Mitigation**: A/B is opt-in (`a_b_test.enabled: false` by default). Test suite unsets env vars between tests.
+
+3. **Pipeline line_count detection adding latency**: Running `git diff --stat` adds ~50ms.
+   - **Mitigation**: Already cached via `PIPELINE_COMPLEXITY_SCORE`. Runs once per pipeline, not per stage.
 
 ---
 
@@ -42,282 +73,317 @@
 ### Component Diagram
 
 ```
-┌─────────────────────┐     ┌──────────────────────┐
-│  Pipeline / Loop     │────▶│  Task Classifier      │
-│  (sw-pipeline.sh)    │     │  (sw-task-classifier.sh)│
-└──────┬──────────────┘     └──────┬───────────────┘
-       │                           │ complexity score
-       ▼                           ▼
-┌─────────────────────┐     ┌──────────────────────┐
-│  Model Router        │◀───│  Policy Config        │
-│  (sw-model-router.sh)│     │  (config/policy.json) │
-└──────┬──────────────┘     └──────────────────────┘
-       │ model selection
+┌─────────────────────┐     ┌──────────────────────────┐
+│  Pipeline / Loop     │────▶│  Task Classifier           │
+│  (sw-pipeline.sh)    │     │  (sw-task-classifier.sh)   │
+│  (sw-loop.sh)        │     │  classify_task()            │
+└──────┬──────────────┘     │  classify_task_from_git()   │
+       │                     └──────┬───────────────────┘
+       │                            │ score 0-100
+       ▼                            ▼
+┌─────────────────────┐     ┌──────────────────────────┐
+│  Model Router        │◀───│  Policy Config             │
+│  (sw-model-router.sh)│     │  (config/policy.json)      │
+│  route_model()       │     │  modelRouting section       │
+│  route_model_auto()  │     └──────────────────────────┘
+│  ab_test_*()         │
+└──────┬──────────────┘
+       │ haiku|sonnet|opus
        ▼
 ┌─────────────────────┐
 │  Cost Tracker        │
 │  (sw-cost.sh)        │
+│  cost_record()       │
+│  cost_check_budget() │
 └─────────────────────┘
 ```
-
-### Data Flow
-
-1. Pipeline starts → intake stage extracts issue metadata
-2. **Classifier** analyzes: file count, line changes, error context, keywords → outputs complexity score (0-100)
-3. **Router** receives (stage, complexity) → selects model tier (haiku/sonnet/opus)
-4. Pipeline runs stage with selected model
-5. **Cost tracker** records actual tokens + model used
-6. On failure → **escalation** bumps model tier and retries
 
 ### Interface Contracts
 
 ```typescript
-// Task Classifier
-classify_task(issue_body: string, file_list?: string, error_context?: string): number // 0-100
+// Task Classifier (existing, no changes needed)
+classify_task(issue_body: string, file_list?: string, error_context?: string, line_count?: string): number // 0-100
+classify_task_from_git(issue_body?: string, error_context?: string): number // 0-100
+complexity_to_tier(score: number, low?: number, high?: number): "haiku" | "sonnet" | "opus"
 
-// Model Router (existing, enhanced)
+// Model Router (fix: low complexity → haiku instead of sonnet)
 route_model(stage: string, complexity?: number): "haiku" | "sonnet" | "opus"
+route_model_auto(stage: string, issue_body?: string, file_list?: string, error_context?: string, line_count?: string): "haiku" | "sonnet" | "opus"
 
-// Policy Config (new section in policy.json)
-interface ModelRoutingPolicy {
-  enabled: boolean;
-  complexity_thresholds: { low: number; high: number };
-  stage_overrides: Record<string, "haiku" | "sonnet" | "opus">;
-  confidence_threshold: number; // below this, route to next tier up
-  classifier_weights: {
-    file_count: number;
-    line_changes: number;
-    error_complexity: number;
-    keywords: number;
-  };
-}
+// A/B Testing (NEW function)
+ab_test_should_use_classifier(): boolean  // true = use classifier, false = use static routing
+
+// Error contracts: all functions fall back to safe defaults on error (sonnet for router, 50 for classifier)
+```
+
+### Data Flow
+
+```
+GitHub Issue → Pipeline Intake
+  → Extract: issue_body, file_list (git diff --name-only), line_count (git diff --stat)
+  → classify_task(issue_body, file_list, error_context, line_count) → score 0-100
+  → Cache: export PIPELINE_COMPLEXITY_SCORE=$score
+  → For each stage:
+      → [A/B check] ab_test_should_use_classifier() → static or dynamic routing
+      → route_model(stage, PIPELINE_COMPLEXITY_SCORE) → haiku|sonnet|opus
+      → Execute stage with selected model
+      → On failure: escalate_model() → retry with next tier
+      → cost_record(tokens, model, stage)
 ```
 
 ### Error Boundaries
-- Classifier errors → fall back to default complexity (50), log warning
-- Router errors → fall back to sonnet (safe middle ground)
-- Cost tracking errors → non-blocking, log and continue
+
+| Component            | Error                  | Handling                                    |
+| -------------------- | ---------------------- | ------------------------------------------- |
+| Classifier           | crash/invalid output   | Fall back to score=50 (sonnet), log warning |
+| Router               | missing config/jq      | Use hardcoded defaults (stage-based)        |
+| A/B test             | config error           | Default to control group (static routing)   |
+| Cost tracker         | write failure          | Non-blocking, log and continue              |
+| Pipeline integration | classifier not sourced | Skip classification, use template defaults  |
 
 ---
 
 ## Files to Modify
 
-### New Files
-1. **`scripts/sw-task-classifier.sh`** — Task complexity classifier module
-2. **`scripts/sw-task-classifier-test.sh`** — Tests for classifier
-
 ### Modified Files
-3. **`scripts/sw-model-router.sh`** — Integrate classifier into route_model, add auto-classify mode
-4. **`scripts/sw-model-router-test.sh`** — Add tests for classifier integration
-5. **`config/policy.json`** — Add `modelRouting` section with classifier config
-6. **`templates/pipelines/cost-aware.json`** — Add `classify_complexity: true` to stage configs
-7. **`scripts/sw-pipeline.sh`** — Call classifier during stage execution, pass complexity to model router
-8. **`scripts/lib/loop-iteration.sh`** — Pass classified complexity when selecting model for loop iterations
+
+1. **`scripts/sw-model-router.sh`** — Fix `route_model()` to route low complexity to haiku (not sonnet); add `ab_test_should_use_classifier()`
+2. **`scripts/sw-pipeline.sh`** — Enhance classifier call to pass real line_count from `git diff --stat`
+3. **`scripts/sw-model-router-test.sh`** — Add tests for haiku routing at low complexity; add A/B classifier tests
+4. **`scripts/skills/generated/cost-aware-model-routing.md`** — Update documentation to match actual implementation
+5. **`templates/pipelines/cost-aware.json`** — Document which stages use hardcoded models vs dynamic routing
 
 ---
 
 ## Implementation Steps
 
-### Task 1: Create Task Complexity Classifier (`sw-task-classifier.sh`)
-**Dependencies**: None
+### Step 1: Fix `route_model()` low-complexity routing (sw-model-router.sh)
 
-Create `scripts/sw-task-classifier.sh` with:
+**The critical bug**: Line 172 routes `complexity < COMPLEXITY_LOW` to `sonnet`. Per the design and issue title ("Haiku for simple tasks"), this should be `haiku`.
+
+Change in `route_model()` Strategy 2 block (lines 171-187):
 
 ```bash
-# classify_task <issue_body> [file_list] [error_context]
-# Returns: complexity score 0-100
+# Before:
+if [[ "$complexity" -lt "$COMPLEXITY_LOW" ]]; then
+    model="sonnet"
+
+# After:
+if [[ "$complexity" -lt "$COMPLEXITY_LOW" ]]; then
+    model="haiku"
 ```
 
-**Scoring heuristics** (weighted, configurable via policy.json):
-- **File count signal** (weight 0.3): 1-2 files → 10, 3-5 → 40, 6-10 → 70, 10+ → 90
-- **Change size signal** (weight 0.3): <50 lines → 10, 50-200 → 40, 200-500 → 70, 500+ → 90
-- **Error complexity signal** (weight 0.2): no error → 10, syntax error → 20, logic error → 50, systemic → 80
-- **Keyword/dependency signal** (weight 0.2): docs/chore → 10, fix/feature → 40, refactor → 60, architecture/redesign → 90
+Also fix the complexity override block (lines 189-196) to be consistent:
 
-Functions to implement:
-- `classify_task()` — main entry point
-- `_score_file_count()` — score based on number of files
-- `_score_change_size()` — score based on line count
-- `_score_error_complexity()` — score based on error context
-- `_score_keywords()` — score based on issue body keywords
-- `_load_classifier_weights()` — load weights from policy.json (with defaults)
-- `classify_task_from_git()` — convenience: classify from current git diff
+```bash
+# Before:
+if [[ "$complexity" -lt "$COMPLEXITY_LOW" && "$model" == "opus" ]]; then
+    model="sonnet"
 
-### Task 2: Add `modelRouting` section to `config/policy.json`
-**Dependencies**: None (parallel with Task 1)
+# After:
+if [[ "$complexity" -lt "$COMPLEXITY_LOW" && "$model" == "opus" ]]; then
+    model="haiku"
+```
 
-Add to policy.json:
-```json
-"modelRouting": {
-  "enabled": true,
-  "classify_complexity": true,
-  "confidence_threshold": 0.7,
-  "complexity_thresholds": {
-    "low": 30,
-    "high": 80
-  },
-  "classifier_weights": {
-    "file_count": 0.3,
-    "line_changes": 0.3,
-    "error_complexity": 0.2,
-    "keywords": 0.2
-  },
-  "stage_overrides": {},
-  "fallback_model": "sonnet"
+**Dependencies**: None
+**Blocks**: Step 4 (test updates)
+
+### Step 2: Add `ab_test_should_use_classifier()` (sw-model-router.sh)
+
+Add new function after `is_classifier_enabled()` (~line 270):
+
+```bash
+ab_test_should_use_classifier() {
+    _resolve_routing_config
+    if [[ -n "$MODEL_ROUTING_CONFIG" && -f "$MODEL_ROUTING_CONFIG" ]] && command -v jq >/dev/null 2>&1; then
+        local enabled percentage
+        enabled=$(jq -r '.a_b_test.enabled // false' "$MODEL_ROUTING_CONFIG" 2>/dev/null || echo "false")
+        if [[ "$enabled" != "true" ]]; then
+            # A/B test disabled → always use classifier (if enabled)
+            return 0
+        fi
+        percentage=$(jq -r '.a_b_test.percentage // 50' "$MODEL_ROUTING_CONFIG" 2>/dev/null || echo "50")
+        # Deterministic: use pipeline run ID or RANDOM
+        local roll=$(( RANDOM % 100 ))
+        if [[ "$roll" -lt "$percentage" ]]; then
+            return 0  # Experimental group: use classifier
+        else
+            return 1  # Control group: use static routing
+        fi
+    fi
+    return 0  # Default: use classifier
 }
 ```
 
-### Task 3: Integrate classifier into `sw-model-router.sh`
-**Dependencies**: Task 1
+Integrate into `route_model_auto()`: before classifying, check A/B test. If control group, skip classification and return default stage routing.
 
-Modify `route_model()` to:
-1. Accept optional `--auto-classify` flag
-2. When complexity is not provided AND auto-classify is enabled, call `classify_task()` with available context
-3. Cache classification result in env var (`CLASSIFIED_COMPLEXITY`) to avoid re-running per stage
-4. Log classification decision to model usage log
+**Dependencies**: None
+**Blocks**: Step 5 (A/B test tests)
 
-Add new function:
+### Step 3: Enhance pipeline line_count detection (sw-pipeline.sh)
+
+At line 1703, currently:
+
 ```bash
-route_model_auto(stage, issue_body, file_list, error_context)
-# Classifies task, then routes based on result
+_cls_score=$(classify_task "${GOAL:-}" "" "" "0" 2>/dev/null) || _cls_score=""
 ```
 
-### Task 4: Wire classifier into pipeline execution (`sw-pipeline.sh`)
-**Dependencies**: Task 3
+Should detect file list and line count from git:
 
-In the stage execution loop:
-1. Source `sw-task-classifier.sh` alongside model router
-2. After intake, run classifier on the issue body + detected files
-3. Store result in pipeline state (`PIPELINE_COMPLEXITY_SCORE`)
-4. Pass complexity to `route_model()` for each subsequent stage
-5. Log complexity classification event
-
-### Task 5: Wire classifier into loop iteration (`lib/loop-iteration.sh`)
-**Dependencies**: Task 3
-
-In the loop iteration model selection:
-1. When `ESCALATE_MODEL` is not set, use classifier to determine complexity
-2. Use git diff to count files changed and lines modified for runtime classification
-3. Pass dynamic complexity to `route_model()`
-
-### Task 6: Update cost-aware template (`cost-aware.json`)
-**Dependencies**: Task 2
-
-Add to each stage config:
-```json
-"classify_complexity": true
+```bash
+local _cls_files="" _cls_lines="0"
+if command -v git >/dev/null 2>&1; then
+    _cls_files=$(git diff --name-only HEAD 2>/dev/null || true)
+    [[ -z "$_cls_files" ]] && _cls_files=$(git diff --name-only --cached 2>/dev/null || true)
+    local _adds _dels
+    _adds=$(git diff --numstat HEAD 2>/dev/null | awk '{s+=$1} END {print s+0}' || echo "0")
+    _dels=$(git diff --numstat HEAD 2>/dev/null | awk '{s+=$2} END {print s+0}' || echo "0")
+    _cls_lines=$((_adds + _dels))
+fi
+_cls_score=$(classify_task "${GOAL:-}" "$_cls_files" "" "$_cls_lines" 2>/dev/null) || _cls_score=""
 ```
 
-Remove hardcoded model assignments from stages that should use dynamic routing. Keep explicit model overrides only for review (opus) and audit (haiku) stages.
+**Dependencies**: None
+**Blocks**: None
 
-### Task 7: Enhance A/B testing for classifier validation
-**Dependencies**: Tasks 1, 3
+### Step 4: Update model-router tests (sw-model-router-test.sh)
 
-Add to `sw-model-router.sh`:
-- `ab_test_should_use_classifier()` — returns true/false based on A/B test config percentage
-- When A/B test is active: control group uses static routing, experimental uses classifier
-- Log which group each pipeline run belongs to in `ab-results.jsonl`
+Add/fix tests:
 
-### Task 8: Create classifier tests (`sw-task-classifier-test.sh`)
-**Dependencies**: Task 1
+- Test that `route_model intake 10` now returns `haiku` (not sonnet)
+- Test that `route_model build 10` returns `haiku` (low complexity override)
+- Test `ab_test_should_use_classifier()` returns 0 when A/B disabled
+- Test `ab_test_should_use_classifier()` returns 0 or 1 when A/B enabled
 
-Test cases:
-- Simple task (1 file, <50 lines, docs keywords) → score < 30
-- Medium task (3-5 files, 100 lines, feature keywords) → score 30-80
-- Complex task (10+ files, 500 lines, architecture keywords) → score > 80
-- Error context escalation (systemic error → higher score)
-- Weight configuration from policy.json
-- Fallback when policy.json missing
-- `classify_task_from_git()` with mock git output
-- Edge cases: empty input, missing fields
+**Dependencies**: Steps 1, 2
 
-### Task 9: Update model-router tests for integration
-**Dependencies**: Tasks 3, 8
+### Step 5: Update documentation (cost-aware-model-routing.md)
 
-Add to `sw-model-router-test.sh`:
-- Test `route_model_auto()` with mock classifier
-- Test that classifier result caching works
-- Test fallback when classifier fails
+Update the skills doc to match actual implementation:
 
-### Task 10: Document complexity heuristics and overrides
-**Dependencies**: All above
+- Correct scoring formula (weighted sum 0-100, not 0-10)
+- Document actual thresholds: `< 30 → haiku, 30-79 → sonnet, ≥ 80 → opus`
+- Document `policy.json` configuration keys
+- Document `ab_test_should_use_classifier()` function
+- Document escalation chain
+- Add CLI usage examples: `shipwright model route-auto`, `shipwright classify`
 
-Update `scripts/skills/generated/cost-aware-model-routing.md` with:
-- Classifier scoring formula with weights
-- How to override per-stage model in policy.json
-- How to tune classifier weights
-- A/B testing setup instructions
-- How to view routing decisions in cost reports
+**Dependencies**: Steps 1, 2
 
 ---
 
 ## Task Checklist
 
-- [ ] Task 1: Create `scripts/sw-task-classifier.sh` with classify_task() and scoring functions
-- [ ] Task 2: Add `modelRouting` config section to `config/policy.json`
-- [ ] Task 3: Integrate classifier into `sw-model-router.sh` route_model_auto()
-- [ ] Task 4: Wire classifier into `sw-pipeline.sh` stage execution
-- [ ] Task 5: Wire classifier into `scripts/lib/loop-iteration.sh` model selection
-- [ ] Task 6: Update `templates/pipelines/cost-aware.json` with dynamic routing
-- [ ] Task 7: Enhance A/B testing in model router for classifier validation
-- [ ] Task 8: Create `scripts/sw-task-classifier-test.sh` with comprehensive tests
-- [ ] Task 9: Update `scripts/sw-model-router-test.sh` with integration tests
-- [ ] Task 10: Update documentation in `scripts/skills/generated/cost-aware-model-routing.md`
+- [ ] Task 1: Fix `route_model()` to route complexity < 30 to haiku instead of sonnet
+- [ ] Task 2: Fix complexity override block to downgrade opus→haiku (not opus→sonnet) for low complexity
+- [ ] Task 3: Add `ab_test_should_use_classifier()` function to sw-model-router.sh
+- [ ] Task 4: Integrate A/B test check into `route_model_auto()` flow
+- [ ] Task 5: Enhance sw-pipeline.sh classifier call with real file list and line count from git
+- [ ] Task 6: Update model-router tests for haiku routing at low complexity
+- [ ] Task 7: Add A/B test function tests to sw-model-router-test.sh
+- [ ] Task 8: Update cost-aware-model-routing.md documentation with actual implementation details
+- [ ] Task 9: Run full test suite (`npm test`) to verify no regressions
+- [ ] Task 10: Verify cost-aware template stages make sense with new haiku routing
+
+---
+
+## Task Decomposition (with dependencies)
+
+1. **Fix route_model() haiku routing** — no dependencies
+2. **Fix complexity override block** — depends on Task 1
+3. **Add ab_test_should_use_classifier()** — no dependencies (parallel with 1-2)
+4. **Integrate A/B into route_model_auto()** — depends on Task 3
+5. **Enhance pipeline line_count detection** — no dependencies (parallel with all)
+6. **Update router tests** — depends on Tasks 1, 2, 3, 4
+7. **Add A/B test tests** — depends on Tasks 3, 4
+8. **Update documentation** — depends on Tasks 1-5
+9. **Run full test suite** — depends on Tasks 6, 7
+10. **Verify cost-aware template** — depends on Task 1
+
+**Parallelism**: Tasks 1-2, 3, and 5 can execute in parallel. Tasks 6-7 in parallel after their deps. Task 8 can overlap with 6-7.
 
 ---
 
 ## Testing Approach
 
 ### Test Pyramid Breakdown
-- **Unit tests** (8 tests): Classifier scoring functions individually, weight loading, edge cases
-- **Integration tests** (6 tests): Classifier → Router pipeline, A/B test variant selection, policy.json loading
-- **E2E tests** (2 tests): Full pipeline with cost-aware template verifying model selection per stage
+
+- **Unit tests** (~6 new): haiku routing at low complexity, A/B function behavior, pipeline line_count extraction
+- **Integration tests** (~4 new): route_model_auto with A/B enabled/disabled, end-to-end classify→route→haiku path
+- **Existing tests** (91 passing): All must continue to pass — some router tests may need updating for haiku instead of sonnet
 
 ### Coverage Targets
-- Classifier module: 90% branch coverage (all scoring paths, weight combinations)
-- Router integration: 80% (existing tests + new auto-classify paths)
-- Critical paths: simple/medium/complex classification boundaries, escalation on failure, fallback on classifier error
+
+- Router: 90% branch coverage (all routing paths including new haiku path)
+- A/B function: 100% (small function, 3 paths: disabled, experimental, control)
+- Pipeline integration: Verified by existing pipeline test suite
 
 ### Critical Paths to Test
-- **Happy path**: Issue with 2 files, 30 lines → classifier scores < 30 → haiku selected → stage succeeds
-- **Error case 1**: Classifier crashes → falls back to complexity 50 → sonnet selected
-- **Error case 2**: Haiku fails on misclassified task → escalation to sonnet → retry succeeds
-- **Edge case 1**: Empty issue body → defaults to medium complexity
-- **Edge case 2**: 100+ files changed → caps at complexity 100
 
-### Test Command
+- **Happy path**: Simple task (2 files, 30 lines, docs keywords) → score 14 → haiku selected
+- **Error case 1**: A/B test config malformed → default to classifier (experimental group)
+- **Error case 2**: Haiku fails → escalate_model("haiku") → sonnet → retry
+- **Edge case 1**: Score exactly 30 → sonnet (boundary)
+- **Edge case 2**: Score exactly 29 → haiku (boundary)
+- **Edge case 3**: A/B test at 0% → all control group (static routing)
+
+### Test Commands
+
 ```bash
-npm test                                    # Full suite (vitest)
-bash scripts/sw-task-classifier-test.sh    # Classifier unit tests
-bash scripts/sw-model-router-test.sh       # Router + integration tests
+bash scripts/sw-task-classifier-test.sh    # 40 tests
+bash scripts/sw-model-router-test.sh       # 51+ tests (updating)
+npm test                                    # Full suite regression
 ```
 
 ---
 
 ## Definition of Done
 
-- [ ] Task complexity classifier correctly scores tasks as simple/medium/complex based on file count, change size, error context, and keywords
-- [ ] Model routing uses classifier scores to select haiku/sonnet/opus (verified by unit tests)
-- [ ] Configuration in `config/policy.json` allows overriding thresholds, weights, and per-stage models
-- [ ] Cost-aware pipeline template uses dynamic classification instead of only hardcoded models
-- [ ] Integration with existing cost tracking records which model was selected and why
-- [ ] A/B testing mode allows comparing classifier-routed vs static-routed pipelines
-- [ ] Budget enforcement respects model routing decisions (existing — verify no regression)
-- [ ] All existing tests pass (`npm test` + shell test scripts)
-- [ ] New tests cover classifier accuracy at classification boundaries
-- [ ] Documentation updated with heuristics, override options, and tuning guide
-- [ ] Bash 3.2 compatible (no associative arrays, readarray, etc.)
+- [ ] `route_model "intake" 10` returns `haiku` (not sonnet)
+- [ ] `route_model "build" 10` returns `haiku` (low complexity overrides static config)
+- [ ] `ab_test_should_use_classifier()` exists and respects A/B config
+- [ ] Pipeline classifier uses real git diff for file list and line count
+- [ ] All 91+ existing tests pass
+- [ ] New tests cover haiku routing boundaries and A/B function
+- [ ] Documentation reflects actual scoring formula, thresholds, and CLI commands
+- [ ] No regressions in `npm test`
+
+---
+
+## User Stories
+
+### Primary
+
+**As a** Shipwright pipeline operator, **I want** simple tasks (docs, single-file fixes) to automatically route to Haiku, **so that** I reduce pipeline costs by 30-50% without manual model selection.
+
+### Secondary
+
+**As a** pipeline administrator, **I want** A/B testing between classifier-routed and static-routed pipelines, **so that** I can validate cost savings against success rate impact before full rollout.
+
+## Acceptance Criteria (Given/When/Then)
+
+1. **Given** a task with 1 file and 20 lines of docs changes, **When** the pipeline runs with cost-aware template, **Then** the classifier scores < 30 and routes to haiku.
+2. **Given** a task with 10+ files and architecture keywords, **When** classified, **Then** scores >= 80 and routes to opus.
+3. **Given** `modelRouting.enabled: false` in policy.json, **When** pipeline runs, **Then** classifier is skipped and static stage models are used.
+4. **Given** A/B test enabled at 50%, **When** 100 pipelines run, **Then** approximately 50 use classifier routing and 50 use static routing, with cost/success metrics logged.
+5. **Given** haiku fails on a misclassified task, **When** escalation triggers, **Then** the task retries with sonnet automatically.
+
+## Edge Cases from User Perspective
+
+1. **Empty state**: No previous cost data → cost dashboard shows "No usage data yet" (existing behavior, no regression)
+2. **Error state**: Classifier crashes mid-pipeline → falls back to sonnet, pipeline continues without interruption
+3. **Overload state**: 100+ files in a single task → capped at score 90, routes to opus appropriately
 
 ---
 
 ## Endpoint Specification
 
-*Not applicable — this is an internal CLI/library change, not an API endpoint.*
+_Not applicable — internal CLI/library change, no API endpoints._
 
 ## Rate Limiting
 
-*Not applicable — internal pipeline orchestration.*
+_Not applicable — internal pipeline orchestration._
 
 ## Versioning
 
-Scripts use `VERSION="3.2.4"` — the new classifier will match this version. No breaking changes to existing CLI commands.
+Scripts use `VERSION="3.2.4"`. No version bump needed — this is additive/fix behavior within existing feature.

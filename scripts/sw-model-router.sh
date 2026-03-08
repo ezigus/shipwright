@@ -38,6 +38,12 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
+# ─── Source Task Classifier (conditional) ──────────────────────────────────
+# shellcheck source=sw-task-classifier.sh
+if [[ -f "$SCRIPT_DIR/sw-task-classifier.sh" ]]; then
+    source "$SCRIPT_DIR/sw-task-classifier.sh"
+fi
+
 # ─── File Paths ────────────────────────────────────────────────────────────
 # Unified: prefer optimization dir (written by self-optimize), fallback to legacy
 OPTIMIZATION_DIR="${HOME}/.shipwright/optimization"
@@ -66,7 +72,7 @@ SONNET_STAGES="test|review"
 OPUS_STAGES="plan|design|build|compound_quality"
 
 # ─── Complexity Thresholds ──────────────────────────────────────────────────
-COMPLEXITY_LOW=30          # Below this: use sonnet
+COMPLEXITY_LOW=30          # Below this: use haiku
 COMPLEXITY_HIGH=80         # Above this: use opus
 
 # ─── Resolve Routing Config Path ────────────────────────────────────────────
@@ -164,7 +170,7 @@ route_model() {
     # Strategy 2: Built-in defaults (complexity + stage rules)
     if [[ -z "$model" ]]; then
         if [[ "$complexity" -lt "$COMPLEXITY_LOW" ]]; then
-            model="sonnet"
+            model="haiku"
         elif [[ "$complexity" -gt "$COMPLEXITY_HIGH" ]]; then
             model="opus"
         else
@@ -182,7 +188,9 @@ route_model() {
 
     # Complexity override: upgrade/downgrade based on complexity even when config says otherwise
     if [[ "$complexity" -lt "$COMPLEXITY_LOW" && "$model" == "opus" ]]; then
-        model="sonnet"
+        model="haiku"
+    elif [[ "$complexity" -lt "$COMPLEXITY_LOW" && "$model" == "sonnet" ]]; then
+        model="haiku"
     elif [[ "$complexity" -gt "$COMPLEXITY_HIGH" && "$model" == "haiku" ]]; then
         model="opus"
     elif [[ "$complexity" -gt "$COMPLEXITY_HIGH" ]]; then
@@ -210,6 +218,89 @@ escalate_model() {
     esac
 
     echo "$next_model"
+}
+
+# ─── Auto-Classify and Route ───────────────────────────────────────────────
+# route_model_auto <stage> <issue_body> [file_list] [error_context] [line_count]
+# Classifies task complexity then routes to the appropriate model.
+# Caches the result in PIPELINE_COMPLEXITY_SCORE to avoid re-computation.
+route_model_auto() {
+    local stage="$1"
+    local issue_body="${2:-}"
+    local file_list="${3:-}"
+    local error_context="${4:-}"
+    local line_count="${5:-0}"
+
+    # Check if classifier is available
+    if [[ "$(type -t classify_task 2>/dev/null)" != "function" ]]; then
+        warn "Task classifier not available, falling back to default routing"
+        route_model "$stage" 50
+        return
+    fi
+
+    # Check for cached complexity score (set on first classification in this pipeline run)
+    if [[ -n "${PIPELINE_COMPLEXITY_SCORE:-}" ]]; then
+        route_model "$stage" "$PIPELINE_COMPLEXITY_SCORE"
+        return
+    fi
+
+    # A/B test gate: if classifier not enabled and this run is not in A/B experimental group, use defaults
+    if ! is_classifier_enabled && ! ab_test_should_use_classifier; then
+        route_model "$stage" 50
+        return
+    fi
+
+    # Classify and cache
+    local score
+    score=$(classify_task "$issue_body" "$file_list" "$error_context" "$line_count" 2>/dev/null) || score=50
+    if ! [[ "$score" =~ ^[0-9]+$ ]]; then
+        score=50
+    fi
+    export PIPELINE_COMPLEXITY_SCORE="$score"
+
+    # Log classification event
+    emit_event "classifier" "score=$score" "stage=$stage" || true
+
+    route_model "$stage" "$score"
+}
+
+# ─── A/B Test: Should This Pipeline Use the Classifier? ────────────────────
+# Returns 0 (true) if this pipeline run should use classifier-based routing.
+# Uses configured percentage and a random draw for assignment.
+ab_test_should_use_classifier() {
+    _resolve_routing_config
+    if [[ -z "$MODEL_ROUTING_CONFIG" || ! -f "$MODEL_ROUTING_CONFIG" ]]; then
+        return 1
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        return 1
+    fi
+
+    local enabled percentage
+    enabled=$(jq -r '.a_b_test.enabled // false' "$MODEL_ROUTING_CONFIG" 2>/dev/null || echo "false")
+    if [[ "$enabled" != "true" ]]; then
+        return 1
+    fi
+
+    percentage=$(jq -r '.a_b_test.percentage // 0' "$MODEL_ROUTING_CONFIG" 2>/dev/null || echo "0")
+    if ! [[ "$percentage" =~ ^[0-9]+$ ]]; then
+        percentage=0
+    fi
+
+    local rand=$((RANDOM % 100))
+    [[ "$rand" -lt "$percentage" ]]
+}
+
+# ─── Check if Classifier Routing is Enabled ────────────────────────────────
+is_classifier_enabled() {
+    local policy_file="${REPO_DIR}/config/policy.json"
+    if [[ -f "$policy_file" ]] && command -v jq >/dev/null 2>&1; then
+        local enabled
+        enabled=$(jq -r '.modelRouting.enabled // false' "$policy_file" 2>/dev/null || echo "false")
+        [[ "$enabled" == "true" ]]
+    else
+        return 1
+    fi
 }
 
 # ─── Show Configuration ─────────────────────────────────────────────────────
@@ -362,6 +453,53 @@ record_usage() {
     echo "$record" >> "$MODEL_USAGE_LOG"
 }
 
+# ─── Validate Budget Before Stage ──────────────────────────────────────────
+validate_budget() {
+    local stage="${1:-unknown}"
+    local model="${2:-sonnet}"
+    local pipeline_id="${3:-default}"
+
+    # FORCE_MODEL override bypasses budget check
+    if [[ -n "${FORCE_MODEL:-}" ]]; then
+        return 0
+    fi
+
+    # Read max_cost_per_pipeline from config (default 50.0)
+    local max_cost="50.0"
+    _resolve_routing_config
+    if [[ -n "$MODEL_ROUTING_CONFIG" && -f "$MODEL_ROUTING_CONFIG" ]] && command -v jq >/dev/null 2>&1; then
+        local cfg_max
+        cfg_max=$(jq -r '.max_cost_per_pipeline // empty' "$MODEL_ROUTING_CONFIG" 2>/dev/null || true)
+        if [[ -n "$cfg_max" && "$cfg_max" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            max_cost="$cfg_max"
+        fi
+    fi
+
+    # Sum accumulated cost for this pipeline_id from usage log
+    local accumulated="0"
+    if [[ -f "$MODEL_USAGE_LOG" ]] && command -v jq >/dev/null 2>&1; then
+        local sum
+        sum=$(jq -s --arg pid "$pipeline_id" \
+            '[.[] | select(.pipeline_id == $pid or $pid == "default") | .cost] | add // 0' \
+            "$MODEL_USAGE_LOG" 2>/dev/null || true)
+        if [[ -n "$sum" && "$sum" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            accumulated="$sum"
+        fi
+    fi
+
+    # Compare: if accumulated >= max_cost, budget exceeded
+    local exceeded
+    exceeded=$(awk "BEGIN {print ($accumulated >= $max_cost) ? 1 : 0}")
+
+    if [[ "$exceeded" -eq 1 ]]; then
+        warn "Budget exceeded: accumulated \$$accumulated >= max \$$max_cost (stage=$stage, model=$model)"
+        emit_event "budget_exceeded" "stage=$stage" "model=$model" "accumulated=$accumulated" "max=$max_cost" || true
+        return 1
+    fi
+
+    return 0
+}
+
 # ─── A/B Test Configuration ────────────────────────────────────────────────
 configure_ab_test() {
     local percentage="${1:-10}"
@@ -512,6 +650,7 @@ show_help() {
     echo "  ${CYAN}config${RESET} [show|set <key> <val>] Show/set routing configuration"
     echo "  ${CYAN}estimate${RESET} [template] [complexity]  Estimate pipeline cost"
     echo "  ${CYAN}ab-test${RESET} [enable|disable] [pct] [variant]  Configure A/B testing"
+    echo "  ${CYAN}validate-budget${RESET} <stage> [model] [id]  Check pipeline budget"
     echo "  ${CYAN}report${RESET}                        Show model usage and cost report"
     echo "  ${CYAN}ab-results${RESET}                     Show A/B test results"
     echo "  ${CYAN}help${RESET}                          Show this help message"
@@ -584,6 +723,23 @@ main() {
             fi
             ;;
 
+        route-auto)
+            shift 2>/dev/null || true
+            route_model_auto "$@"
+            ;;
+        classify)
+            shift 2>/dev/null || true
+            if [[ "$(type -t classify_task 2>/dev/null)" == "function" ]]; then
+                classify_task "$@"
+            else
+                error "Task classifier not available"
+                exit 1
+            fi
+            ;;
+        validate-budget)
+            shift 2>/dev/null || true
+            validate_budget "$@"
+            ;;
         report)
             show_report
             ;;

@@ -35,6 +35,8 @@ if [[ -f "$SCRIPT_DIR/sw-db.sh" ]]; then
 fi
 # Cross-pipeline discovery (learnings from other pipeline runs)
 [[ -f "$SCRIPT_DIR/sw-discovery.sh" ]] && source "$SCRIPT_DIR/sw-discovery.sh" 2>/dev/null || true
+# shellcheck source=sw-model-router.sh
+[[ -f "$SCRIPT_DIR/sw-model-router.sh" ]] && source "$SCRIPT_DIR/sw-model-router.sh" 2>/dev/null || true
 # Source loop sub-modules for modular iteration management
 [[ -f "$SCRIPT_DIR/lib/loop-iteration.sh" ]] && source "$SCRIPT_DIR/lib/loop-iteration.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-convergence.sh" ]] && source "$SCRIPT_DIR/lib/loop-convergence.sh"
@@ -428,6 +430,20 @@ select_adaptive_model() {
         if [[ -n "${_routed_model:-}" && "${_routed_model:-}" != "null" ]]; then
             echo "${_routed_model}"
             return 0
+        fi
+    fi
+
+    # Try task classifier routing (cost-aware)
+    if type classify_task_from_git >/dev/null 2>&1 && type is_classifier_enabled >/dev/null 2>&1 && is_classifier_enabled 2>/dev/null; then
+        local _cls_score
+        _cls_score=$(classify_task_from_git "${GOAL:-}" "" 2>/dev/null) || _cls_score=""
+        if [[ -n "$_cls_score" ]] && [[ "$_cls_score" =~ ^[0-9]+$ ]]; then
+            local _cls_model
+            _cls_model=$(route_model "$role" "$_cls_score" 2>/dev/null) || _cls_model=""
+            if [[ -n "$_cls_model" && "$_cls_model" =~ ^(haiku|sonnet|opus)$ ]]; then
+                echo "$_cls_model"
+                return 0
+            fi
         fi
     fi
 

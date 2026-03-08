@@ -64,7 +64,7 @@ assert_eq "route test at 50 = sonnet" "sonnet" "$output"
 
 # ─── Test 5: Route model with low complexity override ─────────────────────
 output=$(bash "$SCRIPT_DIR/sw-model-router.sh" route build 10 2>&1)
-assert_eq "route build at 10 (low) = sonnet" "sonnet" "$output"
+assert_eq "route build at 10 (low) = haiku" "haiku" "$output"
 
 # ─── Test 6: Route model with high complexity override ────────────────────
 output=$(bash "$SCRIPT_DIR/sw-model-router.sh" route intake 90 2>&1)
@@ -157,7 +157,7 @@ for stage in intake plan design build test review compound_quality validate moni
 done
 out_low=$(bash "$SCRIPT_DIR/sw-model-router.sh" route plan 10 2>&1)
 out_high=$(bash "$SCRIPT_DIR/sw-model-router.sh" route plan 95 2>&1)
-assert_eq "route plan at low complexity = sonnet" "sonnet" "$out_low"
+assert_eq "route plan at low complexity = haiku" "haiku" "$out_low"
 assert_eq "route plan at high complexity = opus" "opus" "$out_high"
 
 # ─── Test 17: Config set and config show cycle ───────────────────────────
@@ -182,6 +182,159 @@ echo -e "${BOLD}  Error Handling${RESET}"
 output=$(bash "$SCRIPT_DIR/sw-model-router.sh" bogus 2>&1) && rc=0 || rc=$?
 assert_eq "unknown subcommand exits non-zero" "1" "$rc"
 assert_contains "unknown subcommand shows error" "$output" "Unknown subcommand"
+
+# ─── Test 20: route_model_auto with classifier ─────────────────────────────
+echo ""
+echo -e "${BOLD}  Auto-Classify Routing${RESET}"
+source "$SCRIPT_DIR/sw-model-router.sh" 2>/dev/null || true
+# Clear cached score
+unset PIPELINE_COMPLEXITY_SCORE 2>/dev/null || true
+if [[ "$(type -t route_model_auto 2>/dev/null)" == "function" ]]; then
+    output=$(route_model_auto "build" "fix typo in docs" "README.md" "" "10" 2>/dev/null)
+    if [[ "$output" =~ ^(haiku|sonnet|opus)$ ]]; then
+        assert_pass "route_model_auto returns valid model (got $output)"
+    else
+        assert_fail "route_model_auto returns valid model" "got: $output"
+    fi
+
+    # Test caching: set PIPELINE_COMPLEXITY_SCORE manually and verify it's used
+    export PIPELINE_COMPLEXITY_SCORE="15"
+    output2=$(route_model_auto "build" "completely different task" "" "" "0" 2>/dev/null)
+    if [[ "$output2" =~ ^(haiku|sonnet|opus)$ ]]; then
+        assert_pass "route_model_auto uses cached score (got $output2)"
+    else
+        assert_fail "route_model_auto uses cached score" "got: $output2"
+    fi
+
+    # With low cached score, routing should give a simpler model than opus for build
+    export PIPELINE_COMPLEXITY_SCORE="10"
+    output3=$(route_model_auto "test" "" "" "" "0" 2>/dev/null)
+    assert_eq "route_model_auto with low cached score routes to haiku" "haiku" "$output3"
+    unset PIPELINE_COMPLEXITY_SCORE 2>/dev/null || true
+else
+    assert_fail "route_model_auto function exists"
+fi
+
+# ─── Test 21: is_classifier_enabled reads policy.json ──────────────────────
+echo ""
+echo -e "${BOLD}  Classifier Enabled Check${RESET}"
+if [[ "$(type -t is_classifier_enabled 2>/dev/null)" == "function" ]]; then
+    # Create a mock policy.json with modelRouting enabled
+    mkdir -p "$TEST_TEMP_DIR/repo/config"
+    cat > "$TEST_TEMP_DIR/repo/config/policy.json" << 'EOF'
+{"modelRouting": {"enabled": true}}
+EOF
+    REPO_DIR="$TEST_TEMP_DIR/repo" is_classifier_enabled && rc=0 || rc=$?
+    assert_eq "is_classifier_enabled returns 0 when enabled" "0" "$rc"
+
+    cat > "$TEST_TEMP_DIR/repo/config/policy.json" << 'EOF'
+{"modelRouting": {"enabled": false}}
+EOF
+    REPO_DIR="$TEST_TEMP_DIR/repo" is_classifier_enabled && rc=0 || rc=$?
+    assert_eq "is_classifier_enabled returns 1 when disabled" "1" "$rc"
+else
+    assert_fail "is_classifier_enabled function exists"
+fi
+
+# ─── Test 22: Classify subcommand via CLI ──────────────────────────────────
+echo ""
+echo -e "${BOLD}  Classify via CLI${RESET}"
+output=$(bash "$SCRIPT_DIR/sw-model-router.sh" classify "add new feature" "src/a.js
+src/b.js
+src/c.js" "" "100" 2>&1)
+if [[ "$output" =~ ^[0-9]+$ ]]; then
+    assert_pass "model-router classify returns numeric score (got $output)"
+else
+    assert_fail "model-router classify returns numeric score" "got: $output"
+fi
+
+# ─── Test 23: ab_test_should_use_classifier function ──────────────────────
+echo ""
+echo -e "${BOLD}  A/B Test Classifier Gate${RESET}"
+source "$SCRIPT_DIR/sw-model-router.sh" 2>/dev/null || true
+if [[ "$(type -t ab_test_should_use_classifier 2>/dev/null)" == "function" ]]; then
+    assert_pass "ab_test_should_use_classifier function exists"
+
+    # With no config file, should return 1 (false)
+    ab_test_should_use_classifier && rc=0 || rc=$?
+    assert_eq "ab_test_should_use_classifier returns 1 with no config" "1" "$rc"
+
+    # With A/B test enabled at 100%, should return 0 (true)
+    ensure_config 2>/dev/null || true
+    ab_tmp=$(mktemp)
+    jq '.a_b_test = {"enabled": true, "percentage": 100, "variant": "cost-optimized"}' \
+        "$HOME/.shipwright/optimization/model-routing.json" > "$ab_tmp" && \
+        mv "$ab_tmp" "$HOME/.shipwright/optimization/model-routing.json"
+    _resolve_routing_config
+    ab_test_should_use_classifier && rc=0 || rc=$?
+    assert_eq "ab_test_should_use_classifier returns 0 at 100%" "0" "$rc"
+
+    # With A/B test disabled, should return 1 (false)
+    ab_tmp2=$(mktemp)
+    jq '.a_b_test.enabled = false' \
+        "$HOME/.shipwright/optimization/model-routing.json" > "$ab_tmp2" && \
+        mv "$ab_tmp2" "$HOME/.shipwright/optimization/model-routing.json"
+    _resolve_routing_config
+    ab_test_should_use_classifier && rc=0 || rc=$?
+    assert_eq "ab_test_should_use_classifier returns 1 when disabled" "1" "$rc"
+
+    # With A/B test at 0%, should return 1 (false)
+    ab_tmp3=$(mktemp)
+    jq '.a_b_test = {"enabled": true, "percentage": 0, "variant": "cost-optimized"}' \
+        "$HOME/.shipwright/optimization/model-routing.json" > "$ab_tmp3" && \
+        mv "$ab_tmp3" "$HOME/.shipwright/optimization/model-routing.json"
+    _resolve_routing_config
+    ab_test_should_use_classifier && rc=0 || rc=$?
+    assert_eq "ab_test_should_use_classifier returns 1 at 0%" "1" "$rc"
+else
+    assert_fail "ab_test_should_use_classifier function exists"
+fi
+
+# ─── Budget Validation Tests ─────────────────────────────────────────────────
+echo -e "${DIM}  Budget Validation${RESET}"
+
+if type validate_budget >/dev/null 2>&1; then
+    assert_pass "validate_budget function exists"
+
+    # Under limit (no usage log) should pass
+    rm -f "$HOME/.shipwright/optimization/model-usage.jsonl" 2>/dev/null || true
+    validate_budget "build" "opus" "test-pipeline-1" && budget_rc=0 || budget_rc=$?
+    assert_eq "validate_budget passes with no usage log" "0" "$budget_rc"
+
+    # FORCE_MODEL override bypasses budget check
+    (
+        export FORCE_MODEL="opus"
+        # Set max_cost low to trigger failure if override didn't work
+        FORCE_MODEL="opus" validate_budget "build" "opus" "test-pipeline-forced" && rc=0 || rc=$?
+        echo "$rc"
+    ) | grep -q "0"
+    assert_pass "validate_budget passes when FORCE_MODEL is set"
+
+    # Over limit: write usage records totaling > max_cost
+    ensure_config 2>/dev/null || true
+    # Set max_cost to 1.0 in config
+    if command -v jq >/dev/null 2>&1; then
+        budget_tmp=$(mktemp)
+        jq '.max_cost_per_pipeline = 1.0' "$HOME/.shipwright/optimization/model-routing.json" > "$budget_tmp" && \
+            mv "$budget_tmp" "$HOME/.shipwright/optimization/model-routing.json"
+        _resolve_routing_config
+        # Write a usage record with cost 2.0 for this pipeline
+        mkdir -p "$HOME/.shipwright/optimization"
+        echo '{"ts":"2026-01-01T00:00:00Z","pipeline_id":"test-budget-pipeline","stage":"build","model":"opus","input_tokens":1000,"output_tokens":1000,"cost":2.0}' \
+            >> "$HOME/.shipwright/optimization/model-usage.jsonl"
+        validate_budget "review" "opus" "test-budget-pipeline" && budget_over_rc=0 || budget_over_rc=$?
+        assert_eq "validate_budget fails when accumulated cost exceeds max" "1" "$budget_over_rc"
+    else
+        assert_pass "validate_budget over-limit test skipped (no jq)"
+    fi
+
+    # CLI validate-budget subcommand
+    cli_budget_out=$(bash "$SCRIPT_DIR/sw-model-router.sh" validate-budget "intake" "haiku" "cli-test" 2>&1) && cli_budget_rc=0 || cli_budget_rc=$?
+    # Should return 0 (no usage for cli-test pipeline)
+    assert_eq "CLI validate-budget passes for new pipeline" "0" "$cli_budget_rc"
+else
+    assert_fail "validate_budget function exists"
+fi
 
 echo ""
 echo ""

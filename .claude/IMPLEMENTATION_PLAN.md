@@ -1,272 +1,274 @@
-# Implementation Plan: Sync Fork with Upstream (v3.1.0 → v3.2.4)
+# Design: Cost-aware model routing: Haiku for simple tasks, Opus for complex
 
-## Summary
+## Context
 
-Merge 42 upstream commits from `sethdford/shipwright` into `ezigus/shipwright`, resolving 11 file conflicts while preserving 38 local commits (bug fixes, smart test targeting, macOS compatibility, hardcoded test_cmd removal).
+Shipwright pipelines currently use a single Claude model (typically Opus) for all stages regardless of task complexity. This is wasteful: simple tasks like intake triage, PR creation, and test running don't need Opus-level reasoning. Issue #65 targets 30-50% cost reduction by routing tasks to the cheapest capable model.
 
-**Upstream version is actually v3.2.4** (not v3.2.0 as originally stated — upstream has continued past the v3.2.0 tag).
+**Codebase constraints:**
 
-## Merge Statistics
+- Shell-based orchestration (Bash 3.2 compatible, `set -euo pipefail`)
+- Pipeline stages execute sequentially via `sw-pipeline.sh` → `sw-loop.sh` → `loop-iteration.sh`
+- Model selection happens in `build_claude_flags()` which reads `$MODEL` env var
+- Configuration layered: `config/policy.json` (repo) → `~/.shipwright/optimization/model-routing.json` (user) → `FORCE_MODEL` env (override)
+- 96 existing tests (56 router + 40 classifier) already pass
 
-| Metric                      | Value        |
-| --------------------------- | ------------ |
-| Merge base                  | `846b47f`    |
-| Local commits since base    | 38           |
-| Upstream commits since base | 42           |
-| Files changed upstream-only | 211          |
-| Files changed fork-only     | 159          |
-| Files changed on both sides | 33           |
-| **Actual git conflicts**    | **11 files** |
-| Auto-merged successfully    | 22 files     |
+**What already exists (implemented):**
 
-## Files to Modify
+- `scripts/sw-task-classifier.sh` — Weighted heuristic scorer (file count 30%, line changes 30%, error complexity 20%, keywords 20%)
+- `scripts/sw-model-router.sh` — Score-to-model mapping with escalation and A/B test gating
+- `config/policy.json` `modelRouting` section — Thresholds, weights, stage overrides
+- `templates/pipelines/cost-aware.json` — Per-stage model assignments
 
-### Conflict Resolution (11 files — manual merge required)
+**What remains (this design covers):**
 
-| File                                  | Resolution Strategy                                                                                                     |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `.claude/CLAUDE.md`                   | **Keep local** — thin wrapper philosophy; upstream only changed AUTO table line counts                                  |
-| `.claude/intelligence-cache.json`     | **Delete** — ephemeral cache, deleted locally, regenerates on demand                                                    |
-| `.claude/platform-hygiene.json`       | **Delete** — ephemeral scan results, deleted locally, regenerates on demand                                             |
-| `scripts/lib/pipeline-detection.sh`   | **Merge both** — keep local multi-lang detection + add upstream `set -u` safety defaults                                |
-| `scripts/sw-hygiene.sh`               | **Merge both** — keep local perf optimization + add upstream shellcheck directives                                      |
-| `scripts/sw-otel.sh`                  | **Merge both** — keep local Bash 3.2 compat fixes + add upstream shellcheck directives                                  |
-| `scripts/sw-pipeline.sh`              | **Merge both** — keep local 500-char goal compaction + add upstream env vars (`SHIPWRIGHT_ACTIVE`, `TEST_CMD_EXPLICIT`) |
-| `scripts/sw-tmux-status.sh`           | **Keep local** — changes converged (both remove `local p a`); add upstream SC2155 directive                             |
-| `templates/pipelines/autonomous.json` | **Merge both** — remove hardcoded `test_cmd` (local fix) + accept full model names + add `audit` stage from upstream    |
-| `templates/pipelines/cost-aware.json` | **Merge both** — remove hardcoded `test_cmd` + accept full model names + add `audit` stage                              |
-| `templates/pipelines/full.json`       | **Merge both** — remove hardcoded `test_cmd` + accept full model names + add `audit` stage                              |
+- Cost tracking integration and budget enforcement
+- A/B testing validation framework
+- CLI command group (`sw model`)
+- End-to-end integration tests
+- Documentation
 
-### Auto-Merged Files (22 files — verify correctness)
+## Decision
 
-These merged cleanly but need post-merge validation:
+### Approach: Embedded heuristic classifier with tiered routing
 
-- `.gitignore`, `README.md`, `config/defaults.json`, `package.json`
-- `scripts/lib/daemon-dispatch.sh`, `scripts/lib/pipeline-stages.sh`
-- `scripts/sw-daemon.sh`, `scripts/sw-daemon-test.sh`
-- `scripts/sw-code-review-test.sh`, `scripts/sw-docs-agent-test.sh`
-- `scripts/sw-e2e-system-test.sh`, `scripts/sw-hygiene-test.sh`
-- `scripts/sw-init-test.sh`, `scripts/sw-lib-daemon-dispatch-test.sh`
-- `scripts/sw-loop.sh`, `scripts/sw-pipeline-test.sh`
-- `scripts/sw-prep.sh`, `scripts/sw-regression.sh`
-- `scripts/sw-self-optimize.sh`, `scripts/sw-self-optimize-test.sh`
-- `scripts/sw-strategic-test.sh`, `scripts/sw-team-stages.sh`
+Use a deterministic, weighted-score classifier embedded directly in the pipeline shell scripts. No external services, no ML models. The classifier runs at pipeline start and per-stage, producing a 0-100 complexity score that maps to a model tier.
 
-### New Files from Upstream (~24 net-new files)
+### Routing Rules
 
-Key additions arriving from upstream:
+| Complexity Score | Model             | Cost (input/output per 1M tokens) |
+| ---------------- | ----------------- | --------------------------------- |
+| 0-29 (low)       | claude-haiku-4-5  | $0.80 / $4.00                     |
+| 30-79 (medium)   | claude-sonnet-4-6 | $3.00 / $15.00                    |
+| 80-100 (high)    | claude-opus-4-6   | $15.00 / $75.00                   |
 
-- `.claudeignore` — context window optimization
-- `.gitmodules` + `skipper` — Skipper submodule
-- `scripts/sw-chaos-test.sh` — chaos testing
-- `scripts/sw-lib-daemon-patrol-test.sh` — patrol test
-- `dashboard/src/canvas/*` — Shipyard dashboard tab (pixel art)
-- `dashboard/src/views/shipyard.ts` — Shipyard view
-- `dashboard/src/design/submarine-theme.ts` — submarine theme
-- `docs/plans/*` — Skipper integration design docs
-- `AUDIT-*.md`, `.claude/*-AUDIT*.md` — audit reports
-- `TEST_RESULTS.md` — test results artifact
+### Stage-Level Overrides
 
-### Post-Merge Version
+Certain stages have hardcoded model minimums regardless of complexity score (defined in `cost-aware.json` template):
 
-- `package.json` version will be `3.2.4` (from upstream auto-merge)
-- All script `VERSION=` headers arrive via upstream's changes
+- **intake, test, audit, pr**: Always Haiku (these are mechanical/template-driven)
+- **review**: Always Opus (quality-critical gate)
+- **plan, design, build, compound_quality**: Complexity-routed (use classifier score)
 
-## Implementation Steps
+### Escalation Path
 
-### Phase 1: Preparation (Steps 1–3)
+When a stage fails, `escalate_model()` bumps to the next tier (haiku→sonnet→opus) and retries. This prevents cheap-model failures from blocking the pipeline.
 
-**Step 1.** Ensure we're on the merge branch `ci/chore-sync-fork-with-upstream-sethdford-37` (already checked out).
+### Budget Enforcement
 
-**Step 2.** Fetch latest upstream:
+- `validate_budget(stage, model)` checks accumulated cost against `max_cost_per_pipeline` before each stage
+- On budget exceeded: emit warning event, block stage unless `FORCE_MODEL` is set
+- Cost data persisted to `~/.shipwright/optimization/model-usage.jsonl` (append-only JSONL)
 
-```bash
-git fetch upstream
+### A/B Testing
+
+- 10% of pipelines (configurable) run as control group with Opus-everywhere
+- Outcomes recorded to `~/.shipwright/ab-results.jsonl`
+- `ab_test_report()` calculates cost delta and success rate delta with p-value
+
+### Data Flow
+
+```
+Issue/Goal
+    │
+    ▼
+┌─────────────────────┐
+│  classify_task()     │  ← issue_body, file_list, error_context, line_count
+│  sw-task-classifier  │
+└────────┬────────────┘
+         │ complexity_score (0-100)
+         ▼
+┌─────────────────────┐     ┌──────────────────────┐
+│  route_model()       │────▶│  Configuration Layer  │
+│  sw-model-router     │     │  policy.json          │
+└────────┬────────────┘     │  model-routing.json   │
+         │ model_id          │  FORCE_MODEL env      │
+         ▼                   └──────────────────────┘
+┌─────────────────────┐
+│  Pipeline Stage      │
+│  (build_claude_flags)│──▶ claude --model $MODEL
+└────────┬────────────┘
+         │ token counts (input, output)
+         ▼
+┌─────────────────────┐
+│  record_model_usage()│──▶ model-usage.jsonl
+│  validate_budget()   │──▶ budget check → abort or continue
+│  sw-cost-integration │
+└─────────────────────┘
 ```
 
-**Step 3.** Begin the merge:
+### Error Handling
 
-```bash
-git merge upstream/main --no-ff -m "chore: merge upstream v3.2.4 into fork (42 commits)"
+| Failure Mode                        | Behavior                                                                                      |
+| ----------------------------------- | --------------------------------------------------------------------------------------------- |
+| Classifier receives empty input     | Returns score 50 (medium), routes to Sonnet                                                   |
+| `jq` unavailable for config parsing | Falls back to built-in defaults (Sonnet)                                                      |
+| Budget exceeded mid-pipeline        | Emits `budget_exceeded` event, blocks next stage, operator can `FORCE_MODEL=opus` to override |
+| A/B random draw fails               | Defaults to treatment group (use classifier)                                                  |
+| Model routing config file missing   | Creates default config on first run                                                           |
+| Stage fails on cheap model          | `escalate_model()` retries with next tier                                                     |
+
+## Alternatives Considered
+
+1. **Separate routing microservice** — Pros: Clean separation, language-agnostic, independently deployable / Cons: Process overhead, requires IPC, adds infrastructure complexity for a CLI tool, violates Shipwright's shell-native architecture
+2. **ML-based classifier (embeddings + logistic regression)** — Pros: Learns from historical data, improves over time / Cons: Requires training data bootstrap (~100+ labeled examples), black-box decisions harder to debug, adds Python/ML dependency to a shell project, issue explicitly asks for heuristic approach
+3. **Static per-stage model assignment only (no classifier)** — Pros: Simplest implementation, zero runtime overhead / Cons: Cannot adapt to task complexity within a stage, misses the core value proposition of routing simple builds to Haiku
+
+## Implementation Plan
+
+### Files to create
+
+- `scripts/sw-cost-integration.sh` — Budget enforcement (`validate_budget`, `record_model_usage`) and A/B outcome recording
+- `scripts/sw-cost-test.sh` — Test suite for cost integration (budget, A/B recording)
+- `tests/integration/model-routing.test.sh` — E2E integration tests (classifier→router→cost)
+- `docs/model-routing.md` — User guide (complexity scoring, configuration)
+- `docs/cost-aware-routing.md` — Operations guide (budgeting, A/B testing)
+
+### Files to modify
+
+- `scripts/sw-pipeline.sh` — Wire in budget checks at stage boundaries, A/B outcome recording at pipeline completion
+- `scripts/sw-model-router.sh` — Add `sw model` CLI dispatcher, `route`/`escalate`/`config`/`estimate`/`ab-test` subcommands
+- `scripts/lib/loop-iteration.sh` — Call `record_model_usage()` after each Claude invocation
+- `scripts/lib/pipeline-stages-build.sh` — Pass complexity score to loop harness
+
+### Dependencies
+
+- None new. Uses existing `jq` (already required), `bc` (for A/B significance calc, already available)
+
+### Risk areas
+
+- **Classifier underestimation**: A complex refactor scored as simple gets routed to Haiku, which may fail or produce low-quality output. Mitigation: escalation on failure + A/B validation to catch systematic underscoring.
+- **Budget enforcement blocking critical work**: A nearly-exhausted budget prevents the review stage from using Opus. Mitigation: `FORCE_MODEL` env override, clear error messages with budget status.
+- **Atomic file writes for cost logging**: Under `pipefail`, concurrent pipelines (worktrees) writing to the same `model-usage.jsonl` could corrupt data. Mitigation: use tmp file + `mv` pattern per project conventions.
+- **Bash 3.2 compatibility**: New cost integration code must avoid associative arrays, `readarray`, `${var,,}`. Existing test harness validates this.
+
+## Component Diagram
+
+```
+┌──────────────────────────────────────────────────────────┐
+│              Pipeline Orchestrator                        │
+│              (sw-pipeline.sh)                             │
+│                                                          │
+│  For each stage:                                         │
+│    1. classify_task() → score                            │
+│    2. validate_budget() → ok/abort                       │
+│    3. route_model(stage, score) → model                  │
+│    4. execute stage with $MODEL                          │
+│    5. record_model_usage(stage, model, tokens)           │
+│  On completion:                                          │
+│    6. ab_test_record_outcome(run_id, variant, result)    │
+└────────────┬──────────┬──────────┬───────────────────────┘
+             │          │          │
+     ┌───────▼──┐  ┌────▼─────┐  ┌▼──────────────┐
+     │Classifier│  │  Router  │  │Cost Tracker    │
+     │          │  │          │  │                │
+     │score()   │  │route()   │  │record_usage()  │
+     │          │  │escalate()│  │validate_budget()│
+     │          │  │ab_gate() │  │ab_record()     │
+     └───────┬──┘  └────┬─────┘  └┬──────────────┘
+             │          │          │
+             └──────────┼──────────┘
+                        │
+              ┌─────────▼─────────┐
+              │  Configuration    │
+              │                   │
+              │ policy.json       │  repo-level defaults
+              │ model-routing.json│  user-level overrides
+              │ cost-aware.json   │  template stage models
+              │ FORCE_MODEL env   │  runtime override
+              └───────────────────┘
 ```
 
-This will stop with 11 conflicts to resolve.
+**Dependencies point inward**: Pipeline → {Classifier, Router, Cost Tracker} → Configuration. No component depends on the Pipeline orchestrator. Classifier and Router are independent of each other (Pipeline composes them).
 
-### Phase 2: Conflict Resolution (Steps 4–14)
+## Interface Contracts
 
-**Step 4.** Resolve `.claude/CLAUDE.md`:
+### Task Classifier (`scripts/sw-task-classifier.sh`)
 
-- Keep the local thin wrapper (18-line version referencing centralized standards)
-- `git checkout --ours .claude/CLAUDE.md && git add .claude/CLAUDE.md`
+```typescript
+// classify_task(issue_body: string, file_list: string, error_context: string, line_count: string): number
+// Returns: 0-100 complexity score
+// Error contract: returns 50 on any invalid/empty input (safe middle-ground)
+// Side effects: emits "classifier" event to events.jsonl
+// Precondition: none (handles all degenerate inputs)
+// Postcondition: output is integer in [0, 100]
 
-**Step 5.** Resolve `.claude/intelligence-cache.json`:
-
-- Accept local deletion (ephemeral cache)
-- `git rm .claude/intelligence-cache.json`
-
-**Step 6.** Resolve `.claude/platform-hygiene.json`:
-
-- Accept local deletion (ephemeral scan artifact)
-- `git rm .claude/platform-hygiene.json`
-
-**Step 7.** Resolve `scripts/lib/pipeline-detection.sh`:
-
-- Start from local version (has multi-lang environment detection)
-- Cherry-pick upstream's safety defaults: `PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"` and similar `SCRIPT_DIR` default
-- Add upstream's comment change ("default branch prefix mapping")
-- Verify all upstream shellcheck directives are present
-
-**Step 8.** Resolve `scripts/sw-hygiene.sh`:
-
-- Start from local version (has timeout optimization + index scan)
-- Bump VERSION to `3.2.4`
-- Add upstream's shellcheck disable directives (SC2155, SC2046, SC2034, SC2038, SC2318)
-- Verify no upstream functional changes were lost
-
-**Step 9.** Resolve `scripts/sw-otel.sh`:
-
-- Start from local version (has Bash 3.2 array init + arithmetic fixes)
-- Bump VERSION to `3.2.4`
-- Add upstream's shellcheck disable directives (SC2034 etc.)
-- Keep local's `active_pipelines=$((active_pipelines - 1))` with bounds check
-
-**Step 10.** Resolve `scripts/sw-pipeline.sh`:
-
-- Start from local version (has 500-char goal compaction + artifact references)
-- Bump VERSION to `3.2.4`
-- Add upstream's `export SHIPWRIGHT_ACTIVE=1` and `export SHIPWRIGHT_SOURCE=pipeline` in `setup_dirs()`
-- Add upstream's `TEST_CMD_EXPLICIT` flag handling
-- Add upstream's shellcheck directives
-- Add upstream's composed pipeline cache TTL config lookup
-
-**Step 11.** Resolve `scripts/sw-tmux-status.sh`:
-
-- Keep local version (variable initialization fix)
-- Bump VERSION to `3.2.4`
-- Add upstream's `# shellcheck disable=SC2155` directive if not already present
-
-**Step 12.** Resolve `templates/pipelines/autonomous.json`:
-
-- Start from upstream version (has `audit` stage + full model names)
-- Remove `"test_cmd": "npm test"` from `defaults` (local fix #25)
-- Result: full model names + audit stage + no hardcoded test_cmd
-
-**Step 13.** Resolve `templates/pipelines/cost-aware.json`:
-
-- Same approach as autonomous.json
-- Remove `"test_cmd": "npm test"` from `defaults`
-- Keep upstream's full model IDs (`claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`)
-- Keep upstream's `audit` stage
-
-**Step 14.** Resolve `templates/pipelines/full.json`:
-
-- Same approach as autonomous.json
-- Remove `"test_cmd": "npm test"` from `defaults`
-- Keep upstream's full model names + audit stage with `blocking: true`
-
-### Phase 3: Finalize Merge (Steps 15–16)
-
-**Step 15.** Stage all resolved files:
-
-```bash
-git add -A
+// Internal scoring functions (not public API, but testable):
+// _score_file_count(file_list: string): number      // 0-100
+// _score_change_size(line_count: string): number     // 0-100
+// _score_error_complexity(error_ctx: string): number // 0-100
+// _score_keywords(issue_body: string): number        // 0-100
 ```
 
-**Step 16.** Complete the merge commit:
+### Model Router (`scripts/sw-model-router.sh`)
 
-```bash
-git commit --no-edit
+```typescript
+// route_model(stage: string, complexity: number): "haiku" | "sonnet" | "opus"
+// Precondition: stage is valid pipeline stage name, complexity in [0, 100]
+// Error contract: returns "sonnet" if config unreadable or inputs invalid
+// Priority: FORCE_MODEL env > stage_override in config > complexity-based routing
+
+// escalate_model(current: "haiku" | "sonnet" | "opus"): "haiku" | "sonnet" | "opus"
+// Returns next tier up; opus→opus (ceiling)
+
+// route_model_auto(): "haiku" | "sonnet" | "opus"
+// Calls classify_task() internally, then route_model()
+
+// ab_test_should_use_classifier(): 0 | 1
+// 0 = use classifier (treatment), 1 = use Opus everywhere (control)
 ```
 
-### Phase 4: Post-Merge Verification (Steps 17–18)
+### Cost Tracker (`scripts/sw-cost-integration.sh`) — NEW
 
-**Step 17.** Check version consistency:
+```typescript
+// record_model_usage(stage: string, model: string, input_tokens: number, output_tokens: number): void
+// Appends JSON line to ~/.shipwright/optimization/model-usage.jsonl
+// Error contract: silently skips on write failure (non-blocking)
+// Uses atomic write (tmp + mv) for crash safety
 
-- `package.json` should show `3.2.4` from auto-merge
-- Run `grep -r 'VERSION=' scripts/sw-*.sh | grep '3.1.0'` to find any scripts still at old version
-- If any remain, update them to `3.2.4`
+// validate_budget(stage: string, model: string): 0 | 1
+// 0 = within budget, 1 = budget exceeded
+// Reads max_cost_per_pipeline from config, sums model-usage.jsonl for current run
+// Error contract: returns 0 (allow) if config missing or unreadable
 
-**Step 18.** Verify local fixes preserved:
+// ab_test_record_outcome(run_id: string, variant: "treatment" | "control", success: boolean, cost: number, duration: number): void
+// Appends to ~/.shipwright/ab-results.jsonl
 
-- Smart test targeting in `sw-loop.sh` (PRs #19–#22) — changes intact
-- Hardcoded test_cmd removal (PR #25) — no `"test_cmd": "npm test"` in templates
-- Status --json flag (PR #36) — `sw-status.sh` changes intact
-
-### Phase 5: Validation (Steps 19–22)
-
-**Step 19.** Run the full test suite:
-
-```bash
-npm test
+// ab_test_report(): void
+// Prints aggregated cost savings, success rates, and p-value to stdout
 ```
 
-All test suites must pass. If new upstream tests fail, investigate and fix.
+### CLI (`sw model` subcommands) — NEW
 
-**Step 20.** Run version consistency check:
-
-```bash
-./scripts/check-version-consistency.sh
+```typescript
+// sw model route <stage> [--complexity <score>]  → prints selected model
+// sw model escalate <current_model>              → prints next tier
+// sw model config [--set key=value]              → show/modify routing config
+// sw model estimate [--template <name>]          → per-stage cost estimate
+// sw model ab-test [--report | --configure <pct>] → A/B test management
 ```
 
-**Step 21.** Spot-check new upstream features:
+## Error Boundaries
 
-- Verify `audit` stage exists in pipeline template configs
-- Verify `.claudeignore` is present
-- Verify new dashboard Shipyard files exist
-- Verify Skipper submodule reference exists (`.gitmodules`)
+| Component    | Errors It Handles                                             | Propagation                                             |
+| ------------ | ------------------------------------------------------------- | ------------------------------------------------------- |
+| Classifier   | Empty/malformed input → returns 50                            | Never fails pipeline; always produces a score           |
+| Router       | Missing config → falls back to Sonnet; invalid stage → Sonnet | Never fails pipeline; always produces a model           |
+| Cost Tracker | Write failures → silent skip; missing config → allow all      | Budget exceeded → returns exit code 1, pipeline decides |
+| Pipeline     | Budget exceeded → emits event, blocks stage                   | Operator override via `FORCE_MODEL`; `--force` flag     |
+| CLI          | Invalid subcommand → usage help; missing args → error message | Exit code 1 with descriptive message                    |
 
-**Step 22.** Fix any test failures introduced by the merge.
+## Validation Criteria
 
-### Phase 6: PR (Step 23)
-
-**Step 23.** Open PR: `ci/chore-sync-fork-with-upstream-sethdford-37` → `main`
-
-## Task Checklist
-
-- [ ] Task 1: Fetch upstream and start merge (`git merge upstream/main --no-ff`)
-- [ ] Task 2: Resolve `.claude/CLAUDE.md` — keep local thin wrapper
-- [ ] Task 3: Resolve `.claude/intelligence-cache.json` and `.claude/platform-hygiene.json` — delete both
-- [ ] Task 4: Resolve `scripts/lib/pipeline-detection.sh` — merge local detection + upstream safety
-- [ ] Task 5: Resolve `scripts/sw-hygiene.sh` — merge local perf + upstream linting
-- [ ] Task 6: Resolve `scripts/sw-otel.sh` — merge local Bash 3.2 compat + upstream linting
-- [ ] Task 7: Resolve `scripts/sw-pipeline.sh` — merge local goal compaction + upstream env vars
-- [ ] Task 8: Resolve `scripts/sw-tmux-status.sh` — keep local + upstream SC2155
-- [ ] Task 9: Resolve 3 pipeline templates — remove test_cmd + keep audit stage + full model names
-- [ ] Task 10: Complete merge commit
-- [ ] Task 11: Verify version consistency (all files at 3.2.4)
-- [ ] Task 12: Verify local fixes preserved (smart targeting, test_cmd removal, status --json)
-- [ ] Task 13: Run `npm test` — full suite, 0 failures
-- [ ] Task 14: Fix any test failures from the merge
-- [ ] Task 15: Open PR: `ci/chore-sync-fork-with-upstream-sethdford-37` → `main`
-
-## Testing Approach
-
-1. **Full test suite** (`npm test`): All 102+ test suites must pass
-2. **Version consistency**: `./scripts/check-version-consistency.sh` — all VERSION= headers, package.json, and README badge must read `3.2.4`
-3. **Spot-check new features**: Verify audit stage in templates, `.claudeignore` present, Shipyard dashboard files exist
-4. **Regression check**: Verify local fixes preserved:
-   - Smart test targeting (PRs #19–#22) — `sw-loop.sh` changes intact
-   - Hardcoded test_cmd removal (PR #25) — no `"test_cmd": "npm test"` in templates
-   - Status --json flag (PR #36) — `sw-status.sh` changes intact
-   - macOS broken pipe assertions (PR #17) — test hardening intact
-
-## Definition of Done
-
-- [ ] All 11 merge conflicts resolved correctly
-- [ ] Local bug fixes preserved (goal compaction, test_cmd removal, macOS compat, smart targeting)
-- [ ] Upstream features present (audit stage, context engineering, shellcheck fixes, intelligence defaults, Shipyard dashboard)
-- [ ] `package.json` version is `3.2.4`
-- [ ] `npm test` passes with 0 failures
-- [ ] Version consistency verified across all files
-- [ ] PR opened against `main` with clear description of merge resolution decisions
-- [ ] No regressions in pipeline stages, loop behavior, or status --json output
-
-## Risks and Mitigations
-
-| Risk                                                                                           | Mitigation                                                                                 |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Shellcheck fixes in 163 upstream scripts may re-introduce warnings in locally modified scripts | Run shellcheck on locally-modified scripts post-merge                                      |
-| New upstream test suites may fail if they depend on features not present in fork's environment | Investigate failures individually; skip env-specific tests if needed                       |
-| Skipper submodule reference may not resolve (different repo access)                            | Verify `.gitmodules` URL is accessible; if not, skip submodule init                        |
-| Auto-merged files may have subtle semantic conflicts despite no textual conflicts              | Review auto-merged files for correctness, especially `sw-loop.sh` and `pipeline-stages.sh` |
-| Version 3.2.4 may not match expectations (issue says v3.2.0)                                   | Upstream has continued past v3.2.0; accept 3.2.4 as current upstream HEAD                  |
+- [ ] `classify_task()` returns integer 0-100 for any combination of inputs (including empty strings)
+- [ ] `route_model("build", 15)` returns "haiku"; `route_model("build", 85)` returns "opus"
+- [ ] `route_model("review", 10)` returns "opus" (stage override takes precedence over low score)
+- [ ] `escalate_model("haiku")` returns "sonnet"; `escalate_model("opus")` returns "opus"
+- [ ] `FORCE_MODEL=opus` overrides all routing decisions regardless of score or stage
+- [ ] `validate_budget()` returns 1 when accumulated cost exceeds configured limit
+- [ ] `record_model_usage()` produces valid JSONL readable by `jq`
+- [ ] A/B control group uses Opus everywhere; treatment group uses classifier routing
+- [ ] `ab_test_report()` calculates cost delta percentage and success rate delta
+- [ ] `sw model route build --complexity 20` prints "haiku" to stdout
+- [ ] All new code passes `shellcheck` with no warnings
+- [ ] Full test suite passes (`npm test`) including 96 existing + new integration tests
+- [ ] No Bash 3.2 incompatibilities (no associative arrays, readarray, or case-modification expansions)

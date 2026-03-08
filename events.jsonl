@@ -74,3 +74,10 @@
 {"ts":"2026-03-08T12:50:04Z","ts_epoch":1772974204,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":65,"todo":44}
 {"ts":"2026-03-08T12:51:09Z","ts_epoch":1772974269,"type":"cost.budget_unconfigured","status":"unlimited"}
 {"ts":"2026-03-08T12:51:16Z","ts_epoch":1772974276,"type":"hygiene_platform_refactor","hardcoded":46,"fallback":63,"todo":44}
+{"ts":"2026-03-08T16:09:54Z","ts_epoch":1772986194,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}
+{"ts":"2026-03-08T16:09:59Z","ts_epoch":1772986199,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-08T16:12:03Z","ts_epoch":1772986323,"type":"strategic.issue_created","title":"Pipeline pre-flight validation to catch configuration errors before execution","priority":"P0","complexity":"standard"}
+{"ts":"2026-03-08T16:12:07Z","ts_epoch":1772986327,"type":"strategic.issue_created","title":"Zero-config quick start with auto-detection and instant setup","priority":"P1","complexity":"fast"}
+{"ts":"2026-03-08T16:12:10Z","ts_epoch":1772986330,"type":"strategic.issue_created","title":"Fleet-wide pattern sharing for cross-repository learning","priority":"P2","complexity":"standard"}
+{"ts":"2026-03-08T16:12:14Z","ts_epoch":1772986334,"type":"strategic.issue_created","title":"Automated refactor opportunity detection with complexity scoring","priority":"P6","complexity":"standard"}
+{"ts":"2026-03-08T16:12:14Z","ts_epoch":1772986334,"type":"strategic.cycle_complete","issues_created":4,"issues_skipped":1}

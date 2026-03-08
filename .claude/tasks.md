@@ -4,27 +4,27 @@
 Pipeline: standard | Branch: feat/interactive-diagnostic-mode-for-failed-p-64
 
 ## Checklist
-- [ ] Task 1: Create `scripts/sw-diagnose.sh` with header, argument parsing, and help text
-- [ ] Task 2: Implement `load_pipeline_state()` to parse pipeline-state.md YAML frontmatter
-- [ ] Task 3: Implement `collect_errors()` to read error-summary.json and error-log.jsonl
-- [ ] Task 4: Implement `collect_events()` to extract failure events from events.jsonl
-- [ ] Task 5: Implement `classify_errors()` with the error classification map
-- [ ] Task 6: Implement `search_memory()` using memory_ranked_search
-- [ ] Task 7: Implement `rank_diagnoses()` to score and sort findings
-- [ ] Task 8: Implement `render_report()` for formatted text output
-- [ ] Task 9: Implement `render_json()` for `--json` output mode
-- [ ] Task 10: Add `diagnose` command to CLI router in `scripts/sw`
-- [ ] Task 11: Create `scripts/sw-diagnose-test.sh` with mock failure scenarios
-- [ ] Task 12: Add test to `package.json` scripts
-- [ ] Task 13: Run tests and verify all pass
-- [ ] `shipwright diagnose` reads latest failed pipeline state from artifacts
-- [ ] Analyzes error-summary.json, error-log.jsonl, and stage artifacts
-- [ ] Checks memory patterns for similar past failures via memory_ranked_search
-- [ ] Outputs ranked list of likely causes with suggested fixes
-- [ ] Includes relevant log excerpts and file paths for investigation
-- [ ] Works without active pipeline (reads from artifacts on disk)
-- [ ] `--json` flag produces valid, parseable JSON output
+- [x] Task 1: Create `sw-diagnose.sh` with error collection and classification
+- [x] Task 2: Implement confidence-based ranking with bubble sort (Bash 3.2 compat)
+- [x] Task 3: Add text report renderer with colored output
+- [x] Task 4: Add JSON output mode (`--json` flag)
+- [x] Task 5: Integrate memory pattern search
+- [x] Task 6: Wire CLI route in `scripts/sw`
+- [x] Task 7: Create test suite with 10 test scenarios
+- [x] Task 8: Add to npm test suite
+- [ ] Task 9: Verify all tests pass
+- [ ] Task 10: Review for edge cases and code quality
+- [ ] Task 11: Create PR
+- [x] `shipwright diagnose` reads latest failed pipeline state
+- [x] Analyzes error-summary.json, error-log.jsonl, stage artifacts
+- [x] Checks memory patterns for similar past failures
+- [x] Outputs ranked list of likely causes with suggested fixes
+- [x] Includes relevant log excerpts and file paths for investigation
+- [x] Works without active pipeline (reads from artifacts)
+- [x] Test coverage with mock failure scenarios (10 tests)
+- [ ] All tests pass in CI
+- [ ] PR created and reviewed
 
 ## Notes
-- Generated from pipeline plan at 2026-03-08T05:07:19Z
+- Generated from pipeline plan at 2026-03-08T06:32:25Z
 - Pipeline will update status as tasks complete

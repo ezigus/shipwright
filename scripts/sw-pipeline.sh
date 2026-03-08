@@ -49,6 +49,9 @@ fi
 [[ -f "$SCRIPT_DIR/lib/pipeline-intelligence.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-intelligence.sh"
 # shellcheck source=lib/pipeline-stages.sh
 [[ -f "$SCRIPT_DIR/lib/pipeline-stages.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-stages.sh"
+# Failure classifier for intelligent retry
+# shellcheck source=lib/failure-classifier.sh
+[[ -f "$SCRIPT_DIR/lib/failure-classifier.sh" ]] && source "$SCRIPT_DIR/lib/failure-classifier.sh"
 # Audit trail for compliance-grade pipeline traceability
 # shellcheck source=lib/audit-trail.sh
 [[ -f "$SCRIPT_DIR/lib/audit-trail.sh" ]] && source "$SCRIPT_DIR/lib/audit-trail.sh" 2>/dev/null || true
@@ -868,25 +871,29 @@ classify_error() {
 
     local classification="unknown"
 
-    # Infrastructure errors: timeout, OOM, network — retry makes sense
-    if echo "$log_tail" | grep -qiE 'timeout|timed out|ETIMEDOUT|ECONNREFUSED|ECONNRESET|network|socket hang up|OOM|out of memory|killed|signal 9|Cannot allocate memory'; then
-        classification="infrastructure"
-    # Configuration errors: missing env, wrong path — don't retry, escalate
-    elif echo "$log_tail" | grep -qiE 'ENOENT|not found|No such file|command not found|MODULE_NOT_FOUND|Cannot find module|missing.*env|undefined variable|permission denied|EACCES'; then
-        classification="configuration"
-    # Logic errors: assertion failures, type errors — retry won't help without code change
-    elif echo "$log_tail" | grep -qiE 'AssertionError|assert.*fail|Expected.*but.*got|TypeError|ReferenceError|SyntaxError|CompileError|type mismatch|cannot assign|incompatible type'; then
-        classification="logic"
-    # Build errors: compilation failures
-    elif echo "$log_tail" | grep -qiE 'error\[E[0-9]+\]|error: aborting|FAILED.*compile|build failed|tsc.*error|eslint.*error'; then
-        classification="logic"
-    # Intelligence fallback: Claude classification for unknown errors
-    elif [[ "$classification" == "unknown" ]] && type intelligence_search_memory >/dev/null 2>&1 && [[ "$(type -t ai_run_json 2>/dev/null)" == "function" ]]; then
+    # Use shared failure classifier library (6-class taxonomy) if available
+    if [[ "$(type -t classify_failure_from_log 2>/dev/null)" == "function" ]]; then
+        classification=$(classify_failure_from_log "$log_tail")
+    else
+        # Inline fallback if library not loaded (backward compatible)
+        if echo "$log_tail" | grep -qiE 'timeout|timed out|ETIMEDOUT|ECONNREFUSED|ECONNRESET|network|socket hang up|OOM|out of memory|killed|signal 9|Cannot allocate memory'; then
+            classification="transient_network"
+        elif echo "$log_tail" | grep -qiE 'ENOENT|not found|No such file|command not found|MODULE_NOT_FOUND|Cannot find module|missing.*env|undefined variable|permission denied|EACCES'; then
+            classification="environment"
+        elif echo "$log_tail" | grep -qiE 'AssertionError|assert.*fail|Expected.*but.*got|TypeError|ReferenceError|SyntaxError|CompileError|type mismatch|cannot assign|incompatible type'; then
+            classification="code_bug"
+        elif echo "$log_tail" | grep -qiE 'error\[E[0-9]+\]|error: aborting|FAILED.*compile|build failed|tsc.*error|eslint.*error'; then
+            classification="code_bug"
+        fi
+    fi
+
+    # AI fallback for unknown errors (preserved from original)
+    if [[ "$classification" == "unknown" ]] && type intelligence_search_memory >/dev/null 2>&1 && [[ "$(type -t ai_run_json 2>/dev/null)" == "function" ]]; then
         local ai_class ai_json ai_provider ai_out ai_err
         ai_provider="$(ai_provider_resolve "${SHIPWRIGHT_AI_PROVIDER:-}" 2>/dev/null || echo "claude")"
         ai_out=$(mktemp "${TMPDIR:-/tmp}/sw-classify-ai.XXXXXX")
         ai_err=$(mktemp "${TMPDIR:-/tmp}/sw-classify-ai-err.XXXXXX")
-        ai_json=$(ai_run_json "$ai_provider" "Classify this error as exactly one of: infrastructure, configuration, logic, unknown.
+        ai_json=$(ai_run_json "$ai_provider" "Classify this error as exactly one of: environment, transient_network, context_exhaustion, flaky_test, code_bug, unknown.
 
 Error output:
 $(echo "$log_tail" | tail -20)
@@ -896,18 +903,18 @@ Reply with ONLY the classification word, nothing else." "haiku" "1" "$ai_out" "$
         ai_class=$(echo "$ai_json" | jq -r '.result_text // ""' 2>/dev/null || echo "")
         ai_class=$(echo "$ai_class" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
         case "$ai_class" in
-            infrastructure|configuration|logic) classification="$ai_class" ;;
+            environment|transient_network|context_exhaustion|flaky_test|code_bug) classification="$ai_class" ;;
         esac
     fi
 
-    # Map retry categories to shared taxonomy (from lib/compat.sh SW_ERROR_CATEGORIES)
-    # Retry uses: infrastructure, configuration, logic, unknown
-    # Shared uses: test_failure, build_error, lint_error, timeout, dependency, flaky, config, security, permission, unknown
+    # Map 6-class taxonomy to shared canonical categories (for compat.sh SW_ERROR_CATEGORIES)
     local canonical_category="unknown"
     case "$classification" in
-        infrastructure) canonical_category="timeout" ;;
-        configuration)  canonical_category="config" ;;
-        logic)
+        transient_network)  canonical_category="timeout" ;;
+        environment)        canonical_category="config" ;;
+        context_exhaustion) canonical_category="timeout" ;;
+        flaky_test)         canonical_category="test_failure" ;;
+        code_bug)
             case "$stage_id" in
                 test) canonical_category="test_failure" ;;
                 *)    canonical_category="build_error" ;;
@@ -915,7 +922,7 @@ Reply with ONLY the classification word, nothing else." "haiku" "1" "$ai_out" "$
             ;;
     esac
 
-    # Record classification for future runs (using both retry and canonical categories)
+    # Record classification for future runs
     if [[ -n "$error_sig" && "$error_sig" != "0" ]]; then
         local class_dir="${HOME}/.shipwright/optimization"
         mkdir -p "$class_dir" 2>/dev/null || true
@@ -949,8 +956,18 @@ run_stage_with_retry() {
 
     local attempt=0
     local prev_error_class=""
+    local last_error_class=""
     while true; do
         if "stage_${stage_id}"; then
+            # Stage succeeded; if this was a retry, emit outcome event
+            if [[ "$attempt" -gt 1 && -n "$last_error_class" ]]; then
+                emit_event "retry.outcome" \
+                    "issue=${ISSUE_NUMBER:-0}" \
+                    "stage=$stage_id" \
+                    "error_class=$last_error_class" \
+                    "attempts=$((attempt - 1))" \
+                    "result=success"
+            fi
             return 0
         fi
 
@@ -958,6 +975,7 @@ run_stage_with_retry() {
         local error_class
         error_class=$(classify_error "$stage_id")
         LAST_STAGE_ERROR_CLASS="$error_class"
+        last_error_class="$error_class"
         LAST_STAGE_ERROR=""
         local _log_file="${ARTIFACTS_DIR}/${stage_id}-results.log"
         [[ ! -f "$_log_file" ]] && _log_file="${ARTIFACTS_DIR}/test-results.log"
@@ -989,41 +1007,49 @@ run_stage_with_retry() {
             return 1
         fi
 
-        # Classify done above; decide whether retry makes sense
+        # Classify done above; get 6-class strategy for retry decision
 
+        # Get retry strategy for the failure class
+        local strategy_json
+        strategy_json=$(get_retry_strategy "$error_class") || true
+        local strategy_action=$(echo "$strategy_json" | jq -r '.action' 2>/dev/null || echo "delayed")
+        local strategy_max=$(echo "$strategy_json" | jq -r '.max_retries' 2>/dev/null || echo "1")
+
+        # Compute effective max: template ceiling takes precedence
+        local effective_max=$((strategy_max < max_retries ? strategy_max : max_retries))
+
+        # Emit enriched classification event
         emit_event "retry.classified" \
             "issue=${ISSUE_NUMBER:-0}" \
             "stage=$stage_id" \
             "attempt=$attempt" \
-            "error_class=$error_class"
+            "error_class=$error_class" \
+            "strategy_action=$strategy_action" \
+            "strategy_max_retries=$strategy_max" \
+            "effective_max=$effective_max"
 
-        case "$error_class" in
-            infrastructure)
-                info "Error classified as infrastructure (timeout/network/OOM) — retry makes sense"
-                ;;
-            configuration)
-                error "Error classified as configuration (missing env/path) — skipping retry, escalating"
-                emit_event "retry.escalated" \
-                    "issue=${ISSUE_NUMBER:-0}" \
-                    "stage=$stage_id" \
-                    "reason=configuration_error"
-                return 1
-                ;;
-            logic)
-                if [[ "$error_class" == "$prev_error_class" ]]; then
-                    error "Error classified as logic (assertion/type error) with same class — retry won't help without code change"
-                    emit_event "retry.skipped" \
-                        "issue=${ISSUE_NUMBER:-0}" \
-                        "stage=$stage_id" \
-                        "reason=repeated_logic_error"
-                    return 1
-                fi
-                warn "Error classified as logic — retrying once in case build fixes it"
-                ;;
-            *)
-                info "Error classification: unknown — retrying"
-                ;;
-        esac
+        # Handle action=skip: don't retry environment errors
+        if [[ "$strategy_action" == "skip" ]]; then
+            error "Error classified as $error_class — skipping retry (non-retryable error)"
+            emit_event "retry.skipped_not_retryable" \
+                "issue=${ISSUE_NUMBER:-0}" \
+                "stage=$stage_id" \
+                "error_class=$error_class" \
+                "reason=strategy_skip"
+            return 1
+        fi
+
+        # Check if we've hit the effective max retries
+        if [[ "$attempt" -gt "$effective_max" ]]; then
+            emit_event "retry.outcome" \
+                "issue=${ISSUE_NUMBER:-0}" \
+                "stage=$stage_id" \
+                "error_class=$error_class" \
+                "attempts=$((attempt - 1))" \
+                "result=exhausted"
+            return 1
+        fi
+
         prev_error_class="$error_class"
 
         if type db_save_reasoning_trace >/dev/null 2>&1; then
@@ -1032,71 +1058,87 @@ run_stage_with_retry() {
             db_save_reasoning_trace "$job_id" "retry_reasoning" \
                 "stage=$stage_id error=$error_msg" \
                 "Stage failed, analyzing error pattern before retry" \
-                "retry_strategy=self_heal" 0.6 2>/dev/null || true
+                "retry_strategy=$strategy_action" 0.6 2>/dev/null || true
         fi
 
-        warn "Stage $stage_id failed (attempt $attempt/$((max_retries + 1)), class: $error_class) — retrying..."
-        # Exponential backoff with jitter to avoid thundering herd
-        local backoff=$((2 ** attempt))
-        [[ "$backoff" -gt 16 ]] && backoff=16
-        local jitter=$(( RANDOM % (backoff + 1) ))
-        local total_sleep=$((backoff + jitter))
-        info "Backing off ${total_sleep}s before retry..."
-        sleep "$total_sleep"
+        warn "Stage $stage_id failed (attempt $attempt/$((effective_max + 1)), class: $error_class, strategy: $strategy_action) — retrying..."
 
-        # Write debugging context for the retry attempt to consume
-        local _retry_ctx_file="${ARTIFACTS_DIR}/.retry-context-${stage_id}.md"
-        {
-            echo "## Previous Attempt Failed"
-            echo ""
-            echo "**Error classification:** ${error_class}"
-            echo "**Attempt:** ${attempt} of $((max_retries + 1))"
-            echo ""
-            echo "### Error Output (last 30 lines)"
-            echo '```'
-            tail -30 "$_log_file" 2>/dev/null || echo "(no log available)"
-            echo '```'
-            echo ""
-            # Check for existing artifacts that should be preserved
-            local _existing_artifacts=""
-            for _af in plan.md design.md test-results.log; do
-                if [[ -s "${ARTIFACTS_DIR}/${_af}" ]]; then
-                    local _af_lines
-                    _af_lines=$(wc -l < "${ARTIFACTS_DIR}/${_af}" 2>/dev/null | xargs)
-                    _existing_artifacts="${_existing_artifacts}  - ${_af} (${_af_lines} lines)\n"
-                fi
-            done
-            if [[ -n "$_existing_artifacts" ]]; then
-                echo "### Existing Artifacts (PRESERVE these)"
-                echo -e "$_existing_artifacts"
-                echo "These artifacts exist from previous successful stages. Use them as-is unless they are the source of the problem."
+        # Handle action-specific behavior before retry
+        case "$strategy_action" in
+            immediate)
+                info "Flaky test detected — immediate retry without backoff"
+                ;;
+            delayed|analysis)
+                # Calculate backoff using shared library
+                local backoff_s
+                backoff_s=$(get_backoff_seconds "$error_class" "$attempt") || backoff_s=0
+                info "Backing off ${backoff_s}s before retry..."
+                sleep "$backoff_s"
+                ;;
+            *)
+                # Unknown action; apply default delayed retry
+                local backoff_s
+                backoff_s=$(get_backoff_seconds "$error_class" "$attempt") || backoff_s=0
+                info "Backing off ${backoff_s}s before retry..."
+                sleep "$backoff_s"
+                ;;
+        esac
+
+        # Write debugging context for the retry attempt to consume (only for analysis action)
+        if [[ "$strategy_action" == "analysis" ]]; then
+            local _retry_ctx_file="${ARTIFACTS_DIR}/.retry-context-${stage_id}.md"
+            {
+                echo "## Previous Attempt Failed"
                 echo ""
-            fi
-            # Adaptive: check if additional skills could help this retry
-            if type skill_memory_get_recommendations >/dev/null 2>&1; then
-                local _retry_skills
-                _retry_skills=$(skill_memory_get_recommendations "${INTELLIGENCE_ISSUE_TYPE:-backend}" "$stage_id" 2>/dev/null || true)
-                if [[ -n "$_retry_skills" ]]; then
-                    echo "### Skills Recommended by Learning System"
-                    echo "Based on historical success rates, these skills may improve the retry:"
-                    echo "- $(printf '%s' "$_retry_skills" | sed 's/,/\n- /g')"
+                echo "**Error classification:** ${error_class}"
+                echo "**Attempt:** ${attempt} of $((effective_max + 1))"
+                echo ""
+                echo "### Error Output (last 30 lines)"
+                echo '```'
+                tail -30 "$_log_file" 2>/dev/null || echo "(no log available)"
+                echo '```'
+                echo ""
+                # Check for existing artifacts that should be preserved
+                local _existing_artifacts=""
+                for _af in plan.md design.md test-results.log; do
+                    if [[ -s "${ARTIFACTS_DIR}/${_af}" ]]; then
+                        local _af_lines
+                        _af_lines=$(wc -l < "${ARTIFACTS_DIR}/${_af}" 2>/dev/null | xargs)
+                        _existing_artifacts="${_existing_artifacts}  - ${_af} (${_af_lines} lines)\n"
+                    fi
+                done
+                if [[ -n "$_existing_artifacts" ]]; then
+                    echo "### Existing Artifacts (PRESERVE these)"
+                    echo -e "$_existing_artifacts"
+                    echo "These artifacts exist from previous successful stages. Use them as-is unless they are the source of the problem."
                     echo ""
                 fi
-            fi
+                # Adaptive: check if additional skills could help this retry
+                if type skill_memory_get_recommendations >/dev/null 2>&1; then
+                    local _retry_skills
+                    _retry_skills=$(skill_memory_get_recommendations "${INTELLIGENCE_ISSUE_TYPE:-backend}" "$stage_id" 2>/dev/null || true)
+                    if [[ -n "$_retry_skills" ]]; then
+                        echo "### Skills Recommended by Learning System"
+                        echo "Based on historical success rates, these skills may improve the retry:"
+                        echo "- $(printf '%s' "$_retry_skills" | sed 's/,/\n- /g')"
+                        echo ""
+                    fi
+                fi
 
-            echo "### Investigation Required"
-            echo "Before attempting a fix:"
-            echo "1. Read the error output above carefully"
-            echo "2. Identify the ROOT CAUSE — not just the symptom"
-            echo "3. If previous artifacts exist and are correct, build on them"
-            echo "4. If previous artifacts are flawed, explain what's wrong before fixing"
-        } > "$_retry_ctx_file" 2>/dev/null || true
+                echo "### Investigation Required"
+                echo "Before attempting a fix:"
+                echo "1. Read the error output above carefully"
+                echo "2. Identify the ROOT CAUSE — not just the symptom"
+                echo "3. If previous artifacts exist and are correct, build on them"
+                echo "4. If previous artifacts are flawed, explain what's wrong before fixing"
+            } > "$_retry_ctx_file" 2>/dev/null || true
 
-        emit_event "retry.context_written" \
-            "issue=${ISSUE_NUMBER:-0}" \
-            "stage=$stage_id" \
-            "attempt=$attempt" \
-            "context_file=$_retry_ctx_file"
+            emit_event "retry.context_written" \
+                "issue=${ISSUE_NUMBER:-0}" \
+                "stage=$stage_id" \
+                "attempt=$attempt" \
+                "context_file=$_retry_ctx_file"
+        fi
     done
 }
 

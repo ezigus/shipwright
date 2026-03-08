@@ -38,6 +38,12 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
+# ─── Source Task Classifier (conditional) ──────────────────────────────────
+# shellcheck source=sw-task-classifier.sh
+if [[ -f "$SCRIPT_DIR/sw-task-classifier.sh" ]]; then
+    source "$SCRIPT_DIR/sw-task-classifier.sh"
+fi
+
 # ─── File Paths ────────────────────────────────────────────────────────────
 # Unified: prefer optimization dir (written by self-optimize), fallback to legacy
 OPTIMIZATION_DIR="${HOME}/.shipwright/optimization"
@@ -66,7 +72,7 @@ SONNET_STAGES="test|review"
 OPUS_STAGES="plan|design|build|compound_quality"
 
 # ─── Complexity Thresholds ──────────────────────────────────────────────────
-COMPLEXITY_LOW=30          # Below this: use sonnet
+COMPLEXITY_LOW=30          # Below this: use haiku
 COMPLEXITY_HIGH=80         # Above this: use opus
 
 # ─── Resolve Routing Config Path ────────────────────────────────────────────
@@ -164,7 +170,7 @@ route_model() {
     # Strategy 2: Built-in defaults (complexity + stage rules)
     if [[ -z "$model" ]]; then
         if [[ "$complexity" -lt "$COMPLEXITY_LOW" ]]; then
-            model="sonnet"
+            model="haiku"
         elif [[ "$complexity" -gt "$COMPLEXITY_HIGH" ]]; then
             model="opus"
         else
@@ -182,7 +188,9 @@ route_model() {
 
     # Complexity override: upgrade/downgrade based on complexity even when config says otherwise
     if [[ "$complexity" -lt "$COMPLEXITY_LOW" && "$model" == "opus" ]]; then
-        model="sonnet"
+        model="haiku"
+    elif [[ "$complexity" -lt "$COMPLEXITY_LOW" && "$model" == "sonnet" ]]; then
+        model="haiku"
     elif [[ "$complexity" -gt "$COMPLEXITY_HIGH" && "$model" == "haiku" ]]; then
         model="opus"
     elif [[ "$complexity" -gt "$COMPLEXITY_HIGH" ]]; then
@@ -210,6 +218,89 @@ escalate_model() {
     esac
 
     echo "$next_model"
+}
+
+# ─── Auto-Classify and Route ───────────────────────────────────────────────
+# route_model_auto <stage> <issue_body> [file_list] [error_context] [line_count]
+# Classifies task complexity then routes to the appropriate model.
+# Caches the result in PIPELINE_COMPLEXITY_SCORE to avoid re-computation.
+route_model_auto() {
+    local stage="$1"
+    local issue_body="${2:-}"
+    local file_list="${3:-}"
+    local error_context="${4:-}"
+    local line_count="${5:-0}"
+
+    # Check if classifier is available
+    if [[ "$(type -t classify_task 2>/dev/null)" != "function" ]]; then
+        warn "Task classifier not available, falling back to default routing"
+        route_model "$stage" 50
+        return
+    fi
+
+    # Check for cached complexity score (set on first classification in this pipeline run)
+    if [[ -n "${PIPELINE_COMPLEXITY_SCORE:-}" ]]; then
+        route_model "$stage" "$PIPELINE_COMPLEXITY_SCORE"
+        return
+    fi
+
+    # A/B test gate: if classifier not enabled and this run is not in A/B experimental group, use defaults
+    if ! is_classifier_enabled && ! ab_test_should_use_classifier; then
+        route_model "$stage" 50
+        return
+    fi
+
+    # Classify and cache
+    local score
+    score=$(classify_task "$issue_body" "$file_list" "$error_context" "$line_count" 2>/dev/null) || score=50
+    if ! [[ "$score" =~ ^[0-9]+$ ]]; then
+        score=50
+    fi
+    export PIPELINE_COMPLEXITY_SCORE="$score"
+
+    # Log classification event
+    emit_event "classifier" "score=$score" "stage=$stage" || true
+
+    route_model "$stage" "$score"
+}
+
+# ─── A/B Test: Should This Pipeline Use the Classifier? ────────────────────
+# Returns 0 (true) if this pipeline run should use classifier-based routing.
+# Uses configured percentage and a random draw for assignment.
+ab_test_should_use_classifier() {
+    _resolve_routing_config
+    if [[ -z "$MODEL_ROUTING_CONFIG" || ! -f "$MODEL_ROUTING_CONFIG" ]]; then
+        return 1
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        return 1
+    fi
+
+    local enabled percentage
+    enabled=$(jq -r '.a_b_test.enabled // false' "$MODEL_ROUTING_CONFIG" 2>/dev/null || echo "false")
+    if [[ "$enabled" != "true" ]]; then
+        return 1
+    fi
+
+    percentage=$(jq -r '.a_b_test.percentage // 0' "$MODEL_ROUTING_CONFIG" 2>/dev/null || echo "0")
+    if ! [[ "$percentage" =~ ^[0-9]+$ ]]; then
+        percentage=0
+    fi
+
+    local rand=$((RANDOM % 100))
+    [[ "$rand" -lt "$percentage" ]]
+}
+
+# ─── Check if Classifier Routing is Enabled ────────────────────────────────
+is_classifier_enabled() {
+    local policy_file="${REPO_DIR}/config/policy.json"
+    if [[ -f "$policy_file" ]] && command -v jq >/dev/null 2>&1; then
+        local enabled
+        enabled=$(jq -r '.modelRouting.enabled // false' "$policy_file" 2>/dev/null || echo "false")
+        [[ "$enabled" == "true" ]]
+    else
+        return 1
+    fi
 }
 
 # ─── Show Configuration ─────────────────────────────────────────────────────
@@ -584,6 +675,19 @@ main() {
             fi
             ;;
 
+        route-auto)
+            shift 2>/dev/null || true
+            route_model_auto "$@"
+            ;;
+        classify)
+            shift 2>/dev/null || true
+            if [[ "$(type -t classify_task 2>/dev/null)" == "function" ]]; then
+                classify_task "$@"
+            else
+                error "Task classifier not available"
+                exit 1
+            fi
+            ;;
         report)
             show_report
             ;;

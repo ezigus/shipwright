@@ -64,5 +64,5 @@
 {"ts":"2026-03-08T12:46:30Z","ts_epoch":1772973990,"type":"intelligence.cache_hit","cache_key":"search_memory_16a6c083182ff11046edcc06eed93985"}
 {"ts":"2026-03-08T12:46:30Z","ts_epoch":1772973990,"type":"loop.context_efficiency","iteration":2,"raw_prompt_chars":19557,"trimmed_prompt_chars":19557,"trim_ratio":0.0,"budget_utilization":9.8,"budget_chars":200000,"job_id":"standard"}
 {"ts":"2026-03-08T12:46:37Z","ts_epoch":1772973997,"type":"stage.failed","event_id":"evt-1772973997-3892791747","payload":"{\"stage\":\"build\",\"issue\":\"68\",\"timing\":\"27m 15s\"}"}
-{"ts":"2026-03-08T12:48:28Z","ts_epoch":1772974108,"type":"cost.budget_unconfigured","status":"unlimited"}
-{"ts":"2026-03-08T12:48:34Z","ts_epoch":1772974114,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}
+{"ts":"2026-03-08T12:48:29Z","ts_epoch":1772974109,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-08T12:48:36Z","ts_epoch":1772974116,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}

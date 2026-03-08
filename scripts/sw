@@ -305,6 +305,9 @@ main() {
         doctor)
             exec "$SCRIPT_DIR/sw-doctor.sh" "$@"
             ;;
+        validate)
+            exec "$SCRIPT_DIR/sw-validate.sh" "$@"
+            ;;
         cleanup)
             check_tmux
             exec "$SCRIPT_DIR/sw-cleanup.sh" "$@"

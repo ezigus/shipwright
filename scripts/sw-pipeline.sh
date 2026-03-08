@@ -792,6 +792,15 @@ preflight_checks() {
 
     echo ""
 
+    # Extended validation (if sw-validate.sh available)
+    if [[ -x "$SCRIPT_DIR/sw-validate.sh" ]]; then
+        local validate_args=("--quiet" "--pipeline" "${TEMPLATE_NAME:-standard}" "--project-root" "$PROJECT_ROOT")
+        [[ "$NO_GITHUB" == "true" ]] && validate_args+=("--no-github")
+        if ! "$SCRIPT_DIR/sw-validate.sh" "${validate_args[@]}" 2>/dev/null; then
+            errors=$((errors + 1))
+        fi
+    fi
+
     if [[ "$errors" -gt 0 ]]; then
         error "Pre-flight failed: $errors error(s)"
         return 1

@@ -1,29 +1,29 @@
 # Pipeline Tasks — Fleet operational visibility dashboard
 
 ## Implementation Checklist
-- [ ] Task 1: Add `fleet_collect_repo_stats()` function — queries events.jsonl/DB for per-repo success rate, avg duration, last run, failure count
-- [ ] Task 2: Add `fleet_collect_worker_util()` function — calculates busy/idle/available workers from heartbeats and fleet-config
-- [ ] Task 3: Add `fleet_collect_failure_patterns()` function — cross-repo failure pattern detection from events
-- [ ] Task 4: Add `fleet_generate_alerts()` function — checks for idle workers with queue, resource hogs, cross-repo failures, stale fleet, budget pressure
-- [ ] Task 5: Enhance `fleet_status()` display — integrate all collectors, render ASCII utilization bars, per-repo table with stats, aggregates section, alerts section, cross-repo patterns section
-- [ ] Task 6: Add JSON output mode (`--json` flag) — structured JSON output for all fleet status data
-- [ ] Task 7: Add `fleet.alert` event type to `config/event-schema.json`
-- [ ] Task 8: Add `--period` flag support — bound event queries to N days (default 7)
-- [ ] Task 9: Write tests for per-repo stats collection and display
-- [ ] Task 10: Write tests for worker utilization display
-- [ ] Task 11: Write tests for cross-repo pattern detection
-- [ ] Task 12: Write tests for alert generation (idle workers, resource hog, cross-repo failures)
-- [ ] Task 13: Write tests for JSON output mode
-- [ ] Task 14: Write tests for edge cases (no events, empty fleet, no fleet running)
-- [ ] Task 15: Run full test suite and verify no regressions
-- [ ] `shipwright fleet status` displays worker pool utilization (busy/idle/available) with ASCII bar
-- [ ] `shipwright fleet status` displays per-repo table with: status, active, queued, completed, success rate, avg duration, last run, failure count
-- [ ] `shipwright fleet status` displays fleet-wide aggregates: total runs, overall success rate, total cost
-- [ ] `shipwright fleet status` displays cross-repo failure patterns (failures in ≥2 repos)
-- [ ] `shipwright fleet status` displays alerts for: idle workers with queue, resource hog, cross-repo failures
+- [ ] Task 1: Create `lib/fleet-stats.sh` with `fleet_collect_repo_stats()` for per-repo event aggregation
+- [ ] Task 2: Add `fleet_collect_worker_util()` for worker busy/idle/available calculation
+- [ ] Task 3: Add `fleet_collect_aggregates()` for fleet-wide totals and cost rollup
+- [ ] Task 4: Add `fleet_detect_cross_patterns()` for cross-repo failure pattern matching
+- [ ] Task 5: Add `fleet_check_alerts()` for resource imbalance and pattern alerting
+- [ ] Task 6: Enhance `fleet_status()` in `sw-fleet.sh` with new dashboard sections
+- [ ] Task 7: Add `--json` output mode for enhanced fleet status
+- [ ] Task 8: Register `fleet.status` and `fleet.alert` event types in `event-schema.json`
+- [ ] Task 9: Write comprehensive shell tests in `sw-fleet-status-test.sh`
+- [ ] Task 10: Run full test suite (`npm test`) and fix any regressions
+- [ ] `shipwright fleet status` displays: active repos, worker pool utilization (progress bar), queue depth per repo
+- [ ] Per-repo stats table shows: success rate, avg duration, last run timestamp, failure count
+- [ ] Cross-repo pattern detection identifies failures appearing in ≥2 repos with same error_class
+- [ ] Worker utilization shows: busy/idle/available workers with visual progress bar
+- [ ] Fleet-wide aggregates show: total runs, overall success rate, total cost
+- [ ] Alerts fire for: idle workers with queued work, single repo dominating resources (>60%), cross-repo failure patterns
+- [ ] `shipwright fleet status --json` outputs valid JSON with all fields
+- [ ] All new shell tests pass
+- [ ] `npm test` passes with no regressions
+- [ ] Bash 3.2 compatible (no associative arrays)
 
 ## Context
 - Pipeline: standard
 - Branch: feat/fleet-operational-visibility-dashboard-77
 - Issue: #77
-- Generated: 2026-03-08T12:35:34Z
+- Generated: 2026-03-08T18:16:46Z

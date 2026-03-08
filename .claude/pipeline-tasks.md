@@ -1,29 +1,31 @@
-# Pipeline Tasks — chore: close issue #45 - merge goal complete
+# Pipeline Tasks — Interactive diagnostic mode for failed pipeline troubleshooting
 
 ## Implementation Checklist
-- [ ] Task 1: Verify branch working tree is clean
-- [ ] Task 2: Verify recent commit history (5 iterations)
-- [ ] Task 3: Create PR from feature branch to main with comprehensive description
-- [ ] Task 4: Wait for GitHub Actions status checks to complete
-- [ ] Task 5: Verify all PR checks pass
-- [ ] Task 6: Request code review approval (if branch protection requires)
-- [ ] Task 7: Merge PR to main (squash merge recommended)
-- [ ] Task 8: Delete feature branch after merge
-- [ ] Task 9: Verify merge completed on main with `git pull`
-- [ ] Task 10: Close GitHub issue #45 with merge reference
-- [ ] Task 11: Sync local main with remote
-- [ ] Task 12: Verify merged commits are functional
-- [ ] Task 13: Update MEMORY.md with completion status
-- [ ] Task 14: Document lessons learned for future pipelines
-- [ ] Task 15: Archive pipeline artifacts and logs
-- [x] Branch is clean and ready
-- [x] Autonomous iterations 3-5 complete
-- [x] Git credential fix implemented
-- [x] Chaos test fix implemented
-- [x] Documentation auto-sync configured
+
+- [x] Task 1: Create `sw-diagnose.sh` with error collection and classification
+- [x] Task 2: Implement confidence-based ranking with bubble sort (Bash 3.2 compat)
+- [x] Task 3: Add text report renderer with colored output
+- [x] Task 4: Add JSON output mode (`--json` flag)
+- [x] Task 5: Integrate memory pattern search
+- [x] Task 6: Wire CLI route in `scripts/sw`
+- [x] Task 7: Create test suite with 10 test scenarios
+- [x] Task 8: Add to npm test suite
+- [x] Task 9: Verify all tests pass
+- [x] Task 10: Review for edge cases and code quality
+- [x] Task 11: Create PR
+- [x] `shipwright diagnose` reads latest failed pipeline state
+- [x] Analyzes error-summary.json, error-log.jsonl, stage artifacts
+- [x] Checks memory patterns for similar past failures
+- [x] Outputs ranked list of likely causes with suggested fixes
+- [x] Includes relevant log excerpts and file paths for investigation
+- [x] Works without active pipeline (reads from artifacts)
+- [x] Test coverage with mock failure scenarios (10 tests)
+- [ ] All tests pass in CI
+- [ ] PR created and reviewed
 
 ## Context
+
 - Pipeline: standard
-- Branch: ci/chore-close-issue-45-merge-goal-complete
-- Issue: none
-- Generated: 2026-03-03T01:01:38Z
+- Branch: feat/interactive-diagnostic-mode-for-failed-p-64
+- Issue: #64
+- Generated: 2026-03-08T06:32:24Z

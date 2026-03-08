@@ -46,3 +46,5 @@
 {"ts":"2026-03-08T18:22:12Z","ts_epoch":1772994132,"type":"stage.failed","event_id":"evt-1772994132-455757339","payload":"{\"stage\":\"plan\",\"issue\":\"64\",\"timing\":\"9m 28s\"}"}
 {"ts":"2026-03-08T18:22:13Z","ts_epoch":1772994133,"type":"stage.failed","issue":64,"stage":"plan","duration_s":569,"error":"unknown","error_class":"unknown"}
 {"ts":"2026-03-08T18:22:13Z","ts_epoch":1772994133,"type":"vitals.snapshot","issue":64,"stage":"plan","iteration":0,"diff_lines":0,"no_progress":0}
+{"ts":"2026-03-08T20:09:22Z","ts_epoch":1773000562,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}
+{"ts":"2026-03-08T20:09:26Z","ts_epoch":1773000566,"type":"cost.budget_unconfigured","status":"unlimited"}

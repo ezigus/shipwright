@@ -9,6 +9,14 @@
       "last_seen": "2026-02-26T01:02:44Z",
       "category": "unknown",
       "weight": 2.25
+    },
+    {
+      "stage": "test",
+      "pattern": "\u001b[38;2;248;113;113mFailed:\u001b[0m 6",
+      "root_cause": "",
+      "fix": "",
+      "seen_count": 1,
+      "last_seen": "2026-03-08T12:40:10Z"
     }
   ]
 }

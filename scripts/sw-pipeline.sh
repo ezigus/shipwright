@@ -49,6 +49,9 @@ fi
 [[ -f "$SCRIPT_DIR/lib/pipeline-intelligence.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-intelligence.sh"
 # shellcheck source=lib/pipeline-stages.sh
 [[ -f "$SCRIPT_DIR/lib/pipeline-stages.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-stages.sh"
+# Failure classifier for intelligent retry
+# shellcheck source=lib/failure-classifier.sh
+[[ -f "$SCRIPT_DIR/lib/failure-classifier.sh" ]] && source "$SCRIPT_DIR/lib/failure-classifier.sh"
 # Audit trail for compliance-grade pipeline traceability
 # shellcheck source=lib/audit-trail.sh
 [[ -f "$SCRIPT_DIR/lib/audit-trail.sh" ]] && source "$SCRIPT_DIR/lib/audit-trail.sh" 2>/dev/null || true
@@ -868,25 +871,29 @@ classify_error() {
 
     local classification="unknown"
 
-    # Infrastructure errors: timeout, OOM, network — retry makes sense
-    if echo "$log_tail" | grep -qiE 'timeout|timed out|ETIMEDOUT|ECONNREFUSED|ECONNRESET|network|socket hang up|OOM|out of memory|killed|signal 9|Cannot allocate memory'; then
-        classification="infrastructure"
-    # Configuration errors: missing env, wrong path — don't retry, escalate
-    elif echo "$log_tail" | grep -qiE 'ENOENT|not found|No such file|command not found|MODULE_NOT_FOUND|Cannot find module|missing.*env|undefined variable|permission denied|EACCES'; then
-        classification="configuration"
-    # Logic errors: assertion failures, type errors — retry won't help without code change
-    elif echo "$log_tail" | grep -qiE 'AssertionError|assert.*fail|Expected.*but.*got|TypeError|ReferenceError|SyntaxError|CompileError|type mismatch|cannot assign|incompatible type'; then
-        classification="logic"
-    # Build errors: compilation failures
-    elif echo "$log_tail" | grep -qiE 'error\[E[0-9]+\]|error: aborting|FAILED.*compile|build failed|tsc.*error|eslint.*error'; then
-        classification="logic"
-    # Intelligence fallback: Claude classification for unknown errors
-    elif [[ "$classification" == "unknown" ]] && type intelligence_search_memory >/dev/null 2>&1 && [[ "$(type -t ai_run_json 2>/dev/null)" == "function" ]]; then
+    # Use shared failure classifier library (6-class taxonomy) if available
+    if [[ "$(type -t classify_failure_from_log 2>/dev/null)" == "function" ]]; then
+        classification=$(classify_failure_from_log "$log_tail")
+    else
+        # Inline fallback if library not loaded (backward compatible)
+        if echo "$log_tail" | grep -qiE 'timeout|timed out|ETIMEDOUT|ECONNREFUSED|ECONNRESET|network|socket hang up|OOM|out of memory|killed|signal 9|Cannot allocate memory'; then
+            classification="transient_network"
+        elif echo "$log_tail" | grep -qiE 'ENOENT|not found|No such file|command not found|MODULE_NOT_FOUND|Cannot find module|missing.*env|undefined variable|permission denied|EACCES'; then
+            classification="environment"
+        elif echo "$log_tail" | grep -qiE 'AssertionError|assert.*fail|Expected.*but.*got|TypeError|ReferenceError|SyntaxError|CompileError|type mismatch|cannot assign|incompatible type'; then
+            classification="code_bug"
+        elif echo "$log_tail" | grep -qiE 'error\[E[0-9]+\]|error: aborting|FAILED.*compile|build failed|tsc.*error|eslint.*error'; then
+            classification="code_bug"
+        fi
+    fi
+
+    # AI fallback for unknown errors (preserved from original)
+    if [[ "$classification" == "unknown" ]] && type intelligence_search_memory >/dev/null 2>&1 && [[ "$(type -t ai_run_json 2>/dev/null)" == "function" ]]; then
         local ai_class ai_json ai_provider ai_out ai_err
         ai_provider="$(ai_provider_resolve "${SHIPWRIGHT_AI_PROVIDER:-}" 2>/dev/null || echo "claude")"
         ai_out=$(mktemp "${TMPDIR:-/tmp}/sw-classify-ai.XXXXXX")
         ai_err=$(mktemp "${TMPDIR:-/tmp}/sw-classify-ai-err.XXXXXX")
-        ai_json=$(ai_run_json "$ai_provider" "Classify this error as exactly one of: infrastructure, configuration, logic, unknown.
+        ai_json=$(ai_run_json "$ai_provider" "Classify this error as exactly one of: environment, transient_network, context_exhaustion, flaky_test, code_bug, unknown.
 
 Error output:
 $(echo "$log_tail" | tail -20)
@@ -896,18 +903,18 @@ Reply with ONLY the classification word, nothing else." "haiku" "1" "$ai_out" "$
         ai_class=$(echo "$ai_json" | jq -r '.result_text // ""' 2>/dev/null || echo "")
         ai_class=$(echo "$ai_class" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
         case "$ai_class" in
-            infrastructure|configuration|logic) classification="$ai_class" ;;
+            environment|transient_network|context_exhaustion|flaky_test|code_bug) classification="$ai_class" ;;
         esac
     fi
 
-    # Map retry categories to shared taxonomy (from lib/compat.sh SW_ERROR_CATEGORIES)
-    # Retry uses: infrastructure, configuration, logic, unknown
-    # Shared uses: test_failure, build_error, lint_error, timeout, dependency, flaky, config, security, permission, unknown
+    # Map 6-class taxonomy to shared canonical categories (for compat.sh SW_ERROR_CATEGORIES)
     local canonical_category="unknown"
     case "$classification" in
-        infrastructure) canonical_category="timeout" ;;
-        configuration)  canonical_category="config" ;;
-        logic)
+        transient_network)  canonical_category="timeout" ;;
+        environment)        canonical_category="config" ;;
+        context_exhaustion) canonical_category="timeout" ;;
+        flaky_test)         canonical_category="test_failure" ;;
+        code_bug)
             case "$stage_id" in
                 test) canonical_category="test_failure" ;;
                 *)    canonical_category="build_error" ;;
@@ -915,7 +922,7 @@ Reply with ONLY the classification word, nothing else." "haiku" "1" "$ai_out" "$
             ;;
     esac
 
-    # Record classification for future runs (using both retry and canonical categories)
+    # Record classification for future runs
     if [[ -n "$error_sig" && "$error_sig" != "0" ]]; then
         local class_dir="${HOME}/.shipwright/optimization"
         mkdir -p "$class_dir" 2>/dev/null || true

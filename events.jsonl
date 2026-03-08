@@ -74,3 +74,11 @@
 {"ts":"2026-03-08T12:01:36Z","ts_epoch":1772971296,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-status.sh","lines":153,"usage":1}
 {"ts":"2026-03-08T12:01:36Z","ts_epoch":1772971296,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-role-color.sh","lines":81,"usage":1}
 {"ts":"2026-03-08T12:01:37Z","ts_epoch":1772971297,"type":"patrol.issue_created","check":"untested_scripts","count":5}
+{"ts":"2026-03-08T12:15:12Z","ts_epoch":1772972112,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}
+{"ts":"2026-03-08T12:15:16Z","ts_epoch":1772972116,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-08T12:16:28Z","ts_epoch":1772972188,"type":"strategic.issue_created","title":"Event collection health check and auto-repair","priority":"P0","complexity":"fast"}
+{"ts":"2026-03-08T12:16:31Z","ts_epoch":1772972191,"type":"strategic.issue_created","title":"Template performance benchmarking and comparison dashboard","priority":"P2","complexity":"standard"}
+{"ts":"2026-03-08T12:16:33Z","ts_epoch":1772972193,"type":"strategic.issue_created","title":"Memory effectiveness measurement and validation","priority":"P2","complexity":"standard"}
+{"ts":"2026-03-08T12:16:36Z","ts_epoch":1772972196,"type":"strategic.issue_created","title":"Graceful degradation test suite and validation","priority":"P0","complexity":"standard"}
+{"ts":"2026-03-08T12:16:38Z","ts_epoch":1772972198,"type":"strategic.issue_created","title":"Fleet operational visibility dashboard","priority":"P1","complexity":"standard"}
+{"ts":"2026-03-08T12:16:38Z","ts_epoch":1772972198,"type":"strategic.cycle_complete","issues_created":5,"issues_skipped":0}

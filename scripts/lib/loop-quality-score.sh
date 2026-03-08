@@ -282,6 +282,10 @@ compute_iteration_quality_score() {
             "test_passed=$test_passed" 2>/dev/null || true
     fi
 
+    # Append to loop-state.md for dashboard visibility
+    append_quality_score_to_state "$quality_score" "$iteration" \
+        "{\"test_delta\":$test_delta_score,\"compile_success\":$compile_score,\"error_reduction\":$error_reduction_score,\"code_churn\":$churn_score}"
+
     echo "$quality_score"
 }
 

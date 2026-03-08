@@ -1,29 +1,25 @@
-# Pipeline Tasks — chore: close issue #45 - merge goal complete
+# Pipeline Tasks — Pipeline-level intelligent retry with failure classification
 
 ## Implementation Checklist
-- [ ] Task 1: Verify branch working tree is clean
-- [ ] Task 2: Verify recent commit history (5 iterations)
-- [ ] Task 3: Create PR from feature branch to main with comprehensive description
-- [ ] Task 4: Wait for GitHub Actions status checks to complete
-- [ ] Task 5: Verify all PR checks pass
-- [ ] Task 6: Request code review approval (if branch protection requires)
-- [ ] Task 7: Merge PR to main (squash merge recommended)
-- [ ] Task 8: Delete feature branch after merge
-- [ ] Task 9: Verify merge completed on main with `git pull`
-- [ ] Task 10: Close GitHub issue #45 with merge reference
-- [ ] Task 11: Sync local main with remote
-- [ ] Task 12: Verify merged commits are functional
-- [ ] Task 13: Update MEMORY.md with completion status
-- [ ] Task 14: Document lessons learned for future pipelines
-- [ ] Task 15: Archive pipeline artifacts and logs
-- [x] Branch is clean and ready
-- [x] Autonomous iterations 3-5 complete
-- [x] Git credential fix implemented
-- [x] Chaos test fix implemented
-- [x] Documentation auto-sync configured
+- [ ] Task 1: Create `scripts/lib/failure-classifier.sh` with 6-class taxonomy, classify_failure_from_log(), get_retry_strategy(), get_backoff_seconds(), is_retryable()
+- [ ] Task 2: Enhance `classify_error()` in sw-pipeline.sh to use failure-classifier.sh (Task 1 blocks this)
+- [ ] Task 3: Enhance `run_stage_with_retry()` in sw-pipeline.sh with per-class retry limits, strategy actions, backoff, and retry budget (Task 1, 2 block this)
+- [ ] Task 4: Add retry configuration blocks to pipeline templates (standard.json, autonomous.json, full.json)
+- [ ] Task 5: Update config/event-schema.json with retry.outcome and retry.strategy events
+- [ ] Task 6: Update config/policy.json with pipeline_retry defaults
+- [ ] Task 7: Create `scripts/sw-lib-failure-classifier-test.sh` test suite (Task 1 blocks this)
+- [ ] Task 8: Run full test suite (`npm test`) and fix any regressions (all tasks block this)
+- [ ] `classify_failure_from_log()` correctly categorizes all 6 failure types with regex pattern matching
+- [ ] `run_stage_with_retry()` applies per-class retry strategy (immediate/delayed/analysis/skip)
+- [ ] Retry metadata emitted to events.jsonl with `retry.classified`, `retry.outcome`, `retry.strategy` events
+- [ ] Pipeline templates include retry configuration (standard, autonomous, full)
+- [ ] Test suite (`sw-lib-failure-classifier-test.sh`) passes with all classification and strategy tests green
+- [ ] Existing pipeline tests (`sw-pipeline-test.sh`) pass without regression
+- [ ] `npm test` passes clean
+- [ ] Backward compatible: pipelines without retry config in templates default to 0 retries (no behavior change)
 
 ## Context
 - Pipeline: standard
-- Branch: ci/chore-close-issue-45-merge-goal-complete
-- Issue: none
-- Generated: 2026-03-03T01:01:38Z
+- Branch: feat/pipeline-level-intelligent-retry-with-fa-67
+- Issue: #67
+- Generated: 2026-03-08T08:35:56Z

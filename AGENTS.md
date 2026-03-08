@@ -589,7 +589,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-activity.sh` | 480 | Live agent activity stream |
 | `scripts/sw-adaptive.sh` | 941 | data-driven pipeline tuning |
 | `scripts/sw-adversarial.sh` | 259 | Adversarial Agent Code Review |
-| `scripts/sw-ai.sh` | 97 | set -euo pipefail |
+| `scripts/sw-ai.sh` | 99 | set -euo pipefail |
 | `scripts/sw-architecture-enforcer.sh` | 319 | Living Architecture Model & Enforcer |
 | `scripts/sw-auth.sh` | 610 | GitHub OAuth Authentication |
 | `scripts/sw-autonomous.sh` | 1057 | Master controller for AI-building-AI loop |

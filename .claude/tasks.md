@@ -1,30 +1,30 @@
-# Tasks — chore: close issue #45 - merge goal complete
+# Tasks — Interactive diagnostic mode for failed pipeline troubleshooting
 
 ## Status: In Progress
-Pipeline: standard | Branch: ci/chore-close-issue-45-merge-goal-complete
+Pipeline: standard | Branch: feat/interactive-diagnostic-mode-for-failed-p-64
 
 ## Checklist
-- [ ] Task 1: Verify branch working tree is clean
-- [ ] Task 2: Verify recent commit history (5 iterations)
-- [ ] Task 3: Create PR from feature branch to main with comprehensive description
-- [ ] Task 4: Wait for GitHub Actions status checks to complete
-- [ ] Task 5: Verify all PR checks pass
-- [ ] Task 6: Request code review approval (if branch protection requires)
-- [ ] Task 7: Merge PR to main (squash merge recommended)
-- [ ] Task 8: Delete feature branch after merge
-- [ ] Task 9: Verify merge completed on main with `git pull`
-- [ ] Task 10: Close GitHub issue #45 with merge reference
-- [ ] Task 11: Sync local main with remote
-- [ ] Task 12: Verify merged commits are functional
-- [ ] Task 13: Update MEMORY.md with completion status
-- [ ] Task 14: Document lessons learned for future pipelines
-- [ ] Task 15: Archive pipeline artifacts and logs
-- [x] Branch is clean and ready
-- [x] Autonomous iterations 3-5 complete
-- [x] Git credential fix implemented
-- [x] Chaos test fix implemented
-- [x] Documentation auto-sync configured
+- [ ] Task 1: Create `scripts/sw-diagnose.sh` with header, argument parsing, and help text
+- [ ] Task 2: Implement `load_pipeline_state()` to parse pipeline-state.md YAML frontmatter
+- [ ] Task 3: Implement `collect_errors()` to read error-summary.json and error-log.jsonl
+- [ ] Task 4: Implement `collect_events()` to extract failure events from events.jsonl
+- [ ] Task 5: Implement `classify_errors()` with the error classification map
+- [ ] Task 6: Implement `search_memory()` using memory_ranked_search
+- [ ] Task 7: Implement `rank_diagnoses()` to score and sort findings
+- [ ] Task 8: Implement `render_report()` for formatted text output
+- [ ] Task 9: Implement `render_json()` for `--json` output mode
+- [ ] Task 10: Add `diagnose` command to CLI router in `scripts/sw`
+- [ ] Task 11: Create `scripts/sw-diagnose-test.sh` with mock failure scenarios
+- [ ] Task 12: Add test to `package.json` scripts
+- [ ] Task 13: Run tests and verify all pass
+- [ ] `shipwright diagnose` reads latest failed pipeline state from artifacts
+- [ ] Analyzes error-summary.json, error-log.jsonl, and stage artifacts
+- [ ] Checks memory patterns for similar past failures via memory_ranked_search
+- [ ] Outputs ranked list of likely causes with suggested fixes
+- [ ] Includes relevant log excerpts and file paths for investigation
+- [ ] Works without active pipeline (reads from artifacts on disk)
+- [ ] `--json` flag produces valid, parseable JSON output
 
 ## Notes
-- Generated from pipeline plan at 2026-03-03T01:01:39Z
+- Generated from pipeline plan at 2026-03-08T05:07:19Z
 - Pipeline will update status as tasks complete

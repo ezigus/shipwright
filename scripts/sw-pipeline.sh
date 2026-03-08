@@ -1699,8 +1699,10 @@ run_pipeline() {
 
         # Task Classifier: dynamic complexity-based model routing
         if [[ -z "${PIPELINE_COMPLEXITY_SCORE:-}" ]] && type classify_task >/dev/null 2>&1 && type is_classifier_enabled >/dev/null 2>&1 && is_classifier_enabled 2>/dev/null; then
-            local _cls_score
-            _cls_score=$(classify_task "${GOAL:-}" "" "" "0" 2>/dev/null) || _cls_score=""
+            local _cls_score _cls_line_count
+            _cls_line_count=$(git diff --numstat HEAD 2>/dev/null | awk '{s+=$1+$2} END{print s+0}') || _cls_line_count="0"
+            [[ -z "$_cls_line_count" || ! "$_cls_line_count" =~ ^[0-9]+$ ]] && _cls_line_count="0"
+            _cls_score=$(classify_task "${GOAL:-}" "" "" "$_cls_line_count" 2>/dev/null) || _cls_score=""
             if [[ -n "$_cls_score" ]] && [[ "$_cls_score" =~ ^[0-9]+$ ]]; then
                 export PIPELINE_COMPLEXITY_SCORE="$_cls_score"
                 emit_event "classifier.score" "issue=${ISSUE_NUMBER:-0}" "score=$_cls_score" || true

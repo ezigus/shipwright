@@ -24,6 +24,17 @@
       "required": ["stage"],
       "optional": ["issue", "job_id", "error", "error_class", "duration_s"]
     },
+    "stage.timeout": {
+      "required": ["stage", "timeout_s"],
+      "optional": [
+        "issue",
+        "job_id",
+        "elapsed_s",
+        "attempt",
+        "cause",
+        "diagnostic_file"
+      ]
+    },
     "daemon.started": { "required": [], "optional": ["pid", "mode"] },
     "daemon.stopped": { "required": [], "optional": ["reason"] },
     "daemon.claimed": { "required": ["issue"], "optional": ["repo", "title"] },

@@ -1,30 +1,28 @@
-# Tasks — chore: close issue #45 - merge goal complete
+# Tasks — 
 
 ## Status: In Progress
-Pipeline: standard | Branch: ci/chore-close-issue-45-merge-goal-complete
+Pipeline: standard | Branch: 
 
 ## Checklist
-- [ ] Task 1: Verify branch working tree is clean
-- [ ] Task 2: Verify recent commit history (5 iterations)
-- [ ] Task 3: Create PR from feature branch to main with comprehensive description
-- [ ] Task 4: Wait for GitHub Actions status checks to complete
-- [ ] Task 5: Verify all PR checks pass
-- [ ] Task 6: Request code review approval (if branch protection requires)
-- [ ] Task 7: Merge PR to main (squash merge recommended)
-- [ ] Task 8: Delete feature branch after merge
-- [ ] Task 9: Verify merge completed on main with `git pull`
-- [ ] Task 10: Close GitHub issue #45 with merge reference
-- [ ] Task 11: Sync local main with remote
-- [ ] Task 12: Verify merged commits are functional
-- [ ] Task 13: Update MEMORY.md with completion status
-- [ ] Task 14: Document lessons learned for future pipelines
-- [ ] Task 15: Archive pipeline artifacts and logs
-- [x] Branch is clean and ready
-- [x] Autonomous iterations 3-5 complete
-- [x] Git credential fix implemented
-- [x] Chaos test fix implemented
-- [x] Documentation auto-sync configured
+- [x] Task 1: Implement `get_stage_timeout()` with 4-tier fallback resolution
+- [x] Task 2: Implement `capture_timeout_diagnostics()` for pre-kill context capture
+- [x] Task 3: Implement `run_with_stage_timeout()` with watchdog pattern and graceful termination
+- [x] Task 4: Integrate timeout into `run_stage_with_retry()` with error classification
+- [x] Task 5: Define `stage.timeout` event schema in `config/event-schema.json`
+- [x] Task 6: Add per-stage timeouts to `config/defaults.json` and `config/policy.json`
+- [x] Task 7: Update all 9 pipeline templates with `timeout_seconds` per stage
+- [x] Task 8: Write comprehensive test suite (`sw-pipeline-timeout-test.sh`, 19 tests)
+- [x] Task 9: Generate timeout-resilience-patterns skill documentation
+- [x] Task 10: Verify all tests pass (19/19 timeout tests, 218/218 core vitest tests)
+- [x] Each pipeline stage has a configurable timeout (default: 30min, build: 90min)
+- [x] Timeout triggers graceful termination (SIGTERM → 30s → SIGKILL) with diagnostic context captured
+- [x] Auto-retry with backoff for infrastructure failures (exit code 124 classified as infrastructure)
+- [x] Manual retry option for non-recoverable timeouts (configuration errors escalate immediately)
+- [x] Timeout events logged to events.jsonl with stage, duration, cause, diagnostic_file
+- [x] Test coverage for timeout enforcement and recovery paths (19 tests)
+- [x] All pipeline templates updated with per-stage timeout_seconds
+- [x] Config resolution chain works: template > policy > defaults > hardcoded fallbacks
 
 ## Notes
-- Generated from pipeline plan at 2026-03-03T01:01:39Z
+- Generated from pipeline plan at 2026-03-08T12:22:21Z
 - Pipeline will update status as tasks complete

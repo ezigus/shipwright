@@ -1,6 +1,6 @@
 {
   "name": "cost-aware",
-  "description": "Cost-optimized pipeline: budget limits, model routing (haiku→sonnet→opus), per-stage tracking",
+  "description": "Cost-optimized pipeline: budget limits, model routing (haiku\u2192sonnet\u2192opus), per-stage tracking",
   "defaults": {
     "model": "claude-sonnet-4-6",
     "agents": 1,
@@ -19,7 +19,8 @@
       "gate": "auto",
       "config": {
         "model": "claude-haiku-4-5-20251001",
-        "cost_tracking": true
+        "cost_tracking": true,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -28,7 +29,8 @@
       "gate": "approve",
       "config": {
         "model": "claude-sonnet-4-6",
-        "cost_tracking": true
+        "cost_tracking": true,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -41,7 +43,8 @@
         "audit": true,
         "quality_gates": true,
         "cost_tracking": true,
-        "abort_on_budget": true
+        "abort_on_budget": true,
+        "timeout_seconds": 5400
       }
     },
     {
@@ -51,7 +54,8 @@
       "config": {
         "coverage_min": 80,
         "model": "claude-haiku-4-5-20251001",
-        "cost_tracking": true
+        "cost_tracking": true,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -60,7 +64,8 @@
       "gate": "approve",
       "config": {
         "model": "claude-opus-4-6",
-        "cost_tracking": true
+        "cost_tracking": true,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -76,7 +81,8 @@
         "audit_intensity": "auto",
         "compound_quality_blocking": true,
         "model": "claude-sonnet-4-6",
-        "cost_tracking": true
+        "cost_tracking": true,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -90,7 +96,8 @@
         "coverage_delta": true,
         "blocking": false,
         "model": "claude-haiku-4-5-20251001",
-        "cost_tracking": true
+        "cost_tracking": true,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -100,7 +107,8 @@
       "config": {
         "wait_ci": false,
         "model": "claude-haiku-4-5-20251001",
-        "cost_tracking": true
+        "cost_tracking": true,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -111,7 +119,8 @@
         "staging_cmd": "",
         "production_cmd": "",
         "rollback_cmd": "",
-        "cost_tracking": true
+        "cost_tracking": true,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -122,7 +131,8 @@
         "smoke_cmd": "",
         "health_url": "",
         "close_issue": true,
-        "cost_tracking": true
+        "cost_tracking": true,
+        "timeout_seconds": 1800
       }
     }
   ]

@@ -27,6 +27,23 @@
     "heartbeat_interval": 30,
     "composed_cache_ttl": 3600,
     "branch_pattern": "shipwright/issue-{issue}",
+    "stage_timeouts": {
+      "default": 1800,
+      "build": 5400,
+      "intake": 1800,
+      "plan": 1800,
+      "design": 1800,
+      "lint": 1800,
+      "format": 1800,
+      "test": 1800,
+      "review": 1800,
+      "compound_quality": 1800,
+      "pr": 1800,
+      "merge": 1800,
+      "deploy": 1800,
+      "validate": 1800,
+      "monitor": 1800
+    },
     "stage_order": [
       "intake",
       "plan",

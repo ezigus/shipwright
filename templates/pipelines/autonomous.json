@@ -1,6 +1,6 @@
 {
   "name": "autonomous",
-  "description": "Fully autonomous pipeline with compound quality — zero human gates",
+  "description": "Fully autonomous pipeline with compound quality \u2014 zero human gates",
   "defaults": {
     "model": "claude-opus-4-6",
     "agents": 1
@@ -11,32 +11,60 @@
     "simulation_enabled": true
   },
   "stages": [
-    { "id": "intake", "enabled": true, "gate": "auto", "config": {} },
+    {
+      "id": "intake",
+      "enabled": true,
+      "gate": "auto",
+      "config": {
+        "timeout_seconds": 1800
+      }
+    },
     {
       "id": "plan",
       "enabled": true,
       "gate": "auto",
-      "config": { "model": "claude-opus-4-6" }
+      "config": {
+        "model": "claude-opus-4-6",
+        "timeout_seconds": 1800
+      }
     },
     {
       "id": "design",
       "enabled": true,
       "gate": "auto",
-      "config": { "model": "claude-opus-4-6" }
+      "config": {
+        "model": "claude-opus-4-6",
+        "timeout_seconds": 1800
+      }
     },
     {
       "id": "build",
       "enabled": true,
       "gate": "auto",
-      "config": { "max_iterations": 20, "audit": true, "quality_gates": true }
+      "config": {
+        "max_iterations": 20,
+        "audit": true,
+        "quality_gates": true,
+        "timeout_seconds": 5400
+      }
     },
     {
       "id": "test",
       "enabled": true,
       "gate": "auto",
-      "config": { "coverage_min": 80 }
+      "config": {
+        "coverage_min": 80,
+        "timeout_seconds": 1800
+      }
     },
-    { "id": "review", "enabled": true, "gate": "auto", "config": {} },
+    {
+      "id": "review",
+      "enabled": true,
+      "gate": "auto",
+      "config": {
+        "timeout_seconds": 1800
+      }
+    },
     {
       "id": "compound_quality",
       "enabled": true,
@@ -48,7 +76,8 @@
         "dod_audit": true,
         "max_cycles": 3,
         "audit_intensity": "auto",
-        "compound_quality_blocking": true
+        "compound_quality_blocking": true,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -60,14 +89,18 @@
         "file_permissions": true,
         "atomic_writes": true,
         "coverage_delta": true,
-        "blocking": false
+        "blocking": false,
+        "timeout_seconds": 1800
       }
     },
     {
       "id": "pr",
       "enabled": true,
       "gate": "auto",
-      "config": { "wait_ci": false }
+      "config": {
+        "wait_ci": false,
+        "timeout_seconds": 1800
+      }
     },
     {
       "id": "merge",
@@ -78,20 +111,31 @@
         "wait_ci_timeout_s": 600,
         "auto_delete_branch": true,
         "auto_merge": true,
-        "auto_approve": true
+        "auto_approve": true,
+        "timeout_seconds": 1800
       }
     },
     {
       "id": "deploy",
       "enabled": false,
       "gate": "approve",
-      "config": { "staging_cmd": "", "production_cmd": "", "rollback_cmd": "" }
+      "config": {
+        "staging_cmd": "",
+        "production_cmd": "",
+        "rollback_cmd": "",
+        "timeout_seconds": 1800
+      }
     },
     {
       "id": "validate",
       "enabled": false,
       "gate": "auto",
-      "config": { "smoke_cmd": "", "health_url": "", "close_issue": true }
+      "config": {
+        "smoke_cmd": "",
+        "health_url": "",
+        "close_issue": true,
+        "timeout_seconds": 1800
+      }
     },
     {
       "id": "monitor",
@@ -104,7 +148,8 @@
         "log_pattern": "ERROR|FATAL|PANIC",
         "log_cmd": "",
         "rollback_cmd": "",
-        "auto_rollback": false
+        "auto_rollback": false,
+        "timeout_seconds": 1800
       }
     }
   ]

@@ -15,19 +15,27 @@
       "id": "intake",
       "enabled": true,
       "gate": "auto",
-      "config": {}
+      "config": {
+        "timeout_seconds": 1800
+      }
     },
     {
       "id": "plan",
       "enabled": true,
       "gate": "approve",
-      "config": { "model": "claude-opus-4-6" }
+      "config": {
+        "model": "claude-opus-4-6",
+        "timeout_seconds": 1800
+      }
     },
     {
       "id": "design",
       "enabled": true,
       "gate": "approve",
-      "config": { "model": "claude-opus-4-6" }
+      "config": {
+        "model": "claude-opus-4-6",
+        "timeout_seconds": 1800
+      }
     },
     {
       "id": "build",
@@ -36,20 +44,26 @@
       "config": {
         "max_iterations": 20,
         "audit": true,
-        "quality_gates": true
+        "quality_gates": true,
+        "timeout_seconds": 5400
       }
     },
     {
       "id": "test",
       "enabled": true,
       "gate": "auto",
-      "config": { "coverage_min": 80 }
+      "config": {
+        "coverage_min": 80,
+        "timeout_seconds": 1800
+      }
     },
     {
       "id": "review",
       "enabled": true,
       "gate": "approve",
-      "config": {}
+      "config": {
+        "timeout_seconds": 1800
+      }
     },
     {
       "id": "compound_quality",
@@ -63,7 +77,8 @@
         "max_cycles": 3,
         "strict_quality": true,
         "audit_intensity": "auto",
-        "compound_quality_blocking": true
+        "compound_quality_blocking": true,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -75,14 +90,18 @@
         "file_permissions": true,
         "atomic_writes": true,
         "coverage_delta": true,
-        "blocking": true
+        "blocking": true,
+        "timeout_seconds": 1800
       }
     },
     {
       "id": "pr",
       "enabled": true,
       "gate": "approve",
-      "config": { "wait_ci": true }
+      "config": {
+        "wait_ci": true,
+        "timeout_seconds": 1800
+      }
     },
     {
       "id": "merge",
@@ -93,7 +112,8 @@
         "wait_ci_timeout_s": 600,
         "auto_delete_branch": true,
         "auto_merge": false,
-        "auto_approve": false
+        "auto_approve": false,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -110,7 +130,8 @@
         "switch_cmd": "__SWITCH_CMD__",
         "health_url": "__HEALTH_URL__",
         "pre_deploy_ci_status": true,
-        "pre_deploy_min_coverage": 80
+        "pre_deploy_min_coverage": 80,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -120,7 +141,8 @@
       "config": {
         "smoke_cmd": "",
         "health_url": "",
-        "close_issue": true
+        "close_issue": true,
+        "timeout_seconds": 1800
       }
     },
     {
@@ -134,7 +156,8 @@
         "log_pattern": "ERROR|FATAL|PANIC",
         "log_cmd": "",
         "rollback_cmd": "",
-        "auto_rollback": false
+        "auto_rollback": false,
+        "timeout_seconds": 1800
       }
     }
   ]

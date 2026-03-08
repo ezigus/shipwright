@@ -181,7 +181,23 @@
     "coverage_threshold_percent": 60,
     "quality_gate_score_threshold": 70,
     "memory_baseline_fallback_percent": 20,
-    "memory_inject_fallback_percent": 30
+    "memory_inject_fallback_percent": 30,
+    "stage_timeouts": {
+      "intake": 1800,
+      "plan": 1800,
+      "design": 1800,
+      "lint": 1800,
+      "format": 1800,
+      "build": 5400,
+      "test": 1800,
+      "review": 1800,
+      "compound_quality": 1800,
+      "pr": 1800,
+      "merge": 1800,
+      "deploy": 1800,
+      "validate": 1800,
+      "monitor": 1800
+    }
   },
   "quality": {
     "coverage_threshold": 60,

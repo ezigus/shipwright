@@ -1,30 +1,29 @@
-# Tasks — chore: close issue #45 - merge goal complete
+# Tasks — Fleet-wide pattern sharing for cross-repository learning
 
 ## Status: In Progress
-Pipeline: standard | Branch: ci/chore-close-issue-45-merge-goal-complete
+Pipeline: autonomous | Branch: ci/issue-80
 
 ## Checklist
-- [ ] Task 1: Verify branch working tree is clean
-- [ ] Task 2: Verify recent commit history (5 iterations)
-- [ ] Task 3: Create PR from feature branch to main with comprehensive description
-- [ ] Task 4: Wait for GitHub Actions status checks to complete
-- [ ] Task 5: Verify all PR checks pass
-- [ ] Task 6: Request code review approval (if branch protection requires)
-- [ ] Task 7: Merge PR to main (squash merge recommended)
-- [ ] Task 8: Delete feature branch after merge
-- [ ] Task 9: Verify merge completed on main with `git pull`
-- [ ] Task 10: Close GitHub issue #45 with merge reference
-- [ ] Task 11: Sync local main with remote
-- [ ] Task 12: Verify merged commits are functional
-- [ ] Task 13: Update MEMORY.md with completion status
-- [ ] Task 14: Document lessons learned for future pipelines
-- [ ] Task 15: Archive pipeline artifacts and logs
-- [x] Branch is clean and ready
-- [x] Autonomous iterations 3-5 complete
-- [x] Git credential fix implemented
-- [x] Chaos test fix implemented
-- [x] Documentation auto-sync configured
+- [ ] Task 1: Add `fleet_patterns_record_reuse` function to `sw-fleet-patterns.sh`
+- [ ] Task 2: Wire `fleet_patterns_capture` call into `sw-pipeline.sh` pipeline completion
+- [ ] Task 3: Track injected fleet pattern IDs in `sw-memory.sh` `memory_ranked_search`
+- [ ] Task 4: Add reuse outcome recording at pipeline completion in `sw-pipeline.sh`
+- [ ] Task 5: Add pattern promotion logic to `_memory_aggregate_global` in `sw-memory.sh`
+- [ ] Task 6: Add `test_record_reuse_success` test
+- [ ] Task 7: Add `test_record_reuse_failure` test
+- [ ] Task 8: Add `test_record_reuse_missing_pattern` test
+- [ ] Task 9: Add `test_pipeline_integration_capture` test
+- [ ] Task 10: Run existing test suites to verify no regressions
+- [ ] `fleet_patterns_capture` is called automatically at pipeline completion when `pattern_share_enabled=true`
+- [ ] `fleet_patterns_record_reuse` correctly updates `success_count`, `failure_count`, and `effectiveness_rate`
+- [ ] Fleet pattern IDs used during build are tracked in `fleet-patterns-used.json`
+- [ ] Reuse outcomes are recorded at pipeline completion
+- [ ] High-frequency repo patterns are promoted to fleet-wide patterns
+- [ ] All new functions have corresponding tests
+- [ ] Existing test suites pass without regression
+- [ ] All changes are Bash 3.2 compatible (no associative arrays, readarray, etc.)
+- [ ] All file writes use atomic tmp+mv pattern under flock
 
 ## Notes
-- Generated from pipeline plan at 2026-03-03T01:01:39Z
+- Generated from pipeline plan at 2026-03-08T17:46:52Z
 - Pipeline will update status as tasks complete

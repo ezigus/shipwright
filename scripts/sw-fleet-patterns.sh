@@ -290,6 +290,76 @@ fleet_patterns_capture() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  RECORD REUSE — Track effectiveness when a pattern is reused
+# ═══════════════════════════════════════════════════════════════════════════
+
+# fleet_patterns_record_reuse pattern_id outcome
+# outcome: "success" or "failure"
+# Exit: 0=updated, 1=pattern not found, 2=error
+fleet_patterns_record_reuse() {
+    local pattern_id="${1:-}"
+    local outcome="${2:-}"
+
+    if [[ -z "$pattern_id" || -z "$outcome" ]]; then
+        warn "fleet_patterns_record_reuse: missing pattern_id or outcome"
+        return 2
+    fi
+
+    if [[ ! -f "$FLEET_PATTERNS_FILE" ]]; then
+        warn "fleet_patterns_record_reuse: no fleet patterns file"
+        return 1
+    fi
+
+    # Check pattern exists
+    if ! grep -qF "\"id\":\"${pattern_id}\"" "$FLEET_PATTERNS_FILE" 2>/dev/null; then
+        return 1
+    fi
+
+    if ! _acquire_lock "$FLEET_PATTERNS_LOCK"; then
+        warn "fleet_patterns_record_reuse: could not acquire lock"
+        return 2
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp)
+    local updated=false
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        if echo "$line" | grep -qF "\"id\":\"${pattern_id}\"" 2>/dev/null; then
+            local field
+            if [[ "$outcome" == "success" ]]; then
+                field="success_count"
+            else
+                field="failure_count"
+            fi
+            line=$(echo "$line" | jq -c \
+                --arg field "$field" \
+                '.[$field] = ((.[$field] // 0) + 1) |
+                 .effectiveness_rate = (if ((.success_count // 0) + (.failure_count // 0)) > 0
+                     then ((.success_count // 0) * 100 / ((.success_count // 0) + (.failure_count // 0)))
+                     else 0 end)' 2>/dev/null) || true
+            updated=true
+        fi
+        echo "$line" >> "$tmp_file"
+    done < "$FLEET_PATTERNS_FILE"
+
+    if [[ "$updated" == "true" ]]; then
+        mv "$tmp_file" "$FLEET_PATTERNS_FILE"
+    else
+        rm -f "$tmp_file"
+    fi
+
+    _release_lock "$FLEET_PATTERNS_LOCK"
+
+    if [[ "$updated" == "true" ]]; then
+        emit_event "fleet.pattern_reuse" "id=$pattern_id" "outcome=$outcome"
+        return 0
+    fi
+    return 1
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  QUERY — Find relevant patterns for a repo/context
 # ═══════════════════════════════════════════════════════════════════════════
 

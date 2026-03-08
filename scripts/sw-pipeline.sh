@@ -2710,6 +2710,27 @@ pipeline_start() {
         if [[ -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
             bash "$SCRIPT_DIR/sw-memory.sh" capture "$STATE_FILE" "$ARTIFACTS_DIR" 2>/dev/null || true
         fi
+
+        # Fleet-wide pattern sharing: capture learnings and record reuse outcomes
+        if [[ -f "$SCRIPT_DIR/sw-fleet-patterns.sh" ]]; then
+            (
+                source "$SCRIPT_DIR/sw-fleet-patterns.sh" 2>/dev/null || true
+                if [[ "$(type -t fleet_patterns_capture 2>/dev/null)" == "function" ]]; then
+                    fleet_patterns_capture "$PWD" "$ARTIFACTS_DIR" "$STATE_FILE" 2>/dev/null || true
+                fi
+                # Record reuse outcomes for fleet patterns injected during build
+                if [[ -f "${ARTIFACTS_DIR}/fleet-patterns-used.json" ]] && \
+                   [[ "$(type -t fleet_patterns_record_reuse 2>/dev/null)" == "function" ]]; then
+                    local _fp_ids
+                    _fp_ids=$(jq -r '.[]' "${ARTIFACTS_DIR}/fleet-patterns-used.json" 2>/dev/null) || true
+                    while IFS= read -r _fp_id; do
+                        [[ -z "$_fp_id" ]] && continue
+                        fleet_patterns_record_reuse "$_fp_id" "success" 2>/dev/null || true
+                    done <<< "$_fp_ids"
+                fi
+            )
+        fi
+
         # Update memory baselines with successful run metrics
         if type memory_update_metrics >/dev/null 2>&1; then
             memory_update_metrics "build_duration_s" "${total_dur_s:-0}" 2>/dev/null || true
@@ -2771,6 +2792,22 @@ pipeline_start() {
                     bash "$SCRIPT_DIR/sw-memory.sh" fix-outcome "$_fail_sig" "true" "false" 2>/dev/null || true
                 fi
             fi
+        fi
+
+        # Fleet-wide pattern sharing: record failure outcomes for injected patterns
+        if [[ -f "$SCRIPT_DIR/sw-fleet-patterns.sh" ]] && \
+           [[ -f "${ARTIFACTS_DIR}/fleet-patterns-used.json" ]]; then
+            (
+                source "$SCRIPT_DIR/sw-fleet-patterns.sh" 2>/dev/null || true
+                if [[ "$(type -t fleet_patterns_record_reuse 2>/dev/null)" == "function" ]]; then
+                    local _fp_ids
+                    _fp_ids=$(jq -r '.[]' "${ARTIFACTS_DIR}/fleet-patterns-used.json" 2>/dev/null) || true
+                    while IFS= read -r _fp_id; do
+                        [[ -z "$_fp_id" ]] && continue
+                        fleet_patterns_record_reuse "$_fp_id" "failure" 2>/dev/null || true
+                    done <<< "$_fp_ids"
+                fi
+            )
         fi
     fi
 

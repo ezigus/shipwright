@@ -188,10 +188,24 @@ memory_ranked_search() {
                 echo "[]"
             fi
         ) || fleet_results="[]"
-        # Merge fleet results into results file
+        # Merge fleet results into results file and track used pattern IDs
         local fleet_count
         fleet_count=$(echo "$fleet_results" | jq 'length' 2>/dev/null || echo 0)
         if [[ "$fleet_count" -gt 0 ]]; then
+            # Track fleet pattern IDs for reuse feedback loop
+            local artifacts_dir="${ARTIFACTS_DIR:-}"
+            if [[ -n "$artifacts_dir" ]] && [[ -d "$artifacts_dir" ]]; then
+                local used_ids_file="${artifacts_dir}/fleet-patterns-used.json"
+                local existing_ids="[]"
+                [[ -f "$used_ids_file" ]] && existing_ids=$(cat "$used_ids_file" 2>/dev/null || echo "[]")
+                local new_ids
+                new_ids=$(echo "$fleet_results" | jq '[.[].id // empty]' 2>/dev/null || echo "[]")
+                local merged_ids
+                merged_ids=$(jq -n --argjson a "$existing_ids" --argjson b "$new_ids" '$a + $b | unique' 2>/dev/null || echo "$new_ids")
+                local tmp_ids
+                tmp_ids=$(mktemp)
+                echo "$merged_ids" > "$tmp_ids" && mv "$tmp_ids" "$used_ids_file" || rm -f "$tmp_ids"
+            fi
             echo "$fleet_results" | jq -c '.[]' 2>/dev/null | while IFS= read -r entry; do
                 local content
                 content=$(echo "$entry" | jq -r '(.title // "") + " | " + (.problem_statement // "") + " | " + (.solution_code // "")' 2>/dev/null)
@@ -684,6 +698,44 @@ _memory_aggregate_global() {
 
     if [[ "$promoted" -gt 0 ]]; then
         emit_event "memory.global_aggregated" "promoted=$promoted"
+    fi
+
+    # Promote high-effectiveness repo patterns to fleet-wide shared patterns
+    local fleet_patterns_script="${SCRIPT_DIR}/sw-fleet-patterns.sh"
+    if [[ -f "$fleet_patterns_script" ]] && [[ -f "$failures_file" ]]; then
+        local fleet_promoted=0
+        local fleet_candidates
+        fleet_candidates=$(jq -c '.failures[] | select(.seen_count >= 3 and (.fix_effectiveness_rate // 0) >= 70)' \
+            "$failures_file" 2>/dev/null) || true
+        if [[ -n "$fleet_candidates" ]]; then
+            while IFS= read -r candidate; do
+                [[ -z "$candidate" ]] && continue
+                local c_pattern c_fix
+                c_pattern=$(echo "$candidate" | jq -r '.pattern // ""' 2>/dev/null)
+                c_fix=$(echo "$candidate" | jq -r '.fix // ""' 2>/dev/null)
+                [[ -z "$c_pattern" ]] && continue
+
+                # Create synthetic artifacts for fleet capture
+                local tmp_art
+                tmp_art=$(mktemp -d)
+                local c_root_cause
+                c_root_cause=$(echo "$candidate" | jq -r '.root_cause // ""' 2>/dev/null)
+                jq -n --arg s "$c_pattern" --arg e "$c_root_cause" --arg f "$c_fix" \
+                    '{summary: $s, error: $e, fix: $f}' > "$tmp_art/error-summary.json" 2>/dev/null || true
+
+                (
+                    source "$fleet_patterns_script" 2>/dev/null || true
+                    if [[ "$(type -t fleet_patterns_capture 2>/dev/null)" == "function" ]]; then
+                        fleet_patterns_capture "$(pwd)" "$tmp_art" "" 2>/dev/null || true
+                    fi
+                )
+                rm -rf "$tmp_art"
+                fleet_promoted=$((fleet_promoted + 1))
+            done <<< "$fleet_candidates"
+        fi
+        if [[ "$fleet_promoted" -gt 0 ]]; then
+            emit_event "memory.fleet_promoted" "promoted=$fleet_promoted"
+        fi
     fi
 }
 

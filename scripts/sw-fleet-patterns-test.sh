@@ -393,6 +393,91 @@ test_help() {
     assert_contains "Help shows search" "$output" "search"
 }
 
+# ─── Record Reuse Tests ───────────────────────────────────────────────────
+print_test_section "Record Reuse"
+
+test_record_reuse_success() {
+    setup_env
+    source "$FLEET_PATTERNS_SCRIPT" 2>/dev/null || true
+
+    # Capture a pattern first
+    fleet_patterns_capture "$TEST_TEMP_DIR/repo" "$TEST_TEMP_DIR/artifacts" "" >/dev/null 2>&1
+
+    local pattern_id
+    pattern_id=$(head -1 "$FLEET_PATTERNS_FILE" | jq -r '.id' 2>/dev/null)
+
+    # Record successful reuse
+    local rc=0
+    fleet_patterns_record_reuse "$pattern_id" "success" >/dev/null 2>&1 || rc=$?
+    assert_eq "Record reuse success returns 0" "0" "$rc"
+
+    local success_count eff_rate
+    success_count=$(grep "\"id\":\"${pattern_id}\"" "$FLEET_PATTERNS_FILE" | jq -r '.success_count' 2>/dev/null)
+    eff_rate=$(grep "\"id\":\"${pattern_id}\"" "$FLEET_PATTERNS_FILE" | jq -r '.effectiveness_rate' 2>/dev/null)
+    assert_eq "Success count incremented to 1" "1" "$success_count"
+    assert_eq "Effectiveness rate is 100" "100" "$eff_rate"
+}
+
+test_record_reuse_failure() {
+    setup_env
+    source "$FLEET_PATTERNS_SCRIPT" 2>/dev/null || true
+
+    fleet_patterns_capture "$TEST_TEMP_DIR/repo" "$TEST_TEMP_DIR/artifacts" "" >/dev/null 2>&1
+
+    local pattern_id
+    pattern_id=$(head -1 "$FLEET_PATTERNS_FILE" | jq -r '.id' 2>/dev/null)
+
+    # Record one success and one failure
+    fleet_patterns_record_reuse "$pattern_id" "success" >/dev/null 2>&1
+    fleet_patterns_record_reuse "$pattern_id" "failure" >/dev/null 2>&1
+
+    local success_count failure_count eff_rate
+    success_count=$(grep "\"id\":\"${pattern_id}\"" "$FLEET_PATTERNS_FILE" | jq -r '.success_count' 2>/dev/null)
+    failure_count=$(grep "\"id\":\"${pattern_id}\"" "$FLEET_PATTERNS_FILE" | jq -r '.failure_count' 2>/dev/null)
+    eff_rate=$(grep "\"id\":\"${pattern_id}\"" "$FLEET_PATTERNS_FILE" | jq -r '.effectiveness_rate' 2>/dev/null)
+    assert_eq "Success count is 1" "1" "$success_count"
+    assert_eq "Failure count is 1" "1" "$failure_count"
+    assert_eq "Effectiveness rate is 50" "50" "$eff_rate"
+}
+
+test_record_reuse_missing_pattern() {
+    setup_env
+    source "$FLEET_PATTERNS_SCRIPT" 2>/dev/null || true
+
+    fleet_patterns_capture "$TEST_TEMP_DIR/repo" "$TEST_TEMP_DIR/artifacts" "" >/dev/null 2>&1
+
+    local rc=0
+    fleet_patterns_record_reuse "nonexistent-id" "success" >/dev/null 2>&1 || rc=$?
+    assert_eq "Missing pattern returns 1" "1" "$rc"
+}
+
+test_pipeline_integration_capture() {
+    setup_env
+    source "$FLEET_PATTERNS_SCRIPT" 2>/dev/null || true
+
+    # Simulate pipeline artifacts
+    mkdir -p "$TEST_TEMP_DIR/pipeline-artifacts"
+    echo '{"summary":"Fix database connection pool","error":"Pool exhausted under load","fix":"Increase pool size to 20"}' \
+        > "$TEST_TEMP_DIR/pipeline-artifacts/error-summary.json"
+
+    # Create a mock pipeline state file
+    echo "current_stage: review" > "$TEST_TEMP_DIR/pipeline-state.md"
+
+    fleet_patterns_capture "$TEST_TEMP_DIR/repo" "$TEST_TEMP_DIR/pipeline-artifacts" "$TEST_TEMP_DIR/pipeline-state.md" >/dev/null 2>&1
+    local rc=$?
+    assert_eq "Pipeline capture returns 0" "0" "$rc"
+
+    # Verify source_stage from state file
+    local source_stage
+    source_stage=$(head -1 "$FLEET_PATTERNS_FILE" | jq -r '.source_stage' 2>/dev/null)
+    assert_eq "Source stage from state file" "review" "$source_stage"
+
+    # Verify the pattern was captured with correct content
+    local title
+    title=$(head -1 "$FLEET_PATTERNS_FILE" | jq -r '.title' 2>/dev/null)
+    assert_contains "Title from error summary" "$title" "database"
+}
+
 # ─── Concurrent Write Test ──────────────────────────────────────────────────
 print_test_section "Concurrent Writes"
 
@@ -468,6 +553,12 @@ test_prune_dry_run
 test_reuse_rate
 test_effectiveness
 test_help
+
+# Record reuse tests
+test_record_reuse_success
+test_record_reuse_failure
+test_record_reuse_missing_pattern
+test_pipeline_integration_capture
 
 # Concurrent write tests
 test_concurrent_writes

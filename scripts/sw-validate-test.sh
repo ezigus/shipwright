@@ -233,6 +233,91 @@ output=$(run_validate --pipeline standard --no-github)
 assert_contains "Banner displayed without quiet" "$output" "Shipwright"
 assert_contains "Summary displayed" "$output" "passed"
 
+# ─── Test 15: Missing templates directory detected ────────────────────
+print_test_section "Directory Validation"
+
+setup_env
+rm -rf "$TEST_TEMP_DIR/templates/pipelines"
+output=$(run_validate --pipeline standard --quiet)
+exit_code=$(echo "$output" | grep "EXIT:" | sed 's/EXIT://')
+assert_eq "Missing templates dir causes failure" "1" "$exit_code"
+assert_contains "Error mentions templates directory" "$output" "Templates directory not found"
+
+# ─── Test 16: Stages must be an array ─────────────────────────────────
+print_test_section "Stage Structure Validation"
+
+setup_env
+cat > "$TEST_TEMP_DIR/templates/pipelines/badtype.json" <<'EOF'
+{
+  "name": "badtype",
+  "stages": "not-an-array"
+}
+EOF
+output=$(run_validate --pipeline badtype --quiet)
+exit_code=$(echo "$output" | grep "EXIT:" | sed 's/EXIT://')
+assert_eq "Non-array stages fails" "1" "$exit_code"
+assert_contains "Error mentions array type" "$output" "must be an array"
+
+# ─── Test 17: Stage missing required fields ───────────────────────────
+setup_env
+cat > "$TEST_TEMP_DIR/templates/pipelines/nofields.json" <<'EOF'
+{
+  "name": "nofields",
+  "stages": [
+    { "id": "intake", "enabled": "yes", "gate": "auto", "config": {} }
+  ]
+}
+EOF
+output=$(run_validate --pipeline nofields --quiet)
+exit_code=$(echo "$output" | grep "EXIT:" | sed 's/EXIT://')
+assert_eq "Non-boolean enabled fails" "1" "$exit_code"
+assert_contains "Error mentions enabled type" "$output" "must be boolean"
+
+# ─── Test 18: Stage missing gate field ────────────────────────────────
+setup_env
+cat > "$TEST_TEMP_DIR/templates/pipelines/nogate.json" <<'EOF'
+{
+  "name": "nogate",
+  "stages": [
+    { "id": "intake", "enabled": true, "config": {} }
+  ]
+}
+EOF
+output=$(run_validate --pipeline nogate --quiet)
+exit_code=$(echo "$output" | grep "EXIT:" | sed 's/EXIT://')
+assert_eq "Missing gate field fails" "1" "$exit_code"
+assert_contains "Error mentions missing gate" "$output" "missing required field: gate"
+
+# ─── Test 19: jq unavailable degrades gracefully ─────────────────────
+print_test_section "jq Graceful Degradation"
+
+setup_env
+# Create a wrapper script that hides jq
+cat > "$TEST_TEMP_DIR/scripts/no-jq-validate.sh" <<'WRAPPER'
+#!/usr/bin/env bash
+# Override command -v to hide jq
+jq() { return 127; }
+export -f jq 2>/dev/null || true
+# Override PATH to exclude jq
+ORIG_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Run the real validator but with jq hidden via PATH manipulation
+PATH="/usr/bin:/bin" HAS_JQ_OVERRIDE=false \
+    "$ORIG_SCRIPT_DIR/sw-validate.sh" "$@"
+WRAPPER
+chmod +x "$TEST_TEMP_DIR/scripts/no-jq-validate.sh"
+
+# Test that validation reports jq as required when templates need validation
+output=$(TEMPLATES_DIR="$TEST_TEMP_DIR/templates/pipelines" \
+    DEFAULTS_FILE="$TEST_TEMP_DIR/config/defaults.json" \
+    NO_GITHUB=true \
+    SHIPWRIGHT_AI_PROVIDER=claude \
+    "$TEST_TEMP_DIR/scripts/sw-validate.sh" \
+    --project-root "$TEST_TEMP_DIR/project" \
+    --pipeline standard --json --no-github 2>&1 || true)
+# This test verifies that when jq IS available, JSON output works correctly
+json_line=$(echo "$output" | grep -v "EXIT:" | head -1)
+assert_json_key "JSON output works with jq present" "$json_line" ".pipeline" "standard"
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

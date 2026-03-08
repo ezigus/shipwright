@@ -126,14 +126,50 @@ check_pass() {
     fi
 }
 
+# ─── jq availability ───────────────────────────────────────────────────
+HAS_JQ=false
+command -v jq >/dev/null 2>&1 && HAS_JQ=true
+
+require_jq() {
+    if [[ "$HAS_JQ" != "true" ]]; then
+        check_error "jq is required for template validation but not found" "Install jq: https://jqlang.github.io/jq/download/"
+        return 1
+    fi
+    return 0
+}
+
 # ─── Canonical stage list ───────────────────────────────────────────────
 get_valid_stages() {
-    if [[ -f "$DEFAULTS_FILE" ]] && command -v jq >/dev/null 2>&1; then
-        jq -r '.pipeline.stage_order[]' "$DEFAULTS_FILE" 2>/dev/null
-    else
-        # Hardcoded fallback
-        echo "intake plan design build test review compound_quality pr merge deploy validate monitor" | tr ' ' '\n'
+    if [[ -f "$DEFAULTS_FILE" ]] && [[ "$HAS_JQ" == "true" ]]; then
+        local stages
+        stages=$(jq -r '.pipeline.stage_order[]' "$DEFAULTS_FILE" 2>/dev/null)
+        if [[ -n "$stages" ]]; then
+            echo "$stages"
+            return
+        fi
     fi
+    # Fallback: read stage_order from defaults.json without jq (grep/sed)
+    if [[ -f "$DEFAULTS_FILE" ]]; then
+        local in_stage_order=false
+        while IFS= read -r line; do
+            if echo "$line" | grep -q '"stage_order"'; then
+                in_stage_order=true
+                continue
+            fi
+            if [[ "$in_stage_order" == "true" ]]; then
+                if echo "$line" | grep -q ']'; then
+                    break
+                fi
+                local stage
+                stage=$(echo "$line" | sed 's/.*"\([a-z_]*\)".*/\1/')
+                [[ -n "$stage" ]] && echo "$stage"
+            fi
+        done < "$DEFAULTS_FILE"
+        return
+    fi
+    # Last resort: hardcoded list (keep in sync with config/defaults.json stage_order)
+    warn "Using hardcoded stage list — config/defaults.json not found"
+    printf '%s\n' intake plan design build test review compound_quality pr merge deploy validate monitor
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -142,12 +178,23 @@ get_valid_stages() {
 
 # ─── 1. Template Validation ─────────────────────────────────────────────
 validate_template() {
+    # Check templates directory exists
+    if [[ ! -d "$TEMPLATES_DIR" ]]; then
+        check_error "Templates directory not found: ${TEMPLATES_DIR}" "Ensure Shipwright is properly installed"
+        return
+    fi
+
     local template_file="${TEMPLATES_DIR}/${PIPELINE_NAME}.json"
 
     if [[ ! -f "$template_file" ]]; then
         local available=""
         available=$(ls "$TEMPLATES_DIR"/*.json 2>/dev/null | xargs -I{} basename {} .json | tr '\n' ', ' | sed 's/,$//')
         check_error "Template not found: ${PIPELINE_NAME}" "Available templates: ${available:-none}"
+        return
+    fi
+
+    # jq is required for template validation
+    if ! require_jq; then
         return
     fi
 
@@ -171,11 +218,55 @@ validate_template() {
         return
     fi
 
+    # Validate stages is an array (not string/object)
+    local stages_type
+    stages_type=$(jq -r '.stages | type' "$template_file" 2>/dev/null)
+    if [[ "$stages_type" != "array" ]]; then
+        check_error "Template 'stages' must be an array, got: ${stages_type}"
+        return
+    fi
+
+    # Validate each stage has required fields
+    local stage_count
+    stage_count=$(jq '.stages | length' "$template_file" 2>/dev/null)
+    local i=0
+    local stage_fields_valid=true
+    while [[ "$i" -lt "$stage_count" ]]; do
+        local sid stype
+        sid=$(jq -r ".stages[$i].id // empty" "$template_file" 2>/dev/null)
+        if [[ -z "$sid" ]]; then
+            check_error "Stage at index ${i} missing required field: id"
+            stage_fields_valid=false
+        fi
+        # enabled must be boolean
+        stype=$(jq -r ".stages[$i].enabled | type" "$template_file" 2>/dev/null)
+        if [[ "$stype" != "boolean" ]]; then
+            check_error "Stage '${sid:-index $i}': 'enabled' must be boolean, got: ${stype}"
+            stage_fields_valid=false
+        fi
+        # gate must exist
+        local sgate
+        sgate=$(jq -r ".stages[$i].gate // empty" "$template_file" 2>/dev/null)
+        if [[ -z "$sgate" ]]; then
+            check_error "Stage '${sid:-index $i}' missing required field: gate"
+            stage_fields_valid=false
+        fi
+        i=$((i + 1))
+    done
+    if [[ "$stage_fields_valid" == "true" ]]; then
+        check_pass "All stages have required fields"
+    fi
+
     # Validate stage IDs against canonical list
     local valid_stages
     valid_stages=$(get_valid_stages)
     local stage_ids
     stage_ids=$(jq -r '.stages[].id' "$template_file" 2>/dev/null)
+
+    if [[ -z "$stage_ids" ]]; then
+        check_error "Could not read stage IDs from template"
+        return
+    fi
 
     local invalid_found=false
     while IFS= read -r stage_id; do
@@ -195,7 +286,7 @@ validate_template() {
     gate_values=$(jq -r '.stages[].gate' "$template_file" 2>/dev/null)
     local invalid_gates=false
     while IFS= read -r gate; do
-        [[ -z "$gate" ]] && continue
+        [[ -z "$gate" || "$gate" == "null" ]] && continue
         if [[ "$gate" != "auto" && "$gate" != "approve" ]]; then
             check_error "Invalid gate value: '${gate}'" "Gate must be 'auto' or 'approve'"
             invalid_gates=true
@@ -392,13 +483,21 @@ main() {
 
     # JSON output mode
     if [[ "$JSON_OUTPUT" == "true" ]]; then
-        jq -cn \
-            --argjson errors "$ERRORS" \
-            --argjson warnings "$WARNINGS" \
-            --argjson checks "$CHECKS" \
-            --arg pipeline "$PIPELINE_NAME" \
-            --arg status "$(if [[ "$ERRORS" -gt 0 ]]; then echo "fail"; else echo "pass"; fi)" \
-            '{pipeline: $pipeline, status: $status, errors: $errors, warnings: $warnings, checks: $checks}'
+        local status_val="pass"
+        [[ "$ERRORS" -gt 0 ]] && status_val="fail"
+        if [[ "$HAS_JQ" == "true" ]]; then
+            jq -cn \
+                --argjson errors "$ERRORS" \
+                --argjson warnings "$WARNINGS" \
+                --argjson checks "$CHECKS" \
+                --arg pipeline "$PIPELINE_NAME" \
+                --arg status "$status_val" \
+                '{pipeline: $pipeline, status: $status, errors: $errors, warnings: $warnings, checks: $checks}'
+        else
+            # Fallback JSON without jq
+            printf '{"pipeline":"%s","status":"%s","errors":%d,"warnings":%d,"checks":%d}\n' \
+                "$PIPELINE_NAME" "$status_val" "$ERRORS" "$WARNINGS" "$CHECKS"
+        fi
         if [[ "$ERRORS" -gt 0 ]]; then
             return 1
         fi

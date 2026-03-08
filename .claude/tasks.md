@@ -4,27 +4,26 @@
 Pipeline: standard | Branch: ci/event-collection-health-check-and-auto-r-73
 
 ## Checklist
-- [ ] Task 1: Add `--test-events` flag parsing to sw-doctor.sh (line ~42-50)
-- [ ] Task 2: Create `doctor_check_event_collection_health()` function
-- [ ] Task 3: Implement directory existence and permission check
-- [ ] Task 4: Implement events.jsonl existence and permission check
-- [ ] Task 5: Implement disk space check (threshold: 100MB, using df)
-- [ ] Task 6: Implement JSON format validation for last 10 entries
-- [ ] Task 7: Create `auto_repair_event_logging()` function
-- [ ] Task 8: Implement auto-repair: create directory if missing
-- [ ] Task 9: Implement auto-repair: create file if missing
-- [ ] Task 10: Implement auto-repair: fix permissions on directory/file
-- [ ] Task 11: Implement clear error messages for non-repairable issues
-- [ ] Task 12: Create `test_event_collection()` function
-- [ ] Task 13: Implement test event emission and verification
-- [ ] Task 14: Add event polling with retries (up to 5 attempts, 100ms delay)
-- [ ] Task 15: Integrate health check call into main doctor flow
-- [ ] Task 16: Write comprehensive tests for health check in sw-doctor-test.sh
-- [ ] Task 17: Write tests for auto-repair success cases
-- [ ] Task 18: Write tests for auto-repair edge cases (permission denied, disk full)
-- [ ] Task 19: Write tests for test mode (--test-events flag)
-- [ ] Task 20: Verify exit codes work correctly (0=pass, 1=fatal, 2=check failed)
+- [ ] Task 1: Add `--test-events` flag parsing to sw-doctor.sh
+- [ ] Task 2: Add `doctor.test_event` to config/event-schema.json
+- [ ] Task 3: Implement `doctor_check_events()` function (dir, file, permissions, lock, integrity, recency, size checks with auto-repair)
+- [ ] Task 4: Implement `doctor_test_events()` function (synthetic event write/read/cleanup)
+- [ ] Task 5: Insert EVENT COLLECTION section into doctor flow (before PLATFORM HEALTH)
+- [ ] Task 6: Add exit code logic (exit 1 on failures)
+- [ ] Task 7: Add test cases to sw-doctor-test.sh (7 tests covering all check paths)
+- [ ] Task 8: Run `npm test` and verify all tests pass
+- [ ] `shipwright doctor` output includes "EVENT COLLECTION" section with pass/warn/fail checks
+- [ ] Detects: missing events.jsonl, permission errors, malformed entries, stale lock files, no recent events, oversized file
+- [ ] Auto-repairs: creates missing `~/.shipwright/` directory, creates missing events.jsonl, fixes world-readable permissions
+- [ ] `shipwright doctor --test-events` writes a synthetic event and verifies read-back
+- [ ] Synthetic test event is cleaned up after verification
+- [ ] Clear error messages with remediation commands for non-repairable issues
+- [ ] Exit code is 1 when any check fails, 0 otherwise (for CI/automation)
+- [ ] `doctor.test_event` registered in event-schema.json
+- [ ] All existing tests continue to pass
+- [ ] 7 new test cases pass in sw-doctor-test.sh
+- [ ] `npm test` passes clean
 
 ## Notes
-- Generated from pipeline plan at 2026-03-08T12:32:01Z
+- Generated from pipeline plan at 2026-03-08T18:16:24Z
 - Pipeline will update status as tasks complete

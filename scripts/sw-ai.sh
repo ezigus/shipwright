@@ -63,10 +63,12 @@ cmd_set() {
     mkdir -p "$(dirname "$cfg")"
     if [[ ! -f "$cfg" ]]; then
         echo '{}' > "$cfg"
+        chmod 600 "$cfg"
     fi
     local tmp
     tmp=$(mktemp "${TMPDIR:-/tmp}/sw-ai-set.XXXXXX")
     jq --arg provider "$provider" '.ai.provider.default = $provider' "$cfg" > "$tmp"
+    chmod 600 "$tmp"
     mv "$tmp" "$cfg"
     echo "Set ai.provider.default=${provider} in ${cfg}"
 }

@@ -395,7 +395,7 @@ setup_loop_env() {
 
     # Create real git repo (use system git, not mock from PATH)
     local _git
-    _git=$(PATH=/usr/local/bin:/usr/bin:/bin command -v git 2>/dev/null)
+    _git=$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git 2>/dev/null)
     if [[ -z "$_git" ]]; then
         echo "WARN: git not found — skipping loop behavior tests"
         return 1
@@ -415,13 +415,13 @@ GHMOCK
 
     # Link real jq, git, date, seq, etc. (use clean PATH to avoid mock from setup_env)
     for cmd in jq git date seq wc cat grep sed awk sort mkdir rm mv cp mktemp basename dirname printf od tr cut head tail tee touch bash; do
-        if PATH=/usr/local/bin:/usr/bin:/bin command -v "$cmd" &>/dev/null; then
-            ln -sf "$(PATH=/usr/local/bin:/usr/bin:/bin command -v "$cmd")" "$TEST_TEMP_DIR/bin/$cmd" 2>/dev/null || true
+        if PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v "$cmd" &>/dev/null; then
+            ln -sf "$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v "$cmd")" "$TEST_TEMP_DIR/bin/$cmd" 2>/dev/null || true
         fi
     done
 
     # Use our mocks (claude, gh) + real git/jq from our bin
-    export PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin"
+    export PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
     export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
     return 0
@@ -440,7 +440,7 @@ exit 0
 CLAUDE_EOF
     chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    output=$(env PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
         bash "$SCRIPT_DIR/sw-loop.sh" \
         --repo "$TEST_TEMP_DIR/repo" \
         "Do nothing" \
@@ -478,7 +478,7 @@ exit 0
 CLAUDE_EOF
     chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    output=$(env PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
         bash "$SCRIPT_DIR/sw-loop.sh" \
         --repo "$TEST_TEMP_DIR/repo" \
         "Add iter2.txt" \
@@ -513,7 +513,7 @@ exit 0
 CLAUDE_EOF
     chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    output=$(env PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
         bash "$SCRIPT_DIR/sw-loop.sh" \
         --repo "$TEST_TEMP_DIR/repo" \
         "Never finish" \
@@ -545,7 +545,7 @@ exit 0
 CLAUDE_EOF
     chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    output=$(env PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
         bash "$SCRIPT_DIR/sw-loop.sh" \
         --repo "$TEST_TEMP_DIR/repo" \
         "Fix something" \
@@ -584,7 +584,7 @@ echo '"'"'[{"type":"result","result":"Done","usage":{"input_tokens":0,"output_to
 exit 0' > "$TEST_TEMP_DIR/bin/claude"
     chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    output=$(env PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
         bash "$SCRIPT_DIR/sw-loop.sh" \
         --repo "$TEST_TEMP_DIR/repo" \
         "Do nothing" \
@@ -609,7 +609,7 @@ echo -e "${DIM}  validate_claude_output${RESET}"
 _validate_fn=$(sed -n '/^validate_claude_output()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")
 _valid_tmp=$(mktemp -d)
 # Use real git for repo setup (bypass mock from setup_env)
-_valid_git=$(PATH=/usr/local/bin:/usr/bin:/bin command -v git 2>/dev/null)
+_valid_git=$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git 2>/dev/null)
 (cd "$_valid_tmp" && "$_valid_git" init -q && "$_valid_git" config user.email "t@t" && "$_valid_git" config user.name "T")
 echo "api key leaked" > "$_valid_tmp/leak.ts"
 (cd "$_valid_tmp" && "$_valid_git" add leak.ts 2>/dev/null)
@@ -641,7 +641,7 @@ exit 0
 CLAUDE_EOF
     chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    output=$(env PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
         bash "$SCRIPT_DIR/sw-loop.sh" \
         --repo "$TEST_TEMP_DIR/repo" \
         "Add progress.txt" \

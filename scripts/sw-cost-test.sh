@@ -210,7 +210,7 @@ cat > "$TEST_TEMP_DIR/home/.shipwright/budget.json" <<'BUDEOF'
 {"daily_budget_usd":0,"enabled":false}
 BUDEOF
 
-dash_output=$(env HOME="$TEST_TEMP_DIR/home" PATH="$TEST_TEMP_DIR/bin:/usr/local/bin:/usr/bin:/bin" \
+dash_output=$(env HOME="$TEST_TEMP_DIR/home" PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
     bash "$SCRIPT_DIR/sw-cost.sh" show --period 30 2>&1) || true
 
 if echo "$dash_output" | grep -q "CONTEXT EFFICIENCY"; then

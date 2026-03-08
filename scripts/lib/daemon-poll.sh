@@ -961,9 +961,10 @@ daemon_self_optimize() {
                  .auto_template = ($auto_template == "true") |
                  .last_optimization = {timestamp: $ts, adjustments: $adj}' \
                 "$config_file")
-            # Atomic write: tmp file + mv
+            # Atomic write: tmp file + mv (preserve 600 permissions)
             local tmp_cfg_file="${config_file}.tmp.$$"
             echo "$tmp_config" > "$tmp_cfg_file"
+            chmod 600 "$tmp_cfg_file"
             mv "$tmp_cfg_file" "$config_file"
             daemon_log INFO "Self-optimize: persisted adjustments to ${config_file}"
         fi

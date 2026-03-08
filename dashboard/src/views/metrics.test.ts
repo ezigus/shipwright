@@ -19,6 +19,10 @@ vi.mock("../core/api", () => ({
   fetchBottlenecks: vi.fn().mockResolvedValue({ bottlenecks: [] }),
   fetchThroughputTrend: vi.fn().mockResolvedValue({ points: [] }),
   fetchCapacity: vi.fn().mockResolvedValue({ rate: 1, queue_clear_hours: 2 }),
+  fetchQualityScores: vi.fn().mockResolvedValue({
+    scores: [],
+    summary: { count: 0, average: 0, trend: "stable" },
+  }),
 }));
 
 function createMetricsDOM(): void {

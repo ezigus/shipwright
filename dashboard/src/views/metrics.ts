@@ -16,12 +16,7 @@ import {
 import { renderDoraGrades } from "../components/charts/pipeline-rail";
 import { STAGES, STAGE_COLORS, STAGE_HEX } from "../design/tokens";
 import * as api from "../core/api";
-import type {
-  FleetState,
-  View,
-  MetricsData,
-  IterationQualityScore,
-} from "../types/api";
+import type { FleetState, View, MetricsData } from "../types/api";
 import {
   getQualityScoreColor,
   getQualityScoreLabel,
@@ -482,6 +477,88 @@ function renderCapacityForecast(): void {
           ? data.queue_clear_hours.toFixed(1)
           : "?";
       container.innerHTML = `<div class="capacity-forecast"><span class="capacity-text">At current rate (${rate}/hr), queue will clear in <strong>${clearTime} hours</strong></span></div>`;
+    })
+    .catch((err) => {
+      container.innerHTML = `<div class="empty-state"><p>Failed to load: ${escapeHtml(String(err))}</p></div>`;
+    });
+}
+
+function renderQualityTrend(): void {
+  const container = document.getElementById("quality-trend-container");
+  if (!container) return;
+  api
+    .fetchQualityScores()
+    .then((data) => {
+      const scores = data.scores || [];
+      if (scores.length === 0) {
+        container.innerHTML =
+          '<div class="empty-state"><p>No iteration quality data</p></div>';
+        return;
+      }
+
+      const avg = computeAverageQuality(scores);
+      const { trend } = computeQualityTrendLine(scores);
+      const color = getQualityScoreColor(avg);
+      const label = getQualityScoreLabel(avg);
+
+      const trendArrow =
+        trend === "improving"
+          ? '<span class="trend-down" style="color:#4ade80">&uarr; Improving</span>'
+          : trend === "declining"
+            ? '<span class="trend-up" style="color:#f43f5e">&darr; Declining</span>'
+            : '<span class="trend-flat">&rarr; Stable</span>';
+
+      let html =
+        '<span class="metric-label">ITERATION QUALITY</span>' +
+        '<div class="quality-trend-grid">';
+
+      // Average score badge
+      html +=
+        '<div class="quality-summary">' +
+        `<span class="quality-avg" style="color:${color.border}">${formatQualityScore(avg)}</span>` +
+        `<span class="quality-label">${escapeHtml(label)}</span>` +
+        `<span class="quality-trend-dir">${trendArrow}</span>` +
+        "</div>";
+
+      // Sparkline
+      const sparkPoints = scores.map((s) => s.quality_score);
+      if (sparkPoints.length >= 2) {
+        html +=
+          '<div class="quality-sparkline">' +
+          renderSparkline(sparkPoints, color.border, 200, 40) +
+          "</div>";
+      }
+
+      html += "</div>";
+
+      // Component breakdown table (last 5 iterations)
+      const recent = scores.slice(-5);
+      if (recent.some((s) => s.components)) {
+        html +=
+          '<table class="quality-breakdown-table"><thead><tr>' +
+          "<th>Iter</th><th>Score</th><th>Tests (40%)</th><th>Compile (30%)</th><th>Errors (20%)</th><th>Churn (10%)</th><th>Trend</th>" +
+          "</tr></thead><tbody>";
+        for (const s of recent) {
+          const c = s.components;
+          const rowTrend =
+            s.trend === "improving"
+              ? '<span style="color:#4ade80">&uarr;</span>'
+              : s.trend === "declining"
+                ? '<span style="color:#f43f5e">&darr;</span>'
+                : '<span style="color:#5a6d8a">&rarr;</span>';
+          html +=
+            `<tr><td>${s.iteration}</td>` +
+            `<td style="color:${getQualityScoreColor(s.quality_score).border}">${formatQualityScore(s.quality_score)}</td>` +
+            `<td>${c ? c.test_delta : "\u2014"}</td>` +
+            `<td>${c ? c.compile_success : "\u2014"}</td>` +
+            `<td>${c ? c.error_reduction : "\u2014"}</td>` +
+            `<td>${c ? c.code_churn : "\u2014"}</td>` +
+            `<td>${rowTrend}</td></tr>`;
+        }
+        html += "</tbody></table>";
+      }
+
+      container.innerHTML = html;
     })
     .catch((err) => {
       container.innerHTML = `<div class="empty-state"><p>Failed to load: ${escapeHtml(String(err))}</p></div>`;

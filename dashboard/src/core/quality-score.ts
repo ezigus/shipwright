@@ -233,7 +233,12 @@ export function parseQualityScoreFromEvent(
       ? parseInt(event.quality_score, 10)
       : event.quality_score;
 
-  if (typeof iteration !== "number" || typeof quality_score !== "number") {
+  if (
+    typeof iteration !== "number" ||
+    typeof quality_score !== "number" ||
+    isNaN(iteration) ||
+    isNaN(quality_score)
+  ) {
     return null;
   }
 

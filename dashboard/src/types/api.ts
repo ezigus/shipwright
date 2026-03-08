@@ -171,6 +171,17 @@ export interface MetricsData {
   stage_durations: Record<string, number>;
   daily_counts: DailyCount[];
   dora_grades: DoraGrades;
+  quality_scores?: IterationQualityScore[];
+  quality_trend?: IterationQualityTrend;
+}
+
+export interface QualityScoresResponse {
+  scores: IterationQualityScore[];
+  summary: {
+    count: number;
+    average: number;
+    trend: "improving" | "declining" | "stable";
+  };
 }
 
 export interface DailyCount {

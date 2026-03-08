@@ -1,30 +1,30 @@
-# Tasks — chore: close issue #45 - merge goal complete
+# Tasks — Interactive diagnostic mode for failed pipeline troubleshooting
 
 ## Status: In Progress
-Pipeline: standard | Branch: ci/chore-close-issue-45-merge-goal-complete
+Pipeline: standard | Branch: feat/interactive-diagnostic-mode-for-failed-p-64
 
 ## Checklist
-- [ ] Task 1: Verify branch working tree is clean
-- [ ] Task 2: Verify recent commit history (5 iterations)
-- [ ] Task 3: Create PR from feature branch to main with comprehensive description
-- [ ] Task 4: Wait for GitHub Actions status checks to complete
-- [ ] Task 5: Verify all PR checks pass
-- [ ] Task 6: Request code review approval (if branch protection requires)
-- [ ] Task 7: Merge PR to main (squash merge recommended)
-- [ ] Task 8: Delete feature branch after merge
-- [ ] Task 9: Verify merge completed on main with `git pull`
-- [ ] Task 10: Close GitHub issue #45 with merge reference
-- [ ] Task 11: Sync local main with remote
-- [ ] Task 12: Verify merged commits are functional
-- [ ] Task 13: Update MEMORY.md with completion status
-- [ ] Task 14: Document lessons learned for future pipelines
-- [ ] Task 15: Archive pipeline artifacts and logs
-- [x] Branch is clean and ready
-- [x] Autonomous iterations 3-5 complete
-- [x] Git credential fix implemented
-- [x] Chaos test fix implemented
-- [x] Documentation auto-sync configured
+- [ ] Task 1: Fix `collect_errors()` to support both error-summary.json formats
+- [ ] Task 2: Fix `search_memory()` subshell bug
+- [ ] Task 3: Add `analyze_stage_artifacts()` function
+- [ ] Task 4: Add log excerpt display in verbose mode
+- [ ] Task 5: Add `--stage <name>` flag for stage-specific filtering
+- [ ] Task 6: Update `render_json()` to include memory matches and stage artifacts
+- [ ] Task 7: Update `render_report()` to show stage artifact summary
+- [ ] Task 8: Add test for real error-summary.json format (`.error_lines[]`)
+- [ ] Task 9: Add test for stage artifact analysis
+- [ ] Task 10: Add test for memory search (mock `memory_ranked_search`)
+- [ ] Task 11: Add test for `--stage` flag
+- [ ] Task 12: Add test for JSON output with all new fields
+- [ ] Task 13: Run full test suite and verify all tests pass
+- [ ] `shipwright diagnose` correctly parses real `error-summary.json` format from `write_error_summary()`
+- [ ] Memory search results are displayed (subshell bug fixed)
+- [ ] Stage artifacts (checkpoints, stuckness) are analyzed and shown
+- [ ] `--verbose` includes log excerpts
+- [ ] `--json` output includes memory matches, stage artifacts
+- [ ] `--stage <name>` filters to specific stage
+- [ ] Works with no pipeline state (clean message)
 
 ## Notes
-- Generated from pipeline plan at 2026-03-03T01:01:39Z
+- Generated from pipeline plan at 2026-03-08T12:19:01Z
 - Pipeline will update status as tasks complete

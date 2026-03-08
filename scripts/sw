@@ -96,6 +96,7 @@ show_help() {
     echo -e "  ${CYAN}init${RESET}                  One-command setup — tmux, CLI, templates, hooks"
     echo -e "  ${CYAN}setup${RESET}                 Guided interactive setup"
     echo -e "  ${CYAN}doctor${RESET}                Validate your setup and check for issues"
+    echo -e "  ${CYAN}diagnose${RESET}              Analyze failed pipelines and suggest fixes"
     echo ""
     echo -e "${BOLD}EVERYDAY COMMANDS${RESET}"
     echo -e "  ${CYAN}session${RESET} [name]         Create a tmux window for a Claude agent team"
@@ -167,7 +168,7 @@ show_help_all() {
     echo -e "  ${CYAN}launchd${RESET}       ${CYAN}jira${RESET}          ${CYAN}linear${RESET}        ${CYAN}tracker${RESET}       ${CYAN}heartbeat${RESET}"
     echo -e "  ${CYAN}checkpoint${RESET}    ${CYAN}durable${RESET}       ${CYAN}autonomous${RESET}    ${CYAN}pm${RESET}            ${CYAN}strategic${RESET}"
     echo -e "  ${CYAN}team-stages${RESET}   ${CYAN}ux${RESET}            ${CYAN}mission-control${RESET}  ${CYAN}tmux${RESET}       ${CYAN}reaper${RESET}"
-    echo -e "  ${CYAN}e2e${RESET}           ${CYAN}init${RESET}          ${CYAN}setup${RESET}         ${CYAN}doctor${RESET}        ${CYAN}cleanup${RESET}"
+    echo -e "  ${CYAN}e2e${RESET}           ${CYAN}init${RESET}          ${CYAN}setup${RESET}         ${CYAN}doctor${RESET}        ${CYAN}diagnose${RESET}"
     echo -e "  ${CYAN}upgrade${RESET}       ${CYAN}templates${RESET}     ${CYAN}version${RESET}"
     echo ""
     echo -e "${DIM}Run ${RESET}${CYAN}shipwright <command> --help${RESET}${DIM} for details on any command${RESET}"
@@ -304,6 +305,9 @@ main() {
             ;;
         doctor)
             exec "$SCRIPT_DIR/sw-doctor.sh" "$@"
+            ;;
+        diagnose)
+            exec "$SCRIPT_DIR/sw-diagnose.sh" "$@"
             ;;
         cleanup)
             check_tmux

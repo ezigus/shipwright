@@ -64,3 +64,13 @@
 {"ts":"2026-03-08T08:56:18Z","ts_epoch":1772960178,"type":"memory.inject","stage":"build"}
 {"ts":"2026-03-08T08:56:18Z","ts_epoch":1772960178,"type":"loop.context_efficiency","iteration":6,"raw_prompt_chars":11243,"trimmed_prompt_chars":11243,"trim_ratio":0.0,"budget_utilization":5.6,"budget_chars":200000,"job_id":"standard"}
 {"ts":"2026-03-08T08:56:24Z","ts_epoch":1772960184,"type":"stage.failed","event_id":"evt-1772960184-3963407536","payload":"{\"stage\":\"build\",\"issue\":\"64\",\"timing\":\"2h 21m 51s\"}"}
+{"ts":"2026-03-08T12:01:22Z","ts_epoch":1772971282,"type":"patrol.started","dry_run":"false"}
+{"ts":"2026-03-08T12:01:25Z","ts_epoch":1772971285,"type":"patrol.issue_created","check":"dead_code","count":1}
+{"ts":"2026-03-08T12:01:34Z","ts_epoch":1772971294,"type":"patrol.finding","check":"recurring_failure","pattern":"[38;2;0;212;255m▸[0m Insert into nonexistent stage fails","seen_count":3}
+{"ts":"2026-03-08T12:01:35Z","ts_epoch":1772971295,"type":"patrol.issue_created","check":"recurring_failure","pattern":"[38;2;0;212;255m▸[0m Insert into nonexistent stage fails"}
+{"ts":"2026-03-08T12:01:36Z","ts_epoch":1772971296,"type":"patrol.finding","check":"untested_script","script":"sw-tracker-linear.sh","lines":568,"usage":7}
+{"ts":"2026-03-08T12:01:36Z","ts_epoch":1772971296,"type":"patrol.finding","check":"untested_script","script":"sw-tracker-jira.sh","lines":474,"usage":7}
+{"ts":"2026-03-08T12:01:36Z","ts_epoch":1772971296,"type":"patrol.finding","check":"untested_script","script":"sw-tracker-github.sh","lines":212,"usage":3}
+{"ts":"2026-03-08T12:01:36Z","ts_epoch":1772971296,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-status.sh","lines":153,"usage":1}
+{"ts":"2026-03-08T12:01:36Z","ts_epoch":1772971296,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-role-color.sh","lines":81,"usage":1}
+{"ts":"2026-03-08T12:01:37Z","ts_epoch":1772971297,"type":"patrol.issue_created","check":"untested_scripts","count":5}

@@ -1,30 +1,30 @@
-# Tasks — chore: close issue #45 - merge goal complete
+# Tasks — Build iteration quality scoring with adaptive prompting
 
 ## Status: In Progress
-Pipeline: standard | Branch: ci/chore-close-issue-45-merge-goal-complete
+Pipeline: standard | Branch: feat/build-iteration-quality-scoring-with-ada-68
 
 ## Checklist
-- [ ] Task 1: Verify branch working tree is clean
-- [ ] Task 2: Verify recent commit history (5 iterations)
-- [ ] Task 3: Create PR from feature branch to main with comprehensive description
-- [ ] Task 4: Wait for GitHub Actions status checks to complete
-- [ ] Task 5: Verify all PR checks pass
-- [ ] Task 6: Request code review approval (if branch protection requires)
-- [ ] Task 7: Merge PR to main (squash merge recommended)
-- [ ] Task 8: Delete feature branch after merge
-- [ ] Task 9: Verify merge completed on main with `git pull`
-- [ ] Task 10: Close GitHub issue #45 with merge reference
-- [ ] Task 11: Sync local main with remote
-- [ ] Task 12: Verify merged commits are functional
-- [ ] Task 13: Update MEMORY.md with completion status
-- [ ] Task 14: Document lessons learned for future pipelines
-- [ ] Task 15: Archive pipeline artifacts and logs
-- [x] Branch is clean and ready
-- [x] Autonomous iterations 3-5 complete
-- [x] Git credential fix implemented
-- [x] Chaos test fix implemented
-- [x] Documentation auto-sync configured
+- [ ] Dashboard displays iteration quality sparkline (5+ data points)
+- [ ] Quality scores are logged to `quality-scores.jsonl` with all 4 components
+- [ ] Quality scores appear in loop-state.md at end of each iteration
+- [ ] Events.jsonl contains `loop.quality_scored` events with iteration metadata
+- [ ] Threshold actions triggered: score < 30 logs "prompt_adapted", < 15 logs "escalated"
+- [ ] Dashboard API endpoint `/api/metrics/quality-scores` returns valid IterationQualityScore array
+- [ ] Quality trend (improving/declining/stable) computed correctly for 3+ iterations
+- [ ] All existing tests pass (npm test)
+- [ ] New integration tests pass: quality aggregation, trend computation, visualization
+- [ ] Regression tests pass: metric extraction, churn normalization
+- [ ] Documentation updated: algorithm explanation, threshold behavior, troubleshooting
+- [ ] **Task 1**: Create quality scores aggregation endpoint in dashboard/server.ts
+- [ ] **Task 2**: Compute trend (improving/declining/stable) in backend
+- [ ] **Task 3**: Extend MetricsData type with quality_scores fields
+- [ ] **Task 4**: Implement fetchQualityScores() API client function
+- [ ] **Task 5**: Create quality trend sparkline component
+- [ ] **Task 6**: Add quality scores section to metrics view
+- [ ] **Task 7**: Create quality details modal with component breakdown
+- [ ] **Task 8**: Create iteration quality fixtures (5 samples)
+- [ ] **Task 9**: Add backend integration test for quality aggregation
 
 ## Notes
-- Generated from pipeline plan at 2026-03-03T01:01:39Z
+- Generated from pipeline plan at 2026-03-08T12:14:58Z
 - Pipeline will update status as tasks complete

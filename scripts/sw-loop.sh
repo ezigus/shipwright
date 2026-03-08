@@ -40,6 +40,7 @@ fi
 [[ -f "$SCRIPT_DIR/lib/loop-convergence.sh" ]] && source "$SCRIPT_DIR/lib/loop-convergence.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-restart.sh" ]] && source "$SCRIPT_DIR/lib/loop-restart.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-progress.sh" ]] && source "$SCRIPT_DIR/lib/loop-progress.sh"
+[[ -f "$SCRIPT_DIR/lib/loop-quality-score.sh" ]] && source "$SCRIPT_DIR/lib/loop-quality-score.sh"
 # Error actionability scoring and enhancement for better error context
 # shellcheck source=lib/error-actionability.sh
 [[ -f "$SCRIPT_DIR/lib/error-actionability.sh" ]] && source "$SCRIPT_DIR/lib/error-actionability.sh" 2>/dev/null || true
@@ -2192,6 +2193,25 @@ ${GOAL}"
                 echo -e "  ${GREEN}✓${RESET} Tests: passed"
             else
                 echo -e "  ${RED}✗${RESET} Tests: failed"
+            fi
+        fi
+
+        # Compute iteration quality score and trigger adaptive actions
+        if type compute_iteration_quality_score >/dev/null 2>&1; then
+            local quality_score
+            quality_score=$(compute_iteration_quality_score "$ITERATION" "$TEST_LOG_FILE" "${TEST_PASSED:-unknown}")
+            if [[ -n "$quality_score" ]]; then
+                echo -e "  ${CYAN}▸${RESET} Quality score: ${quality_score}/100"
+
+                # Adapt prompt if quality is low
+                if type adapt_prompt_for_quality >/dev/null 2>&1; then
+                    adapt_prompt_for_quality "$quality_score" "$ITERATION"
+                fi
+
+                # Escalate model if quality is critically low
+                if type escalate_model_for_quality >/dev/null 2>&1; then
+                    escalate_model_for_quality "$quality_score" "$ITERATION" "${CLAUDE_MODEL:-haiku}"
+                fi
             fi
         fi
 

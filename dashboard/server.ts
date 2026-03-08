@@ -4085,6 +4085,134 @@ const server = Bun.serve({
       );
     }
 
+    // REST: Iteration quality scores from events
+    if (pathname === "/api/metrics/quality-scores") {
+      const events = readEvents();
+      const issueFilter = url.searchParams.get("issue");
+      const scores: Array<{
+        iteration: number;
+        timestamp?: string;
+        quality_score: number;
+        components?: {
+          test_delta: number;
+          compile_success: number;
+          error_reduction: number;
+          code_churn: number;
+        };
+        test_passed?: boolean;
+        trend?: "improving" | "declining" | "stable";
+        issue?: number;
+      }> = [];
+
+      for (const e of events) {
+        if (e.type !== "loop.quality_scored") continue;
+        if (issueFilter && String(e.issue) !== issueFilter) continue;
+
+        const iteration =
+          typeof e.iteration === "string"
+            ? parseInt(e.iteration as string, 10)
+            : (e.iteration as number);
+        const quality_score =
+          typeof e.quality_score === "string"
+            ? parseInt(e.quality_score as string, 10)
+            : (e.quality_score as number);
+
+        if (typeof iteration !== "number" || typeof quality_score !== "number")
+          continue;
+
+        const td = e.test_delta as number | string | undefined;
+        const cs = e.compile_success as number | string | undefined;
+        const er = e.error_reduction as number | string | undefined;
+        const cc = e.code_churn as number | string | undefined;
+
+        const test_delta = typeof td === "string" ? parseInt(td, 10) : td;
+        const compile_success = typeof cs === "string" ? parseInt(cs, 10) : cs;
+        const error_reduction = typeof er === "string" ? parseInt(er, 10) : er;
+        const code_churn = typeof cc === "string" ? parseInt(cc, 10) : cc;
+
+        const entry: (typeof scores)[number] = {
+          iteration,
+          timestamp: (e.ts as string) || undefined,
+          quality_score,
+          issue: e.issue,
+          test_passed:
+            e.test_passed === true || e.test_passed === "true"
+              ? true
+              : e.test_passed === false || e.test_passed === "false"
+                ? false
+                : undefined,
+        };
+
+        if (
+          typeof test_delta === "number" &&
+          typeof compile_success === "number" &&
+          typeof error_reduction === "number" &&
+          typeof code_churn === "number"
+        ) {
+          entry.components = {
+            test_delta,
+            compile_success,
+            error_reduction,
+            code_churn,
+          };
+        }
+
+        scores.push(entry);
+      }
+
+      // Compute trend for each score
+      for (let i = 0; i < scores.length; i++) {
+        if (i === 0) {
+          scores[i].trend = "stable";
+        } else {
+          const diff = scores[i].quality_score - scores[i - 1].quality_score;
+          if (Math.abs(diff) < 3) scores[i].trend = "stable";
+          else if (diff > 0) scores[i].trend = "improving";
+          else scores[i].trend = "declining";
+        }
+      }
+
+      // Compute overall trend using linear regression on last 5
+      const window = scores.slice(-Math.min(5, scores.length));
+      let overallTrend: "improving" | "declining" | "stable" = "stable";
+      if (window.length >= 2) {
+        const n = window.length;
+        let sumX = 0,
+          sumY = 0,
+          sumXY = 0,
+          sumX2 = 0;
+        for (let i = 0; i < n; i++) {
+          const x = i + 1;
+          const y = window[i].quality_score;
+          sumX += x;
+          sumY += y;
+          sumXY += x * y;
+          sumX2 += x * x;
+        }
+        const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+        if (Math.abs(slope) < 0.5) overallTrend = "stable";
+        else if (slope > 0) overallTrend = "improving";
+        else overallTrend = "declining";
+      }
+
+      const avg =
+        scores.length > 0
+          ? scores.reduce((s, e) => s + e.quality_score, 0) / scores.length
+          : 0;
+
+      return new Response(
+        JSON.stringify({
+          scores,
+          summary: {
+            count: scores.length,
+            average: Math.round(avg * 10) / 10,
+            trend: overallTrend,
+          },
+        }),
+        { headers: { "Content-Type": "application/json", ...CORS_HEADERS } },
+      );
+    }
+
     // ── Phase 5: Alerts + Bulk Actions + Emergency ──────────────
 
     // REST: Computed alerts

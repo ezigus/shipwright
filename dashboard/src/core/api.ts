@@ -16,6 +16,7 @@ import type {
   TeamActivityEvent,
   StagePerformance,
   UserInfo,
+  QualityScoresResponse,
 } from "../types/api";
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -376,6 +377,17 @@ export const removeWebhook = (url: string) =>
 
 export const testNotification = () =>
   request<{ ok: boolean }>("/api/notifications/test", { method: "POST" });
+
+// Quality scores
+export const fetchQualityScores = (issue?: number | string) => {
+  const qs = issue ? `?issue=${encodeURIComponent(issue)}` : "";
+  return request<QualityScoresResponse>(
+    `/api/metrics/quality-scores${qs}`,
+  ).catch(() => ({
+    scores: [],
+    summary: { count: 0, average: 0, trend: "stable" as const },
+  }));
+};
 
 // Predictions (new endpoint, returns graceful defaults if not yet implemented)
 export const fetchPredictions = (issue: number | string) =>

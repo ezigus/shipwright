@@ -1,4 +1,6 @@
 {
+  "loop": { "claude_timeout": 3600 },
+  "plan": { "claude_timeout": 3600 },
   "self_optimize": true,
   "intelligence": {
     "enabled": true,

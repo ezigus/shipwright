@@ -109,7 +109,7 @@ show_help() {
     echo ""
     echo -e "${BOLD}COMMAND GROUPS${RESET}  ${DIM}(use: shipwright <group> help)${RESET}"
     echo -e "  ${CYAN}agent${RESET}     ${DIM}recruit, swarm, standup, guild, oversight${RESET}"
-    echo -e "  ${CYAN}quality${RESET}   ${DIM}code-review, security-audit, testgen, hygiene${RESET}"
+    echo -e "  ${CYAN}quality${RESET}   ${DIM}code-review, security-audit, testgen, hygiene, test-flaky${RESET}"
     echo -e "  ${CYAN}observe${RESET}   ${DIM}vitals, dora, retro, stream, activity, replay${RESET}"
     echo -e "  ${CYAN}release${RESET}   ${DIM}release, release-manager, changelog, deploy${RESET}"
     echo -e "  ${CYAN}intel${RESET}     ${DIM}predict, intelligence, strategic, optimize${RESET}"
@@ -197,7 +197,8 @@ route_quality() {
         testgen)          exec "$SCRIPT_DIR/sw-testgen.sh" "$@" ;;
         hygiene)          exec "$SCRIPT_DIR/sw-hygiene.sh" "$@" ;;
         validate|gate)    exec "$SCRIPT_DIR/sw-quality.sh" "$@" ;;
-        help|*) echo "Usage: shipwright quality {code-review|security-audit|testgen|hygiene|validate}"; exit 1 ;;
+        test-flaky|flaky) exec "$SCRIPT_DIR/sw-test-flaky.sh" "$@" ;;
+        help|*) echo "Usage: shipwright quality {code-review|security-audit|testgen|hygiene|validate|test-flaky}"; exit 1 ;;
     esac
 }
 
@@ -570,6 +571,9 @@ main() {
             ;;
         testgen)
             exec "$SCRIPT_DIR/sw-testgen.sh" "$@"
+            ;;
+        test-flaky|flaky)
+            exec "$SCRIPT_DIR/sw-test-flaky.sh" "$@"
             ;;
         e2e)
             exec "$SCRIPT_DIR/sw-e2e-orchestrator.sh" "$@"

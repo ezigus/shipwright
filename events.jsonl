@@ -81,3 +81,27 @@
 {"ts":"2026-03-08T16:12:10Z","ts_epoch":1772986330,"type":"strategic.issue_created","title":"Fleet-wide pattern sharing for cross-repository learning","priority":"P2","complexity":"standard"}
 {"ts":"2026-03-08T16:12:14Z","ts_epoch":1772986334,"type":"strategic.issue_created","title":"Automated refactor opportunity detection with complexity scoring","priority":"P6","complexity":"standard"}
 {"ts":"2026-03-08T16:12:14Z","ts_epoch":1772986334,"type":"strategic.cycle_complete","issues_created":4,"issues_skipped":1}
+{"ts":"2026-03-08T16:26:31Z","ts_epoch":1772987191,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-08T16:26:39Z","ts_epoch":1772987199,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}
+{"ts":"2026-03-08T16:26:57Z","ts_epoch":1772987217,"type":"intelligence.analysis","complexity":6,"risk_level":"medium","success_probability":78,"recommended_template":"standard","issue_type":"infrastructure"}
+{"ts":"2026-03-08T16:26:57Z","ts_epoch":1772987217,"type":"reasoning.trace","job_id":"pipeline-4487-79","complexity":"medium","risk":50,"template":"standard"}
+{"ts":"2026-03-08T16:26:59Z","ts_epoch":1772987219,"type":"intelligence.cache_hit","cache_key":"analyze_issue_b9eb69744cc27a8c013ae76452ca9b9f"}
+{"ts":"2026-03-08T16:26:59Z","ts_epoch":1772987219,"type":"intelligence.analysis","complexity":6,"risk_level":"medium","success_probability":78,"recommended_template":"standard","issue_type":"infrastructure"}
+{"ts":"2026-03-08T16:27:10Z","ts_epoch":1772987230,"type":"intelligence.estimate_iterations","estimate":5,"complexity":5,"source":"claude"}
+{"ts":"2026-03-08T16:27:21Z","ts_epoch":1772987241,"type":"intelligence.prediction","estimated_cost":0.52,"estimated_iterations":2,"complexity":5}
+{"ts":"2026-03-08T16:27:23Z","ts_epoch":1772987243,"type":"checks.pipeline_start","stages":9}
+{"ts":"2026-03-08T16:27:23Z","ts_epoch":1772987243,"type":"pipeline.started","issue":79,"template":"standard","complexity":0,"machine":"runnervm0kj6c","pipeline":"standard","model":"opus","goal":""}
+{"ts":"2026-03-08T16:27:23Z","ts_epoch":1772987243,"type":"pipeline.started","event_id":"evt-1772987243-2981346045","payload":"{\"issue\":\"79\",\"pipeline\":\"standard\",\"goal\":\"\"}"}
+{"ts":"2026-03-08T16:27:23Z","ts_epoch":1772987243,"type":"intelligence.model","stage":"intake","complexity":5,"model":"haiku","source":"heuristic"}
+{"ts":"2026-03-08T16:27:23Z","ts_epoch":1772987243,"type":"intelligence.model_ab","issue":79,"stage":"intake","recommended":"haiku","applied":"haiku","ab_group":"experiment","ab_ratio":20}
+{"ts":"2026-03-08T16:27:23Z","ts_epoch":1772987243,"type":"stage.started","issue":79,"stage":"intake"}
+{"ts":"2026-03-08T16:28:35Z","ts_epoch":1772987315,"type":"stage.complete","event_id":"evt-1772987315-463767663","payload":"{\"stage\":\"intake\",\"issue\":\"79\",\"timing\":\"1m 11s\"}"}
+{"ts":"2026-03-08T16:28:35Z","ts_epoch":1772987315,"type":"memory.pattern","type":"project","proj_type":"node","framework":""}
+{"ts":"2026-03-08T16:28:35Z","ts_epoch":1772987315,"type":"stage.completed","issue":79,"stage":"intake","duration_s":72,"result":"success"}
+{"ts":"2026-03-08T16:28:35Z","ts_epoch":1772987315,"type":"vitals.snapshot","issue":79,"stage":"intake","iteration":0,"diff_lines":0,"no_progress":0}
+{"ts":"2026-03-08T16:28:35Z","ts_epoch":1772987315,"type":"intelligence.model","stage":"plan","complexity":5,"model":"haiku","source":"heuristic"}
+{"ts":"2026-03-08T16:28:35Z","ts_epoch":1772987315,"type":"intelligence.model_ab","issue":79,"stage":"plan","recommended":"haiku","applied":"opus","ab_group":"control","ab_ratio":20}
+{"ts":"2026-03-08T16:28:36Z","ts_epoch":1772987316,"type":"stage.started","issue":79,"stage":"plan"}
+{"ts":"2026-03-08T16:32:11Z","ts_epoch":1772987531,"type":"stage.failed","event_id":"evt-1772987531-642011723","payload":"{\"stage\":\"plan\",\"issue\":\"79\",\"timing\":\"3m 33s\"}"}
+{"ts":"2026-03-08T16:32:11Z","ts_epoch":1772987531,"type":"stage.failed","issue":79,"stage":"plan","duration_s":215,"error":"unknown","error_class":"unknown"}
+{"ts":"2026-03-08T16:32:11Z","ts_epoch":1772987531,"type":"vitals.snapshot","issue":79,"stage":"plan","iteration":0,"diff_lines":0,"no_progress":0}

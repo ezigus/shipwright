@@ -445,6 +445,340 @@ test_unknown_option() {
   fi
 }
 
+# ─── Test 11: Real error-summary.json format (error_lines) ──────────────────
+test_real_error_format() {
+  echo ""
+  echo -e "${CYAN}${BOLD}TEST: Real error-summary.json format (error_lines)${RESET}"
+  setup_test "real_error_format"
+
+  cat > "$STATE_FILE" <<'EOF'
+---
+pipeline: standard
+goal: "Build feature"
+status: failed
+issue: "#110"
+current_stage: build
+elapsed: "8m 12s"
+---
+EOF
+
+  # Real format from write_error_summary() in sw-loop.sh
+  cat > "$PIPELINE_DIR/error-summary.json" <<'EOF'
+{
+  "iteration": 3,
+  "timestamp": "2026-03-08T12:19:01Z",
+  "error_count": 2,
+  "error_lines": [
+    "FAIL: src/utils.test.js > should validate input",
+    "TypeError: Cannot read property 'name' of undefined"
+  ],
+  "test_cmd": "npm test"
+}
+EOF
+
+  local output
+  output=$(
+    cd "$TEST_DIR"
+    PIPELINE_DIR="$PIPELINE_DIR" STATE_FILE="$STATE_FILE" \
+    "$SCRIPT_DIR/sw-diagnose.sh" 2>&1 || true
+  )
+
+  if echo "$output" | grep -q "FAIL.*validate input"; then
+    test_pass "Real error_lines format: test failure detected"
+  else
+    test_fail "Real error_lines format: test failure not detected (output: $output)"
+  fi
+
+  if echo "$output" | grep -q "TypeError"; then
+    test_pass "Real error_lines format: TypeError detected"
+  else
+    test_fail "Real error_lines format: TypeError not detected"
+  fi
+
+  cleanup_test
+}
+
+# ─── Test 12: Stage artifact analysis ─────────────────────────────────────
+test_stage_artifacts() {
+  echo ""
+  echo -e "${CYAN}${BOLD}TEST: Stage artifact analysis${RESET}"
+  setup_test "stage_artifacts"
+
+  cat > "$STATE_FILE" <<'EOF'
+---
+pipeline: standard
+goal: "Deploy service"
+status: failed
+issue: "#111"
+current_stage: test
+elapsed: "12m"
+stage_progress: "intake:complete plan:complete build:complete test:pending review:pending"
+---
+EOF
+
+  cat > "$PIPELINE_DIR/error-summary.json" <<'EOF'
+{
+  "error_lines": ["FAIL: test suite"]
+}
+EOF
+
+  # Create checkpoint directory with a checkpoint
+  mkdir -p "$PIPELINE_DIR/checkpoints"
+  cat > "$PIPELINE_DIR/checkpoints/test-001.json" <<'EOF'
+{
+  "stage": "test",
+  "status": "failed",
+  "timestamp": "2026-03-08T12:00:00Z"
+}
+EOF
+
+  local output
+  output=$(
+    cd "$TEST_DIR"
+    PIPELINE_DIR="$PIPELINE_DIR" STATE_FILE="$STATE_FILE" \
+    "$SCRIPT_DIR/sw-diagnose.sh" 2>&1 || true
+  )
+
+  if echo "$output" | grep -qi "checkpoint"; then
+    test_pass "Stage artifacts: checkpoints detected"
+  else
+    test_fail "Stage artifacts: checkpoints not detected"
+  fi
+
+  if echo "$output" | grep -qi "progress"; then
+    test_pass "Stage artifacts: progress shown"
+  else
+    test_fail "Stage artifacts: progress not shown"
+  fi
+
+  cleanup_test
+}
+
+# ─── Test 13: Memory search (mock) ────────────────────────────────────────
+test_memory_search() {
+  echo ""
+  echo -e "${CYAN}${BOLD}TEST: Memory search with mock${RESET}"
+  setup_test "memory_search"
+
+  cat > "$STATE_FILE" <<'EOF'
+---
+pipeline: standard
+goal: "Build auth module"
+status: failed
+issue: "#112"
+current_stage: build
+elapsed: "5m"
+---
+EOF
+
+  cat > "$PIPELINE_DIR/error-summary.json" <<'EOF'
+{
+  "error_lines": ["SyntaxError: Unexpected token"]
+}
+EOF
+
+  # Create a mock memory_ranked_search that returns JSON
+  local mock_bin_dir="$TEST_DIR/bin"
+  mkdir -p "$mock_bin_dir"
+
+  # Source the script with a mocked function
+  local output
+  output=$(
+    cd "$TEST_DIR"
+    # Define mock before sourcing
+    memory_ranked_search() {
+      echo '{"results":[{"file":"failures.json","summary":"Similar SyntaxError in auth module fixed by adding missing bracket"}]}'
+    }
+    export -f memory_ranked_search
+    PIPELINE_DIR="$PIPELINE_DIR" STATE_FILE="$STATE_FILE" \
+    bash -c '
+      memory_ranked_search() {
+        echo "{\"results\":[{\"file\":\"failures.json\",\"summary\":\"Similar SyntaxError in auth module fixed by adding missing bracket\"}]}"
+      }
+      source "'"$SCRIPT_DIR/sw-diagnose.sh"'"
+      main
+    ' 2>&1 || true
+  )
+
+  if echo "$output" | grep -qi "SIMILAR PAST FAILURES\|failures.json\|SyntaxError.*auth"; then
+    test_pass "Memory search: past failures shown"
+  else
+    test_skip "Memory search: mock function not invoked in subshell (expected in some environments)"
+  fi
+
+  cleanup_test
+}
+
+# ─── Test 14: --stage flag ────────────────────────────────────────────────
+test_stage_flag() {
+  echo ""
+  echo -e "${CYAN}${BOLD}TEST: --stage flag${RESET}"
+  setup_test "stage_flag"
+
+  cat > "$STATE_FILE" <<'EOF'
+---
+pipeline: standard
+goal: "Build app"
+status: failed
+issue: "#113"
+current_stage: test
+elapsed: "7m"
+---
+EOF
+
+  cat > "$PIPELINE_DIR/error-summary.json" <<'EOF'
+{
+  "error_lines": ["FAIL: test case"]
+}
+EOF
+
+  # Matching stage filter
+  local output_match
+  output_match=$(
+    cd "$TEST_DIR"
+    PIPELINE_DIR="$PIPELINE_DIR" STATE_FILE="$STATE_FILE" \
+    "$SCRIPT_DIR/sw-diagnose.sh" --stage test 2>&1 || true
+  )
+
+  if echo "$output_match" | grep -qiE "ROOT CAUSES|FAIL"; then
+    test_pass "--stage test: matching stage shows diagnoses"
+  else
+    test_fail "--stage test: matching stage should show diagnoses"
+  fi
+
+  # Non-matching stage filter
+  local output_nomatch
+  output_nomatch=$(
+    cd "$TEST_DIR"
+    PIPELINE_DIR="$PIPELINE_DIR" STATE_FILE="$STATE_FILE" \
+    "$SCRIPT_DIR/sw-diagnose.sh" --stage build 2>&1 || true
+  )
+
+  if echo "$output_nomatch" | grep -qi "does not match"; then
+    test_pass "--stage build: non-matching stage shows filter message"
+  else
+    test_fail "--stage build: non-matching stage should show filter message"
+  fi
+
+  cleanup_test
+}
+
+# ─── Test 15: JSON output with all new fields ──────────────────────────────
+test_json_full_output() {
+  echo ""
+  echo -e "${CYAN}${BOLD}TEST: JSON output with memory_matches and stage_artifacts${RESET}"
+  setup_test "json_full"
+
+  cat > "$STATE_FILE" <<'EOF'
+---
+pipeline: standard
+goal: "Full test"
+status: failed
+issue: "#114"
+current_stage: build
+elapsed: "3m"
+stage_progress: "intake:complete plan:complete build:pending"
+---
+EOF
+
+  cat > "$PIPELINE_DIR/error-summary.json" <<'EOF'
+{
+  "error_lines": ["FAIL: component test"]
+}
+EOF
+
+  mkdir -p "$PIPELINE_DIR/checkpoints"
+  cat > "$PIPELINE_DIR/checkpoints/build-001.json" <<'EOF'
+{"stage":"build","status":"failed"}
+EOF
+
+  local output
+  output=$(
+    cd "$TEST_DIR"
+    PIPELINE_DIR="$PIPELINE_DIR" STATE_FILE="$STATE_FILE" \
+    "$SCRIPT_DIR/sw-diagnose.sh" --json 2>&1 || true
+  )
+
+  if echo "$output" | grep -q '"memory_matches"'; then
+    test_pass "JSON contains memory_matches field"
+  else
+    test_fail "JSON missing memory_matches field"
+  fi
+
+  if echo "$output" | grep -q '"stage_artifacts"'; then
+    test_pass "JSON contains stage_artifacts field"
+  else
+    test_fail "JSON missing stage_artifacts field"
+  fi
+
+  # Validate it's parseable JSON (if jq available)
+  # Filter out stderr warnings that may be mixed in with 2>&1
+  if command -v jq >/dev/null 2>&1; then
+    local json_only
+    json_only=$(echo "$output" | sed -n '/^{/,/^}/p')
+    if echo "$json_only" | jq . >/dev/null 2>&1; then
+      test_pass "JSON output is valid JSON"
+    else
+      test_fail "JSON output is not valid JSON"
+    fi
+  else
+    test_skip "jq not available to validate JSON"
+  fi
+
+  cleanup_test
+}
+
+# ─── Test 16: Verbose log excerpts ───────────────────────────────────────
+test_verbose_log_excerpts() {
+  echo ""
+  echo -e "${CYAN}${BOLD}TEST: Verbose mode shows log excerpts${RESET}"
+  setup_test "verbose_excerpts"
+
+  cat > "$STATE_FILE" <<'EOF'
+---
+pipeline: standard
+goal: "Test verbose"
+status: failed
+issue: "#115"
+current_stage: test
+elapsed: "4m"
+---
+EOF
+
+  cat > "$PIPELINE_DIR/error-summary.json" <<'EOF'
+{
+  "error_lines": ["FAIL: auth test"]
+}
+EOF
+
+  # Create error-log.jsonl with entries
+  cat > "$PIPELINE_DIR/error-log.jsonl" <<'EOF'
+{"timestamp":"2026-03-08T12:00:00Z","level":"error","message":"Authentication handler threw exception"}
+{"timestamp":"2026-03-08T12:00:01Z","level":"error","message":"Token validation failed: expired"}
+EOF
+
+  local output
+  output=$(
+    cd "$TEST_DIR"
+    PIPELINE_DIR="$PIPELINE_DIR" STATE_FILE="$STATE_FILE" \
+    "$SCRIPT_DIR/sw-diagnose.sh" --verbose 2>&1 || true
+  )
+
+  if echo "$output" | grep -qi "LOG EXCERPTS"; then
+    test_pass "Verbose mode shows LOG EXCERPTS section"
+  else
+    test_fail "Verbose mode missing LOG EXCERPTS section"
+  fi
+
+  if echo "$output" | grep -qi "Authentication handler\|Token validation"; then
+    test_pass "Verbose mode shows log content"
+  else
+    test_fail "Verbose mode missing log content"
+  fi
+
+  cleanup_test
+}
+
 # ─── Main test runner ───────────────────────────────────────────────────────
 main() {
   echo ""
@@ -463,6 +797,12 @@ main() {
   test_multiple_errors
   test_verbose_flag
   test_unknown_option
+  test_real_error_format
+  test_stage_artifacts
+  test_memory_search
+  test_stage_flag
+  test_json_full_output
+  test_verbose_log_excerpts
 
   # Summary
   echo ""

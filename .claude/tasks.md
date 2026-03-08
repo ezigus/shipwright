@@ -4,27 +4,27 @@
 Pipeline: standard | Branch: feat/interactive-diagnostic-mode-for-failed-p-64
 
 ## Checklist
-- [x] Task 1: Create `sw-diagnose.sh` with error collection and classification
-- [x] Task 2: Implement confidence-based ranking with bubble sort (Bash 3.2 compat)
-- [x] Task 3: Add text report renderer with colored output
-- [x] Task 4: Add JSON output mode (`--json` flag)
-- [x] Task 5: Integrate memory pattern search
-- [x] Task 6: Wire CLI route in `scripts/sw`
-- [x] Task 7: Create test suite with 10 test scenarios
-- [x] Task 8: Add to npm test suite
-- [ ] Task 9: Verify all tests pass
-- [ ] Task 10: Review for edge cases and code quality
-- [ ] Task 11: Create PR
-- [x] `shipwright diagnose` reads latest failed pipeline state
-- [x] Analyzes error-summary.json, error-log.jsonl, stage artifacts
-- [x] Checks memory patterns for similar past failures
-- [x] Outputs ranked list of likely causes with suggested fixes
-- [x] Includes relevant log excerpts and file paths for investigation
-- [x] Works without active pipeline (reads from artifacts)
-- [x] Test coverage with mock failure scenarios (10 tests)
-- [ ] All tests pass in CI
-- [ ] PR created and reviewed
+- [ ] Task 1: Fix `collect_errors()` to support both error-summary.json formats
+- [ ] Task 2: Fix `search_memory()` subshell bug
+- [ ] Task 3: Add `analyze_stage_artifacts()` function
+- [ ] Task 4: Add log excerpt display in verbose mode
+- [ ] Task 5: Add `--stage <name>` flag for stage-specific filtering
+- [ ] Task 6: Update `render_json()` to include memory matches and stage artifacts
+- [ ] Task 7: Update `render_report()` to show stage artifact summary
+- [ ] Task 8: Add test for real error-summary.json format (`.error_lines[]`)
+- [ ] Task 9: Add test for stage artifact analysis
+- [ ] Task 10: Add test for memory search (mock `memory_ranked_search`)
+- [ ] Task 11: Add test for `--stage` flag
+- [ ] Task 12: Add test for JSON output with all new fields
+- [ ] Task 13: Run full test suite and verify all tests pass
+- [ ] `shipwright diagnose` correctly parses real `error-summary.json` format from `write_error_summary()`
+- [ ] Memory search results are displayed (subshell bug fixed)
+- [ ] Stage artifacts (checkpoints, stuckness) are analyzed and shown
+- [ ] `--verbose` includes log excerpts
+- [ ] `--json` output includes memory matches, stage artifacts
+- [ ] `--stage <name>` filters to specific stage
+- [ ] Works with no pipeline state (clean message)
 
 ## Notes
-- Generated from pipeline plan at 2026-03-08T06:32:25Z
+- Generated from pipeline plan at 2026-03-08T12:19:01Z
 - Pipeline will update status as tasks complete

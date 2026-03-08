@@ -41,6 +41,7 @@ YELLOW='\033[38;2;250;204;21m'
 # ─── Globals ─────────────────────────────────────────────────────────────────
 VERBOSE=false
 OUTPUT_JSON=false
+STAGE_FILTER=""
 PIPELINE_DIR="${PIPELINE_DIR:-./.claude/pipeline-artifacts}"
 STATE_FILE="${STATE_FILE:-./.claude/pipeline-state.md}"
 
@@ -49,6 +50,8 @@ declare -a ERRORS=()
 declare -a CLASSIFICATIONS=()
 declare -a DIAGNOSES=()
 declare -a MEMORY_MATCHES=()
+declare -a STAGE_ARTIFACTS=()
+declare -a LOG_EXCERPTS=()
 PIPELINE_GOAL=""
 PIPELINE_STAGE=""
 PIPELINE_STATUS="unknown"
@@ -66,6 +69,7 @@ show_help() {
   echo -e "${BOLD}OPTIONS${RESET}"
   echo -e "  ${CYAN}--json${RESET}      Output as JSON (for tooling/automation)"
   echo -e "  ${CYAN}--verbose${RESET}   Include detailed evidence and log excerpts"
+  echo -e "  ${CYAN}--stage${RESET}     Filter to a specific pipeline stage"
   echo -e "  ${CYAN}--help${RESET}      Show this help message"
   echo -e "  ${CYAN}--version${RESET}   Show version"
   echo ""
@@ -79,14 +83,22 @@ show_help() {
 }
 
 # ─── Parse Arguments ──────────────────────────────────────────────────────────
-for arg in "$@"; do
-  case "$arg" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --json)      OUTPUT_JSON=true ;;
     --verbose)   VERBOSE=true ;;
+    --stage)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "Error: --stage requires a stage name" >&2; exit 1
+      fi
+      STAGE_FILTER="$1"
+      ;;
     --version|-V) echo "sw-diagnose $VERSION"; exit 0 ;;
     --help|-h)   show_help; exit 0 ;;
-    *)           echo "Unknown option: $arg" >&2; show_help; exit 1 ;;
+    *)           echo "Unknown option: $1" >&2; show_help; exit 1 ;;
   esac
+  shift
 done
 
 # ─── YAML Frontmatter Parser (Bash 3.2 compatible) ──────────────────────────
@@ -128,15 +140,16 @@ collect_errors() {
   # Try error-summary.json first (structured)
   if [[ -f "$error_summary" ]]; then
     if command -v jq >/dev/null 2>&1; then
-      # Extract error messages from JSON array (avoid subshell by using while < <())
+      # Real format from write_error_summary(): {error_lines: [...]}
+      # Legacy format: {errors: [{message: ...}]}
       while IFS= read -r line; do
         [[ -n "$line" ]] && ERRORS+=("$line")
-      done < <(jq -r '.errors[]? | .message // ""' "$error_summary" 2>/dev/null)
+      done < <(jq -r '(.error_lines[]? // empty), (.errors[]? | .message // empty)' "$error_summary" 2>/dev/null)
     else
-      # Fallback: grep for error patterns
+      # Fallback: grep for error patterns (both formats)
       while IFS= read -r line; do
         [[ -n "$line" ]] && ERRORS+=("$line")
-      done < <(grep -o '"message":"[^"]*"' "$error_summary" 2>/dev/null | sed 's/"message":"\(.*\)"/\1/')
+      done < <(grep -oE '"(message|error_lines)":\s*("[^"]*"|\[[^]]*\])' "$error_summary" 2>/dev/null | grep -o '"[^"]*"$' | sed 's/^"//;s/"$//')
     fi
   fi
 
@@ -209,17 +222,101 @@ classify_errors() {
 search_memory() {
   # Call memory_ranked_search if available
   if [[ -n "${PIPELINE_GOAL:-}" ]] && type memory_ranked_search >/dev/null 2>&1; then
-    # Try to search by combined error + goal context
     local query="${PIPELINE_GOAL} failed in ${PIPELINE_STAGE}"
-    # memory_ranked_search returns structured results; we capture them
     local mem_result
     mem_result=$(memory_ranked_search "$query" 2>/dev/null || echo "")
     if [[ -n "$mem_result" ]]; then
-      # Parse result and add to MEMORY_MATCHES
-      echo "$mem_result" | while read -r match; do
-        [[ -n "$match" ]] && MEMORY_MATCHES+=("$match")
-      done
+      # Parse JSON results if jq available, otherwise use line-by-line
+      if command -v jq >/dev/null 2>&1; then
+        while IFS= read -r match; do
+          [[ -n "$match" ]] && MEMORY_MATCHES+=("$match")
+        done < <(echo "$mem_result" | jq -r '.results[]? | "\(.file // "unknown"): \(.summary // .match // .)"' 2>/dev/null || echo "$mem_result")
+      else
+        # Fallback: read line-by-line (avoid pipe subshell)
+        while IFS= read -r match; do
+          [[ -n "$match" ]] && MEMORY_MATCHES+=("$match")
+        done <<< "$mem_result"
+      fi
     fi
+  fi
+}
+
+# ─── Stage 4b: Analyze Stage Artifacts ──────────────────────────────────────
+analyze_stage_artifacts() {
+  local checkpoint_dir="${PIPELINE_DIR}/checkpoints"
+  local progress_file="${PIPELINE_DIR}/../pipeline-state.md"
+  [[ -f "$STATE_FILE" ]] && progress_file="$STATE_FILE"
+
+  # Check for checkpoint files
+  if [[ -d "$checkpoint_dir" ]]; then
+    local checkpoint_count=0
+    local latest_checkpoint=""
+    for f in "$checkpoint_dir"/*.json; do
+      [[ -f "$f" ]] || continue
+      checkpoint_count=$((checkpoint_count + 1))
+      latest_checkpoint="$f"
+    done
+    if [[ $checkpoint_count -gt 0 ]]; then
+      STAGE_ARTIFACTS+=("checkpoints:${checkpoint_count} checkpoint(s) found")
+      if [[ -n "$latest_checkpoint" ]] && command -v jq >/dev/null 2>&1; then
+        local cp_stage
+        cp_stage=$(jq -r '.stage // "unknown"' "$latest_checkpoint" 2>/dev/null || echo "unknown")
+        local cp_status
+        cp_status=$(jq -r '.status // "unknown"' "$latest_checkpoint" 2>/dev/null || echo "unknown")
+        STAGE_ARTIFACTS+=("latest_checkpoint:stage=${cp_stage} status=${cp_status}")
+      fi
+    fi
+  fi
+
+  # Detect stuckness: same stage repeated in progress
+  if [[ -f "$progress_file" ]]; then
+    local stage_progress
+    stage_progress=$(parse_yaml_frontmatter "$progress_file" "stage_progress" 2>/dev/null || echo "")
+    if [[ -n "$stage_progress" ]]; then
+      # Count how many stages are still pending
+      local pending_count=0
+      local complete_count=0
+      for token in $stage_progress; do
+        case "$token" in
+          *:pending) pending_count=$((pending_count + 1)) ;;
+          *:complete) complete_count=$((complete_count + 1)) ;;
+        esac
+      done
+      STAGE_ARTIFACTS+=("progress:${complete_count} complete, ${pending_count} pending")
+    fi
+  fi
+
+  # Check error-log.jsonl for repeated stage failures (stuckness indicator)
+  local error_log="${PIPELINE_DIR}/error-log.jsonl"
+  if [[ -f "$error_log" ]] && command -v jq >/dev/null 2>&1; then
+    local entry_count
+    entry_count=$(wc -l < "$error_log" | tr -d ' ')
+    STAGE_ARTIFACTS+=("error_log:${entry_count} entries in error log")
+  fi
+}
+
+# ─── Stage 4c: Collect Log Excerpts ────────────────────────────────────────
+collect_log_excerpts() {
+  [[ "$VERBOSE" != true ]] && return 0
+
+  local error_log="${PIPELINE_DIR}/error-log.jsonl"
+  local error_summary="${PIPELINE_DIR}/error-summary.json"
+  local max_lines=10
+
+  # Extract recent log entries from error-log.jsonl
+  if [[ -f "$error_log" ]]; then
+    local line_count=0
+    while IFS= read -r line; do
+      [[ $line_count -ge $max_lines ]] && break
+      if command -v jq >/dev/null 2>&1; then
+        local excerpt
+        excerpt=$(echo "$line" | jq -r '"[\(.timestamp // .ts // "?")] \(.level // "info"): \(.message // .msg // .)"' 2>/dev/null || echo "$line")
+        [[ -n "$excerpt" ]] && LOG_EXCERPTS+=("$excerpt")
+      else
+        LOG_EXCERPTS+=("$line")
+      fi
+      line_count=$((line_count + 1))
+    done < "$error_log"
   fi
 }
 
@@ -362,6 +459,28 @@ render_report() {
     echo ""
   fi
 
+  # Stage artifacts
+  if [[ ${#STAGE_ARTIFACTS[@]} -gt 0 ]]; then
+    echo -e "${PURPLE}${BOLD}  STAGE ARTIFACTS${RESET}"
+    echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+    for artifact in "${STAGE_ARTIFACTS[@]}"; do
+      local art_key="${artifact%%:*}"
+      local art_val="${artifact#*:}"
+      echo -e "  ${BOLD}${art_key}${RESET}: ${art_val}"
+    done
+    echo ""
+  fi
+
+  # Log excerpts (verbose only)
+  if [[ "$VERBOSE" == true && ${#LOG_EXCERPTS[@]} -gt 0 ]]; then
+    echo -e "${PURPLE}${BOLD}  LOG EXCERPTS${RESET}"
+    echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+    for excerpt in "${LOG_EXCERPTS[@]}"; do
+      echo -e "  ${DIM}${excerpt}${RESET}"
+    done
+    echo ""
+  fi
+
   # Files to investigate
   local files_to_check=()
   [[ -f "$PIPELINE_DIR/error-summary.json" ]] && files_to_check+=(".claude/pipeline-artifacts/error-summary.json")
@@ -424,6 +543,38 @@ render_json() {
     json_diagnoses="${json_diagnoses}]"
   fi
 
+  # Build memory_matches JSON array
+  local json_memory="[]"
+  if [[ ${#MEMORY_MATCHES[@]} -gt 0 ]]; then
+    json_memory="["
+    local first=true
+    for match in "${MEMORY_MATCHES[@]}"; do
+      [[ "$first" == true ]] && first=false || json_memory="${json_memory},"
+      match="${match//\\/\\\\}"
+      match="${match//\"/\\\"}"
+      json_memory="${json_memory}\"${match}\""
+    done
+    json_memory="${json_memory}]"
+  fi
+
+  # Build stage_artifacts JSON array
+  local json_artifacts="[]"
+  if [[ ${#STAGE_ARTIFACTS[@]} -gt 0 ]]; then
+    json_artifacts="["
+    local first=true
+    for artifact in "${STAGE_ARTIFACTS[@]}"; do
+      [[ "$first" == true ]] && first=false || json_artifacts="${json_artifacts},"
+      local art_key="${artifact%%:*}"
+      local art_val="${artifact#*:}"
+      art_key="${art_key//\\/\\\\}"
+      art_key="${art_key//\"/\\\"}"
+      art_val="${art_val//\\/\\\\}"
+      art_val="${art_val//\"/\\\"}"
+      json_artifacts="${json_artifacts}{\"type\":\"${art_key}\",\"detail\":\"${art_val}\"}"
+    done
+    json_artifacts="${json_artifacts}]"
+  fi
+
   # Build final JSON object
   echo "{"
   echo "  \"status\": \"$PIPELINE_STATUS\","
@@ -433,7 +584,9 @@ render_json() {
   echo "    \"elapsed\": \"${ELAPSED}\""
   echo "  },"
   echo "  \"errors\": $json_errors,"
-  echo "  \"diagnoses\": $json_diagnoses"
+  echo "  \"diagnoses\": $json_diagnoses,"
+  echo "  \"memory_matches\": $json_memory,"
+  echo "  \"stage_artifacts\": $json_artifacts"
   echo "}"
 }
 
@@ -456,10 +609,22 @@ main() {
     return 0
   fi
 
+  # Apply stage filter if specified
+  if [[ -n "$STAGE_FILTER" && -n "$PIPELINE_STAGE" && "$STAGE_FILTER" != "$PIPELINE_STAGE" ]]; then
+    if [[ "$OUTPUT_JSON" == true ]]; then
+      echo "{\"status\":\"filtered\",\"message\":\"Stage '$STAGE_FILTER' does not match current stage '$PIPELINE_STAGE'\",\"errors\":[],\"diagnoses\":[],\"memory_matches\":[],\"stage_artifacts\":[]}"
+    else
+      warn "Stage filter '$STAGE_FILTER' does not match current failed stage '$PIPELINE_STAGE'"
+    fi
+    return 0
+  fi
+
   # Collect and analyze errors
   collect_errors
   classify_errors
   search_memory
+  analyze_stage_artifacts
+  collect_log_excerpts
   rank_diagnoses
 
   # Render output

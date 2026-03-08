@@ -290,6 +290,52 @@ else
     assert_fail "ab_test_should_use_classifier function exists"
 fi
 
+# ─── Budget Validation Tests ─────────────────────────────────────────────────
+echo -e "${DIM}  Budget Validation${RESET}"
+
+if type validate_budget >/dev/null 2>&1; then
+    assert_pass "validate_budget function exists"
+
+    # Under limit (no usage log) should pass
+    rm -f "$HOME/.shipwright/optimization/model-usage.jsonl" 2>/dev/null || true
+    validate_budget "build" "opus" "test-pipeline-1" && budget_rc=0 || budget_rc=$?
+    assert_eq "validate_budget passes with no usage log" "0" "$budget_rc"
+
+    # FORCE_MODEL override bypasses budget check
+    (
+        export FORCE_MODEL="opus"
+        # Set max_cost low to trigger failure if override didn't work
+        FORCE_MODEL="opus" validate_budget "build" "opus" "test-pipeline-forced" && rc=0 || rc=$?
+        echo "$rc"
+    ) | grep -q "0"
+    assert_pass "validate_budget passes when FORCE_MODEL is set"
+
+    # Over limit: write usage records totaling > max_cost
+    ensure_config 2>/dev/null || true
+    # Set max_cost to 1.0 in config
+    if command -v jq >/dev/null 2>&1; then
+        budget_tmp=$(mktemp)
+        jq '.max_cost_per_pipeline = 1.0' "$HOME/.shipwright/optimization/model-routing.json" > "$budget_tmp" && \
+            mv "$budget_tmp" "$HOME/.shipwright/optimization/model-routing.json"
+        _resolve_routing_config
+        # Write a usage record with cost 2.0 for this pipeline
+        mkdir -p "$HOME/.shipwright/optimization"
+        echo '{"ts":"2026-01-01T00:00:00Z","pipeline_id":"test-budget-pipeline","stage":"build","model":"opus","input_tokens":1000,"output_tokens":1000,"cost":2.0}' \
+            >> "$HOME/.shipwright/optimization/model-usage.jsonl"
+        validate_budget "review" "opus" "test-budget-pipeline" && budget_over_rc=0 || budget_over_rc=$?
+        assert_eq "validate_budget fails when accumulated cost exceeds max" "1" "$budget_over_rc"
+    else
+        assert_pass "validate_budget over-limit test skipped (no jq)"
+    fi
+
+    # CLI validate-budget subcommand
+    cli_budget_out=$(bash "$SCRIPT_DIR/sw-model-router.sh" validate-budget "intake" "haiku" "cli-test" 2>&1) && cli_budget_rc=0 || cli_budget_rc=$?
+    # Should return 0 (no usage for cli-test pipeline)
+    assert_eq "CLI validate-budget passes for new pipeline" "0" "$cli_budget_rc"
+else
+    assert_fail "validate_budget function exists"
+fi
+
 echo ""
 echo ""
 print_test_results

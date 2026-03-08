@@ -453,6 +453,53 @@ record_usage() {
     echo "$record" >> "$MODEL_USAGE_LOG"
 }
 
+# ─── Validate Budget Before Stage ──────────────────────────────────────────
+validate_budget() {
+    local stage="${1:-unknown}"
+    local model="${2:-sonnet}"
+    local pipeline_id="${3:-default}"
+
+    # FORCE_MODEL override bypasses budget check
+    if [[ -n "${FORCE_MODEL:-}" ]]; then
+        return 0
+    fi
+
+    # Read max_cost_per_pipeline from config (default 50.0)
+    local max_cost="50.0"
+    _resolve_routing_config
+    if [[ -n "$MODEL_ROUTING_CONFIG" && -f "$MODEL_ROUTING_CONFIG" ]] && command -v jq >/dev/null 2>&1; then
+        local cfg_max
+        cfg_max=$(jq -r '.max_cost_per_pipeline // empty' "$MODEL_ROUTING_CONFIG" 2>/dev/null || true)
+        if [[ -n "$cfg_max" && "$cfg_max" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            max_cost="$cfg_max"
+        fi
+    fi
+
+    # Sum accumulated cost for this pipeline_id from usage log
+    local accumulated="0"
+    if [[ -f "$MODEL_USAGE_LOG" ]] && command -v jq >/dev/null 2>&1; then
+        local sum
+        sum=$(jq -s --arg pid "$pipeline_id" \
+            '[.[] | select(.pipeline_id == $pid or $pid == "default") | .cost] | add // 0' \
+            "$MODEL_USAGE_LOG" 2>/dev/null || true)
+        if [[ -n "$sum" && "$sum" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            accumulated="$sum"
+        fi
+    fi
+
+    # Compare: if accumulated >= max_cost, budget exceeded
+    local exceeded
+    exceeded=$(awk "BEGIN {print ($accumulated >= $max_cost) ? 1 : 0}")
+
+    if [[ "$exceeded" -eq 1 ]]; then
+        warn "Budget exceeded: accumulated \$$accumulated >= max \$$max_cost (stage=$stage, model=$model)"
+        emit_event "budget_exceeded" "stage=$stage" "model=$model" "accumulated=$accumulated" "max=$max_cost" || true
+        return 1
+    fi
+
+    return 0
+}
+
 # ─── A/B Test Configuration ────────────────────────────────────────────────
 configure_ab_test() {
     local percentage="${1:-10}"
@@ -603,6 +650,7 @@ show_help() {
     echo "  ${CYAN}config${RESET} [show|set <key> <val>] Show/set routing configuration"
     echo "  ${CYAN}estimate${RESET} [template] [complexity]  Estimate pipeline cost"
     echo "  ${CYAN}ab-test${RESET} [enable|disable] [pct] [variant]  Configure A/B testing"
+    echo "  ${CYAN}validate-budget${RESET} <stage> [model] [id]  Check pipeline budget"
     echo "  ${CYAN}report${RESET}                        Show model usage and cost report"
     echo "  ${CYAN}ab-results${RESET}                     Show A/B test results"
     echo "  ${CYAN}help${RESET}                          Show this help message"
@@ -687,6 +735,10 @@ main() {
                 error "Task classifier not available"
                 exit 1
             fi
+            ;;
+        validate-budget)
+            shift 2>/dev/null || true
+            validate_budget "$@"
             ;;
         report)
             show_report

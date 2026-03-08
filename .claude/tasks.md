@@ -4,25 +4,27 @@
 Pipeline: standard | Branch: feat/build-iteration-quality-scoring-with-ada-68
 
 ## Checklist
-- [ ] Task 1: Create `scripts/lib/loop-quality-score.sh` with scoring functions and adaptive actions
-- [ ] Task 2: Add `loop.quality_scored` and `loop.quality_escalated` to `config/event-schema.json`
-- [ ] Task 3: Integrate quality scoring into `scripts/sw-loop.sh` main loop
-- [ ] Task 4: Create `scripts/sw-loop-quality-score-test.sh` bash test suite
-- [ ] Task 5: Add `IterationQualityScore` type to `dashboard/src/types/api.ts`
-- [ ] Task 6: Create `dashboard/src/core/quality-score.ts` with rendering helpers
-- [ ] Task 7: Create `dashboard/src/core/quality-score.test.ts` vitest tests
-- [ ] Task 8: Add quality trend panel to `dashboard/src/views/metrics.ts`
-- [ ] Task 9: Run full test suite (`npm test`) and fix any failures
-- [ ] Task 10: Verify event schema consistency and edge case handling
-- [ ] `compute_iteration_quality_score()` produces correct weighted scores for all component combinations
-- [ ] Score is logged to events.jsonl as `loop.quality_scored` with all component values
-- [ ] Score < 30 triggers prompt adaptation (verifiable by GOAL modification)
-- [ ] Score < 15 for 2+ consecutive iterations triggers model escalation to Opus
-- [ ] Dashboard renders quality trend chart with threshold lines
-- [ ] All tests pass (`npm test`)
-- [ ] No regressions in existing loop behavior (convergence, stuckness detection, circuit breaker)
-- [ ] Bash 3.2 compatible (no associative arrays, no `${var,,}`)
+- [ ] Dashboard displays iteration quality sparkline (5+ data points)
+- [ ] Quality scores are logged to `quality-scores.jsonl` with all 4 components
+- [ ] Quality scores appear in loop-state.md at end of each iteration
+- [ ] Events.jsonl contains `loop.quality_scored` events with iteration metadata
+- [ ] Threshold actions triggered: score < 30 logs "prompt_adapted", < 15 logs "escalated"
+- [ ] Dashboard API endpoint `/api/metrics/quality-scores` returns valid IterationQualityScore array
+- [ ] Quality trend (improving/declining/stable) computed correctly for 3+ iterations
+- [ ] All existing tests pass (npm test)
+- [ ] New integration tests pass: quality aggregation, trend computation, visualization
+- [ ] Regression tests pass: metric extraction, churn normalization
+- [ ] Documentation updated: algorithm explanation, threshold behavior, troubleshooting
+- [ ] **Task 1**: Create quality scores aggregation endpoint in dashboard/server.ts
+- [ ] **Task 2**: Compute trend (improving/declining/stable) in backend
+- [ ] **Task 3**: Extend MetricsData type with quality_scores fields
+- [ ] **Task 4**: Implement fetchQualityScores() API client function
+- [ ] **Task 5**: Create quality trend sparkline component
+- [ ] **Task 6**: Add quality scores section to metrics view
+- [ ] **Task 7**: Create quality details modal with component breakdown
+- [ ] **Task 8**: Create iteration quality fixtures (5 samples)
+- [ ] **Task 9**: Add backend integration test for quality aggregation
 
 ## Notes
-- Generated from pipeline plan at 2026-03-08T08:35:21Z
+- Generated from pipeline plan at 2026-03-08T12:14:58Z
 - Pipeline will update status as tasks complete

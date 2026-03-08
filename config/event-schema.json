@@ -213,6 +213,22 @@
     "stage.artifact_miss": {
       "required": ["stage"],
       "optional": ["issue"]
+    },
+    "fleet.pattern_captured": {
+      "required": ["id"],
+      "optional": ["repo", "category"]
+    },
+    "fleet.pattern_capture_failed": {
+      "required": [],
+      "optional": ["repo", "reason"]
+    },
+    "fleet.pattern_query": {
+      "required": [],
+      "optional": ["query", "results"]
+    },
+    "fleet.patterns_pruned": {
+      "required": [],
+      "optional": ["removed", "remaining"]
     }
   }
 }

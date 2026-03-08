@@ -171,6 +171,35 @@ memory_ranked_search() {
         fi
     fi
 
+    # Search fleet-wide shared patterns
+    local fleet_patterns_script="${SCRIPT_DIR}/sw-fleet-patterns.sh"
+    if [[ -f "$fleet_patterns_script" ]]; then
+        local repo_lang=""
+        if [[ -f "$memory_dir/patterns.json" ]]; then
+            repo_lang=$(jq -r '.language // ""' "$memory_dir/patterns.json" 2>/dev/null || echo "")
+        fi
+        local fleet_results
+        fleet_results=$(
+            export FLEET_PATTERNS_FILE="${FLEET_PATTERNS_FILE:-${HOME}/.shipwright/fleet-patterns.jsonl}"
+            source "$fleet_patterns_script" 2>/dev/null || true
+            if [[ "$(type -t fleet_patterns_query 2>/dev/null)" == "function" ]]; then
+                fleet_patterns_query "$query" "$repo_lang" "" "3" 2>/dev/null
+            else
+                echo "[]"
+            fi
+        ) || fleet_results="[]"
+        # Merge fleet results into results file
+        local fleet_count
+        fleet_count=$(echo "$fleet_results" | jq 'length' 2>/dev/null || echo 0)
+        if [[ "$fleet_count" -gt 0 ]]; then
+            echo "$fleet_results" | jq -c '.[]' 2>/dev/null | while IFS= read -r entry; do
+                local content
+                content=$(echo "$entry" | jq -r '(.title // "") + " | " + (.problem_statement // "") + " | " + (.solution_code // "")' 2>/dev/null)
+                echo "5|{\"source_type\":\"fleet_pattern\",\"content_text\":$(echo "$content" | jq -Rs .)}" >> "$results_file"
+            done
+        fi
+    fi
+
     # Sort by score and output as JSON array
     local output
     if [[ -s "$results_file" ]]; then

@@ -1362,6 +1362,10 @@ case "$SUBCOMMAND" in
         shift 2>/dev/null || true
         exec "$SCRIPT_DIR/sw-fleet-discover.sh" "$@"
         ;;
+    patterns)
+        # Delegate to fleet-patterns script
+        exec "$SCRIPT_DIR/sw-fleet-patterns.sh" "$@"
+        ;;
     init)
         fleet_init
         ;;

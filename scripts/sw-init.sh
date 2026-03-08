@@ -39,6 +39,7 @@ DEPLOY_SETUP=false
 DEPLOY_PLATFORM=""
 SKIP_CLAUDE_MD=false
 REPAIR_MODE=false
+SKIP_DETECT=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -59,13 +60,18 @@ while [[ $# -gt 0 ]]; do
             REPAIR_MODE=true
             shift
             ;;
+        --no-detect)
+            SKIP_DETECT=true
+            shift
+            ;;
         --help|-h)
-            echo "Usage: shipwright init [--deploy] [--platform vercel|fly|railway|docker] [--no-claude-md] [--repair]"
+            echo "Usage: shipwright init [--deploy] [--platform vercel|fly|railway|docker] [--no-claude-md] [--no-detect] [--repair]"
             echo ""
             echo "Options:"
             echo "  --deploy             Detect deploy platform and generate deployed.json"
             echo "  --platform PLATFORM  Skip detection, use specified platform"
             echo "  --no-claude-md       Skip creating .claude/CLAUDE.md"
+            echo "  --no-detect          Skip project auto-detection and config generation"
             echo "  --repair             Force clean reinstall of tmux config, plugins, and adapters"
             echo "  --help, -h           Show this help"
             exit 0
@@ -81,6 +87,47 @@ echo ""
 echo -e "${CYAN}${BOLD}shipwright init${RESET} — Complete setup"
 echo -e "${DIM}══════════════════════════════════════════${RESET}"
 echo ""
+
+# ─── Phase 0: Project Auto-Detection ────────────────────────────────────────
+if [[ "$SKIP_DETECT" == "false" ]] && [[ -f "$SCRIPT_DIR/lib/detect.sh" ]]; then
+    # shellcheck source=lib/detect.sh
+    source "$SCRIPT_DIR/lib/detect.sh"
+
+    PROJECT_ROOT="$(pwd)" detect_project
+
+    if [[ "$DETECTED_LANG" != "unknown" ]]; then
+        _template=$(recommend_template)
+        info "Project detected:"
+        echo -e "    ${DIM}Language:     ${RESET}${BOLD}${DETECTED_LANG}${RESET}"
+        [[ -n "$DETECTED_FRAMEWORK" ]]      && echo -e "    ${DIM}Framework:    ${RESET}${BOLD}${DETECTED_FRAMEWORK}${RESET}"
+        [[ -n "$DETECTED_TEST_CMD" ]]        && echo -e "    ${DIM}Test cmd:     ${RESET}${DETECTED_TEST_CMD}"
+        [[ -n "$DETECTED_PKG_MANAGER" ]]     && echo -e "    ${DIM}Pkg manager:  ${RESET}${DETECTED_PKG_MANAGER}"
+        [[ -n "$DETECTED_TEST_FRAMEWORK" ]]  && echo -e "    ${DIM}Test runner:  ${RESET}${DETECTED_TEST_FRAMEWORK}"
+        echo -e "    ${DIM}Template:     ${RESET}${_template}"
+        echo ""
+
+        if generate_daemon_config; then
+            success "Generated .claude/daemon-config.json (template: ${_template})"
+        else
+            info "Existing .claude/daemon-config.json preserved"
+        fi
+    else
+        warn "Could not auto-detect project type"
+        echo -e "    ${DIM}No recognized manifest (package.json, go.mod, Cargo.toml, etc.)${RESET}"
+        echo -e "    ${DIM}Run ${RESET}${BOLD}shipwright setup${RESET}${DIM} for guided configuration${RESET}"
+
+        # Still generate a default config if none exists
+        if generate_daemon_config; then
+            success "Generated .claude/daemon-config.json with defaults"
+        else
+            info "Existing .claude/daemon-config.json preserved"
+        fi
+    fi
+    echo ""
+elif [[ "$SKIP_DETECT" == "true" ]]; then
+    info "Skipping project auto-detection (--no-detect)"
+    echo ""
+fi
 
 # ─── tmux.conf ────────────────────────────────────────────────────────────────
 TOOK_FULL_TMUX_CONF=false

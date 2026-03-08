@@ -222,58 +222,39 @@ echo -e "${PURPLE}${BOLD}  PHASE 2: REPO ANALYSIS${RESET}"
 echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 echo ""
 
+# Use shared detection library if available, fall back to basic detection
 DETECTED_LANGUAGE=""
 DETECTED_FRAMEWORK=""
 DETECTED_TEST_CMD=""
 DETECTED_BUILD_CMD=""
 
-# Detect language and framework
-if [[ -f "package.json" ]]; then
-    DETECTED_LANGUAGE="Node.js"
-    if grep -q '"next"' package.json 2>/dev/null; then
-        DETECTED_FRAMEWORK="Next.js"
-    elif grep -q '"react"' package.json 2>/dev/null; then
-        DETECTED_FRAMEWORK="React"
-    elif grep -q '"express"' package.json 2>/dev/null; then
-        DETECTED_FRAMEWORK="Express.js"
-    elif grep -q '"vue"' package.json 2>/dev/null; then
-        DETECTED_FRAMEWORK="Vue.js"
-    else
-        DETECTED_FRAMEWORK="Node.js (generic)"
-    fi
+if [[ -f "$SCRIPT_DIR/lib/detect.sh" ]]; then
+    # shellcheck source=lib/detect.sh
+    source "$SCRIPT_DIR/lib/detect.sh"
+    PROJECT_ROOT="$(pwd)" detect_project
 
-    # Detect test command
-    if grep -q '"jest"' package.json 2>/dev/null; then
-        DETECTED_TEST_CMD="npm test"
-    elif grep -q '"mocha"' package.json 2>/dev/null; then
-        DETECTED_TEST_CMD="npm test"
-    elif grep -q '"vitest"' package.json 2>/dev/null; then
-        DETECTED_TEST_CMD="npm run test"
+    # Map shared lib globals to setup's display variables
+    if [[ "$DETECTED_LANG" != "unknown" ]]; then
+        DETECTED_LANGUAGE="$DETECTED_LANG"
     fi
-
-    # Detect build command
-    if [[ -n "$(grep -o '"build":' package.json 2>/dev/null || true)" ]]; then
-        DETECTED_BUILD_CMD="npm run build"
+    DETECTED_FRAMEWORK="${DETECTED_FRAMEWORK:-}"
+    DETECTED_TEST_CMD="${DETECTED_TEST_CMD:-}"
+    DETECTED_BUILD_CMD="${DETECTED_BUILD_CMD:-}"
+else
+    # Fallback: basic inline detection (legacy)
+    if [[ -f "package.json" ]]; then
+        DETECTED_LANGUAGE="nodejs"
+        if grep -q '"next"' package.json 2>/dev/null; then DETECTED_FRAMEWORK="next.js"
+        elif grep -q '"react"' package.json 2>/dev/null; then DETECTED_FRAMEWORK="react"
+        elif grep -q '"express"' package.json 2>/dev/null; then DETECTED_FRAMEWORK="express"
+        fi
+    elif [[ -f "Cargo.toml" ]]; then
+        DETECTED_LANGUAGE="rust"; DETECTED_TEST_CMD="cargo test"; DETECTED_BUILD_CMD="cargo build"
+    elif [[ -f "go.mod" ]]; then
+        DETECTED_LANGUAGE="go"; DETECTED_TEST_CMD="go test ./..."; DETECTED_BUILD_CMD="go build"
+    elif [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]]; then
+        DETECTED_LANGUAGE="python"; DETECTED_TEST_CMD="pytest"
     fi
-elif [[ -f "Cargo.toml" ]]; then
-    DETECTED_LANGUAGE="Rust"
-    DETECTED_FRAMEWORK="Cargo"
-    DETECTED_TEST_CMD="cargo test"
-    DETECTED_BUILD_CMD="cargo build"
-elif [[ -f "go.mod" ]]; then
-    DETECTED_LANGUAGE="Go"
-    DETECTED_FRAMEWORK="Go"
-    DETECTED_TEST_CMD="go test ./..."
-    DETECTED_BUILD_CMD="go build"
-elif [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]]; then
-    DETECTED_LANGUAGE="Python"
-    DETECTED_FRAMEWORK="Python"
-    if [[ -f "pyproject.toml" ]] && grep -q 'pytest' pyproject.toml 2>/dev/null; then
-        DETECTED_TEST_CMD="pytest"
-    elif [[ -f "setup.py" ]]; then
-        DETECTED_TEST_CMD="python -m pytest"
-    fi
-    DETECTED_BUILD_CMD="python setup.py build"
 fi
 
 # Display detected info

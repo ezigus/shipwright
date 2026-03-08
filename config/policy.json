@@ -230,5 +230,22 @@
     "outcome_learning_enabled": true,
     "outcome_min_samples": 10,
     "dedup_window_days": 7
+  },
+  "modelRouting": {
+    "enabled": true,
+    "classify_complexity": true,
+    "confidence_threshold": 0.7,
+    "complexity_thresholds": {
+      "low": 30,
+      "high": 80
+    },
+    "classifier_weights": {
+      "file_count": 0.3,
+      "line_changes": 0.3,
+      "error_complexity": 0.2,
+      "keywords": 0.2
+    },
+    "stage_overrides": {},
+    "fallback_model": "sonnet"
   }
 }

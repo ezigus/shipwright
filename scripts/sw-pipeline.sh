@@ -81,6 +81,12 @@ if [[ -f "$SCRIPT_DIR/sw-pipeline-vitals.sh" ]]; then
     source "$SCRIPT_DIR/sw-pipeline-vitals.sh"
 fi
 
+# ─── Model Routing & Task Classification (optional) ──────────────────────
+# shellcheck source=sw-model-router.sh
+if [[ -f "$SCRIPT_DIR/sw-model-router.sh" ]]; then
+    source "$SCRIPT_DIR/sw-model-router.sh"
+fi
+
 # ─── Memory, Optimization & Discovery (optional) ─────────────────────────
 # shellcheck source=sw-memory.sh
 if [[ -f "$SCRIPT_DIR/sw-memory.sh" ]]; then
@@ -1688,6 +1694,25 @@ run_pipeline() {
                 emit_event "pipeline.budget_paused" "issue=${ISSUE_NUMBER:-0}" "stage=$id"
                 update_status "paused" "$id"
                 return 0
+            fi
+        fi
+
+        # Task Classifier: dynamic complexity-based model routing
+        if [[ -z "${PIPELINE_COMPLEXITY_SCORE:-}" ]] && type classify_task >/dev/null 2>&1 && type is_classifier_enabled >/dev/null 2>&1 && is_classifier_enabled 2>/dev/null; then
+            local _cls_score
+            _cls_score=$(classify_task "${GOAL:-}" "" "" "0" 2>/dev/null) || _cls_score=""
+            if [[ -n "$_cls_score" ]] && [[ "$_cls_score" =~ ^[0-9]+$ ]]; then
+                export PIPELINE_COMPLEXITY_SCORE="$_cls_score"
+                emit_event "classifier.score" "issue=${ISSUE_NUMBER:-0}" "score=$_cls_score" || true
+            fi
+        fi
+        # Use classifier score for model routing when available
+        if [[ -n "${PIPELINE_COMPLEXITY_SCORE:-}" ]] && type route_model >/dev/null 2>&1; then
+            local _cls_model
+            _cls_model=$(route_model "$id" "$PIPELINE_COMPLEXITY_SCORE" 2>/dev/null) || _cls_model=""
+            if [[ -n "$_cls_model" && "$_cls_model" =~ ^(haiku|sonnet|opus)$ ]]; then
+                export CLAUDE_MODEL="$_cls_model"
+                emit_event "classifier.routed" "issue=${ISSUE_NUMBER:-0}" "stage=$id" "model=$_cls_model" "score=$PIPELINE_COMPLEXITY_SCORE" || true
             fi
         fi
 

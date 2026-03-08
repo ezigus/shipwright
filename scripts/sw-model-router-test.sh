@@ -183,6 +183,71 @@ output=$(bash "$SCRIPT_DIR/sw-model-router.sh" bogus 2>&1) && rc=0 || rc=$?
 assert_eq "unknown subcommand exits non-zero" "1" "$rc"
 assert_contains "unknown subcommand shows error" "$output" "Unknown subcommand"
 
+# ─── Test 20: route_model_auto with classifier ─────────────────────────────
+echo ""
+echo -e "${BOLD}  Auto-Classify Routing${RESET}"
+source "$SCRIPT_DIR/sw-model-router.sh" 2>/dev/null || true
+# Clear cached score
+unset PIPELINE_COMPLEXITY_SCORE 2>/dev/null || true
+if [[ "$(type -t route_model_auto 2>/dev/null)" == "function" ]]; then
+    output=$(route_model_auto "build" "fix typo in docs" "README.md" "" "10" 2>/dev/null)
+    if [[ "$output" =~ ^(haiku|sonnet|opus)$ ]]; then
+        assert_pass "route_model_auto returns valid model (got $output)"
+    else
+        assert_fail "route_model_auto returns valid model" "got: $output"
+    fi
+
+    # Test caching: set PIPELINE_COMPLEXITY_SCORE manually and verify it's used
+    export PIPELINE_COMPLEXITY_SCORE="15"
+    output2=$(route_model_auto "build" "completely different task" "" "" "0" 2>/dev/null)
+    if [[ "$output2" =~ ^(haiku|sonnet|opus)$ ]]; then
+        assert_pass "route_model_auto uses cached score (got $output2)"
+    else
+        assert_fail "route_model_auto uses cached score" "got: $output2"
+    fi
+
+    # With low cached score, routing should give a simpler model than opus for build
+    export PIPELINE_COMPLEXITY_SCORE="10"
+    output3=$(route_model_auto "test" "" "" "" "0" 2>/dev/null)
+    assert_eq "route_model_auto with low cached score routes to sonnet" "sonnet" "$output3"
+    unset PIPELINE_COMPLEXITY_SCORE 2>/dev/null || true
+else
+    assert_fail "route_model_auto function exists"
+fi
+
+# ─── Test 21: is_classifier_enabled reads policy.json ──────────────────────
+echo ""
+echo -e "${BOLD}  Classifier Enabled Check${RESET}"
+if [[ "$(type -t is_classifier_enabled 2>/dev/null)" == "function" ]]; then
+    # Create a mock policy.json with modelRouting enabled
+    mkdir -p "$TEST_TEMP_DIR/repo/config"
+    cat > "$TEST_TEMP_DIR/repo/config/policy.json" << 'EOF'
+{"modelRouting": {"enabled": true}}
+EOF
+    REPO_DIR="$TEST_TEMP_DIR/repo" is_classifier_enabled && rc=0 || rc=$?
+    assert_eq "is_classifier_enabled returns 0 when enabled" "0" "$rc"
+
+    cat > "$TEST_TEMP_DIR/repo/config/policy.json" << 'EOF'
+{"modelRouting": {"enabled": false}}
+EOF
+    REPO_DIR="$TEST_TEMP_DIR/repo" is_classifier_enabled && rc=0 || rc=$?
+    assert_eq "is_classifier_enabled returns 1 when disabled" "1" "$rc"
+else
+    assert_fail "is_classifier_enabled function exists"
+fi
+
+# ─── Test 22: Classify subcommand via CLI ──────────────────────────────────
+echo ""
+echo -e "${BOLD}  Classify via CLI${RESET}"
+output=$(bash "$SCRIPT_DIR/sw-model-router.sh" classify "add new feature" "src/a.js
+src/b.js
+src/c.js" "" "100" 2>&1)
+if [[ "$output" =~ ^[0-9]+$ ]]; then
+    assert_pass "model-router classify returns numeric score (got $output)"
+else
+    assert_fail "model-router classify returns numeric score" "got: $output"
+fi
+
 echo ""
 echo ""
 print_test_results

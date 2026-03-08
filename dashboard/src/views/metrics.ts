@@ -16,7 +16,19 @@ import {
 import { renderDoraGrades } from "../components/charts/pipeline-rail";
 import { STAGES, STAGE_COLORS, STAGE_HEX } from "../design/tokens";
 import * as api from "../core/api";
-import type { FleetState, View, MetricsData } from "../types/api";
+import type {
+  FleetState,
+  View,
+  MetricsData,
+  IterationQualityScore,
+} from "../types/api";
+import {
+  getQualityScoreColor,
+  getQualityScoreLabel,
+  formatQualityScore,
+  computeAverageQuality,
+  computeQualityTrendLine,
+} from "../core/quality-score";
 
 function fetchMetrics(): void {
   api
@@ -97,6 +109,7 @@ function renderMetrics(data: MetricsData): void {
     renderThroughputTrend();
   if (document.getElementById("capacity-forecast-container"))
     renderCapacityForecast();
+  if (document.getElementById("quality-trend-container")) renderQualityTrend();
 }
 
 function renderStageBreakdown(stageDurations: Record<string, number>): void {

@@ -326,6 +326,31 @@ export interface UserInfo {
   role?: "viewer" | "operator" | "admin";
 }
 
+export interface IterationQualityScore {
+  iteration: number;
+  timestamp?: string;
+  quality_score: number; // 0-100
+  components?: {
+    test_delta: number; // 0-100 (40% weight)
+    compile_success: number; // 0-100 (30% weight)
+    error_reduction: number; // 0-100 (20% weight)
+    code_churn: number; // 0-100 (10% weight)
+  };
+  test_passed?: boolean;
+  trend?: "improving" | "declining" | "stable";
+}
+
+export interface IterationQualityTrend {
+  iteration: number;
+  score: number;
+  components?: {
+    test_delta: number;
+    compile_success: number;
+    error_reduction: number;
+    code_churn: number;
+  };
+}
+
 export type TabId =
   | "overview"
   | "agents"

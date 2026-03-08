@@ -72,7 +72,7 @@ SONNET_STAGES="test|review"
 OPUS_STAGES="plan|design|build|compound_quality"
 
 # ─── Complexity Thresholds ──────────────────────────────────────────────────
-COMPLEXITY_LOW=30          # Below this: use sonnet
+COMPLEXITY_LOW=30          # Below this: use haiku
 COMPLEXITY_HIGH=80         # Above this: use opus
 
 # ─── Resolve Routing Config Path ────────────────────────────────────────────

@@ -72,5 +72,5 @@
 {"ts":"2026-03-08T12:49:32Z","ts_epoch":1772974172,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}
 {"ts":"2026-03-08T12:49:57Z","ts_epoch":1772974197,"type":"cost.budget_unconfigured","status":"unlimited"}
 {"ts":"2026-03-08T12:50:04Z","ts_epoch":1772974204,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":65,"todo":44}
-{"ts":"2026-03-08T12:51:04Z","ts_epoch":1772974264,"type":"cost.budget_unconfigured","status":"unlimited"}
-{"ts":"2026-03-08T12:51:10Z","ts_epoch":1772974270,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}
+{"ts":"2026-03-08T12:51:09Z","ts_epoch":1772974269,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-08T12:51:16Z","ts_epoch":1772974276,"type":"hygiene_platform_refactor","hardcoded":46,"fallback":63,"todo":44}

@@ -939,6 +939,180 @@ Reply with ONLY the classification word, nothing else." "haiku" "1" "$ai_out" "$
     echo "$classification"
 }
 
+# ─── Stage Timeout Enforcement ──────────────────────────────────────────────
+
+# Resolve timeout value for a stage (template config > policy > defaults > hardcoded)
+get_stage_timeout() {
+    local stage_id="$1"
+
+    # Try template config first
+    if [[ -n "${PIPELINE_CONFIG:-}" && -f "$PIPELINE_CONFIG" ]]; then
+        local timeout_from_template
+        timeout_from_template=$(jq -r --arg id "$stage_id" \
+            '(.stages[] | select(.id == $id) | .config.timeout_seconds) // empty' \
+            "$PIPELINE_CONFIG" 2>/dev/null || true)
+        if [[ -n "$timeout_from_template" && "$timeout_from_template" != "null" ]]; then
+            echo "$timeout_from_template"
+            return
+        fi
+    fi
+
+    # Try policy.json
+    if [[ -n "${POLICY_FILE:-}" && -f "$POLICY_FILE" ]]; then
+        local timeout_from_policy
+        timeout_from_policy=$(jq -r --arg id "$stage_id" \
+            '.pipeline.stage_timeouts[$id] // empty' \
+            "$POLICY_FILE" 2>/dev/null || true)
+        if [[ -n "$timeout_from_policy" && "$timeout_from_policy" != "null" ]]; then
+            echo "$timeout_from_policy"
+            return
+        fi
+    fi
+
+    # Try defaults.json
+    if [[ -n "${DEFAULTS_FILE:-}" && -f "$DEFAULTS_FILE" ]]; then
+        local timeout_from_defaults
+        timeout_from_defaults=$(jq -r --arg id "$stage_id" \
+            '.pipeline.stage_timeouts[$id] // empty' \
+            "$DEFAULTS_FILE" 2>/dev/null || true)
+        if [[ -n "$timeout_from_defaults" && "$timeout_from_defaults" != "null" ]]; then
+            echo "$timeout_from_defaults"
+            return
+        fi
+    fi
+
+    # Hardcoded fallbacks (in seconds)
+    case "$stage_id" in
+        build)  echo 5400 ;;  # 90 minutes for build stage
+        *)      echo 1800 ;;  # 30 minutes default for all others
+    esac
+}
+
+# Capture diagnostic context before killing a timed-out stage
+capture_timeout_diagnostics() {
+    local stage_id="$1"
+    local elapsed_s="$2"
+    local timeout_s="$3"
+    local diag_file="${ARTIFACTS_DIR}/${stage_id}-timeout-diagnostics.txt"
+
+    {
+        echo "═══════════════════════════════════════════════════════"
+        echo "STAGE TIMEOUT DIAGNOSTICS"
+        echo "═══════════════════════════════════════════════════════"
+        echo "Stage: $stage_id"
+        echo "Timeout: ${timeout_s}s"
+        echo "Elapsed: ${elapsed_s}s"
+        echo "Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        echo ""
+
+        echo "─── Process Tree ───────────────────────────────────────"
+        ps auxww || true
+        echo ""
+
+        echo "─── Last 50 lines of stage log ──────────────────────────"
+        local log_file="${ARTIFACTS_DIR}/${stage_id}-results.log"
+        [[ ! -f "$log_file" ]] && log_file="${ARTIFACTS_DIR}/test-results.log"
+        if [[ -f "$log_file" ]]; then
+            tail -50 "$log_file" || true
+        else
+            echo "(no log file found)"
+        fi
+        echo ""
+
+        echo "─── Git Status ──────────────────────────────────────────"
+        git -C "$REPO_DIR" status --short || true
+        echo ""
+        git -C "$REPO_DIR" log --oneline -3 || true
+        echo ""
+
+        echo "─── Memory/CPU Usage ────────────────────────────────────"
+        if command -v free >/dev/null 2>&1; then
+            free -h || true
+        fi
+        if command -v top >/dev/null 2>&1; then
+            top -bn1 | head -20 || true
+        fi
+        echo ""
+
+        echo "═══════════════════════════════════════════════════════"
+    } > "$diag_file" 2>&1 || true
+
+    echo "$diag_file"
+}
+
+# Run stage with timeout enforcement (background watchdog pattern)
+run_with_stage_timeout() {
+    local stage_id="$1"
+    local timeout_s
+    timeout_s=$(get_stage_timeout "$stage_id")
+
+    # Run the stage in a subshell so we can monitor and kill it
+    (
+        # Create process group so we can kill all descendants
+        set -m
+        "stage_${stage_id}" &
+        local stage_pid=$!
+
+        # Wait for stage to complete or timeout
+        local start_time
+        start_time=$(date +%s)
+        local elapsed_s=0
+
+        while true; do
+            if ! kill -0 "$stage_pid" 2>/dev/null; then
+                # Stage completed naturally
+                wait "$stage_pid"
+                return $?
+            fi
+
+            elapsed_s=$(($(date +%s) - start_time))
+            if [[ $elapsed_s -ge $timeout_s ]]; then
+                # Timeout exceeded
+                warn "Stage '$stage_id' exceeded timeout of ${timeout_s}s (elapsed: ${elapsed_s}s)"
+
+                # Capture diagnostic context
+                local diag_file
+                diag_file=$(capture_timeout_diagnostics "$stage_id" "$elapsed_s" "$timeout_s")
+
+                # Emit timeout event
+                emit_event "stage.timeout" \
+                    "stage=$stage_id" \
+                    "timeout_s=$timeout_s" \
+                    "elapsed_s=$elapsed_s" \
+                    "issue=${ISSUE_NUMBER:-0}" \
+                    "job_id=${PIPELINE_JOB_ID:-}" \
+                    "diagnostic_file=$diag_file"
+
+                # Graceful termination: SIGTERM → 30s grace → SIGKILL
+                info "Sending SIGTERM to stage process (PID $stage_pid)..."
+                kill -TERM "$stage_pid" 2>/dev/null || true
+
+                # Wait up to 30 seconds for graceful shutdown
+                local grace_period=30
+                local grace_start
+                grace_start=$(date +%s)
+                while kill -0 "$stage_pid" 2>/dev/null && [[ $(($(date +%s) - grace_start)) -lt $grace_period ]]; do
+                    sleep 0.5
+                done
+
+                # Force kill if still running
+                if kill -0 "$stage_pid" 2>/dev/null; then
+                    warn "Force killing stage process (PID $stage_pid) with SIGKILL..."
+                    kill -KILL "$stage_pid" 2>/dev/null || true
+                fi
+
+                # Wait for final exit
+                wait "$stage_pid" 2>/dev/null || true
+
+                # Return timeout exit code (124, same as GNU timeout command)
+                return 124
+            fi
+
+            sleep 1
+        done
+    )
+}
+
 # ─── Stage Runner ───────────────────────────────────────────────────────────
 
 run_stage_with_retry() {
@@ -950,7 +1124,7 @@ run_stage_with_retry() {
     local attempt=0
     local prev_error_class=""
     while true; do
-        if "stage_${stage_id}"; then
+        if run_with_stage_timeout "$stage_id"; then
             return 0
         fi
 

@@ -29,6 +29,15 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   }
 fi
 
+# ─── Colors (Bash 3.2 compatible) ────────────────────────────────────────────
+CYAN='\033[38;2;0;212;255m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+PURPLE='\033[38;2;168;85;247m'
+GREEN='\033[38;2;74;222;128m'
+YELLOW='\033[38;2;250;204;21m'
+
 # ─── Globals ─────────────────────────────────────────────────────────────────
 VERBOSE=false
 OUTPUT_JSON=false

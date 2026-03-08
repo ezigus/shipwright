@@ -58,3 +58,5 @@
 {"ts":"2026-03-08T01:20:52Z","ts_epoch":1772932852,"type":"reasoning.trace","job_id":"pipeline-1436932-42","complexity":"medium","risk":50,"template":"standard"}
 {"ts":"2026-03-08T01:20:52Z","ts_epoch":1772932852,"type":"reasoning.trace","job_id":"pipeline-1437644-42","complexity":"medium","risk":50,"template":"standard"}
 {"ts":"2026-03-08T01:20:53Z","ts_epoch":1772932853,"type":"reasoning.trace","job_id":"pipeline-1438324-42","complexity":"medium","risk":50,"template":"standard"}
+{"ts":"2026-03-08T03:48:56Z","ts_epoch":1772941736,"type":"optimize.memory_pruned","pruned":0,"strengthened":1,"promoted":0}
+{"ts":"2026-03-08T03:48:56Z","ts_epoch":1772941736,"type":"optimize.memory_pruned","pruned":0,"strengthened":1,"promoted":0}

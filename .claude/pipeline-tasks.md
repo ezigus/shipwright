@@ -1,29 +1,27 @@
-# Pipeline Tasks — chore: close issue #45 - merge goal complete
+# Pipeline Tasks — Build iteration quality scoring with adaptive prompting
 
 ## Implementation Checklist
-- [ ] Task 1: Verify branch working tree is clean
-- [ ] Task 2: Verify recent commit history (5 iterations)
-- [ ] Task 3: Create PR from feature branch to main with comprehensive description
-- [ ] Task 4: Wait for GitHub Actions status checks to complete
-- [ ] Task 5: Verify all PR checks pass
-- [ ] Task 6: Request code review approval (if branch protection requires)
-- [ ] Task 7: Merge PR to main (squash merge recommended)
-- [ ] Task 8: Delete feature branch after merge
-- [ ] Task 9: Verify merge completed on main with `git pull`
-- [ ] Task 10: Close GitHub issue #45 with merge reference
-- [ ] Task 11: Sync local main with remote
-- [ ] Task 12: Verify merged commits are functional
-- [ ] Task 13: Update MEMORY.md with completion status
-- [ ] Task 14: Document lessons learned for future pipelines
-- [ ] Task 15: Archive pipeline artifacts and logs
-- [x] Branch is clean and ready
-- [x] Autonomous iterations 3-5 complete
-- [x] Git credential fix implemented
-- [x] Chaos test fix implemented
-- [x] Documentation auto-sync configured
+- [ ] Task 1: Create `scripts/lib/loop-quality-score.sh` with scoring functions and adaptive actions
+- [ ] Task 2: Add `loop.quality_scored` and `loop.quality_escalated` to `config/event-schema.json`
+- [ ] Task 3: Integrate quality scoring into `scripts/sw-loop.sh` main loop
+- [ ] Task 4: Create `scripts/sw-loop-quality-score-test.sh` bash test suite
+- [ ] Task 5: Add `IterationQualityScore` type to `dashboard/src/types/api.ts`
+- [ ] Task 6: Create `dashboard/src/core/quality-score.ts` with rendering helpers
+- [ ] Task 7: Create `dashboard/src/core/quality-score.test.ts` vitest tests
+- [ ] Task 8: Add quality trend panel to `dashboard/src/views/metrics.ts`
+- [ ] Task 9: Run full test suite (`npm test`) and fix any failures
+- [ ] Task 10: Verify event schema consistency and edge case handling
+- [ ] `compute_iteration_quality_score()` produces correct weighted scores for all component combinations
+- [ ] Score is logged to events.jsonl as `loop.quality_scored` with all component values
+- [ ] Score < 30 triggers prompt adaptation (verifiable by GOAL modification)
+- [ ] Score < 15 for 2+ consecutive iterations triggers model escalation to Opus
+- [ ] Dashboard renders quality trend chart with threshold lines
+- [ ] All tests pass (`npm test`)
+- [ ] No regressions in existing loop behavior (convergence, stuckness detection, circuit breaker)
+- [ ] Bash 3.2 compatible (no associative arrays, no `${var,,}`)
 
 ## Context
 - Pipeline: standard
-- Branch: ci/chore-close-issue-45-merge-goal-complete
-- Issue: none
-- Generated: 2026-03-03T01:01:38Z
+- Branch: feat/build-iteration-quality-scoring-with-ada-68
+- Issue: #68
+- Generated: 2026-03-08T08:35:19Z

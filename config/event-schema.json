@@ -213,6 +213,24 @@
     "stage.artifact_miss": {
       "required": ["stage"],
       "optional": ["issue"]
+    },
+    "loop.quality_scored": {
+      "required": ["iteration", "quality_score"],
+      "optional": [
+        "test_delta",
+        "compile_success",
+        "error_reduction",
+        "code_churn",
+        "test_passed"
+      ]
+    },
+    "loop.quality_escalated": {
+      "required": ["iteration", "quality_score"],
+      "optional": ["previous_model", "escalated_model"]
+    },
+    "loop.quality_adapted": {
+      "required": ["iteration", "quality_score"],
+      "optional": ["action"]
     }
   }
 }

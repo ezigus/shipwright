@@ -624,7 +624,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-guild.sh` | 556 | Knowledge Guilds & Cross-Team Learning |
 | `scripts/sw-heartbeat.sh` | 342 | File-based agent heartbeat protocol |
 | `scripts/sw-hello.sh` | 67 | Hello World Command |
-| `scripts/sw-hygiene.sh` | 725 | Repository Organization & Cleanup |
+| `scripts/sw-hygiene.sh` | 728 | Repository Organization & Cleanup |
 | `scripts/sw-incident.sh` | 873 | Autonomous Incident Detection & Response |
 | `scripts/sw-init.sh` | 891 | Complete setup for Shipwright + Shipwright |
 | `scripts/sw-instrument.sh` | 691 | Pipeline Instrumentation & Feedback Loops |

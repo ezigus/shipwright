@@ -118,6 +118,9 @@ fi'
 
 # Use real git - we have a real project repo
 
+# Mock timeout — macOS doesn't have GNU coreutils timeout by default
+mock_binary "timeout" 'shift; exec "$@"'
+
 # Ensure jq works: copy /usr/bin/jq to avoid symlink resolution issues
 [[ -x /usr/bin/jq ]] && cp -f /usr/bin/jq "$TEST_TEMP_DIR/bin/jq" 2>/dev/null || true
 

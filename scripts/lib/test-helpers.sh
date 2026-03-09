@@ -177,6 +177,16 @@ setup_test_env() {
     if command -v jq >/dev/null 2>&1; then
         ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
     fi
+
+    # Mock timeout — macOS doesn't have GNU coreutils timeout by default
+    if ! command -v timeout >/dev/null 2>&1; then
+        cat > "$TEST_TEMP_DIR/bin/timeout" <<'TIMEOUT_EOF'
+#!/usr/bin/env bash
+shift  # skip the timeout duration
+exec "$@"
+TIMEOUT_EOF
+        chmod +x "$TEST_TEMP_DIR/bin/timeout"
+    fi
 }
 
 cleanup_test_env() {

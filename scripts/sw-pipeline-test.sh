@@ -69,6 +69,14 @@ LOOP_EOF
     create_mock_gh
     create_mock_sw
 
+    # Mock timeout — macOS doesn't have GNU coreutils timeout by default
+    cat > "$TEST_TEMP_DIR/bin/timeout" <<'TIMEOUT_EOF'
+#!/usr/bin/env bash
+shift  # skip the timeout duration
+exec "$@"
+TIMEOUT_EOF
+    chmod +x "$TEST_TEMP_DIR/bin/timeout"
+
     # ── Mock project git repo ─────────────────────────────────────────────
     create_mock_project
 

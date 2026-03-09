@@ -511,7 +511,14 @@ detect_test_cmd_for_loop() {
                     [[ -n "$all_targets" ]] && all_targets="${all_targets},Packages" \
                         || all_targets="Packages"
                 fi
-                [[ -n "$all_targets" ]] && helper_flags="-t ${all_targets}"
+                if [[ -n "$all_targets" ]]; then
+                    helper_flags="-t ${all_targets}"
+                else
+                    # No specific targets — fall back to syntax check to avoid triggering full regression
+                    local syntax_flag
+                    syntax_flag=$(jq -r '.mode_flags.syntax // ""' <<<"$helper")
+                    [[ -n "$syntax_flag" ]] && helper_flags="$syntax_flag"
+                fi
             fi
             prefer_helper=$(jq -r '.prefer_helper // false' <<<"$helper")
             script=$(jq -r '.script // ""' <<<"$helper")

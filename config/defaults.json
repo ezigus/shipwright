@@ -73,6 +73,8 @@
   },
   "loop": {
     "claude_timeout": 1800,
+    "test_timeout": 900,
+    "test_timeout_max": 3600,
     "sleep_between_iterations": 2,
     "max_restarts": 0,
     "fast_test_interval": 5,

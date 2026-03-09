@@ -58,3 +58,11 @@
 {"ts":"2026-03-09T00:02:35Z","ts_epoch":1773014555,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-status.sh","lines":153,"usage":1}
 {"ts":"2026-03-09T00:02:35Z","ts_epoch":1773014555,"type":"patrol.finding","check":"untested_script","script":"sw-tmux-role-color.sh","lines":81,"usage":1}
 {"ts":"2026-03-09T00:02:36Z","ts_epoch":1773014556,"type":"patrol.issue_created","check":"untested_scripts","count":5}
+{"ts":"2026-03-09T00:41:11Z","ts_epoch":1773016871,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}
+{"ts":"2026-03-09T00:41:15Z","ts_epoch":1773016875,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-09T00:42:39Z","ts_epoch":1773016959,"type":"strategic.issue_created","title":"Inter-stage state validation and automatic recovery","priority":"P0","complexity":"standard"}
+{"ts":"2026-03-09T00:42:41Z","ts_epoch":1773016961,"type":"strategic.issue_created","title":"Real-time build loop progress streaming to dashboard","priority":"P1","complexity":"standard"}
+{"ts":"2026-03-09T00:42:44Z","ts_epoch":1773016964,"type":"strategic.issue_created","title":"Success pattern extraction and predictive guidance injection","priority":"P2","complexity":"standard"}
+{"ts":"2026-03-09T00:42:47Z","ts_epoch":1773016967,"type":"strategic.issue_created","title":"Automated hardcoded policy extraction and config migration","priority":"P6","complexity":"standard"}
+{"ts":"2026-03-09T00:42:49Z","ts_epoch":1773016969,"type":"strategic.issue_created","title":"Stage-level cost attribution and budget burn rate tracking","priority":"P3","complexity":"fast"}
+{"ts":"2026-03-09T00:42:49Z","ts_epoch":1773016969,"type":"strategic.cycle_complete","issues_created":5,"issues_skipped":0}

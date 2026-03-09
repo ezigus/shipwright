@@ -35,6 +35,16 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
   now_epoch() { date +%s; }
 fi
+# Color variable fallbacks (defined by lib/helpers.sh; set empty if not loaded)
+: "${CYAN:=}"
+: "${PURPLE:=}"
+: "${BLUE:=}"
+: "${GREEN:=}"
+: "${YELLOW:=}"
+: "${RED:=}"
+: "${DIM:=}"
+: "${BOLD:=}"
+: "${RESET:=}"
 # Policy + pipeline quality thresholds (config/policy.json via lib/pipeline-quality.sh)
 [[ -f "$SCRIPT_DIR/lib/pipeline-quality.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-quality.sh"
 # shellcheck source=lib/pipeline-state.sh

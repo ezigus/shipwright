@@ -71,6 +71,7 @@ show_help() {
     echo ""
     echo -e "${BOLD}ENVIRONMENT${RESET}"
     echo -e "  ${CYAN}SHIPWRIGHT_HYGIENE_DEAD_CODE_TIMEOUT_S${RESET}  Dead-code scan timeout in seconds (default: 20)"
+    echo -e "  ${CYAN}SHIPWRIGHT_HYGIENE_FIND_MAX_DEPTH${RESET}       Max directory depth for fixture scan (default: 5)"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo -e "  ${DIM}shipwright hygiene scan${RESET}                # Full scan"
@@ -93,6 +94,7 @@ detect_dead_code() {
     local partial_reasons=""
     func_limit=$(_config_get_int "limits.function_scan_limit" 1000)
     dead_code_timeout="${SHIPWRIGHT_HYGIENE_DEAD_CODE_TIMEOUT_S:-$(_config_get_int "limits.dead_code_timeout_seconds" 20)}"
+    find_max_depth="${SHIPWRIGHT_HYGIENE_FIND_MAX_DEPTH:-$(_config_get_int "limits.find_max_depth" 5)}"
     case "$dead_code_timeout" in
         ''|*[!0-9-]*)
             warn "Invalid dead-code timeout '$dead_code_timeout'; falling back to 20s."
@@ -202,7 +204,8 @@ detect_dead_code() {
             warn "Orphaned test fixture: $(basename "$fixture")"
             orphaned_tests=$((orphaned_tests + 1))
         fi
-    done < <(find "$REPO_DIR" -name "*.fixture" -type f 2>/dev/null)
+    done < <(find "$REPO_DIR" -maxdepth "$find_max_depth" -name "*.fixture" -type f \
+        ! -path '*/node_modules/*' ! -path '*/.git/*' 2>/dev/null)
 
     [[ $VERBOSE == true ]] && {
         info "Dead code summary: $unused_functions unused functions, $unused_scripts scripts, $orphaned_tests fixtures"

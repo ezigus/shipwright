@@ -388,4 +388,110 @@ rm -f "$PROJECT_ROOT/package.json"
 result=$(detect_test_commands)
 assert_eq "Empty project returns empty" "" "$result"
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# detect_test_cmd_for_loop — ios_xcode syntax-check fallback
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_test_cmd_for_loop (ios_xcode fallback)"
+
+# Set up a mock ios_xcode project with a real git repo
+DTCFL_DIR="$TEST_TEMP_DIR/dtcfl_project"
+mkdir -p "$DTCFL_DIR/scripts" "$DTCFL_DIR/Sources" "$DTCFL_DIR/MyApp.xcodeproj"
+
+# Mock run-xcode-tests.sh: advertises -s via pattern '^\s+-s\b' (parsed by xcode_runner_help_v1)
+cat > "$DTCFL_DIR/scripts/run-xcode-tests.sh" <<'RUNNER'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--help" ]]; then
+    echo "Usage: run-xcode-tests.sh [OPTIONS]"
+    echo "  -s            Syntax check only"
+    echo "  -t TARGETS    Comma-separated test targets"
+    exit 0
+fi
+echo "Running tests: $*"
+RUNNER
+chmod +x "$DTCFL_DIR/scripts/run-xcode-tests.sh"
+
+# Temporarily replace mock git with the real git binary so git operations work
+DTCFL_REAL_GIT=$(PATH="$ORIG_PATH" command -v git 2>/dev/null || true)
+if [[ -n "$DTCFL_REAL_GIT" ]]; then
+    cp "$TEST_TEMP_DIR/bin/git" "$TEST_TEMP_DIR/bin/git.mock"
+    ln -sf "$DTCFL_REAL_GIT" "$TEST_TEMP_DIR/bin/git"
+fi
+
+# Initialise git repo and record the base commit SHA
+( cd "$DTCFL_DIR" && git init -q && git config user.email "test@test.com" && git config user.name "Test" )
+echo "placeholder" > "$DTCFL_DIR/README"
+( cd "$DTCFL_DIR" && git add . && git commit -q -m "init" )
+DTCFL_BASE=$(git -C "$DTCFL_DIR" rev-parse HEAD)
+
+_orig_project_root="$PROJECT_ROOT"
+export PROJECT_ROOT="$DTCFL_DIR"
+
+# Helper: reset caches so each detect_test_cmd_for_loop call is fresh
+_reset_dtcfl_caches() {
+    _PIPELINE_DETECT_REPO_ENVS_CACHE=""
+    _PIPELINE_DETECT_HELPER_CAPS_CACHE=""
+}
+
+# --- Test 1: Only a .storyboard changed (ios_xcode relevant, but no Swift class names)
+#             → should fall back to syntax check (-s) not a bare helper invocation
+_reset_dtcfl_caches
+echo "placeholder" > "$DTCFL_DIR/Main.storyboard"
+( cd "$DTCFL_DIR" && git add Main.storyboard && git commit -q -m "storyboard change" )
+result=$(detect_test_cmd_for_loop "$DTCFL_BASE" 2>/dev/null || true)
+if echo "$result" | grep -q ' -s'; then
+    assert_pass "Storyboard-only change: syntax fallback (-s) used"
+else
+    assert_fail "Storyboard-only change: syntax fallback (-s) used" "got: $result"
+fi
+if echo "$result" | grep -qE ' -t [^ ]'; then
+    assert_fail "Storyboard-only change: no -t target flag in command"
+else
+    assert_pass "Storyboard-only change: no -t target flag in command"
+fi
+DTCFL_BASE=$(git -C "$DTCFL_DIR" rev-parse HEAD)
+
+# --- Test 2: One Swift file changed → -t ClassName
+_reset_dtcfl_caches
+echo "class FooTests {}" > "$DTCFL_DIR/Sources/FooTests.swift"
+( cd "$DTCFL_DIR" && git add "Sources/FooTests.swift" && git commit -q -m "add FooTests" )
+result=$(detect_test_cmd_for_loop "$DTCFL_BASE" 2>/dev/null || true)
+if echo "$result" | grep -qE ' -t [^ ]'; then
+    assert_pass "One Swift file: -t flag present"
+else
+    assert_fail "One Swift file: -t flag present" "got: $result"
+fi
+if echo "$result" | grep -q 'FooTests'; then
+    assert_pass "One Swift file: target class name extracted"
+else
+    assert_fail "One Swift file: target class name extracted" "got: $result"
+fi
+DTCFL_BASE=$(git -C "$DTCFL_DIR" rev-parse HEAD)
+
+# --- Test 3: Multiple Swift files changed → -t Class1,Class2
+_reset_dtcfl_caches
+echo "class BarTests {}" > "$DTCFL_DIR/Sources/BarTests.swift"
+echo "class BazTests {}" > "$DTCFL_DIR/Sources/BazTests.swift"
+( cd "$DTCFL_DIR" && git add "Sources/BarTests.swift" "Sources/BazTests.swift" && git commit -q -m "add BarTests BazTests" )
+result=$(detect_test_cmd_for_loop "$DTCFL_BASE" 2>/dev/null || true)
+if echo "$result" | grep -qE ' -t [^ ]'; then
+    assert_pass "Multiple Swift files: -t flag present"
+else
+    assert_fail "Multiple Swift files: -t flag present" "got: $result"
+fi
+if echo "$result" | grep -qE ' -t [^,]+,[^ ]'; then
+    assert_pass "Multiple Swift files: comma-separated targets"
+else
+    assert_fail "Multiple Swift files: comma-separated targets" "got: $result"
+fi
+
+export PROJECT_ROOT="$_orig_project_root"
+_PIPELINE_DETECT_REPO_ENVS_CACHE=""
+_PIPELINE_DETECT_HELPER_CAPS_CACHE=""
+
+# Restore mock git
+if [[ -f "$TEST_TEMP_DIR/bin/git.mock" ]]; then
+    mv "$TEST_TEMP_DIR/bin/git.mock" "$TEST_TEMP_DIR/bin/git"
+fi
+
 print_test_results

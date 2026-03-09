@@ -922,7 +922,20 @@ run_test_gate() {
     local all_passed=true
     local test_results="[]"
     local combined_output=""
-    local test_timeout="${SW_TEST_TIMEOUT:-900}"
+    local test_timeout="${SW_TEST_TIMEOUT:-$(_config_get_int "loop.test_timeout" 900 2>/dev/null || echo 900)}"
+    local _max_test_timeout="$(_config_get_int "loop.test_timeout_max" 3600 2>/dev/null || echo 3600)"
+    # Scale proportionally for multi-target commands (e.g. -t FooTests,BarTests,Packages)
+    local _targets_str
+    _targets_str=$(echo "$active_test_cmd" | grep -oE '\-t [^ ]+' | head -1 | sed 's/-t //' || true)
+    if [[ -n "$_targets_str" ]]; then
+        local _target_count
+        _target_count=$(echo "$_targets_str" | tr ',' '\n' | grep -c '.' || true)
+        if [[ "${_target_count:-1}" -gt 1 ]]; then
+            local _scaled=$(( _target_count * test_timeout ))
+            [[ "$_scaled" -gt "$_max_test_timeout" ]] && _scaled="$_max_test_timeout"
+            test_timeout="$_scaled"
+        fi
+    fi
 
     # Run primary test command
     if [[ -n "$active_test_cmd" ]]; then

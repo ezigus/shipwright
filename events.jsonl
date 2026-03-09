@@ -133,3 +133,5 @@
 {"ts":"2026-03-09T12:26:37Z","ts_epoch":1773059197,"type":"intelligence.model","stage":"plan","complexity":6,"model":"haiku","source":"heuristic"}
 {"ts":"2026-03-09T12:26:37Z","ts_epoch":1773059197,"type":"intelligence.model_ab","issue":92,"stage":"plan","recommended":"haiku","applied":"opus","ab_group":"control","ab_ratio":20}
 {"ts":"2026-03-09T12:26:37Z","ts_epoch":1773059197,"type":"stage.started","issue":92,"stage":"plan"}
+{"ts":"2026-03-09T16:27:35Z","ts_epoch":1773073655,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}
+{"ts":"2026-03-09T16:27:39Z","ts_epoch":1773073659,"type":"cost.budget_unconfigured","status":"unlimited"}

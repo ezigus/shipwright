@@ -2948,6 +2948,7 @@ pipeline_start() {
 pipeline_resume() {
     setup_dirs
     resume_state
+    load_pipeline_config
     echo ""
     run_pipeline
 }

@@ -69,6 +69,14 @@ LOOP_EOF
     create_mock_gh
     create_mock_sw
 
+    # Mock timeout — macOS doesn't have GNU coreutils timeout by default
+    cat > "$TEST_TEMP_DIR/bin/timeout" <<'TIMEOUT_EOF'
+#!/usr/bin/env bash
+shift  # skip the timeout duration
+exec "$@"
+TIMEOUT_EOF
+    chmod +x "$TEST_TEMP_DIR/bin/timeout"
+
     # ── Mock project git repo ─────────────────────────────────────────────
     create_mock_project
 
@@ -370,9 +378,13 @@ invoke_pipeline() {
     PIPELINE_OUTPUT=""
     PIPELINE_EXIT=0
 
-    # Invoke the REAL pipeline script as a subprocess
+    # Invoke the REAL pipeline script as a subprocess.
+    # Redirect HOME so emit_event writes events.jsonl to the temp dir rather than
+    # the real ~/.shipwright/ (which may be outside sandbox write allowlists).
     PIPELINE_OUTPUT=$(
         cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR" \
+        EVENTS_FILE="$TEST_TEMP_DIR/events.jsonl" \
         PATH="$TEST_TEMP_DIR/bin:$PATH" \
         bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
     ) || PIPELINE_EXIT=$?
@@ -388,6 +400,8 @@ assert_exit_code() {
         return 0
     fi
     echo -e "    ${RED}✗${RESET} Expected exit code $expected, got $PIPELINE_EXIT ($label)"
+    echo -e "    ${DIM}Pipeline output (last 20 lines):${RESET}"
+    echo "$PIPELINE_OUTPUT" | tail -20 | sed 's/^/      /'
     return 1
 }
 

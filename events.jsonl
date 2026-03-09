@@ -101,3 +101,4 @@
 {"ts":"2026-03-09T01:07:11Z","ts_epoch":1773018431,"type":"loop.iteration_start","iteration":1,"max":30,"job_id":"standard","agent":1,"test_passed":"unknown"}
 {"ts":"2026-03-09T01:07:11Z","ts_epoch":1773018431,"type":"intelligence.cache_hit","cache_key":"search_memory_16a6c083182ff11046edcc06eed93985"}
 {"ts":"2026-03-09T01:07:11Z","ts_epoch":1773018431,"type":"loop.context_efficiency","iteration":1,"raw_prompt_chars":7869,"trimmed_prompt_chars":7869,"trim_ratio":0.0,"budget_utilization":3.9,"budget_chars":200000,"job_id":"standard"}
+{"ts":"2026-03-09T04:41:50Z","ts_epoch":1773031310,"type":"hygiene_platform_refactor","hardcoded":44,"fallback":63,"todo":44}

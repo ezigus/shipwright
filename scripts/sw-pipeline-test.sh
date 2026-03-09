@@ -392,6 +392,8 @@ assert_exit_code() {
         return 0
     fi
     echo -e "    ${RED}✗${RESET} Expected exit code $expected, got $PIPELINE_EXIT ($label)"
+    echo -e "    ${DIM}Pipeline output (last 20 lines):${RESET}"
+    echo "$PIPELINE_OUTPUT" | tail -20 | sed 's/^/      /'
     return 1
 }
 

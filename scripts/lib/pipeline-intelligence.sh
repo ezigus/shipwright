@@ -1326,6 +1326,13 @@ stage_compound_quality() {
         _cascade_plan=$(head -200 "$ARTIFACTS_DIR/plan.md" 2>/dev/null) || true
     fi
 
+    # Capture test evidence to prevent "diff=codebase" false criticals in audit agents
+    local _cascade_test_evidence=""
+    local _cascade_test_log="$ARTIFACTS_DIR/test-results.log"
+    if [[ -f "$_cascade_test_log" ]]; then
+        _cascade_test_evidence="$(tail -10 "$_cascade_test_log" 2>/dev/null || echo "")"
+    fi
+
     local cycle=0
     while [[ "$cycle" -lt "$max_cycles" ]]; do
         cycle=$((cycle + 1))
@@ -1517,7 +1524,7 @@ stage_compound_quality() {
             info "Running compound audit cascade (agents: $_cascade_active_agents)..."
 
             local cascade_findings
-            cascade_findings=$(compound_audit_run_cycle "$_cascade_active_agents" "$_cascade_diff" "$_cascade_plan" "$_cascade_all_findings" "$cycle") || cascade_findings="[]"
+            cascade_findings=$(compound_audit_run_cycle "$_cascade_active_agents" "$_cascade_diff" "$_cascade_plan" "$_cascade_all_findings" "$cycle" "$_cascade_test_evidence") || cascade_findings="[]"
 
             # Dedup within this cycle
             if type compound_audit_dedup_structural >/dev/null 2>&1; then

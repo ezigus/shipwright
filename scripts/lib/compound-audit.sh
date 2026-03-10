@@ -65,16 +65,32 @@ Do NOT report non-edge-case issues."
 # ─── compound_audit_build_prompt ───────────────────────────────────────────
 # Builds the full prompt for a specific agent type.
 #
-# Usage: compound_audit_build_prompt "logic" "$diff" "$plan" "$prev_findings_json"
+# Usage: compound_audit_build_prompt "logic" "$diff" "$plan" "$prev_findings_json" "$test_evidence"
 compound_audit_build_prompt() {
     local agent_type="$1"
     local diff="$2"
     local plan_summary="$3"
     local prev_findings="$4"
+    local test_evidence="${5:-}"
 
     # Get agent-specific instructions
     local varname="_COMPOUND_AGENT_PROMPTS_${agent_type}"
     local specialization="${!varname:-"You are a code auditor. Review the changes for issues."}"
+
+    local evidence_section=""
+    if [[ -n "$test_evidence" ]]; then
+        evidence_section="
+## Test Evidence (Pipeline Verified — Trust This)
+The full test suite passed BEFORE this audit. All tests exit 0.
+
+CRITICAL: If a test references an identifier, method, or symbol not in this diff,
+it already exists in the codebase from prior commits. Do NOT flag 'missing code'
+issues for anything the passing tests have already verified.
+The diff shows CHANGES only — not the complete codebase.
+
+Last test output:
+${test_evidence}"
+    fi
 
     cat <<EOF
 ${specialization}
@@ -89,7 +105,7 @@ ${plan_summary}
 
 ## Previously Found Issues (do NOT repeat these)
 ${prev_findings}
-
+${evidence_section}
 ## Output Format
 Return ONLY valid JSON (no markdown, no explanation):
 {"findings":[{"severity":"critical|high|medium|low","category":"${agent_type}","file":"path/to/file","line":0,"description":"One sentence","evidence":"The specific code","suggestion":"How to fix"}]}
@@ -271,6 +287,7 @@ compound_audit_run_cycle() {
     local plan_summary="$3"
     local prev_findings="$4"
     local cycle="$5"
+    local test_evidence="${6:-}"
 
     local model="${COMPOUND_AUDIT_MODEL:-haiku}"
     local temp_dir
@@ -285,7 +302,7 @@ compound_audit_run_cycle() {
     local agent
     for agent in $agents; do
         local prompt
-        prompt=$(compound_audit_build_prompt "$agent" "$diff" "$plan_summary" "$prev_findings")
+        prompt=$(compound_audit_build_prompt "$agent" "$diff" "$plan_summary" "$prev_findings" "$test_evidence")
 
         (
             local output

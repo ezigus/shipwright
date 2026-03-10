@@ -235,7 +235,7 @@ _intelligence_enabled() {
     local config="${REPO_DIR}/.claude/daemon-config.json"
     if [[ -f "$config" ]]; then
         local enabled
-        enabled=$(jq -r '.intelligence.enabled // "auto"' "$config" 2>/dev/null || echo "auto")
+        enabled=$(jq -r '.intelligence.enabled | if . == null then "auto" elif . == true then "true" else "false" end' "$config" 2>/dev/null || echo "auto")
         if [[ "$enabled" == "true" ]]; then
             return 0
         elif [[ "$enabled" == "auto" ]]; then

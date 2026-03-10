@@ -264,6 +264,27 @@ assert_file_exists "Review generated" "$ARTIFACTS_DIR/review.md"
 review_len=$(wc -c < "$ARTIFACTS_DIR/review.md")
 assert_gt "Review has content" "$review_len" 0
 
+# Test: test evidence section present in review stage source
+if grep -q 'Test Evidence' "$SCRIPT_DIR/lib/pipeline-stages-review.sh" 2>/dev/null; then
+    assert_pass "Review prompt injects test evidence section"
+else
+    assert_fail "Review prompt injects test evidence section"
+fi
+
+# Test: false-critical guard instruction present in source
+if grep -q 'Do NOT flag.*missing code' "$SCRIPT_DIR/lib/pipeline-stages-review.sh" 2>/dev/null; then
+    assert_pass "Review prompt includes false-critical guard instruction"
+else
+    assert_fail "Review prompt includes false-critical guard instruction"
+fi
+
+# Test: test evidence injection is conditional on log file existence
+if grep -A1 'test_log=' "$SCRIPT_DIR/lib/pipeline-stages-review.sh" 2>/dev/null | grep -q '\[\[ -f'; then
+    assert_pass "Test evidence injection is conditional on log file existence"
+else
+    assert_fail "Test evidence injection is conditional on log file existence"
+fi
+
 # ─── Tests: stage_pr quality gate ───────────────────────────────────────────
 print_test_section "stage_pr quality gate"
 

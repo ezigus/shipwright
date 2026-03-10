@@ -81,15 +81,13 @@ compound_audit_build_prompt() {
     if [[ -n "$test_evidence" ]]; then
         evidence_section="
 ## Test Evidence (Pipeline Verified — Trust This)
-The full test suite passed BEFORE this audit. All tests exit 0.
+${test_evidence}
 
 CRITICAL: If a test references an identifier, method, or symbol not in this diff,
 it already exists in the codebase from prior commits. Do NOT flag 'missing code'
 issues for anything the passing tests have already verified.
 The diff shows CHANGES only — not the complete codebase.
-
-Last test output:
-${test_evidence}"
+"
     fi
 
     cat <<EOF
@@ -279,7 +277,7 @@ compound_audit_converged() {
 # ─── compound_audit_run_cycle ─────────────────────────────────────────────
 # Runs multiple agents in parallel and collects their findings.
 #
-# Usage: compound_audit_run_cycle "logic integration completeness" "$diff" "$plan" "$prev_findings" $cycle
+# Usage: compound_audit_run_cycle "logic integration completeness" "$diff" "$plan" "$prev_findings" $cycle "$test_evidence"
 # Output: Merged JSON array of all findings
 compound_audit_run_cycle() {
     local agents="$1"

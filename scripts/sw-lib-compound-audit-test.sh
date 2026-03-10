@@ -65,6 +65,30 @@ assert_contains "Security prompt mentions injection" "$result" "injection"
 result=$(compound_audit_build_prompt "error_handling" "diff" "plan" "[]")
 assert_contains "Error handling prompt mentions catch" "$result" "catch"
 
+# Test: test evidence section absent when test_evidence is empty
+result=$(compound_audit_build_prompt "logic" "diff" "plan" "[]" "")
+if echo "$result" | grep -q "Test Evidence"; then
+    assert_fail "No Test Evidence section when empty"
+else
+    assert_pass "No Test Evidence section when empty"
+fi
+
+# Test: test evidence section present when test_evidence is non-empty
+result=$(compound_audit_build_prompt "logic" "diff" "plan" "[]" "The full test suite was run by the pipeline BEFORE this audit and PASSED (exit 0).")
+assert_contains "Test Evidence section present when evidence provided" "$result" "Test Evidence"
+
+# Test: evidence content included in prompt
+result=$(compound_audit_build_prompt "logic" "diff" "plan" "[]" "95 PASS | 0 FAIL")
+assert_contains "Test evidence content included in prompt" "$result" "95 PASS | 0 FAIL"
+
+# Test: CRITICAL guard present when evidence provided
+result=$(compound_audit_build_prompt "logic" "diff" "plan" "[]" "The full test suite was run by the pipeline BEFORE this audit and PASSED (exit 0).")
+assert_contains "Do NOT flag guard present in prompt" "$result" "Do NOT flag"
+
+# Test: Output Format follows evidence section (no section bleed)
+result=$(compound_audit_build_prompt "logic" "diff" "plan" "[]" "95 PASS | 0 FAIL")
+assert_contains "Output Format section present after evidence" "$result" "Output Format"
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # compound_audit_parse_findings
 # ═══════════════════════════════════════════════════════════════════════════════

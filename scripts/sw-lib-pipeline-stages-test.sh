@@ -264,26 +264,73 @@ assert_file_exists "Review generated" "$ARTIFACTS_DIR/review.md"
 review_len=$(wc -c < "$ARTIFACTS_DIR/review.md")
 assert_gt "Review has content" "$review_len" 0
 
-# Test: test evidence section present in review stage source
-if grep -q 'Test Evidence' "$SCRIPT_DIR/lib/pipeline-stages-review.sh" 2>/dev/null; then
-    assert_pass "Review prompt injects test evidence section"
+# Behavioral tests: swap mock claude to capture the prompt it receives
+_captured_prompt="$ARTIFACTS_DIR/.captured-review-prompt.txt"
+cat > "$TEST_TEMP_DIR/bin/claude" <<CAPTURE_MOCK
+#!/usr/bin/env bash
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    -p) printf '%s' "\${2:-}" > "$_captured_prompt"; shift 2 ;;
+    --model|--max-turns) shift 2 ;;
+    --print|--dangerously-skip-permissions) shift ;;
+    --*) shift ;;
+    *) printf '%s' "\$1" > "$_captured_prompt"; shift ;;
+  esac
+done
+echo "LGTM — no critical issues found."
+CAPTURE_MOCK
+chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+# Test: with test-results.log present, prompt contains Test Evidence section
+echo "162 tests passed, 0 failures" > "$ARTIFACTS_DIR/test-results.log"
+stage_review 2>/dev/null
+if grep -q 'Test Evidence' "$_captured_prompt" 2>/dev/null; then
+    assert_pass "Review prompt includes Test Evidence section when test log present"
 else
-    assert_fail "Review prompt injects test evidence section"
+    assert_fail "Review prompt includes Test Evidence section when test log present"
 fi
 
-# Test: false-critical guard instruction present in source
-if grep -q 'Do NOT flag.*missing code' "$SCRIPT_DIR/lib/pipeline-stages-review.sh" 2>/dev/null; then
+# Test: with passing test log, prompt asserts tests passed
+if grep -q 'PASSED\|passed' "$_captured_prompt" 2>/dev/null; then
+    assert_pass "Review prompt asserts tests passed when log indicates success"
+else
+    assert_fail "Review prompt asserts tests passed when log indicates success"
+fi
+
+# Test: prompt includes false-critical guard instruction
+if grep -q 'Do NOT flag' "$_captured_prompt" 2>/dev/null; then
     assert_pass "Review prompt includes false-critical guard instruction"
 else
     assert_fail "Review prompt includes false-critical guard instruction"
 fi
 
-# Test: test evidence injection is conditional on log file existence
-if grep -A1 'test_log=' "$SCRIPT_DIR/lib/pipeline-stages-review.sh" 2>/dev/null | grep -q '\[\[ -f'; then
-    assert_pass "Test evidence injection is conditional on log file existence"
+# Test: without test-results.log, prompt has no Test Evidence section
+rm -f "$ARTIFACTS_DIR/test-results.log" "$_captured_prompt"
+stage_review 2>/dev/null
+if ! grep -q 'Test Evidence' "$_captured_prompt" 2>/dev/null; then
+    assert_pass "Review prompt omits Test Evidence section when no test log"
 else
-    assert_fail "Test evidence injection is conditional on log file existence"
+    assert_fail "Review prompt omits Test Evidence section when no test log"
 fi
+
+# Restore the original mock claude for subsequent tests
+mock_binary "claude" 'prompt=""
+use_json=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -p) prompt="${2:-}"; shift 2 ;;
+    --output-format) [[ "${2:-}" == "json" ]] && use_json=true; shift 2 ;;
+    --output-format=*) [[ "${1#*=}" == "json" ]] && use_json=true; shift ;;
+    --model|--max-turns|--print|--dangerously-skip-permissions) shift ;;
+    --*) shift ;;
+    *) prompt="${1:-}"; shift ;;
+  esac
+done
+if [[ "$use_json" == "true" ]]; then
+  jq -n --arg r "ok" "{type:\"result\",result:\$r,usage:{input_tokens:10,output_tokens:5}}"
+else
+  echo "LGTM"
+fi'
 
 # ─── Tests: stage_pr quality gate ───────────────────────────────────────────
 print_test_section "stage_pr quality gate"

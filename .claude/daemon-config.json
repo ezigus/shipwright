@@ -1,6 +1,10 @@
 {
-  "loop": { "claude_timeout": 3600 },
-  "plan": { "claude_timeout": 3600 },
+  "loop": {
+    "claude_timeout": 3600
+  },
+  "plan": {
+    "claude_timeout": 3600
+  },
   "self_optimize": true,
   "intelligence": {
     "enabled": true,
@@ -18,7 +22,7 @@
   "pipeline_template": "autonomous",
   "auto_template": false,
   "last_optimization": {
-    "timestamp": "2026-03-09T23:02:46Z",
+    "timestamp": "2026-03-10T00:22:34Z",
     "adjustments": "compound_quality enabled (CFR 25% > 20%); merge stage recommended (deploy freq 3.0/week); "
   }
 }

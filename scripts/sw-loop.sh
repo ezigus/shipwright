@@ -1377,6 +1377,17 @@ run_holistic_gate() {
     file_count=$(git -C "$PROJECT_ROOT" ls-files | wc -l | tr -d ' ')
     local cumulative_stat
     cumulative_stat="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | tail -1 || echo "(no changes)")"
+    local merge_base branch_stat
+    local base_branch
+    base_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||')"
+    [[ -z "$base_branch" ]] && base_branch="main"
+    merge_base="$(git -C "$PROJECT_ROOT" merge-base "origin/${base_branch}" HEAD 2>/dev/null \
+        || git -C "$PROJECT_ROOT" merge-base "$base_branch" HEAD 2>/dev/null || echo "")"
+    if [[ -n "$merge_base" ]]; then
+        branch_stat="$(git -C "$PROJECT_ROOT" diff --stat "${merge_base}..HEAD" 2>/dev/null | head -40 || echo "(none)")"
+    else
+        branch_stat="(unable to determine base)"
+    fi
     local test_summary=""
     if [[ -n "${TEST_OUTPUT:-}" ]]; then
         test_summary="$(echo "$TEST_OUTPUT" | tail -5)"
@@ -1392,12 +1403,18 @@ ${GOAL}
 ## Project Stats
 - Files in repo: ${file_count}
 - Iterations completed: ${ITERATION}
-- Cumulative changes: ${cumulative_stat}
+- Loop-run changes: ${cumulative_stat}
 - Tests: ${TEST_PASSED:-unknown} (command: ${TEST_CMD:-none})
 ${test_summary:+- Test output: ${test_summary}}
 
-## Cumulative Git Changes (diff --stat from start)
-$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -40 || echo "(none)")
+## Cumulative Git Changes (this loop run only)
+$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -40 || echo "(none — loop may have started after feature was committed)")
+
+## Full Branch Changes vs Base (authoritative — use this to evaluate goal completion)
+${branch_stat}
+
+NOTE: If the loop was restarted after prior work, "this loop run" may show only minor fixes
+while "full branch" shows the complete feature. Use the full branch diff to judge goal achievement.
 
 ## Your Task
 Based on the goal and the cumulative work done:

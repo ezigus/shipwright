@@ -780,6 +780,54 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# HOLISTIC GATE — BRANCH DIFF TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${DIM}  holistic gate branch diff${RESET}"
+
+# Test: full branch diff section present in holistic prompt
+if grep -q 'Full Branch Changes vs Base' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic prompt includes Full Branch Changes vs Base section"
+else
+    assert_fail "Holistic prompt includes Full Branch Changes vs Base section"
+fi
+
+# Test: loop-run section relabelled (not the old 'from start' wording)
+if grep -q 'this loop run only' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic loop-run diff section labelled as loop-run only"
+else
+    assert_fail "Holistic loop-run diff section labelled as loop-run only"
+fi
+
+# Test: restart NOTE present to guide assessor
+if grep -q 'loop was restarted after prior work' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic prompt includes restart NOTE for assessor"
+else
+    assert_fail "Holistic prompt includes restart NOTE for assessor"
+fi
+
+# Test: base branch detection uses git rev-parse (not hardcoded 'main')
+if grep -q "rev-parse --abbrev-ref origin/HEAD" "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic gate detects base branch dynamically via git rev-parse"
+else
+    assert_fail "Holistic gate detects base branch dynamically via git rev-parse"
+fi
+
+# Test: fallback to 'main' if rev-parse fails
+if grep -A2 'rev-parse --abbrev-ref origin/HEAD' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'base_branch.*main'; then
+    assert_pass "Holistic gate falls back to main if base branch detection fails"
+else
+    assert_fail "Holistic gate falls back to main if base branch detection fails"
+fi
+
+# Test: Project Stats uses loop-scoped label (not misleading 'Cumulative')
+if grep -q 'Loop-run changes:' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Project Stats labels loop-scoped change count accurately"
+else
+    assert_fail "Project Stats labels loop-scoped change count accurately"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

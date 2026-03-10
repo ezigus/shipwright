@@ -58,3 +58,5 @@
 {"ts":"2026-03-10T12:22:17Z","ts_epoch":1773145337,"type":"strategic.issue_created","title":"Real-time pipeline health scoring with predictive auto-abort","priority":"P0","complexity":"standard"}
 {"ts":"2026-03-10T12:22:20Z","ts_epoch":1773145340,"type":"strategic.issue_created","title":"Template auto-selection engine with intelligent repo analysis","priority":"P1","complexity":"standard"}
 {"ts":"2026-03-10T12:22:20Z","ts_epoch":1773145340,"type":"strategic.cycle_complete","issues_created":3,"issues_skipped":0}
+{"ts":"2026-03-10T16:28:01Z","ts_epoch":1773160081,"type":"hygiene_platform_refactor","hardcoded":45,"fallback":63,"todo":44}
+{"ts":"2026-03-10T16:28:07Z","ts_epoch":1773160087,"type":"cost.budget_unconfigured","status":"unlimited"}

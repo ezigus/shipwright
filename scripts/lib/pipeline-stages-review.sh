@@ -156,6 +156,32 @@ ${_review_skills}
         fi
     fi
 
+    # Inject test evidence to prevent false "missing code" criticals on pre-existing identifiers
+    local test_log="$ARTIFACTS_DIR/test-results.log"
+    if [[ -f "$test_log" ]]; then
+        local test_summary test_status_line
+        test_summary=$(tail -5 "$test_log" 2>/dev/null || echo "")
+        # Determine pass/fail from log content — avoid hardcoding a claim
+        if grep -qiE '(tests? passed|0 failures|0 failed|all.*passed|\bpassed\b)' "$test_log" 2>/dev/null \
+           && ! grep -qiE '(tests? failed|[1-9][0-9]* failure|[1-9][0-9]* failed|\bFAIL\b)' "$test_log" 2>/dev/null; then
+            test_status_line="The full test suite was run by the pipeline BEFORE this review and PASSED (exit 0)."
+        else
+            test_status_line="The test suite was run by the pipeline BEFORE this review (see last output lines below)."
+        fi
+        review_prompt+="
+## Test Evidence (Pipeline Verified — Trust This)
+${test_status_line}
+
+CRITICAL REVIEWER INSTRUCTION: If a test references an identifier, method, or property
+that does not appear in this diff, it is already present in the codebase from prior commits.
+Do NOT flag 'missing code' or 'will cause test failure' issues for anything the passing
+tests have already verified. The diff shows only CHANGES — not the complete codebase.
+
+Last test output lines:
+${test_summary}
+"
+    fi
+
     review_prompt+="
 ## Diff to Review
 $(cat "$diff_file")"

@@ -80,3 +80,11 @@
 {"ts":"2026-03-11T12:21:47Z","ts_epoch":1773231707,"type":"strategic.issue_created","title":"sw-pipeline.sh modular decomposition for maintainability","priority":"P6","complexity":"full"}
 {"ts":"2026-03-11T12:21:50Z","ts_epoch":1773231710,"type":"strategic.issue_created","title":"GitHub API resilience layer with retry and circuit breaker","priority":"P0","complexity":"standard"}
 {"ts":"2026-03-11T12:21:50Z","ts_epoch":1773231710,"type":"strategic.cycle_complete","issues_created":5,"issues_skipped":0}
+{"ts":"2026-03-11T16:24:15Z","ts_epoch":1773246255,"type":"hygiene_platform_refactor","hardcoded":45,"fallback":63,"todo":44}
+{"ts":"2026-03-11T16:24:20Z","ts_epoch":1773246260,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-11T16:26:12Z","ts_epoch":1773246372,"type":"strategic.issue_created","title":"Pre-flight validation suite to prevent doomed pipeline starts","priority":"P0","complexity":"fast"}
+{"ts":"2026-03-11T16:26:15Z","ts_epoch":1773246375,"type":"strategic.issue_created","title":"One-command optimized setup with parallel checks and smart defaults","priority":"P1","complexity":"standard"}
+{"ts":"2026-03-11T16:26:18Z","ts_epoch":1773246378,"type":"strategic.issue_created","title":"Context window proactive budgeting with per-stage limits and auto-summarization","priority":"P0","complexity":"standard"}
+{"ts":"2026-03-11T16:26:21Z","ts_epoch":1773246381,"type":"strategic.issue_created","title":"Pipeline template evolution engine with success-rate optimization","priority":"P2","complexity":"standard"}
+{"ts":"2026-03-11T16:26:25Z","ts_epoch":1773246385,"type":"strategic.issue_created","title":"Automated platform hygiene sweep daemon with continuous refactor issue generation","priority":"P6","complexity":"fast"}
+{"ts":"2026-03-11T16:26:25Z","ts_epoch":1773246385,"type":"strategic.cycle_complete","issues_created":5,"issues_skipped":0}

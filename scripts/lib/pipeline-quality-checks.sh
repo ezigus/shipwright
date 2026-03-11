@@ -697,14 +697,23 @@ run_negative_prompting() {
         return 0
     fi
 
-    # Read contents of changed files
+    # Read contents of changed files and gather diffs
     local file_contents=""
+    local diff_contents=""
     while IFS= read -r file; do
         if [[ -f "$file" ]]; then
             file_contents+="
 --- $file ---
 $(head -200 "$file" 2>/dev/null || true)
 "
+            local file_diff
+            file_diff=$(git diff "${BASE_BRANCH}...HEAD" -- "$file" 2>/dev/null || true)
+            if [[ -n "$file_diff" ]]; then
+                diff_contents+="
+--- diff: $file ---
+$file_diff
+"
+            fi
         fi
     done <<< "$changed_files"
 
@@ -715,29 +724,54 @@ $(head -200 "$file" 2>/dev/null || true)
     fi
 
     local prompt="You are a pessimistic engineer who assumes everything will break.
-Review these changes and answer:
-1. What could go wrong in production?
-2. What did the developer miss?
-3. What's fragile and will break when requirements change?
-4. What assumptions are being made that might not hold?
-5. What happens under load/stress?
-6. What happens with malicious input?
-7. Are there any implicit dependencies that could break?
+You are provided BOTH the full file context AND the actual diff (lines added/removed in this PR).
+
+IMPORTANT SCOPING RULES:
+- Issues INTRODUCED BY THE DIFF (lines starting with '+' in the diff): categorize as [Critical], [Concern], or [Minor]. These can block the build.
+- Issues found in the file context that are NOT related to the diff (pre-existing code): categorize as [Pre-existing]. Do NOT use [Critical], [Concern], or [Minor] for these. Describe them as recommendations for future issues. These must NOT block the build.
+
+Review the diff and answer:
+1. What could go wrong in production due to the changes in the diff?
+2. What did the developer miss in the changes?
+3. What's fragile in the new code and will break when requirements change?
+4. What assumptions in the new code might not hold?
+5. What happens under load/stress with the new code?
+6. What happens with malicious input targeting the new code?
+7. Are there any implicit dependencies introduced by the diff that could break?
 ${neg_memory:+
 ## Known Concerns from Previous Reviews
 These issues have been found in past reviews of this codebase. Check if any apply to the current changes:
 ${neg_memory}
 }
-Be specific. Reference actual code. Categorize each concern as [Critical/Concern/Minor].
+Be specific. Reference actual code. Use [Critical], [Concern], [Minor], or [Pre-existing] tags for every finding.
 
 Files changed: $changed_files
 
-$file_contents"
+## Full File Context (for reference)
+$file_contents
+
+## Actual Diff (what changed in this PR)
+$diff_contents"
 
     local review_output
     review_output=$(_pipeline_quality_ai_text "$prompt" "haiku" "8")
 
     echo "$review_output" > "$ARTIFACTS_DIR/negative-review.md"
+
+    # Post pre-existing findings as a comment on the current GitHub issue (informational only)
+    if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+        local preexisting_findings
+        preexisting_findings=$(grep -E '\[Pre-existing\]' "$ARTIFACTS_DIR/negative-review.md" 2>/dev/null || true)
+        if [[ -n "$preexisting_findings" ]]; then
+            local comment_body
+            comment_body="**Pre-existing issues found during negative prompting review**
+These items were not introduced by this PR but were identified during review.
+Consider filing separate issues for any that warrant attention:
+
+$preexisting_findings"
+            gh_comment_issue "$ISSUE_NUMBER" "$comment_body" 2>/dev/null || true
+        fi
+    fi
 
     local critical_count
     critical_count=$(grep -ciE '\[Critical\]' "$ARTIFACTS_DIR/negative-review.md" 2>/dev/null || true)
@@ -805,8 +839,11 @@ run_dod_audit() {
             local item_passed=false
             case "$item" in
                 *"tests pass"*|*"test pass"*)
-                    if [[ -f "$ARTIFACTS_DIR/test-results.log" ]] && ! grep -qi "fail\|error" "$ARTIFACTS_DIR/test-results.log" 2>/dev/null; then
-                        item_passed=true
+                    if [[ -f "$ARTIFACTS_DIR/test-results.log" ]]; then
+                        if grep -qiE '(0 failures|0 failed|tests passed|all tests passed)' "$ARTIFACTS_DIR/test-results.log" 2>/dev/null && \
+                           ! grep -qiE '([1-9][0-9]* (failures|failed)|FAILED|FAILURE)' "$ARTIFACTS_DIR/test-results.log" 2>/dev/null; then
+                            item_passed=true
+                        fi
                     fi
                     ;;
                 *"lint"*|*"Lint"*)

@@ -1326,6 +1326,24 @@ stage_compound_quality() {
         _cascade_plan=$(head -200 "$ARTIFACTS_DIR/plan.md" 2>/dev/null) || true
     fi
 
+    # Capture test evidence to prevent "diff=codebase" false criticals in audit agents
+    local _cascade_test_evidence=""
+    local _cascade_test_log="$ARTIFACTS_DIR/test-results.log"
+    if [[ -f "$_cascade_test_log" ]]; then
+        local _cascade_test_tail
+        _cascade_test_tail="$(tail -10 "$_cascade_test_log" 2>/dev/null || echo "")"
+        # Determine pass/fail from log content — avoid hardcoding a claim
+        local _cascade_test_status_line
+        if grep -qiE '(tests? passed|0 failures|0 failed|all.*passed|\bpassed\b)' "$_cascade_test_log" 2>/dev/null \
+           && ! grep -qiE '(tests? failed|[1-9][0-9]* failure|[1-9][0-9]* failed|\bFAIL\b)' "$_cascade_test_log" 2>/dev/null; then
+            _cascade_test_status_line="The full test suite was run by the pipeline BEFORE this audit and PASSED (exit 0)."
+        else
+            _cascade_test_status_line="The test suite was run by the pipeline BEFORE this audit (see last output lines below)."
+        fi
+        _cascade_test_evidence="${_cascade_test_status_line}
+${_cascade_test_tail}"
+    fi
+
     local cycle=0
     while [[ "$cycle" -lt "$max_cycles" ]]; do
         cycle=$((cycle + 1))
@@ -1517,7 +1535,7 @@ stage_compound_quality() {
             info "Running compound audit cascade (agents: $_cascade_active_agents)..."
 
             local cascade_findings
-            cascade_findings=$(compound_audit_run_cycle "$_cascade_active_agents" "$_cascade_diff" "$_cascade_plan" "$_cascade_all_findings" "$cycle") || cascade_findings="[]"
+            cascade_findings=$(compound_audit_run_cycle "$_cascade_active_agents" "$_cascade_diff" "$_cascade_plan" "$_cascade_all_findings" "$cycle" "$_cascade_test_evidence") || cascade_findings="[]"
 
             # Dedup within this cycle
             if type compound_audit_dedup_structural >/dev/null 2>&1; then

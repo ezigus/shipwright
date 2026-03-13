@@ -45,3 +45,4 @@
 {"ts":"2026-03-13T21:46:36Z","ts_epoch":1773438396,"type":"reasoning.trace","job_id":"pipeline-937648-42","complexity":"medium","risk":50,"template":"standard"}
 {"ts":"2026-03-13T21:46:37Z","ts_epoch":1773438397,"type":"pipeline.context_exhaustion","issue":154,"stage":"build"}
 {"ts":"2026-03-13T21:46:39Z","ts_epoch":1773438399,"type":"stage.failed","event_id":"evt-1773438399-138377762","payload":"{\"stage\":\"build\",\"issue\":\"154\",\"timing\":\"46m 12s\"}"}
+{"ts":"2026-03-13T21:55:38Z","ts_epoch":1773438938,"type":"regression.baseline","timestamp":"2026-03-13T21:55:38Z","test_count":0,"pass_rate":0,"script_count":248,"total_lines":255838}

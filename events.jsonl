@@ -58,3 +58,10 @@
 {"ts":"2026-03-13T19:33:16Z","ts_epoch":1773430396,"type":"reasoning.trace","job_id":"pipeline-660425-42","complexity":"medium","risk":50,"template":"standard"}
 {"ts":"2026-03-13T19:33:17Z","ts_epoch":1773430397,"type":"reasoning.trace","job_id":"pipeline-661115-42","complexity":"medium","risk":50,"template":"standard"}
 {"ts":"2026-03-13T19:33:18Z","ts_epoch":1773430398,"type":"reasoning.trace","job_id":"pipeline-661764-42","complexity":"medium","risk":50,"template":"standard"}
+{"ts":"2026-03-13T20:13:55Z","ts_epoch":1773432835,"type":"hygiene_platform_refactor","hardcoded":45,"fallback":63,"todo":44}
+{"ts":"2026-03-13T20:14:01Z","ts_epoch":1773432841,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-13T20:15:56Z","ts_epoch":1773432956,"type":"strategic.issue_created","title":"Build loop context exhaustion prevention with proactive summarization","priority":"P0","complexity":"standard"}
+{"ts":"2026-03-13T20:15:59Z","ts_epoch":1773432959,"type":"strategic.issue_created","title":"Build loop iteration checkpoint and crash recovery system","priority":"P0","complexity":"standard"}
+{"ts":"2026-03-13T20:16:02Z","ts_epoch":1773432962,"type":"strategic.issue_created","title":"Live build loop iteration streaming to dashboard","priority":"P1","complexity":"standard"}
+{"ts":"2026-03-13T20:16:05Z","ts_epoch":1773432965,"type":"strategic.issue_created","title":"GitHub API rate limit protection with exponential backoff","priority":"P0","complexity":"fast"}
+{"ts":"2026-03-13T20:16:05Z","ts_epoch":1773432965,"type":"strategic.cycle_complete","issues_created":4,"issues_skipped":0}

@@ -1736,6 +1736,12 @@ All quality checks clean:
                 return 1
             fi
 
+            # Code changed — clear stale findings and refresh diff to prevent
+            # infinite loop where shifted line numbers defeat structural dedup
+            _cascade_all_findings="[]"
+            _cascade_converged=""
+            _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" 2>/dev/null | head -5000) || _cascade_diff=""
+
             # Re-run review stage too (since code changed)
             info "Re-running review after rebuild..."
             stage_review 2>/dev/null || true

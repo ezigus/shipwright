@@ -357,4 +357,34 @@ fi
 crit_count=$(echo "$accumulated" | jq '[.[] | select(.severity == "critical" or .severity == "high")] | length' 2>/dev/null || echo "0")
 assert_eq "deduped accumulation counts 1 not 2 for convergence" "1" "$crit_count"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Stale findings after rebuild (issue #153 regression test)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "stale findings after rebuild"
+
+# Test: findings with shifted line numbers defeat structural dedup
+# Simulates what happens when code is rebuilt and line numbers shift by >5
+pre_rebuild='[{"severity":"high","category":"logic","file":"foo.sh","line":10,"description":"Off by one in loop","evidence":"i < n","suggestion":"Use <="}]'
+post_rebuild='[{"severity":"high","category":"logic","file":"foo.sh","line":18,"description":"Off by one in loop","evidence":"i < n","suggestion":"Use <="}]'
+combined=$(echo "$pre_rebuild" "$post_rebuild" | jq -s '.[0] + .[1]')
+deduped=$(compound_audit_dedup_structural "$combined")
+count=$(echo "$deduped" | jq 'length')
+# Line shift of 8 defeats the ±5 window — dedup keeps both, proving stale findings cause duplicates
+assert_eq "shifted lines (>5) defeat structural dedup" "2" "$count"
+
+# Test: clearing findings after rebuild prevents false duplicates
+# After rebuild, _cascade_all_findings should be reset to "[]"
+# so the next cycle starts fresh — no stale line numbers to conflict with
+cleared="[]"
+post_rebuild_fresh='[{"severity":"high","category":"logic","file":"foo.sh","line":18,"description":"Off by one in loop","evidence":"i < n","suggestion":"Use <="}]'
+combined_fresh=$(echo "$cleared" "$post_rebuild_fresh" | jq -s '.[0] + .[1]')
+deduped_fresh=$(compound_audit_dedup_structural "$combined_fresh")
+count_fresh=$(echo "$deduped_fresh" | jq 'length')
+assert_eq "cleared findings after rebuild yields clean cycle" "1" "$count_fresh"
+
+# Test: convergence detection works correctly after findings reset
+# With cleared findings, convergence should detect no_criticals when no new critical/high found
+converge_result=$(compound_audit_converged "[]" "[]" 2 5)
+assert_eq "converged after reset with no new findings" "no_criticals" "$converge_result"
+
 print_test_results

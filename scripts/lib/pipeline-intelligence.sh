@@ -1596,6 +1596,14 @@ ${_cascade_test_tail}"
             echo "$_cascade_all_findings" > "$ARTIFACTS_DIR/compound-audit-findings.json" 2>/dev/null || true
         fi
 
+        # Propagate accumulated cascade findings into all_passed (handles converged cycles where
+        # cascade block is skipped but critical/high findings from prior cycles still exist)
+        if [[ -n "$_cascade_all_findings" && "$_cascade_all_findings" != "[]" ]]; then
+            local _cascade_carry_crit
+            _cascade_carry_crit=$(echo "$_cascade_all_findings" | jq '[.[] | select(.severity == "critical" or .severity == "high")] | length' 2>/dev/null || echo "0")
+            [[ "${_cascade_carry_crit:-0}" -gt 0 ]] && all_passed=false
+        fi
+
         # ── Convergence Detection ──
         # Count critical/high issues from all review artifacts
         local current_issue_count=0

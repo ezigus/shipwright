@@ -2107,7 +2107,10 @@ run_single_agent_loop() {
                 "max=$MAX_ITERATIONS" \
                 "job_id=${PIPELINE_JOB_ID:-loop-$$}" \
                 "agent=${AGENT_NUM:-1}" \
-                "test_passed=${TEST_PASSED:-unknown}"
+                "test_passed=${TEST_PASSED:-unknown}" \
+                "consecutive_failures=${CONSECUTIVE_FAILURES:-0}" \
+                "start_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%s)" \
+                "issue=${ISSUE_NUMBER:-}" || true
         fi
 
         # Root-cause diagnosis and memory-based fix on retry after test failure
@@ -2223,6 +2226,30 @@ ${GOAL}"
             else
                 echo -e "  ${RED}✗${RESET} Tests: failed"
             fi
+
+            # Emit test execution event for dashboard streaming
+            if type emit_event >/dev/null 2>&1; then
+                local _test_cmd_count=1
+                [[ ${#ADDITIONAL_TEST_CMDS[@]} -gt 0 ]] && _test_cmd_count=$(( 1 + ${#ADDITIONAL_TEST_CMDS[@]} )) 2>/dev/null || true
+                emit_event "loop.test_execution" \
+                    "iteration=$ITERATION" \
+                    "job_id=${PIPELINE_JOB_ID:-loop-$$}" \
+                    "test_passed=${TEST_PASSED:-unknown}" \
+                    "commands_run=${_test_cmd_count:-1}" \
+                    "issue=${ISSUE_NUMBER:-}" || true
+            fi
+
+            # Emit error detection event on test failure
+            if [[ "$TEST_PASSED" == "false" ]] && type emit_event >/dev/null 2>&1; then
+                local _err_count=0
+                [[ -f "$LOG_DIR/error-summary.json" ]] && _err_count=$(jq -r '.error_count // 0' "$LOG_DIR/error-summary.json" 2>/dev/null || echo "0")
+                emit_event "loop.error_detected" \
+                    "iteration=$ITERATION" \
+                    "job_id=${PIPELINE_JOB_ID:-loop-$$}" \
+                    "error_count=${_err_count:-0}" \
+                    "consecutive_failures=${CONSECUTIVE_FAILURES:-0}" \
+                    "issue=${ISSUE_NUMBER:-}" || true
+            fi
         fi
 
         # Track fix outcome for memory effectiveness
@@ -2332,6 +2359,12 @@ $summary
         write_state
         write_progress
 
+        # Compute lines changed this iteration
+        local _iter_lines_changed=0
+        if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
+            _iter_lines_changed=$(git diff --stat HEAD~1 HEAD 2>/dev/null | tail -1 | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo "0")
+        fi
+
         # Emit iteration complete event for pipeline visibility
         if type emit_event >/dev/null 2>&1; then
             emit_event "loop.iteration_complete" \
@@ -2341,7 +2374,11 @@ $summary
                 "agent=${AGENT_NUM:-1}" \
                 "test_passed=${TEST_PASSED:-unknown}" \
                 "commits=$TOTAL_COMMITS" \
-                "status=${STATUS:-running}"
+                "status=${STATUS:-running}" \
+                "lines_changed=${_iter_lines_changed:-0}" \
+                "consecutive_failures=${CONSECUTIVE_FAILURES:-0}" \
+                "duration_s=${ITER_DURATION_S:-0}" \
+                "issue=${ISSUE_NUMBER:-}" || true
         fi
 
         # Update heartbeat

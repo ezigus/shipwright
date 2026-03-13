@@ -106,6 +106,21 @@ export interface AgentInfo {
   elapsed_s: number;
 }
 
+export interface BuildLoopState {
+  job_id: string;
+  issue: number;
+  iteration: number;
+  maxIterations: number;
+  testPassed: boolean | null;
+  consecutiveFailures: number;
+  commits: number;
+  status: "running" | "passing" | "failing" | "complete";
+  linesChanged: number;
+  iterDurationS: number;
+  lastEventTs: string;
+  lastEventType: string;
+}
+
 export interface FleetState {
   timestamp: string;
   daemon: DaemonInfo;
@@ -119,6 +134,7 @@ export interface FleetState {
   cost: CostInfo;
   dora: DoraGrades;
   team?: TeamData;
+  buildLoops?: BuildLoopState[];
 }
 
 export interface CostBreakdown {

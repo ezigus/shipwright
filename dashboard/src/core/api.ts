@@ -16,6 +16,7 @@ import type {
   TeamActivityEvent,
   StagePerformance,
   UserInfo,
+  BuildLoopState,
 } from "../types/api";
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -206,6 +207,12 @@ export const fetchTeamActivity = () =>
   request<{ events: TeamActivityEvent[] }>("/api/team/activity")
     .then((d) => d.events)
     .catch(() => [] as TeamActivityEvent[]);
+
+// Build loop iterations
+export const fetchBuildLoopIterations = (issue: number | string) =>
+  request<{ iterations: BuildLoopState[] }>(
+    `/api/pipeline/${encodeURIComponent(issue)}/iterations`,
+  );
 
 // Pipeline live changes
 export const fetchPipelineDiff = (issue: number | string) =>

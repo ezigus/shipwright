@@ -8,7 +8,12 @@ import { updateBulkToolbar } from "../components/modal";
 import { icon } from "../design/icons";
 import { STAGE_SHORT } from "../design/tokens";
 import * as api from "../core/api";
-import type { FleetState, View, PipelineDetail } from "../types/api";
+import type {
+  FleetState,
+  View,
+  PipelineDetail,
+  BuildLoopState,
+} from "../types/api";
 
 let localPipelineDetail: PipelineDetail | null = null;
 
@@ -236,6 +241,9 @@ function renderPipelineDetail(detail: PipelineDetail): void {
     html += `<div class="detail-meta-item">PR: <a href="${escapeHtml(detail.prLink)}" target="_blank">${escapeHtml(detail.prLink)}</a></div>`;
   html += "</div>";
 
+  // Build loop iteration panel
+  html += `<section class="build-loop-panel" id="build-loop-${issue}" aria-labelledby="build-loop-heading-${issue}" style="display:none"></section>`;
+
   // Quality gate display
   html += `<div class="quality-gate-panel" id="quality-gate-${issue}" style="display:none"></div>`;
 
@@ -250,6 +258,7 @@ function renderPipelineDetail(detail: PipelineDetail): void {
     setupArtifactTabs(issue);
     checkApprovalGate(issue, detail.stage);
     loadQualityGates(issue);
+    updateBuildLoopPanel(issue);
   }
 }
 
@@ -472,6 +481,75 @@ function renderErrorHighlight(issue: number): void {
     });
 }
 
+function renderBuildLoopPanel(state: BuildLoopState): string {
+  const pct =
+    state.maxIterations > 0
+      ? Math.round((state.iteration / state.maxIterations) * 100)
+      : 0;
+
+  const statusColors: Record<string, string> = {
+    running: "var(--clr-info, #3b82f6)",
+    passing: "var(--clr-ok, #22c55e)",
+    failing: "var(--clr-danger, #ef4444)",
+    complete: "var(--clr-ok, #22c55e)",
+  };
+  const statusColor = statusColors[state.status] || statusColors.running;
+
+  const testIcon =
+    state.testPassed === true
+      ? `<span style="color:var(--clr-ok, #22c55e)" aria-label="Tests passing">${icon("check-circle")}</span>`
+      : state.testPassed === false
+        ? `<span style="color:var(--clr-danger, #ef4444)" aria-label="Tests failing${state.consecutiveFailures > 1 ? `, ${state.consecutiveFailures} consecutive failures` : ""}">${icon("x-circle")}</span>`
+        : `<span style="color:var(--clr-muted, #6b7280)" aria-label="No test results">—</span>`;
+
+  let html = `<h4 id="build-loop-heading-${state.issue}" style="margin:0 0 8px">Build Loop</h4>`;
+
+  // Progress bar
+  html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">`;
+  html += `<div role="progressbar" aria-valuenow="${state.iteration}" aria-valuemin="0" aria-valuemax="${state.maxIterations}" style="flex:1;height:8px;background:var(--clr-surface, #1e293b);border-radius:4px;overflow:hidden">`;
+  html += `<div style="width:${pct}%;height:100%;background:${statusColor};transition:width 0.3s"></div>`;
+  html += `</div>`;
+  html += `<span style="font-size:12px;white-space:nowrap">Iteration ${state.iteration} / ${state.maxIterations}</span>`;
+  html += `</div>`;
+
+  // Status and test info
+  html += `<div style="display:flex;gap:12px;align-items:center;font-size:12px;flex-wrap:wrap">`;
+  html += `<span class="build-loop-badge" style="background:${statusColor};color:#fff;padding:2px 8px;border-radius:4px;font-weight:600;text-transform:uppercase;font-size:11px">${escapeHtml(state.status)}</span>`;
+  html += `<span>${testIcon} Tests</span>`;
+  if (state.consecutiveFailures > 1) {
+    html += `<span style="color:var(--clr-danger, #ef4444);font-weight:600">${state.consecutiveFailures} consecutive failures</span>`;
+  }
+  if (state.linesChanged > 0) {
+    html += `<span>+${state.linesChanged} lines</span>`;
+  }
+  if (state.iterDurationS > 0) {
+    html += `<span>${formatDuration(state.iterDurationS)}</span>`;
+  }
+  if (state.commits > 0) {
+    html += `<span>${state.commits} commits</span>`;
+  }
+  html += `</div>`;
+
+  return html;
+}
+
+function updateBuildLoopPanel(issue: number): void {
+  const panel = document.getElementById("build-loop-" + issue);
+  if (!panel) return;
+
+  const fleetState = store.get("fleetState") as FleetState | undefined;
+  const loops = fleetState?.buildLoops || [];
+  const loop = loops.find((l) => l.issue === issue);
+
+  if (!loop) {
+    panel.style.display = "none";
+    return;
+  }
+
+  panel.style.display = "";
+  panel.innerHTML = renderBuildLoopPanel(loop);
+}
+
 function loadQualityGates(issue: number): void {
   const panel = document.getElementById("quality-gate-" + issue);
   if (!panel) return;
@@ -590,6 +668,13 @@ export const pipelinesView: View = {
   },
   render(data: FleetState) {
     renderPipelinesTab(data);
+    // Update build loop panel if a pipeline detail is open
+    const selectedIssue = store.get("selectedPipelineIssue") as
+      | number
+      | undefined;
+    if (selectedIssue) {
+      updateBuildLoopPanel(selectedIssue);
+    }
   },
   destroy() {},
 };

@@ -532,6 +532,8 @@ run_claude_iteration() {
     local iter_end
     iter_end="$(now_epoch)"
     local iter_duration=$(( iter_end - iter_start ))
+    # Export iteration duration for event emission in sw-loop.sh
+    ITER_DURATION_S="$iter_duration"
 
     echo -e "  ${GREEN}✓${RESET} Claude session completed ($(format_duration "$iter_duration"), exit $exit_code)"
 

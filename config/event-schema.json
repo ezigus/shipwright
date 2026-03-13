@@ -192,11 +192,46 @@
     },
     "loop.iteration_start": {
       "required": ["iteration"],
-      "optional": ["issue", "goal"]
+      "optional": [
+        "issue",
+        "goal",
+        "max",
+        "job_id",
+        "agent",
+        "consecutive_failures",
+        "start_ts"
+      ]
     },
     "loop.iteration_complete": {
       "required": ["iteration"],
-      "optional": ["issue", "test_result", "duration_s"]
+      "optional": [
+        "issue",
+        "test_result",
+        "duration_s",
+        "max",
+        "job_id",
+        "agent",
+        "test_passed",
+        "commits",
+        "status",
+        "lines_changed",
+        "consecutive_failures"
+      ]
+    },
+    "loop.test_execution": {
+      "required": ["iteration"],
+      "optional": [
+        "job_id",
+        "test_passed",
+        "duration_s",
+        "test_mode",
+        "commands_run",
+        "issue"
+      ]
+    },
+    "loop.error_detected": {
+      "required": ["iteration"],
+      "optional": ["job_id", "error_count", "consecutive_failures", "issue"]
     },
     "loop.restart": {
       "required": [],

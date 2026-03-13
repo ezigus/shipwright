@@ -243,6 +243,21 @@ interface TeamState {
   total_queued: number;
 }
 
+interface BuildLoopState {
+  job_id: string;
+  issue: number;
+  iteration: number;
+  maxIterations: number;
+  testPassed: boolean | null;
+  consecutiveFailures: number;
+  commits: number;
+  status: "running" | "passing" | "failing" | "complete";
+  linesChanged: number;
+  iterDurationS: number;
+  lastEventTs: string;
+  lastEventType: string;
+}
+
 interface FleetState {
   timestamp: string;
   daemon: {
@@ -274,6 +289,7 @@ interface FleetState {
   cost: CostInfo;
   dora: DoraGrades;
   team?: TeamState;
+  buildLoops?: BuildLoopState[];
 }
 
 interface HealthResponse {
@@ -1085,6 +1101,112 @@ function readLogIterations(issue: number): {
   }
 }
 
+function getBuildLoopStates(events: DaemonEvent[]): BuildLoopState[] {
+  try {
+    const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+    const now = Date.now();
+    // Scan last 200 events for loop events
+    const loopEvents = events
+      .slice(-200)
+      .filter(
+        (e) =>
+          (typeof e.type === "string" && e.type.startsWith("loop.iteration")) ||
+          e.type === "loop.test_execution" ||
+          e.type === "loop.error_detected",
+      );
+
+    // Group by job_id
+    const byJob = new Map<string, DaemonEvent[]>();
+    for (const ev of loopEvents) {
+      const jobId = String(ev.job_id || ev.job || "unknown");
+      if (!byJob.has(jobId)) byJob.set(jobId, []);
+      byJob.get(jobId)!.push(ev);
+    }
+
+    const results: BuildLoopState[] = [];
+    for (const [jobId, jobEvents] of byJob) {
+      const last = jobEvents[jobEvents.length - 1];
+      const lastTs = last.ts || last.timestamp || "";
+      // Filter stale loops (>30min since last event)
+      if (lastTs) {
+        try {
+          const eventTime = new Date(lastTs).getTime();
+          if (now - eventTime > STALE_THRESHOLD_MS) continue;
+        } catch {
+          /* proceed if date parsing fails */
+        }
+      }
+
+      // Find the latest iteration_complete or iteration_start for state
+      let iteration = 0,
+        maxIterations = 20,
+        testPassed: boolean | null = null;
+      let consecutiveFailures = 0,
+        commits = 0,
+        linesChanged = 0;
+      let iterDurationS = 0,
+        status: BuildLoopState["status"] = "running";
+      let issue = 0;
+
+      for (const ev of jobEvents) {
+        const evIter = Number(ev.iteration) || 0;
+        if (evIter > iteration) iteration = evIter;
+        if (Number(ev.max) > 0) maxIterations = Number(ev.max);
+        if (ev.issue != null) issue = Number(ev.issue);
+
+        if (ev.type === "loop.iteration_complete") {
+          if (ev.test_passed === "true" || ev.test_passed === true)
+            testPassed = true;
+          else if (ev.test_passed === "false" || ev.test_passed === false)
+            testPassed = false;
+          if (Number(ev.commits) > 0) commits = Number(ev.commits);
+          if (Number(ev.lines_changed) > 0)
+            linesChanged = Number(ev.lines_changed);
+          if (Number(ev.duration_s) > 0) iterDurationS = Number(ev.duration_s);
+          if (Number(ev.consecutive_failures) > 0)
+            consecutiveFailures = Number(ev.consecutive_failures);
+          if (ev.status === "complete") status = "complete";
+        }
+        if (ev.type === "loop.test_execution") {
+          if (ev.test_passed === "true" || ev.test_passed === true)
+            testPassed = true;
+          else if (ev.test_passed === "false" || ev.test_passed === false)
+            testPassed = false;
+        }
+        if (ev.type === "loop.error_detected") {
+          if (Number(ev.consecutive_failures) > 0)
+            consecutiveFailures = Number(ev.consecutive_failures);
+        }
+      }
+
+      // Derive status from state
+      if (status !== "complete") {
+        if (testPassed === true) status = "passing";
+        else if (testPassed === false) status = "failing";
+        else status = "running";
+      }
+
+      results.push({
+        job_id: jobId,
+        issue,
+        iteration,
+        maxIterations,
+        testPassed,
+        consecutiveFailures,
+        commits,
+        status,
+        linesChanged,
+        iterDurationS,
+        lastEventTs: lastTs,
+        lastEventType: last.type || "",
+      });
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
 function getFleetState(): FleetState {
   const events = readEvents();
   const daemonState = readDaemonState();
@@ -1196,6 +1318,12 @@ function getFleetState(): FleetState {
   // Add team data if any developers are connected
   if (developerRegistry.size > 0) {
     state.team = getTeamState();
+  }
+
+  // Build loop states from recent events
+  const buildLoops = getBuildLoopStates(events);
+  if (buildLoops.length > 0) {
+    state.buildLoops = buildLoops;
   }
 
   return state;
@@ -5176,6 +5304,35 @@ const server = Bun.serve({
           status: 400,
           headers: { "Content-Type": "application/json", ...CORS_HEADERS },
         });
+      }
+    }
+
+    // GET /api/pipeline/:issue/iterations — Get build loop iteration state
+    if (
+      /^\/api\/pipeline\/\d+\/iterations$/.test(pathname) &&
+      req.method === "GET"
+    ) {
+      const issueNum = parseInt(pathname.split("/")[3] || "0");
+      try {
+        const events = readEvents();
+        const allLoops = getBuildLoopStates(events);
+        const iterations =
+          issueNum > 0
+            ? allLoops.filter((l) => l.issue === issueNum)
+            : allLoops;
+        return new Response(JSON.stringify({ iterations }), {
+          headers: { "content-type": "application/json", ...CORS },
+        });
+      } catch (err) {
+        return new Response(
+          JSON.stringify({
+            error: { code: "INTERNAL_ERROR", message: String(err) },
+          }),
+          {
+            status: 500,
+            headers: { "content-type": "application/json", ...CORS },
+          },
+        );
       }
     }
 

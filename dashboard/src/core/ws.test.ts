@@ -158,6 +158,40 @@ describe("WebSocket module", () => {
       expect(store.store.get("firstRender")).toBe(false);
     });
 
+    it("accepts FleetState with buildLoops field", () => {
+      ws.connect();
+      const instance = MockWebSocket.instances[0];
+      instance.onopen?.();
+
+      const mockState = {
+        pipelines: [{ issue: 42, status: "building" }],
+        machines: [],
+        buildLoops: [
+          {
+            job_id: "pipeline-42",
+            issue: 42,
+            iteration: 3,
+            maxIterations: 20,
+            testPassed: true,
+            consecutiveFailures: 0,
+            commits: 2,
+            status: "passing",
+            linesChanged: 30,
+            iterDurationS: 90,
+            lastEventTs: "2026-03-13T20:50:00Z",
+            lastEventType: "loop.iteration_complete",
+          },
+        ],
+      };
+      instance.onmessage?.({ data: JSON.stringify(mockState) });
+
+      const fleetState = store.store.get("fleetState") as any;
+      expect(fleetState.buildLoops).toHaveLength(1);
+      expect(fleetState.buildLoops[0].issue).toBe(42);
+      expect(fleetState.buildLoops[0].iteration).toBe(3);
+      expect(fleetState.buildLoops[0].status).toBe("passing");
+    });
+
     it("handles malformed JSON gracefully", () => {
       ws.connect();
       const instance = MockWebSocket.instances[0];

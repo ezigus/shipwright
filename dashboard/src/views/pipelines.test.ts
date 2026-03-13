@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { store } from "../core/state";
-import type { FleetState } from "../types/api";
+import type { FleetState, BuildLoopState } from "../types/api";
 
 vi.mock("../core/api", () => ({
   fetchPipelineDetail: vi.fn().mockResolvedValue({}),
@@ -179,5 +179,198 @@ describe("PipelinesView", () => {
     const tbody = document.getElementById("pipeline-table-body");
     expect(tbody!.innerHTML).toContain("#1");
     expect(tbody!.innerHTML).not.toContain("#2");
+  });
+
+  describe("build loop panel", () => {
+    function makeBuildLoop(
+      overrides: Partial<BuildLoopState> = {},
+    ): BuildLoopState {
+      return {
+        job_id: "pipeline-42",
+        issue: 100,
+        iteration: 5,
+        maxIterations: 20,
+        testPassed: true,
+        consecutiveFailures: 0,
+        commits: 3,
+        status: "passing",
+        linesChanged: 47,
+        iterDurationS: 120,
+        lastEventTs: new Date().toISOString(),
+        lastEventType: "loop.iteration_complete",
+        ...overrides,
+      };
+    }
+
+    it("renders build loop panel for running pipeline", async () => {
+      const { pipelinesView } = await import("./pipelines");
+      pipelinesView.init();
+
+      const data = emptyFleetState();
+      data.pipelines = [
+        {
+          issue: 100,
+          title: "Test",
+          stage: "build",
+          stagesDone: [],
+          elapsed_s: 300,
+          iteration: 5,
+          maxIterations: 20,
+        },
+      ];
+      data.buildLoops = [makeBuildLoop({ status: "running" })];
+      store.set("fleetState", data);
+      store.set("selectedPipelineIssue", 100);
+      pipelinesView.render(data);
+
+      const panel = document.getElementById("build-loop-100");
+      expect(panel).toBeTruthy();
+      expect(panel!.innerHTML).toContain("Build Loop");
+      expect(panel!.innerHTML).toContain("Iteration 5 / 20");
+      expect(panel!.innerHTML).toContain("RUNNING");
+    });
+
+    it("renders passing status with test indicator", async () => {
+      const { pipelinesView } = await import("./pipelines");
+      pipelinesView.init();
+
+      const data = emptyFleetState();
+      data.pipelines = [
+        {
+          issue: 100,
+          title: "Test",
+          stage: "build",
+          stagesDone: [],
+          elapsed_s: 300,
+          iteration: 10,
+          maxIterations: 20,
+        },
+      ];
+      data.buildLoops = [
+        makeBuildLoop({ status: "passing", testPassed: true }),
+      ];
+      store.set("fleetState", data);
+      store.set("selectedPipelineIssue", 100);
+      pipelinesView.render(data);
+
+      const panel = document.getElementById("build-loop-100");
+      expect(panel!.innerHTML).toContain("PASSING");
+      expect(panel!.innerHTML).toContain("Tests passing");
+    });
+
+    it("renders failing status with consecutive failures warning", async () => {
+      const { pipelinesView } = await import("./pipelines");
+      pipelinesView.init();
+
+      const data = emptyFleetState();
+      data.pipelines = [
+        {
+          issue: 100,
+          title: "Test",
+          stage: "build",
+          stagesDone: [],
+          elapsed_s: 300,
+          iteration: 8,
+          maxIterations: 20,
+        },
+      ];
+      data.buildLoops = [
+        makeBuildLoop({
+          status: "failing",
+          testPassed: false,
+          consecutiveFailures: 3,
+        }),
+      ];
+      store.set("fleetState", data);
+      store.set("selectedPipelineIssue", 100);
+      pipelinesView.render(data);
+
+      const panel = document.getElementById("build-loop-100");
+      expect(panel!.innerHTML).toContain("FAILING");
+      expect(panel!.innerHTML).toContain("3 consecutive failures");
+    });
+
+    it("renders complete status", async () => {
+      const { pipelinesView } = await import("./pipelines");
+      pipelinesView.init();
+
+      const data = emptyFleetState();
+      data.pipelines = [
+        {
+          issue: 100,
+          title: "Test",
+          stage: "build",
+          stagesDone: [],
+          elapsed_s: 300,
+          iteration: 20,
+          maxIterations: 20,
+        },
+      ];
+      data.buildLoops = [
+        makeBuildLoop({
+          status: "complete",
+          iteration: 20,
+        }),
+      ];
+      store.set("fleetState", data);
+      store.set("selectedPipelineIssue", 100);
+      pipelinesView.render(data);
+
+      const panel = document.getElementById("build-loop-100");
+      expect(panel!.innerHTML).toContain("COMPLETE");
+      expect(panel!.innerHTML).toContain("Iteration 20 / 20");
+    });
+
+    it("hides panel when no build loops match", async () => {
+      const { pipelinesView } = await import("./pipelines");
+      pipelinesView.init();
+
+      const data = emptyFleetState();
+      data.pipelines = [
+        {
+          issue: 100,
+          title: "Test",
+          stage: "review",
+          stagesDone: ["build"],
+          elapsed_s: 300,
+          iteration: 0,
+          maxIterations: 20,
+        },
+      ];
+      data.buildLoops = [];
+      store.set("fleetState", data);
+      store.set("selectedPipelineIssue", 100);
+      pipelinesView.render(data);
+
+      const panel = document.getElementById("build-loop-100");
+      // Panel may not exist (no pipeline detail rendered) or should be hidden
+      if (panel) {
+        expect(panel.style.display).toBe("none");
+      }
+    });
+
+    it("handles undefined buildLoops gracefully", async () => {
+      const { pipelinesView } = await import("./pipelines");
+      pipelinesView.init();
+
+      const data = emptyFleetState();
+      data.pipelines = [
+        {
+          issue: 100,
+          title: "Test",
+          stage: "build",
+          stagesDone: [],
+          elapsed_s: 300,
+          iteration: 5,
+          maxIterations: 20,
+        },
+      ];
+      // buildLoops intentionally undefined
+      store.set("fleetState", data);
+      store.set("selectedPipelineIssue", 100);
+
+      // Should not throw
+      expect(() => pipelinesView.render(data)).not.toThrow();
+    });
   });
 });

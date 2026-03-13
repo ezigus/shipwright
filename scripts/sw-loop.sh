@@ -92,6 +92,7 @@ VERSION="3.2.4"
 LOOP_INPUT_TOKENS=0
 LOOP_OUTPUT_TOKENS=0
 LOOP_COST_MILLICENTS=0
+CONTEXT_SUMMARIZED=false
 
 # ─── Flexible Iteration Defaults ────────────────────────────────────────────
 AUTO_EXTEND=true          # Auto-extend iterations when work is incomplete
@@ -580,6 +581,151 @@ write_loop_tokens() {
 {"input_tokens":${LOOP_INPUT_TOKENS},"output_tokens":${LOOP_OUTPUT_TOKENS},"cost_usd":${cost_usd},"iterations":${ITERATION:-0}}
 TOKJSON
     mv "$tmp_file" "$token_file"
+}
+
+# ─── Context Exhaustion Prevention ──────────────────────────────────────────
+
+# Write a structured summary of essential loop state to a JSON file.
+# Called by check_context_exhaustion() when token threshold is exceeded.
+# Uses atomic tmp+mv write and jq --arg for injection-safe JSON construction.
+write_context_summary() {
+    local summary_file="$LOG_DIR/context-summary.json"
+
+    # Gather error patterns (max 5 from error-summary.json)
+    local error_patterns="[]"
+    local error_json="$LOG_DIR/error-summary.json"
+    if [[ -f "$error_json" ]] && command -v jq >/dev/null 2>&1; then
+        error_patterns=$(jq -c '[.error_lines[]? // empty] | .[0:5]' "$error_json" 2>/dev/null || echo "[]")
+    fi
+
+    # Gather modified files (max 20 from git diff)
+    local files_modified="[]"
+    if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
+        local file_list
+        file_list=$(git -C "$PROJECT_ROOT" diff --name-only "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -20 || true)
+        if [[ -n "$file_list" ]] && command -v jq >/dev/null 2>&1; then
+            files_modified=$(echo "$file_list" | jq -R -s -c 'split("\n") | map(select(length > 0))' 2>/dev/null || echo "[]")
+        fi
+    fi
+
+    # Test status
+    local test_status="unknown"
+    if [[ "${TEST_PASSED:-}" == "true" ]]; then
+        test_status="passing"
+    elif [[ "${TEST_PASSED:-}" == "false" ]]; then
+        test_status="failing"
+    fi
+
+    # Recent progress (last 3 log entries)
+    local recent_progress=""
+    recent_progress=$(echo "$LOG_ENTRIES" | tail -15 | head -45 || true)
+    [[ -z "$recent_progress" ]] && recent_progress="(no progress recorded)"
+
+    # Fixes attempted (max 5 from diagnoses.txt)
+    local fixes_attempted="[]"
+    local diag_file="${LOG_DIR:-/tmp}/diagnoses.txt"
+    if [[ -f "$diag_file" ]] && command -v jq >/dev/null 2>&1; then
+        fixes_attempted=$(tail -5 "$diag_file" 2>/dev/null | jq -R -s -c 'split("\n") | map(select(length > 0))' 2>/dev/null || echo "[]")
+    fi
+
+    # Cumulative diff stat
+    local cum_stat=""
+    if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
+        cum_stat=$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | tail -1 || true)
+    fi
+
+    local total_tokens=$(( LOOP_INPUT_TOKENS + LOOP_OUTPUT_TOKENS ))
+    local threshold_pct
+    threshold_pct=$(_config_get_int "loop.context_summary_threshold" 70 2>/dev/null || echo 70)
+
+    # Build JSON with jq (injection-safe)
+    local tmp_file
+    tmp_file=$(mktemp "${summary_file}.XXXXXX" 2>/dev/null || mktemp)
+
+    if command -v jq >/dev/null 2>&1; then
+        jq -n \
+            --argjson iteration "${ITERATION:-0}" \
+            --argjson total_tokens "$total_tokens" \
+            --argjson threshold_pct "$threshold_pct" \
+            --argjson error_patterns "$error_patterns" \
+            --argjson files_modified "$files_modified" \
+            --arg test_status "$test_status" \
+            --arg recent_progress "$recent_progress" \
+            --argjson fixes_attempted "$fixes_attempted" \
+            --arg goal "${GOAL:-}" \
+            --arg cumulative_diff_stat "${cum_stat:-}" \
+            '{
+                summarized_at_iteration: $iteration,
+                total_tokens_used: $total_tokens,
+                threshold_pct: $threshold_pct,
+                error_patterns: $error_patterns,
+                files_modified: $files_modified,
+                test_status: $test_status,
+                recent_progress: $recent_progress,
+                fixes_attempted: $fixes_attempted,
+                goal: $goal,
+                iteration: $iteration,
+                cumulative_diff_stat: $cumulative_diff_stat
+            }' > "$tmp_file" 2>/dev/null
+    else
+        # Minimal fallback without jq
+        cat > "$tmp_file" <<SUMJSON
+{"summarized_at_iteration":${ITERATION:-0},"total_tokens_used":${total_tokens},"threshold_pct":${threshold_pct},"test_status":"${test_status}","iteration":${ITERATION:-0}}
+SUMJSON
+    fi
+
+    mv "$tmp_file" "$summary_file" 2>/dev/null || {
+        warn "Failed to write context summary"
+        rm -f "$tmp_file" 2>/dev/null || true
+        return 1
+    }
+
+    # Emit telemetry event
+    if type emit_event >/dev/null 2>&1; then
+        local token_limit
+        token_limit=$(_config_get_int "loop.context_token_limit" 180000 2>/dev/null || echo 180000)
+        emit_event "loop.context_summary" \
+            "iteration=$ITERATION" \
+            "tokens_used=$total_tokens" \
+            "threshold_pct=$threshold_pct" \
+            "token_limit=$token_limit" \
+            "job_id=${PIPELINE_JOB_ID:-loop-$$}" 2>/dev/null || true
+    fi
+
+    info "Context summary written (${total_tokens} tokens used, ${threshold_pct}% threshold)"
+    return 0
+}
+
+# Check if cumulative token usage exceeds the configured threshold.
+# Returns 0 if summarization was triggered, 1 otherwise.
+# Never fails fatally — returns 1 on any error to keep the loop running.
+check_context_exhaustion() {
+    # Skip if already summarized
+    [[ "$CONTEXT_SUMMARIZED" == "true" ]] && return 1
+
+    local total_tokens=$(( ${LOOP_INPUT_TOKENS:-0} + ${LOOP_OUTPUT_TOKENS:-0} ))
+
+    # Skip if no tokens tracked yet
+    [[ "$total_tokens" -le 0 ]] && return 1
+
+    local token_limit threshold_pct
+    token_limit=$(_config_get_int "loop.context_token_limit" 180000 2>/dev/null || echo 180000)
+    threshold_pct=$(_config_get_int "loop.context_summary_threshold" 70 2>/dev/null || echo 70)
+
+    # Calculate threshold: limit * threshold_pct / 100
+    local threshold=$(( token_limit * threshold_pct / 100 ))
+
+    if [[ "$total_tokens" -ge "$threshold" ]]; then
+        info "Context exhaustion threshold reached: ${total_tokens}/${threshold} tokens (${threshold_pct}% of ${token_limit})"
+        write_context_summary || {
+            warn "Context summary write failed — continuing without summarization"
+            return 1
+        }
+        CONTEXT_SUMMARIZED=true
+        return 0
+    fi
+
+    return 1
 }
 
 # ─── Adaptive Iteration Budget ──────────────────────────────────────────────
@@ -2167,6 +2313,9 @@ ${GOAL}"
 
         local log_file="$LOG_DIR/iteration-${ITERATION}.log"
 
+        # Check for context exhaustion and proactively summarize if threshold exceeded
+        check_context_exhaustion || true
+
         # Record iteration data for stuckness detection (diff hash, error hash, exit code)
         record_iteration_stuckness_data "$exit_code"
 
@@ -2433,6 +2582,10 @@ run_loop_with_restarts() {
         TEST_PASSED=""
         TEST_OUTPUT=""
         TEST_LOG_FILE=""
+        CONTEXT_SUMMARIZED=false
+        LOOP_INPUT_TOKENS=0
+        LOOP_OUTPUT_TOKENS=0
+        LOOP_COST_MILLICENTS=0
         # Reset GOAL to original — prevent unbounded growth from memory/human injections
         GOAL="$ORIGINAL_GOAL"
 

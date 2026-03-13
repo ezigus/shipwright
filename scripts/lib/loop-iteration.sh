@@ -3,6 +3,62 @@
 [[ -n "${_LOOP_ITERATION_LOADED:-}" ]] && return 0
 _LOOP_ITERATION_LOADED=1
 
+# ─── Context Summary Injection ───────────────────────────────────────────────
+
+# Read context-summary.json and format as compressed markdown for prompt injection.
+# Returns empty string if file is missing or corrupt — compose_prompt falls back to normal.
+inject_context_summary() {
+    local summary_file="${LOG_DIR:-/tmp}/context-summary.json"
+    [[ ! -f "$summary_file" ]] && return 0
+
+    command -v jq >/dev/null 2>&1 || return 0
+
+    local summary
+    summary=$(cat "$summary_file" 2>/dev/null) || return 0
+    # Validate JSON
+    echo "$summary" | jq empty 2>/dev/null || return 0
+
+    local iteration tokens test_status progress goal diff_stat
+    iteration=$(echo "$summary" | jq -r '.iteration // 0' 2>/dev/null || echo "0")
+    tokens=$(echo "$summary" | jq -r '.total_tokens_used // 0' 2>/dev/null || echo "0")
+    test_status=$(echo "$summary" | jq -r '.test_status // "unknown"' 2>/dev/null || echo "unknown")
+    progress=$(echo "$summary" | jq -r '.recent_progress // "(none)"' 2>/dev/null || echo "(none)")
+    goal=$(echo "$summary" | jq -r '.goal // "(none)"' 2>/dev/null || echo "(none)")
+    diff_stat=$(echo "$summary" | jq -r '.cumulative_diff_stat // ""' 2>/dev/null || true)
+
+    # Format error patterns as bullet list
+    local errors
+    errors=$(echo "$summary" | jq -r '.error_patterns[]? // empty' 2>/dev/null | head -5 | sed 's/^/- /' || true)
+
+    # Format modified files as bullet list
+    local files
+    files=$(echo "$summary" | jq -r '.files_modified[]? // empty' 2>/dev/null | head -20 | sed 's/^/- /' || true)
+
+    # Format fixes attempted as bullet list
+    local fixes
+    fixes=$(echo "$summary" | jq -r '.fixes_attempted[]? // empty' 2>/dev/null | head -5 | sed 's/^/- /' || true)
+
+    cat <<SUMMARY
+## Context Summary (proactively compressed at iteration ${iteration})
+> Context was proactively summarized to prevent exhaustion (${tokens} tokens used).
+
+**Test status**: ${test_status}
+${diff_stat:+**Cumulative changes**: ${diff_stat}
+}
+${errors:+### Error Patterns
+${errors}
+}
+${files:+### Files Modified
+${files}
+}
+${fixes:+### Fixes Attempted
+${fixes}
+}
+### Recent Progress
+${progress}
+SUMMARY
+}
+
 # ─── Prompt Composition ──────────────────────────────────────────────────────
 
 manage_context_window() {
@@ -125,8 +181,22 @@ Fix these specific errors. Each line above is one distinct error from the test o
     local rejection_notice_section
     rejection_notice_section="$(compose_rejection_notice_section)"
 
-    # Memory context injection (failure patterns + past learnings)
+    # Context summary injection — when summarized, replace verbose sections with compressed summary
+    local context_summary_section=""
     local memory_section=""
+    local discovery_section=""
+    local dora_section=""
+    local intelligence_section=""
+
+    if [[ "${CONTEXT_SUMMARIZED:-false}" == "true" ]]; then
+        # Use compressed summary instead of verbose sections
+        context_summary_section="$(inject_context_summary 2>/dev/null || true)"
+    fi
+
+    # Only build verbose sections when NOT summarized (or if summary injection failed)
+    if [[ -z "$context_summary_section" ]]; then
+
+    # Memory context injection (failure patterns + past learnings)
     if type memory_inject_context >/dev/null 2>&1; then
         memory_section="$(memory_inject_context "build" 2>/dev/null || true)"
     elif [[ -f "$SCRIPT_DIR/sw-memory.sh" ]]; then
@@ -134,7 +204,6 @@ Fix these specific errors. Each line above is one distinct error from the test o
     fi
 
     # Cross-pipeline discovery injection (learnings from other pipeline runs)
-    local discovery_section=""
     if type inject_discoveries >/dev/null 2>&1; then
         local disc_output
         disc_output="$(inject_discoveries "${GOAL:-}" 2>/dev/null | head -10 || true)"
@@ -144,7 +213,6 @@ Fix these specific errors. Each line above is one distinct error from the test o
     fi
 
     # DORA baselines for context
-    local dora_section=""
     if type memory_get_dora_baseline >/dev/null 2>&1; then
         local dora_json
         dora_json="$(memory_get_dora_baseline 7 2>/dev/null || echo "{}")"
@@ -171,7 +239,6 @@ $(cat "$memory_refresh_file")"
     fi
 
     # GitHub intelligence context (gated by availability)
-    local intelligence_section=""
     if [[ "${NO_GITHUB:-}" != "true" ]]; then
         # File hotspots — top 5 most-changed files
         if type gh_file_change_frequency >/dev/null 2>&1; then
@@ -244,6 +311,8 @@ Current coverage: ${coverage_pct}% — do not decrease this."
 ${last_error}"
         fi
     fi
+
+    fi # end of non-summarized verbose section building
 
     # Stuckness detection — compare last 3 iteration outputs
     local stuckness_section=""
@@ -343,6 +412,8 @@ ${git_log}
 ${test_section}
 
 ${error_summary_section:+$error_summary_section
+}
+${context_summary_section:+$context_summary_section
 }
 ${memory_section:+## Memory Context
 $memory_section

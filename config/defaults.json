@@ -84,7 +84,9 @@
     "context_trim_memory_chars": 20000,
     "context_trim_git_entries": 10,
     "context_trim_hotspot_files": 5,
-    "context_trim_test_lines": 50
+    "context_trim_test_lines": 50,
+    "context_token_limit": 180000,
+    "context_summary_threshold": 70
   },
   "ai": {
     "provider": {

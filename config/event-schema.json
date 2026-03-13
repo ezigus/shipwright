@@ -206,6 +206,10 @@
       "required": [],
       "optional": ["issue", "iteration", "reason"]
     },
+    "loop.context_summary": {
+      "required": ["iteration"],
+      "optional": ["tokens_used", "threshold_pct", "token_limit", "job_id"]
+    },
     "stage.skipped": {
       "required": ["stage"],
       "optional": ["issue", "reason"]

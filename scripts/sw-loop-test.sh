@@ -827,6 +827,248 @@ else
     assert_fail "Project Stats labels loop-scoped change count accurately"
 fi
 
+# ─── Context Exhaustion Prevention Tests ──────────────────────────────────────
+echo ""
+echo -e "${DIM}  context exhaustion prevention${RESET}"
+
+# Source the loop modules so we can test functions directly
+# Set up required globals that the functions expect
+LOG_DIR="$TEST_TEMP_DIR/loop-logs"
+mkdir -p "$LOG_DIR"
+PROJECT_ROOT="$TEST_TEMP_DIR/repo"
+ITERATION=5
+GOAL="Test goal for context exhaustion"
+LOG_ENTRIES="iter 1: did stuff
+iter 2: did more stuff
+iter 3: fixed tests"
+TEST_PASSED="true"
+LOOP_START_COMMIT=""
+PIPELINE_JOB_ID="test-loop-123"
+
+# Source the main loop script's functions (we need config helpers + the new functions)
+# We source individual modules to get the functions without running main()
+_LOOP_ITERATION_LOADED=""
+source "$SCRIPT_DIR/lib/loop-iteration.sh" 2>/dev/null || true
+
+# Provide fallback config helpers if not loaded
+if ! type _config_get_int >/dev/null 2>&1; then
+    _config_get_int() { echo "${2:-0}"; }
+fi
+
+# Source the context exhaustion functions from sw-loop.sh by extracting them
+# We can't source sw-loop.sh directly (it parses args), so test via the loaded functions
+# The functions are already available from the source at the top of the test setup
+
+# Test: defaults.json has context_token_limit
+if jq -e '.loop.context_token_limit' "$SCRIPT_DIR/../config/defaults.json" >/dev/null 2>&1; then
+    assert_pass "defaults.json has loop.context_token_limit"
+    val=$(jq -r '.loop.context_token_limit' "$SCRIPT_DIR/../config/defaults.json")
+    assert_eq "context_token_limit default is 180000" "$val" "180000"
+else
+    assert_fail "defaults.json has loop.context_token_limit"
+fi
+
+# Test: defaults.json has context_summary_threshold
+if jq -e '.loop.context_summary_threshold' "$SCRIPT_DIR/../config/defaults.json" >/dev/null 2>&1; then
+    assert_pass "defaults.json has loop.context_summary_threshold"
+    val=$(jq -r '.loop.context_summary_threshold' "$SCRIPT_DIR/../config/defaults.json")
+    assert_eq "context_summary_threshold default is 70" "$val" "70"
+else
+    assert_fail "defaults.json has loop.context_summary_threshold"
+fi
+
+# Test: event-schema.json has loop.context_summary event type
+if jq -e '.event_types["loop.context_summary"]' "$SCRIPT_DIR/../config/event-schema.json" >/dev/null 2>&1; then
+    assert_pass "event-schema.json has loop.context_summary event type"
+    # Verify required fields include iteration
+    required=$(jq -r '.event_types["loop.context_summary"].required[]' "$SCRIPT_DIR/../config/event-schema.json" 2>/dev/null)
+    if echo "$required" | grep -q "iteration"; then
+        assert_pass "loop.context_summary requires iteration field"
+    else
+        assert_fail "loop.context_summary requires iteration field"
+    fi
+else
+    assert_fail "event-schema.json has loop.context_summary event type"
+fi
+
+# Test: CONTEXT_SUMMARIZED is initialized in sw-loop.sh
+if grep -q 'CONTEXT_SUMMARIZED=false' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "CONTEXT_SUMMARIZED initialized to false in sw-loop.sh"
+else
+    assert_fail "CONTEXT_SUMMARIZED initialized to false in sw-loop.sh"
+fi
+
+# Test: CONTEXT_SUMMARIZED is reset on session restart
+if grep -A 15 'Reset ALL iteration-level state' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'CONTEXT_SUMMARIZED=false'; then
+    assert_pass "CONTEXT_SUMMARIZED reset to false on session restart"
+else
+    assert_fail "CONTEXT_SUMMARIZED reset to false on session restart"
+fi
+
+# Test: Token counters reset on session restart
+if grep -A 15 'Reset ALL iteration-level state' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'LOOP_INPUT_TOKENS=0'; then
+    assert_pass "LOOP_INPUT_TOKENS reset on session restart"
+else
+    assert_fail "LOOP_INPUT_TOKENS reset on session restart"
+fi
+
+# Test: check_context_exhaustion is called in run_single_agent_loop
+if grep -q 'check_context_exhaustion' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "check_context_exhaustion called in main loop"
+else
+    assert_fail "check_context_exhaustion called in main loop"
+fi
+
+# Test: write_context_summary function exists in sw-loop.sh
+if grep -q '^write_context_summary()' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "write_context_summary function defined in sw-loop.sh"
+else
+    assert_fail "write_context_summary function defined in sw-loop.sh"
+fi
+
+# Test: check_context_exhaustion function exists in sw-loop.sh
+if grep -q '^check_context_exhaustion()' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "check_context_exhaustion function defined in sw-loop.sh"
+else
+    assert_fail "check_context_exhaustion function defined in sw-loop.sh"
+fi
+
+# Test: inject_context_summary function exists in loop-iteration.sh
+if grep -q '^inject_context_summary()' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "inject_context_summary function defined in loop-iteration.sh"
+else
+    assert_fail "inject_context_summary function defined in loop-iteration.sh"
+fi
+
+# Test: compose_prompt checks CONTEXT_SUMMARIZED
+if grep -q 'CONTEXT_SUMMARIZED' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "compose_prompt respects CONTEXT_SUMMARIZED flag"
+else
+    assert_fail "compose_prompt respects CONTEXT_SUMMARIZED flag"
+fi
+
+# Test: inject_context_summary returns empty string when no summary file exists
+(
+    # Run in subshell to avoid polluting globals
+    LOG_DIR="$TEST_TEMP_DIR/no-summary-dir"
+    mkdir -p "$LOG_DIR"
+    output=$(inject_context_summary 2>/dev/null) || true
+    if [[ -z "$output" ]]; then
+        echo "PASS"
+    else
+        echo "FAIL: got output when no summary file exists"
+    fi
+) | while read -r result; do
+    if [[ "$result" == "PASS" ]]; then
+        assert_pass "inject_context_summary returns empty when no summary file"
+    else
+        assert_fail "inject_context_summary returns empty when no summary file" "$result"
+    fi
+done
+
+# Test: inject_context_summary returns valid output from a valid summary file
+(
+    test_log_dir="$TEST_TEMP_DIR/summary-test-dir"
+    mkdir -p "$test_log_dir"
+    cat > "$test_log_dir/context-summary.json" <<'TESTJSON'
+{
+    "summarized_at_iteration": 3,
+    "total_tokens_used": 130000,
+    "threshold_pct": 70,
+    "error_patterns": ["TypeError: undefined is not a function"],
+    "files_modified": ["src/index.js", "src/utils.js"],
+    "test_status": "failing",
+    "recent_progress": "Fixed utils, working on index",
+    "fixes_attempted": ["added null check"],
+    "goal": "Fix the bug",
+    "iteration": 3,
+    "cumulative_diff_stat": "2 files changed, 15 insertions(+), 3 deletions(-)"
+}
+TESTJSON
+    LOG_DIR="$test_log_dir"
+    output=$(inject_context_summary 2>/dev/null) || true
+    if echo "$output" | grep -q "Context Summary"; then
+        echo "HAS_HEADER"
+    fi
+    if echo "$output" | grep -q "130000 tokens"; then
+        echo "HAS_TOKENS"
+    fi
+    if echo "$output" | grep -q "failing"; then
+        echo "HAS_STATUS"
+    fi
+    if echo "$output" | grep -q "src/index.js"; then
+        echo "HAS_FILES"
+    fi
+    if echo "$output" | grep -q "TypeError"; then
+        echo "HAS_ERRORS"
+    fi
+) | {
+    has_header=false has_tokens=false has_status=false has_files=false has_errors=false
+    while read -r result; do
+        case "$result" in
+            HAS_HEADER) has_header=true ;;
+            HAS_TOKENS) has_tokens=true ;;
+            HAS_STATUS) has_status=true ;;
+            HAS_FILES)  has_files=true ;;
+            HAS_ERRORS) has_errors=true ;;
+        esac
+    done
+    $has_header && assert_pass "inject_context_summary includes Context Summary header" || assert_fail "inject_context_summary includes Context Summary header"
+    $has_tokens && assert_pass "inject_context_summary includes token count" || assert_fail "inject_context_summary includes token count"
+    $has_status && assert_pass "inject_context_summary includes test status" || assert_fail "inject_context_summary includes test status"
+    $has_files  && assert_pass "inject_context_summary includes modified files" || assert_fail "inject_context_summary includes modified files"
+    $has_errors && assert_pass "inject_context_summary includes error patterns" || assert_fail "inject_context_summary includes error patterns"
+}
+
+# Test: write_context_summary uses atomic write (tmp+mv pattern)
+# Check that the function body contains mktemp (for atomic writes) via simple grep
+if grep -q 'mktemp.*summary_file' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "write_context_summary uses atomic write (mktemp+mv)"
+else
+    assert_fail "write_context_summary uses atomic write (mktemp+mv)"
+fi
+
+# Test: write_context_summary uses jq for safe JSON construction
+if grep -q 'jq -n' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "write_context_summary uses jq for injection-safe JSON"
+else
+    assert_fail "write_context_summary uses jq for injection-safe JSON"
+fi
+
+# Test: check_context_exhaustion skips when already summarized
+if grep -q 'CONTEXT_SUMMARIZED.*true.*return' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "check_context_exhaustion skips when already summarized"
+else
+    assert_fail "check_context_exhaustion skips when already summarized"
+fi
+
+# Test: write_context_summary emits loop.context_summary event
+if grep -q 'emit_event "loop.context_summary"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "write_context_summary emits loop.context_summary event"
+else
+    assert_fail "write_context_summary emits loop.context_summary event"
+fi
+
+# Test: inject_context_summary handles corrupt JSON gracefully
+(
+    test_log_dir="$TEST_TEMP_DIR/corrupt-json-dir"
+    mkdir -p "$test_log_dir"
+    echo "NOT VALID JSON {{{" > "$test_log_dir/context-summary.json"
+    LOG_DIR="$test_log_dir"
+    output=$(inject_context_summary 2>/dev/null) || true
+    if [[ -z "$output" ]]; then
+        echo "PASS"
+    else
+        echo "FAIL"
+    fi
+) | while read -r result; do
+    if [[ "$result" == "PASS" ]]; then
+        assert_pass "inject_context_summary handles corrupt JSON gracefully"
+    else
+        assert_fail "inject_context_summary handles corrupt JSON gracefully"
+    fi
+done
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

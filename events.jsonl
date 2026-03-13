@@ -128,3 +128,5 @@
 {"ts":"2026-03-13T21:25:34Z","ts_epoch":1773437134,"type":"loop.context_efficiency","iteration":1,"raw_prompt_chars":8674,"trimmed_prompt_chars":8674,"trim_ratio":0.0,"budget_utilization":4.3,"budget_chars":200000,"job_id":"autonomous"}
 {"ts":"2026-03-13T21:42:41Z","ts_epoch":1773438161,"type":"pipeline.context_exhaustion","issue":157,"stage":"build"}
 {"ts":"2026-03-13T21:42:43Z","ts_epoch":1773438163,"type":"stage.failed","event_id":"evt-1773438163-3776367976","payload":"{\"stage\":\"build\",\"issue\":\"157\",\"timing\":\"17m 43s\"}"}
+{"ts":"2026-03-13T21:45:36Z","ts_epoch":1773438336,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-13T21:45:42Z","ts_epoch":1773438342,"type":"hygiene_platform_refactor","hardcoded":45,"fallback":63,"todo":44}

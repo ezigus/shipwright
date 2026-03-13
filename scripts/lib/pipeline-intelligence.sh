@@ -1320,8 +1320,13 @@ stage_compound_quality() {
     local _cascade_converged=false
     local _cascade_all_findings="[]"
     local _cascade_active_agents="logic integration completeness"
+    local _cascade_prebuild_commit=""
+    _cascade_prebuild_commit=$(git rev-parse HEAD 2>/dev/null) || _cascade_prebuild_commit=""
     local _cascade_diff=""
     _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" 2>/dev/null | head -5000) || _cascade_diff=""
+    if [[ -n "$_cascade_diff" ]] && [[ $(echo "$_cascade_diff" | wc -l) -ge 5000 ]]; then
+        warn "Diff truncated at 5000 lines — audit findings for files beyond this limit may be incomplete"
+    fi
     local _cascade_plan=""
     if [[ -f "$ARTIFACTS_DIR/plan.md" ]]; then
         _cascade_plan=$(head -200 "$ARTIFACTS_DIR/plan.md" 2>/dev/null) || true
@@ -1736,11 +1741,26 @@ All quality checks clean:
                 return 1
             fi
 
-            # Code changed — clear stale findings and refresh diff to prevent
-            # infinite loop where shifted line numbers defeat structural dedup
-            _cascade_all_findings="[]"
-            _cascade_converged=""
-            _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" 2>/dev/null | head -5000) || _cascade_diff=""
+            # Check if code actually changed by comparing HEAD commit
+            local _post_rebuild_commit=""
+            _post_rebuild_commit=$(git rev-parse HEAD 2>/dev/null) || _post_rebuild_commit=""
+
+            if [[ -n "$_post_rebuild_commit" && "$_post_rebuild_commit" != "$_cascade_prebuild_commit" ]]; then
+                # Code changed — clear stale findings and refresh diff to prevent
+                # infinite loop where shifted line numbers defeat structural dedup
+                info "Cascade state reset — code changed (${_cascade_prebuild_commit:0:8}→${_post_rebuild_commit:0:8})"
+                _cascade_all_findings="[]"
+                _cascade_converged=false
+                _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" 2>/dev/null | head -5000) || true
+                if [[ -z "$_cascade_diff" ]]; then
+                    warn "Git diff failed after rebuild — cascade will operate without diff context"
+                elif [[ $(echo "$_cascade_diff" | wc -l) -ge 5000 ]]; then
+                    warn "Diff truncated at 5000 lines — audit findings for files beyond this limit may be incomplete"
+                fi
+                _cascade_prebuild_commit="$_post_rebuild_commit"
+            else
+                warn "Rebuild completed but no new commits detected — preserving cascade findings"
+            fi
 
             # Re-run review stage too (since code changed)
             info "Re-running review after rebuild..."

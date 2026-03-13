@@ -316,6 +316,10 @@ compound_audit_run_cycle() {
         wait "$pid" 2>/dev/null || true
     done
 
+    # Tag findings with the commit at which they were discovered
+    local current_commit=""
+    current_commit=$(git rev-parse HEAD 2>/dev/null) || current_commit=""
+
     # Merge findings from all agents
     local all_findings="[]"
     for agent in $agents; do
@@ -323,6 +327,11 @@ compound_audit_run_cycle() {
         if [[ -f "$agent_file" ]]; then
             local agent_findings
             agent_findings=$(compound_audit_parse_findings "$(cat "$agent_file")")
+
+            # Stamp each finding with the commit it was discovered at
+            if [[ -n "$current_commit" ]]; then
+                agent_findings=$(echo "$agent_findings" | jq --arg c "$current_commit" '[.[] | . + {created_at_commit: $c}]' 2>/dev/null) || true
+            fi
 
             # Emit individual findings as audit events
             local i=0

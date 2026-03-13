@@ -544,7 +544,7 @@ test_post_install_verification() {
     assert_exit_code 0 "init should succeed"
 
     # Verify output contains the verification success message
-    assert_output_contains "Verified.*tmux config" "verification message present"
+    assert_output_contains "Verified.*tmux config.*overlay" "verification message present"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────

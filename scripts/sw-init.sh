@@ -283,10 +283,9 @@ if [[ ! -f "$HOME/.tmux/shipwright-overlay.conf" ]]; then
 fi
 if [[ ! -d "$HOME/.tmux/plugins/tpm" ]]; then
     warn "VERIFY: TPM not installed — press prefix + I inside tmux to install"
-    _verify_fail=1
 fi
 if [[ $_verify_fail -eq 0 ]]; then
-    success "Verified: tmux config, overlay, TPM, and plugins all deployed"
+    success "Verified: tmux config and overlay deployed"
 fi
 
 # ─── CLI Bootstrap (stable install + PATH) ───────────────────────────────────

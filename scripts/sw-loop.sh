@@ -1680,6 +1680,36 @@ show_summary() {
 
 CHILD_PID=""
 
+# ─── Iteration Checkpoint Helpers ────────────────────────────────────────────
+
+save_iteration_checkpoint() {
+    # Save full checkpoint (stage, iteration, git SHA, test status, files)
+    # All calls silenced — checkpoint failure must never break the loop
+    local _files_modified=""
+    _files_modified="$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')"
+
+    local _ckpt_args=(--stage "build" --iteration "$ITERATION"
+        --git-sha "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+        --loop-state "${STATUS:-running}")
+    [[ "${TEST_PASSED:-}" == "true" ]] && _ckpt_args+=(--tests-passing)
+    [[ -n "$_files_modified" ]] && _ckpt_args+=(--files-modified "$_files_modified")
+
+    "$SCRIPT_DIR/sw-checkpoint.sh" save "${_ckpt_args[@]}" 2>/dev/null || true
+
+    # Save Claude context for meaningful resume
+    export SW_LOOP_GOAL="$GOAL"
+    export SW_LOOP_ITERATION="$ITERATION"
+    export SW_LOOP_STATUS="${STATUS:-running}"
+    export SW_LOOP_TEST_OUTPUT="${TEST_OUTPUT:-}"
+    export SW_LOOP_FINDINGS="${LOG_ENTRIES:-}"
+    export SW_LOOP_MODIFIED="${_files_modified}"
+    "$SCRIPT_DIR/sw-checkpoint.sh" save-context --stage build 2>/dev/null || true
+}
+
+clear_build_checkpoint() {
+    "$SCRIPT_DIR/sw-checkpoint.sh" clear --stage build 2>/dev/null || true
+}
+
 cleanup() {
     echo ""
     warn "Loop interrupted at iteration $ITERATION"
@@ -1697,22 +1727,7 @@ cleanup() {
 
     STATUS="interrupted"
     write_state
-
-    # Save checkpoint on interruption
-    "$SCRIPT_DIR/sw-checkpoint.sh" save \
-        --stage "build" \
-        --iteration "$ITERATION" \
-        --git-sha "$(git rev-parse HEAD 2>/dev/null || echo unknown)" 2>/dev/null || true
-
-    # Save Claude context for meaningful resume (goal, findings, test output)
-    export SW_LOOP_GOAL="$GOAL"
-    export SW_LOOP_ITERATION="$ITERATION"
-    export SW_LOOP_STATUS="$STATUS"
-    export SW_LOOP_TEST_OUTPUT="${TEST_OUTPUT:-}"
-    export SW_LOOP_FINDINGS="${LOG_ENTRIES:-}"
-    # shellcheck disable=SC2155
-    export SW_LOOP_MODIFIED="$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')"
-    "$SCRIPT_DIR/sw-checkpoint.sh" save-context --stage build 2>/dev/null || true
+    save_iteration_checkpoint
 
     # Clear heartbeat
     "$SCRIPT_DIR/sw-heartbeat.sh" clear "${PIPELINE_JOB_ID:-loop-$$}" 2>/dev/null || true
@@ -2059,6 +2074,9 @@ run_single_agent_loop() {
         info "Session restart ${RESTART_COUNT}/${MAX_RESTARTS} — fresh context, reading progress"
     elif $RESUME; then
         resume_state
+    elif detect_interrupted_loop 2>/dev/null; then
+        RESUME=true
+        resume_state
     else
         initialize_state
     fi
@@ -2237,15 +2255,8 @@ ${GOAL}"
             _applied_fix_pattern=""
         fi
 
-        # Save Claude context for checkpoint resume (goal, findings, test output)
-        export SW_LOOP_GOAL="$GOAL"
-        export SW_LOOP_ITERATION="$ITERATION"
-        export SW_LOOP_STATUS="${STATUS:-running}"
-        export SW_LOOP_TEST_OUTPUT="${TEST_OUTPUT:-}"
-        export SW_LOOP_FINDINGS="${LOG_ENTRIES:-}"
-        # shellcheck disable=SC2155
-        export SW_LOOP_MODIFIED="$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')"
-        "$SCRIPT_DIR/sw-checkpoint.sh" save-context --stage build 2>/dev/null || true
+        # Save iteration checkpoint (full checkpoint + Claude context)
+        save_iteration_checkpoint
 
         # Audit agent (reviews implementer's work)
         run_audit_agent
@@ -2309,6 +2320,7 @@ ${GOAL}"
         if guard_completion; then
             STATUS="complete"
             write_state
+            clear_build_checkpoint
             write_progress
             show_summary
             return 0
@@ -2330,6 +2342,7 @@ ${GOAL}"
 $summary
 "
         write_state
+        save_iteration_checkpoint
         write_progress
 
         # Emit iteration complete event for pipeline visibility

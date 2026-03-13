@@ -149,6 +149,25 @@ write_state() {
     fi
 }
 
+detect_interrupted_loop() {
+    local ckpt_file="${PROJECT_ROOT:-.}/.claude/pipeline-artifacts/checkpoints/build-checkpoint.json"
+    [[ -f "$ckpt_file" ]] || return 1
+
+    # Only trigger if state file also exists with non-complete status
+    [[ -f "$STATE_FILE" ]] || return 1
+
+    local state_status=""
+    state_status="$(grep '^status:' "$STATE_FILE" 2>/dev/null | head -1 | awk '{print $2}')" || true
+    if [[ "$state_status" == "running" || "$state_status" == "interrupted" ]]; then
+        local ckpt_iter
+        ckpt_iter="$(jq -r '.iteration // 0' "$ckpt_file" 2>/dev/null)" || true
+        warn "Detected interrupted build loop at iteration ${ckpt_iter:-0}"
+        info "Resuming automatically from checkpoint"
+        return 0
+    fi
+    return 1
+}
+
 check_fatal_error() {
     local log_file="$1"
     local cli_exit_code="${2:-0}"

@@ -335,6 +335,250 @@ assert_contains "restore-context exports SW_LOOP_GOAL" "$RESTORE_OUT" "SW_LOOP_G
 
 echo ""
 
+# ─── 10. Iteration Checkpoint Cycle ──────────────────────────────────────────
+echo -e "${BOLD}  Iteration Checkpoint Cycle${RESET}"
+
+# Save a checkpoint with full iteration data (simulating save_iteration_checkpoint)
+bash "$SRC" save --stage build --iteration 7 \
+    --git-sha "iter7sha" --tests-passing \
+    --files-modified "src/a.ts,src/b.ts" \
+    --loop-state running 2>/dev/null || true
+
+ITER_CKPT=".claude/pipeline-artifacts/checkpoints/build-checkpoint.json"
+if [[ -f "$ITER_CKPT" ]]; then
+    assert_pass "Iteration checkpoint file created"
+else
+    assert_fail "Iteration checkpoint file created"
+fi
+
+ITER_VAL=$(jq -r '.iteration' "$ITER_CKPT" 2>/dev/null || echo "")
+assert_eq "Iteration checkpoint has correct iteration" "7" "$ITER_VAL"
+
+ITER_SHA=$(jq -r '.git_sha' "$ITER_CKPT" 2>/dev/null || echo "")
+assert_eq "Iteration checkpoint has correct git_sha" "iter7sha" "$ITER_SHA"
+
+ITER_TESTS=$(jq -r '.tests_passing' "$ITER_CKPT" 2>/dev/null || echo "")
+assert_eq "Iteration checkpoint has tests_passing true" "true" "$ITER_TESTS"
+
+ITER_STATE=$(jq -r '.loop_state' "$ITER_CKPT" 2>/dev/null || echo "")
+assert_eq "Iteration checkpoint has loop_state running" "running" "$ITER_STATE"
+
+ITER_FILES=$(jq '.files_modified | length' "$ITER_CKPT" 2>/dev/null || echo "0")
+assert_eq "Iteration checkpoint has 2 modified files" "2" "$ITER_FILES"
+
+# Overwrite with iteration 8 — verify atomic overwrite
+bash "$SRC" save --stage build --iteration 8 \
+    --git-sha "iter8sha" --loop-state running 2>/dev/null || true
+ITER_VAL2=$(jq -r '.iteration' "$ITER_CKPT" 2>/dev/null || echo "")
+assert_eq "Iteration overwrite updates to iteration 8" "8" "$ITER_VAL2"
+ITER_SHA2=$(jq -r '.git_sha' "$ITER_CKPT" 2>/dev/null || echo "")
+assert_eq "Iteration overwrite updates git_sha" "iter8sha" "$ITER_SHA2"
+
+echo ""
+
+# ─── 11. Cleanup on Completion ───────────────────────────────────────────────
+echo -e "${BOLD}  Cleanup on Completion${RESET}"
+
+# Create both checkpoint and context files
+bash "$SRC" save --stage build --iteration 10 --loop-state complete 2>/dev/null || true
+export SW_LOOP_GOAL="Test cleanup"
+export SW_LOOP_ITERATION="10"
+export SW_LOOP_STATUS="complete"
+export SW_LOOP_TEST_OUTPUT=""
+export SW_LOOP_FINDINGS=""
+export SW_LOOP_MODIFIED=""
+bash "$SRC" save-context --stage build 2>/dev/null || true
+
+CKPT_FILE=".claude/pipeline-artifacts/checkpoints/build-checkpoint.json"
+CTX_FILE2=".claude/pipeline-artifacts/checkpoints/build-claude-context.json"
+
+if [[ -f "$CKPT_FILE" ]] && [[ -f "$CTX_FILE2" ]]; then
+    assert_pass "Both checkpoint and context files exist before clear"
+else
+    assert_fail "Both checkpoint and context files exist before clear"
+fi
+
+# Clear the build stage checkpoint (simulating clear_build_checkpoint)
+bash "$SRC" clear --stage build 2>/dev/null || true
+
+if [[ ! -f "$CKPT_FILE" ]]; then
+    assert_pass "Checkpoint file removed after clear"
+else
+    assert_fail "Checkpoint file removed after clear"
+fi
+
+if [[ ! -f "$CTX_FILE2" ]]; then
+    assert_pass "Context file removed after clear"
+else
+    assert_fail "Context file removed after clear"
+fi
+
+echo ""
+
+# ─── 12. Crash Detection ────────────────────────────────────────────────────
+echo -e "${BOLD}  Crash Detection (detect_interrupted_loop)${RESET}"
+
+# Source loop-restart.sh to get detect_interrupted_loop
+# Need to set up the environment it expects
+LOOP_RESTART_SRC="$SCRIPT_DIR/lib/loop-restart.sh"
+_LOOP_RESTART_LOADED=""  # Reset module guard
+
+# Helper functions needed by loop-restart.sh
+now_epoch() { date +%s 2>/dev/null || echo 0; }
+now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "unknown"; }
+info() { echo "INFO: $*"; }
+warn() { echo "WARN: $*"; }
+error() { echo "ERROR: $*"; }
+success() { echo "OK: $*"; }
+export -f now_epoch now_iso info warn error success 2>/dev/null || true
+
+PROJECT_ROOT="$TEST_TEMP_DIR/repo"
+STATE_FILE="$TEST_TEMP_DIR/repo/loop-state.md"
+MAX_ITERATIONS=20
+MAX_ITERATIONS_EXPLICIT=false
+GOAL=""
+TEST_CMD=""
+MODEL="opus"
+AGENTS=1
+CONSECUTIVE_FAILURES=0
+TOTAL_COMMITS=0
+AUDIT_ENABLED=false
+AUDIT_AGENT_ENABLED=false
+QUALITY_GATES_ENABLED=false
+DOD_FILE=""
+AUTO_EXTEND=false
+EXTENSION_COUNT=0
+MAX_EXTENSIONS=3
+LOG_ENTRIES=""
+STATUS=""
+ITERATION=0
+LOOP_START_COMMIT=""
+DIM=""
+RESET=""
+
+source "$LOOP_RESTART_SRC"
+
+# Test 1: No checkpoint file — should return 1 (no crash detected)
+rm -f "$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts/checkpoints/build-checkpoint.json"
+rm -f "$STATE_FILE"
+if detect_interrupted_loop 2>/dev/null; then
+    assert_fail "No checkpoint → no crash detected (returns 1)"
+else
+    assert_pass "No checkpoint → no crash detected (returns 1)"
+fi
+
+# Test 2: Checkpoint exists with running state + state file running → crash detected
+bash "$SRC" save --stage build --iteration 5 --loop-state running 2>/dev/null || true
+cat > "$STATE_FILE" <<'STATEEOF'
+---
+goal: "Test goal"
+iteration: 5
+max_iterations: 20
+status: running
+test_cmd: "npm test"
+model: opus
+agents: 1
+started_at: 2026-03-13T00:00:00Z
+last_iteration_at: 2026-03-13T00:00:00Z
+consecutive_failures: 0
+total_commits: 3
+audit_enabled: false
+audit_agent_enabled: false
+quality_gates_enabled: false
+dod_file: ""
+auto_extend: false
+extension_count: 0
+max_extensions: 3
+---
+
+## Log
+STATEEOF
+
+if detect_interrupted_loop 2>/dev/null; then
+    assert_pass "Running checkpoint + running state → crash detected"
+else
+    assert_fail "Running checkpoint + running state → crash detected"
+fi
+
+# Test 3: Checkpoint exists but state file shows complete → no false positive
+cat > "$STATE_FILE" <<'STATEEOF2'
+---
+goal: "Test goal"
+iteration: 10
+max_iterations: 20
+status: complete
+test_cmd: "npm test"
+model: opus
+agents: 1
+started_at: 2026-03-13T00:00:00Z
+last_iteration_at: 2026-03-13T00:00:00Z
+consecutive_failures: 0
+total_commits: 5
+audit_enabled: false
+audit_agent_enabled: false
+quality_gates_enabled: false
+dod_file: ""
+auto_extend: false
+extension_count: 0
+max_extensions: 3
+---
+
+## Log
+STATEEOF2
+
+if detect_interrupted_loop 2>/dev/null; then
+    assert_fail "Complete state → no false positive (returns 1)"
+else
+    assert_pass "Complete state → no false positive (returns 1)"
+fi
+
+# Test 4: Checkpoint exists with interrupted state + state file interrupted → crash detected
+bash "$SRC" save --stage build --iteration 3 --loop-state interrupted 2>/dev/null || true
+cat > "$STATE_FILE" <<'STATEEOF3'
+---
+goal: "Test goal"
+iteration: 3
+max_iterations: 20
+status: interrupted
+test_cmd: "npm test"
+model: opus
+agents: 1
+started_at: 2026-03-13T00:00:00Z
+last_iteration_at: 2026-03-13T00:00:00Z
+consecutive_failures: 0
+total_commits: 1
+audit_enabled: false
+audit_agent_enabled: false
+quality_gates_enabled: false
+dod_file: ""
+auto_extend: false
+extension_count: 0
+max_extensions: 3
+---
+
+## Log
+STATEEOF3
+
+if detect_interrupted_loop 2>/dev/null; then
+    assert_pass "Interrupted state → crash detected"
+else
+    assert_fail "Interrupted state → crash detected"
+fi
+
+# Test 5: Checkpoint exists but no state file → no crash detected
+rm -f "$STATE_FILE"
+if detect_interrupted_loop 2>/dev/null; then
+    assert_fail "No state file → no crash detected (returns 1)"
+else
+    assert_pass "No state file → no crash detected (returns 1)"
+fi
+
+# Cleanup
+rm -f "$STATE_FILE"
+bash "$SRC" clear --all 2>/dev/null || true
+
+echo ""
+
 # ─── Results ─────────────────────────────────────────────────────────────────
 echo ""
 echo ""

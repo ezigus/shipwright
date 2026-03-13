@@ -1,71 +1,258 @@
-# Design: Add --json output flag to shipwright status command
+# Implementation Plan: Fix Infinite Quality Loop from Stale Findings
 
-## Context
+## Problem Analysis
 
-The `shipwright status` command (`scripts/sw-status.sh`) provides a human-readable dashboard showing tmux windows, team configs, task lists, daemon state, heartbeats, remote machines, connected developers, and database health. Issue #4 requests a `--json` flag that emits the same data as machine-readable JSON so other tools (CI scripts, dashboards, fleet orchestrators, monitoring) can consume it programmatically.
+### Root Cause
 
-Constraints:
+The compound audit cascade accumulates findings across multiple cycles in `_cascade_all_findings`. When code modifications occur during the build loop, these findings become **stale** (line numbers shift, code structure changes). However, agents still receive these stale findings with instructions to "avoid repeating" them. The structural deduplication logic (file + category + line within 5) fails to match because line numbers have shifted, causing agents to report the same logical issue as "new" findings with different line numbers. This creates an infinite loop:
 
-- Bash 3.2 compatible (no associative arrays, no `${var,,}`)
-- `set -euo pipefail` required
-- `jq` is a project prerequisite (used broadly across Shipwright)
-- JSON assembly must avoid string interpolation for values (use `jq --arg`/`--argjson`)
-- The human-readable path must remain unchanged when `--json` is not passed
+1. Cycle N finds issue X at file.js:42
+2. Code is modified in build loop → line numbers change
+3. Re-enter compound quality
+4. Agents get stale finding (file.js:42, issue X) in "Previously Found Issues"
+5. Agent can't structurally match the old finding (code has shifted to line 50)
+6. Agent flags the same issue at file.js:50 as a new critical finding
+7. Cascade doesn't converge (always finding "new" issues that are just location-shifted old ones)
+8. Loop repeats
 
-## Decision
+### Why Current Fixes Don't Prevent This
 
-Implement `--json` as an early-exit code path in `scripts/sw-status.sh`. When the flag is set:
+- PR #142 fixed **convergence detection** (we now properly stop when findings repeat)
+- But it didn't fix **finding staleness** (findings from before code edits are still passed to agents)
+- The structural dedup only works if line numbers haven't changed much, which fails for modified code
 
-1. **Argument parsing** (lines 57-71): A `JSON_OUTPUT` flag is set by `--json`. Unknown flags error with exit 1. `--help` documents the new flag.
+## Requirements & Success Criteria
 
-2. **Guard clause** (lines 74-78): If `jq` is not installed, emit a clear error to stderr and exit 1 — the human-readable path does not require `jq`, so this is JSON-specific.
+### Acceptance Criteria (Definition of Done)
 
-3. **Data collection** (lines 80-238): Each of the 11 data sections is collected independently into shell variables (`WINDOWS_JSON`, `TEAMS_JSON`, `TASKS_JSON`, `DAEMON_JSON`, `TRACKER_JSON`, `HEARTBEATS_JSON`, `MACHINES_JSON`, `DEVELOPERS_JSON`, `DATABASE_JSON`). Each section:
-   - Defaults to a safe empty value (`[]` for arrays, `null` for optional objects)
-   - Falls back to the default on any `jq` or I/O error (`|| SECTION_JSON="[]"`)
-   - Uses `jq -n --arg`/`--argjson` for safe JSON construction — never raw string interpolation for values
+1. **Findings don't accumulate across builds:** When re-entering compound_quality after a build loop, findings are isolated to that specific pass
+2. **Structural matching works:** Dedup logic correctly identifies true duplicates even when code has been modified
+3. **No false infinite loops:** Cascade converges within max_cycles, even when code is heavily modified
+4. **Backwards compatible:** Existing dedup logic and convergence checks still work
+5. **Testable:** Verify with a test case where agents make changes and cascade runs multiple times
 
-4. **Assembly** (lines 240-265): A single `jq -n` call assembles all sections into the final JSON envelope with keys: `version`, `timestamp`, `tmux_windows`, `teams`, `task_lists`, `daemon`, `issue_tracker`, `heartbeats`, `remote_machines`, `connected_developers`, `database`.
+## Design Alternatives Considered
 
-5. **Early exit** (line 266): `exit 0` prevents any human-readable output from being emitted.
+### Alternative A: "Fresh cascade per rebuild" (CHOSEN)
 
-**Key design properties:**
+**Approach:** Clear `_cascade_all_findings` when entering compound_quality from a successful build
 
-- **No shared code path with human-readable output.** The JSON branch collects data independently, so changes to the human-readable formatting cannot break JSON output and vice versa.
-- **Graceful degradation per section.** If any single data source (heartbeat dir, daemon state file, sqlite DB) is missing or corrupted, that section defaults to `[]` or `null` — the envelope is always valid JSON.
-- **No new dependencies.** `jq` is already required by the project.
-- **Schema:** Top-level keys are stable. `version` (string, semver), `timestamp` (string, ISO-8601 UTC), `tmux_windows` (array), `teams` (array), `task_lists` (array), `daemon` (object|null), `issue_tracker` (object|null), `heartbeats` (array), `remote_machines` (array), `connected_developers` (object|null), `database` (object|null).
+- **Pros:**
+  - Simple, low risk: no stale findings can ever accumulate
+  - Ensures each cascade cycle sees fresh code state
+  - Prevents the structural matching problem entirely
+- **Cons:**
+  - Loses deduplication across build iterations (might re-report issues if agent partially fixes)
+  - Slightly higher API cost (agents might rediscover same issues)
 
-## Alternatives Considered
+### Alternative B: "Verify findings before reuse"
 
-1. **Shared data collection with format switch at output time** — Pros: eliminates ~190 lines of duplication between JSON and human-readable paths / Cons: couples the two paths tightly; changes to human-readable formatting could break JSON assembly; harder to reason about error handling when one path needs `jq` and the other doesn't; the human-readable path uses shell variables and printf, not structured data. Rejected in favor of independent paths for robustness.
+**Approach:** Before passing findings to agents, verify they still match current code
 
-2. **Output as line-delimited JSON (JSONL) per section** — Pros: streamable, each section independently parseable / Cons: not a single queryable document (can't do `jq '.daemon.active_jobs'` in one pass); breaks user expectation of `--json` producing a JSON object; no ecosystem precedent in Shipwright. Rejected.
+- **Pros:**
+  - Keeps institutional knowledge (valid findings persist across builds)
+  - Only removes truly stale findings
+- **Cons:**
+  - Complex: requires smart code matching or git blame analysis
+  - Slow: every finding verification is expensive
 
-3. **Python/Node helper for JSON assembly** — Pros: richer JSON manipulation, eliminates `jq` dependency in the critical path / Cons: adds a runtime dependency; all other Shipwright scripts are pure bash + `jq`; inconsistent with project architecture. Rejected.
+### Alternative C: "Cycle-scoped findings"
 
-## Implementation Plan
+**Approach:** Only pass findings from the most recent cycle to next cycle, not all accumulated findings
 
-- Files to create: none (all files already exist)
-- Files to modify: `scripts/sw-status.sh` (lines 57-267 — already modified), `scripts/sw-status-test.sh` (30 tests — already written)
-- Dependencies: none new (`jq` already required)
-- Risk areas:
-  - **`cmd | while read` subshell variable loss** (lines 83-91, 184-192): The tmux windows and heartbeats sections pipe into `while read` loops. Variables set inside the loop are lost, but this is handled correctly — JSON fragments are emitted via `printf` to stdout and collected by `jq -s '.'`.
-  - **Dashboard curl timeout** (line 208): The connected developers section calls `curl --max-time 3` to the dashboard API. If the dashboard is slow, the 3-second timeout prevents the JSON output from hanging, but adds up to 3s of latency. Acceptable for a status command that a user invokes interactively or a monitor polls infrequently.
-  - **Large daemon state** (line 154): `recent_completions` is capped at 20 entries via `jq` slice (`reverse | .[:20]`), preventing unbounded output growth.
-  - **Task list `find` in subshell** (lines 116-132): Task counting uses `while read` from a process substitution (`< <(find ...)`), which correctly preserves variable state in the parent shell. This is the right pattern per project conventions.
+- **Pros:**
+  - Simpler than B, more sophisticated than A
+  - Keeps some dedup benefit (same-cycle duplicates caught)
+- **Cons:**
+  - Still vulnerable to findings staleness over multiple cycles
+  - Harder to reason about when exactly findings get cleared
 
-## Validation Criteria
+### Alternative D: "Timestamp & age out findings"
 
-- [x] `shipwright status --json` produces valid JSON (`jq empty` succeeds)
-- [x] All 11 top-level keys are present in output
-- [x] `version` field matches semver pattern `X.Y.Z`
-- [x] `timestamp` is ISO-8601 UTC format
-- [x] No ANSI escape codes appear in JSON output
-- [x] Empty state (no daemon, no teams, no heartbeats) produces valid JSON with safe defaults (`[]`, `null`)
-- [x] Human-readable output (`shipwright status` without `--json`) is unaffected
-- [x] `--help` documents the `--json` flag
-- [x] Unknown flags produce error and exit 1
-- [x] Missing `jq` produces clear error to stderr and exit 1
-- [x] Subsections are independently queryable (e.g., `jq '.daemon.active_jobs[].issue'`)
-- [x] All 30 tests in `scripts/sw-status-test.sh` pass
+**Approach:** Add timestamp metadata, age out findings older than N minutes or older than the last git commit
+
+- **Pros:**
+  - Very precise, catches the exact moment findings become stale
+- **Cons:**
+  - Requires tracking git state, timestamps, and complex metadata
+  - Significant implementation complexity
+
+## Chosen Approach: Alternative A + Verification Phase
+
+**Why:**
+
+- **Simplicity wins:** The pipeline is already complex; minimal changes reduce regression risk
+- **Correctness first:** Better to re-run audits cleanly than pass stale data and hope dedup works
+- **Cost trade-off acceptable:** Extra audit API calls are small compared to avoiding infinite loops
+
+**Key Insight:** The cascade is cheap relative to the build loop. Clearing findings is safe because the build loop has already tested the code. We're just being extra cautious in quality gates.
+
+## Implementation Steps
+
+### Phase 1: Add Finding Freshness Tracking (Tasks 1-2)
+
+1. **Add metadata to stage_compound_quality:** Track whether findings are from a fresh cascade or carry-forward from rebuild
+2. **Add git commit snapshot:** Capture `git rev-parse HEAD` when compound_quality starts, use to invalidate old findings
+
+### Phase 2: Clear Stale Findings (Tasks 3-5)
+
+3. **Detect rebuild context:** Check if we're re-entering compound_quality after a build loop (new git commits since last cascade start)
+4. **Clear accumulations on rebuild:** Reset `_cascade_all_findings="[]"` if re-entering after code changes
+5. **Log clearing decision:** Emit audit event when findings are cleared so we can trace why cascade restarted
+
+### Phase 3: Improve Structural Dedup (Tasks 6-8)
+
+6. **Enhance structural matching:** Instead of just line±5, also check if finding file was modified since finding was created
+7. **Add verification check before agent prompt:** Validate that at least one "Previously Found Issues" actually appears in current diff
+8. **Warn about orphaned findings:** Log when findings can't be matched to current code
+
+### Phase 4: Testing & Validation (Tasks 9-12)
+
+9. **Unit test:** Test the new clearing logic in isolation
+10. **Integration test:** Verify cascade converges with modified code
+11. **Regression test:** Ensure normal (non-modified) cascade still works and dedup still catches duplicates
+12. **Manual verification:** Run a pipeline where build loop modifies code multiple times, verify no infinite loop
+
+## Task Decomposition (with dependencies)
+
+- [ ] **Task 1: Add git commit snapshot tracking** (no dependencies)
+  - Stores: `git rev-parse HEAD` when cascade starts in `_cascade_start_commit`
+  - Location: pipeline-intelligence.sh, stage_compound_quality(), line ~1324
+  - ~5 lines added
+
+- [ ] **Task 2: Add freshness metadata to findings JSON** (depends on Task 1)
+  - Adds: `created_at_commit` field to each finding
+  - Location: compound-audit.sh, compound_audit_build_prompt(), line ~93
+  - ~3 lines added
+
+- [ ] **Task 3: Detect rebuild context** (depends on Task 1, blocks Task 4)
+  - Check: `[[ $(git rev-parse HEAD) != "$_cascade_start_commit" ]]`
+  - Location: pipeline-intelligence.sh, inside while loop before cascade block
+  - ~8 lines added
+
+- [ ] **Task 4: Clear stale findings on rebuild** (depends on Task 3)
+  - Action: Reset `_cascade_all_findings="[]"` if rebuild detected
+  - Location: pipeline-intelligence.sh, while loop, line ~1355
+  - ~5 lines added
+
+- [ ] **Task 5: Add audit events for clearing** (depends on Task 4)
+  - Events: `compound.findings_cleared`, `compound.rebuild_detected`
+  - Location: pipeline-intelligence.sh, alongside clearing code
+  - ~6 lines added
+
+- [ ] **Task 6: Enhance structural dedup logic** (depends on Task 2)
+  - Update: compound_audit_dedup_structural() to check file modification
+  - Use: git diff --name-only to see what files changed
+  - Location: compound-audit.sh, compound_audit_dedup_structural(), line ~145
+  - ~25 lines added
+
+- [ ] **Task 7: Add pre-prompt verification** (depends on Task 6)
+  - Check: Does proposed finding file appear in current diff?
+  - Location: compound-audit.sh, compound_audit_build_prompt()
+  - ~15 lines added
+
+- [ ] **Task 8: Add orphaned finding warnings** (depends on Tasks 2, 6)
+  - Log: "Finding for file.js line 42 not found in current code state"
+  - Location: compound-audit.sh, compound_audit_dedup_structural()
+  - ~8 lines added
+
+- [ ] **Task 9: Unit test - clearing logic** (depends on Tasks 1-5)
+  - Test: \_cascade_all_findings correctly resets on rebuild
+  - File: scripts/sw-lib-pipeline-intelligence-test.sh (new test cases)
+  - ~40 lines added
+
+- [ ] **Task 10: Unit test - structural dedup enhancement** (depends on Tasks 2, 6, 8)
+  - Test: Modified files correctly invalidate old findings
+  - File: scripts/sw-lib-compound-audit-test.sh (new test cases)
+  - ~45 lines added
+
+- [ ] **Task 11: Integration test - multi-cycle with code changes** (depends on Tasks 1-5, 9)
+  - Test: Run cascade → modify code → run cascade again → verify convergence
+  - File: scripts/sw-lib-pipeline-intelligence-test.sh (new test)
+  - ~50 lines added
+
+- [ ] **Task 12: Regression test - normal cascade (no code changes)** (depends on Task 10)
+  - Test: Verify dedup still works when code hasn't changed
+  - File: scripts/sw-lib-compound-audit-test.sh
+  - ~30 lines added
+
+## Files to Modify
+
+1. **scripts/lib/pipeline-intelligence.sh** (~2000 LOC)
+   - Add `_cascade_start_commit` tracking at stage start
+   - Add rebuild detection logic in while loop
+   - Add clearing logic + audit events
+   - **Impact:** ~40-60 lines added, minimal risk (isolated to cascade block)
+
+2. **scripts/lib/compound-audit.sh** (~350 LOC)
+   - Add finding metadata (created_at_commit)
+   - Enhance structural dedup to check file modifications
+   - Add pre-prompt verification
+   - **Impact:** ~50-80 lines added, low risk (separate functions)
+
+3. **scripts/sw-lib-compound-audit-test.sh** (~500 LOC)
+   - Add test cases for enhanced dedup
+   - Test orphaned finding detection
+   - **Impact:** ~60-80 lines added, new tests only
+
+4. **scripts/sw-lib-pipeline-intelligence-test.sh** (new or existing)
+   - Add test for clearing logic
+   - Add test for rebuild detection
+   - **Impact:** ~80-120 lines added, new tests only
+
+## Risk Analysis
+
+| Risk                              | Impact                                   | Probability | Mitigation                                                |
+| --------------------------------- | ---------------------------------------- | ----------- | --------------------------------------------------------- |
+| Findings cleared too aggressively | Lose valid findings, repeat audits       | Low         | Emit audit events for every clear; easy to audit logs     |
+| Rebuild detection false positives | Clear when shouldn't; miss issues        | Very low    | git rev-parse HEAD is reliable; unit tests                |
+| Enhanced dedup logic bugs         | Keep stale findings OR remove valid ones | Medium      | Unit tests verify both cases; verify against current diff |
+| Performance impact                | Cascade takes longer                     | Low         | Cache git diff results; reuse existing \_cascade_diff     |
+| Breaking existing behavior        | Convergence breaks, dedup stops working  | Low         | Regression test ensures normal cascade works              |
+
+## Testing Approach
+
+### Unit Tests
+
+- **Test 1:** Rebuild detection correctly identifies when HEAD changed
+- **Test 2:** Clearing logic resets \_cascade_all_findings only when needed
+- **Test 3:** Structural dedup with file modification detection works
+- **Test 4:** Findings with no matching files are flagged as orphaned
+
+### Integration Tests
+
+- **Test 5:** Full cascade with code modification → converges
+- **Test 6:** Multiple rebuilds → findings stay fresh
+- **Test 7:** Normal cascade (no code changes) → dedup still catches duplicates
+
+### Test Scenarios
+
+1. **Scenario A:** Single cycle, no code changes (baseline)
+   - Expected: Normal behavior, agents find issues
+
+2. **Scenario B:** Build loop modifies code, re-enter compound_quality
+   - Expected: Findings are cleared, cascade starts fresh
+
+3. **Scenario C:** Multiple build loops with incremental fixes
+   - Expected: Findings stay fresh each time, cascade converges
+
+4. **Scenario D:** Code changes but same issue exists
+   - Expected: Fresh findings catch the issue again (not treated as duplicate)
+
+## Definition of Done Checklist
+
+- [ ] Task 1: Git commit snapshot added and tracked
+- [ ] Task 2: Findings include created_at_commit metadata
+- [ ] Task 3: Rebuild detection logic working correctly
+- [ ] Task 4: Stale findings cleared on rebuild
+- [ ] Task 5: Audit events emitted for all clearing decisions
+- [ ] Task 6: Structural dedup enhanced with file modification check
+- [ ] Task 7: Pre-prompt verification filters orphaned findings
+- [ ] Task 8: Orphaned findings are logged with warnings
+- [ ] Task 9: Unit tests for clearing logic pass
+- [ ] Task 10: Unit tests for enhanced dedup pass
+- [ ] Task 11: Integration test with multi-cycle code changes passes
+- [ ] Task 12: Regression test for normal cascade passes
+- [ ] All existing tests still pass
+- [ ] Code reviewed and approved
+- [ ] No regressions in existing pipelines

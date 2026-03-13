@@ -302,4 +302,59 @@ result=$(compound_audit_run_cycle "logic" "diff content" "plan" "[]" 1)
 count=$(echo "$result" | jq 'length')
 assert_eq "Single agent returns its findings" "1" "$count"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Convergence flag and deduped counting (Bug 1, 2, 3 regression tests)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "cascade convergence flag and deduped counting"
+
+# Test: compound_audit_converged returns reason when cycle >= max_cycles
+result=$(compound_audit_converged "[]" "[]" 3 3)
+if [[ -n "$result" ]]; then
+    assert_pass "converged at max_cycles returns reason"
+else
+    assert_fail "converged at max_cycles returns reason" "Expected non-empty reason, got empty"
+fi
+
+# Test: compound_audit_converged returns reason on empty new findings (plateau)
+prev='[{"severity":"high","category":"logic","file":"foo.sh","line":10,"description":"Off by one","evidence":"x","suggestion":"fix"}]'
+result=$(compound_audit_converged "[]" "$prev" 2 5)
+if [[ -n "$result" ]]; then
+    assert_pass "converged on empty new findings returns reason"
+else
+    assert_fail "converged on empty new findings returns reason" "Expected non-empty reason, got empty"
+fi
+
+# Test: compound_audit_converged returns empty string when not yet converged
+result=$(compound_audit_converged '[{"severity":"high","category":"logic","file":"foo.sh","line":10,"description":"New bug","evidence":"x","suggestion":"fix"}]' "[]" 1 5)
+if [[ -z "$result" ]]; then
+    assert_pass "not converged returns empty string"
+else
+    assert_fail "not converged returns empty string" "Expected empty, got: $result"
+fi
+
+# Test: dedup removes exact duplicates across cycles
+finding='[{"severity":"high","category":"logic","file":"foo.sh","line":10,"description":"Off by one","evidence":"x","suggestion":"fix"}]'
+doubled=$(echo "$finding" "$finding" | jq -s '.[0] + .[1]')
+deduped=$(compound_audit_dedup_structural "$doubled")
+count=$(echo "$deduped" | jq 'length')
+assert_eq "dedup removes exact duplicate across cycles" "1" "$count"
+
+# Test: dedup keeps genuinely different findings
+finding_a='[{"severity":"high","category":"logic","file":"foo.sh","line":10,"description":"Off by one","evidence":"x","suggestion":"fix"}]'
+finding_b='[{"severity":"high","category":"security","file":"foo.sh","line":10,"description":"SQL injection","evidence":"y","suggestion":"sanitize"}]'
+combined=$(echo "$finding_a" "$finding_b" | jq -s '.[0] + .[1]')
+deduped=$(compound_audit_dedup_structural "$combined")
+count=$(echo "$deduped" | jq 'length')
+assert_eq "dedup keeps different-category findings on same line" "2" "$count"
+
+# Test: convergence count uses variable length, not file (dedup prevents inflation)
+# Simulate two cycles with the same finding — after dedup, count should be 1
+finding='[{"severity":"critical","category":"logic","file":"foo.sh","line":5,"description":"Null deref","evidence":"ptr","suggestion":"check null"}]'
+accumulated=$(echo "$finding" "$finding" | jq -s '.[0] + .[1]')
+if type compound_audit_dedup_structural >/dev/null 2>&1; then
+    accumulated=$(compound_audit_dedup_structural "$accumulated") || true
+fi
+crit_count=$(echo "$accumulated" | jq '[.[] | select(.severity == "critical" or .severity == "high")] | length' 2>/dev/null || echo "0")
+assert_eq "deduped accumulation counts 1 not 2 for convergence" "1" "$crit_count"
+
 print_test_results

@@ -287,48 +287,27 @@ check_disk_space() {
 }
 
 # ─── GitHub API Retry Helper ────────────────────────────────────
-# Retries gh CLI calls with exponential backoff on 403 (rate limit)
+# Legacy wrapper — delegates to centralized gh_safe() from github-rate-limit.sh.
 # Usage: gh_with_retry <max_attempts> gh issue view <args>
-# Returns: command output on success, empty on failure
+# Note: max_attempts arg is accepted for API compat but ignored (gh_safe uses config).
 gh_with_retry() {
-    local max_attempts="${1:-4}"
+    local _max_attempts="${1:-4}"
     shift
-    local attempt=1
-    local backoff_secs=30
-
-    while [[ "$attempt" -le "$max_attempts" ]]; do
-        # Execute gh command
-        local output result
-        output=$("$@" 2>&1)
-        result=$?
-
-        # Success
-        if [[ "$result" -eq 0 ]]; then
-            echo "$output"
-            return 0
+    # Load gh_safe if not already available
+    if ! type gh_safe >/dev/null 2>&1; then
+        local _helpers_dir
+        _helpers_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        if [[ -f "$_helpers_dir/github-rate-limit.sh" ]]; then
+            # shellcheck source=github-rate-limit.sh
+            source "$_helpers_dir/github-rate-limit.sh"
         fi
-
-        # Check for rate limit (403) or API error
-        if echo "$output" | grep -qE "HTTP 403|API rate limit|rate limited|You have exceeded"; then
-            if [[ "$attempt" -lt "$max_attempts" ]]; then
-                warn "GitHub API rate limit detected — backing off ${backoff_secs}s (attempt $attempt/$max_attempts)"
-                emit_event "github.rate_limited" "attempt=$attempt" "backoff=$backoff_secs"
-                sleep "$backoff_secs"
-                backoff_secs=$((backoff_secs * 2))
-                [[ "$backoff_secs" -gt 300 ]] && backoff_secs=300
-            fi
-        else
-            # Non-rate-limit error — fail immediately
-            return "$result"
-        fi
-
-        attempt=$((attempt + 1))
-    done
-
-    # Exhausted all retries
-    error "GitHub API call failed after $max_attempts attempts: ${output##*$'\n'}"
-    emit_event "github.api_failed" "attempts=$max_attempts"
-    return 1
+    fi
+    if type gh_safe >/dev/null 2>&1; then
+        gh_safe "$@"
+    else
+        # Fallback: run directly if gh_safe unavailable
+        "$@"
+    fi
 }
 
 # ─── Project Identity ────────────────────────────────────────────

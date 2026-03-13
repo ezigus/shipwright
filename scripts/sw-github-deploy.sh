@@ -35,6 +35,10 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
+# ─── Rate-limit retry wrapper ────────────────────────────────────────────────
+# shellcheck source=lib/github-rate-limit.sh
+[[ -f "$SCRIPT_DIR/lib/github-rate-limit.sh" ]] && source "$SCRIPT_DIR/lib/github-rate-limit.sh"
+
 # ─── Artifacts Directory ─────────────────────────────────────────────────────
 ARTIFACTS_DIR="${REPO_DIR}/.claude/pipeline-artifacts"
 
@@ -89,7 +93,7 @@ gh_deploy_create() {
 
     local response=""
     local result=0
-    response=$(gh api "repos/${owner}/${repo}/deployments" \
+    response=$(gh_safe gh api "repos/${owner}/${repo}/deployments" \
         --method POST \
         --input - <<< "$body" 2>/dev/null) || result=$?
 
@@ -147,7 +151,7 @@ gh_deploy_update_status() {
         + (if $log_url != "" then {log_url: $log_url} else {} end)')
 
     local result=0
-    gh api "repos/${owner}/${repo}/deployments/${deploy_id}/statuses" \
+    gh_safe gh api "repos/${owner}/${repo}/deployments/${deploy_id}/statuses" \
         --method POST \
         --input - <<< "$body" --silent 2>/dev/null || result=$?
 
@@ -182,7 +186,7 @@ gh_deploy_list() {
 
     local response=""
     local result=0
-    response=$(gh api "$endpoint" 2>/dev/null) || result=$?
+    response=$(gh_safe gh api "$endpoint" 2>/dev/null) || result=$?
 
     if [[ "$result" -ne 0 ]]; then
         warn "Failed to list deployments" >&2
@@ -211,7 +215,7 @@ gh_deploy_latest() {
 
     local response=""
     local result=0
-    response=$(gh api "repos/${owner}/${repo}/deployments?environment=${environment}&per_page=1" 2>/dev/null) || result=$?
+    response=$(gh_safe gh api "repos/${owner}/${repo}/deployments?environment=${environment}&per_page=1" 2>/dev/null) || result=$?
 
     if [[ "$result" -ne 0 ]]; then
         warn "Failed to get latest deployment" >&2
@@ -243,7 +247,7 @@ gh_deploy_rollback() {
     # Get the two most recent deployments
     local deployments=""
     local result=0
-    deployments=$(gh api "repos/${owner}/${repo}/deployments?environment=${environment}&per_page=2" 2>/dev/null) || result=$?
+    deployments=$(gh_safe gh api "repos/${owner}/${repo}/deployments?environment=${environment}&per_page=2" 2>/dev/null) || result=$?
 
     if [[ "$result" -ne 0 ]]; then
         error "Failed to fetch deployments for rollback"

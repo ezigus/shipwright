@@ -25,6 +25,8 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
 [[ -f "$SCRIPT_DIR/lib/config.sh" ]] && source "$SCRIPT_DIR/lib/config.sh"
+# shellcheck source=lib/github-rate-limit.sh
+[[ -f "$SCRIPT_DIR/lib/github-rate-limit.sh" ]] && source "$SCRIPT_DIR/lib/github-rate-limit.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -148,39 +150,10 @@ daemon_github_context() {
 }
 
 # ─── GitHub API Retry with Backoff ────────────────────────────────────────
-# Retries gh commands up to 3 times with exponential backoff (1s, 3s, 9s).
-# Detects rate-limit (403/429) and transient errors. Returns the gh exit code.
+# Legacy wrapper — delegates to centralized gh_safe() from github-rate-limit.sh.
+# Kept for backward compatibility with existing daemon call sites.
 gh_retry() {
-    local max_retries=3
-    local backoff=1
-    local attempt=0
-    local exit_code=0
-
-    while [[ $attempt -lt $max_retries ]]; do
-        attempt=$((attempt + 1))
-        # Run the gh command with per-call timeout; capture exit code
-        if output=$(_timeout "$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)" "$@" 2>&1); then
-            echo "$output"
-            return 0
-        fi
-        exit_code=$?
-
-        # Check for rate-limit or server error indicators
-        if echo "$output" | grep -qiE "rate limit|403|429|502|503"; then
-            daemon_log WARN "gh_retry: rate limit / server error on attempt ${attempt}/${max_retries} — backoff ${backoff}s" >&2
-        else
-            daemon_log WARN "gh_retry: transient error on attempt ${attempt}/${max_retries} (exit ${exit_code}) — backoff ${backoff}s" >&2
-        fi
-
-        if [[ $attempt -lt $max_retries ]]; then
-            sleep "$backoff"
-            backoff=$((backoff * 3))
-        fi
-    done
-
-    # Return last output and exit code after exhausting retries
-    echo "$output"
-    return "$exit_code"
+    gh_safe "$@"
 }
 
 # ─── Defaults ───────────────────────────────────────────────────────────────

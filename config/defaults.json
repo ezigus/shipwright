@@ -7,7 +7,14 @@
     "max_time": 60,
     "gh_timeout": 30,
     "retry_count": 3,
-    "retry_delay": 2
+    "retry_delay": 2,
+    "rate_limit": {
+      "max_retries": 4,
+      "base_backoff_secs": 2,
+      "max_backoff_secs": 300,
+      "backoff_multiplier": 2,
+      "circuit_breaker_failures": 3
+    }
   },
   "daemon": {
     "poll_interval": 30,

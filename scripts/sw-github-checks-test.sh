@@ -36,6 +36,9 @@ setup_env() {
     # Create compat.sh stub
     touch "$TEST_TEMP_DIR/repo/scripts/lib/compat.sh"
 
+    # Copy github-rate-limit.sh for gh_safe() support
+    cp "$SCRIPT_DIR/lib/github-rate-limit.sh" "$TEST_TEMP_DIR/repo/scripts/lib/"
+
     # Create a mock git config for _gh_detect_repo
     git -C "$TEST_TEMP_DIR/repo" init --quiet 2>/dev/null || true
     git -C "$TEST_TEMP_DIR/repo" remote add origin "https://github.com/testowner/testrepo.git" 2>/dev/null || true

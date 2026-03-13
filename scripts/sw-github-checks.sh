@@ -35,6 +35,10 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
+# ─── Rate-limit retry wrapper ────────────────────────────────────────────────
+# shellcheck source=lib/github-rate-limit.sh
+[[ -f "$SCRIPT_DIR/lib/github-rate-limit.sh" ]] && source "$SCRIPT_DIR/lib/github-rate-limit.sh"
+
 # ─── Artifacts Directory ─────────────────────────────────────────────────────
 ARTIFACTS_DIR="${REPO_DIR}/.claude/pipeline-artifacts"
 
@@ -91,7 +95,7 @@ _gh_checks_available() {
     fi
 
     local result=0
-    gh api "repos/${owner}/${repo}/commits/HEAD/check-runs?per_page=1" --silent 2>/dev/null || result=$?
+    gh_safe gh api "repos/${owner}/${repo}/commits/HEAD/check-runs?per_page=1" --silent 2>/dev/null || result=$?
 
     if [[ "$result" -eq 0 ]]; then
         _GH_CHECKS_AVAILABLE="yes"
@@ -136,7 +140,7 @@ gh_checks_create_run() {
 
     local response=""
     local result=0
-    response=$(gh api "repos/${owner}/${repo}/check-runs" \
+    response=$(gh_safe gh api "repos/${owner}/${repo}/check-runs" \
         --method POST \
         --input - <<< "$body" 2>/dev/null) || result=$?
 
@@ -199,7 +203,7 @@ gh_checks_update_run() {
         )} else {} end)')
 
     local result=0
-    gh api "repos/${owner}/${repo}/check-runs/${run_id}" \
+    gh_safe gh api "repos/${owner}/${repo}/check-runs/${run_id}" \
         --method PATCH \
         --input - <<< "$body" --silent 2>/dev/null || result=$?
 
@@ -251,7 +255,7 @@ gh_checks_annotate() {
             }')
 
         local result=0
-        gh api "repos/${owner}/${repo}/check-runs/${run_id}" \
+        gh_safe gh api "repos/${owner}/${repo}/check-runs/${run_id}" \
             --method PATCH \
             --input - <<< "$body" --silent 2>/dev/null || result=$?
 
@@ -283,7 +287,7 @@ gh_checks_list_runs() {
 
     local response=""
     local result=0
-    response=$(gh api "repos/${owner}/${repo}/commits/${head_sha}/check-runs" 2>/dev/null) || result=$?
+    response=$(gh_safe gh api "repos/${owner}/${repo}/commits/${head_sha}/check-runs" 2>/dev/null) || result=$?
 
     if [[ "$result" -ne 0 ]]; then
         warn "Failed to list check runs for ${head_sha}" >&2

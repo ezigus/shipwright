@@ -29,6 +29,10 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
+# ─── Rate-limit retry wrapper ────────────────────────────────────────────────
+# shellcheck source=lib/github-rate-limit.sh
+[[ -f "$SCRIPT_DIR/lib/github-rate-limit.sh" ]] && source "$SCRIPT_DIR/lib/github-rate-limit.sh"
+
 # ─── Discovery & CRUD Interface ────────────────────────────────────────────
 # All functions output normalized JSON (or plain text where specified).
 # Input: normalized arguments (label, state, issue_id, etc.)
@@ -59,7 +63,7 @@ provider_discover_issues() {
     gh_args+=(--json number,title,labels,state)
 
     local response
-    response=$(gh "${gh_args[@]}" 2>/dev/null) || {
+    response=$(gh_safe gh "${gh_args[@]}" 2>/dev/null) || {
         echo "[]"
         return 0
     }
@@ -78,7 +82,7 @@ provider_get_issue() {
     [[ "${NO_GITHUB:-}" == "1" ]] && return 0
 
     local response
-    response=$(gh issue view "$issue_id" --json number,title,body,labels,state 2>/dev/null) || {
+    response=$(gh_safe gh issue view "$issue_id" --json number,title,body,labels,state 2>/dev/null) || {
         return 1
     }
 
@@ -95,7 +99,7 @@ provider_get_issue_body() {
     [[ -z "$issue_id" ]] && return 1
     [[ "${NO_GITHUB:-}" == "1" ]] && return 0
 
-    gh issue view "$issue_id" --json body --jq '.body' 2>/dev/null || return 1
+    gh_safe gh issue view "$issue_id" --json body --jq '.body' 2>/dev/null || return 1
 }
 
 # Add label to issue
@@ -108,7 +112,7 @@ provider_add_label() {
     [[ -z "$issue_id" || -z "$label" ]] && return 1
     [[ "${NO_GITHUB:-}" == "1" ]] && return 0
 
-    gh issue edit "$issue_id" --add-label "$label" 2>/dev/null || return 1
+    gh_safe gh issue edit "$issue_id" --add-label "$label" 2>/dev/null || return 1
 }
 
 # Remove label from issue
@@ -121,7 +125,7 @@ provider_remove_label() {
     [[ -z "$issue_id" || -z "$label" ]] && return 1
     [[ "${NO_GITHUB:-}" == "1" ]] && return 0
 
-    gh issue edit "$issue_id" --remove-label "$label" 2>/dev/null || return 1
+    gh_safe gh issue edit "$issue_id" --remove-label "$label" 2>/dev/null || return 1
 }
 
 # Add comment to issue
@@ -134,7 +138,7 @@ provider_comment() {
     [[ -z "$issue_id" || -z "$body" ]] && return 1
     [[ "${NO_GITHUB:-}" == "1" ]] && return 0
 
-    gh issue comment "$issue_id" --body "$body" 2>/dev/null || return 1
+    gh_safe gh issue comment "$issue_id" --body "$body" 2>/dev/null || return 1
 }
 
 # Close/resolve issue
@@ -146,7 +150,7 @@ provider_close_issue() {
     [[ -z "$issue_id" ]] && return 1
     [[ "${NO_GITHUB:-}" == "1" ]] && return 0
 
-    gh issue close "$issue_id" 2>/dev/null || return 1
+    gh_safe gh issue close "$issue_id" 2>/dev/null || return 1
 }
 
 # Create new issue
@@ -178,7 +182,7 @@ provider_create_issue() {
     fi
 
     local response
-    response=$(gh "${gh_args[@]}" 2>/dev/null) || {
+    response=$(gh_safe gh "${gh_args[@]}" 2>/dev/null) || {
         return 1
     }
 

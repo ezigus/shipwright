@@ -37,6 +37,10 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
     echo "${payload}}" >> "${HOME}/.shipwright/events.jsonl"
   }
 fi
+# ─── Rate-limit retry wrapper ────────────────────────────────────────────────
+# shellcheck source=lib/github-rate-limit.sh
+[[ -f "$SCRIPT_DIR/lib/github-rate-limit.sh" ]] && source "$SCRIPT_DIR/lib/github-rate-limit.sh"
+
 # ─── Structured Event Log ──────────────────────────────────────────────────
 # shellcheck disable=SC2034
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
@@ -195,7 +199,7 @@ gh_graphql() {
     fi
 
     local result
-    result=$(gh api graphql -f query="$query" --input - <<< "$variables" 2>/dev/null) || {
+    result=$(gh_safe gh api graphql -f query="$query" --input - <<< "$variables" 2>/dev/null) || {
         error "GraphQL query failed"
         echo '{"error": "query failed"}'
         return 1
@@ -319,7 +323,7 @@ gh_blame_data() {
 
     # Use REST API for commit history on path
     local result
-    result=$(gh api "repos/${owner}/${repo}/commits?path=${path}&per_page=100" 2>/dev/null) || {
+    result=$(gh_safe gh api "repos/${owner}/${repo}/commits?path=${path}&per_page=100" 2>/dev/null) || {
         echo "[]"
         return 0
     }
@@ -360,7 +364,7 @@ gh_contributors() {
     }
 
     local result
-    result=$(gh api "repos/${owner}/${repo}/contributors?per_page=100" 2>/dev/null) || {
+    result=$(gh_safe gh api "repos/${owner}/${repo}/contributors?per_page=100" 2>/dev/null) || {
         echo "[]"
         return 0
     }
@@ -455,7 +459,7 @@ gh_commit_history() {
     }
 
     local result
-    result=$(gh api "repos/${owner}/${repo}/commits?path=${path}&per_page=${limit}" 2>/dev/null) || {
+    result=$(gh_safe gh api "repos/${owner}/${repo}/commits?path=${path}&per_page=${limit}" 2>/dev/null) || {
         echo "[]"
         return 0
     }
@@ -496,7 +500,7 @@ gh_branch_protection() {
     }
 
     local result
-    result=$(gh api "repos/${owner}/${repo}/branches/${branch}/protection" 2>/dev/null) || {
+    result=$(gh_safe gh api "repos/${owner}/${repo}/branches/${branch}/protection" 2>/dev/null) || {
         # 404 = no protection rules
         local parsed='{"protected": false}'
         _gh_cache_set "$cache_key" "$parsed"
@@ -545,7 +549,7 @@ gh_codeowners() {
     local content=""
     local locations=("CODEOWNERS" ".github/CODEOWNERS" "docs/CODEOWNERS")
     for loc in "${locations[@]}"; do
-        content=$(gh api "repos/${owner}/${repo}/contents/${loc}" --jq '.content' 2>/dev/null || true)
+        content=$(gh_safe gh api "repos/${owner}/${repo}/contents/${loc}" --jq '.content' 2>/dev/null || true)
         if [[ -n "$content" ]]; then
             break
         fi
@@ -629,7 +633,7 @@ gh_security_alerts() {
     }
 
     local result
-    result=$(gh api "repos/${owner}/${repo}/code-scanning/alerts?state=open&per_page=50" 2>/dev/null) || {
+    result=$(gh_safe gh api "repos/${owner}/${repo}/code-scanning/alerts?state=open&per_page=50" 2>/dev/null) || {
         # 403 = feature not enabled, 404 = not found
         _gh_cache_set "$cache_key" "[]"
         echo "[]"
@@ -673,7 +677,7 @@ gh_dependabot_alerts() {
     }
 
     local result
-    result=$(gh api "repos/${owner}/${repo}/dependabot/alerts?state=open&per_page=50" 2>/dev/null) || {
+    result=$(gh_safe gh api "repos/${owner}/${repo}/dependabot/alerts?state=open&per_page=50" 2>/dev/null) || {
         # 403 = feature not enabled
         _gh_cache_set "$cache_key" "[]"
         echo "[]"
@@ -721,7 +725,7 @@ gh_actions_runs() {
     }
 
     local result
-    result=$(gh api "repos/${owner}/${repo}/actions/workflows/${workflow}/runs?per_page=${limit}" 2>/dev/null) || {
+    result=$(gh_safe gh api "repos/${owner}/${repo}/actions/workflows/${workflow}/runs?per_page=${limit}" 2>/dev/null) || {
         echo "[]"
         return 0
     }
@@ -776,7 +780,7 @@ gh_repo_context() {
 
     # Get basic repo info
     local repo_info
-    repo_info=$(gh api "repos/${owner}/${repo}" 2>/dev/null || echo '{}')
+    repo_info=$(gh_safe gh api "repos/${owner}/${repo}" 2>/dev/null || echo '{}')
 
     local primary_language
     primary_language=$(echo "$repo_info" | jq -r '.language // "unknown"' 2>/dev/null || echo "unknown")

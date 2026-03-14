@@ -1069,6 +1069,10 @@ compound_rebuild_with_feedback() {
         fi
         if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]]; then
             echo "## Negative Prompting Concerns"
+            echo "NOTE: These findings were generated against a PREVIOUS version of the code."
+            echo "Re-read the actual current source files before making changes."
+            echo "If a finding references code that has already been fixed, skip it."
+            echo ""
             cat "$ARTIFACTS_DIR/negative-review.md"
             echo ""
         fi
@@ -1320,8 +1324,13 @@ stage_compound_quality() {
     local _cascade_converged=false
     local _cascade_all_findings="[]"
     local _cascade_active_agents="logic integration completeness"
+    local _cascade_prebuild_commit=""
+    _cascade_prebuild_commit=$(git rev-parse HEAD 2>/dev/null) || _cascade_prebuild_commit=""
     local _cascade_diff=""
     _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" 2>/dev/null | head -5000) || _cascade_diff=""
+    if [[ -n "$_cascade_diff" ]] && [[ $(echo "$_cascade_diff" | wc -l) -ge 5000 ]]; then
+        warn "Diff truncated at 5000 lines — audit findings for files beyond this limit may be incomplete"
+    fi
     local _cascade_plan=""
     if [[ -f "$ARTIFACTS_DIR/plan.md" ]]; then
         _cascade_plan=$(head -200 "$ARTIFACTS_DIR/plan.md" 2>/dev/null) || true
@@ -1344,6 +1353,10 @@ stage_compound_quality() {
         _cascade_test_evidence="${_cascade_test_status_line}
 ${_cascade_test_tail}"
     fi
+
+    # Track negative prompting finding categories across cycles for cross-cycle dedup
+    # Bash 3.2 compatible: newline-delimited string, no declare -A
+    local _neg_prev_categories=""
 
     local cycle=0
     while [[ "$cycle" -lt "$max_cycles" ]]; do
@@ -1618,9 +1631,31 @@ ${_cascade_test_tail}"
             current_issue_count=$((current_issue_count + ${adv_json_issues:-0}))
         fi
         if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]]; then
-            local neg_issues
-            neg_issues=$(grep -ciE '\[Critical\]' "$ARTIFACTS_DIR/negative-review.md" 2>/dev/null || true)
+            # Extract normalized categories (strip digits so shifted line numbers don't create false uniques)
+            local _neg_current_categories=""
+            _neg_current_categories=$(grep -iE '\[Critical\]' "$ARTIFACTS_DIR/negative-review.md" 2>/dev/null \
+                | sed 's/[0-9]//g' | sort -u || true)
+
+            # Count only findings not seen in a prior cycle (cross-cycle dedup)
+            local neg_issues=0
+            if [[ -z "$_neg_prev_categories" ]]; then
+                neg_issues=$(echo "$_neg_current_categories" | grep -c . 2>/dev/null || echo "0")
+            else
+                neg_issues=$(comm -23 \
+                    <(echo "$_neg_current_categories") \
+                    <(echo "$_neg_prev_categories") \
+                    | grep -c . 2>/dev/null || echo "0")
+            fi
             current_issue_count=$((current_issue_count + ${neg_issues:-0}))
+
+            # Accumulate categories for next cycle's dedup
+            if [[ -n "$_neg_current_categories" ]]; then
+                if [[ -z "$_neg_prev_categories" ]]; then
+                    _neg_prev_categories="$_neg_current_categories"
+                else
+                    _neg_prev_categories=$(printf '%s\n%s' "$_neg_prev_categories" "$_neg_current_categories" | sort -u)
+                fi
+            fi
         fi
         current_issue_count=$((current_issue_count + quality_failures))
 
@@ -1734,6 +1769,41 @@ All quality checks clean:
                 error "Rebuild with feedback failed"
                 log_stage "compound_quality" "Rebuild failed on cycle ${cycle}"
                 return 1
+            fi
+
+            # Check if code actually changed by comparing HEAD commit
+            local _post_rebuild_commit=""
+            _post_rebuild_commit=$(git rev-parse HEAD 2>/dev/null) || _post_rebuild_commit=""
+
+            if [[ -n "$_post_rebuild_commit" && "$_post_rebuild_commit" != "$_cascade_prebuild_commit" ]]; then
+                # Code changed — clear stale findings and refresh diff to prevent
+                # infinite loop where shifted line numbers defeat structural dedup
+                info "Cascade state reset — code changed (${_cascade_prebuild_commit:0:8}→${_post_rebuild_commit:0:8})"
+                emit_event "compound.rebuild_detected" \
+                    "issue=${ISSUE_NUMBER:-0}" \
+                    "cycle=$cycle" \
+                    "from_commit=${_cascade_prebuild_commit:0:8}" \
+                    "to_commit=${_post_rebuild_commit:0:8}"
+                _cascade_all_findings="[]"
+                _cascade_converged=false
+                _neg_prev_categories=""
+                emit_event "compound.findings_cleared" \
+                    "issue=${ISSUE_NUMBER:-0}" \
+                    "cycle=$cycle" \
+                    "reason=code_changed"
+                # Archive stale negative review so stale line numbers don't bleed into next cycle
+                if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]]; then
+                    mv "$ARTIFACTS_DIR/negative-review.md" "$ARTIFACTS_DIR/negative-review-cycle${cycle}.md" 2>/dev/null || true
+                fi
+                _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" 2>/dev/null | head -5000) || true
+                if [[ -z "$_cascade_diff" ]]; then
+                    warn "Git diff failed after rebuild — cascade will operate without diff context"
+                elif [[ $(echo "$_cascade_diff" | wc -l) -ge 5000 ]]; then
+                    warn "Diff truncated at 5000 lines — audit findings for files beyond this limit may be incomplete"
+                fi
+                _cascade_prebuild_commit="$_post_rebuild_commit"
+            else
+                warn "Rebuild completed but no new commits detected — preserving cascade findings"
             fi
 
             # Re-run review stage too (since code changed)

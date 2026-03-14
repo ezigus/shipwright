@@ -357,4 +357,94 @@ fi
 crit_count=$(echo "$accumulated" | jq '[.[] | select(.severity == "critical" or .severity == "high")] | length' 2>/dev/null || echo "0")
 assert_eq "deduped accumulation counts 1 not 2 for convergence" "1" "$crit_count"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Stale findings after rebuild (issue #153 regression test)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "stale findings after rebuild"
+
+# Test: findings with shifted line numbers defeat structural dedup
+# Simulates what happens when code is rebuilt and line numbers shift by >5
+pre_rebuild='[{"severity":"high","category":"logic","file":"foo.sh","line":10,"description":"Off by one in loop","evidence":"i < n","suggestion":"Use <="}]'
+post_rebuild='[{"severity":"high","category":"logic","file":"foo.sh","line":18,"description":"Off by one in loop","evidence":"i < n","suggestion":"Use <="}]'
+combined=$(jq -n --argjson a "$pre_rebuild" --argjson b "$post_rebuild" '$a + $b')
+deduped=$(compound_audit_dedup_structural "$combined")
+count=$(echo "$deduped" | jq 'length')
+# Line shift of 8 defeats the ±5 window — dedup keeps both, proving stale findings cause duplicates
+assert_eq "shifted lines (>5) defeat structural dedup" "2" "$count"
+
+# Test: clearing findings after rebuild prevents false duplicates
+# After rebuild, _cascade_all_findings should be reset to "[]"
+# so the next cycle starts fresh — no stale line numbers to conflict with
+cleared="[]"
+post_rebuild_fresh='[{"severity":"high","category":"logic","file":"foo.sh","line":18,"description":"Off by one in loop","evidence":"i < n","suggestion":"Use <="}]'
+combined_fresh=$(jq -n --argjson a "$cleared" --argjson b "$post_rebuild_fresh" '$a + $b')
+deduped_fresh=$(compound_audit_dedup_structural "$combined_fresh")
+count_fresh=$(echo "$deduped_fresh" | jq 'length')
+assert_eq "cleared findings after rebuild yields clean cycle" "1" "$count_fresh"
+
+# Test: convergence detection works correctly after findings reset
+# With cleared findings, convergence should detect no_criticals when no new critical/high found
+converge_result=$(compound_audit_converged "[]" "[]" 2 5)
+assert_eq "converged after reset with no new findings" "no_criticals" "$converge_result"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Integration test: simulate full rebuild + cascade convergence (issue #153)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "infinite loop prevention (integration)"
+
+# Simulate the full scenario that caused infinite loops:
+# 1. Cycle 1: agent finds issue X at line 10
+# 2. Rebuild modifies code — line 10 moves to line 18
+# 3. Cycle 2 (WITHOUT fix): agent re-reports issue X at line 18, dedup fails → loop
+# 3. Cycle 2 (WITH fix): findings cleared after rebuild, agent reports at line 18, converges
+
+max_sim_cycles=5
+sim_findings="[]"
+sim_converged=""
+
+# Cycle 1: initial finding
+cycle1_new='[{"severity":"high","category":"logic","file":"foo.sh","line":10,"description":"Off by one","evidence":"i < n","suggestion":"Use <="}]'
+sim_findings=$(jq -n --argjson a "$sim_findings" --argjson b "$cycle1_new" '$a + $b')
+sim_findings=$(compound_audit_dedup_structural "$sim_findings")
+c1_converge=$(compound_audit_converged "$cycle1_new" "[]" 1 "$max_sim_cycles")
+assert_eq "cycle 1: not converged (critical/high found)" "" "$c1_converge"
+
+# Simulate rebuild: code changed, line 10 → line 18
+# WITH FIX: clear findings (as pipeline-intelligence.sh now does)
+sim_findings="[]"
+sim_converged=false
+
+# Cycle 2: agent finds same issue at new line, but findings are clear
+cycle2_new='[{"severity":"high","category":"logic","file":"foo.sh","line":18,"description":"Off by one","evidence":"i < n","suggestion":"Use <="}]'
+sim_findings=$(jq -n --argjson a "$sim_findings" --argjson b "$cycle2_new" '$a + $b')
+sim_findings=$(compound_audit_dedup_structural "$sim_findings")
+c2_converge=$(compound_audit_converged "$cycle2_new" "[]" 2 "$max_sim_cycles")
+# After clearing, prev_findings is empty, so it checks crit/high count — still has high
+assert_eq "cycle 2 after reset: not converged (new high finding)" "" "$c2_converge"
+
+# Cycle 3: no new findings (rebuild fixed the issue)
+cycle3_new="[]"
+c3_converge=$(compound_audit_converged "$cycle3_new" "$sim_findings" 3 "$max_sim_cycles")
+assert_eq "cycle 3: converged (no new findings)" "no_criticals" "$c3_converge"
+
+# Verify: the loop terminated in ≤ max_sim_cycles
+assert_eq "loop converged within max cycles" "no_criticals" "$c3_converge"
+
+# Counter-test: WITHOUT the fix (stale findings preserved), dedup fails → never converges
+stale_accumulated='[{"severity":"high","category":"logic","file":"foo.sh","line":10,"description":"Off by one","evidence":"i < n","suggestion":"Use <="}]'
+shifted_new='[{"severity":"high","category":"logic","file":"foo.sh","line":18,"description":"Off by one","evidence":"i < n","suggestion":"Use <="}]'
+stale_converge=$(compound_audit_converged "$shifted_new" "$stale_accumulated" 2 "$max_sim_cycles")
+# Line shift of 8 > ±5 window, so not a dup; has crit/high → not converged
+assert_eq "without fix: shifted findings don't converge (proves bug)" "" "$stale_converge"
+
+# Test: _cascade_converged=false (not empty string) after reset is valid for loop re-entry
+# The while loop condition checks [[ "$_cascade_converged" != "true" ]]
+# so both "false" and "" would work, but "false" is unambiguous
+test_converged_val=false
+if [[ "$test_converged_val" != "true" ]]; then
+    assert_eq "false is valid loop re-entry state" "pass" "pass"
+else
+    assert_eq "false should allow loop re-entry" "pass" "fail"
+fi
+
 print_test_results

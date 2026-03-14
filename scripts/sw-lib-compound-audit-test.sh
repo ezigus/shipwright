@@ -366,7 +366,7 @@ print_test_section "stale findings after rebuild"
 # Simulates what happens when code is rebuilt and line numbers shift by >5
 pre_rebuild='[{"severity":"high","category":"logic","file":"foo.sh","line":10,"description":"Off by one in loop","evidence":"i < n","suggestion":"Use <="}]'
 post_rebuild='[{"severity":"high","category":"logic","file":"foo.sh","line":18,"description":"Off by one in loop","evidence":"i < n","suggestion":"Use <="}]'
-combined=$(echo "$pre_rebuild" "$post_rebuild" | jq -s '.[0] + .[1]')
+combined=$(jq -n --argjson a "$pre_rebuild" --argjson b "$post_rebuild" '$a + $b')
 deduped=$(compound_audit_dedup_structural "$combined")
 count=$(echo "$deduped" | jq 'length')
 # Line shift of 8 defeats the ±5 window — dedup keeps both, proving stale findings cause duplicates
@@ -377,7 +377,7 @@ assert_eq "shifted lines (>5) defeat structural dedup" "2" "$count"
 # so the next cycle starts fresh — no stale line numbers to conflict with
 cleared="[]"
 post_rebuild_fresh='[{"severity":"high","category":"logic","file":"foo.sh","line":18,"description":"Off by one in loop","evidence":"i < n","suggestion":"Use <="}]'
-combined_fresh=$(echo "$cleared" "$post_rebuild_fresh" | jq -s '.[0] + .[1]')
+combined_fresh=$(jq -n --argjson a "$cleared" --argjson b "$post_rebuild_fresh" '$a + $b')
 deduped_fresh=$(compound_audit_dedup_structural "$combined_fresh")
 count_fresh=$(echo "$deduped_fresh" | jq 'length')
 assert_eq "cleared findings after rebuild yields clean cycle" "1" "$count_fresh"
@@ -404,7 +404,7 @@ sim_converged=""
 
 # Cycle 1: initial finding
 cycle1_new='[{"severity":"high","category":"logic","file":"foo.sh","line":10,"description":"Off by one","evidence":"i < n","suggestion":"Use <="}]'
-sim_findings=$(echo "$sim_findings" "$cycle1_new" | jq -s '.[0] + .[1]')
+sim_findings=$(jq -n --argjson a "$sim_findings" --argjson b "$cycle1_new" '$a + $b')
 sim_findings=$(compound_audit_dedup_structural "$sim_findings")
 c1_converge=$(compound_audit_converged "$cycle1_new" "[]" 1 "$max_sim_cycles")
 assert_eq "cycle 1: not converged (critical/high found)" "" "$c1_converge"
@@ -416,7 +416,7 @@ sim_converged=false
 
 # Cycle 2: agent finds same issue at new line, but findings are clear
 cycle2_new='[{"severity":"high","category":"logic","file":"foo.sh","line":18,"description":"Off by one","evidence":"i < n","suggestion":"Use <="}]'
-sim_findings=$(echo "$sim_findings" "$cycle2_new" | jq -s '.[0] + .[1]')
+sim_findings=$(jq -n --argjson a "$sim_findings" --argjson b "$cycle2_new" '$a + $b')
 sim_findings=$(compound_audit_dedup_structural "$sim_findings")
 c2_converge=$(compound_audit_converged "$cycle2_new" "[]" 2 "$max_sim_cycles")
 # After clearing, prev_findings is empty, so it checks crit/high count — still has high

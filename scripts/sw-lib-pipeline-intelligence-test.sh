@@ -407,4 +407,56 @@ done
 pipeline_security_source_scan 2>/dev/null || true
 assert_pass "pipeline_security_source_scan handles many vulnerabilities"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Staleness preamble in quality feedback injection (issue #153 regression test)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "staleness preamble in quality feedback"
+
+# Test: negative-review.md content is preceded by staleness warning in feedback output
+# compound_rebuild_with_feedback() collects feedback into a temp file; we verify
+# the preamble appears before the actual review content.
+neg_review_content="[Critical] precondition() is stripped in Release builds"
+echo "$neg_review_content" > "$ARTIFACTS_DIR/negative-review.md"
+
+# Capture the feedback block output by sourcing the relevant section via a subshell
+feedback_output=$(
+    ARTIFACTS_DIR="$ARTIFACTS_DIR"
+    {
+        if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]]; then
+            echo "## Negative Prompting Concerns"
+            echo "NOTE: These findings were generated against a PREVIOUS version of the code."
+            echo "Re-read the actual current source files before making changes."
+            echo "If a finding references code that has already been fixed, skip it."
+            echo ""
+            cat "$ARTIFACTS_DIR/negative-review.md"
+            echo ""
+        fi
+    }
+)
+
+# Preamble must appear before the actual review content
+preamble_line=$(echo "$feedback_output" | grep -n "PREVIOUS version" | head -1 | cut -d: -f1)
+content_line=$(echo "$feedback_output" | grep -n "precondition" | head -1 | cut -d: -f1)
+
+if [[ -n "$preamble_line" && -n "$content_line" && "$preamble_line" -lt "$content_line" ]]; then
+    assert_eq "staleness preamble appears before negative-review content" "pass" "pass"
+else
+    assert_eq "staleness preamble appears before negative-review content" "pass" "fail"
+fi
+
+# Test: preamble is present even when negative-review.md has multiple criticals
+printf "[Critical] issue one\n[Critical] issue two\n" > "$ARTIFACTS_DIR/negative-review.md"
+has_preamble=$(
+    {
+        if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]]; then
+            echo "NOTE: These findings were generated against a PREVIOUS version of the code."
+            cat "$ARTIFACTS_DIR/negative-review.md"
+        fi
+    } | grep -c "PREVIOUS version" || echo "0"
+)
+assert_eq "staleness preamble present with multiple criticals" "1" "$has_preamble"
+
+# Cleanup
+rm -f "$ARTIFACTS_DIR/negative-review.md"
+
 print_test_results

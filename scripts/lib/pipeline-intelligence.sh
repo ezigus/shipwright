@@ -1010,44 +1010,14 @@ Update the design to address these violations, then rebuild."
     fi
 }
 
-compound_rebuild_with_feedback() {
-    local feedback_file="$ARTIFACTS_DIR/quality-feedback.md"
+# _write_quality_feedback <route> <output_file>
+# Collects all quality findings into a single markdown file. Extracted from
+# compound_rebuild_with_feedback() to allow direct testing without mocking
+# the full build loop.
+_write_quality_feedback() {
+    local route="${1:-correctness}"
+    local feedback_file="${2:-$ARTIFACTS_DIR/quality-feedback.md}"
 
-    # ── Intelligence: classify findings and determine routing ──
-    local route="correctness"
-    route=$(classify_quality_findings 2>/dev/null) || route="correctness"
-
-    # ── Build structured findings JSON alongside markdown ──
-    local structured_findings="[]"
-    local s_total_critical=0 s_total_major=0 s_total_minor=0
-
-    if [[ -f "$ARTIFACTS_DIR/classified-findings.json" ]]; then
-        s_total_critical=$(jq -r '.security // 0' "$ARTIFACTS_DIR/classified-findings.json" 2>/dev/null || echo "0")
-        s_total_major=$(jq -r '.correctness // 0' "$ARTIFACTS_DIR/classified-findings.json" 2>/dev/null || echo "0")
-        s_total_minor=$(jq -r '.style // 0' "$ARTIFACTS_DIR/classified-findings.json" 2>/dev/null || echo "0")
-    fi
-
-    local tmp_qf
-    tmp_qf="$(mktemp)"
-    jq -n \
-        --arg route "$route" \
-        --argjson total_critical "$s_total_critical" \
-        --argjson total_major "$s_total_major" \
-        --argjson total_minor "$s_total_minor" \
-        '{route: $route, total_critical: $total_critical, total_major: $total_major, total_minor: $total_minor}' \
-        > "$tmp_qf" 2>/dev/null && mv "$tmp_qf" "$ARTIFACTS_DIR/quality-findings.json" || rm -f "$tmp_qf"
-
-    # ── Architecture route: backtrack to design instead of rebuild ──
-    if [[ "$route" == "architecture" ]]; then
-        info "Architecture-level findings detected — attempting backtrack to design"
-        if pipeline_backtrack_to_stage "design" "architecture_violation" 2>/dev/null; then
-            return 0
-        fi
-        # Backtrack failed or already used — fall through to standard rebuild
-        warn "Backtrack unavailable — falling through to standard rebuild"
-    fi
-
-    # Collect all findings (prioritized by classification)
     {
         echo "# Quality Feedback — Issues to Fix"
         echo ""
@@ -1098,6 +1068,47 @@ compound_rebuild_with_feedback() {
             fi
         fi
     } > "$feedback_file"
+}
+
+compound_rebuild_with_feedback() {
+    local feedback_file="$ARTIFACTS_DIR/quality-feedback.md"
+
+    # ── Intelligence: classify findings and determine routing ──
+    local route="correctness"
+    route=$(classify_quality_findings 2>/dev/null) || route="correctness"
+
+    # ── Build structured findings JSON alongside markdown ──
+    local structured_findings="[]"
+    local s_total_critical=0 s_total_major=0 s_total_minor=0
+
+    if [[ -f "$ARTIFACTS_DIR/classified-findings.json" ]]; then
+        s_total_critical=$(jq -r '.security // 0' "$ARTIFACTS_DIR/classified-findings.json" 2>/dev/null || echo "0")
+        s_total_major=$(jq -r '.correctness // 0' "$ARTIFACTS_DIR/classified-findings.json" 2>/dev/null || echo "0")
+        s_total_minor=$(jq -r '.style // 0' "$ARTIFACTS_DIR/classified-findings.json" 2>/dev/null || echo "0")
+    fi
+
+    local tmp_qf
+    tmp_qf="$(mktemp)"
+    jq -n \
+        --arg route "$route" \
+        --argjson total_critical "$s_total_critical" \
+        --argjson total_major "$s_total_major" \
+        --argjson total_minor "$s_total_minor" \
+        '{route: $route, total_critical: $total_critical, total_major: $total_major, total_minor: $total_minor}' \
+        > "$tmp_qf" 2>/dev/null && mv "$tmp_qf" "$ARTIFACTS_DIR/quality-findings.json" || rm -f "$tmp_qf"
+
+    # ── Architecture route: backtrack to design instead of rebuild ──
+    if [[ "$route" == "architecture" ]]; then
+        info "Architecture-level findings detected — attempting backtrack to design"
+        if pipeline_backtrack_to_stage "design" "architecture_violation" 2>/dev/null; then
+            return 0
+        fi
+        # Backtrack failed or already used — fall through to standard rebuild
+        warn "Backtrack unavailable — falling through to standard rebuild"
+    fi
+
+    # Collect all findings (prioritized by classification)
+    _write_quality_feedback "$route" "$feedback_file"
 
     # Validate feedback file has actual content
     if [[ ! -s "$feedback_file" ]]; then
@@ -1329,7 +1340,7 @@ stage_compound_quality() {
     local _cascade_diff=""
     _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" 2>/dev/null | head -5000) || _cascade_diff=""
     if [[ -n "$_cascade_diff" ]] && [[ $(echo "$_cascade_diff" | wc -l) -ge 5000 ]]; then
-        warn "Diff truncated at 5000 lines — audit findings for files beyond this limit may be incomplete"
+        warn "Diff may be truncated at 5000 lines — audit findings for files beyond this limit may be incomplete"
     fi
     local _cascade_plan=""
     if [[ -f "$ARTIFACTS_DIR/plan.md" ]]; then
@@ -1639,14 +1650,16 @@ ${_cascade_test_tail}"
             # Count only findings not seen in a prior cycle (cross-cycle dedup)
             local neg_issues=0
             if [[ -z "$_neg_prev_categories" ]]; then
-                neg_issues=$(echo "$_neg_current_categories" | grep -c . 2>/dev/null || echo "0")
+                neg_issues=$(echo "$_neg_current_categories" | grep -c . 2>/dev/null || true)
+                neg_issues=${neg_issues:-0}
             else
                 neg_issues=$(comm -23 \
                     <(echo "$_neg_current_categories") \
                     <(echo "$_neg_prev_categories") \
-                    | grep -c . 2>/dev/null || echo "0")
+                    | grep -c . 2>/dev/null || true)
+                neg_issues=${neg_issues:-0}
             fi
-            current_issue_count=$((current_issue_count + ${neg_issues:-0}))
+            current_issue_count=$((current_issue_count + neg_issues))
 
             # Accumulate categories for next cycle's dedup
             if [[ -n "$_neg_current_categories" ]]; then
@@ -1799,7 +1812,7 @@ All quality checks clean:
                 if [[ -z "$_cascade_diff" ]]; then
                     warn "Git diff failed after rebuild — cascade will operate without diff context"
                 elif [[ $(echo "$_cascade_diff" | wc -l) -ge 5000 ]]; then
-                    warn "Diff truncated at 5000 lines — audit findings for files beyond this limit may be incomplete"
+                    warn "Diff may be truncated at 5000 lines — audit findings for files beyond this limit may be incomplete"
                 fi
                 _cascade_prebuild_commit="$_post_rebuild_commit"
             else

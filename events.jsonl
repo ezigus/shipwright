@@ -86,3 +86,4 @@
 {"ts":"2026-03-14T12:18:13Z","ts_epoch":1773490693,"type":"strategic.issue_created","title":"Safe stage parallelization analyzer with dependency graph computation","priority":"P3","complexity":"standard"}
 {"ts":"2026-03-14T12:18:17Z","ts_epoch":1773490697,"type":"strategic.issue_created","title":"CLI real-time stage progress streaming with iteration visibility","priority":"P1","complexity":"fast"}
 {"ts":"2026-03-14T12:18:17Z","ts_epoch":1773490697,"type":"strategic.cycle_complete","issues_created":5,"issues_skipped":0}
+{"ts":"2026-03-14T16:11:20Z","ts_epoch":1773504680,"type":"hygiene_platform_refactor","hardcoded":45,"fallback":63,"todo":44}

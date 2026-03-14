@@ -67,3 +67,5 @@
 {"ts":"2026-03-13T21:57:03Z","ts_epoch":1773439023,"type":"stage.failed","event_id":"evt-1773439023-2058884349","payload":"{\"stage\":\"compound_quality\",\"issue\":\"153\",\"timing\":\"1h 5m 24s\"}"}
 {"ts":"2026-03-13T21:57:03Z","ts_epoch":1773439023,"type":"stage.failed","issue":153,"stage":"compound_quality","duration_s":3927,"error":"  [38;2;0;212;255m▸[0m Pipeline exit code default is 1 (failure)... [38;2;74;222;128m✓[0m","error_class":"unknown"}
 {"ts":"2026-03-13T21:57:03Z","ts_epoch":1773439023,"type":"vitals.snapshot","issue":153,"stage":"compound_quality","iteration":0,"diff_lines":0,"no_progress":0}
+{"ts":"2026-03-14T00:38:33Z","ts_epoch":1773448713,"type":"hygiene_platform_refactor","hardcoded":45,"fallback":63,"todo":44}
+{"ts":"2026-03-14T00:38:38Z","ts_epoch":1773448718,"type":"cost.budget_unconfigured","status":"unlimited"}

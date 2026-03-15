@@ -538,6 +538,18 @@ run_claude_iteration() {
     # Accumulate token usage from this iteration's JSON output
     accumulate_loop_tokens "$json_file"
 
+    # Emit per-iteration context usage telemetry
+    if type emit_event >/dev/null 2>&1 && type get_context_usage_pct >/dev/null 2>&1; then
+        local _ctx_pct
+        _ctx_pct="$(get_context_usage_pct 2>/dev/null || echo 0)"
+        emit_event "loop.context_usage" \
+            "iteration=${ITERATION:-0}" \
+            "input_tokens=${LOOP_INPUT_TOKENS:-0}" \
+            "output_tokens=${LOOP_OUTPUT_TOKENS:-0}" \
+            "usage_pct=$_ctx_pct" \
+            "threshold=${CONTEXT_EXHAUSTION_THRESHOLD:-70}" || true
+    fi
+
     # Audit: record response metadata
     if type audit_emit >/dev/null 2>&1; then
         local response_chars=0

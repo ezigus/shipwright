@@ -40,6 +40,8 @@ fi
 [[ -f "$SCRIPT_DIR/lib/loop-convergence.sh" ]] && source "$SCRIPT_DIR/lib/loop-convergence.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-restart.sh" ]] && source "$SCRIPT_DIR/lib/loop-restart.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-progress.sh" ]] && source "$SCRIPT_DIR/lib/loop-progress.sh"
+# Context exhaustion prevention — proactive summarization before Claude hits context limits
+[[ -f "$SCRIPT_DIR/lib/loop-context-monitor.sh" ]] && source "$SCRIPT_DIR/lib/loop-context-monitor.sh"
 # Error actionability scoring and enhancement for better error context
 # shellcheck source=lib/error-actionability.sh
 [[ -f "$SCRIPT_DIR/lib/error-actionability.sh" ]] && source "$SCRIPT_DIR/lib/error-actionability.sh" 2>/dev/null || true
@@ -2180,6 +2182,18 @@ ${GOAL}"
             return 1
         fi
 
+        # Context exhaustion prevention — check cumulative token usage
+        if type check_context_exhaustion >/dev/null 2>&1 && check_context_exhaustion; then
+            local _ctx_pct
+            _ctx_pct="$(get_context_usage_pct 2>/dev/null || echo '?')"
+            warn "Context usage at ${_ctx_pct}% — triggering proactive summarization and session restart"
+            summarize_loop_state >/dev/null 2>&1 || true
+            STATUS="context_exhaustion"
+            write_state
+            write_progress
+            break
+        fi
+
         # Mid-loop memory refresh — re-query with current error context after iteration 3
         if [[ "$ITERATION" -ge 3 ]] && type memory_inject_context >/dev/null 2>&1; then
             local refresh_ctx
@@ -2416,8 +2430,9 @@ run_loop_with_restarts() {
         fi
 
         RESTART_COUNT=$(( RESTART_COUNT + 1 ))
+        local _restart_reason="${STATUS:-unknown}"
         if type emit_event >/dev/null 2>&1; then
-            emit_event "loop.restart" "restart=$RESTART_COUNT" "max=$MAX_RESTARTS" "iteration=$ITERATION"
+            emit_event "loop.restart" "restart=$RESTART_COUNT" "max=$MAX_RESTARTS" "iteration=$ITERATION" "reason=$_restart_reason"
         fi
         info "Session restart ${RESTART_COUNT}/${MAX_RESTARTS} — resetting iteration counter"
 
@@ -2435,6 +2450,32 @@ run_loop_with_restarts() {
         TEST_LOG_FILE=""
         # Reset GOAL to original — prevent unbounded growth from memory/human injections
         GOAL="$ORIGINAL_GOAL"
+
+        # Context exhaustion restart: inject compressed summary so the new session
+        # has essential context without re-exhausting the window
+        if [[ "$_restart_reason" == "context_exhaustion" ]]; then
+            local _ctx_summary_file="${LOG_DIR:-/tmp}/context-summary.md"
+            if [[ -f "$_ctx_summary_file" ]]; then
+                local _ctx_summary
+                _ctx_summary="$(head -50 "$_ctx_summary_file" 2>/dev/null || true)"
+                if [[ -n "$_ctx_summary" ]]; then
+                    GOAL="${GOAL}
+
+## Previous Session Context (Summarized)
+${_ctx_summary}"
+                    info "Context summary injected from previous session (${#_ctx_summary} chars)"
+                fi
+            fi
+            if type emit_event >/dev/null 2>&1; then
+                emit_event "loop.context_exhaustion_restart" \
+                    "restart=$RESTART_COUNT" \
+                    "iteration=$ITERATION"
+            fi
+            # Reset token counters so the new session starts fresh
+            LOOP_INPUT_TOKENS=0
+            LOOP_OUTPUT_TOKENS=0
+            LOOP_COST_MILLICENTS=0
+        fi
 
         # Archive old artifacts so they don't get overwritten or pollute new session
         local restart_archive="$LOG_DIR/restart-${RESTART_COUNT}"

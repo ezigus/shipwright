@@ -101,3 +101,11 @@
 {"ts":"2026-03-15T12:17:01Z","ts_epoch":1773577021,"type":"cost.budget_unconfigured","status":"unlimited"}
 {"ts":"2026-03-15T16:12:28Z","ts_epoch":1773591148,"type":"hygiene_platform_refactor","hardcoded":45,"fallback":63,"todo":44}
 {"ts":"2026-03-15T16:12:35Z","ts_epoch":1773591155,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-15T20:10:43Z","ts_epoch":1773605443,"type":"hygiene_platform_refactor","hardcoded":45,"fallback":63,"todo":44}
+{"ts":"2026-03-15T20:10:48Z","ts_epoch":1773605448,"type":"cost.budget_unconfigured","status":"unlimited"}
+{"ts":"2026-03-15T20:11:47Z","ts_epoch":1773605507,"type":"strategic.issue_created","title":"Pipeline failure diagnostic dashboard with root cause analysis","priority":"P0","complexity":"fast"}
+{"ts":"2026-03-15T20:11:50Z","ts_epoch":1773605510,"type":"strategic.issue_created","title":"Build loop iteration quality scoring with degradation detection","priority":"P0","complexity":"standard"}
+{"ts":"2026-03-15T20:11:53Z","ts_epoch":1773605513,"type":"strategic.issue_created","title":"sw-pipeline.sh modular extraction — stage executor and state manager","priority":"P6","complexity":"standard"}
+{"ts":"2026-03-15T20:11:56Z","ts_epoch":1773605516,"type":"strategic.issue_created","title":"Hardcoded policy inventory and config migration framework","priority":"P6","complexity":"fast"}
+{"ts":"2026-03-15T20:11:59Z","ts_epoch":1773605519,"type":"strategic.issue_created","title":"Stage-level success rate and cost attribution tracker","priority":"P0","complexity":"fast"}
+{"ts":"2026-03-15T20:11:59Z","ts_epoch":1773605519,"type":"strategic.cycle_complete","issues_created":5,"issues_skipped":0}

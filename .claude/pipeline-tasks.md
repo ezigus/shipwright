@@ -1,29 +1,29 @@
-# Pipeline Tasks — chore: close issue #45 - merge goal complete
+# Pipeline Tasks — Build loop context exhaustion prevention with proactive summarization
 
 ## Implementation Checklist
-- [ ] Task 1: Verify branch working tree is clean
-- [ ] Task 2: Verify recent commit history (5 iterations)
-- [ ] Task 3: Create PR from feature branch to main with comprehensive description
-- [ ] Task 4: Wait for GitHub Actions status checks to complete
-- [ ] Task 5: Verify all PR checks pass
-- [ ] Task 6: Request code review approval (if branch protection requires)
-- [ ] Task 7: Merge PR to main (squash merge recommended)
-- [ ] Task 8: Delete feature branch after merge
-- [ ] Task 9: Verify merge completed on main with `git pull`
-- [ ] Task 10: Close GitHub issue #45 with merge reference
-- [ ] Task 11: Sync local main with remote
-- [ ] Task 12: Verify merged commits are functional
-- [ ] Task 13: Update MEMORY.md with completion status
-- [ ] Task 14: Document lessons learned for future pipelines
-- [ ] Task 15: Archive pipeline artifacts and logs
-- [x] Branch is clean and ready
-- [x] Autonomous iterations 3-5 complete
-- [x] Git credential fix implemented
-- [x] Chaos test fix implemented
-- [x] Documentation auto-sync configured
+- [ ] Task 1: Create `scripts/lib/loop-context-monitor.sh` with module guard, constants, `check_context_exhaustion()`, `summarize_loop_state()`, `get_context_usage_pct()`
+- [ ] Task 2: Source the new module in `sw-loop.sh` (near line 28 with other lib sources)
+- [ ] Task 3: Add context exhaustion check in main loop after `accumulate_loop_tokens` call (~line 2166 in `run_single_agent_loop`)
+- [ ] Task 4: Handle `context_exhaustion` status in `run_loop_with_restarts()` — allow restart with summary injection
+- [ ] Task 5: Add `loop.context_exhaustion_warning` and `loop.context_exhaustion_restart` event emissions
+- [ ] Task 6: Emit `loop.context_usage` event per iteration with cumulative token usage percentage
+- [ ] Task 7: Add threshold calculation unit tests to `sw-loop-test.sh`
+- [ ] Task 8: Add summarization output unit tests to `sw-loop-test.sh`
+- [ ] Task 9: Add restart trigger integration test to `sw-loop-test.sh`
+- [ ] Task 10: Verify existing tests still pass after changes
+- [ ] `check_context_exhaustion()` correctly identifies when cumulative tokens exceed 70% of context window
+- [ ] `summarize_loop_state()` produces compressed state with: goal, iteration count, modified files, error patterns, test status
+- [ ] Loop continues seamlessly after summarization-triggered restart without losing critical context
+- [ ] `loop.context_exhaustion_warning` event emitted when threshold crossed (observable in events.jsonl)
+- [ ] `loop.context_exhaustion_restart` event emitted when restart occurs
+- [ ] Per-iteration `loop.context_usage` event includes cumulative token percentage
+- [ ] All new code has test coverage (threshold boundaries, summarization output, restart trigger)
+- [ ] Existing test suite passes without regression
+- [ ] Bash 3.2 compatible (no associative arrays, no `${var,,}`)
+- [ ] Uses `set -euo pipefail` and module guard pattern
 
 ## Context
-- Pipeline: standard
-- Branch: ci/chore-close-issue-45-merge-goal-complete
-- Issue: none
-- Generated: 2026-03-03T01:01:38Z
+- Pipeline: autonomous
+- Branch: feat/build-loop-context-exhaustion-prevention-154
+- Issue: #154
+- Generated: 2026-03-15T18:08:57Z

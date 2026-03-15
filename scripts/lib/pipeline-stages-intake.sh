@@ -385,7 +385,7 @@ ${_skill_prompts}
     _plan_timeout=$(_config_get_int "plan.claude_timeout" 3600 2>/dev/null || echo 3600)
     for _plan_attempt in 1 2 3; do
         : > "$plan_file"
-        timeout "$_plan_timeout" claude --print --model "$plan_model" --max-turns 25 \
+        _timeout "$_plan_timeout" claude --print --model "$plan_model" --max-turns 25 \
             --dangerously-skip-permissions "$plan_prompt" < /dev/null > "$plan_file" 2>"$_token_log"
         _plan_exit=$?
         if [[ "$_plan_exit" -eq 124 ]]; then

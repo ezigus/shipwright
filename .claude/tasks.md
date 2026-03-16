@@ -1,30 +1,33 @@
-# Tasks — chore: close issue #45 - merge goal complete
+# Tasks — Build loop context exhaustion prevention with proactive summarization
 
-## Status: In Progress
-Pipeline: standard | Branch: ci/chore-close-issue-45-merge-goal-complete
+## Status: Complete
+
+Pipeline: autonomous | Branch: feat/build-loop-context-exhaustion-prevention-154
 
 ## Checklist
-- [ ] Task 1: Verify branch working tree is clean
-- [ ] Task 2: Verify recent commit history (5 iterations)
-- [ ] Task 3: Create PR from feature branch to main with comprehensive description
-- [ ] Task 4: Wait for GitHub Actions status checks to complete
-- [ ] Task 5: Verify all PR checks pass
-- [ ] Task 6: Request code review approval (if branch protection requires)
-- [ ] Task 7: Merge PR to main (squash merge recommended)
-- [ ] Task 8: Delete feature branch after merge
-- [ ] Task 9: Verify merge completed on main with `git pull`
-- [ ] Task 10: Close GitHub issue #45 with merge reference
-- [ ] Task 11: Sync local main with remote
-- [ ] Task 12: Verify merged commits are functional
-- [ ] Task 13: Update MEMORY.md with completion status
-- [ ] Task 14: Document lessons learned for future pipelines
-- [ ] Task 15: Archive pipeline artifacts and logs
-- [x] Branch is clean and ready
-- [x] Autonomous iterations 3-5 complete
-- [x] Git credential fix implemented
-- [x] Chaos test fix implemented
-- [x] Documentation auto-sync configured
+
+- [x] Task 1: Create `scripts/lib/loop-context-monitor.sh` with module guard, constants, `check_context_exhaustion()`, `summarize_loop_state()`, `get_context_usage_pct()`
+- [x] Task 2: Source the new module in `sw-loop.sh` (near line 28 with other lib sources)
+- [x] Task 3: Add context exhaustion check in main loop after `accumulate_loop_tokens` call (~line 2166 in `run_single_agent_loop`)
+- [x] Task 4: Handle `context_exhaustion` status in `run_loop_with_restarts()` — allow restart with summary injection
+- [x] Task 5: Add `loop.context_exhaustion_warning` and `loop.context_exhaustion_restart` event emissions
+- [x] Task 6: Emit `loop.context_usage` event per iteration with cumulative token usage percentage
+- [x] Task 7: Add threshold calculation unit tests to `sw-loop-test.sh`
+- [x] Task 8: Add summarization output unit tests to `sw-loop-test.sh`
+- [x] Task 9: Add restart trigger integration test to `sw-loop-test.sh`
+- [x] Task 10: Verify existing tests still pass after changes
+- [x] `check_context_exhaustion()` correctly identifies when cumulative tokens exceed 70% of context window
+- [x] `summarize_loop_state()` produces compressed state with: goal, iteration count, modified files, error patterns, test status
+- [x] Loop continues seamlessly after summarization-triggered restart without losing critical context
+- [x] `loop.context_exhaustion_warning` event emitted when threshold crossed (observable in events.jsonl)
+- [x] `loop.context_exhaustion_restart` event emitted when restart occurs
+- [x] Per-iteration `loop.context_usage` event includes cumulative token percentage
+- [x] All new code has test coverage (threshold boundaries, summarization output, restart trigger)
+- [x] Existing test suite passes without regression (96/96 tests pass)
+- [x] Bash 3.2 compatible (no associative arrays, no `${var,,}`)
+- [x] Uses `set -euo pipefail` and module guard pattern
 
 ## Notes
-- Generated from pipeline plan at 2026-03-03T01:01:39Z
-- Pipeline will update status as tasks complete
+
+- Generated from pipeline plan at 2026-03-15T18:08:59Z
+- All tasks complete — implementation verified by 96/96 loop tests passing

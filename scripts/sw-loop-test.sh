@@ -828,6 +828,281 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# CONTEXT EXHAUSTION PREVENTION TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${DIM}  context exhaustion prevention${RESET}"
+
+# Test: loop-context-monitor.sh exists
+if [[ -f "$SCRIPT_DIR/lib/loop-context-monitor.sh" ]]; then
+    assert_pass "loop-context-monitor.sh module exists"
+else
+    assert_fail "loop-context-monitor.sh module exists"
+fi
+
+# Test: module has module guard
+if grep -q '_LOOP_CONTEXT_MONITOR_LOADED' "$SCRIPT_DIR/lib/loop-context-monitor.sh"; then
+    assert_pass "loop-context-monitor.sh has module guard"
+else
+    assert_fail "loop-context-monitor.sh has module guard"
+fi
+
+# Test: module defines CONTEXT_WINDOW_TOKENS default
+if grep -q 'CONTEXT_WINDOW_TOKENS.*200000' "$SCRIPT_DIR/lib/loop-context-monitor.sh"; then
+    assert_pass "CONTEXT_WINDOW_TOKENS defaults to 200000"
+else
+    assert_fail "CONTEXT_WINDOW_TOKENS defaults to 200000"
+fi
+
+# Test: module defines CONTEXT_EXHAUSTION_THRESHOLD default
+if grep -q 'CONTEXT_EXHAUSTION_THRESHOLD.*70' "$SCRIPT_DIR/lib/loop-context-monitor.sh"; then
+    assert_pass "CONTEXT_EXHAUSTION_THRESHOLD defaults to 70"
+else
+    assert_fail "CONTEXT_EXHAUSTION_THRESHOLD defaults to 70"
+fi
+
+# Test: check_context_exhaustion function defined
+if grep -q '^check_context_exhaustion()' "$SCRIPT_DIR/lib/loop-context-monitor.sh"; then
+    assert_pass "check_context_exhaustion() function defined"
+else
+    assert_fail "check_context_exhaustion() function defined"
+fi
+
+# Test: summarize_loop_state function defined
+if grep -q '^summarize_loop_state()' "$SCRIPT_DIR/lib/loop-context-monitor.sh"; then
+    assert_pass "summarize_loop_state() function defined"
+else
+    assert_fail "summarize_loop_state() function defined"
+fi
+
+# Test: get_context_usage_pct function defined
+if grep -q '^get_context_usage_pct()' "$SCRIPT_DIR/lib/loop-context-monitor.sh"; then
+    assert_pass "get_context_usage_pct() function defined"
+else
+    assert_fail "get_context_usage_pct() function defined"
+fi
+
+# Test: division-by-zero guard present
+if grep -q 'window.*-le 0' "$SCRIPT_DIR/lib/loop-context-monitor.sh"; then
+    assert_pass "Division-by-zero guard present in get_context_usage_pct"
+else
+    assert_fail "Division-by-zero guard present in get_context_usage_pct"
+fi
+
+# Test: threshold calculation — get_context_usage_pct returns correct value
+source "$SCRIPT_DIR/lib/loop-context-monitor.sh" 2>/dev/null || true
+if type get_context_usage_pct >/dev/null 2>&1; then
+    # 140000 / 200000 = 70%
+    LOOP_INPUT_TOKENS=100000
+    LOOP_OUTPUT_TOKENS=40000
+    CONTEXT_WINDOW_TOKENS=200000
+    pct="$(get_context_usage_pct)"
+    if [[ "$pct" -eq 70 ]]; then
+        assert_pass "get_context_usage_pct: 140000/200000 = 70%"
+    else
+        assert_fail "get_context_usage_pct: 140000/200000 = 70%" "got $pct, expected 70"
+    fi
+
+    # Under threshold: 100000 / 200000 = 50%
+    LOOP_INPUT_TOKENS=80000
+    LOOP_OUTPUT_TOKENS=20000
+    pct_under="$(get_context_usage_pct)"
+    if [[ "$pct_under" -eq 50 ]]; then
+        assert_pass "get_context_usage_pct: 100000/200000 = 50%"
+    else
+        assert_fail "get_context_usage_pct: 100000/200000 = 50%" "got $pct_under, expected 50"
+    fi
+
+    # Zero tokens: should return 0
+    LOOP_INPUT_TOKENS=0
+    LOOP_OUTPUT_TOKENS=0
+    pct_zero="$(get_context_usage_pct)"
+    if [[ "$pct_zero" -eq 0 ]]; then
+        assert_pass "get_context_usage_pct: 0/200000 = 0%"
+    else
+        assert_fail "get_context_usage_pct: 0/200000 = 0%" "got $pct_zero, expected 0"
+    fi
+
+    # Division by zero guard: window=0 should return 0, not crash
+    LOOP_INPUT_TOKENS=100000
+    LOOP_OUTPUT_TOKENS=0
+    CONTEXT_WINDOW_TOKENS=0
+    pct_divzero="$(get_context_usage_pct)"
+    if [[ "$pct_divzero" -eq 0 ]]; then
+        assert_pass "get_context_usage_pct: division-by-zero returns 0"
+    else
+        assert_fail "get_context_usage_pct: division-by-zero returns 0" "got $pct_divzero, expected 0"
+    fi
+    # Reset to sane defaults
+    CONTEXT_WINDOW_TOKENS=200000
+else
+    assert_fail "get_context_usage_pct() callable after sourcing module"
+fi
+
+# Test: check_context_exhaustion returns false (1) when below threshold
+if type check_context_exhaustion >/dev/null 2>&1; then
+    LOOP_INPUT_TOKENS=0
+    LOOP_OUTPUT_TOKENS=0
+    CONTEXT_WINDOW_TOKENS=200000
+    CONTEXT_EXHAUSTION_THRESHOLD=70
+    if ! check_context_exhaustion 2>/dev/null; then
+        assert_pass "check_context_exhaustion: returns false when no tokens"
+    else
+        assert_fail "check_context_exhaustion: returns false when no tokens"
+    fi
+
+    # 50% usage (below 70% threshold) — should return false
+    LOOP_INPUT_TOKENS=80000
+    LOOP_OUTPUT_TOKENS=20000
+    if ! check_context_exhaustion 2>/dev/null; then
+        assert_pass "check_context_exhaustion: returns false at 50% usage"
+    else
+        assert_fail "check_context_exhaustion: returns false at 50% usage"
+    fi
+
+    # 70% usage (at threshold) — should return true
+    LOOP_INPUT_TOKENS=100000
+    LOOP_OUTPUT_TOKENS=40000
+    if check_context_exhaustion 2>/dev/null; then
+        assert_pass "check_context_exhaustion: returns true at 70% threshold"
+    else
+        assert_fail "check_context_exhaustion: returns true at 70% threshold"
+    fi
+
+    # Over threshold (80%) — should return true
+    LOOP_INPUT_TOKENS=140000
+    LOOP_OUTPUT_TOKENS=20000
+    if check_context_exhaustion 2>/dev/null; then
+        assert_pass "check_context_exhaustion: returns true above threshold"
+    else
+        assert_fail "check_context_exhaustion: returns true above threshold"
+    fi
+
+    # Custom threshold override: 90% threshold, 80% usage → should return false
+    LOOP_INPUT_TOKENS=140000
+    LOOP_OUTPUT_TOKENS=20000
+    CONTEXT_EXHAUSTION_THRESHOLD=90
+    if ! check_context_exhaustion 2>/dev/null; then
+        assert_pass "check_context_exhaustion: respects custom threshold (90%)"
+    else
+        assert_fail "check_context_exhaustion: respects custom threshold (90%)"
+    fi
+    # Reset
+    CONTEXT_EXHAUSTION_THRESHOLD=70
+    LOOP_INPUT_TOKENS=0
+    LOOP_OUTPUT_TOKENS=0
+else
+    assert_fail "check_context_exhaustion() callable after sourcing module"
+fi
+
+# Test: summarize_loop_state writes output file
+if type summarize_loop_state >/dev/null 2>&1; then
+    _summary_log_dir="$TEST_TEMP_DIR/log-summary-test"
+    mkdir -p "$_summary_log_dir"
+    LOG_DIR="$_summary_log_dir"
+    GOAL="Test goal for summarization"
+    ORIGINAL_GOAL="Test goal for summarization"
+    ITERATION=5
+    MAX_ITERATIONS=20
+    TEST_PASSED=false
+    CONSECUTIVE_FAILURES=2
+    LOOP_INPUT_TOKENS=80000
+    LOOP_OUTPUT_TOKENS=20000
+    CONTEXT_WINDOW_TOKENS=200000
+    PROJECT_ROOT="$TEST_TEMP_DIR/repo"
+    LOG_ENTRIES="### Iteration 1
+Some work done
+### Iteration 2
+More progress"
+
+    _summary_path="$(summarize_loop_state 2>/dev/null || true)"
+    if [[ -f "$_summary_log_dir/context-summary.md" ]]; then
+        assert_pass "summarize_loop_state: creates context-summary.md"
+    else
+        assert_fail "summarize_loop_state: creates context-summary.md"
+    fi
+
+    # Check required sections exist
+    _summary_content="$(cat "$_summary_log_dir/context-summary.md" 2>/dev/null || true)"
+    if echo "$_summary_content" | grep -q 'Goal'; then
+        assert_pass "summarize_loop_state: includes Goal section"
+    else
+        assert_fail "summarize_loop_state: includes Goal section"
+    fi
+
+    if echo "$_summary_content" | grep -q 'Session Status'; then
+        assert_pass "summarize_loop_state: includes Session Status section"
+    else
+        assert_fail "summarize_loop_state: includes Session Status section"
+    fi
+
+    if echo "$_summary_content" | grep -q 'Modified Files'; then
+        assert_pass "summarize_loop_state: includes Modified Files section"
+    else
+        assert_fail "summarize_loop_state: includes Modified Files section"
+    fi
+
+    if echo "$_summary_content" | grep -q 'Recent Progress'; then
+        assert_pass "summarize_loop_state: includes Recent Progress section"
+    else
+        assert_fail "summarize_loop_state: includes Recent Progress section"
+    fi
+else
+    assert_fail "summarize_loop_state() callable after sourcing module"
+fi
+
+# Test: sw-loop.sh sources loop-context-monitor.sh
+if grep -q 'loop-context-monitor.sh' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "sw-loop.sh sources loop-context-monitor.sh"
+else
+    assert_fail "sw-loop.sh sources loop-context-monitor.sh"
+fi
+
+# Test: sw-loop.sh has context exhaustion check in main loop
+if grep -q 'check_context_exhaustion' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "sw-loop.sh calls check_context_exhaustion in main loop"
+else
+    assert_fail "sw-loop.sh calls check_context_exhaustion in main loop"
+fi
+
+# Test: sw-loop.sh emits context_exhaustion_warning (via the monitor module)
+if grep -q 'context_exhaustion_warning' "$SCRIPT_DIR/lib/loop-context-monitor.sh"; then
+    assert_pass "loop.context_exhaustion_warning event emitted in monitor module"
+else
+    assert_fail "loop.context_exhaustion_warning event emitted in monitor module"
+fi
+
+# Test: sw-loop.sh handles context_exhaustion status in restart handler
+if grep -q 'context_exhaustion_restart' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "sw-loop.sh emits loop.context_exhaustion_restart event"
+else
+    assert_fail "sw-loop.sh emits loop.context_exhaustion_restart event"
+fi
+
+# Test: sw-loop.sh resets token counters on every session restart (not just context_exhaustion).
+# The reset must appear in the shared restart block, before the context_exhaustion branch.
+# Accepts either an inline zero-assignment or a call to reset_token_counters().
+if grep -A30 'Reset ALL iteration-level state' "$SCRIPT_DIR/sw-loop.sh" | grep -qE 'LOOP_INPUT_TOKENS=0|reset_token_counters'; then
+    assert_pass "sw-loop.sh resets LOOP_INPUT_TOKENS on context_exhaustion restart"
+else
+    assert_fail "sw-loop.sh resets LOOP_INPUT_TOKENS on context_exhaustion restart"
+fi
+
+# Test: loop-iteration.sh emits loop.context_usage event
+if grep -q 'loop.context_usage' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "loop-iteration.sh emits loop.context_usage event per iteration"
+else
+    assert_fail "loop-iteration.sh emits loop.context_usage event per iteration"
+fi
+
+# Test: loop.context_usage event includes usage_pct field
+if grep -A5 'loop.context_usage' "$SCRIPT_DIR/lib/loop-iteration.sh" | grep -q 'usage_pct'; then
+    assert_pass "loop.context_usage event includes usage_pct field"
+else
+    assert_fail "loop.context_usage event includes usage_pct field"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

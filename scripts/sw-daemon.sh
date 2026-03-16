@@ -786,6 +786,8 @@ daemon_start() {
     # Load GitHub context (repo metadata, security alerts, etc.)
     daemon_github_context || daemon_log WARN "Failed to load GitHub context — continuing without it"
 
+    export SHIPWRIGHT_SOURCE="${SHIPWRIGHT_SOURCE:-daemon}"
+
     daemon_log INFO "Daemon started successfully"
     daemon_log INFO "Config: poll_interval=${POLL_INTERVAL}s, max_parallel=${MAX_PARALLEL}, label=${WATCH_LABEL}"
 

@@ -40,6 +40,8 @@ fi
 [[ -f "$SCRIPT_DIR/lib/loop-convergence.sh" ]] && source "$SCRIPT_DIR/lib/loop-convergence.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-restart.sh" ]] && source "$SCRIPT_DIR/lib/loop-restart.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-progress.sh" ]] && source "$SCRIPT_DIR/lib/loop-progress.sh"
+# Context exhaustion prevention — proactive summarization before Claude hits context limits
+[[ -f "$SCRIPT_DIR/lib/loop-context-monitor.sh" ]] && source "$SCRIPT_DIR/lib/loop-context-monitor.sh"
 # Error actionability scoring and enhancement for better error context
 # shellcheck source=lib/error-actionability.sh
 [[ -f "$SCRIPT_DIR/lib/error-actionability.sh" ]] && source "$SCRIPT_DIR/lib/error-actionability.sh" 2>/dev/null || true
@@ -92,6 +94,12 @@ VERSION="3.2.4"
 LOOP_INPUT_TOKENS=0
 LOOP_OUTPUT_TOKENS=0
 LOOP_COST_MILLICENTS=0
+
+reset_token_counters() {
+    LOOP_INPUT_TOKENS=0
+    LOOP_OUTPUT_TOKENS=0
+    LOOP_COST_MILLICENTS=0
+}
 
 # ─── Flexible Iteration Defaults ────────────────────────────────────────────
 AUTO_EXTEND=true          # Auto-extend iterations when work is incomplete
@@ -767,6 +775,7 @@ git_auto_commit() {
     fi
 
     git -C "$work_dir" add -A 2>/dev/null || true
+    git -C "$work_dir" restore --staged .claude/daemon-config.json 2>/dev/null || true
 
     # Semantic validation before commit — skip commit if validation fails
     if ! validate_claude_output "$work_dir"; then
@@ -1879,6 +1888,7 @@ PROMPT
 
     # Auto-commit
     git add -A 2>/dev/null || true
+    git restore --staged .claude/daemon-config.json 2>/dev/null || true
     if git commit -m "agent-${AGENT_NUM}: iteration ${ITERATION}" --no-verify 2>/dev/null; then
         if ! git push origin "loop/agent-${AGENT_NUM}" 2>/dev/null; then
             echo -e "  ${YELLOW}⚠${RESET} git push failed for loop/agent-${AGENT_NUM} — remote may be out of sync"
@@ -2180,6 +2190,18 @@ ${GOAL}"
             return 1
         fi
 
+        # Context exhaustion prevention — check cumulative token usage
+        if type check_context_exhaustion >/dev/null 2>&1 && check_context_exhaustion; then
+            local _ctx_pct
+            _ctx_pct="$(get_context_usage_pct 2>/dev/null || echo '?')"
+            warn "Context usage at ${_ctx_pct}% — triggering proactive summarization and session restart"
+            summarize_loop_state >/dev/null 2>&1 || true
+            STATUS="context_exhaustion"
+            write_state
+            write_progress
+            break
+        fi
+
         # Mid-loop memory refresh — re-query with current error context after iteration 3
         if [[ "$ITERATION" -ge 3 ]] && type memory_inject_context >/dev/null 2>&1; then
             local refresh_ctx
@@ -2416,8 +2438,10 @@ run_loop_with_restarts() {
         fi
 
         RESTART_COUNT=$(( RESTART_COUNT + 1 ))
+        local _restart_reason="${STATUS:-unknown}"
+        local _prev_iteration="$ITERATION"
         if type emit_event >/dev/null 2>&1; then
-            emit_event "loop.restart" "restart=$RESTART_COUNT" "max=$MAX_RESTARTS" "iteration=$ITERATION"
+            emit_event "loop.restart" "restart=$RESTART_COUNT" "max=$MAX_RESTARTS" "iteration=$ITERATION" "reason=$_restart_reason"
         fi
         info "Session restart ${RESTART_COUNT}/${MAX_RESTARTS} — resetting iteration counter"
 
@@ -2435,6 +2459,32 @@ run_loop_with_restarts() {
         TEST_LOG_FILE=""
         # Reset GOAL to original — prevent unbounded growth from memory/human injections
         GOAL="$ORIGINAL_GOAL"
+        # Reset per-session token counters on every restart — cumulative totals from
+        # the previous session must not carry over and trigger false exhaustion warnings
+        reset_token_counters
+
+        # Context exhaustion restart: inject compressed summary so the new session
+        # has essential context without re-exhausting the window
+        if [[ "$_restart_reason" == "context_exhaustion" ]]; then
+            local _ctx_summary_file="${LOG_DIR:-/tmp}/context-summary.md"
+            if [[ -f "$_ctx_summary_file" ]]; then
+                local _ctx_summary
+                _ctx_summary="$(head -50 "$_ctx_summary_file" 2>/dev/null || true)"
+                if [[ -n "$_ctx_summary" ]]; then
+                    GOAL="${GOAL}
+
+## Previous Session Context (Summarized)
+${_ctx_summary}"
+                    info "Context summary injected from previous session (${#_ctx_summary} chars)"
+                fi
+            fi
+            if type emit_event >/dev/null 2>&1; then
+                emit_event "loop.context_exhaustion_restart" \
+                    "restart=$RESTART_COUNT" \
+                    "prev_iteration=$_prev_iteration" \
+                    "iteration=$ITERATION"
+            fi
+        fi
 
         # Archive old artifacts so they don't get overwritten or pollute new session
         local restart_archive="$LOG_DIR/restart-${RESTART_COUNT}"

@@ -836,10 +836,17 @@ daemon_self_optimize() {
         return
     fi
 
-    # Skip optimization write if a pipeline is actively running in this repo
-    if [[ -f "${CONFIG_DIR:-.claude}/pipeline-state.md" ]]; then
-        daemon_log INFO "daemon_self_optimize: pipeline active — deferring config write"
-        return
+    # Skip optimization write if a pipeline is actively running in this repo.
+    # Check status field rather than file existence — the state file persists
+    # after completion with status: idle, so a file-only check would defer forever.
+    local _pipeline_state_file="${CONFIG_DIR:-.claude}/pipeline-state.md"
+    if [[ -f "$_pipeline_state_file" ]]; then
+        local _pipeline_status
+        _pipeline_status=$(sed -n 's/^status: *//p' "$_pipeline_state_file" | head -1)
+        if [[ "$_pipeline_status" == "running" || "$_pipeline_status" == "interrupted" ]]; then
+            daemon_log INFO "daemon_self_optimize: pipeline active (status: ${_pipeline_status}) — deferring config write"
+            return
+        fi
     fi
 
     # ── Intelligence-powered optimization (if enabled) ──

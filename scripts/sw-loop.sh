@@ -2458,6 +2458,9 @@ run_loop_with_restarts() {
         TEST_LOG_FILE=""
         # Reset GOAL to original — prevent unbounded growth from memory/human injections
         GOAL="$ORIGINAL_GOAL"
+        # Reset per-session token counters on every restart — cumulative totals from
+        # the previous session must not carry over and trigger false exhaustion warnings
+        reset_token_counters
 
         # Context exhaustion restart: inject compressed summary so the new session
         # has essential context without re-exhausting the window
@@ -2479,8 +2482,6 @@ ${_ctx_summary}"
                     "restart=$RESTART_COUNT" \
                     "iteration=$ITERATION"
             fi
-            # Reset token counters so the new session starts fresh
-            reset_token_counters
         fi
 
         # Archive old artifacts so they don't get overwritten or pollute new session

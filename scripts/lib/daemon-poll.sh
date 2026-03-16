@@ -836,6 +836,12 @@ daemon_self_optimize() {
         return
     fi
 
+    # Skip optimization write if a pipeline is actively running in this repo
+    if [[ -f "${CONFIG_DIR:-.claude}/pipeline-state.md" ]]; then
+        daemon_log INFO "daemon_self_optimize: pipeline active — deferring config write"
+        return
+    fi
+
     # ── Intelligence-powered optimization (if enabled) ──
     if [[ "${OPTIMIZATION_ENABLED:-false}" == "true" ]] && type optimize_full_analysis >/dev/null 2>&1; then
         daemon_log INFO "Running intelligence-powered optimization"

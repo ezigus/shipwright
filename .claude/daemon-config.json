@@ -20,9 +20,5 @@
   "max_parallel": 2,
   "poll_interval": 60,
   "pipeline_template": "autonomous",
-  "auto_template": false,
-  "last_optimization": {
-    "timestamp": "2026-03-16T07:53:44Z",
-    "adjustments": "compound_quality enabled (CFR 25% > 20%); merge stage recommended (deploy freq 3.0/week); "
-  }
+  "auto_template": false
 }

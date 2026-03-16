@@ -2439,6 +2439,7 @@ run_loop_with_restarts() {
 
         RESTART_COUNT=$(( RESTART_COUNT + 1 ))
         local _restart_reason="${STATUS:-unknown}"
+        local _prev_iteration="$ITERATION"
         if type emit_event >/dev/null 2>&1; then
             emit_event "loop.restart" "restart=$RESTART_COUNT" "max=$MAX_RESTARTS" "iteration=$ITERATION" "reason=$_restart_reason"
         fi
@@ -2480,6 +2481,7 @@ ${_ctx_summary}"
             if type emit_event >/dev/null 2>&1; then
                 emit_event "loop.context_exhaustion_restart" \
                     "restart=$RESTART_COUNT" \
+                    "prev_iteration=$_prev_iteration" \
                     "iteration=$ITERATION"
             fi
         fi

@@ -206,20 +206,30 @@ run_test() {
 # 1. Template loading — feature-dev template
 # ──────────────────────────────────────────────────────────────────────────────
 test_template_loading_feature_dev() {
+    tmux kill-window -t "claude-test-tpl-1" 2>/dev/null || true
     invoke_session "test-tpl-1" --template feature-dev --no-launch
-    assert_exit_code 0 "session should succeed" &&
-    assert_output_contains "feature-dev" "template name shown" &&
-    assert_output_contains "Agents: 3" "should have 3 agents"
+    local result=0
+    { assert_exit_code 0 "session should succeed" &&
+      assert_output_contains "feature-dev" "template name shown" &&
+      assert_output_contains "Agents: 3" "should have 3 agents"; } || result=$?
+    tmux kill-window -t "claude-test-tpl-1" 2>/dev/null || true
+    return $result
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 2. Template loading — exploration template
 # ──────────────────────────────────────────────────────────────────────────────
 test_template_loading_exploration() {
+    # Kill window if it exists from a previous run to prevent "already exists" early exit
+    tmux kill-window -t "claude-test-tpl-2" 2>/dev/null || true
     invoke_session "test-tpl-2" --template exploration --no-launch
-    assert_exit_code 0 "session should succeed" &&
-    assert_output_contains "exploration" "template name shown" &&
-    assert_output_contains "Agents: 2" "should have 2 agents"
+    local result=0
+    { assert_exit_code 0 "session should succeed" &&
+      assert_output_contains "exploration" "template name shown" &&
+      assert_output_contains "Agents: 2" "should have 2 agents"; } || result=$?
+    # Cleanup to prevent window from affecting subsequent runs
+    tmux kill-window -t "claude-test-tpl-2" 2>/dev/null || true
+    return $result
 }
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -1079,9 +1079,10 @@ else
     assert_fail "sw-loop.sh emits loop.context_exhaustion_restart event"
 fi
 
-# Test: sw-loop.sh resets token counters on context_exhaustion restart
-# Accepts either inline reset or call to reset_token_counters()
-if grep -A5 'context_exhaustion_restart' "$SCRIPT_DIR/sw-loop.sh" | grep -qE 'LOOP_INPUT_TOKENS=0|reset_token_counters'; then
+# Test: sw-loop.sh resets token counters on every session restart (not just context_exhaustion).
+# The reset must appear in the shared restart block, before the context_exhaustion branch.
+# Accepts either an inline zero-assignment or a call to reset_token_counters().
+if grep -A30 'Reset ALL iteration-level state' "$SCRIPT_DIR/sw-loop.sh" | grep -qE 'LOOP_INPUT_TOKENS=0|reset_token_counters'; then
     assert_pass "sw-loop.sh resets LOOP_INPUT_TOKENS on context_exhaustion restart"
 else
     assert_fail "sw-loop.sh resets LOOP_INPUT_TOKENS on context_exhaustion restart"

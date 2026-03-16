@@ -109,3 +109,5 @@
 {"ts":"2026-03-15T20:11:56Z","ts_epoch":1773605516,"type":"strategic.issue_created","title":"Hardcoded policy inventory and config migration framework","priority":"P6","complexity":"fast"}
 {"ts":"2026-03-15T20:11:59Z","ts_epoch":1773605519,"type":"strategic.issue_created","title":"Stage-level success rate and cost attribution tracker","priority":"P0","complexity":"fast"}
 {"ts":"2026-03-15T20:11:59Z","ts_epoch":1773605519,"type":"strategic.cycle_complete","issues_created":5,"issues_skipped":0}
+{"ts":"2026-03-16T00:46:28Z","ts_epoch":1773621988,"type":"hygiene_platform_refactor","hardcoded":45,"fallback":63,"todo":44}
+{"ts":"2026-03-16T00:46:32Z","ts_epoch":1773621992,"type":"cost.budget_unconfigured","status":"unlimited"}

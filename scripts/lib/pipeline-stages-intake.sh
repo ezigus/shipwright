@@ -380,6 +380,10 @@ ${_skill_prompts}
         plan_model="$CLAUDE_MODEL"
     fi
 
+    # Ensure _timeout helper is available (sourced from helpers.sh); fall back to
+    # system timeout if called out of normal load order.
+    type _timeout >/dev/null 2>&1 || _timeout() { timeout "$@"; }
+
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-plan.log"
     local _plan_attempt _plan_timeout _plan_exit
     _plan_timeout=$(_config_get_int "plan.claude_timeout" 3600 2>/dev/null || echo 3600)

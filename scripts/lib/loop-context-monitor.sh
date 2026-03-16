@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Sourced modules inherit caller's strict mode; set here for self-contained
+# consistency with other lib modules (e.g., error-actionability.sh).
+set -euo pipefail
 # Module guard — prevent double-sourcing
 [[ -n "${_LOOP_CONTEXT_MONITOR_LOADED:-}" ]] && return 0
 _LOOP_CONTEXT_MONITOR_LOADED=1
@@ -56,7 +59,8 @@ check_context_exhaustion() {
                 "threshold=$threshold" \
                 "input_tokens=$input" \
                 "output_tokens=$output" \
-                "window=$window"
+                "window=$window" || \
+                echo "WARNING: Could not emit loop.context_exhaustion_warning event" >&2
         fi
         return 0  # exhaustion threshold crossed
     fi

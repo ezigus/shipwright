@@ -95,6 +95,12 @@ LOOP_INPUT_TOKENS=0
 LOOP_OUTPUT_TOKENS=0
 LOOP_COST_MILLICENTS=0
 
+reset_token_counters() {
+    LOOP_INPUT_TOKENS=0
+    LOOP_OUTPUT_TOKENS=0
+    LOOP_COST_MILLICENTS=0
+}
+
 # ─── Flexible Iteration Defaults ────────────────────────────────────────────
 AUTO_EXTEND=true          # Auto-extend iterations when work is incomplete
 EXTENSION_SIZE=5          # Additional iterations per extension
@@ -2472,9 +2478,7 @@ ${_ctx_summary}"
                     "iteration=$ITERATION"
             fi
             # Reset token counters so the new session starts fresh
-            LOOP_INPUT_TOKENS=0
-            LOOP_OUTPUT_TOKENS=0
-            LOOP_COST_MILLICENTS=0
+            reset_token_counters
         fi
 
         # Archive old artifacts so they don't get overwritten or pollute new session

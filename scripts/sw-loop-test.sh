@@ -1080,7 +1080,8 @@ else
 fi
 
 # Test: sw-loop.sh resets token counters on context_exhaustion restart
-if grep -A5 'context_exhaustion_restart' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'LOOP_INPUT_TOKENS=0'; then
+# Accepts either inline reset or call to reset_token_counters()
+if grep -A5 'context_exhaustion_restart' "$SCRIPT_DIR/sw-loop.sh" | grep -qE 'LOOP_INPUT_TOKENS=0|reset_token_counters'; then
     assert_pass "sw-loop.sh resets LOOP_INPUT_TOKENS on context_exhaustion restart"
 else
     assert_fail "sw-loop.sh resets LOOP_INPUT_TOKENS on context_exhaustion restart"

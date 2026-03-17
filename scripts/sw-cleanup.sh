@@ -65,6 +65,19 @@ done
 
 # ─── --prune-orphans: Kill stale pipeline processes ─────────────────────────
 
+# Helper: returns true if pid is orphaned (parent dead or reparented to init/1)
+_is_orphan() {
+    local pid="$1"
+    local ppid
+    ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') || return 1
+    # Reparented to init (PID 1) — genuine orphan
+    [[ "$ppid" == "1" ]] && return 0
+    # Parent no longer alive — orphan
+    kill -0 "$ppid" 2>/dev/null || return 0
+    # Parent alive — not an orphan
+    return 1
+}
+
 if $PRUNE_ORPHANS; then
     echo ""
     echo -e "${BOLD}Pruning Orphaned Pipeline Processes${RESET}"
@@ -73,29 +86,34 @@ if $PRUNE_ORPHANS; then
     orphans_found=0
     orphans_killed=0
 
-    # Find processes with SHIPWRIGHT_PIPELINE_ACTIVE in their environment,
-    # or sw-pipeline.sh / sw-loop.sh in their command line
-    while IFS= read -r pid; do
-        [[ -z "$pid" ]] && continue
-        # Skip our own process and parent
-        [[ "$pid" == "$$" ]] && continue
-        [[ "$pid" == "$PPID" ]] && continue
+    _kill_orphan() {
+        local pid="$1" label="$2"
+        # Only kill if genuinely orphaned (parent dead or reparented to init)
+        if ! _is_orphan "$pid"; then
+            echo -e "  ${DIM}Skipping PID ${pid} (${label}) — parent is alive${RESET}"
+            return 0
+        fi
         orphans_found=$((orphans_found + 1))
-        echo -e "  ${YELLOW}○${RESET} Found: PID ${pid} $(ps -p "$pid" -o comm= 2>/dev/null || true)"
-        kill -- -"$pid" 2>/dev/null || true
+        echo -e "  ${YELLOW}○${RESET} Orphan: PID ${pid} (${label}) $(ps -p "$pid" -o comm= 2>/dev/null || true)"
+        # Only send group kill if pid is its own group leader
+        local pgid
+        pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ') || true
+        if [[ "${pgid:-}" == "$pid" ]]; then
+            kill -- -"$pid" 2>/dev/null || true
+        fi
+        pkill -P "$pid" 2>/dev/null || true
         kill "$pid" 2>/dev/null || true
         orphans_killed=$((orphans_killed + 1))
+    }
+
+    while IFS= read -r pid; do
+        [[ -z "$pid" || "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+        _kill_orphan "$pid" "sw-pipeline.sh"
     done < <(pgrep -f "sw-pipeline.sh" 2>/dev/null || true)
 
-    # Also catch orphaned sw-loop.sh processes not under a pipeline
     while IFS= read -r pid; do
-        [[ -z "$pid" ]] && continue
-        [[ "$pid" == "$$" ]] && continue
-        [[ "$pid" == "$PPID" ]] && continue
-        orphans_found=$((orphans_found + 1))
-        echo -e "  ${YELLOW}○${RESET} Found: PID ${pid} $(ps -p "$pid" -o comm= 2>/dev/null || true)"
-        kill "$pid" 2>/dev/null || true
-        orphans_killed=$((orphans_killed + 1))
+        [[ -z "$pid" || "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+        _kill_orphan "$pid" "sw-loop.sh"
     done < <(pgrep -f "sw-loop.sh" 2>/dev/null || true)
 
     if [[ "$orphans_found" -eq 0 ]]; then

@@ -575,7 +575,14 @@ trigger_pipeline_for_finding() {
     fi
 
     info "Triggering pipeline for finding issue #${issue_num}: $title"
-    (cd "$REPO_DIR" && export REPO_DIR SCRIPT_DIR && exec setsid "$SCRIPT_DIR/sw-pipeline.sh" start --issue "$issue_num" "${recruit_args[@]}" 2>/dev/null) &
+    (
+        cd "$REPO_DIR" && export REPO_DIR SCRIPT_DIR
+        if command -v setsid >/dev/null 2>&1; then
+            exec setsid "$SCRIPT_DIR/sw-pipeline.sh" start --issue "$issue_num" "${recruit_args[@]}" 2>/dev/null
+        else
+            exec "$SCRIPT_DIR/sw-pipeline.sh" start --issue "$issue_num" "${recruit_args[@]}" 2>/dev/null
+        fi
+    ) &
     emit_event "autonomous.pipeline_triggered" "issue=$issue_num" "title=$title"
 }
 

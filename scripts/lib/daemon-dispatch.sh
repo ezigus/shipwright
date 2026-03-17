@@ -251,7 +251,7 @@ daemon_spawn_pipeline() {
     (
         trap '' HUP
         cd "$work_dir"
-        exec "$SCRIPT_DIR/sw-pipeline.sh" "${pipeline_args[@]}"
+        exec setsid "$SCRIPT_DIR/sw-pipeline.sh" "${pipeline_args[@]}"
     ) >> "$LOG_DIR/issue-${issue_num}.log" 2>&1 200>&- &
     local pid=$!
 

@@ -630,21 +630,24 @@ cleanup_on_exit() {
             while IFS= read -r cpid; do
                 [[ -z "$cpid" ]] && continue
                 if kill -0 "$cpid" 2>/dev/null; then
-                    daemon_log INFO "Killing pipeline process tree PID ${cpid}"
-                    pkill -TERM -P "$cpid" 2>/dev/null || true
+                    daemon_log INFO "Killing pipeline process group PID ${cpid}"
+                    # Kill the entire process group (setsid makes cpid the group leader)
+                    kill -- -"$cpid" 2>/dev/null || true
+                    # Also kill direct children (fallback if setsid not used)
+                    pkill -P "$cpid" 2>/dev/null || true
                     kill "$cpid" 2>/dev/null || true
                     killed=$((killed + 1))
                 fi
             done <<< "$child_pids"
             if [[ $killed -gt 0 ]]; then
-                daemon_log INFO "Sent SIGTERM to ${killed} pipeline process(es) — waiting 5s"
+                daemon_log INFO "Sent SIGTERM to ${killed} pipeline process group(s) — waiting 5s"
                 sleep 5
                 # Force-kill any that didn't exit
                 while IFS= read -r cpid; do
                     [[ -z "$cpid" ]] && continue
                     if kill -0 "$cpid" 2>/dev/null; then
-                        daemon_log WARN "Force-killing pipeline tree PID ${cpid}"
-                        pkill -9 -P "$cpid" 2>/dev/null || true
+                        daemon_log WARN "Force-killing pipeline process group PID ${cpid}"
+                        kill -9 -- -"$cpid" 2>/dev/null || true
                         kill -9 "$cpid" 2>/dev/null || true
                     fi
                 done <<< "$child_pids"

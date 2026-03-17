@@ -42,15 +42,18 @@ fi
 # ─── Parse Args ──────────────────────────────────────────────────────────────
 
 FORCE=false
+PRUNE_ORPHANS=false
 for arg in "$@"; do
     case "$arg" in
         --force|-f) FORCE=true ;;
+        --prune-orphans) PRUNE_ORPHANS=true ;;
         --help|-h)
             echo -e "${CYAN}${BOLD}shipwright cleanup${RESET} — Clean up orphaned sessions and artifacts"
             echo ""
             echo -e "${BOLD}USAGE${RESET}"
-            echo -e "  shipwright cleanup            ${DIM}# Dry-run: show what would be cleaned${RESET}"
-            echo -e "  shipwright cleanup --force    ${DIM}# Actually kill sessions and remove files${RESET}"
+            echo -e "  shipwright cleanup                    ${DIM}# Dry-run: show what would be cleaned${RESET}"
+            echo -e "  shipwright cleanup --force            ${DIM}# Actually kill sessions and remove files${RESET}"
+            echo -e "  shipwright cleanup --prune-orphans    ${DIM}# Kill orphaned pipeline processes${RESET}"
             exit 0
             ;;
         *)
@@ -59,6 +62,50 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# ─── --prune-orphans: Kill stale pipeline processes ─────────────────────────
+
+if $PRUNE_ORPHANS; then
+    echo ""
+    echo -e "${BOLD}Pruning Orphaned Pipeline Processes${RESET}"
+    echo -e "${DIM}────────────────────────────────────────${RESET}"
+
+    orphans_found=0
+    orphans_killed=0
+
+    # Find processes with SHIPWRIGHT_PIPELINE_ACTIVE in their environment,
+    # or sw-pipeline.sh / sw-loop.sh in their command line
+    while IFS= read -r pid; do
+        [[ -z "$pid" ]] && continue
+        # Skip our own process and parent
+        [[ "$pid" == "$$" ]] && continue
+        [[ "$pid" == "$PPID" ]] && continue
+        orphans_found=$((orphans_found + 1))
+        echo -e "  ${YELLOW}○${RESET} Found: PID ${pid} $(ps -p "$pid" -o comm= 2>/dev/null || true)"
+        kill -- -"$pid" 2>/dev/null || true
+        kill "$pid" 2>/dev/null || true
+        orphans_killed=$((orphans_killed + 1))
+    done < <(pgrep -f "sw-pipeline.sh" 2>/dev/null || true)
+
+    # Also catch orphaned sw-loop.sh processes not under a pipeline
+    while IFS= read -r pid; do
+        [[ -z "$pid" ]] && continue
+        [[ "$pid" == "$$" ]] && continue
+        [[ "$pid" == "$PPID" ]] && continue
+        orphans_found=$((orphans_found + 1))
+        echo -e "  ${YELLOW}○${RESET} Found: PID ${pid} $(ps -p "$pid" -o comm= 2>/dev/null || true)"
+        kill "$pid" 2>/dev/null || true
+        orphans_killed=$((orphans_killed + 1))
+    done < <(pgrep -f "sw-loop.sh" 2>/dev/null || true)
+
+    if [[ "$orphans_found" -eq 0 ]]; then
+        success "No orphaned pipeline processes found."
+    else
+        success "Sent kill signal to ${orphans_killed} orphaned process(es)."
+    fi
+    echo ""
+    exit 0
+fi
 
 # ─── Track cleanup stats ────────────────────────────────────────────────────
 

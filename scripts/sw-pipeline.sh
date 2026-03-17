@@ -655,9 +655,9 @@ ci_post_stage_event() {
 # ─── Signal Handling ───────────────────────────────────────────────────────
 
 cleanup_on_exit() {
+    local exit_code=$?
     [[ "${_cleanup_done:-}" == "true" ]] && return 0
     _cleanup_done=true
-    local exit_code=$?
 
     # Stop heartbeat writer
     stop_heartbeat
@@ -696,10 +696,19 @@ cleanup_on_exit() {
         fi
     fi
 
+    # Kill the entire process group only when we are the group leader (i.e., launched via setsid).
+    # Without setsid, kill -- -$$ would kill the parent shell/daemon process group.
+    local _our_pgid
+    _our_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ') || true
+    if [[ "${_our_pgid:-}" == "$$" ]]; then
+        kill -- -$$ 2>/dev/null || true
+        wait 2>/dev/null || true
+    fi
+
     exit "$exit_code"
 }
 
-trap cleanup_on_exit SIGINT SIGTERM
+trap cleanup_on_exit EXIT SIGINT SIGTERM
 
 # ─── Pre-flight Validation ─────────────────────────────────────────────────
 

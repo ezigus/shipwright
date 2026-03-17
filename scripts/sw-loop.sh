@@ -1688,10 +1688,14 @@ show_summary() {
 # ─── Signal Handling ──────────────────────────────────────────────────────────
 
 CHILD_PID=""
+_MEM_ANALYZE_PID=""
 
 cleanup() {
     echo ""
     warn "Loop interrupted at iteration $ITERATION"
+
+    # Kill background memory analysis job if running
+    [[ -n "${_MEM_ANALYZE_PID:-}" ]] && kill "$_MEM_ANALYZE_PID" 2>/dev/null || true
 
     # Kill any running Claude process
     if [[ -n "$CHILD_PID" ]] && kill -0 "$CHILD_PID" 2>/dev/null; then
@@ -1703,6 +1707,10 @@ cleanup() {
     if [[ "$AGENTS" -gt 1 ]]; then
         cleanup_multi_agent
     fi
+
+    # Reap any remaining direct child processes
+    pkill -P $$ 2>/dev/null || true
+    wait 2>/dev/null || true
 
     STATUS="interrupted"
     write_state
@@ -2167,6 +2175,7 @@ ${GOAL}"
                 local _test_log="${TEST_LOG_FILE:-$LOG_DIR/tests-iter-$(( ITERATION - 1 )).log}"
                 if [[ -f "$_test_log" ]]; then
                     memory_analyze_failure "$_test_log" "test" 2>/dev/null &
+                    _MEM_ANALYZE_PID=$!
                 fi
             fi
         fi

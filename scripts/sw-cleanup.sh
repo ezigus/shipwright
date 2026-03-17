@@ -42,15 +42,18 @@ fi
 # ─── Parse Args ──────────────────────────────────────────────────────────────
 
 FORCE=false
+PRUNE_ORPHANS=false
 for arg in "$@"; do
     case "$arg" in
         --force|-f) FORCE=true ;;
+        --prune-orphans) PRUNE_ORPHANS=true ;;
         --help|-h)
             echo -e "${CYAN}${BOLD}shipwright cleanup${RESET} — Clean up orphaned sessions and artifacts"
             echo ""
             echo -e "${BOLD}USAGE${RESET}"
-            echo -e "  shipwright cleanup            ${DIM}# Dry-run: show what would be cleaned${RESET}"
-            echo -e "  shipwright cleanup --force    ${DIM}# Actually kill sessions and remove files${RESET}"
+            echo -e "  shipwright cleanup                    ${DIM}# Dry-run: show what would be cleaned${RESET}"
+            echo -e "  shipwright cleanup --force            ${DIM}# Actually kill sessions and remove files${RESET}"
+            echo -e "  shipwright cleanup --prune-orphans    ${DIM}# Kill orphaned pipeline processes${RESET}"
             exit 0
             ;;
         *)
@@ -59,6 +62,68 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# ─── --prune-orphans: Kill stale pipeline processes ─────────────────────────
+
+# Helper: returns true if pid is orphaned (parent dead or reparented to init/1)
+_is_orphan() {
+    local pid="$1"
+    local ppid
+    ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ') || return 1
+    # Reparented to init (PID 1) — genuine orphan
+    [[ "$ppid" == "1" ]] && return 0
+    # Parent no longer alive — orphan
+    kill -0 "$ppid" 2>/dev/null || return 0
+    # Parent alive — not an orphan
+    return 1
+}
+
+if $PRUNE_ORPHANS; then
+    echo ""
+    echo -e "${BOLD}Pruning Orphaned Pipeline Processes${RESET}"
+    echo -e "${DIM}────────────────────────────────────────${RESET}"
+
+    orphans_found=0
+    orphans_killed=0
+
+    _kill_orphan() {
+        local pid="$1" label="$2"
+        # Only kill if genuinely orphaned (parent dead or reparented to init)
+        if ! _is_orphan "$pid"; then
+            echo -e "  ${DIM}Skipping PID ${pid} (${label}) — parent is alive${RESET}"
+            return 0
+        fi
+        orphans_found=$((orphans_found + 1))
+        echo -e "  ${YELLOW}○${RESET} Orphan: PID ${pid} (${label}) $(ps -p "$pid" -o comm= 2>/dev/null || true)"
+        # Only send group kill if pid is its own group leader
+        local pgid
+        pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ') || true
+        if [[ "${pgid:-}" == "$pid" ]]; then
+            kill -- -"$pid" 2>/dev/null || true
+        fi
+        pkill -P "$pid" 2>/dev/null || true
+        kill "$pid" 2>/dev/null || true
+        orphans_killed=$((orphans_killed + 1))
+    }
+
+    while IFS= read -r pid; do
+        [[ -z "$pid" || "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+        _kill_orphan "$pid" "sw-pipeline.sh"
+    done < <(pgrep -f "sw-pipeline.sh" 2>/dev/null || true)
+
+    while IFS= read -r pid; do
+        [[ -z "$pid" || "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+        _kill_orphan "$pid" "sw-loop.sh"
+    done < <(pgrep -f "sw-loop.sh" 2>/dev/null || true)
+
+    if [[ "$orphans_found" -eq 0 ]]; then
+        success "No orphaned pipeline processes found."
+    else
+        success "Sent kill signal to ${orphans_killed} orphaned process(es)."
+    fi
+    echo ""
+    exit 0
+fi
 
 # ─── Track cleanup stats ────────────────────────────────────────────────────
 

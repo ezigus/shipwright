@@ -671,13 +671,6 @@ if [[ "$SKIP_CLAUDE_MD" == "false" && -f "$CLAUDE_MD_SRC" ]]; then
     fi
 fi
 
-# ─── Skip-worktree for runtime-only tracked files ─────────────────────────────
-# daemon-config.json is committed for its default values but modified at runtime.
-# skip-worktree tells git to ignore local changes so they never leak into commits.
-if git rev-parse --git-dir >/dev/null 2>&1 && [[ -f ".claude/daemon-config.json" ]]; then
-    git update-index --skip-worktree .claude/daemon-config.json 2>/dev/null || true
-    success "Set skip-worktree on .claude/daemon-config.json (runtime changes won't leak into commits)"
-fi
 
 # ─── GitHub CLI Authentication ────────────────────────────────────────────────
 # gh auth is required for daemon, pipeline, PR creation, and issue management

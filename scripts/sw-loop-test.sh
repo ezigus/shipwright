@@ -1112,7 +1112,7 @@ else
 fi
 
 # Test: safe_git_stage() calls restore --staged daemon-config.json
-if grep -A3 '^safe_git_stage()' "$SCRIPT_DIR/lib/helpers.sh" | grep -q 'daemon-config.json'; then
+if grep -A8 '^safe_git_stage()' "$SCRIPT_DIR/lib/helpers.sh" | grep -q 'daemon-config.json'; then
     assert_pass "safe_git_stage() unstages .claude/daemon-config.json after add -A"
 else
     assert_fail "safe_git_stage() unstages .claude/daemon-config.json after add -A"
@@ -1161,21 +1161,25 @@ else
 fi
 
 # Test: functional — safe_git_stage does not stage daemon-config.json
+# Uses the real git binary (not the mock stub injected by setup_env) so the
+# test actually exercises git init/add/commit/restore rather than no-ops.
 _test_safe_git_stage() {
+    local real_git
+    real_git="$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git 2>/dev/null)" || return 1
     local tmpdir
     tmpdir="$(mktemp -d)"
     # shellcheck disable=SC2064
     trap "rm -rf '$tmpdir'" RETURN
-    git init -q "$tmpdir"
-    git -C "$tmpdir" config user.email "test@test.com"
-    git -C "$tmpdir" config user.name "test"
+    "$real_git" init -q "$tmpdir"
+    "$real_git" -C "$tmpdir" config user.email "test@test.com"
+    "$real_git" -C "$tmpdir" config user.name "test"
     mkdir -p "$tmpdir/.claude"
     echo '{}' > "$tmpdir/.claude/daemon-config.json"
-    git -C "$tmpdir" add "$tmpdir/.claude/daemon-config.json"
-    git -C "$tmpdir" commit -q -m "initial"
+    "$real_git" -C "$tmpdir" add "$tmpdir/.claude/daemon-config.json"
+    "$real_git" -C "$tmpdir" commit -q -m "initial"
     echo '{"modified": true}' > "$tmpdir/.claude/daemon-config.json"
-    ( cd "$tmpdir" && source "$SCRIPT_DIR/lib/helpers.sh" && safe_git_stage )
-    if git -C "$tmpdir" diff --cached --name-only | grep -q 'daemon-config.json'; then
+    ( cd "$tmpdir" && PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin source "$SCRIPT_DIR/lib/helpers.sh" && safe_git_stage )
+    if "$real_git" -C "$tmpdir" diff --cached --name-only | grep -q 'daemon-config.json'; then
         return 1
     fi
     return 0

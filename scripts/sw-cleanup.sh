@@ -147,7 +147,6 @@ if $TEST_ORPHANS; then
         test_orphans_found=$((test_orphans_found + 1))
         local_comm=$(ps -p "$pid" -o comm= 2>/dev/null || true)
         echo -e "  ${YELLOW}○${RESET} Orphan: PID ${pid} (sw-*-test.sh) ${local_comm}"
-        local pgid
         pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ') || true
         if [[ "${pgid:-}" == "$pid" ]]; then
             kill -- -"$pid" 2>/dev/null || true

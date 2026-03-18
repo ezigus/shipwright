@@ -49,6 +49,7 @@ mkdir -p "$TEST_TEMP_DIR/bin"
 _kill_test_children() {
     local pids
     pids=$(jobs -p 2>/dev/null) || true
+    # shellcheck disable=SC2086  # word splitting intentional to pass multiple PIDs
     [[ -n "$pids" ]] && kill $pids 2>/dev/null || true
     pkill -P $$ 2>/dev/null || true
     wait 2>/dev/null || true

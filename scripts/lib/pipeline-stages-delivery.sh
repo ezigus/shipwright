@@ -83,7 +83,7 @@ stage_pr() {
     # Commit any uncommitted changes left by the build agent
     if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
         info "Committing remaining uncommitted changes..."
-        git add -A 2>/dev/null || true
+        safe_git_stage
         git commit -m "chore: pipeline cleanup — commit remaining build changes" --no-verify 2>/dev/null || true
     fi
 

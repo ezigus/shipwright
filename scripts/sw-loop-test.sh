@@ -1102,6 +1102,90 @@ else
     assert_fail "loop.context_usage event includes usage_pct field"
 fi
 
+# ─── safe_git_stage() — daemon-config.json exclusion ─────────────────────────
+
+# Test: safe_git_stage() is defined in helpers.sh
+if grep -q '^safe_git_stage()' "$SCRIPT_DIR/lib/helpers.sh"; then
+    assert_pass "safe_git_stage() defined in helpers.sh"
+else
+    assert_fail "safe_git_stage() defined in helpers.sh"
+fi
+
+# Test: safe_git_stage() calls restore --staged daemon-config.json
+if grep -A3 '^safe_git_stage()' "$SCRIPT_DIR/lib/helpers.sh" | grep -q 'daemon-config.json'; then
+    assert_pass "safe_git_stage() unstages .claude/daemon-config.json after add -A"
+else
+    assert_fail "safe_git_stage() unstages .claude/daemon-config.json after add -A"
+fi
+
+# Test: post-audit cleanup path uses safe_git_stage
+if grep -B2 'post-audit cleanup' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'safe_git_stage'; then
+    assert_pass "post-audit cleanup path uses safe_git_stage"
+else
+    assert_fail "post-audit cleanup path uses safe_git_stage"
+fi
+
+# Test: git_auto_commit() uses safe_git_stage
+if grep -A15 'git_auto_commit()' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'safe_git_stage'; then
+    assert_pass "git_auto_commit() uses safe_git_stage"
+else
+    assert_fail "git_auto_commit() uses safe_git_stage"
+fi
+
+# Test: multi-agent parallel commit path uses safe_git_stage
+if grep -B2 "agent-.*: iteration" "$SCRIPT_DIR/sw-loop.sh" | grep -q 'safe_git_stage'; then
+    assert_pass "multi-agent parallel commit path uses safe_git_stage"
+else
+    assert_fail "multi-agent parallel commit path uses safe_git_stage"
+fi
+
+# Test: pipeline-stages-build.sh TDD commit uses safe_git_stage
+if grep -B1 'TDD - define expected' "$SCRIPT_DIR/lib/pipeline-stages-build.sh" | grep -q 'safe_git_stage'; then
+    assert_pass "pipeline-stages-build.sh TDD commit uses safe_git_stage"
+else
+    assert_fail "pipeline-stages-build.sh TDD commit uses safe_git_stage"
+fi
+
+# Test: pipeline-stages-delivery.sh cleanup commit uses safe_git_stage
+if grep -B1 'pipeline cleanup' "$SCRIPT_DIR/lib/pipeline-stages-delivery.sh" | grep -q 'safe_git_stage'; then
+    assert_pass "pipeline-stages-delivery.sh cleanup commit uses safe_git_stage"
+else
+    assert_fail "pipeline-stages-delivery.sh cleanup commit uses safe_git_stage"
+fi
+
+# Test: pipeline-state.sh artifact commit guards daemon-config.json
+if grep -A3 'git add.*to_add' "$SCRIPT_DIR/lib/pipeline-state.sh" | grep -q 'daemon-config.json'; then
+    assert_pass "pipeline-state.sh artifact commit guards daemon-config.json"
+else
+    assert_fail "pipeline-state.sh artifact commit guards daemon-config.json"
+fi
+
+# Test: functional — safe_git_stage does not stage daemon-config.json
+_test_safe_git_stage() {
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmpdir'" RETURN
+    git init -q "$tmpdir"
+    git -C "$tmpdir" config user.email "test@test.com"
+    git -C "$tmpdir" config user.name "test"
+    mkdir -p "$tmpdir/.claude"
+    echo '{}' > "$tmpdir/.claude/daemon-config.json"
+    git -C "$tmpdir" add "$tmpdir/.claude/daemon-config.json"
+    git -C "$tmpdir" commit -q -m "initial"
+    echo '{"modified": true}' > "$tmpdir/.claude/daemon-config.json"
+    ( cd "$tmpdir" && source "$SCRIPT_DIR/lib/helpers.sh" && safe_git_stage )
+    if git -C "$tmpdir" diff --cached --name-only | grep -q 'daemon-config.json'; then
+        return 1
+    fi
+    return 0
+}
+if _test_safe_git_stage; then
+    assert_pass "safe_git_stage() functional: daemon-config.json not staged after add -A"
+else
+    assert_fail "safe_git_stage() functional: daemon-config.json not staged after add -A"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -774,8 +774,7 @@ git_auto_commit() {
         fi
     fi
 
-    git -C "$work_dir" add -A 2>/dev/null || true
-    git -C "$work_dir" restore --staged .claude/daemon-config.json 2>/dev/null || true
+    safe_git_stage "$work_dir"
 
     # Semantic validation before commit — skip commit if validation fails
     if ! validate_claude_output "$work_dir"; then
@@ -1895,8 +1894,7 @@ PROMPT
     fi
 
     # Auto-commit
-    git add -A 2>/dev/null || true
-    git restore --staged .claude/daemon-config.json 2>/dev/null || true
+    safe_git_stage
     if git commit -m "agent-${AGENT_NUM}: iteration ${ITERATION}" --no-verify 2>/dev/null; then
         if ! git push origin "loop/agent-${AGENT_NUM}" 2>/dev/null; then
             echo -e "  ${YELLOW}⚠${RESET} git push failed for loop/agent-${AGENT_NUM} — remote may be out of sync"
@@ -2329,7 +2327,7 @@ ${GOAL}"
         if ! git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null || \
            ! git -C "$PROJECT_ROOT" diff --cached --quiet 2>/dev/null || \
            [[ -n "$(git -C "$PROJECT_ROOT" ls-files --others --exclude-standard 2>/dev/null | head -1)" ]]; then
-            git -C "$PROJECT_ROOT" add -A 2>/dev/null || true
+            safe_git_stage "$PROJECT_ROOT"
             git -C "$PROJECT_ROOT" commit -m "loop: iteration $ITERATION — post-audit cleanup" --no-verify 2>/dev/null || true
         fi
 

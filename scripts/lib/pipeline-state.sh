@@ -300,6 +300,7 @@ persist_artifacts() {
 
     (
         git add "${to_add[@]}" 2>/dev/null || true
+        git restore --staged .claude/daemon-config.json 2>/dev/null || true
         if ! git diff --cached --quiet 2>/dev/null; then
             git commit -m "chore: persist ${stage} artifacts for #${ISSUE_NUMBER} [skip ci]" --no-verify 2>/dev/null || true
             local branch="shipwright/issue-${ISSUE_NUMBER}"

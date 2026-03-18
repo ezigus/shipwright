@@ -577,7 +577,7 @@ auto_fix_issues() {
 
     # Create a commit if changes were made
     if [[ $fixed_count -gt 0 ]] && git rev-parse --git-dir >/dev/null 2>&1; then
-        git add -A
+        safe_git_stage
         git commit -m "chore: hygiene auto-fix ($fixed_count items)
 
 - Fixed script permissions

@@ -101,7 +101,7 @@ Create files in the appropriate project directories (e.g. tests/, __tests__/, sr
 
     if [[ "$wrote_any" == "true" ]]; then
         if (cd "$PROJECT_ROOT" && git diff --name-only 2>/dev/null | grep -qE 'test|spec'); then
-            git add -A 2>/dev/null || true
+            safe_git_stage
             git commit -m "test: TDD - define expected behavior before implementation" 2>/dev/null || true
             emit_event "tdd.tests_generated" "{\"stage\":\"test_first\"}"
         fi

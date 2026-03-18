@@ -631,7 +631,7 @@ ci_push_partial_work() {
 
     # Only push if we have uncommitted changes
     if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-        git add -A 2>/dev/null || true
+        safe_git_stage
         git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
     fi
 

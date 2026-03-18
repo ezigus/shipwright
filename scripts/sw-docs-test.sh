@@ -160,7 +160,7 @@ cleanup_env() {
         rm -rf "$TEST_TEMP_DIR"
     fi
 }
-trap cleanup_env EXIT
+_test_cleanup_hook() { cleanup_env; }
 
 # Helper to run sw-docs.sh in the temp repo context
 run_docs() {

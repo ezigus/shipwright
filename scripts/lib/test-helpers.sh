@@ -45,7 +45,28 @@ AUTO_TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-test-auto.XXXXXX")
 TEST_TEMP_DIR="$AUTO_TEST_TEMP_DIR"
 mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
 mkdir -p "$TEST_TEMP_DIR/bin"
-trap 'if [[ -n "${AUTO_TEST_TEMP_DIR:-}" && -d "$AUTO_TEST_TEMP_DIR" ]]; then rm -rf "$AUTO_TEST_TEMP_DIR"; fi' EXIT
+# ─── Child-process killer (used by master trap) ──────────────────────────────
+_kill_test_children() {
+    local pids
+    pids=$(jobs -p 2>/dev/null) || true
+    [[ -n "$pids" ]] && kill $pids 2>/dev/null || true
+    pkill -P $$ 2>/dev/null || true
+    wait 2>/dev/null || true
+}
+
+# ─── Script-level cleanup hook — override in each test script ────────────────
+# Default is a no-op; scripts set: _test_cleanup_hook() { cleanup_env; }
+_test_cleanup_hook() { :; }
+
+# ─── Master trap — kills children, calls hook, removes auto temp dir ─────────
+_test_harness_cleanup() {
+    _kill_test_children
+    _test_cleanup_hook
+    if [[ -n "${AUTO_TEST_TEMP_DIR:-}" && -d "$AUTO_TEST_TEMP_DIR" ]]; then
+        rm -rf "$AUTO_TEST_TEMP_DIR"
+    fi
+}
+trap '_test_harness_cleanup' EXIT INT TERM
 
 # ─── Assertions ──────────────────────────────────────────────────────────────
 

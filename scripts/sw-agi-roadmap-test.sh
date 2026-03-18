@@ -34,7 +34,7 @@ SKIP=0
 # ── Temp dir for test artifacts ───────────────────────────────────────────────
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/sw-agi-test.XXXXXX")
 cleanup() { rm -rf "$TEST_TMP"; }
-trap cleanup EXIT
+_test_cleanup_hook() { cleanup; }
 
 # ══════════════════════════════════════════════════════════════════════════════
 # P1: FEEDBACK LOOPS — Discovery, Memory, PM, Failure Learning

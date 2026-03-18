@@ -249,7 +249,7 @@ cleanup() {
 }
 
 ORIGINAL_HOME="$HOME"
-trap cleanup EXIT
+_test_cleanup_hook() { cleanup; }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TESTS: API Endpoints

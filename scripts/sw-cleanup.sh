@@ -43,10 +43,12 @@ fi
 
 FORCE=false
 PRUNE_ORPHANS=false
+TEST_ORPHANS=false
 for arg in "$@"; do
     case "$arg" in
         --force|-f) FORCE=true ;;
         --prune-orphans) PRUNE_ORPHANS=true ;;
+        --test-orphans) TEST_ORPHANS=true ;;
         --help|-h)
             echo -e "${CYAN}${BOLD}shipwright cleanup${RESET} — Clean up orphaned sessions and artifacts"
             echo ""
@@ -54,6 +56,7 @@ for arg in "$@"; do
             echo -e "  shipwright cleanup                    ${DIM}# Dry-run: show what would be cleaned${RESET}"
             echo -e "  shipwright cleanup --force            ${DIM}# Actually kill sessions and remove files${RESET}"
             echo -e "  shipwright cleanup --prune-orphans    ${DIM}# Kill orphaned pipeline processes${RESET}"
+            echo -e "  shipwright cleanup --test-orphans     ${DIM}# Kill orphaned test harness processes${RESET}"
             exit 0
             ;;
         *)
@@ -120,6 +123,44 @@ if $PRUNE_ORPHANS; then
         success "No orphaned pipeline processes found."
     else
         success "Sent kill signal to ${orphans_killed} orphaned process(es)."
+    fi
+    echo ""
+    exit 0
+fi
+
+# ─── --test-orphans: Kill stale test harness processes ──────────────────────
+
+if $TEST_ORPHANS; then
+    echo ""
+    echo -e "${BOLD}Pruning Orphaned Test Harness Processes${RESET}"
+    echo -e "${DIM}────────────────────────────────────────${RESET}"
+
+    test_orphans_found=0
+    test_orphans_killed=0
+
+    while IFS= read -r pid; do
+        [[ -z "$pid" || "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+        if ! _is_orphan "$pid"; then
+            echo -e "  ${DIM}Skipping PID ${pid} (sw-*-test.sh) — parent is alive${RESET}"
+            continue
+        fi
+        test_orphans_found=$((test_orphans_found + 1))
+        local_comm=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+        echo -e "  ${YELLOW}○${RESET} Orphan: PID ${pid} (sw-*-test.sh) ${local_comm}"
+        local pgid
+        pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ') || true
+        if [[ "${pgid:-}" == "$pid" ]]; then
+            kill -- -"$pid" 2>/dev/null || true
+        fi
+        pkill -P "$pid" 2>/dev/null || true
+        kill "$pid" 2>/dev/null || true
+        test_orphans_killed=$((test_orphans_killed + 1))
+    done < <(pgrep -f "sw-[a-z].*-test\.sh" 2>/dev/null || true)
+
+    if [[ "$test_orphans_found" -eq 0 ]]; then
+        success "No orphaned test processes found."
+    else
+        success "Sent kill signal to ${test_orphans_killed} orphaned test process(es)."
     fi
     echo ""
     exit 0

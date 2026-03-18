@@ -35,7 +35,7 @@ echo "Running budget-limited Claude smoke (target ~\$${BUDGET_TARGET_USD}/run, o
 out_file=$(mktemp "${TMPDIR:-/tmp}/sw-claude-smoke.XXXXXX")
 err_file=$(mktemp "${TMPDIR:-/tmp}/sw-claude-smoke-err.XXXXXX")
 cleanup() { rm -f "$out_file" "$err_file"; }
-trap cleanup EXIT
+_test_cleanup_hook() { cleanup; }
 
 run_claude() {
     local timeout_cmd=""

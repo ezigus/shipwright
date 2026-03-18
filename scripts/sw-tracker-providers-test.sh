@@ -163,7 +163,7 @@ cleanup_env() {
         rm -rf "$TEMP_DIR"
     fi
 }
-trap cleanup_env EXIT
+_test_cleanup_hook() { cleanup_env; }
 
 run_test() {
     local test_name="$1"

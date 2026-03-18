@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 print_test_header "Lib: daemon-dispatch Tests"
 
 setup_test_env "lib-daemon-dispatch"
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 # ─── Daemon environment ────────────────────────────────────────────────────
 export SHIPWRIGHT_HOME="$TEST_TEMP_DIR/home/.shipwright"

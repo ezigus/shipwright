@@ -41,7 +41,7 @@ MOCKEOF
     export HOME="$TEST_TEMP_DIR/home"
 }
 
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 assert_pass() {
     local desc="$1"

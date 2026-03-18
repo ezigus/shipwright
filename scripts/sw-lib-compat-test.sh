@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 print_test_header "Lib: compat Tests"
 
 setup_test_env "sw-lib-compat-test"
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 # Source the lib (clear guard to re-source)
 _COMPAT_LOADED=""

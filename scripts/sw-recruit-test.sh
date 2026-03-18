@@ -16,6 +16,7 @@ export SW_RECRUIT_NO_LLM=1
 
 # Redirect HOME to a temp directory to avoid writing to the real ~/.shipwright
 setup_test_env "sw-recruit-test"
+trap cleanup_test_env EXIT
 
 # Colors
 # shellcheck disable=SC2034

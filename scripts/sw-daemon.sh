@@ -631,7 +631,15 @@ cleanup_on_exit() {
                 [[ -z "$cpid" ]] && continue
                 if kill -0 "$cpid" 2>/dev/null; then
                     daemon_log INFO "Killing pipeline process tree PID ${cpid}"
-                    pkill -TERM -P "$cpid" 2>/dev/null || true
+                    # Only send negative-PGID signal when cpid is the process group
+                    # leader (i.e., was spawned via setsid). Otherwise fall through
+                    # to pkill -P to avoid killing unrelated processes.
+                    local _cpgid
+                    _cpgid=$(ps -o pgid= -p "$cpid" 2>/dev/null | tr -d ' ') || true
+                    if [[ "${_cpgid:-}" == "$cpid" ]]; then
+                        kill -- -"$cpid" 2>/dev/null || true
+                    fi
+                    pkill -P "$cpid" 2>/dev/null || true
                     kill "$cpid" 2>/dev/null || true
                     killed=$((killed + 1))
                 fi
@@ -644,6 +652,11 @@ cleanup_on_exit() {
                     [[ -z "$cpid" ]] && continue
                     if kill -0 "$cpid" 2>/dev/null; then
                         daemon_log WARN "Force-killing pipeline tree PID ${cpid}"
+                        local _cpgid2
+                        _cpgid2=$(ps -o pgid= -p "$cpid" 2>/dev/null | tr -d ' ') || true
+                        if [[ "${_cpgid2:-}" == "$cpid" ]]; then
+                            kill -9 -- -"$cpid" 2>/dev/null || true
+                        fi
                         pkill -9 -P "$cpid" 2>/dev/null || true
                         kill -9 "$cpid" 2>/dev/null || true
                     fi

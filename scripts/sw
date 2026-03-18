@@ -129,7 +129,7 @@ show_help() {
     echo -e "  ${CYAN}ci${RESET} <cmd>                CI/CD workflow generation"
     echo ""
     echo -e "${BOLD}MAINTENANCE${RESET}"
-    echo -e "  ${CYAN}cleanup${RESET} [--force]       Clean up orphaned sessions"
+    echo -e "  ${CYAN}cleanup${RESET} [--force] [--prune-orphans]  Clean up orphaned sessions/processes"
     echo -e "  ${CYAN}upgrade${RESET} [--apply]       Check for and apply updates"
     echo -e "  ${CYAN}templates${RESET} [list|show]   Manage team composition templates"
     echo -e "  ${CYAN}version${RESET}                 Show/bump/check version"

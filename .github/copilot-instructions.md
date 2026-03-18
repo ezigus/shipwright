@@ -606,16 +606,16 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-ai.sh` | 99 | set -euo pipefail |
 | `scripts/sw-architecture-enforcer.sh` | 319 | Living Architecture Model & Enforcer |
 | `scripts/sw-auth.sh` | 610 | GitHub OAuth Authentication |
-| `scripts/sw-autonomous.sh` | 1057 | Master controller for AI-building-AI loop |
+| `scripts/sw-autonomous.sh` | 1064 | Master controller for AI-building-AI loop |
 | `scripts/sw-changelog.sh` | 696 | Automated Release Notes & Migration Guides |
 | `scripts/sw-checkpoint.sh` | 605 | Save and restore agent state mid-stage |
 | `scripts/sw-ci.sh` | 589 | GitHub Actions CI/CD Orchestration |
-| `scripts/sw-cleanup.sh` | 374 | Clean up orphaned Claude team sessions & artifacts |
+| `scripts/sw-cleanup.sh` | 439 | Clean up orphaned Claude team sessions & artifacts |
 | `scripts/sw-code-review.sh` | 697 | Clean Code & Architecture Analysis |
 | `scripts/sw-connect.sh` | 624 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 600 | Context Engine for Pipeline Stages |
 | `scripts/sw-cost.sh` | 1013 | Token Usage & Cost Intelligence |
-| `scripts/sw-daemon.sh` | 1449 | Autonomous GitHub Issue Watcher |
+| `scripts/sw-daemon.sh` | 1464 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 510 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 1939 | SQLite Persistence Layer |
 | `scripts/sw-decide.sh` | 691 | Shipwright Autonomous Decision Engine |
@@ -649,7 +649,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 703 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 643 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 353 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 2473 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 2532 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 2114 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 473 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 606 | Intelligent Model Routing & Cost Optimization |
@@ -658,7 +658,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 445 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 444 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1076 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 3171 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 3195 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 749 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 688 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 834 | Predictive & Proactive Intelligence |
@@ -820,7 +820,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-pipeline-state-test.sh` | 309 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 281 | Validate agent pane log viewing, searching, |
-| `scripts/sw-loop-test.sh` | 836 | Validate continuous agent loop harness |
+| `scripts/sw-loop-test.sh` | 1111 | Validate continuous agent loop harness |
 | `scripts/sw-memory-discovery-e2e-test.sh` | 411 | Memory & Discovery E2E Test |
 | `scripts/sw-memory-test.sh` | 871 | Unit tests for memory system & cost tracking |
 | `scripts/sw-mission-control-test.sh` | 153 | Validate mission control dashboard |
@@ -852,7 +852,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-security-audit-test.sh` | 162 | Security auditing tests |
 | `scripts/sw-self-optimize-test.sh` | 837 | Unit tests for learning & tuning system |
 | `scripts/sw-server-api-test.sh` | 713 | Dashboard Server API Test Suite |
-| `scripts/sw-session-test.sh` | 586 | E2E validation of session creation flow |
+| `scripts/sw-session-test.sh` | 605 | E2E validation of session creation flow |
 | `scripts/sw-setup-test.sh` | 262 | Validate comprehensive onboarding wizard |
 | `scripts/sw-standup-test.sh` | 241 | Validate daily standup automation |
 | `scripts/sw-status-test.sh` | 294 | Validate status dashboard and --json output |

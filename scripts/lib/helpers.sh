@@ -379,3 +379,16 @@ sanitize_secrets() {
     echo "$text"
 }
 
+# ─── Git Staging Helper ───────────────────────────────────────────
+# Stage all changes and unstage runtime-only files that must not be committed.
+# Usage: safe_git_stage [dir]   (dir defaults to current directory)
+safe_git_stage() {
+    local dir="${1:-.}"
+    local toplevel
+    toplevel="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || true
+    git -C "$dir" add -A 2>/dev/null || true
+    if [[ -n "$toplevel" ]]; then
+        git -C "$dir" restore --staged "$toplevel/.claude/daemon-config.json" 2>/dev/null || true
+    fi
+}
+

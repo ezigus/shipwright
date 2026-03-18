@@ -631,7 +631,7 @@ ci_push_partial_work() {
 
     # Only push if we have uncommitted changes
     if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-        git add -A 2>/dev/null || true
+        safe_git_stage
         git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
     fi
 
@@ -654,16 +654,21 @@ ci_post_stage_event() {
 
 # ─── Signal Handling ───────────────────────────────────────────────────────
 
+# Set to true when a signal (SIGINT/SIGTERM) drives the cleanup, so that the
+# EXIT trap can distinguish signal-driven interruption from normal completion.
+_PIPELINE_SIGNALED=false
+
 cleanup_on_exit() {
+    local exit_code=$?
     [[ "${_cleanup_done:-}" == "true" ]] && return 0
     _cleanup_done=true
-    local exit_code=$?
 
     # Stop heartbeat writer
     stop_heartbeat
 
-    # Save state if we were running
-    if [[ "$PIPELINE_STATUS" == "running" && -n "$STATE_FILE" ]]; then
+    # Only mark as interrupted and post GitHub comment if actually signal-driven.
+    # On clean completions the pipeline stages handle their own state/comments.
+    if [[ "$_PIPELINE_SIGNALED" == "true" && "$PIPELINE_STATUS" == "running" && -n "$STATE_FILE" ]]; then
         PIPELINE_STATUS="interrupted"
         UPDATED_AT="$(now_iso)"
         write_state 2>/dev/null || true
@@ -673,6 +678,17 @@ cleanup_on_exit() {
 
         # Push partial work in CI mode so retries can pick it up
         ci_push_partial_work
+
+        # Cancel lingering in_progress GitHub Check Runs
+        pipeline_cancel_check_runs 2>/dev/null || true
+
+        # Update GitHub
+        if [[ -n "${ISSUE_NUMBER:-}" && "${GH_AVAILABLE:-false}" == "true" ]]; then
+            if ! _timeout "$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)" gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Pipeline interrupted** at stage: ${CURRENT_STAGE_ID:-unknown}" 2>/dev/null; then
+                warn "gh issue comment failed — status update may not have been posted"
+                emit_event "pipeline.comment_failed" "issue=$ISSUE_NUMBER"
+            fi
+        fi
     fi
 
     # Restore stashed changes
@@ -685,21 +701,29 @@ cleanup_on_exit() {
         release_lock "$_PIPELINE_LOCK_ID" 2>/dev/null || true
     fi
 
-    # Cancel lingering in_progress GitHub Check Runs
-    pipeline_cancel_check_runs 2>/dev/null || true
-
-    # Update GitHub
-    if [[ -n "${ISSUE_NUMBER:-}" && "${GH_AVAILABLE:-false}" == "true" ]]; then
-        if ! _timeout "$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)" gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Pipeline interrupted** at stage: ${CURRENT_STAGE_ID:-unknown}" 2>/dev/null; then
-            warn "gh issue comment failed — status update may not have been posted"
-            emit_event "pipeline.comment_failed" "issue=$ISSUE_NUMBER"
+    # Kill the entire process group only on signal-driven exits and only when we
+    # are the group leader (i.e., launched via setsid). Skipping on clean exits
+    # preserves intentionally detached post-run background jobs.
+    if [[ "$_PIPELINE_SIGNALED" == "true" ]]; then
+        local _our_pgid
+        _our_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ') || true
+        if [[ "${_our_pgid:-}" == "$$" ]]; then
+            kill -- -$$ 2>/dev/null || true
+            sleep 2
+            kill -9 -- -$$ 2>/dev/null || true
         fi
     fi
 
     exit "$exit_code"
 }
 
-trap cleanup_on_exit SIGINT SIGTERM
+_signal_cleanup() {
+    _PIPELINE_SIGNALED=true
+    cleanup_on_exit
+}
+
+trap cleanup_on_exit EXIT
+trap _signal_cleanup SIGINT SIGTERM
 
 # ─── Pre-flight Validation ─────────────────────────────────────────────────
 

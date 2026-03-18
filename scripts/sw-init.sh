@@ -671,6 +671,7 @@ if [[ "$SKIP_CLAUDE_MD" == "false" && -f "$CLAUDE_MD_SRC" ]]; then
     fi
 fi
 
+
 # ─── GitHub CLI Authentication ────────────────────────────────────────────────
 # gh auth is required for daemon, pipeline, PR creation, and issue management
 if command -v gh >/dev/null 2>&1; then

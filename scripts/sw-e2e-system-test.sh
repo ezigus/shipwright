@@ -528,7 +528,7 @@ main() {
 
     ORIG_HOME="${HOME:-}"
     ORIG_PATH="${PATH:-}"
-    trap cleanup_e2e_env EXIT
+    _test_cleanup_hook() { cleanup_e2e_env; }
 
     echo -e "${DIM}Setting up mock environment...${RESET}"
     setup_e2e_env

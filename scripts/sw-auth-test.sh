@@ -63,7 +63,7 @@ MOCK
     export NO_GITHUB=true
 }
 
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 print_test_header "Shipwright Auth Tests"
 setup_env

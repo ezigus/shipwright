@@ -12,7 +12,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 print_test_header "sw-evidence Tests"
 
 setup_test_env "sw-evidence-test"
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 # Build a minimal test repo so REPO_DIR resolves to our temp
 # sw-evidence.sh uses SCRIPT_DIR/.. as REPO_DIR — we need scripts under test repo

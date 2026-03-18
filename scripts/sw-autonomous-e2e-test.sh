@@ -23,7 +23,7 @@ export REPO_DIR="$REPO_ROOT"
 export SKIP_GATES=true
 
 cleanup() { rm -rf "$MOCK_DIR"; }
-trap cleanup EXIT
+_test_cleanup_hook() { cleanup; }
 
 echo -e "\n${BOLD}Shipwright Autonomous Loop E2E Test${RESET}\n"
 

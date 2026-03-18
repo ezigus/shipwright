@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 print_test_header "Lib: daemon-triage Tests"
 
 setup_test_env "sw-lib-daemon-triage-test"
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 # Set up env
 export EVENTS_FILE="$TEST_TEMP_DIR/home/.shipwright/events.jsonl"

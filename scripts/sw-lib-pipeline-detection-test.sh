@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 print_test_header "Lib: pipeline-detection Tests"
 
 setup_test_env "sw-lib-pipeline-detection-test"
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 mock_git
 mock_gh

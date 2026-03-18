@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 print_test_header "Lib: daemon-failure Tests"
 
 setup_test_env "sw-lib-daemon-failure-test"
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 # Set up daemon environment variables
 export LOG_DIR="$TEST_TEMP_DIR/logs"

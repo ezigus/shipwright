@@ -86,7 +86,7 @@ cleanup_env() {
     # Clean up mock pipeline if we placed one
     rm -f "$SCRIPT_DIR/sw-pipeline.sh.mock" 2>/dev/null || true
 }
-trap cleanup_env EXIT
+_test_cleanup_hook() { cleanup_env; }
 
 # Reset between tests
 reset_test() {

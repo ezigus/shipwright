@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 print_test_header "Lib: pipeline-intelligence Tests"
 
 setup_test_env "sw-lib-pipeline-intelligence-test"
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 # Set up pipeline intelligence env
 export ARTIFACTS_DIR="$TEST_TEMP_DIR/artifacts"

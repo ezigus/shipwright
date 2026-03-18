@@ -58,7 +58,7 @@ MOCK
     cd "$TEST_TEMP_DIR/repo"
 }
 
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 assert_pass() { local desc="$1"; TOTAL=$((TOTAL+1)); PASS=$((PASS+1)); echo -e "  ${GREEN}✓${RESET} ${desc}"; }
 assert_fail() { local desc="$1"; local detail="${2:-}"; TOTAL=$((TOTAL+1)); FAIL=$((FAIL+1)); FAILURES+=("$desc"); echo -e "  ${RED}✗${RESET} ${desc}"; if [[ -n "$detail" ]]; then echo -e "    ${DIM}${detail}${RESET}"; fi; }
@@ -162,6 +162,13 @@ echo '{}' > "$HOME/.claude/tasks/task-a/t.json"
 output=$(bash "$SCRIPT_DIR/sw-cleanup.sh" 2>&1) || true
 assert_contains "summary shows found count" "$output" "Found"
 assert_contains "summary shows --force hint" "$output" "--force"
+
+# ─── Test 11: --test-orphans flag ─────────────────────────────────────────
+echo ""
+echo -e "${BOLD}  Test Orphan Reaper${RESET}"
+output=$(bash "$SCRIPT_DIR/sw-cleanup.sh" --test-orphans 2>&1) && rc=0 || rc=$?
+assert_eq "--test-orphans exits zero" "0" "$rc"
+assert_contains "--test-orphans reports no orphans" "$output" "No orphaned test processes found"
 
 echo ""
 echo ""

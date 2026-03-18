@@ -110,7 +110,7 @@ FIXTURE
     export HOME="$TEST_TEMP_DIR/home"
 }
 
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEST HELPERS

@@ -12,7 +12,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 print_test_header "Lib: error-actionability Tests"
 
 setup_test_env "sw-lib-error-actionability-test"
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 # Source the library
 source "$SCRIPT_DIR/lib/error-actionability.sh"

@@ -51,7 +51,7 @@ MOCK
     export NO_GITHUB=true
 }
 
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 assert_pass() {
     local desc="$1"

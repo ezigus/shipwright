@@ -13,7 +13,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 print_test_header "sw-decide Tests"
 
 setup_test_env "sw-decide-test"
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 # ─── Build test repo ──────────────────────────────────────────────────────────
 TEST_REPO="$TEST_TEMP_DIR/repo"

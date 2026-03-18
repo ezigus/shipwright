@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 print_test_header "Lib: daemon-patrol Tests"
 
 setup_test_env "sw-lib-daemon-patrol-test"
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 # Set up daemon environment
 export STATE_FILE="$TEST_TEMP_DIR/home/.shipwright/daemon-state.json"

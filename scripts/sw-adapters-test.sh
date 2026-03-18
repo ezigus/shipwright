@@ -12,7 +12,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 print_test_header "sw-adapters Tests"
 
 setup_test_env "sw-adapters-test"
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 ADAPTERS_DIR="$SCRIPT_DIR/adapters"
 

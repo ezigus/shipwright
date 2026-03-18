@@ -19,7 +19,7 @@ export HOME="$MOCK_DIR"
 export REPO_DIR="$REPO_ROOT"
 
 cleanup() { rm -rf "$MOCK_DIR"; }
-trap cleanup EXIT
+_test_cleanup_hook() { cleanup; }
 
 echo -e "\n${BOLD}Shipwright Budget & Chaos Test Suite${RESET}\n"
 

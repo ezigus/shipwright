@@ -69,7 +69,7 @@ cleanup_env() {
         rm -rf "$DAEMON_TEST_TEMP_DIR"
     fi
 }
-trap cleanup_env EXIT
+_test_cleanup_hook() { cleanup_env; }
 
 # Reset between tests
 reset_test() {

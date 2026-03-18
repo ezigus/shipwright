@@ -31,7 +31,7 @@ cleanup_env() {
         rm -rf "$TEST_TEMP_DIR"
     fi
 }
-trap cleanup_env EXIT
+_test_cleanup_hook() { cleanup_env; }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROJECT CREATORS — set up mock repos for each language

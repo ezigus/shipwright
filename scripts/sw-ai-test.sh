@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 print_test_header "AI Command Tests"
 setup_test_env "sw-ai-test"
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 mock_git
 mock_gh

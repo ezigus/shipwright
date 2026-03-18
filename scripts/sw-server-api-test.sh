@@ -89,7 +89,7 @@ cleanup() {
     kill "$SERVER_PID" 2>/dev/null || true
     rm -rf "$MOCK_DIR"
 }
-trap cleanup EXIT
+_test_cleanup_hook() { cleanup; }
 
 # Wait for server
 # shellcheck disable=SC2034

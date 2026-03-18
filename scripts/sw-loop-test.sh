@@ -91,7 +91,7 @@ MOCKEOF
     export NO_GITHUB=true
 }
 
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 # Use assert_pass/assert_fail from test-helpers.sh (they track TOTAL/PASS/FAIL counters)
 

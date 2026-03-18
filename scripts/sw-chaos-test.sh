@@ -14,7 +14,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 print_test_header "Chaos Test Suite: Fault Injection & Recovery"
 
 setup_test_env "sw-chaos-test"
-trap cleanup_test_env EXIT
+_test_cleanup_hook() { cleanup_test_env; }
 
 # Chaos environment
 export STATE_FILE="$TEST_TEMP_DIR/home/.shipwright/daemon-state.json"

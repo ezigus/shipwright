@@ -612,7 +612,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-changelog.sh` | 696 | Automated Release Notes & Migration Guides |
 | `scripts/sw-checkpoint.sh` | 605 | Save and restore agent state mid-stage |
 | `scripts/sw-ci.sh` | 589 | GitHub Actions CI/CD Orchestration |
-| `scripts/sw-cleanup.sh` | 439 | Clean up orphaned Claude team sessions & artifacts |
+| `scripts/sw-cleanup.sh` | 479 | Clean up orphaned Claude team sessions & artifacts |
 | `scripts/sw-code-review.sh` | 697 | Clean Code & Architecture Analysis |
 | `scripts/sw-connect.sh` | 624 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 600 | Context Engine for Pipeline Stages |
@@ -757,7 +757,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-chaos-test.sh` | 387 | Fault injection & recovery validation |
 | `scripts/sw-checkpoint-test.sh` | 341 | Validate checkpoint save/restore |
 | `scripts/sw-ci-test.sh` | 198 | GitHub Actions CI/CD orchestration tests |
-| `scripts/sw-cleanup-test.sh` | 168 | Clean up orphaned sessions & artifacts |
+| `scripts/sw-cleanup-test.sh` | 175 | Clean up orphaned sessions & artifacts |
 | `scripts/sw-code-review-test.sh` | 174 | Clean code & architecture analysis tests |
 | `scripts/sw-connect-test.sh` | 822 | Validate dashboard connection, heartbeat |
 | `scripts/sw-context-test.sh` | 219 | Context Engine for Pipeline Stages tests |

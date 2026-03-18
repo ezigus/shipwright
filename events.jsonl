@@ -149,3 +149,5 @@
 {"ts":"2026-03-18T04:47:05Z","ts_epoch":1773809225,"type":"strategic.issue_created","title":"Automated monolithic script detection with refactor roadmap generation","priority":"P6","complexity":"standard"}
 {"ts":"2026-03-18T04:47:05Z","ts_epoch":1773809225,"type":"strategic.cycle_complete","issues_created":5,"issues_skipped":0}
 {"ts":"2026-03-18T08:22:04Z","ts_epoch":1773822124,"type":"hygiene_platform_refactor","hardcoded":45,"fallback":63,"todo":44}
+{"ts":"2026-03-18T12:26:29Z","ts_epoch":1773836789,"type":"hygiene_platform_refactor","hardcoded":45,"fallback":63,"todo":44}
+{"ts":"2026-03-18T12:26:36Z","ts_epoch":1773836796,"type":"cost.budget_unconfigured","status":"unlimited"}

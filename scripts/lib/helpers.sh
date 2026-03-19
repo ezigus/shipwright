@@ -421,7 +421,8 @@ _git_diff_stat_excluded() {
 }
 
 # ─── Git Staging Helper ───────────────────────────────────────────
-# Stage all changes and unstage runtime-only files that must not be committed.
+# Stage all changes, then unstage any bookkeeping files listed in
+# _GIT_BOOKKEEPING_FILES so they are not included in commits.
 # Usage: safe_git_stage [dir]   (dir defaults to current directory)
 safe_git_stage() {
     local dir="${1:-.}"

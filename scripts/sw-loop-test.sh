@@ -1183,7 +1183,7 @@ fi
 
 # Test: all three bookkeeping files are listed in _GIT_BOOKKEEPING_FILES
 for _bf in daemon-config.json pipeline-tasks.md tasks.md; do
-    if awk '/_GIT_BOOKKEEPING_FILES=/,/\)/' "$SCRIPT_DIR/lib/helpers.sh" | grep -q "$_bf"; then
+    if awk '/_GIT_BOOKKEEPING_FILES=/,/\)/' "$SCRIPT_DIR/lib/helpers.sh" | grep -Fq "$_bf"; then
         assert_pass "_GIT_BOOKKEEPING_FILES includes $_bf"
     else
         assert_fail "_GIT_BOOKKEEPING_FILES includes $_bf"
@@ -1251,12 +1251,12 @@ _test_safe_git_stage() {
     # Bookkeeping files must NOT be staged
     local _bf
     for _bf in .claude/daemon-config.json .claude/pipeline-tasks.md .claude/tasks.md; do
-        if echo "$staged" | grep -q "$_bf"; then
+        if echo "$staged" | grep -F -x -q "$_bf"; then
             return 1
         fi
     done
     # Real code file MUST be staged
-    if ! echo "$staged" | grep -q "app.sh"; then
+    if ! echo "$staged" | grep -F -x -q "app.sh"; then
         return 1
     fi
     return 0

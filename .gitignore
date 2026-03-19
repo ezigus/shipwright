@@ -19,6 +19,7 @@ demo/*.gif
 .claude/loop-state.md
 .claude/platform-hygiene.json
 .claude/intelligence-cache.json
+.claude/daemon-runtime.json
 .claude/code-review.json
 .claude/hygiene-report.json
 

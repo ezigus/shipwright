@@ -957,30 +957,20 @@ daemon_self_optimize() {
             --arg ts "$(now_iso)" \
             '.last_optimization = {timestamp: $ts, adjustments: $adj}'
 
-        # ── Persist adjustments to daemon-config.json (survives restart) ──
-        local config_file="${CONFIG_PATH:-.claude/daemon-config.json}"
-        if [[ -f "$config_file" ]]; then
-            local tmp_config
-            tmp_config=$(jq \
-                --argjson max_parallel "$MAX_PARALLEL" \
-                --argjson poll_interval "$POLL_INTERVAL" \
-                --arg template "$PIPELINE_TEMPLATE" \
-                --arg auto_template "${AUTO_TEMPLATE:-false}" \
-                --arg ts "$(now_iso)" \
-                --arg adj "$adj_str" \
-                '.max_parallel = $max_parallel |
-                 .poll_interval = $poll_interval |
-                 .pipeline_template = $template |
-                 .auto_template = ($auto_template == "true") |
-                 .last_optimization = {timestamp: $ts, adjustments: $adj}' \
-                "$config_file")
-            # Atomic write: tmp file + mv (preserve 600 permissions)
-            local tmp_cfg_file="${config_file}.tmp.$$"
-            echo "$tmp_config" > "$tmp_cfg_file"
-            chmod 600 "$tmp_cfg_file"
-            mv "$tmp_cfg_file" "$config_file"
-            daemon_log INFO "Self-optimize: persisted adjustments to ${config_file}"
-        fi
+        # ── Persist adjustments to daemon-runtime.json (untracked, never committed) ──
+        write_daemon_runtime \
+            --argjson max_parallel "$MAX_PARALLEL" \
+            --argjson poll_interval "$POLL_INTERVAL" \
+            --arg template "$PIPELINE_TEMPLATE" \
+            --arg auto_template "${AUTO_TEMPLATE:-false}" \
+            --arg ts "$(now_iso)" \
+            --arg adj "$adj_str" \
+            '.max_parallel = $max_parallel |
+             .poll_interval = $poll_interval |
+             .pipeline_template = $template |
+             .auto_template = ($auto_template == "true") |
+             .last_optimization = {timestamp: $ts, adjustments: $adj}'
+        daemon_log INFO "Self-optimize: persisted adjustments to daemon-runtime.json"
 
         emit_event "daemon.optimize" "adjustments=${adj_str}" "cfr=$cfr" "cycle_time=$cycle_time_median" "deploy_freq=$deploy_freq" "mttr=$mttr"
         daemon_log SUCCESS "Self-optimization applied ${#adjustments[@]} adjustment(s)"

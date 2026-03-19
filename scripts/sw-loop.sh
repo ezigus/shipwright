@@ -1210,9 +1210,9 @@ run_quality_gates() {
         gate_failures+=("tests failing")
     fi
 
-    # Gate 2: No uncommitted changes
-    if ! git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null || \
-       ! git -C "$PROJECT_ROOT" diff --cached --quiet 2>/dev/null; then
+    # Gate 2: No uncommitted changes (excluding daemon-config.json which may have runtime writes)
+    if ! git -C "$PROJECT_ROOT" diff --quiet -- ':!.claude/daemon-config.json' 2>/dev/null || \
+       ! git -C "$PROJECT_ROOT" diff --cached --quiet -- ':!.claude/daemon-config.json' 2>/dev/null; then
         gate_failures+=("uncommitted changes present")
     fi
 
@@ -2297,7 +2297,7 @@ ${GOAL}"
             done
 
             # 2. Check for uncommitted changes (quality gate)
-            if ! git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null; then
+            if ! git -C "$PROJECT_ROOT" diff --quiet -- ':!.claude/daemon-config.json' 2>/dev/null; then
                 echo -e "  ${YELLOW}⚠${RESET} Uncommitted changes detected"
                 verification_passed=false
             fi
@@ -2324,8 +2324,8 @@ ${GOAL}"
 
         # Auto-commit any remaining changes before quality gates
         # (audit agent, verification handler, or test evidence may create files)
-        if ! git -C "$PROJECT_ROOT" diff --quiet 2>/dev/null || \
-           ! git -C "$PROJECT_ROOT" diff --cached --quiet 2>/dev/null || \
+        if ! git -C "$PROJECT_ROOT" diff --quiet -- ':!.claude/daemon-config.json' 2>/dev/null || \
+           ! git -C "$PROJECT_ROOT" diff --cached --quiet -- ':!.claude/daemon-config.json' 2>/dev/null || \
            [[ -n "$(git -C "$PROJECT_ROOT" ls-files --others --exclude-standard 2>/dev/null | head -1)" ]]; then
             safe_git_stage "$PROJECT_ROOT"
             git -C "$PROJECT_ROOT" commit -m "loop: iteration $ITERATION — post-audit cleanup" --no-verify 2>/dev/null || true

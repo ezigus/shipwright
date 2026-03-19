@@ -541,7 +541,14 @@ fleet_rebalance_distributed() {
         local sw_path="${machine_paths[$i]}"
         local new_max="${alloc_list[$i]}"
 
-        local update_cmd="if [ -f '${sw_path}/.claude/daemon-config.json' ]; then tmp=\"${sw_path}/.claude/daemon-config.json.tmp.\$\$\"; jq --argjson mp ${new_max} '.max_parallel = \$mp' '${sw_path}/.claude/daemon-config.json' > \"\$tmp\" && mv \"\$tmp\" '${sw_path}/.claude/daemon-config.json'; fi"
+        # NOTE: This string is executed via ssh or eval on remote machines.
+        # Heavy escaping is required: outer vars (sw_path, new_max) expand now (local);
+        # inner vars ($rt, $tmp, $$) must escape to expand on the remote side.
+        local update_cmd
+        update_cmd="rt='${sw_path}/.claude/daemon-runtime.json'; \
+if [ ! -f \"\$rt\" ]; then echo '{}' > \"\$rt\"; chmod 600 \"\$rt\"; fi; \
+tmp=\"\${rt}.tmp.\$\$\"; \
+jq --argjson mp ${new_max} '.max_parallel = \$mp' \"\$rt\" > \"\$tmp\" && chmod 600 \"\$tmp\" && mv \"\$tmp\" \"\$rt\""
 
         if [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "::1" ]]; then
             bash -c "$update_cmd" 2>/dev/null || true

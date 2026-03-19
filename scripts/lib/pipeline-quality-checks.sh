@@ -808,7 +808,9 @@ run_e2e_validation() {
     fi
 
     info "Running E2E validation: $test_cmd"
-    if _timeout "${PIPELINE_TEST_TIMEOUT:-300}" bash -c "$test_cmd" > "$ARTIFACTS_DIR/e2e-validation.log" 2>&1; then
+    local e2e_rc=0
+    _timeout "${PIPELINE_TEST_TIMEOUT:-300}" bash -c "$test_cmd" 2>&1 | tee "$ARTIFACTS_DIR/e2e-validation.log" || e2e_rc=$?
+    if [[ "$e2e_rc" -eq 0 ]]; then
         success "E2E validation passed"
         return 0
     else
@@ -1016,10 +1018,12 @@ run_test_coverage_check() {
 
     info "Running test coverage check..."
 
-    # Run tests and capture output
-    local test_output
+    # Run tests — tee to stdout so the daemon sees activity, capture for parsing
+    local coverage_log="$ARTIFACTS_DIR/coverage-run.log"
     local test_rc=0
-    test_output=$(_timeout "${PIPELINE_TEST_TIMEOUT:-300}" bash -c "$test_cmd" 2>&1) || test_rc=$?
+    _timeout "${PIPELINE_TEST_TIMEOUT:-300}" bash -c "$test_cmd" 2>&1 | tee "$coverage_log" || test_rc=$?
+    local test_output
+    test_output=$(cat "$coverage_log" 2>/dev/null) || true
 
     if [[ "$test_rc" -ne 0 ]]; then
         warn "Test command failed (exit code: $test_rc) — cannot extract coverage"

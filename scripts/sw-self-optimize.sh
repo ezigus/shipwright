@@ -18,8 +18,6 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
-# shellcheck source=lib/daemon-runtime.sh
-[[ -f "$SCRIPT_DIR/lib/daemon-runtime.sh" ]] && source "$SCRIPT_DIR/lib/daemon-runtime.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -1598,8 +1596,10 @@ optimize_report() {
 # to increase audit intensity when quality is declining.
 optimize_adjust_audit_intensity() {
     local quality_file="${HOME}/.shipwright/optimization/quality-scores.jsonl"
+    local daemon_config="${REPO_DIR:-.}/.claude/daemon-config.json"
 
     [[ ! -f "$quality_file" ]] && return 0
+    [[ ! -f "$daemon_config" ]] && return 0
 
     # Get last 10 quality scores
     local recent_scores avg_quality trend
@@ -1626,7 +1626,11 @@ optimize_adjust_audit_intensity() {
     # Declining quality → enable more audits
     if [[ "$trend" == "declining" || "${avg_quality:-70}" -lt 60 ]]; then
         info "Quality trend: ${trend} (avg: ${avg_quality}) — increasing audit intensity"
-        write_daemon_runtime '.intelligence.adversarial_enabled = true | .intelligence.architecture_enabled = true'
+        local tmp_dc
+        tmp_dc=$(mktemp "${daemon_config}.tmp.XXXXXX")
+        trap "rm -f '$tmp_dc'" RETURN
+        jq '.intelligence.adversarial_enabled = true | .intelligence.architecture_enabled = true' \
+            "$daemon_config" > "$tmp_dc" 2>/dev/null && mv "$tmp_dc" "$daemon_config" || rm -f "$tmp_dc"
         emit_event "optimize.audit_intensity" \
             "avg_quality=$avg_quality" \
             "trend=$trend" \

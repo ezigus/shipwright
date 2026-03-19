@@ -53,8 +53,6 @@ fi
 [[ -f "$SCRIPT_DIR/lib/daemon-patrol.sh" ]] && source "$SCRIPT_DIR/lib/daemon-patrol.sh"
 # shellcheck source=lib/daemon-poll.sh
 [[ -f "$SCRIPT_DIR/lib/daemon-poll.sh" ]] && source "$SCRIPT_DIR/lib/daemon-poll.sh"
-# shellcheck source=lib/daemon-runtime.sh
-[[ -f "$SCRIPT_DIR/lib/daemon-runtime.sh" ]] && source "$SCRIPT_DIR/lib/daemon-runtime.sh"
 
 # ─── Intelligence Engine (optional) ──────────────────────────────────────────
 # shellcheck source=sw-intelligence.sh
@@ -560,22 +558,6 @@ load_config() {
     if [[ "${AUTO_TEMPLATE:-false}" == "true" && "${SELF_OPTIMIZE:-false}" == "false" ]]; then
         SELF_OPTIMIZE="true"
         daemon_log INFO "Auto-enabling self_optimize (auto_template is true)"
-    fi
-
-    # Merge runtime overlay (daemon-runtime.json) — untracked, never committed
-    local _rt_file
-    _rt_file="$(git rev-parse --show-toplevel 2>/dev/null || echo ".")/.claude/daemon-runtime.json"
-    if [[ -f "$_rt_file" ]]; then
-        POLL_INTERVAL=$(jq -r --argjson d "$POLL_INTERVAL" '.poll_interval // $d' "$_rt_file")
-        MAX_PARALLEL=$(jq -r --argjson d "$MAX_PARALLEL" '.max_parallel // $d' "$_rt_file")
-        PIPELINE_TEMPLATE=$(jq -r --arg d "$PIPELINE_TEMPLATE" '.pipeline_template // $d' "$_rt_file")
-        AUTO_TEMPLATE=$(jq -r --arg d "$AUTO_TEMPLATE" '.auto_template // $d' "$_rt_file")
-        # Intelligence overrides (from sw-self-optimize.sh)
-        local _adv _arch
-        _adv=$(jq -r '.intelligence.adversarial_enabled // empty' "$_rt_file")
-        _arch=$(jq -r '.intelligence.architecture_enabled // empty' "$_rt_file")
-        [[ -n "$_adv"  ]] && INTELLIGENCE_ADVERSARIAL_ENABLED="$_adv"
-        [[ -n "$_arch" ]] && INTELLIGENCE_ARCHITECTURE_ENABLED="$_arch"
     fi
 
     success "Config loaded"

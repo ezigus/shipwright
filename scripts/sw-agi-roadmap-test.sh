@@ -33,7 +33,7 @@ SKIP=0
 
 # ── Temp dir for test artifacts ───────────────────────────────────────────────
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/sw-agi-test.XXXXXX")
-cleanup() { rm -rf "$TEST_TMP"; }
+cleanup() { rm -rf "$TEST_TMP" 2>/dev/null || true; }
 _test_cleanup_hook() { cleanup; }
 
 # ══════════════════════════════════════════════════════════════════════════════

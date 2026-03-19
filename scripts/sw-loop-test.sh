@@ -1112,10 +1112,10 @@ else
 fi
 
 # Test: safe_git_stage() calls restore --staged daemon-config.json
-if grep -A8 '^safe_git_stage()' "$SCRIPT_DIR/lib/helpers.sh" | grep -q 'daemon-config.json'; then
-    assert_pass "safe_git_stage() unstages .claude/daemon-config.json after add -A"
+if grep -A10 '^safe_git_stage()' "$SCRIPT_DIR/lib/helpers.sh" | grep -q '_GIT_BOOKKEEPING_FILES'; then
+    assert_pass "safe_git_stage() uses _GIT_BOOKKEEPING_FILES to unstage bookkeeping files"
 else
-    assert_fail "safe_git_stage() unstages .claude/daemon-config.json after add -A"
+    assert_fail "safe_git_stage() uses _GIT_BOOKKEEPING_FILES to unstage bookkeeping files"
 fi
 
 # Test: post-audit cleanup path uses safe_git_stage
@@ -1160,7 +1160,65 @@ else
     assert_fail "pipeline-state.sh artifact commit guards daemon-config.json"
 fi
 
-# Test: functional — safe_git_stage does not stage daemon-config.json
+# Test: _GIT_BOOKKEEPING_FILES array is defined in helpers.sh
+if grep -q '_GIT_BOOKKEEPING_FILES=' "$SCRIPT_DIR/lib/helpers.sh"; then
+    assert_pass "_GIT_BOOKKEEPING_FILES defined in helpers.sh"
+else
+    assert_fail "_GIT_BOOKKEEPING_FILES defined in helpers.sh"
+fi
+
+# Test: _GIT_RUNTIME_EXCLUDES array is defined in helpers.sh
+if grep -q '_GIT_RUNTIME_EXCLUDES=' "$SCRIPT_DIR/lib/helpers.sh"; then
+    assert_pass "_GIT_RUNTIME_EXCLUDES defined in helpers.sh"
+else
+    assert_fail "_GIT_RUNTIME_EXCLUDES defined in helpers.sh"
+fi
+
+# Test: _git_diff_stat_excluded helper is defined in helpers.sh
+if grep -q '^_git_diff_stat_excluded()' "$SCRIPT_DIR/lib/helpers.sh"; then
+    assert_pass "_git_diff_stat_excluded() defined in helpers.sh"
+else
+    assert_fail "_git_diff_stat_excluded() defined in helpers.sh"
+fi
+
+# Test: all three bookkeeping files are listed in _GIT_BOOKKEEPING_FILES
+for _bf in daemon-config.json pipeline-tasks.md tasks.md; do
+    if awk '/_GIT_BOOKKEEPING_FILES=/,/\)/' "$SCRIPT_DIR/lib/helpers.sh" | grep -Fq "$_bf"; then
+        assert_pass "_GIT_BOOKKEEPING_FILES includes $_bf"
+    else
+        assert_fail "_GIT_BOOKKEEPING_FILES includes $_bf"
+    fi
+done
+
+# Test: safe_git_stage() loops over _GIT_BOOKKEEPING_FILES (not a hardcoded path)
+if grep -A10 '^safe_git_stage()' "$SCRIPT_DIR/lib/helpers.sh" | grep -q '_GIT_BOOKKEEPING_FILES'; then
+    assert_pass "safe_git_stage() uses _GIT_BOOKKEEPING_FILES"
+else
+    assert_fail "safe_git_stage() uses _GIT_BOOKKEEPING_FILES"
+fi
+
+# Test: check_progress() uses shared helper
+if grep -A5 '^check_progress()' "$SCRIPT_DIR/lib/loop-convergence.sh" | grep -q '_git_diff_stat_excluded'; then
+    assert_pass "check_progress() uses _git_diff_stat_excluded"
+else
+    assert_fail "check_progress() uses _git_diff_stat_excluded"
+fi
+
+# Test: track_iteration_velocity() uses shared helper
+if grep -A5 '^track_iteration_velocity()' "$SCRIPT_DIR/lib/loop-convergence.sh" | grep -q '_git_diff_stat_excluded'; then
+    assert_pass "track_iteration_velocity() uses _git_diff_stat_excluded"
+else
+    assert_fail "track_iteration_velocity() uses _git_diff_stat_excluded"
+fi
+
+# Test: git_diff_stat() uses shared helper
+if grep -A3 '^git_diff_stat()' "$SCRIPT_DIR/sw-loop.sh" | grep -q '_git_diff_stat_excluded'; then
+    assert_pass "git_diff_stat() uses _git_diff_stat_excluded"
+else
+    assert_fail "git_diff_stat() uses _git_diff_stat_excluded"
+fi
+
+# Test: functional — safe_git_stage excludes all bookkeeping files (not just daemon-config.json)
 # Uses the real git binary (not the mock stub injected by setup_env) so the
 # test actually exercises git init/add/commit/restore rather than no-ops.
 _test_safe_git_stage() {
@@ -1174,20 +1232,39 @@ _test_safe_git_stage() {
     "$real_git" -C "$tmpdir" config user.email "test@test.com"
     "$real_git" -C "$tmpdir" config user.name "test"
     mkdir -p "$tmpdir/.claude"
+    # Create all bookkeeping files and a real code file
     echo '{}' > "$tmpdir/.claude/daemon-config.json"
-    "$real_git" -C "$tmpdir" add "$tmpdir/.claude/daemon-config.json"
+    echo '# tasks' > "$tmpdir/.claude/pipeline-tasks.md"
+    echo '# tasks' > "$tmpdir/.claude/tasks.md"
+    echo 'echo hello' > "$tmpdir/app.sh"
+    "$real_git" -C "$tmpdir" add -A
     "$real_git" -C "$tmpdir" commit -q -m "initial"
+    # Modify all files
     echo '{"modified": true}' > "$tmpdir/.claude/daemon-config.json"
+    echo '# updated tasks' > "$tmpdir/.claude/pipeline-tasks.md"
+    echo '# updated tasks' > "$tmpdir/.claude/tasks.md"
+    echo 'echo world' > "$tmpdir/app.sh"
+    # Run safe_git_stage
     ( cd "$tmpdir" && PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin source "$SCRIPT_DIR/lib/helpers.sh" && safe_git_stage )
-    if "$real_git" -C "$tmpdir" diff --cached --name-only | grep -q 'daemon-config.json'; then
+    local staged
+    staged="$("$real_git" -C "$tmpdir" diff --cached --name-only)"
+    # Bookkeeping files must NOT be staged
+    local _bf
+    for _bf in .claude/daemon-config.json .claude/pipeline-tasks.md .claude/tasks.md; do
+        if echo "$staged" | grep -F -x -q "$_bf"; then
+            return 1
+        fi
+    done
+    # Real code file MUST be staged
+    if ! echo "$staged" | grep -F -x -q "app.sh"; then
         return 1
     fi
     return 0
 }
 if _test_safe_git_stage; then
-    assert_pass "safe_git_stage() functional: daemon-config.json not staged after add -A"
+    assert_pass "safe_git_stage() functional: all bookkeeping files excluded, real code staged"
 else
-    assert_fail "safe_git_stage() functional: daemon-config.json not staged after add -A"
+    assert_fail "safe_git_stage() functional: all bookkeeping files excluded, real code staged"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -7,7 +7,7 @@ _LOOP_CONVERGENCE_LOADED=1
 
 track_iteration_velocity() {
     local changes
-    changes="$(git -C "$PROJECT_ROOT" diff --stat HEAD~1 2>/dev/null | tail -1 || echo "")"
+    changes="$(_git_diff_stat_excluded "$PROJECT_ROOT")"
     local insertions
     insertions="$(echo "$changes" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)"
     ITERATION_LINES_CHANGED="${insertions:-0}"
@@ -40,11 +40,8 @@ compute_velocity_avg() {
 
 check_progress() {
     local changes
-    # Exclude loop bookkeeping files — only count real code changes as progress
-    changes="$(git -C "$PROJECT_ROOT" diff --stat HEAD~1 \
-        -- . ':!.claude/loop-state.md' ':!.claude/pipeline-state.md' \
-        ':!**/progress.md' ':!**/error-summary.json' \
-        2>/dev/null | tail -1 || echo "")"
+    # Exclude bookkeeping and runtime files — only count real code changes as progress
+    changes="$(_git_diff_stat_excluded "$PROJECT_ROOT")"
     local insertions
     insertions="$(echo "$changes" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)"
     if [[ "${insertions:-0}" -lt "$MIN_PROGRESS_LINES" ]]; then

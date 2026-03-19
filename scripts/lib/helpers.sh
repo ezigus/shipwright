@@ -379,6 +379,47 @@ sanitize_secrets() {
     echo "$text"
 }
 
+# ─── Git Bookkeeping Exclusions ──────────────────────────────────
+# Two categories of files excluded from loop progress/diff tracking:
+#
+# 1. Bookkeeping files: tracked in git, NOT gitignored. Must be excluded
+#    from auto-commits (safe_git_stage) AND diff/progress checks.
+# 2. Runtime files: already gitignored so they never get committed, but
+#    excluded from diff checks as belt-and-suspenders safety.
+#
+# Add new files here — all consumers read these lists.
+
+_GIT_BOOKKEEPING_FILES=(
+    ".claude/daemon-config.json"
+    ".claude/pipeline-tasks.md"
+    ".claude/tasks.md"
+)
+
+_GIT_RUNTIME_EXCLUDES=(
+    ".claude/loop-state.md"
+    ".claude/pipeline-state.md"
+    "**/progress.md"
+    "**/error-summary.json"
+)
+
+# Git diff --stat excluding all bookkeeping and runtime files.
+# Returns the summary line (e.g. "3 files changed, 10 insertions(+), 2 deletions(-)").
+# Usage: _git_diff_stat_excluded [git-dir]
+_git_diff_stat_excluded() {
+    local _dir="${1:-${PROJECT_ROOT:-.}}"
+    local _excl_args=()
+    local _f
+    for _f in "${_GIT_BOOKKEEPING_FILES[@]+"${_GIT_BOOKKEEPING_FILES[@]}"}"; do
+        _excl_args+=(":!$_f")
+    done
+    for _f in "${_GIT_RUNTIME_EXCLUDES[@]+"${_GIT_RUNTIME_EXCLUDES[@]}"}"; do
+        _excl_args+=(":!$_f")
+    done
+    git -C "$_dir" diff --stat HEAD~1 \
+        -- . "${_excl_args[@]+"${_excl_args[@]}"}" \
+        2>/dev/null | tail -1 || echo ""
+}
+
 # ─── Git Staging Helper ───────────────────────────────────────────
 # Stage all changes and unstage runtime-only files that must not be committed.
 # Usage: safe_git_stage [dir]   (dir defaults to current directory)
@@ -388,7 +429,10 @@ safe_git_stage() {
     toplevel="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || true
     git -C "$dir" add -A 2>/dev/null || true
     if [[ -n "$toplevel" ]]; then
-        git -C "$dir" restore --staged "$toplevel/.claude/daemon-config.json" 2>/dev/null || true
+        local _bf
+        for _bf in "${_GIT_BOOKKEEPING_FILES[@]+"${_GIT_BOOKKEEPING_FILES[@]}"}"; do
+            git -C "$dir" restore --staged "$toplevel/$_bf" 2>/dev/null || true
+        done
     fi
 }
 

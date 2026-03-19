@@ -759,7 +759,7 @@ git_recent_log() {
 }
 
 git_diff_stat() {
-    git -C "$PROJECT_ROOT" diff --stat HEAD~1 2>/dev/null | tail -1 || echo ""
+    _git_diff_stat_excluded "$PROJECT_ROOT"
 }
 
 git_auto_commit() {

@@ -797,8 +797,18 @@ run_e2e_validation() {
         return 0
     fi
 
+    # Reuse test stage results if available and passing (no failure markers)
+    local test_log="$ARTIFACTS_DIR/test-results.log"
+    if [[ -f "$test_log" ]]; then
+        if ! grep -qiE '(tests? failed|[1-9][0-9]* failure|[1-9][0-9]* failed|\bFAIL\b)' "$test_log" 2>/dev/null; then
+            success "E2E validation passed (reusing test stage results)"
+            cp "$test_log" "$ARTIFACTS_DIR/e2e-validation.log" 2>/dev/null || true
+            return 0
+        fi
+    fi
+
     info "Running E2E validation: $test_cmd"
-    if bash -c "$test_cmd" > "$ARTIFACTS_DIR/e2e-validation.log" 2>&1; then
+    if _timeout "${PIPELINE_TEST_TIMEOUT:-300}" bash -c "$test_cmd" > "$ARTIFACTS_DIR/e2e-validation.log" 2>&1; then
         success "E2E validation passed"
         return 0
     else
@@ -992,12 +1002,24 @@ run_test_coverage_check() {
         return 0
     fi
 
+    # Reuse coverage from test stage if available
+    local cached_coverage="$ARTIFACTS_DIR/test-coverage.json"
+    if [[ -f "$cached_coverage" ]]; then
+        local cached_pct
+        cached_pct=$(jq -r '.coverage_pct // empty' "$cached_coverage" 2>/dev/null) || true
+        if [[ -n "$cached_pct" && "$cached_pct" =~ ^[0-9]+$ ]]; then
+            success "Test coverage (from test stage): ${cached_pct}%"
+            echo "$cached_pct"
+            return 0
+        fi
+    fi
+
     info "Running test coverage check..."
 
     # Run tests and capture output
     local test_output
     local test_rc=0
-    test_output=$(bash -c "$test_cmd" 2>&1) || test_rc=$?
+    test_output=$(_timeout "${PIPELINE_TEST_TIMEOUT:-300}" bash -c "$test_cmd" 2>&1) || test_rc=$?
 
     if [[ "$test_rc" -ne 0 ]]; then
         warn "Test command failed (exit code: $test_rc) — cannot extract coverage"

@@ -32,6 +32,8 @@ success() { :; }
 warn() { :; }
 error() { :; }
 emit_event() { :; }
+# _timeout is normally from compat.sh (sourced by sw-pipeline.sh); stub it here
+_timeout() { shift; "$@"; }
 
 # parse_coverage_from_output is used by quality_check_coverage - stub it
 parse_coverage_from_output() {
@@ -74,6 +76,64 @@ assert_eq "Extracts coverage from coverage format" "90" "$result"
 export TEST_CMD="false"
 result=$(run_test_coverage_check 2>/dev/null | tail -1)
 assert_eq "Failing test returns 0" "0" "$result"
+
+# Cached coverage from test stage — skips running TEST_CMD
+echo '{"coverage_pct": 75}' > "$ARTIFACTS_DIR/test-coverage.json"
+export TEST_CMD="exit 1"  # would fail if actually run
+result=$(run_test_coverage_check 2>/dev/null | tail -1)
+assert_eq "Returns cached coverage without running tests" "75" "$result"
+
+# Invalid cache value falls back to running TEST_CMD
+echo '{"coverage_pct": "bad"}' > "$ARTIFACTS_DIR/test-coverage.json"
+export TEST_CMD="echo 'coverage: 60%'"
+result=$(run_test_coverage_check 2>/dev/null | tail -1)
+assert_eq "Invalid cache falls back to running tests" "60" "$result"
+
+rm -f "$ARTIFACTS_DIR/test-coverage.json"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# run_e2e_validation
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "run_e2e_validation"
+
+rm -f "$ARTIFACTS_DIR/test-results.log" "$ARTIFACTS_DIR/e2e-validation.log"
+
+# No test-results.log and passing TEST_CMD → runs and passes
+export TEST_CMD="echo ok"
+if run_e2e_validation 2>/dev/null; then
+    assert_pass "run_e2e_validation passes when no log and TEST_CMD succeeds"
+else
+    assert_fail "run_e2e_validation: no log, passing cmd"
+fi
+
+# No test-results.log and failing TEST_CMD → runs and fails
+rm -f "$ARTIFACTS_DIR/test-results.log"
+export TEST_CMD="exit 1"
+if run_e2e_validation 2>/dev/null; then
+    assert_fail "run_e2e_validation: no log, failing cmd should fail"
+else
+    assert_pass "run_e2e_validation fails when no log and TEST_CMD fails"
+fi
+
+# Passing test-results.log → skips re-run (TEST_CMD would fail if run)
+echo "10 tests passed, 0 failures" > "$ARTIFACTS_DIR/test-results.log"
+export TEST_CMD="exit 1"
+if run_e2e_validation 2>/dev/null; then
+    assert_pass "run_e2e_validation skips re-run when log shows passing"
+else
+    assert_fail "run_e2e_validation: passing log should skip re-run"
+fi
+
+# Failing test-results.log → re-runs TEST_CMD
+echo "1 failed" > "$ARTIFACTS_DIR/test-results.log"
+export TEST_CMD="echo ok"
+if run_e2e_validation 2>/dev/null; then
+    assert_pass "run_e2e_validation re-runs when log shows failures"
+else
+    assert_fail "run_e2e_validation: failing log should re-run tests"
+fi
+
+rm -f "$ARTIFACTS_DIR/test-results.log" "$ARTIFACTS_DIR/e2e-validation.log"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # run_bash_compat_check

@@ -629,8 +629,9 @@ ci_push_partial_work() {
 
     local branch="shipwright/issue-${ISSUE_NUMBER}"
 
-    # Only push if we have uncommitted changes
-    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+    # Only push if we have uncommitted changes (excluding daemon-config.json runtime writes)
+    if ! git diff --quiet -- ':!.claude/daemon-config.json' 2>/dev/null || \
+       ! git diff --cached --quiet -- ':!.claude/daemon-config.json' 2>/dev/null; then
         safe_git_stage
         git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
     fi
@@ -766,9 +767,9 @@ preflight_checks() {
         errors=$((errors + 1))
     fi
 
-    # Check for uncommitted changes — offer to stash
+    # Check for uncommitted changes — offer to stash (excluding daemon-config.json runtime writes)
     local dirty_files
-    dirty_files=$(git status --porcelain 2>/dev/null | wc -l | xargs)
+    dirty_files=$(git status --porcelain 2>/dev/null | grep -v '\.claude/daemon-config\.json' | wc -l | xargs)
     if [[ "$dirty_files" -gt 0 ]]; then
         echo -e "  ${YELLOW}⚠${RESET} $dirty_files uncommitted change(s)"
         if [[ "$SKIP_GATES" == "true" ]]; then

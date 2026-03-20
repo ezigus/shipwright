@@ -1894,6 +1894,8 @@ PROMPT
     fi
 
     # Auto-commit
+    local _commits_before _commits_after _new_commits
+    _commits_before=$(git rev-list --count HEAD 2>/dev/null || echo 0)
     safe_git_stage
     if git commit -m "agent-${AGENT_NUM}: iteration ${ITERATION}" --no-verify 2>/dev/null; then
         if ! git push origin "loop/agent-${AGENT_NUM}" 2>/dev/null; then
@@ -1903,15 +1905,16 @@ PROMPT
             echo -e "  ${GREEN}✓${RESET} Committed and pushed"
         fi
     fi
+    _commits_after=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+    _new_commits=$(( _commits_after - _commits_before ))
 
-    # Circuit breaker: check for progress
-    CHANGES="$(git diff --stat HEAD~1 2>/dev/null | tail -1 || echo '')"
-    INSERTIONS="$(echo "$CHANGES" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)"
-    if [[ "${INSERTIONS:-0}" -lt 5 ]]; then
+    # Circuit breaker: check for progress using commit count delta (not HEAD~1 diff,
+    # which is fooled by prior commits when the current iteration produces no changes)
+    if [[ "$_new_commits" -gt 0 ]]; then
+        CONSECUTIVE_FAILURES=0
+    else
         CONSECUTIVE_FAILURES=$(( CONSECUTIVE_FAILURES + 1 ))
         echo -e "  ${YELLOW}⚠${RESET} Low progress (${CONSECUTIVE_FAILURES}/3)"
-    else
-        CONSECUTIVE_FAILURES=0
     fi
 
     if [[ "$CONSECUTIVE_FAILURES" -ge 3 ]]; then
@@ -2344,7 +2347,7 @@ ${GOAL}"
         fi
 
         # Check progress (circuit breaker)
-        if check_progress; then
+        if check_progress "$new_commits"; then
             CONSECUTIVE_FAILURES=0
             echo -e "  ${GREEN}✓${RESET} Progress detected — continuing"
         else

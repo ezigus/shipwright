@@ -1198,7 +1198,7 @@ else
 fi
 
 # Test: check_progress() uses shared helper
-if grep -A5 '^check_progress()' "$SCRIPT_DIR/lib/loop-convergence.sh" | grep -q '_git_diff_stat_excluded'; then
+if grep -A20 '^check_progress()' "$SCRIPT_DIR/lib/loop-convergence.sh" | grep -q '_git_diff_stat_excluded'; then
     assert_pass "check_progress() uses _git_diff_stat_excluded"
 else
     assert_fail "check_progress() uses _git_diff_stat_excluded"
@@ -1265,6 +1265,80 @@ if _test_safe_git_stage; then
     assert_pass "safe_git_stage() functional: all bookkeeping files excluded, real code staged"
 else
     assert_fail "safe_git_stage() functional: all bookkeeping files excluded, real code staged"
+fi
+
+# ─── Tests: check_progress() with new_commits param (issue #221) ─────────────
+# Each case runs in its own subshell to avoid set -e propagation from sourced scripts.
+
+# Build a two-commit repo for the no-arg fallback test (needs real commits)
+_build_test_repo() {
+    local _real_git
+    _real_git=$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git 2>/dev/null) || return 1
+    local _tmpdir
+    _tmpdir=$(mktemp -d)
+    "$_real_git" init -q "$_tmpdir"
+    "$_real_git" -C "$_tmpdir" config user.email "test@test.com"
+    "$_real_git" -C "$_tmpdir" config user.name "test"
+    printf 'line1\n' > "$_tmpdir/file.txt"
+    "$_real_git" -C "$_tmpdir" add .
+    "$_real_git" -C "$_tmpdir" commit -q -m "initial"
+    printf 'line1\nline2\nline3\nline4\nline5\nline6\n' > "$_tmpdir/file.txt"
+    "$_real_git" -C "$_tmpdir" add .
+    "$_real_git" -C "$_tmpdir" commit -q -m "second"
+    echo "$_tmpdir"
+}
+
+# Test A: new_commits=0 → no progress
+if ( export PROJECT_ROOT="/tmp" MIN_PROGRESS_LINES=5
+     source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
+     source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
+     check_progress 0 ) 2>/dev/null; then
+    assert_fail "check_progress(0): no commits = no progress (circuit breaker fix #221)"
+else
+    assert_pass "check_progress(0): no commits = no progress (circuit breaker fix #221)"
+fi
+
+# Test B: new_commits=1 → progress
+if ( export PROJECT_ROOT="/tmp" MIN_PROGRESS_LINES=5
+     source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
+     source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
+     check_progress 1 ) 2>/dev/null; then
+    assert_pass "check_progress(1): one commit = progress detected"
+else
+    assert_fail "check_progress(1): one commit = progress detected"
+fi
+
+# Test C: new_commits=3 → progress
+if ( export PROJECT_ROOT="/tmp" MIN_PROGRESS_LINES=5
+     source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
+     source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
+     check_progress 3 ) 2>/dev/null; then
+    assert_pass "check_progress(3): multiple commits = progress detected"
+else
+    assert_fail "check_progress(3): multiple commits = progress detected"
+fi
+
+# Test D: no-arg fallback uses _git_diff_stat_excluded (backward compat)
+# Strip mock bin from PATH so _git_diff_stat_excluded uses the real git binary.
+_fallback_repo=$(_build_test_repo 2>/dev/null || echo "")
+if [[ -n "$_fallback_repo" ]]; then
+    if (
+         _real_path=$(printf '%s\n' "$PATH" | tr ':' '\n' | \
+             awk -v mock="${TEST_TEMP_DIR:-__none__}/bin" '$0 != mock' | \
+             paste -sd: -)
+         export PATH="$_real_path"
+         export PROJECT_ROOT="$_fallback_repo" MIN_PROGRESS_LINES=5
+         source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
+         source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
+         check_progress
+       ) 2>/dev/null; then
+        assert_pass "check_progress() fallback (no args): detects progress via HEAD~1 diff"
+    else
+        assert_fail "check_progress() fallback (no args): detects progress via HEAD~1 diff"
+    fi
+    rm -rf "$_fallback_repo"
+else
+    assert_pass "check_progress() fallback (no args): skipped (git unavailable)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

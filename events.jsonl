@@ -173,3 +173,5 @@
 {"ts":"2026-03-19T20:18:53Z","ts_epoch":1773951533,"type":"strategic.issue_created","title":"Agent health monitoring with crash detection and automatic task reassignment","priority":"P0","complexity":"standard"}
 {"ts":"2026-03-19T20:18:56Z","ts_epoch":1773951536,"type":"strategic.issue_created","title":"Pipeline execution trace export with OpenTelemetry span format","priority":"P4","complexity":"fast"}
 {"ts":"2026-03-19T20:18:56Z","ts_epoch":1773951536,"type":"strategic.cycle_complete","issues_created":5,"issues_skipped":0}
+{"ts":"2026-03-20T00:41:06Z","ts_epoch":1773967266,"type":"hygiene_platform_refactor","hardcoded":46,"fallback":63,"todo":44}
+{"ts":"2026-03-20T00:41:11Z","ts_epoch":1773967271,"type":"cost.budget_unconfigured","status":"unlimited"}

@@ -1270,38 +1270,7 @@ fi
 # ─── Tests: check_progress() with new_commits param (issue #221) ─────────────
 # Each case runs in its own subshell to avoid set -e propagation from sourced scripts.
 
-_run_check_progress() {
-    # $1 = argument to pass to check_progress (or empty for no-arg)
-    local _arg="${1:-}"
-    local _real_git
-    _real_git=$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git 2>/dev/null) || return 2
-    local _tmpdir
-    _tmpdir=$(mktemp -d)
-    # Build a two-commit repo so HEAD~1 always resolves
-    "$_real_git" init -q "$_tmpdir"
-    "$_real_git" -C "$_tmpdir" config user.email "test@test.com"
-    "$_real_git" -C "$_tmpdir" config user.name "test"
-    printf 'line1\n' > "$_tmpdir/file.txt"
-    "$_real_git" -C "$_tmpdir" add .
-    "$_real_git" -C "$_tmpdir" commit -q -m "initial"
-    printf 'line1\nline2\nline3\nline4\nline5\nline6\n' > "$_tmpdir/file.txt"
-    "$_real_git" -C "$_tmpdir" add .
-    "$_real_git" -C "$_tmpdir" commit -q -m "second"
-    rm -rf "$_tmpdir"
-    ( export PROJECT_ROOT="$_tmpdir"
-      export MIN_PROGRESS_LINES=5
-      # shellcheck disable=SC1090
-      source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
-      source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
-      if [[ -n "$_arg" ]]; then
-          check_progress "$_arg"
-      else
-          check_progress
-      fi
-    ) 2>/dev/null
-}
-
-# Rebuild the repo once for the no-arg fallback test (needs real commits)
+# Build a two-commit repo for the no-arg fallback test (needs real commits)
 _build_test_repo() {
     local _real_git
     _real_git=$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git 2>/dev/null) || return 1
@@ -1350,12 +1319,19 @@ else
 fi
 
 # Test D: no-arg fallback uses _git_diff_stat_excluded (backward compat)
+# Strip mock bin from PATH so _git_diff_stat_excluded uses the real git binary.
 _fallback_repo=$(_build_test_repo 2>/dev/null || echo "")
 if [[ -n "$_fallback_repo" ]]; then
-    if ( export PROJECT_ROOT="$_fallback_repo" MIN_PROGRESS_LINES=5
+    if (
+         _real_path=$(printf '%s\n' "$PATH" | tr ':' '\n' | \
+             awk -v mock="${TEST_TEMP_DIR:-__none__}/bin" '$0 != mock' | \
+             paste -sd: -)
+         export PATH="$_real_path"
+         export PROJECT_ROOT="$_fallback_repo" MIN_PROGRESS_LINES=5
          source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
          source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
-         check_progress ) 2>/dev/null; then
+         check_progress
+       ) 2>/dev/null; then
         assert_pass "check_progress() fallback (no args): detects progress via HEAD~1 diff"
     else
         assert_fail "check_progress() fallback (no args): detects progress via HEAD~1 diff"

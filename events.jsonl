@@ -201,3 +201,5 @@
 {"ts":"2026-03-20T08:05:57Z","ts_epoch":1773993957,"type":"stage.failed","event_id":"evt-1773993957-3187444397","payload":"{\"stage\":\"plan\",\"issue\":\"207\",\"timing\":\"2m 1s\"}"}
 {"ts":"2026-03-20T08:05:57Z","ts_epoch":1773993957,"type":"stage.failed","issue":207,"stage":"plan","duration_s":123,"error":"unknown","error_class":"unknown"}
 {"ts":"2026-03-20T08:05:57Z","ts_epoch":1773993957,"type":"vitals.snapshot","issue":207,"stage":"plan","iteration":0,"diff_lines":0,"no_progress":0}
+{"ts":"2026-03-20T08:18:43Z","ts_epoch":1773994723,"type":"hygiene_platform_refactor","hardcoded":46,"fallback":63,"todo":44}
+{"ts":"2026-03-20T08:18:49Z","ts_epoch":1773994729,"type":"cost.budget_unconfigured","status":"unlimited"}

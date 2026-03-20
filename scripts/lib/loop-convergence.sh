@@ -39,6 +39,19 @@ compute_velocity_avg() {
 }
 
 check_progress() {
+    local new_commits="${1:-}"
+
+    # Iteration-level check: did HEAD advance this iteration?
+    # This avoids being fooled by HEAD~1 diffs from prior commits when
+    # the current iteration produces no changes (issue #221).
+    if [[ -n "$new_commits" ]]; then
+        if [[ "${new_commits:-0}" -gt 0 ]]; then
+            return 0
+        fi
+        return 1
+    fi
+
+    # Fallback: cumulative diff for non-loop callers (backward compat)
     local changes
     # Exclude bookkeeping and runtime files — only count real code changes as progress
     changes="$(_git_diff_stat_excluded "$PROJECT_ROOT")"

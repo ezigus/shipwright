@@ -815,7 +815,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-helpers-test.sh` | 229 | Unit tests for shared helper functions |
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 444 | Unit tests for intelligence |
-| `scripts/sw-lib-pipeline-quality-checks-test.sh` | 193 | Unit tests for quality |
+| `scripts/sw-lib-pipeline-quality-checks-test.sh` | 253 | Unit tests for quality |
 | `scripts/sw-lib-pipeline-stages-test.sh` | 380 | Unit tests for stage functions |
 | `scripts/sw-lib-pipeline-state-test.sh` | 309 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |

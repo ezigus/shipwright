@@ -651,7 +651,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 703 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 643 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 353 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 2533 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 2536 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 2114 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 473 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 606 | Intelligent Model Routing & Cost Optimization |
@@ -780,7 +780,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-e2e-integration-test.sh` | 352 | Real Claude + Real GitHub |
 | `scripts/sw-e2e-orchestrator-test.sh` | 157 | Test suite registry & execution |
 | `scripts/sw-e2e-smoke-test.sh` | 835 | Pipeline orchestration without API keys |
-| `scripts/sw-e2e-system-test.sh` | 547 | Proves full daemon→pipeline→loop→PR flow |
+| `scripts/sw-e2e-system-test.sh` | 548 | Proves full daemon→pipeline→loop→PR flow |
 | `scripts/sw-eventbus-test.sh` | 155 | Durable event bus tests |
 | `scripts/sw-evidence-test.sh` | 214 | Unit tests for sw-evidence.sh |
 | `scripts/sw-feedback-test.sh` | 176 | Production Feedback Loop tests |
@@ -818,7 +818,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 444 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 253 | Unit tests for quality |
-| `scripts/sw-lib-pipeline-stages-test.sh` | 380 | Unit tests for stage functions |
+| `scripts/sw-lib-pipeline-stages-test.sh` | 385 | Unit tests for stage functions |
 | `scripts/sw-lib-pipeline-state-test.sh` | 309 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 281 | Validate agent pane log viewing, searching, |

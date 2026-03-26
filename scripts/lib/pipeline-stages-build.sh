@@ -44,7 +44,7 @@ Create files in the appropriate project directories (e.g. tests/, __tests__/, sr
     [[ -z "$model" || "$model" == "null" ]] && model="sonnet"
 
     local output=""
-    output=$(echo "$tdd_prompt" | _timeout 120 claude --print --model "$model" 2>/dev/null) || {
+    output=$(echo "$tdd_prompt" | _timeout 120 claude --print --disallowed-tools "EnterPlanMode,ExitPlanMode" --model "$model" 2>/dev/null) || {
         warn "TDD test generation failed, falling back to standard build"
         return 1
     }
@@ -421,7 +421,7 @@ ${_skill_prompts}
         local commit_msgs
         commit_msgs=$(_safe_base_log --format="%s" | head -20)
         local quality_score
-        quality_score=$(claude --print --output-format text -p "Rate the quality of these git commit messages on a scale of 0-100. Consider: focus (one thing per commit), clarity (describes the why), atomicity (small logical units). Reply with ONLY a number 0-100.
+        quality_score=$(claude --print --output-format text --disallowed-tools "EnterPlanMode,ExitPlanMode" -p "Rate the quality of these git commit messages on a scale of 0-100. Consider: focus (one thing per commit), clarity (describes the why), atomicity (small logical units). Reply with ONLY a number 0-100.
 
 Commit messages:
 ${commit_msgs}" --model haiku < /dev/null 2>/dev/null || true)

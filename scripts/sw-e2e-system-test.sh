@@ -95,9 +95,10 @@ while [[ $# -gt 0 ]]; do
         -p) prompt="${2:-}"; shift 2 ;;
         --output-format) [[ "${2:-}" == "json" ]] && use_json=true; shift 2 ;;
         --output-format=*) [[ "${1#*=}" == "json" ]] && use_json=true; shift ;;
-        --model|--max-turns) [[ $# -gt 1 ]] && shift 2 || shift ;;
+        --model|--max-turns|--disallowed-tools) [[ $# -gt 1 ]] && shift 2 || shift ;;
         --print|--dangerously-skip-permissions) shift ;;
-        --*) shift ;;
+        --*=*) shift ;;
+        --*) [[ $# -gt 1 && "${2:-}" != -* ]] && shift 2 || shift ;;
         *) prompt="${1:-}"; shift ;;
     esac
 done

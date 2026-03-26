@@ -656,6 +656,7 @@ Fix these issues in the new plan."
 
                 claude --print --model "$plan_model" --max-turns 25 \
                     --disallowed-tools "EnterPlanMode,ExitPlanMode" \
+                    --dangerously-skip-permissions \
                     "$regen_prompt" < /dev/null > "$plan_file" 2>"$_token_log" || true
                 parse_claude_tokens "$_token_log"
 
@@ -859,8 +860,9 @@ ${_skill_prompts}
     fi
 
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-design.log"
-    claude --print --model "$design_model" --max-turns 25 --dangerously-skip-permissions \
+    claude --print --model "$design_model" --max-turns 25 \
         --disallowed-tools "EnterPlanMode,ExitPlanMode" \
+        --dangerously-skip-permissions \
         "$design_prompt" < /dev/null > "$design_file" 2>"$_token_log" || true
     parse_claude_tokens "$_token_log"
 

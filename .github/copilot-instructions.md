@@ -684,7 +684,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-status.sh` | 869 | Dashboard showing Claude Code team status |
 | `scripts/sw-strategic.sh` | 943 | Strategic Intelligence Agent |
 | `scripts/sw-stream.sh` | 451 | Live terminal output streaming from agent panes |
-| `scripts/sw-swarm.sh` | 788 | Dynamic agent swarm management |
+| `scripts/sw-swarm.sh` | 800 | Dynamic agent swarm management |
 | `scripts/sw-team-stages.sh` | 500 | Multi-agent execution with leader/specialist roles |
 | `scripts/sw-templates.sh` | 254 | Browse and inspect team templates |
 | `scripts/sw-testgen.sh` | 567 | Autonomous test generation and coverage maintenance |

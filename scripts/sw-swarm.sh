@@ -324,6 +324,9 @@ cmd_health() {
 
         echo ""
         echo -e "  Summary: ${GREEN}${healthy}${RESET} healthy, ${DIM}${inactive}${RESET} inactive"
+
+        # Auto-prune stale agents after health report
+        cmd_prune --quiet
     else
         # Health check single agent
         local agent
@@ -338,6 +341,109 @@ cmd_health() {
         echo ""
         echo "$agent" | jq '.' | sed 's/^/  /'
     fi
+}
+
+# ─── Prune stale agents ───────────────────────────────────────────────────
+# Remove agents whose last_heartbeat exceeds TTL threshold.
+# Kills tmux sessions and atomically removes registry entries.
+# Usage: cmd_prune [--quiet]
+cmd_prune() {
+    local quiet=false
+    for arg in "$@"; do
+        [[ "$arg" == "--quiet" ]] && quiet=true
+    done
+
+    ensure_dirs
+    init_registry
+    init_config
+
+    # Determine TTL threshold: env override > config > default 300s
+    local threshold
+    if [[ -n "${SWARM_PRUNE_TTL:-}" ]]; then
+        threshold="$SWARM_PRUNE_TTL"
+    else
+        threshold=$(jq -r '.stall_detection_threshold // 300' "$CONFIG_FILE")
+    fi
+    # Validate threshold is a positive integer; fall back to safe default
+    if ! [[ "$threshold" =~ ^[0-9]+$ ]]; then
+        warn "Invalid SWARM_PRUNE_TTL value '${threshold}'; falling back to 300 seconds."
+        threshold=300
+    fi
+
+    local agent_count
+    agent_count=$(jq -r '.agents | length' "$REGISTRY_FILE")
+
+    if [[ "$agent_count" -eq 0 ]]; then
+        $quiet || echo -e "  ${DIM}No agents to prune.${RESET}"
+        return 0
+    fi
+
+    local now
+    now=$(date +%s)
+
+    # Collect stale agent IDs
+    local stale_ids=""
+    local pruned_count=0
+
+    while IFS= read -r line; do
+        local agent
+        agent=$(echo "$line" | base64 -d 2>/dev/null || echo "$line")
+
+        local id last_hb last_hb_epoch elapsed
+        id=$(echo "$agent" | jq -r '.id')
+        last_hb=$(echo "$agent" | jq -r '.last_heartbeat')
+        last_hb_epoch=$(date_to_epoch "$last_hb")
+        # Skip agents with unparseable timestamps to avoid false stale detection
+        [[ "$last_hb_epoch" == "0" ]] && continue
+        elapsed=$((now - last_hb_epoch))
+
+        if [[ $elapsed -gt $threshold ]]; then
+            # Kill tmux session if present
+            local session_name="swarm-${id}"
+            if command -v tmux >/dev/null 2>&1; then
+                tmux kill-session -t "$session_name" 2>/dev/null || true
+            fi
+            stale_ids="${stale_ids} ${id}"
+            pruned_count=$((pruned_count + 1))
+            record_metric "$id" "prune" "1" "stale_heartbeat"
+            $quiet || echo -e "  ${RED}✗${RESET} Pruned stale agent: ${id} ${DIM}(${elapsed}s inactive)${RESET}"
+        fi
+    done < <(jq -r '.agents[] | @base64' "$REGISTRY_FILE")
+
+    if [[ $pruned_count -eq 0 ]]; then
+        $quiet || echo -e "  ${GREEN}✓${RESET} No stale agents found."
+        return 0
+    fi
+
+    # Atomic registry update: remove all stale IDs in a single jq pass
+    local tmp_file
+    tmp_file=$(mktemp)
+    # shellcheck disable=SC2064
+    trap "rm -f '$tmp_file'" RETURN
+
+    # Build a JSON array of stale IDs for use with --argjson
+    local stale_json="["
+    local first=true
+    for sid in $stale_ids; do
+        [[ -z "$sid" ]] && continue
+        $first || stale_json="${stale_json},"
+        stale_json="${stale_json}\"${sid}\""
+        first=false
+    done
+    stale_json="${stale_json}]"
+
+    jq --argjson stale "$stale_json" \
+       '.agents |= map(select(.id as $id | ($stale | index($id)) == null)) | .active_count = ([.agents[] | select(.status == "active")] | length) | .last_updated = "'"$(now_iso)"'"' \
+       "$REGISTRY_FILE" > "$tmp_file"
+    if [[ ! -s "$tmp_file" ]] || ! mv "$tmp_file" "$REGISTRY_FILE"; then
+        rm -f "$tmp_file"
+        warn "Failed to update registry after prune"
+        $quiet && return 0
+        return 1
+    fi
+
+    emit_event "swarm_prune" "pruned=${pruned_count}" "threshold=${threshold}" 2>/dev/null || true
+    $quiet || success "Pruned ${pruned_count} stale agent(s) (threshold: ${threshold}s)"
 }
 
 # ─── Swarm spawn helper (for cmd_scale) ───────────────────────────────────
@@ -577,6 +683,7 @@ COMMANDS
   spawn [type]       Spawn new agent (type: fast/standard/powerful, default: standard)
   retire <agent-id>  Gracefully retire an agent (drain tasks first)
   health [agent-id]  Check agent health (all agents or specific one)
+  prune [--quiet]    Remove stale agents (heartbeat > threshold)
   scale              Show auto-scaling status and recommendations
   top [N]            Show top N performing agents (default: 10)
   topology           Visualize swarm structure and resource allocation
@@ -621,6 +728,12 @@ EXAMPLES
   # Show swarm topology
   shipwright swarm topology
 
+  # Remove stale agents
+  shipwright swarm prune
+
+  # Override prune threshold (seconds)
+  SWARM_PRUNE_TTL=600 shipwright swarm prune
+
   # Enable auto-scaling
   shipwright swarm config set auto_scaling_enabled true
 
@@ -650,6 +763,9 @@ main() {
             ;;
         health)
             cmd_health "$@"
+            ;;
+        prune)
+            cmd_prune "$@"
             ;;
         scale)
             cmd_scale "$@"

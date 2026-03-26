@@ -610,7 +610,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-changelog.sh` | 696 | Automated Release Notes & Migration Guides |
 | `scripts/sw-checkpoint.sh` | 605 | Save and restore agent state mid-stage |
 | `scripts/sw-ci.sh` | 589 | GitHub Actions CI/CD Orchestration |
-| `scripts/sw-cleanup.sh` | 479 | Clean up orphaned Claude team sessions & artifacts |
+| `scripts/sw-cleanup.sh` | 562 | Clean up orphaned Claude team sessions & artifacts |
 | `scripts/sw-code-review.sh` | 697 | Clean Code & Architecture Analysis |
 | `scripts/sw-connect.sh` | 624 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 600 | Context Engine for Pipeline Stages |
@@ -684,7 +684,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-status.sh` | 869 | Dashboard showing Claude Code team status |
 | `scripts/sw-strategic.sh` | 943 | Strategic Intelligence Agent |
 | `scripts/sw-stream.sh` | 451 | Live terminal output streaming from agent panes |
-| `scripts/sw-swarm.sh` | 684 | Dynamic agent swarm management |
+| `scripts/sw-swarm.sh` | 788 | Dynamic agent swarm management |
 | `scripts/sw-team-stages.sh` | 500 | Multi-agent execution with leader/specialist roles |
 | `scripts/sw-templates.sh` | 254 | Browse and inspect team templates |
 | `scripts/sw-testgen.sh` | 567 | Autonomous test generation and coverage maintenance |
@@ -858,7 +858,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-status-test.sh` | 294 | Validate status dashboard and --json output |
 | `scripts/sw-strategic-test.sh` | 216 | Validate strategic intelligence agent |
 | `scripts/sw-stream-test.sh` | 140 | Live terminal output streaming |
-| `scripts/sw-swarm-test.sh` | 153 | Dynamic agent swarm management tests |
+| `scripts/sw-swarm-test.sh` | 225 | Dynamic agent swarm management tests |
 | `scripts/sw-team-stages-test.sh` | 148 | Validate multi-agent stage execution |
 | `scripts/sw-templates-test.sh` | 251 | Validate team template browser |
 | `scripts/sw-testgen-test.sh` | 160 | Test generation & coverage tests |

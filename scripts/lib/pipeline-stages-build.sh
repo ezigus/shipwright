@@ -421,7 +421,7 @@ ${_skill_prompts}
         local commit_msgs
         commit_msgs=$(_safe_base_log --format="%s" | head -20)
         local quality_score
-        quality_score=$(claude --print --output-format text -p "Rate the quality of these git commit messages on a scale of 0-100. Consider: focus (one thing per commit), clarity (describes the why), atomicity (small logical units). Reply with ONLY a number 0-100.
+        quality_score=$(claude --print --output-format text --disallowed-tools "EnterPlanMode,ExitPlanMode" -p "Rate the quality of these git commit messages on a scale of 0-100. Consider: focus (one thing per commit), clarity (describes the why), atomicity (small logical units). Reply with ONLY a number 0-100.
 
 Commit messages:
 ${commit_msgs}" --model haiku < /dev/null 2>/dev/null || true)

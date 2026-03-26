@@ -444,6 +444,7 @@ build_claude_flags() {
     local flags=()
     flags+=("--model" "$MODEL")
     flags+=("--output-format" "json")
+    flags+=("--disallowed-tools" "EnterPlanMode,ExitPlanMode")
 
     if $SKIP_PERMISSIONS; then
         flags+=("--dangerously-skip-permissions")

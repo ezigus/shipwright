@@ -1176,6 +1176,7 @@ AUDIT_PROMPT
     audit_model="$(select_audit_model)"
     local audit_flags=()
     audit_flags+=("--model" "$audit_model")
+    audit_flags+=("--disallowed-tools" "EnterPlanMode,ExitPlanMode")
     if $SKIP_PERMISSIONS; then
         audit_flags+=("--dangerously-skip-permissions")
     fi
@@ -1307,6 +1308,7 @@ DOD_PROMPT
     dod_model="$(select_audit_model)"
     local dod_flags=()
     dod_flags+=("--model" "$dod_model")
+    dod_flags+=("--disallowed-tools" "EnterPlanMode,ExitPlanMode")
     if $SKIP_PERMISSIONS; then
         dod_flags+=("--dangerously-skip-permissions")
     fi
@@ -1438,6 +1440,7 @@ HOLISTIC_PROMPT
     local hol_model
     hol_model="$(select_audit_model)"
     local hol_flags=("--model" "$hol_model")
+    hol_flags+=("--disallowed-tools" "EnterPlanMode,ExitPlanMode")
     if $SKIP_PERMISSIONS; then
         hol_flags+=("--dangerously-skip-permissions")
     fi

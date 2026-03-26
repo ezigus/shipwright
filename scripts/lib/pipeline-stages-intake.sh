@@ -390,6 +390,7 @@ ${_skill_prompts}
     for _plan_attempt in 1 2 3; do
         : > "$plan_file"
         _timeout "$_plan_timeout" claude --print --model "$plan_model" --max-turns 25 \
+            --disallowed-tools "EnterPlanMode,ExitPlanMode" \
             --dangerously-skip-permissions "$plan_prompt" < /dev/null > "$plan_file" 2>"$_token_log"
         _plan_exit=$?
         if [[ "$_plan_exit" -eq 124 ]]; then
@@ -585,7 +586,7 @@ Then explain your reasoning briefly."
 
             local validation_model="${plan_model:-opus}"
             local validation_result
-            validation_result=$(claude --print --output-format text -p "$validation_prompt" --model "$validation_model" < /dev/null 2>"${ARTIFACTS_DIR}/.claude-tokens-plan-validate.log" || true)
+            validation_result=$(claude --print --output-format text --disallowed-tools "EnterPlanMode,ExitPlanMode" -p "$validation_prompt" --model "$validation_model" < /dev/null 2>"${ARTIFACTS_DIR}/.claude-tokens-plan-validate.log" || true)
             parse_claude_tokens "${ARTIFACTS_DIR}/.claude-tokens-plan-validate.log"
 
             # Save validation result
@@ -654,6 +655,7 @@ GUIDANCE: ${failure_guidance}}
 Fix these issues in the new plan."
 
                 claude --print --model "$plan_model" --max-turns 25 \
+                    --disallowed-tools "EnterPlanMode,ExitPlanMode" \
                     "$regen_prompt" < /dev/null > "$plan_file" 2>"$_token_log" || true
                 parse_claude_tokens "$_token_log"
 
@@ -858,6 +860,7 @@ ${_skill_prompts}
 
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-design.log"
     claude --print --model "$design_model" --max-turns 25 --dangerously-skip-permissions \
+        --disallowed-tools "EnterPlanMode,ExitPlanMode" \
         "$design_prompt" < /dev/null > "$design_file" 2>"$_token_log" || true
     parse_claude_tokens "$_token_log"
 

@@ -289,14 +289,14 @@ cmd_health() -> void
 
 ## Risk Analysis & Mitigations
 
-| Risk                                                     | Probability | Impact                  | Mitigation                                                                              |
-| -------------------------------------------------------- | ----------- | ----------------------- | --------------------------------------------------------------------------------------- |
-| Prune kills working agent with stale heartbeat           | Low         | Medium (lost agent)     | Use same 300s threshold as proven health checks; emit events to trace decisions         |
-| Race condition on registry during concurrent prune/spawn | Very Low    | Low (duplicate entry)   | Atomic tmp+mv (existing Shipwright pattern); spawn already handles this                 |
-| `cleanup --force` kills active pipeline's swarm          | Low         | Medium (pipeline fails) | Documented as destructive; consistent with existing cleanup semantics; can be recovered |
-| Date parsing fails on non-standard systems               | Low         | Medium (pruning fails)  | Use `date -j` with fallback to `date -d` (already in compat.sh patterns)                |
-| Heartbeat timestamp corruption                           | Very Low    | Medium (wrong pruning)  | Each agent write includes fresh ISO timestamp; only issue if registry corrupted         |
-| Memory leak in tmux session after kill                   | Low         | Low (residual memory)   | Tmux native cleanup should work; monitor with `tmux list-sessions`                      |
+| Risk                                                     | Probability | Impact                  | Mitigation                                                                                                                     |
+| -------------------------------------------------------- | ----------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Prune kills working agent with stale heartbeat           | Low         | Medium (lost agent)     | Use same 300s threshold as proven health checks; emit events to trace decisions                                                |
+| Race condition on registry during concurrent prune/spawn | Very Low    | Low (duplicate entry)   | Atomic tmp+mv (existing Shipwright pattern); spawn already handles this                                                        |
+| `cleanup --force` kills active pipeline's swarm          | Low         | Medium (pipeline fails) | Documented as destructive; consistent with existing cleanup semantics; can be recovered                                        |
+| Date parsing fails on non-standard systems               | Low         | Medium (pruning fails)  | Use `date_to_epoch` from `scripts/lib/compat.sh` (GNU/BSD portable); skip agent on parse failure rather than treating as stale |
+| Heartbeat timestamp corruption                           | Very Low    | Medium (wrong pruning)  | Each agent write includes fresh ISO timestamp; only issue if registry corrupted                                                |
+| Memory leak in tmux session after kill                   | Low         | Low (residual memory)   | Tmux native cleanup should work; monitor with `tmux list-sessions`                                                             |
 
 ---
 

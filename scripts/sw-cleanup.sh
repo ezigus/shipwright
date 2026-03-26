@@ -279,7 +279,7 @@ if [[ -f "$SWARM_REGISTRY" ]]; then
         done < <(jq -r '.agents[] | @base64' "$SWARM_REGISTRY" 2>/dev/null || true)
 
         if $FORCE && [[ -n "$swarm_stale_ids" ]]; then
-            swarm_tmp=$(mktemp)
+            swarm_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-swarm-registry.XXXXXX")
             # Build JSON array of stale IDs for --argjson
             swarm_stale_json="["
             swarm_first=true
@@ -539,10 +539,10 @@ fi
 echo ""
 echo -e "${DIM}────────────────────────────────────────${RESET}"
 
-TOTAL_FOUND=$((WINDOWS_FOUND + SWARM_SESSIONS_FOUND + TEAM_DIRS_FOUND + TASK_DIRS_FOUND + ARTIFACTS_FOUND + CHECKPOINTS_FOUND + HEARTBEATS_FOUND + BRANCHES_FOUND + STATE_RESET))
+TOTAL_FOUND=$((WINDOWS_FOUND + SWARM_SESSIONS_FOUND + SWARM_REGISTRY_REMOVED + TEAM_DIRS_FOUND + TASK_DIRS_FOUND + ARTIFACTS_FOUND + CHECKPOINTS_FOUND + HEARTBEATS_FOUND + BRANCHES_FOUND + STATE_RESET))
 
 if $FORCE; then
-    TOTAL_CLEANED=$((WINDOWS_KILLED + SWARM_SESSIONS_KILLED + TEAM_DIRS_REMOVED + TASK_DIRS_REMOVED + ARTIFACTS_REMOVED + CHECKPOINTS_REMOVED + HEARTBEATS_REMOVED + BRANCHES_REMOVED + STATE_RESET))
+    TOTAL_CLEANED=$((WINDOWS_KILLED + SWARM_SESSIONS_KILLED + SWARM_REGISTRY_REMOVED + TEAM_DIRS_REMOVED + TASK_DIRS_REMOVED + ARTIFACTS_REMOVED + CHECKPOINTS_REMOVED + HEARTBEATS_REMOVED + BRANCHES_REMOVED + STATE_RESET))
     if [[ $TOTAL_CLEANED -gt 0 ]]; then
         success "Cleaned ${TOTAL_CLEANED} items"
         echo -e "  ${DIM}windows: ${WINDOWS_KILLED}, swarm sessions: ${SWARM_SESSIONS_KILLED}, swarm registry: ${SWARM_REGISTRY_REMOVED}${RESET}"

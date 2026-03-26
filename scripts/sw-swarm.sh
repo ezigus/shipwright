@@ -364,6 +364,11 @@ cmd_prune() {
     else
         threshold=$(jq -r '.stall_detection_threshold // 300' "$CONFIG_FILE")
     fi
+    # Validate threshold is a positive integer; fall back to safe default
+    if ! [[ "$threshold" =~ ^[0-9]+$ ]]; then
+        warn "Invalid SWARM_PRUNE_TTL value '${threshold}'; falling back to 300 seconds."
+        threshold=300
+    fi
 
     local agent_count
     agent_count=$(jq -r '.agents | length' "$REGISTRY_FILE")
@@ -387,7 +392,9 @@ cmd_prune() {
         local id last_hb last_hb_epoch elapsed
         id=$(echo "$agent" | jq -r '.id')
         last_hb=$(echo "$agent" | jq -r '.last_heartbeat')
-        last_hb_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_hb" +%s 2>/dev/null || echo "0")
+        last_hb_epoch=$(date_to_epoch "$last_hb")
+        # Skip agents with unparseable timestamps to avoid false stale detection
+        [[ "$last_hb_epoch" == "0" ]] && continue
         elapsed=$((now - last_hb_epoch))
 
         if [[ $elapsed -gt $threshold ]]; then
@@ -427,8 +434,13 @@ cmd_prune() {
 
     jq --argjson stale "$stale_json" \
        '.agents |= map(select(.id as $id | ($stale | index($id)) == null)) | .active_count = ([.agents[] | select(.status == "active")] | length) | .last_updated = "'"$(now_iso)"'"' \
-       "$REGISTRY_FILE" > "$tmp_file" && [[ -s "$tmp_file" ]] && \
-    mv "$tmp_file" "$REGISTRY_FILE" || { rm -f "$tmp_file"; warn "Failed to update registry after prune"; return 0; }
+       "$REGISTRY_FILE" > "$tmp_file"
+    if [[ ! -s "$tmp_file" ]] || ! mv "$tmp_file" "$REGISTRY_FILE"; then
+        rm -f "$tmp_file"
+        warn "Failed to update registry after prune"
+        $quiet && return 0
+        return 1
+    fi
 
     emit_event "swarm_prune" "pruned=${pruned_count}" "threshold=${threshold}" 2>/dev/null || true
     $quiet || success "Pruned ${pruned_count} stale agent(s) (threshold: ${threshold}s)"

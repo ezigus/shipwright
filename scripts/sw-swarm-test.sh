@@ -184,8 +184,8 @@ fi
 
 # ─── Test 19: prune empty registry ───────────────────────────────────────────
 echo '{"agents":[],"active_count":0,"last_updated":"2025-01-01T00:00:00Z"}' > "$HOME/.shipwright/swarm/registry.json"
-output=$(bash "$SCRIPT_DIR/sw-swarm.sh" prune 2>&1) || true
-exit_code=$?
+exit_code=0
+output=$(bash "$SCRIPT_DIR/sw-swarm.sh" prune 2>&1) || exit_code=$?
 if [[ $exit_code -eq 0 ]]; then
     assert_pass "prune empty registry exits cleanly"
 else

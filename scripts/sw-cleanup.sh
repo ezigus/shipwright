@@ -182,6 +182,9 @@ HEARTBEATS_REMOVED=0
 BRANCHES_FOUND=0
 BRANCHES_REMOVED=0
 STATE_RESET=0
+SWARM_SESSIONS_FOUND=0
+SWARM_SESSIONS_KILLED=0
+SWARM_REGISTRY_REMOVED=0
 
 # ─── 1. Find orphaned tmux windows ──────────────────────────────────────────
 
@@ -221,6 +224,86 @@ else
             echo -e "  ${YELLOW}○${RESET} Would kill: ${local_name} ${DIM}(${local_target})${RESET}"
         fi
     done
+fi
+
+# ─── 1b. Swarm sessions and registry ────────────────────────────────────────
+
+echo ""
+echo -e "${BOLD}Swarm Sessions${RESET}  ${DIM}swarm-* tmux sessions${RESET}"
+echo -e "${DIM}────────────────────────────────────────${RESET}"
+
+SWARM_REGISTRY="${HOME}/.shipwright/swarm/registry.json"
+
+# Find all swarm-* tmux sessions
+SWARM_SESSIONS=()
+while IFS= read -r sess; do
+    [[ -n "$sess" ]] && SWARM_SESSIONS+=("$sess")
+done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^swarm-' || true)
+
+if [[ ${#SWARM_SESSIONS[@]} -eq 0 ]]; then
+    echo -e "  ${DIM}No swarm sessions found.${RESET}"
+else
+    for sess in "${SWARM_SESSIONS[@]}"; do
+        SWARM_SESSIONS_FOUND=$((SWARM_SESSIONS_FOUND + 1))
+        if $FORCE; then
+            tmux kill-session -t "$sess" 2>/dev/null && {
+                echo -e "  ${RED}✗${RESET} Killed swarm session: ${sess}"
+                SWARM_SESSIONS_KILLED=$((SWARM_SESSIONS_KILLED + 1))
+            } || warn "  Could not kill swarm session: ${sess}"
+        else
+            echo -e "  ${YELLOW}○${RESET} Would kill: ${sess}"
+        fi
+    done
+fi
+
+# Clean stale registry entries (agents with no live tmux session)
+if [[ -f "$SWARM_REGISTRY" ]]; then
+    swarm_reg_count=$(jq -r '.agents | length' "$SWARM_REGISTRY" 2>/dev/null || echo "0")
+
+    if [[ "${swarm_reg_count:-0}" -gt 0 ]]; then
+        # Find agents whose tmux session is gone
+        swarm_stale_ids=""
+        while IFS= read -r line; do
+            sw_agent=$(echo "$line" | base64 -d 2>/dev/null || echo "$line")
+            sw_aid=$(echo "$sw_agent" | jq -r '.id')
+            sw_sess="swarm-${sw_aid}"
+            if ! tmux has-session -t "$sw_sess" 2>/dev/null; then
+                swarm_stale_ids="${swarm_stale_ids} ${sw_aid}"
+                SWARM_REGISTRY_REMOVED=$((SWARM_REGISTRY_REMOVED + 1))
+                if $FORCE; then
+                    echo -e "  ${RED}✗${RESET} Removed orphaned registry entry: ${sw_aid}"
+                else
+                    echo -e "  ${YELLOW}○${RESET} Would remove orphaned registry entry: ${sw_aid}"
+                fi
+            fi
+        done < <(jq -r '.agents[] | @base64' "$SWARM_REGISTRY" 2>/dev/null || true)
+
+        if $FORCE && [[ -n "$swarm_stale_ids" ]]; then
+            swarm_tmp=$(mktemp)
+            # Build JSON array of stale IDs for --argjson
+            swarm_stale_json="["
+            swarm_first=true
+            for swarm_sid in $swarm_stale_ids; do
+                [[ -z "$swarm_sid" ]] && continue
+                $swarm_first || swarm_stale_json="${swarm_stale_json},"
+                swarm_stale_json="${swarm_stale_json}\"${swarm_sid}\""
+                swarm_first=false
+            done
+            swarm_stale_json="${swarm_stale_json}]"
+            jq --argjson stale "$swarm_stale_json" \
+               '.agents |= map(select(.id as $id | ($stale | index($id)) == null)) | .active_count = ([.agents[] | select(.status == "active")] | length) | .last_updated = "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"' \
+               "$SWARM_REGISTRY" > "$swarm_tmp" && [[ -s "$swarm_tmp" ]] && \
+            mv "$swarm_tmp" "$SWARM_REGISTRY" || rm -f "$swarm_tmp"
+        fi
+
+        if [[ "$SWARM_REGISTRY_REMOVED" -eq 0 ]]; then
+            echo -e "  ${DIM}No orphaned registry entries.${RESET}"
+        fi
+    else
+        echo -e "  ${DIM}Swarm registry is empty.${RESET}"
+    fi
+else
+    echo -e "  ${DIM}No swarm registry found.${RESET}"
 fi
 
 # ─── 2. Clean up ~/.claude/teams/ ───────────────────────────────────────────
@@ -456,15 +539,15 @@ fi
 echo ""
 echo -e "${DIM}────────────────────────────────────────${RESET}"
 
-TOTAL_FOUND=$((WINDOWS_FOUND + TEAM_DIRS_FOUND + TASK_DIRS_FOUND + ARTIFACTS_FOUND + CHECKPOINTS_FOUND + HEARTBEATS_FOUND + BRANCHES_FOUND + STATE_RESET))
+TOTAL_FOUND=$((WINDOWS_FOUND + SWARM_SESSIONS_FOUND + TEAM_DIRS_FOUND + TASK_DIRS_FOUND + ARTIFACTS_FOUND + CHECKPOINTS_FOUND + HEARTBEATS_FOUND + BRANCHES_FOUND + STATE_RESET))
 
 if $FORCE; then
-    TOTAL_CLEANED=$((WINDOWS_KILLED + TEAM_DIRS_REMOVED + TASK_DIRS_REMOVED + ARTIFACTS_REMOVED + CHECKPOINTS_REMOVED + HEARTBEATS_REMOVED + BRANCHES_REMOVED + STATE_RESET))
+    TOTAL_CLEANED=$((WINDOWS_KILLED + SWARM_SESSIONS_KILLED + TEAM_DIRS_REMOVED + TASK_DIRS_REMOVED + ARTIFACTS_REMOVED + CHECKPOINTS_REMOVED + HEARTBEATS_REMOVED + BRANCHES_REMOVED + STATE_RESET))
     if [[ $TOTAL_CLEANED -gt 0 ]]; then
         success "Cleaned ${TOTAL_CLEANED} items"
-        echo -e "  ${DIM}windows: ${WINDOWS_KILLED}, teams: ${TEAM_DIRS_REMOVED}, tasks: ${TASK_DIRS_REMOVED}${RESET}"
-        echo -e "  ${DIM}artifacts: ${ARTIFACTS_REMOVED}, checkpoints: ${CHECKPOINTS_REMOVED}, heartbeats: ${HEARTBEATS_REMOVED}${RESET}"
-        echo -e "  ${DIM}branches: ${BRANCHES_REMOVED}, state: ${STATE_RESET}${RESET}"
+        echo -e "  ${DIM}windows: ${WINDOWS_KILLED}, swarm sessions: ${SWARM_SESSIONS_KILLED}, swarm registry: ${SWARM_REGISTRY_REMOVED}${RESET}"
+        echo -e "  ${DIM}teams: ${TEAM_DIRS_REMOVED}, tasks: ${TASK_DIRS_REMOVED}, artifacts: ${ARTIFACTS_REMOVED}${RESET}"
+        echo -e "  ${DIM}checkpoints: ${CHECKPOINTS_REMOVED}, heartbeats: ${HEARTBEATS_REMOVED}, branches: ${BRANCHES_REMOVED}, state: ${STATE_RESET}${RESET}"
     else
         success "Nothing to clean up."
     fi

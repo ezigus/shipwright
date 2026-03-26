@@ -148,6 +148,91 @@ else
     assert_pass "unknown command exits 1"
 fi
 
+# ─── Test 16: prune removes stale agents ─────────────────────────────────────
+# Spawn an agent then backdate its heartbeat to simulate staleness
+bash "$SCRIPT_DIR/sw-swarm.sh" spawn standard >/dev/null 2>&1 || true
+stale_id=$(jq -r '.agents[0].id' "$HOME/.shipwright/swarm/registry.json" 2>/dev/null)
+# Backdate heartbeat to 2020 (well past any threshold)
+tmp_reg=$(mktemp)
+jq '.agents[0].last_heartbeat = "2020-01-01T00:00:00Z"' \
+    "$HOME/.shipwright/swarm/registry.json" > "$tmp_reg" && mv "$tmp_reg" "$HOME/.shipwright/swarm/registry.json"
+output=$(bash "$SCRIPT_DIR/sw-swarm.sh" prune 2>&1) || true
+if echo "$output" | grep -qiE "Pruned|stale"; then
+    assert_pass "prune removes stale agents"
+else
+    assert_fail "prune removes stale agents" "$output"
+fi
+
+# ─── Test 17: prune keeps active agents ──────────────────────────────────────
+# Spawn a fresh agent — heartbeat is recent, should survive prune
+bash "$SCRIPT_DIR/sw-swarm.sh" spawn standard >/dev/null 2>&1 || true
+count_before=$(jq -r '.agents | length' "$HOME/.shipwright/swarm/registry.json" 2>/dev/null)
+bash "$SCRIPT_DIR/sw-swarm.sh" prune >/dev/null 2>&1 || true
+count_after=$(jq -r '.agents | length' "$HOME/.shipwright/swarm/registry.json" 2>/dev/null)
+if [[ "$count_after" -ge "$count_before" ]]; then
+    assert_pass "prune keeps active agents"
+else
+    assert_fail "prune keeps active agents" "before=$count_before after=$count_after"
+fi
+
+# ─── Test 18: prune mixed — removes stale, keeps active ──────────────────────
+# Fresh state: spawn 2 agents, backdate one
+bash "$SCRIPT_DIR/sw-swarm.sh" config reset >/dev/null 2>&1 || true
+# Reset registry
+echo '{"agents":[],"active_count":0,"last_updated":"2025-01-01T00:00:00Z"}' > "$HOME/.shipwright/swarm/registry.json"
+bash "$SCRIPT_DIR/sw-swarm.sh" spawn standard >/dev/null 2>&1 || true
+bash "$SCRIPT_DIR/sw-swarm.sh" spawn standard >/dev/null 2>&1 || true
+# Backdate first agent
+tmp_reg=$(mktemp)
+jq '.agents[0].last_heartbeat = "2020-01-01T00:00:00Z"' \
+    "$HOME/.shipwright/swarm/registry.json" > "$tmp_reg" && mv "$tmp_reg" "$HOME/.shipwright/swarm/registry.json"
+count_before=$(jq -r '.agents | length' "$HOME/.shipwright/swarm/registry.json")
+bash "$SCRIPT_DIR/sw-swarm.sh" prune >/dev/null 2>&1 || true
+count_after=$(jq -r '.agents | length' "$HOME/.shipwright/swarm/registry.json")
+if [[ "$count_after" -eq $((count_before - 1)) ]]; then
+    assert_pass "prune mixed: removes stale, keeps active"
+else
+    assert_fail "prune mixed: removes stale, keeps active" "before=$count_before after=$count_after (expected $((count_before - 1)))"
+fi
+
+# ─── Test 19: prune empty registry ───────────────────────────────────────────
+echo '{"agents":[],"active_count":0,"last_updated":"2025-01-01T00:00:00Z"}' > "$HOME/.shipwright/swarm/registry.json"
+output=$(bash "$SCRIPT_DIR/sw-swarm.sh" prune 2>&1) || true
+exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "prune empty registry exits cleanly"
+else
+    assert_fail "prune empty registry exits cleanly" "exit_code=$exit_code"
+fi
+
+# ─── Test 20: prune --quiet suppresses output ────────────────────────────────
+echo '{"agents":[],"active_count":0,"last_updated":"2025-01-01T00:00:00Z"}' > "$HOME/.shipwright/swarm/registry.json"
+bash "$SCRIPT_DIR/sw-swarm.sh" spawn standard >/dev/null 2>&1 || true
+tmp_reg=$(mktemp)
+jq '.agents[0].last_heartbeat = "2020-01-01T00:00:00Z"' \
+    "$HOME/.shipwright/swarm/registry.json" > "$tmp_reg" && mv "$tmp_reg" "$HOME/.shipwright/swarm/registry.json"
+output=$(bash "$SCRIPT_DIR/sw-swarm.sh" prune --quiet 2>&1) || true
+if [[ -z "$output" ]]; then
+    assert_pass "prune --quiet produces no output"
+else
+    assert_fail "prune --quiet produces no output" "got: $output"
+fi
+
+# ─── Test 21: health auto-prunes stale agents ────────────────────────────────
+echo '{"agents":[],"active_count":0,"last_updated":"2025-01-01T00:00:00Z"}' > "$HOME/.shipwright/swarm/registry.json"
+bash "$SCRIPT_DIR/sw-swarm.sh" spawn standard >/dev/null 2>&1 || true
+tmp_reg=$(mktemp)
+jq '.agents[0].last_heartbeat = "2020-01-01T00:00:00Z"' \
+    "$HOME/.shipwright/swarm/registry.json" > "$tmp_reg" && mv "$tmp_reg" "$HOME/.shipwright/swarm/registry.json"
+count_before=$(jq -r '.agents | length' "$HOME/.shipwright/swarm/registry.json")
+bash "$SCRIPT_DIR/sw-swarm.sh" health >/dev/null 2>&1 || true
+count_after=$(jq -r '.agents | length' "$HOME/.shipwright/swarm/registry.json")
+if [[ "$count_after" -lt "$count_before" ]]; then
+    assert_pass "health auto-prunes stale agents"
+else
+    assert_fail "health auto-prunes stale agents" "before=$count_before after=$count_after"
+fi
+
 echo ""
 echo ""
 print_test_results

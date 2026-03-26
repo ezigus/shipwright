@@ -858,7 +858,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-status-test.sh` | 294 | Validate status dashboard and --json output |
 | `scripts/sw-strategic-test.sh` | 216 | Validate strategic intelligence agent |
 | `scripts/sw-stream-test.sh` | 140 | Live terminal output streaming |
-| `scripts/sw-swarm-test.sh` | 238 | Dynamic agent swarm management tests |
+| `scripts/sw-swarm-test.sh` | 225 | Dynamic agent swarm management tests |
 | `scripts/sw-team-stages-test.sh` | 148 | Validate multi-agent stage execution |
 | `scripts/sw-templates-test.sh` | 251 | Validate team template browser |
 | `scripts/sw-testgen-test.sh` | 160 | Test generation & coverage tests |

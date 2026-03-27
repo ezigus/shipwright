@@ -1443,6 +1443,44 @@ else
     assert_fail "DoD has fallback for raw DOD_PASS if JSON parse fails"
 fi
 
+# ─── Circuit breaker: DoD-only failures (#237) ────────────────────────────────
+
+# Test: bypass emits 'skipping circuit breaker strike' message
+if grep -q 'skipping circuit breaker strike' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "circuit breaker bypass emits 'skipping circuit breaker strike' message"
+else
+    assert_fail "circuit breaker bypass emits 'skipping circuit breaker strike' message"
+fi
+
+# Test: bypass resets CONSECUTIVE_FAILURES=0 (not just skipping increment)
+# so stale prior strikes don't accumulate across a verified-pass iteration
+if grep -B1 'skipping circuit breaker strike' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'CONSECUTIVE_FAILURES=0'; then
+    assert_pass "circuit breaker bypass resets CONSECUTIVE_FAILURES=0 to clear stale strikes"
+else
+    assert_fail "circuit breaker bypass resets CONSECUTIVE_FAILURES=0 to clear stale strikes"
+fi
+
+# Test: bypass guarded by TEST_PASSED == true
+if grep -A3 'check_progress.*new_commits' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'TEST_PASSED.*true'; then
+    assert_pass "circuit breaker bypass guarded by TEST_PASSED == true"
+else
+    assert_fail "circuit breaker bypass guarded by TEST_PASSED == true"
+fi
+
+# Test: bypass requires explicit AUDIT_RESULT=pass when audit is enabled (no silent default)
+if grep -A3 'TEST_PASSED.*true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'AUDIT_AGENT_ENABLED\|AUDIT_RESULT.*==.*pass'; then
+    assert_pass "circuit breaker bypass guards AUDIT_RESULT explicitly (no silent default to pass)"
+else
+    assert_fail "circuit breaker bypass guards AUDIT_RESULT explicitly (no silent default to pass)"
+fi
+
+# Test: genuine failures (test fail or audit fail) still increment circuit breaker
+if grep -q 'CONSECUTIVE_FAILURES=$(( CONSECUTIVE_FAILURES + 1 ))' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "genuine failures still increment CONSECUTIVE_FAILURES"
+else
+    assert_fail "genuine failures still increment CONSECUTIVE_FAILURES"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

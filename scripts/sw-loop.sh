@@ -2389,9 +2389,21 @@ ${GOAL}"
         fi
 
         # Check progress (circuit breaker)
+        # Count a strike whenever there is no progress (no new commits) and we are
+        # NOT in the "(tests pass AND audit passes)" bypass. This includes cases
+        # where tests or audit failed, were skipped, or have not yet run. The only
+        # no-progress case that is not penalized is when both tests and audit pass —
+        # the implementation is verified and the agent isn't stuck.
         if check_progress "$new_commits"; then
             CONSECUTIVE_FAILURES=0
             echo -e "  ${GREEN}✓${RESET} Progress detected — continuing"
+        elif [[ "${TEST_PASSED:-}" == "true" ]] && \
+             { ! $AUDIT_AGENT_ENABLED || [[ "${AUDIT_RESULT:-}" == "pass" ]]; }; then
+            # Tests passed AND audit either passed or is disabled.
+            # Implementation is verified — this is not a stuck agent.
+            # Clear prior strikes so stale counts don't trip the breaker later.
+            CONSECUTIVE_FAILURES=0
+            echo -e "  ${CYAN}▸${RESET} Tests and audit passed — skipping circuit breaker strike"
         else
             CONSECUTIVE_FAILURES=$(( CONSECUTIVE_FAILURES + 1 ))
             echo -e "  ${YELLOW}⚠${RESET} Low progress (${CONSECUTIVE_FAILURES}/${CIRCUIT_BREAKER_THRESHOLD} before circuit breaker)"

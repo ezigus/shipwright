@@ -2391,6 +2391,19 @@ ${GOAL}"
             GATES_PASSED_NO_SIGNAL=true
         fi
 
+        # Early exit: all gates passing and no changes made — work is already done.
+        if [[ "$GATES_PASSED_NO_SIGNAL" == "true" ]] && [[ "${new_commits:-0}" -eq 0 ]]; then
+            STATUS="complete"
+            emit_event "loop.early_exit_no_changes" \
+                "iteration=$ITERATION" \
+                "total_commits=$TOTAL_COMMITS" 2>/dev/null || true
+            echo -e "  ${GREEN}${BOLD}✓ Complete — no changes needed, all gates passing${RESET}"
+            write_state
+            write_progress
+            show_summary
+            return 0
+        fi
+
         # Check progress (circuit breaker)
         # Count a strike whenever there is no progress (no new commits) and we are
         # NOT in the "(tests pass AND audit passes)" bypass. This includes cases

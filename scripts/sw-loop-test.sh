@@ -1406,6 +1406,29 @@ else
     assert_fail "GATES_PASSED_NO_SIGNAL reset in main loop before prompt build (not in subshell)"
 fi
 
+# ─── Early exit when no changes and all gates pass (#245) ─────────────────────
+
+# Test: early exit block exists after GATES_PASSED_NO_SIGNAL is set
+if grep -A10 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'loop.early_exit_no_changes'; then
+    assert_pass "early exit check present after GATES_PASSED_NO_SIGNAL (no changes + all gates = complete)"
+else
+    assert_fail "early exit check present after GATES_PASSED_NO_SIGNAL (no changes + all gates = complete)"
+fi
+
+# Test: early exit requires zero new_commits
+if grep -B2 'loop.early_exit_no_changes' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'new_commits.*-eq 0'; then
+    assert_pass "early exit guarded by new_commits == 0"
+else
+    assert_fail "early exit guarded by new_commits == 0"
+fi
+
+# Test: early exit sets STATUS=complete
+if grep -B5 'loop.early_exit_no_changes' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'STATUS="complete"'; then
+    assert_pass "early exit sets STATUS=complete"
+else
+    assert_fail "early exit sets STATUS=complete"
+fi
+
 # ─── DoD evaluator: diff truncation fix (#236) ────────────────────────────────
 
 # Test: DoD diff no longer truncated with head -200

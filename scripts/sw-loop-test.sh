@@ -1406,6 +1406,43 @@ else
     assert_fail "GATES_PASSED_NO_SIGNAL reset in main loop before prompt build (not in subshell)"
 fi
 
+# ─── DoD evaluator: diff truncation fix (#236) ────────────────────────────────
+
+# Test: DoD diff no longer truncated with head -200
+if grep -A10 'Detailed Changes' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'head -200'; then
+    assert_fail "DoD diff must NOT be truncated with head -200"
+else
+    assert_pass "DoD diff is not truncated with head -200"
+fi
+
+# Test: DoD uses --json-schema for structured output
+if grep -A5 'dod_flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q '\-\-json-schema'; then
+    assert_pass "DoD evaluator uses --json-schema for structured output"
+else
+    assert_fail "DoD evaluator uses --json-schema for structured output"
+fi
+
+# Test: DoD verdict parsed from JSON verdict field (not plain text DOD_PASS)
+if grep -q 'dod_verdict.*jq.*verdict' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD verdict parsed from JSON verdict field"
+else
+    assert_fail "DoD verdict parsed from JSON verdict field"
+fi
+
+# Test: DoD verdict checks for "pass" string (JSON schema enum value)
+if grep -q '"$dod_verdict" == "pass"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD verdict compared against JSON enum value \"pass\""
+else
+    assert_fail "DoD verdict compared against JSON enum value \"pass\""
+fi
+
+# Test: DoD has fallback for raw DOD_PASS in case JSON parse fails
+if grep -A5 'JSON parse failed' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'DOD_PASS'; then
+    assert_pass "DoD has fallback for raw DOD_PASS if JSON parse fails"
+else
+    assert_fail "DoD has fallback for raw DOD_PASS if JSON parse fails"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

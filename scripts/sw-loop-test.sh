@@ -1520,9 +1520,9 @@ fi
 
 # ─── Dynamic task progress (#239) ────────────────────────────────────────────
 
-# Test: pipeline-stages-build.sh no longer injects raw cat of TASKS_FILE into enriched goal
-if grep -A3 'task.*list\|Task.*tracking' "$SCRIPT_DIR/lib/pipeline-stages-build.sh" | grep -q 'cat.*TASKS_FILE\|\$(cat.*TASKS_FILE'; then
-    assert_fail "pipeline-stages-build.sh must NOT inject raw TASKS_FILE into enriched goal (done dynamically now)"
+# Test: pipeline-stages-build.sh no longer injects raw cat of TASKS_FILE anywhere
+if grep -q 'cat.*TASKS_FILE\|\$(cat.*TASKS_FILE' "$SCRIPT_DIR/lib/pipeline-stages-build.sh"; then
+    assert_fail "pipeline-stages-build.sh must NOT inject raw TASKS_FILE (done dynamically now)"
 else
     assert_pass "pipeline-stages-build.sh does not inject raw TASKS_FILE into enriched goal"
 fi

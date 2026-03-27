@@ -8,8 +8,8 @@ _LOOP_ITERATION_LOADED=1
 # Produce a dynamic task list section each iteration.
 # On iteration 1 (no cumulative diff yet): show the raw checklist as guidance.
 # On iteration 2+: annotate each task with [x] when the cumulative diff touches
-# a filename/function keyword that appears in the task description, giving the
-# agent an accurate view of completed vs remaining work.
+# a keyword inferred from changed file basenames that appears in the task
+# description, giving the agent an approximate view of completed vs remaining work.
 compose_task_section() {
     [[ -z "${TASKS_FILE:-}" || ! -f "$TASKS_FILE" ]] && return 0
 
@@ -40,11 +40,13 @@ compose_task_section() {
             total=$((total + 1))
             local task_text="${line#*\[ \] }"
             local matched=false
-            local kw
+            # Case-insensitive substring match — Bash 3.2 compatible (no ${var,,})
+            local kw task_text_lc kw_lc
+            task_text_lc="$(printf '%s' "$task_text" | tr '[:upper:]' '[:lower:]')"
             for kw in $keywords; do
-                # Case-insensitive substring match against the task description
-                case "${task_text,,}" in
-                    *"${kw,,}"*) matched=true; break ;;
+                kw_lc="$(printf '%s' "$kw" | tr '[:upper:]' '[:lower:]')"
+                case "$task_text_lc" in
+                    *"$kw_lc"*) matched=true; break ;;
                 esac
             done
             if [[ "$matched" == "true" ]]; then

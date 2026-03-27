@@ -1341,6 +1341,71 @@ else
     assert_pass "check_progress() fallback (no args): skipped (git unavailable)"
 fi
 
+# ─── GATES_PASSED_NO_SIGNAL — silent loop continuation fix (#234) ─────────────
+
+# Test: GATES_PASSED_NO_SIGNAL is set when quality gates pass but no LOOP_COMPLETE
+if grep -q 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "sw-loop.sh sets GATES_PASSED_NO_SIGNAL=true when gates pass without LOOP_COMPLETE"
+else
+    assert_fail "sw-loop.sh sets GATES_PASSED_NO_SIGNAL=true when gates pass without LOOP_COMPLETE"
+fi
+
+# Test: GATES_PASSED_NO_SIGNAL is only set when COMPLETION_REJECTED is not true
+if grep -B3 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'COMPLETION_REJECTED.*!=.*true'; then
+    assert_pass "GATES_PASSED_NO_SIGNAL=true guarded by COMPLETION_REJECTED check"
+else
+    assert_fail "GATES_PASSED_NO_SIGNAL=true guarded by COMPLETION_REJECTED check"
+fi
+
+# Test: GATES_PASSED_NO_SIGNAL is only set when QUALITY_GATES_ENABLED
+if grep -B5 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'QUALITY_GATES_ENABLED'; then
+    assert_pass "GATES_PASSED_NO_SIGNAL=true guarded by QUALITY_GATES_ENABLED check"
+else
+    assert_fail "GATES_PASSED_NO_SIGNAL=true guarded by QUALITY_GATES_ENABLED check"
+fi
+
+# Test: GATES_PASSED_NO_SIGNAL is only set when audit passed
+if grep -B5 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'AUDIT_RESULT'; then
+    assert_pass "GATES_PASSED_NO_SIGNAL=true guarded by AUDIT_RESULT check"
+else
+    assert_fail "GATES_PASSED_NO_SIGNAL=true guarded by AUDIT_RESULT check"
+fi
+
+# Test: compose_rejection_notice_section handles GATES_PASSED_NO_SIGNAL branch
+if grep -A10 '^compose_rejection_notice_section()' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'GATES_PASSED_NO_SIGNAL'; then
+    assert_pass "compose_rejection_notice_section() handles GATES_PASSED_NO_SIGNAL branch"
+else
+    assert_fail "compose_rejection_notice_section() handles GATES_PASSED_NO_SIGNAL branch"
+fi
+
+# Test: quality gates passed hint injected into prompt (not rejection notice)
+if grep -A20 'GATES_PASSED_NO_SIGNAL.*true' "$SCRIPT_DIR/sw-loop.sh" | grep -qi 'quality.*gates.*passed\|gates.*passed'; then
+    assert_pass "GATES_PASSED_NO_SIGNAL branch emits quality gates passed hint"
+else
+    assert_fail "GATES_PASSED_NO_SIGNAL branch emits quality gates passed hint"
+fi
+
+# Test: COMPLETION_REJECTED path unchanged (rejection notice still present)
+if grep -A5 '^compose_rejection_notice_section()' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'COMPLETION_REJECTED'; then
+    assert_pass "compose_rejection_notice_section() still handles COMPLETION_REJECTED path"
+else
+    assert_fail "compose_rejection_notice_section() still handles COMPLETION_REJECTED path"
+fi
+
+# Test: COMPLETION_REJECTED and GATES_PASSED_NO_SIGNAL reset at top of each iteration
+# (not inside compose_rejection_notice_section subshell where resets are no-ops)
+if grep -A5 'Reset per-iteration completion signal flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'COMPLETION_REJECTED=false'; then
+    assert_pass "COMPLETION_REJECTED reset in main loop before prompt build (not in subshell)"
+else
+    assert_fail "COMPLETION_REJECTED reset in main loop before prompt build (not in subshell)"
+fi
+
+if grep -A5 'Reset per-iteration completion signal flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'GATES_PASSED_NO_SIGNAL=false'; then
+    assert_pass "GATES_PASSED_NO_SIGNAL reset in main loop before prompt build (not in subshell)"
+else
+    assert_fail "GATES_PASSED_NO_SIGNAL reset in main loop before prompt build (not in subshell)"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

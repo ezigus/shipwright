@@ -172,7 +172,7 @@ ${build_discoveries}"
     if [[ -s "$TASKS_FILE" ]]; then
         local tasks_issue
         tasks_issue=$(grep -m1 "^- Issue:" "$TASKS_FILE" 2>/dev/null | sed 's/^- Issue: *//' | xargs || true)
-        if [[ -z "$tasks_issue" || "$tasks_issue" == "${GITHUB_ISSUE:-none}" ]]; then
+        if [[ -n "$tasks_issue" && "$tasks_issue" == "${GITHUB_ISSUE:-}" ]]; then
             enriched_goal="${enriched_goal}
 
 Task tracking (check off items as you complete them):

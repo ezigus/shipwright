@@ -838,17 +838,18 @@ diagnose_failure() {
         strategy="retry_with_context"
     fi
 
-    # Check if we've seen this diagnosis before in this session
+    # Check if we've seen this diagnosis before in this session.
+    # Append first, then count — so repeat_count reflects total occurrences
+    # including the current one, and the threshold matches what the message reports.
     local diagnosis_file="${LOG_DIR:-/tmp}/diagnoses.txt"
-    local repeat_count=0
-    if [[ -f "$diagnosis_file" ]]; then
-        repeat_count=$(grep -c "^${diagnosis}$" "$diagnosis_file" 2>/dev/null || true)
-        repeat_count="${repeat_count:-0}"
-    fi
     echo "$diagnosis" >> "$diagnosis_file"
+    local repeat_count=0
+    repeat_count=$(grep -c "^${diagnosis}$" "$diagnosis_file" 2>/dev/null || true)
+    repeat_count="${repeat_count:-0}"
 
-    # Escalate strategy if same diagnosis repeats
-    if [[ "$repeat_count" -ge 2 ]]; then
+    # Escalate strategy if same diagnosis repeats — threshold is 5 same-session
+    # failures to avoid thrashing on iteration 2 of a fresh run
+    if [[ "$repeat_count" -ge 5 ]]; then
         strategy="alternative_approach"
     fi
 
@@ -2123,6 +2124,8 @@ run_single_agent_loop() {
     STUCKNESS_TRACKING_FILE="$LOG_DIR/stuckness-tracking.txt"
     : > "$STUCKNESS_TRACKING_FILE" 2>/dev/null || true
     : > "${LOG_DIR:-/tmp}/strategy-attempts.txt" 2>/dev/null || true
+    # Clear per-session diagnosis tracking so repeat counts don't bleed across pipeline runs
+    : > "${LOG_DIR:-/tmp}/diagnoses.txt" 2>/dev/null || true
 
     show_banner
 

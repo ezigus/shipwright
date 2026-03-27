@@ -1443,6 +1443,43 @@ else
     assert_fail "DoD has fallback for raw DOD_PASS if JSON parse fails"
 fi
 
+# ─── Circuit breaker: DoD-only failures (#237) ────────────────────────────────
+
+# Test: circuit breaker has a DoD-only bypass branch (elif between check_progress and increment)
+if grep -q 'Tests and audit both passed' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "circuit breaker has DoD-only bypass path when tests and audit both pass"
+else
+    assert_fail "circuit breaker has DoD-only bypass path when tests and audit both pass"
+fi
+
+# Test: DoD-only bypass emits a 'DoD pending' message (not incrementing)
+if grep -q 'DoD pending, not counting against circuit breaker' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD-only bypass emits 'DoD pending, not counting against circuit breaker' message"
+else
+    assert_fail "DoD-only bypass emits 'DoD pending, not counting against circuit breaker' message"
+fi
+
+# Test: DoD-only bypass guarded by TEST_PASSED == true condition
+if grep -B2 'Tests and audit both passed' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'TEST_PASSED.*true'; then
+    assert_pass "circuit breaker bypass guarded by TEST_PASSED == true"
+else
+    assert_fail "circuit breaker bypass guarded by TEST_PASSED == true"
+fi
+
+# Test: DoD-only bypass also guarded by AUDIT_RESULT == pass condition
+if grep -B2 'Tests and audit both passed' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'AUDIT_RESULT.*pass'; then
+    assert_pass "circuit breaker bypass guarded by AUDIT_RESULT == pass"
+else
+    assert_fail "circuit breaker bypass guarded by AUDIT_RESULT == pass"
+fi
+
+# Test: genuine failures (test fail or audit fail) still increment circuit breaker
+if grep -q 'CONSECUTIVE_FAILURES=$(( CONSECUTIVE_FAILURES + 1 ))' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "genuine failures still increment CONSECUTIVE_FAILURES"
+else
+    assert_fail "genuine failures still increment CONSECUTIVE_FAILURES"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

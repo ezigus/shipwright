@@ -2389,9 +2389,17 @@ ${GOAL}"
         fi
 
         # Check progress (circuit breaker)
+        # Only count as a strike if the agent is genuinely stuck (no commits AND
+        # tests or audit are also failing). If tests pass AND audit passes, the
+        # implementation is verified — the agent isn't stuck, it just hasn't
+        # emitted LOOP_COMPLETE yet. Don't penalize working implementations.
         if check_progress "$new_commits"; then
             CONSECUTIVE_FAILURES=0
             echo -e "  ${GREEN}✓${RESET} Progress detected — continuing"
+        elif [[ "${TEST_PASSED:-}" == "true" && "${AUDIT_RESULT:-pass}" == "pass" ]]; then
+            # Tests and audit both passed — only DoD gate is pending.
+            # This is not a stuck agent; skip the circuit breaker increment.
+            echo -e "  ${CYAN}▸${RESET} Tests and audit passed — DoD pending, not counting against circuit breaker"
         else
             CONSECUTIVE_FAILURES=$(( CONSECUTIVE_FAILURES + 1 ))
             echo -e "  ${YELLOW}⚠${RESET} Low progress (${CONSECUTIVE_FAILURES}/${CIRCUIT_BREAKER_THRESHOLD} before circuit breaker)"

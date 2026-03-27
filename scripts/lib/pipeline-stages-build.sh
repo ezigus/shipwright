@@ -168,12 +168,18 @@ ${build_discoveries}"
         fi
     fi
 
-    # Add task list context
+    # Add task list context — validate issue matches before injecting
     if [[ -s "$TASKS_FILE" ]]; then
-        enriched_goal="${enriched_goal}
+        local tasks_issue
+        tasks_issue=$(grep -m1 "^- Issue:" "$TASKS_FILE" 2>/dev/null | sed 's/^- Issue: *//' | xargs || true)
+        if [[ -z "$tasks_issue" || "$tasks_issue" == "${GITHUB_ISSUE:-none}" ]]; then
+            enriched_goal="${enriched_goal}
 
 Task tracking (check off items as you complete them):
 $(cat "$TASKS_FILE")"
+        else
+            warn "Skipping stale pipeline-tasks.md (was for issue $tasks_issue, current ${GITHUB_ISSUE:-none})"
+        fi
     fi
 
     # Inject file hotspots from GitHub intelligence

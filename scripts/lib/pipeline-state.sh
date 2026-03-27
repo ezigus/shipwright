@@ -459,6 +459,8 @@ initialize_state() {
     LOG_ENTRIES=""
     # Clear per-run tracking files
     rm -f "$ARTIFACTS_DIR/model-routing.log" "$ARTIFACTS_DIR/.plan-failure-sig.txt"
+    # Clear stale task file so previous issue's tasks don't leak into new run
+    rm -f "${TASKS_FILE:-}"
     write_state
 }
 
@@ -600,6 +602,16 @@ ${sid}:${sst}"
 
     if [[ -n "$GIT_BRANCH" ]]; then
         git checkout "$GIT_BRANCH" 2>/dev/null || true
+    fi
+
+    # Validate pipeline-tasks.md belongs to this resume's issue; clear if stale
+    if [[ -s "${TASKS_FILE:-}" ]]; then
+        local tasks_issue
+        tasks_issue=$(grep -m1 "^- Issue:" "$TASKS_FILE" 2>/dev/null | sed 's/^- Issue: *//' | xargs || true)
+        if [[ -n "$tasks_issue" && "$tasks_issue" != "${GITHUB_ISSUE:-none}" ]]; then
+            warn "Clearing stale pipeline-tasks.md (was for issue $tasks_issue, now ${GITHUB_ISSUE:-none})"
+            rm -f "$TASKS_FILE"
+        fi
     fi
 
     PIPELINE_START_EPOCH="$(now_epoch)"

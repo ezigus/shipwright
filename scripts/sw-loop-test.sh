@@ -1351,11 +1351,24 @@ else
 fi
 
 # Test: GATES_PASSED_NO_SIGNAL is only set when COMPLETION_REJECTED is not true
-if grep -A5 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -qv 'COMPLETION_REJECTED.*true' || \
-   grep -B3 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'COMPLETION_REJECTED.*!=.*true'; then
+if grep -B3 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'COMPLETION_REJECTED.*!=.*true'; then
     assert_pass "GATES_PASSED_NO_SIGNAL=true guarded by COMPLETION_REJECTED check"
 else
     assert_fail "GATES_PASSED_NO_SIGNAL=true guarded by COMPLETION_REJECTED check"
+fi
+
+# Test: GATES_PASSED_NO_SIGNAL is only set when QUALITY_GATES_ENABLED
+if grep -B5 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'QUALITY_GATES_ENABLED'; then
+    assert_pass "GATES_PASSED_NO_SIGNAL=true guarded by QUALITY_GATES_ENABLED check"
+else
+    assert_fail "GATES_PASSED_NO_SIGNAL=true guarded by QUALITY_GATES_ENABLED check"
+fi
+
+# Test: GATES_PASSED_NO_SIGNAL is only set when audit passed
+if grep -B5 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'AUDIT_RESULT'; then
+    assert_pass "GATES_PASSED_NO_SIGNAL=true guarded by AUDIT_RESULT check"
+else
+    assert_fail "GATES_PASSED_NO_SIGNAL=true guarded by AUDIT_RESULT check"
 fi
 
 # Test: compose_rejection_notice_section handles GATES_PASSED_NO_SIGNAL branch
@@ -1379,11 +1392,18 @@ else
     assert_fail "compose_rejection_notice_section() still handles COMPLETION_REJECTED path"
 fi
 
-# Test: GATES_PASSED_NO_SIGNAL reset after use (no state leak into next iteration)
-if grep -A20 'GATES_PASSED_NO_SIGNAL.*true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'GATES_PASSED_NO_SIGNAL=false'; then
-    assert_pass "GATES_PASSED_NO_SIGNAL reset to false after use (no state leak)"
+# Test: COMPLETION_REJECTED and GATES_PASSED_NO_SIGNAL reset at top of each iteration
+# (not inside compose_rejection_notice_section subshell where resets are no-ops)
+if grep -A5 'Reset per-iteration completion signal flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'COMPLETION_REJECTED=false'; then
+    assert_pass "COMPLETION_REJECTED reset in main loop before prompt build (not in subshell)"
 else
-    assert_fail "GATES_PASSED_NO_SIGNAL reset to false after use (no state leak)"
+    assert_fail "COMPLETION_REJECTED reset in main loop before prompt build (not in subshell)"
+fi
+
+if grep -A5 'Reset per-iteration completion signal flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'GATES_PASSED_NO_SIGNAL=false'; then
+    assert_pass "GATES_PASSED_NO_SIGNAL reset in main loop before prompt build (not in subshell)"
+else
+    assert_fail "GATES_PASSED_NO_SIGNAL reset in main loop before prompt build (not in subshell)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

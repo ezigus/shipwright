@@ -1527,7 +1527,6 @@ AUDIT_FEEDBACK
 
 compose_rejection_notice_section() {
     if $COMPLETION_REJECTED; then
-        COMPLETION_REJECTED=false
         cat <<'REJECTION'
 ## ⚠ Completion Rejected
 Your previous LOOP_COMPLETE was REJECTED because quality gates did not pass.
@@ -1535,10 +1534,9 @@ Review the audit feedback and test results above, fix the issues, then try again
 Do NOT output LOOP_COMPLETE until all quality checks pass.
 REJECTION
     elif [[ "${GATES_PASSED_NO_SIGNAL:-false}" == "true" ]]; then
-        GATES_PASSED_NO_SIGNAL=false
         cat <<'GATES_PASSED'
 ## ✓ Quality Gates Passed
-All quality checks passed on the previous iteration. If the goal is fully achieved, output LOOP_COMPLETE to finish the loop.
+All configured quality gates (tests, uncommitted changes, DoD) passed on the previous iteration. If the goal is fully achieved and any audit issues above are addressed, output LOOP_COMPLETE to finish the loop.
 GATES_PASSED
     fi
 }
@@ -2127,6 +2125,12 @@ run_single_agent_loop() {
         }
         ITERATION=$(( ITERATION + 1 ))
 
+        # Reset per-iteration completion signal flags before prompt is built.
+        # These cannot be reset inside compose_rejection_notice_section() because
+        # that function runs in a $(...) subshell and side effects don't persist.
+        COMPLETION_REJECTED=false
+        GATES_PASSED_NO_SIGNAL=false
+
         # Emit iteration start event for pipeline visibility
         if type emit_event >/dev/null 2>&1; then
             emit_event "loop.iteration_start" \
@@ -2354,9 +2358,13 @@ ${GOAL}"
             return 0
         fi
 
-        # If gates passed but agent never emitted LOOP_COMPLETE, hint next iteration
+        # If gates passed but agent never emitted LOOP_COMPLETE, hint next iteration.
+        # Only set when quality gates are actually enabled (disabled runs default
+        # QUALITY_GATE_PASSED=true unconditionally) and audit also passed.
         GATES_PASSED_NO_SIGNAL=false
-        if $QUALITY_GATE_PASSED && [[ "${COMPLETION_REJECTED:-false}" != "true" ]]; then
+        if $QUALITY_GATES_ENABLED && $QUALITY_GATE_PASSED && \
+           [[ "${COMPLETION_REJECTED:-false}" != "true" ]] && \
+           [[ "${AUDIT_RESULT:-pass}" == "pass" ]]; then
             GATES_PASSED_NO_SIGNAL=true
         fi
 

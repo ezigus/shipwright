@@ -3,6 +3,70 @@
 [[ -n "${_LOOP_ITERATION_LOADED:-}" ]] && return 0
 _LOOP_ITERATION_LOADED=1
 
+# ─── Task Progress ───────────────────────────────────────────────────────────
+
+# Produce a dynamic task list section each iteration.
+# On iteration 1 (no cumulative diff yet): show the raw checklist as guidance.
+# On iteration 2+: annotate each task with [x] when the cumulative diff touches
+# a keyword inferred from changed file basenames that appears in the task
+# description, giving the agent an approximate view of completed vs remaining work.
+compose_task_section() {
+    [[ -z "${TASKS_FILE:-}" || ! -f "$TASKS_FILE" ]] && return 0
+
+    local changed_files=""
+    if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
+        changed_files="$(git -C "${PROJECT_ROOT:-.}" diff --name-only "${LOOP_START_COMMIT}..HEAD" 2>/dev/null || true)"
+    fi
+
+    # No commits yet — show raw list as initial guidance
+    if [[ -z "$changed_files" ]]; then
+        cat "$TASKS_FILE"
+        return 0
+    fi
+
+    # Build a flat keyword list from changed file basenames (stem only, 4+ chars)
+    local keywords=""
+    while IFS= read -r cf; do
+        local stem
+        stem="$(basename "$cf" 2>/dev/null)"
+        stem="${stem%.*}"
+        [[ ${#stem} -ge 4 ]] && keywords="${keywords} ${stem}"
+    done <<< "$changed_files"
+
+    # Annotate task lines; pass non-task lines through unchanged
+    local completed=0 total=0
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*-\ \[\ \] ]]; then
+            total=$((total + 1))
+            local task_text="${line#*\[ \] }"
+            local matched=false
+            # Case-insensitive substring match — Bash 3.2 compatible (no ${var,,})
+            local kw task_text_lc kw_lc
+            task_text_lc="$(printf '%s' "$task_text" | tr '[:upper:]' '[:lower:]')"
+            for kw in $keywords; do
+                kw_lc="$(printf '%s' "$kw" | tr '[:upper:]' '[:lower:]')"
+                case "$task_text_lc" in
+                    *"$kw_lc"*) matched=true; break ;;
+                esac
+            done
+            if [[ "$matched" == "true" ]]; then
+                # Replace [ ] with [x] — Bash 3.2 compatible substitution
+                echo "${line/- [ ]/- [x]}"
+                completed=$((completed + 1))
+            else
+                echo "$line"
+            fi
+        else
+            echo "$line"
+        fi
+    done < "$TASKS_FILE"
+
+    if [[ "$total" -gt 0 ]]; then
+        echo ""
+        echo "(${completed}/${total} tasks inferred complete from committed changes — verify and check off any missed)"
+    fi
+}
+
 # ─── Prompt Composition ──────────────────────────────────────────────────────
 
 manage_context_window() {
@@ -338,6 +402,10 @@ ${cum_stat}
         fi
     fi
 
+    # Dynamic task progress — auto-marks completed tasks based on cumulative diff
+    local task_section=""
+    task_section="$(compose_task_section 2>/dev/null || true)"
+
     cat <<PROMPT
 You are an autonomous coding agent on iteration ${ITERATION}/${MAX_ITERATIONS} of a continuous loop.
 ${resume_section}
@@ -345,7 +413,10 @@ ${resume_section}
 ${prompt_goal}
 
 ${cumulative_section}
-## Current Progress
+${task_section:+## Task Progress
+$task_section
+
+}## Current Progress
 ${recent_log}
 
 ## Recent Git Activity

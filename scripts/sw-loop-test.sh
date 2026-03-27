@@ -1518,6 +1518,36 @@ else
     assert_fail "prompt uses prompt_goal variable (truncated to headline when stuck)"
 fi
 
+# ─── Dynamic task progress (#239) ────────────────────────────────────────────
+
+# Test: pipeline-stages-build.sh no longer injects raw cat of TASKS_FILE into enriched goal
+if grep -A3 'task.*list\|Task.*tracking' "$SCRIPT_DIR/lib/pipeline-stages-build.sh" | grep -q 'cat.*TASKS_FILE\|\$(cat.*TASKS_FILE'; then
+    assert_fail "pipeline-stages-build.sh must NOT inject raw TASKS_FILE into enriched goal (done dynamically now)"
+else
+    assert_pass "pipeline-stages-build.sh does not inject raw TASKS_FILE into enriched goal"
+fi
+
+# Test: compose_task_section() function exists in loop-iteration.sh
+if grep -q '^compose_task_section()' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "compose_task_section() function exists in loop-iteration.sh"
+else
+    assert_fail "compose_task_section() function exists in loop-iteration.sh"
+fi
+
+# Test: compose_task_section annotates tasks with [x] based on diff (auto-marking logic)
+if grep -q '\- \[x\]' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "compose_task_section() marks completed tasks with [x]"
+else
+    assert_fail "compose_task_section() marks completed tasks with [x]"
+fi
+
+# Test: task_section is injected into the prompt
+if grep -q 'task_section' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "task_section is injected into the prompt each iteration"
+else
+    assert_fail "task_section is injected into the prompt each iteration"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

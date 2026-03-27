@@ -168,13 +168,9 @@ ${build_discoveries}"
         fi
     fi
 
-    # Add task list context
-    if [[ -s "$TASKS_FILE" ]]; then
-        enriched_goal="${enriched_goal}
-
-Task tracking (check off items as you complete them):
-$(cat "$TASKS_FILE")"
-    fi
+    # Task list is injected dynamically each iteration by compose_task_section()
+    # in loop-iteration.sh so the agent sees accurate completion status based on
+    # committed changes, not a static all-unchecked list from the plan stage.
 
     # Inject file hotspots from GitHub intelligence
     if [[ "${NO_GITHUB:-}" != "true" ]] && type gh_file_change_frequency >/dev/null 2>&1; then

@@ -1429,6 +1429,20 @@ else
     assert_fail "early exit sets STATUS=complete"
 fi
 
+# Test: early exit runs holistic gate before exiting
+if grep 'GATES_PASSED_NO_SIGNAL.*true.*new_commits' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'run_holistic_gate'; then
+    assert_pass "early exit runs run_holistic_gate before completing"
+else
+    assert_fail "early exit runs run_holistic_gate before completing"
+fi
+
+# Test: new_commits recomputed after post-audit cleanup commit
+if grep -B5 'Quality gates' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'commits_after_cleanup'; then
+    assert_pass "new_commits recomputed after post-audit cleanup"
+else
+    assert_fail "new_commits recomputed after post-audit cleanup"
+fi
+
 # ─── DoD evaluator: diff truncation fix (#236) ────────────────────────────────
 
 # Test: DoD diff no longer truncated with head -200

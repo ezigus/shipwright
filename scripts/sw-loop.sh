@@ -2369,6 +2369,12 @@ ${GOAL}"
             git -C "$PROJECT_ROOT" commit -m "loop: iteration $ITERATION — post-audit cleanup" --no-verify 2>/dev/null || true
         fi
 
+        # Recompute iteration commit count after post-audit cleanup
+        local commits_after_cleanup
+        commits_after_cleanup="$(git_commit_count)"
+        new_commits=$(( commits_after_cleanup - commits_before ))
+        TOTAL_COMMITS=$(( TOTAL_COMMITS + commits_after_cleanup - commits_after ))
+
         # Quality gates (automated checks)
         run_quality_gates
 
@@ -2392,7 +2398,8 @@ ${GOAL}"
         fi
 
         # Early exit: all gates passing and no changes made — work is already done.
-        if [[ "$GATES_PASSED_NO_SIGNAL" == "true" ]] && [[ "${new_commits:-0}" -eq 0 ]]; then
+        # Run holistic gate to verify the goal is fully achieved before exiting.
+        if [[ "$GATES_PASSED_NO_SIGNAL" == "true" ]] && [[ "${new_commits:-0}" -eq 0 ]] && run_holistic_gate; then
             STATUS="complete"
             emit_event "loop.early_exit_no_changes" \
                 "iteration=$ITERATION" \

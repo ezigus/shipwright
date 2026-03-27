@@ -1261,8 +1261,8 @@ check_definition_of_done() {
         diff_content="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null || echo "(no diff)")"
         diff_content="${diff_content}
 
-## Detailed Changes (cumulative diff, truncated to 200 lines)
-$(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -200 || echo "(no diff)")"
+## Detailed Changes (cumulative diff)
+$(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null || echo "(no diff)")"
     else
         diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null || echo "(no diff)")"
     fi
@@ -1299,27 +1299,47 @@ ${diff_content}
 ## Your Task
 For each item in the Definition of Done, determine if the project satisfies it.
 The runtime facts above are verified by the harness — trust them as ground truth.
-If ALL items are satisfied, output exactly: DOD_PASS
-Otherwise, list which items are NOT satisfied and why.
+
+IMPORTANT: You MUST respond using the exact JSON schema provided. No prose, no hedging.
+- Set "verdict" to "pass" if ALL items are satisfied. Set it to "fail" if ANY item is not satisfied.
+- For each DoD item, add an entry to "items" with the item text and whether it passes.
+- In "summary", briefly explain your verdict (1-2 sentences max).
 DOD_PROMPT
 
     local dod_log="$LOG_DIR/dod-iter-${ITERATION}.log"
     local dod_model
     dod_model="$(select_audit_model)"
+    local dod_schema='{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"items":{"type":"array","items":{"type":"object","properties":{"item":{"type":"string"},"satisfied":{"type":"boolean"},"reason":{"type":"string"}},"required":["item","satisfied"]}},"summary":{"type":"string"}},"required":["verdict","items","summary"]}'
     local dod_flags=()
     dod_flags+=("--model" "$dod_model")
+    dod_flags+=("--json-schema" "$dod_schema")
     dod_flags+=("--disallowed-tools" "EnterPlanMode,ExitPlanMode")
     if $SKIP_PERMISSIONS; then
         dod_flags+=("--dangerously-skip-permissions")
     fi
 
-    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>&1 || true
+    local dod_err_log="${dod_log%.log}-stderr.log"
+    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>"$dod_err_log" || true
 
-    if grep -q "DOD_PASS" "$dod_log" 2>/dev/null; then
+    # Parse structured JSON output: verdict field must be "pass"
+    local dod_verdict
+    dod_verdict="$(jq -r '.verdict // empty' "$dod_log" 2>/dev/null || echo "")"
+    if [[ "$dod_verdict" == "pass" ]]; then
         echo -e "  ${GREEN}✓${RESET} Definition of Done: satisfied"
+        # Log summary for diagnostics
+        local dod_summary
+        dod_summary="$(jq -r '.summary // ""' "$dod_log" 2>/dev/null || echo "")"
+        [[ -n "$dod_summary" ]] && info "  DoD summary: $dod_summary"
         return 0
     else
         echo -e "  ${YELLOW}⚠${RESET} Definition of Done: not satisfied"
+        # Surface failing items for diagnostics
+        jq -r '.items[] | select(.satisfied == false) | "  - \(.item): " + (.reason // "not satisfied")' "$dod_log" 2>/dev/null || true
+        # Fallback: if JSON parse failed but DOD_PASS is in raw output, accept it
+        if grep -q "DOD_PASS" "$dod_log" 2>/dev/null; then
+            warn "  DoD JSON parse failed but found DOD_PASS in raw output — accepting as pass"
+            return 0
+        fi
         return 1
     fi
 }

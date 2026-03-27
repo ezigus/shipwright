@@ -459,6 +459,8 @@ initialize_state() {
     LOG_ENTRIES=""
     # Clear per-run tracking files
     rm -f "$ARTIFACTS_DIR/model-routing.log" "$ARTIFACTS_DIR/.plan-failure-sig.txt"
+    # Clear task list so stale tasks from a previous pipeline run are not injected
+    [[ -n "${TASKS_FILE:-}" ]] && rm -f "$TASKS_FILE"
     write_state
 }
 
@@ -577,6 +579,18 @@ ${sid}:${sst}"
 
     if [[ -n "$GITHUB_ISSUE" && "$GITHUB_ISSUE" =~ ^#([0-9]+)$ ]]; then
         ISSUE_NUMBER="${BASH_REMATCH[1]}"
+    fi
+
+    # Clear stale pipeline-tasks.md if it belongs to a different pipeline run.
+    # Tasks are written by the plan stage and include "- Issue: #NNN" in a Context
+    # section. If that issue doesn't match the current pipeline, the file is from a
+    # previous run and must be removed to prevent stale context injection.
+    if [[ -n "${TASKS_FILE:-}" && -f "$TASKS_FILE" ]]; then
+        local _tasks_issue=""
+        _tasks_issue=$(grep -m1 '^- Issue:' "$TASKS_FILE" 2>/dev/null | sed 's/^- Issue: *//' | xargs || true)
+        if [[ -n "$_tasks_issue" && "$_tasks_issue" != "${GITHUB_ISSUE:-}" ]]; then
+            rm -f "$TASKS_FILE"
+        fi
     fi
 
     if [[ -z "$GOAL" ]]; then

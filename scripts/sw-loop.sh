@@ -1526,16 +1526,21 @@ AUDIT_FEEDBACK
 }
 
 compose_rejection_notice_section() {
-    if ! $COMPLETION_REJECTED; then
-        return
-    fi
-    COMPLETION_REJECTED=false
-    cat <<'REJECTION'
+    if $COMPLETION_REJECTED; then
+        COMPLETION_REJECTED=false
+        cat <<'REJECTION'
 ## ⚠ Completion Rejected
 Your previous LOOP_COMPLETE was REJECTED because quality gates did not pass.
 Review the audit feedback and test results above, fix the issues, then try again.
 Do NOT output LOOP_COMPLETE until all quality checks pass.
 REJECTION
+    elif [[ "${GATES_PASSED_NO_SIGNAL:-false}" == "true" ]]; then
+        GATES_PASSED_NO_SIGNAL=false
+        cat <<'GATES_PASSED'
+## ✓ Quality Gates Passed
+All quality checks passed on the previous iteration. If the goal is fully achieved, output LOOP_COMPLETE to finish the loop.
+GATES_PASSED
+    fi
 }
 
 compose_worker_prompt() {
@@ -2347,6 +2352,12 @@ ${GOAL}"
             write_progress
             show_summary
             return 0
+        fi
+
+        # If gates passed but agent never emitted LOOP_COMPLETE, hint next iteration
+        GATES_PASSED_NO_SIGNAL=false
+        if $QUALITY_GATE_PASSED && [[ "${COMPLETION_REJECTED:-false}" != "true" ]]; then
+            GATES_PASSED_NO_SIGNAL=true
         fi
 
         # Check progress (circuit breaker)

@@ -1481,6 +1481,43 @@ else
     assert_fail "genuine failures still increment CONSECUTIVE_FAILURES"
 fi
 
+# ─── Stale counters + contradictory prompt fixes (#238) ──────────────────────
+
+# Test: diagnoses.txt is cleared at loop init (not shared across pipeline runs)
+if grep -A5 'strategy-attempts.txt' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'diagnoses.txt'; then
+    assert_pass "diagnoses.txt is cleared at loop init alongside strategy-attempts.txt"
+else
+    assert_fail "diagnoses.txt is cleared at loop init alongside strategy-attempts.txt"
+fi
+
+# Test: alternative_approach threshold is 5 (not 2)
+if grep -q 'repeat_count.*-ge 5' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "alternative_approach escalation threshold is 5 same-session failures"
+else
+    assert_fail "alternative_approach escalation threshold is 5 same-session failures"
+fi
+
+# Test: GOAL is NOT mutated by appending alt_strategy when stuck
+if grep 'GOAL=' "$SCRIPT_DIR/lib/loop-iteration.sh" | grep -q 'alt_strategy'; then
+    assert_fail "GOAL must NOT be mutated with alt_strategy when stuck (creates contradictory prompt)"
+else
+    assert_pass "GOAL is not mutated with alt_strategy when stuck"
+fi
+
+# Test: alt_strategy injected as dedicated section (alt_strategy_section variable)
+if grep -q 'alt_strategy_section' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "alt_strategy injected as dedicated prompt section (not appended to GOAL)"
+else
+    assert_fail "alt_strategy injected as dedicated prompt section (not appended to GOAL)"
+fi
+
+# Test: prompt uses prompt_goal (truncated when stuck) instead of raw GOAL
+if grep -q 'prompt_goal' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "prompt uses prompt_goal variable (truncated to headline when stuck)"
+else
+    assert_fail "prompt uses prompt_goal variable (truncated to headline when stuck)"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

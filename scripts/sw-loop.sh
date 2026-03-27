@@ -847,8 +847,9 @@ diagnose_failure() {
     fi
     echo "$diagnosis" >> "$diagnosis_file"
 
-    # Escalate strategy if same diagnosis repeats
-    if [[ "$repeat_count" -ge 2 ]]; then
+    # Escalate strategy if same diagnosis repeats — threshold is 5 same-session
+    # failures to avoid thrashing on iteration 2 of a fresh run
+    if [[ "$repeat_count" -ge 5 ]]; then
         strategy="alternative_approach"
     fi
 
@@ -2123,6 +2124,8 @@ run_single_agent_loop() {
     STUCKNESS_TRACKING_FILE="$LOG_DIR/stuckness-tracking.txt"
     : > "$STUCKNESS_TRACKING_FILE" 2>/dev/null || true
     : > "${LOG_DIR:-/tmp}/strategy-attempts.txt" 2>/dev/null || true
+    # Clear per-session diagnosis tracking so repeat counts don't bleed across pipeline runs
+    : > "${LOG_DIR:-/tmp}/diagnoses.txt" 2>/dev/null || true
 
     show_banner
 

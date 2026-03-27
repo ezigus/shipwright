@@ -252,7 +252,10 @@ ${last_error}"
     local stuckness_detected=false
     [[ "$_stuck_ret" -eq 0 ]] && stuckness_detected=true
 
-    # Strategy exploration when stuck — append alternative strategy to GOAL
+    # Strategy exploration when stuck — inject as a dedicated section, NOT appended to GOAL.
+    # Appending to GOAL mixes "implement these tasks" with "try a different approach" in the
+    # same section, creating contradictory directives. Keep them separate.
+    local alt_strategy_section=""
     if [[ "$stuckness_detected" == "true" ]]; then
         local last_error diagnosis
         last_error=$(tail -1 "${ARTIFACTS_DIR:-${PROJECT_ROOT:-.}/.claude/pipeline-artifacts}/error-log.jsonl" 2>/dev/null | jq -r '"Type: \(.type), Exit: \(.exit_code), Error: \(.error | split("\n") | first)"' 2>/dev/null || true)
@@ -260,9 +263,7 @@ ${last_error}"
         diagnosis="${STUCKNESS_DIAGNOSIS:-}"
         local alt_strategy
         alt_strategy=$(explore_alternative_strategy "$last_error" "${ITERATION:-0}" "$diagnosis")
-        GOAL="${GOAL}
-
-${alt_strategy}"
+        [[ -n "$alt_strategy" ]] && alt_strategy_section="$alt_strategy"
 
         # Handle model escalation
         if [[ "${ESCALATE_MODEL:-}" == "true" ]]; then
@@ -275,6 +276,14 @@ ${alt_strategy}"
             fi
             unset ESCALATE_MODEL
         fi
+    fi
+
+    # When stuck, truncate GOAL to the high-level objective only (first paragraph).
+    # The full task list mixed with recovery instructions creates contradictory directives.
+    local prompt_goal="$GOAL"
+    if [[ "$stuckness_detected" == "true" ]]; then
+        prompt_goal="$(echo "$GOAL" | awk 'NR==1{print; next} /^[[:space:]]*$/{exit} {print}')"
+        [[ -z "$prompt_goal" ]] && prompt_goal="$GOAL"
     fi
 
     # Session restart context — inject previous session progress
@@ -330,7 +339,7 @@ ${cum_stat}
 You are an autonomous coding agent on iteration ${ITERATION}/${MAX_ITERATIONS} of a continuous loop.
 ${resume_section}
 ## Your Goal
-${GOAL}
+${prompt_goal}
 
 ${cumulative_section}
 ## Current Progress
@@ -379,6 +388,8 @@ ${rejection_notice_section}
 
 ${stuckness_section}
 
+${alt_strategy_section:+$alt_strategy_section
+}
 ## Rules
 - Focus on ONE task per iteration — do it well
 - Always commit with descriptive messages

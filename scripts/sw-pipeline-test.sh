@@ -709,6 +709,39 @@ test_resume() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 12b. Resume from "running" status (killed process)
+# ──────────────────────────────────────────────────────────────────────────────
+test_resume_from_running() {
+    # Step 1: Run intake-only pipeline to create real state + branch
+    pipeline_config_with_stages "intake" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+    invoke_pipeline start --goal "Resume running test" --skip-gates --test-cmd "echo passed"
+
+    if [[ "$PIPELINE_EXIT" -ne 0 ]]; then
+        echo -e "    ${RED}✗${RESET} Setup failed: intake didn't complete"
+        return 1
+    fi
+
+    # Step 2: Modify state to look like a killed pipeline (status: running)
+    # and update the template to include plan stage
+    pipeline_config_with_stages "intake,plan" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+
+    # Rewrite status from "complete" to "running" to simulate a killed process
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' 's/^status: complete$/status: running/' "$TEST_TEMP_DIR/project/.claude/pipeline-state.md"
+    else
+        sed -i 's/^status: complete$/status: running/' "$TEST_TEMP_DIR/project/.claude/pipeline-state.md"
+    fi
+
+    # Step 3: Resume — should treat "running" as resumable and skip intake, run plan
+    invoke_pipeline resume
+
+    assert_exit_code 0 "resume from running should complete" &&
+    assert_output_contains "Resum" "resume message" &&
+    assert_file_exists ".claude/pipeline-artifacts/plan.md" "plan generated after resume from running" &&
+    assert_state_contains "plan.*complete" "plan completed after resume from running"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 13. Abort marks pipeline as aborted
 # ──────────────────────────────────────────────────────────────────────────────
 test_abort() {
@@ -1837,6 +1870,7 @@ main() {
         "test_pr_creates_url:PR stage creates PR URL artifact"
         "test_full_pipeline_e2e:Full E2E pipeline (6 stages)"
         "test_resume:Resume continues from partial state"
+        "test_resume_from_running:Resume from running status (killed process)"
         "test_abort:Abort marks pipeline as aborted"
         "test_dry_run:Dry run shows config, no artifacts"
         "test_self_healing:Self-healing build→test retry loop"

@@ -1445,32 +1445,33 @@ fi
 
 # ─── Circuit breaker: DoD-only failures (#237) ────────────────────────────────
 
-# Test: circuit breaker has a DoD-only bypass branch (elif between check_progress and increment)
-if grep -q 'Tests and audit both passed' "$SCRIPT_DIR/sw-loop.sh"; then
-    assert_pass "circuit breaker has DoD-only bypass path when tests and audit both pass"
+# Test: bypass emits 'skipping circuit breaker strike' message
+if grep -q 'skipping circuit breaker strike' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "circuit breaker bypass emits 'skipping circuit breaker strike' message"
 else
-    assert_fail "circuit breaker has DoD-only bypass path when tests and audit both pass"
+    assert_fail "circuit breaker bypass emits 'skipping circuit breaker strike' message"
 fi
 
-# Test: DoD-only bypass emits a 'DoD pending' message (not incrementing)
-if grep -q 'DoD pending, not counting against circuit breaker' "$SCRIPT_DIR/sw-loop.sh"; then
-    assert_pass "DoD-only bypass emits 'DoD pending, not counting against circuit breaker' message"
+# Test: bypass resets CONSECUTIVE_FAILURES=0 (not just skipping increment)
+# so stale prior strikes don't accumulate across a verified-pass iteration
+if grep -B1 'skipping circuit breaker strike' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'CONSECUTIVE_FAILURES=0'; then
+    assert_pass "circuit breaker bypass resets CONSECUTIVE_FAILURES=0 to clear stale strikes"
 else
-    assert_fail "DoD-only bypass emits 'DoD pending, not counting against circuit breaker' message"
+    assert_fail "circuit breaker bypass resets CONSECUTIVE_FAILURES=0 to clear stale strikes"
 fi
 
-# Test: DoD-only bypass guarded by TEST_PASSED == true condition
-if grep -B2 'Tests and audit both passed' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'TEST_PASSED.*true'; then
+# Test: bypass guarded by TEST_PASSED == true
+if grep -A3 'check_progress.*new_commits' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'TEST_PASSED.*true'; then
     assert_pass "circuit breaker bypass guarded by TEST_PASSED == true"
 else
     assert_fail "circuit breaker bypass guarded by TEST_PASSED == true"
 fi
 
-# Test: DoD-only bypass also guarded by AUDIT_RESULT == pass condition
-if grep -B2 'Tests and audit both passed' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'AUDIT_RESULT.*pass'; then
-    assert_pass "circuit breaker bypass guarded by AUDIT_RESULT == pass"
+# Test: bypass requires explicit AUDIT_RESULT=pass when audit is enabled (no silent default)
+if grep -A3 'TEST_PASSED.*true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'AUDIT_AGENT_ENABLED\|AUDIT_RESULT.*==.*pass'; then
+    assert_pass "circuit breaker bypass guards AUDIT_RESULT explicitly (no silent default to pass)"
 else
-    assert_fail "circuit breaker bypass guarded by AUDIT_RESULT == pass"
+    assert_fail "circuit breaker bypass guards AUDIT_RESULT explicitly (no silent default to pass)"
 fi
 
 # Test: genuine failures (test fail or audit fail) still increment circuit breaker

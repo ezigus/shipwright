@@ -2442,8 +2442,8 @@ pipeline_start() {
         PIPELINE_NAME="$PIPELINE_TEMPLATE"
     fi
 
-    # Check for existing pipeline
-    if [[ -f "$STATE_FILE" ]]; then
+    # Check for existing pipeline (skip guard when resuming from checkpoint)
+    if [[ -f "$STATE_FILE" ]] && ! $RESUME_FROM_CHECKPOINT; then
         local existing_status
         existing_status=$(sed -n 's/^status: *//p' "$STATE_FILE" | head -1)
         if [[ "$existing_status" == "running" || "$existing_status" == "paused" || "$existing_status" == "interrupted" ]]; then

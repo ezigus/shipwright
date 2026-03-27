@@ -1318,7 +1318,8 @@ DOD_PROMPT
         dod_flags+=("--dangerously-skip-permissions")
     fi
 
-    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>&1 || true
+    local dod_err_log="${dod_log%.log}-stderr.log"
+    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>"$dod_err_log" || true
 
     # Parse structured JSON output: verdict field must be "pass"
     local dod_verdict
@@ -1333,7 +1334,7 @@ DOD_PROMPT
     else
         echo -e "  ${YELLOW}⚠${RESET} Definition of Done: not satisfied"
         # Surface failing items for diagnostics
-        jq -r '.items[] | select(.satisfied == false) | "  - \(.item): \(.reason // "not satisfied")"' "$dod_log" 2>/dev/null || true
+        jq -r '.items[] | select(.satisfied == false) | "  - \(.item): " + (.reason // "not satisfied")' "$dod_log" 2>/dev/null || true
         # Fallback: if JSON parse failed but DOD_PASS is in raw output, accept it
         if grep -q "DOD_PASS" "$dod_log" 2>/dev/null; then
             warn "  DoD JSON parse failed but found DOD_PASS in raw output — accepting as pass"

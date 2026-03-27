@@ -588,7 +588,10 @@ ${sid}:${sst}"
     if [[ -n "${TASKS_FILE:-}" && -f "$TASKS_FILE" ]]; then
         local _tasks_issue=""
         _tasks_issue=$(grep -m1 '^- Issue:' "$TASKS_FILE" 2>/dev/null | sed 's/^- Issue: *//' | xargs || true)
-        if [[ -n "$_tasks_issue" && "$_tasks_issue" != "${GITHUB_ISSUE:-}" ]]; then
+        # Intake writes "- Issue: ${GITHUB_ISSUE:-none}" so normalize both sides:
+        # treat an empty GITHUB_ISSUE as "none" to avoid deleting goal-based task files on resume.
+        local _expected_issue="${GITHUB_ISSUE:-none}"
+        if [[ -n "$_tasks_issue" && "$_tasks_issue" != "$_expected_issue" ]]; then
             rm -f "$TASKS_FILE"
         fi
     fi

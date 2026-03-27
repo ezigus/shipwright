@@ -2530,11 +2530,13 @@ pipeline_start() {
         fi
     fi
 
-    # Restore from state file if resuming (failed/interrupted pipeline); else initialize fresh
+    # Restore from state file if resuming (failed/interrupted/running pipeline); else initialize fresh
+    # Note: "running" is included because a killed process leaves status as "running"
+    # without gracefully setting it to "interrupted"
     if $RESUME_FROM_CHECKPOINT && [[ -f "$STATE_FILE" ]]; then
         local existing_status
         existing_status="$(sed -n 's/^status: *//p' "$STATE_FILE" | head -1)"
-        if [[ "$existing_status" == "failed" || "$existing_status" == "interrupted" ]]; then
+        if [[ "$existing_status" == "failed" || "$existing_status" == "interrupted" || "$existing_status" == "running" ]]; then
             resume_state
         else
             initialize_state

@@ -422,14 +422,15 @@ _git_diff_stat_excluded() {
 
 # ─── Pipeline Tasks File Helper ──────────────────────────────────
 # Extracts the issue number from the "- Issue:" header line of a
-# pipeline-tasks.md file. Returns the trimmed issue string on stdout.
+# pipeline-tasks.md file. Returns the normalized issue number (no #)
+# on stdout. Accepts "- Issue:" or "Issue:" with any case.
 # Exit codes: 0=success, 1=file missing/unreadable/no issue line.
 # Usage: issue=$(extract_issue_from_tasks_file "$path") || ...
 extract_issue_from_tasks_file() {
     local file="$1"
     [[ ! -f "$file" ]] && return 1
     local issue
-    issue=$(grep -m1 "^- Issue:" "$file" 2>/dev/null | sed 's/^- Issue: *//' | xargs) || return 1
+    issue=$(grep -m1 -iE "^-? *Issue:" "$file" 2>/dev/null | sed 's/^[^:]*:[[:space:]]*//' | tr -d '#' | xargs) || return 1
     [[ -n "$issue" ]] && echo "$issue" || return 1
 }
 

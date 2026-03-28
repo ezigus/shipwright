@@ -556,4 +556,99 @@ fi
 # Restore mocked sw binary for other tests
 mock_binary "sw" 'mkdir -p src; echo "// auth" > src/auth.js'
 
+# ─── Tests: issue number normalization (#-prefix stripping) ──────────────────
+print_test_section "issue number normalization (#-prefix and format variants)"
+
+# Re-create the capturing sw mock for this section
+cat > "$TEST_TEMP_DIR/bin/sw" <<'SWMOCK'
+#!/usr/bin/env bash
+set -- "$@"
+_saw_loop=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    loop) _saw_loop=true; shift ;;
+    --*) shift; [[ $# -gt 0 ]] && shift ;;
+    *) if [[ "$_saw_loop" == true && -n "${CAPTURED_BUILD_PROMPT:-}" ]]; then
+           printf '%s' "$1" > "${CAPTURED_BUILD_PROMPT}"
+           _saw_loop=false
+       fi
+       shift ;;
+  esac
+done
+SWMOCK
+chmod +x "$TEST_TEMP_DIR/bin/sw"
+
+# Test: GITHUB_ISSUE without # matches tasks file with #42
+cat > "$TASKS_FILE" <<'TEOF'
+# Pipeline Tasks — Normalize test
+## Implementation Checklist
+- [ ] Task for issue #42
+
+## Context
+- Pipeline: test-pipeline
+- Branch: fix/issue-42
+- Issue: #42
+- Generated: 2026-03-28T00:00:00Z
+TEOF
+
+export GITHUB_ISSUE="42"  # no # prefix
+
+rm -f "$_captured_build_prompt"
+set +e
+CAPTURED_BUILD_PROMPT="$_captured_build_prompt" stage_build 2>/dev/null || true
+set -e
+
+if [[ -f "$_captured_build_prompt" ]] && grep -q "Task for issue #42" "$_captured_build_prompt" 2>/dev/null; then
+    assert_pass "stage_build injects tasks when GITHUB_ISSUE lacks # prefix (42 == #42)"
+else
+    assert_fail "stage_build injects tasks when GITHUB_ISSUE lacks # prefix (42 == #42)"
+fi
+
+# Test: resume_state with GITHUB_ISSUE without # clears stale tasks for different issue
+mkdir -p "$(dirname "$TASKS_FILE")"
+cat > "$TASKS_FILE" <<'TEOF'
+# Pipeline Tasks
+## Implementation Checklist
+- [ ] Old task
+
+## Context
+- Issue: #99
+TEOF
+
+export GITHUB_ISSUE="42"  # no # prefix — should still detect mismatch with #99
+
+set +e
+resume_state 2>/dev/null
+set -e
+
+if [[ ! -f "$TASKS_FILE" ]]; then
+    assert_pass "resume_state clears stale tasks when GITHUB_ISSUE lacks # prefix (42 != #99)"
+else
+    assert_fail "resume_state clears stale tasks when GITHUB_ISSUE lacks # prefix (42 != #99)"
+fi
+
+# Test: tasks file with "Issue:" line missing leading dash (format variant)
+mkdir -p "$(dirname "$TASKS_FILE")"
+cat > "$TASKS_FILE" <<'TEOF'
+# Pipeline Tasks
+## Context
+Issue: #42
+TEOF
+
+export GITHUB_ISSUE="#42"
+
+set +e
+resume_state 2>/dev/null
+set -e
+
+if [[ -f "$TASKS_FILE" ]]; then
+    assert_pass "resume_state keeps tasks when Issue: line has no leading dash"
+else
+    assert_fail "resume_state keeps tasks when Issue: line has no leading dash"
+fi
+
+# Restore GITHUB_ISSUE and mocked sw binary
+export GITHUB_ISSUE="#42"
+mock_binary "sw" 'mkdir -p src; echo "// auth" > src/auth.js'
+
 print_test_results

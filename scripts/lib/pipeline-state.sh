@@ -611,7 +611,7 @@ ${sid}:${sst}"
             warn "Malformed pipeline-tasks.md (missing '- Issue:' header) — removing"
             rm -f "$TASKS_FILE"
         else
-            local current_issue; current_issue=$(echo "${GITHUB_ISSUE:-}" | xargs)
+            local current_issue; current_issue=$(echo "${GITHUB_ISSUE:-}" | tr -d '#' | xargs)
             if [[ -n "$current_issue" && "$tasks_issue" != "$current_issue" ]]; then
                 warn "Clearing stale pipeline-tasks.md (was for issue $tasks_issue, now $current_issue)"
                 rm -f "$TASKS_FILE"

@@ -175,7 +175,7 @@ ${build_discoveries}"
             warn "Malformed pipeline-tasks.md (missing '- Issue:' header) — skipping injection"
             rm -f "$TASKS_FILE"
         else
-            local current_issue; current_issue=$(echo "${GITHUB_ISSUE:-}" | xargs)
+            local current_issue; current_issue=$(echo "${GITHUB_ISSUE:-}" | tr -d '#' | xargs)
             if [[ -n "$current_issue" && "$tasks_issue" == "$current_issue" ]]; then
                 enriched_goal="${enriched_goal}
 

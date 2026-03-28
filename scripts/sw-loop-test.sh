@@ -1430,7 +1430,8 @@ else
 fi
 
 # Test: early exit runs holistic gate before exiting
-if grep 'GATES_PASSED_NO_SIGNAL.*true.*new_commits' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'run_holistic_gate'; then
+# Use -A2 to match across potential line breaks in the condition
+if grep -A2 'GATES_PASSED_NO_SIGNAL.*true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'run_holistic_gate'; then
     assert_pass "early exit runs run_holistic_gate before completing"
 else
     assert_fail "early exit runs run_holistic_gate before completing"
@@ -1441,6 +1442,64 @@ if grep -B5 'Quality gates' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'commits_after_cl
     assert_pass "new_commits recomputed after post-audit cleanup"
 else
     assert_fail "new_commits recomputed after post-audit cleanup"
+fi
+
+# Behavioral test: loop exits early when no changes and all gates pass
+echo ""
+echo -e "${DIM}  loop behavior: early exit with no changes (#245)${RESET}"
+
+if setup_loop_env 2>/dev/null; then
+    # Mock claude that makes NO changes and does NOT emit LOOP_COMPLETE
+    # Iteration calls use --output-format json; holistic gate does not
+    cat > "$TEST_TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
+#!/usr/bin/env bash
+if echo "$@" | grep -q 'output-format'; then
+    # Iteration call — valid JSON, no LOOP_COMPLETE
+    echo '[{"type":"result","result":"Everything looks good, no changes needed.","usage":{"input_tokens":0,"output_tokens":0}}]'
+else
+    # Holistic gate / audit — output HOLISTIC_PASS
+    echo "HOLISTIC_PASS"
+fi
+exit 0
+CLAUDE_EOF
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+    # Ignore loop infrastructure files so they don't count as commits
+    # Prior tests may have tracked .claude/ files — untrack them
+    _git=$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git)
+    echo ".claude/" > "$TEST_TEMP_DIR/repo/.gitignore"
+    (cd "$TEST_TEMP_DIR/repo" && "$_git" rm -r --cached .claude 2>/dev/null || true)
+    (cd "$TEST_TEMP_DIR/repo" && "$_git" add .gitignore && "$_git" commit -q -m "add gitignore" --allow-empty)
+
+    # Clear any accumulated cost data from prior tests so budget gate doesn't block
+    rm -f "$TEST_TEMP_DIR/home/.shipwright/costs.json" "$TEST_TEMP_DIR/home/.shipwright/budget.json"
+
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
+        bash "$SCRIPT_DIR/sw-loop.sh" \
+        --repo "$TEST_TEMP_DIR/repo" \
+        "Already done task" \
+        --max-iterations 5 \
+        --test-cmd "true" \
+        --quality-gates \
+        --local \
+        2>&1) || true
+
+    if echo "$output" | grep -q "no changes needed, all gates passing"; then
+        assert_pass "Loop early exit: no changes + all gates = complete"
+    elif echo "$output" | grep -q "LOOP COMPLETE"; then
+        assert_pass "Loop early exit: detected completion without LOOP_COMPLETE"
+    else
+        assert_fail "Loop early exit: expected early exit on no changes + all gates" "$(echo "$output" | grep -iE 'error|Fatal|Budget|Iteration|Complete|no changes' | head -5)"
+    fi
+
+    # Verify it didn't iterate more than once
+    if echo "$output" | grep -qE "Iteration [2-9]|iteration [2-9]"; then
+        assert_fail "Loop early exit: should exit after iteration 1, not iterate further"
+    else
+        assert_pass "Loop early exit: exited after iteration 1 (no extra iterations)"
+    fi
+else
+    assert_fail "Loop early exit behavioral test" "setup failed"
 fi
 
 # ─── DoD evaluator: diff truncation fix (#236) ────────────────────────────────

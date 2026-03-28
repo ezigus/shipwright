@@ -4,6 +4,7 @@ _AI_PROVIDER_LOADED=1
 
 _AI_PROVIDER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -f "${_AI_PROVIDER_DIR}/config.sh" ]] && source "${_AI_PROVIDER_DIR}/config.sh"
+[[ -f "${_AI_PROVIDER_DIR}/gate-signal.sh" ]] && source "${_AI_PROVIDER_DIR}/gate-signal.sh"
 [[ -f "${_AI_PROVIDER_DIR}/ai-provider-claude.sh" ]] && source "${_AI_PROVIDER_DIR}/ai-provider-claude.sh"
 [[ -f "${_AI_PROVIDER_DIR}/ai-provider-codex.sh" ]] && source "${_AI_PROVIDER_DIR}/ai-provider-codex.sh"
 
@@ -152,7 +153,7 @@ ai_run_json() {
     result_text="$(_ai_parse_provider_json_result "$provider" "$out_file")"
     usage_json="$(_ai_parse_provider_json_usage "$provider" "$out_file")"
     if echo "$result_text" | detect_gate_signal "-" "LOOP" \
-        'LOOP_COMPLETE|goal.{0,20}(achieved|complete)' \
+        'LOOP_COMPLETE' \
         '<<<LOOP:FAIL>>>'; then
         completion=true
     else

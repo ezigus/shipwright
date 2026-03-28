@@ -66,7 +66,7 @@ check_progress() {
 check_completion() {
     local log_file="$1"
     detect_gate_signal "$log_file" "LOOP" \
-        'LOOP_COMPLETE|goal.{0,20}(achieved|complete)' \
+        'LOOP_COMPLETE' \
         '<<<LOOP:FAIL>>>'
 }
 
@@ -128,8 +128,10 @@ check_max_iterations() {
     if [[ "${CONSECUTIVE_FAILURES:-0}" -lt 2 ]]; then
         # Check 2: agent hasn't signaled completion (if it did, guard_completion handles it)
         local last_log="$LOG_DIR/iteration-$(( ITERATION - 1 )).log"
+        # <<<LOOP:FAIL>>> is treated as "no completion" here — we extend to give the agent
+        # a chance to recover from whatever caused the failure signal.
         if [[ -f "$last_log" ]] && ! detect_gate_signal "$last_log" "LOOP" \
-            'LOOP_COMPLETE|goal.{0,20}(achieved|complete)' \
+            'LOOP_COMPLETE' \
             '<<<LOOP:FAIL>>>'; then
             should_extend=true
             extension_reason="work in progress with recent progress"

@@ -831,7 +831,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-oversight-test.sh` | 164 | Quality oversight board tests |
 | `scripts/sw-patrol-meta-test.sh` | 306 | Validate self-improvement patrol |
 | `scripts/sw-pipeline-composer-test.sh` | 632 | Test Suite |
-| `scripts/sw-pipeline-test.sh` | 1955 | E2E validation invoking the REAL pipeline |
+| `scripts/sw-pipeline-test.sh` | 2006 | E2E validation invoking the REAL pipeline |
 | `scripts/sw-pipeline-vitals-test.sh` | 226 | Validate pipeline health scoring |
 | `scripts/sw-pm-test.sh` | 225 | Autonomous PM Agent test suite |
 | `scripts/sw-policy-e2e-test.sh` | 290 | Verify config/policy.json is honored |
@@ -860,7 +860,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-status-test.sh` | 294 | Validate status dashboard and --json output |
 | `scripts/sw-strategic-test.sh` | 216 | Validate strategic intelligence agent |
 | `scripts/sw-stream-test.sh` | 140 | Live terminal output streaming |
-| `scripts/sw-swarm-test.sh` | 225 | Dynamic agent swarm management tests |
+| `scripts/sw-swarm-test.sh` | 233 | Dynamic agent swarm management tests |
 | `scripts/sw-team-stages-test.sh` | 148 | Validate multi-agent stage execution |
 | `scripts/sw-templates-test.sh` | 251 | Validate team template browser |
 | `scripts/sw-testgen-test.sh` | 160 | Test generation & coverage tests |

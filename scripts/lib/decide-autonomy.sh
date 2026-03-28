@@ -286,8 +286,10 @@ autonomy_daily_summary() {
 
     local max_issues max_cost
     local _limits_json; _limits_json="${TIER_LIMITS}"; [[ -z "$_limits_json" ]] && _limits_json="{}"
-    max_issues=$(echo "$_limits_json" | jq -r '.max_issues_per_day // 15')
-    max_cost=$(echo "$_limits_json" | jq -r '.max_cost_per_day_usd // 25')
+    max_issues=$(echo "$_limits_json" | jq -r '.max_issues_per_day // 15' 2>/dev/null) || max_issues=15
+    [[ -z "$max_issues" || ! "$max_issues" =~ ^[0-9]+$ ]] && max_issues=15
+    max_cost=$(echo "$_limits_json" | jq -r '.max_cost_per_day_usd // 25' 2>/dev/null) || max_cost=25
+    [[ -z "$max_cost" ]] && max_cost=25
 
     jq -s --argjson mi "$max_issues" --arg mc "$max_cost" '
         {

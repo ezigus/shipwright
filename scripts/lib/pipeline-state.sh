@@ -460,7 +460,7 @@ initialize_state() {
     # Clear per-run tracking files
     rm -f "$ARTIFACTS_DIR/model-routing.log" "$ARTIFACTS_DIR/.plan-failure-sig.txt"
     # Clear stale task file so previous issue's tasks don't leak into new run
-    rm -f "${TASKS_FILE:-}"
+    [[ -n "${TASKS_FILE:-}" ]] && rm -f "$TASKS_FILE"
     write_state
 }
 

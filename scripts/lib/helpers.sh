@@ -430,7 +430,7 @@ extract_issue_from_tasks_file() {
     local file="$1"
     [[ ! -f "$file" ]] && return 1
     local issue
-    issue=$(grep -m1 -iE "^-? *Issue:" "$file" 2>/dev/null | sed 's/^[^:]*:[[:space:]]*//' | tr -d '#' | xargs) || return 1
+    issue=$(grep -m1 -i "^-\{0,1\} *Issue:" "$file" 2>/dev/null | sed 's/^[^:]*:[[:space:]]*//' | tr -d '#' | xargs) || return 1
     [[ -n "$issue" ]] && echo "$issue" || return 1
 }
 

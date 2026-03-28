@@ -490,12 +490,12 @@ CLAUDE_EOF
         --local \
         2>&1) || true
 
-    if echo "$output" | grep -qF "LOOP_COMPLETE"; then
+    if echo "$output" | grep -qi "Completion signal detected\|LOOP_COMPLETE"; then
         assert_pass "Loop detected completion signal"
-    elif echo "$output" | grep -qi "complete.*LOOP_COMPLETE\|LOOP_COMPLETE.*accepted"; then
+    elif echo "$output" | grep -qiE "LOOP COMPLETE|loop complete|loop.*pass"; then
         assert_pass "Loop detected completion signal"
     else
-        assert_fail "Loop detected completion signal" "output missing LOOP_COMPLETE"
+        assert_fail "Loop detected completion signal" "output missing completion signal"
     fi
 else
     assert_fail "Loop completes on LOOP_COMPLETE" "setup failed (git missing?)"
@@ -572,6 +572,110 @@ CLAUDE_EOF
 else
     assert_fail "Loop max iterations" "setup failed"
 fi
+
+# ─── Test: LOOP_COMPLETE signal detection hardening (#263) ──────────────────
+echo ""
+echo -e "${DIM}  loop behavior: LOOP_COMPLETE signal hardening${RESET}"
+
+# Test: main loop prompt uses <<<LOOP:PASS>>> fence delimiter
+if grep -q '<<<LOOP:PASS>>>' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Main loop prompt uses <<<LOOP:PASS>>> fence delimiter"
+else
+    assert_fail "Main loop prompt uses <<<LOOP:PASS>>> fence delimiter"
+fi
+
+# Test: guard_completion uses detect_gate_signal (not bare grep)
+if grep -q 'detect_gate_signal.*log_file.*LOOP\|detect_gate_signal.*"LOOP"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "guard_completion uses detect_gate_signal for LOOP signal"
+else
+    assert_fail "guard_completion uses detect_gate_signal for LOOP signal"
+fi
+
+# Test: main agent loop uses detect_gate_signal for completion check
+if grep -q 'detect_gate_signal.*LOG_FILE.*LOOP\|detect_gate_signal.*"LOOP"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Main agent loop uses detect_gate_signal for completion check"
+else
+    assert_fail "Main agent loop uses detect_gate_signal for completion check"
+fi
+
+# Test: check_completion() in loop-convergence.sh uses detect_gate_signal
+if grep -q 'detect_gate_signal' "$SCRIPT_DIR/lib/loop-convergence.sh"; then
+    assert_pass "loop-convergence.sh check_completion uses detect_gate_signal"
+else
+    assert_fail "loop-convergence.sh check_completion uses detect_gate_signal"
+fi
+
+# Test: ai-provider.sh uses detect_gate_signal (stdin mode) for LOOP signal
+if grep -q 'detect_gate_signal.*"-".*LOOP\|detect_gate_signal.*"-"' "$SCRIPT_DIR/lib/ai-provider.sh"; then
+    assert_pass "ai-provider.sh uses detect_gate_signal stdin mode for LOOP signal"
+else
+    assert_fail "ai-provider.sh uses detect_gate_signal stdin mode for LOOP signal"
+fi
+
+# Test: gate-signal.sh shared lib exists (detect_gate_signal extracted out of sw-loop.sh)
+if [[ -f "$SCRIPT_DIR/lib/gate-signal.sh" ]]; then
+    assert_pass "lib/gate-signal.sh shared library exists"
+else
+    assert_fail "lib/gate-signal.sh shared library exists"
+fi
+
+# Test: sw-loop.sh sources gate-signal.sh (not inline)
+if grep -q 'gate-signal.sh' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "sw-loop.sh sources gate-signal.sh"
+else
+    assert_fail "sw-loop.sh sources gate-signal.sh"
+fi
+
+# Test: ai-provider.sh sources gate-signal.sh
+if grep -q 'gate-signal.sh' "$SCRIPT_DIR/lib/ai-provider.sh"; then
+    assert_pass "ai-provider.sh sources gate-signal.sh"
+else
+    assert_fail "ai-provider.sh sources gate-signal.sh"
+fi
+
+# Load detect_gate_signal from the shared lib for functional tests
+_dgs_body="$(sed -n '/^detect_gate_signal()/,/^}/p' "$SCRIPT_DIR/lib/gate-signal.sh")"
+
+# Test: legacy LOOP_COMPLETE still detected via Layer 3 (backwards compat)
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "Done. LOOP_COMPLETE" > "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "LOOP" 'LOOP_COMPLETE') 2>/dev/null; then
+    assert_pass "detect_gate_signal: legacy LOOP_COMPLETE accepted via Layer 3"
+else
+    assert_fail "detect_gate_signal: legacy LOOP_COMPLETE accepted via Layer 3"
+fi
+rm -f "$dgs_test_log"
+
+# Test: new <<<LOOP:PASS>>> fence accepted via Layer 2
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "All tasks complete." > "$dgs_test_log"
+echo "<<<LOOP:PASS>>>" >> "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "LOOP" 'LOOP_COMPLETE') 2>/dev/null; then
+    assert_pass "detect_gate_signal: <<<LOOP:PASS>>> fence accepted"
+else
+    assert_fail "detect_gate_signal: <<<LOOP:PASS>>> fence accepted"
+fi
+rm -f "$dgs_test_log"
+
+# Test: prose "goal achieved" no longer accepted (narrowed legacy pattern)
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "The goal has been achieved." > "$dgs_test_log"
+if ! (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "LOOP" 'LOOP_COMPLETE') 2>/dev/null; then
+    assert_pass "detect_gate_signal: prose 'goal achieved' correctly rejected (narrowed pattern)"
+else
+    assert_fail "detect_gate_signal: prose 'goal achieved' correctly rejected (narrowed pattern)"
+fi
+rm -f "$dgs_test_log"
+
+# Test: <<<LOOP:FAIL>>> blocks pass even when LOOP_COMPLETE also present
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+printf 'LOOP_COMPLETE\n<<<LOOP:FAIL>>>' > "$dgs_test_log"
+if ! (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "LOOP" 'LOOP_COMPLETE' '<<<LOOP:FAIL>>>') 2>/dev/null; then
+    assert_pass "detect_gate_signal: <<<LOOP:FAIL>>> blocks pass (negative-first)"
+else
+    assert_fail "detect_gate_signal: <<<LOOP:FAIL>>> blocks pass (negative-first)"
+fi
+rm -f "$dgs_test_log"
 
 # ─── Test: Loop detects stuckness ───────────────────────────────────────────
 echo ""
@@ -1707,16 +1811,16 @@ else
     assert_fail "DoD strips markdown fences from output before jq parsing"
 fi
 
-# Test: detect_gate_signal helper exists in sw-loop.sh
-if grep -q '^detect_gate_signal()' "$SCRIPT_DIR/sw-loop.sh"; then
-    assert_pass "detect_gate_signal() helper function exists"
+# Test: detect_gate_signal helper exists in lib/gate-signal.sh (shared lib)
+if grep -q '^detect_gate_signal()' "$SCRIPT_DIR/lib/gate-signal.sh"; then
+    assert_pass "detect_gate_signal() helper function exists in lib/gate-signal.sh"
 else
-    assert_fail "detect_gate_signal() helper function exists"
+    assert_fail "detect_gate_signal() helper function exists in lib/gate-signal.sh"
 fi
 
 # Test: detect_gate_signal Layer 2 — fenced delimiter passes
-# Extract and eval just the helper function (sourcing full sw-loop.sh would trigger arg parsing)
-_dgs_body="$(sed -n '/^detect_gate_signal()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")"
+# Load from shared lib (function moved out of sw-loop.sh into lib/gate-signal.sh)
+_dgs_body="$(sed -n '/^detect_gate_signal()/,/^}/p' "$SCRIPT_DIR/lib/gate-signal.sh")"
 dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
 echo "<<<DOD:PASS>>>" > "$dgs_test_log"
 if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "DOD") 2>/dev/null; then

@@ -171,7 +171,7 @@ show_help() {
     echo ""
     echo -e "${BOLD}COMPLETION & CIRCUIT BREAKER${RESET}"
     echo -e "  The loop completes when:"
-    echo -e "  ${DIM}• Claude outputs LOOP_COMPLETE and all quality gates pass${RESET}"
+    echo -e "  ${DIM}• Claude outputs <<<LOOP:PASS>>> and all quality gates pass${RESET}"
     echo -e "  ${DIM}• Max iterations reached (auto-extends if work is incomplete)${RESET}"
     echo -e "  The loop stops (circuit breaker) if:"
     echo -e "  ${DIM}• ${CIRCUIT_BREAKER_THRESHOLD} consecutive iterations with < ${MIN_PROGRESS_LINES} lines changed${RESET}"
@@ -736,47 +736,8 @@ validate_claude_output() {
 }
 
 # ─── Gate Signal Detection ──────────────────────────────────────────────────
-# Robust multi-layer LLM verdict detection. Handles fenced delimiters, JSON
-# verdicts, legacy magic strings, and prose variants.
-#
-# Usage: detect_gate_signal <log_file_or_dash> <gate_name> [legacy_pattern] [negative_pattern]
-#   log_file_or_dash: path to log file, or "-" to read from stdin
-#   gate_name: e.g., "AUDIT", "DOD", "LOOP", "HOLISTIC"
-#   legacy_pattern: gate-specific Layer 3 regex (optional, defaults to GATE_PASS)
-#   negative_pattern: gate-specific failure signals (optional, defaults to <<<GATE:FAIL>>>)
-# Returns 0 (pass), 1 (fail/ambiguous)
-detect_gate_signal() {
-    local log_file="$1" gate="$2"
-    local legacy="${3:-${gate}_PASS}"
-    local negative="${4:-<<<${gate}:FAIL>>>}"
-    local content
-
-    if [[ "$log_file" == "-" ]]; then
-        content="$(cat)"
-    elif [[ -f "$log_file" ]]; then
-        content="$(cat "$log_file")"
-    else
-        return 1
-    fi
-
-    # Layer 1: Negative-first — explicit failure signals override everything
-    if echo "$content" | grep -iqE "$negative" 2>/dev/null; then
-        return 1
-    fi
-
-    # Layer 2: Fenced delimiter (most reliable positive signal)
-    if echo "$content" | grep -q "<<<${gate}:PASS>>>" 2>/dev/null; then
-        return 0
-    fi
-
-    # Layer 3: Legacy compat + prose variants (gate-specific, case-insensitive)
-    if echo "$content" | grep -iqE "$legacy" 2>/dev/null; then
-        return 0
-    fi
-
-    # Ambiguous — fail safely
-    return 1
-}
+# Sourced from shared lib so ai-provider.sh can use the same function.
+[[ -f "${SCRIPT_DIR}/lib/gate-signal.sh" ]] && source "${SCRIPT_DIR}/lib/gate-signal.sh"
 
 # ─── Budget Gate (hard stop when exhausted) ───────────────────────────────────
 check_budget_gate() {
@@ -1458,12 +1419,14 @@ DOD_PROMPT
 guard_completion() {
     local log_file="$LOG_DIR/iteration-${ITERATION}.log"
 
-    # Check if LOOP_COMPLETE is in the log
-    if ! grep -q "LOOP_COMPLETE" "$log_file" 2>/dev/null; then
+    # Check if agent signaled completion
+    if ! detect_gate_signal "$log_file" "LOOP" \
+        'LOOP_COMPLETE' \
+        '<<<LOOP:FAIL>>>'; then
         return 1  # No completion claim
     fi
 
-    echo -e "  ${CYAN}▸${RESET} LOOP_COMPLETE detected — validating..."
+    echo -e "  ${CYAN}▸${RESET} <<<LOOP:PASS>>> detected — validating..."
 
     local rejection_reasons=()
 
@@ -1625,7 +1588,7 @@ compose_audit_section() {
     fi
 
     echo "## Self-Audit Checklist"
-    echo "Before declaring LOOP_COMPLETE, critically evaluate your own work:"
+    echo "Before declaring <<<LOOP:PASS>>>, critically evaluate your own work:"
     echo "1. Does the implementation FULLY satisfy the goal, not just partially?"
     echo "2. Are there any edge cases you haven't handled?"
     echo "3. Did you leave any TODO, FIXME, HACK, or XXX comments in new code?"
@@ -1638,7 +1601,7 @@ compose_audit_section() {
         echo "$memory_audit_items"
     fi
     echo ""
-    echo "If ANY answer is \"no\", do NOT output LOOP_COMPLETE. Instead, fix the issues first."
+    echo "If ANY answer is \"no\", do NOT output <<<LOOP:PASS>>>. Instead, fix the issues first."
 }
 
 compose_audit_feedback_section() {
@@ -1658,14 +1621,14 @@ compose_rejection_notice_section() {
     if $COMPLETION_REJECTED; then
         cat <<'REJECTION'
 ## ⚠ Completion Rejected
-Your previous LOOP_COMPLETE was REJECTED because quality gates did not pass.
+Your previous <<<LOOP:PASS>>> was REJECTED because quality gates did not pass.
 Review the audit feedback and test results above, fix the issues, then try again.
-Do NOT output LOOP_COMPLETE until all quality checks pass.
+Do NOT output <<<LOOP:PASS>>> until all quality checks pass.
 REJECTION
     elif [[ "${GATES_PASSED_NO_SIGNAL:-false}" == "true" ]]; then
         cat <<'GATES_PASSED'
 ## ✓ Quality Gates Passed
-All configured quality gates (tests, uncommitted changes, DoD) passed on the previous iteration. If the goal is fully achieved and any audit issues above are addressed, output LOOP_COMPLETE to finish the loop.
+All configured quality gates (tests, uncommitted changes, DoD) passed on the previous iteration. If the goal is fully achieved and any audit issues above are addressed, output <<<LOOP:PASS>>> to finish the loop.
 GATES_PASSED
     fi
 }
@@ -1772,7 +1735,7 @@ show_summary() {
 
     local status_display
     case "$STATUS" in
-        complete)         status_display="${GREEN}✓ Complete (LOOP_COMPLETE detected)${RESET}" ;;
+        complete)         status_display="${GREEN}✓ Complete (<<<LOOP:PASS>>> accepted)${RESET}" ;;
         circuit_breaker)  status_display="${RED}✗ Circuit breaker tripped${RESET}" ;;
         max_iterations)   status_display="${YELLOW}⚠ Max iterations reached${RESET}" ;;
         budget_exhausted) status_display="${RED}✗ Budget exhausted${RESET}" ;;
@@ -1998,13 +1961,13 @@ Focus on areas they haven't touched yet.
 2. Identify the highest-priority remaining work toward the goal
 3. Implement ONE meaningful chunk of progress
 4. Commit your work with a descriptive message
-5. When the goal is FULLY achieved, output exactly: LOOP_COMPLETE
+5. When the goal is FULLY achieved, output exactly on its own line: <<<LOOP:PASS>>>
 
 ## Rules
 - Focus on ONE task per iteration — do it well
 - Always commit with descriptive messages
 - If stuck on the same issue for 2+ iterations, try a different approach
-- Do NOT output LOOP_COMPLETE unless the goal is genuinely achieved
+- Do NOT output <<<LOOP:PASS>>> unless the goal is genuinely achieved
 PROMPT
 )"
 
@@ -2025,8 +1988,10 @@ PROMPT
     echo -e "  ${GREEN}✓${RESET} Claude session completed"
 
     # Check completion
-    if grep -q "LOOP_COMPLETE" "$LOG_FILE" 2>/dev/null; then
-        echo -e "  ${GREEN}${BOLD}✓ LOOP_COMPLETE detected!${RESET}"
+    if detect_gate_signal "$LOG_FILE" "LOOP" \
+        'LOOP_COMPLETE' \
+        '<<<LOOP:FAIL>>>'; then
+        echo -e "  ${GREEN}${BOLD}✓ Completion signal detected!${RESET}"
         # Signal completion
         touch "$LOG_DIR/.agent-${AGENT_NUM}-complete"
         break
@@ -2146,7 +2111,7 @@ wait_for_multi_completion() {
         # Check if any agent signaled completion
         for i in $(seq 1 "$AGENTS"); do
             if [[ -f "$LOG_DIR/.agent-${i}-complete" ]]; then
-                success "Agent $i signaled LOOP_COMPLETE!"
+                success "Agent $i signaled <<<LOOP:PASS>>>!"
                 STATUS="complete"
                 write_state
                 return 0
@@ -2499,7 +2464,7 @@ ${GOAL}"
             return 0
         fi
 
-        # If gates passed but agent never emitted LOOP_COMPLETE, hint next iteration.
+        # If gates passed but agent never emitted <<<LOOP:PASS>>>, hint next iteration.
         # Only set when quality gates are actually enabled (disabled runs default
         # QUALITY_GATE_PASSED=true unconditionally) and audit also passed.
         GATES_PASSED_NO_SIGNAL=false

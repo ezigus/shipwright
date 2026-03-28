@@ -1548,11 +1548,25 @@ else
     assert_pass "DoD diff is not truncated with head -200"
 fi
 
-# Test: DoD uses --json-schema for structured output
+# Test: DoD does NOT use --json-schema (flag causes empty output — see #253)
 if grep -A5 'dod_flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q '\-\-json-schema'; then
-    assert_pass "DoD evaluator uses --json-schema for structured output"
+    assert_fail "DoD evaluator must NOT use --json-schema (causes empty claude -p output)"
 else
-    assert_fail "DoD evaluator uses --json-schema for structured output"
+    assert_pass "DoD evaluator does not use --json-schema"
+fi
+
+# Test: DoD prompt embeds explicit JSON format instruction (replaces CLI schema enforcement)
+if grep -q 'Respond with ONLY a JSON object' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD prompt embeds explicit JSON format instruction"
+else
+    assert_fail "DoD prompt embeds explicit JSON format instruction"
+fi
+
+# Test: DoD has empty-output guard before verdict parsing (surfaces broken CLI invocations)
+if grep -q 'claude -p returned empty output' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD has empty-output guard with diagnostic warning"
+else
+    assert_fail "DoD has empty-output guard with diagnostic warning"
 fi
 
 # Test: DoD verdict parsed from JSON verdict field (not plain text DOD_PASS)

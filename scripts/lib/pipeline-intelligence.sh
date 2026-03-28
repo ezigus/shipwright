@@ -1019,8 +1019,8 @@ Update the design to address these violations, then rebuild."
 # items found.
 _extract_blocking_items() {
     local tmp_items tmp_fps
-    tmp_items="$(mktemp)"
-    tmp_fps="$(mktemp)"
+    tmp_items="$(mktemp "${TMPDIR:-/tmp}/sw-blocking.XXXXXX")"
+    tmp_fps="$(mktemp "${TMPDIR:-/tmp}/sw-blocking-fps.XXXXXX")"
 
     # ── 1. adversarial-review.json (intelligence path) ──
     if [[ -f "$ARTIFACTS_DIR/adversarial-review.json" ]]; then
@@ -1033,36 +1033,38 @@ _extract_blocking_items() {
                 local fp
                 fp=$(printf '%s' "$line" | grep -oE '[a-zA-Z0-9_./-]+:[0-9]+' | head -1 || true)
                 [[ -z "$fp" ]] && fp=$(printf '%s' "$line" | cut -c1-80)
-                if ! grep -qF "$fp" "$tmp_fps" 2>/dev/null; then
+                if ! grep -qxF "$fp" "$tmp_fps" 2>/dev/null; then
                     printf '%s\n' "$fp" >> "$tmp_fps"
                     printf '%s [source: adversarial]\n' "$line" >> "$tmp_items"
                 fi
             done <<< "$adv_lines"
         fi
     elif [[ -f "$ARTIFACTS_DIR/adversarial-review.md" ]]; then
-        # Fallback: parse .md for **[Critical]** / **[Bug]** lines (non-JSON path)
+        # Fallback: parse .md for **[Critical]** / **[High]** / **[Bug]** lines (non-JSON path)
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             local fp
             fp=$(printf '%s' "$line" | grep -oE '[a-zA-Z0-9_./-]+:[0-9]+' | head -1 || true)
             [[ -z "$fp" ]] && fp=$(printf '%s' "$line" | cut -c1-80)
-            if ! grep -qF "$fp" "$tmp_fps" 2>/dev/null; then
+            if ! grep -qxF "$fp" "$tmp_fps" 2>/dev/null; then
                 printf '%s\n' "$fp" >> "$tmp_fps"
                 printf '%s [source: adversarial]\n' "$line" >> "$tmp_items"
             fi
-        done < <(grep -E '\*\*\[?(Critical|Bug)\]?\*\*' "$ARTIFACTS_DIR/adversarial-review.md" 2>/dev/null || true)
+        done < <(grep -iE '\*\*\[?(Critical|High|Bug)\]?\*\*' "$ARTIFACTS_DIR/adversarial-review.md" 2>/dev/null || true)
     fi
 
     # ── 2. negative-review.md — [Critical] lines only ──
+    # Note: these findings were generated against a previous code snapshot; the
+    # staleness label is carried inline so the model knows to verify before acting.
     if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]]; then
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             local fp
             fp=$(printf '%s' "$line" | grep -oE '[a-zA-Z0-9_./-]+:[0-9]+' | head -1 || true)
             [[ -z "$fp" ]] && fp=$(printf '%s' "$line" | cut -c1-80)
-            if ! grep -qF "$fp" "$tmp_fps" 2>/dev/null; then
+            if ! grep -qxF "$fp" "$tmp_fps" 2>/dev/null; then
                 printf '%s\n' "$fp" >> "$tmp_fps"
-                printf '%s [source: negative]\n' "$line" >> "$tmp_items"
+                printf '%s [source: negative — verify against current code]\n' "$line" >> "$tmp_items"
             fi
         done < <(grep -E '\[Critical\]' "$ARTIFACTS_DIR/negative-review.md" 2>/dev/null || true)
     fi
@@ -1074,7 +1076,7 @@ _extract_blocking_items() {
             local fp
             fp=$(printf '%s' "$line" | grep -oE '[a-zA-Z0-9_./-]+:[0-9]+' | head -1 || true)
             [[ -z "$fp" ]] && fp=$(printf '%s' "$line" | cut -c1-80)
-            if ! grep -qF "$fp" "$tmp_fps" 2>/dev/null; then
+            if ! grep -qxF "$fp" "$tmp_fps" 2>/dev/null; then
                 printf '%s\n' "$fp" >> "$tmp_fps"
                 printf '%s [source: dod]\n' "$line" >> "$tmp_items"
             fi

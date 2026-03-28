@@ -1010,6 +1010,104 @@ Update the design to address these violations, then rebuild."
     fi
 }
 
+# _extract_blocking_items
+# Collects critical/high-severity findings from available artifact sources into a
+# numbered list. Sources: adversarial-review.json (with .md fallback),
+# negative-review.md [Critical] lines, dod-audit.md unchecked items, and
+# classified-findings.json needs_backtrack flag. Deduplicates by file:line
+# fingerprint (best-effort). Outputs to stdout; empty output means no blocking
+# items found.
+_extract_blocking_items() {
+    local tmp_items tmp_fps
+    tmp_items="$(mktemp)"
+    tmp_fps="$(mktemp)"
+
+    # ── 1. adversarial-review.json (intelligence path) ──
+    if [[ -f "$ARTIFACTS_DIR/adversarial-review.json" ]]; then
+        local adv_lines
+        adv_lines=$(jq -r '.[] | select(.severity == "critical" or .severity == "high") | "\(.location // "") — \(.description // .concern // "")"' \
+            "$ARTIFACTS_DIR/adversarial-review.json" 2>/dev/null || true)
+        if [[ -n "$adv_lines" ]]; then
+            while IFS= read -r line; do
+                [[ -z "$line" ]] && continue
+                local fp
+                fp=$(printf '%s' "$line" | grep -oE '[a-zA-Z0-9_./-]+:[0-9]+' | head -1 || true)
+                [[ -z "$fp" ]] && fp=$(printf '%s' "$line" | cut -c1-80)
+                if ! grep -qF "$fp" "$tmp_fps" 2>/dev/null; then
+                    printf '%s\n' "$fp" >> "$tmp_fps"
+                    printf '%s [source: adversarial]\n' "$line" >> "$tmp_items"
+                fi
+            done <<< "$adv_lines"
+        fi
+    elif [[ -f "$ARTIFACTS_DIR/adversarial-review.md" ]]; then
+        # Fallback: parse .md for **[Critical]** / **[Bug]** lines (non-JSON path)
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            local fp
+            fp=$(printf '%s' "$line" | grep -oE '[a-zA-Z0-9_./-]+:[0-9]+' | head -1 || true)
+            [[ -z "$fp" ]] && fp=$(printf '%s' "$line" | cut -c1-80)
+            if ! grep -qF "$fp" "$tmp_fps" 2>/dev/null; then
+                printf '%s\n' "$fp" >> "$tmp_fps"
+                printf '%s [source: adversarial]\n' "$line" >> "$tmp_items"
+            fi
+        done < <(grep -E '\*\*\[?(Critical|Bug)\]?\*\*' "$ARTIFACTS_DIR/adversarial-review.md" 2>/dev/null || true)
+    fi
+
+    # ── 2. negative-review.md — [Critical] lines only ──
+    if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]]; then
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            local fp
+            fp=$(printf '%s' "$line" | grep -oE '[a-zA-Z0-9_./-]+:[0-9]+' | head -1 || true)
+            [[ -z "$fp" ]] && fp=$(printf '%s' "$line" | cut -c1-80)
+            if ! grep -qF "$fp" "$tmp_fps" 2>/dev/null; then
+                printf '%s\n' "$fp" >> "$tmp_fps"
+                printf '%s [source: negative]\n' "$line" >> "$tmp_items"
+            fi
+        done < <(grep -E '\[Critical\]' "$ARTIFACTS_DIR/negative-review.md" 2>/dev/null || true)
+    fi
+
+    # ── 3. dod-audit.md — unchecked items ──
+    if [[ -f "$ARTIFACTS_DIR/dod-audit.md" ]]; then
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            local fp
+            fp=$(printf '%s' "$line" | grep -oE '[a-zA-Z0-9_./-]+:[0-9]+' | head -1 || true)
+            [[ -z "$fp" ]] && fp=$(printf '%s' "$line" | cut -c1-80)
+            if ! grep -qF "$fp" "$tmp_fps" 2>/dev/null; then
+                printf '%s\n' "$fp" >> "$tmp_fps"
+                printf '%s [source: dod]\n' "$line" >> "$tmp_items"
+            fi
+        done < <(grep -E '(❌|\[ \])' "$ARTIFACTS_DIR/dod-audit.md" 2>/dev/null || true)
+    fi
+
+    rm -f "$tmp_fps"
+
+    # ── 4. classified-findings.json — backtrack flag as header note ──
+    local backtrack_note=""
+    if [[ -f "$ARTIFACTS_DIR/classified-findings.json" ]]; then
+        local needs_backtrack
+        needs_backtrack=$(jq -r '.needs_backtrack // false' "$ARTIFACTS_DIR/classified-findings.json" 2>/dev/null || echo "false")
+        if [[ "$needs_backtrack" == "true" ]]; then
+            backtrack_note="⚠ Backtrack flagged by classifier — structural issues may require revisiting design"
+        fi
+    fi
+
+    # ── Output: backtrack note + numbered items ──
+    if [[ -n "$backtrack_note" ]]; then
+        printf '%s\n' "$backtrack_note"
+    fi
+    if [[ -s "$tmp_items" ]]; then
+        local n=0
+        while IFS= read -r item; do
+            n=$((n + 1))
+            printf '%d. %s\n' "$n" "$item"
+        done < "$tmp_items"
+    fi
+
+    rm -f "$tmp_items"
+}
+
 # _write_quality_feedback <route> <output_file>
 # Collects all quality findings into a single markdown file. Extracted from
 # compound_rebuild_with_feedback() to allow direct testing without mocking
@@ -1018,27 +1116,43 @@ _write_quality_feedback() {
     local route="${1:-correctness}"
     local feedback_file="${2:-$ARTIFACTS_DIR/quality-feedback.md}"
 
+    # Extract blocking items first so they can be rendered at the top of the file.
+    local blocking_items
+    blocking_items=$(_extract_blocking_items)
+
     {
         echo "# Quality Feedback — Issues to Fix"
         echo ""
 
-        # Security findings first (highest priority)
+        # ── Blocking Issues (first-class, top of prompt) ──
+        if [[ -n "$blocking_items" ]]; then
+            echo "## Blocking Issues (must fix before merge)"
+            echo ""
+            printf '%s\n' "$blocking_items"
+            echo ""
+            echo "## Supporting Context"
+            echo ""
+        fi
+
+        # Security findings (highest priority within supporting context)
         if [[ "$route" == "security" || -f "$ARTIFACTS_DIR/security-audit.log" ]] && grep -qiE 'critical|high' "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null; then
-            echo "## 🔴 PRIORITY: Security Findings (fix these first)"
+            echo "### 🔴 PRIORITY: Security Findings (fix these first)"
             cat "$ARTIFACTS_DIR/security-audit.log"
             echo ""
             echo "Security issues MUST be resolved before any other changes."
             echo ""
         fi
 
-        # Correctness findings
+        # Adversarial review narrative
         if [[ -f "$ARTIFACTS_DIR/adversarial-review.md" ]]; then
-            echo "## Adversarial Review Findings"
+            echo "### Adversarial Review Findings"
             cat "$ARTIFACTS_DIR/adversarial-review.md"
             echo ""
         fi
+
+        # Negative prompting narrative
         if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]]; then
-            echo "## Negative Prompting Concerns"
+            echo "### Negative Prompting Concerns"
             echo "NOTE: These findings were generated against a PREVIOUS version of the code."
             echo "Re-read the actual current source files before making changes."
             echo "If a finding references code that has already been fixed, skip it."
@@ -1046,13 +1160,14 @@ _write_quality_feedback() {
             cat "$ARTIFACTS_DIR/negative-review.md"
             echo ""
         fi
+
         if [[ -f "$ARTIFACTS_DIR/dod-audit.md" ]]; then
-            echo "## DoD Audit Failures"
+            echo "### DoD Audit Failures"
             grep "❌" "$ARTIFACTS_DIR/dod-audit.md" 2>/dev/null || true
             echo ""
         fi
         if [[ -f "$ARTIFACTS_DIR/api-compat.log" ]] && grep -qi 'BREAKING' "$ARTIFACTS_DIR/api-compat.log" 2>/dev/null; then
-            echo "## API Breaking Changes"
+            echo "### API Breaking Changes"
             cat "$ARTIFACTS_DIR/api-compat.log"
             echo ""
         fi
@@ -1062,7 +1177,7 @@ _write_quality_feedback() {
             local style_count
             style_count=$(jq -r '.style // 0' "$ARTIFACTS_DIR/classified-findings.json" 2>/dev/null || echo "0")
             if [[ "$style_count" -gt 0 ]]; then
-                echo "## Style Notes (non-blocking, address if time permits)"
+                echo "### Style Notes (non-blocking, address if time permits)"
                 echo "${style_count} style suggestions found. These do not block the build."
                 echo ""
             fi
@@ -1123,8 +1238,9 @@ compound_rebuild_with_feedback() {
 
     # Augment GOAL with quality feedback (route-specific instructions)
     local original_goal="$GOAL"
-    local feedback_content
+    local feedback_content blocking_items
     feedback_content=$(cat "$feedback_file")
+    blocking_items=$(_extract_blocking_items)
 
     local route_instruction=""
     case "$route" in
@@ -1148,12 +1264,24 @@ compound_rebuild_with_feedback() {
             ;;
     esac
 
-    GOAL="$GOAL
+    if [[ -n "$blocking_items" ]]; then
+        GOAL="$GOAL
+
+BLOCKING ISSUES — fix all of these before merge:
+$blocking_items
+
+Full review context:
+$feedback_content
+
+${route_instruction}"
+    else
+        GOAL="$GOAL
 
 IMPORTANT — Compound quality review found issues (route: ${route}). Fix ALL of these:
 $feedback_content
 
 ${route_instruction}"
+    fi
 
     # Re-run self-healing build→test
     info "Rebuilding with quality feedback (route: ${route})..."

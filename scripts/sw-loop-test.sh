@@ -1569,6 +1569,13 @@ else
     assert_fail "DoD has empty-output guard with diagnostic warning"
 fi
 
+# Test: DoD rejects pass verdict when items array is missing or empty (#253)
+if grep -q 'verdict is pass but items array is missing or empty' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD rejects pass verdict with missing items array"
+else
+    assert_fail "DoD rejects pass verdict with missing items array"
+fi
+
 # Test: DoD verdict parsed from JSON verdict field (not plain text DOD_PASS)
 if grep -q 'dod_verdict.*jq.*verdict' "$SCRIPT_DIR/sw-loop.sh"; then
     assert_pass "DoD verdict parsed from JSON verdict field"

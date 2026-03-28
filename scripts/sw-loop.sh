@@ -1301,7 +1301,8 @@ ${diff_content}
 For each item in the Definition of Done, determine if the project satisfies it.
 The runtime facts above are verified by the harness — trust them as ground truth.
 
-IMPORTANT: You MUST respond using the exact JSON schema provided. No prose, no hedging.
+IMPORTANT: Respond with ONLY a JSON object — no prose, no markdown fences. Format:
+{"verdict":"pass","items":[{"item":"...","satisfied":true,"reason":"..."}],"summary":"..."}
 - Set "verdict" to "pass" if ALL items are satisfied. Set it to "fail" if ANY item is not satisfied.
 - For each DoD item, add an entry to "items" with the item text and whether it passes.
 - In "summary", briefly explain your verdict (1-2 sentences max).
@@ -1310,10 +1311,8 @@ DOD_PROMPT
     local dod_log="$LOG_DIR/dod-iter-${ITERATION}.log"
     local dod_model
     dod_model="$(select_audit_model)"
-    local dod_schema='{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"items":{"type":"array","items":{"type":"object","properties":{"item":{"type":"string"},"satisfied":{"type":"boolean"},"reason":{"type":"string"}},"required":["item","satisfied"]}},"summary":{"type":"string"}},"required":["verdict","items","summary"]}'
     local dod_flags=()
     dod_flags+=("--model" "$dod_model")
-    dod_flags+=("--json-schema" "$dod_schema")
     dod_flags+=("--disallowed-tools" "EnterPlanMode,ExitPlanMode")
     if $SKIP_PERMISSIONS; then
         dod_flags+=("--dangerously-skip-permissions")
@@ -1321,6 +1320,16 @@ DOD_PROMPT
 
     local dod_err_log="${dod_log%.log}-stderr.log"
     claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>"$dod_err_log" || true
+
+    # Guard: if claude -p returned nothing, surface a diagnostic rather than silently failing.
+    local dod_log_bytes
+    dod_log_bytes="$(wc -c < "$dod_log" 2>/dev/null || echo "0")"
+    dod_log_bytes="${dod_log_bytes// /}"
+    if [[ ! -s "$dod_log" ]] || [[ "$dod_log_bytes" -le 2 ]]; then
+        warn "DoD: claude -p returned empty output — check CLI flags and model availability"
+        warn "DoD log: $dod_log (${dod_log_bytes} bytes), stderr: $dod_err_log"
+        return 1
+    fi
 
     # Parse structured JSON output: verdict field must be "pass"
     local dod_verdict

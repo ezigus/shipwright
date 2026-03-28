@@ -521,7 +521,7 @@ write_state() {
         printf '## Log\n'
         printf '%s\n' "$LOG_ENTRIES"
     } > "$tmp_state"
-    mv -f "$tmp_state" "$STATE_FILE"
+    mv -f "$tmp_state" "$STATE_FILE" || { rm -f "$tmp_state"; error "Failed to write pipeline state to $STATE_FILE (mv failed)"; return 1; }
 
     # Update pipeline_runs in DB
     if type update_pipeline_status >/dev/null 2>&1 && db_available 2>/dev/null; then

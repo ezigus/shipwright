@@ -1209,8 +1209,11 @@ Critically review the CUMULATIVE work (not just the latest iteration):
 IMPORTANT: If the current iteration made small or no code changes, that may be acceptable
 if earlier iterations already completed the substantive work. Judge the whole body of work.
 
-If the work is acceptable and moves toward the goal, output exactly: AUDIT_PASS
-Otherwise, list the specific issues that need fixing.
+If the work is acceptable and moves toward the goal, output your verdict on its own line as:
+  <<<AUDIT:PASS>>>
+If there are issues that need fixing, list them and then output on its own line:
+  <<<AUDIT:FAIL>>>
+Do not wrap the verdict in JSON, markdown, or code blocks.
 AUDIT_PROMPT
 
     echo -e "  ${PURPLE}▸${RESET} Running audit agent..."
@@ -1228,7 +1231,17 @@ AUDIT_PROMPT
     local exit_code=0
     claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>&1 || exit_code=$?
 
-    if grep -q "AUDIT_PASS" "$audit_log" 2>/dev/null; then
+    # Empty response diagnostic (no existing guard for audit)
+    local audit_log_bytes
+    audit_log_bytes="$(wc -c < "$audit_log" 2>/dev/null || echo "0")"
+    audit_log_bytes="${audit_log_bytes// /}"
+    if [[ ! -s "$audit_log" ]] || [[ "$audit_log_bytes" -le 2 ]]; then
+        warn "Audit: evaluator returned empty response — treating as inconclusive"
+    fi
+
+    if detect_gate_signal "$audit_log" "AUDIT" \
+        'AUDIT_PASS|"verdict"[[:space:]]*:[[:space:]]*"pass"' \
+        '<<<AUDIT:FAIL>>>'; then
         AUDIT_RESULT="pass"
         echo -e "  ${GREEN}✓${RESET} Audit: passed"
     else

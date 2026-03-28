@@ -732,6 +732,27 @@ else
     assert_fail "run_audit_agent reads structured test evidence"
 fi
 
+# Test: audit prompt includes fence delimiter instruction (#261)
+if grep -q '<<<AUDIT:PASS>>>' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Audit prompt includes <<<AUDIT:PASS>>> fence delimiter"
+else
+    assert_fail "Audit prompt includes <<<AUDIT:PASS>>> fence delimiter"
+fi
+
+# Test: audit detection uses detect_gate_signal (not bare grep)
+if grep -A3 'detect_gate_signal.*audit_log.*AUDIT' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'AUDIT_RESULT'; then
+    assert_pass "Audit detection uses detect_gate_signal (not bare grep)"
+else
+    assert_fail "Audit detection uses detect_gate_signal (not bare grep)"
+fi
+
+# Test: audit has empty-response guard
+if grep -q 'Audit.*evaluator returned empty response' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Audit has empty-response guard with diagnostic warning"
+else
+    assert_fail "Audit has empty-response guard with diagnostic warning"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # VERIFICATION GAP TESTS
 # ═══════════════════════════════════════════════════════════════════════════════

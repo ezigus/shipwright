@@ -1569,6 +1569,15 @@ else
     assert_fail "DoD has empty-output guard with diagnostic warning"
 fi
 
+# Test: DoD rejects pass verdict when items is missing, not an array, or empty (#253)
+# The guard uses a type-checking jq expression so non-array items (string, object) are
+# also rejected — not just a missing or empty array.
+if grep -q 'verdict is pass but items array is missing, not an array, or empty' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD rejects pass verdict when items is missing, not an array, or empty"
+else
+    assert_fail "DoD rejects pass verdict when items is missing, not an array, or empty"
+fi
+
 # Test: DoD verdict parsed from JSON verdict field (not plain text DOD_PASS)
 if grep -q 'dod_verdict.*jq.*verdict' "$SCRIPT_DIR/sw-loop.sh"; then
     assert_pass "DoD verdict parsed from JSON verdict field"

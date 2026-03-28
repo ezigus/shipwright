@@ -1334,7 +1334,17 @@ DOD_PROMPT
     # Parse structured JSON output: verdict field must be "pass"
     local dod_verdict
     dod_verdict="$(jq -r '.verdict // empty' "$dod_log" 2>/dev/null || echo "")"
+
+    # Structural validation: a pass verdict without a populated items array means the
+    # model skipped the per-item checklist evaluation — reject it as incomplete.
     if [[ "$dod_verdict" == "pass" ]]; then
+        local dod_item_count
+        dod_item_count="$(jq 'if (.items | type) == "array" then (.items | length) else 0 end' "$dod_log" 2>/dev/null || echo "0")"
+        dod_item_count="${dod_item_count// /}"
+        if [[ "${dod_item_count:-0}" -eq 0 ]]; then
+            warn "DoD: verdict is pass but items array is missing, not an array, or empty — treating as fail"
+            return 1
+        fi
         echo -e "  ${GREEN}✓${RESET} Definition of Done: satisfied"
         # Log summary for diagnostics
         local dod_summary

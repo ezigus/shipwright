@@ -412,8 +412,8 @@ assert_pass "pipeline_security_source_scan handles many vulnerabilities"
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "staleness preamble in quality feedback"
 
-# Test: _write_quality_feedback() emits staleness preamble before negative-review content
-# Calls the real extracted helper to verify the production implementation, not a copy.
+# Test: [Critical] negative items are promoted to blocking section with inline
+# staleness label; the preamble note is also retained in the supporting context.
 neg_review_content="[Critical] precondition() is stripped in Release builds"
 echo "$neg_review_content" > "$ARTIFACTS_DIR/negative-review.md"
 local_feedback_file="$ARTIFACTS_DIR/quality-feedback.md"
@@ -421,14 +421,23 @@ local_feedback_file="$ARTIFACTS_DIR/quality-feedback.md"
 _write_quality_feedback "correctness" "$local_feedback_file"
 feedback_output=$(cat "$local_feedback_file")
 
-# Preamble must appear before the actual review content
-preamble_line=$(echo "$feedback_output" | grep -n "PREVIOUS version" | head -1 | cut -d: -f1)
-content_line=$(echo "$feedback_output" | grep -n "precondition" | head -1 | cut -d: -f1)
+# Inline staleness label must be present on the promoted blocking item
+has_staleness_label=$(echo "$feedback_output" | grep -c "verify against current code" 2>/dev/null || true)
+has_staleness_label=${has_staleness_label:-0}
+assert_eq "inline staleness label on negative blocking item" "1" "$has_staleness_label"
 
-if [[ -n "$preamble_line" && -n "$content_line" && "$preamble_line" -lt "$content_line" ]]; then
-    assert_eq "staleness preamble appears before negative-review content" "pass" "pass"
+# Staleness preamble must still appear in Review Findings section
+has_preamble=$(echo "$feedback_output" | grep -c "PREVIOUS version" 2>/dev/null || true)
+has_preamble=${has_preamble:-0}
+assert_eq "staleness preamble retained in review findings section" "1" "$has_preamble"
+
+# Blocking Issues section must precede Review Findings section
+blocking_line=$(echo "$feedback_output" | grep -n "Blocking Issues" | head -1 | cut -d: -f1)
+review_line=$(echo "$feedback_output" | grep -n "Review Findings" | head -1 | cut -d: -f1)
+if [[ -n "$blocking_line" && -n "$review_line" && "$blocking_line" -lt "$review_line" ]]; then
+    assert_eq "blocking items section appears before review findings" "pass" "pass"
 else
-    assert_eq "staleness preamble appears before negative-review content" "pass" "fail"
+    assert_eq "blocking items section appears before review findings" "pass" "fail"
 fi
 
 # Test: preamble is present even when negative-review.md has multiple criticals
@@ -440,5 +449,96 @@ assert_eq "staleness preamble present with multiple criticals" "1" "$has_preambl
 
 # Cleanup
 rm -f "$ARTIFACTS_DIR/negative-review.md" "$local_feedback_file"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# _extract_blocking_items
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "_extract_blocking_items"
+
+type _extract_blocking_items >/dev/null 2>&1
+assert_pass "_extract_blocking_items is defined"
+
+# ── Empty artifacts: no output ──
+rm -f "$ARTIFACTS_DIR/adversarial-review.json" "$ARTIFACTS_DIR/adversarial-review.md" \
+      "$ARTIFACTS_DIR/negative-review.md" "$ARTIFACTS_DIR/dod-audit.md" \
+      "$ARTIFACTS_DIR/security-audit.log" "$ARTIFACTS_DIR/classified-findings.json"
+blocking_result=$(_extract_blocking_items)
+assert_eq "_extract_blocking_items: empty artifacts produce no output" "" "$blocking_result"
+
+# ── JSON path: critical+high extracted, medium filtered ──
+cat > "$ARTIFACTS_DIR/adversarial-review.json" <<'EOJSON'
+[
+  {"severity": "critical", "location": "foo.sh:10", "description": "null deref"},
+  {"severity": "high",     "location": "bar.sh:20", "description": "race condition"},
+  {"severity": "medium",   "location": "baz.sh:30", "description": "slow path"}
+]
+EOJSON
+blocking_result=$(_extract_blocking_items)
+has_critical=$(echo "$blocking_result" | grep -c "null deref" 2>/dev/null || true)
+has_high=$(echo "$blocking_result" | grep -c "race condition" 2>/dev/null || true)
+has_medium=$(echo "$blocking_result" | grep -c "slow path" 2>/dev/null || true)
+assert_eq "_extract_blocking_items: JSON critical item included" "1" "${has_critical:-0}"
+assert_eq "_extract_blocking_items: JSON high item included" "1" "${has_high:-0}"
+assert_eq "_extract_blocking_items: JSON medium item excluded" "0" "${has_medium:-0}"
+rm -f "$ARTIFACTS_DIR/adversarial-review.json"
+
+# ── .md fallback: Critical/High/Bug matched, Warning excluded ──
+cat > "$ARTIFACTS_DIR/adversarial-review.md" <<'EOMD'
+- **[Critical]** src/a.sh:1 — missing null check
+- **[High]** src/b.sh:2 — auth bypass
+- **[Bug]** src/c.sh:3 — off-by-one
+- **[Warning]** src/d.sh:4 — minor concern
+EOMD
+blocking_result=$(_extract_blocking_items)
+has_crit=$(echo "$blocking_result" | grep -c "missing null check" 2>/dev/null || true)
+has_high=$(echo "$blocking_result" | grep -c "auth bypass" 2>/dev/null || true)
+has_bug=$(echo "$blocking_result" | grep -c "off-by-one" 2>/dev/null || true)
+has_warn=$(echo "$blocking_result" | grep -c "minor concern" 2>/dev/null || true)
+assert_eq "_extract_blocking_items: .md Critical included" "1" "${has_crit:-0}"
+assert_eq "_extract_blocking_items: .md High included" "1" "${has_high:-0}"
+assert_eq "_extract_blocking_items: .md Bug included" "1" "${has_bug:-0}"
+assert_eq "_extract_blocking_items: .md Warning excluded" "0" "${has_warn:-0}"
+rm -f "$ARTIFACTS_DIR/adversarial-review.md"
+
+# ── Deduplication: same file:line from two sources appears once ──
+echo "- **[Critical]** src/dup.sh:42 — first mention" > "$ARTIFACTS_DIR/adversarial-review.md"
+echo "[Critical] src/dup.sh:42 — second mention" > "$ARTIFACTS_DIR/negative-review.md"
+blocking_result=$(_extract_blocking_items)
+dup_count=$(echo "$blocking_result" | grep -c "dup.sh:42" 2>/dev/null || true)
+assert_eq "_extract_blocking_items: same file:line deduplicated across sources" "1" "${dup_count:-0}"
+rm -f "$ARTIFACTS_DIR/adversarial-review.md" "$ARTIFACTS_DIR/negative-review.md"
+
+# ── security-audit.log: critical/high lines promoted ──
+echo "CRITICAL: hardcoded secret in config.sh:99" > "$ARTIFACTS_DIR/security-audit.log"
+blocking_result=$(_extract_blocking_items)
+has_sec=$(echo "$blocking_result" | grep -c "hardcoded secret" 2>/dev/null || true)
+assert_eq "_extract_blocking_items: security-audit.log critical included" "1" "${has_sec:-0}"
+rm -f "$ARTIFACTS_DIR/security-audit.log"
+
+# ── Backtrack flag: note renders before numbered items ──
+echo '[{"severity":"critical","location":"x.sh:1","description":"test finding"}]' > "$ARTIFACTS_DIR/adversarial-review.json"
+echo '{"needs_backtrack": true}' > "$ARTIFACTS_DIR/classified-findings.json"
+blocking_result=$(_extract_blocking_items)
+backtrack_line=$(echo "$blocking_result" | grep -n "Backtrack" | head -1 | cut -d: -f1)
+item_line=$(echo "$blocking_result" | grep -n "^1\." | head -1 | cut -d: -f1)
+if [[ -n "$backtrack_line" && -n "$item_line" && "$backtrack_line" -lt "$item_line" ]]; then
+    assert_eq "_extract_blocking_items: backtrack note precedes numbered items" "pass" "pass"
+else
+    assert_eq "_extract_blocking_items: backtrack note precedes numbered items" "pass" "fail"
+fi
+rm -f "$ARTIFACTS_DIR/adversarial-review.json" "$ARTIFACTS_DIR/classified-findings.json"
+
+# ── Mixed sources: adversarial + negative + dod all present ──
+echo "- **[Critical]** a.sh:1 — adversarial finding" > "$ARTIFACTS_DIR/adversarial-review.md"
+echo "[Critical] b.sh:2 — negative finding" > "$ARTIFACTS_DIR/negative-review.md"
+echo "❌ DoD item not completed" > "$ARTIFACTS_DIR/dod-audit.md"
+blocking_result=$(_extract_blocking_items)
+has_adv=$(echo "$blocking_result" | grep -c "adversarial finding" 2>/dev/null || true)
+has_neg=$(echo "$blocking_result" | grep -c "negative finding" 2>/dev/null || true)
+has_dod=$(echo "$blocking_result" | grep -c "DoD item" 2>/dev/null || true)
+assert_eq "_extract_blocking_items: adversarial source in mixed result" "1" "${has_adv:-0}"
+assert_eq "_extract_blocking_items: negative source in mixed result" "1" "${has_neg:-0}"
+assert_eq "_extract_blocking_items: dod source in mixed result" "1" "${has_dod:-0}"
+rm -f "$ARTIFACTS_DIR/adversarial-review.md" "$ARTIFACTS_DIR/negative-review.md" "$ARTIFACTS_DIR/dod-audit.md"
 
 print_test_results

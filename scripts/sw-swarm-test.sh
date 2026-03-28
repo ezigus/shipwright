@@ -51,7 +51,15 @@ MOCK
     export NO_GITHUB=true
 }
 
-_test_cleanup_hook() { cleanup_test_env; }
+_test_cleanup_hook() {
+    # Kill any tmux sessions spawned during tests before removing temp dir
+    if command -v tmux >/dev/null 2>&1; then
+        tmux list-sessions -F '#{session_name}' 2>/dev/null \
+            | grep -E '^swarm-' \
+            | while read -r s; do tmux kill-session -t "$s" 2>/dev/null || true; done
+    fi
+    cleanup_test_env
+}
 
 echo ""
 print_test_header "Shipwright Swarm Tests"

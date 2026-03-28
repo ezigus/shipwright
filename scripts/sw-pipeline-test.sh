@@ -742,6 +742,56 @@ test_resume_from_running() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 12c. Resume with empty stages recovers from log
+# ──────────────────────────────────────────────────────────────────────────────
+test_resume_empty_stages_recovers_from_log() {
+    # Simulate a corrupted state file where stages: section is empty but log
+    # entries show completed stages (happens when write was interrupted).
+    pipeline_config_with_stages "intake,plan" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+    mkdir -p "$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
+
+    # Create a state file with empty stages but log showing intake complete
+    cat > "$TEST_TEMP_DIR/project/.claude/pipeline-state.md" <<'STATE'
+---
+pipeline: standard
+goal: "Recovery test feature"
+status: interrupted
+issue: ""
+branch: ""
+template: ""
+current_stage: plan
+current_stage_description: ""
+stage_progress: ""
+started_at: 2026-01-01T00:00:00Z
+updated_at: 2026-01-01T00:01:00Z
+elapsed: 1m
+test_cmd: "echo passed"
+pr_number:
+progress_comment_id:
+stages:
+---
+
+## Log
+
+### intake (00:00:01)
+Goal: Recovery test feature
+Type: feature
+Branch: feat/recovery-test
+Language: javascript
+Test cmd: echo passed
+
+### intake (00:00:01)
+complete (30s)
+STATE
+
+    invoke_pipeline resume
+
+    assert_exit_code 0 "resume with empty stages should complete" &&
+    assert_output_contains "Recovered stage statuses from log" "should show recovery message" &&
+    assert_file_exists ".claude/pipeline-artifacts/plan.md" "plan generated after log-based recovery"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 13. Abort marks pipeline as aborted
 # ──────────────────────────────────────────────────────────────────────────────
 test_abort() {
@@ -1871,6 +1921,7 @@ main() {
         "test_full_pipeline_e2e:Full E2E pipeline (6 stages)"
         "test_resume:Resume continues from partial state"
         "test_resume_from_running:Resume from running status (killed process)"
+        "test_resume_empty_stages_recovers_from_log:Resume recovers stages from log when stages section is empty"
         "test_abort:Abort marks pipeline as aborted"
         "test_dry_run:Dry run shows config, no artifacts"
         "test_self_healing:Self-healing build→test retry loop"

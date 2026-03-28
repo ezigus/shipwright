@@ -151,7 +151,9 @@ ai_run_json() {
     local result_text usage_json completion
     result_text="$(_ai_parse_provider_json_result "$provider" "$out_file")"
     usage_json="$(_ai_parse_provider_json_usage "$provider" "$out_file")"
-    if echo "$result_text" | grep -q "LOOP_COMPLETE"; then
+    if echo "$result_text" | detect_gate_signal "-" "LOOP" \
+        'LOOP_COMPLETE|goal.{0,20}(achieved|complete)' \
+        '<<<LOOP:FAIL>>>'; then
         completion=true
     else
         completion=false

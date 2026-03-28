@@ -573,6 +573,67 @@ else
     assert_fail "Loop max iterations" "setup failed"
 fi
 
+# ─── Test: LOOP_COMPLETE signal detection hardening (#263) ──────────────────
+echo ""
+echo -e "${DIM}  loop behavior: LOOP_COMPLETE signal hardening${RESET}"
+
+# Test: main loop prompt uses <<<LOOP:PASS>>> fence delimiter
+if grep -q '<<<LOOP:PASS>>>' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Main loop prompt uses <<<LOOP:PASS>>> fence delimiter"
+else
+    assert_fail "Main loop prompt uses <<<LOOP:PASS>>> fence delimiter"
+fi
+
+# Test: guard_completion uses detect_gate_signal (not bare grep)
+if grep -q 'detect_gate_signal.*log_file.*LOOP\|detect_gate_signal.*"LOOP"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "guard_completion uses detect_gate_signal for LOOP signal"
+else
+    assert_fail "guard_completion uses detect_gate_signal for LOOP signal"
+fi
+
+# Test: main agent loop uses detect_gate_signal for completion check
+if grep -q 'detect_gate_signal.*LOG_FILE.*LOOP\|detect_gate_signal.*"LOOP"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Main agent loop uses detect_gate_signal for completion check"
+else
+    assert_fail "Main agent loop uses detect_gate_signal for completion check"
+fi
+
+# Test: check_completion() in loop-convergence.sh uses detect_gate_signal
+if grep -q 'detect_gate_signal' "$SCRIPT_DIR/lib/loop-convergence.sh"; then
+    assert_pass "loop-convergence.sh check_completion uses detect_gate_signal"
+else
+    assert_fail "loop-convergence.sh check_completion uses detect_gate_signal"
+fi
+
+# Test: ai-provider.sh uses detect_gate_signal (stdin mode) for LOOP signal
+if grep -q 'detect_gate_signal.*"-".*LOOP\|detect_gate_signal.*"-"' "$SCRIPT_DIR/lib/ai-provider.sh"; then
+    assert_pass "ai-provider.sh uses detect_gate_signal stdin mode for LOOP signal"
+else
+    assert_fail "ai-provider.sh uses detect_gate_signal stdin mode for LOOP signal"
+fi
+
+# Test: legacy LOOP_COMPLETE still detected via Layer 3 (backwards compat)
+_dgs_body="$(sed -n '/^detect_gate_signal()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")"
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "Done. LOOP_COMPLETE" > "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "LOOP" 'LOOP_COMPLETE') 2>/dev/null; then
+    assert_pass "detect_gate_signal: legacy LOOP_COMPLETE accepted via Layer 3"
+else
+    assert_fail "detect_gate_signal: legacy LOOP_COMPLETE accepted via Layer 3"
+fi
+rm -f "$dgs_test_log"
+
+# Test: new <<<LOOP:PASS>>> fence accepted via Layer 2
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "All tasks complete." > "$dgs_test_log"
+echo "<<<LOOP:PASS>>>" >> "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "LOOP" 'LOOP_COMPLETE') 2>/dev/null; then
+    assert_pass "detect_gate_signal: <<<LOOP:PASS>>> fence accepted"
+else
+    assert_fail "detect_gate_signal: <<<LOOP:PASS>>> fence accepted"
+fi
+rm -f "$dgs_test_log"
+
 # ─── Test: Loop detects stuckness ───────────────────────────────────────────
 echo ""
 echo -e "${DIM}  loop behavior: stuckness detection${RESET}"

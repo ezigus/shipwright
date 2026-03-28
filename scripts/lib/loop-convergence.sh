@@ -65,7 +65,9 @@ check_progress() {
 
 check_completion() {
     local log_file="$1"
-    grep -q "LOOP_COMPLETE" "$log_file" 2>/dev/null
+    detect_gate_signal "$log_file" "LOOP" \
+        'LOOP_COMPLETE|goal.{0,20}(achieved|complete)' \
+        '<<<LOOP:FAIL>>>'
 }
 
 check_circuit_breaker() {
@@ -126,7 +128,9 @@ check_max_iterations() {
     if [[ "${CONSECUTIVE_FAILURES:-0}" -lt 2 ]]; then
         # Check 2: agent hasn't signaled completion (if it did, guard_completion handles it)
         local last_log="$LOG_DIR/iteration-$(( ITERATION - 1 )).log"
-        if [[ -f "$last_log" ]] && ! grep -q "LOOP_COMPLETE" "$last_log" 2>/dev/null; then
+        if [[ -f "$last_log" ]] && ! detect_gate_signal "$last_log" "LOOP" \
+            'LOOP_COMPLETE|goal.{0,20}(achieved|complete)' \
+            '<<<LOOP:FAIL>>>'; then
             should_extend=true
             extension_reason="work in progress with recent progress"
         fi

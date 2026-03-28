@@ -1458,8 +1458,10 @@ DOD_PROMPT
 guard_completion() {
     local log_file="$LOG_DIR/iteration-${ITERATION}.log"
 
-    # Check if LOOP_COMPLETE is in the log
-    if ! grep -q "LOOP_COMPLETE" "$log_file" 2>/dev/null; then
+    # Check if agent signaled completion
+    if ! detect_gate_signal "$log_file" "LOOP" \
+        'LOOP_COMPLETE|goal.{0,20}(achieved|complete)' \
+        '<<<LOOP:FAIL>>>'; then
         return 1  # No completion claim
     fi
 
@@ -1998,13 +2000,13 @@ Focus on areas they haven't touched yet.
 2. Identify the highest-priority remaining work toward the goal
 3. Implement ONE meaningful chunk of progress
 4. Commit your work with a descriptive message
-5. When the goal is FULLY achieved, output exactly: LOOP_COMPLETE
+5. When the goal is FULLY achieved, output exactly on its own line: <<<LOOP:PASS>>>
 
 ## Rules
 - Focus on ONE task per iteration — do it well
 - Always commit with descriptive messages
 - If stuck on the same issue for 2+ iterations, try a different approach
-- Do NOT output LOOP_COMPLETE unless the goal is genuinely achieved
+- Do NOT output <<<LOOP:PASS>>> unless the goal is genuinely achieved
 PROMPT
 )"
 
@@ -2025,7 +2027,9 @@ PROMPT
     echo -e "  ${GREEN}✓${RESET} Claude session completed"
 
     # Check completion
-    if grep -q "LOOP_COMPLETE" "$LOG_FILE" 2>/dev/null; then
+    if detect_gate_signal "$LOG_FILE" "LOOP" \
+        'LOOP_COMPLETE|goal.{0,20}(achieved|complete)' \
+        '<<<LOOP:FAIL>>>'; then
         echo -e "  ${GREEN}${BOLD}✓ LOOP_COMPLETE detected!${RESET}"
         # Signal completion
         touch "$LOG_DIR/.agent-${AGENT_NUM}-complete"

@@ -749,14 +749,14 @@ detect_gate_signal() {
         return 1
     fi
 
-    # Layer 1: Fenced delimiter (most reliable)
-    if echo "$content" | grep -q "<<<${gate}:PASS>>>" 2>/dev/null; then
-        return 0
-    fi
-
-    # Layer 2: Negative-first — explicit failure signals mean fail
+    # Layer 1: Negative-first — explicit failure signals override everything
     if echo "$content" | grep -iqE "$negative" 2>/dev/null; then
         return 1
+    fi
+
+    # Layer 2: Fenced delimiter (most reliable positive signal)
+    if echo "$content" | grep -q "<<<${gate}:PASS>>>" 2>/dev/null; then
+        return 0
     fi
 
     # Layer 3: Legacy compat + prose variants (gate-specific, case-insensitive)
@@ -1344,13 +1344,13 @@ ${diff_content}
 For each item in the Definition of Done, determine if the project satisfies it.
 The runtime facts above are verified by the harness — trust them as ground truth.
 
-IMPORTANT: Respond with ONLY a JSON object — no prose, no markdown fences, no code blocks. Format:
+IMPORTANT: Respond with a JSON object followed by a verdict line. No prose, no markdown fences, no code blocks. Format:
 {"verdict":"pass","items":[{"item":"...","satisfied":true,"reason":"..."}],"summary":"..."}
 - Set "verdict" to "pass" if ALL items are satisfied. Set it to "fail" if ANY item is not satisfied.
 - For each DoD item, add an entry to "items" with the item text and whether it passes.
 - In "summary", briefly explain your verdict (1-2 sentences max).
 
-After the JSON object, output your verdict on its own line as exactly one of:
+On the line immediately after the JSON object, output exactly one of:
   <<<DOD:PASS>>>
   <<<DOD:FAIL>>>
 DOD_PROMPT
@@ -1378,9 +1378,11 @@ DOD_PROMPT
         return 1
     fi
 
-    # Strip markdown fences (```json ... ```) before parsing — LLMs often wrap JSON output
+    # Strip markdown fences and delimiter lines before jq parsing.
+    # Markdown fences (```json / ```) break jq; delimiter lines (<<<DOD:*>>>) are
+    # appended after the JSON object and also cause jq to fail.
     local dod_clean="${dod_log%.log}-clean.json"
-    sed -E '/^```(json)?[[:space:]]*$/d' "$dod_log" > "$dod_clean" 2>/dev/null || cp "$dod_log" "$dod_clean"
+    sed -E '/^```(json)?[[:space:]]*$|^<<<DOD:(PASS|FAIL)>>>[[:space:]]*$/d' "$dod_log" > "$dod_clean" 2>/dev/null || cp "$dod_log" "$dod_clean"
 
     # Parse structured JSON output: verdict field must be "pass"
     local dod_verdict

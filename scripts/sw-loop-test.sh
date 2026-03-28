@@ -1556,7 +1556,7 @@ else
 fi
 
 # Test: DoD prompt embeds explicit JSON format instruction (replaces CLI schema enforcement)
-if grep -q 'Respond with ONLY a JSON object' "$SCRIPT_DIR/sw-loop.sh"; then
+if grep -q 'Respond with a JSON object' "$SCRIPT_DIR/sw-loop.sh"; then
     assert_pass "DoD prompt embeds explicit JSON format instruction"
 else
     assert_fail "DoD prompt embeds explicit JSON format instruction"
@@ -1621,20 +1621,20 @@ else
     assert_fail "detect_gate_signal() helper function exists"
 fi
 
-# Test: detect_gate_signal Layer 1 — fenced delimiter passes
+# Test: detect_gate_signal Layer 2 — fenced delimiter passes
 # Extract and eval just the helper function (sourcing full sw-loop.sh would trigger arg parsing)
 _dgs_body="$(sed -n '/^detect_gate_signal()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")"
-dgs_test_log="$(mktemp)"
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
 echo "<<<DOD:PASS>>>" > "$dgs_test_log"
 if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "DOD") 2>/dev/null; then
-    assert_pass "detect_gate_signal: Layer 1 fenced delimiter accepted"
+    assert_pass "detect_gate_signal: Layer 2 fenced delimiter accepted"
 else
-    assert_fail "detect_gate_signal: Layer 1 fenced delimiter accepted"
+    assert_fail "detect_gate_signal: Layer 2 fenced delimiter accepted"
 fi
 rm -f "$dgs_test_log"
 
 # Test: detect_gate_signal Layer 3 — legacy DOD_PASS accepted
-dgs_test_log="$(mktemp)"
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
 echo "DOD_PASS" > "$dgs_test_log"
 if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "DOD" 'DOD_PASS') 2>/dev/null; then
     assert_pass "detect_gate_signal: Layer 3 legacy DOD_PASS accepted"
@@ -1643,13 +1643,13 @@ else
 fi
 rm -f "$dgs_test_log"
 
-# Test: detect_gate_signal Layer 2 — explicit failure signal blocks pass
-dgs_test_log="$(mktemp)"
-echo 'DOD_PASS <<<DOD:FAIL>>>' > "$dgs_test_log"
+# Test: detect_gate_signal Layer 1 — failure signal overrides PASS delimiter
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo '<<<DOD:PASS>>> <<<DOD:FAIL>>>' > "$dgs_test_log"
 if ! (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "DOD" 'DOD_PASS' '<<<DOD:FAIL>>>') 2>/dev/null; then
-    assert_pass "detect_gate_signal: Layer 2 failure signal blocks positive match"
+    assert_pass "detect_gate_signal: Layer 1 failure signal overrides PASS delimiter"
 else
-    assert_fail "detect_gate_signal: Layer 2 failure signal blocks positive match"
+    assert_fail "detect_gate_signal: Layer 1 failure signal overrides PASS delimiter"
 fi
 rm -f "$dgs_test_log"
 

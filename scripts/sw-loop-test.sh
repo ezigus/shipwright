@@ -269,21 +269,22 @@ echo ""
 echo -e "${DIM}  json extraction robustness${RESET}"
 # Extract the function from sw-loop.sh and test it in isolation (can't source
 # sw-loop.sh because it has no source guard — main() runs unconditionally)
-_extract_fn=$(sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")
 tmpdir=$(mktemp -d)
-bash -c "
+_fn_file="$tmpdir/_extract_fn.sh"
+sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh" > "$_fn_file"
+bash <<EXTRACT_TEST 2>/dev/null
 warn() { :; }
-$_extract_fn
+source "$_fn_file"
 # Test 1: empty file → '(no output)'
-touch '$tmpdir/empty.json'
-_extract_text_from_json '$tmpdir/empty.json' '$tmpdir/out1.log' ''
+touch "$tmpdir/empty.json"
+_extract_text_from_json "$tmpdir/empty.json" "$tmpdir/out1.log" ""
 # Test 2: valid JSON array → extracts .result
-echo '[{\"type\":\"result\",\"result\":\"Hello world\",\"usage\":{\"input_tokens\":100}}]' > '$tmpdir/valid.json'
-_extract_text_from_json '$tmpdir/valid.json' '$tmpdir/out2.log' ''
+echo '[{"type":"result","result":"Hello world","usage":{"input_tokens":100}}]' > "$tmpdir/valid.json"
+_extract_text_from_json "$tmpdir/valid.json" "$tmpdir/out2.log" ""
 # Test 3: plain text → pass through
-echo 'This is plain text output' > '$tmpdir/text.json'
-_extract_text_from_json '$tmpdir/text.json' '$tmpdir/out3.log' ''
-" 2>/dev/null
+echo 'This is plain text output' > "$tmpdir/text.json"
+_extract_text_from_json "$tmpdir/text.json" "$tmpdir/out3.log" ""
+EXTRACT_TEST
 
 if grep -q "no output" "$tmpdir/out1.log" 2>/dev/null; then
     assert_pass "_extract_text_from_json handles empty file"
@@ -327,18 +328,19 @@ fi
 # ─── Test 21: _extract_text_from_json — nested objects and binary ─────────────
 echo ""
 echo -e "${DIM}  json extraction edge cases${RESET}"
-_extract_fn=$(sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")
 tmpdir2=$(mktemp -d)
-bash -c "
+_fn_file2="$tmpdir2/_extract_fn.sh"
+sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh" > "$_fn_file2"
+bash <<EXTRACT_TEST2 2>/dev/null
 warn() { :; }
-$_extract_fn
+source "$_fn_file2"
 # Nested JSON array with objects
-echo '[{\"type\":\"result\",\"result\":\"Nested extraction works\",\"usage\":{\"input_tokens\":50}}]' > '$tmpdir2/nested.json'
-_extract_text_from_json '$tmpdir2/nested.json' '$tmpdir2/nested_out.log' ''
+echo '[{"type":"result","result":"Nested extraction works","usage":{"input_tokens":50}}]' > "$tmpdir2/nested.json"
+_extract_text_from_json "$tmpdir2/nested.json" "$tmpdir2/nested_out.log" ""
 # Binary garbage — should not crash, pass through or handle
-printf '\x00\x01\x02\xff\xfe' > '$tmpdir2/binary.dat'
-_extract_text_from_json '$tmpdir2/binary.dat' '$tmpdir2/binary_out.log' ''
-" 2>/dev/null
+printf '\x00\x01\x02\xff\xfe' > "$tmpdir2/binary.dat"
+_extract_text_from_json "$tmpdir2/binary.dat" "$tmpdir2/binary_out.log" ""
+EXTRACT_TEST2
 
 if grep -q "Nested extraction works" "$tmpdir2/nested_out.log" 2>/dev/null; then
     assert_pass "_extract_text_from_json handles nested JSON objects"
@@ -356,21 +358,22 @@ rm -rf "$tmpdir2"
 # ─── Test 21b: _extract_text_from_json — JSON object (not array) ──────────────
 echo ""
 echo -e "${DIM}  json extraction for JSON objects${RESET}"
-_extract_fn=$(sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")
 tmpdir3=$(mktemp -d)
-bash -c "
-warn() { echo \"WARN: \$*\" >&2; }
-$_extract_fn
+_fn_file3="$tmpdir3/_extract_fn.sh"
+sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh" > "$_fn_file3"
+bash <<EXTRACT_TEST3 2>"$tmpdir3/stderr.log"
+warn() { echo "WARN: \$*" >&2; }
+source "$_fn_file3"
 # Test: JSON object with .result field
-echo '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"Object result text\",\"cost_usd\":0.05}' > '$tmpdir3/object.json'
-_extract_text_from_json '$tmpdir3/object.json' '$tmpdir3/object_out.log' ''
+echo '{"type":"result","subtype":"success","result":"Object result text","cost_usd":0.05}' > "$tmpdir3/object.json"
+_extract_text_from_json "$tmpdir3/object.json" "$tmpdir3/object_out.log" ""
 # Test: JSON object with .content field (no .result)
-echo '{\"type\":\"result\",\"content\":\"Object content text\"}' > '$tmpdir3/content.json'
-_extract_text_from_json '$tmpdir3/content.json' '$tmpdir3/content_out.log' ''
+echo '{"type":"result","content":"Object content text"}' > "$tmpdir3/content.json"
+_extract_text_from_json "$tmpdir3/content.json" "$tmpdir3/content_out.log" ""
 # Test: JSON object — verify no misleading jq warning
-echo '{\"type\":\"result\",\"result\":\"No warning expected\"}' > '$tmpdir3/nowarn.json'
-_extract_text_from_json '$tmpdir3/nowarn.json' '$tmpdir3/nowarn_out.log' '' 2>'$tmpdir3/stderr.log'
-" 2>/dev/null
+echo '{"type":"result","result":"No warning expected"}' > "$tmpdir3/nowarn.json"
+_extract_text_from_json "$tmpdir3/nowarn.json" "$tmpdir3/nowarn_out.log" ""
+EXTRACT_TEST3
 
 if grep -q "Object result text" "$tmpdir3/object_out.log" 2>/dev/null; then
     assert_pass "_extract_text_from_json extracts .result from JSON object"

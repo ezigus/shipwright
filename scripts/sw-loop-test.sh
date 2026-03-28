@@ -1014,6 +1014,135 @@ else
     assert_fail "Project Stats labels loop-scoped change count accurately"
 fi
 
+# ─── HOLISTIC gate signal hardening (#264) ────────────────────────────────────
+echo ""
+echo -e "${DIM}  holistic gate: signal hardening (#264)${RESET}"
+
+# Test: holistic prompt uses <<<HOLISTIC:PASS>>> fence delimiter
+if grep -q '<<<HOLISTIC:PASS>>>' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic prompt uses <<<HOLISTIC:PASS>>> fence delimiter"
+else
+    assert_fail "Holistic prompt uses <<<HOLISTIC:PASS>>> fence delimiter"
+fi
+
+# Test: holistic prompt uses <<<HOLISTIC:FAIL>>> fence delimiter
+if grep -q '<<<HOLISTIC:FAIL>>>' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic prompt uses <<<HOLISTIC:FAIL>>> fence delimiter"
+else
+    assert_fail "Holistic prompt uses <<<HOLISTIC:FAIL>>> fence delimiter"
+fi
+
+# Test: holistic detection uses detect_gate_signal (not bare grep)
+if grep -q 'detect_gate_signal.*holistic_log.*HOLISTIC\|detect_gate_signal.*"HOLISTIC"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic detection uses detect_gate_signal (not bare grep)"
+else
+    assert_fail "Holistic detection uses detect_gate_signal (not bare grep)"
+fi
+
+# Test: holistic has empty-response guard (checks both zero-length and whitespace-only)
+if grep -q 'grep -q.*\[.*\^.*\[:space:\]' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic empty-response guard rejects whitespace-only output"
+else
+    assert_fail "Holistic empty-response guard rejects whitespace-only output"
+fi
+
+# Test: holistic captures stderr separately
+if grep -q 'holistic.*stderr\|holistic_stderr' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic stderr captured to dedicated file"
+else
+    assert_fail "Holistic stderr captured to dedicated file"
+fi
+
+# Test: holistic surfaces gap text as HOLISTIC_RESULT for agent feedback
+if grep -q 'HOLISTIC_RESULT=' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic sets HOLISTIC_RESULT for agent feedback injection"
+else
+    assert_fail "Holistic sets HOLISTIC_RESULT for agent feedback injection"
+fi
+
+# Test: compose_holistic_feedback_section exists for prompt injection
+if grep -q '^compose_holistic_feedback_section()' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "compose_holistic_feedback_section() exists for prompt injection"
+else
+    assert_fail "compose_holistic_feedback_section() exists for prompt injection"
+fi
+
+# Test: holistic feedback injected into agent prompt
+if grep -q 'holistic_feedback_section' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "holistic_feedback_section injected into agent prompt"
+else
+    assert_fail "holistic_feedback_section injected into agent prompt"
+fi
+
+# Test: holistic legacy pattern does NOT include prose goal.{0,20}fully.{0,10}achieved
+# (removed in review — too permissive, matches negated sentences)
+if ! grep 'detect_gate_signal.*HOLISTIC' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'goal.*achieved'; then
+    assert_pass "Holistic legacy pattern does not include overly permissive prose (goal.*achieved removed)"
+else
+    assert_fail "Holistic legacy pattern does not include overly permissive prose (goal.*achieved removed)"
+fi
+
+# Test: holistic negative pattern is <<<HOLISTIC:FAIL>>> only (no ambiguous prose)
+if ! grep 'detect_gate_signal.*HOLISTIC' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'gaps.*remaining'; then
+    assert_pass "Holistic negative pattern is unambiguous (gaps.remaining prose removed)"
+else
+    assert_fail "Holistic negative pattern is unambiguous (gaps.remaining prose removed)"
+fi
+
+# Load detect_gate_signal for unit tests
+_dgs_body="$(sed -n '/^detect_gate_signal()/,/^}/p' "$SCRIPT_DIR/lib/gate-signal.sh")"
+
+# Test: detect_gate_signal — HOLISTIC_PASS legacy accepted
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "HOLISTIC_PASS" > "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "HOLISTIC" 'HOLISTIC_PASS') 2>/dev/null; then
+    assert_pass "detect_gate_signal: HOLISTIC legacy HOLISTIC_PASS accepted"
+else
+    assert_fail "detect_gate_signal: HOLISTIC legacy HOLISTIC_PASS accepted"
+fi
+rm -f "$dgs_test_log"
+
+# Test: detect_gate_signal — <<<HOLISTIC:PASS>>> fence accepted
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "Goal is complete." > "$dgs_test_log"
+echo "<<<HOLISTIC:PASS>>>" >> "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "HOLISTIC" 'HOLISTIC_PASS') 2>/dev/null; then
+    assert_pass "detect_gate_signal: <<<HOLISTIC:PASS>>> fence accepted"
+else
+    assert_fail "detect_gate_signal: <<<HOLISTIC:PASS>>> fence accepted"
+fi
+rm -f "$dgs_test_log"
+
+# Test: detect_gate_signal — <<<HOLISTIC:FAIL>>> blocks pass
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+printf 'HOLISTIC_PASS\n<<<HOLISTIC:FAIL>>>' > "$dgs_test_log"
+if ! (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "HOLISTIC" 'HOLISTIC_PASS' '<<<HOLISTIC:FAIL>>>') 2>/dev/null; then
+    assert_pass "detect_gate_signal: <<<HOLISTIC:FAIL>>> blocks positive match (negative-first)"
+else
+    assert_fail "detect_gate_signal: <<<HOLISTIC:FAIL>>> blocks positive match (negative-first)"
+fi
+rm -f "$dgs_test_log"
+
+# Test: boundary — "no gaps remaining" (past-tense resolution prose) does not cause false FAIL
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+printf 'HOLISTIC_PASS\nAll gaps have been addressed; no gaps remaining.\n' > "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "HOLISTIC" 'HOLISTIC_PASS' '<<<HOLISTIC:FAIL>>>') 2>/dev/null; then
+    assert_pass "detect_gate_signal: HOLISTIC prose 'no gaps remaining' does not cause false FAIL"
+else
+    assert_fail "detect_gate_signal: HOLISTIC prose 'no gaps remaining' does not cause false FAIL"
+fi
+rm -f "$dgs_test_log"
+
+# Test: boundary — "not fully achieved" prose does not cause false PASS
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "Overall status: the goal is not fully achieved yet." > "$dgs_test_log"
+if ! (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "HOLISTIC" 'HOLISTIC_PASS' '<<<HOLISTIC:FAIL>>>') 2>/dev/null; then
+    assert_pass "detect_gate_signal: HOLISTIC prose 'not fully achieved' does not trigger false PASS"
+else
+    assert_fail "detect_gate_signal: HOLISTIC prose 'not fully achieved' does not trigger false PASS"
+fi
+rm -f "$dgs_test_log"
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTEXT EXHAUSTION PREVENTION TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1668,34 +1797,27 @@ else
     assert_fail "new_commits recomputed after post-audit cleanup"
 fi
 
-# Behavioral test: loop exits early when no changes and all gates pass
+# Behavioral test: loop exits early when holistic outputs new fence delimiter (primary path)
 echo ""
-echo -e "${DIM}  loop behavior: early exit with no changes (#245)${RESET}"
+echo -e "${DIM}  loop behavior: early exit with no changes (#245, #264)${RESET}"
 
 if setup_loop_env 2>/dev/null; then
-    # Mock claude that makes NO changes and does NOT emit LOOP_COMPLETE
-    # Iteration calls use --output-format json; holistic gate does not
+    # Mock claude: no changes, holistic outputs new <<<HOLISTIC:PASS>>> fence delimiter
     cat > "$TEST_TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
 #!/usr/bin/env bash
 if echo "$@" | grep -q 'output-format'; then
-    # Iteration call — valid JSON, no LOOP_COMPLETE
     echo '[{"type":"result","result":"Everything looks good, no changes needed.","usage":{"input_tokens":0,"output_tokens":0}}]'
 else
-    # Holistic gate / audit — output HOLISTIC_PASS
-    echo "HOLISTIC_PASS"
+    echo "<<<HOLISTIC:PASS>>>"
 fi
 exit 0
 CLAUDE_EOF
     chmod +x "$TEST_TEMP_DIR/bin/claude"
 
-    # Ignore loop infrastructure files so they don't count as commits
-    # Prior tests may have tracked .claude/ files — untrack them
     _git=$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git)
     echo ".claude/" > "$TEST_TEMP_DIR/repo/.gitignore"
     (cd "$TEST_TEMP_DIR/repo" && "$_git" rm -r --cached .claude 2>/dev/null || true)
     (cd "$TEST_TEMP_DIR/repo" && "$_git" add .gitignore && "$_git" commit -q -m "add gitignore" --allow-empty)
-
-    # Clear any accumulated cost data from prior tests so budget gate doesn't block
     rm -f "$TEST_TEMP_DIR/home/.shipwright/costs.json" "$TEST_TEMP_DIR/home/.shipwright/budget.json"
 
     output=$(env PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
@@ -1708,22 +1830,64 @@ CLAUDE_EOF
         --local \
         2>&1) || true
 
-    if echo "$output" | grep -q "no changes needed, all gates passing"; then
-        assert_pass "Loop early exit: no changes + all gates = complete"
-    elif echo "$output" | grep -q "LOOP COMPLETE"; then
-        assert_pass "Loop early exit: detected completion without LOOP_COMPLETE"
+    if echo "$output" | grep -qiE "no changes needed, all gates passing|LOOP COMPLETE|Complete"; then
+        assert_pass "Loop early exit (fence delimiter): no changes + holistic <<<HOLISTIC:PASS>>> = complete"
     else
-        assert_fail "Loop early exit: expected early exit on no changes + all gates" "$(echo "$output" | grep -iE 'error|Fatal|Budget|Iteration|Complete|no changes' | head -5)"
+        assert_fail "Loop early exit (fence delimiter): expected early exit on <<<HOLISTIC:PASS>>>" "$(echo "$output" | grep -iE 'error|Fatal|Budget|Iteration|Complete|no changes|holistic' | head -5)"
     fi
 
-    # Verify it didn't iterate more than once
     if echo "$output" | grep -qE "Iteration [2-9]|iteration [2-9]"; then
-        assert_fail "Loop early exit: should exit after iteration 1, not iterate further"
+        assert_fail "Loop early exit (fence delimiter): should exit after iteration 1"
     else
-        assert_pass "Loop early exit: exited after iteration 1 (no extra iterations)"
+        assert_pass "Loop early exit (fence delimiter): exited after iteration 1"
     fi
 else
-    assert_fail "Loop early exit behavioral test" "setup failed"
+    assert_fail "Loop early exit behavioral test (fence delimiter)" "setup failed"
+fi
+
+# Behavioral test: legacy HOLISTIC_PASS still accepted (Layer 3 compat)
+if setup_loop_env 2>/dev/null; then
+    # Mock claude: no changes, holistic outputs legacy HOLISTIC_PASS string
+    cat > "$TEST_TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
+#!/usr/bin/env bash
+if echo "$@" | grep -q 'output-format'; then
+    echo '[{"type":"result","result":"Everything looks good, no changes needed.","usage":{"input_tokens":0,"output_tokens":0}}]'
+else
+    echo "HOLISTIC_PASS"
+fi
+exit 0
+CLAUDE_EOF
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+    _git=$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git)
+    echo ".claude/" > "$TEST_TEMP_DIR/repo/.gitignore"
+    (cd "$TEST_TEMP_DIR/repo" && "$_git" rm -r --cached .claude 2>/dev/null || true)
+    (cd "$TEST_TEMP_DIR/repo" && "$_git" add .gitignore && "$_git" commit -q -m "add gitignore" --allow-empty)
+    rm -f "$TEST_TEMP_DIR/home/.shipwright/costs.json" "$TEST_TEMP_DIR/home/.shipwright/budget.json"
+
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
+        bash "$SCRIPT_DIR/sw-loop.sh" \
+        --repo "$TEST_TEMP_DIR/repo" \
+        "Already done task" \
+        --max-iterations 5 \
+        --test-cmd "true" \
+        --quality-gates \
+        --local \
+        2>&1) || true
+
+    if echo "$output" | grep -qiE "no changes needed, all gates passing|LOOP COMPLETE|Complete"; then
+        assert_pass "Loop early exit (legacy compat): HOLISTIC_PASS still accepted via Layer 3"
+    else
+        assert_fail "Loop early exit (legacy compat): HOLISTIC_PASS should still work" "$(echo "$output" | grep -iE 'error|Fatal|Budget|Iteration|Complete|no changes|holistic' | head -5)"
+    fi
+
+    if echo "$output" | grep -qE "Iteration [2-9]|iteration [2-9]"; then
+        assert_fail "Loop early exit (legacy compat): should exit after iteration 1"
+    else
+        assert_pass "Loop early exit (legacy compat): exited after iteration 1"
+    fi
+else
+    assert_fail "Loop early exit behavioral test (legacy compat)" "setup failed"
 fi
 
 # ─── DoD evaluator: diff truncation fix (#236) ────────────────────────────────

@@ -186,6 +186,8 @@ Fix these specific errors. Each line above is one distinct error from the test o
     audit_section="$(compose_audit_section)"
     local audit_feedback_section
     audit_feedback_section="$(compose_audit_feedback_section)"
+    local holistic_feedback_section
+    holistic_feedback_section="$(compose_holistic_feedback_section)"
     local rejection_notice_section
     rejection_notice_section="$(compose_rejection_notice_section)"
 
@@ -457,6 +459,8 @@ ${restart_section:+$restart_section
 ${audit_section}
 
 ${audit_feedback_section}
+
+${holistic_feedback_section}
 
 ${rejection_notice_section}
 

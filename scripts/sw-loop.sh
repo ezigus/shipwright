@@ -1229,19 +1229,28 @@ AUDIT_PROMPT
     fi
 
     local exit_code=0
-    claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>&1 || exit_code=$?
+    local audit_err_log="${audit_log%.log}-stderr.log"
+    claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>"$audit_err_log" || exit_code=$?
 
-    # Empty response diagnostic (no existing guard for audit)
+    # Guard: empty or near-empty response means the evaluator failed to run
     local audit_log_bytes
     audit_log_bytes="$(wc -c < "$audit_log" 2>/dev/null || echo "0")"
     audit_log_bytes="${audit_log_bytes// /}"
     if [[ ! -s "$audit_log" ]] || [[ "$audit_log_bytes" -le 2 ]]; then
-        warn "Audit: evaluator returned empty response — treating as inconclusive"
+        warn "Audit: evaluator returned empty output (exit_code=${exit_code}) — treating as fail"
+        warn "Audit log: $audit_log (${audit_log_bytes} bytes), stderr: $audit_err_log"
+        AUDIT_RESULT="Audit evaluator returned no output"
+        return 0  # don't abort the loop; AUDIT_RESULT will be injected as feedback
+    fi
+
+    # Log non-zero exit alongside non-empty output — likely a Claude API/CLI error message
+    if [[ "$exit_code" -ne 0 ]]; then
+        warn "Audit: claude -p exited with code ${exit_code} — output may contain an error message"
     fi
 
     if detect_gate_signal "$audit_log" "AUDIT" \
         'AUDIT_PASS|"verdict"[[:space:]]*:[[:space:]]*"pass"' \
-        '<<<AUDIT:FAIL>>>'; then
+        'AUDIT_FAIL|<<<AUDIT:FAIL>>>'; then
         AUDIT_RESULT="pass"
         echo -e "  ${GREEN}✓${RESET} Audit: passed"
     else
@@ -1421,8 +1430,10 @@ DOD_PROMPT
         echo -e "  ${YELLOW}⚠${RESET} Definition of Done: not satisfied"
         # Surface failing items for diagnostics
         jq -r '.items[] | select(.satisfied == false) | "  - \(.item): " + (.reason // "not satisfied")' "$dod_clean" 2>/dev/null || true
-        # Fallback: if JSON parse failed, use multi-layer signal detection on raw output
-        if detect_gate_signal "$dod_log" "DOD" \
+        # Fallback: only when jq parse failed (dod_verdict empty) — not when jq returned "fail".
+        # Without this guard, prose in a legitimately-parsed "fail" summary (e.g. "all requirements
+        # are now satisfied") could match the legacy pattern and incorrectly flip the verdict to pass.
+        if [[ -z "$dod_verdict" ]] && detect_gate_signal "$dod_log" "DOD" \
             'DOD_PASS|all.{0,20}satisfied|"verdict"[[:space:]]*:[[:space:]]*"pass"' \
             '"satisfied"[[:space:]]*:[[:space:]]*false|not satisfied|<<<DOD:FAIL>>>'; then
             warn "  DoD JSON parse failed but detected pass signal in raw output — accepting"

@@ -740,17 +740,38 @@ else
 fi
 
 # Test: audit detection uses detect_gate_signal (not bare grep)
-if grep -A3 'detect_gate_signal.*audit_log.*AUDIT' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'AUDIT_RESULT'; then
+if grep -q 'detect_gate_signal.*AUDIT' "$SCRIPT_DIR/sw-loop.sh"; then
     assert_pass "Audit detection uses detect_gate_signal (not bare grep)"
 else
     assert_fail "Audit detection uses detect_gate_signal (not bare grep)"
 fi
 
-# Test: audit has empty-response guard
-if grep -q 'Audit.*evaluator returned empty response' "$SCRIPT_DIR/sw-loop.sh"; then
+# Test: audit negative pattern includes both AUDIT_FAIL and fenced <<<AUDIT:FAIL>>>
+if grep -q 'AUDIT_FAIL|<<<AUDIT:FAIL>>>' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Audit negative pattern covers both AUDIT_FAIL and fenced delimiter"
+else
+    assert_fail "Audit negative pattern covers both AUDIT_FAIL and fenced delimiter"
+fi
+
+# Test: audit has empty-response guard that returns early (matching DoD pattern)
+if grep -q 'Audit.*evaluator returned empty output' "$SCRIPT_DIR/sw-loop.sh"; then
     assert_pass "Audit has empty-response guard with diagnostic warning"
 else
     assert_fail "Audit has empty-response guard with diagnostic warning"
+fi
+
+# Test: audit stderr is written to a dedicated file (not merged into audit_log)
+if grep -q 'audit_err_log' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Audit stderr captured to dedicated file (not merged with stdout)"
+else
+    assert_fail "Audit stderr captured to dedicated file (not merged with stdout)"
+fi
+
+# Test: audit non-zero exit_code is logged as a warning
+if grep -q 'exit_code.*Audit.*exited with code\|Audit.*claude -p exited with code' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Audit logs warning on non-zero claude exit code"
+else
+    assert_fail "Audit logs warning on non-zero claude exit code"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1614,10 +1635,20 @@ else
 fi
 
 # Test: DoD fallback uses detect_gate_signal (multi-layer, not bare grep)
-if grep -A5 'JSON parse failed' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'detect_gate_signal'; then
+if grep -q 'detect_gate_signal.*dod_log.*DOD\|detect_gate_signal.*"DOD"' "$SCRIPT_DIR/sw-loop.sh"; then
     assert_pass "DoD fallback uses detect_gate_signal for robust multi-layer detection"
 else
     assert_fail "DoD fallback uses detect_gate_signal for robust multi-layer detection"
+fi
+
+# Test: DoD fallback is gated on empty dod_verdict (prevents overriding legitimate jq "fail")
+# A model returning {"verdict":"fail","summary":"all requirements are now satisfied"} must stay
+# a fail — the "all...satisfied" prose in the summary must not flip the verdict via Layer 3.
+if grep -q '\[\[ -z.*dod_verdict.*\]\].*detect_gate_signal\|detect_gate_signal.*dod_log.*DOD' "$SCRIPT_DIR/sw-loop.sh" && \
+   grep -q '\-z.*dod_verdict' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD fallback gated on empty dod_verdict (won't override legitimate fail verdict)"
+else
+    assert_fail "DoD fallback gated on empty dod_verdict (won't override legitimate fail verdict)"
 fi
 
 # Test: DoD prompt includes fence delimiter instruction

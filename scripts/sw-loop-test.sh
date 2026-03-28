@@ -353,6 +353,44 @@ else
 fi
 rm -rf "$tmpdir2"
 
+# ─── Test 21b: _extract_text_from_json — JSON object (not array) ──────────────
+echo ""
+echo -e "${DIM}  json extraction for JSON objects${RESET}"
+_extract_fn=$(sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")
+tmpdir3=$(mktemp -d)
+bash -c "
+warn() { echo \"WARN: \$*\" >&2; }
+$_extract_fn
+# Test: JSON object with .result field
+echo '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"Object result text\",\"cost_usd\":0.05}' > '$tmpdir3/object.json'
+_extract_text_from_json '$tmpdir3/object.json' '$tmpdir3/object_out.log' ''
+# Test: JSON object with .content field (no .result)
+echo '{\"type\":\"result\",\"content\":\"Object content text\"}' > '$tmpdir3/content.json'
+_extract_text_from_json '$tmpdir3/content.json' '$tmpdir3/content_out.log' ''
+# Test: JSON object — verify no misleading jq warning
+echo '{\"type\":\"result\",\"result\":\"No warning expected\"}' > '$tmpdir3/nowarn.json'
+_extract_text_from_json '$tmpdir3/nowarn.json' '$tmpdir3/nowarn_out.log' '' 2>'$tmpdir3/stderr.log'
+" 2>/dev/null
+
+if grep -q "Object result text" "$tmpdir3/object_out.log" 2>/dev/null; then
+    assert_pass "_extract_text_from_json extracts .result from JSON object"
+else
+    assert_fail "_extract_text_from_json extracts .result from JSON object" "expected 'Object result text' in $tmpdir3/object_out.log"
+fi
+
+if grep -q "Object content text" "$tmpdir3/content_out.log" 2>/dev/null; then
+    assert_pass "_extract_text_from_json extracts .content from JSON object"
+else
+    assert_fail "_extract_text_from_json extracts .content from JSON object" "expected 'Object content text' in $tmpdir3/content_out.log"
+fi
+
+if ! grep -q "jq not available" "$tmpdir3/stderr.log" 2>/dev/null; then
+    assert_pass "_extract_text_from_json no misleading jq warning for JSON object"
+else
+    assert_fail "_extract_text_from_json no misleading jq warning for JSON object" "got misleading 'jq not available' warning"
+fi
+rm -rf "$tmpdir3"
+
 # ─── Test 22: Script structure — circuit breaker, stuckness, test gate ────────
 echo ""
 echo -e "${DIM}  script structure${RESET}"

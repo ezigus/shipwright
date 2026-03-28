@@ -477,6 +477,24 @@ else
     assert_fail "resume_state keeps tasks when issue matches"
 fi
 
+# Malformed tasks file (no '- Issue:' line) should be removed by resume_state
+mkdir -p "$(dirname "$TASKS_FILE")"
+cat > "$TASKS_FILE" <<'TEOF'
+# Pipeline Tasks — Malformed
+## Implementation Checklist
+- [ ] Some task
+TEOF
+
+set +e
+resume_state 2>/dev/null
+set -e
+
+if [[ ! -f "$TASKS_FILE" ]]; then
+    assert_pass "resume_state removes malformed pipeline-tasks.md"
+else
+    assert_fail "resume_state removes malformed pipeline-tasks.md"
+fi
+
 # ─── Tests: stage_build skips stale task injection ──────────────────────────
 print_test_section "stage_build skips stale task injection"
 
@@ -496,22 +514,37 @@ TEOF
 export GITHUB_ISSUE="#42"
 
 _captured_build_prompt="$ARTIFACTS_DIR/.captured-build-prompt.txt"
+# The goal is passed as the first positional arg after 'loop' (not --goal).
+# Capture any argument that is not a flag and follows 'loop'.
 cat > "$TEST_TEMP_DIR/bin/sw" <<'SWMOCK'
 #!/usr/bin/env bash
-# Capture the enriched goal / prompt passed via -p
+set -- "$@"
+_saw_loop=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    loop) shift ;;
-    --goal) printf '%s' "${2:-}" > "${CAPTURED_BUILD_PROMPT}"; shift 2 ;;
-    *) shift ;;
+    loop) _saw_loop=true; shift ;;
+    --*) shift; [[ $# -gt 0 ]] && shift ;;
+    *) if [[ "$_saw_loop" == true && -n "${CAPTURED_BUILD_PROMPT:-}" ]]; then
+           printf '%s' "$1" > "${CAPTURED_BUILD_PROMPT}"
+           _saw_loop=false
+       fi
+       shift ;;
   esac
 done
 SWMOCK
 chmod +x "$TEST_TEMP_DIR/bin/sw"
 
+rm -f "$_captured_build_prompt"
 set +e
 CAPTURED_BUILD_PROMPT="$_captured_build_prompt" stage_build 2>/dev/null || true
 set -e
+
+# First ensure sw was actually invoked and captured the goal (non-empty file)
+if [[ ! -s "$_captured_build_prompt" ]]; then
+    assert_fail "stage_build invokes sw loop with a goal (captured prompt is empty)"
+else
+    assert_pass "stage_build invokes sw loop with a goal (captured prompt is non-empty)"
+fi
 
 # The old task content should NOT appear in the injected goal
 if [[ -f "$_captured_build_prompt" ]] && grep -q "Old task for issue #99" "$_captured_build_prompt" 2>/dev/null; then

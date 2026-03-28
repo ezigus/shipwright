@@ -261,7 +261,8 @@ decide_run() {
         warn "Rate limited — last decision at ${last_ts}"
         local cooldown
         local _limits_json; _limits_json="${TIER_LIMITS}"; [[ -z "$_limits_json" ]] && _limits_json="{}"
-        cooldown=$(echo "$_limits_json" | jq -r '.cooldown_seconds // 300')
+        cooldown=$(echo "$_limits_json" | jq -r '.cooldown_seconds // 300' 2>/dev/null) || cooldown=300
+        [[ -z "$cooldown" || ! "$cooldown" =~ ^[0-9]+$ ]] && cooldown=300
         echo -e "  ${DIM}Cooldown: ${cooldown}s between cycles${RESET}"
         return 0
     fi

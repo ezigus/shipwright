@@ -100,7 +100,8 @@ autonomy_check_budget() {
     local _limits_json; _limits_json="${TIER_LIMITS}"; [[ -z "$_limits_json" ]] && _limits_json="{}"
 
     local max_issues
-    max_issues=$(echo "$_limits_json" | jq -r '.max_issues_per_day // 15')
+    max_issues=$(echo "$_limits_json" | jq -r '.max_issues_per_day // 15' 2>/dev/null) || max_issues=15
+    [[ -z "$max_issues" || ! "$max_issues" =~ ^[0-9]+$ ]] && max_issues=15
 
     if [[ "$today_count" -ge "$max_issues" ]]; then
         return 1
@@ -108,7 +109,8 @@ autonomy_check_budget() {
 
     # Check cost budget
     local max_cost
-    max_cost=$(echo "$_limits_json" | jq -r '.max_cost_per_day_usd // 25')
+    max_cost=$(echo "$_limits_json" | jq -r '.max_cost_per_day_usd // 25' 2>/dev/null) || max_cost=25
+    [[ -z "$max_cost" ]] && max_cost=25
     local today_cost=0
     if [[ -f "$daily_log" ]]; then
         today_cost=$(jq -s '[.[] | .estimated_cost_usd // 0] | add // 0' "$daily_log" 2>/dev/null || echo "0")
@@ -138,7 +140,8 @@ autonomy_check_rate_limit() {
 
     local _limits_json; _limits_json="${TIER_LIMITS}"; [[ -z "$_limits_json" ]] && _limits_json="{}"
     local cooldown
-    cooldown=$(echo "$_limits_json" | jq -r '.cooldown_seconds // 300')
+    cooldown=$(echo "$_limits_json" | jq -r '.cooldown_seconds // 300' 2>/dev/null) || cooldown=300
+    [[ -z "$cooldown" || ! "$cooldown" =~ ^[0-9]+$ ]] && cooldown=300
 
     local elapsed=$((now_e - last_epoch))
     if [[ "$elapsed" -lt "$cooldown" ]]; then
@@ -181,7 +184,8 @@ autonomy_check_consecutive_failures() {
 
     local max_consecutive
     local _limits_json; _limits_json="${TIER_LIMITS}"; [[ -z "$_limits_json" ]] && _limits_json="{}"
-    max_consecutive=$(echo "$_limits_json" | jq -r '.halt_after_consecutive_failures // 3')
+    max_consecutive=$(echo "$_limits_json" | jq -r '.halt_after_consecutive_failures // 3' 2>/dev/null) || max_consecutive=3
+    [[ -z "$max_consecutive" || ! "$max_consecutive" =~ ^[0-9]+$ ]] && max_consecutive=3
 
     # Get the last N decisions and check if all failed
     local recent

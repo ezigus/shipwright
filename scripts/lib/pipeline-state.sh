@@ -604,13 +604,18 @@ ${sid}:${sst}"
         git checkout "$GIT_BRANCH" 2>/dev/null || true
     fi
 
-    # Validate pipeline-tasks.md belongs to this resume's issue; clear if stale
+    # Validate pipeline-tasks.md belongs to this resume's issue; clear if stale or malformed
     if [[ -s "${TASKS_FILE:-}" ]]; then
         local tasks_issue
-        tasks_issue=$(grep -m1 "^- Issue:" "$TASKS_FILE" 2>/dev/null | sed 's/^- Issue: *//' | xargs || true)
-        if [[ -n "$tasks_issue" && "$tasks_issue" != "${GITHUB_ISSUE:-none}" ]]; then
-            warn "Clearing stale pipeline-tasks.md (was for issue $tasks_issue, now ${GITHUB_ISSUE:-none})"
+        if ! tasks_issue=$(extract_issue_from_tasks_file "$TASKS_FILE"); then
+            warn "Malformed pipeline-tasks.md (missing '- Issue:' header) — removing"
             rm -f "$TASKS_FILE"
+        else
+            local current_issue; current_issue=$(echo "${GITHUB_ISSUE:-}" | xargs)
+            if [[ -n "$current_issue" && "$tasks_issue" != "$current_issue" ]]; then
+                warn "Clearing stale pipeline-tasks.md (was for issue $tasks_issue, now $current_issue)"
+                rm -f "$TASKS_FILE"
+            fi
         fi
     fi
 

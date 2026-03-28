@@ -171,14 +171,19 @@ ${build_discoveries}"
     # Add task list context — validate issue matches before injecting
     if [[ -s "$TASKS_FILE" ]]; then
         local tasks_issue
-        tasks_issue=$(grep -m1 "^- Issue:" "$TASKS_FILE" 2>/dev/null | sed 's/^- Issue: *//' | xargs || true)
-        if [[ -n "$tasks_issue" && "$tasks_issue" == "${GITHUB_ISSUE:-}" ]]; then
-            enriched_goal="${enriched_goal}
+        if ! tasks_issue=$(extract_issue_from_tasks_file "$TASKS_FILE"); then
+            warn "Malformed pipeline-tasks.md (missing '- Issue:' header) — skipping injection"
+            rm -f "$TASKS_FILE"
+        else
+            local current_issue; current_issue=$(echo "${GITHUB_ISSUE:-}" | xargs)
+            if [[ -n "$current_issue" && "$tasks_issue" == "$current_issue" ]]; then
+                enriched_goal="${enriched_goal}
 
 Task tracking (check off items as you complete them):
 $(cat "$TASKS_FILE")"
-        else
-            warn "Skipping stale pipeline-tasks.md (was for issue $tasks_issue, current ${GITHUB_ISSUE:-none})"
+            else
+                warn "Skipping stale pipeline-tasks.md (was for issue $tasks_issue, current ${current_issue:-none})"
+            fi
         fi
     fi
 

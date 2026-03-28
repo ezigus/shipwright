@@ -1359,8 +1359,8 @@ fi
 
 # Test: In main loop, commits_before capture appears before run_claude_iteration
 # (line-ordering regression: guards against moving commits_before back after the call)
-_cb_line=$(grep -n 'commits_before.*git_commit_count' "$SCRIPT_DIR/sw-loop.sh" | head -1 | cut -d: -f1)
-_rci_line=$(grep -n 'run_claude_iteration' "$SCRIPT_DIR/sw-loop.sh" | head -1 | cut -d: -f1)
+_cb_line=$(grep -n 'commits_before.*git_commit_count' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | head -1 | cut -d: -f1 || true)
+_rci_line=$(grep -n 'run_claude_iteration' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | head -1 | cut -d: -f1 || true)
 if [[ -n "$_cb_line" && -n "$_rci_line" && "$_cb_line" -lt "$_rci_line" ]]; then
     assert_pass "sw-loop.sh: commits_before captured before run_claude_iteration (line ${_cb_line} < ${_rci_line})"
 else
@@ -1370,8 +1370,8 @@ fi
 # Test: In agent sub-loop, _commits_before appears before the agent-specific claude -p invocation
 # (line-ordering regression: guards against moving _commits_before back after the call)
 # Restrict search to lines 1800+ to target the agent sub-loop only (avoids earlier claude -p calls)
-_acb_line=$(grep -n '_commits_before=\$(git rev-list' "$SCRIPT_DIR/sw-loop.sh" | head -1 | cut -d: -f1)
-_cp_line=$(awk 'NR>=1800 && /claude -p "\$PROMPT"/{print NR; exit}' "$SCRIPT_DIR/sw-loop.sh")
+_acb_line=$(grep -n '_commits_before=\$(git rev-list' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | head -1 | cut -d: -f1 || true)
+_cp_line=$(awk 'NR>=1800 && /claude -p "\$PROMPT"/{print NR; exit}' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
 if [[ -n "$_acb_line" && -n "$_cp_line" && "$_acb_line" -lt "$_cp_line" ]]; then
     assert_pass "sw-loop.sh: agent _commits_before captured before claude -p (line ${_acb_line} < ${_cp_line})"
 else

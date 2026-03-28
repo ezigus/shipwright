@@ -2425,8 +2425,10 @@ ${GOAL}"
             CONSECUTIVE_FAILURES=0
             if [[ "${TEST_PASSED:-}" == "true" ]]; then
                 echo -e "  ${GREEN}✓${RESET} Progress detected — continuing"
-            else
+            elif [[ "${TEST_PASSED:-}" == "false" ]]; then
                 echo -e "  ${CYAN}▸${RESET} Progress detected — tests still failing"
+            else
+                echo -e "  ${CYAN}▸${RESET} Progress detected — continuing"
             fi
         elif [[ "${TEST_PASSED:-}" == "true" ]] && \
              { ! $AUDIT_AGENT_ENABLED || [[ "${AUDIT_RESULT:-}" == "pass" ]]; }; then

@@ -196,16 +196,18 @@ else
 fi
 
 # Functional test: write mock events and verify dashboard parses them
+# Use a dynamic epoch (1 day ago) so the entry is always within the period window,
+# regardless of what date the CI runner reports.
+_mock_epoch=$(( $(date +%s) - 86400 ))
 mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
-cat > "$TEST_TEMP_DIR/home/.shipwright/events.jsonl" <<'EVTEOF'
-{"ts":"2026-02-27T10:00:00Z","type":"loop.context_efficiency","iteration":"1","raw_prompt_chars":"200000","trimmed_prompt_chars":"180000","trim_ratio":"10.0","budget_utilization":"100.0","budget_chars":"180000","job_id":"test-1"}
-{"ts":"2026-02-27T10:01:00Z","type":"loop.context_efficiency","iteration":"2","raw_prompt_chars":"150000","trimmed_prompt_chars":"150000","trim_ratio":"0.0","budget_utilization":"83.3","budget_chars":"180000","job_id":"test-1"}
-EVTEOF
+printf '{"ts":"2026-03-01T10:00:00Z","type":"loop.context_efficiency","iteration":"1","raw_prompt_chars":"200000","trimmed_prompt_chars":"180000","trim_ratio":"10.0","budget_utilization":"100.0","budget_chars":"180000","job_id":"test-1"}\n' \
+    > "$TEST_TEMP_DIR/home/.shipwright/events.jsonl"
+printf '{"ts":"2026-03-01T10:01:00Z","type":"loop.context_efficiency","iteration":"2","raw_prompt_chars":"150000","trimmed_prompt_chars":"150000","trim_ratio":"0.0","budget_utilization":"83.3","budget_chars":"180000","job_id":"test-1"}\n' \
+    >> "$TEST_TEMP_DIR/home/.shipwright/events.jsonl"
 
 # Also need cost data for the dashboard to run
-cat > "$TEST_TEMP_DIR/home/.shipwright/costs.json" <<'COSTEOF'
-{"entries":[{"ts":"2026-02-27T10:00:00Z","ts_epoch":1772125200,"input_tokens":50000,"output_tokens":10000,"cost_usd":1.50,"model":"opus","stage":"build","issue":"1"}],"summary":{}}
-COSTEOF
+printf '{"entries":[{"ts":"2026-03-01T10:00:00Z","ts_epoch":%d,"input_tokens":50000,"output_tokens":10000,"cost_usd":1.50,"model":"opus","stage":"build","issue":"1"}],"summary":{}}\n' \
+    "$_mock_epoch" > "$TEST_TEMP_DIR/home/.shipwright/costs.json"
 cat > "$TEST_TEMP_DIR/home/.shipwright/budget.json" <<'BUDEOF'
 {"daily_budget_usd":0,"enabled":false}
 BUDEOF

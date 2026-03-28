@@ -1,17 +1,28 @@
-# Claude Instructions (Thin Wrapper)
+<!-- sw:auto-start -->
+# Project: shipwright
 
-Use centralized standards as source of truth:
-- /Users/ericziegler/code/standards/ai-agent-standards/core/core-policy.md
-- /Users/ericziegler/code/standards/ai-agent-standards/adapters/claude-adapter.md
-- /Users/ericziegler/code/standards/ai-agent-standards/repo-overrides/shipwright.md
-- /Users/ericziegler/code/standards/ai-agent-standards/resolution/profile-resolution-matrix.md
-- /Users/ericziegler/code/standards/ai-agent-standards/resolution/shipwright-detection-contract.md
+## Stack
+- Language: typescript
+- Framework: none detected
+- Package Manager: npm
+- Test Framework: vitest
 
-Default profile eligibility for this repo: shipwright.
-Shipwright profile is conditional per detection contract.
+## Commands
+- Build: `N/A`
+- Test: `npm test`
+- Lint: `N/A`
+- Format: `N/A`
+- Dev: `N/A`
 
-Load local generated instructions:
-@../.ai-standards/generated/claude-instructions.md
+## Structure
+### Source Directories
+- `src/`
 
-Optional repo-specific additions:
-@../.ai-standards/local/claude-additions.md
+## Conventions
+- Naming: snake_case
+- Imports: CommonJS (require/module.exports)
+- Database: flat-file JSON via jq
+
+## Important Files
+
+<!-- sw:auto-end -->

@@ -1592,12 +1592,66 @@ else
     assert_fail "DoD verdict compared against JSON enum value \"pass\""
 fi
 
-# Test: DoD has fallback for raw DOD_PASS in case JSON parse fails
-if grep -A5 'JSON parse failed' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'DOD_PASS'; then
-    assert_pass "DoD has fallback for raw DOD_PASS if JSON parse fails"
+# Test: DoD fallback uses detect_gate_signal (multi-layer, not bare grep)
+if grep -A5 'JSON parse failed' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'detect_gate_signal'; then
+    assert_pass "DoD fallback uses detect_gate_signal for robust multi-layer detection"
 else
-    assert_fail "DoD has fallback for raw DOD_PASS if JSON parse fails"
+    assert_fail "DoD fallback uses detect_gate_signal for robust multi-layer detection"
 fi
+
+# Test: DoD prompt includes fence delimiter instruction
+if grep -q '<<<DOD:PASS>>>' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD prompt includes <<<DOD:PASS>>> fence delimiter"
+else
+    assert_fail "DoD prompt includes <<<DOD:PASS>>> fence delimiter"
+fi
+
+# Test: DoD strips markdown fences before jq parsing
+if grep -q 'sed.*json.*dod_log.*dod_clean\|dod_clean.*sed' "$SCRIPT_DIR/sw-loop.sh" || \
+   grep -q "sed.*dod_log.*dod_clean" "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD strips markdown fences from output before jq parsing"
+else
+    assert_fail "DoD strips markdown fences from output before jq parsing"
+fi
+
+# Test: detect_gate_signal helper exists in sw-loop.sh
+if grep -q '^detect_gate_signal()' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "detect_gate_signal() helper function exists"
+else
+    assert_fail "detect_gate_signal() helper function exists"
+fi
+
+# Test: detect_gate_signal Layer 1 — fenced delimiter passes
+# Extract and eval just the helper function (sourcing full sw-loop.sh would trigger arg parsing)
+_dgs_body="$(sed -n '/^detect_gate_signal()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")"
+dgs_test_log="$(mktemp)"
+echo "<<<DOD:PASS>>>" > "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "DOD") 2>/dev/null; then
+    assert_pass "detect_gate_signal: Layer 1 fenced delimiter accepted"
+else
+    assert_fail "detect_gate_signal: Layer 1 fenced delimiter accepted"
+fi
+rm -f "$dgs_test_log"
+
+# Test: detect_gate_signal Layer 3 — legacy DOD_PASS accepted
+dgs_test_log="$(mktemp)"
+echo "DOD_PASS" > "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "DOD" 'DOD_PASS') 2>/dev/null; then
+    assert_pass "detect_gate_signal: Layer 3 legacy DOD_PASS accepted"
+else
+    assert_fail "detect_gate_signal: Layer 3 legacy DOD_PASS accepted"
+fi
+rm -f "$dgs_test_log"
+
+# Test: detect_gate_signal Layer 2 — explicit failure signal blocks pass
+dgs_test_log="$(mktemp)"
+echo 'DOD_PASS <<<DOD:FAIL>>>' > "$dgs_test_log"
+if ! (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "DOD" 'DOD_PASS' '<<<DOD:FAIL>>>') 2>/dev/null; then
+    assert_pass "detect_gate_signal: Layer 2 failure signal blocks positive match"
+else
+    assert_fail "detect_gate_signal: Layer 2 failure signal blocks positive match"
+fi
+rm -f "$dgs_test_log"
 
 # ─── Circuit breaker: DoD-only failures (#237) ────────────────────────────────
 

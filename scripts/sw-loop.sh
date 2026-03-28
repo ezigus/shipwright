@@ -725,6 +725,49 @@ validate_claude_output() {
     return "$issues"
 }
 
+# ─── Gate Signal Detection ──────────────────────────────────────────────────
+# Robust multi-layer LLM verdict detection. Handles fenced delimiters, JSON
+# verdicts, legacy magic strings, and prose variants.
+#
+# Usage: detect_gate_signal <log_file_or_dash> <gate_name> [legacy_pattern] [negative_pattern]
+#   log_file_or_dash: path to log file, or "-" to read from stdin
+#   gate_name: e.g., "AUDIT", "DOD", "LOOP", "HOLISTIC"
+#   legacy_pattern: gate-specific Layer 3 regex (optional, defaults to GATE_PASS)
+#   negative_pattern: gate-specific failure signals (optional, defaults to <<<GATE:FAIL>>>)
+# Returns 0 (pass), 1 (fail/ambiguous)
+detect_gate_signal() {
+    local log_file="$1" gate="$2"
+    local legacy="${3:-${gate}_PASS}"
+    local negative="${4:-<<<${gate}:FAIL>>>}"
+    local content
+
+    if [[ "$log_file" == "-" ]]; then
+        content="$(cat)"
+    elif [[ -f "$log_file" ]]; then
+        content="$(cat "$log_file")"
+    else
+        return 1
+    fi
+
+    # Layer 1: Negative-first — explicit failure signals override everything
+    if echo "$content" | grep -iqE "$negative" 2>/dev/null; then
+        return 1
+    fi
+
+    # Layer 2: Fenced delimiter (most reliable positive signal)
+    if echo "$content" | grep -q "<<<${gate}:PASS>>>" 2>/dev/null; then
+        return 0
+    fi
+
+    # Layer 3: Legacy compat + prose variants (gate-specific, case-insensitive)
+    if echo "$content" | grep -iqE "$legacy" 2>/dev/null; then
+        return 0
+    fi
+
+    # Ambiguous — fail safely
+    return 1
+}
+
 # ─── Budget Gate (hard stop when exhausted) ───────────────────────────────────
 check_budget_gate() {
     [[ ! -x "$SCRIPT_DIR/sw-cost.sh" ]] && return 0
@@ -1301,11 +1344,15 @@ ${diff_content}
 For each item in the Definition of Done, determine if the project satisfies it.
 The runtime facts above are verified by the harness — trust them as ground truth.
 
-IMPORTANT: Respond with ONLY a JSON object — no prose, no markdown fences. Format:
+IMPORTANT: Respond with a JSON object followed by a verdict line. No prose, no markdown fences, no code blocks. Format:
 {"verdict":"pass","items":[{"item":"...","satisfied":true,"reason":"..."}],"summary":"..."}
 - Set "verdict" to "pass" if ALL items are satisfied. Set it to "fail" if ANY item is not satisfied.
 - For each DoD item, add an entry to "items" with the item text and whether it passes.
 - In "summary", briefly explain your verdict (1-2 sentences max).
+
+On the line immediately after the JSON object, output exactly one of:
+  <<<DOD:PASS>>>
+  <<<DOD:FAIL>>>
 DOD_PROMPT
 
     local dod_log="$LOG_DIR/dod-iter-${ITERATION}.log"
@@ -1331,15 +1378,21 @@ DOD_PROMPT
         return 1
     fi
 
+    # Strip markdown fences and delimiter lines before jq parsing.
+    # Markdown fences (```json / ```) break jq; delimiter lines (<<<DOD:*>>>) are
+    # appended after the JSON object and also cause jq to fail.
+    local dod_clean="${dod_log%.log}-clean.json"
+    sed -E '/^```(json)?[[:space:]]*$|^<<<DOD:(PASS|FAIL)>>>[[:space:]]*$/d' "$dod_log" > "$dod_clean" 2>/dev/null || cp "$dod_log" "$dod_clean"
+
     # Parse structured JSON output: verdict field must be "pass"
     local dod_verdict
-    dod_verdict="$(jq -r '.verdict // empty' "$dod_log" 2>/dev/null || echo "")"
+    dod_verdict="$(jq -r '.verdict // empty' "$dod_clean" 2>/dev/null || echo "")"
 
     # Structural validation: a pass verdict without a populated items array means the
     # model skipped the per-item checklist evaluation — reject it as incomplete.
     if [[ "$dod_verdict" == "pass" ]]; then
         local dod_item_count
-        dod_item_count="$(jq 'if (.items | type) == "array" then (.items | length) else 0 end' "$dod_log" 2>/dev/null || echo "0")"
+        dod_item_count="$(jq 'if (.items | type) == "array" then (.items | length) else 0 end' "$dod_clean" 2>/dev/null || echo "0")"
         dod_item_count="${dod_item_count// /}"
         if [[ "${dod_item_count:-0}" -eq 0 ]]; then
             warn "DoD: verdict is pass but items array is missing, not an array, or empty — treating as fail"
@@ -1348,16 +1401,18 @@ DOD_PROMPT
         echo -e "  ${GREEN}✓${RESET} Definition of Done: satisfied"
         # Log summary for diagnostics
         local dod_summary
-        dod_summary="$(jq -r '.summary // ""' "$dod_log" 2>/dev/null || echo "")"
+        dod_summary="$(jq -r '.summary // ""' "$dod_clean" 2>/dev/null || echo "")"
         [[ -n "$dod_summary" ]] && info "  DoD summary: $dod_summary"
         return 0
     else
         echo -e "  ${YELLOW}⚠${RESET} Definition of Done: not satisfied"
         # Surface failing items for diagnostics
-        jq -r '.items[] | select(.satisfied == false) | "  - \(.item): " + (.reason // "not satisfied")' "$dod_log" 2>/dev/null || true
-        # Fallback: if JSON parse failed but DOD_PASS is in raw output, accept it
-        if grep -q "DOD_PASS" "$dod_log" 2>/dev/null; then
-            warn "  DoD JSON parse failed but found DOD_PASS in raw output — accepting as pass"
+        jq -r '.items[] | select(.satisfied == false) | "  - \(.item): " + (.reason // "not satisfied")' "$dod_clean" 2>/dev/null || true
+        # Fallback: if JSON parse failed, use multi-layer signal detection on raw output
+        if detect_gate_signal "$dod_log" "DOD" \
+            'DOD_PASS|all.{0,20}satisfied|"verdict"[[:space:]]*:[[:space:]]*"pass"' \
+            '"satisfied"[[:space:]]*:[[:space:]]*false|not satisfied|<<<DOD:FAIL>>>'; then
+            warn "  DoD JSON parse failed but detected pass signal in raw output — accepting"
             return 0
         fi
         return 1

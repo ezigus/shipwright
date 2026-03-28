@@ -180,7 +180,8 @@ autonomy_check_consecutive_failures() {
     [[ ! -f "$daily_log" ]] && return 0
 
     local max_consecutive
-    max_consecutive=$(echo "${TIER_LIMITS:-{}}" | jq -r '.halt_after_consecutive_failures // 3')
+    local _limits_json; _limits_json="${TIER_LIMITS}"; [[ -z "$_limits_json" ]] && _limits_json="{}"
+    max_consecutive=$(echo "$_limits_json" | jq -r '.halt_after_consecutive_failures // 3')
 
     # Get the last N decisions and check if all failed
     local recent
@@ -278,8 +279,9 @@ autonomy_daily_summary() {
     fi
 
     local max_issues max_cost
-    max_issues=$(echo "${TIER_LIMITS:-{}}" | jq -r '.max_issues_per_day // 15')
-    max_cost=$(echo "${TIER_LIMITS:-{}}" | jq -r '.max_cost_per_day_usd // 25')
+    local _limits_json; _limits_json="${TIER_LIMITS}"; [[ -z "$_limits_json" ]] && _limits_json="{}"
+    max_issues=$(echo "$_limits_json" | jq -r '.max_issues_per_day // 15')
+    max_cost=$(echo "$_limits_json" | jq -r '.max_cost_per_day_usd // 25')
 
     jq -s --argjson mi "$max_issues" --arg mc "$max_cost" '
         {

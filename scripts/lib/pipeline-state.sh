@@ -495,11 +495,11 @@ write_state() {
         stage_progress=$(build_stage_progress)
     fi
 
-    cat > "$STATE_FILE" <<'_SW_STATE_END_'
----
-_SW_STATE_END_
-    # Write state with printf to avoid heredoc delimiter injection
+    # Atomic write: build content in tmp file, then mv into place.
+    # This prevents partial/corrupt state files when interrupted by signals.
+    local tmp_state="${STATE_FILE}.tmp.$$"
     {
+        printf -- '---\n'
         printf 'pipeline: %s\n' "$PIPELINE_NAME"
         printf 'goal: "%s"\n' "$GOAL"
         printf 'status: %s\n' "$PIPELINE_STATUS"
@@ -520,7 +520,8 @@ _SW_STATE_END_
         printf -- '---\n\n'
         printf '## Log\n'
         printf '%s\n' "$LOG_ENTRIES"
-    } >> "$STATE_FILE"
+    } > "$tmp_state"
+    mv -f "$tmp_state" "$STATE_FILE" || { rm -f "$tmp_state"; error "Failed to write pipeline state to $STATE_FILE (mv failed)"; return 1; }
 
     # Update pipeline_runs in DB
     if type update_pipeline_status >/dev/null 2>&1 && db_available 2>/dev/null; then
@@ -576,6 +577,35 @@ ${sid}:${sst}"
     done < "$STATE_FILE"
 
     LOG_ENTRIES="$(sed -n '/^## Log$/,$ { /^## Log$/d; p; }' "$STATE_FILE" 2>/dev/null || true)"
+
+    # Recovery: if stages section was empty (e.g., corrupted by signal during write),
+    # reconstruct stage statuses from the log entries which record "complete (...)" lines.
+    local trimmed_statuses
+    trimmed_statuses="$(echo "$STAGE_STATUSES" | sed '/^$/d')"
+    if [[ -z "$trimmed_statuses" && -n "$LOG_ENTRIES" ]]; then
+        local recovered=""
+        local stage_id=""
+        while IFS= read -r log_line; do
+            # Log entries like: "### intake (18:08:17)" set the current stage
+            if [[ "$log_line" =~ ^###[[:space:]]+([a-z_]+)[[:space:]]+ ]]; then
+                stage_id="${BASH_REMATCH[1]}"
+            # Log entries like: "complete (2m 48s)" mark that stage as complete
+            elif [[ -n "$stage_id" && "$log_line" =~ ^complete[[:space:]] ]]; then
+                recovered="${recovered}
+${stage_id}:complete"
+                stage_id=""
+            # "failed (...)" marks stage as failed
+            elif [[ -n "$stage_id" && "$log_line" =~ ^failed[[:space:]] ]]; then
+                recovered="${recovered}
+${stage_id}:failed"
+                stage_id=""
+            fi
+        done <<< "$LOG_ENTRIES"
+        if [[ -n "$recovered" ]]; then
+            STAGE_STATUSES="$recovered"
+            warn "Recovered stage statuses from log (stages section was empty)"
+        fi
+    fi
 
     if [[ -n "$GITHUB_ISSUE" && "$GITHUB_ISSUE" =~ ^#([0-9]+)$ ]]; then
         ISSUE_NUMBER="${BASH_REMATCH[1]}"

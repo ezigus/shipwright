@@ -1900,6 +1900,10 @@ Focus on areas they haven't touched yet.
 PROMPT
 )"
 
+    # Capture commit count before Claude runs so Claude-initiated commits are included in delta
+    local _commits_before _commits_after _new_commits
+    _commits_before=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+
     # Run Claude (output is JSON due to --output-format json in CLAUDE_FLAGS)
     local JSON_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.json"
     local ERR_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.stderr"
@@ -1921,8 +1925,6 @@ PROMPT
     fi
 
     # Auto-commit
-    local _commits_before _commits_after _new_commits
-    _commits_before=$(git rev-list --count HEAD 2>/dev/null || echo 0)
     safe_git_stage
     if git commit -m "agent-${AGENT_NUM}: iteration ${ITERATION}" --no-verify 2>/dev/null; then
         if ! git push origin "loop/agent-${AGENT_NUM}" 2>/dev/null; then
@@ -2216,6 +2218,10 @@ ${GOAL}"
             fi
         fi
 
+        # Capture commit count before Claude runs so Claude-initiated commits are included in delta
+        local commits_before
+        commits_before="$(git_commit_count)"
+
         # Run Claude
         local exit_code=0
         run_claude_iteration || exit_code=$?
@@ -2263,8 +2269,6 @@ ${GOAL}"
         fi
 
         # Auto-commit if Claude didn't
-        local commits_before
-        commits_before="$(git_commit_count)"
         git_auto_commit "$PROJECT_ROOT" || true
         local commits_after
         commits_after="$(git_commit_count)"
@@ -2419,7 +2423,11 @@ ${GOAL}"
         # the implementation is verified and the agent isn't stuck.
         if check_progress "$new_commits"; then
             CONSECUTIVE_FAILURES=0
-            echo -e "  ${GREEN}✓${RESET} Progress detected — continuing"
+            if [[ "${TEST_PASSED:-}" == "true" ]]; then
+                echo -e "  ${GREEN}✓${RESET} Progress detected — continuing"
+            else
+                echo -e "  ${CYAN}▸${RESET} Progress detected — tests still failing"
+            fi
         elif [[ "${TEST_PASSED:-}" == "true" ]] && \
              { ! $AUDIT_AGENT_ENABLED || [[ "${AUDIT_RESULT:-}" == "pass" ]]; }; then
             # Tests passed AND audit either passed or is disabled.

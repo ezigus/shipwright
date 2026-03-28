@@ -117,6 +117,7 @@ AUDIT_AGENT_ENABLED=false
 DOD_FILE=""
 QUALITY_GATES_ENABLED=false
 AUDIT_RESULT=""
+HOLISTIC_RESULT=""
 COMPLETION_REJECTED=false
 QUALITY_GATE_PASSED=true
 
@@ -1426,7 +1427,7 @@ guard_completion() {
         return 1  # No completion claim
     fi
 
-    echo -e "  ${CYAN}▸${RESET} <<<LOOP:PASS>>> detected — validating..."
+    echo -e "  ${CYAN}▸${RESET} Completion signal detected — validating..."
 
     local rejection_reasons=()
 
@@ -1523,8 +1524,11 @@ Based on the goal and the cumulative work done:
 1. Has the goal been FULLY achieved (not partially)?
 2. Is there any critical gap that would make this unacceptable for production?
 
-If the goal is fully achieved, output exactly: HOLISTIC_PASS
-Otherwise, list the specific gaps remaining.
+If the goal is fully achieved, output your verdict on its own line as:
+  <<<HOLISTIC:PASS>>>
+If there are gaps remaining, list them and then output on its own line:
+  <<<HOLISTIC:FAIL>>>
+Do not wrap the verdict in JSON, markdown, or code blocks.
 HOLISTIC_PROMPT
 
     echo -e "  ${PURPLE}▸${RESET} Running holistic project assessment..."
@@ -1537,13 +1541,23 @@ HOLISTIC_PROMPT
         hol_flags+=("--dangerously-skip-permissions")
     fi
 
-    claude -p "$holistic_prompt" "${hol_flags[@]}" > "$holistic_log" 2>&1 || true
+    local holistic_stderr_log="${holistic_log%.log}-stderr.log"
+    claude -p "$holistic_prompt" "${hol_flags[@]}" > "$holistic_log" 2>"$holistic_stderr_log" || true
 
-    if grep -q "HOLISTIC_PASS" "$holistic_log" 2>/dev/null; then
+    if [[ ! -s "$holistic_log" ]] || ! grep -q '[^[:space:]]' "$holistic_log"; then
+        warn "  Holistic: empty response from evaluator — treating as fail"
+        return 1
+    fi
+
+    if detect_gate_signal "$holistic_log" "HOLISTIC" \
+        'HOLISTIC_PASS|"verdict"[[:space:]]*:[[:space:]]*"pass"' \
+        '<<<HOLISTIC:FAIL>>>'; then
         echo -e "  ${GREEN}✓${RESET} Holistic assessment: passed"
+        HOLISTIC_RESULT="pass"
         return 0
     else
         echo -e "  ${YELLOW}⚠${RESET} Holistic assessment: gaps found"
+        HOLISTIC_RESULT="$(grep -v '^$' "$holistic_log" | tail -20 | head -10 2>/dev/null || echo "Holistic assessment found gaps")"
         return 1
     fi
 }
@@ -1615,6 +1629,19 @@ ${AUDIT_RESULT}
 
 Address ALL audit findings before proceeding with new work.
 AUDIT_FEEDBACK
+}
+
+compose_holistic_feedback_section() {
+    if [[ -z "$HOLISTIC_RESULT" ]] || [[ "$HOLISTIC_RESULT" == "pass" ]]; then
+        return
+    fi
+    cat <<HOLISTIC_FEEDBACK
+## Holistic Assessment Feedback (Previous Iteration)
+The final quality gate found these gaps:
+${HOLISTIC_RESULT}
+
+Address ALL gaps before declaring the goal complete.
+HOLISTIC_FEEDBACK
 }
 
 compose_rejection_notice_section() {

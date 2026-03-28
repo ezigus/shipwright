@@ -249,6 +249,35 @@ print_test_section "autonomy"
     fi
 )
 
+# Regression: TIER_LIMITS set — no extra '}' in jq input (issue #232 fix)
+# When TIER_LIMITS is non-empty, the old ${TIER_LIMITS:-{}} pattern appended a
+# trailing '}', producing invalid JSON. Verify autonomy_check_budget reads the
+# correct limit from TIER_LIMITS without a jq parse error.
+(
+    source "$TEST_REPO/scripts/lib/helpers.sh"
+    source "$TEST_REPO/scripts/lib/policy.sh"
+    source "$TEST_REPO/scripts/lib/decide-autonomy.sh"
+
+    cd "$TEST_REPO"
+    # Set TIER_LIMITS to a JSON string with a very low limit (1 issue/day)
+    export TIER_LIMITS='{"max_issues_per_day":1,"max_cost_per_day_usd":5,"cooldown_seconds":60,"halt_after_consecutive_failures":2}'
+
+    # Write 2 decisions — exceeds limit of 1
+    log_file=$(_daily_log_file)
+    mkdir -p "$(dirname "$log_file")"
+    echo '{"action":"issue_created","estimated_cost_usd":0.01}' >> "$log_file"
+    echo '{"action":"issue_created","estimated_cost_usd":0.01}' >> "$log_file"
+
+    # Budget should be exhausted (limit=1, count=2). If jq received invalid JSON
+    # (e.g. '{"max_issues_per_day":1}' + '}' = '{"max_issues_per_day":1}}') it would
+    # fall back to the default of 15 and incorrectly report budget available.
+    if ! autonomy_check_budget "auto"; then
+        assert_pass "TIER_LIMITS set: budget enforced from JSON value (no trailing-brace regression)"
+    else
+        assert_fail "TIER_LIMITS set: budget enforced from JSON value (no trailing-brace regression)"
+    fi
+)
+
 # Rate limiting
 (
     source "$TEST_REPO/scripts/lib/helpers.sh"

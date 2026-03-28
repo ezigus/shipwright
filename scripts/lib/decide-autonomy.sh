@@ -95,8 +95,10 @@ autonomy_check_budget() {
         today_count=$(jq -s '[.[] | select(.action == "issue_created" or .action == "draft_written")] | length' "$daily_log" 2>/dev/null || echo "0")
     fi
 
-    # ${TIER_LIMITS:-{}} appends extra '}' when set (bash parses {}} as default={, close, literal-})
-    # Use an explicit conditional instead
+    # Regression guard: ${VAR:-{}} is parsed by bash as default='{', then the first '}'
+    # closes ${...}, leaving a trailing literal '}'. When TIER_LIMITS is set, this
+    # concatenates: e.g. '{"a":1}' + '}' = '{"a":1}}' — invalid JSON. Use an explicit
+    # conditional to avoid the ambiguous brace nesting.
     local _limits_json; _limits_json="${TIER_LIMITS}"; [[ -z "$_limits_json" ]] && _limits_json="{}"
 
     local max_issues

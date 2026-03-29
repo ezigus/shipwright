@@ -182,7 +182,8 @@ ${build_discoveries}"
 Task tracking (check off items as you complete them):
 $(cat "$TASKS_FILE")"
             else
-                warn "Skipping stale pipeline-tasks.md (was for issue $tasks_issue, current ${current_issue:-none})"
+                warn "Removing stale pipeline-tasks.md (was for issue $tasks_issue, current ${current_issue:-none})"
+                rm -f "$TASKS_FILE"
             fi
         fi
     fi

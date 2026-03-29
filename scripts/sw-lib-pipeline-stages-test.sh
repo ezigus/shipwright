@@ -553,6 +553,13 @@ else
     assert_pass "stage_build skips stale tasks from different issue"
 fi
 
+# The stale tasks file should be deleted after mismatch (not just skipped)
+if [[ ! -f "$TASKS_FILE" ]]; then
+    assert_pass "stage_build removes stale tasks file on issue mismatch"
+else
+    assert_fail "stage_build removes stale tasks file on issue mismatch"
+fi
+
 # Restore mocked sw binary for other tests
 mock_binary "sw" 'mkdir -p src; echo "// auth" > src/auth.js'
 

@@ -160,6 +160,8 @@ show_help() {
     echo -e "  ${CYAN}--audit-agent${RESET}             Run separate auditor agent (haiku) after each iteration"
     echo -e "  ${CYAN}--quality-gates${RESET}           Enable automated quality gates before accepting completion"
     echo -e "  ${CYAN}--definition-of-done${RESET} FILE DoD checklist file — evaluated by AI against git diff"
+    echo -e "  ${CYAN}--dod-diff-max-lines${RESET} N    Max diff lines for DoD evaluator (default: 3000)"
+    echo -e "  ${CYAN}--holistic-diff-max-lines${RESET} N Max diff lines for holistic gate (default: 1000)"
     echo -e "  ${CYAN}--no-auto-extend${RESET}          Disable auto-extension when max iterations reached"
     echo -e "  ${CYAN}--extension-size${RESET} N         Additional iterations per extension (default: 5)"
     echo -e "  ${CYAN}--max-extensions${RESET} N         Max number of auto-extensions (default: 3)"
@@ -357,6 +359,14 @@ if ! [[ "$FAST_TEST_INTERVAL" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if ! [[ "$MAX_RESTARTS" =~ ^[0-9]+$ ]]; then
     error "--max-restarts must be a non-negative integer (got: $MAX_RESTARTS)"
+    exit 1
+fi
+if ! [[ "$DOD_DIFF_MAX_LINES" =~ ^[1-9][0-9]*$ ]]; then
+    error "--dod-diff-max-lines must be a positive integer (got: $DOD_DIFF_MAX_LINES)"
+    exit 1
+fi
+if ! [[ "$HOLISTIC_DIFF_MAX_LINES" =~ ^[1-9][0-9]*$ ]]; then
+    error "--holistic-diff-max-lines must be a positive integer (got: $HOLISTIC_DIFF_MAX_LINES)"
     exit 1
 fi
 
@@ -1314,9 +1324,9 @@ check_definition_of_done() {
         diff_content="${diff_content}
 
 ## Detailed Changes (cumulative diff, capped at ${DOD_DIFF_MAX_LINES} lines)
-$(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -${DOD_DIFF_MAX_LINES} || echo "(no diff)")"
+$(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
     else
-        diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null || echo "(no diff)")"
+        diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
     fi
 
     # Inject verified runtime facts so the evaluator doesn't have to guess
@@ -1505,7 +1515,7 @@ run_holistic_gate() {
         # Cap diff and sanitize gate delimiter tokens to prevent prompt injection
         # via diff content that happens to contain <<<HOLISTIC:PASS>>> or similar strings.
         branch_diff="$(git -C "$PROJECT_ROOT" diff "${merge_base}..HEAD" 2>/dev/null \
-            | head -${HOLISTIC_DIFF_MAX_LINES} \
+            | head -"${HOLISTIC_DIFF_MAX_LINES}" \
             | sed 's/<<<HOLISTIC:PASS>>>/[REDACTED:HOLISTIC:PASS]/g; s/<<<HOLISTIC:FAIL>>>/[REDACTED:HOLISTIC:FAIL]/g' \
             || echo "(none)")"
     else

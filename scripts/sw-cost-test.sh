@@ -198,7 +198,10 @@ fi
 # Functional test: write mock events and verify dashboard parses them
 # Use dynamic epoch (yesterday) so the test doesn't rot as time passes
 _mock_epoch=$(( $(date +%s) - 86400 ))
-_mock_ts=$(date -u -r "$_mock_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d "@$_mock_epoch" '+%Y-%m-%dT%H:%M:%SZ')
+_mock_ts=$(date -u -r "$_mock_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || \
+           date -u -d "@$_mock_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || \
+  { echo "ERROR: date command failed on both macOS and GNU formats" >&2; exit 1; }
+[[ -z "$_mock_ts" ]] && { echo "ERROR: timestamp is empty after date command" >&2; exit 1; }
 mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
 cat > "$TEST_TEMP_DIR/home/.shipwright/events.jsonl" <<EVTEOF
 {"ts":"${_mock_ts}","type":"loop.context_efficiency","iteration":"1","raw_prompt_chars":"200000","trimmed_prompt_chars":"180000","trim_ratio":"10.0","budget_utilization":"100.0","budget_chars":"180000","job_id":"test-1"}

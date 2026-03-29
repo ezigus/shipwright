@@ -1480,7 +1480,7 @@ run_holistic_gate() {
     file_count=$(git -C "$PROJECT_ROOT" ls-files | wc -l | tr -d ' ')
     local cumulative_stat
     cumulative_stat="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | tail -1 || echo "(no changes)")"
-    local merge_base branch_stat
+    local merge_base branch_stat branch_diff
     local base_branch
     base_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||')"
     [[ -z "$base_branch" ]] && base_branch="main"
@@ -1488,8 +1488,15 @@ run_holistic_gate() {
         || git -C "$PROJECT_ROOT" merge-base "$base_branch" HEAD 2>/dev/null || echo "")"
     if [[ -n "$merge_base" ]]; then
         branch_stat="$(git -C "$PROJECT_ROOT" diff --stat "${merge_base}..HEAD" 2>/dev/null | head -40 || echo "(none)")"
+        # Cap at 300 lines and sanitize gate delimiter tokens to prevent prompt injection
+        # via diff content that happens to contain <<<HOLISTIC:PASS>>> or similar strings.
+        branch_diff="$(git -C "$PROJECT_ROOT" diff "${merge_base}..HEAD" 2>/dev/null \
+            | head -300 \
+            | sed 's/<<<HOLISTIC:PASS>>>/[REDACTED:HOLISTIC:PASS]/g; s/<<<HOLISTIC:FAIL>>>/[REDACTED:HOLISTIC:FAIL]/g' \
+            || echo "(none)")"
     else
         branch_stat="(unable to determine base)"
+        branch_diff="(unable to determine base)"
     fi
     local test_summary=""
     if [[ -n "${TEST_OUTPUT:-}" ]]; then
@@ -1513,16 +1520,25 @@ ${test_summary:+- Test output: ${test_summary}}
 ## Cumulative Git Changes (this loop run only)
 $(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -40 || echo "(none — loop may have started after feature was committed)")
 
-## Full Branch Changes vs Base (authoritative — use this to evaluate goal completion)
+## Full Branch Changes vs Base — Stats (authoritative — use this to evaluate goal completion)
 ${branch_stat}
 
 NOTE: If the loop was restarted after prior work, "this loop run" may show only minor fixes
 while "full branch" shows the complete feature. Use the full branch diff to judge goal achievement.
 
+## Full Branch Diff (first 300 lines — may be truncated; rely on stats above for files not shown)
+${branch_diff}
+
+## Evaluation Rules
+- Default to FAIL. Only output PASS if you are certain every component of the goal is complete.
+- Partial completion is FAIL. Gaps in test coverage for new behavior are FAIL.
+- If the diff is truncated, use the stats section above to assess files not shown; do not FAIL solely due to truncation.
+
 ## Your Task
-Based on the goal and the cumulative work done:
-1. Has the goal been FULLY achieved (not partially)?
-2. Is there any critical gap that would make this unacceptable for production?
+For each distinct component of the goal, explicitly state whether it is complete or missing.
+Then answer:
+1. Is EVERY component of the goal fully achieved — not partially?
+2. Is there any gap that would make this unacceptable for production?
 
 If the goal is fully achieved, output your verdict on its own line as:
   <<<HOLISTIC:PASS>>>
@@ -2501,14 +2517,14 @@ ${GOAL}"
             GATES_PASSED_NO_SIGNAL=true
         fi
 
-        # Early exit: all gates passing and no changes made — work is already done.
-        # Run holistic gate to verify the goal is fully achieved before exiting.
-        if [[ "$GATES_PASSED_NO_SIGNAL" == "true" ]] && [[ "${new_commits:-0}" -eq 0 ]] && run_holistic_gate; then
+        # Early exit: all gates passing — work is done regardless of whether commits were made.
+        # Holistic gate runs as a final independent confirmation before exiting.
+        if [[ "$GATES_PASSED_NO_SIGNAL" == "true" ]] && run_holistic_gate; then
             STATUS="complete"
-            emit_event "loop.early_exit_no_changes" \
+            emit_event "loop.early_exit_gates_passed" \
                 "iteration=$ITERATION" \
                 "total_commits=$TOTAL_COMMITS" 2>/dev/null || true
-            echo -e "  ${GREEN}${BOLD}✓ Complete — no changes needed, all gates passing${RESET}"
+            echo -e "  ${GREEN}${BOLD}✓ Complete — all gates passing${RESET}"
             write_state
             write_progress
             show_summary

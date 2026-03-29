@@ -1762,21 +1762,21 @@ fi
 # ─── Early exit when no changes and all gates pass (#245) ─────────────────────
 
 # Test: early exit block exists after GATES_PASSED_NO_SIGNAL is set
-if grep -A10 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'loop.early_exit_no_changes'; then
-    assert_pass "early exit check present after GATES_PASSED_NO_SIGNAL (no changes + all gates = complete)"
+if grep -A10 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'loop.early_exit_gates_passed'; then
+    assert_pass "early exit check present after GATES_PASSED_NO_SIGNAL (all gates = complete)"
 else
-    assert_fail "early exit check present after GATES_PASSED_NO_SIGNAL (no changes + all gates = complete)"
+    assert_fail "early exit check present after GATES_PASSED_NO_SIGNAL (all gates = complete)"
 fi
 
-# Test: early exit requires zero new_commits
-if grep -B2 'loop.early_exit_no_changes' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'new_commits.*-eq 0'; then
-    assert_pass "early exit guarded by new_commits == 0"
+# Test: early exit does NOT require zero new_commits (fires regardless of commits when gates pass)
+if grep -B2 'loop.early_exit_gates_passed' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'new_commits.*-eq 0'; then
+    assert_fail "early exit must NOT be guarded by new_commits == 0 (should exit on any gates-pass)"
 else
-    assert_fail "early exit guarded by new_commits == 0"
+    assert_pass "early exit not guarded by new_commits == 0 — exits when gates pass regardless of commits"
 fi
 
 # Test: early exit sets STATUS=complete
-if grep -B5 'loop.early_exit_no_changes' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'STATUS="complete"'; then
+if grep -B5 'loop.early_exit_gates_passed' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'STATUS="complete"'; then
     assert_pass "early exit sets STATUS=complete"
 else
     assert_fail "early exit sets STATUS=complete"
@@ -1788,6 +1788,41 @@ if grep -A2 'GATES_PASSED_NO_SIGNAL.*true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'r
     assert_pass "early exit runs run_holistic_gate before completing"
 else
     assert_fail "early exit runs run_holistic_gate before completing"
+fi
+
+# Test: holistic gate prompt includes actual diff content (not just stats)
+if grep -q 'branch_diff' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "holistic gate collects branch_diff for prompt"
+else
+    assert_fail "holistic gate collects branch_diff for prompt"
+fi
+
+# Test: holistic gate prompt includes Evaluation Rules with default-to-FAIL bias
+if grep -q 'Default to FAIL' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "holistic gate prompt has default-to-FAIL conservative bias"
+else
+    assert_fail "holistic gate prompt has default-to-FAIL conservative bias"
+fi
+
+# Test: holistic gate prompt requires per-component goal verification
+if grep -q 'each distinct component' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "holistic gate prompt requires per-component goal verification"
+else
+    assert_fail "holistic gate prompt requires per-component goal verification"
+fi
+
+# Test: branch_diff is sanitized to prevent delimiter injection
+if grep -q 'REDACTED:HOLISTIC:PASS\|REDACTED:HOLISTIC:FAIL' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "branch_diff sanitized to prevent holistic gate delimiter injection"
+else
+    assert_fail "branch_diff sanitized to prevent holistic gate delimiter injection"
+fi
+
+# Test: diff truncation notice in prompt (so model knows to rely on stats for large branches)
+if grep -q 'may be truncated' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "holistic gate prompt notes diff may be truncated"
+else
+    assert_fail "holistic gate prompt notes diff may be truncated"
 fi
 
 # Test: new_commits recomputed after post-audit cleanup commit

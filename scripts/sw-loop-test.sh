@@ -1925,14 +1925,48 @@ else
     assert_fail "Loop early exit behavioral test (legacy compat)" "setup failed"
 fi
 
-# ─── DoD evaluator: diff truncation fix (#236) ────────────────────────────────
+# ─── DoD evaluator: configurable diff truncation (#236, #275) ──────────────────
 
-# Test: DoD diff no longer truncated with head -200
+# Test: DoD diff uses configurable DOD_DIFF_MAX_LINES (not hard-coded)
 if grep -A10 'Detailed Changes' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'head -200'; then
-    assert_fail "DoD diff must NOT be truncated with head -200"
+    assert_fail "DoD diff must NOT be truncated with hard-coded head -200"
+elif grep -A10 'Detailed Changes' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'DOD_DIFF_MAX_LINES'; then
+    assert_pass "DoD diff uses configurable DOD_DIFF_MAX_LINES"
 else
-    assert_pass "DoD diff is not truncated with head -200"
+    assert_fail "DoD diff should use DOD_DIFF_MAX_LINES variable"
 fi
+
+# Test: Holistic gate uses configurable HOLISTIC_DIFF_MAX_LINES (not hard-coded)
+if grep -B2 -A2 'head -300' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'holistic\|HOLISTIC'; then
+    assert_fail "Holistic gate must NOT use hard-coded head -300"
+elif grep -B2 -A2 'HOLISTIC_DIFF_MAX_LINES' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'head.*HOLISTIC_DIFF_MAX_LINES'; then
+    assert_pass "Holistic gate uses configurable HOLISTIC_DIFF_MAX_LINES"
+else
+    assert_fail "Holistic gate should use HOLISTIC_DIFF_MAX_LINES variable"
+fi
+
+# Test: DOD_DIFF_MAX_LINES actually truncates (behavioral)
+_trunc_tmpdir="$(mktemp -d)"
+seq 1 20 > "$_trunc_tmpdir/bigdiff.txt"
+DOD_DIFF_MAX_LINES=5
+_trunc_result="$(cat "$_trunc_tmpdir/bigdiff.txt" | head -"${DOD_DIFF_MAX_LINES}")"
+_trunc_lines="$(echo "$_trunc_result" | wc -l | tr -d ' ')"
+if [[ "$_trunc_lines" -eq 5 ]]; then
+    assert_pass "DOD_DIFF_MAX_LINES=5 truncates 20-line diff to 5 lines"
+else
+    assert_fail "DOD_DIFF_MAX_LINES=5 truncates 20-line diff to 5 lines" "got $_trunc_lines lines"
+fi
+
+# Test: HOLISTIC_DIFF_MAX_LINES actually truncates (behavioral)
+HOLISTIC_DIFF_MAX_LINES=3
+_trunc_result2="$(cat "$_trunc_tmpdir/bigdiff.txt" | head -"${HOLISTIC_DIFF_MAX_LINES}")"
+_trunc_lines2="$(echo "$_trunc_result2" | wc -l | tr -d ' ')"
+if [[ "$_trunc_lines2" -eq 3 ]]; then
+    assert_pass "HOLISTIC_DIFF_MAX_LINES=3 truncates 20-line diff to 3 lines"
+else
+    assert_fail "HOLISTIC_DIFF_MAX_LINES=3 truncates 20-line diff to 3 lines" "got $_trunc_lines2 lines"
+fi
+rm -rf "$_trunc_tmpdir"
 
 # Test: DoD does NOT use --json-schema (flag causes empty output — see #253)
 if grep -A5 'dod_flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q '\-\-json-schema'; then

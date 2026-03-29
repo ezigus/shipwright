@@ -119,6 +119,19 @@ if $PRUNE_ORPHANS; then
         _kill_orphan "$pid" "sw-loop.sh"
     done < <(pgrep -f "sw-loop.sh" 2>/dev/null || true)
 
+    # Orphaned claude -p processes (prompt-mode only — never interactive sessions)
+    # pgrep -f "claude -p" matches shipwright-spawned evaluator/gate processes
+    while IFS= read -r pid; do
+        [[ -z "$pid" || "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+        _kill_orphan "$pid" "claude -p (orphaned)"
+    done < <(pgrep -f "claude -p" 2>/dev/null || true)
+
+    # Orphaned timeout wrappers around claude (spawned by TIMEOUT_CMD in loop/pipeline)
+    while IFS= read -r pid; do
+        [[ -z "$pid" || "$pid" == "$$" || "$pid" == "$PPID" ]] && continue
+        _kill_orphan "$pid" "timeout.*claude (orphaned)"
+    done < <(pgrep -f "timeout.*claude" 2>/dev/null || true)
+
     if [[ "$orphans_found" -eq 0 ]]; then
         success "No orphaned pipeline processes found."
     else

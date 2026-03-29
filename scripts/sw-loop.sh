@@ -1226,7 +1226,10 @@ AUDIT_PROMPT
 
     local exit_code=0
     local audit_err_log="${audit_log%.log}-stderr.log"
-    claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>"$audit_err_log" || exit_code=$?
+    claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>"$audit_err_log" &
+    CHILD_PID=$!
+    wait "$CHILD_PID" 2>/dev/null || exit_code=$?
+    CHILD_PID=""
 
     # Guard: empty or near-empty response means the evaluator failed to run
     local audit_log_bytes
@@ -1384,7 +1387,10 @@ DOD_PROMPT
     fi
 
     local dod_err_log="${dod_log%.log}-stderr.log"
-    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>"$dod_err_log" || true
+    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>"$dod_err_log" &
+    CHILD_PID=$!
+    wait "$CHILD_PID" 2>/dev/null || true
+    CHILD_PID=""
 
     # Guard: if claude -p returned nothing, surface a diagnostic rather than silently failing.
     local dod_log_bytes
@@ -1582,7 +1588,10 @@ HOLISTIC_PROMPT
     fi
 
     local holistic_stderr_log="${holistic_log%.log}-stderr.log"
-    claude -p "$holistic_prompt" "${hol_flags[@]}" > "$holistic_log" 2>"$holistic_stderr_log" || true
+    claude -p "$holistic_prompt" "${hol_flags[@]}" > "$holistic_log" 2>"$holistic_stderr_log" &
+    CHILD_PID=$!
+    wait "$CHILD_PID" 2>/dev/null || true
+    CHILD_PID=""
 
     if [[ ! -s "$holistic_log" ]] || ! grep -q '[^[:space:]]' "$holistic_log"; then
         warn "  Holistic: empty response from evaluator — treating as fail"
@@ -1853,8 +1862,13 @@ show_summary() {
 
 CHILD_PID=""
 _MEM_ANALYZE_PID=""
+_CLEANUP_DONE=false
+EXIT_CODE=""
 
 cleanup() {
+    # Guard against recursive invocation (EXIT trap fires after signal trap's exit call)
+    [[ "${_CLEANUP_DONE:-false}" == "true" ]] && return 0
+    _CLEANUP_DONE=true
     echo ""
     warn "Loop interrupted at iteration $ITERATION"
 
@@ -1899,10 +1913,14 @@ cleanup() {
     "$SCRIPT_DIR/sw-heartbeat.sh" clear "${PIPELINE_JOB_ID:-loop-$$}" 2>/dev/null || true
 
     show_summary
-    exit 130
+    # For signal-driven exits (SIGINT/SIGTERM), use exit code 130.
+    # For EXIT-trap-driven exits (errors, normal returns), let the shell exit
+    # naturally with whatever code triggered the exit.
+    [[ -n "${EXIT_CODE:-}" ]] && exit "$EXIT_CODE"
 }
 
-trap cleanup SIGINT SIGTERM
+trap 'EXIT_CODE=130; cleanup' SIGINT SIGTERM
+trap cleanup EXIT
 
 # ─── Multi-Agent: Worktree Setup ─────────────────────────────────────────────
 
@@ -2217,17 +2235,44 @@ wait_for_multi_completion() {
 }
 
 cleanup_multi_agent() {
-    if [[ -n "$MULTI_WINDOW_NAME" ]]; then
-        # Send Ctrl-C to all panes using stable pane IDs (not indices)
-        # Pane IDs (%0, %1, ...) are unaffected by pane-base-index setting
-        local pane_id
-        while IFS= read -r pane_id; do
-            [[ -z "$pane_id" ]] && continue
-            tmux send-keys -t "$pane_id" C-c 2>/dev/null || true
-        done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_id}' 2>/dev/null || true)
-        sleep 1
-        tmux kill-window -t "$MULTI_WINDOW_NAME" 2>/dev/null || true
-    fi
+    [[ -z "${MULTI_WINDOW_NAME:-}" ]] && return 0
+
+    # Collect shell PIDs from each pane before sending any signals.
+    # #{pane_pid} is the PID of the shell running inside the pane — reliable
+    # and unaffected by pane-base-index settings.
+    local pane_pids=()
+    local ppid
+    while IFS= read -r ppid; do
+        [[ -n "$ppid" ]] && pane_pids+=("$ppid")
+    done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_pid}' 2>/dev/null || true)
+
+    # Send Ctrl-C to all panes (SIGINT for graceful shutdown of running commands)
+    local pane_id
+    while IFS= read -r pane_id; do
+        [[ -z "$pane_id" ]] && continue
+        tmux send-keys -t "$pane_id" C-c 2>/dev/null || true
+    done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_id}' 2>/dev/null || true)
+
+    # SIGTERM process trees (children first, then shell)
+    local wpid
+    for wpid in "${pane_pids[@]}"; do
+        [[ -z "$wpid" ]] && continue
+        pkill -P "$wpid" 2>/dev/null || true
+        kill "$wpid" 2>/dev/null || true
+    done
+
+    sleep 3
+
+    # SIGKILL any survivors
+    for wpid in "${pane_pids[@]}"; do
+        [[ -z "$wpid" ]] && continue
+        kill -0 "$wpid" 2>/dev/null || continue
+        warn "Force-killing multi-agent worker PID $wpid"
+        pkill -9 -P "$wpid" 2>/dev/null || true
+        kill -9 "$wpid" 2>/dev/null || true
+    done
+
+    tmux kill-window -t "$MULTI_WINDOW_NAME" 2>/dev/null || true
 
     # Clean up completion markers
     rm -f "$LOG_DIR"/.agent-*-complete 2>/dev/null || true

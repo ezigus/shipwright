@@ -374,7 +374,23 @@ cmd_prune() {
     agent_count=$(jq -r '.agents | length' "$REGISTRY_FILE")
 
     if [[ "$agent_count" -eq 0 ]]; then
-        $quiet || echo -e "  ${DIM}No agents to prune.${RESET}"
+        $quiet || echo -e "  ${DIM}No agents in registry — scanning tmux for orphaned swarm sessions.${RESET}"
+        # Fallback: kill any swarm-* tmux sessions directly when registry is empty/missing
+        local orphan_count=0
+        if command -v tmux >/dev/null 2>&1; then
+            while IFS= read -r orphan_sess; do
+                [[ -z "$orphan_sess" ]] && continue
+                tmux kill-session -t "$orphan_sess" 2>/dev/null || true
+                orphan_count=$((orphan_count + 1))
+                $quiet || echo -e "  ${RED}✗${RESET} Killed orphaned swarm session (no registry): ${orphan_sess}"
+            done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^swarm-' || true)
+        fi
+        if [[ "$orphan_count" -eq 0 ]]; then
+            $quiet || echo -e "  ${DIM}No orphaned swarm sessions found.${RESET}"
+        else
+            emit_event "swarm_prune" "pruned=${orphan_count}" "source=tmux_fallback" 2>/dev/null || true
+            $quiet || success "Pruned ${orphan_count} orphaned swarm session(s) via tmux fallback"
+        fi
         return 0
     fi
 

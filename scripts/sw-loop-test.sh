@@ -1925,13 +1925,24 @@ else
     assert_fail "Loop early exit behavioral test (legacy compat)" "setup failed"
 fi
 
-# ─── DoD evaluator: diff truncation fix (#236) ────────────────────────────────
+# ─── DoD evaluator: configurable diff truncation (#236, #275) ──────────────────
 
-# Test: DoD diff no longer truncated with head -200
+# Test: DoD diff uses configurable DOD_DIFF_MAX_LINES (not hard-coded)
 if grep -A10 'Detailed Changes' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'head -200'; then
-    assert_fail "DoD diff must NOT be truncated with head -200"
+    assert_fail "DoD diff must NOT be truncated with hard-coded head -200"
+elif grep -A10 'Detailed Changes' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'DOD_DIFF_MAX_LINES'; then
+    assert_pass "DoD diff uses configurable DOD_DIFF_MAX_LINES"
 else
-    assert_pass "DoD diff is not truncated with head -200"
+    assert_fail "DoD diff should use DOD_DIFF_MAX_LINES variable"
+fi
+
+# Test: Holistic gate uses configurable HOLISTIC_DIFF_MAX_LINES (not hard-coded)
+if grep -B2 -A2 'head -300' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'holistic\|HOLISTIC'; then
+    assert_fail "Holistic gate must NOT use hard-coded head -300"
+elif grep -B2 -A2 'HOLISTIC_DIFF_MAX_LINES' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'head.*HOLISTIC_DIFF_MAX_LINES'; then
+    assert_pass "Holistic gate uses configurable HOLISTIC_DIFF_MAX_LINES"
+else
+    assert_fail "Holistic gate should use HOLISTIC_DIFF_MAX_LINES variable"
 fi
 
 # Test: DoD does NOT use --json-schema (flag causes empty output — see #253)

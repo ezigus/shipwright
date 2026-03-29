@@ -1790,6 +1790,41 @@ else
     assert_fail "early exit runs run_holistic_gate before completing"
 fi
 
+# Test: holistic gate prompt includes actual diff content (not just stats)
+if grep -q 'branch_diff' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "holistic gate collects branch_diff for prompt"
+else
+    assert_fail "holistic gate collects branch_diff for prompt"
+fi
+
+# Test: holistic gate prompt includes Evaluation Rules with default-to-FAIL bias
+if grep -q 'Default to FAIL' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "holistic gate prompt has default-to-FAIL conservative bias"
+else
+    assert_fail "holistic gate prompt has default-to-FAIL conservative bias"
+fi
+
+# Test: holistic gate prompt requires per-component goal verification
+if grep -q 'each distinct component' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "holistic gate prompt requires per-component goal verification"
+else
+    assert_fail "holistic gate prompt requires per-component goal verification"
+fi
+
+# Test: branch_diff is sanitized to prevent delimiter injection
+if grep -q 'REDACTED:HOLISTIC:PASS\|REDACTED:HOLISTIC:FAIL' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "branch_diff sanitized to prevent holistic gate delimiter injection"
+else
+    assert_fail "branch_diff sanitized to prevent holistic gate delimiter injection"
+fi
+
+# Test: diff truncation notice in prompt (so model knows to rely on stats for large branches)
+if grep -q 'may be truncated' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "holistic gate prompt notes diff may be truncated"
+else
+    assert_fail "holistic gate prompt notes diff may be truncated"
+fi
+
 # Test: new_commits recomputed after post-audit cleanup commit
 if grep -B5 'Quality gates' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'commits_after_cleanup'; then
     assert_pass "new_commits recomputed after post-audit cleanup"

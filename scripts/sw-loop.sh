@@ -1488,7 +1488,12 @@ run_holistic_gate() {
         || git -C "$PROJECT_ROOT" merge-base "$base_branch" HEAD 2>/dev/null || echo "")"
     if [[ -n "$merge_base" ]]; then
         branch_stat="$(git -C "$PROJECT_ROOT" diff --stat "${merge_base}..HEAD" 2>/dev/null | head -40 || echo "(none)")"
-        branch_diff="$(git -C "$PROJECT_ROOT" diff "${merge_base}..HEAD" 2>/dev/null | head -150 || echo "(none)")"
+        # Cap at 300 lines and sanitize gate delimiter tokens to prevent prompt injection
+        # via diff content that happens to contain <<<HOLISTIC:PASS>>> or similar strings.
+        branch_diff="$(git -C "$PROJECT_ROOT" diff "${merge_base}..HEAD" 2>/dev/null \
+            | head -300 \
+            | sed 's/<<<HOLISTIC:PASS>>>/[REDACTED:HOLISTIC:PASS]/g; s/<<<HOLISTIC:FAIL>>>/[REDACTED:HOLISTIC:FAIL]/g' \
+            || echo "(none)")"
     else
         branch_stat="(unable to determine base)"
         branch_diff="(unable to determine base)"
@@ -1521,13 +1526,13 @@ ${branch_stat}
 NOTE: If the loop was restarted after prior work, "this loop run" may show only minor fixes
 while "full branch" shows the complete feature. Use the full branch diff to judge goal achievement.
 
-## Full Branch Diff (first 150 lines — read this to verify what actually changed)
+## Full Branch Diff (first 300 lines — may be truncated; rely on stats above for files not shown)
 ${branch_diff}
 
 ## Evaluation Rules
 - Default to FAIL. Only output PASS if you are certain every component of the goal is complete.
 - Partial completion is FAIL. Gaps in test coverage for new behavior are FAIL.
-- If the diff above is insufficient to judge completeness, that is FAIL.
+- If the diff is truncated, use the stats section above to assess files not shown; do not FAIL solely due to truncation.
 
 ## Your Task
 For each distinct component of the goal, explicitly state whether it is complete or missing.

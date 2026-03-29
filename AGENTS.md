@@ -814,7 +814,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-daemon-state-test.sh` | 383 | Unit tests for state management |
 | `scripts/sw-lib-daemon-triage-test.sh` | 267 | Unit tests for triage scoring |
 | `scripts/sw-lib-error-actionability-test.sh` | 149 |  |
-| `scripts/sw-lib-helpers-test.sh` | 229 | Unit tests for shared helper functions |
+| `scripts/sw-lib-helpers-test.sh` | 258 | Unit tests for shared helper functions |
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 544 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 253 | Unit tests for quality |

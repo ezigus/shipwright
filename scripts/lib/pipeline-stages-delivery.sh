@@ -206,7 +206,7 @@ stage_pr() {
 
     local test_summary=""
     if [[ -s "$test_log" ]]; then
-        test_summary=$(tail -10 "$test_log" | sed 's/\x1b\[[0-9;]*m//g')
+        test_summary=$(tail -10 "$test_log" | strip_ansi)
     fi
 
     local review_summary=""

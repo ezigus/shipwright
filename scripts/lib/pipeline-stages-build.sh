@@ -470,9 +470,9 @@ stage_test() {
         error "Tests failed (exit code: $test_exit)"
         # Extract most relevant error section (assertion failures, stack traces)
         local relevant_output=""
-        relevant_output=$(grep -A5 -E 'FAIL|AssertionError|Expected.*but.*got|Error:|panic:|assert' "$test_log" 2>/dev/null | tail -40 || true)
+        relevant_output=$(grep -A5 -E 'FAIL|AssertionError|Expected.*but.*got|Error:|panic:|assert' "$test_log" 2>/dev/null | tail -40 | strip_ansi || true)
         if [[ -z "$relevant_output" ]]; then
-            relevant_output=$(tail -40 "$test_log")
+            relevant_output=$(tail -40 "$test_log" | strip_ansi)
         fi
         echo "$relevant_output"
 
@@ -483,11 +483,11 @@ stage_test() {
             log_lines="${log_lines:-0}"
             local log_excerpt
             if [[ "$log_lines" -lt 60 ]]; then
-                log_excerpt="$(cat "$test_log" 2>/dev/null || true)"
+                log_excerpt="$(cat "$test_log" 2>/dev/null | strip_ansi || true)"
             else
-                log_excerpt="$(head -20 "$test_log" 2>/dev/null || true)
+                log_excerpt="$(head -20 "$test_log" 2>/dev/null | strip_ansi || true)
 ... (${log_lines} lines total, showing head + tail) ...
-$(tail -30 "$test_log" 2>/dev/null || true)"
+$(tail -30 "$test_log" 2>/dev/null | strip_ansi || true)"
             fi
             gh_comment_issue "$ISSUE_NUMBER" "❌ **Tests failed** (exit code: $test_exit, ${log_lines} lines)
 \`\`\`
@@ -523,7 +523,7 @@ ${log_excerpt}
     # Post test results to GitHub
     if [[ -n "$ISSUE_NUMBER" ]]; then
         local test_summary
-        test_summary=$(tail -10 "$test_log" | sed 's/\x1b\[[0-9;]*m//g')
+        test_summary=$(tail -10 "$test_log" | strip_ansi)
         local cov_line=""
         [[ -n "$coverage" ]] && cov_line="
 **Coverage:** ${coverage}%"

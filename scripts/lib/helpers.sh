@@ -361,6 +361,17 @@ _sw_github_url() {
     echo "https://github.com/${repo}"
 }
 
+# ─── ANSI Escape Code Stripping ─────────────────────────────────────────
+# Removes ANSI/CSI escape sequences from text (colors, cursor, formatting)
+# Usage: clean=$(strip_ansi "$raw_text")  OR  echo "$raw" | strip_ansi
+strip_ansi() {
+    if [[ $# -gt 0 ]]; then
+        printf '%s' "$1" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g'
+    else
+        sed 's/\x1b\[[0-9;]*[a-zA-Z]//g'
+    fi
+}
+
 # ─── Secret Sanitization ─────────────────────────────────────────────
 # Redacts sensitive data from strings before logging
 # Redacts: ANTHROPIC_API_KEY, GITHUB_TOKEN, sk-* patterns, Bearer tokens

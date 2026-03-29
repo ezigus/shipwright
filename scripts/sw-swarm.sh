@@ -375,15 +375,21 @@ cmd_prune() {
 
     if [[ "$agent_count" -eq 0 ]]; then
         $quiet || echo -e "  ${DIM}No agents in registry — scanning tmux for orphaned swarm sessions.${RESET}"
-        # Fallback: kill any swarm-* tmux sessions directly when registry is empty/missing
+        # Fallback: only kill detached swarm-* sessions (attached==0) to avoid
+        # terminating active sessions when the registry is temporarily missing/corrupt.
         local orphan_count=0
         if command -v tmux >/dev/null 2>&1; then
-            while IFS= read -r orphan_sess; do
-                [[ -z "$orphan_sess" ]] && continue
+            while IFS= read -r sess_line; do
+                [[ -z "$sess_line" ]] && continue
+                local orphan_sess orphan_attached
+                orphan_sess="${sess_line%% *}"
+                orphan_attached="${sess_line##* }"
+                # Only kill sessions with no attached clients
+                [[ "$orphan_attached" != "0" ]] && continue
                 tmux kill-session -t "$orphan_sess" 2>/dev/null || true
                 orphan_count=$((orphan_count + 1))
-                $quiet || echo -e "  ${RED}✗${RESET} Killed orphaned swarm session (no registry): ${orphan_sess}"
-            done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^swarm-' || true)
+                $quiet || echo -e "  ${RED}✗${RESET} Killed orphaned swarm session (no registry, detached): ${orphan_sess}"
+            done < <(tmux list-sessions -F '#{session_name} #{session_attached}' 2>/dev/null | grep '^swarm-' || true)
         fi
         if [[ "$orphan_count" -eq 0 ]]; then
             $quiet || echo -e "  ${DIM}No orphaned swarm sessions found.${RESET}"

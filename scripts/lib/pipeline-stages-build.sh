@@ -343,27 +343,41 @@ ${_skill_prompts}
 
     # Session restart capability
     [[ -n "${MAX_RESTARTS_OVERRIDE:-}" ]] && loop_args+=(--max-restarts "$MAX_RESTARTS_OVERRIDE")
-    # Fast test cmd: CLI override takes priority, then JSON config
+    # Fast test cmd: CLI override > template stage config > template defaults > daemon-config.json baseline
     local _fast_test_cmd="${FAST_TEST_CMD_OVERRIDE:-}"
     if [[ -z "$_fast_test_cmd" ]]; then
         _fast_test_cmd=$(jq -r --arg id "build" \
-            '(.stages[] | select(.id == $id) | .config.fast_test_cmd) // ""' \
+            '(.stages[] | select(.id == $id) | .config.fast_test_cmd) // .defaults.fast_test_cmd // ""' \
             "$PIPELINE_CONFIG" 2>/dev/null) || true
         [[ "$_fast_test_cmd" == "null" ]] && _fast_test_cmd=""
     fi
+    if [[ -z "$_fast_test_cmd" ]]; then
+        local _daemon_cfg="${PROJECT_ROOT:-$PWD}/.claude/daemon-config.json"
+        if [[ -f "$_daemon_cfg" ]]; then
+            _fast_test_cmd=$(jq -r '.fast_test_cmd // ""' "$_daemon_cfg" 2>/dev/null) || true
+            [[ "$_fast_test_cmd" == "null" ]] && _fast_test_cmd=""
+        fi
+    fi
     [[ -n "$_fast_test_cmd" ]] && loop_args+=(--fast-test-cmd "$_fast_test_cmd")
 
-    # Fast test interval: CLI override takes priority, then JSON config
+    # Fast test interval: CLI override > template stage config > template defaults > daemon-config.json baseline
     local _fast_test_interval="${FAST_TEST_INTERVAL_OVERRIDE:-}"
     if [[ -z "$_fast_test_interval" ]]; then
         _fast_test_interval=$(jq -r --arg id "build" \
-            '(.stages[] | select(.id == $id) | .config.fast_test_interval) // ""' \
+            '(.stages[] | select(.id == $id) | .config.fast_test_interval) // .defaults.fast_test_interval // ""' \
             "$PIPELINE_CONFIG" 2>/dev/null) || true
         [[ "$_fast_test_interval" == "null" ]] && _fast_test_interval=""
     fi
+    if [[ -z "$_fast_test_interval" ]]; then
+        local _daemon_cfg="${PROJECT_ROOT:-$PWD}/.claude/daemon-config.json"
+        if [[ -f "$_daemon_cfg" ]]; then
+            _fast_test_interval=$(jq -r '.fast_test_interval // ""' "$_daemon_cfg" 2>/dev/null) || true
+            [[ "$_fast_test_interval" == "null" ]] && _fast_test_interval=""
+        fi
+    fi
     if [[ -n "$_fast_test_interval" ]]; then
         if ! [[ "$_fast_test_interval" =~ ^[1-9][0-9]*$ ]]; then
-            warn "Ignoring invalid build stage config fast_test_interval='$_fast_test_interval' in pipeline template (expected positive integer)."
+            warn "Ignoring invalid fast_test_interval='$_fast_test_interval' (expected positive integer; check template stage config, template defaults, or daemon-config.json)."
             _fast_test_interval=""
         fi
     fi

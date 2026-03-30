@@ -271,8 +271,108 @@ else
     assert_pass "Invalid fast_test_interval ignored"
 fi
 
+# Test: template .defaults.fast_test_cmd is used when build stage has no stage-level config
+echo "" > "$_sw_args_log"
+jq '.stages = [(.stages[] | if .id == "build" then .config = {max_iterations: 20} else . end)] | .defaults.fast_test_cmd = "npm run test:defaults" | .defaults.fast_test_interval = 4' \
+    "$PIPELINE_CONFIG" > "$PIPELINE_CONFIG.tmp" && mv "$PIPELINE_CONFIG.tmp" "$PIPELINE_CONFIG"
+unset FAST_TEST_CMD_OVERRIDE FAST_TEST_INTERVAL_OVERRIDE
+stage_build 2>/dev/null || true
+_sw_args_defaults=$(cat "$_sw_args_log" 2>/dev/null || echo "")
+assert_contains "defaults.fast_test_cmd forwarded" "$_sw_args_defaults" "--fast-test-cmd"
+assert_contains "defaults.fast_test_interval forwarded" "$_sw_args_defaults" "--fast-test-interval"
+if echo "$_sw_args_defaults" | grep -q "test:defaults"; then
+    assert_pass "defaults.fast_test_cmd value correct"
+else
+    assert_fail "defaults.fast_test_cmd value correct" "expected 'test:defaults' in sw args"
+fi
+
+# Test: template stage config overrides template defaults
+echo "" > "$_sw_args_log"
+jq '.stages = [(.stages[] | if .id == "build" then .config += {max_iterations: 20, fast_test_cmd: "npm run test:stage"} else . end)] | .defaults.fast_test_cmd = "npm run test:defaults"' \
+    "$PIPELINE_CONFIG" > "$PIPELINE_CONFIG.tmp" && mv "$PIPELINE_CONFIG.tmp" "$PIPELINE_CONFIG"
+stage_build 2>/dev/null || true
+_sw_args_stage_wins=$(cat "$_sw_args_log" 2>/dev/null || echo "")
+if echo "$_sw_args_stage_wins" | grep -q "test:stage"; then
+    assert_pass "Stage config overrides template defaults"
+else
+    assert_fail "Stage config overrides template defaults" "expected 'test:stage' to win over 'test:defaults'"
+fi
+
+# Test: daemon-config.json baseline is used when template has no fast_test settings
+echo "" > "$_sw_args_log"
+jq '.stages = [(.stages[] | if .id == "build" then .config = {max_iterations: 20} else . end)] | del(.defaults.fast_test_cmd) | del(.defaults.fast_test_interval)' \
+    "$PIPELINE_CONFIG" > "$PIPELINE_CONFIG.tmp" && mv "$PIPELINE_CONFIG.tmp" "$PIPELINE_CONFIG"
+_daemon_cfg_test="$PROJECT_ROOT/.claude/daemon-config.json"
+_daemon_cfg_existed=false
+[[ -f "$_daemon_cfg_test" ]] && _daemon_cfg_existed=true
+_daemon_cfg_orig=$(cat "$_daemon_cfg_test" 2>/dev/null || echo "")
+echo '{"fast_test_cmd": "npm run test:daemon", "fast_test_interval": 6}' > "$_daemon_cfg_test"
+stage_build 2>/dev/null || true
+_sw_args_daemon=$(cat "$_sw_args_log" 2>/dev/null || echo "")
+if [[ "$_daemon_cfg_existed" == "true" ]]; then
+    echo "$_daemon_cfg_orig" > "$_daemon_cfg_test"
+else
+    rm -f "$_daemon_cfg_test"
+fi
+assert_contains "daemon-config.json fast_test_cmd used as baseline" "$_sw_args_daemon" "--fast-test-cmd"
+if echo "$_sw_args_daemon" | grep -q "test:daemon"; then
+    assert_pass "daemon-config.json fast_test_cmd value correct"
+else
+    assert_fail "daemon-config.json fast_test_cmd value correct" "expected 'test:daemon' in sw args"
+fi
+assert_contains "daemon-config.json fast_test_interval used as baseline" "$_sw_args_daemon" "--fast-test-interval"
+if echo "$_sw_args_daemon" | grep -q -- "--fast-test-interval 6\|--fast-test-interval=6"; then
+    assert_pass "daemon-config.json fast_test_interval value correct"
+else
+    assert_fail "daemon-config.json fast_test_interval value correct" "expected '--fast-test-interval 6' in sw args"
+fi
+
+# Test: template defaults override daemon-config.json (middle-layer precedence)
+echo "" > "$_sw_args_log"
+jq '.stages = [(.stages[] | if .id == "build" then .config = {max_iterations: 20} else . end)] | .defaults.fast_test_cmd = "npm run test:template-default"' \
+    "$PIPELINE_CONFIG" > "$PIPELINE_CONFIG.tmp" && mv "$PIPELINE_CONFIG.tmp" "$PIPELINE_CONFIG"
+_daemon_cfg_existed2=false
+[[ -f "$_daemon_cfg_test" ]] && _daemon_cfg_existed2=true
+_daemon_cfg_orig2=$(cat "$_daemon_cfg_test" 2>/dev/null || echo "")
+echo '{"fast_test_cmd": "npm run test:daemon-baseline"}' > "$_daemon_cfg_test"
+stage_build 2>/dev/null || true
+_sw_args_middle=$(cat "$_sw_args_log" 2>/dev/null || echo "")
+if [[ "$_daemon_cfg_existed2" == "true" ]]; then
+    echo "$_daemon_cfg_orig2" > "$_daemon_cfg_test"
+else
+    rm -f "$_daemon_cfg_test"
+fi
+if echo "$_sw_args_middle" | grep -q "test:template-default"; then
+    assert_pass "Template defaults override daemon-config.json baseline"
+else
+    assert_fail "Template defaults override daemon-config.json baseline" "expected 'test:template-default' to win over 'test:daemon-baseline'"
+fi
+
+# Test: CLI override (FAST_TEST_CMD_OVERRIDE) wins over all layers
+echo "" > "$_sw_args_log"
+jq '.stages = [(.stages[] | if .id == "build" then .config += {max_iterations: 20, fast_test_cmd: "npm run test:stage"} else . end)] | .defaults.fast_test_cmd = "npm run test:defaults"' \
+    "$PIPELINE_CONFIG" > "$PIPELINE_CONFIG.tmp" && mv "$PIPELINE_CONFIG.tmp" "$PIPELINE_CONFIG"
+_daemon_cfg_existed3=false
+[[ -f "$_daemon_cfg_test" ]] && _daemon_cfg_existed3=true
+_daemon_cfg_orig3=$(cat "$_daemon_cfg_test" 2>/dev/null || echo "")
+echo '{"fast_test_cmd": "npm run test:daemon"}' > "$_daemon_cfg_test"
+export FAST_TEST_CMD_OVERRIDE="npm run test:cli"
+stage_build 2>/dev/null || true
+_sw_args_cli=$(cat "$_sw_args_log" 2>/dev/null || echo "")
+if [[ "$_daemon_cfg_existed3" == "true" ]]; then
+    echo "$_daemon_cfg_orig3" > "$_daemon_cfg_test"
+else
+    rm -f "$_daemon_cfg_test"
+fi
+unset FAST_TEST_CMD_OVERRIDE
+if echo "$_sw_args_cli" | grep -q "test:cli"; then
+    assert_pass "CLI override wins over all config layers"
+else
+    assert_fail "CLI override wins over all config layers" "expected 'test:cli' to win over all other layers"
+fi
+
 # Restore pipeline config to original (no fast test settings)
-jq '.stages = [(.stages[] | if .id == "build" then .config = {max_iterations: 20} else . end)]' \
+jq '.stages = [(.stages[] | if .id == "build" then .config = {max_iterations: 20} else . end)] | del(.defaults.fast_test_cmd) | del(.defaults.fast_test_interval)' \
     "$PIPELINE_CONFIG" > "$PIPELINE_CONFIG.tmp" && mv "$PIPELINE_CONFIG.tmp" "$PIPELINE_CONFIG"
 
 # Restore original sw mock

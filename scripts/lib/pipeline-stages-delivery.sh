@@ -31,7 +31,7 @@ stage_pr() {
         local branch_name
         branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
         local commit_count
-        commit_count=$(_safe_base_log --oneline | wc -l | xargs)
+        commit_count=$(_trim "$(_safe_base_log --oneline | wc -l)")
         {
             echo "# PR Draft (local mode)"
             echo ""
@@ -48,7 +48,7 @@ stage_pr() {
 
     # ── PR Hygiene Checks (informational) ──
     local hygiene_commit_count
-    hygiene_commit_count=$(_safe_base_log --oneline | wc -l | xargs)
+    hygiene_commit_count=$(_trim "$(_safe_base_log --oneline | wc -l)")
     hygiene_commit_count="${hygiene_commit_count:-0}"
 
     if [[ "$hygiene_commit_count" -gt 20 ]]; then
@@ -77,7 +77,7 @@ stage_pr() {
         return 1
     fi
     local real_file_count
-    real_file_count=$(echo "$real_files" | wc -l | xargs)
+    real_file_count=$(_trim "$(echo "$real_files" | wc -l)")
     info "PR quality gate: ${real_file_count} real file(s) changed"
 
     # Commit any uncommitted changes left by the build agent
@@ -231,7 +231,7 @@ stage_pr() {
     diff_stats=$(_safe_base_diff --stat | tail -1 || echo "")
 
     local commit_count
-    commit_count=$(_safe_base_log --oneline | wc -l | xargs)
+    commit_count=$(_trim "$(_safe_base_log --oneline | wc -l)")
 
     local total_dur=""
     if [[ -n "$PIPELINE_START_EPOCH" ]]; then

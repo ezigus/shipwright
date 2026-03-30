@@ -111,7 +111,7 @@ docs_gen_architecture_table() {
                 [[ "$basename" == sw-tracker-*.sh ]] && continue
                 [[ "$basename" == sw-github-*.sh ]] && continue
                 local lines purpose
-                lines=$(wc -l < "$f" | xargs)
+                lines=$(wc -l < "$f" | sed 's/^[[:space:]]*//')
                 # Extract purpose from header: "# ║  shipwright X — Description  ║"
                 purpose=$(sed -n '3p' "$f" 2>/dev/null | sed 's/^# *║ *//;s/ *║ *$//;s/.*— *//' || echo "")
                 if [[ -z "$purpose" || "$purpose" == "#"* ]]; then
@@ -122,7 +122,7 @@ docs_gen_architecture_table() {
             # Also include the CLI router
             if [[ -f "$REPO_DIR/scripts/sw" ]]; then
                 local sw_lines
-                sw_lines=$(wc -l < "$REPO_DIR/scripts/sw" | xargs)
+                sw_lines=$(wc -l < "$REPO_DIR/scripts/sw" | sed 's/^[[:space:]]*//')
                 echo "| \`scripts/sw\` | ${sw_lines} | CLI router — dispatches subcommands via exec |"
             fi
             ;;
@@ -135,7 +135,7 @@ docs_gen_architecture_table() {
                 [[ "$f" == *-test.sh ]] && continue
                 local basename lines purpose
                 basename=$(basename "$f")
-                lines=$(wc -l < "$f" | xargs)
+                lines=$(wc -l < "$f" | sed 's/^[[:space:]]*//')
                 purpose=$(head -5 "$f" | grep -m1 '# .*—' | sed 's/.*— *//;s/ *║.*//' || echo "")
                 echo "| \`scripts/${basename}\` | ${lines} | ${purpose} |"
             done
@@ -148,7 +148,7 @@ docs_gen_architecture_table() {
                 [[ -f "$f" ]] || continue
                 local basename lines purpose
                 basename=$(basename "$f")
-                lines=$(wc -l < "$f" | xargs)
+                lines=$(wc -l < "$f" | sed 's/^[[:space:]]*//')
                 purpose=$(head -5 "$f" | grep -m1 '# .*—' | sed 's/.*— *//;s/ *║.*//' || echo "")
                 echo "| \`scripts/${basename}\` | ${lines} | ${purpose} |"
             done
@@ -161,7 +161,7 @@ docs_gen_architecture_table() {
                 [[ -f "$f" ]] || continue
                 local basename lines purpose
                 basename=$(basename "$f")
-                lines=$(wc -l < "$f" | xargs)
+                lines=$(wc -l < "$f" | sed 's/^[[:space:]]*//')
                 purpose=$(head -5 "$f" | grep -m1 '# .*—' | sed 's/.*— *//;s/ *║.*//' || echo "")
                 echo "| \`scripts/${basename}\` | ${lines} | ${purpose} |"
             done
@@ -302,16 +302,16 @@ docs_gen_stats() {
             script_count=$((script_count + 1))
         fi
         local lines
-        lines=$(wc -l < "$f" | xargs)
+        lines=$(wc -l < "$f" | sed 's/^[[:space:]]*//')
         total_lines=$((total_lines + lines))
     done
 
     local template_count=0 team_template_count=0
     if [[ -d "$REPO_DIR/templates/pipelines" ]]; then
-        template_count=$(find "$REPO_DIR/templates/pipelines" -name '*.json' 2>/dev/null | wc -l | xargs)
+        template_count=$(find "$REPO_DIR/templates/pipelines" -name '*.json' 2>/dev/null | wc -l | sed 's/^[[:space:]]*//')
     fi
     if [[ -d "$REPO_DIR/tmux/templates" ]]; then
-        team_template_count=$(find "$REPO_DIR/tmux/templates" -name '*.json' 2>/dev/null | wc -l | xargs)
+        team_template_count=$(find "$REPO_DIR/tmux/templates" -name '*.json' 2>/dev/null | wc -l | sed 's/^[[:space:]]*//')
     fi
 
     echo "- **${script_count}** core scripts + CLI router"

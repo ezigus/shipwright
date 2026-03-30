@@ -1138,7 +1138,7 @@ run_new_function_test_check() {
     # Simple heuristic: if we have new functions but no test file modifications, warn
     if [[ "$test_files_modified" -eq 0 ]]; then
         local func_count
-        func_count=$(echo "$new_functions" | wc -l | xargs)
+        func_count=$(_trim "$(echo "$new_functions" | wc -l)")
         untested_functions="$func_count"
         details="Added ${func_count} new function(s) but no test file modifications detected"
     fi

@@ -769,7 +769,7 @@ preflight_checks() {
 
     # Check for uncommitted changes — offer to stash (excluding daemon-config.json runtime writes)
     local dirty_files
-    dirty_files=$(git status --porcelain 2>/dev/null | grep -v '\.claude/daemon-config\.json' | wc -l | xargs)
+    dirty_files=$(_trim "$(git status --porcelain 2>/dev/null | grep -v '\.claude/daemon-config\.json' | wc -l)")
     if [[ "$dirty_files" -gt 0 ]]; then
         echo -e "  ${YELLOW}⚠${RESET} $dirty_files uncommitted change(s)"
         if [[ "$SKIP_GATES" == "true" ]]; then
@@ -1007,7 +1007,7 @@ run_stage_with_retry() {
             local plan_artifact="${ARTIFACTS_DIR}/plan.md"
             if [[ -s "$plan_artifact" ]]; then
                 local existing_lines
-                existing_lines=$(wc -l < "$plan_artifact" 2>/dev/null | xargs)
+                existing_lines=$(_trim "$(wc -l < "$plan_artifact" 2>/dev/null)")
                 existing_lines="${existing_lines:-0}"
                 if [[ "$existing_lines" -gt 10 ]]; then
                     info "Plan already exists (${existing_lines} lines) — skipping retry, advancing"
@@ -1097,7 +1097,7 @@ run_stage_with_retry() {
             for _af in plan.md design.md test-results.log; do
                 if [[ -s "${ARTIFACTS_DIR}/${_af}" ]]; then
                     local _af_lines
-                    _af_lines=$(wc -l < "${ARTIFACTS_DIR}/${_af}" 2>/dev/null | xargs)
+                    _af_lines=$(_trim "$(wc -l < "${ARTIFACTS_DIR}/${_af}" 2>/dev/null)")
                     _existing_artifacts="${_existing_artifacts}  - ${_af} (${_af_lines} lines)\n"
                 fi
             done
@@ -3001,15 +3001,15 @@ pipeline_status() {
         fi
         if $in_frontmatter; then
             case "$line" in
-                pipeline:*)      p_name="$(echo "${line#pipeline:}" | xargs)" ;;
+                pipeline:*)      p_name="$(_trim "${line#pipeline:}")" ;;
                 goal:*)          p_goal="$(echo "${line#goal:}" | sed 's/^ *"//;s/" *$//')" ;;
-                status:*)        p_status="$(echo "${line#status:}" | xargs)" ;;
+                status:*)        p_status="$(_trim "${line#status:}")" ;;
                 branch:*)        p_branch="$(echo "${line#branch:}" | sed 's/^ *"//;s/" *$//')" ;;
-                current_stage:*) p_stage="$(echo "${line#current_stage:}" | xargs)" ;;
-                started_at:*)    p_started="$(echo "${line#started_at:}" | xargs)" ;;
+                current_stage:*) p_stage="$(_trim "${line#current_stage:}")" ;;
+                started_at:*)    p_started="$(_trim "${line#started_at:}")" ;;
                 issue:*)         p_issue="$(echo "${line#issue:}" | sed 's/^ *"//;s/" *$//')" ;;
-                elapsed:*)       p_elapsed="$(echo "${line#elapsed:}" | xargs)" ;;
-                pr_number:*)     p_pr="$(echo "${line#pr_number:}" | xargs)" ;;
+                elapsed:*)       p_elapsed="$(_trim "${line#elapsed:}")" ;;
+                pr_number:*)     p_pr="$(_trim "${line#pr_number:}")" ;;
             esac
         fi
     done < "$STATE_FILE"
@@ -3046,7 +3046,7 @@ pipeline_status() {
         if $in_stages; then
             if [[ "$line" == "---" || ! "$line" =~ ^" " ]]; then break; fi
             local trimmed
-            trimmed="$(echo "$line" | xargs)"
+            trimmed="$(_trim "$line")"
             if [[ "$trimmed" == *":"* ]]; then
                 local sid="${trimmed%%:*}"
                 local sst="${trimmed#*: }"
@@ -3064,7 +3064,7 @@ pipeline_status() {
 
     if [[ -d "$ARTIFACTS_DIR" ]]; then
         local artifact_count
-        artifact_count=$(find "$ARTIFACTS_DIR" -type f 2>/dev/null | wc -l | xargs)
+        artifact_count=$(_trim "$(find "$ARTIFACTS_DIR" -type f 2>/dev/null | wc -l)")
         if [[ "$artifact_count" -gt 0 ]]; then
             echo ""
             echo -e "  ${BOLD}Artifacts:${RESET} ($artifact_count files)"

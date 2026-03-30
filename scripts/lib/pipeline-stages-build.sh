@@ -409,7 +409,7 @@ ${_skill_prompts}
 
     # Count commits made during build
     local commit_count
-    commit_count=$(_safe_base_log --oneline | wc -l | xargs)
+    commit_count=$(_trim "$(_safe_base_log --oneline | wc -l)")
     info "Build produced ${BOLD}$commit_count${RESET} commit(s)"
 
     # Commit quality evaluation when intelligence is enabled

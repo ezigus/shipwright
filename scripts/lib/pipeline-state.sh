@@ -3,6 +3,17 @@
 [[ -n "${_PIPELINE_STATE_LOADED:-}" ]] && return 0
 _PIPELINE_STATE_LOADED=1
 
+# Ensure _trim is available (normally provided by helpers.sh, but this file
+# may be sourced in test harnesses that stub helpers instead of sourcing them).
+if ! type _trim >/dev/null 2>&1; then
+    _trim() {
+        local s="${1:-}"
+        s="${s#"${s%%[![:space:]]*}"}"
+        s="${s%"${s##*[![:space:]]}"}"
+        printf '%s' "$s"
+    }
+fi
+
 # Defaults for variables normally set by sw-pipeline.sh (safe under set -u).
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
 STAGE_STATUSES="${STAGE_STATUSES:-}"
@@ -550,21 +561,21 @@ resume_state() {
         fi
         if $in_frontmatter; then
             case "$line" in
-                pipeline:*)            PIPELINE_NAME="$(echo "${line#pipeline:}" | xargs)" ;;
+                pipeline:*)            PIPELINE_NAME="$(_trim "${line#pipeline:}")" ;;
                 goal:*)                GOAL="$(echo "${line#goal:}" | sed 's/^ *"//;s/" *$//')" ;;
-                status:*)              PIPELINE_STATUS="$(echo "${line#status:}" | xargs)" ;;
+                status:*)              PIPELINE_STATUS="$(_trim "${line#status:}")" ;;
                 issue:*)               GITHUB_ISSUE="$(echo "${line#issue:}" | sed 's/^ *"//;s/" *$//')" ;;
                 branch:*)              GIT_BRANCH="$(echo "${line#branch:}" | sed 's/^ *"//;s/" *$//')" ;;
-                current_stage:*)       CURRENT_STAGE="$(echo "${line#current_stage:}" | xargs)" ;;
+                current_stage:*)       CURRENT_STAGE="$(_trim "${line#current_stage:}")" ;;
                 current_stage_description:*) ;; # computed field — skip on resume
                 stage_progress:*)      ;; # computed field — skip on resume
-                started_at:*)          STARTED_AT="$(echo "${line#started_at:}" | xargs)" ;;
+                started_at:*)          STARTED_AT="$(_trim "${line#started_at:}")" ;;
                 test_cmd:*)            TEST_CMD="$(echo "${line#test_cmd:}" | sed 's/^ *"//;s/" *$//')" ;;
-                pr_number:*)           PR_NUMBER="$(echo "${line#pr_number:}" | xargs)" ;;
-                progress_comment_id:*) PROGRESS_COMMENT_ID="$(echo "${line#progress_comment_id:}" | xargs)" ;;
+                pr_number:*)           PR_NUMBER="$(_trim "${line#pr_number:}")" ;;
+                progress_comment_id:*) PROGRESS_COMMENT_ID="$(_trim "${line#progress_comment_id:}")" ;;
                 "  "*)
                     local trimmed
-                    trimmed="$(echo "$line" | xargs)"
+                    trimmed="$(_trim "$line")"
                     if [[ "$trimmed" == *":"* ]]; then
                         local sid="${trimmed%%:*}"
                         local sst="${trimmed#*: }"
@@ -617,7 +628,7 @@ ${stage_id}:failed"
     # previous run and must be removed to prevent stale context injection.
     if [[ -n "${TASKS_FILE:-}" && -f "$TASKS_FILE" ]]; then
         local _tasks_issue=""
-        _tasks_issue=$(grep -m1 '^- Issue:' "$TASKS_FILE" 2>/dev/null | sed 's/^- Issue: *//' | xargs || true)
+        _tasks_issue=$(_trim "$(grep -m1 '^- Issue:' "$TASKS_FILE" 2>/dev/null | sed 's/^- Issue: *//')" || true)
         # Intake writes "- Issue: ${GITHUB_ISSUE:-none}" so normalize both sides:
         # treat an empty GITHUB_ISSUE as "none" to avoid deleting goal-based task files on resume.
         local _expected_issue="${GITHUB_ISSUE:-none}"

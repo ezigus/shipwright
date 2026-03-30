@@ -955,6 +955,31 @@ test_patrol_untested_detection() {
     assert_equals "true" "$foo_has_test" "foo has test file"
 }
 
+test_patrol_guards_quiet_period_when_paused() {
+    local poll_src="$SCRIPT_DIR/lib/daemon-poll.sh"
+    # The quiet-period block must contain a PAUSE_FLAG check that gates both
+    # daemon_patrol and the decision engine — verify the guard exists in the block
+    grep -A 5 'issue_count_now.*-eq 0.*active_count_now.*-eq 0' "$poll_src" | grep -q 'PAUSE_FLAG' || \
+        { echo "daemon_poll_loop quiet-period block missing PAUSE_FLAG guard — patrol and decision engine run while paused"; return 1; }
+    # Both daemon_patrol and sw-decide.sh must appear inside the else branch (after the PAUSE_FLAG check)
+    local block
+    block="$(awk '/issue_count_now.*-eq 0.*active_count_now.*-eq 0/,/^        fi$/' "$poll_src" 2>/dev/null || true)"
+    echo "$block" | grep -q 'daemon_patrol' || \
+        { echo "daemon_patrol not found inside quiet-period block"; return 1; }
+    echo "$block" | grep -q 'sw-decide.sh' || \
+        { echo "sw-decide.sh not found inside quiet-period block"; return 1; }
+}
+
+test_patrol_emits_skip_event() {
+    local poll_src="$SCRIPT_DIR/lib/daemon-poll.sh"
+    # When paused, a patrol.skipped_paused event must be emitted for observability
+    grep -q 'patrol.skipped_paused' "$poll_src" || \
+        { echo "Missing patrol.skipped_paused event emission — skip not observable via events.jsonl"; return 1; }
+    # Must be inside the PAUSE_FLAG check (not unconditional)
+    grep -B 3 'patrol.skipped_paused' "$poll_src" | grep -q 'PAUSE_FLAG' || \
+        { echo "patrol.skipped_paused event not guarded by PAUSE_FLAG check"; return 1; }
+}
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 19. Progress assessment detects forward progress (stage change)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2044,6 +2069,8 @@ main() {
         "test_patrol_dora_events:DORA degradation event detection"
         "test_patrol_retry_exhaustion_events:Retry exhaustion event detection"
         "test_patrol_untested_detection:Untested script detection logic"
+        "test_patrol_guards_quiet_period_when_paused:Patrol: quiet-period block guarded by PAUSE_FLAG (covers patrol + decision engine)"
+        "test_patrol_emits_skip_event:Patrol: patrol.skipped_paused event emitted when paused"
         "test_progress_stage_advance:Progress detects stage advancement"
         "test_progress_stuck_detection:Progress detects stuck (no change N checks)"
         "test_progress_repeated_errors:Progress detects repeated error loop"

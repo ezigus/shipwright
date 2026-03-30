@@ -377,7 +377,7 @@ ${_skill_prompts}
     fi
     if [[ -n "$_fast_test_interval" ]]; then
         if ! [[ "$_fast_test_interval" =~ ^[1-9][0-9]*$ ]]; then
-            warn "Ignoring invalid build stage config fast_test_interval='$_fast_test_interval' in pipeline template (expected positive integer)."
+            warn "Ignoring invalid fast_test_interval='$_fast_test_interval' (expected positive integer; check template stage config, template defaults, or daemon-config.json)."
             _fast_test_interval=""
         fi
     fi

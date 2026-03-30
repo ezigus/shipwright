@@ -52,11 +52,13 @@ MOCK
 }
 
 _test_cleanup_hook() {
-    # Kill any tmux sessions spawned during tests before removing temp dir
+    # Kill any tmux sessions spawned during tests before removing temp dir.
+    # Use process substitution with || true so grep returning 1 (no matches)
+    # does not fail the pipeline under set -euo pipefail.
     if command -v tmux >/dev/null 2>&1; then
-        tmux list-sessions -F '#{session_name}' 2>/dev/null \
-            | grep -E '^swarm-' \
-            | while read -r s; do tmux kill-session -t "$s" 2>/dev/null || true; done
+        while IFS= read -r s; do
+            tmux kill-session -t "$s" 2>/dev/null || true
+        done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -E '^swarm-' || true)
     fi
     cleanup_test_env
 }

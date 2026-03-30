@@ -1226,7 +1226,10 @@ AUDIT_PROMPT
 
     local exit_code=0
     local audit_err_log="${audit_log%.log}-stderr.log"
-    claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>"$audit_err_log" || exit_code=$?
+    claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>"$audit_err_log" &
+    CHILD_PID=$!
+    wait "$CHILD_PID" 2>/dev/null || exit_code=$?
+    CHILD_PID=""
 
     # Guard: empty or near-empty response means the evaluator failed to run
     local audit_log_bytes
@@ -1384,14 +1387,18 @@ DOD_PROMPT
     fi
 
     local dod_err_log="${dod_log%.log}-stderr.log"
-    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>"$dod_err_log" || true
+    local dod_exit_code=0
+    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>"$dod_err_log" &
+    CHILD_PID=$!
+    wait "$CHILD_PID" 2>/dev/null || dod_exit_code=$?
+    CHILD_PID=""
 
     # Guard: if claude -p returned nothing, surface a diagnostic rather than silently failing.
     local dod_log_bytes
     dod_log_bytes="$(wc -c < "$dod_log" 2>/dev/null || echo "0")"
     dod_log_bytes="${dod_log_bytes// /}"
     if [[ ! -s "$dod_log" ]] || [[ "$dod_log_bytes" -le 2 ]]; then
-        warn "DoD: claude -p returned empty output — check CLI flags and model availability"
+        warn "DoD: claude -p returned empty output (exit_code=${dod_exit_code}) — check CLI flags and model availability"
         warn "DoD log: $dod_log (${dod_log_bytes} bytes), stderr: $dod_err_log"
         return 1
     fi
@@ -1582,10 +1589,14 @@ HOLISTIC_PROMPT
     fi
 
     local holistic_stderr_log="${holistic_log%.log}-stderr.log"
-    claude -p "$holistic_prompt" "${hol_flags[@]}" > "$holistic_log" 2>"$holistic_stderr_log" || true
+    local holistic_exit_code=0
+    claude -p "$holistic_prompt" "${hol_flags[@]}" > "$holistic_log" 2>"$holistic_stderr_log" &
+    CHILD_PID=$!
+    wait "$CHILD_PID" 2>/dev/null || holistic_exit_code=$?
+    CHILD_PID=""
 
     if [[ ! -s "$holistic_log" ]] || ! grep -q '[^[:space:]]' "$holistic_log"; then
-        warn "  Holistic: empty response from evaluator — treating as fail"
+        warn "  Holistic: empty response from evaluator (exit_code=${holistic_exit_code}) — treating as fail"
         return 1
     fi
 
@@ -1853,10 +1864,13 @@ show_summary() {
 
 CHILD_PID=""
 _MEM_ANALYZE_PID=""
+_CLEANUP_DONE=false
+EXIT_CODE=""
 
 cleanup() {
-    echo ""
-    warn "Loop interrupted at iteration $ITERATION"
+    # Guard against recursive invocation (EXIT trap fires after signal trap's exit call)
+    [[ "${_CLEANUP_DONE:-false}" == "true" ]] && return 0
+    _CLEANUP_DONE=true
 
     # Kill background memory analysis job if running
     [[ -n "${_MEM_ANALYZE_PID:-}" ]] && kill "$_MEM_ANALYZE_PID" 2>/dev/null || true
@@ -1876,33 +1890,42 @@ cleanup() {
     pkill -P $$ 2>/dev/null || true
     wait 2>/dev/null || true
 
-    STATUS="interrupted"
-    write_state
-
-    # Save checkpoint on interruption
-    "$SCRIPT_DIR/sw-checkpoint.sh" save \
-        --stage "build" \
-        --iteration "$ITERATION" \
-        --git-sha "$(git rev-parse HEAD 2>/dev/null || echo unknown)" 2>/dev/null || true
-
-    # Save Claude context for meaningful resume (goal, findings, test output)
-    export SW_LOOP_GOAL="$GOAL"
-    export SW_LOOP_ITERATION="$ITERATION"
-    export SW_LOOP_STATUS="$STATUS"
-    export SW_LOOP_TEST_OUTPUT="${TEST_OUTPUT:-}"
-    export SW_LOOP_FINDINGS="${LOG_ENTRIES:-}"
-    # shellcheck disable=SC2155
-    export SW_LOOP_MODIFIED="$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')"
-    "$SCRIPT_DIR/sw-checkpoint.sh" save-context --stage build 2>/dev/null || true
-
-    # Clear heartbeat
+    # Clear heartbeat (always — whether signal-driven or not)
     "$SCRIPT_DIR/sw-heartbeat.sh" clear "${PIPELINE_JOB_ID:-loop-$$}" 2>/dev/null || true
 
-    show_summary
-    exit 130
+    # Interruption-specific: only when EXIT_CODE is set (SIGINT/SIGTERM triggered this)
+    if [[ -n "${EXIT_CODE:-}" ]]; then
+        echo ""
+        warn "Loop interrupted at iteration $ITERATION"
+
+        STATUS="interrupted"
+        write_state
+
+        # Save checkpoint for resume
+        "$SCRIPT_DIR/sw-checkpoint.sh" save \
+            --stage "build" \
+            --iteration "$ITERATION" \
+            --git-sha "$(git rev-parse HEAD 2>/dev/null || echo unknown)" 2>/dev/null || true
+
+        # Save Claude context for meaningful resume (goal, findings, test output)
+        export SW_LOOP_GOAL="$GOAL"
+        export SW_LOOP_ITERATION="$ITERATION"
+        export SW_LOOP_STATUS="$STATUS"
+        export SW_LOOP_TEST_OUTPUT="${TEST_OUTPUT:-}"
+        export SW_LOOP_FINDINGS="${LOG_ENTRIES:-}"
+        # shellcheck disable=SC2155
+        export SW_LOOP_MODIFIED="$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')"
+        "$SCRIPT_DIR/sw-checkpoint.sh" save-context --stage build 2>/dev/null || true
+
+        show_summary
+        exit "$EXIT_CODE"
+    fi
+    # For EXIT-trap-driven exits (errors, normal returns), let the shell exit
+    # naturally with whatever code triggered the exit.
 }
 
-trap cleanup SIGINT SIGTERM
+trap 'EXIT_CODE=130; cleanup' SIGINT SIGTERM
+trap cleanup EXIT
 
 # ─── Multi-Agent: Worktree Setup ─────────────────────────────────────────────
 
@@ -2217,17 +2240,44 @@ wait_for_multi_completion() {
 }
 
 cleanup_multi_agent() {
-    if [[ -n "$MULTI_WINDOW_NAME" ]]; then
-        # Send Ctrl-C to all panes using stable pane IDs (not indices)
-        # Pane IDs (%0, %1, ...) are unaffected by pane-base-index setting
-        local pane_id
-        while IFS= read -r pane_id; do
-            [[ -z "$pane_id" ]] && continue
-            tmux send-keys -t "$pane_id" C-c 2>/dev/null || true
-        done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_id}' 2>/dev/null || true)
-        sleep 1
-        tmux kill-window -t "$MULTI_WINDOW_NAME" 2>/dev/null || true
-    fi
+    [[ -z "${MULTI_WINDOW_NAME:-}" ]] && return 0
+
+    # Collect shell PIDs from each pane before sending any signals.
+    # #{pane_pid} is the PID of the shell running inside the pane — reliable
+    # and unaffected by pane-base-index settings.
+    local pane_pids=()
+    local ppid
+    while IFS= read -r ppid; do
+        [[ -n "$ppid" ]] && pane_pids+=("$ppid")
+    done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_pid}' 2>/dev/null || true)
+
+    # Send Ctrl-C to all panes (SIGINT for graceful shutdown of running commands)
+    local pane_id
+    while IFS= read -r pane_id; do
+        [[ -z "$pane_id" ]] && continue
+        tmux send-keys -t "$pane_id" C-c 2>/dev/null || true
+    done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_id}' 2>/dev/null || true)
+
+    # SIGTERM process trees (children first, then shell)
+    local wpid
+    for wpid in "${pane_pids[@]}"; do
+        [[ -z "$wpid" ]] && continue
+        pkill -P "$wpid" 2>/dev/null || true
+        kill "$wpid" 2>/dev/null || true
+    done
+
+    sleep 3
+
+    # SIGKILL any survivors
+    for wpid in "${pane_pids[@]}"; do
+        [[ -z "$wpid" ]] && continue
+        kill -0 "$wpid" 2>/dev/null || continue
+        warn "Force-killing multi-agent worker PID $wpid"
+        pkill -9 -P "$wpid" 2>/dev/null || true
+        kill -9 "$wpid" 2>/dev/null || true
+    done
+
+    tmux kill-window -t "$MULTI_WINDOW_NAME" 2>/dev/null || true
 
     # Clean up completion markers
     rm -f "$LOG_DIR"/.agent-*-complete 2>/dev/null || true

@@ -812,12 +812,12 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-daemon-state-test.sh` | 383 | Unit tests for state management |
 | `scripts/sw-lib-daemon-triage-test.sh` | 267 | Unit tests for triage scoring |
 | `scripts/sw-lib-error-actionability-test.sh` | 149 |  |
-| `scripts/sw-lib-helpers-test.sh` | 258 | Unit tests for shared helper functions |
+| `scripts/sw-lib-helpers-test.sh` | 271 | Unit tests for shared helper functions |
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 544 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 253 | Unit tests for quality |
 | `scripts/sw-lib-pipeline-stages-test.sh` | 395 | Unit tests for stage functions |
-| `scripts/sw-lib-pipeline-state-test.sh` | 457 | Unit tests for pipeline state |
+| `scripts/sw-lib-pipeline-state-test.sh` | 498 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 281 | Validate agent pane log viewing, searching, |
 | `scripts/sw-loop-test.sh` | 2197 | Validate continuous agent loop harness |

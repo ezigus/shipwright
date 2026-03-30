@@ -617,7 +617,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-connect.sh` | 624 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 600 | Context Engine for Pipeline Stages |
 | `scripts/sw-cost.sh` | 1013 | Token Usage & Cost Intelligence |
-| `scripts/sw-daemon.sh` | 1521 | Autonomous GitHub Issue Watcher |
+| `scripts/sw-daemon.sh` | 1526 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 510 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 1939 | SQLite Persistence Layer |
 | `scripts/sw-decide.sh` | 691 | Shipwright Autonomous Decision Engine |
@@ -660,7 +660,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 445 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 444 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1076 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 3200 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 3209 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 749 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 688 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 834 | Predictive & Proactive Intelligence |
@@ -762,7 +762,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-connect-test.sh` | 822 | Validate dashboard connection, heartbeat |
 | `scripts/sw-context-test.sh` | 219 | Context Engine for Pipeline Stages tests |
 | `scripts/sw-cost-test.sh` | 238 | Validate token usage & cost intelligence |
-| `scripts/sw-daemon-test.sh` | 2256 | Unit tests for daemon metrics, health, alerting |
+| `scripts/sw-daemon-test.sh` | 2271 | Unit tests for daemon metrics, health, alerting |
 | `scripts/sw-dashboard-e2e-test.sh` | 591 | full live validation |
 | `scripts/sw-dashboard-test.sh` | 250 | validates dashboard structure |
 | `scripts/sw-db-test.sh` | 971 | SQLite Persistence Layer Test Suite |
@@ -807,7 +807,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-audit-trail-test.sh` | 311 |  |
 | `scripts/sw-lib-compat-test.sh` | 297 | Unit tests for cross-platform helpers |
 | `scripts/sw-lib-compound-audit-test.sh` | 450 |  |
-| `scripts/sw-lib-daemon-dispatch-test.sh` | 413 | Unit tests for spawn/reap/queue |
+| `scripts/sw-lib-daemon-dispatch-test.sh` | 414 | Unit tests for spawn/reap/queue |
 | `scripts/sw-lib-daemon-failure-test.sh` | 213 | Unit tests for failure handling |
 | `scripts/sw-lib-daemon-patrol-test.sh` | 343 | Unit tests for all patrol functions |
 | `scripts/sw-lib-daemon-poll-test.sh` | 344 | Unit tests for poll, health, cleanup |
@@ -818,7 +818,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 544 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 253 | Unit tests for quality |
-| `scripts/sw-lib-pipeline-stages-test.sh` | 395 | Unit tests for stage functions |
+| `scripts/sw-lib-pipeline-stages-test.sh` | 441 | Unit tests for stage functions |
 | `scripts/sw-lib-pipeline-state-test.sh` | 498 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 281 | Validate agent pane log viewing, searching, |

@@ -349,6 +349,16 @@ rc=0
 stage_pr 2>/dev/null || rc=$?
 if [[ "$rc" -eq 1 ]]; then assert_pass "PR rejects when no real code changes"; else assert_pass "PR quality gate executed (rc=$rc)"; fi
 
+# Regression test for #279: .github/ changes must be treated as real changes
+(cd "$PROJECT_ROOT" && git checkout main 2>/dev/null) || true
+(cd "$PROJECT_ROOT" && git checkout -b feat/github-workflow-fix 2>/dev/null) || true
+mkdir -p "$PROJECT_ROOT/.github/workflows"
+echo "# workflow fix" > "$PROJECT_ROOT/.github/workflows/test.yml"
+(cd "$PROJECT_ROOT" && git add .github && git commit -m "fix workflow" 2>/dev/null) || true
+rc=0
+stage_pr 2>/dev/null || rc=$?
+if [[ "$rc" -ne 1 ]]; then assert_pass "PR accepts .github/ changes as real code"; else assert_fail "PR accepts .github/ changes as real code" ".github/ incorrectly excluded from real-changes detection"; fi
+
 # ─── Tests: detect_task_type ────────────────────────────────────────────────
 print_test_section "detect_task_type"
 

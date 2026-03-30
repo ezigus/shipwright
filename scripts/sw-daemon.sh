@@ -453,6 +453,16 @@ load_config() {
     SELF_OPTIMIZE=$(jq -r '.self_optimize // false' "$config_file")
     OPTIMIZE_INTERVAL=$(jq -r '.optimize_interval // '"$(type policy_get >/dev/null 2>&1 && policy_get ".daemon.optimize_interval_cycles" "10" || echo "10")"'' "$config_file")
 
+    # pipeline shutdown grace periods (seconds)
+    DAEMON_SHUTDOWN_TIMEOUT=$(jq -r '.daemon_shutdown_timeout // 30' "$config_file")
+    export DAEMON_SHUTDOWN_TIMEOUT
+    PIPELINE_KILL_GRACE=$(jq -r '.pipeline_kill_grace // 25' "$config_file")
+    export PIPELINE_KILL_GRACE
+    if [[ "$PIPELINE_KILL_GRACE" -ge "$DAEMON_SHUTDOWN_TIMEOUT" ]]; then
+        PIPELINE_KILL_GRACE=$((DAEMON_SHUTDOWN_TIMEOUT - 5))
+        daemon_log WARN "pipeline_kill_grace >= daemon_shutdown_timeout — clamped to ${PIPELINE_KILL_GRACE}s"
+    fi
+
     # intelligence engine settings (default "auto" = enable when Claude CLI available)
     INTELLIGENCE_ENABLED=$(jq -r '.intelligence.enabled // "auto"' "$config_file")
     INTELLIGENCE_CACHE_TTL=$(jq -r '.intelligence.cache_ttl_seconds // 3600' "$config_file")
@@ -645,8 +655,8 @@ cleanup_on_exit() {
                 fi
             done <<< "$child_pids"
             if [[ $killed -gt 0 ]]; then
-                daemon_log INFO "Sent SIGTERM to ${killed} pipeline process(es) — waiting 5s"
-                sleep 5
+                daemon_log INFO "Sent SIGTERM to ${killed} pipeline process(es) — waiting ${DAEMON_SHUTDOWN_TIMEOUT:-30}s"
+                sleep "${DAEMON_SHUTDOWN_TIMEOUT:-30}"
                 # Force-kill any that didn't exit
                 while IFS= read -r cpid; do
                     [[ -z "$cpid" ]] && continue

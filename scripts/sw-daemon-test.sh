@@ -2061,6 +2061,38 @@ test_optimize_scheduled_via_self_optimize() {
     fi
 }
 
+test_shutdown_timeout_loaded_from_config() {
+    local daemon_src="$SCRIPT_DIR/sw-daemon.sh"
+    # load_config() must read both DAEMON_SHUTDOWN_TIMEOUT and PIPELINE_KILL_GRACE from config
+    if ! awk '/^load_config\(\)/{in_fn=1} in_fn && /^\}$/{in_fn=0} in_fn' "$daemon_src" \
+        | grep -q 'daemon_shutdown_timeout'; then
+        echo "DAEMON_SHUTDOWN_TIMEOUT not loaded from config in load_config()"
+        return 1
+    fi
+    if ! awk '/^load_config\(\)/{in_fn=1} in_fn && /^\}$/{in_fn=0} in_fn' "$daemon_src" \
+        | grep -q 'pipeline_kill_grace'; then
+        echo "PIPELINE_KILL_GRACE not loaded from config in load_config()"
+        return 1
+    fi
+}
+
+test_shutdown_timeout_used_in_cleanup() {
+    local daemon_src="$SCRIPT_DIR/sw-daemon.sh"
+    local pipeline_src="$SCRIPT_DIR/sw-pipeline.sh"
+    # cleanup_on_exit in sw-daemon.sh must reference DAEMON_SHUTDOWN_TIMEOUT (not hardcoded sleep 5)
+    if ! awk '/^cleanup_on_exit\(\)/{in_fn=1} in_fn && /^\}$/{in_fn=0} in_fn' "$daemon_src" \
+        | grep -q 'DAEMON_SHUTDOWN_TIMEOUT'; then
+        echo "cleanup_on_exit in sw-daemon.sh does not reference DAEMON_SHUTDOWN_TIMEOUT"
+        return 1
+    fi
+    # cleanup_on_exit in sw-pipeline.sh must reference PIPELINE_KILL_GRACE (not hardcoded sleep 2)
+    if ! awk '/^cleanup_on_exit\(\)/{in_fn=1} in_fn && /^\}$/{in_fn=0} in_fn' "$pipeline_src" \
+        | grep -q 'PIPELINE_KILL_GRACE'; then
+        echo "cleanup_on_exit in sw-pipeline.sh does not reference PIPELINE_KILL_GRACE"
+        return 1
+    fi
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2155,6 +2187,8 @@ main() {
         "test_daemon_single_instance_behavioral:SingleInstance: behavioral — live PID blocks, stale PID yields STALE"
         "test_optimize_not_spawned_in_reap:Optimize: optimize_full_analysis not spawned as background job in daemon-dispatch.sh"
         "test_optimize_scheduled_via_self_optimize:Optimize: daemon_self_optimize called on OPTIMIZE_INTERVAL cadence in poll loop"
+        "test_shutdown_timeout_loaded_from_config:ShutdownTimeout: DAEMON_SHUTDOWN_TIMEOUT and PIPELINE_KILL_GRACE loaded from config"
+        "test_shutdown_timeout_used_in_cleanup:ShutdownTimeout: cleanup_on_exit uses configurable variables not hardcoded sleeps"
     )
 
     for entry in "${tests[@]}"; do

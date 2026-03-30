@@ -65,7 +65,7 @@ stage_pr() {
 
     # ── PR Quality Gate: reject PRs with no real code changes ──
     local real_files
-    real_files=$(_safe_base_diff --name-only | grep -v '^\.claude/' | grep -v '^\.github/' || true)
+    real_files=$(_safe_base_diff --name-only | grep -v '^\.claude/' || true)
     if [[ -z "$real_files" ]]; then
         error "No real code changes detected — only pipeline artifacts (.claude/ logs)."
         error "The build agent did not produce meaningful changes. Skipping PR creation."

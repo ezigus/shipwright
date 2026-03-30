@@ -710,7 +710,7 @@ cleanup_on_exit() {
         _our_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ') || true
         if [[ "${_our_pgid:-}" == "$$" ]]; then
             kill -- -$$ 2>/dev/null || true
-            sleep 2
+            sleep "${PIPELINE_KILL_GRACE:-25}"
             kill -9 -- -$$ 2>/dev/null || true
         fi
     fi

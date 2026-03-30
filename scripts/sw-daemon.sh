@@ -455,13 +455,22 @@ load_config() {
 
     # pipeline shutdown grace periods (seconds)
     DAEMON_SHUTDOWN_TIMEOUT=$(jq -r '.daemon_shutdown_timeout // 30' "$config_file")
+    if ! [[ "$DAEMON_SHUTDOWN_TIMEOUT" =~ ^[0-9]+$ ]]; then
+        daemon_log WARN "Invalid daemon_shutdown_timeout in config: $DAEMON_SHUTDOWN_TIMEOUT (using default: 30)"
+        DAEMON_SHUTDOWN_TIMEOUT="30"
+    fi
     export DAEMON_SHUTDOWN_TIMEOUT
     PIPELINE_KILL_GRACE=$(jq -r '.pipeline_kill_grace // 25' "$config_file")
-    export PIPELINE_KILL_GRACE
+    if ! [[ "$PIPELINE_KILL_GRACE" =~ ^[0-9]+$ ]]; then
+        daemon_log WARN "Invalid pipeline_kill_grace in config: $PIPELINE_KILL_GRACE (using default: 25)"
+        PIPELINE_KILL_GRACE="25"
+    fi
     if [[ "$PIPELINE_KILL_GRACE" -ge "$DAEMON_SHUTDOWN_TIMEOUT" ]]; then
         PIPELINE_KILL_GRACE=$((DAEMON_SHUTDOWN_TIMEOUT - 5))
+        [[ "$PIPELINE_KILL_GRACE" -lt 1 ]] && PIPELINE_KILL_GRACE=1
         daemon_log WARN "pipeline_kill_grace >= daemon_shutdown_timeout — clamped to ${PIPELINE_KILL_GRACE}s"
     fi
+    export PIPELINE_KILL_GRACE
 
     # intelligence engine settings (default "auto" = enable when Claude CLI available)
     INTELLIGENCE_ENABLED=$(jq -r '.intelligence.enabled // "auto"' "$config_file")

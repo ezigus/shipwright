@@ -489,11 +489,6 @@ daemon_reap_completed() {
             memory_finalize_pipeline "$_job_state" "$_job_artifacts" 2>/dev/null || true
         fi
 
-        # Trigger learning after pipeline reap
-        if type optimize_full_analysis &>/dev/null; then
-            optimize_full_analysis &>/dev/null &
-        fi
-
         # Clean up progress tracking for this job
         daemon_clear_progress "$issue_num"
 

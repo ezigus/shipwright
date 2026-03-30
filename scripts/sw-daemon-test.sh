@@ -955,6 +955,45 @@ test_patrol_untested_detection() {
     assert_equals "true" "$foo_has_test" "foo has test file"
 }
 
+test_patrol_guards_quiet_period_when_paused() {
+    local poll_src="$SCRIPT_DIR/lib/daemon-poll.sh"
+    # Extract the quiet-period if/else block
+    local block
+    block="$(awk '/issue_count_now.*-eq 0.*active_count_now.*-eq 0/,/^        fi$/' "$poll_src" 2>/dev/null || true)"
+    [[ -n "$block" ]] || \
+        { echo "Failed to locate daemon_poll_loop quiet-period block in daemon-poll.sh"; return 1; }
+    # Split into paused (then) branch and else branch on the first bare 'else'
+    local paused_branch else_branch
+    paused_branch="$(printf '%s\n' "$block" | sed '/^[[:space:]]*else[[:space:]]*$/,$d')"
+    else_branch="$(printf '%s\n' "$block" | sed '1,/^[[:space:]]*else[[:space:]]*$/d')"
+    [[ -n "$else_branch" ]] || \
+        { echo "Quiet-period block is missing an else branch — daemon_patrol/decision engine not guarded"; return 1; }
+    # daemon_patrol and sw-decide.sh must NOT be in the paused branch
+    echo "$paused_branch" | grep -q 'daemon_patrol' && \
+        { echo "daemon_patrol must not run while PAUSE_FLAG is set (found in paused branch)"; return 1; }
+    echo "$paused_branch" | grep -q 'sw-decide.sh' && \
+        { echo "sw-decide.sh must not run while PAUSE_FLAG is set (found in paused branch)"; return 1; }
+    # Both must appear in the else (active) branch
+    echo "$else_branch" | grep -q 'daemon_patrol' || \
+        { echo "daemon_patrol not found inside quiet-period else branch"; return 1; }
+    echo "$else_branch" | grep -q 'sw-decide.sh' || \
+        { echo "sw-decide.sh not found inside quiet-period else branch"; return 1; }
+}
+
+test_patrol_emits_skip_event() {
+    local poll_src="$SCRIPT_DIR/lib/daemon-poll.sh"
+    # When paused, a patrol.skipped_paused event must be emitted for observability
+    grep -q 'patrol.skipped_paused' "$poll_src" || \
+        { echo "Missing patrol.skipped_paused event emission — skip not observable via events.jsonl"; return 1; }
+    # Must be emitted inside the PAUSE_FLAG-guarded block (not unconditionally)
+    local pause_block
+    pause_block="$(awk '/if \[\[ -f "\$PAUSE_FLAG" \]\]/{in_block=1} in_block{print} in_block && /^[[:space:]]*fi$/{exit}' "$poll_src" 2>/dev/null || true)"
+    [[ -n "$pause_block" ]] || \
+        { echo "if [[ -f \"\$PAUSE_FLAG\" ]] block not found in daemon-poll.sh"; return 1; }
+    echo "$pause_block" | grep -q 'patrol.skipped_paused' || \
+        { echo "patrol.skipped_paused event not emitted inside PAUSE_FLAG-guarded block"; return 1; }
+}
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 19. Progress assessment detects forward progress (stage change)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2044,6 +2083,8 @@ main() {
         "test_patrol_dora_events:DORA degradation event detection"
         "test_patrol_retry_exhaustion_events:Retry exhaustion event detection"
         "test_patrol_untested_detection:Untested script detection logic"
+        "test_patrol_guards_quiet_period_when_paused:Patrol: quiet-period block guarded by PAUSE_FLAG (covers patrol + decision engine)"
+        "test_patrol_emits_skip_event:Patrol: patrol.skipped_paused event emitted when paused"
         "test_progress_stage_advance:Progress detects stage advancement"
         "test_progress_stuck_detection:Progress detects stuck (no change N checks)"
         "test_progress_repeated_errors:Progress detects repeated error loop"

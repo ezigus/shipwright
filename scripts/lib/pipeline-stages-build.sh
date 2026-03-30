@@ -361,6 +361,12 @@ ${_skill_prompts}
             "$PIPELINE_CONFIG" 2>/dev/null) || true
         [[ "$_fast_test_interval" == "null" ]] && _fast_test_interval=""
     fi
+    if [[ -n "$_fast_test_interval" ]]; then
+        if ! [[ "$_fast_test_interval" =~ ^[1-9][0-9]*$ ]]; then
+            warn "Ignoring invalid build stage config fast_test_interval='$_fast_test_interval' in pipeline template (expected positive integer)."
+            _fast_test_interval=""
+        fi
+    fi
     [[ -n "$_fast_test_interval" ]] && loop_args+=(--fast-test-interval "$_fast_test_interval")
 
     # Definition of Done: use plan-extracted DoD if available

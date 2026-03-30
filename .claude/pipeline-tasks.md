@@ -1,9 +1,6 @@
-# Tasks — bug: pipeline-tasks.md not cleared on resume — stale tasks injected into build loop
+# Pipeline Tasks — bug: pipeline-tasks.md not cleared on resume — stale tasks injected into build loop
 
-## Status: In Progress
-Pipeline: autonomous | Branch: fix/bug-pipeline-tasks-md-not-cleared-on-res-232
-
-## Checklist
+## Implementation Checklist
 - [ ] 1.1 Verify TASKS_FILE initialization across all entry points
 - [ ] 1.2 Test extract_issue_from_tasks_file() with 5+ metadata formats
 - [ ] 1.3 Trace issue number normalization (initialize → resume → build)
@@ -20,6 +17,8 @@ Pipeline: autonomous | Branch: fix/bug-pipeline-tasks-md-not-cleared-on-res-232
 - [ ] 4.2 Add ADR explaining three-layer validation
 - [ ] 4.3 Verify warnings logged with debugging context
 
-## Notes
-- Generated from pipeline plan at 2026-03-30T00:39:30Z
-- Pipeline will update status as tasks complete
+## Context
+- Pipeline: autonomous
+- Branch: fix/bug-pipeline-tasks-md-not-cleared-on-res-232
+- Issue: #232
+- Generated: 2026-03-30T00:39:28Z

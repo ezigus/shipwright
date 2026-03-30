@@ -1221,9 +1221,16 @@ daemon_poll_loop() {
         active_count_now=$(get_active_count || echo 0)
         if [[ "$issue_count_now" -eq 0 ]] && [[ "$active_count_now" -eq 0 ]]; then
             if [[ -f "$PAUSE_FLAG" ]]; then
-                # Daemon is paused (e.g. auth failure) — skip patrol and decision engine
-                daemon_log INFO "Daemon paused — skipping patrol and decision engine"
-                emit_event "patrol.skipped_paused" "reason=pause_flag"
+                # Daemon is paused (e.g. auth failure) — skip patrol and decision engine.
+                # Emit skip event at the same cadence patrol would normally run (PATROL_INTERVAL)
+                # to avoid replacing patrol spam with skip-event spam.
+                local now_e
+                now_e=$(now_epoch || date +%s)
+                if [[ $((now_e - LAST_PATROL_EPOCH)) -ge "$PATROL_INTERVAL" ]]; then
+                    daemon_log INFO "Daemon paused — skipping patrol and decision engine"
+                    emit_event "patrol.skipped_paused" "reason=pause_flag"
+                    LAST_PATROL_EPOCH=$now_e
+                fi
             else
                 local now_e
                 now_e=$(now_epoch || date +%s)

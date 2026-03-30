@@ -2032,6 +2032,35 @@ test_daemon_single_instance_behavioral() {
         { echo "Stale PID (dead process) not identified as stale — stale lock recovery broken"; return 1; }
 }
 
+test_optimize_not_spawned_in_reap() {
+    local dispatch_src="$SCRIPT_DIR/lib/daemon-dispatch.sh"
+    # optimize_full_analysis must not appear in daemon-dispatch.sh at all —
+    # the post-reap background spawn was the only reference; search non-comment
+    # lines only to avoid false positives from any future doc comments
+    grep -v '^[[:space:]]*#' "$dispatch_src" | grep -q 'optimize_full_analysis' && \
+        { echo "optimize_full_analysis still referenced in daemon-dispatch.sh — background spawn not fully removed"; return 1; }
+    return 0
+}
+
+test_optimize_scheduled_via_self_optimize() {
+    local poll_src="$SCRIPT_DIR/lib/daemon-poll.sh"
+    # daemon_self_optimize must be called inside an OPTIMIZE_INTERVAL modulo check
+    # in the poll loop — this is the scheduled path that replaces the removed reap call
+    grep -q 'OPTIMIZE_INTERVAL' "$poll_src" || \
+        { echo "OPTIMIZE_INTERVAL not found in daemon-poll.sh — scheduled optimize cadence may be broken"; return 1; }
+    # The modulo check and daemon_self_optimize call must appear in the same block —
+    # use awk block matching so comments or blank lines between them don't break the assertion
+    if ! awk '
+        /OPTIMIZE_INTERVAL/ { in_block = 1 }
+        in_block && /daemon_self_optimize/ { found = 1 }
+        in_block && /^[[:space:]]*fi$/ { in_block = 0 }
+        END { exit !(found) }
+    ' "$poll_src"; then
+        echo "daemon_self_optimize not called inside OPTIMIZE_INTERVAL gate in daemon-poll.sh"
+        return 1
+    fi
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2124,6 +2153,8 @@ main() {
         "test_daemon_stale_lock_recovery:SingleInstance: stale lock dir recovered via check+rm+retry"
         "test_daemon_lock_cleanup_on_exit:SingleInstance: lock artifacts cleaned in cleanup_on_exit and daemon_stop"
         "test_daemon_single_instance_behavioral:SingleInstance: behavioral — live PID blocks, stale PID yields STALE"
+        "test_optimize_not_spawned_in_reap:Optimize: optimize_full_analysis not spawned as background job in daemon-dispatch.sh"
+        "test_optimize_scheduled_via_self_optimize:Optimize: daemon_self_optimize called on OPTIMIZE_INTERVAL cadence in poll loop"
     )
 
     for entry in "${tests[@]}"; do

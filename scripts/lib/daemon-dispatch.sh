@@ -236,6 +236,9 @@ daemon_spawn_pipeline() {
     if [[ -n "${FAST_TEST_CMD_CFG:-}" ]]; then
         pipeline_args+=("--fast-test-cmd" "$FAST_TEST_CMD_CFG")
     fi
+    if [[ -n "${FAST_TEST_INTERVAL_CFG:-}" ]]; then
+        pipeline_args+=("--fast-test-interval" "$FAST_TEST_INTERVAL_CFG")
+    fi
 
     # Append any extra pipeline args (from retry escalation, etc.)
     if [[ ${#extra_pipeline_args[@]} -gt 0 ]]; then

@@ -448,6 +448,11 @@ load_config() {
         MAX_RESTARTS_CFG="3"
     fi
     FAST_TEST_CMD_CFG=$(jq -r '.fast_test_cmd // ""' "$config_file" 2>/dev/null || echo "")
+    FAST_TEST_INTERVAL_CFG=$(jq -r '.fast_test_interval // ""' "$config_file" 2>/dev/null || echo "")
+    if [[ -n "$FAST_TEST_INTERVAL_CFG" ]] && ! [[ "$FAST_TEST_INTERVAL_CFG" =~ ^[1-9][0-9]*$ ]]; then
+        daemon_log WARN "Invalid fast_test_interval in config: $FAST_TEST_INTERVAL_CFG (ignoring)"
+        FAST_TEST_INTERVAL_CFG=""
+    fi
 
     # self-optimization
     SELF_OPTIMIZE=$(jq -r '.self_optimize // false' "$config_file")

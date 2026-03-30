@@ -169,7 +169,7 @@ _shipwright_completions() {
     if [[ "$cur" == -* ]]; then
         case "${COMP_WORDS[1]}" in
             pipeline)
-                COMPREPLY=( $(compgen -W "--issue --goal --repo --local --worktree --template --skip-gates --test-cmd --model --agents --base --reviewers --labels --no-github --no-github-label --ci --ignore-budget --dry-run --slack-webhook --self-heal --max-iterations --max-restarts --fast-test-cmd --completed-stages" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--issue --goal --repo --local --worktree --template --skip-gates --test-cmd --model --agents --base --reviewers --labels --no-github --no-github-label --ci --ignore-budget --dry-run --slack-webhook --self-heal --max-iterations --max-restarts --fast-test-cmd --fast-test-interval --completed-stages" -- "$cur") )
                 ;;
             prep)
                 COMPREPLY=( $(compgen -W "--check --with-claude --verbose" -- "$cur") )

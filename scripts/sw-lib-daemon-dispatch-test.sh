@@ -199,6 +199,7 @@ init_daemon_state
 ( cd "$REPO_DIR" && daemon_spawn_pipeline 100 "Add auth" "" 2>/dev/null ) || true
 job_count=$(jq '.active_jobs | length' "$STATE_FILE" 2>/dev/null || echo "0")
 [[ "$job_count" -ge 1 ]] && assert_pass "Spawn tracked job" || assert_pass "Spawn attempted (track tested separately)"
+
 export SCRIPT_DIR="$SCRIPT_DIR_SAVE"
 
 # ─── Tests: daemon_spawn_pipeline — disk space check ───────────────────────

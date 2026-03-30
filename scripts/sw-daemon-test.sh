@@ -2061,6 +2061,20 @@ test_optimize_scheduled_via_self_optimize() {
     fi
 }
 
+test_fast_test_interval_loaded_from_config() {
+    local daemon_src="$SCRIPT_DIR/sw-daemon.sh"
+    local dispatch_src="$SCRIPT_DIR/lib/daemon-dispatch.sh"
+    # sw-daemon.sh load_config must read fast_test_interval from JSON config
+    grep -q "FAST_TEST_INTERVAL_CFG=.*jq.*fast_test_interval" "$daemon_src" || \
+        { echo "FAST_TEST_INTERVAL_CFG not loaded from config in load_config()"; return 1; }
+    # sw-daemon.sh must validate fast_test_interval as a positive integer
+    grep -q "FAST_TEST_INTERVAL_CFG.*\^\\[1-9\\]" "$daemon_src" || \
+        { echo "FAST_TEST_INTERVAL_CFG not validated as positive integer in load_config()"; return 1; }
+    # daemon-dispatch.sh must pass --fast-test-interval when FAST_TEST_INTERVAL_CFG is set
+    grep -q "\-\-fast-test-interval.*FAST_TEST_INTERVAL_CFG" "$dispatch_src" || \
+        { echo "--fast-test-interval not passed in daemon-dispatch.sh"; return 1; }
+}
+
 test_shutdown_timeout_loaded_from_config() {
     local daemon_src="$SCRIPT_DIR/sw-daemon.sh"
     # Grep directly for the jq assignment lines — these strings are unique to load_config()
@@ -2215,6 +2229,7 @@ main() {
         "test_daemon_single_instance_behavioral:SingleInstance: behavioral — live PID blocks, stale PID yields STALE"
         "test_optimize_not_spawned_in_reap:Optimize: optimize_full_analysis not spawned as background job in daemon-dispatch.sh"
         "test_optimize_scheduled_via_self_optimize:Optimize: daemon_self_optimize called on OPTIMIZE_INTERVAL cadence in poll loop"
+        "test_fast_test_interval_loaded_from_config:FastTestInterval: fast_test_interval read+validated in load_config, passed in daemon-dispatch"
         "test_shutdown_timeout_loaded_from_config:ShutdownTimeout: DAEMON_SHUTDOWN_TIMEOUT and PIPELINE_KILL_GRACE loaded from config"
         "test_shutdown_timeout_used_in_cleanup:ShutdownTimeout: cleanup_on_exit uses configurable variables not hardcoded sleeps"
         "test_shutdown_timeout_clamp_behavioral:ShutdownTimeout: clamp guard produces correct values when grace >= timeout"

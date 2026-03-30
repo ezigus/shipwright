@@ -302,6 +302,7 @@ RESUME_FROM_CHECKPOINT=false
 MAX_ITERATIONS_OVERRIDE=""
 MAX_RESTARTS_OVERRIDE=""
 FAST_TEST_CMD_OVERRIDE=""
+FAST_TEST_INTERVAL_OVERRIDE=""
 PR_NUMBER=""
 AUTO_WORKTREE=false
 WORKTREE_NAME=""
@@ -377,6 +378,7 @@ show_help() {
     echo -e "  ${DIM}--max-iterations <n>${RESET}       Override max build loop iterations"
     echo -e "  ${DIM}--max-restarts <n>${RESET}         Max session restarts in build loop"
     echo -e "  ${DIM}--fast-test-cmd <cmd>${RESET}      Fast/subset test for build loop"
+    echo -e "  ${DIM}--fast-test-interval <n>${RESET}   Run full tests every N iterations (default: 5)"
     echo -e "  ${DIM}--tdd${RESET}                     Test-first: generate tests before implementation"
     echo -e "  ${DIM}--completed-stages \"a,b\"${RESET}   Skip these stages (CI resume)"
     echo ""
@@ -475,6 +477,13 @@ parse_args() {
                 shift 2 ;;
 
             --fast-test-cmd) FAST_TEST_CMD_OVERRIDE="$2"; shift 2 ;;
+            --fast-test-interval)
+                FAST_TEST_INTERVAL_OVERRIDE="$2"
+                if ! [[ "$FAST_TEST_INTERVAL_OVERRIDE" =~ ^[1-9][0-9]*$ ]]; then
+                    error "--fast-test-interval must be a positive integer (got: $FAST_TEST_INTERVAL_OVERRIDE)"
+                    exit 1
+                fi
+                shift 2 ;;
             --tdd)         TDD_ENABLED=true; shift ;;
             --help|-h)     show_help; exit 0 ;;
             *)

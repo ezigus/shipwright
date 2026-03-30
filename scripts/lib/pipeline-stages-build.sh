@@ -343,8 +343,31 @@ ${_skill_prompts}
 
     # Session restart capability
     [[ -n "${MAX_RESTARTS_OVERRIDE:-}" ]] && loop_args+=(--max-restarts "$MAX_RESTARTS_OVERRIDE")
-    # Fast test mode
-    [[ -n "${FAST_TEST_CMD_OVERRIDE:-}" ]] && loop_args+=(--fast-test-cmd "$FAST_TEST_CMD_OVERRIDE")
+    # Fast test cmd: CLI override takes priority, then JSON config
+    local _fast_test_cmd="${FAST_TEST_CMD_OVERRIDE:-}"
+    if [[ -z "$_fast_test_cmd" ]]; then
+        _fast_test_cmd=$(jq -r --arg id "build" \
+            '(.stages[] | select(.id == $id) | .config.fast_test_cmd) // ""' \
+            "$PIPELINE_CONFIG" 2>/dev/null) || true
+        [[ "$_fast_test_cmd" == "null" ]] && _fast_test_cmd=""
+    fi
+    [[ -n "$_fast_test_cmd" ]] && loop_args+=(--fast-test-cmd "$_fast_test_cmd")
+
+    # Fast test interval: CLI override takes priority, then JSON config
+    local _fast_test_interval="${FAST_TEST_INTERVAL_OVERRIDE:-}"
+    if [[ -z "$_fast_test_interval" ]]; then
+        _fast_test_interval=$(jq -r --arg id "build" \
+            '(.stages[] | select(.id == $id) | .config.fast_test_interval) // ""' \
+            "$PIPELINE_CONFIG" 2>/dev/null) || true
+        [[ "$_fast_test_interval" == "null" ]] && _fast_test_interval=""
+    fi
+    if [[ -n "$_fast_test_interval" ]]; then
+        if ! [[ "$_fast_test_interval" =~ ^[1-9][0-9]*$ ]]; then
+            warn "Ignoring invalid build stage config fast_test_interval='$_fast_test_interval' in pipeline template (expected positive integer)."
+            _fast_test_interval=""
+        fi
+    fi
+    [[ -n "$_fast_test_interval" ]] && loop_args+=(--fast-test-interval "$_fast_test_interval")
 
     # Definition of Done: use plan-extracted DoD if available
     [[ -s "$dod_file" ]] && loop_args+=(--definition-of-done "$dod_file")

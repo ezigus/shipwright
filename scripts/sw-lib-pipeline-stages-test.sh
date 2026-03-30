@@ -235,6 +235,52 @@ stage_build 2>/dev/null || build_rc=$?
 [[ "${build_rc:-0}" -eq 0 ]] && assert_pass "Build stage completes" || assert_pass "Build attempted"
 [[ -f "$PROJECT_ROOT/src/auth.js" ]] && assert_pass "Build produced source file" || assert_pass "Build stage ran"
 
+# Test: fast_test_cmd and fast_test_interval from JSON config are forwarded to sw loop
+_sw_args_log="$TEST_TEMP_DIR/sw-args.log"
+mock_binary "sw" "echo \"\$@\" >> \"$_sw_args_log\""
+
+# Update pipeline config to include fast_test_cmd and fast_test_interval in build stage
+jq '.stages = [(.stages[] | if .id == "build" then .config += {"fast_test_cmd": "npm run test:fast", "fast_test_interval": 3} else . end)]' \
+    "$PIPELINE_CONFIG" > "$PIPELINE_CONFIG.tmp" && mv "$PIPELINE_CONFIG.tmp" "$PIPELINE_CONFIG"
+
+unset FAST_TEST_CMD_OVERRIDE FAST_TEST_INTERVAL_OVERRIDE
+stage_build 2>/dev/null || true
+_sw_args=$(cat "$_sw_args_log" 2>/dev/null || echo "")
+assert_contains "fast_test_cmd forwarded from JSON config" "$_sw_args" "--fast-test-cmd"
+assert_contains "fast_test_interval forwarded from JSON config" "$_sw_args" "--fast-test-interval"
+
+# Test: CLI override takes precedence over JSON config
+echo "" > "$_sw_args_log"
+export FAST_TEST_CMD_OVERRIDE="npm run test:override"
+export FAST_TEST_INTERVAL_OVERRIDE="7"
+stage_build 2>/dev/null || true
+_sw_args2=$(cat "$_sw_args_log" 2>/dev/null || echo "")
+assert_contains "CLI fast_test_cmd override forwarded" "$_sw_args2" "test:override"
+assert_contains "CLI fast_test_interval override forwarded" "$_sw_args2" "7"
+unset FAST_TEST_CMD_OVERRIDE FAST_TEST_INTERVAL_OVERRIDE
+
+# Test: invalid fast_test_interval from JSON config is ignored (warns, does not pass flag)
+echo "" > "$_sw_args_log"
+jq '.stages = [(.stages[] | if .id == "build" then .config += {"fast_test_cmd": "npm run test:fast", "fast_test_interval": "not-a-number"} else . end)]' \
+    "$PIPELINE_CONFIG" > "$PIPELINE_CONFIG.tmp" && mv "$PIPELINE_CONFIG.tmp" "$PIPELINE_CONFIG"
+stage_build 2>/dev/null || true
+_sw_args3=$(cat "$_sw_args_log" 2>/dev/null || echo "")
+if echo "$_sw_args3" | grep -q -- "--fast-test-interval"; then
+    assert_fail "Invalid fast_test_interval ignored" "--fast-test-interval was passed with invalid value"
+else
+    assert_pass "Invalid fast_test_interval ignored"
+fi
+
+# Restore pipeline config to original (no fast test settings)
+jq '.stages = [(.stages[] | if .id == "build" then .config = {max_iterations: 20} else . end)]' \
+    "$PIPELINE_CONFIG" > "$PIPELINE_CONFIG.tmp" && mv "$PIPELINE_CONFIG.tmp" "$PIPELINE_CONFIG"
+
+# Restore original sw mock
+mock_binary "sw" 'mkdir -p src
+echo "// auth" > src/auth.js
+git add src/auth.js 2>/dev/null || true
+git commit -m "feat: add auth" --allow-empty 2>/dev/null || true'
+
 # ─── Tests: stage_test ──────────────────────────────────────────────────────
 print_test_section "stage_test"
 

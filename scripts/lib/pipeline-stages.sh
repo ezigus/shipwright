@@ -85,7 +85,7 @@ prune_context_section() {
 
     # Text content — sandwich approach (first N + last N lines)
     local line_count=0
-    line_count=$(printf '%s\n' "$content" | wc -l | xargs)
+    line_count=$(_trim "$(printf '%s\n' "$content" | wc -l)")
 
     # Calculate how many lines to keep from each end
     # Approximate chars-per-line to figure out line budget

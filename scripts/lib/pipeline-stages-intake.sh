@@ -429,7 +429,7 @@ ${_skill_prompts}
     fi
 
     local line_count
-    line_count=$(wc -l < "$plan_file" | xargs)
+    line_count=$(_trim "$(wc -l < "$plan_file")")
     if [[ "$line_count" -lt 3 ]]; then
         error "Plan too short (${line_count} lines) — likely an error, not a real plan"
         return 1
@@ -660,7 +660,7 @@ Fix these issues in the new plan."
                     "$regen_prompt" < /dev/null > "$plan_file" 2>"$_token_log" || true
                 parse_claude_tokens "$_token_log"
 
-                line_count=$(wc -l < "$plan_file" | xargs)
+                line_count=$(_trim "$(wc -l < "$plan_file")")
                 info "Regenerated plan: ${DIM}$plan_file${RESET} (${line_count} lines)"
             fi
         done
@@ -892,7 +892,7 @@ ${_skill_prompts}
     fi
 
     local line_count
-    line_count=$(wc -l < "$design_file" | xargs)
+    line_count=$(_trim "$(wc -l < "$design_file")")
     if [[ "$line_count" -lt 3 ]]; then
         error "Design too short (${line_count} lines) — likely an error, not a real design"
         return 1

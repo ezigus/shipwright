@@ -255,4 +255,17 @@ assert_eq "strip_ansi handles multiple codes" "ERROR: something broke" "$result"
 result=$(strip_ansi "")
 assert_eq "strip_ansi handles empty input" "" "$result"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# _trim — whitespace trimming without xargs
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "_trim"
+
+assert_eq "_trim strips leading spaces" "hello" "$(_trim "  hello")"
+assert_eq "_trim strips trailing spaces" "hello" "$(_trim "hello  ")"
+assert_eq "_trim strips both sides" "hello" "$(_trim "  hello  ")"
+assert_eq "_trim preserves internal spaces" "hello world" "$(_trim "  hello world  ")"
+assert_eq "_trim handles empty string" "" "$(_trim "")"
+assert_eq "_trim handles single quotes" "it's a test" "$(_trim "  it's a test  ")"
+assert_eq "_trim handles tabs" "hello" "$(_trim "	hello	")"
+
 print_test_results

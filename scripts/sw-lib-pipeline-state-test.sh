@@ -442,6 +442,47 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# resume_state — goal containing single quotes (xargs crash regression)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "resume_state with single quotes in goal"
+
+cat > "$STATE_FILE" <<'_RESUME_QUOTE_'
+---
+pipeline: fast
+goal: "pipeline resume crashes with 'xargs: unterminated quote'"
+status: interrupted
+issue: "#223"
+branch: "fix/pipeline-resume-223"
+current_stage: build
+started_at: 2024-01-01T00:00:00Z
+test_cmd: "npm test"
+pr_number:
+progress_comment_id:
+stages:
+  intake: complete
+  build: pending
+---
+
+## Log
+### intake
+Goal: pipeline resume crashes with 'xargs: unterminated quote'
+_RESUME_QUOTE_
+
+rm -f "$TASKS_FILE"
+GITHUB_ISSUE="" GIT_BRANCH="" GOAL=""
+resume_state 2>/dev/null
+if [[ "$GOAL" == "pipeline resume crashes with 'xargs: unterminated quote'" ]]; then
+    assert_pass "resume_state parses goal with single quotes"
+else
+    assert_fail "resume_state parses goal with single quotes" "got: $GOAL"
+fi
+if [[ "$CURRENT_STAGE" == "build" ]]; then
+    assert_pass "resume_state parses stage when goal has quotes"
+else
+    assert_fail "resume_state parses stage when goal has quotes" "got: $CURRENT_STAGE"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # persist_artifacts — CI_MODE guard
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "persist_artifacts"

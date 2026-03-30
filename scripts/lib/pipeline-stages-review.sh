@@ -45,7 +45,7 @@ stage_review() {
         emit_event "review.risk_assessed" \
             "issue=${ISSUE_NUMBER:-0}" \
             "risk=$risk_score" \
-            "files_changed=$(echo "$diff_files" | wc -l | xargs)"
+            "files_changed=$(_trim "$(echo "$diff_files" | wc -l)")"
         if [[ "$risk_score" == "high" ]]; then
             warn "High-risk changes detected (DB schema, auth, crypto, or secrets)"
         fi

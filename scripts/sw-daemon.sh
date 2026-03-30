@@ -697,7 +697,10 @@ daemon_start() {
     #   mkdir: POSIX-atomic fallback for macOS where flock is not installed by default
     local _lock_file="${PID_FILE}.lock"
 
-    # Helper: abort if a live daemon is already running (intentionally calls exit 1)
+    # Helper: abort if a live daemon is already running (intentionally calls exit 1,
+    # not return 1 — callers are inside lock-acquisition logic, not returning status).
+    # If the PID is stale (process dead), clears the PID file and returns to allow
+    # the caller to claim the lock.
     _check_existing_daemon() {
         local _epid
         _epid=$(cat "$PID_FILE" 2>/dev/null || true)
@@ -705,6 +708,9 @@ daemon_start() {
             error "Daemon already running (PID: ${_epid})"
             info "Use ${CYAN}shipwright daemon stop${RESET} to stop it first"
             exit 1
+        elif [[ -n "$_epid" ]]; then
+            warn "Stale PID file found (PID: ${_epid} no longer running) — removing"
+            rm -f "$PID_FILE" 2>/dev/null || true
         fi
     }
 
@@ -745,7 +751,11 @@ daemon_start() {
         exit 1
     fi
 
-    # Detach mode: re-exec in a tmux session
+    # Detach mode: re-exec inside tmux. The lock acquired above is released when
+    # this parent process exits (flock: fd 9 closes; mkdir: cleanup_on_exit runs).
+    # The tmux child runs daemon_start fresh and acquires its own lock. There is a
+    # brief window between parent exit and child lock acquisition — this is safe
+    # because the child will be the sole owner of the lock before it writes daemon.pid.
     if [[ "$DETACH" == "true" ]]; then
         if ! command -v tmux >/dev/null 2>&1; then
             error "tmux required for --detach mode"
@@ -894,6 +904,8 @@ daemon_stop() {
     if ! kill -0 "$pid" 2>/dev/null; then
         warn "Daemon process (PID: ${pid}) is not running — cleaning up"
         rm -f "$PID_FILE" "$SHUTDOWN_FLAG"
+        rm -f "${PID_FILE}.lock" 2>/dev/null || true
+        rm -rf "${PID_FILE}.lock.d" 2>/dev/null || true
         return 0
     fi
 

@@ -198,7 +198,7 @@ if command -v flock >/dev/null 2>&1; then
 else
     check_warn "flock not installed — daemon uses mkdir fallback (safe but weaker)"
     echo -e "    ${DIM}brew install flock${RESET}  (macOS)"
-    echo -e "    ${DIM}sudo apt-get install util-linux${RESET}  (Debian/Ubuntu)"
+    echo -e "    ${DIM}sudo apt install util-linux${RESET}  (Debian/Ubuntu)"
 fi
 
 # Claude Code CLI

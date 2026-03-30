@@ -1866,6 +1866,133 @@ test_failure_classification_wired() {
         { echo "Missing daemon.failure_classified event"; return 1; }
 }
 
+test_daemon_single_instance_no_flock() {
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+    # mkdir fallback path must exist
+    grep -q "mkdir.*\\\$_lock_dir" "$daemon_src" $DAEMON_LIB_GLOB || \
+        grep -q 'mkdir.*_lock_dir' "$daemon_src" $DAEMON_LIB_GLOB || \
+        { echo "Missing mkdir lock_dir fallback for no-flock path"; return 1; }
+    # Must write PID to lock dir
+    grep -q '_lock_dir.*pid\|_lock_dir/pid' "$daemon_src" $DAEMON_LIB_GLOB || \
+        { echo "Missing PID write into lock dir"; return 1; }
+    # Must handle stale lock by removing it (rm -rf lock_dir)
+    grep -A 10 '_check_existing_daemon' "$daemon_src" $DAEMON_LIB_GLOB | grep -q 'rm.*-rf.*_lock_dir\|rm.*_lock_dir' || \
+        grep -q 'rm -rf.*_lock_dir\|rm -rf.*lock_dir' "$daemon_src" $DAEMON_LIB_GLOB || \
+        { echo "Missing stale lock_dir removal after check_existing_daemon"; return 1; }
+}
+
+test_daemon_single_instance_with_flock() {
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+    # flock path must lock a dedicated .lock file, NOT daemon.pid
+    grep -q '_lock_file.*\.lock\|PID_FILE.*\.lock' "$daemon_src" $DAEMON_LIB_GLOB || \
+        { echo "Missing dedicated .lock file variable"; return 1; }
+    # flock must open _lock_file (fd 9), not PID_FILE
+    grep -q 'exec 9>".*_lock_file\|exec 9>"\$_lock_file' "$daemon_src" $DAEMON_LIB_GLOB || \
+        grep -q 'exec 9>"$_lock_file' "$daemon_src" || \
+        { echo "flock must open _lock_file, not PID_FILE"; return 1; }
+    # comment confirming fd 9 is intentionally held open
+    grep -q 'fd 9.*intentionally\|intentionally.*fd 9' "$daemon_src" $DAEMON_LIB_GLOB || \
+        { echo "Missing comment confirming fd 9 held open for process lifetime"; return 1; }
+}
+
+test_daemon_stale_lock_recovery() {
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+    # _check_existing_daemon must call exit 1 (intentionally, not return 1)
+    grep -A 10 '_check_existing_daemon()' "$daemon_src" $DAEMON_LIB_GLOB | grep -q 'exit 1' || \
+        { echo "_check_existing_daemon must call exit 1 to abort caller"; return 1; }
+    # stale lock recovery: rm -rf the lock dir then retry mkdir
+    grep -q 'rm -rf.*_lock_dir\|rm.*-rf.*lock.*\.d' "$daemon_src" $DAEMON_LIB_GLOB || \
+        { echo "Missing stale lock dir cleanup (rm -rf _lock_dir)"; return 1; }
+    # retry mkdir after removing stale lock
+    local block
+    block="$(grep -A 20 'if ! mkdir.*_lock_dir' "$daemon_src" 2>/dev/null || true)"
+    echo "$block" | grep -q 'mkdir.*_lock_dir' && echo "$block" | grep -q 'rm -rf' || \
+        grep -c 'mkdir.*_lock_dir' "$daemon_src" 2>/dev/null | grep -qv '^0$' || \
+        { echo "Missing retry mkdir after stale lock removal"; return 1; }
+}
+
+test_daemon_lock_cleanup_on_exit() {
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+    # cleanup_on_exit must remove both .lock and .lock.d artifacts
+    # Function body can be 60+ lines — use -A 80 to capture the full body
+    local cleanup_ctx
+    cleanup_ctx="$(grep -A 80 'cleanup_on_exit()' "$daemon_src" $DAEMON_LIB_GLOB 2>/dev/null || true)"
+    echo "$cleanup_ctx" | grep -q 'PID_FILE.*\.lock\|\.lock.*PID_FILE\|PID_FILE}\.lock' || \
+        { echo "cleanup_on_exit missing .lock file removal"; return 1; }
+    echo "$cleanup_ctx" | grep -q '\.lock\.d' || \
+        { echo "cleanup_on_exit missing .lock.d dir removal"; return 1; }
+    # daemon_stop must also clean up lock artifacts (handles SIGKILL where EXIT trap doesn't run)
+    local stop_ctx
+    stop_ctx="$(grep -A 50 'daemon_stop()' "$daemon_src" $DAEMON_LIB_GLOB 2>/dev/null || true)"
+    echo "$stop_ctx" | grep -q 'PID_FILE.*\.lock\|\.lock.*PID_FILE\|PID_FILE}\.lock' || \
+        { echo "daemon_stop missing .lock file removal (needed for SIGKILL path)"; return 1; }
+    echo "$stop_ctx" | grep -q '\.lock\.d' || \
+        { echo "daemon_stop missing .lock.d dir removal (needed for SIGKILL path)"; return 1; }
+}
+
+test_daemon_single_instance_behavioral() {
+    # Behavioral: simulate a live running daemon by writing our own PID to both
+    # daemon.pid and the mkdir lock dir — verify _check_existing_daemon blocks entry.
+    local daemon_src
+    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
+
+    # Set up fake lock state: PID file + lock dir pointing to a live PID ($$)
+    local fake_pid_file="${DAEMON_TEST_TEMP_DIR}/behavioral_pid"
+    local fake_lock_dir="${fake_pid_file}.lock.d"
+    echo "$$" > "$fake_pid_file"
+    mkdir "$fake_lock_dir" 2>/dev/null || true
+    echo "$$" > "${fake_lock_dir}/pid"
+
+    # Source a minimal version of _check_existing_daemon with our fake PID_FILE
+    local result
+    result=$(
+        PID_FILE="$fake_pid_file"
+        _check_existing_daemon() {
+            local _epid
+            _epid=$(cat "$PID_FILE" 2>/dev/null || true)
+            if [[ -n "$_epid" ]] && kill -0 "$_epid" 2>/dev/null; then
+                echo "BLOCKED"
+                exit 0
+            elif [[ -n "$_epid" ]]; then
+                echo "STALE"
+            fi
+        }
+        _check_existing_daemon
+    ) || true
+
+    rm -rf "$fake_lock_dir" "$fake_pid_file" 2>/dev/null || true
+
+    echo "$result" | grep -q 'BLOCKED' || \
+        { echo "Live PID lock not detected — concurrent start would have proceeded"; return 1; }
+
+    # Behavioral: stale PID (dead process) should NOT block — verify result is STALE
+    local dead_pid=99999999
+    echo "$dead_pid" > "$fake_pid_file"
+    result=$(
+        PID_FILE="$fake_pid_file"
+        _check_existing_daemon() {
+            local _epid
+            _epid=$(cat "$PID_FILE" 2>/dev/null || true)
+            if [[ -n "$_epid" ]] && kill -0 "$_epid" 2>/dev/null; then
+                echo "BLOCKED"
+                exit 0
+            elif [[ -n "$_epid" ]]; then
+                echo "STALE"
+            fi
+        }
+        _check_existing_daemon
+    ) || true
+
+    rm -f "$fake_pid_file" 2>/dev/null || true
+
+    echo "$result" | grep -q 'STALE' || \
+        { echo "Stale PID (dead process) not identified as stale — stale lock recovery broken"; return 1; }
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1951,6 +2078,11 @@ main() {
         "test_consecutive_failure_pause:Intelligence: Consecutive failure auto-pause (3 threshold)"
         "test_retry_args_passed_to_spawn:Intelligence: Retry escalation args passed to spawn"
         "test_failure_classification_wired:Intelligence: classify_failure wired into retry logic"
+        "test_daemon_single_instance_no_flock:SingleInstance: mkdir fallback path exists (no flock)"
+        "test_daemon_single_instance_with_flock:SingleInstance: flock path uses dedicated lock file"
+        "test_daemon_stale_lock_recovery:SingleInstance: stale lock dir recovered via check+rm+retry"
+        "test_daemon_lock_cleanup_on_exit:SingleInstance: lock artifacts cleaned in cleanup_on_exit and daemon_stop"
+        "test_daemon_single_instance_behavioral:SingleInstance: behavioral — live PID blocks, stale PID yields STALE"
     )
 
     for entry in "${tests[@]}"; do

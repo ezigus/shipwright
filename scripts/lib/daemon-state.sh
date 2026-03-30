@@ -214,6 +214,13 @@ preflight_checks() {
         fi
     done
 
+    # flock: optional — daemon uses mkdir-based atomic fallback on macOS without it
+    if command -v flock >/dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${RESET} flock"
+    else
+        echo -e "  ${DIM}○${RESET} flock ${DIM}(optional — install: brew install flock)${RESET}"
+    fi
+
     # 2. Git state
     echo ""
     if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then

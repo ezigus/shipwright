@@ -678,6 +678,8 @@ cleanup_on_exit() {
     fi
 
     rm -f "$PID_FILE" "$SHUTDOWN_FLAG"
+    rm -f "${PID_FILE}.lock" 2>/dev/null || true
+    rm -rf "${PID_FILE}.lock.d" 2>/dev/null || true
     daemon_log INFO "Daemon stopped"
     emit_event "daemon.stopped" "pid=$$"
 }
@@ -688,26 +690,48 @@ daemon_start() {
     echo -e "${PURPLE}${BOLD}━━━ shipwright daemon v${VERSION} ━━━${RESET}"
     echo ""
 
-    # Acquire exclusive lock on PID file (prevents race between concurrent starts)
-    exec 9>"$PID_FILE"
-    if ! flock -n 9 2>/dev/null; then
-        # flock unavailable or lock held — fall back to PID check
-        local existing_pid
-        existing_pid=$(cat "$PID_FILE" 2>/dev/null || true)
-        if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
-            exec 9>&-  # Release FD before exiting
-            error "Daemon already running (PID: ${existing_pid})"
+    # Acquire exclusive lock to prevent concurrent daemon starts.
+    # Uses a dedicated .lock file (never daemon.pid) so reading the PID file
+    # doesn't race with truncation. Two paths:
+    #   flock: strong advisory lock held for the full process lifetime (fd 9 never closed)
+    #   mkdir: POSIX-atomic fallback for macOS where flock is not installed by default
+    local _lock_file="${PID_FILE}.lock"
+
+    # Helper: abort if a live daemon is already running (intentionally calls exit 1)
+    _check_existing_daemon() {
+        local _epid
+        _epid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [[ -n "$_epid" ]] && kill -0 "$_epid" 2>/dev/null; then
+            error "Daemon already running (PID: ${_epid})"
             info "Use ${CYAN}shipwright daemon stop${RESET} to stop it first"
             exit 1
-        else
-            warn "Stale PID file found — removing"
-            rm -f "$PID_FILE"
-            exec 9>&-  # Release old FD
-            exec 9>"$PID_FILE"
         fi
+    }
+
+    if command -v flock >/dev/null 2>&1; then
+        # flock path: lock _lock_file, hold fd 9 open for the full process lifetime
+        exec 9>"$_lock_file"
+        if ! flock -n 9 2>/dev/null; then
+            exec 9>&-
+            _check_existing_daemon   # holder may have died; verify via daemon.pid
+            # flock auto-releases when holder exits — retry once
+            exec 9>"$_lock_file"
+            flock -n 9 2>/dev/null || { error "Unable to acquire daemon lock"; exit 1; }
+        fi
+        # fd 9 intentionally left open — released automatically on process exit
+    else
+        # mkdir path: atomic directory creation (macOS default, no flock installed)
+        local _lock_dir="${_lock_file}.d"
+        if ! mkdir "$_lock_dir" 2>/dev/null; then
+            _check_existing_daemon
+            # Holder is dead — clean stale lock and claim it
+            rm -rf "$_lock_dir" 2>/dev/null || true
+            mkdir "$_lock_dir" 2>/dev/null || { error "Unable to acquire daemon lock"; exit 1; }
+        fi
+        echo "$$" > "${_lock_dir}/pid" 2>/dev/null || true
+        # Lock cleanup is handled by cleanup_on_exit() — do NOT add a separate trap here
+        # as it would silently replace the existing daemon cleanup trap
     fi
-    # Release FD 9 — we only needed it for the startup race check
-    exec 9>&-
 
     # Load config
     load_config
@@ -896,6 +920,8 @@ daemon_stop() {
     fi
 
     rm -f "$PID_FILE" "$SHUTDOWN_FLAG"
+    rm -f "${PID_FILE}.lock" 2>/dev/null || true
+    rm -rf "${PID_FILE}.lock.d" 2>/dev/null || true
 
     # Also kill tmux session if it exists
     tmux kill-session -t "sw-daemon" 2>/dev/null || true

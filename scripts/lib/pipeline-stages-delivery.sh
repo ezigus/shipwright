@@ -64,8 +64,14 @@ stage_pr() {
     fi
 
     # Commit any uncommitted changes left by the build agent
-    # Must happen BEFORE the quality gate so _safe_base_diff sees all real changes
-    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+    # Must happen BEFORE the quality gate so _safe_base_diff sees all real changes.
+    # Use git status --porcelain to catch untracked files (new files created by the
+    # build agent) in addition to tracked modifications. Only commit when real
+    # (non-.claude/) changes are present to avoid leaving an artifact-only commit
+    # on a branch that the quality gate is about to reject.
+    local _pending_real
+    _pending_real=$(git status --porcelain 2>/dev/null | awk '{print $NF}' | grep -v '^\.claude/' || true)
+    if [[ -n "$_pending_real" ]]; then
         info "Committing remaining uncommitted changes..."
         safe_git_stage
         git commit -m "chore: pipeline cleanup — commit remaining build changes" --no-verify 2>/dev/null || true

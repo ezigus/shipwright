@@ -431,7 +431,7 @@ extract_issue_from_tasks_file() {
     [[ ! -f "$file" ]] && return 1
     local issue
     issue=$(grep -m1 -i "^-\{0,1\} *Issue:" "$file" 2>/dev/null | sed 's/^[^:]*:[[:space:]]*//' | tr -d '#' | xargs) || return 1
-    [[ -n "$issue" ]] && echo "$issue" || return 1
+    [[ -n "$issue" && "$issue" =~ ^[0-9]+$ ]] && echo "$issue" || return 1
 }
 
 # ─── Git Staging Helper ───────────────────────────────────────────

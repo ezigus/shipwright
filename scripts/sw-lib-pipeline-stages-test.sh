@@ -505,6 +505,107 @@ rc=0
 stage_pr 2>/dev/null || rc=$?
 if [[ "$rc" -ne 1 ]]; then assert_pass "PR accepts .github/ changes as real code"; else assert_fail "PR accepts .github/ changes as real code" ".github/ incorrectly excluded from real-changes detection"; fi
 
+# ─── Tests: stage_pr push retry logic ──────────────────────────────────────
+# These tests exercise the push retry/force fallback path directly using a
+# file-based mock git that avoids subshell variable-isolation problems.
+print_test_section "stage_pr push retry/force fallback"
+
+PUSH_SEQ_FILE="$TEST_TEMP_DIR/push-seq"
+PUSH_LOG_FILE="$TEST_TEMP_DIR/push-log"
+
+# Create a mock git script that reads exit-code sequence from PUSH_SEQ_FILE
+# and appends each push call's flags to PUSH_LOG_FILE.
+# Non-push commands delegate to the real git via ORIG_PATH (saved by test-helpers.sh).
+REAL_GIT_BIN=$(PATH="${ORIG_PATH}" command -v git)
+cat > "$TEST_TEMP_DIR/bin/git" <<MOCKGIT
+#!/usr/bin/env bash
+SEQ_FILE="\${PUSH_SEQ_FILE:-/dev/null}"
+LOG_FILE="\${PUSH_LOG_FILE:-/dev/null}"
+if [[ "\${1:-}" == "push" ]]; then
+    echo "\${*}" >> "\$LOG_FILE"
+    code=0
+    if [[ -s "\$SEQ_FILE" ]]; then
+        code=\$(head -1 "\$SEQ_FILE")
+        tail -n +2 "\$SEQ_FILE" > "\${SEQ_FILE}.tmp" && mv "\${SEQ_FILE}.tmp" "\$SEQ_FILE"
+    fi
+    if [[ "\$code" -ne 0 ]]; then
+        printf '! [rejected] non-fast-forward\n' >&2
+        exit 1
+    fi
+    exit 0
+fi
+exec "${REAL_GIT_BIN}" "\$@"
+MOCKGIT
+chmod +x "$TEST_TEMP_DIR/bin/git"
+hash -r  # clear bash command-path cache so mock git takes precedence
+export PUSH_SEQ_FILE PUSH_LOG_FILE
+
+# Helper: set push exit-code sequence (one code per line)
+_set_push_seq() { printf '%s\n' "$@" > "$PUSH_SEQ_FILE"; }
+_reset_push_log() { > "$PUSH_LOG_FILE"; }
+
+# Inline push block — mirrors stage_pr exactly (update if stage_pr changes)
+_test_push_block() {
+    local push_err
+    push_err=$(git push -u origin "$GIT_BRANCH" --force-with-lease 2>&1) || {
+        warn "force-with-lease push failed; see git output below" >/dev/null
+        printf '%s\n' "$push_err" >&2
+        git fetch origin "$GIT_BRANCH" 2>/dev/null || true
+        push_err=$(git push -u origin "$GIT_BRANCH" --force-with-lease 2>&1) || {
+            warn "Second force-with-lease attempt failed; see git output below" >/dev/null
+            printf '%s\n' "$push_err" >&2
+            push_err=$(git push -u origin "$GIT_BRANCH" --force 2>&1) || {
+                printf '%s\n' "$push_err" >&2
+                return 1
+            }
+        }
+    }
+}
+
+# Scenario 1: first push succeeds — must use --force-with-lease
+_set_push_seq 0
+_reset_push_log
+_test_push_block 2>/dev/null
+calls=$(cat "$PUSH_LOG_FILE")
+if echo "$calls" | grep -q "force-with-lease"; then
+    assert_pass "Push uses --force-with-lease on first attempt"
+else
+    assert_fail "Push uses --force-with-lease on first attempt" "calls: $calls"
+fi
+
+# Scenario 2: force-with-lease fails twice, --force succeeds
+_set_push_seq 1 1 0
+_reset_push_log
+rc=0
+_test_push_block 2>/dev/null || rc=$?
+calls=$(cat "$PUSH_LOG_FILE")
+if [[ "$rc" -eq 0 ]]; then
+    assert_pass "Push succeeds via --force fallback after two --force-with-lease failures"
+else
+    assert_fail "Push succeeds via --force fallback after two --force-with-lease failures" "exit rc=$rc"
+fi
+last_push=$(echo "$calls" | tail -1)
+if echo "$last_push" | grep -q -- "--force" && ! echo "$last_push" | grep -q -- "--force-with-lease"; then
+    assert_pass "Final fallback uses --force (not --force-with-lease)"
+else
+    assert_fail "Final fallback uses --force (not --force-with-lease)" "last push: $last_push"
+fi
+
+# Scenario 3: all push attempts fail — must return non-zero
+_set_push_seq 1 1 1
+_reset_push_log
+rc=0
+_test_push_block 2>/dev/null || rc=$?
+if [[ "$rc" -ne 0 ]]; then
+    assert_pass "Push logic fails when all attempts are rejected"
+else
+    assert_fail "Push logic fails when all attempts are rejected" "expected non-zero exit"
+fi
+
+# Restore real git for remaining tests
+rm -f "$TEST_TEMP_DIR/bin/git"
+hash -r
+
 # ─── Tests: detect_task_type ────────────────────────────────────────────────
 print_test_section "detect_task_type"
 

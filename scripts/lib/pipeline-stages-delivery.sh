@@ -103,13 +103,16 @@ stage_pr() {
     info "Pushing branch: $GIT_BRANCH"
     local push_err
     push_err=$(git push -u origin "$GIT_BRANCH" --force-with-lease 2>&1) || {
-        warn "force-with-lease push failed: $push_err"
+        warn "force-with-lease push failed; see git output below"
+        printf '%s\n' "$push_err" >&2
         # Fallback: fetch remote ref then retry lease, or force-push as last resort
         git fetch origin "$GIT_BRANCH" 2>/dev/null || true
         push_err=$(git push -u origin "$GIT_BRANCH" --force-with-lease 2>&1) || {
-            warn "Second force-with-lease attempt failed: $push_err"
+            warn "Second force-with-lease attempt failed; see git output below"
+            printf '%s\n' "$push_err" >&2
             push_err=$(git push -u origin "$GIT_BRANCH" --force 2>&1) || {
-                error "Failed to push branch: $push_err"
+                error "Failed to push branch"
+                printf '%s\n' "$push_err" >&2
                 return 1
             }
         }

@@ -343,7 +343,7 @@ cmd_analyze() {
 
     check_gh
 
-    info "Analyzing issue ${CYAN}${issue}${RESET}..."
+    info "Analyzing issue ${CYAN}${issue}${RESET}..." >&2
 
     # Fetch issue via gh CLI
     local issue_json
@@ -395,9 +395,9 @@ cmd_analyze() {
             else
                 labels=$(suggest_labels "$type" "$complexity" "$risk" "$effort")
             fi
-            info "AI triage applied"
+            info "AI triage applied" >&2
         else
-            warn "AI triage unavailable, using keyword analysis"
+            warn "AI triage unavailable, using keyword analysis" >&2
         fi
     fi
 

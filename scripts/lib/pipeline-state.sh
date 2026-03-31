@@ -604,20 +604,9 @@ ${sid}:${sst}"
         git checkout "$GIT_BRANCH" 2>/dev/null || true
     fi
 
-    # Validate pipeline-tasks.md belongs to this resume's issue; clear if stale or malformed
-    if [[ -s "${TASKS_FILE:-}" ]]; then
-        local tasks_issue
-        if ! tasks_issue=$(extract_issue_from_tasks_file "$TASKS_FILE"); then
-            warn "Malformed pipeline-tasks.md (missing '- Issue:' header) — removing"
-            rm -f "$TASKS_FILE"
-        else
-            local current_issue; current_issue=$(echo "${GITHUB_ISSUE:-}" | tr -d '#' | xargs)
-            if [[ -n "$current_issue" && "$tasks_issue" != "$current_issue" ]]; then
-                warn "Clearing stale pipeline-tasks.md (was for issue $tasks_issue, now $current_issue)"
-                rm -f "$TASKS_FILE"
-            fi
-        fi
-    fi
+    # Always clear pipeline-tasks.md on resume — it is derived from plan.md and
+    # stale checked-off items from a failed attempt must not be re-injected.
+    rm -f "${TASKS_FILE:-}"
 
     PIPELINE_START_EPOCH="$(now_epoch)"
     gh_init

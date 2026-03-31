@@ -454,7 +454,7 @@ else
     assert_fail "resume_state clears stale tasks when issue differs (#99 vs #42)"
 fi
 
-# Matching issue should NOT clear the tasks file
+# Matching issue should STILL clear the tasks file (stale checked-off items must not persist)
 cat > "$TASKS_FILE" <<'TEOF'
 # Pipeline Tasks
 ## Implementation Checklist
@@ -471,10 +471,10 @@ set +e
 resume_state 2>/dev/null
 set -e
 
-if [[ -f "$TASKS_FILE" ]]; then
-    assert_pass "resume_state keeps tasks when issue matches"
+if [[ ! -f "$TASKS_FILE" ]]; then
+    assert_pass "resume_state clears tasks even when issue matches"
 else
-    assert_fail "resume_state keeps tasks when issue matches"
+    assert_fail "resume_state clears tasks even when issue matches"
 fi
 
 # Malformed tasks file (no '- Issue:' line) should be removed by resume_state
@@ -648,10 +648,10 @@ set +e
 resume_state 2>/dev/null
 set -e
 
-if [[ -f "$TASKS_FILE" ]]; then
-    assert_pass "resume_state keeps tasks when Issue: line has no leading dash"
+if [[ ! -f "$TASKS_FILE" ]]; then
+    assert_pass "resume_state clears tasks regardless of Issue: format"
 else
-    assert_fail "resume_state keeps tasks when Issue: line has no leading dash"
+    assert_fail "resume_state clears tasks regardless of Issue: format"
 fi
 
 # Restore GITHUB_ISSUE and mocked sw binary

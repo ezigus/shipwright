@@ -541,4 +541,78 @@ assert_eq "_extract_blocking_items: negative source in mixed result" "1" "${has_
 assert_eq "_extract_blocking_items: dod source in mixed result" "1" "${has_dod:-0}"
 rm -f "$ARTIFACTS_DIR/adversarial-review.md" "$ARTIFACTS_DIR/negative-review.md" "$ARTIFACTS_DIR/dod-audit.md"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# RETURN trap self-clearing in compound_rebuild_with_feedback
+# Regression for: original_goal unbound under set -u when trap re-fired in caller
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "compound_rebuild_with_feedback RETURN trap"
+
+# The trap must self-clear (trap - RETURN) so it doesn't re-fire when the
+# caller's next return happens — which would reference the now-out-of-scope
+# local variable original_goal and trigger "unbound variable" under set -u.
+if grep -A1 "trap.*GOAL.*original_goal" "$SCRIPT_DIR/lib/pipeline-intelligence.sh" | grep -q "trap - RETURN"; then
+    assert_pass "compound_rebuild_with_feedback RETURN trap self-clears after first execution"
+else
+    assert_fail "compound_rebuild_with_feedback RETURN trap must self-clear (trap - RETURN) to prevent re-fire in caller"
+fi
+
+# Behavioral test: stub self_healing_build_test, call compound_rebuild_with_feedback,
+# then return from another function — GOAL must be restored and no unbound-variable error.
+_trap_out="$(mktemp)"
+_trap_err_f="$(mktemp)"
+(
+    set -u
+    # Minimal stubs so compound_rebuild_with_feedback can run without full pipeline
+    GOAL="original-goal-value"
+    ARTIFACTS_DIR="$(mktemp -d)"
+    echo "## feedback" > "$ARTIFACTS_DIR/quality-feedback.md"
+    echo '{"security":0,"correctness":1,"style":0}' > "$ARTIFACTS_DIR/classified-findings.json"
+    # Stub the functions called inside compound_rebuild_with_feedback
+    classify_quality_findings() { echo "correctness"; }
+    _extract_blocking_items() { echo "item 1"; }
+    _write_quality_feedback() { :; }
+    set_stage_status() { :; }
+    pipeline_backtrack_to_stage() { return 1; }
+    self_healing_build_test() { return 0; }
+
+    compound_rebuild_with_feedback 2>/dev/null
+
+    # After compound_rebuild_with_feedback returns, GOAL must be restored
+    if [[ "$GOAL" == "original-goal-value" ]]; then
+        echo "GOAL_RESTORED=true"
+    else
+        echo "GOAL_RESTORED=false: $GOAL"
+    fi
+
+    # Simulate a subsequent return from an outer function — must NOT trigger the trap
+    # (which would error on unbound original_goal under set -u)
+    _outer_fn() { return 0; }
+    _outer_fn 2>/dev/null
+    echo "NO_TRAP_REFIRE=true"
+
+    rm -rf "$ARTIFACTS_DIR"
+) > "$_trap_out" 2>"$_trap_err_f"
+_trap_goal=$(grep "GOAL_RESTORED" "$_trap_out" | head -1)
+_trap_refire=$(grep "NO_TRAP_REFIRE" "$_trap_out" | head -1)
+_trap_err=$(cat "$_trap_err_f")
+rm -f "$_trap_out" "$_trap_err_f"
+
+if [[ "$_trap_goal" == "GOAL_RESTORED=true" ]]; then
+    assert_pass "compound_rebuild_with_feedback restores GOAL on return"
+else
+    assert_fail "compound_rebuild_with_feedback restores GOAL on return" "$_trap_goal"
+fi
+
+if [[ "$_trap_refire" == "NO_TRAP_REFIRE=true" ]]; then
+    assert_pass "RETURN trap does not re-fire on subsequent caller return"
+else
+    assert_fail "RETURN trap must not re-fire on subsequent caller return"
+fi
+
+if echo "$_trap_err" | grep -q "unbound variable"; then
+    assert_fail "No unbound-variable error from RETURN trap re-fire" "$_trap_err"
+else
+    assert_pass "No unbound-variable error from RETURN trap re-fire"
+fi
+
 print_test_results

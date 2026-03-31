@@ -1332,6 +1332,28 @@ $(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -"
         diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
     fi
 
+    # Also compute the full branch diff vs base branch. In compound_rebuild cycles,
+    # LOOP_START_COMMIT is reset to the HEAD after prior build work, so the loop-run
+    # diff above only shows the small rebuild-cycle changes. The branch diff shows
+    # ALL work accumulated on this branch — which is what the DoD items actually cover.
+    local branch_diff_content=""
+    local _dod_merge_base=""
+    _dod_merge_base="$(git -C "$PROJECT_ROOT" merge-base "origin/${BASE_BRANCH:-main}" HEAD 2>/dev/null \
+        || git -C "$PROJECT_ROOT" merge-base "${BASE_BRANCH:-main}" HEAD 2>/dev/null || echo "")"
+    if [[ -n "$_dod_merge_base" ]]; then
+        local _dod_branch_stat _dod_branch_diff
+        _dod_branch_stat="$(git -C "$PROJECT_ROOT" diff --stat "${_dod_merge_base}..HEAD" 2>/dev/null || echo "(none)")"
+        _dod_branch_diff="$(git -C "$PROJECT_ROOT" diff "${_dod_merge_base}..HEAD" 2>/dev/null \
+            | head -"${DOD_DIFF_MAX_LINES}" \
+            | sed 's/<<<DOD:PASS>>>/[REDACTED:DOD:PASS]/g; s/<<<DOD:FAIL>>>/[REDACTED:DOD:FAIL]/g' \
+            || echo "(none)")"
+        branch_diff_content="## Full Branch Changes vs Base (authoritative — all work including prior build loops)
+${_dod_branch_stat}
+
+### Branch Diff Detail (capped at ${DOD_DIFF_MAX_LINES} lines)
+${_dod_branch_diff}"
+    fi
+
     # Inject verified runtime facts so the evaluator doesn't have to guess
     local runtime_facts=""
     if [[ -n "$TEST_CMD" ]]; then
@@ -1358,11 +1380,16 @@ ${dod_content}
 
 ${runtime_facts}
 
-## Cumulative Changes Made (git diff from start of loop to now)
+## This Loop Run Changes (git diff from start of this loop invocation to now)
+NOTE: If this section shows few or no changes, the original work was likely done in a prior build
+loop (e.g., an earlier compound_quality rebuild cycle). Use the Full Branch diff below instead.
 ${diff_content}
+
+${branch_diff_content}
 
 ## Your Task
 For each item in the Definition of Done, determine if the project satisfies it.
+Use the Full Branch diff above as the authoritative view of all work done on this branch.
 The runtime facts above are verified by the harness — trust them as ground truth.
 
 IMPORTANT: Respond with a JSON object followed by a verdict line. No prose, no markdown fences, no code blocks. Format:

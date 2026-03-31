@@ -1968,6 +1968,31 @@ else
 fi
 rm -rf "$_trunc_tmpdir"
 
+# Test: DoD includes full branch diff for compound_rebuild cycle correctness (#258)
+# When compound_quality fails and triggers a rebuild, LOOP_START_COMMIT is reset to HEAD
+# (after all prior build work). The loop-run diff is then empty/tiny, causing the DoD
+# evaluator to say "no diff provided". The fix: also include the merge-base..HEAD diff.
+if grep -q '_dod_merge_base' "$SCRIPT_DIR/sw-loop.sh" && \
+   grep -q 'Full Branch Changes vs Base' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD includes full branch diff for compound_rebuild cycle correctness"
+else
+    assert_fail "DoD must include full branch diff (merge-base..HEAD) to handle compound_rebuild cycles"
+fi
+
+# Test: DoD branch diff is sanitized to prevent delimiter injection
+if grep -A5 '_dod_branch_diff' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'REDACTED:DOD'; then
+    assert_pass "DoD branch diff sanitized to prevent delimiter injection"
+else
+    assert_fail "DoD branch diff must sanitize <<<DOD:PASS/FAIL>>> tokens"
+fi
+
+# Test: DoD prompt notes loop-run diff may be small in rebuild cycles
+if grep -q 'prior build' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD prompt explains loop-run diff may be small in rebuild cycles"
+else
+    assert_fail "DoD prompt should explain loop-run diff may be small in rebuild cycles"
+fi
+
 # Test: DoD does NOT use --json-schema (flag causes empty output — see #253)
 if grep -A5 'dod_flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q '\-\-json-schema'; then
     assert_fail "DoD evaluator must NOT use --json-schema (causes empty claude -p output)"

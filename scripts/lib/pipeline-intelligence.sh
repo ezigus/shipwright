@@ -1259,7 +1259,7 @@ compound_rebuild_with_feedback() {
     # Save original_goal and install a RETURN trap so it is always restored even
     # if self_healing_build_test exits unexpectedly under set -e.
     local original_goal="$GOAL"
-    trap 'GOAL="$original_goal"' RETURN
+    trap '{ GOAL="$original_goal"; trap - RETURN; }' RETURN
     local feedback_content
     feedback_content=$(cat "$feedback_file")
 

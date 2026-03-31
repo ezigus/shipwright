@@ -99,13 +99,19 @@ stage_pr() {
         warn "Rebase/merge failed — pushing as-is"
     }
 
-    # Push branch
+    # Push branch — force required after rebase (history rewritten)
     info "Pushing branch: $GIT_BRANCH"
-    git push -u origin "$GIT_BRANCH" --force-with-lease 2>/dev/null || {
-        # Retry with regular push if force-with-lease fails (first push)
-        git push -u origin "$GIT_BRANCH" 2>/dev/null || {
-            error "Failed to push branch"
-            return 1
+    local push_err
+    push_err=$(git push -u origin "$GIT_BRANCH" --force-with-lease 2>&1) || {
+        warn "force-with-lease push failed: $push_err"
+        # Fallback: fetch remote ref then retry lease, or force-push as last resort
+        git fetch origin "$GIT_BRANCH" 2>/dev/null || true
+        push_err=$(git push -u origin "$GIT_BRANCH" --force-with-lease 2>&1) || {
+            warn "Second force-with-lease attempt failed: $push_err"
+            push_err=$(git push -u origin "$GIT_BRANCH" --force 2>&1) || {
+                error "Failed to push branch: $push_err"
+                return 1
+            }
         }
     }
 

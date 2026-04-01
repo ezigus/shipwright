@@ -401,20 +401,16 @@ ${_skill_prompts}
         fi
         # Detect max-turns exhaustion — retrying won't help at the same limit,
         # so fail immediately with a clear actionable message.
-        if grep -q "Reached max turns" "$plan_file" 2>/dev/null; then
-            local _max_turns_msg
-            _max_turns_msg="Plan stage failed: Claude exhausted its turn budget (--max-turns 25) before producing a plan. The codebase likely requires more exploration turns than the current limit allows. Increase \`plan.max_turns\` in pipeline config or simplify the context bundle."
-            error "$_max_turns_msg"
-            if [[ -n "${ISSUE_NUMBER:-}" ]]; then
-                gh issue comment "$ISSUE_NUMBER" --body ":warning: **Shipwright Pipeline — Plan Stage Failed**
+        if grep -qE '^Error: Reached max turns( \([0-9]+\))?$' "$plan_file" 2>/dev/null; then
+            error "Plan stage failed: Claude exhausted its turn budget (--max-turns 25) before producing a plan. The codebase likely requires more exploration turns than the current limit allows."
+            gh_comment_issue "${ISSUE_NUMBER:-}" ":warning: **Shipwright Pipeline — Plan Stage Failed**
 
 Claude exhausted its turn budget (\`--max-turns 25\`) while exploring the codebase, and did not produce a plan. This is not a code error — it means Claude needed more tool calls to gather context than the limit allows.
 
 **What to try:**
 - Re-trigger the pipeline (transient overload can reduce turns available)
-- Reduce context bundle size by clearing the intelligence cache: \`shipwright intelligence reset\`
-- If this happens repeatedly, increase the turn limit in pipeline config" 2>/dev/null || true
-            fi
+- Reduce context bundle size by clearing the intelligence cache: \`shipwright intelligence cache-clear\`
+- If this happens repeatedly, increase the turn limit in pipeline config"
             return 1
         fi
         break
@@ -425,7 +421,7 @@ Claude exhausted its turn budget (\`--max-turns 25\`) while exploring the codeba
     local _plan_rescue
     for _plan_rescue in "${PROJECT_ROOT}/PLAN.md" "${PROJECT_ROOT}/plan.md" \
                          "${PROJECT_ROOT}/implementation-plan.md"; do
-        if [[ -s "$_plan_rescue" ]] && [[ $(grep -c . "$plan_file" 2>/dev/null || echo 0) -lt 10 ]]; then
+        if [[ -s "$_plan_rescue" ]] && [[ $(awk 'END{print NR}' "$plan_file" 2>/dev/null || echo 0) -lt 10 ]]; then
             info "Plan written to ${_plan_rescue} via tools — adopting as plan artifact"
             cat "$_plan_rescue" >> "$plan_file"
             rm -f "$_plan_rescue"
@@ -447,7 +443,7 @@ Claude exhausted its turn budget (\`--max-turns 25\`) while exploring the codeba
     fi
 
     local line_count
-    line_count=$(grep -c . "$plan_file" 2>/dev/null || echo 0)
+    line_count=$(awk 'END{print NR}' "$plan_file" 2>/dev/null || echo 0)
     if [[ "$line_count" -lt 3 ]]; then
         error "Plan too short (${line_count} lines) — likely an error, not a real plan"
         return 1
@@ -678,7 +674,7 @@ Fix these issues in the new plan."
                     "$regen_prompt" < /dev/null > "$plan_file" 2>"$_token_log" || true
                 parse_claude_tokens "$_token_log"
 
-                line_count=$(grep -c . "$plan_file" 2>/dev/null || echo 0)
+                line_count=$(awk 'END{print NR}' "$plan_file" 2>/dev/null || echo 0)
                 info "Regenerated plan: ${DIM}$plan_file${RESET} (${line_count} lines)"
             fi
         done

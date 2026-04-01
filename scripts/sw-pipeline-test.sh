@@ -381,11 +381,15 @@ invoke_pipeline() {
     # Invoke the REAL pipeline script as a subprocess.
     # Redirect HOME so emit_event writes events.jsonl to the temp dir rather than
     # the real ~/.shipwright/ (which may be outside sandbox write allowlists).
+    # Isolate intelligence env vars from parent pipeline to prevent test pollution.
+    # Tests that need these should set _TEST_INTELLIGENCE_COMPLEXITY instead.
     PIPELINE_OUTPUT=$(
         cd "$TEST_TEMP_DIR/project"
         HOME="$TEST_TEMP_DIR" \
         EVENTS_FILE="$TEST_TEMP_DIR/events.jsonl" \
         PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        INTELLIGENCE_COMPLEXITY="${_TEST_INTELLIGENCE_COMPLEXITY:-}" \
+        INTELLIGENCE_ISSUE_TYPE="${_TEST_INTELLIGENCE_ISSUE_TYPE:-}" \
         bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
     ) || PIPELINE_EXIT=$?
 }
@@ -964,11 +968,8 @@ test_intelligent_skip_low_complexity() {
 }
 CONFIG
 
-    # Export INTELLIGENCE_COMPLEXITY=2 in environment (very simple)
-    # Need to pass it in via subshell env for invoke_pipeline
-    export INTELLIGENCE_COMPLEXITY=2
-    invoke_pipeline start --goal "Simple typo fix" --skip-gates
-    unset INTELLIGENCE_COMPLEXITY
+    # Set complexity=2 (very simple) via test-isolated env var
+    _TEST_INTELLIGENCE_COMPLEXITY=2 invoke_pipeline start --goal "Simple typo fix" --skip-gates
 
     assert_exit_code 0 "pipeline should complete with low complexity" &&
     assert_output_contains "intelligence.*complexity.*[0-3]|stage.*skipped" "should show intelligence skip due to complexity" &&

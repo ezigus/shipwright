@@ -237,6 +237,60 @@ else
     assert_fail "team offline without recruit uses heuristic defaults" "exit=$rc output=$(echo "$output" | tail -3)"
 fi
 
+# ─── Test 16: analyze_type with double quotes in text ─────────────────────────
+echo ""
+echo -e "  ${CYAN}double quotes in input${RESET}"
+(
+    set +euo pipefail
+    source "$SCRIPT_DIR/sw-triage.sh"
+    result=$(analyze_type 'fix: workflow issue with "double quotes" in title')
+    echo "$result"
+) > "$TEST_TEMP_DIR/double_quote_output" 2>/dev/null
+double_quote_result=$(cat "$TEST_TEMP_DIR/double_quote_output")
+if [[ -n "$double_quote_result" ]]; then
+    assert_pass "analyze_type handles double quotes"
+else
+    assert_fail "analyze_type handles double quotes" "got empty result"
+fi
+
+# ─── Test 17: cmd_team JSON output with double quotes ────────────────────────
+# Create a mock gh that returns an issue with double quotes
+cat > "$TEST_TEMP_DIR/bin/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "issue" && "${2:-}" == "view" && "${3:-}" == "257" ]]; then
+    if [[ "${4:-}" == "--json" && "${5:-}" == "title" ]]; then
+        echo '{"title":"fix: workflow issue with \"double quotes\" in title"}'
+    elif [[ "${4:-}" == "--json" ]]; then
+        echo '{"title":"fix: workflow issue with \"double quotes\" in title","body":"Test body"}'
+    fi
+fi
+exit 0
+MOCK_GH
+chmod +x "$TEST_TEMP_DIR/bin/gh"
+
+# Create a mock recruit that accepts the title with quotes
+cat > "$TEST_TEMP_DIR/bin/sw-recruit.sh" <<'MOCK_RECRUIT'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "team" && "${2:-}" == "--json" ]]; then
+    echo '{"team":["builder"],"model":"sonnet","agents":1,"template":"fast","max_iterations":2}'
+    exit 0
+fi
+echo "mock recruit"
+MOCK_RECRUIT
+chmod +x "$TEST_TEMP_DIR/bin/sw-recruit.sh"
+
+# Copy triage to test directory
+cp "$SCRIPT_DIR/sw-triage.sh" "$TEST_TEMP_DIR/bin/sw-triage.sh"
+
+output=$(NO_GITHUB=0 SCRIPT_DIR="$TEST_TEMP_DIR/bin" PATH="$TEST_TEMP_DIR/bin:$PATH" bash "$TEST_TEMP_DIR/bin/sw-triage.sh" team 257 2>&1) && rc=0 || rc=$?
+if echo "$output" | jq -e '.recommendation' >/dev/null 2>&1; then
+    assert_pass "cmd_team outputs valid JSON with double quotes in issue title"
+elif echo "$output" | grep -q "pipeline_template"; then
+    assert_pass "cmd_team works with double quotes (text output)"
+else
+    assert_fail "cmd_team with double quotes in issue title" "exit=$rc, output=$(echo "$output" | head -5)"
+fi
+
 echo ""
 echo ""
 print_test_results

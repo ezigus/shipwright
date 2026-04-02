@@ -2,6 +2,7 @@
 # test-skill-injection.sh — Verify Dynamic Skill Injection System
 # Tests: skill registry, issue type classification, retry context, two-stage review
 set -euo pipefail
+trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORIGINAL_PATH="$PATH"

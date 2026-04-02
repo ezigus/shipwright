@@ -216,6 +216,51 @@ assert_contains "Plan has steps" "$plan_content" "Files to Modify"
 assert_file_exists "DoD extracted" "$ARTIFACTS_DIR/dod.md"
 assert_file_exists "Tasks file" "$TASKS_FILE"
 
+# stage_plan: max-turns exhaustion — with trailing newline
+mock_binary "claude" 'printf "Error: Reached max turns (25)\n"'
+rm -f "$ARTIFACTS_DIR/plan.md"
+stage_plan 2>/dev/null && assert_fail "Max-turns plan (newline) should fail" || assert_pass "Max-turns plan (newline) fails stage"
+plan_out=$(cat "$ARTIFACTS_DIR/plan.md" 2>/dev/null || echo "")
+assert_contains "Max-turns output preserved" "$plan_out" "Reached max turns"
+
+# stage_plan: max-turns exhaustion — no trailing newline (the real-world case)
+mock_binary "claude" 'printf "Error: Reached max turns (25)"'
+rm -f "$ARTIFACTS_DIR/plan.md"
+stage_plan 2>/dev/null && assert_fail "Max-turns plan (no newline) should fail" || assert_pass "Max-turns plan (no newline) fails stage"
+
+# Restore normal claude mock for subsequent tests
+mock_binary "claude" 'prompt=""
+use_json=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -p) prompt="${2:-}"; shift 2 ;;
+    --output-format) [[ "${2:-}" == "json" ]] && use_json=true; shift 2 ;;
+    --output-format=*) [[ "${1#*=}" == "json" ]] && use_json=true; shift ;;
+    --model|--max-turns|--disallowed-tools) [[ $# -gt 1 ]] && shift 2 || shift ;;
+    --print|--dangerously-skip-permissions) shift ;;
+    --*=*) shift ;;
+    --*) [[ $# -gt 1 && "${2:-}" != -* ]] && shift 2 || shift ;;
+    *) prompt="${1:-}"; shift ;;
+  esac
+done
+plan="# Implementation Plan
+
+## Files to Modify
+- src/auth.js
+
+### Task Checklist
+- [ ] Create auth module
+- [ ] Add JWT validation
+
+### Definition of Done
+- [ ] All tests pass
+"
+if [[ "$use_json" == "true" ]]; then
+  jq -n --arg result "$plan" "{type:\"result\",result:\$result,usage:{input_tokens:10,output_tokens:20}}"
+else
+  printf "%s\n" "$plan"
+fi'
+
 # ─── Tests: stage_build ────────────────────────────────────────────────────
 print_test_section "stage_build"
 

@@ -117,10 +117,11 @@ jobs:
       - name: Vet issue alignment and determine strategy
         if: steps.skip.conclusion == 'skipped'
         id: triage
+        env:
+          TITLE: ${{ steps.issue.outputs.title }}
+          LABELS: ${{ steps.issue.outputs.labels }}
+          AUTHOR: ${{ steps.issue.outputs.author }}
         run: |
-          TITLE="${{ steps.issue.outputs.title }}"
-          LABELS="${{ steps.issue.outputs.labels }}"
-          AUTHOR="${{ steps.issue.outputs.author }}"
           BODY=$(cat /tmp/issue-body.txt 2>/dev/null || echo "")
 
           # Build triage prompt with strategy engine

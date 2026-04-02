@@ -515,7 +515,7 @@ setup_dirs() {
     STATE_FILE="$STATE_DIR/pipeline-state.md"
     ARTIFACTS_DIR="$STATE_DIR/pipeline-artifacts"
     export ARTIFACTS_DIR  # Export so child processes (sw-loop.sh) can write audit events
-    TASKS_FILE="$STATE_DIR/pipeline-tasks.md"
+    TASKS_FILE="$STATE_DIR/pipeline-tasks${ISSUE_NUMBER:+-${ISSUE_NUMBER}}.md"
     mkdir -p "$STATE_DIR" "$ARTIFACTS_DIR"
     export SHIPWRIGHT_PIPELINE_ID="pipeline-$$-${ISSUE_NUMBER:-0}"
     export SHIPWRIGHT_ACTIVE=1

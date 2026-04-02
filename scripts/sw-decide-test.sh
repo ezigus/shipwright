@@ -278,6 +278,34 @@ print_test_section "autonomy"
     fi
 )
 
+# TIER_LIMITS set + jq missing → hard fail
+(
+    source "$TEST_REPO/scripts/lib/helpers.sh"
+    source "$TEST_REPO/scripts/lib/policy.sh"
+    source "$TEST_REPO/scripts/lib/decide-autonomy.sh"
+
+    cd "$TEST_REPO"
+    export TIER_LIMITS='{"max_issues_per_day":15,"max_cost_per_day_usd":25}'
+
+    # Create a PATH with no jq binary present
+    _no_jq_bin="$TEST_TEMP_DIR/no-jq-bin-$$"
+    mkdir -p "$_no_jq_bin"
+    # Copy other required commands but deliberately omit jq
+    for _cmd in bash sh grep sed awk tr date mkdir rm cat; do
+        _cmd_path=$(command -v "$_cmd" 2>/dev/null || true)
+        [[ -n "$_cmd_path" ]] && ln -sf "$_cmd_path" "$_no_jq_bin/$_cmd" 2>/dev/null || true
+    done
+
+    _exit_code=0
+    ( PATH="$_no_jq_bin" autonomy_check_budget "auto" ) 2>/dev/null || _exit_code=$?
+    if [[ "$_exit_code" -ne 0 ]]; then
+        assert_pass "TIER_LIMITS + missing jq: autonomy_check_budget exits non-zero"
+    else
+        assert_fail "TIER_LIMITS + missing jq: autonomy_check_budget exits non-zero"
+    fi
+    unset TIER_LIMITS
+)
+
 # Rate limiting
 (
     source "$TEST_REPO/scripts/lib/helpers.sh"

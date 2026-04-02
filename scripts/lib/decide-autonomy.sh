@@ -86,6 +86,12 @@ autonomy_check_budget() {
     local tier="$1"
     _ensure_decisions_dir
 
+    # When TIER_LIMITS is configured, jq is required — fail hard to prevent silent limit bypass
+    if [[ -n "${TIER_LIMITS:-}" ]] && ! command -v jq >/dev/null 2>&1; then
+        error "jq is required for TIER_LIMITS enforcement but was not found. Install: brew install jq (macOS) or apt install jq (Linux)"
+        exit 1
+    fi
+
     local daily_log
     daily_log=$(_daily_log_file)
 

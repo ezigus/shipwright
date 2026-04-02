@@ -225,11 +225,11 @@ start_server() {
         retries=$((retries + 1))
         if [[ $retries -gt 20 ]]; then
             kill "$SERVER_PID" 2>/dev/null || true
-            echo -e "\033[38;2;250;204;21m⚠ Dashboard server failed to start (port binding unavailable) — skipping e2e tests\033[0m"
+            echo -e "\033[38;2;239;68;68m✗ Dashboard server failed to start (port binding unavailable)\033[0m"
             echo ""
             echo "━━━ Results ━━━"
-            echo "  Skipped: server could not bind to port ${test_port}"
-            exit 0
+            echo "  FAIL: server could not bind to port ${test_port}"
+            exit 1
         fi
         sleep 0.5
     done

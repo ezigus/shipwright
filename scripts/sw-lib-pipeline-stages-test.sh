@@ -495,6 +495,9 @@ else
     assert_fail "resume_state removes malformed pipeline-tasks.md"
 fi
 
+# Clean up mocks to prevent scope pollution in subsequent tests
+unset -f git gh_init load_pipeline_config 2>/dev/null || true
+
 # ─── Tests: stage_build skips stale task injection ──────────────────────────
 print_test_section "stage_build skips stale task injection"
 

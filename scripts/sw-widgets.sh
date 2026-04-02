@@ -62,12 +62,12 @@ _get_pipeline_status() {
         return
     fi
 
-    # Try to extract status from pipeline state markdown (match structured field only)
-    if grep -qi "^status:.*passing" "$PIPELINE_STATE" 2>/dev/null; then
+    # Try to extract status from pipeline state markdown (allow optional leading whitespace)
+    if grep -qi "^[[:space:]]*status:[[:space:]]*passing" "$PIPELINE_STATE" 2>/dev/null; then
         echo "passing"
-    elif grep -qi "^status:.*failing" "$PIPELINE_STATE" 2>/dev/null; then
+    elif grep -qi "^[[:space:]]*status:[[:space:]]*failing" "$PIPELINE_STATE" 2>/dev/null; then
         echo "failing"
-    elif grep -qi "^status:.*running" "$PIPELINE_STATE" 2>/dev/null; then
+    elif grep -qi "^[[:space:]]*status:[[:space:]]*running" "$PIPELINE_STATE" 2>/dev/null; then
         echo "running"
     else
         echo "unknown"

@@ -302,6 +302,7 @@ RESUME_FROM_CHECKPOINT=false
 MAX_ITERATIONS_OVERRIDE=""
 MAX_RESTARTS_OVERRIDE=""
 FAST_TEST_CMD_OVERRIDE=""
+FAST_TEST_INTERVAL_OVERRIDE=""
 PR_NUMBER=""
 AUTO_WORKTREE=false
 WORKTREE_NAME=""
@@ -377,6 +378,7 @@ show_help() {
     echo -e "  ${DIM}--max-iterations <n>${RESET}       Override max build loop iterations"
     echo -e "  ${DIM}--max-restarts <n>${RESET}         Max session restarts in build loop"
     echo -e "  ${DIM}--fast-test-cmd <cmd>${RESET}      Fast/subset test for build loop"
+    echo -e "  ${DIM}--fast-test-interval <n>${RESET}   Run full tests every N iterations (default: 5)"
     echo -e "  ${DIM}--tdd${RESET}                     Test-first: generate tests before implementation"
     echo -e "  ${DIM}--completed-stages \"a,b\"${RESET}   Skip these stages (CI resume)"
     echo ""
@@ -475,6 +477,13 @@ parse_args() {
                 shift 2 ;;
 
             --fast-test-cmd) FAST_TEST_CMD_OVERRIDE="$2"; shift 2 ;;
+            --fast-test-interval)
+                FAST_TEST_INTERVAL_OVERRIDE="$2"
+                if ! [[ "$FAST_TEST_INTERVAL_OVERRIDE" =~ ^[1-9][0-9]*$ ]]; then
+                    error "--fast-test-interval must be a positive integer (got: $FAST_TEST_INTERVAL_OVERRIDE)"
+                    exit 1
+                fi
+                shift 2 ;;
             --tdd)         TDD_ENABLED=true; shift ;;
             --help|-h)     show_help; exit 0 ;;
             *)
@@ -710,7 +719,9 @@ cleanup_on_exit() {
         _our_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ') || true
         if [[ "${_our_pgid:-}" == "$$" ]]; then
             kill -- -$$ 2>/dev/null || true
-            sleep 2
+            local _grace="${PIPELINE_KILL_GRACE:-25}"
+            [[ "$_grace" =~ ^[0-9]+$ ]] || _grace=25
+            sleep "$_grace"
             kill -9 -- -$$ 2>/dev/null || true
         fi
     fi
@@ -769,7 +780,7 @@ preflight_checks() {
 
     # Check for uncommitted changes — offer to stash (excluding daemon-config.json runtime writes)
     local dirty_files
-    dirty_files=$(git status --porcelain 2>/dev/null | grep -v '\.claude/daemon-config\.json' | wc -l | xargs)
+    dirty_files=$(_trim "$(git status --porcelain 2>/dev/null | grep -v '\.claude/daemon-config\.json' | wc -l)")
     if [[ "$dirty_files" -gt 0 ]]; then
         echo -e "  ${YELLOW}⚠${RESET} $dirty_files uncommitted change(s)"
         if [[ "$SKIP_GATES" == "true" ]]; then
@@ -1007,7 +1018,7 @@ run_stage_with_retry() {
             local plan_artifact="${ARTIFACTS_DIR}/plan.md"
             if [[ -s "$plan_artifact" ]]; then
                 local existing_lines
-                existing_lines=$(wc -l < "$plan_artifact" 2>/dev/null | xargs)
+                existing_lines=$(_trim "$(wc -l < "$plan_artifact" 2>/dev/null)")
                 existing_lines="${existing_lines:-0}"
                 if [[ "$existing_lines" -gt 10 ]]; then
                     info "Plan already exists (${existing_lines} lines) — skipping retry, advancing"
@@ -1097,7 +1108,7 @@ run_stage_with_retry() {
             for _af in plan.md design.md test-results.log; do
                 if [[ -s "${ARTIFACTS_DIR}/${_af}" ]]; then
                     local _af_lines
-                    _af_lines=$(wc -l < "${ARTIFACTS_DIR}/${_af}" 2>/dev/null | xargs)
+                    _af_lines=$(_trim "$(wc -l < "${ARTIFACTS_DIR}/${_af}" 2>/dev/null)")
                     _existing_artifacts="${_existing_artifacts}  - ${_af} (${_af_lines} lines)\n"
                 fi
             done
@@ -2442,8 +2453,8 @@ pipeline_start() {
         PIPELINE_NAME="$PIPELINE_TEMPLATE"
     fi
 
-    # Check for existing pipeline
-    if [[ -f "$STATE_FILE" ]]; then
+    # Check for existing pipeline (skip guard when resuming from checkpoint)
+    if [[ -f "$STATE_FILE" ]] && ! $RESUME_FROM_CHECKPOINT; then
         local existing_status
         existing_status=$(sed -n 's/^status: *//p' "$STATE_FILE" | head -1)
         if [[ "$existing_status" == "running" || "$existing_status" == "paused" || "$existing_status" == "interrupted" ]]; then
@@ -2530,11 +2541,13 @@ pipeline_start() {
         fi
     fi
 
-    # Restore from state file if resuming (failed/interrupted pipeline); else initialize fresh
+    # Restore from state file if resuming (failed/interrupted/running pipeline); else initialize fresh
+    # Note: "running" is included because a killed process leaves status as "running"
+    # without gracefully setting it to "interrupted"
     if $RESUME_FROM_CHECKPOINT && [[ -f "$STATE_FILE" ]]; then
         local existing_status
         existing_status="$(sed -n 's/^status: *//p' "$STATE_FILE" | head -1)"
-        if [[ "$existing_status" == "failed" || "$existing_status" == "interrupted" ]]; then
+        if [[ "$existing_status" == "failed" || "$existing_status" == "interrupted" || "$existing_status" == "running" ]]; then
             resume_state
         else
             initialize_state
@@ -2999,15 +3012,15 @@ pipeline_status() {
         fi
         if $in_frontmatter; then
             case "$line" in
-                pipeline:*)      p_name="$(echo "${line#pipeline:}" | xargs)" ;;
+                pipeline:*)      p_name="$(_trim "${line#pipeline:}")" ;;
                 goal:*)          p_goal="$(echo "${line#goal:}" | sed 's/^ *"//;s/" *$//')" ;;
-                status:*)        p_status="$(echo "${line#status:}" | xargs)" ;;
+                status:*)        p_status="$(_trim "${line#status:}")" ;;
                 branch:*)        p_branch="$(echo "${line#branch:}" | sed 's/^ *"//;s/" *$//')" ;;
-                current_stage:*) p_stage="$(echo "${line#current_stage:}" | xargs)" ;;
-                started_at:*)    p_started="$(echo "${line#started_at:}" | xargs)" ;;
+                current_stage:*) p_stage="$(_trim "${line#current_stage:}")" ;;
+                started_at:*)    p_started="$(_trim "${line#started_at:}")" ;;
                 issue:*)         p_issue="$(echo "${line#issue:}" | sed 's/^ *"//;s/" *$//')" ;;
-                elapsed:*)       p_elapsed="$(echo "${line#elapsed:}" | xargs)" ;;
-                pr_number:*)     p_pr="$(echo "${line#pr_number:}" | xargs)" ;;
+                elapsed:*)       p_elapsed="$(_trim "${line#elapsed:}")" ;;
+                pr_number:*)     p_pr="$(_trim "${line#pr_number:}")" ;;
             esac
         fi
     done < "$STATE_FILE"
@@ -3044,7 +3057,7 @@ pipeline_status() {
         if $in_stages; then
             if [[ "$line" == "---" || ! "$line" =~ ^" " ]]; then break; fi
             local trimmed
-            trimmed="$(echo "$line" | xargs)"
+            trimmed="$(_trim "$line")"
             if [[ "$trimmed" == *":"* ]]; then
                 local sid="${trimmed%%:*}"
                 local sst="${trimmed#*: }"
@@ -3062,7 +3075,7 @@ pipeline_status() {
 
     if [[ -d "$ARTIFACTS_DIR" ]]; then
         local artifact_count
-        artifact_count=$(find "$ARTIFACTS_DIR" -type f 2>/dev/null | wc -l | xargs)
+        artifact_count=$(_trim "$(find "$ARTIFACTS_DIR" -type f 2>/dev/null | wc -l)")
         if [[ "$artifact_count" -gt 0 ]]; then
             echo ""
             echo -e "  ${BOLD}Artifacts:${RESET} ($artifact_count files)"

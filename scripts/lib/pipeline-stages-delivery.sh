@@ -31,7 +31,7 @@ stage_pr() {
         local branch_name
         branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
         local commit_count
-        commit_count=$(_safe_base_log --oneline | wc -l | xargs)
+        commit_count=$(_trim "$(_safe_base_log --oneline | wc -l)")
         {
             echo "# PR Draft (local mode)"
             echo ""
@@ -48,7 +48,7 @@ stage_pr() {
 
     # ── PR Hygiene Checks (informational) ──
     local hygiene_commit_count
-    hygiene_commit_count=$(_safe_base_log --oneline | wc -l | xargs)
+    hygiene_commit_count=$(_trim "$(_safe_base_log --oneline | wc -l)")
     hygiene_commit_count="${hygiene_commit_count:-0}"
 
     if [[ "$hygiene_commit_count" -gt 20 ]]; then
@@ -63,9 +63,23 @@ stage_pr() {
         warn "Branch has ${wip_commits} WIP/fixup/squash/temp commit(s) — consider cleaning up"
     fi
 
+    # Commit any uncommitted changes left by the build agent
+    # Must happen BEFORE the quality gate so _safe_base_diff sees all real changes.
+    # Use git status --porcelain to catch untracked files (new files created by the
+    # build agent) in addition to tracked modifications. Only commit when real
+    # (non-.claude/) changes are present to avoid leaving an artifact-only commit
+    # on a branch that the quality gate is about to reject.
+    local _pending_real
+    _pending_real=$(git status --porcelain 2>/dev/null | awk '{print $NF}' | grep -v '^\.claude/' || true)
+    if [[ -n "$_pending_real" ]]; then
+        info "Committing remaining uncommitted changes..."
+        safe_git_stage
+        git commit -m "chore: pipeline cleanup — commit remaining build changes" --no-verify 2>/dev/null || true
+    fi
+
     # ── PR Quality Gate: reject PRs with no real code changes ──
     local real_files
-    real_files=$(_safe_base_diff --name-only | grep -v '^\.claude/' | grep -v '^\.github/' || true)
+    real_files=$(_safe_base_diff --name-only | grep -v '^\.claude/' || true)
     if [[ -z "$real_files" ]]; then
         error "No real code changes detected — only pipeline artifacts (.claude/ logs)."
         error "The build agent did not produce meaningful changes. Skipping PR creation."
@@ -77,28 +91,30 @@ stage_pr() {
         return 1
     fi
     local real_file_count
-    real_file_count=$(echo "$real_files" | wc -l | xargs)
+    real_file_count=$(_trim "$(echo "$real_files" | wc -l)")
     info "PR quality gate: ${real_file_count} real file(s) changed"
-
-    # Commit any uncommitted changes left by the build agent
-    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-        info "Committing remaining uncommitted changes..."
-        safe_git_stage
-        git commit -m "chore: pipeline cleanup — commit remaining build changes" --no-verify 2>/dev/null || true
-    fi
 
     # Auto-rebase onto latest base branch before PR
     auto_rebase || {
         warn "Rebase/merge failed — pushing as-is"
     }
 
-    # Push branch
+    # Push branch — force required after rebase (history rewritten)
     info "Pushing branch: $GIT_BRANCH"
-    git push -u origin "$GIT_BRANCH" --force-with-lease 2>/dev/null || {
-        # Retry with regular push if force-with-lease fails (first push)
-        git push -u origin "$GIT_BRANCH" 2>/dev/null || {
-            error "Failed to push branch"
-            return 1
+    local push_err
+    push_err=$(git push -u origin "$GIT_BRANCH" --force-with-lease 2>&1) || {
+        warn "force-with-lease push failed; see git output below"
+        printf '%s\n' "$push_err" >&2
+        # Fallback: fetch remote ref then retry lease, or force-push as last resort
+        git fetch origin "$GIT_BRANCH" 2>/dev/null || true
+        push_err=$(git push -u origin "$GIT_BRANCH" --force-with-lease 2>&1) || {
+            warn "Second force-with-lease attempt failed; see git output below"
+            printf '%s\n' "$push_err" >&2
+            push_err=$(git push -u origin "$GIT_BRANCH" --force 2>&1) || {
+                error "Failed to push branch"
+                printf '%s\n' "$push_err" >&2
+                return 1
+            }
         }
     }
 
@@ -206,7 +222,7 @@ stage_pr() {
 
     local test_summary=""
     if [[ -s "$test_log" ]]; then
-        test_summary=$(tail -10 "$test_log" | sed 's/\x1b\[[0-9;]*m//g')
+        test_summary=$(tail -10 "$test_log" | strip_ansi)
     fi
 
     local review_summary=""
@@ -231,7 +247,7 @@ stage_pr() {
     diff_stats=$(_safe_base_diff --stat | tail -1 || echo "")
 
     local commit_count
-    commit_count=$(_safe_base_log --oneline | wc -l | xargs)
+    commit_count=$(_trim "$(_safe_base_log --oneline | wc -l)")
 
     local total_dur=""
     if [[ -n "$PIPELINE_START_EPOCH" ]]; then

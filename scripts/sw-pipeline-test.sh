@@ -381,11 +381,15 @@ invoke_pipeline() {
     # Invoke the REAL pipeline script as a subprocess.
     # Redirect HOME so emit_event writes events.jsonl to the temp dir rather than
     # the real ~/.shipwright/ (which may be outside sandbox write allowlists).
+    # Isolate intelligence env vars from parent pipeline to prevent test pollution.
+    # Tests that need these should set _TEST_INTELLIGENCE_COMPLEXITY instead.
     PIPELINE_OUTPUT=$(
         cd "$TEST_TEMP_DIR/project"
         HOME="$TEST_TEMP_DIR" \
         EVENTS_FILE="$TEST_TEMP_DIR/events.jsonl" \
         PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        INTELLIGENCE_COMPLEXITY="${_TEST_INTELLIGENCE_COMPLEXITY:-}" \
+        INTELLIGENCE_ISSUE_TYPE="${_TEST_INTELLIGENCE_ISSUE_TYPE:-}" \
         bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
     ) || PIPELINE_EXIT=$?
 }
@@ -709,6 +713,89 @@ test_resume() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 12b. Resume from "running" status (killed process)
+# ──────────────────────────────────────────────────────────────────────────────
+test_resume_from_running() {
+    # Step 1: Run intake-only pipeline to create real state + branch
+    pipeline_config_with_stages "intake" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+    invoke_pipeline start --goal "Resume running test" --skip-gates --test-cmd "echo passed"
+
+    if [[ "$PIPELINE_EXIT" -ne 0 ]]; then
+        echo -e "    ${RED}✗${RESET} Setup failed: intake didn't complete"
+        return 1
+    fi
+
+    # Step 2: Modify state to look like a killed pipeline (status: running)
+    # and update the template to include plan stage
+    pipeline_config_with_stages "intake,plan" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+
+    # Rewrite status from "complete" to "running" to simulate a killed process
+    if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' 's/^status: complete$/status: running/' "$TEST_TEMP_DIR/project/.claude/pipeline-state.md"
+    else
+        sed -i 's/^status: complete$/status: running/' "$TEST_TEMP_DIR/project/.claude/pipeline-state.md"
+    fi
+
+    # Step 3: Resume — should treat "running" as resumable and skip intake, run plan
+    invoke_pipeline resume
+
+    assert_exit_code 0 "resume from running should complete" &&
+    assert_output_contains "Resum" "resume message" &&
+    assert_file_exists ".claude/pipeline-artifacts/plan.md" "plan generated after resume from running" &&
+    assert_state_contains "plan.*complete" "plan completed after resume from running"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 12c. Resume with empty stages recovers from log
+# ──────────────────────────────────────────────────────────────────────────────
+test_resume_empty_stages_recovers_from_log() {
+    # Simulate a corrupted state file where stages: section is empty but log
+    # entries show completed stages (happens when write was interrupted).
+    pipeline_config_with_stages "intake,plan" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+    mkdir -p "$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
+
+    # Create a state file with empty stages but log showing intake complete
+    cat > "$TEST_TEMP_DIR/project/.claude/pipeline-state.md" <<'STATE'
+---
+pipeline: standard
+goal: "Recovery test feature"
+status: interrupted
+issue: ""
+branch: ""
+template: ""
+current_stage: plan
+current_stage_description: ""
+stage_progress: ""
+started_at: 2026-01-01T00:00:00Z
+updated_at: 2026-01-01T00:01:00Z
+elapsed: 1m
+test_cmd: "echo passed"
+pr_number:
+progress_comment_id:
+stages:
+---
+
+## Log
+
+### intake (00:00:01)
+Goal: Recovery test feature
+Type: feature
+Branch: feat/recovery-test
+Language: javascript
+Test cmd: echo passed
+
+### intake (00:00:01)
+complete (30s)
+STATE
+
+    invoke_pipeline resume
+
+    assert_exit_code 0 "resume with empty stages should complete" &&
+    assert_output_contains "Recovered stage statuses from log" "should show recovery message" &&
+    assert_file_exists ".claude/pipeline-artifacts/plan.md" "plan generated after log-based recovery"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 13. Abort marks pipeline as aborted
 # ──────────────────────────────────────────────────────────────────────────────
 test_abort() {
@@ -881,11 +968,8 @@ test_intelligent_skip_low_complexity() {
 }
 CONFIG
 
-    # Export INTELLIGENCE_COMPLEXITY=2 in environment (very simple)
-    # Need to pass it in via subshell env for invoke_pipeline
-    export INTELLIGENCE_COMPLEXITY=2
-    invoke_pipeline start --goal "Simple typo fix" --skip-gates
-    unset INTELLIGENCE_COMPLEXITY
+    # Set complexity=2 (very simple) via test-isolated env var
+    _TEST_INTELLIGENCE_COMPLEXITY=2 invoke_pipeline start --goal "Simple typo fix" --skip-gates
 
     assert_exit_code 0 "pipeline should complete with low complexity" &&
     assert_output_contains "intelligence.*complexity.*[0-3]|stage.*skipped" "should show intelligence skip due to complexity" &&
@@ -1837,6 +1921,8 @@ main() {
         "test_pr_creates_url:PR stage creates PR URL artifact"
         "test_full_pipeline_e2e:Full E2E pipeline (6 stages)"
         "test_resume:Resume continues from partial state"
+        "test_resume_from_running:Resume from running status (killed process)"
+        "test_resume_empty_stages_recovers_from_log:Resume recovers stages from log when stages section is empty"
         "test_abort:Abort marks pipeline as aborted"
         "test_dry_run:Dry run shows config, no artifacts"
         "test_self_healing:Self-healing build→test retry loop"

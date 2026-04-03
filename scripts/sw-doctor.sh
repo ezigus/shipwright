@@ -192,6 +192,15 @@ else
     echo -e "    ${DIM}sudo apt install jq${RESET}  (Ubuntu/Debian)"
 fi
 
+# flock (optional — daemon uses mkdir fallback on macOS without it)
+if command -v flock >/dev/null 2>&1; then
+    check_pass "flock available (strong daemon single-instance lock)"
+else
+    check_warn "flock not installed — daemon uses mkdir fallback (safe but weaker)"
+    echo -e "    ${DIM}brew install flock${RESET}  (macOS)"
+    echo -e "    ${DIM}sudo apt install util-linux${RESET}  (Debian/Ubuntu)"
+fi
+
 # Claude Code CLI
 if command -v claude >/dev/null 2>&1; then
     check_pass "Claude Code CLI found"

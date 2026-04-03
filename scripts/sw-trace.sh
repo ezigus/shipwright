@@ -143,7 +143,7 @@ trace_show() {
             echo -e "  ${DIM}No branch found${RESET}"
         else
             echo "$branches" | while read -r branch; do
-                branch=$(echo "$branch" | xargs)
+                branch=$(_trim "$(echo "$branch")")
                 echo -e "  ${CYAN}${branch}${RESET}"
             done
         fi

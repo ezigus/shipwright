@@ -3,6 +3,17 @@
 [[ -n "${_PIPELINE_STATE_LOADED:-}" ]] && return 0
 _PIPELINE_STATE_LOADED=1
 
+# Ensure _trim is available (normally provided by helpers.sh, but this file
+# may be sourced in test harnesses that stub helpers instead of sourcing them).
+if ! type _trim >/dev/null 2>&1; then
+    _trim() {
+        local s="${1:-}"
+        s="${s#"${s%%[![:space:]]*}"}"
+        s="${s%"${s##*[![:space:]]}"}"
+        printf '%s' "$s"
+    }
+fi
+
 # Defaults for variables normally set by sw-pipeline.sh (safe under set -u).
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
 STAGE_STATUSES="${STAGE_STATUSES:-}"
@@ -459,7 +470,7 @@ initialize_state() {
     LOG_ENTRIES=""
     # Clear per-run tracking files
     rm -f "$ARTIFACTS_DIR/model-routing.log" "$ARTIFACTS_DIR/.plan-failure-sig.txt"
-    # Clear stale task file so previous issue's tasks don't leak into new run
+    # Clear task list so stale tasks from a previous pipeline run are not injected
     [[ -n "${TASKS_FILE:-}" ]] && rm -f "$TASKS_FILE"
     write_state
 }
@@ -495,11 +506,11 @@ write_state() {
         stage_progress=$(build_stage_progress)
     fi
 
-    cat > "$STATE_FILE" <<'_SW_STATE_END_'
----
-_SW_STATE_END_
-    # Write state with printf to avoid heredoc delimiter injection
+    # Atomic write: build content in tmp file, then mv into place.
+    # This prevents partial/corrupt state files when interrupted by signals.
+    local tmp_state="${STATE_FILE}.tmp.$$"
     {
+        printf -- '---\n'
         printf 'pipeline: %s\n' "$PIPELINE_NAME"
         printf 'goal: "%s"\n' "$GOAL"
         printf 'status: %s\n' "$PIPELINE_STATUS"
@@ -520,7 +531,8 @@ _SW_STATE_END_
         printf -- '---\n\n'
         printf '## Log\n'
         printf '%s\n' "$LOG_ENTRIES"
-    } >> "$STATE_FILE"
+    } > "$tmp_state"
+    mv -f "$tmp_state" "$STATE_FILE" || { rm -f "$tmp_state"; error "Failed to write pipeline state to $STATE_FILE (mv failed)"; return 1; }
 
     # Update pipeline_runs in DB
     if type update_pipeline_status >/dev/null 2>&1 && db_available 2>/dev/null; then
@@ -549,21 +561,21 @@ resume_state() {
         fi
         if $in_frontmatter; then
             case "$line" in
-                pipeline:*)            PIPELINE_NAME="$(echo "${line#pipeline:}" | xargs)" ;;
+                pipeline:*)            PIPELINE_NAME="$(_trim "${line#pipeline:}")" ;;
                 goal:*)                GOAL="$(echo "${line#goal:}" | sed 's/^ *"//;s/" *$//')" ;;
-                status:*)              PIPELINE_STATUS="$(echo "${line#status:}" | xargs)" ;;
+                status:*)              PIPELINE_STATUS="$(_trim "${line#status:}")" ;;
                 issue:*)               GITHUB_ISSUE="$(echo "${line#issue:}" | sed 's/^ *"//;s/" *$//')" ;;
                 branch:*)              GIT_BRANCH="$(echo "${line#branch:}" | sed 's/^ *"//;s/" *$//')" ;;
-                current_stage:*)       CURRENT_STAGE="$(echo "${line#current_stage:}" | xargs)" ;;
+                current_stage:*)       CURRENT_STAGE="$(_trim "${line#current_stage:}")" ;;
                 current_stage_description:*) ;; # computed field — skip on resume
                 stage_progress:*)      ;; # computed field — skip on resume
-                started_at:*)          STARTED_AT="$(echo "${line#started_at:}" | xargs)" ;;
+                started_at:*)          STARTED_AT="$(_trim "${line#started_at:}")" ;;
                 test_cmd:*)            TEST_CMD="$(echo "${line#test_cmd:}" | sed 's/^ *"//;s/" *$//')" ;;
-                pr_number:*)           PR_NUMBER="$(echo "${line#pr_number:}" | xargs)" ;;
-                progress_comment_id:*) PROGRESS_COMMENT_ID="$(echo "${line#progress_comment_id:}" | xargs)" ;;
+                pr_number:*)           PR_NUMBER="$(_trim "${line#pr_number:}")" ;;
+                progress_comment_id:*) PROGRESS_COMMENT_ID="$(_trim "${line#progress_comment_id:}")" ;;
                 "  "*)
                     local trimmed
-                    trimmed="$(echo "$line" | xargs)"
+                    trimmed="$(_trim "$line")"
                     if [[ "$trimmed" == *":"* ]]; then
                         local sid="${trimmed%%:*}"
                         local sst="${trimmed#*: }"
@@ -577,8 +589,52 @@ ${sid}:${sst}"
 
     LOG_ENTRIES="$(sed -n '/^## Log$/,$ { /^## Log$/d; p; }' "$STATE_FILE" 2>/dev/null || true)"
 
+    # Recovery: if stages section was empty (e.g., corrupted by signal during write),
+    # reconstruct stage statuses from the log entries which record "complete (...)" lines.
+    local trimmed_statuses
+    trimmed_statuses="$(echo "$STAGE_STATUSES" | sed '/^$/d')"
+    if [[ -z "$trimmed_statuses" && -n "$LOG_ENTRIES" ]]; then
+        local recovered=""
+        local stage_id=""
+        while IFS= read -r log_line; do
+            # Log entries like: "### intake (18:08:17)" set the current stage
+            if [[ "$log_line" =~ ^###[[:space:]]+([a-z_]+)[[:space:]]+ ]]; then
+                stage_id="${BASH_REMATCH[1]}"
+            # Log entries like: "complete (2m 48s)" mark that stage as complete
+            elif [[ -n "$stage_id" && "$log_line" =~ ^complete[[:space:]] ]]; then
+                recovered="${recovered}
+${stage_id}:complete"
+                stage_id=""
+            # "failed (...)" marks stage as failed
+            elif [[ -n "$stage_id" && "$log_line" =~ ^failed[[:space:]] ]]; then
+                recovered="${recovered}
+${stage_id}:failed"
+                stage_id=""
+            fi
+        done <<< "$LOG_ENTRIES"
+        if [[ -n "$recovered" ]]; then
+            STAGE_STATUSES="$recovered"
+            warn "Recovered stage statuses from log (stages section was empty)"
+        fi
+    fi
+
     if [[ -n "$GITHUB_ISSUE" && "$GITHUB_ISSUE" =~ ^#([0-9]+)$ ]]; then
         ISSUE_NUMBER="${BASH_REMATCH[1]}"
+    fi
+
+    # Clear stale pipeline-tasks.md if it belongs to a different pipeline run.
+    # Tasks are written by the plan stage and include "- Issue: #NNN" in a Context
+    # section. If that issue doesn't match the current pipeline, the file is from a
+    # previous run and must be removed to prevent stale context injection.
+    if [[ -n "${TASKS_FILE:-}" && -f "$TASKS_FILE" ]]; then
+        local _tasks_issue=""
+        _tasks_issue=$(_trim "$(grep -m1 '^- Issue:' "$TASKS_FILE" 2>/dev/null | sed 's/^- Issue: *//')" || true)
+        # Intake writes "- Issue: ${GITHUB_ISSUE:-none}" so normalize both sides:
+        # treat an empty GITHUB_ISSUE as "none" to avoid deleting goal-based task files on resume.
+        local _expected_issue="${GITHUB_ISSUE:-none}"
+        if [[ -n "$_tasks_issue" && "$_tasks_issue" != "$_expected_issue" ]]; then
+            rm -f "$TASKS_FILE"
+        fi
     fi
 
     if [[ -z "$GOAL" ]]; then
@@ -603,10 +659,6 @@ ${sid}:${sst}"
     if [[ -n "$GIT_BRANCH" ]]; then
         git checkout "$GIT_BRANCH" 2>/dev/null || true
     fi
-
-    # Always clear pipeline-tasks.md on resume — it is derived from plan.md and
-    # stale checked-off items from a failed attempt must not be re-injected.
-    rm -f "${TASKS_FILE:-}"
 
     PIPELINE_START_EPOCH="$(now_epoch)"
     gh_init

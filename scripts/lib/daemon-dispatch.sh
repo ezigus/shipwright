@@ -236,6 +236,9 @@ daemon_spawn_pipeline() {
     if [[ -n "${FAST_TEST_CMD_CFG:-}" ]]; then
         pipeline_args+=("--fast-test-cmd" "$FAST_TEST_CMD_CFG")
     fi
+    if [[ -n "${FAST_TEST_INTERVAL_CFG:-}" ]]; then
+        pipeline_args+=("--fast-test-interval" "$FAST_TEST_INTERVAL_CFG")
+    fi
 
     # Append any extra pipeline args (from retry escalation, etc.)
     if [[ ${#extra_pipeline_args[@]} -gt 0 ]]; then
@@ -487,11 +490,6 @@ daemon_reap_completed() {
             _job_state="${worktree:-.}/.claude/pipeline-state.md"
             _job_artifacts="${worktree:-.}/.claude/pipeline-artifacts"
             memory_finalize_pipeline "$_job_state" "$_job_artifacts" 2>/dev/null || true
-        fi
-
-        # Trigger learning after pipeline reap
-        if type optimize_full_analysis &>/dev/null; then
-            optimize_full_analysis &>/dev/null &
         fi
 
         # Clean up progress tracking for this job

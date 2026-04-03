@@ -448,10 +448,34 @@ load_config() {
         MAX_RESTARTS_CFG="3"
     fi
     FAST_TEST_CMD_CFG=$(jq -r '.fast_test_cmd // ""' "$config_file" 2>/dev/null || echo "")
+    FAST_TEST_INTERVAL_CFG=$(jq -r '.fast_test_interval // ""' "$config_file" 2>/dev/null || echo "")
+    if [[ -n "$FAST_TEST_INTERVAL_CFG" ]] && ! [[ "$FAST_TEST_INTERVAL_CFG" =~ ^[1-9][0-9]*$ ]]; then
+        daemon_log WARN "Invalid fast_test_interval in config: $FAST_TEST_INTERVAL_CFG (ignoring)"
+        FAST_TEST_INTERVAL_CFG=""
+    fi
 
     # self-optimization
     SELF_OPTIMIZE=$(jq -r '.self_optimize // false' "$config_file")
     OPTIMIZE_INTERVAL=$(jq -r '.optimize_interval // '"$(type policy_get >/dev/null 2>&1 && policy_get ".daemon.optimize_interval_cycles" "10" || echo "10")"'' "$config_file")
+
+    # pipeline shutdown grace periods (seconds)
+    DAEMON_SHUTDOWN_TIMEOUT=$(jq -r '.daemon_shutdown_timeout // 30' "$config_file")
+    if ! [[ "$DAEMON_SHUTDOWN_TIMEOUT" =~ ^[0-9]+$ ]]; then
+        daemon_log WARN "Invalid daemon_shutdown_timeout in config: $DAEMON_SHUTDOWN_TIMEOUT (using default: 30)"
+        DAEMON_SHUTDOWN_TIMEOUT="30"
+    fi
+    export DAEMON_SHUTDOWN_TIMEOUT
+    PIPELINE_KILL_GRACE=$(jq -r '.pipeline_kill_grace // 25' "$config_file")
+    if ! [[ "$PIPELINE_KILL_GRACE" =~ ^[0-9]+$ ]]; then
+        daemon_log WARN "Invalid pipeline_kill_grace in config: $PIPELINE_KILL_GRACE (using default: 25)"
+        PIPELINE_KILL_GRACE="25"
+    fi
+    if [[ "$PIPELINE_KILL_GRACE" -ge "$DAEMON_SHUTDOWN_TIMEOUT" ]]; then
+        PIPELINE_KILL_GRACE=$((DAEMON_SHUTDOWN_TIMEOUT - 5))
+        [[ "$PIPELINE_KILL_GRACE" -lt 1 ]] && PIPELINE_KILL_GRACE=1
+        daemon_log WARN "pipeline_kill_grace >= daemon_shutdown_timeout — clamped to ${PIPELINE_KILL_GRACE}s"
+    fi
+    export PIPELINE_KILL_GRACE
 
     # intelligence engine settings (default "auto" = enable when Claude CLI available)
     INTELLIGENCE_ENABLED=$(jq -r '.intelligence.enabled // "auto"' "$config_file")
@@ -645,8 +669,8 @@ cleanup_on_exit() {
                 fi
             done <<< "$child_pids"
             if [[ $killed -gt 0 ]]; then
-                daemon_log INFO "Sent SIGTERM to ${killed} pipeline process(es) — waiting 5s"
-                sleep 5
+                daemon_log INFO "Sent SIGTERM to ${killed} pipeline process(es) — waiting ${DAEMON_SHUTDOWN_TIMEOUT:-30}s"
+                sleep "${DAEMON_SHUTDOWN_TIMEOUT:-30}"
                 # Force-kill any that didn't exit
                 while IFS= read -r cpid; do
                     [[ -z "$cpid" ]] && continue
@@ -678,6 +702,8 @@ cleanup_on_exit() {
     fi
 
     rm -f "$PID_FILE" "$SHUTDOWN_FLAG"
+    rm -f "${PID_FILE}.lock" 2>/dev/null || true
+    rm -rf "${PID_FILE}.lock.d" 2>/dev/null || true
     daemon_log INFO "Daemon stopped"
     emit_event "daemon.stopped" "pid=$$"
 }
@@ -688,26 +714,54 @@ daemon_start() {
     echo -e "${PURPLE}${BOLD}━━━ shipwright daemon v${VERSION} ━━━${RESET}"
     echo ""
 
-    # Acquire exclusive lock on PID file (prevents race between concurrent starts)
-    exec 9>"$PID_FILE"
-    if ! flock -n 9 2>/dev/null; then
-        # flock unavailable or lock held — fall back to PID check
-        local existing_pid
-        existing_pid=$(cat "$PID_FILE" 2>/dev/null || true)
-        if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
-            exec 9>&-  # Release FD before exiting
-            error "Daemon already running (PID: ${existing_pid})"
+    # Acquire exclusive lock to prevent concurrent daemon starts.
+    # Uses a dedicated .lock file (never daemon.pid) so reading the PID file
+    # doesn't race with truncation. Two paths:
+    #   flock: strong advisory lock held for the full process lifetime (fd 9 never closed)
+    #   mkdir: POSIX-atomic fallback for macOS where flock is not installed by default
+    local _lock_file="${PID_FILE}.lock"
+
+    # Helper: abort if a live daemon is already running (intentionally calls exit 1,
+    # not return 1 — callers are inside lock-acquisition logic, not returning status).
+    # If the PID is stale (process dead), clears the PID file and returns to allow
+    # the caller to claim the lock.
+    _check_existing_daemon() {
+        local _epid
+        _epid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [[ -n "$_epid" ]] && kill -0 "$_epid" 2>/dev/null; then
+            error "Daemon already running (PID: ${_epid})"
             info "Use ${CYAN}shipwright daemon stop${RESET} to stop it first"
             exit 1
-        else
-            warn "Stale PID file found — removing"
-            rm -f "$PID_FILE"
-            exec 9>&-  # Release old FD
-            exec 9>"$PID_FILE"
+        elif [[ -n "$_epid" ]]; then
+            warn "Stale PID file found (PID: ${_epid} no longer running) — removing"
+            rm -f "$PID_FILE" 2>/dev/null || true
         fi
+    }
+
+    if command -v flock >/dev/null 2>&1; then
+        # flock path: lock _lock_file, hold fd 9 open for the full process lifetime
+        exec 9>"$_lock_file"
+        if ! flock -n 9 2>/dev/null; then
+            exec 9>&-
+            _check_existing_daemon   # holder may have died; verify via daemon.pid
+            # flock auto-releases when holder exits — retry once
+            exec 9>"$_lock_file"
+            flock -n 9 2>/dev/null || { error "Unable to acquire daemon lock"; exit 1; }
+        fi
+        # fd 9 intentionally left open — released automatically on process exit
+    else
+        # mkdir path: atomic directory creation (macOS default, no flock installed)
+        local _lock_dir="${_lock_file}.d"
+        if ! mkdir "$_lock_dir" 2>/dev/null; then
+            _check_existing_daemon
+            # Holder is dead — clean stale lock and claim it
+            rm -rf "$_lock_dir" 2>/dev/null || true
+            mkdir "$_lock_dir" 2>/dev/null || { error "Unable to acquire daemon lock"; exit 1; }
+        fi
+        echo "$$" > "${_lock_dir}/pid" 2>/dev/null || true
+        # Lock cleanup is handled by cleanup_on_exit() — do NOT add a separate trap here
+        # as it would silently replace the existing daemon cleanup trap
     fi
-    # Release FD 9 — we only needed it for the startup race check
-    exec 9>&-
 
     # Load config
     load_config
@@ -721,7 +775,11 @@ daemon_start() {
         exit 1
     fi
 
-    # Detach mode: re-exec in a tmux session
+    # Detach mode: re-exec inside tmux. The lock acquired above is released when
+    # this parent process exits (flock: fd 9 closes; mkdir: cleanup_on_exit runs).
+    # The tmux child runs daemon_start fresh and acquires its own lock. There is a
+    # brief window between parent exit and child lock acquisition — this is safe
+    # because the child will be the sole owner of the lock before it writes daemon.pid.
     if [[ "$DETACH" == "true" ]]; then
         if ! command -v tmux >/dev/null 2>&1; then
             error "tmux required for --detach mode"
@@ -870,6 +928,8 @@ daemon_stop() {
     if ! kill -0 "$pid" 2>/dev/null; then
         warn "Daemon process (PID: ${pid}) is not running — cleaning up"
         rm -f "$PID_FILE" "$SHUTDOWN_FLAG"
+        rm -f "${PID_FILE}.lock" 2>/dev/null || true
+        rm -rf "${PID_FILE}.lock.d" 2>/dev/null || true
         return 0
     fi
 
@@ -896,6 +956,8 @@ daemon_stop() {
     fi
 
     rm -f "$PID_FILE" "$SHUTDOWN_FLAG"
+    rm -f "${PID_FILE}.lock" 2>/dev/null || true
+    rm -rf "${PID_FILE}.lock.d" 2>/dev/null || true
 
     # Also kill tmux session if it exists
     tmux kill-session -t "sw-daemon" 2>/dev/null || true

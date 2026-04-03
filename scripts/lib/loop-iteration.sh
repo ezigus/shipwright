@@ -3,6 +3,70 @@
 [[ -n "${_LOOP_ITERATION_LOADED:-}" ]] && return 0
 _LOOP_ITERATION_LOADED=1
 
+# ─── Task Progress ───────────────────────────────────────────────────────────
+
+# Produce a dynamic task list section each iteration.
+# On iteration 1 (no cumulative diff yet): show the raw checklist as guidance.
+# On iteration 2+: annotate each task with [x] when the cumulative diff touches
+# a keyword inferred from changed file basenames that appears in the task
+# description, giving the agent an approximate view of completed vs remaining work.
+compose_task_section() {
+    [[ -z "${TASKS_FILE:-}" || ! -f "$TASKS_FILE" ]] && return 0
+
+    local changed_files=""
+    if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
+        changed_files="$(git -C "${PROJECT_ROOT:-.}" diff --name-only "${LOOP_START_COMMIT}..HEAD" 2>/dev/null || true)"
+    fi
+
+    # No commits yet — show raw list as initial guidance
+    if [[ -z "$changed_files" ]]; then
+        cat "$TASKS_FILE"
+        return 0
+    fi
+
+    # Build a flat keyword list from changed file basenames (stem only, 4+ chars)
+    local keywords=""
+    while IFS= read -r cf; do
+        local stem
+        stem="$(basename "$cf" 2>/dev/null)"
+        stem="${stem%.*}"
+        [[ ${#stem} -ge 4 ]] && keywords="${keywords} ${stem}"
+    done <<< "$changed_files"
+
+    # Annotate task lines; pass non-task lines through unchanged
+    local completed=0 total=0
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*-\ \[\ \] ]]; then
+            total=$((total + 1))
+            local task_text="${line#*\[ \] }"
+            local matched=false
+            # Case-insensitive substring match — Bash 3.2 compatible (no ${var,,})
+            local kw task_text_lc kw_lc
+            task_text_lc="$(printf '%s' "$task_text" | tr '[:upper:]' '[:lower:]')"
+            for kw in $keywords; do
+                kw_lc="$(printf '%s' "$kw" | tr '[:upper:]' '[:lower:]')"
+                case "$task_text_lc" in
+                    *"$kw_lc"*) matched=true; break ;;
+                esac
+            done
+            if [[ "$matched" == "true" ]]; then
+                # Replace [ ] with [x] — Bash 3.2 compatible substitution
+                echo "${line/- [ ]/- [x]}"
+                completed=$((completed + 1))
+            else
+                echo "$line"
+            fi
+        else
+            echo "$line"
+        fi
+    done < "$TASKS_FILE"
+
+    if [[ "$total" -gt 0 ]]; then
+        echo ""
+        echo "(${completed}/${total} tasks inferred complete from committed changes — verify and check off any missed)"
+    fi
+}
+
 # ─── Prompt Composition ──────────────────────────────────────────────────────
 
 manage_context_window() {
@@ -122,6 +186,8 @@ Fix these specific errors. Each line above is one distinct error from the test o
     audit_section="$(compose_audit_section)"
     local audit_feedback_section
     audit_feedback_section="$(compose_audit_feedback_section)"
+    local holistic_feedback_section
+    holistic_feedback_section="$(compose_holistic_feedback_section)"
     local rejection_notice_section
     rejection_notice_section="$(compose_rejection_notice_section)"
 
@@ -252,7 +318,10 @@ ${last_error}"
     local stuckness_detected=false
     [[ "$_stuck_ret" -eq 0 ]] && stuckness_detected=true
 
-    # Strategy exploration when stuck — append alternative strategy to GOAL
+    # Strategy exploration when stuck — inject as a dedicated section, NOT appended to GOAL.
+    # Appending to GOAL mixes "implement these tasks" with "try a different approach" in the
+    # same section, creating contradictory directives. Keep them separate.
+    local alt_strategy_section=""
     if [[ "$stuckness_detected" == "true" ]]; then
         local last_error diagnosis
         last_error=$(tail -1 "${ARTIFACTS_DIR:-${PROJECT_ROOT:-.}/.claude/pipeline-artifacts}/error-log.jsonl" 2>/dev/null | jq -r '"Type: \(.type), Exit: \(.exit_code), Error: \(.error | split("\n") | first)"' 2>/dev/null || true)
@@ -260,9 +329,7 @@ ${last_error}"
         diagnosis="${STUCKNESS_DIAGNOSIS:-}"
         local alt_strategy
         alt_strategy=$(explore_alternative_strategy "$last_error" "${ITERATION:-0}" "$diagnosis")
-        GOAL="${GOAL}
-
-${alt_strategy}"
+        [[ -n "$alt_strategy" ]] && alt_strategy_section="$alt_strategy"
 
         # Handle model escalation
         if [[ "${ESCALATE_MODEL:-}" == "true" ]]; then
@@ -275,6 +342,17 @@ ${alt_strategy}"
             fi
             unset ESCALATE_MODEL
         fi
+    fi
+
+    # When stuck, truncate to the high-level objective only (first paragraph).
+    # Use ORIGINAL_GOAL (not GOAL) so memory-injected prefixes like "KNOWN FIX: ..."
+    # don't replace the actual task objective. Use printf to avoid echo mis-parsing
+    # goals that start with -n/-e or contain backslash escapes.
+    local prompt_goal="$GOAL"
+    if [[ "$stuckness_detected" == "true" ]]; then
+        local _base_goal="${ORIGINAL_GOAL:-$GOAL}"
+        prompt_goal="$(printf '%s\n' "$_base_goal" | awk 'NR==1{print; next} /^[[:space:]]*$/{exit} {print}')"
+        [[ -z "$prompt_goal" ]] && prompt_goal="$_base_goal"
     fi
 
     # Session restart context — inject previous session progress
@@ -326,14 +404,21 @@ ${cum_stat}
         fi
     fi
 
+    # Dynamic task progress — auto-marks completed tasks based on cumulative diff
+    local task_section=""
+    task_section="$(compose_task_section 2>/dev/null || true)"
+
     cat <<PROMPT
 You are an autonomous coding agent on iteration ${ITERATION}/${MAX_ITERATIONS} of a continuous loop.
 ${resume_section}
 ## Your Goal
-${GOAL}
+${prompt_goal}
 
 ${cumulative_section}
-## Current Progress
+${task_section:+## Task Progress
+$task_section
+
+}## Current Progress
 ${recent_log}
 
 ## Recent Git Activity
@@ -375,10 +460,14 @@ ${audit_section}
 
 ${audit_feedback_section}
 
+${holistic_feedback_section}
+
 ${rejection_notice_section}
 
 ${stuckness_section}
 
+${alt_strategy_section:+$alt_strategy_section
+}
 ## Rules
 - Focus on ONE task per iteration — do it well
 - Always commit with descriptive messages

@@ -370,7 +370,7 @@ for i in $(seq 1 15); do echo "- Task $i" >> "${ARTIFACTS_DIR}/plan.md"; done
     local_existing_artifacts=""
     for _af in plan.md design.md test-results.log; do
         if [[ -s "${ARTIFACTS_DIR}/${_af}" ]]; then
-            _af_lines=$(wc -l < "${ARTIFACTS_DIR}/${_af}" 2>/dev/null | xargs)
+            _af_lines=$(wc -l < "${ARTIFACTS_DIR}/${_af}" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             local_existing_artifacts="${local_existing_artifacts}  - ${_af} (${_af_lines} lines)\n"
         fi
     done
@@ -394,7 +394,7 @@ echo ""
 echo "  ── Plan artifact skip logic ──"
 
 plan_artifact="${TMPDIR_TEST}/plan.md"
-existing_lines=$(wc -l < "$plan_artifact" 2>/dev/null | xargs)
+existing_lines=$(wc -l < "$plan_artifact" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 existing_lines="${existing_lines:-0}"
 if [[ "$existing_lines" -gt 10 ]]; then
     plan_skip="yes"
@@ -405,7 +405,7 @@ assert_eq "$plan_skip" "yes" "plan with ${existing_lines} lines skips retry (>10
 
 # Test with short plan
 echo "# Short plan" > "${TMPDIR_TEST}/short-plan.md"
-short_lines=$(wc -l < "${TMPDIR_TEST}/short-plan.md" 2>/dev/null | xargs)
+short_lines=$(wc -l < "${TMPDIR_TEST}/short-plan.md" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 if [[ "$short_lines" -gt 10 ]]; then
     short_skip="yes"
 else
@@ -676,7 +676,7 @@ assert_eq "$doc_empty" "6" "documentation skips 6 stages (design, review, compou
 
 echo ""
 echo "  ── Total skill file count ──"
-total_skills=$(ls "$SCRIPT_DIR/skills/"*.md 2>/dev/null | wc -l | xargs)
+total_skills=$(ls "$SCRIPT_DIR/skills/"*.md 2>/dev/null | wc -l | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 assert_eq "$total_skills" "17" "17 total skill files (11 original + 6 new)"
 
 

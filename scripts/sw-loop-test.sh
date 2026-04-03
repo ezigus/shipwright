@@ -269,21 +269,22 @@ echo ""
 echo -e "${DIM}  json extraction robustness${RESET}"
 # Extract the function from sw-loop.sh and test it in isolation (can't source
 # sw-loop.sh because it has no source guard — main() runs unconditionally)
-_extract_fn=$(sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")
 tmpdir=$(mktemp -d)
-bash -c "
+_fn_file="$tmpdir/_extract_fn.sh"
+sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh" > "$_fn_file"
+bash <<EXTRACT_TEST 2>/dev/null
 warn() { :; }
-$_extract_fn
+source "$_fn_file"
 # Test 1: empty file → '(no output)'
-touch '$tmpdir/empty.json'
-_extract_text_from_json '$tmpdir/empty.json' '$tmpdir/out1.log' ''
+touch "$tmpdir/empty.json"
+_extract_text_from_json "$tmpdir/empty.json" "$tmpdir/out1.log" ""
 # Test 2: valid JSON array → extracts .result
-echo '[{\"type\":\"result\",\"result\":\"Hello world\",\"usage\":{\"input_tokens\":100}}]' > '$tmpdir/valid.json'
-_extract_text_from_json '$tmpdir/valid.json' '$tmpdir/out2.log' ''
+echo '[{"type":"result","result":"Hello world","usage":{"input_tokens":100}}]' > "$tmpdir/valid.json"
+_extract_text_from_json "$tmpdir/valid.json" "$tmpdir/out2.log" ""
 # Test 3: plain text → pass through
-echo 'This is plain text output' > '$tmpdir/text.json'
-_extract_text_from_json '$tmpdir/text.json' '$tmpdir/out3.log' ''
-" 2>/dev/null
+echo 'This is plain text output' > "$tmpdir/text.json"
+_extract_text_from_json "$tmpdir/text.json" "$tmpdir/out3.log" ""
+EXTRACT_TEST
 
 if grep -q "no output" "$tmpdir/out1.log" 2>/dev/null; then
     assert_pass "_extract_text_from_json handles empty file"
@@ -327,18 +328,19 @@ fi
 # ─── Test 21: _extract_text_from_json — nested objects and binary ─────────────
 echo ""
 echo -e "${DIM}  json extraction edge cases${RESET}"
-_extract_fn=$(sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")
 tmpdir2=$(mktemp -d)
-bash -c "
+_fn_file2="$tmpdir2/_extract_fn.sh"
+sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh" > "$_fn_file2"
+bash <<EXTRACT_TEST2 2>/dev/null
 warn() { :; }
-$_extract_fn
+source "$_fn_file2"
 # Nested JSON array with objects
-echo '[{\"type\":\"result\",\"result\":\"Nested extraction works\",\"usage\":{\"input_tokens\":50}}]' > '$tmpdir2/nested.json'
-_extract_text_from_json '$tmpdir2/nested.json' '$tmpdir2/nested_out.log' ''
+echo '[{"type":"result","result":"Nested extraction works","usage":{"input_tokens":50}}]' > "$tmpdir2/nested.json"
+_extract_text_from_json "$tmpdir2/nested.json" "$tmpdir2/nested_out.log" ""
 # Binary garbage — should not crash, pass through or handle
-printf '\x00\x01\x02\xff\xfe' > '$tmpdir2/binary.dat'
-_extract_text_from_json '$tmpdir2/binary.dat' '$tmpdir2/binary_out.log' ''
-" 2>/dev/null
+printf '\x00\x01\x02\xff\xfe' > "$tmpdir2/binary.dat"
+_extract_text_from_json "$tmpdir2/binary.dat" "$tmpdir2/binary_out.log" ""
+EXTRACT_TEST2
 
 if grep -q "Nested extraction works" "$tmpdir2/nested_out.log" 2>/dev/null; then
     assert_pass "_extract_text_from_json handles nested JSON objects"
@@ -352,6 +354,45 @@ else
     assert_fail "_extract_text_from_json handles binary garbage without crash"
 fi
 rm -rf "$tmpdir2"
+
+# ─── Test 21b: _extract_text_from_json — JSON object (not array) ──────────────
+echo ""
+echo -e "${DIM}  json extraction for JSON objects${RESET}"
+tmpdir3=$(mktemp -d)
+_fn_file3="$tmpdir3/_extract_fn.sh"
+sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh" > "$_fn_file3"
+bash <<EXTRACT_TEST3 2>"$tmpdir3/stderr.log"
+warn() { echo "WARN: \$*" >&2; }
+source "$_fn_file3"
+# Test: JSON object with .result field
+echo '{"type":"result","subtype":"success","result":"Object result text","cost_usd":0.05}' > "$tmpdir3/object.json"
+_extract_text_from_json "$tmpdir3/object.json" "$tmpdir3/object_out.log" ""
+# Test: JSON object with .content field (no .result)
+echo '{"type":"result","content":"Object content text"}' > "$tmpdir3/content.json"
+_extract_text_from_json "$tmpdir3/content.json" "$tmpdir3/content_out.log" ""
+# Test: JSON object — verify no misleading jq warning
+echo '{"type":"result","result":"No warning expected"}' > "$tmpdir3/nowarn.json"
+_extract_text_from_json "$tmpdir3/nowarn.json" "$tmpdir3/nowarn_out.log" ""
+EXTRACT_TEST3
+
+if grep -q "Object result text" "$tmpdir3/object_out.log" 2>/dev/null; then
+    assert_pass "_extract_text_from_json extracts .result from JSON object"
+else
+    assert_fail "_extract_text_from_json extracts .result from JSON object" "expected 'Object result text' in $tmpdir3/object_out.log"
+fi
+
+if grep -q "Object content text" "$tmpdir3/content_out.log" 2>/dev/null; then
+    assert_pass "_extract_text_from_json extracts .content from JSON object"
+else
+    assert_fail "_extract_text_from_json extracts .content from JSON object" "expected 'Object content text' in $tmpdir3/content_out.log"
+fi
+
+if ! grep -q "jq not available" "$tmpdir3/stderr.log" 2>/dev/null; then
+    assert_pass "_extract_text_from_json no misleading jq warning for JSON object"
+else
+    assert_fail "_extract_text_from_json no misleading jq warning for JSON object" "got misleading 'jq not available' warning"
+fi
+rm -rf "$tmpdir3"
 
 # ─── Test 22: Script structure — circuit breaker, stuckness, test gate ────────
 echo ""
@@ -449,12 +490,12 @@ CLAUDE_EOF
         --local \
         2>&1) || true
 
-    if echo "$output" | grep -qF "LOOP_COMPLETE"; then
+    if echo "$output" | grep -qi "Completion signal detected\|LOOP_COMPLETE"; then
         assert_pass "Loop detected completion signal"
-    elif echo "$output" | grep -qi "complete.*LOOP_COMPLETE\|LOOP_COMPLETE.*accepted"; then
+    elif echo "$output" | grep -qiE "LOOP COMPLETE|loop complete|loop.*pass"; then
         assert_pass "Loop detected completion signal"
     else
-        assert_fail "Loop detected completion signal" "output missing LOOP_COMPLETE"
+        assert_fail "Loop detected completion signal" "output missing completion signal"
     fi
 else
     assert_fail "Loop completes on LOOP_COMPLETE" "setup failed (git missing?)"
@@ -531,6 +572,110 @@ CLAUDE_EOF
 else
     assert_fail "Loop max iterations" "setup failed"
 fi
+
+# ─── Test: LOOP_COMPLETE signal detection hardening (#263) ──────────────────
+echo ""
+echo -e "${DIM}  loop behavior: LOOP_COMPLETE signal hardening${RESET}"
+
+# Test: main loop prompt uses <<<LOOP:PASS>>> fence delimiter
+if grep -q '<<<LOOP:PASS>>>' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Main loop prompt uses <<<LOOP:PASS>>> fence delimiter"
+else
+    assert_fail "Main loop prompt uses <<<LOOP:PASS>>> fence delimiter"
+fi
+
+# Test: guard_completion uses detect_gate_signal (not bare grep)
+if grep -q 'detect_gate_signal.*log_file.*LOOP\|detect_gate_signal.*"LOOP"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "guard_completion uses detect_gate_signal for LOOP signal"
+else
+    assert_fail "guard_completion uses detect_gate_signal for LOOP signal"
+fi
+
+# Test: main agent loop uses detect_gate_signal for completion check
+if grep -q 'detect_gate_signal.*LOG_FILE.*LOOP\|detect_gate_signal.*"LOOP"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Main agent loop uses detect_gate_signal for completion check"
+else
+    assert_fail "Main agent loop uses detect_gate_signal for completion check"
+fi
+
+# Test: check_completion() in loop-convergence.sh uses detect_gate_signal
+if grep -q 'detect_gate_signal' "$SCRIPT_DIR/lib/loop-convergence.sh"; then
+    assert_pass "loop-convergence.sh check_completion uses detect_gate_signal"
+else
+    assert_fail "loop-convergence.sh check_completion uses detect_gate_signal"
+fi
+
+# Test: ai-provider.sh uses detect_gate_signal (stdin mode) for LOOP signal
+if grep -q 'detect_gate_signal.*"-".*LOOP\|detect_gate_signal.*"-"' "$SCRIPT_DIR/lib/ai-provider.sh"; then
+    assert_pass "ai-provider.sh uses detect_gate_signal stdin mode for LOOP signal"
+else
+    assert_fail "ai-provider.sh uses detect_gate_signal stdin mode for LOOP signal"
+fi
+
+# Test: gate-signal.sh shared lib exists (detect_gate_signal extracted out of sw-loop.sh)
+if [[ -f "$SCRIPT_DIR/lib/gate-signal.sh" ]]; then
+    assert_pass "lib/gate-signal.sh shared library exists"
+else
+    assert_fail "lib/gate-signal.sh shared library exists"
+fi
+
+# Test: sw-loop.sh sources gate-signal.sh (not inline)
+if grep -q 'gate-signal.sh' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "sw-loop.sh sources gate-signal.sh"
+else
+    assert_fail "sw-loop.sh sources gate-signal.sh"
+fi
+
+# Test: ai-provider.sh sources gate-signal.sh
+if grep -q 'gate-signal.sh' "$SCRIPT_DIR/lib/ai-provider.sh"; then
+    assert_pass "ai-provider.sh sources gate-signal.sh"
+else
+    assert_fail "ai-provider.sh sources gate-signal.sh"
+fi
+
+# Load detect_gate_signal from the shared lib for functional tests
+_dgs_body="$(sed -n '/^detect_gate_signal()/,/^}/p' "$SCRIPT_DIR/lib/gate-signal.sh")"
+
+# Test: legacy LOOP_COMPLETE still detected via Layer 3 (backwards compat)
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "Done. LOOP_COMPLETE" > "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "LOOP" 'LOOP_COMPLETE') 2>/dev/null; then
+    assert_pass "detect_gate_signal: legacy LOOP_COMPLETE accepted via Layer 3"
+else
+    assert_fail "detect_gate_signal: legacy LOOP_COMPLETE accepted via Layer 3"
+fi
+rm -f "$dgs_test_log"
+
+# Test: new <<<LOOP:PASS>>> fence accepted via Layer 2
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "All tasks complete." > "$dgs_test_log"
+echo "<<<LOOP:PASS>>>" >> "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "LOOP" 'LOOP_COMPLETE') 2>/dev/null; then
+    assert_pass "detect_gate_signal: <<<LOOP:PASS>>> fence accepted"
+else
+    assert_fail "detect_gate_signal: <<<LOOP:PASS>>> fence accepted"
+fi
+rm -f "$dgs_test_log"
+
+# Test: prose "goal achieved" no longer accepted (narrowed legacy pattern)
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "The goal has been achieved." > "$dgs_test_log"
+if ! (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "LOOP" 'LOOP_COMPLETE') 2>/dev/null; then
+    assert_pass "detect_gate_signal: prose 'goal achieved' correctly rejected (narrowed pattern)"
+else
+    assert_fail "detect_gate_signal: prose 'goal achieved' correctly rejected (narrowed pattern)"
+fi
+rm -f "$dgs_test_log"
+
+# Test: <<<LOOP:FAIL>>> blocks pass even when LOOP_COMPLETE also present
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+printf 'LOOP_COMPLETE\n<<<LOOP:FAIL>>>' > "$dgs_test_log"
+if ! (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "LOOP" 'LOOP_COMPLETE' '<<<LOOP:FAIL>>>') 2>/dev/null; then
+    assert_pass "detect_gate_signal: <<<LOOP:FAIL>>> blocks pass (negative-first)"
+else
+    assert_fail "detect_gate_signal: <<<LOOP:FAIL>>> blocks pass (negative-first)"
+fi
+rm -f "$dgs_test_log"
 
 # ─── Test: Loop detects stuckness ───────────────────────────────────────────
 echo ""
@@ -732,6 +877,48 @@ else
     assert_fail "run_audit_agent reads structured test evidence"
 fi
 
+# Test: audit prompt includes fence delimiter instruction (#261)
+if grep -q '<<<AUDIT:PASS>>>' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Audit prompt includes <<<AUDIT:PASS>>> fence delimiter"
+else
+    assert_fail "Audit prompt includes <<<AUDIT:PASS>>> fence delimiter"
+fi
+
+# Test: audit detection uses detect_gate_signal (not bare grep)
+if grep -q 'detect_gate_signal.*AUDIT' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Audit detection uses detect_gate_signal (not bare grep)"
+else
+    assert_fail "Audit detection uses detect_gate_signal (not bare grep)"
+fi
+
+# Test: audit negative pattern includes both AUDIT_FAIL and fenced <<<AUDIT:FAIL>>>
+if grep -q 'AUDIT_FAIL|<<<AUDIT:FAIL>>>' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Audit negative pattern covers both AUDIT_FAIL and fenced delimiter"
+else
+    assert_fail "Audit negative pattern covers both AUDIT_FAIL and fenced delimiter"
+fi
+
+# Test: audit has empty-response guard that returns early (matching DoD pattern)
+if grep -q 'Audit.*evaluator returned empty output' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Audit has empty-response guard with diagnostic warning"
+else
+    assert_fail "Audit has empty-response guard with diagnostic warning"
+fi
+
+# Test: audit stderr is written to a dedicated file (not merged into audit_log)
+if grep -q 'audit_err_log' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Audit stderr captured to dedicated file (not merged with stdout)"
+else
+    assert_fail "Audit stderr captured to dedicated file (not merged with stdout)"
+fi
+
+# Test: audit non-zero exit_code is logged as a warning
+if grep -q 'exit_code.*Audit.*exited with code\|Audit.*claude -p exited with code' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Audit logs warning on non-zero claude exit code"
+else
+    assert_fail "Audit logs warning on non-zero claude exit code"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # VERIFICATION GAP TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -826,6 +1013,135 @@ if grep -q 'Loop-run changes:' "$SCRIPT_DIR/sw-loop.sh"; then
 else
     assert_fail "Project Stats labels loop-scoped change count accurately"
 fi
+
+# ─── HOLISTIC gate signal hardening (#264) ────────────────────────────────────
+echo ""
+echo -e "${DIM}  holistic gate: signal hardening (#264)${RESET}"
+
+# Test: holistic prompt uses <<<HOLISTIC:PASS>>> fence delimiter
+if grep -q '<<<HOLISTIC:PASS>>>' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic prompt uses <<<HOLISTIC:PASS>>> fence delimiter"
+else
+    assert_fail "Holistic prompt uses <<<HOLISTIC:PASS>>> fence delimiter"
+fi
+
+# Test: holistic prompt uses <<<HOLISTIC:FAIL>>> fence delimiter
+if grep -q '<<<HOLISTIC:FAIL>>>' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic prompt uses <<<HOLISTIC:FAIL>>> fence delimiter"
+else
+    assert_fail "Holistic prompt uses <<<HOLISTIC:FAIL>>> fence delimiter"
+fi
+
+# Test: holistic detection uses detect_gate_signal (not bare grep)
+if grep -q 'detect_gate_signal.*holistic_log.*HOLISTIC\|detect_gate_signal.*"HOLISTIC"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic detection uses detect_gate_signal (not bare grep)"
+else
+    assert_fail "Holistic detection uses detect_gate_signal (not bare grep)"
+fi
+
+# Test: holistic has empty-response guard (checks both zero-length and whitespace-only)
+if grep -q 'grep -q.*\[.*\^.*\[:space:\]' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic empty-response guard rejects whitespace-only output"
+else
+    assert_fail "Holistic empty-response guard rejects whitespace-only output"
+fi
+
+# Test: holistic captures stderr separately
+if grep -q 'holistic.*stderr\|holistic_stderr' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic stderr captured to dedicated file"
+else
+    assert_fail "Holistic stderr captured to dedicated file"
+fi
+
+# Test: holistic surfaces gap text as HOLISTIC_RESULT for agent feedback
+if grep -q 'HOLISTIC_RESULT=' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Holistic sets HOLISTIC_RESULT for agent feedback injection"
+else
+    assert_fail "Holistic sets HOLISTIC_RESULT for agent feedback injection"
+fi
+
+# Test: compose_holistic_feedback_section exists for prompt injection
+if grep -q '^compose_holistic_feedback_section()' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "compose_holistic_feedback_section() exists for prompt injection"
+else
+    assert_fail "compose_holistic_feedback_section() exists for prompt injection"
+fi
+
+# Test: holistic feedback injected into agent prompt
+if grep -q 'holistic_feedback_section' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "holistic_feedback_section injected into agent prompt"
+else
+    assert_fail "holistic_feedback_section injected into agent prompt"
+fi
+
+# Test: holistic legacy pattern does NOT include prose goal.{0,20}fully.{0,10}achieved
+# (removed in review — too permissive, matches negated sentences)
+if ! grep 'detect_gate_signal.*HOLISTIC' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'goal.*achieved'; then
+    assert_pass "Holistic legacy pattern does not include overly permissive prose (goal.*achieved removed)"
+else
+    assert_fail "Holistic legacy pattern does not include overly permissive prose (goal.*achieved removed)"
+fi
+
+# Test: holistic negative pattern is <<<HOLISTIC:FAIL>>> only (no ambiguous prose)
+if ! grep 'detect_gate_signal.*HOLISTIC' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'gaps.*remaining'; then
+    assert_pass "Holistic negative pattern is unambiguous (gaps.remaining prose removed)"
+else
+    assert_fail "Holistic negative pattern is unambiguous (gaps.remaining prose removed)"
+fi
+
+# Load detect_gate_signal for unit tests
+_dgs_body="$(sed -n '/^detect_gate_signal()/,/^}/p' "$SCRIPT_DIR/lib/gate-signal.sh")"
+
+# Test: detect_gate_signal — HOLISTIC_PASS legacy accepted
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "HOLISTIC_PASS" > "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "HOLISTIC" 'HOLISTIC_PASS') 2>/dev/null; then
+    assert_pass "detect_gate_signal: HOLISTIC legacy HOLISTIC_PASS accepted"
+else
+    assert_fail "detect_gate_signal: HOLISTIC legacy HOLISTIC_PASS accepted"
+fi
+rm -f "$dgs_test_log"
+
+# Test: detect_gate_signal — <<<HOLISTIC:PASS>>> fence accepted
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "Goal is complete." > "$dgs_test_log"
+echo "<<<HOLISTIC:PASS>>>" >> "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "HOLISTIC" 'HOLISTIC_PASS') 2>/dev/null; then
+    assert_pass "detect_gate_signal: <<<HOLISTIC:PASS>>> fence accepted"
+else
+    assert_fail "detect_gate_signal: <<<HOLISTIC:PASS>>> fence accepted"
+fi
+rm -f "$dgs_test_log"
+
+# Test: detect_gate_signal — <<<HOLISTIC:FAIL>>> blocks pass
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+printf 'HOLISTIC_PASS\n<<<HOLISTIC:FAIL>>>' > "$dgs_test_log"
+if ! (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "HOLISTIC" 'HOLISTIC_PASS' '<<<HOLISTIC:FAIL>>>') 2>/dev/null; then
+    assert_pass "detect_gate_signal: <<<HOLISTIC:FAIL>>> blocks positive match (negative-first)"
+else
+    assert_fail "detect_gate_signal: <<<HOLISTIC:FAIL>>> blocks positive match (negative-first)"
+fi
+rm -f "$dgs_test_log"
+
+# Test: boundary — "no gaps remaining" (past-tense resolution prose) does not cause false FAIL
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+printf 'HOLISTIC_PASS\nAll gaps have been addressed; no gaps remaining.\n' > "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "HOLISTIC" 'HOLISTIC_PASS' '<<<HOLISTIC:FAIL>>>') 2>/dev/null; then
+    assert_pass "detect_gate_signal: HOLISTIC prose 'no gaps remaining' does not cause false FAIL"
+else
+    assert_fail "detect_gate_signal: HOLISTIC prose 'no gaps remaining' does not cause false FAIL"
+fi
+rm -f "$dgs_test_log"
+
+# Test: boundary — "not fully achieved" prose does not cause false PASS
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "Overall status: the goal is not fully achieved yet." > "$dgs_test_log"
+if ! (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "HOLISTIC" 'HOLISTIC_PASS' '<<<HOLISTIC:FAIL>>>') 2>/dev/null; then
+    assert_pass "detect_gate_signal: HOLISTIC prose 'not fully achieved' does not trigger false PASS"
+else
+    assert_fail "detect_gate_signal: HOLISTIC prose 'not fully achieved' does not trigger false PASS"
+fi
+rm -f "$dgs_test_log"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTEXT EXHAUSTION PREVENTION TESTS
@@ -1339,6 +1655,562 @@ if [[ -n "$_fallback_repo" ]]; then
     rm -rf "$_fallback_repo"
 else
     assert_pass "check_progress() fallback (no args): skipped (git unavailable)"
+fi
+
+# ─── Progress message variants — commit count fix (#246) ──────────────────────
+
+# Test: "Progress detected — tests still failing" message exists (Claude committed, tests fail)
+if grep -q 'Progress detected — tests still failing' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "sw-loop.sh contains 'Progress detected — tests still failing' message variant"
+else
+    assert_fail "sw-loop.sh contains 'Progress detected — tests still failing' message variant"
+fi
+
+# Test: "Low progress" message still exists (zero commits case unchanged)
+if grep -q 'Low progress' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "sw-loop.sh contains 'Low progress' message variant (zero commits case)"
+else
+    assert_fail "sw-loop.sh contains 'Low progress' message variant (zero commits case)"
+fi
+
+# Test: In main loop, commits_before capture appears before run_claude_iteration
+# (line-ordering regression: guards against moving commits_before back after the call)
+_cb_line=$(grep -n 'commits_before.*git_commit_count' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | head -1 | cut -d: -f1 || true)
+_rci_line=$(grep -n 'run_claude_iteration' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | head -1 | cut -d: -f1 || true)
+if [[ -n "$_cb_line" && -n "$_rci_line" && "$_cb_line" -lt "$_rci_line" ]]; then
+    assert_pass "sw-loop.sh: commits_before captured before run_claude_iteration (line ${_cb_line} < ${_rci_line})"
+else
+    assert_fail "sw-loop.sh: commits_before captured before run_claude_iteration (got commits_before=${_cb_line:-unset}, run_claude_iteration=${_rci_line:-unset})"
+fi
+
+# Test: In agent sub-loop, _commits_before appears before the agent-specific claude -p invocation
+# (line-ordering regression: guards against moving _commits_before back after the call)
+# Restrict search to lines 1800+ to target the agent sub-loop only (avoids earlier claude -p calls)
+_acb_line=$(grep -n '_commits_before=\$(git rev-list' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | head -1 | cut -d: -f1 || true)
+_cp_line=$(awk 'NR>=1800 && /claude -p "\$PROMPT"/{print NR; exit}' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
+if [[ -n "$_acb_line" && -n "$_cp_line" && "$_acb_line" -lt "$_cp_line" ]]; then
+    assert_pass "sw-loop.sh: agent _commits_before captured before claude -p (line ${_acb_line} < ${_cp_line})"
+else
+    assert_fail "sw-loop.sh: agent _commits_before captured before claude -p (got _commits_before=${_acb_line:-unset}, claude -p=${_cp_line:-unset})"
+fi
+
+# ─── GATES_PASSED_NO_SIGNAL — silent loop continuation fix (#234) ─────────────
+
+# Test: GATES_PASSED_NO_SIGNAL is set when quality gates pass but no LOOP_COMPLETE
+if grep -q 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "sw-loop.sh sets GATES_PASSED_NO_SIGNAL=true when gates pass without LOOP_COMPLETE"
+else
+    assert_fail "sw-loop.sh sets GATES_PASSED_NO_SIGNAL=true when gates pass without LOOP_COMPLETE"
+fi
+
+# Test: GATES_PASSED_NO_SIGNAL is only set when COMPLETION_REJECTED is not true
+if grep -B3 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'COMPLETION_REJECTED.*!=.*true'; then
+    assert_pass "GATES_PASSED_NO_SIGNAL=true guarded by COMPLETION_REJECTED check"
+else
+    assert_fail "GATES_PASSED_NO_SIGNAL=true guarded by COMPLETION_REJECTED check"
+fi
+
+# Test: GATES_PASSED_NO_SIGNAL is only set when QUALITY_GATES_ENABLED
+if grep -B5 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'QUALITY_GATES_ENABLED'; then
+    assert_pass "GATES_PASSED_NO_SIGNAL=true guarded by QUALITY_GATES_ENABLED check"
+else
+    assert_fail "GATES_PASSED_NO_SIGNAL=true guarded by QUALITY_GATES_ENABLED check"
+fi
+
+# Test: GATES_PASSED_NO_SIGNAL is only set when audit passed
+if grep -B5 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'AUDIT_RESULT'; then
+    assert_pass "GATES_PASSED_NO_SIGNAL=true guarded by AUDIT_RESULT check"
+else
+    assert_fail "GATES_PASSED_NO_SIGNAL=true guarded by AUDIT_RESULT check"
+fi
+
+# Test: compose_rejection_notice_section handles GATES_PASSED_NO_SIGNAL branch
+if grep -A10 '^compose_rejection_notice_section()' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'GATES_PASSED_NO_SIGNAL'; then
+    assert_pass "compose_rejection_notice_section() handles GATES_PASSED_NO_SIGNAL branch"
+else
+    assert_fail "compose_rejection_notice_section() handles GATES_PASSED_NO_SIGNAL branch"
+fi
+
+# Test: quality gates passed hint injected into prompt (not rejection notice)
+if grep -A20 'GATES_PASSED_NO_SIGNAL.*true' "$SCRIPT_DIR/sw-loop.sh" | grep -qi 'quality.*gates.*passed\|gates.*passed'; then
+    assert_pass "GATES_PASSED_NO_SIGNAL branch emits quality gates passed hint"
+else
+    assert_fail "GATES_PASSED_NO_SIGNAL branch emits quality gates passed hint"
+fi
+
+# Test: COMPLETION_REJECTED path unchanged (rejection notice still present)
+if grep -A5 '^compose_rejection_notice_section()' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'COMPLETION_REJECTED'; then
+    assert_pass "compose_rejection_notice_section() still handles COMPLETION_REJECTED path"
+else
+    assert_fail "compose_rejection_notice_section() still handles COMPLETION_REJECTED path"
+fi
+
+# Test: COMPLETION_REJECTED and GATES_PASSED_NO_SIGNAL reset at top of each iteration
+# (not inside compose_rejection_notice_section subshell where resets are no-ops)
+if grep -A5 'Reset per-iteration completion signal flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'COMPLETION_REJECTED=false'; then
+    assert_pass "COMPLETION_REJECTED reset in main loop before prompt build (not in subshell)"
+else
+    assert_fail "COMPLETION_REJECTED reset in main loop before prompt build (not in subshell)"
+fi
+
+if grep -A5 'Reset per-iteration completion signal flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'GATES_PASSED_NO_SIGNAL=false'; then
+    assert_pass "GATES_PASSED_NO_SIGNAL reset in main loop before prompt build (not in subshell)"
+else
+    assert_fail "GATES_PASSED_NO_SIGNAL reset in main loop before prompt build (not in subshell)"
+fi
+
+# ─── Early exit when no changes and all gates pass (#245) ─────────────────────
+
+# Test: early exit block exists after GATES_PASSED_NO_SIGNAL is set
+if grep -A10 'GATES_PASSED_NO_SIGNAL=true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'loop.early_exit_gates_passed'; then
+    assert_pass "early exit check present after GATES_PASSED_NO_SIGNAL (all gates = complete)"
+else
+    assert_fail "early exit check present after GATES_PASSED_NO_SIGNAL (all gates = complete)"
+fi
+
+# Test: early exit does NOT require zero new_commits (fires regardless of commits when gates pass)
+if grep -B2 'loop.early_exit_gates_passed' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'new_commits.*-eq 0'; then
+    assert_fail "early exit must NOT be guarded by new_commits == 0 (should exit on any gates-pass)"
+else
+    assert_pass "early exit not guarded by new_commits == 0 — exits when gates pass regardless of commits"
+fi
+
+# Test: early exit sets STATUS=complete
+if grep -B5 'loop.early_exit_gates_passed' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'STATUS="complete"'; then
+    assert_pass "early exit sets STATUS=complete"
+else
+    assert_fail "early exit sets STATUS=complete"
+fi
+
+# Test: early exit runs holistic gate before exiting
+# Use -A2 to match across potential line breaks in the condition
+if grep -A2 'GATES_PASSED_NO_SIGNAL.*true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'run_holistic_gate'; then
+    assert_pass "early exit runs run_holistic_gate before completing"
+else
+    assert_fail "early exit runs run_holistic_gate before completing"
+fi
+
+# Test: holistic gate prompt includes actual diff content (not just stats)
+if grep -q 'branch_diff' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "holistic gate collects branch_diff for prompt"
+else
+    assert_fail "holistic gate collects branch_diff for prompt"
+fi
+
+# Test: holistic gate prompt includes Evaluation Rules with default-to-FAIL bias
+if grep -q 'Default to FAIL' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "holistic gate prompt has default-to-FAIL conservative bias"
+else
+    assert_fail "holistic gate prompt has default-to-FAIL conservative bias"
+fi
+
+# Test: holistic gate prompt requires per-component goal verification
+if grep -q 'each distinct component' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "holistic gate prompt requires per-component goal verification"
+else
+    assert_fail "holistic gate prompt requires per-component goal verification"
+fi
+
+# Test: branch_diff is sanitized to prevent delimiter injection
+if grep -q 'REDACTED:HOLISTIC:PASS\|REDACTED:HOLISTIC:FAIL' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "branch_diff sanitized to prevent holistic gate delimiter injection"
+else
+    assert_fail "branch_diff sanitized to prevent holistic gate delimiter injection"
+fi
+
+# Test: diff truncation notice in prompt (so model knows to rely on stats for large branches)
+if grep -q 'may be truncated' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "holistic gate prompt notes diff may be truncated"
+else
+    assert_fail "holistic gate prompt notes diff may be truncated"
+fi
+
+# Test: new_commits recomputed after post-audit cleanup commit
+if grep -B5 'Quality gates' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'commits_after_cleanup'; then
+    assert_pass "new_commits recomputed after post-audit cleanup"
+else
+    assert_fail "new_commits recomputed after post-audit cleanup"
+fi
+
+# Behavioral test: loop exits early when holistic outputs new fence delimiter (primary path)
+echo ""
+echo -e "${DIM}  loop behavior: early exit with no changes (#245, #264)${RESET}"
+
+if setup_loop_env 2>/dev/null; then
+    # Mock claude: no changes, holistic outputs new <<<HOLISTIC:PASS>>> fence delimiter
+    cat > "$TEST_TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
+#!/usr/bin/env bash
+if echo "$@" | grep -q 'output-format'; then
+    echo '[{"type":"result","result":"Everything looks good, no changes needed.","usage":{"input_tokens":0,"output_tokens":0}}]'
+else
+    echo "<<<HOLISTIC:PASS>>>"
+fi
+exit 0
+CLAUDE_EOF
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+    _git=$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git)
+    echo ".claude/" > "$TEST_TEMP_DIR/repo/.gitignore"
+    (cd "$TEST_TEMP_DIR/repo" && "$_git" rm -r --cached .claude 2>/dev/null || true)
+    (cd "$TEST_TEMP_DIR/repo" && "$_git" add .gitignore && "$_git" commit -q -m "add gitignore" --allow-empty)
+    rm -f "$TEST_TEMP_DIR/home/.shipwright/costs.json" "$TEST_TEMP_DIR/home/.shipwright/budget.json"
+
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
+        bash "$SCRIPT_DIR/sw-loop.sh" \
+        --repo "$TEST_TEMP_DIR/repo" \
+        "Already done task" \
+        --max-iterations 5 \
+        --test-cmd "true" \
+        --quality-gates \
+        --local \
+        2>&1) || true
+
+    if echo "$output" | grep -qiE "no changes needed, all gates passing|LOOP COMPLETE|Complete"; then
+        assert_pass "Loop early exit (fence delimiter): no changes + holistic <<<HOLISTIC:PASS>>> = complete"
+    else
+        assert_fail "Loop early exit (fence delimiter): expected early exit on <<<HOLISTIC:PASS>>>" "$(echo "$output" | grep -iE 'error|Fatal|Budget|Iteration|Complete|no changes|holistic' | head -5)"
+    fi
+
+    if echo "$output" | grep -qE "Iteration [2-9]|iteration [2-9]"; then
+        assert_fail "Loop early exit (fence delimiter): should exit after iteration 1"
+    else
+        assert_pass "Loop early exit (fence delimiter): exited after iteration 1"
+    fi
+else
+    assert_fail "Loop early exit behavioral test (fence delimiter)" "setup failed"
+fi
+
+# Behavioral test: legacy HOLISTIC_PASS still accepted (Layer 3 compat)
+if setup_loop_env 2>/dev/null; then
+    # Mock claude: no changes, holistic outputs legacy HOLISTIC_PASS string
+    cat > "$TEST_TEMP_DIR/bin/claude" << 'CLAUDE_EOF'
+#!/usr/bin/env bash
+if echo "$@" | grep -q 'output-format'; then
+    echo '[{"type":"result","result":"Everything looks good, no changes needed.","usage":{"input_tokens":0,"output_tokens":0}}]'
+else
+    echo "HOLISTIC_PASS"
+fi
+exit 0
+CLAUDE_EOF
+    chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+    _git=$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git)
+    echo ".claude/" > "$TEST_TEMP_DIR/repo/.gitignore"
+    (cd "$TEST_TEMP_DIR/repo" && "$_git" rm -r --cached .claude 2>/dev/null || true)
+    (cd "$TEST_TEMP_DIR/repo" && "$_git" add .gitignore && "$_git" commit -q -m "add gitignore" --allow-empty)
+    rm -f "$TEST_TEMP_DIR/home/.shipwright/costs.json" "$TEST_TEMP_DIR/home/.shipwright/budget.json"
+
+    output=$(env PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" HOME="$TEST_TEMP_DIR/home" NO_GITHUB=true \
+        bash "$SCRIPT_DIR/sw-loop.sh" \
+        --repo "$TEST_TEMP_DIR/repo" \
+        "Already done task" \
+        --max-iterations 5 \
+        --test-cmd "true" \
+        --quality-gates \
+        --local \
+        2>&1) || true
+
+    if echo "$output" | grep -qiE "no changes needed, all gates passing|LOOP COMPLETE|Complete"; then
+        assert_pass "Loop early exit (legacy compat): HOLISTIC_PASS still accepted via Layer 3"
+    else
+        assert_fail "Loop early exit (legacy compat): HOLISTIC_PASS should still work" "$(echo "$output" | grep -iE 'error|Fatal|Budget|Iteration|Complete|no changes|holistic' | head -5)"
+    fi
+
+    if echo "$output" | grep -qE "Iteration [2-9]|iteration [2-9]"; then
+        assert_fail "Loop early exit (legacy compat): should exit after iteration 1"
+    else
+        assert_pass "Loop early exit (legacy compat): exited after iteration 1"
+    fi
+else
+    assert_fail "Loop early exit behavioral test (legacy compat)" "setup failed"
+fi
+
+# ─── DoD evaluator: configurable diff truncation (#236, #275) ──────────────────
+
+# Test: DoD diff uses configurable DOD_DIFF_MAX_LINES (not hard-coded)
+if grep -A10 'Detailed Changes' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'head -200'; then
+    assert_fail "DoD diff must NOT be truncated with hard-coded head -200"
+elif grep -A10 'Detailed Changes' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'DOD_DIFF_MAX_LINES'; then
+    assert_pass "DoD diff uses configurable DOD_DIFF_MAX_LINES"
+else
+    assert_fail "DoD diff should use DOD_DIFF_MAX_LINES variable"
+fi
+
+# Test: Holistic gate uses configurable HOLISTIC_DIFF_MAX_LINES (not hard-coded)
+if grep -B2 -A2 'head -300' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'holistic\|HOLISTIC'; then
+    assert_fail "Holistic gate must NOT use hard-coded head -300"
+elif grep -B2 -A2 'HOLISTIC_DIFF_MAX_LINES' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'head.*HOLISTIC_DIFF_MAX_LINES'; then
+    assert_pass "Holistic gate uses configurable HOLISTIC_DIFF_MAX_LINES"
+else
+    assert_fail "Holistic gate should use HOLISTIC_DIFF_MAX_LINES variable"
+fi
+
+# Test: DOD_DIFF_MAX_LINES actually truncates (behavioral)
+_trunc_tmpdir="$(mktemp -d)"
+seq 1 20 > "$_trunc_tmpdir/bigdiff.txt"
+DOD_DIFF_MAX_LINES=5
+_trunc_result="$(cat "$_trunc_tmpdir/bigdiff.txt" | head -"${DOD_DIFF_MAX_LINES}")"
+_trunc_lines="$(echo "$_trunc_result" | wc -l | tr -d ' ')"
+if [[ "$_trunc_lines" -eq 5 ]]; then
+    assert_pass "DOD_DIFF_MAX_LINES=5 truncates 20-line diff to 5 lines"
+else
+    assert_fail "DOD_DIFF_MAX_LINES=5 truncates 20-line diff to 5 lines" "got $_trunc_lines lines"
+fi
+
+# Test: HOLISTIC_DIFF_MAX_LINES actually truncates (behavioral)
+HOLISTIC_DIFF_MAX_LINES=3
+_trunc_result2="$(cat "$_trunc_tmpdir/bigdiff.txt" | head -"${HOLISTIC_DIFF_MAX_LINES}")"
+_trunc_lines2="$(echo "$_trunc_result2" | wc -l | tr -d ' ')"
+if [[ "$_trunc_lines2" -eq 3 ]]; then
+    assert_pass "HOLISTIC_DIFF_MAX_LINES=3 truncates 20-line diff to 3 lines"
+else
+    assert_fail "HOLISTIC_DIFF_MAX_LINES=3 truncates 20-line diff to 3 lines" "got $_trunc_lines2 lines"
+fi
+rm -rf "$_trunc_tmpdir"
+
+# Test: DoD includes full branch diff for compound_rebuild cycle correctness (#258)
+# When compound_quality fails and triggers a rebuild, LOOP_START_COMMIT is reset to HEAD
+# (after all prior build work). The loop-run diff is then empty/tiny, causing the DoD
+# evaluator to say "no diff provided". The fix: also include the merge-base..HEAD diff.
+if grep -q '_dod_merge_base' "$SCRIPT_DIR/sw-loop.sh" && \
+   grep -q 'Full Branch Changes vs Base' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD includes full branch diff for compound_rebuild cycle correctness"
+else
+    assert_fail "DoD must include full branch diff (merge-base..HEAD) to handle compound_rebuild cycles"
+fi
+
+# Test: DoD branch diff is sanitized to prevent delimiter injection
+if grep -A5 '_dod_branch_diff' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'REDACTED:DOD'; then
+    assert_pass "DoD branch diff sanitized to prevent delimiter injection"
+else
+    assert_fail "DoD branch diff must sanitize <<<DOD:PASS/FAIL>>> tokens"
+fi
+
+# Test: DoD prompt notes loop-run diff may be small in rebuild cycles
+if grep -q 'prior build' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD prompt explains loop-run diff may be small in rebuild cycles"
+else
+    assert_fail "DoD prompt should explain loop-run diff may be small in rebuild cycles"
+fi
+
+# Test: DoD does NOT use --json-schema (flag causes empty output — see #253)
+if grep -A5 'dod_flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q '\-\-json-schema'; then
+    assert_fail "DoD evaluator must NOT use --json-schema (causes empty claude -p output)"
+else
+    assert_pass "DoD evaluator does not use --json-schema"
+fi
+
+# Test: DoD prompt embeds explicit JSON format instruction (replaces CLI schema enforcement)
+if grep -q 'Respond with a JSON object' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD prompt embeds explicit JSON format instruction"
+else
+    assert_fail "DoD prompt embeds explicit JSON format instruction"
+fi
+
+# Test: DoD has empty-output guard before verdict parsing (surfaces broken CLI invocations)
+if grep -q 'claude -p returned empty output' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD has empty-output guard with diagnostic warning"
+else
+    assert_fail "DoD has empty-output guard with diagnostic warning"
+fi
+
+# Test: DoD rejects pass verdict when items is missing, not an array, or empty (#253)
+# The guard uses a type-checking jq expression so non-array items (string, object) are
+# also rejected — not just a missing or empty array.
+if grep -q 'verdict is pass but items array is missing, not an array, or empty' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD rejects pass verdict when items is missing, not an array, or empty"
+else
+    assert_fail "DoD rejects pass verdict when items is missing, not an array, or empty"
+fi
+
+# Test: DoD verdict parsed from JSON verdict field (not plain text DOD_PASS)
+if grep -q 'dod_verdict.*jq.*verdict' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD verdict parsed from JSON verdict field"
+else
+    assert_fail "DoD verdict parsed from JSON verdict field"
+fi
+
+# Test: DoD verdict checks for "pass" string (JSON schema enum value)
+if grep -q '"$dod_verdict" == "pass"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD verdict compared against JSON enum value \"pass\""
+else
+    assert_fail "DoD verdict compared against JSON enum value \"pass\""
+fi
+
+# Test: DoD fallback uses detect_gate_signal (multi-layer, not bare grep)
+if grep -q 'detect_gate_signal.*dod_log.*DOD\|detect_gate_signal.*"DOD"' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD fallback uses detect_gate_signal for robust multi-layer detection"
+else
+    assert_fail "DoD fallback uses detect_gate_signal for robust multi-layer detection"
+fi
+
+# Test: DoD fallback is gated on empty dod_verdict (prevents overriding legitimate jq "fail")
+# A model returning {"verdict":"fail","summary":"all requirements are now satisfied"} must stay
+# a fail — the "all...satisfied" prose in the summary must not flip the verdict via Layer 3.
+if grep -q '\[\[ -z.*dod_verdict.*\]\].*detect_gate_signal\|detect_gate_signal.*dod_log.*DOD' "$SCRIPT_DIR/sw-loop.sh" && \
+   grep -q '\-z.*dod_verdict' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD fallback gated on empty dod_verdict (won't override legitimate fail verdict)"
+else
+    assert_fail "DoD fallback gated on empty dod_verdict (won't override legitimate fail verdict)"
+fi
+
+# Test: DoD prompt includes fence delimiter instruction
+if grep -q '<<<DOD:PASS>>>' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD prompt includes <<<DOD:PASS>>> fence delimiter"
+else
+    assert_fail "DoD prompt includes <<<DOD:PASS>>> fence delimiter"
+fi
+
+# Test: DoD strips markdown fences before jq parsing
+if grep -q 'sed.*json.*dod_log.*dod_clean\|dod_clean.*sed' "$SCRIPT_DIR/sw-loop.sh" || \
+   grep -q "sed.*dod_log.*dod_clean" "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "DoD strips markdown fences from output before jq parsing"
+else
+    assert_fail "DoD strips markdown fences from output before jq parsing"
+fi
+
+# Test: detect_gate_signal helper exists in lib/gate-signal.sh (shared lib)
+if grep -q '^detect_gate_signal()' "$SCRIPT_DIR/lib/gate-signal.sh"; then
+    assert_pass "detect_gate_signal() helper function exists in lib/gate-signal.sh"
+else
+    assert_fail "detect_gate_signal() helper function exists in lib/gate-signal.sh"
+fi
+
+# Test: detect_gate_signal Layer 2 — fenced delimiter passes
+# Load from shared lib (function moved out of sw-loop.sh into lib/gate-signal.sh)
+_dgs_body="$(sed -n '/^detect_gate_signal()/,/^}/p' "$SCRIPT_DIR/lib/gate-signal.sh")"
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "<<<DOD:PASS>>>" > "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "DOD") 2>/dev/null; then
+    assert_pass "detect_gate_signal: Layer 2 fenced delimiter accepted"
+else
+    assert_fail "detect_gate_signal: Layer 2 fenced delimiter accepted"
+fi
+rm -f "$dgs_test_log"
+
+# Test: detect_gate_signal Layer 3 — legacy DOD_PASS accepted
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo "DOD_PASS" > "$dgs_test_log"
+if (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "DOD" 'DOD_PASS') 2>/dev/null; then
+    assert_pass "detect_gate_signal: Layer 3 legacy DOD_PASS accepted"
+else
+    assert_fail "detect_gate_signal: Layer 3 legacy DOD_PASS accepted"
+fi
+rm -f "$dgs_test_log"
+
+# Test: detect_gate_signal Layer 1 — failure signal overrides PASS delimiter
+dgs_test_log="$(mktemp "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
+echo '<<<DOD:PASS>>> <<<DOD:FAIL>>>' > "$dgs_test_log"
+if ! (eval "$_dgs_body"; detect_gate_signal "$dgs_test_log" "DOD" 'DOD_PASS' '<<<DOD:FAIL>>>') 2>/dev/null; then
+    assert_pass "detect_gate_signal: Layer 1 failure signal overrides PASS delimiter"
+else
+    assert_fail "detect_gate_signal: Layer 1 failure signal overrides PASS delimiter"
+fi
+rm -f "$dgs_test_log"
+
+# ─── Circuit breaker: DoD-only failures (#237) ────────────────────────────────
+
+# Test: bypass emits 'skipping circuit breaker strike' message
+if grep -q 'skipping circuit breaker strike' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "circuit breaker bypass emits 'skipping circuit breaker strike' message"
+else
+    assert_fail "circuit breaker bypass emits 'skipping circuit breaker strike' message"
+fi
+
+# Test: bypass resets CONSECUTIVE_FAILURES=0 (not just skipping increment)
+# so stale prior strikes don't accumulate across a verified-pass iteration
+if grep -B1 'skipping circuit breaker strike' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'CONSECUTIVE_FAILURES=0'; then
+    assert_pass "circuit breaker bypass resets CONSECUTIVE_FAILURES=0 to clear stale strikes"
+else
+    assert_fail "circuit breaker bypass resets CONSECUTIVE_FAILURES=0 to clear stale strikes"
+fi
+
+# Test: bypass guarded by TEST_PASSED == true
+if grep -A3 'check_progress.*new_commits' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'TEST_PASSED.*true'; then
+    assert_pass "circuit breaker bypass guarded by TEST_PASSED == true"
+else
+    assert_fail "circuit breaker bypass guarded by TEST_PASSED == true"
+fi
+
+# Test: bypass requires explicit AUDIT_RESULT=pass when audit is enabled (no silent default)
+if grep -A3 'TEST_PASSED.*true' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'AUDIT_AGENT_ENABLED\|AUDIT_RESULT.*==.*pass'; then
+    assert_pass "circuit breaker bypass guards AUDIT_RESULT explicitly (no silent default to pass)"
+else
+    assert_fail "circuit breaker bypass guards AUDIT_RESULT explicitly (no silent default to pass)"
+fi
+
+# Test: genuine failures (test fail or audit fail) still increment circuit breaker
+if grep -q 'CONSECUTIVE_FAILURES=$(( CONSECUTIVE_FAILURES + 1 ))' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "genuine failures still increment CONSECUTIVE_FAILURES"
+else
+    assert_fail "genuine failures still increment CONSECUTIVE_FAILURES"
+fi
+
+# ─── Stale counters + contradictory prompt fixes (#238) ──────────────────────
+
+# Test: diagnoses.txt is cleared at loop init (not shared across pipeline runs)
+if grep -A5 'strategy-attempts.txt' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'diagnoses.txt'; then
+    assert_pass "diagnoses.txt is cleared at loop init alongside strategy-attempts.txt"
+else
+    assert_fail "diagnoses.txt is cleared at loop init alongside strategy-attempts.txt"
+fi
+
+# Test: alternative_approach threshold is 5 (not 2)
+if grep -q 'repeat_count.*-ge 5' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "alternative_approach escalation threshold is 5 same-session failures"
+else
+    assert_fail "alternative_approach escalation threshold is 5 same-session failures"
+fi
+
+# Test: GOAL is NOT mutated by appending alt_strategy when stuck
+if grep 'GOAL=' "$SCRIPT_DIR/lib/loop-iteration.sh" | grep -q 'alt_strategy'; then
+    assert_fail "GOAL must NOT be mutated with alt_strategy when stuck (creates contradictory prompt)"
+else
+    assert_pass "GOAL is not mutated with alt_strategy when stuck"
+fi
+
+# Test: alt_strategy injected as dedicated section (alt_strategy_section variable)
+if grep -q 'alt_strategy_section' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "alt_strategy injected as dedicated prompt section (not appended to GOAL)"
+else
+    assert_fail "alt_strategy injected as dedicated prompt section (not appended to GOAL)"
+fi
+
+# Test: prompt uses prompt_goal (truncated when stuck) instead of raw GOAL
+if grep -q 'prompt_goal' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "prompt uses prompt_goal variable (truncated to headline when stuck)"
+else
+    assert_fail "prompt uses prompt_goal variable (truncated to headline when stuck)"
+fi
+
+# ─── Dynamic task progress (#239) ────────────────────────────────────────────
+
+# Test: pipeline-stages-build.sh no longer injects raw cat of TASKS_FILE anywhere
+if grep -q 'cat.*TASKS_FILE\|\$(cat.*TASKS_FILE' "$SCRIPT_DIR/lib/pipeline-stages-build.sh"; then
+    assert_fail "pipeline-stages-build.sh must NOT inject raw TASKS_FILE (done dynamically now)"
+else
+    assert_pass "pipeline-stages-build.sh does not inject raw TASKS_FILE into enriched goal"
+fi
+
+# Test: compose_task_section() function exists in loop-iteration.sh
+if grep -q '^compose_task_section()' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "compose_task_section() function exists in loop-iteration.sh"
+else
+    assert_fail "compose_task_section() function exists in loop-iteration.sh"
+fi
+
+# Test: compose_task_section annotates tasks with [x] based on diff (auto-marking logic)
+if grep -q '\- \[x\]' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "compose_task_section() marks completed tasks with [x]"
+else
+    assert_fail "compose_task_section() marks completed tasks with [x]"
+fi
+
+# Test: task_section is injected into the prompt
+if grep -q 'task_section' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "task_section is injected into the prompt each iteration"
+else
+    assert_fail "task_section is injected into the prompt each iteration"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

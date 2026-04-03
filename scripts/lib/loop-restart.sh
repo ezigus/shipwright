@@ -60,6 +60,8 @@ resume_state() {
                 auto_extend:*)           AUTO_EXTEND="$(echo "${line#auto_extend:}" | tr -d ' ')" ;;
                 extension_count:*)       EXTENSION_COUNT="$(echo "${line#extension_count:}" | tr -d ' ')" ;;
                 max_extensions:*)        MAX_EXTENSIONS="$(echo "${line#max_extensions:}" | tr -d ' ')" ;;
+                dod_diff_max_lines:*)    DOD_DIFF_MAX_LINES="$(echo "${line#dod_diff_max_lines:}" | tr -d ' ')" ;;
+                holistic_diff_max_lines:*) HOLISTIC_DIFF_MAX_LINES="$(echo "${line#holistic_diff_max_lines:}" | tr -d ' ')" ;;
             esac
         fi
     done < "$STATE_FILE"
@@ -140,6 +142,8 @@ write_state() {
         printf 'auto_extend: %s\n' "$AUTO_EXTEND"
         printf 'extension_count: %s\n' "$EXTENSION_COUNT"
         printf 'max_extensions: %s\n' "$MAX_EXTENSIONS"
+        printf 'dod_diff_max_lines: %s\n' "$DOD_DIFF_MAX_LINES"
+        printf 'holistic_diff_max_lines: %s\n' "$HOLISTIC_DIFF_MAX_LINES"
         printf -- '---\n\n'
         printf '## Log\n'
         printf '%s\n' "$LOG_ENTRIES"

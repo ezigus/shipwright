@@ -360,6 +360,7 @@ for cmd in shipwright sw
     complete -c $cmd -n "__fish_seen_subcommand_from pipeline" -l max-iterations -d "Max build loop iterations" -r
     complete -c $cmd -n "__fish_seen_subcommand_from pipeline" -l max-restarts -d "Max session restarts" -r
     complete -c $cmd -n "__fish_seen_subcommand_from pipeline" -l fast-test-cmd -d "Fast/subset test command" -r
+    complete -c $cmd -n "__fish_seen_subcommand_from pipeline" -l fast-test-interval -d "Run full tests every N iterations" -r
     complete -c $cmd -n "__fish_seen_subcommand_from pipeline" -l completed-stages -d "Skip these stages" -r
 
     # loop flags

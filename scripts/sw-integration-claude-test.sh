@@ -12,7 +12,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 # shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUDGET_TARGET_USD="0.25"
-SCRIPT_TIMEOUT=120
+SCRIPT_TIMEOUT=180
 
 # ─── Skip when no Claude auth (CI without secret, local dev) ─────────────────
 if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then

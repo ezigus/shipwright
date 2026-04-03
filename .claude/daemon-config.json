@@ -20,5 +20,9 @@
   "max_parallel": 2,
   "poll_interval": 60,
   "pipeline_template": "autonomous",
-  "auto_template": false
+  "auto_template": false,
+  "last_optimization": {
+    "timestamp": "2026-04-03T11:14:38Z",
+    "adjustments": "merge stage recommended (deploy freq 0.0/week); "
+  }
 }

@@ -578,7 +578,7 @@ gh_codeowners() {
         local pattern
         pattern=$(echo "$line" | awk '{print $1}')
         local owners_str
-        owners_str=$(echo "$line" | awk '{$1=""; print $0}' | xargs)
+        owners_str=$(_trim "$(echo "$line" | awk '{$1=""; print $0}')")
 
         # Build JSON owners array
         local owners_json="["

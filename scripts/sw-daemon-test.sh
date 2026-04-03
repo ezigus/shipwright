@@ -955,6 +955,45 @@ test_patrol_untested_detection() {
     assert_equals "true" "$foo_has_test" "foo has test file"
 }
 
+test_patrol_guards_quiet_period_when_paused() {
+    local poll_src="$SCRIPT_DIR/lib/daemon-poll.sh"
+    # Extract the quiet-period if/else block
+    local block
+    block="$(awk '/issue_count_now.*-eq 0.*active_count_now.*-eq 0/,/^        fi$/' "$poll_src" 2>/dev/null || true)"
+    [[ -n "$block" ]] || \
+        { echo "Failed to locate daemon_poll_loop quiet-period block in daemon-poll.sh"; return 1; }
+    # Split into paused (then) branch and else branch on the first bare 'else'
+    local paused_branch else_branch
+    paused_branch="$(printf '%s\n' "$block" | sed '/^[[:space:]]*else[[:space:]]*$/,$d')"
+    else_branch="$(printf '%s\n' "$block" | sed '1,/^[[:space:]]*else[[:space:]]*$/d')"
+    [[ -n "$else_branch" ]] || \
+        { echo "Quiet-period block is missing an else branch — daemon_patrol/decision engine not guarded"; return 1; }
+    # daemon_patrol and sw-decide.sh must NOT be in the paused branch
+    echo "$paused_branch" | grep -q 'daemon_patrol' && \
+        { echo "daemon_patrol must not run while PAUSE_FLAG is set (found in paused branch)"; return 1; }
+    echo "$paused_branch" | grep -q 'sw-decide.sh' && \
+        { echo "sw-decide.sh must not run while PAUSE_FLAG is set (found in paused branch)"; return 1; }
+    # Both must appear in the else (active) branch
+    echo "$else_branch" | grep -q 'daemon_patrol' || \
+        { echo "daemon_patrol not found inside quiet-period else branch"; return 1; }
+    echo "$else_branch" | grep -q 'sw-decide.sh' || \
+        { echo "sw-decide.sh not found inside quiet-period else branch"; return 1; }
+}
+
+test_patrol_emits_skip_event() {
+    local poll_src="$SCRIPT_DIR/lib/daemon-poll.sh"
+    # When paused, a patrol.skipped_paused event must be emitted for observability
+    grep -q 'patrol.skipped_paused' "$poll_src" || \
+        { echo "Missing patrol.skipped_paused event emission — skip not observable via events.jsonl"; return 1; }
+    # Must be emitted inside the PAUSE_FLAG-guarded block (not unconditionally)
+    local pause_block
+    pause_block="$(awk '/if \[\[ -f "\$PAUSE_FLAG" \]\]/{in_block=1} in_block{print} in_block && /^[[:space:]]*fi$/{exit}' "$poll_src" 2>/dev/null || true)"
+    [[ -n "$pause_block" ]] || \
+        { echo "if [[ -f \"\$PAUSE_FLAG\" ]] block not found in daemon-poll.sh"; return 1; }
+    echo "$pause_block" | grep -q 'patrol.skipped_paused' || \
+        { echo "patrol.skipped_paused event not emitted inside PAUSE_FLAG-guarded block"; return 1; }
+}
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 19. Progress assessment detects forward progress (stage change)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1729,29 +1768,33 @@ test_api_error_extended_backoff() {
 }
 
 test_preflight_auth_check() {
-    local daemon_src
+    local daemon_src preflight_ctx poll_ctx
     daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
     grep -q 'daemon_preflight_auth_check()' "$daemon_src" $DAEMON_LIB_GLOB || \
         { echo "daemon_preflight_auth_check function not found"; return 1; }
-    grep -A 60 'daemon_preflight_auth_check()' "$daemon_src" $DAEMON_LIB_GLOB | grep -q 'gh auth status' || \
+    preflight_ctx="$(grep -A 60 'daemon_preflight_auth_check()' "$daemon_src" $DAEMON_LIB_GLOB 2>/dev/null || true)"
+    echo "$preflight_ctx" | grep -q 'gh auth status' || \
         { echo "Missing gh auth check"; return 1; }
-    grep -A 60 'daemon_preflight_auth_check()' "$daemon_src" $DAEMON_LIB_GLOB | grep -q 'ai_provider_check_ready' || \
+    echo "$preflight_ctx" | grep -q 'ai_provider_check_ready' || \
         { echo "Missing provider readiness check"; return 1; }
-    grep -B 5 'daemon_poll_issues' "$daemon_src" $DAEMON_LIB_GLOB | grep -q 'daemon_preflight_auth_check' || \
+    poll_ctx="$(grep -B 5 'daemon_poll_issues' "$daemon_src" $DAEMON_LIB_GLOB 2>/dev/null || true)"
+    echo "$poll_ctx" | grep -q 'daemon_preflight_auth_check' || \
         { echo "Auth check not wired into poll loop"; return 1; }
 }
 
 test_process_group_spawn() {
-    local daemon_src
+    local daemon_src spawn_ctx
     daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
-    grep -B 5 'exec.*sw-pipeline.sh' "$daemon_src" $DAEMON_LIB_GLOB | grep -q "trap '' HUP" || \
+    spawn_ctx="$(grep -B 5 'exec.*sw-pipeline.sh' "$daemon_src" $DAEMON_LIB_GLOB 2>/dev/null || true)"
+    echo "$spawn_ctx" | grep -q "trap '' HUP" || \
         { echo "Missing HUP trap in spawn subshell"; return 1; }
 }
 
 test_process_tree_kill() {
-    local daemon_src
+    local daemon_src cleanup_ctx
     daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
-    grep -A 30 'cleanup_on_exit()' "$daemon_src" $DAEMON_LIB_GLOB | grep -q 'pkill.*-P' || \
+    cleanup_ctx="$(grep -A 30 'cleanup_on_exit()' "$daemon_src" $DAEMON_LIB_GLOB 2>/dev/null || true)"
+    echo "$cleanup_ctx" | grep -q 'pkill.*-P' || \
         { echo "Missing pkill -P in cleanup_on_exit"; return 1; }
 }
 
@@ -1793,77 +1836,234 @@ test_failure_classification_wired() {
         { echo "Missing daemon.failure_classified event"; return 1; }
 }
 
-test_api_error_extended_backoff() {
+test_daemon_single_instance_no_flock() {
     local daemon_src
     daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
-    # API error backoff uses base_secs=300 in per-class exponential backoff
-    grep -q 'base_secs=300' "$daemon_src" $DAEMON_LIB_GLOB || \
-        { echo "Missing API error 300s backoff (base_secs=300)"; return 1; }
+    # mkdir fallback path must exist
+    grep -q "mkdir.*\\\$_lock_dir" "$daemon_src" $DAEMON_LIB_GLOB || \
+        grep -q 'mkdir.*_lock_dir' "$daemon_src" $DAEMON_LIB_GLOB || \
+        { echo "Missing mkdir lock_dir fallback for no-flock path"; return 1; }
+    # Must write PID to lock dir
+    grep -q '_lock_dir.*pid\|_lock_dir/pid' "$daemon_src" $DAEMON_LIB_GLOB || \
+        { echo "Missing PID write into lock dir"; return 1; }
+    # Must handle stale lock by removing it (rm -rf lock_dir)
+    grep -A 10 '_check_existing_daemon' "$daemon_src" $DAEMON_LIB_GLOB | grep -q 'rm.*-rf.*_lock_dir\|rm.*_lock_dir' || \
+        grep -q 'rm -rf.*_lock_dir\|rm -rf.*lock_dir' "$daemon_src" $DAEMON_LIB_GLOB || \
+        { echo "Missing stale lock_dir removal after check_existing_daemon"; return 1; }
 }
 
-test_preflight_auth_check() {
+test_daemon_single_instance_with_flock() {
     local daemon_src
     daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
-    grep -q 'daemon_preflight_auth_check()' "$daemon_src" $DAEMON_LIB_GLOB || \
-        { echo "daemon_preflight_auth_check function not found"; return 1; }
-    grep -A 60 'daemon_preflight_auth_check()' "$daemon_src" $DAEMON_LIB_GLOB | grep -q 'gh auth status' || \
-        { echo "Missing gh auth check"; return 1; }
-    grep -A 60 'daemon_preflight_auth_check()' "$daemon_src" $DAEMON_LIB_GLOB | grep -q 'ai_provider_check_ready' || \
-        { echo "Missing provider readiness check"; return 1; }
-    grep -B 5 'daemon_poll_issues' "$daemon_src" $DAEMON_LIB_GLOB | grep -q 'daemon_preflight_auth_check' || \
-        { echo "Auth check not wired into poll loop"; return 1; }
+    # flock path must lock a dedicated .lock file, NOT daemon.pid
+    grep -q '_lock_file.*\.lock\|PID_FILE.*\.lock' "$daemon_src" $DAEMON_LIB_GLOB || \
+        { echo "Missing dedicated .lock file variable"; return 1; }
+    # flock must open _lock_file (fd 9), not PID_FILE
+    grep -q 'exec 9>".*_lock_file\|exec 9>"\$_lock_file' "$daemon_src" $DAEMON_LIB_GLOB || \
+        grep -q 'exec 9>"$_lock_file' "$daemon_src" || \
+        { echo "flock must open _lock_file, not PID_FILE"; return 1; }
+    # comment confirming fd 9 is intentionally held open
+    grep -q 'fd 9.*intentionally\|intentionally.*fd 9' "$daemon_src" $DAEMON_LIB_GLOB || \
+        { echo "Missing comment confirming fd 9 held open for process lifetime"; return 1; }
 }
 
-test_process_group_spawn() {
+test_daemon_stale_lock_recovery() {
     local daemon_src
     daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
-    grep -B 5 'exec.*sw-pipeline.sh' "$daemon_src" $DAEMON_LIB_GLOB | grep -q "trap '' HUP" || \
-        { echo "Missing HUP trap in spawn subshell"; return 1; }
+    # _check_existing_daemon must call exit 1 (intentionally, not return 1)
+    grep -A 10 '_check_existing_daemon()' "$daemon_src" $DAEMON_LIB_GLOB | grep -q 'exit 1' || \
+        { echo "_check_existing_daemon must call exit 1 to abort caller"; return 1; }
+    # stale lock recovery: rm -rf the lock dir then retry mkdir
+    grep -q 'rm -rf.*_lock_dir\|rm.*-rf.*lock.*\.d' "$daemon_src" $DAEMON_LIB_GLOB || \
+        { echo "Missing stale lock dir cleanup (rm -rf _lock_dir)"; return 1; }
+    # retry mkdir after removing stale lock
+    local block
+    block="$(grep -A 20 'if ! mkdir.*_lock_dir' "$daemon_src" 2>/dev/null || true)"
+    echo "$block" | grep -q 'mkdir.*_lock_dir' && echo "$block" | grep -q 'rm -rf' || \
+        grep -c 'mkdir.*_lock_dir' "$daemon_src" 2>/dev/null | grep -qv '^0$' || \
+        { echo "Missing retry mkdir after stale lock removal"; return 1; }
 }
 
-test_process_tree_kill() {
+test_daemon_lock_cleanup_on_exit() {
     local daemon_src
     daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
-    grep -A 30 'cleanup_on_exit()' "$daemon_src" $DAEMON_LIB_GLOB | grep -q 'pkill.*-P' || \
-        { echo "Missing pkill -P in cleanup_on_exit"; return 1; }
+    # cleanup_on_exit must remove both .lock and .lock.d artifacts
+    # Function body can be 60+ lines — use -A 80 to capture the full body
+    local cleanup_ctx
+    cleanup_ctx="$(grep -A 80 'cleanup_on_exit()' "$daemon_src" $DAEMON_LIB_GLOB 2>/dev/null || true)"
+    echo "$cleanup_ctx" | grep -q 'PID_FILE.*\.lock\|\.lock.*PID_FILE\|PID_FILE}\.lock' || \
+        { echo "cleanup_on_exit missing .lock file removal"; return 1; }
+    echo "$cleanup_ctx" | grep -q '\.lock\.d' || \
+        { echo "cleanup_on_exit missing .lock.d dir removal"; return 1; }
+    # daemon_stop must also clean up lock artifacts (handles SIGKILL where EXIT trap doesn't run)
+    local stop_ctx
+    stop_ctx="$(grep -A 50 'daemon_stop()' "$daemon_src" $DAEMON_LIB_GLOB 2>/dev/null || true)"
+    echo "$stop_ctx" | grep -q 'PID_FILE.*\.lock\|\.lock.*PID_FILE\|PID_FILE}\.lock' || \
+        { echo "daemon_stop missing .lock file removal (needed for SIGKILL path)"; return 1; }
+    echo "$stop_ctx" | grep -q '\.lock\.d' || \
+        { echo "daemon_stop missing .lock.d dir removal (needed for SIGKILL path)"; return 1; }
 }
 
-test_consecutive_failure_pause() {
+test_daemon_single_instance_behavioral() {
+    # Behavioral: simulate a live running daemon by writing our own PID to both
+    # daemon.pid and the mkdir lock dir — verify _check_existing_daemon blocks entry.
     local daemon_src
     daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
-    grep -q 'DAEMON_CONSECUTIVE_FAILURE_CLASS=' "$daemon_src" $DAEMON_LIB_GLOB || \
-        { echo "Missing DAEMON_CONSECUTIVE_FAILURE_CLASS variable"; return 1; }
-    grep -q 'DAEMON_CONSECUTIVE_FAILURE_COUNT=' "$daemon_src" $DAEMON_LIB_GLOB || \
-        { echo "Missing DAEMON_CONSECUTIVE_FAILURE_COUNT variable"; return 1; }
-    # Threshold check: uses local $consecutive var set from DAEMON_CONSECUTIVE_FAILURE_COUNT
-    grep -q 'consecutive.*-ge 3' "$daemon_src" $DAEMON_LIB_GLOB || \
-        { echo "Missing consecutive failure threshold of 3"; return 1; }
-    grep -q 'daemon.auto_pause.*consecutive_failures' "$daemon_src" $DAEMON_LIB_GLOB || \
-        { echo "Missing auto_pause event for consecutive failures"; return 1; }
-    grep -q 'reset_failure_tracking()' "$daemon_src" $DAEMON_LIB_GLOB || \
-        { echo "Missing reset_failure_tracking function"; return 1; }
+
+    # Set up fake lock state: PID file + lock dir pointing to a live PID ($$)
+    local fake_pid_file="${DAEMON_TEST_TEMP_DIR}/behavioral_pid"
+    local fake_lock_dir="${fake_pid_file}.lock.d"
+    echo "$$" > "$fake_pid_file"
+    mkdir "$fake_lock_dir" 2>/dev/null || true
+    echo "$$" > "${fake_lock_dir}/pid"
+
+    # Source a minimal version of _check_existing_daemon with our fake PID_FILE
+    local result
+    result=$(
+        PID_FILE="$fake_pid_file"
+        _check_existing_daemon() {
+            local _epid
+            _epid=$(cat "$PID_FILE" 2>/dev/null || true)
+            if [[ -n "$_epid" ]] && kill -0 "$_epid" 2>/dev/null; then
+                echo "BLOCKED"
+                exit 0
+            elif [[ -n "$_epid" ]]; then
+                echo "STALE"
+            fi
+        }
+        _check_existing_daemon
+    ) || true
+
+    rm -rf "$fake_lock_dir" "$fake_pid_file" 2>/dev/null || true
+
+    echo "$result" | grep -q 'BLOCKED' || \
+        { echo "Live PID lock not detected — concurrent start would have proceeded"; return 1; }
+
+    # Behavioral: stale PID (dead process) should NOT block — verify result is STALE
+    local dead_pid=99999999
+    echo "$dead_pid" > "$fake_pid_file"
+    result=$(
+        PID_FILE="$fake_pid_file"
+        _check_existing_daemon() {
+            local _epid
+            _epid=$(cat "$PID_FILE" 2>/dev/null || true)
+            if [[ -n "$_epid" ]] && kill -0 "$_epid" 2>/dev/null; then
+                echo "BLOCKED"
+                exit 0
+            elif [[ -n "$_epid" ]]; then
+                echo "STALE"
+            fi
+        }
+        _check_existing_daemon
+    ) || true
+
+    rm -f "$fake_pid_file" 2>/dev/null || true
+
+    echo "$result" | grep -q 'STALE' || \
+        { echo "Stale PID (dead process) not identified as stale — stale lock recovery broken"; return 1; }
 }
 
-test_retry_args_passed_to_spawn() {
-    local daemon_src
-    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
-    grep -q 'extra_pipeline_args=.*"$@"' "$daemon_src" $DAEMON_LIB_GLOB || \
-        { echo "daemon_spawn_pipeline missing extra_pipeline_args parameter"; return 1; }
-    grep -q 'pipeline_args+=.*extra_pipeline_args' "$daemon_src" $DAEMON_LIB_GLOB || \
-        { echo "extra_pipeline_args not merged into pipeline_args"; return 1; }
-    grep -q 'all_extra_args' "$daemon_src" $DAEMON_LIB_GLOB || \
-        { echo "Retry logic missing all_extra_args merge"; return 1; }
+test_optimize_not_spawned_in_reap() {
+    local dispatch_src="$SCRIPT_DIR/lib/daemon-dispatch.sh"
+    # optimize_full_analysis must not appear in daemon-dispatch.sh at all —
+    # the post-reap background spawn was the only reference; search non-comment
+    # lines only to avoid false positives from any future doc comments
+    grep -v '^[[:space:]]*#' "$dispatch_src" | grep -q 'optimize_full_analysis' && \
+        { echo "optimize_full_analysis still referenced in daemon-dispatch.sh — background spawn not fully removed"; return 1; }
+    return 0
 }
 
-test_failure_classification_wired() {
-    local daemon_src
-    local on_failure_ctx
-    daemon_src="$(dirname "$DAEMON_SCRIPT")/sw-daemon.sh"
-    on_failure_ctx="$(grep -A 50 'daemon_on_failure()' "$daemon_src" $DAEMON_LIB_GLOB 2>/dev/null || true)"
-    echo "$on_failure_ctx" | grep -q 'classify_failure' || \
-        { echo "classify_failure not called in daemon_on_failure"; return 1; }
-    grep -q 'daemon.failure_classified' "$daemon_src" $DAEMON_LIB_GLOB || \
-        { echo "Missing daemon.failure_classified event"; return 1; }
+test_optimize_scheduled_via_self_optimize() {
+    local poll_src="$SCRIPT_DIR/lib/daemon-poll.sh"
+    # daemon_self_optimize must be called inside an OPTIMIZE_INTERVAL modulo check
+    # in the poll loop — this is the scheduled path that replaces the removed reap call
+    grep -q 'OPTIMIZE_INTERVAL' "$poll_src" || \
+        { echo "OPTIMIZE_INTERVAL not found in daemon-poll.sh — scheduled optimize cadence may be broken"; return 1; }
+    # The modulo check and daemon_self_optimize call must appear in the same block —
+    # use awk block matching so comments or blank lines between them don't break the assertion
+    if ! awk '
+        /OPTIMIZE_INTERVAL/ { in_block = 1 }
+        in_block && /daemon_self_optimize/ { found = 1 }
+        in_block && /^[[:space:]]*fi$/ { in_block = 0 }
+        END { exit !(found) }
+    ' "$poll_src"; then
+        echo "daemon_self_optimize not called inside OPTIMIZE_INTERVAL gate in daemon-poll.sh"
+        return 1
+    fi
+}
+
+test_fast_test_interval_loaded_from_config() {
+    local daemon_src="$SCRIPT_DIR/sw-daemon.sh"
+    local dispatch_src="$SCRIPT_DIR/lib/daemon-dispatch.sh"
+    # sw-daemon.sh load_config must read fast_test_interval from JSON config
+    grep -q "FAST_TEST_INTERVAL_CFG=.*jq.*fast_test_interval" "$daemon_src" || \
+        { echo "FAST_TEST_INTERVAL_CFG not loaded from config in load_config()"; return 1; }
+    # sw-daemon.sh must validate fast_test_interval as a positive integer
+    grep -q "FAST_TEST_INTERVAL_CFG.*\^\\[1-9\\]" "$daemon_src" || \
+        { echo "FAST_TEST_INTERVAL_CFG not validated as positive integer in load_config()"; return 1; }
+    # daemon-dispatch.sh must pass --fast-test-interval when FAST_TEST_INTERVAL_CFG is set
+    grep -q "\-\-fast-test-interval.*FAST_TEST_INTERVAL_CFG" "$dispatch_src" || \
+        { echo "--fast-test-interval not passed in daemon-dispatch.sh"; return 1; }
+}
+
+test_shutdown_timeout_loaded_from_config() {
+    local daemon_src="$SCRIPT_DIR/sw-daemon.sh"
+    # Grep directly for the jq assignment lines — these strings are unique to load_config()
+    grep -q "DAEMON_SHUTDOWN_TIMEOUT=.*jq.*daemon_shutdown_timeout" "$daemon_src" || \
+        { echo "DAEMON_SHUTDOWN_TIMEOUT not loaded from config in load_config()"; return 1; }
+    grep -q "PIPELINE_KILL_GRACE=.*jq.*pipeline_kill_grace" "$daemon_src" || \
+        { echo "PIPELINE_KILL_GRACE not loaded from config in load_config()"; return 1; }
+}
+
+test_shutdown_timeout_used_in_cleanup() {
+    local daemon_src="$SCRIPT_DIR/sw-daemon.sh"
+    local pipeline_src="$SCRIPT_DIR/sw-pipeline.sh"
+    # cleanup_on_exit in sw-daemon.sh must reference DAEMON_SHUTDOWN_TIMEOUT (not hardcoded sleep 5)
+    if ! awk '/^cleanup_on_exit\(\)/{in_fn=1} in_fn && /^\}$/{in_fn=0} in_fn' "$daemon_src" \
+        | grep -q 'DAEMON_SHUTDOWN_TIMEOUT'; then
+        echo "cleanup_on_exit in sw-daemon.sh does not reference DAEMON_SHUTDOWN_TIMEOUT"
+        return 1
+    fi
+    # cleanup_on_exit in sw-pipeline.sh must reference PIPELINE_KILL_GRACE (not hardcoded sleep 2)
+    if ! awk '/^cleanup_on_exit\(\)/{in_fn=1} in_fn && /^\}$/{in_fn=0} in_fn' "$pipeline_src" \
+        | grep -q 'PIPELINE_KILL_GRACE'; then
+        echo "cleanup_on_exit in sw-pipeline.sh does not reference PIPELINE_KILL_GRACE"
+        return 1
+    fi
+}
+
+test_shutdown_timeout_clamp_behavioral() {
+    # Exercise the clamp/validation logic directly (sw-daemon.sh has no source guard,
+    # so we test the arithmetic inline rather than calling load_config())
+
+    # Case 1: grace (40) >= timeout (10) — expect clamp to timeout-5 = 5
+    local DST=10 PKG=40
+    if [[ "$PKG" -ge "$DST" ]]; then
+        PKG=$((DST - 5))
+        [[ "$PKG" -lt 1 ]] && PKG=1
+    fi
+    [[ "$PKG" -eq 5 ]] || { echo "Case 1: expected PKG=5 after clamp (10-5), got: $PKG"; return 1; }
+
+    # Case 2: very small timeout (3) — clamp would go negative, floor to 1
+    DST=3 PKG=40
+    if [[ "$PKG" -ge "$DST" ]]; then
+        PKG=$((DST - 5))
+        [[ "$PKG" -lt 1 ]] && PKG=1
+    fi
+    [[ "$PKG" -eq 1 ]] || { echo "Case 2: expected PKG=1 (floor) for timeout=3, got: $PKG"; return 1; }
+
+    # Case 3: grace (25) < timeout (30) — no clamp, values unchanged
+    DST=30 PKG=25
+    if [[ "$PKG" -ge "$DST" ]]; then
+        PKG=$((DST - 5))
+        [[ "$PKG" -lt 1 ]] && PKG=1
+    fi
+    [[ "$PKG" -eq 25 ]] || { echo "Case 3: expected PKG=25 unchanged (no clamp), got: $PKG"; return 1; }
+
+    # Case 4: invalid non-numeric — validation must coerce to default
+    local daemon_src="$SCRIPT_DIR/sw-daemon.sh"
+    grep -q '=~ \^\[0-9\]+\$' "$daemon_src" || \
+        { echo "Case 4: numeric validation pattern not found in sw-daemon.sh"; return 1; }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1917,6 +2117,8 @@ main() {
         "test_patrol_dora_events:DORA degradation event detection"
         "test_patrol_retry_exhaustion_events:Retry exhaustion event detection"
         "test_patrol_untested_detection:Untested script detection logic"
+        "test_patrol_guards_quiet_period_when_paused:Patrol: quiet-period block guarded by PAUSE_FLAG (covers patrol + decision engine)"
+        "test_patrol_emits_skip_event:Patrol: patrol.skipped_paused event emitted when paused"
         "test_progress_stage_advance:Progress detects stage advancement"
         "test_progress_stuck_detection:Progress detects stuck (no change N checks)"
         "test_progress_repeated_errors:Progress detects repeated error loop"
@@ -1951,6 +2153,17 @@ main() {
         "test_consecutive_failure_pause:Intelligence: Consecutive failure auto-pause (3 threshold)"
         "test_retry_args_passed_to_spawn:Intelligence: Retry escalation args passed to spawn"
         "test_failure_classification_wired:Intelligence: classify_failure wired into retry logic"
+        "test_daemon_single_instance_no_flock:SingleInstance: mkdir fallback path exists (no flock)"
+        "test_daemon_single_instance_with_flock:SingleInstance: flock path uses dedicated lock file"
+        "test_daemon_stale_lock_recovery:SingleInstance: stale lock dir recovered via check+rm+retry"
+        "test_daemon_lock_cleanup_on_exit:SingleInstance: lock artifacts cleaned in cleanup_on_exit and daemon_stop"
+        "test_daemon_single_instance_behavioral:SingleInstance: behavioral — live PID blocks, stale PID yields STALE"
+        "test_optimize_not_spawned_in_reap:Optimize: optimize_full_analysis not spawned as background job in daemon-dispatch.sh"
+        "test_optimize_scheduled_via_self_optimize:Optimize: daemon_self_optimize called on OPTIMIZE_INTERVAL cadence in poll loop"
+        "test_fast_test_interval_loaded_from_config:FastTestInterval: fast_test_interval read+validated in load_config, passed in daemon-dispatch"
+        "test_shutdown_timeout_loaded_from_config:ShutdownTimeout: DAEMON_SHUTDOWN_TIMEOUT and PIPELINE_KILL_GRACE loaded from config"
+        "test_shutdown_timeout_used_in_cleanup:ShutdownTimeout: cleanup_on_exit uses configurable variables not hardcoded sleeps"
+        "test_shutdown_timeout_clamp_behavioral:ShutdownTimeout: clamp guard produces correct values when grace >= timeout"
     )
 
     for entry in "${tests[@]}"; do

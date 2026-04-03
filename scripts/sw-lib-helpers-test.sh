@@ -226,7 +226,6 @@ assert_contains "_sw_github_url contains github.com" "$url" "github.com"
 
 unset SHIPWRIGHT_GITHUB_REPO
 
-# ═══════════════════════════════════════════════════════════════════════════════
 # extract_issue_from_tasks_file — multiple metadata format variants
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "extract_issue_from_tasks_file"
@@ -273,5 +272,47 @@ if extract_issue_from_tasks_file "$_tasks_tmp" >/dev/null 2>&1; then
 else
     assert_pass "no Issue line returns failure"
 fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# strip_ansi
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "strip_ansi"
+
+# Argument form
+result=$(strip_ansi $'\x1b[31mred text\x1b[0m')
+assert_eq "strip_ansi removes SGR color codes (argument)" "red text" "$result"
+
+# Pipe form
+result=$(echo $'\x1b[38;2;248;113;113mfailed\x1b[0m' | strip_ansi)
+assert_eq "strip_ansi removes 24-bit color codes (pipe)" "failed" "$result"
+
+# Non-SGR CSI sequences (cursor movement, clear)
+result=$(strip_ansi $'\x1b[2Jcleared\x1b[H')
+assert_eq "strip_ansi removes cursor/clear CSI codes" "cleared" "$result"
+
+# Plain text passes through unchanged
+result=$(strip_ansi "no escape codes here")
+assert_eq "strip_ansi preserves plain text" "no escape codes here" "$result"
+
+# Mixed content
+result=$(strip_ansi $'\x1b[1m\x1b[31mERROR:\x1b[0m something broke')
+assert_eq "strip_ansi handles multiple codes" "ERROR: something broke" "$result"
+
+# Empty input
+result=$(strip_ansi "")
+assert_eq "strip_ansi handles empty input" "" "$result"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# _trim — whitespace trimming without xargs
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "_trim"
+
+assert_eq "_trim strips leading spaces" "hello" "$(_trim "  hello")"
+assert_eq "_trim strips trailing spaces" "hello" "$(_trim "hello  ")"
+assert_eq "_trim strips both sides" "hello" "$(_trim "  hello  ")"
+assert_eq "_trim preserves internal spaces" "hello world" "$(_trim "  hello world  ")"
+assert_eq "_trim handles empty string" "" "$(_trim "")"
+assert_eq "_trim handles single quotes" "it's a test" "$(_trim "  it's a test  ")"
+assert_eq "_trim handles tabs" "hello" "$(_trim "	hello	")"
 
 print_test_results

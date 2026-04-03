@@ -359,8 +359,45 @@ ${_skill_prompts}
 
     # Session restart capability
     [[ -n "${MAX_RESTARTS_OVERRIDE:-}" ]] && loop_args+=(--max-restarts "$MAX_RESTARTS_OVERRIDE")
-    # Fast test mode
-    [[ -n "${FAST_TEST_CMD_OVERRIDE:-}" ]] && loop_args+=(--fast-test-cmd "$FAST_TEST_CMD_OVERRIDE")
+    # Fast test cmd: CLI override > template stage config > template defaults > daemon-config.json baseline
+    local _fast_test_cmd="${FAST_TEST_CMD_OVERRIDE:-}"
+    if [[ -z "$_fast_test_cmd" ]]; then
+        _fast_test_cmd=$(jq -r --arg id "build" \
+            '(.stages[] | select(.id == $id) | .config.fast_test_cmd) // .defaults.fast_test_cmd // ""' \
+            "$PIPELINE_CONFIG" 2>/dev/null) || true
+        [[ "$_fast_test_cmd" == "null" ]] && _fast_test_cmd=""
+    fi
+    if [[ -z "$_fast_test_cmd" ]]; then
+        local _daemon_cfg="${PROJECT_ROOT:-$PWD}/.claude/daemon-config.json"
+        if [[ -f "$_daemon_cfg" ]]; then
+            _fast_test_cmd=$(jq -r '.fast_test_cmd // ""' "$_daemon_cfg" 2>/dev/null) || true
+            [[ "$_fast_test_cmd" == "null" ]] && _fast_test_cmd=""
+        fi
+    fi
+    [[ -n "$_fast_test_cmd" ]] && loop_args+=(--fast-test-cmd "$_fast_test_cmd")
+
+    # Fast test interval: CLI override > template stage config > template defaults > daemon-config.json baseline
+    local _fast_test_interval="${FAST_TEST_INTERVAL_OVERRIDE:-}"
+    if [[ -z "$_fast_test_interval" ]]; then
+        _fast_test_interval=$(jq -r --arg id "build" \
+            '(.stages[] | select(.id == $id) | .config.fast_test_interval) // .defaults.fast_test_interval // ""' \
+            "$PIPELINE_CONFIG" 2>/dev/null) || true
+        [[ "$_fast_test_interval" == "null" ]] && _fast_test_interval=""
+    fi
+    if [[ -z "$_fast_test_interval" ]]; then
+        local _daemon_cfg="${PROJECT_ROOT:-$PWD}/.claude/daemon-config.json"
+        if [[ -f "$_daemon_cfg" ]]; then
+            _fast_test_interval=$(jq -r '.fast_test_interval // ""' "$_daemon_cfg" 2>/dev/null) || true
+            [[ "$_fast_test_interval" == "null" ]] && _fast_test_interval=""
+        fi
+    fi
+    if [[ -n "$_fast_test_interval" ]]; then
+        if ! [[ "$_fast_test_interval" =~ ^[1-9][0-9]*$ ]]; then
+            warn "Ignoring invalid fast_test_interval='$_fast_test_interval' (expected positive integer; check template stage config, template defaults, or daemon-config.json)."
+            _fast_test_interval=""
+        fi
+    fi
+    [[ -n "$_fast_test_interval" ]] && loop_args+=(--fast-test-interval "$_fast_test_interval")
 
     # Definition of Done: use plan-extracted DoD if available
     [[ -s "$dod_file" ]] && loop_args+=(--definition-of-done "$dod_file")
@@ -425,7 +462,7 @@ ${_skill_prompts}
 
     # Count commits made during build
     local commit_count
-    commit_count=$(_safe_base_log --oneline | wc -l | xargs)
+    commit_count=$(_trim "$(_safe_base_log --oneline | wc -l)")
     info "Build produced ${BOLD}$commit_count${RESET} commit(s)"
 
     # Commit quality evaluation when intelligence is enabled
@@ -486,9 +523,9 @@ stage_test() {
         error "Tests failed (exit code: $test_exit)"
         # Extract most relevant error section (assertion failures, stack traces)
         local relevant_output=""
-        relevant_output=$(grep -A5 -E 'FAIL|AssertionError|Expected.*but.*got|Error:|panic:|assert' "$test_log" 2>/dev/null | tail -40 || true)
+        relevant_output=$(grep -A5 -E 'FAIL|AssertionError|Expected.*but.*got|Error:|panic:|assert' "$test_log" 2>/dev/null | tail -40 | strip_ansi || true)
         if [[ -z "$relevant_output" ]]; then
-            relevant_output=$(tail -40 "$test_log")
+            relevant_output=$(tail -40 "$test_log" | strip_ansi)
         fi
         echo "$relevant_output"
 
@@ -499,11 +536,11 @@ stage_test() {
             log_lines="${log_lines:-0}"
             local log_excerpt
             if [[ "$log_lines" -lt 60 ]]; then
-                log_excerpt="$(cat "$test_log" 2>/dev/null || true)"
+                log_excerpt="$(cat "$test_log" 2>/dev/null | strip_ansi || true)"
             else
-                log_excerpt="$(head -20 "$test_log" 2>/dev/null || true)
+                log_excerpt="$(head -20 "$test_log" 2>/dev/null | strip_ansi || true)
 ... (${log_lines} lines total, showing head + tail) ...
-$(tail -30 "$test_log" 2>/dev/null || true)"
+$(tail -30 "$test_log" 2>/dev/null | strip_ansi || true)"
             fi
             gh_comment_issue "$ISSUE_NUMBER" "❌ **Tests failed** (exit code: $test_exit, ${log_lines} lines)
 \`\`\`
@@ -539,7 +576,7 @@ ${log_excerpt}
     # Post test results to GitHub
     if [[ -n "$ISSUE_NUMBER" ]]; then
         local test_summary
-        test_summary=$(tail -10 "$test_log" | sed 's/\x1b\[[0-9;]*m//g')
+        test_summary=$(tail -10 "$test_log" | strip_ansi)
         local cov_line=""
         [[ -n "$coverage" ]] && cov_line="
 **Coverage:** ${coverage}%"

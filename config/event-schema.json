@@ -162,6 +162,10 @@
         "error"
       ]
     },
+    "vitals.adaptive_limit": {
+      "required": [],
+      "optional": ["issue", "context", "original", "vitals_limit"]
+    },
     "retry.classified": {
       "required": ["stage"],
       "optional": ["issue", "attempt", "error_class"]

@@ -16,6 +16,7 @@ _test_cleanup_hook() { cleanup_test_env; }
 # Set up pipeline env
 export ARTIFACTS_DIR="$TEST_TEMP_DIR/artifacts"
 export STATE_FILE="$TEST_TEMP_DIR/state.md"
+export TASKS_FILE="$TEST_TEMP_DIR/pipeline-tasks.md"
 export ISSUE_NUMBER=""
 export NO_GITHUB=true
 export PIPELINE_CONFIG=""
@@ -291,6 +292,194 @@ if [[ "$_write_state_called" == "true" ]]; then
     assert_pass "write_state called during init"
 else
     assert_fail "write_state called during init"
+fi
+
+# initialize_state clears TASKS_FILE (prevent stale context injection on new run)
+echo "# Stale tasks from issue #99" > "$TASKS_FILE"
+initialize_state
+if [[ ! -f "$TASKS_FILE" ]]; then
+    assert_pass "initialize_state clears pipeline-tasks.md"
+else
+    assert_fail "initialize_state clears pipeline-tasks.md" "file still exists after init"
+fi
+
+# initialize_state is safe when TASKS_FILE is unset
+_saved_tasks_file="$TASKS_FILE"
+unset TASKS_FILE
+initialize_state
+assert_pass "initialize_state safe when TASKS_FILE unset"
+export TASKS_FILE="$_saved_tasks_file"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# resume_state — stale pipeline-tasks.md cleared when issue doesn't match
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "resume_state stale tasks cleanup"
+
+# Provide stubs needed by resume_state
+gh_init() { :; }
+load_pipeline_config() { :; }
+
+_write_state_resume() { :; }
+write_state() { _write_state_resume; }
+
+# Build a minimal state file for issue #42
+cat > "$STATE_FILE" <<'_RESUME_STATE_'
+---
+pipeline: test-pipeline
+goal: "Resume test goal"
+status: interrupted
+issue: "#42"
+branch: "feat/test-42"
+current_stage: build
+started_at: 2024-01-01T00:00:00Z
+test_cmd: "echo pass"
+pr_number:
+progress_comment_id:
+stages:
+  intake: complete
+  plan: complete
+---
+
+## Log
+### intake
+Goal: Resume test goal
+_RESUME_STATE_
+
+# Case 1: tasks file has a DIFFERENT issue → should be removed on resume
+cat > "$TASKS_FILE" <<'_STALE_TASKS_'
+# Pipeline Tasks — old run
+
+## Context
+
+- Pipeline: autonomous
+- Branch: feat/build-loop-context-exhaustion-prevention-154
+- Issue: #154
+_STALE_TASKS_
+
+GITHUB_ISSUE="" GIT_BRANCH=""
+resume_state 2>/dev/null || true
+if [[ ! -f "$TASKS_FILE" ]]; then
+    assert_pass "resume_state removes stale pipeline-tasks.md (different issue)"
+else
+    assert_fail "resume_state removes stale pipeline-tasks.md (different issue)" "file still exists"
+fi
+
+# Case 2: tasks file matches current pipeline issue → should be preserved
+cat > "$STATE_FILE" <<'_RESUME_STATE2_'
+---
+pipeline: test-pipeline
+goal: "Resume test goal"
+status: interrupted
+issue: "#42"
+branch: "feat/test-42"
+current_stage: build
+started_at: 2024-01-01T00:00:00Z
+test_cmd: "echo pass"
+pr_number:
+progress_comment_id:
+stages:
+  intake: complete
+  plan: complete
+---
+
+## Log
+### intake
+Goal: Resume test goal
+_RESUME_STATE2_
+
+cat > "$TASKS_FILE" <<'_MATCH_TASKS_'
+# Pipeline Tasks — current run
+
+## Context
+
+- Pipeline: autonomous
+- Branch: feat/test-42
+- Issue: #42
+_MATCH_TASKS_
+
+GITHUB_ISSUE="" GIT_BRANCH=""
+resume_state 2>/dev/null || true
+if [[ -f "$TASKS_FILE" ]]; then
+    assert_pass "resume_state preserves pipeline-tasks.md when issue matches"
+else
+    assert_fail "resume_state preserves pipeline-tasks.md when issue matches" "file was incorrectly removed"
+fi
+
+# Case 3: tasks file has no Context/Issue section → preserve (backward-compat)
+cat > "$TASKS_FILE" <<'_OLD_TASKS_'
+# Pipeline Tasks
+
+- [ ] Task 1
+- [ ] Task 2
+_OLD_TASKS_
+
+cat > "$STATE_FILE" <<'_RESUME_STATE3_'
+---
+pipeline: test-pipeline
+goal: "Resume test goal"
+status: interrupted
+issue: "#42"
+branch: "feat/test-42"
+current_stage: build
+started_at: 2024-01-01T00:00:00Z
+test_cmd: "echo pass"
+pr_number:
+progress_comment_id:
+stages:
+  intake: complete
+  plan: complete
+---
+
+## Log
+_RESUME_STATE3_
+
+GITHUB_ISSUE="" GIT_BRANCH=""
+resume_state 2>/dev/null || true
+if [[ -f "$TASKS_FILE" ]]; then
+    assert_pass "resume_state preserves pipeline-tasks.md with no Issue metadata (backward-compat)"
+else
+    assert_fail "resume_state preserves pipeline-tasks.md with no Issue metadata (backward-compat)" "file was incorrectly removed"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# resume_state — goal containing single quotes (xargs crash regression)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "resume_state with single quotes in goal"
+
+cat > "$STATE_FILE" <<'_RESUME_QUOTE_'
+---
+pipeline: fast
+goal: "pipeline resume crashes with 'xargs: unterminated quote'"
+status: interrupted
+issue: "#223"
+branch: "fix/pipeline-resume-223"
+current_stage: build
+started_at: 2024-01-01T00:00:00Z
+test_cmd: "npm test"
+pr_number:
+progress_comment_id:
+stages:
+  intake: complete
+  build: pending
+---
+
+## Log
+### intake
+Goal: pipeline resume crashes with 'xargs: unterminated quote'
+_RESUME_QUOTE_
+
+rm -f "$TASKS_FILE"
+GITHUB_ISSUE="" GIT_BRANCH="" GOAL=""
+resume_state 2>/dev/null
+if [[ "$GOAL" == "pipeline resume crashes with 'xargs: unterminated quote'" ]]; then
+    assert_pass "resume_state parses goal with single quotes"
+else
+    assert_fail "resume_state parses goal with single quotes" "got: $GOAL"
+fi
+if [[ "$CURRENT_STAGE" == "build" ]]; then
+    assert_pass "resume_state parses stage when goal has quotes"
+else
+    assert_fail "resume_state parses stage when goal has quotes" "got: $CURRENT_STAGE"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

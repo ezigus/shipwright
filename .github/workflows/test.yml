@@ -85,7 +85,7 @@ jobs:
 
       - name: Install dependencies
         if: env.SKIP_CLAUDE != 'true'
-        run: sudo apt-get update && sudo apt-get install -y tmux jq
+        run: sudo apt-get update && sudo apt-get install -y tmux jq bubblewrap socat
 
       - name: Install Claude Code CLI
         if: env.SKIP_CLAUDE != 'true'

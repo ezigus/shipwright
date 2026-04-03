@@ -213,7 +213,7 @@ TIMEOUT_EOF
 
 cleanup_test_env() {
     if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
-        rm -rf "$TEST_TEMP_DIR"
+        rm -rf "$TEST_TEMP_DIR" 2>/dev/null || true
     fi
     [[ -n "${ORIG_HOME:-}" ]] && export HOME="$ORIG_HOME" || true
     [[ -n "${ORIG_PATH:-}" ]] && export PATH="$ORIG_PATH" || true

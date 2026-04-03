@@ -51,6 +51,15 @@ success() { echo -e "${GREEN}${BOLD}✓${RESET} $*"; }
 warn()    { echo -e "${YELLOW}${BOLD}⚠${RESET} $*"; }
 error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
 
+# ─── String Helpers ──────────────────────────────────────────────
+# Trim leading/trailing whitespace without xargs (which chokes on quotes).
+_trim() {
+    local s="${1:-}"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf '%s' "$s"
+}
+
 # ─── Timestamp Helpers ───────────────────────────────────────────
 now_iso()   { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 now_epoch() { date +%s; }
@@ -359,6 +368,17 @@ _sw_github_url() {
     local repo
     repo="$(_sw_github_repo)"
     echo "https://github.com/${repo}"
+}
+
+# ─── ANSI Escape Code Stripping ─────────────────────────────────────────
+# Removes ANSI/CSI escape sequences from text (colors, cursor, formatting)
+# Usage: clean=$(strip_ansi "$raw_text")  OR  echo "$raw" | strip_ansi
+strip_ansi() {
+    if [[ $# -gt 0 ]]; then
+        printf '%s' "$1" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g'
+    else
+        sed 's/\x1b\[[0-9;]*[a-zA-Z]//g'
+    fi
 }
 
 # ─── Secret Sanitization ─────────────────────────────────────────────

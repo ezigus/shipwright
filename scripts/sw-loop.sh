@@ -85,6 +85,8 @@ RESUME=false
 VERBOSE=false
 MAX_ITERATIONS_EXPLICIT=false
 MAX_RESTARTS=$(_config_get_int "loop.max_restarts" 0 2>/dev/null || echo 0)
+DOD_DIFF_MAX_LINES=$(_config_get_int "loop.dod_diff_max_lines" 3000 2>/dev/null || echo 3000)
+HOLISTIC_DIFF_MAX_LINES=$(_config_get_int "loop.holistic_diff_max_lines" 1000 2>/dev/null || echo 1000)
 SESSION_RESTART=false
 RESTART_COUNT=0
 REPO_OVERRIDE=""
@@ -117,6 +119,7 @@ AUDIT_AGENT_ENABLED=false
 DOD_FILE=""
 QUALITY_GATES_ENABLED=false
 AUDIT_RESULT=""
+HOLISTIC_RESULT=""
 COMPLETION_REJECTED=false
 QUALITY_GATE_PASSED=true
 
@@ -157,6 +160,8 @@ show_help() {
     echo -e "  ${CYAN}--audit-agent${RESET}             Run separate auditor agent (haiku) after each iteration"
     echo -e "  ${CYAN}--quality-gates${RESET}           Enable automated quality gates before accepting completion"
     echo -e "  ${CYAN}--definition-of-done${RESET} FILE DoD checklist file — evaluated by AI against git diff"
+    echo -e "  ${CYAN}--dod-diff-max-lines${RESET} N    Max diff lines for DoD evaluator (default: 3000)"
+    echo -e "  ${CYAN}--holistic-diff-max-lines${RESET} N Max diff lines for holistic gate (default: 1000)"
     echo -e "  ${CYAN}--no-auto-extend${RESET}          Disable auto-extension when max iterations reached"
     echo -e "  ${CYAN}--extension-size${RESET} N         Additional iterations per extension (default: 5)"
     echo -e "  ${CYAN}--max-extensions${RESET} N         Max number of auto-extensions (default: 3)"
@@ -171,7 +176,7 @@ show_help() {
     echo ""
     echo -e "${BOLD}COMPLETION & CIRCUIT BREAKER${RESET}"
     echo -e "  The loop completes when:"
-    echo -e "  ${DIM}• Claude outputs LOOP_COMPLETE and all quality gates pass${RESET}"
+    echo -e "  ${DIM}• Claude outputs <<<LOOP:PASS>>> and all quality gates pass${RESET}"
     echo -e "  ${DIM}• Max iterations reached (auto-extends if work is incomplete)${RESET}"
     echo -e "  The loop stops (circuit breaker) if:"
     echo -e "  ${DIM}• ${CIRCUIT_BREAKER_THRESHOLD} consecutive iterations with < ${MIN_PROGRESS_LINES} lines changed${RESET}"
@@ -239,6 +244,18 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --definition-of-done=*) DOD_FILE="${1#--definition-of-done=}"; shift ;;
+        --dod-diff-max-lines)
+            DOD_DIFF_MAX_LINES="${2:-}"
+            [[ -z "$DOD_DIFF_MAX_LINES" ]] && { error "Missing value for --dod-diff-max-lines"; exit 1; }
+            shift 2
+            ;;
+        --dod-diff-max-lines=*) DOD_DIFF_MAX_LINES="${1#--dod-diff-max-lines=}"; shift ;;
+        --holistic-diff-max-lines)
+            HOLISTIC_DIFF_MAX_LINES="${2:-}"
+            [[ -z "$HOLISTIC_DIFF_MAX_LINES" ]] && { error "Missing value for --holistic-diff-max-lines"; exit 1; }
+            shift 2
+            ;;
+        --holistic-diff-max-lines=*) HOLISTIC_DIFF_MAX_LINES="${1#--holistic-diff-max-lines=}"; shift ;;
         --quality-gates) QUALITY_GATES_ENABLED=true; shift ;;
         --no-auto-extend) AUTO_EXTEND=false; shift ;;
         --extension-size)
@@ -342,6 +359,14 @@ if ! [[ "$FAST_TEST_INTERVAL" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if ! [[ "$MAX_RESTARTS" =~ ^[0-9]+$ ]]; then
     error "--max-restarts must be a non-negative integer (got: $MAX_RESTARTS)"
+    exit 1
+fi
+if ! [[ "$DOD_DIFF_MAX_LINES" =~ ^[1-9][0-9]*$ ]]; then
+    error "--dod-diff-max-lines must be a positive integer (got: $DOD_DIFF_MAX_LINES)"
+    exit 1
+fi
+if ! [[ "$HOLISTIC_DIFF_MAX_LINES" =~ ^[1-9][0-9]*$ ]]; then
+    error "--holistic-diff-max-lines must be a positive integer (got: $HOLISTIC_DIFF_MAX_LINES)"
     exit 1
 fi
 
@@ -541,16 +566,26 @@ _extract_text_from_json() {
     local first_char
     first_char=$(head -c1 "$json_file" 2>/dev/null || true)
 
-    # Case 2: Valid JSON array — extract .result from last element
-    if [[ "$first_char" == "[" ]] && command -v jq >/dev/null 2>&1; then
+    # Case 2: Valid JSON (array or object) — extract with jq
+    if [[ "$first_char" == "[" || "$first_char" == "{" ]] && command -v jq >/dev/null 2>&1; then
         local extracted
-        extracted=$(jq -r '.[-1].result // empty' "$json_file" 2>/dev/null) || true
+        if [[ "$first_char" == "[" ]]; then
+            # Array: extract .result from last element
+            extracted=$(jq -r '.[-1].result // empty' "$json_file" 2>/dev/null) || true
+        else
+            # Object: extract .result directly
+            extracted=$(jq -r '.result // empty' "$json_file" 2>/dev/null) || true
+        fi
         if [[ -n "$extracted" ]]; then
             echo "$extracted" > "$log_file"
             return 0
         fi
-        # jq succeeded but result was null/empty — try .content or raw text
-        extracted=$(jq -r '.[].content // empty' "$json_file" 2>/dev/null | head -500) || true
+        # Try .content as fallback
+        if [[ "$first_char" == "[" ]]; then
+            extracted=$(jq -r '.[].content // empty' "$json_file" 2>/dev/null | head -500) || true
+        else
+            extracted=$(jq -r '.content // empty' "$json_file" 2>/dev/null | head -500) || true
+        fi
         if [[ -n "$extracted" ]]; then
             echo "$extracted" > "$log_file"
             return 0
@@ -561,7 +596,7 @@ _extract_text_from_json() {
         return 0
     fi
 
-    # Case 3: Looks like JSON but no jq — can't parse, use raw
+    # Case 3: Looks like JSON but jq not available — can't parse, use raw
     if [[ "$first_char" == "[" || "$first_char" == "{" ]]; then
         warn "JSON output but jq not available — using raw output"
         cp "$json_file" "$log_file"
@@ -725,6 +760,10 @@ validate_claude_output() {
     return "$issues"
 }
 
+# ─── Gate Signal Detection ──────────────────────────────────────────────────
+# Sourced from shared lib so ai-provider.sh can use the same function.
+[[ -f "${SCRIPT_DIR}/lib/gate-signal.sh" ]] && source "${SCRIPT_DIR}/lib/gate-signal.sh"
+
 # ─── Budget Gate (hard stop when exhausted) ───────────────────────────────────
 check_budget_gate() {
     [[ ! -x "$SCRIPT_DIR/sw-cost.sh" ]] && return 0
@@ -838,17 +877,18 @@ diagnose_failure() {
         strategy="retry_with_context"
     fi
 
-    # Check if we've seen this diagnosis before in this session
+    # Check if we've seen this diagnosis before in this session.
+    # Append first, then count — so repeat_count reflects total occurrences
+    # including the current one, and the threshold matches what the message reports.
     local diagnosis_file="${LOG_DIR:-/tmp}/diagnoses.txt"
-    local repeat_count=0
-    if [[ -f "$diagnosis_file" ]]; then
-        repeat_count=$(grep -c "^${diagnosis}$" "$diagnosis_file" 2>/dev/null || true)
-        repeat_count="${repeat_count:-0}"
-    fi
     echo "$diagnosis" >> "$diagnosis_file"
+    local repeat_count=0
+    repeat_count=$(grep -c "^${diagnosis}$" "$diagnosis_file" 2>/dev/null || true)
+    repeat_count="${repeat_count:-0}"
 
-    # Escalate strategy if same diagnosis repeats
-    if [[ "$repeat_count" -ge 2 ]]; then
+    # Escalate strategy if same diagnosis repeats — threshold is 5 same-session
+    # failures to avoid thrashing on iteration 2 of a fresh run
+    if [[ "$repeat_count" -ge 5 ]]; then
         strategy="alternative_approach"
     fi
 
@@ -1024,7 +1064,7 @@ run_test_gate() {
     fi
 
     TEST_PASSED=$all_passed
-    TEST_OUTPUT="$(echo "$combined_output" | tail -50)"
+    TEST_OUTPUT="$(echo "$combined_output" | tail -50 | strip_ansi)"
 }
 
 write_error_summary() {
@@ -1057,7 +1097,7 @@ write_error_summary() {
 
     # Extract error lines (last 30 lines, grep for error patterns)
     local error_lines_raw
-    error_lines_raw=$(tail -30 "$source_log" 2>/dev/null | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' | head -10 || true)
+    error_lines_raw=$(tail -30 "$source_log" 2>/dev/null | strip_ansi | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' | head -10 || true)
 
     local error_count=0
     if [[ -n "$error_lines_raw" ]]; then
@@ -1165,8 +1205,11 @@ Critically review the CUMULATIVE work (not just the latest iteration):
 IMPORTANT: If the current iteration made small or no code changes, that may be acceptable
 if earlier iterations already completed the substantive work. Judge the whole body of work.
 
-If the work is acceptable and moves toward the goal, output exactly: AUDIT_PASS
-Otherwise, list the specific issues that need fixing.
+If the work is acceptable and moves toward the goal, output your verdict on its own line as:
+  <<<AUDIT:PASS>>>
+If there are issues that need fixing, list them and then output on its own line:
+  <<<AUDIT:FAIL>>>
+Do not wrap the verdict in JSON, markdown, or code blocks.
 AUDIT_PROMPT
 
     echo -e "  ${PURPLE}▸${RESET} Running audit agent..."
@@ -1182,9 +1225,31 @@ AUDIT_PROMPT
     fi
 
     local exit_code=0
-    claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>&1 || exit_code=$?
+    local audit_err_log="${audit_log%.log}-stderr.log"
+    claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>"$audit_err_log" &
+    CHILD_PID=$!
+    wait "$CHILD_PID" 2>/dev/null || exit_code=$?
+    CHILD_PID=""
 
-    if grep -q "AUDIT_PASS" "$audit_log" 2>/dev/null; then
+    # Guard: empty or near-empty response means the evaluator failed to run
+    local audit_log_bytes
+    audit_log_bytes="$(wc -c < "$audit_log" 2>/dev/null || echo "0")"
+    audit_log_bytes="${audit_log_bytes// /}"
+    if [[ ! -s "$audit_log" ]] || [[ "$audit_log_bytes" -le 2 ]]; then
+        warn "Audit: evaluator returned empty output (exit_code=${exit_code}) — treating as fail"
+        warn "Audit log: $audit_log (${audit_log_bytes} bytes), stderr: $audit_err_log"
+        AUDIT_RESULT="Audit evaluator returned no output"
+        return 0  # don't abort the loop; AUDIT_RESULT will be injected as feedback
+    fi
+
+    # Log non-zero exit alongside non-empty output — likely a Claude API/CLI error message
+    if [[ "$exit_code" -ne 0 ]]; then
+        warn "Audit: claude -p exited with code ${exit_code} — output may contain an error message"
+    fi
+
+    if detect_gate_signal "$audit_log" "AUDIT" \
+        'AUDIT_PASS|"verdict"[[:space:]]*:[[:space:]]*"pass"' \
+        'AUDIT_FAIL|<<<AUDIT:FAIL>>>'; then
         AUDIT_RESULT="pass"
         echo -e "  ${GREEN}✓${RESET} Audit: passed"
     else
@@ -1261,10 +1326,32 @@ check_definition_of_done() {
         diff_content="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null || echo "(no diff)")"
         diff_content="${diff_content}
 
-## Detailed Changes (cumulative diff, truncated to 200 lines)
-$(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -200 || echo "(no diff)")"
+## Detailed Changes (cumulative diff, capped at ${DOD_DIFF_MAX_LINES} lines)
+$(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
     else
-        diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null || echo "(no diff)")"
+        diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
+    fi
+
+    # Also compute the full branch diff vs base branch. In compound_rebuild cycles,
+    # LOOP_START_COMMIT is reset to the HEAD after prior build work, so the loop-run
+    # diff above only shows the small rebuild-cycle changes. The branch diff shows
+    # ALL work accumulated on this branch — which is what the DoD items actually cover.
+    local branch_diff_content=""
+    local _dod_merge_base=""
+    _dod_merge_base="$(git -C "$PROJECT_ROOT" merge-base "origin/${BASE_BRANCH:-main}" HEAD 2>/dev/null \
+        || git -C "$PROJECT_ROOT" merge-base "${BASE_BRANCH:-main}" HEAD 2>/dev/null || echo "")"
+    if [[ -n "$_dod_merge_base" ]]; then
+        local _dod_branch_stat _dod_branch_diff
+        _dod_branch_stat="$(git -C "$PROJECT_ROOT" diff --stat "${_dod_merge_base}..HEAD" 2>/dev/null || echo "(none)")"
+        _dod_branch_diff="$(git -C "$PROJECT_ROOT" diff "${_dod_merge_base}..HEAD" 2>/dev/null \
+            | head -"${DOD_DIFF_MAX_LINES}" \
+            | sed 's/<<<DOD:PASS>>>/[REDACTED:DOD:PASS]/g; s/<<<DOD:FAIL>>>/[REDACTED:DOD:FAIL]/g' \
+            || echo "(none)")"
+        branch_diff_content="## Full Branch Changes vs Base (authoritative — all work including prior build loops)
+${_dod_branch_stat}
+
+### Branch Diff Detail (capped at ${DOD_DIFF_MAX_LINES} lines)
+${_dod_branch_diff}"
     fi
 
     # Inject verified runtime facts so the evaluator doesn't have to guess
@@ -1293,14 +1380,27 @@ ${dod_content}
 
 ${runtime_facts}
 
-## Cumulative Changes Made (git diff from start of loop to now)
+## This Loop Run Changes (git diff from start of this loop invocation to now)
+NOTE: If this section shows few or no changes, the original work was likely done in a prior build
+loop (e.g., an earlier compound_quality rebuild cycle). Use the Full Branch diff below instead.
 ${diff_content}
+
+${branch_diff_content}
 
 ## Your Task
 For each item in the Definition of Done, determine if the project satisfies it.
+Use the Full Branch diff above as the authoritative view of all work done on this branch.
 The runtime facts above are verified by the harness — trust them as ground truth.
-If ALL items are satisfied, output exactly: DOD_PASS
-Otherwise, list which items are NOT satisfied and why.
+
+IMPORTANT: Respond with a JSON object followed by a verdict line. No prose, no markdown fences, no code blocks. Format:
+{"verdict":"pass","items":[{"item":"...","satisfied":true,"reason":"..."}],"summary":"..."}
+- Set "verdict" to "pass" if ALL items are satisfied. Set it to "fail" if ANY item is not satisfied.
+- For each DoD item, add an entry to "items" with the item text and whether it passes.
+- In "summary", briefly explain your verdict (1-2 sentences max).
+
+On the line immediately after the JSON object, output exactly one of:
+  <<<DOD:PASS>>>
+  <<<DOD:FAIL>>>
 DOD_PROMPT
 
     local dod_log="$LOG_DIR/dod-iter-${ITERATION}.log"
@@ -1313,13 +1413,62 @@ DOD_PROMPT
         dod_flags+=("--dangerously-skip-permissions")
     fi
 
-    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>&1 || true
+    local dod_err_log="${dod_log%.log}-stderr.log"
+    local dod_exit_code=0
+    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>"$dod_err_log" &
+    CHILD_PID=$!
+    wait "$CHILD_PID" 2>/dev/null || dod_exit_code=$?
+    CHILD_PID=""
 
-    if grep -q "DOD_PASS" "$dod_log" 2>/dev/null; then
+    # Guard: if claude -p returned nothing, surface a diagnostic rather than silently failing.
+    local dod_log_bytes
+    dod_log_bytes="$(wc -c < "$dod_log" 2>/dev/null || echo "0")"
+    dod_log_bytes="${dod_log_bytes// /}"
+    if [[ ! -s "$dod_log" ]] || [[ "$dod_log_bytes" -le 2 ]]; then
+        warn "DoD: claude -p returned empty output (exit_code=${dod_exit_code}) — check CLI flags and model availability"
+        warn "DoD log: $dod_log (${dod_log_bytes} bytes), stderr: $dod_err_log"
+        return 1
+    fi
+
+    # Strip markdown fences and delimiter lines before jq parsing.
+    # Markdown fences (```json / ```) break jq; delimiter lines (<<<DOD:*>>>) are
+    # appended after the JSON object and also cause jq to fail.
+    local dod_clean="${dod_log%.log}-clean.json"
+    sed -E '/^```(json)?[[:space:]]*$|^<<<DOD:(PASS|FAIL)>>>[[:space:]]*$/d' "$dod_log" > "$dod_clean" 2>/dev/null || cp "$dod_log" "$dod_clean"
+
+    # Parse structured JSON output: verdict field must be "pass"
+    local dod_verdict
+    dod_verdict="$(jq -r '.verdict // empty' "$dod_clean" 2>/dev/null || echo "")"
+
+    # Structural validation: a pass verdict without a populated items array means the
+    # model skipped the per-item checklist evaluation — reject it as incomplete.
+    if [[ "$dod_verdict" == "pass" ]]; then
+        local dod_item_count
+        dod_item_count="$(jq 'if (.items | type) == "array" then (.items | length) else 0 end' "$dod_clean" 2>/dev/null || echo "0")"
+        dod_item_count="${dod_item_count// /}"
+        if [[ "${dod_item_count:-0}" -eq 0 ]]; then
+            warn "DoD: verdict is pass but items array is missing, not an array, or empty — treating as fail"
+            return 1
+        fi
         echo -e "  ${GREEN}✓${RESET} Definition of Done: satisfied"
+        # Log summary for diagnostics
+        local dod_summary
+        dod_summary="$(jq -r '.summary // ""' "$dod_clean" 2>/dev/null || echo "")"
+        [[ -n "$dod_summary" ]] && info "  DoD summary: $dod_summary"
         return 0
     else
         echo -e "  ${YELLOW}⚠${RESET} Definition of Done: not satisfied"
+        # Surface failing items for diagnostics
+        jq -r '.items[] | select(.satisfied == false) | "  - \(.item): " + (.reason // "not satisfied")' "$dod_clean" 2>/dev/null || true
+        # Fallback: only when jq parse failed (dod_verdict empty) — not when jq returned "fail".
+        # Without this guard, prose in a legitimately-parsed "fail" summary (e.g. "all requirements
+        # are now satisfied") could match the legacy pattern and incorrectly flip the verdict to pass.
+        if [[ -z "$dod_verdict" ]] && detect_gate_signal "$dod_log" "DOD" \
+            'DOD_PASS|all.{0,20}satisfied|"verdict"[[:space:]]*:[[:space:]]*"pass"' \
+            '"satisfied"[[:space:]]*:[[:space:]]*false|not satisfied|<<<DOD:FAIL>>>'; then
+            warn "  DoD JSON parse failed but detected pass signal in raw output — accepting"
+            return 0
+        fi
         return 1
     fi
 }
@@ -1329,12 +1478,14 @@ DOD_PROMPT
 guard_completion() {
     local log_file="$LOG_DIR/iteration-${ITERATION}.log"
 
-    # Check if LOOP_COMPLETE is in the log
-    if ! grep -q "LOOP_COMPLETE" "$log_file" 2>/dev/null; then
+    # Check if agent signaled completion
+    if ! detect_gate_signal "$log_file" "LOOP" \
+        'LOOP_COMPLETE' \
+        '<<<LOOP:FAIL>>>'; then
         return 1  # No completion claim
     fi
 
-    echo -e "  ${CYAN}▸${RESET} LOOP_COMPLETE detected — validating..."
+    echo -e "  ${CYAN}▸${RESET} Completion signal detected — validating..."
 
     local rejection_reasons=()
 
@@ -1387,7 +1538,7 @@ run_holistic_gate() {
     file_count=$(git -C "$PROJECT_ROOT" ls-files | wc -l | tr -d ' ')
     local cumulative_stat
     cumulative_stat="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | tail -1 || echo "(no changes)")"
-    local merge_base branch_stat
+    local merge_base branch_stat branch_diff
     local base_branch
     base_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||')"
     [[ -z "$base_branch" ]] && base_branch="main"
@@ -1395,8 +1546,15 @@ run_holistic_gate() {
         || git -C "$PROJECT_ROOT" merge-base "$base_branch" HEAD 2>/dev/null || echo "")"
     if [[ -n "$merge_base" ]]; then
         branch_stat="$(git -C "$PROJECT_ROOT" diff --stat "${merge_base}..HEAD" 2>/dev/null | head -40 || echo "(none)")"
+        # Cap diff and sanitize gate delimiter tokens to prevent prompt injection
+        # via diff content that happens to contain <<<HOLISTIC:PASS>>> or similar strings.
+        branch_diff="$(git -C "$PROJECT_ROOT" diff "${merge_base}..HEAD" 2>/dev/null \
+            | head -"${HOLISTIC_DIFF_MAX_LINES}" \
+            | sed 's/<<<HOLISTIC:PASS>>>/[REDACTED:HOLISTIC:PASS]/g; s/<<<HOLISTIC:FAIL>>>/[REDACTED:HOLISTIC:FAIL]/g' \
+            || echo "(none)")"
     else
         branch_stat="(unable to determine base)"
+        branch_diff="(unable to determine base)"
     fi
     local test_summary=""
     if [[ -n "${TEST_OUTPUT:-}" ]]; then
@@ -1420,19 +1578,31 @@ ${test_summary:+- Test output: ${test_summary}}
 ## Cumulative Git Changes (this loop run only)
 $(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -40 || echo "(none — loop may have started after feature was committed)")
 
-## Full Branch Changes vs Base (authoritative — use this to evaluate goal completion)
+## Full Branch Changes vs Base — Stats (authoritative — use this to evaluate goal completion)
 ${branch_stat}
 
 NOTE: If the loop was restarted after prior work, "this loop run" may show only minor fixes
 while "full branch" shows the complete feature. Use the full branch diff to judge goal achievement.
 
-## Your Task
-Based on the goal and the cumulative work done:
-1. Has the goal been FULLY achieved (not partially)?
-2. Is there any critical gap that would make this unacceptable for production?
+## Full Branch Diff (first 300 lines — may be truncated; rely on stats above for files not shown)
+${branch_diff}
 
-If the goal is fully achieved, output exactly: HOLISTIC_PASS
-Otherwise, list the specific gaps remaining.
+## Evaluation Rules
+- Default to FAIL. Only output PASS if you are certain every component of the goal is complete.
+- Partial completion is FAIL. Gaps in test coverage for new behavior are FAIL.
+- If the diff is truncated, use the stats section above to assess files not shown; do not FAIL solely due to truncation.
+
+## Your Task
+For each distinct component of the goal, explicitly state whether it is complete or missing.
+Then answer:
+1. Is EVERY component of the goal fully achieved — not partially?
+2. Is there any gap that would make this unacceptable for production?
+
+If the goal is fully achieved, output your verdict on its own line as:
+  <<<HOLISTIC:PASS>>>
+If there are gaps remaining, list them and then output on its own line:
+  <<<HOLISTIC:FAIL>>>
+Do not wrap the verdict in JSON, markdown, or code blocks.
 HOLISTIC_PROMPT
 
     echo -e "  ${PURPLE}▸${RESET} Running holistic project assessment..."
@@ -1445,13 +1615,27 @@ HOLISTIC_PROMPT
         hol_flags+=("--dangerously-skip-permissions")
     fi
 
-    claude -p "$holistic_prompt" "${hol_flags[@]}" > "$holistic_log" 2>&1 || true
+    local holistic_stderr_log="${holistic_log%.log}-stderr.log"
+    local holistic_exit_code=0
+    claude -p "$holistic_prompt" "${hol_flags[@]}" > "$holistic_log" 2>"$holistic_stderr_log" &
+    CHILD_PID=$!
+    wait "$CHILD_PID" 2>/dev/null || holistic_exit_code=$?
+    CHILD_PID=""
 
-    if grep -q "HOLISTIC_PASS" "$holistic_log" 2>/dev/null; then
+    if [[ ! -s "$holistic_log" ]] || ! grep -q '[^[:space:]]' "$holistic_log"; then
+        warn "  Holistic: empty response from evaluator (exit_code=${holistic_exit_code}) — treating as fail"
+        return 1
+    fi
+
+    if detect_gate_signal "$holistic_log" "HOLISTIC" \
+        'HOLISTIC_PASS|"verdict"[[:space:]]*:[[:space:]]*"pass"' \
+        '<<<HOLISTIC:FAIL>>>'; then
         echo -e "  ${GREEN}✓${RESET} Holistic assessment: passed"
+        HOLISTIC_RESULT="pass"
         return 0
     else
         echo -e "  ${YELLOW}⚠${RESET} Holistic assessment: gaps found"
+        HOLISTIC_RESULT="$(grep -v '^$' "$holistic_log" | tail -20 | head -10 2>/dev/null || echo "Holistic assessment found gaps")"
         return 1
     fi
 }
@@ -1496,7 +1680,7 @@ compose_audit_section() {
     fi
 
     echo "## Self-Audit Checklist"
-    echo "Before declaring LOOP_COMPLETE, critically evaluate your own work:"
+    echo "Before declaring <<<LOOP:PASS>>>, critically evaluate your own work:"
     echo "1. Does the implementation FULLY satisfy the goal, not just partially?"
     echo "2. Are there any edge cases you haven't handled?"
     echo "3. Did you leave any TODO, FIXME, HACK, or XXX comments in new code?"
@@ -1509,7 +1693,7 @@ compose_audit_section() {
         echo "$memory_audit_items"
     fi
     echo ""
-    echo "If ANY answer is \"no\", do NOT output LOOP_COMPLETE. Instead, fix the issues first."
+    echo "If ANY answer is \"no\", do NOT output <<<LOOP:PASS>>>. Instead, fix the issues first."
 }
 
 compose_audit_feedback_section() {
@@ -1525,17 +1709,33 @@ Address ALL audit findings before proceeding with new work.
 AUDIT_FEEDBACK
 }
 
-compose_rejection_notice_section() {
-    if ! $COMPLETION_REJECTED; then
+compose_holistic_feedback_section() {
+    if [[ -z "$HOLISTIC_RESULT" ]] || [[ "$HOLISTIC_RESULT" == "pass" ]]; then
         return
     fi
-    COMPLETION_REJECTED=false
-    cat <<'REJECTION'
+    cat <<HOLISTIC_FEEDBACK
+## Holistic Assessment Feedback (Previous Iteration)
+The final quality gate found these gaps:
+${HOLISTIC_RESULT}
+
+Address ALL gaps before declaring the goal complete.
+HOLISTIC_FEEDBACK
+}
+
+compose_rejection_notice_section() {
+    if $COMPLETION_REJECTED; then
+        cat <<'REJECTION'
 ## ⚠ Completion Rejected
-Your previous LOOP_COMPLETE was REJECTED because quality gates did not pass.
+Your previous <<<LOOP:PASS>>> was REJECTED because quality gates did not pass.
 Review the audit feedback and test results above, fix the issues, then try again.
-Do NOT output LOOP_COMPLETE until all quality checks pass.
+Do NOT output <<<LOOP:PASS>>> until all quality checks pass.
 REJECTION
+    elif [[ "${GATES_PASSED_NO_SIGNAL:-false}" == "true" ]]; then
+        cat <<'GATES_PASSED'
+## ✓ Quality Gates Passed
+All configured quality gates (tests, uncommitted changes, DoD) passed on the previous iteration. If the goal is fully achieved and any audit issues above are addressed, output <<<LOOP:PASS>>> to finish the loop.
+GATES_PASSED
+    fi
 }
 
 compose_worker_prompt() {
@@ -1640,7 +1840,7 @@ show_summary() {
 
     local status_display
     case "$STATUS" in
-        complete)         status_display="${GREEN}✓ Complete (LOOP_COMPLETE detected)${RESET}" ;;
+        complete)         status_display="${GREEN}✓ Complete (<<<LOOP:PASS>>> accepted)${RESET}" ;;
         circuit_breaker)  status_display="${RED}✗ Circuit breaker tripped${RESET}" ;;
         max_iterations)   status_display="${YELLOW}⚠ Max iterations reached${RESET}" ;;
         budget_exhausted) status_display="${RED}✗ Budget exhausted${RESET}" ;;
@@ -1691,10 +1891,13 @@ show_summary() {
 
 CHILD_PID=""
 _MEM_ANALYZE_PID=""
+_CLEANUP_DONE=false
+EXIT_CODE=""
 
 cleanup() {
-    echo ""
-    warn "Loop interrupted at iteration $ITERATION"
+    # Guard against recursive invocation (EXIT trap fires after signal trap's exit call)
+    [[ "${_CLEANUP_DONE:-false}" == "true" ]] && return 0
+    _CLEANUP_DONE=true
 
     # Kill background memory analysis job if running
     [[ -n "${_MEM_ANALYZE_PID:-}" ]] && kill "$_MEM_ANALYZE_PID" 2>/dev/null || true
@@ -1714,33 +1917,42 @@ cleanup() {
     pkill -P $$ 2>/dev/null || true
     wait 2>/dev/null || true
 
-    STATUS="interrupted"
-    write_state
-
-    # Save checkpoint on interruption
-    "$SCRIPT_DIR/sw-checkpoint.sh" save \
-        --stage "build" \
-        --iteration "$ITERATION" \
-        --git-sha "$(git rev-parse HEAD 2>/dev/null || echo unknown)" 2>/dev/null || true
-
-    # Save Claude context for meaningful resume (goal, findings, test output)
-    export SW_LOOP_GOAL="$GOAL"
-    export SW_LOOP_ITERATION="$ITERATION"
-    export SW_LOOP_STATUS="$STATUS"
-    export SW_LOOP_TEST_OUTPUT="${TEST_OUTPUT:-}"
-    export SW_LOOP_FINDINGS="${LOG_ENTRIES:-}"
-    # shellcheck disable=SC2155
-    export SW_LOOP_MODIFIED="$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')"
-    "$SCRIPT_DIR/sw-checkpoint.sh" save-context --stage build 2>/dev/null || true
-
-    # Clear heartbeat
+    # Clear heartbeat (always — whether signal-driven or not)
     "$SCRIPT_DIR/sw-heartbeat.sh" clear "${PIPELINE_JOB_ID:-loop-$$}" 2>/dev/null || true
 
-    show_summary
-    exit 130
+    # Interruption-specific: only when EXIT_CODE is set (SIGINT/SIGTERM triggered this)
+    if [[ -n "${EXIT_CODE:-}" ]]; then
+        echo ""
+        warn "Loop interrupted at iteration $ITERATION"
+
+        STATUS="interrupted"
+        write_state
+
+        # Save checkpoint for resume
+        "$SCRIPT_DIR/sw-checkpoint.sh" save \
+            --stage "build" \
+            --iteration "$ITERATION" \
+            --git-sha "$(git rev-parse HEAD 2>/dev/null || echo unknown)" 2>/dev/null || true
+
+        # Save Claude context for meaningful resume (goal, findings, test output)
+        export SW_LOOP_GOAL="$GOAL"
+        export SW_LOOP_ITERATION="$ITERATION"
+        export SW_LOOP_STATUS="$STATUS"
+        export SW_LOOP_TEST_OUTPUT="${TEST_OUTPUT:-}"
+        export SW_LOOP_FINDINGS="${LOG_ENTRIES:-}"
+        # shellcheck disable=SC2155
+        export SW_LOOP_MODIFIED="$(git diff --name-only HEAD 2>/dev/null | head -50 | tr '\n' ',' | sed 's/,$//')"
+        "$SCRIPT_DIR/sw-checkpoint.sh" save-context --stage build 2>/dev/null || true
+
+        show_summary
+        exit "$EXIT_CODE"
+    fi
+    # For EXIT-trap-driven exits (errors, normal returns), let the shell exit
+    # naturally with whatever code triggered the exit.
 }
 
-trap cleanup SIGINT SIGTERM
+trap 'EXIT_CODE=130; cleanup' SIGINT SIGTERM
+trap cleanup EXIT
 
 # ─── Multi-Agent: Worktree Setup ─────────────────────────────────────────────
 
@@ -1866,15 +2078,19 @@ Focus on areas they haven't touched yet.
 2. Identify the highest-priority remaining work toward the goal
 3. Implement ONE meaningful chunk of progress
 4. Commit your work with a descriptive message
-5. When the goal is FULLY achieved, output exactly: LOOP_COMPLETE
+5. When the goal is FULLY achieved, output exactly on its own line: <<<LOOP:PASS>>>
 
 ## Rules
 - Focus on ONE task per iteration — do it well
 - Always commit with descriptive messages
 - If stuck on the same issue for 2+ iterations, try a different approach
-- Do NOT output LOOP_COMPLETE unless the goal is genuinely achieved
+- Do NOT output <<<LOOP:PASS>>> unless the goal is genuinely achieved
 PROMPT
 )"
+
+    # Capture commit count before Claude runs so Claude-initiated commits are included in delta
+    local _commits_before _commits_after _new_commits
+    _commits_before=$(git rev-list --count HEAD 2>/dev/null || echo 0)
 
     # Run Claude (output is JSON due to --output-format json in CLAUDE_FLAGS)
     local JSON_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.json"
@@ -1889,16 +2105,16 @@ PROMPT
     echo -e "  ${GREEN}✓${RESET} Claude session completed"
 
     # Check completion
-    if grep -q "LOOP_COMPLETE" "$LOG_FILE" 2>/dev/null; then
-        echo -e "  ${GREEN}${BOLD}✓ LOOP_COMPLETE detected!${RESET}"
+    if detect_gate_signal "$LOG_FILE" "LOOP" \
+        'LOOP_COMPLETE' \
+        '<<<LOOP:FAIL>>>'; then
+        echo -e "  ${GREEN}${BOLD}✓ Completion signal detected!${RESET}"
         # Signal completion
         touch "$LOG_DIR/.agent-${AGENT_NUM}-complete"
         break
     fi
 
     # Auto-commit
-    local _commits_before _commits_after _new_commits
-    _commits_before=$(git rev-list --count HEAD 2>/dev/null || echo 0)
     safe_git_stage
     if git commit -m "agent-${AGENT_NUM}: iteration ${ITERATION}" --no-verify 2>/dev/null; then
         if ! git push origin "loop/agent-${AGENT_NUM}" 2>/dev/null; then
@@ -2012,7 +2228,7 @@ wait_for_multi_completion() {
         # Check if any agent signaled completion
         for i in $(seq 1 "$AGENTS"); do
             if [[ -f "$LOG_DIR/.agent-${i}-complete" ]]; then
-                success "Agent $i signaled LOOP_COMPLETE!"
+                success "Agent $i signaled <<<LOOP:PASS>>>!"
                 STATUS="complete"
                 write_state
                 return 0
@@ -2051,17 +2267,44 @@ wait_for_multi_completion() {
 }
 
 cleanup_multi_agent() {
-    if [[ -n "$MULTI_WINDOW_NAME" ]]; then
-        # Send Ctrl-C to all panes using stable pane IDs (not indices)
-        # Pane IDs (%0, %1, ...) are unaffected by pane-base-index setting
-        local pane_id
-        while IFS= read -r pane_id; do
-            [[ -z "$pane_id" ]] && continue
-            tmux send-keys -t "$pane_id" C-c 2>/dev/null || true
-        done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_id}' 2>/dev/null || true)
-        sleep 1
-        tmux kill-window -t "$MULTI_WINDOW_NAME" 2>/dev/null || true
-    fi
+    [[ -z "${MULTI_WINDOW_NAME:-}" ]] && return 0
+
+    # Collect shell PIDs from each pane before sending any signals.
+    # #{pane_pid} is the PID of the shell running inside the pane — reliable
+    # and unaffected by pane-base-index settings.
+    local pane_pids=()
+    local ppid
+    while IFS= read -r ppid; do
+        [[ -n "$ppid" ]] && pane_pids+=("$ppid")
+    done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_pid}' 2>/dev/null || true)
+
+    # Send Ctrl-C to all panes (SIGINT for graceful shutdown of running commands)
+    local pane_id
+    while IFS= read -r pane_id; do
+        [[ -z "$pane_id" ]] && continue
+        tmux send-keys -t "$pane_id" C-c 2>/dev/null || true
+    done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_id}' 2>/dev/null || true)
+
+    # SIGTERM process trees (children first, then shell)
+    local wpid
+    for wpid in "${pane_pids[@]}"; do
+        [[ -z "$wpid" ]] && continue
+        pkill -P "$wpid" 2>/dev/null || true
+        kill "$wpid" 2>/dev/null || true
+    done
+
+    sleep 3
+
+    # SIGKILL any survivors
+    for wpid in "${pane_pids[@]}"; do
+        [[ -z "$wpid" ]] && continue
+        kill -0 "$wpid" 2>/dev/null || continue
+        warn "Force-killing multi-agent worker PID $wpid"
+        pkill -9 -P "$wpid" 2>/dev/null || true
+        kill -9 "$wpid" 2>/dev/null || true
+    done
+
+    tmux kill-window -t "$MULTI_WINDOW_NAME" 2>/dev/null || true
 
     # Clean up completion markers
     rm -f "$LOG_DIR"/.agent-*-complete 2>/dev/null || true
@@ -2100,6 +2343,8 @@ run_single_agent_loop() {
     STUCKNESS_TRACKING_FILE="$LOG_DIR/stuckness-tracking.txt"
     : > "$STUCKNESS_TRACKING_FILE" 2>/dev/null || true
     : > "${LOG_DIR:-/tmp}/strategy-attempts.txt" 2>/dev/null || true
+    # Clear per-session diagnosis tracking so repeat counts don't bleed across pipeline runs
+    : > "${LOG_DIR:-/tmp}/diagnoses.txt" 2>/dev/null || true
 
     show_banner
 
@@ -2121,6 +2366,12 @@ run_single_agent_loop() {
             return 1
         }
         ITERATION=$(( ITERATION + 1 ))
+
+        # Reset per-iteration completion signal flags before prompt is built.
+        # These cannot be reset inside compose_rejection_notice_section() because
+        # that function runs in a $(...) subshell and side effects don't persist.
+        COMPLETION_REJECTED=false
+        GATES_PASSED_NO_SIGNAL=false
 
         # Emit iteration start event for pipeline visibility
         if type emit_event >/dev/null 2>&1; then
@@ -2184,6 +2435,10 @@ ${GOAL}"
             fi
         fi
 
+        # Capture commit count before Claude runs so Claude-initiated commits are included in delta
+        local commits_before
+        commits_before="$(git_commit_count)"
+
         # Run Claude
         local exit_code=0
         run_claude_iteration || exit_code=$?
@@ -2231,8 +2486,6 @@ ${GOAL}"
         fi
 
         # Auto-commit if Claude didn't
-        local commits_before
-        commits_before="$(git_commit_count)"
         git_auto_commit "$PROJECT_ROOT" || true
         local commits_after
         commits_after="$(git_commit_count)"
@@ -2337,6 +2590,12 @@ ${GOAL}"
             git -C "$PROJECT_ROOT" commit -m "loop: iteration $ITERATION — post-audit cleanup" --no-verify 2>/dev/null || true
         fi
 
+        # Recompute iteration commit count after post-audit cleanup
+        local commits_after_cleanup
+        commits_after_cleanup="$(git_commit_count)"
+        new_commits=$(( commits_after_cleanup - commits_before ))
+        TOTAL_COMMITS=$(( TOTAL_COMMITS + commits_after_cleanup - commits_after ))
+
         # Quality gates (automated checks)
         run_quality_gates
 
@@ -2349,10 +2608,52 @@ ${GOAL}"
             return 0
         fi
 
+        # If gates passed but agent never emitted <<<LOOP:PASS>>>, hint next iteration.
+        # Only set when quality gates are actually enabled (disabled runs default
+        # QUALITY_GATE_PASSED=true unconditionally) and audit also passed.
+        GATES_PASSED_NO_SIGNAL=false
+        if $QUALITY_GATES_ENABLED && $QUALITY_GATE_PASSED && \
+           [[ "${COMPLETION_REJECTED:-false}" != "true" ]] && \
+           [[ "${AUDIT_RESULT:-pass}" == "pass" ]]; then
+            GATES_PASSED_NO_SIGNAL=true
+        fi
+
+        # Early exit: all gates passing — work is done regardless of whether commits were made.
+        # Holistic gate runs as a final independent confirmation before exiting.
+        if [[ "$GATES_PASSED_NO_SIGNAL" == "true" ]] && run_holistic_gate; then
+            STATUS="complete"
+            emit_event "loop.early_exit_gates_passed" \
+                "iteration=$ITERATION" \
+                "total_commits=$TOTAL_COMMITS" 2>/dev/null || true
+            echo -e "  ${GREEN}${BOLD}✓ Complete — all gates passing${RESET}"
+            write_state
+            write_progress
+            show_summary
+            return 0
+        fi
+
         # Check progress (circuit breaker)
+        # Count a strike whenever there is no progress (no new commits) and we are
+        # NOT in the "(tests pass AND audit passes)" bypass. This includes cases
+        # where tests or audit failed, were skipped, or have not yet run. The only
+        # no-progress case that is not penalized is when both tests and audit pass —
+        # the implementation is verified and the agent isn't stuck.
         if check_progress "$new_commits"; then
             CONSECUTIVE_FAILURES=0
-            echo -e "  ${GREEN}✓${RESET} Progress detected — continuing"
+            if [[ "${TEST_PASSED:-}" == "true" ]]; then
+                echo -e "  ${GREEN}✓${RESET} Progress detected — continuing"
+            elif [[ "${TEST_PASSED:-}" == "false" ]]; then
+                echo -e "  ${CYAN}▸${RESET} Progress detected — tests still failing"
+            else
+                echo -e "  ${CYAN}▸${RESET} Progress detected — continuing"
+            fi
+        elif [[ "${TEST_PASSED:-}" == "true" ]] && \
+             { ! $AUDIT_AGENT_ENABLED || [[ "${AUDIT_RESULT:-}" == "pass" ]]; }; then
+            # Tests passed AND audit either passed or is disabled.
+            # Implementation is verified — this is not a stuck agent.
+            # Clear prior strikes so stale counts don't trip the breaker later.
+            CONSECUTIVE_FAILURES=0
+            echo -e "  ${CYAN}▸${RESET} Tests and audit passed — skipping circuit breaker strike"
         else
             CONSECUTIVE_FAILURES=$(( CONSECUTIVE_FAILURES + 1 ))
             echo -e "  ${YELLOW}⚠${RESET} Low progress (${CONSECUTIVE_FAILURES}/${CIRCUIT_BREAKER_THRESHOLD} before circuit breaker)"

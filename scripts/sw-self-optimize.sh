@@ -874,7 +874,7 @@ thompson_select_template() {
 
     while IFS='|' read -r template wins losses; do
         [[ -z "$template" ]] && continue
-        template=$(echo "$template" | xargs)
+        template=$(_trim "$(echo "$template")")
         local alpha=$((wins + 1))
         local beta_param=$((losses + 1))
         local total=$((alpha + beta_param))
@@ -939,7 +939,7 @@ ucb1_select_model() {
 
     while IFS='|' read -r model mean_reward trials avg_cost; do
         [[ -z "$model" ]] && continue
-        model=$(echo "$model" | xargs)
+        model=$(_trim "$(echo "$model")")
         local mean_x1000 exploration ucb
         mean_x1000=$(echo "$mean_reward" | awk '{printf "%d", $1 * 1000}')
         exploration=$(awk "BEGIN { printf \"%d\", 1000 * sqrt(2 * log($total_trials) / $trials) }" 2>/dev/null || echo "0")

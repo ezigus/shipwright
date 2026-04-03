@@ -168,21 +168,28 @@ ${build_discoveries}"
         fi
     fi
 
-    # Add task list context — validate issue matches before injecting
+    # Add task list context — validate issue matches before injecting.
+    # Goal-based pipelines (no GITHUB_ISSUE) skip issue validation and inject as-is.
     if [[ -s "$TASKS_FILE" ]]; then
-        local tasks_issue
-        if ! tasks_issue=$(extract_issue_from_tasks_file "$TASKS_FILE"); then
-            warn "Malformed pipeline-tasks.md (missing '- Issue:' header) — skipping injection"
-            rm -f "$TASKS_FILE"
+        local current_issue; current_issue=$(echo "${GITHUB_ISSUE:-}" | tr -d '#' | xargs)
+        if [[ -z "$current_issue" ]]; then
+            # Goal-based pipeline — no issue to validate against; inject directly
+            enriched_goal="${enriched_goal}
+
+Task tracking (check off items as you complete them):
+$(cat "$TASKS_FILE")"
         else
-            local current_issue; current_issue=$(echo "${GITHUB_ISSUE:-}" | tr -d '#' | xargs)
-            if [[ -n "$current_issue" && "$tasks_issue" == "$current_issue" ]]; then
+            local tasks_issue
+            if ! tasks_issue=$(extract_issue_from_tasks_file "$TASKS_FILE"); then
+                warn "Malformed pipeline-tasks.md (missing '- Issue:' header) — skipping injection"
+                rm -f "$TASKS_FILE"
+            elif [[ "$tasks_issue" == "$current_issue" ]]; then
                 enriched_goal="${enriched_goal}
 
 Task tracking (check off items as you complete them):
 $(cat "$TASKS_FILE")"
             else
-                warn "Removing stale pipeline-tasks.md (was for issue $tasks_issue, current ${current_issue:-none})"
+                warn "Removing stale pipeline-tasks.md (was for issue $tasks_issue, current $current_issue)"
                 rm -f "$TASKS_FILE"
             fi
         fi

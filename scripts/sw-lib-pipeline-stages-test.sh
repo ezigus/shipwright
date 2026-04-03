@@ -866,6 +866,40 @@ else
     assert_fail "stage_build removes stale tasks file on issue mismatch"
 fi
 
+# Goal-based pipeline (no GITHUB_ISSUE) — task file with "- Issue: none" must be injected
+cat > "$TASKS_FILE" <<'TEOF'
+# Pipeline Tasks — Goal Run
+## Implementation Checklist
+- [ ] Implement the feature
+
+## Context
+- Pipeline: autonomous
+- Issue: none
+- Generated: 2026-03-27T00:00:00Z
+TEOF
+
+export GITHUB_ISSUE=""
+
+rm -f "$_captured_build_prompt"
+set +e
+CAPTURED_BUILD_PROMPT="$_captured_build_prompt" stage_build 2>/dev/null || true
+set -e
+
+if [[ -f "$_captured_build_prompt" ]] && grep -q "Implement the feature" "$_captured_build_prompt" 2>/dev/null; then
+    assert_pass "stage_build injects task file for goal-based pipeline (no GITHUB_ISSUE)"
+else
+    assert_fail "stage_build injects task file for goal-based pipeline (no GITHUB_ISSUE)"
+fi
+
+# The task file must not be deleted for goal-based runs
+if [[ -f "$TASKS_FILE" ]]; then
+    assert_pass "stage_build preserves task file for goal-based pipeline"
+else
+    assert_fail "stage_build preserves task file for goal-based pipeline"
+fi
+
+export GITHUB_ISSUE="#42"
+
 # Restore mocked sw binary for other tests
 mock_binary "sw" 'mkdir -p src; echo "// auth" > src/auth.js'
 

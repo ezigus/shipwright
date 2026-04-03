@@ -1144,7 +1144,7 @@ run_new_function_test_check() {
     fi
 
     if [[ "$untested_functions" -gt 0 ]]; then
-        warn "New functions without tests: ${details}"
+        warn "New functions without tests: ${details}" >&2
     fi
 
     echo "$untested_functions"

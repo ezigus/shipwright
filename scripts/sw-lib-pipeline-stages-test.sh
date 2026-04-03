@@ -866,7 +866,8 @@ else
     assert_fail "stage_build removes stale tasks file on issue mismatch"
 fi
 
-# Goal-based pipeline (no GITHUB_ISSUE) — task file with "- Issue: none" must be injected
+# Goal-based pipeline (no GITHUB_ISSUE) — task file with "- Issue: none" must be preserved
+# (loop-iteration.sh injects content dynamically; build stage only validates/cleans up)
 cat > "$TASKS_FILE" <<'TEOF'
 # Pipeline Tasks — Goal Run
 ## Implementation Checklist
@@ -880,22 +881,14 @@ TEOF
 
 export GITHUB_ISSUE=""
 
-rm -f "$_captured_build_prompt"
 set +e
-CAPTURED_BUILD_PROMPT="$_captured_build_prompt" stage_build 2>/dev/null || true
+stage_build 2>/dev/null || true
 set -e
 
-if [[ -f "$_captured_build_prompt" ]] && grep -q "Implement the feature" "$_captured_build_prompt" 2>/dev/null; then
-    assert_pass "stage_build injects task file for goal-based pipeline (no GITHUB_ISSUE)"
-else
-    assert_fail "stage_build injects task file for goal-based pipeline (no GITHUB_ISSUE)"
-fi
-
-# The task file must not be deleted for goal-based runs
 if [[ -f "$TASKS_FILE" ]]; then
-    assert_pass "stage_build preserves task file for goal-based pipeline"
+    assert_pass "stage_build preserves task file for goal-based pipeline (no GITHUB_ISSUE)"
 else
-    assert_fail "stage_build preserves task file for goal-based pipeline"
+    assert_fail "stage_build preserves task file for goal-based pipeline (no GITHUB_ISSUE)"
 fi
 
 export GITHUB_ISSUE="#42"
@@ -940,15 +933,16 @@ TEOF
 
 export GITHUB_ISSUE="42"  # no # prefix
 
-rm -f "$_captured_build_prompt"
+# Task content injection is handled by compose_task_section() in loop-iteration.sh,
+# not by the build stage. Verify the file is preserved (not treated as stale).
 set +e
-CAPTURED_BUILD_PROMPT="$_captured_build_prompt" stage_build 2>/dev/null || true
+stage_build 2>/dev/null || true
 set -e
 
-if [[ -f "$_captured_build_prompt" ]] && grep -q "Task for issue #42" "$_captured_build_prompt" 2>/dev/null; then
-    assert_pass "stage_build injects tasks when GITHUB_ISSUE lacks # prefix (42 == #42)"
+if [[ -f "$TASKS_FILE" ]]; then
+    assert_pass "stage_build preserves task file when GITHUB_ISSUE lacks # prefix (42 == #42)"
 else
-    assert_fail "stage_build injects tasks when GITHUB_ISSUE lacks # prefix (42 == #42)"
+    assert_fail "stage_build preserves task file when GITHUB_ISSUE lacks # prefix (42 == #42)"
 fi
 
 # Test: resume_state with GITHUB_ISSUE without # clears stale tasks for different issue

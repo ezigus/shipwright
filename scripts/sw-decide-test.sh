@@ -249,6 +249,63 @@ print_test_section "autonomy"
     fi
 )
 
+# Regression: TIER_LIMITS set — no extra '}' in jq input (issue #232 fix)
+# When TIER_LIMITS is non-empty, the old ${TIER_LIMITS:-{}} pattern appended a
+# trailing '}', producing invalid JSON. Verify autonomy_check_budget reads the
+# correct limit from TIER_LIMITS without a jq parse error.
+(
+    source "$TEST_REPO/scripts/lib/helpers.sh"
+    source "$TEST_REPO/scripts/lib/policy.sh"
+    source "$TEST_REPO/scripts/lib/decide-autonomy.sh"
+
+    cd "$TEST_REPO"
+    # Set TIER_LIMITS to a JSON string with a very low limit (1 issue/day)
+    export TIER_LIMITS='{"max_issues_per_day":1,"max_cost_per_day_usd":5,"cooldown_seconds":60,"halt_after_consecutive_failures":2}'
+
+    # Write 2 decisions — exceeds limit of 1
+    log_file=$(_daily_log_file)
+    mkdir -p "$(dirname "$log_file")"
+    echo '{"action":"issue_created","estimated_cost_usd":0.01}' >> "$log_file"
+    echo '{"action":"issue_created","estimated_cost_usd":0.01}' >> "$log_file"
+
+    # Budget should be exhausted (limit=1, count=2). If jq received invalid JSON
+    # (e.g. '{"max_issues_per_day":1}' + '}' = '{"max_issues_per_day":1}}') it would
+    # fall back to the default of 15 and incorrectly report budget available.
+    if ! autonomy_check_budget "auto"; then
+        assert_pass "TIER_LIMITS set: budget enforced from JSON value (no trailing-brace regression)"
+    else
+        assert_fail "TIER_LIMITS set: budget enforced from JSON value (no trailing-brace regression)"
+    fi
+)
+
+# TIER_LIMITS set + jq missing → hard fail
+(
+    source "$TEST_REPO/scripts/lib/helpers.sh"
+    source "$TEST_REPO/scripts/lib/policy.sh"
+    source "$TEST_REPO/scripts/lib/decide-autonomy.sh"
+
+    cd "$TEST_REPO"
+    export TIER_LIMITS='{"max_issues_per_day":15,"max_cost_per_day_usd":25}'
+
+    # Create a PATH with no jq binary present
+    _no_jq_bin="$TEST_TEMP_DIR/no-jq-bin-$$"
+    mkdir -p "$_no_jq_bin"
+    # Copy other required commands but deliberately omit jq
+    for _cmd in bash sh grep sed awk tr date mkdir rm cat; do
+        _cmd_path=$(command -v "$_cmd" 2>/dev/null || true)
+        [[ -n "$_cmd_path" ]] && ln -sf "$_cmd_path" "$_no_jq_bin/$_cmd" 2>/dev/null || true
+    done
+
+    _exit_code=0
+    ( PATH="$_no_jq_bin" autonomy_check_budget "auto" ) 2>/dev/null || _exit_code=$?
+    if [[ "$_exit_code" -ne 0 ]]; then
+        assert_pass "TIER_LIMITS + missing jq: autonomy_check_budget exits non-zero"
+    else
+        assert_fail "TIER_LIMITS + missing jq: autonomy_check_budget exits non-zero"
+    fi
+    unset TIER_LIMITS
+)
+
 # Rate limiting
 (
     source "$TEST_REPO/scripts/lib/helpers.sh"

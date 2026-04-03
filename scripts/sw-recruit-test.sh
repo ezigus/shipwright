@@ -4,7 +4,7 @@
 # ║  Covers: roles · matching · feedback loop · role creation · evolution   ║
 # ║  · self-tuning · meta-learning · decomposition · theory of mind         ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-set -u
+set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,13 +30,13 @@ test_case() {
 
 pass() {
     echo -e "${GREEN}${BOLD}PASS${RESET}"
-    ((PASS++))
+    PASS=$((PASS+1))
 }
 
 fail() {
     local reason="$1"
     echo -e "${RED}${BOLD}FAIL${RESET}: ${reason}"
-    ((FAIL++))
+    FAIL=$((FAIL+1))
 }
 
 # ─── Clean test state ────────────────────────────────────────────────────────

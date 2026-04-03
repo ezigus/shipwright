@@ -86,6 +86,12 @@ autonomy_check_budget() {
     local tier="$1"
     _ensure_decisions_dir
 
+    # When TIER_LIMITS is configured, jq is required — fail hard to prevent silent limit bypass
+    if [[ -n "${TIER_LIMITS:-}" ]] && ! command -v jq >/dev/null 2>&1; then
+        error "jq is required for TIER_LIMITS enforcement but was not found. Install: brew install jq (macOS) or apt install jq (Linux)"
+        exit 1
+    fi
+
     local daily_log
     daily_log=$(_daily_log_file)
 
@@ -95,8 +101,15 @@ autonomy_check_budget() {
         today_count=$(jq -s '[.[] | select(.action == "issue_created" or .action == "draft_written")] | length' "$daily_log" 2>/dev/null || echo "0")
     fi
 
+    # Regression guard: ${VAR:-{}} is parsed by bash as default='{', then the first '}'
+    # closes ${...}, leaving a trailing literal '}'. When TIER_LIMITS is set, this
+    # concatenates: e.g. '{"a":1}' + '}' = '{"a":1}}' — invalid JSON. Use an explicit
+    # conditional to avoid the ambiguous brace nesting.
+    local _limits_json; _limits_json="${TIER_LIMITS}"; [[ -z "$_limits_json" ]] && _limits_json="{}"
+
     local max_issues
-    max_issues=$(echo "${TIER_LIMITS:-{}}" | jq -r '.max_issues_per_day // 15')
+    max_issues=$(echo "$_limits_json" | jq -r '.max_issues_per_day // 15' 2>/dev/null) || max_issues=15
+    [[ -z "$max_issues" || ! "$max_issues" =~ ^[0-9]+$ ]] && max_issues=15
 
     if [[ "$today_count" -ge "$max_issues" ]]; then
         return 1
@@ -104,7 +117,8 @@ autonomy_check_budget() {
 
     # Check cost budget
     local max_cost
-    max_cost=$(echo "${TIER_LIMITS:-{}}" | jq -r '.max_cost_per_day_usd // 25')
+    max_cost=$(echo "$_limits_json" | jq -r '.max_cost_per_day_usd // 25' 2>/dev/null) || max_cost=25
+    [[ -z "$max_cost" ]] && max_cost=25
     local today_cost=0
     if [[ -f "$daily_log" ]]; then
         today_cost=$(jq -s '[.[] | .estimated_cost_usd // 0] | add // 0' "$daily_log" 2>/dev/null || echo "0")
@@ -132,8 +146,10 @@ autonomy_check_rate_limit() {
     local now_e
     now_e=$(now_epoch)
 
+    local _limits_json; _limits_json="${TIER_LIMITS}"; [[ -z "$_limits_json" ]] && _limits_json="{}"
     local cooldown
-    cooldown=$(echo "${TIER_LIMITS:-{}}" | jq -r '.cooldown_seconds // 300')
+    cooldown=$(echo "$_limits_json" | jq -r '.cooldown_seconds // 300' 2>/dev/null) || cooldown=300
+    [[ -z "$cooldown" || ! "$cooldown" =~ ^[0-9]+$ ]] && cooldown=300
 
     local elapsed=$((now_e - last_epoch))
     if [[ "$elapsed" -lt "$cooldown" ]]; then
@@ -175,7 +191,9 @@ autonomy_check_consecutive_failures() {
     [[ ! -f "$daily_log" ]] && return 0
 
     local max_consecutive
-    max_consecutive=$(echo "${TIER_LIMITS:-{}}" | jq -r '.halt_after_consecutive_failures // 3')
+    local _limits_json; _limits_json="${TIER_LIMITS}"; [[ -z "$_limits_json" ]] && _limits_json="{}"
+    max_consecutive=$(echo "$_limits_json" | jq -r '.halt_after_consecutive_failures // 3' 2>/dev/null) || max_consecutive=3
+    [[ -z "$max_consecutive" || ! "$max_consecutive" =~ ^[0-9]+$ ]] && max_consecutive=3
 
     # Get the last N decisions and check if all failed
     local recent
@@ -273,8 +291,11 @@ autonomy_daily_summary() {
     fi
 
     local max_issues max_cost
-    max_issues=$(echo "${TIER_LIMITS:-{}}" | jq -r '.max_issues_per_day // 15')
-    max_cost=$(echo "${TIER_LIMITS:-{}}" | jq -r '.max_cost_per_day_usd // 25')
+    local _limits_json; _limits_json="${TIER_LIMITS}"; [[ -z "$_limits_json" ]] && _limits_json="{}"
+    max_issues=$(echo "$_limits_json" | jq -r '.max_issues_per_day // 15' 2>/dev/null) || max_issues=15
+    [[ -z "$max_issues" || ! "$max_issues" =~ ^[0-9]+$ ]] && max_issues=15
+    max_cost=$(echo "$_limits_json" | jq -r '.max_cost_per_day_usd // 25' 2>/dev/null) || max_cost=25
+    [[ -z "$max_cost" ]] && max_cost=25
 
     jq -s --argjson mi "$max_issues" --arg mc "$max_cost" '
         {

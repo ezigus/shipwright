@@ -198,8 +198,10 @@ fi
 echo ""
 echo -e "${DIM}  subcommand usage${RESET}"
 set +e
+trap - ERR
 show_out=$(bash "$SCRIPT_DIR/sw-incident.sh" show 2>&1)
 show_rc=$?
+trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 set -e
 if [[ $show_rc -ne 0 ]] && { [[ "$show_out" == *"Usage"* ]] || [[ "$show_out" == *"incident"* ]] || [[ "$show_out" == *"unbound"* ]]; }; then
     assert_pass "show subcommand fails or shows usage when missing args"

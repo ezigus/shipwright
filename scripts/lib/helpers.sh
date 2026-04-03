@@ -440,6 +440,20 @@ _git_diff_stat_excluded() {
         2>/dev/null | tail -1 || echo ""
 }
 
+# ─── Pipeline Tasks File Helper ──────────────────────────────────
+# Extracts the issue number from the "- Issue:" header line of a
+# pipeline-tasks.md file. Returns the normalized issue number (no #)
+# on stdout. Accepts "- Issue:" or "Issue:" with any case.
+# Exit codes: 0=success, 1=file missing/unreadable/no issue line.
+# Usage: issue=$(extract_issue_from_tasks_file "$path") || ...
+extract_issue_from_tasks_file() {
+    local file="$1"
+    [[ ! -f "$file" ]] && return 1
+    local issue
+    issue=$(grep -m1 -i "^-\{0,1\} *Issue:" "$file" 2>/dev/null | sed 's/^[^:]*:[[:space:]]*//' | tr -d '#' | xargs) || return 1
+    [[ -n "$issue" && "$issue" =~ ^[0-9]+$ ]] && echo "$issue" || return 1
+}
+
 # ─── Git Staging Helper ───────────────────────────────────────────
 # Stage all changes, then unstage any bookkeeping files listed in
 # _GIT_BOOKKEEPING_FILES so they are not included in commits.

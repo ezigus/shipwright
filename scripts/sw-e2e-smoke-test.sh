@@ -709,9 +709,16 @@ test_issue_number_in_state() {
 # 16. Headless mode auto-detection
 # ──────────────────────────────────────────────────────────────────────────────
 test_headless_auto_detection() {
-    # invoke_pipeline runs in a subshell, so stdin is not a terminal
-    # The pipeline should auto-detect this and enable skip-gates
-    invoke_pipeline start --issue 42 --dry-run
+    # Redirect stdin from /dev/null to simulate non-interactive (headless) mode.
+    # Command substitution in invoke_pipeline only redirects stdout, not stdin,
+    # so [[ ! -t 0 ]] would still see a terminal. We must explicitly disconnect stdin.
+    PIPELINE_OUTPUT=""
+    PIPELINE_EXIT=0
+    PIPELINE_OUTPUT=$(
+        cd "$TEST_TEMP_DIR/project"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" start --issue 42 --dry-run < /dev/null 2>&1
+    ) || PIPELINE_EXIT=$?
     assert_exit_code 0 "dry-run should succeed in headless mode" &&
     assert_output_contains "headless.*non-interactive|all auto" "Headless mode auto-detected"
 }

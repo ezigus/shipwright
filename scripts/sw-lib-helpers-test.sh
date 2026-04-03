@@ -226,6 +226,53 @@ assert_contains "_sw_github_url contains github.com" "$url" "github.com"
 
 unset SHIPWRIGHT_GITHUB_REPO
 
+# extract_issue_from_tasks_file — multiple metadata format variants
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "extract_issue_from_tasks_file"
+
+_tasks_tmp="$TEST_TEMP_DIR/tasks-format-test.md"
+
+# Format 1: standard "- Issue: #42"
+printf '# Pipeline Tasks\n- Issue: #42\n' > "$_tasks_tmp"
+_iss=$(extract_issue_from_tasks_file "$_tasks_tmp")
+assert_eq "dash prefix with # sign" "42" "$_iss"
+
+# Format 2: "Issue: #42" (no leading dash)
+printf '# Pipeline Tasks\nIssue: #42\n' > "$_tasks_tmp"
+_iss=$(extract_issue_from_tasks_file "$_tasks_tmp")
+assert_eq "no dash prefix with # sign" "42" "$_iss"
+
+# Format 3: "- Issue: 42" (no # sign)
+printf '# Pipeline Tasks\n- Issue: 42\n' > "$_tasks_tmp"
+_iss=$(extract_issue_from_tasks_file "$_tasks_tmp")
+assert_eq "dash prefix without # sign" "42" "$_iss"
+
+# Format 4: "- issue: #42" (lowercase key)
+printf '# Pipeline Tasks\n- issue: #42\n' > "$_tasks_tmp"
+_iss=$(extract_issue_from_tasks_file "$_tasks_tmp")
+assert_eq "lowercase issue key" "42" "$_iss"
+
+# Format 5: "- Issue:  #42" (extra whitespace)
+printf '# Pipeline Tasks\n- Issue:  #42\n' > "$_tasks_tmp"
+_iss=$(extract_issue_from_tasks_file "$_tasks_tmp")
+assert_eq "extra whitespace after colon" "42" "$_iss"
+
+# Format 6: missing file → exit 1
+rm -f "$_tasks_tmp"
+if extract_issue_from_tasks_file "$_tasks_tmp" >/dev/null 2>&1; then
+    assert_fail "missing file returns failure"
+else
+    assert_pass "missing file returns failure"
+fi
+
+# Format 7: no Issue: line → exit 1
+printf '# Pipeline Tasks\n- [ ] some task\n' > "$_tasks_tmp"
+if extract_issue_from_tasks_file "$_tasks_tmp" >/dev/null 2>&1; then
+    assert_fail "no Issue line returns failure"
+else
+    assert_pass "no Issue line returns failure"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # strip_ansi
 # ═══════════════════════════════════════════════════════════════════════════════

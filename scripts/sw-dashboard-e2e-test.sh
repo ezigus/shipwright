@@ -5,6 +5,7 @@
 # ║  then cleans up. No external deps required (no daemon/GitHub/Claude).   ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
+trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/test-helpers.sh"
@@ -224,8 +225,11 @@ start_server() {
     while ! curl -sf "http://localhost:${test_port}/api/health" &>/dev/null; do
         retries=$((retries + 1))
         if [[ $retries -gt 20 ]]; then
-            echo -e "${RED}Server failed to start after 10s${RESET}"
             kill "$SERVER_PID" 2>/dev/null || true
+            echo -e "\033[38;2;239;68;68m✗ Dashboard server failed to start\033[0m"
+            echo ""
+            echo "━━━ Results ━━━"
+            echo "  FAIL: server did not respond on port ${test_port} after startup"
             exit 1
         fi
         sleep 0.5

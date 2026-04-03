@@ -168,9 +168,23 @@ ${build_discoveries}"
         fi
     fi
 
-    # Task list is injected dynamically each iteration by compose_task_section()
-    # in loop-iteration.sh so the agent sees accurate completion status based on
-    # committed changes, not a static all-unchecked list from the plan stage.
+    # Validate task list before loop start — clean up stale or malformed files.
+    # Task content is injected dynamically each iteration by compose_task_section()
+    # in loop-iteration.sh; do not inject the full file into the goal here.
+    # Goal-based pipelines (no GITHUB_ISSUE) skip issue validation — preserve the file.
+    if [[ -s "$TASKS_FILE" ]]; then
+        local current_issue; current_issue=$(echo "${GITHUB_ISSUE:-}" | tr -d '#' | xargs)
+        if [[ -n "$current_issue" ]]; then
+            local tasks_issue
+            if ! tasks_issue=$(extract_issue_from_tasks_file "$TASKS_FILE"); then
+                warn "Malformed pipeline-tasks.md (missing Issue header) — removing before loop start"
+                rm -f "$TASKS_FILE"
+            elif [[ "$tasks_issue" != "$current_issue" ]]; then
+                warn "Removing stale pipeline-tasks.md (was for issue $tasks_issue, current $current_issue)"
+                rm -f "$TASKS_FILE"
+            fi
+        fi
+    fi
 
     # Inject file hotspots from GitHub intelligence
     if [[ "${NO_GITHUB:-}" != "true" ]] && type gh_file_change_frequency >/dev/null 2>&1; then

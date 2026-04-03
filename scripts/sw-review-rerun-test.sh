@@ -36,12 +36,6 @@ setup_env() {
     mkdir -p "$TEMP_DIR/home/.shipwright"
     mkdir -p "$TEMP_DIR/bin"
     mkdir -p "$TEMP_DIR/config"
-    mkdir -p "$REPO_DIR/config"  # Ensure config exists for policy.json
-
-    # Back up policy.json so tests that delete it don't destroy the real config
-    if [[ -f "$REPO_DIR/config/policy.json" ]]; then
-        cp "$REPO_DIR/config/policy.json" "$TEMP_DIR/policy.json.bak"
-    fi
 
     # Mock gh — gh pr view uses --jq '.comments[].body' so we output that directly
     cat > "$TEMP_DIR/bin/gh" <<'GH_EOF'
@@ -96,10 +90,6 @@ GH_EOF
 }
 
 cleanup_env() {
-    # Restore policy.json if it was backed up
-    if [[ -n "${TEMP_DIR:-}" && -f "$TEMP_DIR/policy.json.bak" ]]; then
-        cp "$TEMP_DIR/policy.json.bak" "$REPO_DIR/config/policy.json"
-    fi
     if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
         rm -rf "$TEMP_DIR"
     fi
@@ -141,20 +131,20 @@ test_sources_correctly() {
 }
 
 test_get_rerun_marker_default() {
-    rm -f "$REPO_DIR/config/policy.json"
-    marker=$(export REPO_DIR="$REPO_DIR"; source "$SCRIPT_DIR/sw-review-rerun.sh" 2>/dev/null; get_rerun_marker)
+    rm -f "$TEMP_DIR/config/policy.json"
+    marker=$(source "$SCRIPT_DIR/sw-review-rerun.sh" 2>/dev/null; REPO_DIR="$TEMP_DIR" get_rerun_marker)
     [[ "$marker" == *"shipwright-review-rerun"* ]] || return 1
 }
 
 test_get_rerun_marker_from_policy() {
-    mkdir -p "$REPO_DIR/config"
-    echo '{"codeReviewAgent":{"rerunMarker":"<!-- custom-marker -->"}}' > "$REPO_DIR/config/policy.json"
-    marker=$(export REPO_DIR="$REPO_DIR"; source "$SCRIPT_DIR/sw-review-rerun.sh" 2>/dev/null; get_rerun_marker)
+    mkdir -p "$TEMP_DIR/config"
+    echo '{"codeReviewAgent":{"rerunMarker":"<!-- custom-marker -->"}}' > "$TEMP_DIR/config/policy.json"
+    marker=$(source "$SCRIPT_DIR/sw-review-rerun.sh" 2>/dev/null; REPO_DIR="$TEMP_DIR" get_rerun_marker)
     [[ "$marker" == *"custom-marker"* ]] || return 1
 }
 
 test_rerun_already_requested_true() {
-    rm -f "$REPO_DIR/config/policy.json"
+    rm -f "$TEMP_DIR/config/policy.json"
     (
         export REPO_DIR="$REPO_DIR"
         export MOCK_GH_PR_VIEW_BODIES='<!-- shipwright-review-rerun -->
@@ -179,7 +169,7 @@ test_rerun_already_requested_false() {
 }
 
 test_rerun_different_comments_different_shas() {
-    rm -f "$REPO_DIR/config/policy.json"
+    rm -f "$TEMP_DIR/config/policy.json"
     # SHA abc123: already requested
     # SHA xyz789: not requested
     (
@@ -209,7 +199,7 @@ test_request_rerun_missing_sha() {
 
 test_request_rerun_skips_when_already_requested() {
     : > "$GH_CALLS_FILE"
-    rm -f "$REPO_DIR/config/policy.json"
+    rm -f "$TEMP_DIR/config/policy.json"
     (
         export REPO_DIR="$REPO_DIR"
         export MOCK_GH_PR_VIEW_BODIES='<!-- shipwright-review-rerun -->

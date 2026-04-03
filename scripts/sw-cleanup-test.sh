@@ -15,11 +15,12 @@ setup_env() {
     if command -v jq &>/dev/null; then
         ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"
     fi
+    local mock_repo="$TEST_TEMP_DIR/repo"
     cat > "$TEST_TEMP_DIR/bin/git" <<MOCK
 #!/usr/bin/env bash
 case "\${1:-}" in
     rev-parse)
-        if [[ "\${2:-}" == "--show-toplevel" ]]; then echo "$TEST_TEMP_DIR/repo"
+        if [[ "\${2:-}" == "--show-toplevel" ]]; then echo "$mock_repo"
         elif [[ "\${2:-}" == "--is-inside-work-tree" ]]; then echo "true"
         else echo "abc1234"; fi ;;
     branch)

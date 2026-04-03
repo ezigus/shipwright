@@ -684,4 +684,312 @@ assert_contains "Issue meta has title" "$meta" "JWT"
 title=$(echo "$meta" | jq -r '.title')
 assert_contains "Title parsed" "$title" "JWT"
 
+# ─── Tests: initialize_state clears pipeline-tasks.md ───────────────────────
+print_test_section "initialize_state clears stale tasks"
+
+# Write a stale tasks file then call initialize_state
+echo "# Stale Tasks" > "$TASKS_FILE"
+export ARTIFACTS_DIR="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
+# initialize_state calls write_state (mocked) and should delete TASKS_FILE
+initialize_state 2>/dev/null || true
+if [[ ! -f "$TASKS_FILE" ]]; then
+    assert_pass "initialize_state removes pipeline-tasks.md"
+else
+    assert_fail "initialize_state removes pipeline-tasks.md"
+fi
+
+# ─── Tests: resume_state clears stale tasks when issue differs ───────────────
+print_test_section "resume_state clears stale tasks on issue mismatch"
+
+# Write a tasks file for a different issue
+mkdir -p "$(dirname "$TASKS_FILE")"
+cat > "$TASKS_FILE" <<'TEOF'
+# Pipeline Tasks
+## Implementation Checklist
+- [ ] Some old task
+
+## Context
+- Pipeline: test-pipeline
+- Branch: fix/old-issue-99
+- Issue: #99
+- Generated: 2026-01-01T00:00:00Z
+TEOF
+
+# Write a minimal state file with issue #42
+mkdir -p "$(dirname "$STATE_FILE")"
+cat > "$STATE_FILE" <<'SEOF'
+---
+pipeline: test-pipeline
+goal: "Test goal"
+status: running
+issue: "#42"
+branch: ""
+template: ""
+current_stage: build
+current_stage_description: ""
+stage_progress: ""
+started_at: 2026-03-27T00:00:00Z
+updated_at: 2026-03-27T00:00:00Z
+elapsed: 0s
+test_cmd: "npm test"
+pr_number:
+progress_comment_id:
+stages:
+---
+
+## Log
+SEOF
+
+# Mock git checkout and dependent functions for resume_state
+git() { return 0; }
+gh_init() { :; }
+load_pipeline_config() { :; }
+export -f git gh_init load_pipeline_config 2>/dev/null || true
+
+set +e
+resume_state 2>/dev/null
+set -e
+
+if [[ ! -f "$TASKS_FILE" ]]; then
+    assert_pass "resume_state clears stale tasks when issue differs (#99 vs #42)"
+else
+    assert_fail "resume_state clears stale tasks when issue differs (#99 vs #42)"
+fi
+
+# Matching issue should PRESERVE the tasks file — it belongs to this pipeline run
+cat > "$TASKS_FILE" <<'TEOF'
+# Pipeline Tasks
+## Implementation Checklist
+- [ ] Some task
+
+## Context
+- Pipeline: test-pipeline
+- Branch: fix/issue-42
+- Issue: #42
+- Generated: 2026-03-27T00:00:00Z
+TEOF
+
+set +e
+resume_state 2>/dev/null
+set -e
+
+if [[ -f "$TASKS_FILE" ]]; then
+    assert_pass "resume_state preserves tasks when issue matches"
+else
+    assert_fail "resume_state preserves tasks when issue matches"
+fi
+
+# Malformed tasks file (no '- Issue:' line) — resume_state preserves it;
+# the build stage's extract_issue_from_tasks_file guard handles cleanup at inject time.
+mkdir -p "$(dirname "$TASKS_FILE")"
+cat > "$TASKS_FILE" <<'TEOF'
+# Pipeline Tasks — Malformed
+## Implementation Checklist
+- [ ] Some task
+TEOF
+
+set +e
+resume_state 2>/dev/null
+set -e
+
+if [[ -f "$TASKS_FILE" ]]; then
+    assert_pass "resume_state preserves malformed pipeline-tasks.md (build stage handles cleanup)"
+else
+    assert_fail "resume_state preserves malformed pipeline-tasks.md (build stage handles cleanup)"
+fi
+
+# Clean up mocks to prevent scope pollution in subsequent tests
+unset -f git gh_init load_pipeline_config 2>/dev/null || true
+
+# ─── Tests: stage_build skips stale task injection ──────────────────────────
+print_test_section "stage_build skips stale task injection"
+
+# Set up a stale tasks file for a different issue
+cat > "$TASKS_FILE" <<'TEOF'
+# Pipeline Tasks — Old Goal
+## Implementation Checklist
+- [ ] Old task for issue #99
+
+## Context
+- Pipeline: old-pipeline
+- Branch: fix/old-99
+- Issue: #99
+- Generated: 2026-01-01T00:00:00Z
+TEOF
+
+export GITHUB_ISSUE="#42"
+
+_captured_build_prompt="$ARTIFACTS_DIR/.captured-build-prompt.txt"
+# The goal is passed as the first positional arg after 'loop' (not --goal).
+# Capture any argument that is not a flag and follows 'loop'.
+cat > "$TEST_TEMP_DIR/bin/sw" <<'SWMOCK'
+#!/usr/bin/env bash
+set -- "$@"
+_saw_loop=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    loop) _saw_loop=true; shift ;;
+    --*) shift; [[ $# -gt 0 ]] && shift ;;
+    *) if [[ "$_saw_loop" == true && -n "${CAPTURED_BUILD_PROMPT:-}" ]]; then
+           printf '%s' "$1" > "${CAPTURED_BUILD_PROMPT}"
+           _saw_loop=false
+       fi
+       shift ;;
+  esac
+done
+SWMOCK
+chmod +x "$TEST_TEMP_DIR/bin/sw"
+
+rm -f "$_captured_build_prompt"
+set +e
+CAPTURED_BUILD_PROMPT="$_captured_build_prompt" stage_build 2>/dev/null || true
+set -e
+
+# First ensure sw was actually invoked and captured the goal (non-empty file)
+if [[ ! -s "$_captured_build_prompt" ]]; then
+    assert_fail "stage_build invokes sw loop with a goal (captured prompt is empty)"
+else
+    assert_pass "stage_build invokes sw loop with a goal (captured prompt is non-empty)"
+fi
+
+# The old task content should NOT appear in the injected goal
+if [[ -f "$_captured_build_prompt" ]] && grep -q "Old task for issue #99" "$_captured_build_prompt" 2>/dev/null; then
+    assert_fail "stage_build skips stale tasks from different issue"
+else
+    assert_pass "stage_build skips stale tasks from different issue"
+fi
+
+# The stale tasks file should be deleted after mismatch (not just skipped)
+if [[ ! -f "$TASKS_FILE" ]]; then
+    assert_pass "stage_build removes stale tasks file on issue mismatch"
+else
+    assert_fail "stage_build removes stale tasks file on issue mismatch"
+fi
+
+# Goal-based pipeline (no GITHUB_ISSUE) — task file with "- Issue: none" must be preserved
+# (loop-iteration.sh injects content dynamically; build stage only validates/cleans up)
+cat > "$TASKS_FILE" <<'TEOF'
+# Pipeline Tasks — Goal Run
+## Implementation Checklist
+- [ ] Implement the feature
+
+## Context
+- Pipeline: autonomous
+- Issue: none
+- Generated: 2026-03-27T00:00:00Z
+TEOF
+
+export GITHUB_ISSUE=""
+
+set +e
+stage_build 2>/dev/null || true
+set -e
+
+if [[ -f "$TASKS_FILE" ]]; then
+    assert_pass "stage_build preserves task file for goal-based pipeline (no GITHUB_ISSUE)"
+else
+    assert_fail "stage_build preserves task file for goal-based pipeline (no GITHUB_ISSUE)"
+fi
+
+export GITHUB_ISSUE="#42"
+
+# Restore mocked sw binary for other tests
+mock_binary "sw" 'mkdir -p src; echo "// auth" > src/auth.js'
+
+# ─── Tests: issue number normalization (#-prefix stripping) ──────────────────
+print_test_section "issue number normalization (#-prefix and format variants)"
+
+# Re-create the capturing sw mock for this section
+cat > "$TEST_TEMP_DIR/bin/sw" <<'SWMOCK'
+#!/usr/bin/env bash
+set -- "$@"
+_saw_loop=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    loop) _saw_loop=true; shift ;;
+    --*) shift; [[ $# -gt 0 ]] && shift ;;
+    *) if [[ "$_saw_loop" == true && -n "${CAPTURED_BUILD_PROMPT:-}" ]]; then
+           printf '%s' "$1" > "${CAPTURED_BUILD_PROMPT}"
+           _saw_loop=false
+       fi
+       shift ;;
+  esac
+done
+SWMOCK
+chmod +x "$TEST_TEMP_DIR/bin/sw"
+
+# Test: GITHUB_ISSUE without # matches tasks file with #42
+cat > "$TASKS_FILE" <<'TEOF'
+# Pipeline Tasks — Normalize test
+## Implementation Checklist
+- [ ] Task for issue #42
+
+## Context
+- Pipeline: test-pipeline
+- Branch: fix/issue-42
+- Issue: #42
+- Generated: 2026-03-28T00:00:00Z
+TEOF
+
+export GITHUB_ISSUE="42"  # no # prefix
+
+# Task content injection is handled by compose_task_section() in loop-iteration.sh,
+# not by the build stage. Verify the file is preserved (not treated as stale).
+set +e
+stage_build 2>/dev/null || true
+set -e
+
+if [[ -f "$TASKS_FILE" ]]; then
+    assert_pass "stage_build preserves task file when GITHUB_ISSUE lacks # prefix (42 == #42)"
+else
+    assert_fail "stage_build preserves task file when GITHUB_ISSUE lacks # prefix (42 == #42)"
+fi
+
+# Test: resume_state with GITHUB_ISSUE without # clears stale tasks for different issue
+mkdir -p "$(dirname "$TASKS_FILE")"
+cat > "$TASKS_FILE" <<'TEOF'
+# Pipeline Tasks
+## Implementation Checklist
+- [ ] Old task
+
+## Context
+- Issue: #99
+TEOF
+
+export GITHUB_ISSUE="42"  # no # prefix — should still detect mismatch with #99
+
+set +e
+resume_state 2>/dev/null
+set -e
+
+if [[ ! -f "$TASKS_FILE" ]]; then
+    assert_pass "resume_state clears stale tasks when GITHUB_ISSUE lacks # prefix (42 != #99)"
+else
+    assert_fail "resume_state clears stale tasks when GITHUB_ISSUE lacks # prefix (42 != #99)"
+fi
+
+# Test: tasks file with "Issue:" line without leading dash (format variant) — issue matches, should preserve
+mkdir -p "$(dirname "$TASKS_FILE")"
+cat > "$TASKS_FILE" <<'TEOF'
+# Pipeline Tasks
+## Context
+Issue: #42
+TEOF
+
+export GITHUB_ISSUE="#42"
+
+set +e
+resume_state 2>/dev/null
+set -e
+
+if [[ -f "$TASKS_FILE" ]]; then
+    assert_pass "resume_state preserves tasks with no-dash Issue: format when issue matches"
+else
+    assert_fail "resume_state preserves tasks with no-dash Issue: format when issue matches"
+fi
+
+# Restore GITHUB_ISSUE and mocked sw binary
+export GITHUB_ISSUE="#42"
+mock_binary "sw" 'mkdir -p src; echo "// auth" > src/auth.js'
+
 print_test_results

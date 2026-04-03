@@ -196,20 +196,22 @@ else
 fi
 
 # Functional test: write mock events and verify dashboard parses them
-# Use dynamic timestamps (now - 24h) so the entry is always within the period window,
-# regardless of what date the CI runner reports. Both ts and ts_epoch are derived from
-# the same epoch so the fixture stays self-consistent.
+# Use dynamic epoch (yesterday) so the test doesn't rot as time passes
 _mock_epoch=$(( $(date +%s) - 86400 ))
-_mock_ts=$(date -u -r "$_mock_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$_mock_epoch" +%Y-%m-%dT%H:%M:%SZ)
+_mock_ts=$(date -u -r "$_mock_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || \
+           date -u -d "@$_mock_epoch" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || \
+  { echo "ERROR: date command failed on both macOS and GNU formats" >&2; exit 1; }
+[[ -z "$_mock_ts" ]] && { echo "ERROR: timestamp is empty after date command" >&2; exit 1; }
 mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
-printf '{"ts":"%s","type":"loop.context_efficiency","iteration":"1","raw_prompt_chars":"200000","trimmed_prompt_chars":"180000","trim_ratio":"10.0","budget_utilization":"100.0","budget_chars":"180000","job_id":"test-1"}\n' \
-    "$_mock_ts" > "$TEST_TEMP_DIR/home/.shipwright/events.jsonl"
-printf '{"ts":"%s","type":"loop.context_efficiency","iteration":"2","raw_prompt_chars":"150000","trimmed_prompt_chars":"150000","trim_ratio":"0.0","budget_utilization":"83.3","budget_chars":"180000","job_id":"test-1"}\n' \
-    "$_mock_ts" >> "$TEST_TEMP_DIR/home/.shipwright/events.jsonl"
+cat > "$TEST_TEMP_DIR/home/.shipwright/events.jsonl" <<EVTEOF
+{"ts":"${_mock_ts}","type":"loop.context_efficiency","iteration":"1","raw_prompt_chars":"200000","trimmed_prompt_chars":"180000","trim_ratio":"10.0","budget_utilization":"100.0","budget_chars":"180000","job_id":"test-1"}
+{"ts":"${_mock_ts}","type":"loop.context_efficiency","iteration":"2","raw_prompt_chars":"150000","trimmed_prompt_chars":"150000","trim_ratio":"0.0","budget_utilization":"83.3","budget_chars":"180000","job_id":"test-1"}
+EVTEOF
 
 # Also need cost data for the dashboard to run
-printf '{"entries":[{"ts":"%s","ts_epoch":%d,"input_tokens":50000,"output_tokens":10000,"cost_usd":1.50,"model":"opus","stage":"build","issue":"1"}],"summary":{}}\n' \
-    "$_mock_ts" "$_mock_epoch" > "$TEST_TEMP_DIR/home/.shipwright/costs.json"
+cat > "$TEST_TEMP_DIR/home/.shipwright/costs.json" <<COSTEOF
+{"entries":[{"ts":"${_mock_ts}","ts_epoch":${_mock_epoch},"input_tokens":50000,"output_tokens":10000,"cost_usd":1.50,"model":"opus","stage":"build","issue":"1"}],"summary":{}}
+COSTEOF
 cat > "$TEST_TEMP_DIR/home/.shipwright/budget.json" <<'BUDEOF'
 {"daily_budget_usd":0,"enabled":false}
 BUDEOF

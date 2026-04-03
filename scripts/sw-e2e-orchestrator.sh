@@ -4,6 +4,7 @@
 # ║  Smoke tests, integration tests, regression management, parallel exec    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
+trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 VERSION="3.2.4"
 

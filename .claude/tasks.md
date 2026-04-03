@@ -1,33 +1,25 @@
-# Tasks — Build loop context exhaustion prevention with proactive summarization
+# Tasks — bug: pipeline-tasks.md not cleared on resume — stale tasks injected into build loop
 
-## Status: Complete
-
-Pipeline: autonomous | Branch: feat/build-loop-context-exhaustion-prevention-154
+## Status: In Progress
+Pipeline: autonomous | Branch: fix/bug-pipeline-tasks-md-not-cleared-on-res-232
 
 ## Checklist
-
-- [x] Task 1: Create `scripts/lib/loop-context-monitor.sh` with module guard, constants, `check_context_exhaustion()`, `summarize_loop_state()`, `get_context_usage_pct()`
-- [x] Task 2: Source the new module in `sw-loop.sh` (near line 28 with other lib sources)
-- [x] Task 3: Add context exhaustion check in main loop after `accumulate_loop_tokens` call (~line 2166 in `run_single_agent_loop`)
-- [x] Task 4: Handle `context_exhaustion` status in `run_loop_with_restarts()` — allow restart with summary injection
-- [x] Task 5: Add `loop.context_exhaustion_warning` and `loop.context_exhaustion_restart` event emissions
-- [x] Task 6: Emit `loop.context_usage` event per iteration with cumulative token usage percentage
-- [x] Task 7: Add threshold calculation unit tests to `sw-loop-test.sh`
-- [x] Task 8: Add summarization output unit tests to `sw-loop-test.sh`
-- [x] Task 9: Add restart trigger integration test to `sw-loop-test.sh`
-- [x] Task 10: Verify existing tests still pass after changes
-- [x] `check_context_exhaustion()` correctly identifies when cumulative tokens exceed 70% of context window
-- [x] `summarize_loop_state()` produces compressed state with: goal, iteration count, modified files, error patterns, test status
-- [x] Loop continues seamlessly after summarization-triggered restart without losing critical context
-- [x] `loop.context_exhaustion_warning` event emitted when threshold crossed (observable in events.jsonl)
-- [x] `loop.context_exhaustion_restart` event emitted when restart occurs
-- [x] Per-iteration `loop.context_usage` event includes cumulative token percentage
-- [x] All new code has test coverage (threshold boundaries, summarization output, restart trigger)
-- [x] Existing test suite passes without regression (96/96 tests pass)
-- [x] Bash 3.2 compatible (no associative arrays, no `${var,,}`)
-- [x] Uses `set -euo pipefail` and module guard pattern
+- [ ] 1.1 Verify TASKS_FILE initialization across all entry points
+- [ ] 1.2 Test extract_issue_from_tasks_file() with 5+ metadata formats
+- [ ] 1.3 Trace issue number normalization (initialize → resume → build)
+- [ ] 1.4 Check for concurrent pipeline race conditions
+- [ ] 2.1 Unit test: extract_issue_from_tasks_file() edge cases
+- [ ] 2.2 Integration test: stale tasks from issue #X don't inject into #Y
+- [ ] 2.3 Regression test: exact scenario from #207 (issue #154→#232)
+- [ ] 2.4 Edge case: resume after partial file deletion
+- [ ] 2.5 Edge case: file exists but TASKS_FILE variable unset
+- [ ] 3.1 Verify all three deletion paths in production code
+- [ ] 3.2 Verify extract_issue_from_tasks_file() is sourced
+- [ ] 3.3 Check no remnants of old "warn + continue" paths
+- [ ] 4.1 Document task file metadata format requirements
+- [ ] 4.2 Add ADR explaining three-layer validation
+- [ ] 4.3 Verify warnings logged with debugging context
 
 ## Notes
-
-- Generated from pipeline plan at 2026-03-15T18:08:59Z
-- All tasks complete — implementation verified by 96/96 loop tests passing
+- Generated from pipeline plan at 2026-03-30T00:39:30Z
+- Pipeline will update status as tasks complete

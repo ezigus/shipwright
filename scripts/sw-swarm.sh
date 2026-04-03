@@ -371,7 +371,11 @@ cmd_prune() {
     fi
 
     local agent_count
-    agent_count=$(jq -r '.agents | length' "$REGISTRY_FILE")
+    agent_count=$(jq -r '.agents | length' "$REGISTRY_FILE" 2>/dev/null) || agent_count=0
+    # Treat non-numeric results (corrupt JSON) as empty registry
+    if ! [[ "$agent_count" =~ ^[0-9]+$ ]]; then
+        agent_count=0
+    fi
 
     if [[ "$agent_count" -eq 0 ]]; then
         $quiet || echo -e "  ${DIM}No agents in registry — scanning tmux for orphaned swarm sessions.${RESET}"

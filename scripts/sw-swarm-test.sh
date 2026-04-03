@@ -202,6 +202,32 @@ else
     assert_fail "prune empty registry exits cleanly" "exit_code=$exit_code"
 fi
 
+# ─── Test 19b: prune with corrupt registry exits cleanly ────────────────────
+echo "corrupt{not json" > "$HOME/.shipwright/swarm/registry.json"
+exit_code=0
+output=$(bash "$SCRIPT_DIR/sw-swarm.sh" prune 2>&1) || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "prune corrupt registry exits cleanly"
+else
+    assert_fail "prune corrupt registry exits cleanly" "exit_code=$exit_code output=$output"
+fi
+# Verify it attempted the tmux fallback scan (message mentions scanning or orphaned)
+if echo "$output" | grep -qiE "scanning|orphan|No orphaned"; then
+    assert_pass "prune corrupt registry triggers tmux fallback"
+else
+    assert_fail "prune corrupt registry triggers tmux fallback" "output=$output"
+fi
+
+# ─── Test 19c: prune with missing registry file exits cleanly ───────────────
+rm -f "$HOME/.shipwright/swarm/registry.json"
+exit_code=0
+output=$(bash "$SCRIPT_DIR/sw-swarm.sh" prune 2>&1) || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "prune missing registry exits cleanly"
+else
+    assert_fail "prune missing registry exits cleanly" "exit_code=$exit_code output=$output"
+fi
+
 # ─── Test 20: prune --quiet suppresses output ────────────────────────────────
 echo '{"agents":[],"active_count":0,"last_updated":"2025-01-01T00:00:00Z"}' > "$HOME/.shipwright/swarm/registry.json"
 bash "$SCRIPT_DIR/sw-swarm.sh" spawn standard >/dev/null 2>&1 || true

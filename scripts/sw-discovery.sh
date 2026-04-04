@@ -93,6 +93,20 @@ broadcast_discovery() {
     echo "$entry" >> "$DISCOVERIES_FILE"
     type rotate_jsonl >/dev/null 2>&1 && rotate_jsonl "$DISCOVERIES_FILE" 5000
 
+    # Bridge: index discovery in ruflo for cross-pipeline semantic search
+    if declare -f ruflo_store >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _disc_key="pipeline-discovery-$(date +%s)-$$"
+        local _disc_content
+        _disc_content=$(printf '%s' "$entry" | jq -sR . 2>/dev/null || true)
+        if [[ -n "$_disc_content" ]]; then
+            ruflo_store "$_disc_key" "$_disc_content" \
+                "pipeline-discovery-${REPO_HASH:-unknown}" \
+                "discovery,cross-pipeline" 2>/dev/null || true
+        fi
+    fi
+
     # Fire-and-forget POST to remote discovery server if configured
     if [[ -n "${DISCOVERY_SERVER_URL:-}" ]]; then
         curl -sS -X POST "${DISCOVERY_SERVER_URL}/api/discoveries" \

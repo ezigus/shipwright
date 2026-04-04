@@ -507,4 +507,61 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Test 21: ruflo_learn_from_shipwright — no-op when RUFLO_AVAILABLE=false
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_learn_from_shipwright — no-op when unavailable"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+exit_code=0
+ruflo_learn_from_shipwright "/nonexistent/file.json" || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_learn_from_shipwright returns 0 when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_learn_from_shipwright returns 0 when RUFLO_AVAILABLE=false" "exit=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 22: ruflo_learn_from_shipwright — skips missing outcome file
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_learn_from_shipwright — skips missing file"
+
+RUFLO_AVAILABLE=true
+exit_code=0
+ruflo_learn_from_shipwright "/nonexistent/outcome.json" || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_learn_from_shipwright returns 0 when file missing"
+else
+    assert_fail "ruflo_learn_from_shipwright returns 0 when file missing" "exit=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 23: ruflo_recall_similar_outcomes — returns empty when unavailable
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_recall_similar_outcomes — no-op when unavailable"
+
+RUFLO_AVAILABLE=false
+result=$(ruflo_recall_similar_outcomes "feature" "bug" 2>/dev/null || true)
+if [[ -z "$result" ]]; then
+    assert_pass "ruflo_recall_similar_outcomes returns empty when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_recall_similar_outcomes returns empty when RUFLO_AVAILABLE=false" "got: $result"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 24: ruflo_index_adr_artifacts — no-op when RUFLO_AVAILABLE=false
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_index_adr_artifacts — no-op when unavailable"
+
+RUFLO_AVAILABLE=false
+exit_code=0
+ruflo_index_adr_artifacts || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_index_adr_artifacts returns 0 when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_index_adr_artifacts returns 0 when RUFLO_AVAILABLE=false" "exit=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

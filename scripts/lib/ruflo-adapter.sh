@@ -179,16 +179,75 @@ ruflo_with_timeout() {
     return 0
 }
 
-# ─── ruflo_import_memory — stub for Issue 2 (memory bridge) ──────────────────
-# Imports ruflo memory from previous run into the current pipeline context.
-# Returns 0 (no-op until Issue 2 is implemented).
+# ─── ruflo_store — store a value in ruflo memory via CLI ─────────────────────
+# Usage: ruflo_store <key> <value> [namespace] [tags]
+# No-op when ruflo is unavailable. Always returns 0.
+ruflo_store() {
+    ruflo_available || return 0
+    local key="$1" value="$2" namespace="${3:-default}" tags="${4:-}"
+    ruflo_with_timeout 10 _ruflo_run memory store \
+        --key "$key" --value "$value" --namespace "$namespace" \
+        ${tags:+--tags "$tags"} 2>/dev/null || true
+}
+
+# ─── ruflo_recall — semantic search in ruflo memory via CLI ───────────────────
+# Usage: ruflo_recall <query> [namespace]
+# Prints matching results to stdout. Returns empty string when ruflo unavailable.
+ruflo_recall() {
+    ruflo_available || { echo ""; return 0; }
+    local query="$1" namespace="${2:-default}"
+    ruflo_with_timeout 10 _ruflo_run memory search \
+        --query "$query" --namespace "$namespace" --limit 3 2>/dev/null || echo ""
+}
+
+# ─── ruflo_index_shipwright_memory — index ~/.shipwright/memory/ into ruflo ───
+# Indexes architecture and skill files from the repo's memory directory into
+# ruflo HNSW storage for semantic retrieval by pipeline stages.
+# No-op when ruflo is unavailable or memory directory is missing.
+ruflo_index_shipwright_memory() {
+    ruflo_available || return 0
+    local repo_hash
+    repo_hash=$(printf '%s/%s' "${REPO_OWNER:-}" "${REPO_NAME:-}" | md5sum 2>/dev/null | cut -d' ' -f1 || true)
+    [[ -z "$repo_hash" ]] && return 0
+    local mem_dir="$HOME/.shipwright/memory/$repo_hash"
+    [[ -d "$mem_dir" ]] || return 0
+
+    if [[ -f "$mem_dir/architecture.json" ]]; then
+        ruflo_store "shipwright-architecture" \
+            "$(cat "$mem_dir/architecture.json" 2>/dev/null || true)" \
+            "shipwright-$repo_hash" "architecture,patterns" || true
+    fi
+
+    local f
+    for f in "$mem_dir"/skill-*.json; do
+        [[ -f "$f" ]] || continue
+        ruflo_store "shipwright-$(basename "$f" .json)" \
+            "$(cat "$f" 2>/dev/null || true)" \
+            "shipwright-$repo_hash" "skills,learning" || true
+    done
+}
+
+# ─── ruflo_import_memory — import memory from previous run ───────────────────
+# Loads the last memory export into ruflo and indexes Shipwright's memory dir.
+# No-op when ruflo is unavailable. Always returns 0.
 ruflo_import_memory() {
+    ruflo_available || return 0
+    local export_file=".claude-flow/data/memory-export.json"
+    if [[ -f "$export_file" ]]; then
+        ruflo_with_timeout 30 _ruflo_run memory import \
+            --input "$export_file" 2>/dev/null || true
+    fi
+    ruflo_index_shipwright_memory || true
     return 0
 }
 
-# ─── ruflo_export_memory — stub for Issue 2 (memory bridge) ──────────────────
-# Exports current pipeline context to ruflo memory for future runs.
-# Returns 0 (no-op until Issue 2 is implemented).
+# ─── ruflo_export_memory — export memory for next run ────────────────────────
+# Saves current ruflo memory to a JSON file for re-import on the next run.
+# No-op when ruflo is unavailable. Always returns 0.
 ruflo_export_memory() {
+    ruflo_available || return 0
+    mkdir -p .claude-flow/data/ 2>/dev/null || true
+    ruflo_with_timeout 30 _ruflo_run memory export \
+        --output .claude-flow/data/memory-export.json 2>/dev/null || true
     return 0
 }

@@ -210,6 +210,25 @@ ${_skill_prompts}
 "
     fi
 
+    # Inject prior stage context from ruflo (supplements file-based artifacts)
+    if type ruflo_available >/dev/null 2>&1 && ruflo_available; then
+        local _prior_context
+        _prior_context=$(ruflo_recall "plan design build results for ${TASK_TYPE:-feature}" \
+            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" 2>/dev/null || true)
+        if [[ -n "$_prior_context" ]]; then
+            review_prompt="${review_prompt}
+
+## Prior Stage Context (from ruflo memory)
+${_prior_context}"
+        fi
+        review_prompt="${review_prompt}
+
+## Ruflo Memory Available
+Ruflo MCP tools are available in this session. Use mcp__ruflo__memory_store to persist
+important decisions and mcp__ruflo__memory_search to recall prior context from namespace
+'pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}'."
+    fi
+
     # Guard total prompt size
     review_prompt=$(guard_prompt_size "review" "$review_prompt")
 
@@ -409,6 +428,13 @@ _Pipeline will attempt self-healing rebuild._"
 ${review_summary}
 
 </details>"
+    fi
+
+    # Store review summary in ruflo for cross-stage context
+    if type ruflo_store >/dev/null 2>&1; then
+        ruflo_store "stage-review-result" \
+            "Review complete: $total_issues issues ($critical_count critical, $bug_count bugs, $warning_count suggestions)." \
+            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
     fi
 
     log_stage "review" "AI review complete ($total_issues issues: $critical_count critical, $bug_count bugs, $warning_count suggestions)"

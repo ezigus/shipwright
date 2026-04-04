@@ -133,6 +133,10 @@ fi
 # shellcheck source=sw-github-deploy.sh
 [[ -f "$SCRIPT_DIR/sw-github-deploy.sh" ]] && source "$SCRIPT_DIR/sw-github-deploy.sh"
 
+# ─── Ruflo Adapter (optional) ───────────────────────────────────────────────
+# shellcheck source=lib/ruflo-adapter.sh
+[[ -f "$SCRIPT_DIR/lib/ruflo-adapter.sh" ]] && source "$SCRIPT_DIR/lib/ruflo-adapter.sh" 2>/dev/null || true
+
 # Parse coverage percentage from test output — multi-framework patterns
 # Usage: parse_coverage_from_output <log_file>
 # Outputs coverage percentage or empty string
@@ -672,6 +676,11 @@ cleanup_on_exit() {
     local exit_code=$?
     [[ "${_cleanup_done:-}" == "true" ]] && return 0
     _cleanup_done=true
+
+    # Cleanup ruflo MCP server
+    if type ruflo_cleanup >/dev/null 2>&1; then
+        ruflo_cleanup || true
+    fi
 
     # Stop heartbeat writer
     stop_heartbeat
@@ -1559,6 +1568,11 @@ run_pipeline() {
     # Initialize audit trail for this pipeline run
     if type audit_init >/dev/null 2>&1; then
         audit_init || true
+    fi
+
+    # Initialize ruflo adapter (no-op if unavailable)
+    if type ruflo_init >/dev/null 2>&1; then
+        ruflo_init || true
     fi
 
     local stages

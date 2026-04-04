@@ -315,3 +315,61 @@ ruflo_export_memory() {
     fi
     return 0
 }
+
+# ─── ruflo_learn_from_shipwright — bridge Shipwright outcomes to ruflo ───────
+# Called after skill_memory_record() writes an outcome. Indexes the outcome
+# into ruflo HNSW under a repo-specific namespace for vector-similarity search.
+# No-op when ruflo unavailable. Always returns 0.
+ruflo_learn_from_shipwright() {
+    ruflo_available || return 0
+    local outcome_file="$1"
+    [[ -f "$outcome_file" ]] || return 0
+    local _key="shipwright-outcome-$(date +%s)-$$"
+    local _task_type
+    _task_type=$(jq -r '.task_type // "unknown"' "$outcome_file" 2>/dev/null || echo "unknown")
+    local _content
+    _content=$(jq -sR . < "$outcome_file" 2>/dev/null || true)
+    [[ -n "$_content" ]] || return 0
+    ruflo_store "$_key" "$_content" \
+        "learning-${REPO_HASH:-unknown}" \
+        "skill-memory,outcome,$_task_type" || true
+    emit_event "ruflo.learn_from_shipwright" \
+        "task_type=$_task_type" \
+        "repo=${REPO_HASH:-unknown}"
+    return 0
+}
+
+# ─── ruflo_recall_similar_outcomes — query ruflo for vector-similar past outcomes
+# Supplements Shipwright's file-based skill selection with semantic vector search.
+# Returns matching outcomes to stdout. Returns empty string when unavailable.
+ruflo_recall_similar_outcomes() {
+    ruflo_available || { echo ""; return 0; }
+    local task_type="$1" issue_labels="${2:-}"
+    ruflo_recall "skill selection for ${task_type} ${issue_labels}" \
+        "learning-${REPO_HASH:-unknown}"
+    return 0
+}
+
+# ─── ruflo_index_adr_artifacts — index pipeline ADR artifacts into ruflo ────
+# Indexes design-stage ADR files so review and build stages can query them for
+# architectural compliance checking. Uses repo-specific namespace.
+# No-op when ruflo unavailable or no ADR files found. Always returns 0.
+ruflo_index_adr_artifacts() {
+    ruflo_available || return 0
+    local artifacts_dir="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
+    [[ -d "$artifacts_dir" ]] || return 0
+    local _count=0
+    local adr _key _content
+    for adr in "$artifacts_dir"/design*.md "$artifacts_dir"/adr*.md; do
+        [[ -f "$adr" ]] || continue
+        _key="adr-$(basename "$adr" .md)-${SHIPWRIGHT_PIPELINE_ID:-unknown}"
+        _content=$(jq -sR . < "$adr" 2>/dev/null || true)
+        [[ -n "$_content" ]] || continue
+        ruflo_store "$_key" "$_content" \
+            "adrs-${REPO_HASH:-unknown}" "adr,architecture" || true
+        _count=$(( _count + 1 ))
+    done
+    [[ "$_count" -gt 0 ]] && \
+        emit_event "ruflo.adr_indexed" "count=$_count" "repo=${REPO_HASH:-unknown}" || true
+    return 0
+}

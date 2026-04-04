@@ -507,7 +507,62 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 21: ruflo_learn_from_shipwright — no-op when RUFLO_AVAILABLE=false
+# Test 21: ruflo_execute_build_single — returns 1 when RUFLO_AVAILABLE=false
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_execute_build_single — no-op (returns 1) when unavailable"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+exit_code=0
+ruflo_execute_build_single "test goal" || exit_code=$?
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_build_single returns 1 when RUFLO_AVAILABLE=false (signals fallback)"
+else
+    assert_fail "ruflo_execute_build_single returns 1 when RUFLO_AVAILABLE=false" "exit_code=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 22: ruflo_execute_build_single — returns 1 when goal is empty
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_execute_build_single — returns 1 when goal is empty"
+
+mock_binary "ruflo" 'exit 0'
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+exit_code=0
+ruflo_execute_build_single "" || exit_code=$?
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_build_single returns 1 (fail-open) when goal is empty"
+else
+    assert_fail "ruflo_execute_build_single returns 1 when goal is empty" "exit_code=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 23: ruflo_execute_build_single — circuit-breaker fires when agent fails
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_execute_build_single — circuit-breaker fires on agent failure"
+
+mock_binary "ruflo" 'exit 1'
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+exit_code=0
+ruflo_execute_build_single "build the feature" || exit_code=$?
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_build_single returns 1 when agent command fails"
+else
+    assert_fail "ruflo_execute_build_single returns 1 when agent command fails" "exit_code=$exit_code"
+fi
+if [[ "$RUFLO_AVAILABLE" == "false" ]]; then
+    assert_pass "ruflo_execute_build_single circuit-breaker disables ruflo after agent failure"
+else
+    assert_fail "ruflo_execute_build_single circuit-breaker disables ruflo after agent failure" "RUFLO_AVAILABLE=$RUFLO_AVAILABLE"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 24: ruflo_learn_from_shipwright — no-op when RUFLO_AVAILABLE=false
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_learn_from_shipwright — no-op when unavailable"
 
@@ -523,7 +578,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 22: ruflo_learn_from_shipwright — skips invalid input (no file, no JSON)
+# Test 25: ruflo_learn_from_shipwright — skips invalid input (no file, no JSON)
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_learn_from_shipwright — skips invalid input"
 
@@ -537,7 +592,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 23: ruflo_recall_similar_outcomes — returns empty when unavailable
+# Test 26: ruflo_recall_similar_outcomes — returns empty when unavailable
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_recall_similar_outcomes — no-op when unavailable"
 
@@ -550,7 +605,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 24: ruflo_index_adr_artifacts — no-op when RUFLO_AVAILABLE=false
+# Test 27: ruflo_index_adr_artifacts — no-op when RUFLO_AVAILABLE=false
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_index_adr_artifacts — no-op when unavailable"
 
@@ -564,18 +619,16 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 25: ruflo_learn_from_shipwright — success path with valid outcome file
+# Test 28: ruflo_learn_from_shipwright — success path with valid outcome file
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_learn_from_shipwright — success path (file input)"
 
-# Set up: mock ruflo binary that accepts memory store and returns success
 _test_tmp=$(mktemp -d)
 cat > "$_test_tmp/ruflo" <<'MOCK'
 #!/usr/bin/env bash
 exit 0
 MOCK
 chmod +x "$_test_tmp/ruflo"
-# Create a valid outcome file
 _outcome_file="$_test_tmp/outcome.json"
 printf '{"issue_type":"backend","stage":"build","skills":"tdd","outcome":"success"}\n' \
     > "$_outcome_file"
@@ -583,7 +636,6 @@ printf '{"issue_type":"backend","stage":"build","skills":"tdd","outcome":"succes
 RUFLO_AVAILABLE=true
 RUFLO_USE_NPX=false
 PATH="$_test_tmp:$PATH"
-# Stub git to return a known origin so _ruflo_resolve_repo_hash succeeds
 git() {
     if [[ "${1:-}" == "config" && "${2:-}" == "--get" && "${3:-}" == "remote.origin.url" ]]; then
         echo "https://github.com/test/repo.git"
@@ -602,7 +654,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 26: ruflo_learn_from_shipwright — success path with raw JSON string input
+# Test 29: ruflo_learn_from_shipwright — success path with raw JSON string input
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_learn_from_shipwright — success path (raw JSON input)"
 

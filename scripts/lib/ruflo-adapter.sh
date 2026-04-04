@@ -338,6 +338,42 @@ _ruflo_resolve_repo_hash() {
     printf '%s' "$_hash"
 }
 
+# ─── ruflo_execute_build_single — execute build via a single ruflo agent ─────
+# Spawns a ruflo agent to execute the build goal in single-agent mode.
+# Provides a lighter-weight alternative to the full sw loop for simple tasks.
+# Usage: ruflo_execute_build_single <goal> [max_turns]
+# Returns 0 on success, 1 on failure. Caller is expected to fall back to sw loop.
+# No-op (returns 1) when ruflo is unavailable — always fails open to sw loop.
+# Uses ruflo_with_timeout circuit-breaker: 10-minute wall-clock bound.
+ruflo_execute_build_single() {
+    ruflo_available || return 1
+    local goal="$1"
+    local max_turns="${2:-30}"
+    [[ -n "$goal" ]] || return 1
+
+    emit_event "ruflo.build_agent_start" "max_turns=$max_turns"
+
+    # Spawn a single build agent via ruflo CLI. Call binary directly (conditioned
+    # on RUFLO_USE_NPX) — system timeout cannot exec shell functions like
+    # _ruflo_run_quiet, which would cause immediate failure on Linux/CI.
+    local _exit_code=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 600 npx -y ruflo@latest agent spawn \
+            --goal "$goal" --max-turns "$max_turns" || _exit_code=$?
+    else
+        ruflo_with_timeout 600 ruflo agent spawn \
+            --goal "$goal" --max-turns "$max_turns" || _exit_code=$?
+    fi
+
+    if [[ $_exit_code -eq 0 ]]; then
+        emit_event "ruflo.build_agent_complete" "success=true"
+        return 0
+    fi
+
+    emit_event "ruflo.build_agent_failed" "success=false"
+    return 1
+}
+
 # ─── ruflo_learn_from_shipwright — bridge Shipwright outcomes to ruflo ───────
 # Called after skill_memory_record() writes an outcome. Indexes the outcome
 # into ruflo HNSW under a repo-specific namespace for vector-similarity search.

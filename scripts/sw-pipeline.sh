@@ -15,7 +15,7 @@ trap '' SIGPIPE
 # Prevent git from blocking on HTTPS credential prompts in any pipeline stage
 export GIT_TERMINAL_PROMPT=0
 
-VERSION="3.2.4"
+VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 

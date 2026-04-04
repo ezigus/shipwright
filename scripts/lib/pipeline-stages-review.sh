@@ -211,7 +211,9 @@ ${_skill_prompts}
     fi
 
     # Inject prior stage context from ruflo (supplements file-based artifacts)
-    if type ruflo_available >/dev/null 2>&1 && ruflo_available; then
+    if declare -f ruflo_available >/dev/null 2>&1 && \
+       declare -f ruflo_recall >/dev/null 2>&1 && \
+       ruflo_available; then
         local _prior_context
         _prior_context=$(ruflo_recall "plan design build results for ${TASK_TYPE:-feature}" \
             "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" 2>/dev/null || true)
@@ -265,6 +267,26 @@ For each gap found:
 
 If all requirements are met, write: \"Spec compliance: PASS — all planned tasks implemented.\"
 "
+            # Inject prior stage context from ruflo into spec compliance prompt
+            if declare -f ruflo_available >/dev/null 2>&1 && \
+               declare -f ruflo_recall >/dev/null 2>&1 && \
+               ruflo_available; then
+                local _spec_prior_context
+                _spec_prior_context=$(ruflo_recall "plan design build results for ${TASK_TYPE:-feature}" \
+                    "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" 2>/dev/null || true)
+                if [[ -n "$_spec_prior_context" ]]; then
+                    spec_prompt="${spec_prompt}
+
+## Prior Stage Context (from ruflo memory)
+${_spec_prior_context}"
+                fi
+                spec_prompt="${spec_prompt}
+
+## Ruflo Memory Available
+Ruflo MCP tools are available in this session. Use mcp__ruflo__memory_store to persist
+important decisions and mcp__ruflo__memory_search to recall prior context from namespace
+'pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}'."
+            fi
             spec_prompt=$(guard_prompt_size "spec-review" "$spec_prompt")
             claude "${review_args[@]}" "$spec_prompt" < /dev/null > "$spec_review_file" 2>"${ARTIFACTS_DIR}/.claude-tokens-spec-review.log" || true
             parse_claude_tokens "${ARTIFACTS_DIR}/.claude-tokens-spec-review.log"
@@ -431,9 +453,9 @@ ${review_summary}
     fi
 
     # Store review summary in ruflo for cross-stage context
-    if type ruflo_store >/dev/null 2>&1; then
+    if declare -f ruflo_store >/dev/null 2>&1 && [[ -s "$review_file" ]]; then
         ruflo_store "stage-review-result" \
-            "Review complete: $total_issues issues ($critical_count critical, $bug_count bugs, $warning_count suggestions)." \
+            "$(head -c 4000 "$review_file" 2>/dev/null || true)" \
             "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
     fi
 

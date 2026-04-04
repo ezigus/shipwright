@@ -363,4 +363,148 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Test 14: ruflo_store — no-op when RUFLO_AVAILABLE=false
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_store — no-op when unavailable"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+
+exit_code=0
+ruflo_store "test-key" "test-value" "test-ns" || exit_code=$?
+
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_store returns 0 (fail-open) when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_store returns 0 (fail-open) when RUFLO_AVAILABLE=false" "exit_code=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 15: ruflo_recall — returns empty string when RUFLO_AVAILABLE=false
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_recall — no-op when unavailable"
+
+RUFLO_AVAILABLE=false
+
+result=$(ruflo_recall "some query" "test-ns" 2>/dev/null || true)
+
+if [[ -z "$result" ]]; then
+    assert_pass "ruflo_recall returns empty string when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_recall returns empty string when RUFLO_AVAILABLE=false" "got: $result"
+fi
+
+exit_code=0
+ruflo_recall "some query" "test-ns" >/dev/null 2>&1 || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_recall returns 0 (fail-open) when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_recall returns 0 (fail-open) when RUFLO_AVAILABLE=false" "exit_code=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 16: ruflo_index_shipwright_memory — no-op when RUFLO_AVAILABLE=false
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_index_shipwright_memory — no-op when unavailable"
+
+RUFLO_AVAILABLE=false
+
+exit_code=0
+ruflo_index_shipwright_memory || exit_code=$?
+
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_index_shipwright_memory returns 0 (fail-open) when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_index_shipwright_memory returns 0 (fail-open) when RUFLO_AVAILABLE=false" "exit_code=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 17: ruflo_index_shipwright_memory — skips gracefully when memory dir missing
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_index_shipwright_memory — skips when no memory dir"
+
+# Use mock ruflo that succeeds so RUFLO_AVAILABLE goes true
+mock_binary "ruflo" 'exit 0'
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+
+# Override HOME to a temp dir with no .shipwright/memory structure
+_orig_home="$HOME"
+export HOME="$TEST_TEMP_DIR/no-memory-home"
+mkdir -p "$HOME"
+
+exit_code=0
+ruflo_index_shipwright_memory || exit_code=$?
+
+export HOME="$_orig_home"
+
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_index_shipwright_memory returns 0 when memory dir missing"
+else
+    assert_fail "ruflo_index_shipwright_memory returns 0 when memory dir missing" "exit_code=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 18: ruflo_import_memory — no-op when RUFLO_AVAILABLE=false
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_import_memory — no-op when unavailable"
+
+RUFLO_AVAILABLE=false
+
+exit_code=0
+ruflo_import_memory || exit_code=$?
+
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_import_memory returns 0 (fail-open) when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_import_memory returns 0 (fail-open) when RUFLO_AVAILABLE=false" "exit_code=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 19: ruflo_export_memory — no-op when RUFLO_AVAILABLE=false
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_export_memory — no-op when unavailable"
+
+RUFLO_AVAILABLE=false
+
+exit_code=0
+ruflo_export_memory || exit_code=$?
+
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_export_memory returns 0 (fail-open) when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_export_memory returns 0 (fail-open) when RUFLO_AVAILABLE=false" "exit_code=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 20: ruflo_store — circuit-breaker fires on command failure
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_store — circuit-breaker fires on command failure"
+
+mock_binary "ruflo" 'exit 1'
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+
+exit_code=0
+ruflo_store "test-key" "test-value" "test-ns" || exit_code=$?
+
+# ruflo_store is fail-open — must return 0 even when ruflo binary fails
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_store returns 0 (fail-open) when ruflo binary fails"
+else
+    assert_fail "ruflo_store returns 0 (fail-open) when ruflo binary fails" "exit_code=$exit_code"
+fi
+
+# After a failure, RUFLO_AVAILABLE should be false (circuit-breaker tripped)
+if [[ "$RUFLO_AVAILABLE" == "false" ]]; then
+    assert_pass "ruflo_store circuit-breaker disables ruflo after failure"
+else
+    assert_fail "ruflo_store circuit-breaker disables ruflo after failure" "RUFLO_AVAILABLE=$RUFLO_AVAILABLE"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

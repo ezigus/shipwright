@@ -487,7 +487,7 @@ ${commit_msgs}" --model haiku < /dev/null 2>/dev/null || true)
     fi
 
     # Store build summary in ruflo for cross-stage context
-    if type ruflo_store >/dev/null 2>&1; then
+    if declare -f ruflo_store >/dev/null 2>&1 && [[ "${commit_count:-0}" -gt 0 ]]; then
         ruflo_store "stage-build-result" \
             "Build loop completed: $commit_count commits. Branch: ${GIT_BRANCH:-unknown}." \
             "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
@@ -606,7 +606,7 @@ ${test_summary}
     printf '{"coverage_pct":%d}' "${_cov_pct:-0}" > "$_cov_tmp" && mv "$_cov_tmp" "$ARTIFACTS_DIR/test-coverage.json" || rm -f "$_cov_tmp"
 
     # Store test results in ruflo for cross-stage context
-    if type ruflo_store >/dev/null 2>&1; then
+    if declare -f ruflo_store >/dev/null 2>&1 && [[ -f "$ARTIFACTS_DIR/test-results.log" ]]; then
         ruflo_store "stage-test-result" \
             "Tests passed. Coverage: ${_cov_pct:-0}%." \
             "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true

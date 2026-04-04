@@ -12,6 +12,8 @@
 # ║      && source "$SCRIPT_DIR/lib/ruflo-adapter.sh" 2>/dev/null || true    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
+VERSION="3.3.0"
+
 # ─── Double-source guard ──────────────────────────────────────────────────────
 [[ -n "${_RUFLO_ADAPTER_LOADED:-}" ]] && return 0
 _RUFLO_ADAPTER_LOADED=1
@@ -19,6 +21,7 @@ _RUFLO_ADAPTER_LOADED=1
 # ─── State ───────────────────────────────────────────────────────────────────
 RUFLO_AVAILABLE=false
 RUFLO_MCP_PID=""
+RUFLO_USE_NPX=false  # true when ruflo is only available via npx (not a local binary)
 
 # ─── Fallback helpers (no-op when helpers.sh is already sourced) ─────────────
 if ! type info >/dev/null 2>&1; then
@@ -31,26 +34,42 @@ if ! type emit_event >/dev/null 2>&1; then
     emit_event() { :; }
 fi
 
+# ─── _ruflo_run — invoke ruflo using the runtime detected at startup ──────────
+# Uses local binary when available; falls back to npx -y ruflo@latest.
+# This ensures the same runtime is used for detection and lifecycle operations.
+_ruflo_run() {
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        npx -y ruflo@latest "$@"
+    else
+        ruflo "$@"
+    fi
+}
+
 # ─── ruflo_detect — detect ruflo availability ────────────────────────────────
 # Fast path: check for local binary first, then fall back to npx.
-# Sets RUFLO_AVAILABLE=true|false.
+# Sets RUFLO_AVAILABLE=true|false and RUFLO_USE_NPX=true|false.
 # Returns 0 if available, 1 if not.
 ruflo_detect() {
-    # Fast path: local binary
+    # Fast path: local binary (~1ms)
     if command -v ruflo >/dev/null 2>&1; then
         RUFLO_AVAILABLE=true
+        RUFLO_USE_NPX=false
         return 0
     fi
 
-    # Fallback: npx (slow, ~5-10s — only runs when no local binary)
+    # Fallback: npx (~5-10s — only runs when no local binary is found)
+    # Note: -y auto-installs ruflo@latest; consider setting RUFLO_NPX_FALLBACK=0
+    # to disable this path in security-sensitive or air-gapped environments.
     if command -v npx >/dev/null 2>&1; then
         if npx -y ruflo@latest mcp status &>/dev/null; then
             RUFLO_AVAILABLE=true
+            RUFLO_USE_NPX=true
             return 0
         fi
     fi
 
     RUFLO_AVAILABLE=false
+    RUFLO_USE_NPX=false
     return 1
 }
 
@@ -69,11 +88,15 @@ ruflo_init() {
     info "Ruflo detected — starting MCP server"
     emit_event "ruflo.init" "available=true"
 
-    # Start MCP server in background
+    # Start MCP server in background using the same runtime as detection
+    # (local binary or npx) to avoid a binary-not-found failure when ruflo
+    # was found via npx but is not installed as a global command.
     if ruflo_available; then
-        ruflo mcp start &>/dev/null &
+        _ruflo_run mcp start &>/dev/null &
         RUFLO_MCP_PID=$!
-        # Brief wait for server readiness
+        # Fixed 2s wait for the MCP server to bind its socket before the
+        # liveness probe below. This is a one-time startup guard, not a
+        # polling loop (testing-baseline: justified bounded sleep).
         sleep 2
 
         # Verify it's still running
@@ -105,20 +128,24 @@ ruflo_cleanup() {
     # Export memory for next run (stub — implemented in Issue 2)
     ruflo_export_memory || true
 
-    # Stop MCP server
+    # Stop MCP server — capture PID before clearing so the event is accurate
     if [[ -n "$RUFLO_MCP_PID" ]]; then
-        kill "$RUFLO_MCP_PID" 2>/dev/null || true
+        local _pid="$RUFLO_MCP_PID"
+        kill "$_pid" 2>/dev/null || true
         RUFLO_MCP_PID=""
-        emit_event "ruflo.mcp_stopped" "pid=$RUFLO_MCP_PID"
+        emit_event "ruflo.mcp_stopped" "pid=$_pid"
     fi
 
     return 0
 }
 
 # ─── ruflo_with_timeout — run a ruflo command with circuit-breaker ────────────
-# On timeout, sets RUFLO_AVAILABLE=false to disable ruflo for the pipeline run.
+# On timeout or failure, sets RUFLO_AVAILABLE=false to disable ruflo for the
+# remainder of the pipeline run.
 # Usage: ruflo_with_timeout <seconds> <command...>
 # Returns 0 on success, 1 on timeout or failure (and disables ruflo).
+# Note: without a system `timeout` binary, the command runs without a time
+# bound — the circuit-breaker still fires on failure but not on hang.
 ruflo_with_timeout() {
     local timeout_s="${1:-30}"
     shift
@@ -135,7 +162,7 @@ ruflo_with_timeout() {
     elif command -v timeout >/dev/null 2>&1; then
         timeout "$timeout_s" "$@" || exit_code=$?
     else
-        # No timeout available — run directly
+        # No timeout binary available — run directly (no wall-clock bound)
         "$@" || exit_code=$?
     fi
 

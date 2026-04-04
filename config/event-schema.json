@@ -217,6 +217,26 @@
     "stage.artifact_miss": {
       "required": ["stage"],
       "optional": ["issue"]
+    },
+    "ruflo.init": {
+      "required": [],
+      "optional": ["available"]
+    },
+    "ruflo.init_failed": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.mcp_started": {
+      "required": ["pid"],
+      "optional": []
+    },
+    "ruflo.mcp_stopped": {
+      "required": ["pid"],
+      "optional": []
+    },
+    "ruflo.circuit_break": {
+      "required": ["exit_code"],
+      "optional": []
     }
   }
 }

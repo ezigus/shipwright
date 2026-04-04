@@ -24,13 +24,15 @@ RUFLO_MCP_PID=""
 RUFLO_USE_NPX=false  # true when ruflo is only available via npx (not a local binary)
 
 # ─── Fallback helpers (no-op when helpers.sh is already sourced) ─────────────
-if ! type info >/dev/null 2>&1; then
+# Use declare -f (not type) to check for shell functions only — type matches
+# external binaries too, and /usr/bin/info exists on Linux.
+if ! declare -f info >/dev/null 2>&1; then
     info()    { echo "▸ $*"; }
 fi
-if ! type warn >/dev/null 2>&1; then
+if ! declare -f warn >/dev/null 2>&1; then
     warn()    { echo "⚠ $*" >&2; }
 fi
-if ! type emit_event >/dev/null 2>&1; then
+if ! declare -f emit_event >/dev/null 2>&1; then
     emit_event() { :; }
 fi
 

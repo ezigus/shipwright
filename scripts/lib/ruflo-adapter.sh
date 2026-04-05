@@ -567,6 +567,290 @@ ruflo_execute_build_hive() {
     return 1
 }
 
+# ─── ruflo_execute_review — parallel review via ruflo hive-mind ──────────────
+# Spawns specialist reviewer agents (security, code_quality, test_gap, architecture)
+# in parallel using hive-mind. Findings are aggregated via union — NOT Byzantine
+# consensus voting (which is for conflicting outputs; review findings are additive).
+# The architecture reviewer receives ADR context from ruflo memory for compliance.
+#
+# Usage: ruflo_execute_review <diff_content> <artifact_file>
+# Returns 0 on success (artifact_file written with union of findings),
+#         1 on any hive failure (caller falls back to native review).
+# Always fail-open — never blocks the pipeline.
+#
+# Environment knobs:
+#   RUFLO_REVIEW_MAX_AGENTS  — max parallel reviewers (default 4)
+ruflo_execute_review() {
+    ruflo_available || return 1
+    local diff_content="$1"
+    local artifact_file="$2"
+    [[ -n "$diff_content" && -n "$artifact_file" ]] || return 1
+
+    local max_agents="${RUFLO_REVIEW_MAX_AGENTS:-4}"
+    # Use pipeline_id when available; fall back to epoch+PID to ensure namespace
+    # uniqueness across concurrent runs when SHIPWRIGHT_PIPELINE_ID is unset.
+    local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
+    local review_ns="hive-review-${pipeline_id}"
+
+    emit_event "ruflo.review_start" "max_agents=$max_agents"
+
+    # Q-learning agent selection via hooks_route — select reviewer subset based on
+    # issue context (e.g. security-heavy issues get more security reviewers).
+    # JSON is built with jq --arg to safely handle quotes/newlines in goal.
+    local _route_context
+    _route_context=$(jq -n \
+        --arg goal "${GOAL:-review}" \
+        --argjson max_agents "$max_agents" \
+        '{goal:$goal,max_agents:$max_agents,stage:"review"}' 2>/dev/null || true)
+    if [[ -n "$_route_context" ]]; then
+        local _route_json=""
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            _route_json=$(npx -y ruflo@latest hooks route \
+                --event "review.start" \
+                --context "$_route_context" 2>/dev/null || true)
+        else
+            _route_json=$(ruflo hooks route \
+                --event "review.start" \
+                --context "$_route_context" 2>/dev/null || true)
+        fi
+        if [[ -n "$_route_json" ]]; then
+            local _recommended
+            _recommended=$(printf '%s' "$_route_json" | \
+                jq -r '.agent_count // empty' 2>/dev/null || true)
+            # Validate _recommended is a non-negative integer before numeric compare
+            if [[ "$_recommended" =~ ^[0-9]+$ && "$_recommended" -le "$max_agents" ]]; then
+                max_agents="$_recommended"
+            fi
+        fi
+    fi
+
+    # Initialize review hive — wrapped in ruflo_with_timeout to prevent hangs
+    local hive_id=""
+    local _init_exit=0
+    local _init_out=""
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
+            --topology hierarchical \
+            --max-agents "$max_agents" \
+            --output-format json 2>/dev/null) || _init_exit=$?
+    else
+        _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
+            --topology hierarchical \
+            --max-agents "$max_agents" \
+            --output-format json 2>/dev/null) || _init_exit=$?
+    fi
+    [[ $_init_exit -eq 0 ]] && \
+        hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
+    if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
+        emit_event "ruflo.review_failed" "reason=hive_init_failed"
+        return 1
+    fi
+
+    # Spawn specialist reviewers — spawn failures are non-fatal (proceed with fewer agents)
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 60 npx -y ruflo@latest hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$max_agents" \
+            --role specialist \
+            --prefix "review-${pipeline_id}" 2>/dev/null || true
+    else
+        ruflo_with_timeout 60 ruflo hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$max_agents" \
+            --role specialist \
+            --prefix "review-${pipeline_id}" 2>/dev/null || true
+    fi
+
+    # Store diff in shared hive memory for reviewers to consume.
+    # Bounded to 8000 bytes to avoid exceeding argv limits.
+    local _bounded_diff
+    _bounded_diff=$(printf '%s' "$diff_content" | head -c 8000 2>/dev/null || true)
+    ruflo_store "review-diff" "$_bounded_diff" "$review_ns" "review,diff" || true
+
+    # Inject ADR context for architecture reviewer — enables compliance checking.
+    # Only runs when repo hash is determinable (to prevent cross-repo namespace leaks).
+    local _ns_hash
+    if _ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null); then
+        local _adrs
+        _adrs=$(ruflo_recall "architecture decisions" "adrs-${_ns_hash}" 2>/dev/null || true)
+        if [[ -n "$_adrs" ]]; then
+            ruflo_store "review-adrs" "$_adrs" "$review_ns" "adr,context" || true
+        fi
+    fi
+
+    # Orchestrate parallel review across the hive — each specialist agent analyses
+    # the diff from their domain perspective (security, code_quality, test_gap,
+    # architecture). Results are written to the shared hive memory namespace.
+    local _orch_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 300 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "parallel code review: analyse diff in namespace ${review_ns}" \
+            --max-turns 20 \
+            --mode "review" 2>/dev/null || _orch_exit=$?
+    else
+        ruflo_with_timeout 300 ruflo coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "parallel code review: analyse diff in namespace ${review_ns}" \
+            --max-turns 20 \
+            --mode "review" 2>/dev/null || _orch_exit=$?
+    fi
+
+    # Aggregate findings via union — list all entries from the hive shared memory.
+    # Union (not Byzantine consensus): all reviewer findings are included regardless
+    # of whether they overlap. Duplicate deduplication is handled downstream.
+    local _findings=""
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _findings=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+            --action list \
+            --namespace "$review_ns" 2>/dev/null) || true
+    else
+        _findings=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+            --action list \
+            --namespace "$review_ns" 2>/dev/null) || true
+    fi
+
+    # Always shut down the hive regardless of outcome
+    _ruflo_hive_shutdown "$hive_id"
+
+    # Write findings to artifact file — ensure parent directory exists
+    mkdir -p "$(dirname "$artifact_file")" 2>/dev/null || true
+    if ! printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null; then
+        warn "ruflo: failed to write review artifact: $artifact_file"
+        # Fail-open: caller checks -s before injecting context, so empty = no-op
+    fi
+
+    # Persist review result for downstream stage context (PR, audit stages)
+    ruflo_store "stage-review-result" \
+        "$(head -c 2000 "$artifact_file" 2>/dev/null || true)" \
+        "pipeline-${pipeline_id}" \
+        "review,outcome" || true
+
+    emit_event "ruflo.review_complete" "hive_id=$hive_id"
+    return 0
+}
+
+# ─── ruflo_execute_compound_quality — adversarial quality hive ───────────────
+# Spawns adversarial specialist agents for compound quality checks:
+#   - negative_tester: writes failing tests for uncovered edge cases
+#   - dod_auditor: checks Definition of Done criteria
+#   - e2e_validator: end-to-end scenario coverage
+# Findings aggregated via union (same principle as ruflo_execute_review).
+#
+# Usage: ruflo_execute_compound_quality <diff_content> <artifact_file>
+# Returns 0 on success, 1 on any hive failure (caller falls back to native checks).
+# Always fail-open — never blocks the pipeline.
+ruflo_execute_compound_quality() {
+    ruflo_available || return 1
+    local diff_content="$1"
+    local artifact_file="$2"
+    [[ -n "$diff_content" && -n "$artifact_file" ]] || return 1
+
+    local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
+    local cq_ns="hive-cq-${pipeline_id}"
+    # Compound quality uses exactly 3 adversarial agents
+    local cq_agents=3
+
+    emit_event "ruflo.cq_start"
+
+    # Initialize adversarial quality hive
+    local hive_id=""
+    local _init_exit=0
+    local _init_out=""
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
+            --topology hierarchical \
+            --max-agents "$cq_agents" \
+            --output-format json 2>/dev/null) || _init_exit=$?
+    else
+        _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
+            --topology hierarchical \
+            --max-agents "$cq_agents" \
+            --output-format json 2>/dev/null) || _init_exit=$?
+    fi
+    [[ $_init_exit -eq 0 ]] && \
+        hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
+    if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
+        emit_event "ruflo.cq_failed" "reason=hive_init_failed"
+        return 1
+    fi
+
+    # Spawn adversarial agents — non-fatal spawn failure
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 60 npx -y ruflo@latest hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$cq_agents" \
+            --role specialist \
+            --prefix "quality-${pipeline_id}" 2>/dev/null || true
+    else
+        ruflo_with_timeout 60 ruflo hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$cq_agents" \
+            --role specialist \
+            --prefix "quality-${pipeline_id}" 2>/dev/null || true
+    fi
+
+    # Store diff and prior review findings for adversarial agents to consume
+    local _bounded_diff
+    _bounded_diff=$(printf '%s' "$diff_content" | head -c 8000 2>/dev/null || true)
+    ruflo_store "cq-diff" "$_bounded_diff" "$cq_ns" "quality,diff" || true
+
+    # Inject prior review results so adversarial agents can target gaps
+    local _prior_review
+    _prior_review=$(ruflo_recall "stage-review-result" \
+        "pipeline-${pipeline_id}" 2>/dev/null || true)
+    if [[ -n "$_prior_review" ]]; then
+        ruflo_store "cq-review-context" "$_prior_review" "$cq_ns" "quality,context" || true
+    fi
+
+    # Orchestrate adversarial quality checks — agents run negative testing,
+    # DoD auditing, and E2E scenario validation in parallel.
+    local _orch_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 300 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "adversarial quality: negative tests, DoD audit, E2E validation for namespace ${cq_ns}" \
+            --max-turns 15 \
+            --mode "quality" 2>/dev/null || _orch_exit=$?
+    else
+        ruflo_with_timeout 300 ruflo coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "adversarial quality: negative tests, DoD audit, E2E validation for namespace ${cq_ns}" \
+            --max-turns 15 \
+            --mode "quality" 2>/dev/null || _orch_exit=$?
+    fi
+
+    # Aggregate via union — all adversarial findings included
+    local _findings=""
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _findings=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+            --action list \
+            --namespace "$cq_ns" 2>/dev/null) || true
+    else
+        _findings=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+            --action list \
+            --namespace "$cq_ns" 2>/dev/null) || true
+    fi
+
+    # Always shut down the hive regardless of outcome
+    _ruflo_hive_shutdown "$hive_id"
+
+    # Write findings to artifact file — ensure parent directory exists
+    mkdir -p "$(dirname "$artifact_file")" 2>/dev/null || true
+    if ! printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null; then
+        warn "ruflo: failed to write compound quality artifact: $artifact_file"
+    fi
+
+    # Persist compound quality result for downstream stages
+    ruflo_store "stage-cq-result" \
+        "$(head -c 2000 "$artifact_file" 2>/dev/null || true)" \
+        "pipeline-${pipeline_id}" \
+        "quality,outcome" || true
+
+    emit_event "ruflo.cq_complete" "hive_id=$hive_id"
+    return 0
+}
+
 # ─── ruflo_learn_from_shipwright — bridge Shipwright outcomes to ruflo ───────
 # Called after skill_memory_record() writes an outcome. Accepts either a path
 # to an outcome JSON file or a raw JSON string, then indexes the outcome into

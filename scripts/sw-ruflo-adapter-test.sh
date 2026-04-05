@@ -823,4 +823,200 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ruflo_execute_review tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Test: ruflo_execute_review returns 1 (exact) when ruflo unavailable
+unset _RUFLO_ADAPTER_LOADED
+RUFLO_AVAILABLE=false
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+exit_code=0
+ruflo_execute_review "diff content" "$_test_tmp/review-out.md" || exit_code=$?
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_review returns 1 when ruflo unavailable"
+else
+    assert_fail "ruflo_execute_review returns 1 when ruflo unavailable" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_review returns 1 (exact) when diff_content is empty
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+exit_code=0
+ruflo_execute_review "" "$_test_tmp/review-out.md" || exit_code=$?
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_review returns 1 when diff_content is empty"
+else
+    assert_fail "ruflo_execute_review returns 1 when diff_content is empty" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_review returns 1 (exact) when hive init fails (binary exits non-zero)
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_orig_path="$PATH"
+mock_binary "ruflo" 'exit 1'
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+exit_code=0
+ruflo_execute_review "diff content here" "$_test_tmp/review-out.md" || exit_code=$?
+PATH="$_orig_path"
+rm -f "$TEST_TEMP_DIR/bin/ruflo"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_review returns 1 when hive init fails"
+else
+    assert_fail "ruflo_execute_review returns 1 when hive init fails" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_review returns 0 and writes artifact on success
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+subcmd="${1:-}"
+if [[ "$subcmd" == "hive-mind" && "${2:-}" == "init" ]]; then
+    printf '{"hive_id":"review-hive-789"}\n'
+    exit 0
+fi
+if [[ "$subcmd" == "hive-mind" && "${2:-}" == "memory" ]]; then
+    printf 'review-diff: <diff content stored>\nreview-adrs: <adr context>\n'
+    exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+_artifact="$_test_tmp/review-result.md"
+exit_code=0
+ruflo_execute_review "diff content here" "$_artifact" || exit_code=$?
+# Check exit code and artifact before cleanup
+_artifact_exists=false
+_artifact_nonempty=false
+[[ -f "$_artifact" ]] && _artifact_exists=true
+[[ -s "$_artifact" ]] && _artifact_nonempty=true
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_execute_review returns 0 on success"
+else
+    assert_fail "ruflo_execute_review returns 0 on success" "got exit=$exit_code"
+fi
+if [[ "$_artifact_exists" == "true" ]]; then
+    assert_pass "ruflo_execute_review writes artifact file on success"
+else
+    assert_fail "ruflo_execute_review writes artifact file on success" "artifact missing"
+fi
+if [[ "$_artifact_nonempty" == "true" ]]; then
+    assert_pass "ruflo_execute_review writes non-empty artifact on success"
+else
+    assert_fail "ruflo_execute_review writes non-empty artifact on success" "artifact empty"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ruflo_execute_compound_quality tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Test: ruflo_execute_compound_quality returns 1 (exact) when ruflo unavailable
+unset _RUFLO_ADAPTER_LOADED
+RUFLO_AVAILABLE=false
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+exit_code=0
+ruflo_execute_compound_quality "diff content" "$_test_tmp/cq-out.md" || exit_code=$?
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_compound_quality returns 1 when ruflo unavailable"
+else
+    assert_fail "ruflo_execute_compound_quality returns 1 when ruflo unavailable" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_compound_quality returns 1 (exact) when diff_content is empty
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+exit_code=0
+ruflo_execute_compound_quality "" "$_test_tmp/cq-out.md" || exit_code=$?
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_compound_quality returns 1 when diff_content is empty"
+else
+    assert_fail "ruflo_execute_compound_quality returns 1 when diff_content is empty" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_compound_quality returns 1 (exact) when hive init fails
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_orig_path="$PATH"
+mock_binary "ruflo" 'exit 1'
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+exit_code=0
+ruflo_execute_compound_quality "diff content here" "$_test_tmp/cq-out.md" || exit_code=$?
+PATH="$_orig_path"
+rm -f "$TEST_TEMP_DIR/bin/ruflo"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_compound_quality returns 1 when hive init fails"
+else
+    assert_fail "ruflo_execute_compound_quality returns 1 when hive init fails" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_compound_quality returns 0 and writes artifact on success
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+subcmd="${1:-}"
+if [[ "$subcmd" == "hive-mind" && "${2:-}" == "init" ]]; then
+    printf '{"hive_id":"cq-hive-999"}\n'
+    exit 0
+fi
+if [[ "$subcmd" == "hive-mind" && "${2:-}" == "memory" ]]; then
+    printf 'cq-diff: <diff stored>\ncq-review-context: <review>\n'
+    exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+_artifact="$_test_tmp/cq-result.md"
+exit_code=0
+ruflo_execute_compound_quality "diff content here" "$_artifact" || exit_code=$?
+# Check exit code and artifact before cleanup
+_cq_artifact_exists=false
+_cq_artifact_nonempty=false
+[[ -f "$_artifact" ]] && _cq_artifact_exists=true
+[[ -s "$_artifact" ]] && _cq_artifact_nonempty=true
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_execute_compound_quality returns 0 on success"
+else
+    assert_fail "ruflo_execute_compound_quality returns 0 on success" "got exit=$exit_code"
+fi
+if [[ "$_cq_artifact_exists" == "true" ]]; then
+    assert_pass "ruflo_execute_compound_quality writes artifact file on success"
+else
+    assert_fail "ruflo_execute_compound_quality writes artifact file on success" "artifact missing"
+fi
+if [[ "$_cq_artifact_nonempty" == "true" ]]; then
+    assert_pass "ruflo_execute_compound_quality writes non-empty artifact on success"
+else
+    assert_fail "ruflo_execute_compound_quality writes non-empty artifact on success" "artifact empty"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

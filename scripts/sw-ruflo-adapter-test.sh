@@ -1197,7 +1197,7 @@ else
 fi
 
 print_test_section "CI workflow — ruflo install step has continue-on-error"
-if grep -A5 "Install ruflo" "$_PIPELINE_YML" 2>/dev/null | grep -q "continue-on-error: true"; then
+if grep -A15 "Install ruflo" "$_PIPELINE_YML" 2>/dev/null | grep -q "continue-on-error: true"; then
     assert_pass "ruflo install step has continue-on-error: true"
 else
     assert_fail "ruflo install step has continue-on-error: true" "not found"
@@ -1208,6 +1208,13 @@ if grep -q "Restore ruflo memory" "$_PIPELINE_YML" 2>/dev/null; then
     assert_pass "shipwright-pipeline.yml contains ruflo memory cache restore step"
 else
     assert_fail "shipwright-pipeline.yml contains ruflo memory cache restore step" "not found"
+fi
+
+print_test_section "CI workflow — cache restore uses cache/restore@v4 (not cache@v4)"
+if grep -A3 "Restore ruflo memory" "$_PIPELINE_YML" 2>/dev/null | grep -q "cache/restore@v4"; then
+    assert_pass "restore step uses actions/cache/restore@v4 (no implicit post-job save)"
+else
+    assert_fail "restore step uses actions/cache/restore@v4 (no implicit post-job save)" "not found"
 fi
 
 print_test_section "CI workflow — ruflo memory cache save step present"

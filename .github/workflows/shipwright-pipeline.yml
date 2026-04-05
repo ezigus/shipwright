@@ -397,7 +397,7 @@ jobs:
           npm link
 
       - name: Restore ruflo memory cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .claude-flow/data/
           key: ruflo-memory-${{ github.repository }}-${{ github.run_number }}
@@ -407,8 +407,18 @@ jobs:
 
       - name: Install ruflo (optional — pipeline falls back gracefully if unavailable)
         run: |
-          npm install -g @claude-flow/cli@latest 2>/dev/null || true
-          ruflo doctor --fix 2>/dev/null || true
+          _ruflo_install_err="$(mktemp)"
+          _ruflo_doctor_err="$(mktemp)"
+          if ! npm install -g @claude-flow/cli@latest 2>"$_ruflo_install_err"; then
+            echo "::warning::Failed to install ruflo — pipeline will run without it"
+            cat "$_ruflo_install_err"
+            exit 1
+          fi
+          if ! ruflo doctor --fix 2>"$_ruflo_doctor_err"; then
+            echo "::warning::ruflo doctor --fix failed — pipeline will run without ruflo"
+            cat "$_ruflo_doctor_err"
+            exit 1
+          fi
         continue-on-error: true
 
       - name: Pre-flight auth check
@@ -850,6 +860,10 @@ jobs:
               -d "{\"type\":\"ci.pipeline_completed\",\"issue\":${ISSUE_NUMBER},\"run_id\":\"${{ github.run_id }}\",\"result\":\"${RESULT}\",\"template\":\"${TEMPLATE}\"}" \
               2>/dev/null || true
           fi
+
+      - name: Ensure ruflo memory cache dir exists
+        if: always() && steps.claim_check.outputs.skip != 'true'
+        run: mkdir -p .claude-flow/data/
 
       - name: Save ruflo memory cache
         if: always() && steps.claim_check.outputs.skip != 'true'

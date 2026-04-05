@@ -740,14 +740,16 @@ fi
 
 # Test: ruflo_execute_build_hive returns 1 when hive init fails (binary exits non-zero)
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d)
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_orig_path="$PATH"
 mock_binary "ruflo" 'exit 1'
-PATH="$_test_tmp:$PATH"
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
 RUFLO_USE_NPX=false
 exit_code=0
 ruflo_execute_build_hive "build the feature" 5 || exit_code=$?
+PATH="$_orig_path"
+rm -f "$TEST_TEMP_DIR/bin/ruflo"
 rm -rf "$_test_tmp"
 if [[ $exit_code -ne 0 ]]; then
     assert_pass "ruflo_execute_build_hive returns 1 when hive init fails"
@@ -757,7 +759,7 @@ fi
 
 # Test: ruflo_execute_build_hive returns 0 when orchestration succeeds
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d)
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
 # Write mock directly (single-quoted heredoc) so $1/$2 are not expanded at write time
 cat > "$_test_tmp/ruflo" <<'MOCK'
 #!/usr/bin/env bash
@@ -775,6 +777,7 @@ RUFLO_AVAILABLE=true
 RUFLO_USE_NPX=false
 exit_code=0
 ruflo_execute_build_hive "build the feature" 5 || exit_code=$?
+PATH="${PATH#"$_test_tmp:"}"
 rm -rf "$_test_tmp"
 if [[ $exit_code -eq 0 ]]; then
     assert_pass "ruflo_execute_build_hive returns 0 on successful orchestration"
@@ -784,7 +787,7 @@ fi
 
 # Test: ruflo_execute_build_hive respects RUFLO_HIVE_MAX_AGENTS cap
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d)
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
 _agent_count_file="$_test_tmp/agent-count.txt"
 # Write mock directly; expand $_agent_count_file at write time (outer heredoc unquoted)
 cat > "$_test_tmp/ruflo" <<MOCK
@@ -811,6 +814,7 @@ RUFLO_HIVE_MAX_AGENTS=2
 ruflo_execute_build_hive "build the feature" 5 || true
 recorded_count=$(cat "$_agent_count_file" 2>/dev/null || echo "0")
 unset RUFLO_HIVE_MAX_AGENTS
+PATH="${PATH#"$_test_tmp:"}"
 rm -rf "$_test_tmp"
 if [[ "$recorded_count" == "2" ]]; then
     assert_pass "ruflo_execute_build_hive respects RUFLO_HIVE_MAX_AGENTS cap"

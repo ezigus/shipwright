@@ -412,7 +412,7 @@ ${_skill_prompts}
     # Ruflo hive-mind build: when RUFLO_HIVE_BUILD=true and agents>1, try hive first.
     # Three-tier fallback: hive → single-agent → sw loop. Fail-open by design.
     if [[ "${RUFLO_HIVE_BUILD:-false}" == "true" ]] && \
-       [[ "${agents:-1}" -gt 1 ]] && \
+       { [[ "${agents:-1}" -gt 1 ]] 2>/dev/null || false; } && \
        declare -f ruflo_execute_build_hive >/dev/null 2>&1 && \
        declare -f ruflo_available >/dev/null 2>&1 && \
        ruflo_available; then

@@ -407,15 +407,20 @@ ruflo_execute_build_single() {
 # ─── _ruflo_hive_shutdown — tear down a hive-mind session safely ─────────────
 # Sends shutdown to the hive identified by $1. Swallows errors — cleanup is
 # best-effort only; the pipeline must not fail on teardown failure.
+# Uses ruflo_with_timeout with a short bound so a hung ruflo can't stall the
+# pipeline during cleanup.
 # Always returns 0.
 _ruflo_hive_shutdown() {
     local hive_id="${1:-}"
     [[ -n "$hive_id" ]] || return 0
+    local _shutdown_timeout="${RUFLO_HIVE_SHUTDOWN_TIMEOUT_SECONDS:-15}"
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        npx -y ruflo@latest hive-mind shutdown --hive-id "$hive_id" \
+        ruflo_with_timeout "$_shutdown_timeout" \
+            npx -y ruflo@latest hive-mind shutdown --hive-id "$hive_id" \
             >/dev/null 2>&1 || true
     else
-        ruflo hive-mind shutdown --hive-id "$hive_id" \
+        ruflo_with_timeout "$_shutdown_timeout" \
+            ruflo hive-mind shutdown --hive-id "$hive_id" \
             >/dev/null 2>&1 || true
     fi
     return 0
@@ -451,25 +456,33 @@ ruflo_execute_build_hive() {
 
     # Q-learning agent selection: ask hooks_route for recommended agent count/
     # topology based on historical performance. Use defaults on any failure.
-    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        local _route_json
-        _route_json=$(npx -y ruflo@latest hooks route \
-            --event "build.start" \
-            --context "{\"goal\":\"$goal\",\"max_agents\":$max_agents}" \
-            2>/dev/null || true)
-    else
-        local _route_json
-        _route_json=$(ruflo hooks route \
-            --event "build.start" \
-            --context "{\"goal\":\"$goal\",\"max_agents\":$max_agents}" \
-            2>/dev/null || true)
+    # JSON is built with jq --arg to safely handle quotes/newlines in goal.
+    local _route_context
+    _route_context=$(jq -n \
+        --arg goal "$goal" \
+        --argjson max_agents "$max_agents" \
+        '{goal:$goal,max_agents:$max_agents}' 2>/dev/null || true)
+    local _route_json=""
+    if [[ -n "$_route_context" ]]; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            _route_json=$(npx -y ruflo@latest hooks route \
+                --event "build.start" \
+                --context "$_route_context" \
+                2>/dev/null || true)
+        else
+            _route_json=$(ruflo hooks route \
+                --event "build.start" \
+                --context "$_route_context" \
+                2>/dev/null || true)
+        fi
     fi
 
     if [[ -n "$_route_json" ]]; then
         local _recommended_agents
         _recommended_agents=$(printf '%s' "$_route_json" | \
             jq -r '.agent_count // empty' 2>/dev/null || true)
-        if [[ -n "$_recommended_agents" && "$_recommended_agents" -le "$max_agents" ]]; then
+        # Validate _recommended_agents is a non-negative integer before numeric compare
+        if [[ "$_recommended_agents" =~ ^[0-9]+$ && "$_recommended_agents" -le "$max_agents" ]]; then
             max_agents="$_recommended_agents"
         fi
         local _recommended_topology
@@ -478,30 +491,32 @@ ruflo_execute_build_hive() {
         [[ -n "$_recommended_topology" ]] && topology="$_recommended_topology"
     fi
 
-    # Initialize the hive-mind session
+    # Initialize the hive-mind session — wrapped in ruflo_with_timeout so a hung
+    # init command doesn't stall the build stage indefinitely.
     local hive_id=""
+    local _init_out
     local _init_exit=0
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        hive_id=$(npx -y ruflo@latest hive-mind init \
+        _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
             --topology "$topology" \
             --max-agents "$max_agents" \
-            --output-format json 2>/dev/null | \
-            jq -r '.hive_id // empty' 2>/dev/null) || _init_exit=$?
+            --output-format json 2>/dev/null) || _init_exit=$?
     else
-        hive_id=$(ruflo hive-mind init \
+        _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
             --topology "$topology" \
             --max-agents "$max_agents" \
-            --output-format json 2>/dev/null | \
-            jq -r '.hive_id // empty' 2>/dev/null) || _init_exit=$?
+            --output-format json 2>/dev/null) || _init_exit=$?
     fi
+    [[ $_init_exit -eq 0 ]] && \
+        hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
 
     if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
         emit_event "ruflo.hive_init_failed" "topology=$topology"
         return 1
     fi
 
-    # Spawn worker agents — spawn failures are non-fatal (hive proceeds with
-    # however many agents successfully joined before the failure)
+    # Spawn worker agents — spawn failures are fatal: any non-zero exit triggers
+    # hive shutdown and causes the function to return 1 (caller falls back).
     local _spawn_exit=0
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
         ruflo_with_timeout 60 npx -y ruflo@latest hive-mind spawn \

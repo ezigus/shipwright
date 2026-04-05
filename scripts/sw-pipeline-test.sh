@@ -356,7 +356,10 @@ reset_test() {
 
 cleanup_env() {
     if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
-        rm -rf "$TEST_TEMP_DIR"
+        # npm/npx may write read-only files into $TEST_TEMP_DIR/.npm when HOME
+        # is redirected to the temp dir. chmod first to allow removal on macOS.
+        chmod -R u+rwx "$TEST_TEMP_DIR" 2>/dev/null || true
+        rm -rf "$TEST_TEMP_DIR" || true
     fi
 }
 _test_cleanup_hook() { cleanup_env; }

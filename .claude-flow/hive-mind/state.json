@@ -1,0 +1,36 @@
+{
+  "initialized": true,
+  "topology": "hierarchical",
+  "workers": [
+    "w311-1775417873363-ec0g",
+    "w311-1775417873363-wuis",
+    "w311-1775417873364-iyuf",
+    "w311-1775417873364-3lk3",
+    "specialist-1775425371976-1kjl",
+    "specialist-1775425371976-y49r",
+    "specialist-1775425371976-0tk2",
+    "specialist-1775425371976-d3li"
+  ],
+  "consensus": {
+    "pending": [],
+    "history": []
+  },
+  "sharedMemory": {
+    "broadcasts": [
+      {
+        "messageId": "msg-1775417919407-ceixus",
+        "message": "Issue #311: ruflo execution layer + project defaults. Workers: (ec0g)=architecture, (wuis)=security, (iyuf)=code-quality, (3lk3)=test-gaps. Key design: ruflo_load_defaults() reads .shipwright/defaults.json or ~/.shipwright/defaults.json, called from ruflo_init(). Variables: RUFLO_MAX_AGENTS, RUFLO_COST_BUDGET_MULTIPLIER, RUFLO_CIRCUIT_BREAKER_TIMEOUT, RUFLO_LEARNING_BRIDGE, RUFLO_Q_LEARNING. Daemon activates ruflo within user template - no template switch. Stage-level ruflo_mode from template config. All existing templates work when ruflo absent.",
+        "priority": "high",
+        "fromId": "queen-311",
+        "timestamp": "2026-04-05T19:38:39.407Z"
+      }
+    ]
+  },
+  "createdAt": "2026-04-05T21:42:49.168Z",
+  "updatedAt": "2026-04-05T21:42:51.977Z",
+  "queen": {
+    "agentId": "queen-312",
+    "electedAt": "2026-04-05T21:42:49.170Z",
+    "term": 1
+  }
+}

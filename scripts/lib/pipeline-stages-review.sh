@@ -520,10 +520,12 @@ stage_compound_quality() {
         echo "$_cq_retry_hints" >> "${ARTIFACTS_DIR}/.compound-quality-skills.md" 2>/dev/null || true
     fi
 
-    # Ruflo adversarial quality hive — runs before native compound quality checks.
-    # Spawns negative_tester, dod_auditor, and e2e_validator agents in parallel.
-    # Findings augment the compound_log. Fail-open: native checks always run.
+    # Ruflo adversarial quality hive — run early to collect parallel findings.
+    # Writes to a separate file; findings are appended to compound_log AFTER
+    # compound_log is declared and initialized below (avoids unbound-variable
+    # error under set -u and prevents `: > "$compound_log"` from wiping findings).
     local _hive_cq_file="$ARTIFACTS_DIR/cq-hive-context.md"
+    local _hive_cq_ok=false
     if declare -f ruflo_execute_compound_quality >/dev/null 2>&1 && \
        declare -f ruflo_available >/dev/null 2>&1 && \
        ruflo_available; then
@@ -532,9 +534,7 @@ stage_compound_quality() {
         if [[ -n "$_cq_diff_content" ]] && \
            ruflo_execute_compound_quality "$_cq_diff_content" "$_hive_cq_file"; then
             info "Ruflo adversarial quality hive complete"
-            if [[ -s "$_hive_cq_file" ]]; then
-                cat "$_hive_cq_file" >> "$compound_log" 2>/dev/null || true
-            fi
+            _hive_cq_ok=true
         else
             warn "Ruflo compound quality hive failed — continuing with native checks"
             emit_event "ruflo.cq_fallback" "reason=hive_failed" || true
@@ -556,6 +556,11 @@ stage_compound_quality() {
     local pass_count=0 fail_count=0 total=0
     local compound_log="$ARTIFACTS_DIR/compound-quality.log"
     : > "$compound_log"
+
+    # Append ruflo hive findings now that compound_log is declared and initialized
+    if [[ "$_hive_cq_ok" == "true" && -s "$_hive_cq_file" ]]; then
+        cat "$_hive_cq_file" >> "$compound_log" 2>/dev/null || true
+    fi
 
     # ── Adversarial review ──
     if [[ "$do_adversarial" == "true" ]]; then

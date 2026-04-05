@@ -285,6 +285,30 @@
     "ruflo.build_fallback": {
       "required": ["reason"],
       "optional": []
+    },
+    "ruflo.hive_build_start": {
+      "required": ["max_agents", "topology", "max_turns"],
+      "optional": []
+    },
+    "ruflo.hive_build_complete": {
+      "required": ["hive_id", "agents", "topology"],
+      "optional": []
+    },
+    "ruflo.hive_build_failed": {
+      "required": ["hive_id", "exit_code"],
+      "optional": []
+    },
+    "ruflo.hive_build_fallback": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.hive_init_failed": {
+      "required": ["topology"],
+      "optional": []
+    },
+    "ruflo.hive_spawn_failed": {
+      "required": ["hive_id"],
+      "optional": []
     }
   }
 }

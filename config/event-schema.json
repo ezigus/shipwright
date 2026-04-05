@@ -341,6 +341,10 @@
     "ruflo.cq_fallback": {
       "required": ["reason"],
       "optional": []
+    },
+    "ruflo.defaults_loaded": {
+      "required": ["file"],
+      "optional": ["max_agents"]
     }
   }
 }

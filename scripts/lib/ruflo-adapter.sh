@@ -92,10 +92,70 @@ ruflo_available() {
     [[ "${RUFLO_AVAILABLE:-false}" == "true" ]]
 }
 
+# ─── ruflo_load_defaults — load project-level ruflo config ───────────────────
+# Reads .shipwright/defaults.json (repo-local, higher priority) or
+# ~/.shipwright/defaults.json (user-global fallback) and exports config vars.
+# No-op when neither file exists. Always returns 0 (fail-open).
+# Variables exported when present in the file:
+#   RUFLO_MAX_AGENTS            — hard cap on parallel agents across all hives
+#   RUFLO_COST_BUDGET_MULTIPLIER — multiplier applied to per-stage cost budget
+#   RUFLO_CIRCUIT_BREAKER_TIMEOUT — default ruflo_with_timeout seconds
+#   RUFLO_LEARNING_BRIDGE       — enable/disable ruflo<->Shipwright learning bridge
+#   RUFLO_Q_LEARNING            — enable/disable Q-learning agent router
+ruflo_load_defaults() {
+    local _repo_defaults=".shipwright/defaults.json"
+    local _user_defaults="$HOME/.shipwright/defaults.json"
+    local _defaults_file=""
+
+    if [[ -f "$_repo_defaults" ]]; then
+        _defaults_file="$_repo_defaults"
+    elif [[ -f "$_user_defaults" ]]; then
+        _defaults_file="$_user_defaults"
+    fi
+
+    [[ -n "$_defaults_file" ]] || return 0
+
+    # Parse each key using select(. != null) rather than // empty because jq's
+    # alternative operator treats boolean false as falsy and returns empty for
+    # learning_bridge: false, which would leave the variable unset.
+    # select(. != null) correctly passes false through while filtering null/missing.
+    local _v
+    # Validate integer fields: only export if value is a non-negative integer to
+    # prevent a non-integer (string/float) from being passed to ruflo_with_timeout
+    # or hive agent count, which would cause unexpected errors.
+    _v=$(jq -r '.ruflo.max_agents | select(. != null)' "$_defaults_file" 2>/dev/null || true)
+    if [[ -n "$_v" ]] && [[ "$_v" =~ ^[0-9]+$ ]]; then
+        RUFLO_MAX_AGENTS="$_v"; export RUFLO_MAX_AGENTS
+    fi
+
+    _v=$(jq -r '.ruflo.cost_budget_multiplier | select(. != null)' "$_defaults_file" 2>/dev/null || true)
+    [[ -n "$_v" ]] && { RUFLO_COST_BUDGET_MULTIPLIER="$_v"; export RUFLO_COST_BUDGET_MULTIPLIER; }
+
+    _v=$(jq -r '.ruflo.circuit_breaker_timeout_s | select(. != null)' "$_defaults_file" 2>/dev/null || true)
+    if [[ -n "$_v" ]] && [[ "$_v" =~ ^[0-9]+$ ]]; then
+        RUFLO_CIRCUIT_BREAKER_TIMEOUT="$_v"; export RUFLO_CIRCUIT_BREAKER_TIMEOUT
+    fi
+
+    _v=$(jq -r '(.ruflo.learning_bridge | select(. != null)) | tostring' "$_defaults_file" 2>/dev/null || true)
+    [[ -n "$_v" ]] && { RUFLO_LEARNING_BRIDGE="$_v"; export RUFLO_LEARNING_BRIDGE; }
+
+    _v=$(jq -r '(.ruflo.q_learning_routing | select(. != null)) | tostring' "$_defaults_file" 2>/dev/null || true)
+    [[ -n "$_v" ]] && { RUFLO_Q_LEARNING="$_v"; export RUFLO_Q_LEARNING; }
+
+    emit_event "ruflo.defaults_loaded" \
+        "file=$_defaults_file" \
+        "max_agents=${RUFLO_MAX_AGENTS:-default}" || true
+    return 0
+}
+
 # ─── ruflo_init — initialize ruflo at pipeline start ─────────────────────────
 # Detects ruflo, starts MCP server in background, imports memory (stub).
 # No-op if ruflo is unavailable. Always returns 0.
 ruflo_init() {
+    # Load project/user defaults before detection so env vars are set before
+    # the MCP server starts and before any hive function reads them.
+    ruflo_load_defaults || true
+
     ruflo_detect || return 0
 
     info "Ruflo detected — starting MCP server"
@@ -197,7 +257,7 @@ ruflo_with_timeout() {
 ruflo_store() {
     ruflo_available || return 0
     local key="$1" value="$2" namespace="${3:-default}" tags="${4:-}"
-    ruflo_with_timeout 10 _ruflo_run_quiet memory store \
+    ruflo_with_timeout "${RUFLO_CIRCUIT_BREAKER_TIMEOUT:-10}" _ruflo_run_quiet memory store \
         --key "$key" --value "$value" --namespace "$namespace" \
         ${tags:+--tags "$tags"} || true
 }
@@ -210,7 +270,7 @@ ruflo_store() {
 ruflo_recall() {
     ruflo_available || { echo ""; return 0; }
     local query="$1" namespace="${2:-default}"
-    ruflo_with_timeout 10 _ruflo_run_quiet memory search \
+    ruflo_with_timeout "${RUFLO_CIRCUIT_BREAKER_TIMEOUT:-10}" _ruflo_run_quiet memory search \
         --query "$query" --namespace "$namespace" --limit 3 || echo ""
 }
 
@@ -426,7 +486,8 @@ ruflo_execute_build_hive() {
     local max_turns="${2:-30}"
     [[ -n "$goal" ]] || return 1
 
-    local max_agents="${RUFLO_HIVE_MAX_AGENTS:-4}"
+    # RUFLO_HIVE_MAX_AGENTS (function-level) overrides RUFLO_MAX_AGENTS (global default)
+    local max_agents="${RUFLO_HIVE_MAX_AGENTS:-${RUFLO_MAX_AGENTS:-4}}"
     local topology="${RUFLO_HIVE_TOPOLOGY:-hierarchical}"
 
     emit_event "ruflo.hive_build_start" \
@@ -564,7 +625,8 @@ ruflo_execute_review() {
     local artifact_file="$2"
     [[ -n "$diff_content" && -n "$artifact_file" ]] || return 1
 
-    local max_agents="${RUFLO_REVIEW_MAX_AGENTS:-4}"
+    # RUFLO_REVIEW_MAX_AGENTS (function-level) overrides RUFLO_MAX_AGENTS (global default)
+    local max_agents="${RUFLO_REVIEW_MAX_AGENTS:-${RUFLO_MAX_AGENTS:-4}}"
     # Use pipeline_id when available; fall back to epoch+PID to ensure namespace
     # uniqueness across concurrent runs when SHIPWRIGHT_PIPELINE_ID is unset.
     local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
@@ -726,8 +788,8 @@ ruflo_execute_compound_quality() {
 
     local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
     local cq_ns="hive-cq-${pipeline_id}"
-    # Compound quality uses exactly 3 adversarial agents
-    local cq_agents=3
+    # Adversarial quality agents: RUFLO_CQ_MAX_AGENTS > RUFLO_MAX_AGENTS > default(3)
+    local cq_agents="${RUFLO_CQ_MAX_AGENTS:-${RUFLO_MAX_AGENTS:-3}}"
 
     emit_event "ruflo.cq_start"
 

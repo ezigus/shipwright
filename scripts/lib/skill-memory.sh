@@ -96,8 +96,9 @@ skill_memory_record() {
     # Bridge: index outcome in ruflo for vector-similarity search
     # (additive — does not replace Shipwright's file-based recording)
     if declare -f ruflo_learn_from_shipwright >/dev/null 2>&1; then
-        # Create temporary outcome file for ruflo to consume
-        local _outcome_file="${TMPDIR:-/tmp}/skill-outcome-$$.json"
+        # Use mktemp for a collision-safe, unpredictable temp path
+        local _outcome_file
+        _outcome_file=$(mktemp "${TMPDIR:-/tmp}/skill-outcome-XXXXXX.json")
         printf '{"issue_type":"%s","stage":"%s","skills":"%s","outcome":"%s"}\n' \
             "$issue_type" "$stage" "$skills_used" "$outcome" > "$_outcome_file"
         ruflo_learn_from_shipwright "$_outcome_file" 2>/dev/null || true

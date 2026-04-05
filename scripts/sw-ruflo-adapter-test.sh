@@ -115,7 +115,6 @@ rm -f "$TEST_TEMP_DIR/bin/ruflo"
 mock_binary "npx" 'exit 1'
 
 RUFLO_AVAILABLE=false
-RUFLO_MCP_PID=""
 
 exit_code=0
 ruflo_init || exit_code=$?
@@ -126,54 +125,54 @@ else
     assert_fail "ruflo_init exits 0 when ruflo unavailable" "got exit code: $exit_code"
 fi
 
-if [[ -z "$RUFLO_MCP_PID" ]]; then
-    assert_pass "ruflo_init sets no MCP PID when ruflo unavailable"
+if [[ "$RUFLO_AVAILABLE" == "false" ]]; then
+    assert_pass "ruflo_init leaves RUFLO_AVAILABLE=false when ruflo unavailable"
 else
-    assert_fail "ruflo_init sets no MCP PID when ruflo unavailable" "got: $RUFLO_MCP_PID"
+    assert_fail "ruflo_init leaves RUFLO_AVAILABLE=false when ruflo unavailable" "got: $RUFLO_AVAILABLE"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 6: ruflo_cleanup no-op when RUFLO_MCP_PID is empty
+# Test 6: ruflo_cleanup no-op when RUFLO_AVAILABLE=false
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_cleanup — no active PID"
+print_test_section "ruflo_cleanup — ruflo unavailable"
 
-RUFLO_MCP_PID=""
+RUFLO_AVAILABLE=false
 exit_code=0
 ruflo_cleanup || exit_code=$?
 
 if [[ $exit_code -eq 0 ]]; then
-    assert_pass "ruflo_cleanup exits 0 when no MCP PID"
+    assert_pass "ruflo_cleanup exits 0 when RUFLO_AVAILABLE=false"
 else
-    assert_fail "ruflo_cleanup exits 0 when no MCP PID" "got exit code: $exit_code"
+    assert_fail "ruflo_cleanup exits 0 when RUFLO_AVAILABLE=false" "got exit code: $exit_code"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 7: ruflo_cleanup kills MCP PID
+# Test 7: ruflo_cleanup calls ruflo stop when available
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_cleanup — kills MCP process"
+print_test_section "ruflo_cleanup — calls ruflo stop"
 
-# Start a background process to simulate MCP server
-sleep 100 &
-fake_pid=$!
+# Mock ruflo: record calls so we can verify `stop` was invoked
+_cleanup_call_log="$TEST_TEMP_DIR/cleanup-calls.txt"
+rm -f "$_cleanup_call_log"
+mock_binary "ruflo" "echo \"\$*\" >> '$_cleanup_call_log'; exit 0"
 
-RUFLO_MCP_PID="$fake_pid"
-ruflo_cleanup || true
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
 
-# Reap zombie so kill -0 accurately reflects process state
-wait "$fake_pid" 2>/dev/null || true
+exit_code=0
+ruflo_cleanup || exit_code=$?
 
-if ! kill -0 "$fake_pid" 2>/dev/null; then
-    assert_pass "ruflo_cleanup kills the MCP process"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_cleanup exits 0 when ruflo available"
 else
-    # Clean up if still running
-    kill "$fake_pid" 2>/dev/null || true
-    assert_fail "ruflo_cleanup kills the MCP process" "process $fake_pid still running"
+    assert_fail "ruflo_cleanup exits 0 when ruflo available" "got exit code: $exit_code"
 fi
 
-if [[ -z "$RUFLO_MCP_PID" ]]; then
-    assert_pass "ruflo_cleanup clears RUFLO_MCP_PID after kill"
+if grep -q "^stop" "$_cleanup_call_log" 2>/dev/null; then
+    assert_pass "ruflo_cleanup calls ruflo stop"
 else
-    assert_fail "ruflo_cleanup clears RUFLO_MCP_PID after kill" "got: $RUFLO_MCP_PID"
+    assert_fail "ruflo_cleanup calls ruflo stop" "stop not found in call log: $(cat "$_cleanup_call_log" 2>/dev/null)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -361,6 +360,100 @@ else
     # Log the state for visibility but do not fail the suite on platform-dependent zombie timing.
     assert_pass "ruflo_init fail-open: RUFLO_AVAILABLE=$RUFLO_AVAILABLE (zombie reaping is platform-dependent)"
 fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 14: ruflo_learn_from_shipwright — indexes outcome file into ruflo
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_learn_from_shipwright — indexes outcome file"
+
+# Mock ruflo that records calls to a log file
+mock_binary "ruflo" 'echo "$@" >> "'"$TEST_TEMP_DIR"'/ruflo-calls.log"; exit 0'
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+REPO_HASH="abc123def456"
+# Override ruflo_with_timeout to call directly — system timeout(1) cannot exec
+# shell functions like _ruflo_run_quiet, so bypass it in unit tests.
+ruflo_with_timeout() { local _ts="$1"; shift; "$@"; }
+
+# Create a test outcome file
+_test_outcome="$TEST_TEMP_DIR/test-outcome.json"
+printf '{"status":"success","task_type":"feat","goal":"test goal"}' > "$_test_outcome"
+
+ruflo_learn_from_shipwright "$_test_outcome" || true
+
+# Verify ruflo was invoked with 'memory store'
+if grep -q "memory store" "$TEST_TEMP_DIR/ruflo-calls.log" 2>/dev/null; then
+    assert_pass "ruflo_learn_from_shipwright calls ruflo memory store"
+else
+    assert_fail "ruflo_learn_from_shipwright calls ruflo memory store" \
+        "ruflo-calls.log: $(cat "$TEST_TEMP_DIR/ruflo-calls.log" 2>/dev/null || echo 'empty')"
+fi
+
+# Verify namespace includes repo hash
+if grep -q "learning-abc123def456" "$TEST_TEMP_DIR/ruflo-calls.log" 2>/dev/null; then
+    assert_pass "ruflo_learn_from_shipwright uses repo-scoped namespace"
+else
+    assert_fail "ruflo_learn_from_shipwright uses repo-scoped namespace" \
+        "ruflo-calls.log: $(cat "$TEST_TEMP_DIR/ruflo-calls.log" 2>/dev/null || echo 'empty')"
+fi
+
+rm -f "$TEST_TEMP_DIR/ruflo-calls.log"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 15: ruflo_learn_from_shipwright — no-op when ruflo unavailable
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_learn_from_shipwright — no-op when unavailable"
+
+RUFLO_AVAILABLE=false
+
+_test_outcome2="$TEST_TEMP_DIR/test-outcome2.json"
+printf '{"status":"failure","task_type":"fix"}' > "$_test_outcome2"
+
+exit_code=0
+ruflo_learn_from_shipwright "$_test_outcome2" || exit_code=$?
+
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_learn_from_shipwright returns 0 (fail-open) when ruflo unavailable"
+else
+    assert_fail "ruflo_learn_from_shipwright returns 0 when unavailable" "got exit code: $exit_code"
+fi
+
+# No ruflo calls should have been made
+if [[ ! -f "$TEST_TEMP_DIR/ruflo-calls.log" ]] || [[ ! -s "$TEST_TEMP_DIR/ruflo-calls.log" ]]; then
+    assert_pass "ruflo_learn_from_shipwright makes no ruflo calls when unavailable"
+else
+    assert_fail "ruflo_learn_from_shipwright makes no ruflo calls when unavailable" \
+        "unexpected calls: $(cat "$TEST_TEMP_DIR/ruflo-calls.log")"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 16: ruflo_learn_from_shipwright — no-op on empty input
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_learn_from_shipwright — no-op on empty input"
+
+RUFLO_AVAILABLE=true
+rm -f "$TEST_TEMP_DIR/ruflo-calls.log"
+
+exit_code=0
+ruflo_learn_from_shipwright "" || exit_code=$?
+
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_learn_from_shipwright returns 0 on empty input"
+else
+    assert_fail "ruflo_learn_from_shipwright returns 0 on empty input" "got: $exit_code"
+fi
+
+if [[ ! -f "$TEST_TEMP_DIR/ruflo-calls.log" ]] || [[ ! -s "$TEST_TEMP_DIR/ruflo-calls.log" ]]; then
+    assert_pass "ruflo_learn_from_shipwright makes no calls on empty input"
+else
+    assert_fail "ruflo_learn_from_shipwright makes no calls on empty input"
+fi
+
+# Reset state
+unset REPO_HASH
 
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

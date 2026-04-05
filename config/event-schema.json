@@ -237,6 +237,10 @@
     "ruflo.circuit_break": {
       "required": ["exit_code"],
       "optional": []
+    },
+    "ruflo.learn_from_shipwright": {
+      "required": [],
+      "optional": ["task_type", "repo"]
     }
   }
 }

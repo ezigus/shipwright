@@ -217,6 +217,13 @@ daemon_spawn_pipeline() {
         fi
     fi
 
+    # Ruflo is an execution layer that activates transparently within the user's
+    # chosen template. The daemon does not switch templates — ruflo_init() inside
+    # sw-pipeline.sh will read .shipwright/defaults.json and enable ruflo if available.
+    if [[ "${RUFLO_AVAILABLE:-false}" == "true" ]]; then
+        daemon_log INFO "Ruflo execution layer active for template: ${PIPELINE_TEMPLATE}"
+    fi
+
     # Build pipeline args
     local pipeline_args=("start" "--issue" "$issue_num" "--pipeline" "$PIPELINE_TEMPLATE")
     if [[ "$SKIP_GATES" == "true" ]]; then

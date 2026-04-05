@@ -1019,4 +1019,166 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Test 31: ruflo_load_defaults — no-op when no defaults file exists
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_load_defaults — no-op when no defaults file"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+# Ensure no defaults files exist in test environment
+_orig_home="$HOME"
+_tmp_home=$(mktemp -d)
+HOME="$_tmp_home"
+# Capture state before
+unset RUFLO_MAX_AGENTS RUFLO_COST_BUDGET_MULTIPLIER RUFLO_CIRCUIT_BREAKER_TIMEOUT \
+      RUFLO_LEARNING_BRIDGE RUFLO_Q_LEARNING 2>/dev/null || true
+exit_code=0
+ruflo_load_defaults || exit_code=$?
+HOME="$_orig_home"
+rm -rf "$_tmp_home"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_load_defaults returns 0 when no defaults file exists"
+else
+    assert_fail "ruflo_load_defaults returns 0 when no defaults file" "exit=$exit_code"
+fi
+if [[ -z "${RUFLO_MAX_AGENTS:-}" ]]; then
+    assert_pass "ruflo_load_defaults does not set RUFLO_MAX_AGENTS when no file"
+else
+    assert_fail "ruflo_load_defaults does not set RUFLO_MAX_AGENTS when no file" "got: $RUFLO_MAX_AGENTS"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 32: ruflo_load_defaults — loads values from repo-local .shipwright/defaults.json
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_load_defaults — loads values from repo-local file"
+
+_tmp_repo=$(mktemp -d)
+mkdir -p "$_tmp_repo/.shipwright"
+cat > "$_tmp_repo/.shipwright/defaults.json" <<'JSON'
+{
+  "ruflo": {
+    "enabled": true,
+    "max_agents": 6,
+    "cost_budget_multiplier": 3.0,
+    "circuit_breaker_timeout_s": 45,
+    "learning_bridge": false,
+    "q_learning_routing": false
+  }
+}
+JSON
+# Run in subdir so .shipwright/defaults.json is found relative to CWD
+unset RUFLO_MAX_AGENTS RUFLO_COST_BUDGET_MULTIPLIER RUFLO_CIRCUIT_BREAKER_TIMEOUT \
+      RUFLO_LEARNING_BRIDGE RUFLO_Q_LEARNING 2>/dev/null || true
+(
+    cd "$_tmp_repo"
+    source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+    ruflo_load_defaults
+    [[ "${RUFLO_MAX_AGENTS:-}" == "6" ]]               && printf 'agents_ok\n'
+    [[ "${RUFLO_COST_BUDGET_MULTIPLIER:-}" == "3.0" ]] && printf 'budget_ok\n'
+    [[ "${RUFLO_CIRCUIT_BREAKER_TIMEOUT:-}" == "45" ]] && printf 'timeout_ok\n'
+    [[ "${RUFLO_LEARNING_BRIDGE:-}" == "false" ]]       && printf 'bridge_ok\n'
+    [[ "${RUFLO_Q_LEARNING:-}" == "false" ]]            && printf 'qlearn_ok\n'
+) > "$_tmp_repo/results.txt" 2>/dev/null || true
+_results=$(cat "$_tmp_repo/results.txt" 2>/dev/null || true)
+rm -rf "$_tmp_repo"
+if printf '%s\n' "$_results" | grep -q "agents_ok"; then
+    assert_pass "ruflo_load_defaults sets RUFLO_MAX_AGENTS from repo-local file"
+else
+    assert_fail "ruflo_load_defaults sets RUFLO_MAX_AGENTS from repo-local file" "results=$_results"
+fi
+if printf '%s\n' "$_results" | grep -q "timeout_ok"; then
+    assert_pass "ruflo_load_defaults sets RUFLO_CIRCUIT_BREAKER_TIMEOUT from repo-local file"
+else
+    assert_fail "ruflo_load_defaults sets RUFLO_CIRCUIT_BREAKER_TIMEOUT from repo-local file" "results=$_results"
+fi
+if printf '%s\n' "$_results" | grep -q "bridge_ok"; then
+    assert_pass "ruflo_load_defaults sets RUFLO_LEARNING_BRIDGE from repo-local file"
+else
+    assert_fail "ruflo_load_defaults sets RUFLO_LEARNING_BRIDGE from repo-local file" "results=$_results"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 33: ruflo_load_defaults — falls back to ~/.shipwright/defaults.json
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_load_defaults — fallback to user-global defaults"
+
+_tmp_home2=$(mktemp -d)
+_tmp_repo2=$(mktemp -d)
+mkdir -p "$_tmp_home2/.shipwright"
+cat > "$_tmp_home2/.shipwright/defaults.json" <<'JSON'
+{
+  "ruflo": {
+    "max_agents": 12,
+    "circuit_breaker_timeout_s": 60,
+    "learning_bridge": true,
+    "q_learning_routing": true
+  }
+}
+JSON
+_global_results=$(
+    cd "$_tmp_repo2"
+    HOME="$_tmp_home2"
+    source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+    ruflo_load_defaults
+    [[ "${RUFLO_MAX_AGENTS:-}" == "12" ]]              && printf 'agents_ok\n'
+    [[ "${RUFLO_CIRCUIT_BREAKER_TIMEOUT:-}" == "60" ]] && printf 'timeout_ok\n'
+) 2>/dev/null || true
+rm -rf "$_tmp_home2" "$_tmp_repo2"
+if printf '%s\n' "$_global_results" | grep -q "agents_ok"; then
+    assert_pass "ruflo_load_defaults falls back to ~/.shipwright/defaults.json"
+else
+    assert_fail "ruflo_load_defaults falls back to ~/.shipwright/defaults.json" "results=$_global_results"
+fi
+if printf '%s\n' "$_global_results" | grep -q "timeout_ok"; then
+    assert_pass "ruflo_load_defaults loads RUFLO_CIRCUIT_BREAKER_TIMEOUT from user-global file"
+else
+    assert_fail "ruflo_load_defaults loads RUFLO_CIRCUIT_BREAKER_TIMEOUT from user-global file" "results=$_global_results"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 34: ruflo_load_defaults — repo-local takes priority over user-global
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_load_defaults — repo-local overrides user-global"
+
+_tmp_home3=$(mktemp -d)
+_tmp_repo3=$(mktemp -d)
+mkdir -p "$_tmp_home3/.shipwright" "$_tmp_repo3/.shipwright"
+printf '{"ruflo":{"max_agents":99}}\n' > "$_tmp_home3/.shipwright/defaults.json"
+printf '{"ruflo":{"max_agents":3}}\n'  > "$_tmp_repo3/.shipwright/defaults.json"
+_priority_results=$(
+    cd "$_tmp_repo3"
+    HOME="$_tmp_home3"
+    source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+    ruflo_load_defaults
+    printf '%s\n' "${RUFLO_MAX_AGENTS:-unset}"
+) 2>/dev/null || true
+rm -rf "$_tmp_home3" "$_tmp_repo3"
+if [[ "$_priority_results" == "3" ]]; then
+    assert_pass "ruflo_load_defaults repo-local (3) overrides user-global (99)"
+else
+    assert_fail "ruflo_load_defaults repo-local overrides user-global" "got: $_priority_results"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 35: ruflo_load_defaults — handles invalid JSON gracefully (fail-open)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_load_defaults — handles invalid JSON gracefully"
+
+_tmp_repo4=$(mktemp -d)
+mkdir -p "$_tmp_repo4/.shipwright"
+printf 'not valid json at all\n' > "$_tmp_repo4/.shipwright/defaults.json"
+exit_code=0
+(
+    cd "$_tmp_repo4"
+    source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+    ruflo_load_defaults || exit 1
+) 2>/dev/null || exit_code=$?
+rm -rf "$_tmp_repo4"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_load_defaults returns 0 on invalid JSON (fail-open)"
+else
+    assert_fail "ruflo_load_defaults returns 0 on invalid JSON (fail-open)" "exit=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

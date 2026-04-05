@@ -587,7 +587,9 @@ ruflo_execute_review() {
     [[ -n "$diff_content" && -n "$artifact_file" ]] || return 1
 
     local max_agents="${RUFLO_REVIEW_MAX_AGENTS:-4}"
-    local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-unknown}"
+    # Use pipeline_id when available; fall back to epoch+PID to ensure namespace
+    # uniqueness across concurrent runs when SHIPWRIGHT_PIPELINE_ID is unset.
+    local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
     local review_ns="hive-review-${pipeline_id}"
 
     emit_event "ruflo.review_start" "max_agents=$max_agents"
@@ -676,6 +678,24 @@ ruflo_execute_review() {
         fi
     fi
 
+    # Orchestrate parallel review across the hive — each specialist agent analyses
+    # the diff from their domain perspective (security, code_quality, test_gap,
+    # architecture). Results are written to the shared hive memory namespace.
+    local _orch_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 300 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "parallel code review: analyse diff in namespace ${review_ns}" \
+            --max-turns 20 \
+            --mode "review" 2>/dev/null || _orch_exit=$?
+    else
+        ruflo_with_timeout 300 ruflo coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "parallel code review: analyse diff in namespace ${review_ns}" \
+            --max-turns 20 \
+            --mode "review" 2>/dev/null || _orch_exit=$?
+    fi
+
     # Aggregate findings via union — list all entries from the hive shared memory.
     # Union (not Byzantine consensus): all reviewer findings are included regardless
     # of whether they overlap. Duplicate deduplication is handled downstream.
@@ -693,8 +713,12 @@ ruflo_execute_review() {
     # Always shut down the hive regardless of outcome
     _ruflo_hive_shutdown "$hive_id"
 
-    # Write findings to artifact file — empty file is valid (no findings)
-    printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null || true
+    # Write findings to artifact file — ensure parent directory exists
+    mkdir -p "$(dirname "$artifact_file")" 2>/dev/null || true
+    if ! printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null; then
+        warn "ruflo: failed to write review artifact: $artifact_file"
+        # Fail-open: caller checks -s before injecting context, so empty = no-op
+    fi
 
     # Persist review result for downstream stage context (PR, audit stages)
     ruflo_store "stage-review-result" \
@@ -722,7 +746,7 @@ ruflo_execute_compound_quality() {
     local artifact_file="$2"
     [[ -n "$diff_content" && -n "$artifact_file" ]] || return 1
 
-    local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-unknown}"
+    local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
     local cq_ns="hive-cq-${pipeline_id}"
     # Compound quality uses exactly 3 adversarial agents
     local cq_agents=3
@@ -779,6 +803,23 @@ ruflo_execute_compound_quality() {
         ruflo_store "cq-review-context" "$_prior_review" "$cq_ns" "quality,context" || true
     fi
 
+    # Orchestrate adversarial quality checks — agents run negative testing,
+    # DoD auditing, and E2E scenario validation in parallel.
+    local _orch_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 300 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "adversarial quality: negative tests, DoD audit, E2E validation for namespace ${cq_ns}" \
+            --max-turns 15 \
+            --mode "quality" 2>/dev/null || _orch_exit=$?
+    else
+        ruflo_with_timeout 300 ruflo coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "adversarial quality: negative tests, DoD audit, E2E validation for namespace ${cq_ns}" \
+            --max-turns 15 \
+            --mode "quality" 2>/dev/null || _orch_exit=$?
+    fi
+
     # Aggregate via union — all adversarial findings included
     local _findings=""
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -794,8 +835,11 @@ ruflo_execute_compound_quality() {
     # Always shut down the hive regardless of outcome
     _ruflo_hive_shutdown "$hive_id"
 
-    # Write findings to artifact file
-    printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null || true
+    # Write findings to artifact file — ensure parent directory exists
+    mkdir -p "$(dirname "$artifact_file")" 2>/dev/null || true
+    if ! printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null; then
+        warn "ruflo: failed to write compound quality artifact: $artifact_file"
+    fi
 
     # Persist compound quality result for downstream stages
     ruflo_store "stage-cq-result" \

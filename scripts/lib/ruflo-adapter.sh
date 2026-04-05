@@ -343,28 +343,6 @@ ruflo_export_memory() {
     return 0
 }
 
-# ─── _ruflo_resolve_repo_hash — get repo-specific hash for namespace isolation ─
-# Returns $REPO_HASH if already set by pipeline, otherwise derives it on-demand
-# from the git origin URL using SHA-256 (same algorithm as sw-memory.sh).
-# Returns non-zero when hash cannot be determined — callers should skip.
-_ruflo_resolve_repo_hash() {
-    if [[ -n "${REPO_HASH:-}" && "${REPO_HASH}" != "unknown" ]]; then
-        printf '%s' "$REPO_HASH"
-        return 0
-    fi
-    local _origin
-    _origin=$(git config --get remote.origin.url 2>/dev/null || true)
-    [[ -n "$_origin" ]] || return 1
-    local _hash=""
-    if command -v shasum >/dev/null 2>&1; then
-        _hash=$(printf '%s' "$_origin" | shasum -a 256 2>/dev/null | cut -c1-12)
-    elif command -v sha256sum >/dev/null 2>&1; then
-        _hash=$(printf '%s' "$_origin" | sha256sum 2>/dev/null | cut -c1-12)
-    fi
-    [[ -n "$_hash" ]] || return 1
-    printf '%s' "$_hash"
-}
-
 # ─── ruflo_execute_build_single — execute build via a single ruflo agent ─────
 # Spawns a ruflo agent to execute the build goal in single-agent mode.
 # Provides a lighter-weight alternative to the full sw loop for simple tasks.

@@ -97,7 +97,7 @@ skill_memory_record() {
     # (additive — does not replace Shipwright's file-based recording)
     if declare -f ruflo_learn_from_shipwright >/dev/null 2>&1; then
         # Create temporary outcome file for ruflo to consume
-        local _outcome_file="/tmp/skill-outcome-$$.json"
+        local _outcome_file="${TMPDIR:-/tmp}/skill-outcome-$$.json"
         printf '{"issue_type":"%s","stage":"%s","skills":"%s","outcome":"%s"}\n' \
             "$issue_type" "$stage" "$skills_used" "$outcome" > "$_outcome_file"
         ruflo_learn_from_shipwright "$_outcome_file" 2>/dev/null || true

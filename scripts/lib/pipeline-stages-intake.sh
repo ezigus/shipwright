@@ -368,6 +368,23 @@ ${_skill_prompts}
 "
     fi
 
+    # Inject ruflo vector-similar past outcomes for this issue type.
+    # Called directly in the parent shell — skill_select_adaptive runs in a subshell
+    # via $() so its SKILL_RUFLO_CONTEXT assignment does not propagate back here.
+    if declare -f ruflo_recall_similar_outcomes >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _ruflo_plan_ctx
+        _ruflo_plan_ctx=$(ruflo_recall_similar_outcomes \
+            "${INTELLIGENCE_ISSUE_TYPE:-backend}" "" 2>/dev/null || true)
+        if [[ -n "$_ruflo_plan_ctx" ]]; then
+            plan_prompt="${plan_prompt}
+## Similar Past Outcomes (ruflo semantic search)
+${_ruflo_plan_ctx}
+"
+        fi
+    fi
+
     # Inject prior stage context from ruflo (supplements file-based artifacts)
     if declare -f ruflo_available >/dev/null 2>&1 && \
        declare -f ruflo_recall >/dev/null 2>&1 && \
@@ -887,6 +904,21 @@ Be concrete and specific. Reference actual file paths in the codebase. Consider 
 ## Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue, AI-selected)
 ${_skill_prompts}
 "
+    fi
+
+    # Inject ruflo vector-similar past outcomes for this issue type (design stage).
+    if declare -f ruflo_recall_similar_outcomes >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _ruflo_design_ctx
+        _ruflo_design_ctx=$(ruflo_recall_similar_outcomes \
+            "${INTELLIGENCE_ISSUE_TYPE:-backend}" "" 2>/dev/null || true)
+        if [[ -n "$_ruflo_design_ctx" ]]; then
+            design_prompt="${design_prompt}
+## Similar Past Outcomes (ruflo semantic search)
+${_ruflo_design_ctx}
+"
+        fi
     fi
 
     # Inject prior stage context from ruflo (supplements file-based artifacts)

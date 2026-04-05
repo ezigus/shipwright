@@ -404,6 +404,154 @@ ruflo_execute_build_single() {
     return 1
 }
 
+# ─── _ruflo_hive_shutdown — tear down a hive-mind session safely ─────────────
+# Sends shutdown to the hive identified by $1. Swallows errors — cleanup is
+# best-effort only; the pipeline must not fail on teardown failure.
+# Always returns 0.
+_ruflo_hive_shutdown() {
+    local hive_id="${1:-}"
+    [[ -n "$hive_id" ]] || return 0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        npx -y ruflo@latest hive-mind shutdown --hive-id "$hive_id" \
+            >/dev/null 2>&1 || true
+    else
+        ruflo hive-mind shutdown --hive-id "$hive_id" \
+            >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+
+# ─── ruflo_execute_build_hive — execute build via a ruflo hive-mind swarm ────
+# Spawns a hierarchical multi-agent hive to execute the build goal in parallel.
+# Uses Q-learning via hooks_route to select the optimal agent count and topology.
+# Falls back gracefully: any init/spawn/orchestrate failure causes the function
+# to return 1, letting the caller fall back to single-agent or sw loop.
+#
+# Environment knobs:
+#   RUFLO_HIVE_MAX_AGENTS  — hard cap on parallel agents (default 4)
+#   RUFLO_HIVE_TOPOLOGY    — force topology (default: hierarchical)
+#   RUFLO_USE_NPX          — use npx instead of installed ruflo binary
+#
+# Usage: ruflo_execute_build_hive <goal> [max_turns]
+# Returns 0 on success, 1 on failure (caller falls back). Fail-open design.
+#
+# Note: calls hive-mind/agent binaries directly (not via _ruflo_run_quiet) so
+# the invocations are real external commands the system timeout binary can exec.
+ruflo_execute_build_hive() {
+    ruflo_available || return 1
+    local goal="$1"
+    local max_turns="${2:-30}"
+    [[ -n "$goal" ]] || return 1
+
+    local max_agents="${RUFLO_HIVE_MAX_AGENTS:-4}"
+    local topology="${RUFLO_HIVE_TOPOLOGY:-hierarchical}"
+
+    emit_event "ruflo.hive_build_start" \
+        "max_agents=$max_agents" "topology=$topology" "max_turns=$max_turns"
+
+    # Q-learning agent selection: ask hooks_route for recommended agent count/
+    # topology based on historical performance. Use defaults on any failure.
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        local _route_json
+        _route_json=$(npx -y ruflo@latest hooks route \
+            --event "build.start" \
+            --context "{\"goal\":\"$goal\",\"max_agents\":$max_agents}" \
+            2>/dev/null || true)
+    else
+        local _route_json
+        _route_json=$(ruflo hooks route \
+            --event "build.start" \
+            --context "{\"goal\":\"$goal\",\"max_agents\":$max_agents}" \
+            2>/dev/null || true)
+    fi
+
+    if [[ -n "$_route_json" ]]; then
+        local _recommended_agents
+        _recommended_agents=$(printf '%s' "$_route_json" | \
+            jq -r '.agent_count // empty' 2>/dev/null || true)
+        if [[ -n "$_recommended_agents" && "$_recommended_agents" -le "$max_agents" ]]; then
+            max_agents="$_recommended_agents"
+        fi
+        local _recommended_topology
+        _recommended_topology=$(printf '%s' "$_route_json" | \
+            jq -r '.topology // empty' 2>/dev/null || true)
+        [[ -n "$_recommended_topology" ]] && topology="$_recommended_topology"
+    fi
+
+    # Initialize the hive-mind session
+    local hive_id=""
+    local _init_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        hive_id=$(npx -y ruflo@latest hive-mind init \
+            --topology "$topology" \
+            --max-agents "$max_agents" \
+            --output-format json 2>/dev/null | \
+            jq -r '.hive_id // empty' 2>/dev/null) || _init_exit=$?
+    else
+        hive_id=$(ruflo hive-mind init \
+            --topology "$topology" \
+            --max-agents "$max_agents" \
+            --output-format json 2>/dev/null | \
+            jq -r '.hive_id // empty' 2>/dev/null) || _init_exit=$?
+    fi
+
+    if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
+        emit_event "ruflo.hive_init_failed" "topology=$topology"
+        return 1
+    fi
+
+    # Spawn worker agents — spawn failures are non-fatal (hive proceeds with
+    # however many agents successfully joined before the failure)
+    local _spawn_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 60 npx -y ruflo@latest hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$max_agents" \
+            --role "worker" 2>/dev/null || _spawn_exit=$?
+    else
+        ruflo_with_timeout 60 ruflo hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$max_agents" \
+            --role "worker" 2>/dev/null || _spawn_exit=$?
+    fi
+
+    if [[ $_spawn_exit -ne 0 ]]; then
+        warn "Ruflo hive spawn failed (hive_id=$hive_id) — aborting hive build"
+        emit_event "ruflo.hive_spawn_failed" "hive_id=$hive_id"
+        _ruflo_hive_shutdown "$hive_id"
+        return 1
+    fi
+
+    # Orchestrate the build goal across the hive
+    local _orch_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 600 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "$goal" \
+            --max-turns "$max_turns" \
+            --mode "pipeline" 2>/dev/null || _orch_exit=$?
+    else
+        ruflo_with_timeout 600 ruflo coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "$goal" \
+            --max-turns "$max_turns" \
+            --mode "pipeline" 2>/dev/null || _orch_exit=$?
+    fi
+
+    # Always shut down the hive regardless of outcome
+    _ruflo_hive_shutdown "$hive_id"
+
+    if [[ $_orch_exit -eq 0 ]]; then
+        emit_event "ruflo.hive_build_complete" \
+            "hive_id=$hive_id" "agents=$max_agents" "topology=$topology"
+        return 0
+    fi
+
+    emit_event "ruflo.hive_build_failed" \
+        "hive_id=$hive_id" "exit_code=$_orch_exit"
+    return 1
+}
+
 # ─── ruflo_learn_from_shipwright — bridge Shipwright outcomes to ruflo ───────
 # Called after skill_memory_record() writes an outcome. Accepts either a path
 # to an outcome JSON file or a raw JSON string, then indexes the outcome into

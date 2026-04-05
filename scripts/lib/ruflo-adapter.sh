@@ -120,14 +120,21 @@ ruflo_load_defaults() {
     # learning_bridge: false, which would leave the variable unset.
     # select(. != null) correctly passes false through while filtering null/missing.
     local _v
+    # Validate integer fields: only export if value is a non-negative integer to
+    # prevent a non-integer (string/float) from being passed to ruflo_with_timeout
+    # or hive agent count, which would cause unexpected errors.
     _v=$(jq -r '.ruflo.max_agents | select(. != null)' "$_defaults_file" 2>/dev/null || true)
-    [[ -n "$_v" ]] && { RUFLO_MAX_AGENTS="$_v"; export RUFLO_MAX_AGENTS; }
+    if [[ -n "$_v" ]] && [[ "$_v" =~ ^[0-9]+$ ]]; then
+        RUFLO_MAX_AGENTS="$_v"; export RUFLO_MAX_AGENTS
+    fi
 
     _v=$(jq -r '.ruflo.cost_budget_multiplier | select(. != null)' "$_defaults_file" 2>/dev/null || true)
     [[ -n "$_v" ]] && { RUFLO_COST_BUDGET_MULTIPLIER="$_v"; export RUFLO_COST_BUDGET_MULTIPLIER; }
 
     _v=$(jq -r '.ruflo.circuit_breaker_timeout_s | select(. != null)' "$_defaults_file" 2>/dev/null || true)
-    [[ -n "$_v" ]] && { RUFLO_CIRCUIT_BREAKER_TIMEOUT="$_v"; export RUFLO_CIRCUIT_BREAKER_TIMEOUT; }
+    if [[ -n "$_v" ]] && [[ "$_v" =~ ^[0-9]+$ ]]; then
+        RUFLO_CIRCUIT_BREAKER_TIMEOUT="$_v"; export RUFLO_CIRCUIT_BREAKER_TIMEOUT
+    fi
 
     _v=$(jq -r '(.ruflo.learning_bridge | select(. != null)) | tostring' "$_defaults_file" 2>/dev/null || true)
     [[ -n "$_v" ]] && { RUFLO_LEARNING_BRIDGE="$_v"; export RUFLO_LEARNING_BRIDGE; }

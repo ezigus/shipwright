@@ -1025,17 +1025,21 @@ print_test_section "ruflo_load_defaults — no-op when no defaults file"
 
 unset _RUFLO_ADAPTER_LOADED
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-# Ensure no defaults files exist in test environment
+# Ensure no defaults files exist in test environment or current working directory
 _orig_home="$HOME"
-_tmp_home=$(mktemp -d)
+_orig_pwd="$(pwd)"
+_tmp_home=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.home.XXXXXX")
+_tmp_cwd=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.cwd.XXXXXX")
 HOME="$_tmp_home"
+cd "$_tmp_cwd"
 # Capture state before
 unset RUFLO_MAX_AGENTS RUFLO_COST_BUDGET_MULTIPLIER RUFLO_CIRCUIT_BREAKER_TIMEOUT \
       RUFLO_LEARNING_BRIDGE RUFLO_Q_LEARNING 2>/dev/null || true
 exit_code=0
 ruflo_load_defaults || exit_code=$?
+cd "$_orig_pwd"
 HOME="$_orig_home"
-rm -rf "$_tmp_home"
+rm -rf "$_tmp_home" "$_tmp_cwd"
 if [[ $exit_code -eq 0 ]]; then
     assert_pass "ruflo_load_defaults returns 0 when no defaults file exists"
 else
@@ -1052,7 +1056,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_load_defaults — loads values from repo-local file"
 
-_tmp_repo=$(mktemp -d)
+_tmp_repo=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
 mkdir -p "$_tmp_repo/.shipwright"
 cat > "$_tmp_repo/.shipwright/defaults.json" <<'JSON'
 {
@@ -1102,8 +1106,8 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_load_defaults — fallback to user-global defaults"
 
-_tmp_home2=$(mktemp -d)
-_tmp_repo2=$(mktemp -d)
+_tmp_home2=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-home.XXXXXX")
+_tmp_repo2=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-repo.XXXXXX")
 mkdir -p "$_tmp_home2/.shipwright"
 cat > "$_tmp_home2/.shipwright/defaults.json" <<'JSON'
 {
@@ -1140,8 +1144,8 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_load_defaults — repo-local overrides user-global"
 
-_tmp_home3=$(mktemp -d)
-_tmp_repo3=$(mktemp -d)
+_tmp_home3=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-home.XXXXXX")
+_tmp_repo3=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-repo.XXXXXX")
 mkdir -p "$_tmp_home3/.shipwright" "$_tmp_repo3/.shipwright"
 printf '{"ruflo":{"max_agents":99}}\n' > "$_tmp_home3/.shipwright/defaults.json"
 printf '{"ruflo":{"max_agents":3}}\n'  > "$_tmp_repo3/.shipwright/defaults.json"
@@ -1164,7 +1168,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_load_defaults — handles invalid JSON gracefully"
 
-_tmp_repo4=$(mktemp -d)
+_tmp_repo4=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
 mkdir -p "$_tmp_repo4/.shipwright"
 printf 'not valid json at all\n' > "$_tmp_repo4/.shipwright/defaults.json"
 exit_code=0

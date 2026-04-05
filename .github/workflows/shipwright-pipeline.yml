@@ -396,6 +396,21 @@ jobs:
         run: |
           npm link
 
+      - name: Restore ruflo memory cache
+        uses: actions/cache@v4
+        with:
+          path: .claude-flow/data/
+          key: ruflo-memory-${{ github.repository }}-${{ github.run_number }}
+          restore-keys: |
+            ruflo-memory-${{ github.repository }}-
+        continue-on-error: true
+
+      - name: Install ruflo (optional — pipeline falls back gracefully if unavailable)
+        run: |
+          npm install -g @claude-flow/cli@latest 2>/dev/null || true
+          ruflo doctor --fix 2>/dev/null || true
+        continue-on-error: true
+
       - name: Pre-flight auth check
         run: |
           if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
@@ -835,6 +850,14 @@ jobs:
               -d "{\"type\":\"ci.pipeline_completed\",\"issue\":${ISSUE_NUMBER},\"run_id\":\"${{ github.run_id }}\",\"result\":\"${RESULT}\",\"template\":\"${TEMPLATE}\"}" \
               2>/dev/null || true
           fi
+
+      - name: Save ruflo memory cache
+        if: always() && steps.claim_check.outputs.skip != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .claude-flow/data/
+          key: ruflo-memory-${{ github.repository }}-${{ github.run_number }}
+        continue-on-error: true
 
       # Gatekeeper: ensure job fails if pipeline failed (triggers auto-retry)
       - name: Propagate pipeline exit code

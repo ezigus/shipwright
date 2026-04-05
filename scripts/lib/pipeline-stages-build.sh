@@ -409,6 +409,30 @@ ${_skill_prompts}
     # for interactive permission prompts. Without this flag, agents can't write files.
     loop_args+=(--skip-permissions)
 
+    # Ruflo single-agent build: when RUFLO_BUILD_AGENT=true and agents=1, try ruflo first.
+    # Falls back to sw loop on any failure — fail-open by design.
+    if [[ "${RUFLO_BUILD_AGENT:-false}" == "true" ]] && \
+       [[ "${agents:-1}" -eq 1 ]] && \
+       declare -f ruflo_execute_build_single >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        info "Ruflo single-agent build executor active — attempting ruflo build"
+        if ruflo_execute_build_single "$enriched_goal" "$max_iter"; then
+            local commit_count
+            commit_count=$(_trim "$(_safe_base_log --oneline | wc -l)")
+            info "Ruflo build produced ${BOLD}$commit_count${RESET} commit(s)"
+            if declare -f ruflo_store >/dev/null 2>&1 && [[ "${commit_count:-0}" -gt 0 ]]; then
+                ruflo_store "stage-build-result" \
+                    "Ruflo single-agent build: $commit_count commits. Branch: ${GIT_BRANCH:-unknown}." \
+                    "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
+            fi
+            log_stage "build" "Ruflo build completed ($commit_count commits)"
+            return 0
+        fi
+        warn "Ruflo build failed — falling back to sw loop"
+        emit_event "ruflo.build_fallback" "reason=agent_failed"
+    fi
+
     info "Starting build loop: ${DIM}shipwright loop${RESET} (max ${max_iter} iterations, ${agents} agent(s))"
 
     # Post build start to GitHub

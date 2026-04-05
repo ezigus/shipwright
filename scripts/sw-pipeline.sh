@@ -533,6 +533,21 @@ setup_dirs() {
     export SHIPWRIGHT_PIPELINE_ID="pipeline-$$-${ISSUE_NUMBER:-0}"
     export SHIPWRIGHT_ACTIVE=1
     export SHIPWRIGHT_SOURCE="${SHIPWRIGHT_SOURCE:-pipeline}"
+
+    # Compute repo hash for ruflo namespace isolation (matches sw-memory.sh repo_hash())
+    # Uses shasum -a 256 of origin URL — consistent with ~/.shipwright/memory/<hash>/ dirs.
+    if [[ -z "${REPO_HASH:-}" ]]; then
+        local _repo_origin
+        _repo_origin=$(git config --get remote.origin.url 2>/dev/null || echo "local-$(basename "$PWD")")
+        if command -v shasum >/dev/null 2>&1; then
+            REPO_HASH=$(printf '%s' "$_repo_origin" | shasum -a 256 2>/dev/null | cut -c1-12 || echo "unknown")
+        elif command -v sha256sum >/dev/null 2>&1; then
+            REPO_HASH=$(printf '%s' "$_repo_origin" | sha256sum 2>/dev/null | cut -c1-12 || echo "unknown")
+        else
+            REPO_HASH="unknown"
+        fi
+        export REPO_HASH
+    fi
 }
 
 # ─── Pipeline Config Loading ───────────────────────────────────────────────

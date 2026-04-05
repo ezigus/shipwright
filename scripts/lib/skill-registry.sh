@@ -314,6 +314,18 @@ skill_select_adaptive() {
     # 5. Final deduplication (complexity weighting may have added duplicates)
     all_skills=$(echo "$all_skills" | sort -u | grep -v '^$')
 
+    # 6. Supplement: query ruflo for vector-similar past outcomes
+    if declare -f ruflo_recall_similar_outcomes >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _ruflo_outcomes
+        _ruflo_outcomes=$(ruflo_recall_similar_outcomes "$issue_type" "" 2>/dev/null || true)
+        if [[ -n "$_ruflo_outcomes" ]]; then
+            # Store for potential use by callers
+            SKILL_RUFLO_CONTEXT="$_ruflo_outcomes"
+        fi
+    fi
+
     echo "$all_skills"
 }
 

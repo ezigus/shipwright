@@ -237,6 +237,54 @@
     "ruflo.circuit_break": {
       "required": ["exit_code"],
       "optional": []
+    },
+    "ruflo.import_memory_ok": {
+      "required": ["file"],
+      "optional": []
+    },
+    "ruflo.import_memory_failed": {
+      "required": ["file"],
+      "optional": []
+    },
+    "ruflo.export_memory_ok": {
+      "required": ["file"],
+      "optional": []
+    },
+    "ruflo.export_memory_failed": {
+      "required": ["file"],
+      "optional": []
+    },
+    "ruflo.indexing_skipped": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.indexing_complete": {
+      "required": ["repo_hash"],
+      "optional": []
+    },
+    "ruflo.learn_from_shipwright": {
+      "required": ["task_type", "repo"],
+      "optional": []
+    },
+    "ruflo.adr_indexed": {
+      "required": ["count", "repo"],
+      "optional": []
+    },
+    "ruflo.build_agent_start": {
+      "required": ["max_turns"],
+      "optional": []
+    },
+    "ruflo.build_agent_complete": {
+      "required": ["success"],
+      "optional": []
+    },
+    "ruflo.build_agent_failed": {
+      "required": ["success"],
+      "optional": []
+    },
+    "ruflo.build_fallback": {
+      "required": ["reason"],
+      "optional": []
     }
   }
 }

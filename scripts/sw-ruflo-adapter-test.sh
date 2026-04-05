@@ -507,4 +507,131 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Test 21: ruflo_learn_from_shipwright — no-op when RUFLO_AVAILABLE=false
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_learn_from_shipwright — no-op when unavailable"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+exit_code=0
+ruflo_learn_from_shipwright "/nonexistent/file.json" || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_learn_from_shipwright returns 0 when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_learn_from_shipwright returns 0 when RUFLO_AVAILABLE=false" "exit=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 22: ruflo_learn_from_shipwright — skips invalid input (no file, no JSON)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_learn_from_shipwright — skips invalid input"
+
+RUFLO_AVAILABLE=true
+exit_code=0
+ruflo_learn_from_shipwright "/nonexistent/outcome.json" || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_learn_from_shipwright returns 0 when file missing and not valid JSON"
+else
+    assert_fail "ruflo_learn_from_shipwright returns 0 when file missing and not valid JSON" "exit=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 23: ruflo_recall_similar_outcomes — returns empty when unavailable
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_recall_similar_outcomes — no-op when unavailable"
+
+RUFLO_AVAILABLE=false
+result=$(ruflo_recall_similar_outcomes "feature" "bug" 2>/dev/null || true)
+if [[ -z "$result" ]]; then
+    assert_pass "ruflo_recall_similar_outcomes returns empty when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_recall_similar_outcomes returns empty when RUFLO_AVAILABLE=false" "got: $result"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 24: ruflo_index_adr_artifacts — no-op when RUFLO_AVAILABLE=false
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_index_adr_artifacts — no-op when unavailable"
+
+RUFLO_AVAILABLE=false
+exit_code=0
+ruflo_index_adr_artifacts || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_index_adr_artifacts returns 0 when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_index_adr_artifacts returns 0 when RUFLO_AVAILABLE=false" "exit=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 25: ruflo_learn_from_shipwright — success path with valid outcome file
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_learn_from_shipwright — success path (file input)"
+
+# Set up: mock ruflo binary that accepts memory store and returns success
+_test_tmp=$(mktemp -d)
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+# Create a valid outcome file
+_outcome_file="$_test_tmp/outcome.json"
+printf '{"issue_type":"backend","stage":"build","skills":"tdd","outcome":"success"}\n' \
+    > "$_outcome_file"
+
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+PATH="$_test_tmp:$PATH"
+# Stub git to return a known origin so _ruflo_resolve_repo_hash succeeds
+git() {
+    if [[ "${1:-}" == "config" && "${2:-}" == "--get" && "${3:-}" == "remote.origin.url" ]]; then
+        echo "https://github.com/test/repo.git"
+    else
+        command git "$@"
+    fi
+}
+exit_code=0
+ruflo_learn_from_shipwright "$_outcome_file" || exit_code=$?
+unset -f git
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_learn_from_shipwright returns 0 on success with valid file"
+else
+    assert_fail "ruflo_learn_from_shipwright returns 0 on success with valid file" "exit=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 26: ruflo_learn_from_shipwright — success path with raw JSON string input
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_learn_from_shipwright — success path (raw JSON input)"
+
+_test_tmp=$(mktemp -d)
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+PATH="$_test_tmp:$PATH"
+git() {
+    if [[ "${1:-}" == "config" && "${2:-}" == "--get" && "${3:-}" == "remote.origin.url" ]]; then
+        echo "https://github.com/test/repo.git"
+    else
+        command git "$@"
+    fi
+}
+exit_code=0
+ruflo_learn_from_shipwright '{"issue_type":"frontend","outcome":"success"}' || exit_code=$?
+unset -f git
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_learn_from_shipwright returns 0 on success with raw JSON"
+else
+    assert_fail "ruflo_learn_from_shipwright returns 0 on success with raw JSON" "exit=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

@@ -315,3 +315,101 @@ ruflo_export_memory() {
     fi
     return 0
 }
+
+# ─── _ruflo_resolve_repo_hash — get repo-specific hash for namespace isolation ─
+# Returns $REPO_HASH if already set by pipeline, otherwise derives it on-demand
+# from the git origin URL using SHA-256 (same algorithm as sw-memory.sh).
+# Returns non-zero when hash cannot be determined — callers should skip.
+_ruflo_resolve_repo_hash() {
+    if [[ -n "${REPO_HASH:-}" && "${REPO_HASH}" != "unknown" ]]; then
+        printf '%s' "$REPO_HASH"
+        return 0
+    fi
+    local _origin
+    _origin=$(git config --get remote.origin.url 2>/dev/null || true)
+    [[ -n "$_origin" ]] || return 1
+    local _hash=""
+    if command -v shasum >/dev/null 2>&1; then
+        _hash=$(printf '%s' "$_origin" | shasum -a 256 2>/dev/null | cut -c1-12)
+    elif command -v sha256sum >/dev/null 2>&1; then
+        _hash=$(printf '%s' "$_origin" | sha256sum 2>/dev/null | cut -c1-12)
+    fi
+    [[ -n "$_hash" ]] || return 1
+    printf '%s' "$_hash"
+}
+
+# ─── ruflo_learn_from_shipwright — bridge Shipwright outcomes to ruflo ───────
+# Called after skill_memory_record() writes an outcome. Indexes the outcome
+# into ruflo HNSW under a repo-specific namespace for vector-similarity search.
+# Accepts a file path OR a raw JSON string as $1.
+# No-op when ruflo unavailable or repo hash undetermined. Always returns 0.
+ruflo_learn_from_shipwright() {
+    ruflo_available || return 0
+    local outcome_source="${1:-}"
+    [[ -n "$outcome_source" ]] || return 0
+    local _ns_hash
+    _ns_hash=$(_ruflo_resolve_repo_hash) || return 0
+    local _key="shipwright-outcome-$(date +%s)-$$"
+    local _task_type="unknown"
+    local _content=""
+    if [[ -f "$outcome_source" ]]; then
+        _task_type=$(jq -r '.task_type // .issue_type // "unknown"' \
+            "$outcome_source" 2>/dev/null || echo "unknown")
+        _content=$(jq -sR . < "$outcome_source" 2>/dev/null || true)
+    else
+        _task_type=$(printf '%s\n' "$outcome_source" | \
+            jq -r '.task_type // .issue_type // "unknown"' 2>/dev/null || echo "unknown")
+        _content=$(printf '%s\n' "$outcome_source" | jq -c . 2>/dev/null || true)
+    fi
+    [[ -n "$_content" ]] || return 0
+    ruflo_store "$_key" "$_content" \
+        "learning-$_ns_hash" \
+        "skill-memory,outcome,$_task_type" || true
+    emit_event "ruflo.learn_from_shipwright" \
+        "task_type=$_task_type" \
+        "repo=$_ns_hash"
+    return 0
+}
+
+# ─── ruflo_recall_similar_outcomes — query ruflo for vector-similar past outcomes
+# Supplements Shipwright's file-based skill selection with semantic vector search.
+# Returns matching outcomes to stdout. Returns empty string when unavailable or
+# when the repo hash cannot be determined.
+ruflo_recall_similar_outcomes() {
+    ruflo_available || { echo ""; return 0; }
+    local task_type="$1" issue_labels="${2:-}"
+    local _ns_hash
+    _ns_hash=$(_ruflo_resolve_repo_hash) || { echo ""; return 0; }
+    ruflo_recall "skill selection for ${task_type} ${issue_labels}" \
+        "learning-$_ns_hash"
+    return 0
+}
+
+# ─── ruflo_index_adr_artifacts — index pipeline ADR artifacts into ruflo ────
+# Indexes design-stage ADR files so review and build stages can query them for
+# architectural compliance checking. Uses repo-specific namespace.
+# Content is bounded to RUFLO_ADR_INDEX_MAX_BYTES (default 4000) to prevent
+# argv overflow on large files. No-op when ruflo unavailable or no ADR files
+# found. Always returns 0.
+ruflo_index_adr_artifacts() {
+    ruflo_available || return 0
+    local _ns_hash
+    _ns_hash=$(_ruflo_resolve_repo_hash) || return 0
+    local artifacts_dir="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
+    [[ -d "$artifacts_dir" ]] || return 0
+    local _max_bytes="${RUFLO_ADR_INDEX_MAX_BYTES:-4000}"
+    local _count=0
+    local adr _key _content
+    for adr in "$artifacts_dir"/design*.md "$artifacts_dir"/adr*.md; do
+        [[ -f "$adr" ]] || continue
+        _key="adr-$(basename "$adr" .md)-${SHIPWRIGHT_PIPELINE_ID:-unknown}"
+        _content=$(head -c "$_max_bytes" "$adr" 2>/dev/null | jq -sR . 2>/dev/null || true)
+        [[ -n "$_content" ]] || continue
+        ruflo_store "$_key" "$_content" \
+            "adrs-$_ns_hash" "adr,architecture" || true
+        _count=$(( _count + 1 ))
+    done
+    [[ "$_count" -gt 0 ]] && \
+        emit_event "ruflo.adr_indexed" "count=$_count" "repo=$_ns_hash" || true
+    return 0
+}

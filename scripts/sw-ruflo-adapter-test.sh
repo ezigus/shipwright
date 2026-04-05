@@ -134,16 +134,17 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 # Test 6: ruflo_cleanup no-op when RUFLO_AVAILABLE=false
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_cleanup — ruflo unavailable"
+print_test_section "ruflo_cleanup — daemon not started by this run"
 
 RUFLO_AVAILABLE=false
+RUFLO_DAEMON_STARTED=false
 exit_code=0
 ruflo_cleanup || exit_code=$?
 
 if [[ $exit_code -eq 0 ]]; then
-    assert_pass "ruflo_cleanup exits 0 when RUFLO_AVAILABLE=false"
+    assert_pass "ruflo_cleanup exits 0 when RUFLO_DAEMON_STARTED=false"
 else
-    assert_fail "ruflo_cleanup exits 0 when RUFLO_AVAILABLE=false" "got exit code: $exit_code"
+    assert_fail "ruflo_cleanup exits 0 when RUFLO_DAEMON_STARTED=false" "got exit code: $exit_code"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -160,19 +161,20 @@ hash -d ruflo 2>/dev/null || true
 
 unset _RUFLO_ADAPTER_LOADED
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-# Override ruflo_with_timeout to call functions directly — GNU timeout(1) cannot
-# exec shell functions like _ruflo_run_quiet, which would trip the circuit breaker
-# and prevent _ruflo_run stop from being reached in ruflo_cleanup.
-ruflo_with_timeout() { local _ts="$1"; shift; "$@"; }
+# Stub _timeout as a shell function so ruflo_with_timeout passes shell functions
+# (like _ruflo_run_quiet) directly without going through system timeout(1), which
+# cannot exec shell functions. This exercises the actual circuit-breaker logic.
+_timeout() { local _ts="$1"; shift; "$@"; }
 RUFLO_AVAILABLE=true
+RUFLO_DAEMON_STARTED=true
 
 exit_code=0
 ruflo_cleanup || exit_code=$?
 
 if [[ $exit_code -eq 0 ]]; then
-    assert_pass "ruflo_cleanup exits 0 when ruflo available"
+    assert_pass "ruflo_cleanup exits 0 when RUFLO_DAEMON_STARTED=true"
 else
-    assert_fail "ruflo_cleanup exits 0 when ruflo available" "got exit code: $exit_code"
+    assert_fail "ruflo_cleanup exits 0 when RUFLO_DAEMON_STARTED=true" "got exit code: $exit_code"
 fi
 
 if grep -q "^stop" "$_cleanup_call_log" 2>/dev/null; then
@@ -181,8 +183,8 @@ else
     assert_fail "ruflo_cleanup calls ruflo stop" "stop not found in call log: $(cat "$_cleanup_call_log" 2>/dev/null)"
 fi
 
-# Restore adapter functions overridden above so subsequent tests see the real impl
-unset -f ruflo_with_timeout
+# Restore: unset _timeout stub and reload adapter for subsequent tests
+unset -f _timeout
 unset _RUFLO_ADAPTER_LOADED
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 
@@ -297,11 +299,12 @@ hash -d ruflo 2>/dev/null || true
 
 unset _RUFLO_ADAPTER_LOADED
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-# Override ruflo_with_timeout to call functions directly — GNU timeout(1) cannot
-# exec shell functions like _ruflo_run_quiet, which would trip the circuit breaker
-# during ruflo_import_memory and leave RUFLO_AVAILABLE=false after a successful init.
-ruflo_with_timeout() { local _ts="$1"; shift; "$@"; }
+# Stub _timeout as a shell function so ruflo_with_timeout passes shell functions
+# (like _ruflo_run_quiet) directly without going through system timeout(1), which
+# cannot exec shell functions and would trip the circuit breaker during import_memory.
+_timeout() { local _ts="$1"; shift; "$@"; }
 RUFLO_AVAILABLE=false
+RUFLO_DAEMON_STARTED=false
 
 ruflo_init
 
@@ -311,8 +314,14 @@ else
     assert_fail "ruflo_init sets RUFLO_AVAILABLE=true when daemon starts" "got: $RUFLO_AVAILABLE"
 fi
 
-# Restore adapter functions overridden above so subsequent tests see the real impl
-unset -f ruflo_with_timeout
+if [[ "$RUFLO_DAEMON_STARTED" == "true" ]]; then
+    assert_pass "ruflo_init sets RUFLO_DAEMON_STARTED=true when daemon starts"
+else
+    assert_fail "ruflo_init sets RUFLO_DAEMON_STARTED=true when daemon starts" "got: $RUFLO_DAEMON_STARTED"
+fi
+
+# Restore: unset _timeout stub and reload adapter for subsequent tests
+unset -f _timeout
 unset _RUFLO_ADAPTER_LOADED
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 

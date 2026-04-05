@@ -20,7 +20,8 @@ _RUFLO_ADAPTER_LOADED=1
 
 # ─── State ───────────────────────────────────────────────────────────────────
 RUFLO_AVAILABLE=false
-RUFLO_USE_NPX=false  # true when ruflo is only available via npx (not a local binary)
+RUFLO_USE_NPX=false        # true when ruflo is only available via npx (not a local binary)
+RUFLO_DAEMON_STARTED=false # true only when THIS run started the daemon via ruflo start --daemon
 
 # ─── Fallback helpers (no-op when helpers.sh is already sourced) ─────────────
 # Use declare -f (not type) to check for shell functions only — type matches
@@ -178,14 +179,16 @@ ruflo_init() {
     fi
 
     # Start daemon synchronously — returns 0 only when ready, no sleep needed.
-    # Treat already-running daemon as success via `ruflo status` fallback.
-    if ! _ruflo_run start --daemon &>/dev/null; then
-        if ! _ruflo_run status &>/dev/null; then
-            warn "Ruflo daemon failed to start — disabling ruflo for this run"
-            RUFLO_AVAILABLE=false
-            emit_event "ruflo.init_failed" "reason=daemon_start_failed"
-            return 0
-        fi
+    # Treat already-running daemon as success via `ruflo status` fallback, but
+    # only set RUFLO_DAEMON_STARTED when THIS run started it (not pre-existing).
+    if _ruflo_run start --daemon &>/dev/null; then
+        RUFLO_DAEMON_STARTED=true
+        export RUFLO_DAEMON_STARTED
+    elif ! _ruflo_run status &>/dev/null; then
+        warn "Ruflo daemon failed to start — disabling ruflo for this run"
+        RUFLO_AVAILABLE=false
+        emit_event "ruflo.init_failed" "reason=daemon_start_failed"
+        return 0
     fi
 
     emit_event "ruflo.mcp_started" "mode=daemon"
@@ -198,16 +201,26 @@ ruflo_init() {
 }
 
 # ─── ruflo_cleanup — cleanup ruflo at pipeline end ───────────────────────────
-# Exports memory, stops the orchestration daemon. No-op if ruflo was not
-# active. Always returns 0.
+# Exports memory, stops the orchestration daemon. No-op if this run did not
+# start the daemon (circuit-breaker may have flipped RUFLO_AVAILABLE=false
+# after startup — we still need to stop a daemon we started). Always returns 0.
 ruflo_cleanup() {
-    ruflo_available || return 0
+    [[ "${RUFLO_DAEMON_STARTED:-false}" == "true" ]] || return 0
 
     # Export memory for next run (stub — implemented in Issue 2)
     ruflo_export_memory || true
 
-    # Stop daemon gracefully
-    _ruflo_run stop &>/dev/null || true
+    # Stop daemon with a short timeout. Call the binary directly (not the
+    # _ruflo_run shell function) so system timeout(1) can exec it.
+    if command -v timeout >/dev/null 2>&1; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            timeout 10 npx -y ruflo@latest stop &>/dev/null || true
+        else
+            timeout 10 ruflo stop &>/dev/null || true
+        fi
+    else
+        _ruflo_run stop &>/dev/null || true
+    fi
     emit_event "ruflo.mcp_stopped" "mode=daemon"
 
     return 0

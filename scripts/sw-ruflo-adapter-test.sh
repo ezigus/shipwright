@@ -1185,4 +1185,61 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Tests 36-41: CI runner — shipwright-pipeline.yml workflow assertions
+# ═══════════════════════════════════════════════════════════════════════════════
+_PIPELINE_YML="${SCRIPT_DIR}/../.github/workflows/shipwright-pipeline.yml"
+
+print_test_section "CI workflow — ruflo install step present"
+if grep -q "Install ruflo" "$_PIPELINE_YML" 2>/dev/null; then
+    assert_pass "shipwright-pipeline.yml contains 'Install ruflo' step"
+else
+    assert_fail "shipwright-pipeline.yml contains 'Install ruflo' step" "not found"
+fi
+
+print_test_section "CI workflow — ruflo install step has continue-on-error"
+if grep -A15 "Install ruflo" "$_PIPELINE_YML" 2>/dev/null | grep -q "continue-on-error: true"; then
+    assert_pass "ruflo install step has continue-on-error: true"
+else
+    assert_fail "ruflo install step has continue-on-error: true" "not found"
+fi
+
+print_test_section "CI workflow — ruflo memory cache restore step present"
+if grep -q "Restore ruflo memory" "$_PIPELINE_YML" 2>/dev/null; then
+    assert_pass "shipwright-pipeline.yml contains ruflo memory cache restore step"
+else
+    assert_fail "shipwright-pipeline.yml contains ruflo memory cache restore step" "not found"
+fi
+
+print_test_section "CI workflow — cache restore uses cache/restore@v4 (not cache@v4)"
+if grep -A3 "Restore ruflo memory" "$_PIPELINE_YML" 2>/dev/null | grep -q "cache/restore@v4"; then
+    assert_pass "restore step uses actions/cache/restore@v4 (no implicit post-job save)"
+else
+    assert_fail "restore step uses actions/cache/restore@v4 (no implicit post-job save)" "not found"
+fi
+
+print_test_section "CI workflow — ruflo memory cache save step present"
+if grep -q "Save ruflo memory" "$_PIPELINE_YML" 2>/dev/null; then
+    assert_pass "shipwright-pipeline.yml contains ruflo memory cache save step"
+else
+    assert_fail "shipwright-pipeline.yml contains ruflo memory cache save step" "not found"
+fi
+
+print_test_section "CI workflow — cache save step runs on always()"
+if grep -A3 "Save ruflo memory" "$_PIPELINE_YML" 2>/dev/null | grep -q "always()"; then
+    assert_pass "ruflo memory cache save step uses if: always()"
+else
+    assert_fail "ruflo memory cache save step uses if: always()" "not found"
+fi
+
+print_test_section "CI workflow — ruflo install appears before Run Shipwright pipeline"
+_install_line=$(grep -n "Install ruflo" "$_PIPELINE_YML" 2>/dev/null | head -1 | cut -d: -f1)
+_run_line=$(grep -n "Run Shipwright pipeline" "$_PIPELINE_YML" 2>/dev/null | head -1 | cut -d: -f1)
+if [[ -n "$_install_line" && -n "$_run_line" && "$_install_line" -lt "$_run_line" ]]; then
+    assert_pass "ruflo install step appears before Run Shipwright pipeline step"
+else
+    assert_fail "ruflo install step appears before Run Shipwright pipeline step" \
+        "install_line=${_install_line:-missing} run_line=${_run_line:-missing}"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

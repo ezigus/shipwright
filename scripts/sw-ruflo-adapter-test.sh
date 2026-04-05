@@ -562,7 +562,31 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 24: ruflo_learn_from_shipwright — no-op when RUFLO_AVAILABLE=false
+# Test 24: ruflo_execute_build_single — returns 0 (success) on happy path
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_execute_build_single — returns 0 on success"
+
+mock_binary "ruflo" 'exit 0'
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+exit_code=0
+ruflo_execute_build_single "implement the feature" || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_execute_build_single returns 0 when agent command succeeds"
+else
+    assert_fail "ruflo_execute_build_single returns 0 when agent command succeeds" "exit_code=$exit_code"
+fi
+# Circuit-breaker must NOT have fired on success
+if [[ "$RUFLO_AVAILABLE" == "true" ]]; then
+    assert_pass "ruflo_execute_build_single does not trip circuit-breaker on success"
+else
+    assert_fail "ruflo_execute_build_single does not trip circuit-breaker on success" "RUFLO_AVAILABLE=$RUFLO_AVAILABLE"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 25: ruflo_learn_from_shipwright — no-op when RUFLO_AVAILABLE=false
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_learn_from_shipwright — no-op when unavailable"
 
@@ -578,21 +602,22 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 25: ruflo_learn_from_shipwright — skips invalid input (no file, no JSON)
+# Test 26: ruflo_learn_from_shipwright — skips invalid input (non-file, non-JSON)
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_learn_from_shipwright — skips invalid input"
 
 RUFLO_AVAILABLE=true
 exit_code=0
+# Path that doesn't exist is treated as raw JSON; jq fails → _content is empty → skips
 ruflo_learn_from_shipwright "/nonexistent/outcome.json" || exit_code=$?
 if [[ $exit_code -eq 0 ]]; then
-    assert_pass "ruflo_learn_from_shipwright returns 0 when file missing and not valid JSON"
+    assert_pass "ruflo_learn_from_shipwright returns 0 on invalid input (fail-open)"
 else
-    assert_fail "ruflo_learn_from_shipwright returns 0 when file missing and not valid JSON" "exit=$exit_code"
+    assert_fail "ruflo_learn_from_shipwright returns 0 on invalid input" "exit=$exit_code"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 26: ruflo_recall_similar_outcomes — returns empty when unavailable
+# Test 27: ruflo_recall_similar_outcomes — returns empty when RUFLO_AVAILABLE=false
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_recall_similar_outcomes — no-op when unavailable"
 
@@ -605,7 +630,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 27: ruflo_index_adr_artifacts — no-op when RUFLO_AVAILABLE=false
+# Test 28: ruflo_index_adr_artifacts — no-op when RUFLO_AVAILABLE=false
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_index_adr_artifacts — no-op when unavailable"
 
@@ -619,7 +644,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 28: ruflo_learn_from_shipwright — success path with valid outcome file
+# Test 29: ruflo_learn_from_shipwright — success path with valid outcome file
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_learn_from_shipwright — success path (file input)"
 
@@ -654,7 +679,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 29: ruflo_learn_from_shipwright — success path with raw JSON string input
+# Test 30: ruflo_learn_from_shipwright — success path with raw JSON string input
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_learn_from_shipwright — success path (raw JSON input)"
 

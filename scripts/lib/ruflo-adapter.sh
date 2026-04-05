@@ -244,6 +244,33 @@ _ruflo_shipwright_memory_dir() {
     done < <(_ruflo_repo_hash_candidates)
 }
 
+# ─── _ruflo_resolve_repo_hash — return a deterministic repo hash ─────────────
+# Returns REPO_HASH if already set by the pipeline (sw-pipeline.sh), otherwise
+# derives it from the git origin URL using the same algorithm as sw-memory.sh.
+# Prints the hash and returns 0 on success; prints nothing and returns 1 when
+# the hash cannot be determined (e.g., no git origin, no hash tool available).
+# Callers MUST skip namespace operations when this returns 1 to preserve
+# repo-isolation guarantees.
+_ruflo_resolve_repo_hash() {
+    # Fast path: already computed and exported by the pipeline
+    if [[ -n "${REPO_HASH:-}" && "${REPO_HASH}" != "unknown" ]]; then
+        printf '%s' "$REPO_HASH"
+        return 0
+    fi
+    # Slow path: derive from git origin URL (matches sw-memory.sh repo_hash())
+    local _origin
+    _origin=$(git config --get remote.origin.url 2>/dev/null || true)
+    [[ -n "$_origin" ]] || return 1
+    local _hash=""
+    if command -v shasum >/dev/null 2>&1; then
+        _hash=$(printf '%s' "$_origin" | shasum -a 256 2>/dev/null | cut -c1-12)
+    elif command -v sha256sum >/dev/null 2>&1; then
+        _hash=$(printf '%s' "$_origin" | sha256sum 2>/dev/null | cut -c1-12)
+    fi
+    [[ -n "$_hash" ]] || return 1
+    printf '%s' "$_hash"
+}
+
 # ─── ruflo_index_shipwright_memory — index ~/.shipwright/memory/ into ruflo ───
 # Indexes architecture and skill files from the repo's memory directory into
 # ruflo HNSW storage for semantic retrieval by pipeline stages.
@@ -345,6 +372,10 @@ _ruflo_resolve_repo_hash() {
 # Returns 0 on success, 1 on failure. Caller is expected to fall back to sw loop.
 # No-op (returns 1) when ruflo is unavailable — always fails open to sw loop.
 # Uses ruflo_with_timeout circuit-breaker: 10-minute wall-clock bound.
+#
+# Note: calls the ruflo binary directly (not via _ruflo_run_quiet) so the
+# invocation is a real external command that the system timeout binary can
+# exec. Shell functions cannot be exec'd by timeout directly.
 ruflo_execute_build_single() {
     ruflo_available || return 1
     local goal="$1"
@@ -353,9 +384,9 @@ ruflo_execute_build_single() {
 
     emit_event "ruflo.build_agent_start" "max_turns=$max_turns"
 
-    # Spawn a single build agent via ruflo CLI. Call binary directly (conditioned
-    # on RUFLO_USE_NPX) — system timeout cannot exec shell functions like
-    # _ruflo_run_quiet, which would cause immediate failure on Linux/CI.
+    # Call the binary directly — system timeout cannot exec shell functions.
+    # On failure (including if 'agent spawn' is unsupported), returns 1 so
+    # the caller falls back to sw loop.
     local _exit_code=0
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
         ruflo_with_timeout 600 npx -y ruflo@latest agent spawn \
@@ -369,34 +400,42 @@ ruflo_execute_build_single() {
         emit_event "ruflo.build_agent_complete" "success=true"
         return 0
     fi
-
     emit_event "ruflo.build_agent_failed" "success=false"
     return 1
 }
 
 # ─── ruflo_learn_from_shipwright — bridge Shipwright outcomes to ruflo ───────
-# Called after skill_memory_record() writes an outcome. Indexes the outcome
-# into ruflo HNSW under a repo-specific namespace for vector-similarity search.
-# Accepts a file path OR a raw JSON string as $1.
-# No-op when ruflo unavailable or repo hash undetermined. Always returns 0.
+# Called after skill_memory_record() writes an outcome. Accepts either a path
+# to an outcome JSON file or a raw JSON string, then indexes the outcome into
+# ruflo HNSW under a repo-specific namespace for vector-similarity search.
+# No-op when ruflo unavailable, input is empty/invalid, or repo hash cannot
+# be determined. Always returns 0 (fail-open).
 ruflo_learn_from_shipwright() {
     ruflo_available || return 0
     local outcome_source="${1:-}"
     [[ -n "$outcome_source" ]] || return 0
+
+    # Resolve repo hash — skip if unavailable to prevent namespace cross-pollution
     local _ns_hash
     _ns_hash=$(_ruflo_resolve_repo_hash) || return 0
+
     local _key="shipwright-outcome-$(date +%s)-$$"
     local _task_type="unknown"
     local _content=""
+
     if [[ -f "$outcome_source" ]]; then
+        # Input is a file path — read task_type (fall back to issue_type for
+        # Shipwright records that use issue_type as the canonical field name)
         _task_type=$(jq -r '.task_type // .issue_type // "unknown"' \
             "$outcome_source" 2>/dev/null || echo "unknown")
         _content=$(jq -sR . < "$outcome_source" 2>/dev/null || true)
     else
+        # Input is a raw JSON string
         _task_type=$(printf '%s\n' "$outcome_source" | \
             jq -r '.task_type // .issue_type // "unknown"' 2>/dev/null || echo "unknown")
         _content=$(printf '%s\n' "$outcome_source" | jq -c . 2>/dev/null || true)
     fi
+
     [[ -n "$_content" ]] || return 0
     ruflo_store "$_key" "$_content" \
         "learning-$_ns_hash" \
@@ -410,7 +449,7 @@ ruflo_learn_from_shipwright() {
 # ─── ruflo_recall_similar_outcomes — query ruflo for vector-similar past outcomes
 # Supplements Shipwright's file-based skill selection with semantic vector search.
 # Returns matching outcomes to stdout. Returns empty string when unavailable or
-# when the repo hash cannot be determined.
+# when repo hash cannot be determined (to prevent cross-repo namespace pollution).
 ruflo_recall_similar_outcomes() {
     ruflo_available || { echo ""; return 0; }
     local task_type="$1" issue_labels="${2:-}"
@@ -424,9 +463,10 @@ ruflo_recall_similar_outcomes() {
 # ─── ruflo_index_adr_artifacts — index pipeline ADR artifacts into ruflo ────
 # Indexes design-stage ADR files so review and build stages can query them for
 # architectural compliance checking. Uses repo-specific namespace.
-# Content is bounded to RUFLO_ADR_INDEX_MAX_BYTES (default 4000) to prevent
-# argv overflow on large files. No-op when ruflo unavailable or no ADR files
-# found. Always returns 0.
+# No-op when ruflo unavailable, no ADR files found, or repo hash unavailable.
+# Content is bounded to RUFLO_ADR_INDEX_MAX_BYTES (default 4000) to avoid
+# exceeding argv limits and tripping the circuit-breaker on large files.
+# Always returns 0 (fail-open).
 ruflo_index_adr_artifacts() {
     ruflo_available || return 0
     local _ns_hash

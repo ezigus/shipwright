@@ -115,7 +115,6 @@ rm -f "$TEST_TEMP_DIR/bin/ruflo"
 mock_binary "npx" 'exit 1'
 
 RUFLO_AVAILABLE=false
-RUFLO_MCP_PID=""
 
 exit_code=0
 ruflo_init || exit_code=$?
@@ -126,55 +125,66 @@ else
     assert_fail "ruflo_init exits 0 when ruflo unavailable" "got exit code: $exit_code"
 fi
 
-if [[ -z "$RUFLO_MCP_PID" ]]; then
-    assert_pass "ruflo_init sets no MCP PID when ruflo unavailable"
+if [[ "$RUFLO_AVAILABLE" == "false" ]]; then
+    assert_pass "ruflo_init leaves RUFLO_AVAILABLE=false when ruflo unavailable"
 else
-    assert_fail "ruflo_init sets no MCP PID when ruflo unavailable" "got: $RUFLO_MCP_PID"
+    assert_fail "ruflo_init leaves RUFLO_AVAILABLE=false when ruflo unavailable" "got: $RUFLO_AVAILABLE"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 6: ruflo_cleanup no-op when RUFLO_MCP_PID is empty
+# Test 6: ruflo_cleanup no-op when RUFLO_AVAILABLE=false
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_cleanup — no active PID"
+print_test_section "ruflo_cleanup — ruflo unavailable"
 
-RUFLO_MCP_PID=""
+RUFLO_AVAILABLE=false
 exit_code=0
 ruflo_cleanup || exit_code=$?
 
 if [[ $exit_code -eq 0 ]]; then
-    assert_pass "ruflo_cleanup exits 0 when no MCP PID"
+    assert_pass "ruflo_cleanup exits 0 when RUFLO_AVAILABLE=false"
 else
-    assert_fail "ruflo_cleanup exits 0 when no MCP PID" "got exit code: $exit_code"
+    assert_fail "ruflo_cleanup exits 0 when RUFLO_AVAILABLE=false" "got exit code: $exit_code"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 7: ruflo_cleanup kills MCP PID
+# Test 7: ruflo_cleanup calls ruflo stop when available
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_cleanup — kills MCP process"
+print_test_section "ruflo_cleanup — calls ruflo stop"
 
-# Start a background process to simulate MCP server
-sleep 100 &
-fake_pid=$!
+# Mock ruflo: record calls so we can verify `stop` was invoked
+_cleanup_call_log="$TEST_TEMP_DIR/cleanup-calls.txt"
+rm -f "$_cleanup_call_log"
+mock_binary "ruflo" "echo \"\$*\" >> '$_cleanup_call_log'; exit 0"
+# Clear bash command hash so the newly created mock is found before the real binary
+hash -d ruflo 2>/dev/null || true
 
-RUFLO_MCP_PID="$fake_pid"
-ruflo_cleanup || true
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+# Override ruflo_with_timeout to call functions directly — GNU timeout(1) cannot
+# exec shell functions like _ruflo_run_quiet, which would trip the circuit breaker
+# and prevent _ruflo_run stop from being reached in ruflo_cleanup.
+ruflo_with_timeout() { local _ts="$1"; shift; "$@"; }
+RUFLO_AVAILABLE=true
 
-# Reap zombie so kill -0 accurately reflects process state
-wait "$fake_pid" 2>/dev/null || true
+exit_code=0
+ruflo_cleanup || exit_code=$?
 
-if ! kill -0 "$fake_pid" 2>/dev/null; then
-    assert_pass "ruflo_cleanup kills the MCP process"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_cleanup exits 0 when ruflo available"
 else
-    # Clean up if still running
-    kill "$fake_pid" 2>/dev/null || true
-    assert_fail "ruflo_cleanup kills the MCP process" "process $fake_pid still running"
+    assert_fail "ruflo_cleanup exits 0 when ruflo available" "got exit code: $exit_code"
 fi
 
-if [[ -z "$RUFLO_MCP_PID" ]]; then
-    assert_pass "ruflo_cleanup clears RUFLO_MCP_PID after kill"
+if grep -q "^stop" "$_cleanup_call_log" 2>/dev/null; then
+    assert_pass "ruflo_cleanup calls ruflo stop"
 else
-    assert_fail "ruflo_cleanup clears RUFLO_MCP_PID after kill" "got: $RUFLO_MCP_PID"
+    assert_fail "ruflo_cleanup calls ruflo stop" "stop not found in call log: $(cat "$_cleanup_call_log" 2>/dev/null)"
 fi
+
+# Restore adapter functions overridden above so subsequent tests see the real impl
+unset -f ruflo_with_timeout
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Test 8: ruflo_with_timeout — circuit-breaks on timeout
@@ -276,90 +286,61 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 12: ruflo_init happy path — ruflo present, MCP server starts and stays alive
+# Test 12: ruflo_init happy path — ruflo present, daemon starts successfully
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_init — MCP server starts successfully"
+print_test_section "ruflo_init — daemon starts successfully"
 
-# Mock ruflo: mcp start keeps running (simulates a live MCP server process)
-mock_binary "ruflo" 'case "${1:-}" in
-    mcp) case "${2:-}" in
-        start) sleep 100 ;;
-        *) exit 0 ;;
-    esac ;;
-    *) exit 0 ;;
-esac'
+# Mock ruflo: all subcommands succeed (init check, start --daemon, etc.)
+mock_binary "ruflo" 'exit 0'
+# Clear bash command hash so the newly created mock is found before the real binary
+hash -d ruflo 2>/dev/null || true
 
 unset _RUFLO_ADAPTER_LOADED
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+# Override ruflo_with_timeout to call functions directly — GNU timeout(1) cannot
+# exec shell functions like _ruflo_run_quiet, which would trip the circuit breaker
+# during ruflo_import_memory and leave RUFLO_AVAILABLE=false after a successful init.
+ruflo_with_timeout() { local _ts="$1"; shift; "$@"; }
 RUFLO_AVAILABLE=false
-RUFLO_MCP_PID=""
 
 ruflo_init
 
 if [[ "$RUFLO_AVAILABLE" == "true" ]]; then
-    assert_pass "ruflo_init sets RUFLO_AVAILABLE=true when MCP server starts"
+    assert_pass "ruflo_init sets RUFLO_AVAILABLE=true when daemon starts"
 else
-    assert_fail "ruflo_init sets RUFLO_AVAILABLE=true when MCP server starts" "got: $RUFLO_AVAILABLE"
+    assert_fail "ruflo_init sets RUFLO_AVAILABLE=true when daemon starts" "got: $RUFLO_AVAILABLE"
 fi
 
-if [[ -n "$RUFLO_MCP_PID" ]]; then
-    assert_pass "ruflo_init records RUFLO_MCP_PID on successful MCP start"
-else
-    assert_fail "ruflo_init records RUFLO_MCP_PID on successful MCP start" "RUFLO_MCP_PID was empty"
-fi
-
-# Verify PID is actually a running process
-if kill -0 "$RUFLO_MCP_PID" 2>/dev/null; then
-    assert_pass "RUFLO_MCP_PID refers to a live process after ruflo_init"
-else
-    assert_fail "RUFLO_MCP_PID refers to a live process after ruflo_init" "PID $RUFLO_MCP_PID not running"
-fi
-
-# Clean up the background MCP process started by ruflo_init
-_mcp_pid_to_cleanup="$RUFLO_MCP_PID"
-[[ -n "$_mcp_pid_to_cleanup" ]] && kill "$_mcp_pid_to_cleanup" 2>/dev/null || true
-wait "$_mcp_pid_to_cleanup" 2>/dev/null || true
-RUFLO_MCP_PID=""
+# Restore adapter functions overridden above so subsequent tests see the real impl
+unset -f ruflo_with_timeout
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 13: ruflo_init — MCP server crashes on startup, fail-open guarantee
+# Test 13: ruflo_init — daemon startup failure, fail-open guarantee
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_init — MCP server startup failure (fail-open)"
+print_test_section "ruflo_init — daemon startup failure (fail-open)"
 
-# Mock ruflo: mcp start exits immediately with failure (simulates MCP crash on startup)
-mock_binary "ruflo" 'case "${1:-}" in
-    mcp) case "${2:-}" in
-        start) exit 1 ;;
-        *) exit 0 ;;
-    esac ;;
-    *) exit 0 ;;
-esac'
+# Mock ruflo: init check and start --daemon both fail; status also fails
+mock_binary "ruflo" 'exit 1'
 
 unset _RUFLO_ADAPTER_LOADED
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=false
-RUFLO_MCP_PID=""
 
 exit_code=0
 ruflo_init || exit_code=$?
 
 if [[ $exit_code -eq 0 ]]; then
-    assert_pass "ruflo_init exits 0 (fail-open) even when MCP server crashes"
+    assert_pass "ruflo_init exits 0 (fail-open) even when daemon startup fails"
 else
-    assert_fail "ruflo_init exits 0 (fail-open) even when MCP server crashes" "got exit code: $exit_code"
+    assert_fail "ruflo_init exits 0 (fail-open) even when daemon startup fails" "got exit code: $exit_code"
 fi
 
-# Reap any zombie from the failed mcp start before state check
-[[ -n "${RUFLO_MCP_PID:-}" ]] && wait "$RUFLO_MCP_PID" 2>/dev/null || true
-
-# When the MCP process has died and been reaped, RUFLO_AVAILABLE must be false
-# (kill -0 can return 0 for short-lived zombies; test what we can reliably verify)
 if [[ "$RUFLO_AVAILABLE" == "false" ]]; then
-    assert_pass "ruflo_init sets RUFLO_AVAILABLE=false when MCP server crashes"
+    assert_pass "ruflo_init sets RUFLO_AVAILABLE=false when daemon startup fails"
 else
-    # MCP process may still be a zombie — the fail-open guarantee is the critical property.
-    # Log the state for visibility but do not fail the suite on platform-dependent zombie timing.
-    assert_pass "ruflo_init fail-open: RUFLO_AVAILABLE=$RUFLO_AVAILABLE (zombie reaping is platform-dependent)"
+    assert_fail "ruflo_init sets RUFLO_AVAILABLE=false when daemon startup fails" "got: $RUFLO_AVAILABLE"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

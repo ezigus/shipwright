@@ -309,6 +309,38 @@
     "ruflo.hive_spawn_failed": {
       "required": ["hive_id"],
       "optional": []
+    },
+    "ruflo.review_start": {
+      "required": ["max_agents"],
+      "optional": []
+    },
+    "ruflo.review_complete": {
+      "required": ["hive_id"],
+      "optional": []
+    },
+    "ruflo.review_failed": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.review_fallback": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.cq_start": {
+      "required": [],
+      "optional": []
+    },
+    "ruflo.cq_complete": {
+      "required": ["hive_id"],
+      "optional": []
+    },
+    "ruflo.cq_failed": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.cq_fallback": {
+      "required": ["reason"],
+      "optional": []
     }
   }
 }

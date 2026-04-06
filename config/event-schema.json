@@ -238,6 +238,18 @@
       "required": ["exit_code"],
       "optional": []
     },
+    "ruflo.health_recovered": {
+      "required": [],
+      "optional": []
+    },
+    "ruflo.health_restarted": {
+      "required": [],
+      "optional": []
+    },
+    "ruflo.health_failed": {
+      "required": [],
+      "optional": []
+    },
     "ruflo.import_memory_ok": {
       "required": ["file"],
       "optional": []

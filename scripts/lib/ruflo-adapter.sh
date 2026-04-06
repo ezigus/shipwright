@@ -19,10 +19,13 @@ VERSION="3.3.0"
 _RUFLO_ADAPTER_LOADED=1
 
 # ─── State ───────────────────────────────────────────────────────────────────
-RUFLO_AVAILABLE=false
-RUFLO_USE_NPX=false        # true when ruflo is only available via npx (not a local binary)
-RUFLO_DAEMON_STARTED=false # true only when THIS run started the daemon via ruflo start --daemon
-RUFLO_FAILURE_COUNT=0      # incremented by circuit-breaker; reset on recovery
+# Use ${VAR:-default} to preserve values inherited from a parent process (e.g.
+# sw-pipeline.sh) when ruflo-adapter.sh is sourced in a subprocess like sw-loop.sh.
+RUFLO_AVAILABLE="${RUFLO_AVAILABLE:-false}"
+RUFLO_USE_NPX="${RUFLO_USE_NPX:-false}"        # true when ruflo is only available via npx (not a local binary)
+RUFLO_DAEMON_STARTED="${RUFLO_DAEMON_STARTED:-false}" # true only when THIS run started the daemon via ruflo start --daemon
+RUFLO_FAILURE_COUNT="${RUFLO_FAILURE_COUNT:-0}"      # incremented by circuit-breaker; reset on recovery
+export RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_FAILURE_COUNT
 
 # ─── Fallback helpers (no-op when helpers.sh is already sourced) ─────────────
 # Use declare -f (not type) to check for shell functions only — type matches
@@ -256,13 +259,13 @@ ruflo_health_check() {
     return 0
 }
 
-# ─── ruflo_with_timeout — run a ruflo command with circuit-breaker ────────────
-# On timeout or failure, sets RUFLO_AVAILABLE=false to disable ruflo for the
-# remainder of the pipeline run.
+# ─── ruflo_with_timeout — run a ruflo command with recoverable circuit-breaker ─
+# Shell functions are run in a background subshell + poll so they get a real
+# wall-clock bound (timeout(1) can only exec binaries, not functions).
+# Failures increment RUFLO_FAILURE_COUNT; ruflo is only disabled after
+# RUFLO_MAX_FAILURES (default 5) consecutive failures — transient errors recover.
 # Usage: ruflo_with_timeout <seconds> <command...>
-# Returns 0 on success, 1 on timeout or failure (and disables ruflo).
-# Note: without a system `timeout` binary, the command runs without a time
-# bound — the circuit-breaker still fires on failure but not on hang.
+# Returns 0 on success, 1 on failure. Returns 1 immediately when ruflo is disabled.
 ruflo_with_timeout() {
     local timeout_s="${1:-30}"
     shift
@@ -286,6 +289,12 @@ ruflo_with_timeout() {
             waited=$(( waited + 1 ))
         done
         if kill -0 "$bg_pid" 2>/dev/null; then
+            # Kill child processes first (e.g. ruflo binary spawned by the function)
+            # then the wrapper subshell. pkill -P kills by parent PID, which works
+            # even without a dedicated process group (non-interactive shell, no set -m).
+            if command -v pkill >/dev/null 2>&1; then
+                pkill -TERM -P "$bg_pid" 2>/dev/null || true
+            fi
             kill "$bg_pid" 2>/dev/null || true
             wait "$bg_pid" 2>/dev/null || true
             exit_code=124  # match timeout(1)'s exit code
@@ -303,6 +312,7 @@ ruflo_with_timeout() {
 
     if [[ $exit_code -ne 0 ]]; then
         RUFLO_FAILURE_COUNT=$(( RUFLO_FAILURE_COUNT + 1 ))
+        export RUFLO_FAILURE_COUNT
         if [[ "$RUFLO_FAILURE_COUNT" -ge "${RUFLO_MAX_FAILURES:-5}" ]]; then
             warn "Ruflo command failed ${RUFLO_FAILURE_COUNT} times — disabling ruflo for this run"
             RUFLO_AVAILABLE=false
@@ -310,7 +320,7 @@ ruflo_with_timeout() {
         else
             warn "Ruflo command failed (attempt ${RUFLO_FAILURE_COUNT}/${RUFLO_MAX_FAILURES:-5})"
         fi
-        emit_event "ruflo.circuit_break" "exit_code=$exit_code" "failure_count=$RUFLO_FAILURE_COUNT"
+        emit_event "ruflo.circuit_break" "exit_code=$exit_code"
         return 1
     fi
 

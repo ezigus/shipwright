@@ -57,6 +57,27 @@ stage_review() {
         review_model="$CLAUDE_MODEL"
     fi
 
+    # Ruflo parallel review hive — run before native review to inject hive findings
+    # as additional context into the review prompt. Fail-open: if the hive fails,
+    # native single-agent review continues unaffected.
+    local _hive_review_file="$ARTIFACTS_DIR/review-hive-context.md"
+    local _hive_review_context=""
+    if declare -f ruflo_execute_review >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _diff_content
+        _diff_content=$(cat "$diff_file" 2>/dev/null || true)
+        if [[ -n "$_diff_content" ]] && ruflo_execute_review "$_diff_content" "$_hive_review_file"; then
+            info "Ruflo parallel review hive complete — augmenting native review"
+            if [[ -s "$_hive_review_file" ]]; then
+                _hive_review_context=$(head -c 3000 "$_hive_review_file" 2>/dev/null || true)
+            fi
+        else
+            warn "Ruflo parallel review failed — falling back to native single-agent review"
+            emit_event "ruflo.review_fallback" "reason=hive_failed" || true
+        fi
+    fi
+
     # Build review prompt with project context
     local review_prompt="You are a senior code reviewer. Review this git diff thoroughly.
 
@@ -210,6 +231,37 @@ ${_skill_prompts}
 "
     fi
 
+    # Inject prior stage context from ruflo (supplements file-based artifacts)
+    if declare -f ruflo_available >/dev/null 2>&1 && \
+       declare -f ruflo_recall >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _prior_context
+        _prior_context=$(ruflo_recall "plan design build results for ${TASK_TYPE:-feature}" \
+            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" 2>/dev/null || true)
+        if [[ -n "$_prior_context" ]]; then
+            review_prompt="${review_prompt}
+
+## Prior Stage Context (from ruflo memory)
+${_prior_context}"
+        fi
+        review_prompt="${review_prompt}
+
+## Ruflo Memory Available
+Ruflo MCP tools are available in this session. Use mcp__ruflo__memory_store to persist
+important decisions and mcp__ruflo__memory_search to recall prior context from namespace
+'pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}'."
+    fi
+
+    # Inject parallel hive reviewer findings — union of all specialist reviewer outputs
+    # (security, code_quality, test_gap, architecture). Only present when ruflo hive
+    # completed successfully above.
+    if [[ -n "$_hive_review_context" ]]; then
+        review_prompt="${review_prompt}
+
+## Parallel Hive Reviewer Findings (ruflo — union aggregation)
+${_hive_review_context}"
+    fi
+
     # Guard total prompt size
     review_prompt=$(guard_prompt_size "review" "$review_prompt")
 
@@ -246,6 +298,26 @@ For each gap found:
 
 If all requirements are met, write: \"Spec compliance: PASS — all planned tasks implemented.\"
 "
+            # Inject prior stage context from ruflo into spec compliance prompt
+            if declare -f ruflo_available >/dev/null 2>&1 && \
+               declare -f ruflo_recall >/dev/null 2>&1 && \
+               ruflo_available; then
+                local _spec_prior_context
+                _spec_prior_context=$(ruflo_recall "plan design build results for ${TASK_TYPE:-feature}" \
+                    "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" 2>/dev/null || true)
+                if [[ -n "$_spec_prior_context" ]]; then
+                    spec_prompt="${spec_prompt}
+
+## Prior Stage Context (from ruflo memory)
+${_spec_prior_context}"
+                fi
+                spec_prompt="${spec_prompt}
+
+## Ruflo Memory Available
+Ruflo MCP tools are available in this session. Use mcp__ruflo__memory_store to persist
+important decisions and mcp__ruflo__memory_search to recall prior context from namespace
+'pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}'."
+            fi
             spec_prompt=$(guard_prompt_size "spec-review" "$spec_prompt")
             claude "${review_args[@]}" "$spec_prompt" < /dev/null > "$spec_review_file" 2>"${ARTIFACTS_DIR}/.claude-tokens-spec-review.log" || true
             parse_claude_tokens "${ARTIFACTS_DIR}/.claude-tokens-spec-review.log"
@@ -411,6 +483,13 @@ ${review_summary}
 </details>"
     fi
 
+    # Store review summary in ruflo for cross-stage context
+    if declare -f ruflo_store >/dev/null 2>&1 && [[ -s "$review_file" ]]; then
+        ruflo_store "stage-review-result" \
+            "$(head -c 4000 "$review_file" 2>/dev/null || true)" \
+            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
+    fi
+
     log_stage "review" "AI review complete ($total_issues issues: $critical_count critical, $bug_count bugs, $warning_count suggestions)"
 }
 
@@ -441,6 +520,27 @@ stage_compound_quality() {
         echo "$_cq_retry_hints" >> "${ARTIFACTS_DIR}/.compound-quality-skills.md" 2>/dev/null || true
     fi
 
+    # Ruflo adversarial quality hive — run early to collect parallel findings.
+    # Writes to a separate file; findings are appended to compound_log AFTER
+    # compound_log is declared and initialized below (avoids unbound-variable
+    # error under set -u and prevents `: > "$compound_log"` from wiping findings).
+    local _hive_cq_file="$ARTIFACTS_DIR/cq-hive-context.md"
+    local _hive_cq_ok=false
+    if declare -f ruflo_execute_compound_quality >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _cq_diff_content
+        _cq_diff_content=$(cat "$ARTIFACTS_DIR/review-diff.patch" 2>/dev/null || true)
+        if [[ -n "$_cq_diff_content" ]] && \
+           ruflo_execute_compound_quality "$_cq_diff_content" "$_hive_cq_file"; then
+            info "Ruflo adversarial quality hive complete"
+            _hive_cq_ok=true
+        else
+            warn "Ruflo compound quality hive failed — continuing with native checks"
+            emit_event "ruflo.cq_fallback" "reason=hive_failed" || true
+        fi
+    fi
+
     # Read stage config from pipeline template
     local cfg
     cfg=$(jq -r '.stages[] | select(.id == "compound_quality") | .config // {}' "$PIPELINE_CONFIG" 2>/dev/null) || cfg="{}"
@@ -456,6 +556,11 @@ stage_compound_quality() {
     local pass_count=0 fail_count=0 total=0
     local compound_log="$ARTIFACTS_DIR/compound-quality.log"
     : > "$compound_log"
+
+    # Append ruflo hive findings now that compound_log is declared and initialized
+    if [[ "$_hive_cq_ok" == "true" && -s "$_hive_cq_file" ]]; then
+        cat "$_hive_cq_file" >> "$compound_log" 2>/dev/null || true
+    fi
 
     # ── Adversarial review ──
     if [[ "$do_adversarial" == "true" ]]; then

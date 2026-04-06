@@ -68,6 +68,7 @@ LOOP_EOF
     create_mock_claude
     create_mock_gh
     create_mock_sw
+    create_mock_ruflo
 
     # Mock timeout — macOS doesn't have GNU coreutils timeout by default
     cat > "$TEST_TEMP_DIR/bin/timeout" <<'TIMEOUT_EOF'
@@ -288,6 +289,16 @@ MOCK_SW
     chmod +x "$TEST_TEMP_DIR/bin/sw"
 }
 
+create_mock_ruflo() {
+    cat > "$TEST_TEMP_DIR/bin/ruflo" <<'RUFLO_EOF'
+#!/usr/bin/env bash
+# Mock ruflo — all subcommands succeed instantly so pipeline tests don't
+# block on real daemon startup (init check, start --daemon, stop, etc.)
+exit 0
+RUFLO_EOF
+    chmod +x "$TEST_TEMP_DIR/bin/ruflo"
+}
+
 create_mock_project() {
     mkdir -p "$TEST_TEMP_DIR/project/src" "$TEST_TEMP_DIR/project/tests"
 
@@ -356,7 +367,10 @@ reset_test() {
 
 cleanup_env() {
     if [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]]; then
-        rm -rf "$TEST_TEMP_DIR"
+        # npm/npx may write read-only files into $TEST_TEMP_DIR/.npm when HOME
+        # is redirected to the temp dir. chmod first to allow removal on macOS.
+        chmod -R u+rwx "$TEST_TEMP_DIR" 2>/dev/null || true
+        rm -rf "$TEST_TEMP_DIR" || true
     fi
 }
 _test_cleanup_hook() { cleanup_env; }

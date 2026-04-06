@@ -409,6 +409,54 @@ ${_skill_prompts}
     # for interactive permission prompts. Without this flag, agents can't write files.
     loop_args+=(--skip-permissions)
 
+    # Ruflo hive-mind build: when RUFLO_HIVE_BUILD=true and agents>1, try hive first.
+    # Three-tier fallback: hive → single-agent → sw loop. Fail-open by design.
+    if [[ "${RUFLO_HIVE_BUILD:-false}" == "true" ]] && \
+       { [[ "${agents:-1}" -gt 1 ]] 2>/dev/null || false; } && \
+       declare -f ruflo_execute_build_hive >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        info "Ruflo hive-mind build executor active — attempting hive build (${agents} agents)"
+        if ruflo_execute_build_hive "$enriched_goal" "$max_iter"; then
+            local commit_count
+            commit_count=$(_trim "$(_safe_base_log --oneline | wc -l)")
+            info "Ruflo hive build produced ${BOLD}$commit_count${RESET} commit(s)"
+            if declare -f ruflo_store >/dev/null 2>&1 && [[ "${commit_count:-0}" -gt 0 ]]; then
+                ruflo_store "stage-build-result" \
+                    "Ruflo hive build: $commit_count commits, ${agents} agents. Branch: ${GIT_BRANCH:-unknown}." \
+                    "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
+            fi
+            log_stage "build" "Ruflo hive build completed ($commit_count commits)"
+            return 0
+        fi
+        warn "Ruflo hive build failed — falling back to single-agent or sw loop"
+        emit_event "ruflo.hive_build_fallback" "reason=hive_failed"
+    fi
+
+    # Ruflo single-agent build: when RUFLO_BUILD_AGENT=true and agents=1, try ruflo first.
+    # Falls back to sw loop on any failure — fail-open by design.
+    if [[ "${RUFLO_BUILD_AGENT:-false}" == "true" ]] && \
+       [[ "${agents:-1}" -eq 1 ]] && \
+       declare -f ruflo_execute_build_single >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        info "Ruflo single-agent build executor active — attempting ruflo build"
+        if ruflo_execute_build_single "$enriched_goal" "$max_iter"; then
+            local commit_count
+            commit_count=$(_trim "$(_safe_base_log --oneline | wc -l)")
+            info "Ruflo build produced ${BOLD}$commit_count${RESET} commit(s)"
+            if declare -f ruflo_store >/dev/null 2>&1 && [[ "${commit_count:-0}" -gt 0 ]]; then
+                ruflo_store "stage-build-result" \
+                    "Ruflo single-agent build: $commit_count commits. Branch: ${GIT_BRANCH:-unknown}." \
+                    "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
+            fi
+            log_stage "build" "Ruflo build completed ($commit_count commits)"
+            return 0
+        fi
+        warn "Ruflo build failed — falling back to sw loop"
+        emit_event "ruflo.build_fallback" "reason=agent_failed"
+    fi
+
     info "Starting build loop: ${DIM}shipwright loop${RESET} (max ${max_iter} iterations, ${agents} agent(s))"
 
     # Post build start to GitHub
@@ -484,6 +532,13 @@ ${commit_msgs}" --model haiku < /dev/null 2>/dev/null || true)
                 info "Commit quality score: ${quality_score}/100"
             fi
         fi
+    fi
+
+    # Store build summary in ruflo for cross-stage context
+    if declare -f ruflo_store >/dev/null 2>&1 && [[ "${commit_count:-0}" -gt 0 ]]; then
+        ruflo_store "stage-build-result" \
+            "Build loop completed: $commit_count commits. Branch: ${GIT_BRANCH:-unknown}." \
+            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
     fi
 
     log_stage "build" "Build loop completed ($commit_count commits)"
@@ -597,6 +652,13 @@ ${test_summary}
     local _cov_tmp
     _cov_tmp=$(mktemp "${ARTIFACTS_DIR}/test-coverage.json.tmp.XXXXXX")
     printf '{"coverage_pct":%d}' "${_cov_pct:-0}" > "$_cov_tmp" && mv "$_cov_tmp" "$ARTIFACTS_DIR/test-coverage.json" || rm -f "$_cov_tmp"
+
+    # Store test results in ruflo for cross-stage context
+    if declare -f ruflo_store >/dev/null 2>&1 && [[ -f "$ARTIFACTS_DIR/test-results.log" ]]; then
+        ruflo_store "stage-test-result" \
+            "Tests passed. Coverage: ${_cov_pct:-0}%." \
+            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
+    fi
 
     log_stage "test" "Tests passed${coverage:+ (coverage: ${coverage}%)}"
 }

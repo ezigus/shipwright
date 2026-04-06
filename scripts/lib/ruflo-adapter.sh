@@ -20,7 +20,8 @@ _RUFLO_ADAPTER_LOADED=1
 
 # ─── State ───────────────────────────────────────────────────────────────────
 RUFLO_AVAILABLE=false
-RUFLO_USE_NPX=false  # true when ruflo is only available via npx (not a local binary)
+RUFLO_USE_NPX=false        # true when ruflo is only available via npx (not a local binary)
+RUFLO_DAEMON_STARTED=false # true only when THIS run started the daemon via ruflo start --daemon
 
 # ─── Fallback helpers (no-op when helpers.sh is already sourced) ─────────────
 # Use declare -f (not type) to check for shell functions only — type matches
@@ -37,14 +38,11 @@ fi
 
 # ─── _ruflo_run — invoke ruflo using the runtime detected at startup ──────────
 # Uses local binary when available; falls back to npx -y ruflo@latest.
-# CI=true prevents ruflo from entering TTY branding mode, which forks subshells
-# using cut in pipelines and writes "cut: stdout: Broken pipe" directly to
-# /dev/tty — bypassing all stdout/stderr redirections from the caller.
 _ruflo_run() {
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        CI=true npx -y ruflo@latest "$@"
+        npx -y ruflo@latest "$@"
     else
-        CI=true ruflo "$@"
+        ruflo "$@"
     fi
 }
 
@@ -53,9 +51,9 @@ _ruflo_run() {
 # circuit-breaker's own warn() output for observability.
 _ruflo_run_quiet() {
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        CI=true npx -y ruflo@latest "$@" 2>/dev/null
+        npx -y ruflo@latest "$@" 2>/dev/null
     else
-        CI=true ruflo "$@" 2>/dev/null
+        ruflo "$@" 2>/dev/null
     fi
 }
 
@@ -93,17 +91,76 @@ ruflo_available() {
     [[ "${RUFLO_AVAILABLE:-false}" == "true" ]]
 }
 
+# ─── ruflo_load_defaults — load project-level ruflo config ───────────────────
+# Reads .shipwright/defaults.json (repo-local, higher priority) or
+# ~/.shipwright/defaults.json (user-global fallback) and exports config vars.
+# No-op when neither file exists. Always returns 0 (fail-open).
+# Variables exported when present in the file:
+#   RUFLO_MAX_AGENTS            — hard cap on parallel agents across all hives
+#   RUFLO_COST_BUDGET_MULTIPLIER — multiplier applied to per-stage cost budget
+#   RUFLO_CIRCUIT_BREAKER_TIMEOUT — default ruflo_with_timeout seconds
+#   RUFLO_LEARNING_BRIDGE       — enable/disable ruflo<->Shipwright learning bridge
+#   RUFLO_Q_LEARNING            — enable/disable Q-learning agent router
+ruflo_load_defaults() {
+    local _repo_defaults=".shipwright/defaults.json"
+    local _user_defaults="$HOME/.shipwright/defaults.json"
+    local _defaults_file=""
+
+    if [[ -f "$_repo_defaults" ]]; then
+        _defaults_file="$_repo_defaults"
+    elif [[ -f "$_user_defaults" ]]; then
+        _defaults_file="$_user_defaults"
+    fi
+
+    [[ -n "$_defaults_file" ]] || return 0
+
+    # Parse each key using select(. != null) rather than // empty because jq's
+    # alternative operator treats boolean false as falsy and returns empty for
+    # learning_bridge: false, which would leave the variable unset.
+    # select(. != null) correctly passes false through while filtering null/missing.
+    local _v
+    # Validate integer fields: only export if value is a non-negative integer to
+    # prevent a non-integer (string/float) from being passed to ruflo_with_timeout
+    # or hive agent count, which would cause unexpected errors.
+    _v=$(jq -r '.ruflo.max_agents | select(. != null)' "$_defaults_file" 2>/dev/null || true)
+    if [[ -n "$_v" ]] && [[ "$_v" =~ ^[0-9]+$ ]]; then
+        RUFLO_MAX_AGENTS="$_v"; export RUFLO_MAX_AGENTS
+    fi
+
+    _v=$(jq -r '.ruflo.cost_budget_multiplier | select(. != null)' "$_defaults_file" 2>/dev/null || true)
+    [[ -n "$_v" ]] && { RUFLO_COST_BUDGET_MULTIPLIER="$_v"; export RUFLO_COST_BUDGET_MULTIPLIER; }
+
+    _v=$(jq -r '.ruflo.circuit_breaker_timeout_s | select(. != null)' "$_defaults_file" 2>/dev/null || true)
+    if [[ -n "$_v" ]] && [[ "$_v" =~ ^[0-9]+$ ]]; then
+        RUFLO_CIRCUIT_BREAKER_TIMEOUT="$_v"; export RUFLO_CIRCUIT_BREAKER_TIMEOUT
+    fi
+
+    _v=$(jq -r '(.ruflo.learning_bridge | select(. != null)) | tostring' "$_defaults_file" 2>/dev/null || true)
+    [[ -n "$_v" ]] && { RUFLO_LEARNING_BRIDGE="$_v"; export RUFLO_LEARNING_BRIDGE; }
+
+    _v=$(jq -r '(.ruflo.q_learning_routing | select(. != null)) | tostring' "$_defaults_file" 2>/dev/null || true)
+    [[ -n "$_v" ]] && { RUFLO_Q_LEARNING="$_v"; export RUFLO_Q_LEARNING; }
+
+    emit_event "ruflo.defaults_loaded" \
+        "file=$_defaults_file" \
+        "max_agents=${RUFLO_MAX_AGENTS:-default}" || true
+    return 0
+}
+
 # ─── ruflo_init — initialize ruflo at pipeline start ─────────────────────────
-# Detects ruflo, ensures project is initialized, starts orchestration daemon,
-# and imports memory. No-op if ruflo is unavailable. Always returns 0.
+# Detects ruflo, ensures the project is initialized, starts the orchestration
+# daemon, and imports memory. No-op if ruflo is unavailable. Always returns 0.
 #
-# Uses `ruflo start --daemon` (not `ruflo mcp start`). The mcp subcommand
-# launches a stdio JSON-RPC server intended for Claude Code's MCP integration —
-# it reads from stdin and immediately exits when stdin is /dev/null, so it can
-# never pass a liveness check. `ruflo start --daemon` is the correct command:
-# it runs synchronously, performs internal health checks, and returns 0 only
-# after the orchestration system is ready. No sleep or PID probe needed.
+# Uses `ruflo start --daemon` (NOT `ruflo mcp start`). The mcp subcommand is
+# a stdio JSON-RPC server for Claude Code's MCP client — it exits immediately
+# when stdin is /dev/null (EOF), so liveness probes always fail. In contrast,
+# `ruflo start --daemon` is synchronous, performs internal health checks, and
+# returns exit 0 only after the orchestration system is ready.
 ruflo_init() {
+    # Load project/user defaults before detection so env vars are set before
+    # the daemon starts and before any hive function reads them.
+    ruflo_load_defaults || true
+
     ruflo_detect || return 0
 
     info "Ruflo detected — starting orchestration daemon"
@@ -111,7 +168,6 @@ ruflo_init() {
 
     # Ensure ruflo is initialized in this project directory.
     # `ruflo init check` exits 0 when .claude-flow/config.yaml exists.
-    # `ruflo init --minimal` is safe to run on already-initialized projects.
     if ! _ruflo_run init check &>/dev/null; then
         if ! _ruflo_run init --minimal &>/dev/null; then
             warn "Ruflo project init failed — disabling ruflo for this run"
@@ -121,37 +177,49 @@ ruflo_init() {
         fi
     fi
 
-    # Start orchestration daemon. Synchronous: returns 0 only after health
-    # checks pass. Non-zero means startup failed OR a daemon is already running
-    # (idempotent re-start is not an error — check status to distinguish).
-    if ! _ruflo_run start --daemon &>/dev/null; then
-        if ! _ruflo_run status &>/dev/null; then
-            warn "Ruflo daemon failed to start — disabling ruflo for this run"
-            RUFLO_AVAILABLE=false
-            emit_event "ruflo.init_failed" "reason=daemon_start_failed"
-            return 0
-        fi
-        # Daemon was already running — that's fine, continue
+    # Start daemon synchronously — returns 0 only when ready, no sleep needed.
+    # Treat already-running daemon as success via `ruflo status` fallback, but
+    # only set RUFLO_DAEMON_STARTED when THIS run started it (not pre-existing).
+    if _ruflo_run start --daemon &>/dev/null; then
+        RUFLO_DAEMON_STARTED=true
+        export RUFLO_DAEMON_STARTED
+    elif ! _ruflo_run status &>/dev/null; then
+        warn "Ruflo daemon failed to start — disabling ruflo for this run"
+        RUFLO_AVAILABLE=false
+        emit_event "ruflo.init_failed" "reason=daemon_start_failed"
+        return 0
     fi
 
     emit_event "ruflo.mcp_started" "mode=daemon"
 
+    # Import memory from previous run (stub — implemented in Issue 2)
     ruflo_import_memory || true
+
     export RUFLO_AVAILABLE
     return 0
 }
 
 # ─── ruflo_cleanup — cleanup ruflo at pipeline end ───────────────────────────
-# Exports memory, stops orchestration daemon. No-op if ruflo was not active.
-# Always returns 0.
+# Exports memory, stops the orchestration daemon. No-op if this run did not
+# start the daemon (circuit-breaker may have flipped RUFLO_AVAILABLE=false
+# after startup — we still need to stop a daemon we started). Always returns 0.
 ruflo_cleanup() {
-    ruflo_available || return 0
+    [[ "${RUFLO_DAEMON_STARTED:-false}" == "true" ]] || return 0
 
     # Export memory for next run (stub — implemented in Issue 2)
     ruflo_export_memory || true
 
-    # Stop daemon — best-effort, never blocks pipeline exit
-    _ruflo_run stop &>/dev/null || true
+    # Stop daemon with a short timeout. Call the binary directly (not the
+    # _ruflo_run shell function) so system timeout(1) can exec it.
+    if command -v timeout >/dev/null 2>&1; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            timeout 10 npx -y ruflo@latest stop &>/dev/null || true
+        else
+            timeout 10 ruflo stop &>/dev/null || true
+        fi
+    else
+        _ruflo_run stop &>/dev/null || true
+    fi
     emit_event "ruflo.mcp_stopped" "mode=daemon"
 
     return 0
@@ -224,14 +292,23 @@ ruflo_recall() {
 # falls back to sha1/md5 variants for cross-platform compatibility.
 # Outputs one hash per line. No-op if origin URL cannot be determined.
 _ruflo_repo_hash_candidates() {
-    local origin
+    local origin _h
     origin=$(git config --get remote.origin.url 2>/dev/null || true)
     [[ -n "$origin" ]] || return 0
     # Canonical: shasum -a 256 (matches sw-memory.sh repo_hash())
-    command -v shasum  >/dev/null 2>&1 && printf '%s' "$origin" | shasum  -a 256 2>/dev/null | cut -c1-12
+    if command -v shasum >/dev/null 2>&1; then
+        _h=$(printf '%s' "$origin" | shasum -a 256 2>/dev/null) || true
+        [[ -n "$_h" ]] && printf '%.12s\n' "$_h" && return 0
+    fi
     # Fallbacks for non-macOS systems
-    command -v sha256sum >/dev/null 2>&1 && printf '%s' "$origin" | sha256sum 2>/dev/null | cut -c1-12
-    command -v sha1sum >/dev/null 2>&1 && printf '%s' "$origin" | sha1sum 2>/dev/null | cut -c1-12
+    if command -v sha256sum >/dev/null 2>&1; then
+        _h=$(printf '%s' "$origin" | sha256sum 2>/dev/null) || true
+        [[ -n "$_h" ]] && printf '%.12s\n' "$_h" && return 0
+    fi
+    if command -v sha1sum >/dev/null 2>&1; then
+        _h=$(printf '%s' "$origin" | sha1sum 2>/dev/null) || true
+        [[ -n "$_h" ]] && printf '%.12s\n' "$_h" && return 0
+    fi
 }
 
 # ─── _ruflo_shipwright_memory_dir — resolve actual memory dir for this repo ────
@@ -268,9 +345,11 @@ _ruflo_resolve_repo_hash() {
     [[ -n "$_origin" ]] || return 1
     local _hash=""
     if command -v shasum >/dev/null 2>&1; then
-        _hash=$(printf '%s' "$_origin" | shasum -a 256 2>/dev/null | cut -c1-12)
+        _hash=$(printf '%s' "$_origin" | shasum -a 256 2>/dev/null) || true
+        _hash="${_hash:0:12}"
     elif command -v sha256sum >/dev/null 2>&1; then
-        _hash=$(printf '%s' "$_origin" | sha256sum 2>/dev/null | cut -c1-12)
+        _hash=$(printf '%s' "$_origin" | sha256sum 2>/dev/null) || true
+        _hash="${_hash:0:12}"
     fi
     [[ -n "$_hash" ]] || return 1
     printf '%s' "$_hash"
@@ -348,10 +427,498 @@ ruflo_export_memory() {
     return 0
 }
 
+# ─── ruflo_execute_build_single — execute build via a single ruflo agent ─────
+# Spawns a ruflo agent to execute the build goal in single-agent mode.
+# Provides a lighter-weight alternative to the full sw loop for simple tasks.
+# Usage: ruflo_execute_build_single <goal> [max_turns]
+# Returns 0 on success, 1 on failure. Caller is expected to fall back to sw loop.
+# No-op (returns 1) when ruflo is unavailable — always fails open to sw loop.
+# Uses ruflo_with_timeout circuit-breaker: 10-minute wall-clock bound.
+#
+# Note: calls the ruflo binary directly (not via _ruflo_run_quiet) so the
+# invocation is a real external command that the system timeout binary can
+# exec. Shell functions cannot be exec'd by timeout directly.
+ruflo_execute_build_single() {
+    ruflo_available || return 1
+    local goal="$1"
+    local max_turns="${2:-30}"
+    [[ -n "$goal" ]] || return 1
+
+    emit_event "ruflo.build_agent_start" "max_turns=$max_turns"
+
+    # Call the binary directly — system timeout cannot exec shell functions.
+    # On failure (including if 'agent spawn' is unsupported), returns 1 so
+    # the caller falls back to sw loop.
+    local _exit_code=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 600 npx -y ruflo@latest agent spawn \
+            --goal "$goal" --max-turns "$max_turns" || _exit_code=$?
+    else
+        ruflo_with_timeout 600 ruflo agent spawn \
+            --goal "$goal" --max-turns "$max_turns" || _exit_code=$?
+    fi
+
+    if [[ $_exit_code -eq 0 ]]; then
+        emit_event "ruflo.build_agent_complete" "success=true"
+        return 0
+    fi
+    emit_event "ruflo.build_agent_failed" "success=false"
+    return 1
+}
+
+# ─── _ruflo_hive_shutdown — tear down a hive-mind session safely ─────────────
+# Sends shutdown to the hive identified by $1. Swallows errors — cleanup is
+# best-effort only; the pipeline must not fail on teardown failure.
+# Uses ruflo_with_timeout with a short bound so a hung ruflo can't stall the
+# pipeline during cleanup.
+# Always returns 0.
+_ruflo_hive_shutdown() {
+    local hive_id="${1:-}"
+    [[ -n "$hive_id" ]] || return 0
+    local _shutdown_timeout="${RUFLO_HIVE_SHUTDOWN_TIMEOUT_SECONDS:-15}"
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout "$_shutdown_timeout" \
+            npx -y ruflo@latest hive-mind shutdown --hive-id "$hive_id" \
+            >/dev/null 2>&1 || true
+    else
+        ruflo_with_timeout "$_shutdown_timeout" \
+            ruflo hive-mind shutdown --hive-id "$hive_id" \
+            >/dev/null 2>&1 || true
+    fi
+    return 0
+}
+
+# ─── ruflo_execute_build_hive — execute build via a ruflo hive-mind swarm ────
+# Spawns a hierarchical multi-agent hive to execute the build goal in parallel.
+# Uses Q-learning via hooks_route to select the optimal agent count and topology.
+# Falls back gracefully: any init/spawn/orchestrate failure causes the function
+# to return 1, letting the caller fall back to single-agent or sw loop.
+#
+# Environment knobs:
+#   RUFLO_HIVE_MAX_AGENTS  — hard cap on parallel agents (default 4)
+#   RUFLO_HIVE_TOPOLOGY    — force topology (default: hierarchical)
+#   RUFLO_USE_NPX          — use npx instead of installed ruflo binary
+#
+# Usage: ruflo_execute_build_hive <goal> [max_turns]
+# Returns 0 on success, 1 on failure (caller falls back). Fail-open design.
+#
+# Note: calls hive-mind/agent binaries directly (not via _ruflo_run_quiet) so
+# the invocations are real external commands the system timeout binary can exec.
+ruflo_execute_build_hive() {
+    ruflo_available || return 1
+    local goal="$1"
+    local max_turns="${2:-30}"
+    [[ -n "$goal" ]] || return 1
+
+    # RUFLO_HIVE_MAX_AGENTS (function-level) overrides RUFLO_MAX_AGENTS (global default)
+    local max_agents="${RUFLO_HIVE_MAX_AGENTS:-${RUFLO_MAX_AGENTS:-4}}"
+    local topology="${RUFLO_HIVE_TOPOLOGY:-hierarchical}"
+
+    emit_event "ruflo.hive_build_start" \
+        "max_agents=$max_agents" "topology=$topology" "max_turns=$max_turns"
+
+    # Q-learning agent selection: ask hooks_route for recommended agent count/
+    # topology based on historical performance. Use defaults on any failure.
+    # JSON is built with jq --arg to safely handle quotes/newlines in goal.
+    local _route_context
+    _route_context=$(jq -n \
+        --arg goal "$goal" \
+        --argjson max_agents "$max_agents" \
+        '{goal:$goal,max_agents:$max_agents}' 2>/dev/null || true)
+    local _route_json=""
+    if [[ -n "$_route_context" ]]; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            _route_json=$(npx -y ruflo@latest hooks route \
+                --event "build.start" \
+                --context "$_route_context" \
+                2>/dev/null || true)
+        else
+            _route_json=$(ruflo hooks route \
+                --event "build.start" \
+                --context "$_route_context" \
+                2>/dev/null || true)
+        fi
+    fi
+
+    if [[ -n "$_route_json" ]]; then
+        local _recommended_agents
+        _recommended_agents=$(printf '%s' "$_route_json" | \
+            jq -r '.agent_count // empty' 2>/dev/null || true)
+        # Validate _recommended_agents is a non-negative integer before numeric compare
+        if [[ "$_recommended_agents" =~ ^[0-9]+$ && "$_recommended_agents" -le "$max_agents" ]]; then
+            max_agents="$_recommended_agents"
+        fi
+        local _recommended_topology
+        _recommended_topology=$(printf '%s' "$_route_json" | \
+            jq -r '.topology // empty' 2>/dev/null || true)
+        [[ -n "$_recommended_topology" ]] && topology="$_recommended_topology"
+    fi
+
+    # Initialize the hive-mind session — wrapped in ruflo_with_timeout so a hung
+    # init command doesn't stall the build stage indefinitely.
+    local hive_id=""
+    local _init_out
+    local _init_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
+            --topology "$topology" \
+            --max-agents "$max_agents" \
+            --output-format json 2>/dev/null) || _init_exit=$?
+    else
+        _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
+            --topology "$topology" \
+            --max-agents "$max_agents" \
+            --output-format json 2>/dev/null) || _init_exit=$?
+    fi
+    [[ $_init_exit -eq 0 ]] && \
+        hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
+
+    if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
+        emit_event "ruflo.hive_init_failed" "topology=$topology"
+        return 1
+    fi
+
+    # Spawn worker agents — spawn failures are fatal: any non-zero exit triggers
+    # hive shutdown and causes the function to return 1 (caller falls back).
+    local _spawn_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 60 npx -y ruflo@latest hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$max_agents" \
+            --role "worker" 2>/dev/null || _spawn_exit=$?
+    else
+        ruflo_with_timeout 60 ruflo hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$max_agents" \
+            --role "worker" 2>/dev/null || _spawn_exit=$?
+    fi
+
+    if [[ $_spawn_exit -ne 0 ]]; then
+        warn "Ruflo hive spawn failed (hive_id=$hive_id) — aborting hive build"
+        emit_event "ruflo.hive_spawn_failed" "hive_id=$hive_id"
+        _ruflo_hive_shutdown "$hive_id"
+        return 1
+    fi
+
+    # Orchestrate the build goal across the hive
+    local _orch_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 600 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "$goal" \
+            --max-turns "$max_turns" \
+            --mode "pipeline" 2>/dev/null || _orch_exit=$?
+    else
+        ruflo_with_timeout 600 ruflo coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "$goal" \
+            --max-turns "$max_turns" \
+            --mode "pipeline" 2>/dev/null || _orch_exit=$?
+    fi
+
+    # Always shut down the hive regardless of outcome
+    _ruflo_hive_shutdown "$hive_id"
+
+    if [[ $_orch_exit -eq 0 ]]; then
+        emit_event "ruflo.hive_build_complete" \
+            "hive_id=$hive_id" "agents=$max_agents" "topology=$topology"
+        return 0
+    fi
+
+    emit_event "ruflo.hive_build_failed" \
+        "hive_id=$hive_id" "exit_code=$_orch_exit"
+    return 1
+}
+
+# ─── ruflo_execute_review — parallel review via ruflo hive-mind ──────────────
+# Spawns specialist reviewer agents (security, code_quality, test_gap, architecture)
+# in parallel using hive-mind. Findings are aggregated via union — NOT Byzantine
+# consensus voting (which is for conflicting outputs; review findings are additive).
+# The architecture reviewer receives ADR context from ruflo memory for compliance.
+#
+# Usage: ruflo_execute_review <diff_content> <artifact_file>
+# Returns 0 on success (artifact_file written with union of findings),
+#         1 on any hive failure (caller falls back to native review).
+# Always fail-open — never blocks the pipeline.
+#
+# Environment knobs:
+#   RUFLO_REVIEW_MAX_AGENTS  — max parallel reviewers (default 4)
+ruflo_execute_review() {
+    ruflo_available || return 1
+    local diff_content="$1"
+    local artifact_file="$2"
+    [[ -n "$diff_content" && -n "$artifact_file" ]] || return 1
+
+    # RUFLO_REVIEW_MAX_AGENTS (function-level) overrides RUFLO_MAX_AGENTS (global default)
+    local max_agents="${RUFLO_REVIEW_MAX_AGENTS:-${RUFLO_MAX_AGENTS:-4}}"
+    # Use pipeline_id when available; fall back to epoch+PID to ensure namespace
+    # uniqueness across concurrent runs when SHIPWRIGHT_PIPELINE_ID is unset.
+    local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
+    local review_ns="hive-review-${pipeline_id}"
+
+    emit_event "ruflo.review_start" "max_agents=$max_agents"
+
+    # Q-learning agent selection via hooks_route — select reviewer subset based on
+    # issue context (e.g. security-heavy issues get more security reviewers).
+    # JSON is built with jq --arg to safely handle quotes/newlines in goal.
+    local _route_context
+    _route_context=$(jq -n \
+        --arg goal "${GOAL:-review}" \
+        --argjson max_agents "$max_agents" \
+        '{goal:$goal,max_agents:$max_agents,stage:"review"}' 2>/dev/null || true)
+    if [[ -n "$_route_context" ]]; then
+        local _route_json=""
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            _route_json=$(npx -y ruflo@latest hooks route \
+                --event "review.start" \
+                --context "$_route_context" 2>/dev/null || true)
+        else
+            _route_json=$(ruflo hooks route \
+                --event "review.start" \
+                --context "$_route_context" 2>/dev/null || true)
+        fi
+        if [[ -n "$_route_json" ]]; then
+            local _recommended
+            _recommended=$(printf '%s' "$_route_json" | \
+                jq -r '.agent_count // empty' 2>/dev/null || true)
+            # Validate _recommended is a non-negative integer before numeric compare
+            if [[ "$_recommended" =~ ^[0-9]+$ && "$_recommended" -le "$max_agents" ]]; then
+                max_agents="$_recommended"
+            fi
+        fi
+    fi
+
+    # Initialize review hive — wrapped in ruflo_with_timeout to prevent hangs
+    local hive_id=""
+    local _init_exit=0
+    local _init_out=""
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
+            --topology hierarchical \
+            --max-agents "$max_agents" \
+            --output-format json 2>/dev/null) || _init_exit=$?
+    else
+        _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
+            --topology hierarchical \
+            --max-agents "$max_agents" \
+            --output-format json 2>/dev/null) || _init_exit=$?
+    fi
+    [[ $_init_exit -eq 0 ]] && \
+        hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
+    if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
+        emit_event "ruflo.review_failed" "reason=hive_init_failed"
+        return 1
+    fi
+
+    # Spawn specialist reviewers — spawn failures are non-fatal (proceed with fewer agents)
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 60 npx -y ruflo@latest hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$max_agents" \
+            --role specialist \
+            --prefix "review-${pipeline_id}" 2>/dev/null || true
+    else
+        ruflo_with_timeout 60 ruflo hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$max_agents" \
+            --role specialist \
+            --prefix "review-${pipeline_id}" 2>/dev/null || true
+    fi
+
+    # Store diff in shared hive memory for reviewers to consume.
+    # Bounded to 8000 bytes to avoid exceeding argv limits.
+    local _bounded_diff
+    _bounded_diff=$(printf '%s' "$diff_content" | head -c 8000 2>/dev/null || true)
+    ruflo_store "review-diff" "$_bounded_diff" "$review_ns" "review,diff" || true
+
+    # Inject ADR context for architecture reviewer — enables compliance checking.
+    # Only runs when repo hash is determinable (to prevent cross-repo namespace leaks).
+    local _ns_hash
+    if _ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null); then
+        local _adrs
+        _adrs=$(ruflo_recall "architecture decisions" "adrs-${_ns_hash}" 2>/dev/null || true)
+        if [[ -n "$_adrs" ]]; then
+            ruflo_store "review-adrs" "$_adrs" "$review_ns" "adr,context" || true
+        fi
+    fi
+
+    # Orchestrate parallel review across the hive — each specialist agent analyses
+    # the diff from their domain perspective (security, code_quality, test_gap,
+    # architecture). Results are written to the shared hive memory namespace.
+    local _orch_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 300 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "parallel code review: analyse diff in namespace ${review_ns}" \
+            --max-turns 20 \
+            --mode "review" 2>/dev/null || _orch_exit=$?
+    else
+        ruflo_with_timeout 300 ruflo coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "parallel code review: analyse diff in namespace ${review_ns}" \
+            --max-turns 20 \
+            --mode "review" 2>/dev/null || _orch_exit=$?
+    fi
+
+    # Aggregate findings via union — list all entries from the hive shared memory.
+    # Union (not Byzantine consensus): all reviewer findings are included regardless
+    # of whether they overlap. Duplicate deduplication is handled downstream.
+    local _findings=""
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _findings=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+            --action list \
+            --namespace "$review_ns" 2>/dev/null) || true
+    else
+        _findings=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+            --action list \
+            --namespace "$review_ns" 2>/dev/null) || true
+    fi
+
+    # Always shut down the hive regardless of outcome
+    _ruflo_hive_shutdown "$hive_id"
+
+    # Write findings to artifact file — ensure parent directory exists
+    mkdir -p "$(dirname "$artifact_file")" 2>/dev/null || true
+    if ! printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null; then
+        warn "ruflo: failed to write review artifact: $artifact_file"
+        # Fail-open: caller checks -s before injecting context, so empty = no-op
+    fi
+
+    # Persist review result for downstream stage context (PR, audit stages)
+    ruflo_store "stage-review-result" \
+        "$(head -c 2000 "$artifact_file" 2>/dev/null || true)" \
+        "pipeline-${pipeline_id}" \
+        "review,outcome" || true
+
+    emit_event "ruflo.review_complete" "hive_id=$hive_id"
+    return 0
+}
+
+# ─── ruflo_execute_compound_quality — adversarial quality hive ───────────────
+# Spawns adversarial specialist agents for compound quality checks:
+#   - negative_tester: writes failing tests for uncovered edge cases
+#   - dod_auditor: checks Definition of Done criteria
+#   - e2e_validator: end-to-end scenario coverage
+# Findings aggregated via union (same principle as ruflo_execute_review).
+#
+# Usage: ruflo_execute_compound_quality <diff_content> <artifact_file>
+# Returns 0 on success, 1 on any hive failure (caller falls back to native checks).
+# Always fail-open — never blocks the pipeline.
+ruflo_execute_compound_quality() {
+    ruflo_available || return 1
+    local diff_content="$1"
+    local artifact_file="$2"
+    [[ -n "$diff_content" && -n "$artifact_file" ]] || return 1
+
+    local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
+    local cq_ns="hive-cq-${pipeline_id}"
+    # Adversarial quality agents: RUFLO_CQ_MAX_AGENTS > RUFLO_MAX_AGENTS > default(3)
+    local cq_agents="${RUFLO_CQ_MAX_AGENTS:-${RUFLO_MAX_AGENTS:-3}}"
+
+    emit_event "ruflo.cq_start"
+
+    # Initialize adversarial quality hive
+    local hive_id=""
+    local _init_exit=0
+    local _init_out=""
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
+            --topology hierarchical \
+            --max-agents "$cq_agents" \
+            --output-format json 2>/dev/null) || _init_exit=$?
+    else
+        _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
+            --topology hierarchical \
+            --max-agents "$cq_agents" \
+            --output-format json 2>/dev/null) || _init_exit=$?
+    fi
+    [[ $_init_exit -eq 0 ]] && \
+        hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
+    if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
+        emit_event "ruflo.cq_failed" "reason=hive_init_failed"
+        return 1
+    fi
+
+    # Spawn adversarial agents — non-fatal spawn failure
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 60 npx -y ruflo@latest hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$cq_agents" \
+            --role specialist \
+            --prefix "quality-${pipeline_id}" 2>/dev/null || true
+    else
+        ruflo_with_timeout 60 ruflo hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$cq_agents" \
+            --role specialist \
+            --prefix "quality-${pipeline_id}" 2>/dev/null || true
+    fi
+
+    # Store diff and prior review findings for adversarial agents to consume
+    local _bounded_diff
+    _bounded_diff=$(printf '%s' "$diff_content" | head -c 8000 2>/dev/null || true)
+    ruflo_store "cq-diff" "$_bounded_diff" "$cq_ns" "quality,diff" || true
+
+    # Inject prior review results so adversarial agents can target gaps
+    local _prior_review
+    _prior_review=$(ruflo_recall "stage-review-result" \
+        "pipeline-${pipeline_id}" 2>/dev/null || true)
+    if [[ -n "$_prior_review" ]]; then
+        ruflo_store "cq-review-context" "$_prior_review" "$cq_ns" "quality,context" || true
+    fi
+
+    # Orchestrate adversarial quality checks — agents run negative testing,
+    # DoD auditing, and E2E scenario validation in parallel.
+    local _orch_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 300 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "adversarial quality: negative tests, DoD audit, E2E validation for namespace ${cq_ns}" \
+            --max-turns 15 \
+            --mode "quality" 2>/dev/null || _orch_exit=$?
+    else
+        ruflo_with_timeout 300 ruflo coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "adversarial quality: negative tests, DoD audit, E2E validation for namespace ${cq_ns}" \
+            --max-turns 15 \
+            --mode "quality" 2>/dev/null || _orch_exit=$?
+    fi
+
+    # Aggregate via union — all adversarial findings included
+    local _findings=""
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _findings=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+            --action list \
+            --namespace "$cq_ns" 2>/dev/null) || true
+    else
+        _findings=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+            --action list \
+            --namespace "$cq_ns" 2>/dev/null) || true
+    fi
+
+    # Always shut down the hive regardless of outcome
+    _ruflo_hive_shutdown "$hive_id"
+
+    # Write findings to artifact file — ensure parent directory exists
+    mkdir -p "$(dirname "$artifact_file")" 2>/dev/null || true
+    if ! printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null; then
+        warn "ruflo: failed to write compound quality artifact: $artifact_file"
+    fi
+
+    # Persist compound quality result for downstream stages
+    ruflo_store "stage-cq-result" \
+        "$(head -c 2000 "$artifact_file" 2>/dev/null || true)" \
+        "pipeline-${pipeline_id}" \
+        "quality,outcome" || true
+
+    emit_event "ruflo.cq_complete" "hive_id=$hive_id"
+    return 0
+}
+
 # ─── ruflo_learn_from_shipwright — bridge Shipwright outcomes to ruflo ───────
-# Called after pipeline completion. Accepts either a path to an outcome JSON
-# file or a raw JSON string, then indexes the outcome into ruflo HNSW under a
-# repo-specific namespace for vector-similarity search.
+# Called after skill_memory_record() writes an outcome. Accepts either a path
+# to an outcome JSON file or a raw JSON string, then indexes the outcome into
+# ruflo HNSW under a repo-specific namespace for vector-similarity search.
 # No-op when ruflo unavailable, input is empty/invalid, or repo hash cannot
 # be determined. Always returns 0 (fail-open).
 ruflo_learn_from_shipwright() {
@@ -401,5 +968,35 @@ ruflo_recall_similar_outcomes() {
     _ns_hash=$(_ruflo_resolve_repo_hash) || { echo ""; return 0; }
     ruflo_recall "skill selection for ${task_type} ${issue_labels}" \
         "learning-$_ns_hash"
+    return 0
+}
+
+# ─── ruflo_index_adr_artifacts — index pipeline ADR artifacts into ruflo ────
+# Indexes design-stage ADR files so review and build stages can query them for
+# architectural compliance checking. Uses repo-specific namespace.
+# No-op when ruflo unavailable, no ADR files found, or repo hash unavailable.
+# Content is bounded to RUFLO_ADR_INDEX_MAX_BYTES (default 4000) to avoid
+# exceeding argv limits and tripping the circuit-breaker on large files.
+# Always returns 0 (fail-open).
+ruflo_index_adr_artifacts() {
+    ruflo_available || return 0
+    local _ns_hash
+    _ns_hash=$(_ruflo_resolve_repo_hash) || return 0
+    local artifacts_dir="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
+    [[ -d "$artifacts_dir" ]] || return 0
+    local _max_bytes="${RUFLO_ADR_INDEX_MAX_BYTES:-4000}"
+    local _count=0
+    local adr _key _content
+    for adr in "$artifacts_dir"/design*.md "$artifacts_dir"/adr*.md; do
+        [[ -f "$adr" ]] || continue
+        _key="adr-$(basename "$adr" .md)-${SHIPWRIGHT_PIPELINE_ID:-unknown}"
+        _content=$(head -c "$_max_bytes" "$adr" 2>/dev/null | jq -sR . 2>/dev/null || true)
+        [[ -n "$_content" ]] || continue
+        ruflo_store "$_key" "$_content" \
+            "adrs-$_ns_hash" "adr,architecture" || true
+        _count=$(( _count + 1 ))
+    done
+    [[ "$_count" -gt 0 ]] && \
+        emit_event "ruflo.adr_indexed" "count=$_count" "repo=$_ns_hash" || true
     return 0
 }

@@ -227,20 +227,124 @@
       "optional": []
     },
     "ruflo.mcp_started": {
-      "required": ["pid"],
-      "optional": []
+      "required": [],
+      "optional": ["pid", "mode"]
     },
     "ruflo.mcp_stopped": {
-      "required": ["pid"],
-      "optional": []
+      "required": [],
+      "optional": ["pid", "mode"]
     },
     "ruflo.circuit_break": {
       "required": ["exit_code"],
       "optional": []
     },
+    "ruflo.import_memory_ok": {
+      "required": ["file"],
+      "optional": []
+    },
+    "ruflo.import_memory_failed": {
+      "required": ["file"],
+      "optional": []
+    },
+    "ruflo.export_memory_ok": {
+      "required": ["file"],
+      "optional": []
+    },
+    "ruflo.export_memory_failed": {
+      "required": ["file"],
+      "optional": []
+    },
+    "ruflo.indexing_skipped": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.indexing_complete": {
+      "required": ["repo_hash"],
+      "optional": []
+    },
     "ruflo.learn_from_shipwright": {
+      "required": ["task_type", "repo"],
+      "optional": []
+    },
+    "ruflo.adr_indexed": {
+      "required": ["count", "repo"],
+      "optional": []
+    },
+    "ruflo.build_agent_start": {
+      "required": ["max_turns"],
+      "optional": []
+    },
+    "ruflo.build_agent_complete": {
+      "required": ["success"],
+      "optional": []
+    },
+    "ruflo.build_agent_failed": {
+      "required": ["success"],
+      "optional": []
+    },
+    "ruflo.build_fallback": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.hive_build_start": {
+      "required": ["max_agents", "topology", "max_turns"],
+      "optional": []
+    },
+    "ruflo.hive_build_complete": {
+      "required": ["hive_id", "agents", "topology"],
+      "optional": []
+    },
+    "ruflo.hive_build_failed": {
+      "required": ["hive_id", "exit_code"],
+      "optional": []
+    },
+    "ruflo.hive_build_fallback": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.hive_init_failed": {
+      "required": ["topology"],
+      "optional": []
+    },
+    "ruflo.hive_spawn_failed": {
+      "required": ["hive_id"],
+      "optional": []
+    },
+    "ruflo.review_start": {
+      "required": ["max_agents"],
+      "optional": []
+    },
+    "ruflo.review_complete": {
+      "required": ["hive_id"],
+      "optional": []
+    },
+    "ruflo.review_failed": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.review_fallback": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.cq_start": {
       "required": [],
-      "optional": ["task_type", "repo"]
+      "optional": []
+    },
+    "ruflo.cq_complete": {
+      "required": ["hive_id"],
+      "optional": []
+    },
+    "ruflo.cq_failed": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.cq_fallback": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.defaults_loaded": {
+      "required": ["file"],
+      "optional": ["max_agents"]
     }
   }
 }

@@ -20,8 +20,8 @@ _RUFLO_ADAPTER_LOADED=1
 
 # ─── State ───────────────────────────────────────────────────────────────────
 RUFLO_AVAILABLE=false
-RUFLO_MCP_PID=""
-RUFLO_USE_NPX=false  # true when ruflo is only available via npx (not a local binary)
+RUFLO_USE_NPX=false        # true when ruflo is only available via npx (not a local binary)
+RUFLO_DAEMON_STARTED=false # true only when THIS run started the daemon via ruflo start --daemon
 
 # ─── Fallback helpers (no-op when helpers.sh is already sourced) ─────────────
 # Use declare -f (not type) to check for shell functions only — type matches
@@ -149,65 +149,79 @@ ruflo_load_defaults() {
 }
 
 # ─── ruflo_init — initialize ruflo at pipeline start ─────────────────────────
-# Detects ruflo, starts MCP server in background, imports memory (stub).
-# No-op if ruflo is unavailable. Always returns 0.
+# Detects ruflo, ensures the project is initialized, starts the orchestration
+# daemon, and imports memory. No-op if ruflo is unavailable. Always returns 0.
+#
+# Uses `ruflo start --daemon` (NOT `ruflo mcp start`). The mcp subcommand is
+# a stdio JSON-RPC server for Claude Code's MCP client — it exits immediately
+# when stdin is /dev/null (EOF), so liveness probes always fail. In contrast,
+# `ruflo start --daemon` is synchronous, performs internal health checks, and
+# returns exit 0 only after the orchestration system is ready.
 ruflo_init() {
     # Load project/user defaults before detection so env vars are set before
-    # the MCP server starts and before any hive function reads them.
+    # the daemon starts and before any hive function reads them.
     ruflo_load_defaults || true
 
     ruflo_detect || return 0
 
-    info "Ruflo detected — starting MCP server"
+    info "Ruflo detected — starting orchestration daemon"
     emit_event "ruflo.init" "available=true"
 
-    # Start MCP server in background using the same runtime as detection
-    # (local binary or npx) to avoid a binary-not-found failure when ruflo
-    # was found via npx but is not installed as a global command.
-    if ruflo_available; then
-        _ruflo_run mcp start &>/dev/null &
-        RUFLO_MCP_PID=$!
-        # Fixed 2s wait for the MCP server to bind its socket before the
-        # liveness probe below. This is a one-time startup guard, not a
-        # polling loop (testing-baseline: justified bounded sleep).
-        sleep 2
-
-        # Verify it's still running
-        if ! kill -0 "$RUFLO_MCP_PID" 2>/dev/null; then
-            warn "Ruflo MCP server failed to start — disabling ruflo"
-            RUFLO_MCP_PID=""
+    # Ensure ruflo is initialized in this project directory.
+    # `ruflo init check` exits 0 when .claude-flow/config.yaml exists.
+    if ! _ruflo_run init check &>/dev/null; then
+        if ! _ruflo_run init --minimal &>/dev/null; then
+            warn "Ruflo project init failed — disabling ruflo for this run"
             RUFLO_AVAILABLE=false
-            emit_event "ruflo.init_failed" "reason=mcp_start_failed"
+            emit_event "ruflo.init_failed" "reason=project_init_failed"
             return 0
         fi
-
-        emit_event "ruflo.mcp_started" "pid=$RUFLO_MCP_PID"
     fi
+
+    # Start daemon synchronously — returns 0 only when ready, no sleep needed.
+    # Treat already-running daemon as success via `ruflo status` fallback, but
+    # only set RUFLO_DAEMON_STARTED when THIS run started it (not pre-existing).
+    if _ruflo_run start --daemon &>/dev/null; then
+        RUFLO_DAEMON_STARTED=true
+        export RUFLO_DAEMON_STARTED
+    elif ! _ruflo_run status &>/dev/null; then
+        warn "Ruflo daemon failed to start — disabling ruflo for this run"
+        RUFLO_AVAILABLE=false
+        emit_event "ruflo.init_failed" "reason=daemon_start_failed"
+        return 0
+    fi
+
+    emit_event "ruflo.mcp_started" "mode=daemon"
 
     # Import memory from previous run (stub — implemented in Issue 2)
     ruflo_import_memory || true
 
     export RUFLO_AVAILABLE
-    export RUFLO_MCP_PID
     return 0
 }
 
 # ─── ruflo_cleanup — cleanup ruflo at pipeline end ───────────────────────────
-# Exports memory (stub), stops MCP server. No-op if ruflo was not active.
-# Always returns 0.
+# Exports memory, stops the orchestration daemon. No-op if this run did not
+# start the daemon (circuit-breaker may have flipped RUFLO_AVAILABLE=false
+# after startup — we still need to stop a daemon we started). Always returns 0.
 ruflo_cleanup() {
-    [[ -z "${RUFLO_MCP_PID:-}" ]] && return 0
+    [[ "${RUFLO_DAEMON_STARTED:-false}" == "true" ]] || return 0
 
     # Export memory for next run (stub — implemented in Issue 2)
     ruflo_export_memory || true
 
-    # Stop MCP server — capture PID before clearing so the event is accurate
-    if [[ -n "$RUFLO_MCP_PID" ]]; then
-        local _pid="$RUFLO_MCP_PID"
-        kill "$_pid" 2>/dev/null || true
-        RUFLO_MCP_PID=""
-        emit_event "ruflo.mcp_stopped" "pid=$_pid"
+    # Stop daemon with a short timeout. Call the binary directly (not the
+    # _ruflo_run shell function) so system timeout(1) can exec it.
+    if command -v timeout >/dev/null 2>&1; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            timeout 10 npx -y ruflo@latest stop &>/dev/null || true
+        else
+            timeout 10 ruflo stop &>/dev/null || true
+        fi
+    else
+        _ruflo_run stop &>/dev/null || true
     fi
+    emit_event "ruflo.mcp_stopped" "mode=daemon"
 
     return 0
 }

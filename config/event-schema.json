@@ -227,12 +227,12 @@
       "optional": []
     },
     "ruflo.mcp_started": {
-      "required": ["pid"],
-      "optional": []
+      "required": [],
+      "optional": ["pid", "mode"]
     },
     "ruflo.mcp_stopped": {
-      "required": ["pid"],
-      "optional": []
+      "required": [],
+      "optional": ["pid", "mode"]
     },
     "ruflo.circuit_break": {
       "required": ["exit_code"],

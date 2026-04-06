@@ -68,6 +68,7 @@ LOOP_EOF
     create_mock_claude
     create_mock_gh
     create_mock_sw
+    create_mock_ruflo
 
     # Mock timeout — macOS doesn't have GNU coreutils timeout by default
     cat > "$TEST_TEMP_DIR/bin/timeout" <<'TIMEOUT_EOF'
@@ -286,6 +287,16 @@ FEAT
 esac
 MOCK_SW
     chmod +x "$TEST_TEMP_DIR/bin/sw"
+}
+
+create_mock_ruflo() {
+    cat > "$TEST_TEMP_DIR/bin/ruflo" <<'RUFLO_EOF'
+#!/usr/bin/env bash
+# Mock ruflo — all subcommands succeed instantly so pipeline tests don't
+# block on real daemon startup (init check, start --daemon, stop, etc.)
+exit 0
+RUFLO_EOF
+    chmod +x "$TEST_TEMP_DIR/bin/ruflo"
 }
 
 create_mock_project() {

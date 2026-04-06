@@ -40,6 +40,8 @@ fi
 [[ -f "$SCRIPT_DIR/lib/loop-convergence.sh" ]] && source "$SCRIPT_DIR/lib/loop-convergence.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-restart.sh" ]] && source "$SCRIPT_DIR/lib/loop-restart.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-progress.sh" ]] && source "$SCRIPT_DIR/lib/loop-progress.sh"
+# RuFlo adapter — compatibility layer for ruflo health checks and timeout recovery
+[[ -f "$SCRIPT_DIR/lib/ruflo-adapter.sh" ]] && source "$SCRIPT_DIR/lib/ruflo-adapter.sh" 2>/dev/null || true
 # Context exhaustion prevention — proactive summarization before Claude hits context limits
 [[ -f "$SCRIPT_DIR/lib/loop-context-monitor.sh" ]] && source "$SCRIPT_DIR/lib/loop-context-monitor.sh"
 # Error actionability scoring and enhancement for better error context
@@ -2366,6 +2368,11 @@ run_single_agent_loop() {
             return 1
         }
         ITERATION=$(( ITERATION + 1 ))
+
+        # Periodic ruflo health check — attempt daemon recovery every 5 iterations
+        if (( ITERATION % 5 == 0 )) && type ruflo_health_check >/dev/null 2>&1; then
+            ruflo_health_check || true
+        fi
 
         # Reset per-iteration completion signal flags before prompt is built.
         # These cannot be reset inside compose_rejection_notice_section() because

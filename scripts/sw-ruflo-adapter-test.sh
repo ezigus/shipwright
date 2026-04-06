@@ -197,6 +197,7 @@ print_test_section "ruflo_with_timeout — circuit-breaker"
 mock_binary "ruflo_slow_cmd" 'exit 1'
 
 RUFLO_AVAILABLE=true
+RUFLO_FAILURE_COUNT=0
 export RUFLO_AVAILABLE
 
 exit_code=0
@@ -208,10 +209,16 @@ else
     assert_fail "ruflo_with_timeout returns non-zero on command failure"
 fi
 
-if [[ "$RUFLO_AVAILABLE" == "false" ]]; then
-    assert_pass "ruflo_with_timeout sets RUFLO_AVAILABLE=false on failure (circuit-break)"
+# Recoverable circuit breaker: single failure increments count but does NOT disable ruflo
+if [[ "$RUFLO_AVAILABLE" == "true" ]]; then
+    assert_pass "ruflo_with_timeout does NOT disable ruflo on single failure (recoverable — threshold 5)"
 else
-    assert_fail "ruflo_with_timeout sets RUFLO_AVAILABLE=false on failure (circuit-break)" "got: $RUFLO_AVAILABLE"
+    assert_fail "ruflo_with_timeout does NOT disable ruflo on single failure (recoverable — threshold 5)" "got: $RUFLO_AVAILABLE"
+fi
+if [[ "${RUFLO_FAILURE_COUNT:-0}" -eq 1 ]]; then
+    assert_pass "ruflo_with_timeout increments RUFLO_FAILURE_COUNT to 1 on first failure"
+else
+    assert_fail "ruflo_with_timeout increments RUFLO_FAILURE_COUNT to 1 on first failure" "got: ${RUFLO_FAILURE_COUNT:-0}"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -477,6 +484,7 @@ mock_binary "ruflo" 'exit 1'
 unset _RUFLO_ADAPTER_LOADED
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_FAILURE_COUNT=0
 RUFLO_USE_NPX=false
 
 exit_code=0
@@ -489,11 +497,16 @@ else
     assert_fail "ruflo_store returns 0 (fail-open) when ruflo binary fails" "exit_code=$exit_code"
 fi
 
-# After a failure, RUFLO_AVAILABLE should be false (circuit-breaker tripped)
-if [[ "$RUFLO_AVAILABLE" == "false" ]]; then
-    assert_pass "ruflo_store circuit-breaker disables ruflo after failure"
+# Recoverable circuit breaker: single failure increments count but does NOT disable ruflo
+if [[ "$RUFLO_AVAILABLE" == "true" ]]; then
+    assert_pass "ruflo_store does NOT disable ruflo on single failure (recoverable circuit breaker)"
 else
-    assert_fail "ruflo_store circuit-breaker disables ruflo after failure" "RUFLO_AVAILABLE=$RUFLO_AVAILABLE"
+    assert_fail "ruflo_store does NOT disable ruflo on single failure (recoverable circuit breaker)" "RUFLO_AVAILABLE=$RUFLO_AVAILABLE"
+fi
+if [[ "${RUFLO_FAILURE_COUNT:-0}" -ge 1 ]]; then
+    assert_pass "ruflo_store increments RUFLO_FAILURE_COUNT on failure"
+else
+    assert_fail "ruflo_store increments RUFLO_FAILURE_COUNT on failure" "got: ${RUFLO_FAILURE_COUNT:-0}"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -537,6 +550,7 @@ mock_binary "ruflo" 'exit 1'
 unset _RUFLO_ADAPTER_LOADED
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_FAILURE_COUNT=0
 RUFLO_USE_NPX=false
 exit_code=0
 ruflo_execute_build_single "build the feature" || exit_code=$?
@@ -545,10 +559,16 @@ if [[ $exit_code -eq 1 ]]; then
 else
     assert_fail "ruflo_execute_build_single returns 1 when agent command fails" "exit_code=$exit_code"
 fi
-if [[ "$RUFLO_AVAILABLE" == "false" ]]; then
-    assert_pass "ruflo_execute_build_single circuit-breaker disables ruflo after agent failure"
+# Recoverable circuit breaker: single failure increments count but does NOT disable ruflo
+if [[ "$RUFLO_AVAILABLE" == "true" ]]; then
+    assert_pass "ruflo_execute_build_single does NOT disable ruflo on single failure (recoverable)"
 else
-    assert_fail "ruflo_execute_build_single circuit-breaker disables ruflo after agent failure" "RUFLO_AVAILABLE=$RUFLO_AVAILABLE"
+    assert_fail "ruflo_execute_build_single does NOT disable ruflo on single failure (recoverable)" "RUFLO_AVAILABLE=$RUFLO_AVAILABLE"
+fi
+if [[ "${RUFLO_FAILURE_COUNT:-0}" -ge 1 ]]; then
+    assert_pass "ruflo_execute_build_single increments RUFLO_FAILURE_COUNT on failure"
+else
+    assert_fail "ruflo_execute_build_single increments RUFLO_FAILURE_COUNT on failure" "got: ${RUFLO_FAILURE_COUNT:-0}"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1229,6 +1249,225 @@ if [[ -n "$_install_line" && -n "$_run_line" && "$_install_line" -lt "$_run_line
 else
     assert_fail "ruflo install step appears before Run Shipwright pipeline step" \
         "install_line=${_install_line:-missing} run_line=${_run_line:-missing}"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 38: ruflo_with_timeout — shell function detected and called (no exit 127)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_with_timeout — shell function called without exit 127"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_FAILURE_COUNT=0
+export RUFLO_AVAILABLE
+
+_test_shell_fn() { return 0; }
+
+exit_code=0
+ruflo_with_timeout 5 _test_shell_fn || exit_code=$?
+unset -f _test_shell_fn
+
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_with_timeout calls shell function and exits 0 (no exit 127)"
+else
+    assert_fail "ruflo_with_timeout calls shell function and exits 0 (no exit 127)" "got exit=$exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 39: ruflo_with_timeout — shell function killed at timeout (non-zero exit)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_with_timeout — shell function timeout returns non-zero"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_FAILURE_COUNT=0
+export RUFLO_AVAILABLE
+
+_test_slow_fn() { sleep 30; }
+
+exit_code=0
+ruflo_with_timeout 2 _test_slow_fn || exit_code=$?
+unset -f _test_slow_fn
+
+if [[ $exit_code -ne 0 ]]; then
+    assert_pass "ruflo_with_timeout returns non-zero when shell function exceeds timeout"
+else
+    assert_fail "ruflo_with_timeout returns non-zero when shell function exceeds timeout" "got exit=0"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 40: ruflo_health_check — recovery from disabled state (status responds)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_health_check — recovers when daemon status responds"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+case "${1:-}" in
+    status) exit 0 ;;
+    *) exit 1 ;;
+esac
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+RUFLO_DAEMON_STARTED=true
+RUFLO_FAILURE_COUNT=3
+RUFLO_USE_NPX=false
+export RUFLO_AVAILABLE
+
+exit_code=0
+ruflo_health_check || exit_code=$?
+_avail_after="$RUFLO_AVAILABLE"
+_count_after="${RUFLO_FAILURE_COUNT:-unset}"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_health_check always returns 0 (fail-open)"
+else
+    assert_fail "ruflo_health_check always returns 0 (fail-open)" "got exit=$exit_code"
+fi
+if [[ "$_avail_after" == "true" ]]; then
+    assert_pass "ruflo_health_check sets RUFLO_AVAILABLE=true when daemon responds"
+else
+    assert_fail "ruflo_health_check sets RUFLO_AVAILABLE=true when daemon responds" "got: $_avail_after"
+fi
+if [[ "$_count_after" -eq 0 ]]; then
+    assert_pass "ruflo_health_check resets RUFLO_FAILURE_COUNT=0 on recovery"
+else
+    assert_fail "ruflo_health_check resets RUFLO_FAILURE_COUNT=0 on recovery" "got: $_count_after"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 41: ruflo_health_check — daemon restart path (status fails, start succeeds)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_health_check — restarts daemon when status fails"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+case "${1:-}" in
+    status) exit 1 ;;
+    start)  exit 0 ;;
+    *) exit 1 ;;
+esac
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+RUFLO_DAEMON_STARTED=true
+RUFLO_FAILURE_COUNT=5
+RUFLO_USE_NPX=false
+export RUFLO_AVAILABLE
+
+ruflo_health_check || true
+_avail_restart="$RUFLO_AVAILABLE"
+_count_restart="${RUFLO_FAILURE_COUNT:-unset}"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+
+if [[ "$_avail_restart" == "true" ]]; then
+    assert_pass "ruflo_health_check sets RUFLO_AVAILABLE=true after daemon restart"
+else
+    assert_fail "ruflo_health_check sets RUFLO_AVAILABLE=true after daemon restart" "got: $_avail_restart"
+fi
+if [[ "$_count_restart" -eq 0 ]]; then
+    assert_pass "ruflo_health_check resets RUFLO_FAILURE_COUNT=0 after restart"
+else
+    assert_fail "ruflo_health_check resets RUFLO_FAILURE_COUNT=0 after restart" "got: $_count_restart"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 42: recoverable circuit breaker — 4 failures leave RUFLO_AVAILABLE=true
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "recoverable circuit breaker — 4 failures (below threshold 5)"
+
+mock_binary "ruflo_fail_cmd" 'exit 1'
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_FAILURE_COUNT=0
+export RUFLO_AVAILABLE
+
+_i=0
+while [[ $_i -lt 4 ]]; do
+    ruflo_with_timeout 5 ruflo_fail_cmd || true
+    _i=$(( _i + 1 ))
+done
+
+if [[ "$RUFLO_AVAILABLE" == "true" ]]; then
+    assert_pass "RUFLO_AVAILABLE remains true after 4 failures (below threshold of 5)"
+else
+    assert_fail "RUFLO_AVAILABLE remains true after 4 failures (below threshold of 5)" "got: $RUFLO_AVAILABLE"
+fi
+if [[ "${RUFLO_FAILURE_COUNT:-0}" -eq 4 ]]; then
+    assert_pass "RUFLO_FAILURE_COUNT is 4 after 4 failures"
+else
+    assert_fail "RUFLO_FAILURE_COUNT is 4 after 4 failures" "got: ${RUFLO_FAILURE_COUNT:-0}"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 43: recoverable circuit breaker — 5 failures trip RUFLO_AVAILABLE=false
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "recoverable circuit breaker — 5 failures trips circuit"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_FAILURE_COUNT=0
+export RUFLO_AVAILABLE
+
+_i=0
+while [[ $_i -lt 5 ]]; do
+    ruflo_with_timeout 5 ruflo_fail_cmd || true
+    _i=$(( _i + 1 ))
+done
+
+if [[ "$RUFLO_AVAILABLE" == "false" ]]; then
+    assert_pass "RUFLO_AVAILABLE=false after 5 failures (threshold reached)"
+else
+    assert_fail "RUFLO_AVAILABLE=false after 5 failures (threshold reached)" "got: $RUFLO_AVAILABLE"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 44: ruflo_health_check — resets RUFLO_FAILURE_COUNT after partial failures
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_health_check — RUFLO_FAILURE_COUNT reset after partial failures"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+case "${1:-}" in
+    status) exit 0 ;;
+    *) exit 1 ;;
+esac
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+RUFLO_DAEMON_STARTED=true
+RUFLO_FAILURE_COUNT=3
+RUFLO_USE_NPX=false
+export RUFLO_AVAILABLE
+
+ruflo_health_check || true
+_count_after_recovery="${RUFLO_FAILURE_COUNT:-unset}"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+
+if [[ "$_count_after_recovery" -eq 0 ]]; then
+    assert_pass "ruflo_health_check resets RUFLO_FAILURE_COUNT=0 after recovery from 3 failures"
+else
+    assert_fail "ruflo_health_check resets RUFLO_FAILURE_COUNT=0 after recovery from 3 failures" "got: $_count_after_recovery"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

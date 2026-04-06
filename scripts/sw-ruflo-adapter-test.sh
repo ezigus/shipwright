@@ -642,19 +642,16 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_learn_from_shipwright — success path (file input)"
 
-_test_tmp=$(mktemp -d)
-cat > "$_test_tmp/ruflo" <<'MOCK'
-#!/usr/bin/env bash
-exit 0
-MOCK
-chmod +x "$_test_tmp/ruflo"
-_outcome_file="$_test_tmp/outcome.json"
+# Use mock_binary (writes to TEST_TEMP_DIR/bin, already first in PATH) and
+# clear the bash hash table so the cached real ruflo path isn't used.
+mock_binary "ruflo" 'exit 0'
+hash -r 2>/dev/null || true
+_outcome_file="$TEST_TEMP_DIR/outcome-29.json"
 printf '{"issue_type":"backend","stage":"build","skills":"tdd","outcome":"success"}\n' \
     > "$_outcome_file"
 
 RUFLO_AVAILABLE=true
 RUFLO_USE_NPX=false
-PATH="$_test_tmp:$PATH"
 git() {
     if [[ "${1:-}" == "config" && "${2:-}" == "--get" && "${3:-}" == "remote.origin.url" ]]; then
         echo "https://github.com/test/repo.git"
@@ -665,7 +662,6 @@ git() {
 exit_code=0
 ruflo_learn_from_shipwright "$_outcome_file" || exit_code=$?
 unset -f git
-rm -rf "$_test_tmp"
 if [[ $exit_code -eq 0 ]]; then
     assert_pass "ruflo_learn_from_shipwright returns 0 on success with valid file"
 else
@@ -677,16 +673,11 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_learn_from_shipwright — success path (raw JSON input)"
 
-_test_tmp=$(mktemp -d)
-cat > "$_test_tmp/ruflo" <<'MOCK'
-#!/usr/bin/env bash
-exit 0
-MOCK
-chmod +x "$_test_tmp/ruflo"
+mock_binary "ruflo" 'exit 0'
+hash -r 2>/dev/null || true
 
 RUFLO_AVAILABLE=true
 RUFLO_USE_NPX=false
-PATH="$_test_tmp:$PATH"
 git() {
     if [[ "${1:-}" == "config" && "${2:-}" == "--get" && "${3:-}" == "remote.origin.url" ]]; then
         echo "https://github.com/test/repo.git"
@@ -697,7 +688,6 @@ git() {
 exit_code=0
 ruflo_learn_from_shipwright '{"issue_type":"frontend","outcome":"success"}' || exit_code=$?
 unset -f git
-rm -rf "$_test_tmp"
 if [[ $exit_code -eq 0 ]]; then
     assert_pass "ruflo_learn_from_shipwright returns 0 on success with raw JSON"
 else

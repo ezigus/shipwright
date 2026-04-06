@@ -1,0 +1,4 @@
+# Ruflo/swarm runtime state — never commit these
+hnsw.index
+hnsw.metadata.json
+memory.db

@@ -5,3 +5,11 @@ sessions/
 neural/
 *.log
 *.tmp
+
+# Runtime state — never commit these
+daemon.pid
+agents.json
+hive-mind/state.json
+swarm/swarm-state.json
+system/metrics.json
+metrics/

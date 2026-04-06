@@ -1325,25 +1325,23 @@ check_definition_of_done() {
     # Use cumulative diff from loop start (not just HEAD~1) so the evaluator
     # can see ALL work done across every iteration, not just the latest commit.
     local diff_content
+    local _diff_range
     if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
-        diff_content="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null || echo "(no diff)")"
+        _diff_range="${LOOP_START_COMMIT}..HEAD"
+        diff_content="$(git -C "$PROJECT_ROOT" diff --stat "${_diff_range}" 2>/dev/null || echo "(no diff)")"
         diff_content="${diff_content}
 
 ## Detailed Changes (cumulative diff, capped at ${DOD_DIFF_MAX_LINES} lines)
-$(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
+$(git -C "$PROJECT_ROOT" diff "${_diff_range}" 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
     else
+        _diff_range="HEAD~1"
         diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
     fi
 
-    # Detect actual truncation by checking if git diff output exceeded the limit.
-    # We use a probe: if requesting N+1 lines and getting N+1, then it was truncated.
-    local _was_truncated=false
+    # Detect actual truncation using N+1 probe against the same range used above.
     local _extra_line
-    _extra_line=$(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -$((DOD_DIFF_MAX_LINES + 1)) | tail -1 || true)
+    _extra_line=$(git -C "$PROJECT_ROOT" diff "${_diff_range}" 2>/dev/null | head -$((DOD_DIFF_MAX_LINES + 1)) | tail -1 || true)
     if [[ -n "$_extra_line" ]]; then
-        _was_truncated=true
-    fi
-    if [[ "$_was_truncated" == "true" ]]; then
         diff_content="${diff_content}
 [DIFF TRUNCATED at ${DOD_DIFF_MAX_LINES} lines — some changes are not shown. Do not conclude 'no changes' from missing sections.]"
     fi

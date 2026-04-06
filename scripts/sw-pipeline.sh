@@ -3009,6 +3009,22 @@ pipeline_start() {
         intelligence_validate_prediction "cost" "$PREDICTED_COST" "$total_cost" 2>/dev/null || true
     fi
 
+    # Close the ruflo learning feedback loop — index pipeline outcome into HNSW
+    if type ruflo_learn_from_shipwright >/dev/null 2>&1; then
+        local _ruflo_result="success"
+        [[ "$exit_code" -ne 0 ]] && _ruflo_result="failure"
+        local _ruflo_outcome
+        _ruflo_outcome=$(printf '{"issue_type":"pipeline","task_type":"pipeline","result":"%s","goal":"%s","template":"%s","duration_s":%s,"stages_passed":%s,"self_heal_count":%s,"failed_stage":"%s"}' \
+            "$_ruflo_result" \
+            "${GOAL:-}" \
+            "${PIPELINE_NAME:-standard}" \
+            "${total_dur_s:-0}" \
+            "${PIPELINE_STAGES_PASSED:-0}" \
+            "${SELF_HEAL_COUNT:-0}" \
+            "${CURRENT_STAGE_ID:-}")
+        ruflo_learn_from_shipwright "$_ruflo_outcome" 2>/dev/null || true
+    fi
+
     return $exit_code
 }
 

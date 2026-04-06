@@ -221,15 +221,33 @@ detect_stuckness() {
         fi
     fi
 
-    # Signal 2: Git diff hash — last 3 iterations produced zero or identical diffs
-    if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 3 ]]; then
-        local last_three
-        last_three=$(tail -3 "$tracking_file" 2>/dev/null | cut -d'|' -f1 || true)
+    # Signal 2: Git diff hash — last 5 iterations produced zero or identical diffs
+    local _signal2_fired=false
+    if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 5 ]]; then
+        local last_five
+        last_five=$(tail -5 "$tracking_file" 2>/dev/null | cut -d'|' -f1 || true)
         local unique_hashes
-        unique_hashes=$(echo "$last_three" | sort -u | grep -v '^$' | wc -l | tr -d ' ')
-        if [[ "$unique_hashes" -le 1 ]] && [[ -n "$last_three" ]]; then
+        unique_hashes=$(echo "$last_five" | sort -u | grep -v '^$' | wc -l | tr -d ' ')
+        if [[ "$unique_hashes" -le 1 ]] && [[ -n "$last_five" ]]; then
             stuckness_signals=$((stuckness_signals + 1))
-            stuckness_reasons+=("identical or zero git diffs in last 3 iterations")
+            stuckness_reasons+=("identical or zero git diffs in last 5 iterations")
+            _signal2_fired=true
+        fi
+    fi
+
+    # Signal 2b: Explicit cycling detector — 4+ consecutive identical diffs.
+    # Only fires when Signal 2 didn't (avoids double-count when 5+ identical).
+    # Adds +2 to act as a standalone kill switch at the >=2 threshold.
+    if [[ "$_signal2_fired" == "false" ]] && [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 4 ]]; then
+        local last_four
+        last_four=$(tail -4 "$tracking_file" 2>/dev/null | cut -d'|' -f1 || true)
+        local unique_four
+        unique_four=$(echo "$last_four" | sort -u | grep -v '^$' | wc -l | tr -d ' ')
+        local count_four
+        count_four=$(echo "$last_four" | grep -v '^$' | wc -l | tr -d ' ')
+        if [[ "$unique_four" -le 1 ]] && [[ "${count_four:-0}" -ge 4 ]]; then
+            stuckness_signals=$((stuckness_signals + 2))
+            stuckness_reasons+=("cycling: ${count_four} consecutive identical diffs (cycling detector)")
         fi
     fi
 
@@ -297,14 +315,13 @@ detect_stuckness() {
         stuckness_reasons+=("used ${progress_pct}% of iteration budget without passing tests")
     fi
 
-    # Gate-aware dampening: if tests pass and the agent has made progress overall,
-    # reduce stuckness signal count. The "no code changes" and "identical diffs" signals
-    # fire when code is already complete and the agent is fighting evaluator quirks —
-    # that's not genuine stuckness, it's "done but gates disagree."
+    # Gate-aware dampening: only when code actually changed this iteration (diff_lines > 5).
+    # Zero-diff iterations must never be dampened — that is the #324 cycling scenario.
     if [[ "${TEST_PASSED:-}" == "true" ]] && [[ "$stuckness_signals" -ge 2 ]]; then
-        # If at least one quality signal is positive, dampen by 1
-        if [[ "${AUDIT_RESULT:-}" == "pass" ]] || $QUALITY_GATE_PASSED 2>/dev/null; then
-            stuckness_signals=$((stuckness_signals - 1))
+        if [[ "${diff_lines:-0}" -gt 5 ]]; then
+            if [[ "${AUDIT_RESULT:-}" == "pass" ]] || $QUALITY_GATE_PASSED 2>/dev/null; then
+                stuckness_signals=$((stuckness_signals - 1))
+            fi
         fi
     fi
 

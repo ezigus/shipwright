@@ -87,7 +87,7 @@ RESUME=false
 VERBOSE=false
 MAX_ITERATIONS_EXPLICIT=false
 MAX_RESTARTS=$(_config_get_int "loop.max_restarts" 0 2>/dev/null || echo 0)
-DOD_DIFF_MAX_LINES=$(_config_get_int "loop.dod_diff_max_lines" 3000 2>/dev/null || echo 3000)
+DOD_DIFF_MAX_LINES=$(_config_get_int "loop.dod_diff_max_lines" 5000 2>/dev/null || echo 5000)
 HOLISTIC_DIFF_MAX_LINES=$(_config_get_int "loop.holistic_diff_max_lines" 1000 2>/dev/null || echo 1000)
 SESSION_RESTART=false
 RESTART_COUNT=0
@@ -1268,6 +1268,7 @@ run_quality_gates() {
         return
     fi
 
+    HOLISTIC_RESULT=""   # reset: stale holistic text from a prior gate-run must not persist across iterations
     QUALITY_GATE_PASSED=true
     local gate_failures=()
 
@@ -1334,6 +1335,13 @@ $(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -"
         diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
     fi
 
+    local _dc_lines
+    _dc_lines=$(printf '%s' "$diff_content" | wc -l | tr -d ' ')
+    if [[ "${_dc_lines:-0}" -ge "$DOD_DIFF_MAX_LINES" ]]; then
+        diff_content="${diff_content}
+[DIFF TRUNCATED at ${DOD_DIFF_MAX_LINES} lines — some changes are not shown. Do not conclude 'no changes' from missing sections.]"
+    fi
+
     # Also compute the full branch diff vs base branch. In compound_rebuild cycles,
     # LOOP_START_COMMIT is reset to the HEAD after prior build work, so the loop-run
     # diff above only shows the small rebuild-cycle changes. The branch diff shows
@@ -1349,6 +1357,12 @@ $(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -"
             | head -"${DOD_DIFF_MAX_LINES}" \
             | sed 's/<<<DOD:PASS>>>/[REDACTED:DOD:PASS]/g; s/<<<DOD:FAIL>>>/[REDACTED:DOD:FAIL]/g' \
             || echo "(none)")"
+        local _branch_diff_lines
+        _branch_diff_lines=$(printf '%s' "$_dod_branch_diff" | wc -l | tr -d ' ')
+        if [[ "${_branch_diff_lines:-0}" -ge "$DOD_DIFF_MAX_LINES" ]]; then
+            _dod_branch_diff="${_dod_branch_diff}
+[DIFF TRUNCATED at ${DOD_DIFF_MAX_LINES} lines — some changes are not shown. Do not conclude 'no changes' from missing sections.]"
+        fi
         branch_diff_content="## Full Branch Changes vs Base (authoritative — all work including prior build loops)
 ${_dod_branch_stat}
 

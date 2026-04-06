@@ -162,7 +162,7 @@ show_help() {
     echo -e "  ${CYAN}--audit-agent${RESET}             Run separate auditor agent (haiku) after each iteration"
     echo -e "  ${CYAN}--quality-gates${RESET}           Enable automated quality gates before accepting completion"
     echo -e "  ${CYAN}--definition-of-done${RESET} FILE DoD checklist file — evaluated by AI against git diff"
-    echo -e "  ${CYAN}--dod-diff-max-lines${RESET} N    Max diff lines for DoD evaluator (default: 3000)"
+    echo -e "  ${CYAN}--dod-diff-max-lines${RESET} N    Max diff lines for DoD evaluator (default: 5000)"
     echo -e "  ${CYAN}--holistic-diff-max-lines${RESET} N Max diff lines for holistic gate (default: 1000)"
     echo -e "  ${CYAN}--no-auto-extend${RESET}          Disable auto-extension when max iterations reached"
     echo -e "  ${CYAN}--extension-size${RESET} N         Additional iterations per extension (default: 5)"
@@ -1335,9 +1335,15 @@ $(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -"
         diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
     fi
 
-    local _dc_lines
-    _dc_lines=$(printf '%s' "$diff_content" | wc -l | tr -d ' ')
-    if [[ "${_dc_lines:-0}" -ge "$DOD_DIFF_MAX_LINES" ]]; then
+    # Detect actual truncation by checking if git diff output exceeded the limit.
+    # We use a probe: if requesting N+1 lines and getting N+1, then it was truncated.
+    local _was_truncated=false
+    local _extra_line
+    _extra_line=$(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -$((DOD_DIFF_MAX_LINES + 1)) | tail -1 || true)
+    if [[ -n "$_extra_line" ]]; then
+        _was_truncated=true
+    fi
+    if [[ "$_was_truncated" == "true" ]]; then
         diff_content="${diff_content}
 [DIFF TRUNCATED at ${DOD_DIFF_MAX_LINES} lines — some changes are not shown. Do not conclude 'no changes' from missing sections.]"
     fi
@@ -1357,9 +1363,14 @@ $(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -"
             | head -"${DOD_DIFF_MAX_LINES}" \
             | sed 's/<<<DOD:PASS>>>/[REDACTED:DOD:PASS]/g; s/<<<DOD:FAIL>>>/[REDACTED:DOD:FAIL]/g' \
             || echo "(none)")"
-        local _branch_diff_lines
-        _branch_diff_lines=$(printf '%s' "$_dod_branch_diff" | wc -l | tr -d ' ')
-        if [[ "${_branch_diff_lines:-0}" -ge "$DOD_DIFF_MAX_LINES" ]]; then
+        # Detect actual truncation by checking if git diff output exceeded the limit.
+        local _branch_was_truncated=false
+        local _branch_extra_line
+        _branch_extra_line=$(git -C "$PROJECT_ROOT" diff "${_dod_merge_base}..HEAD" 2>/dev/null | head -$((DOD_DIFF_MAX_LINES + 1)) | tail -1 || true)
+        if [[ -n "$_branch_extra_line" ]]; then
+            _branch_was_truncated=true
+        fi
+        if [[ "$_branch_was_truncated" == "true" ]]; then
             _dod_branch_diff="${_dod_branch_diff}
 [DIFF TRUNCATED at ${DOD_DIFF_MAX_LINES} lines — some changes are not shown. Do not conclude 'no changes' from missing sections.]"
         fi

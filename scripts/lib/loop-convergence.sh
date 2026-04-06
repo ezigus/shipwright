@@ -236,9 +236,10 @@ detect_stuckness() {
     fi
 
     # Signal 2b: Explicit cycling detector — 4+ consecutive identical diffs.
-    # Only fires when Signal 2 didn't (avoids double-count when 5+ identical).
-    # Adds +2 to act as a standalone kill switch at the >=2 threshold.
-    if [[ "$_signal2_fired" == "false" ]] && [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 4 ]]; then
+    # Runs independently of Signal 2 to maintain monotonic detection: if 4+ identical diffs
+    # are detected, it fires and keeps firing as sequences grow longer (5+, 6+, etc).
+    # This prevents non-monotonic behavior where stronger cycling evidence could reduce detection.
+    if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 4 ]]; then
         local last_four
         last_four=$(tail -4 "$tracking_file" 2>/dev/null | cut -d'|' -f1 || true)
         local unique_four

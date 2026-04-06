@@ -116,8 +116,12 @@ mock_binary "npx" 'exit 1'
 
 RUFLO_AVAILABLE=false
 
+# Restrict PATH to only the test bin dir so real system ruflo is excluded
+_saved_path_init="$PATH"
+PATH="$TEST_TEMP_DIR/bin"
 exit_code=0
 ruflo_init || exit_code=$?
+PATH="$_saved_path_init"
 
 if [[ $exit_code -eq 0 ]]; then
     assert_pass "ruflo_init exits 0 when ruflo unavailable"

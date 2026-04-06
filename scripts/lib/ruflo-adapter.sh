@@ -38,14 +38,11 @@ fi
 
 # ─── _ruflo_run — invoke ruflo using the runtime detected at startup ──────────
 # Uses local binary when available; falls back to npx -y ruflo@latest.
-# CI=true prevents ruflo from entering TTY branding mode, which forks subshells
-# using cut in pipelines and writes "cut: stdout: Broken pipe" directly to
-# /dev/tty — bypassing all stdout/stderr redirections from the caller.
 _ruflo_run() {
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        CI=true npx -y ruflo@latest "$@"
+        npx -y ruflo@latest "$@"
     else
-        CI=true ruflo "$@"
+        ruflo "$@"
     fi
 }
 
@@ -54,9 +51,9 @@ _ruflo_run() {
 # circuit-breaker's own warn() output for observability.
 _ruflo_run_quiet() {
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        CI=true npx -y ruflo@latest "$@" 2>/dev/null
+        npx -y ruflo@latest "$@" 2>/dev/null
     else
-        CI=true ruflo "$@" 2>/dev/null
+        ruflo "$@" 2>/dev/null
     fi
 }
 
@@ -295,14 +292,23 @@ ruflo_recall() {
 # falls back to sha1/md5 variants for cross-platform compatibility.
 # Outputs one hash per line. No-op if origin URL cannot be determined.
 _ruflo_repo_hash_candidates() {
-    local origin
+    local origin _h
     origin=$(git config --get remote.origin.url 2>/dev/null || true)
     [[ -n "$origin" ]] || return 0
     # Canonical: shasum -a 256 (matches sw-memory.sh repo_hash())
-    command -v shasum  >/dev/null 2>&1 && printf '%s' "$origin" | shasum  -a 256 2>/dev/null | cut -c1-12
+    if command -v shasum >/dev/null 2>&1; then
+        _h=$(printf '%s' "$origin" | shasum -a 256 2>/dev/null) || true
+        [[ -n "$_h" ]] && printf '%.12s\n' "$_h" && return 0
+    fi
     # Fallbacks for non-macOS systems
-    command -v sha256sum >/dev/null 2>&1 && printf '%s' "$origin" | sha256sum 2>/dev/null | cut -c1-12
-    command -v sha1sum >/dev/null 2>&1 && printf '%s' "$origin" | sha1sum 2>/dev/null | cut -c1-12
+    if command -v sha256sum >/dev/null 2>&1; then
+        _h=$(printf '%s' "$origin" | sha256sum 2>/dev/null) || true
+        [[ -n "$_h" ]] && printf '%.12s\n' "$_h" && return 0
+    fi
+    if command -v sha1sum >/dev/null 2>&1; then
+        _h=$(printf '%s' "$origin" | sha1sum 2>/dev/null) || true
+        [[ -n "$_h" ]] && printf '%.12s\n' "$_h" && return 0
+    fi
 }
 
 # ─── _ruflo_shipwright_memory_dir — resolve actual memory dir for this repo ────
@@ -339,9 +345,11 @@ _ruflo_resolve_repo_hash() {
     [[ -n "$_origin" ]] || return 1
     local _hash=""
     if command -v shasum >/dev/null 2>&1; then
-        _hash=$(printf '%s' "$_origin" | shasum -a 256 2>/dev/null | cut -c1-12)
+        _hash=$(printf '%s' "$_origin" | shasum -a 256 2>/dev/null) || true
+        _hash="${_hash:0:12}"
     elif command -v sha256sum >/dev/null 2>&1; then
-        _hash=$(printf '%s' "$_origin" | sha256sum 2>/dev/null | cut -c1-12)
+        _hash=$(printf '%s' "$_origin" | sha256sum 2>/dev/null) || true
+        _hash="${_hash:0:12}"
     fi
     [[ -n "$_hash" ]] || return 1
     printf '%s' "$_hash"

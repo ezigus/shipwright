@@ -315,6 +315,11 @@ detect_stuckness() {
         if type emit_event >/dev/null 2>&1; then
             emit_event "loop.stuckness_detected" "signals=$stuckness_signals" "count=$STUCKNESS_COUNT" "iteration=$iteration" "reasons=${stuckness_reasons[*]}"
         fi
+        if type ruflo_store >/dev/null 2>&1; then
+            ruflo_store "stuckness-iter-${iteration}" \
+                "{\"signals\":$stuckness_signals,\"reasons\":\"${stuckness_reasons[*]}\",\"iteration\":$iteration}" \
+                "learning-${REPO_HASH:-default}" "stuckness,loop,cycling" || true
+        fi
         STUCKNESS_HINT="IMPORTANT: The loop appears stuck. Previous approaches have not worked. You MUST try a fundamentally different strategy. Reasons: ${stuckness_reasons[*]}"
         warn "Stuckness detected (${stuckness_signals} signals, count ${STUCKNESS_COUNT}): ${stuckness_reasons[*]}"
 
@@ -330,6 +335,12 @@ detect_stuckness() {
             alternatives=$(memory_inject_context "build" 2>/dev/null | grep -i "fix:" | head -3 || true)
         fi
 
+        local ruflo_patterns=""
+        if type ruflo_recall >/dev/null 2>&1; then
+            ruflo_patterns=$(ruflo_recall "loop cycling identical diff stuckness" \
+                "learning-${REPO_HASH:-default}" 2>/dev/null || true)
+        fi
+
         cat <<STUCK_SECTION
 ## Stuckness Detected
 ${STUCKNESS_HINT}
@@ -339,6 +350,9 @@ $diff_summary
 }
 ${alternatives:+Consider these alternative approaches from past fixes:
 $alternatives
+}
+${ruflo_patterns:+Ruflo recalled similar patterns from past runs:
+$ruflo_patterns
 }
 Try a fundamentally different approach:
 - Break the problem into smaller steps

@@ -22,6 +22,7 @@ _RUFLO_ADAPTER_LOADED=1
 RUFLO_AVAILABLE=false
 RUFLO_USE_NPX=false        # true when ruflo is only available via npx (not a local binary)
 RUFLO_DAEMON_STARTED=false # true only when THIS run started the daemon via ruflo start --daemon
+RUFLO_FAILURE_COUNT=0      # incremented by circuit-breaker; reset on recovery
 
 # ─── Fallback helpers (no-op when helpers.sh is already sourced) ─────────────
 # Use declare -f (not type) to check for shell functions only — type matches
@@ -225,6 +226,36 @@ ruflo_cleanup() {
     return 0
 }
 
+# ─── ruflo_health_check — check daemon liveness and attempt recovery ──────────
+# Resets RUFLO_AVAILABLE=true and RUFLO_FAILURE_COUNT=0 if daemon responds.
+# No-op if ruflo was never started by this run. Always returns 0 (fail-open).
+ruflo_health_check() {
+    # If currently healthy, nothing to do
+    [[ "${RUFLO_AVAILABLE:-false}" == "true" ]] && return 0
+    # Only attempt recovery if this run started the daemon
+    [[ "${RUFLO_DAEMON_STARTED:-false}" == "true" ]] || return 0
+
+    if _ruflo_run status &>/dev/null; then
+        RUFLO_AVAILABLE=true
+        RUFLO_FAILURE_COUNT=0
+        export RUFLO_AVAILABLE
+        emit_event "ruflo.health_recovered"
+        return 0
+    fi
+
+    # Daemon dead — try one restart
+    if _ruflo_run start --daemon &>/dev/null; then
+        RUFLO_AVAILABLE=true
+        RUFLO_FAILURE_COUNT=0
+        export RUFLO_AVAILABLE
+        emit_event "ruflo.health_restarted"
+        return 0
+    fi
+
+    emit_event "ruflo.health_failed"
+    return 0
+}
+
 # ─── ruflo_with_timeout — run a ruflo command with circuit-breaker ────────────
 # On timeout or failure, sets RUFLO_AVAILABLE=false to disable ruflo for the
 # remainder of the pipeline run.
@@ -241,9 +272,27 @@ ruflo_with_timeout() {
     fi
 
     local exit_code=0
+    local cmd_type
+    cmd_type=$(type -t "$1" 2>/dev/null || true)
 
-    # Use _timeout if available (from helpers.sh), fall back to timeout command
-    if type _timeout >/dev/null 2>&1; then
+    if [[ "$cmd_type" == "function" ]]; then
+        # Shell functions can't be exec'd by timeout(1) — run in background
+        # subshell and poll until done or wall-clock limit reached.
+        ( "$@" ) &
+        local bg_pid=$!
+        local waited=0
+        while kill -0 "$bg_pid" 2>/dev/null && [[ "$waited" -lt "$timeout_s" ]]; do
+            sleep 1
+            waited=$(( waited + 1 ))
+        done
+        if kill -0 "$bg_pid" 2>/dev/null; then
+            kill "$bg_pid" 2>/dev/null || true
+            wait "$bg_pid" 2>/dev/null || true
+            exit_code=124  # match timeout(1)'s exit code
+        else
+            wait "$bg_pid" 2>/dev/null || exit_code=$?
+        fi
+    elif type _timeout >/dev/null 2>&1; then
         _timeout "$timeout_s" "$@" || exit_code=$?
     elif command -v timeout >/dev/null 2>&1; then
         timeout "$timeout_s" "$@" || exit_code=$?
@@ -253,10 +302,15 @@ ruflo_with_timeout() {
     fi
 
     if [[ $exit_code -ne 0 ]]; then
-        warn "Ruflo command timed out or failed — disabling ruflo for this run"
-        RUFLO_AVAILABLE=false
-        export RUFLO_AVAILABLE
-        emit_event "ruflo.circuit_break" "exit_code=$exit_code"
+        RUFLO_FAILURE_COUNT=$(( RUFLO_FAILURE_COUNT + 1 ))
+        if [[ "$RUFLO_FAILURE_COUNT" -ge "${RUFLO_MAX_FAILURES:-5}" ]]; then
+            warn "Ruflo command failed ${RUFLO_FAILURE_COUNT} times — disabling ruflo for this run"
+            RUFLO_AVAILABLE=false
+            export RUFLO_AVAILABLE
+        else
+            warn "Ruflo command failed (attempt ${RUFLO_FAILURE_COUNT}/${RUFLO_MAX_FAILURES:-5})"
+        fi
+        emit_event "ruflo.circuit_break" "exit_code=$exit_code" "failure_count=$RUFLO_FAILURE_COUNT"
         return 1
     fi
 

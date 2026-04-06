@@ -38,13 +38,14 @@ fi
 
 # ─── _ruflo_run — invoke ruflo using the runtime detected at startup ──────────
 # Uses local binary when available; falls back to npx -y ruflo@latest.
-# stdin is always redirected from /dev/null so ruflo never detects a TTY and
-# does not enter CLI branding mode (which causes "cut: stdout: Broken pipe").
+# CI=true prevents ruflo from entering TTY branding mode, which forks subshells
+# using cut in pipelines and writes "cut: stdout: Broken pipe" directly to
+# /dev/tty — bypassing all stdout/stderr redirections from the caller.
 _ruflo_run() {
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        npx -y ruflo@latest "$@" </dev/null
+        CI=true npx -y ruflo@latest "$@"
     else
-        ruflo "$@" </dev/null
+        CI=true ruflo "$@"
     fi
 }
 
@@ -53,9 +54,9 @@ _ruflo_run() {
 # circuit-breaker's own warn() output for observability.
 _ruflo_run_quiet() {
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        npx -y ruflo@latest "$@" </dev/null 2>/dev/null
+        CI=true npx -y ruflo@latest "$@" 2>/dev/null
     else
-        ruflo "$@" </dev/null 2>/dev/null
+        CI=true ruflo "$@" 2>/dev/null
     fi
 }
 

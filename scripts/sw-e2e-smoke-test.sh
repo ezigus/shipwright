@@ -81,6 +81,7 @@ LOOP_EOF
     create_mock_claude
     create_mock_gh
     create_mock_sw
+    create_mock_ruflo
 
     # ── Mock project git repo ─────────────────────────────────────────────
     create_mock_project
@@ -247,6 +248,16 @@ FEAT
 esac
 MOCK_SW
     chmod +x "$TEST_TEMP_DIR/bin/sw"
+}
+
+create_mock_ruflo() {
+    cat > "$TEST_TEMP_DIR/bin/ruflo" <<'RUFLO_EOF'
+#!/usr/bin/env bash
+# Mock ruflo — all subcommands succeed instantly so e2e tests
+# never call the real ruflo binary (which may hang without MCP).
+exit 0
+RUFLO_EOF
+    chmod +x "$TEST_TEMP_DIR/bin/ruflo"
 }
 
 create_mock_project() {

@@ -147,6 +147,25 @@ ruflo_load_defaults() {
     return 0
 }
 
+# ─── _ruflo_run_timed — invoke ruflo binary with a timeout (no circuit-breaker)
+# Unlike ruflo_with_timeout, this does NOT trip the circuit-breaker on failure.
+# Used in ruflo_init where transient failures (e.g. init check on first run)
+# are expected. Calls the ruflo binary directly so system timeout(1) can exec it.
+# Usage: _ruflo_run_timed <seconds> <ruflo-args...>
+# Returns the exit code of the underlying command (0=success, 124=timeout, etc).
+_ruflo_run_timed() {
+    local _t="${1:-30}"; shift
+    if command -v timeout >/dev/null 2>&1; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            timeout "$_t" npx -y ruflo@latest "$@"
+        else
+            timeout "$_t" ruflo "$@"
+        fi
+    else
+        _ruflo_run "$@"
+    fi
+}
+
 # ─── ruflo_init — initialize ruflo at pipeline start ─────────────────────────
 # Detects ruflo, ensures the project is initialized, starts the orchestration
 # daemon, and imports memory. No-op if ruflo is unavailable. Always returns 0.
@@ -156,6 +175,10 @@ ruflo_load_defaults() {
 # when stdin is /dev/null (EOF), so liveness probes always fail. In contrast,
 # `ruflo start --daemon` is synchronous, performs internal health checks, and
 # returns exit 0 only after the orchestration system is ready.
+#
+# All ruflo calls are wrapped in _ruflo_run_timed to prevent an unresponsive
+# ruflo binary from stalling the entire pipeline indefinitely. The init-phase
+# timeout defaults to 30s (override with RUFLO_INIT_TIMEOUT).
 ruflo_init() {
     # Load project/user defaults before detection so env vars are set before
     # the daemon starts and before any hive function reads them.
@@ -166,10 +189,12 @@ ruflo_init() {
     info "Ruflo detected — starting orchestration daemon"
     emit_event "ruflo.init" "available=true"
 
+    local _init_timeout="${RUFLO_INIT_TIMEOUT:-30}"
+
     # Ensure ruflo is initialized in this project directory.
     # `ruflo init check` exits 0 when .claude-flow/config.yaml exists.
-    if ! _ruflo_run init check &>/dev/null; then
-        if ! _ruflo_run init --minimal &>/dev/null; then
+    if ! _ruflo_run_timed "$_init_timeout" init check &>/dev/null; then
+        if ! _ruflo_run_timed "$_init_timeout" init --minimal &>/dev/null; then
             warn "Ruflo project init failed — disabling ruflo for this run"
             RUFLO_AVAILABLE=false
             emit_event "ruflo.init_failed" "reason=project_init_failed"
@@ -180,10 +205,10 @@ ruflo_init() {
     # Start daemon synchronously — returns 0 only when ready, no sleep needed.
     # Treat already-running daemon as success via `ruflo status` fallback, but
     # only set RUFLO_DAEMON_STARTED when THIS run started it (not pre-existing).
-    if _ruflo_run start --daemon &>/dev/null; then
+    if _ruflo_run_timed "$_init_timeout" start --daemon &>/dev/null; then
         RUFLO_DAEMON_STARTED=true
         export RUFLO_DAEMON_STARTED
-    elif ! _ruflo_run status &>/dev/null; then
+    elif ! _ruflo_run_timed "$_init_timeout" status &>/dev/null; then
         warn "Ruflo daemon failed to start — disabling ruflo for this run"
         RUFLO_AVAILABLE=false
         emit_event "ruflo.init_failed" "reason=daemon_start_failed"

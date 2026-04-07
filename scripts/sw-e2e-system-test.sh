@@ -70,6 +70,7 @@ EOF
 
     create_mock_claude
     create_mock_gh
+    create_mock_ruflo
     write_e2e_template
     create_mock_project
     git init -q --bare "$TEMP_DIR/remote.git" 2>/dev/null || true
@@ -229,6 +230,15 @@ write_e2e_template() {
   ]
 }
 TMPL
+}
+
+create_mock_ruflo() {
+    cat > "$TEMP_DIR/bin/ruflo" <<'RUFLO_MOCK'
+#!/usr/bin/env bash
+# Mock ruflo — all subcommands succeed instantly
+exit 0
+RUFLO_MOCK
+    chmod +x "$TEMP_DIR/bin/ruflo"
 }
 
 create_mock_project() {

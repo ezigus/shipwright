@@ -171,7 +171,9 @@ ruflo_init() {
     emit_event "ruflo.init" "available=true"
 
     # Ensure ruflo is initialized in this project directory.
-    # `ruflo init check` exits 0 when .claude-flow/config.yaml exists.
+    # `ruflo init check` exits 0 when .claude/settings.json exists, but
+    # `ruflo start --daemon` also requires .claude-flow/config.yaml. Use the
+    # check only as a fast path; a failed daemon start triggers a force-reinit.
     if ! _ruflo_run init check &>/dev/null; then
         if ! _ruflo_run init --minimal &>/dev/null; then
             warn "Ruflo project init failed — disabling ruflo for this run"
@@ -184,14 +186,24 @@ ruflo_init() {
     # Start daemon synchronously — returns 0 only when ready, no sleep needed.
     # Treat already-running daemon as success via `ruflo status` fallback, but
     # only set RUFLO_DAEMON_STARTED when THIS run started it (not pre-existing).
+    #
+    # Recovery: if start fails (e.g. .claude-flow/ runtime missing despite
+    # init check passing), attempt a force-reinit once before giving up.
     if _ruflo_run start --daemon &>/dev/null; then
         RUFLO_DAEMON_STARTED=true
         export RUFLO_DAEMON_STARTED
     elif ! _ruflo_run status &>/dev/null; then
-        warn "Ruflo daemon failed to start — disabling ruflo for this run"
-        RUFLO_AVAILABLE=false
-        emit_event "ruflo.init_failed" "reason=daemon_start_failed"
-        return 0
+        # Daemon not running — try force-reinit to repair missing runtime files
+        if _ruflo_run init --force &>/dev/null && _ruflo_run start --daemon &>/dev/null; then
+            RUFLO_DAEMON_STARTED=true
+            export RUFLO_DAEMON_STARTED
+            emit_event "ruflo.init_repaired" "reason=force_reinit"
+        else
+            warn "Ruflo daemon failed to start — disabling ruflo for this run"
+            RUFLO_AVAILABLE=false
+            emit_event "ruflo.init_failed" "reason=daemon_start_failed"
+            return 0
+        fi
     fi
 
     emit_event "ruflo.mcp_started" "mode=daemon"

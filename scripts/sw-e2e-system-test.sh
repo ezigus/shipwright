@@ -256,9 +256,17 @@ invoke_pipeline() {
     PIPELINE_OUTPUT=""
     # shellcheck disable=SC2034
     PIPELINE_EXIT=0
+    # Guard against hangs: timeout 120s (Linux timeout / macOS gtimeout from coreutils).
+    # Without this, a stalled pipeline blocks CI for the full job timeout.
+    local _timeout_cmd=""
+    if command -v timeout >/dev/null 2>&1; then
+        _timeout_cmd="timeout 120"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        _timeout_cmd="gtimeout 120"
+    fi
     # shellcheck disable=SC2034
     PIPELINE_OUTPUT=$(cd "$TEMP_DIR/project" && PATH="$TEMP_DIR/bin:$PATH" HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$@" 2>&1) || PIPELINE_EXIT=$?
+        $_timeout_cmd bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$@" 2>&1) || PIPELINE_EXIT=$?
 }
 
 dump_pipeline_debug() {

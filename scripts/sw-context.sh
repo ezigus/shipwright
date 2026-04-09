@@ -10,10 +10,12 @@ VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -z "${REPO_DIR:-}" ]]; then
     _sw_ctx_candidate="$(cd "$SCRIPT_DIR/.." && pwd)"
-    if [[ -d "$_sw_ctx_candidate/.claude" ]]; then
+    if [[ -n "${SHIPWRIGHT_REPO_DIR:-}" ]]; then
+        REPO_DIR="$SHIPWRIGHT_REPO_DIR"
+    elif [[ -d "$_sw_ctx_candidate/.claude" ]]; then
         REPO_DIR="$_sw_ctx_candidate"
     else
-        REPO_DIR="${SHIPWRIGHT_REPO_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || echo "$_sw_ctx_candidate")}"
+        REPO_DIR="$(git rev-parse --show-toplevel 2>/dev/null || echo "$_sw_ctx_candidate")"
     fi
     unset _sw_ctx_candidate
 fi

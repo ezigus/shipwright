@@ -471,28 +471,40 @@ test_intelligence_enabled_path_install() {
 }
 CFG
 
-    # The bug: When sw-intelligence.sh is installed to ~/.local/bin:
-    # 1. SCRIPT_DIR becomes ~/.local/bin
-    # 2. Line 12 of sw-intelligence.sh calculates _sw_intel_candidate = ~/.local
-    # 3. Line 13 checks for ~/.local/.claude (doesn't exist)
-    # 4. Line 16 tries git rev-parse --show-toplevel, but REPO_DIR should be the
-    #    actual git root (isolated_project), NOT the parent of SCRIPT_DIR (~/.local)
-    #
-    # This test validates that REPO_DIR gets set correctly (to git root, not ~/.local)
-    # and therefore _intelligence_enabled() can find the daemon-config.json
-    local result repo_dir
-    result=$(
-        SCRIPT_DIR="$fake_install_dir"
+    # Symlink sw-intelligence.sh into the fake install dir so BASH_SOURCE[0]
+    # points to the fake path. This causes the script to compute:
+    #   SCRIPT_DIR = ~/.local/bin  (the fake install dir)
+    #   SCRIPT_DIR/.. = ~/.local   (no .claude/ there)
+    # which triggers the git rev-parse fallback — the actual PATH-install branch.
+    local fake_script="$fake_install_dir/sw-intelligence.sh"
+    ln -sf "$INTELLIGENCE_SCRIPT" "$fake_script"
+
+    local output result repo_dir intelligence_cache
+    output=$(
         unset REPO_DIR 2>/dev/null || true
         cd "$isolated_project"
-        source "$INTELLIGENCE_SCRIPT" 2>/dev/null
-        repo_dir="$REPO_DIR"
-        _intelligence_enabled && echo "enabled" || echo "disabled"
+        source "$fake_script" 2>/dev/null
+        if _intelligence_enabled; then
+            echo "enabled=enabled"
+        else
+            echo "enabled=disabled"
+        fi
+        echo "repo_dir=$REPO_DIR"
+        echo "intelligence_cache=$INTELLIGENCE_CACHE"
     )
 
-    # The critical assertion: _intelligence_enabled must return "enabled"
-    # If it returns "disabled", the bug is present (REPO_DIR was incorrectly set)
-    assert_equals "enabled" "$result" "_intelligence_enabled should be enabled when installed to PATH (bug is present if this fails)"
+    result=$(printf '%s\n' "$output" | grep '^enabled=' | cut -d= -f2-)
+    repo_dir=$(printf '%s\n' "$output" | grep '^repo_dir=' | cut -d= -f2-)
+    intelligence_cache=$(printf '%s\n' "$output" | grep '^intelligence_cache=' | cut -d= -f2-)
+
+    # Canonicalize the expected path — macOS /var is a symlink to /private/var,
+    # so mktemp and git rev-parse may return different forms of the same path.
+    local canonical_project
+    canonical_project="$(cd "$isolated_project" && pwd -P)"
+
+    assert_equals "enabled" "$result" "_intelligence_enabled should be enabled when installed to PATH"
+    assert_equals "$canonical_project" "$repo_dir" "REPO_DIR should resolve to git root when installed to PATH"
+    assert_contains "$intelligence_cache" "$canonical_project/.claude" "INTELLIGENCE_CACHE should be under project .claude"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

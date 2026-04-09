@@ -451,6 +451,111 @@ test_cache_init() {
     fi
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 13. PATH install regression — intelligence enabled when installed to ~/.local/bin
+# ──────────────────────────────────────────────────────────────────────────────
+test_intelligence_enabled_path_install() {
+    local fake_install_dir="$TEST_TEMP_DIR/local/bin"
+    local isolated_project="$TEST_TEMP_DIR/isolated_project"
+    mkdir -p "$fake_install_dir"
+    mkdir -p "$isolated_project"
+
+    # Initialize a git repo AND create daemon-config.json
+    git -C "$isolated_project" init -q 2>/dev/null || true
+    mkdir -p "$isolated_project/.claude"
+    cat > "$isolated_project/.claude/daemon-config.json" <<'CFG'
+{
+  "intelligence": {
+    "enabled": true
+  }
+}
+CFG
+
+    # Symlink sw-intelligence.sh into the fake install dir so BASH_SOURCE[0]
+    # points to the fake path. This causes the script to compute:
+    #   SCRIPT_DIR = ~/.local/bin  (the fake install dir)
+    #   SCRIPT_DIR/.. = ~/.local   (no .claude/ there)
+    # which triggers the git rev-parse fallback — the actual PATH-install branch.
+    local fake_script="$fake_install_dir/sw-intelligence.sh"
+    ln -sf "$INTELLIGENCE_SCRIPT" "$fake_script"
+
+    local output result repo_dir intelligence_cache
+    output=$(
+        unset REPO_DIR 2>/dev/null || true
+        cd "$isolated_project"
+        source "$fake_script" 2>/dev/null
+        if _intelligence_enabled; then
+            echo "enabled=enabled"
+        else
+            echo "enabled=disabled"
+        fi
+        echo "repo_dir=$REPO_DIR"
+        echo "intelligence_cache=$INTELLIGENCE_CACHE"
+    )
+
+    result=$(printf '%s\n' "$output" | grep '^enabled=' | cut -d= -f2-)
+    repo_dir=$(printf '%s\n' "$output" | grep '^repo_dir=' | cut -d= -f2-)
+    intelligence_cache=$(printf '%s\n' "$output" | grep '^intelligence_cache=' | cut -d= -f2-)
+
+    # Canonicalize the expected path — macOS /var is a symlink to /private/var,
+    # so mktemp and git rev-parse may return different forms of the same path.
+    local canonical_project
+    canonical_project="$(cd "$isolated_project" && pwd -P)"
+
+    assert_equals "enabled" "$result" "_intelligence_enabled should be enabled when installed to PATH"
+    assert_equals "$canonical_project" "$repo_dir" "REPO_DIR should resolve to git root when installed to PATH"
+    assert_contains "$intelligence_cache" "$canonical_project/.claude" "INTELLIGENCE_CACHE should be under project .claude"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 14. REPO_DIR pre-set to install root (sw-pipeline.sh sourcing scenario)
+# ──────────────────────────────────────────────────────────────────────────────
+test_intelligence_cache_when_repo_dir_is_install_root() {
+    local fake_install_dir="$TEST_TEMP_DIR/local/bin"
+    local fake_install_root="$TEST_TEMP_DIR/local"
+    local isolated_project="$TEST_TEMP_DIR/isolated_project2"
+    mkdir -p "$fake_install_dir"
+    mkdir -p "$isolated_project"
+
+    # Install root has no .claude/ — simulates ~/.local
+    git -C "$isolated_project" init -q 2>/dev/null || true
+    mkdir -p "$isolated_project/.claude"
+    cat > "$isolated_project/.claude/daemon-config.json" <<'CFG'
+{
+  "intelligence": {
+    "enabled": true
+  }
+}
+CFG
+
+    local fake_script="$fake_install_dir/sw-intelligence.sh"
+    ln -sf "$INTELLIGENCE_SCRIPT" "$fake_script"
+
+    local output result intelligence_cache
+    output=$(
+        # Simulate sw-pipeline.sh pre-setting REPO_DIR to install root
+        REPO_DIR="$fake_install_root"
+        export REPO_DIR
+        cd "$isolated_project"
+        source "$fake_script" 2>/dev/null
+        if _intelligence_enabled; then
+            echo "enabled=enabled"
+        else
+            echo "enabled=disabled"
+        fi
+        echo "intelligence_cache=$INTELLIGENCE_CACHE"
+    )
+
+    result=$(printf '%s\n' "$output" | grep '^enabled=' | cut -d= -f2-)
+    intelligence_cache=$(printf '%s\n' "$output" | grep '^intelligence_cache=' | cut -d= -f2-)
+
+    local canonical_project
+    canonical_project="$(cd "$isolated_project" && pwd -P)"
+
+    assert_equals "enabled" "$result" "_intelligence_enabled should be enabled when REPO_DIR is install root"
+    assert_contains "$intelligence_cache" "$canonical_project/.claude" "INTELLIGENCE_CACHE should be under project .claude even when REPO_DIR is install root"
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -496,6 +601,8 @@ main() {
         "test_events_emitted:Events emitted for analysis"
         "test_recommend_model_events:recommend_model emits events"
         "test_cache_init:Cache init creates file if missing"
+        "test_intelligence_enabled_path_install:PATH install does not disable intelligence"
+        "test_intelligence_cache_when_repo_dir_is_install_root:INTELLIGENCE_CACHE correct when REPO_DIR pre-set to install root"
     )
 
     for entry in "${tests[@]}"; do

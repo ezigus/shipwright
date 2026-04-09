@@ -70,6 +70,16 @@ EOF
 
     create_mock_claude
     create_mock_gh
+    # Stub ruflo so ruflo_detect finds a binary but it exits 1, causing
+    # ruflo_init to cleanly disable Ruflo for this test run.  Without this,
+    # ruflo_detect falls back to "npx -y ruflo@latest mcp status" on Linux CI
+    # runners (which have npx), downloads the package (~40s), and then
+    # subsequent ruflo commands fail — causing a >2-minute hang per test.
+    cat > "$TEMP_DIR/bin/ruflo" << 'RUFLO_STUB'
+#!/usr/bin/env bash
+exit 1
+RUFLO_STUB
+    chmod +x "$TEMP_DIR/bin/ruflo"
     write_e2e_template
     create_mock_project
     git init -q --bare "$TEMP_DIR/remote.git" 2>/dev/null || true
@@ -256,9 +266,17 @@ invoke_pipeline() {
     PIPELINE_OUTPUT=""
     # shellcheck disable=SC2034
     PIPELINE_EXIT=0
+    # Guard against hangs: timeout 120s (Linux timeout / macOS gtimeout from coreutils).
+    # Without this, a stalled pipeline blocks CI for the full job timeout.
+    local _timeout_cmd=""
+    if command -v timeout >/dev/null 2>&1; then
+        _timeout_cmd="timeout 120"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        _timeout_cmd="gtimeout 120"
+    fi
     # shellcheck disable=SC2034
     PIPELINE_OUTPUT=$(cd "$TEMP_DIR/project" && PATH="$TEMP_DIR/bin:$PATH" HOME="$TEMP_DIR/home" \
-        bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$@" 2>&1) || PIPELINE_EXIT=$?
+        $_timeout_cmd bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$@" 2>&1) || PIPELINE_EXIT=$?
 }
 
 dump_pipeline_debug() {

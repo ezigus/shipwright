@@ -8,7 +8,17 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="${SHIPWRIGHT_REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+if [[ -z "${REPO_DIR:-}" ]]; then
+    _sw_ctx_candidate="$(cd "$SCRIPT_DIR/.." && pwd)"
+    if [[ -n "${SHIPWRIGHT_REPO_DIR:-}" ]]; then
+        REPO_DIR="$SHIPWRIGHT_REPO_DIR"
+    elif [[ -d "$_sw_ctx_candidate/.claude" ]]; then
+        REPO_DIR="$_sw_ctx_candidate"
+    else
+        REPO_DIR="$(git rev-parse --show-toplevel 2>/dev/null || echo "$_sw_ctx_candidate")"
+    fi
+    unset _sw_ctx_candidate
+fi
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh

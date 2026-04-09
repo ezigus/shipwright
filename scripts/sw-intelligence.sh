@@ -55,7 +55,20 @@ if type bootstrap_optimization &>/dev/null 2>&1; then
 fi
 
 # ─── Intelligence Configuration ─────────────────────────────────────────────
-INTELLIGENCE_CACHE="${REPO_DIR}/.claude/intelligence-cache.json"
+# Derive the project root for intelligence paths — may differ from REPO_DIR when
+# sw-intelligence.sh is sourced from sw-pipeline.sh, which sets REPO_DIR to the
+# install root (not the project root) for template lookup.
+_sw_intel_project_root=""
+for _sw_intel_root_candidate in \
+    "${REPO_DIR}" \
+    "$(git rev-parse --show-toplevel 2>/dev/null)" \
+    "$(pwd)"; do
+    [[ -n "$_sw_intel_root_candidate" && -d "$_sw_intel_root_candidate/.claude" ]] && \
+        _sw_intel_project_root="$_sw_intel_root_candidate" && break
+done
+_sw_intel_project_root="${_sw_intel_project_root:-${REPO_DIR}}"
+INTELLIGENCE_CACHE="${_sw_intel_project_root}/.claude/intelligence-cache.json"
+unset _sw_intel_root_candidate _sw_intel_project_root
 INTELLIGENCE_CONFIG_DIR="${HOME}/.shipwright/optimization"
 CACHE_TTL_CONFIG="${INTELLIGENCE_CONFIG_DIR}/cache-ttl.json"
 CACHE_STATS_FILE="${INTELLIGENCE_CONFIG_DIR}/cache-stats.json"
@@ -243,9 +256,9 @@ _intelligence_enabled() {
     local config=""
     local cfg
     for cfg in \
-        "${REPO_DIR}/.claude/daemon-config.json" \
         "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/daemon-config.json" \
-        "$(pwd)/.claude/daemon-config.json"; do
+        "$(pwd)/.claude/daemon-config.json" \
+        "${REPO_DIR}/.claude/daemon-config.json"; do
         [[ -n "$cfg" && -f "$cfg" ]] && config="$cfg" && break
     done
     if [[ -n "$config" ]]; then

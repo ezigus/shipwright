@@ -507,6 +507,55 @@ CFG
     assert_contains "$intelligence_cache" "$canonical_project/.claude" "INTELLIGENCE_CACHE should be under project .claude"
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 14. REPO_DIR pre-set to install root (sw-pipeline.sh sourcing scenario)
+# ──────────────────────────────────────────────────────────────────────────────
+test_intelligence_cache_when_repo_dir_is_install_root() {
+    local fake_install_dir="$TEST_TEMP_DIR/local/bin"
+    local fake_install_root="$TEST_TEMP_DIR/local"
+    local isolated_project="$TEST_TEMP_DIR/isolated_project2"
+    mkdir -p "$fake_install_dir"
+    mkdir -p "$isolated_project"
+
+    # Install root has no .claude/ — simulates ~/.local
+    git -C "$isolated_project" init -q 2>/dev/null || true
+    mkdir -p "$isolated_project/.claude"
+    cat > "$isolated_project/.claude/daemon-config.json" <<'CFG'
+{
+  "intelligence": {
+    "enabled": true
+  }
+}
+CFG
+
+    local fake_script="$fake_install_dir/sw-intelligence.sh"
+    ln -sf "$INTELLIGENCE_SCRIPT" "$fake_script"
+
+    local output result intelligence_cache
+    output=$(
+        # Simulate sw-pipeline.sh pre-setting REPO_DIR to install root
+        REPO_DIR="$fake_install_root"
+        export REPO_DIR
+        cd "$isolated_project"
+        source "$fake_script" 2>/dev/null
+        if _intelligence_enabled; then
+            echo "enabled=enabled"
+        else
+            echo "enabled=disabled"
+        fi
+        echo "intelligence_cache=$INTELLIGENCE_CACHE"
+    )
+
+    result=$(printf '%s\n' "$output" | grep '^enabled=' | cut -d= -f2-)
+    intelligence_cache=$(printf '%s\n' "$output" | grep '^intelligence_cache=' | cut -d= -f2-)
+
+    local canonical_project
+    canonical_project="$(cd "$isolated_project" && pwd -P)"
+
+    assert_equals "enabled" "$result" "_intelligence_enabled should be enabled when REPO_DIR is install root"
+    assert_contains "$intelligence_cache" "$canonical_project/.claude" "INTELLIGENCE_CACHE should be under project .claude even when REPO_DIR is install root"
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -553,6 +602,7 @@ main() {
         "test_recommend_model_events:recommend_model emits events"
         "test_cache_init:Cache init creates file if missing"
         "test_intelligence_enabled_path_install:PATH install does not disable intelligence"
+        "test_intelligence_cache_when_repo_dir_is_install_root:INTELLIGENCE_CACHE correct when REPO_DIR pre-set to install root"
     )
 
     for entry in "${tests[@]}"; do

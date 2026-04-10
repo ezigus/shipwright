@@ -218,7 +218,7 @@ daemon_spawn_pipeline() {
 
     # If template is "composed", copy the composed spec into the worktree
     if [[ "$PIPELINE_TEMPLATE" == "composed" ]]; then
-        local _src_composed="${REPO_DIR:-.}/.claude/pipeline-artifacts/composed-pipeline.json"
+        local _src_composed="${PROJECT_ROOT:-.}/.claude/pipeline-artifacts/composed-pipeline.json"
         if [[ -f "$_src_composed" ]]; then
             local _dst_artifacts="${work_dir}/.claude/pipeline-artifacts"
             mkdir -p "$_dst_artifacts"

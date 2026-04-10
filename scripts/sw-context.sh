@@ -11,9 +11,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 # Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+# Honor SHIPWRIGHT_REPO_DIR if set (used by tests and external callers)
 PROJECT_ROOT="${PROJECT_ROOT:-}"
 if [[ -z "$PROJECT_ROOT" ]]; then
-    if [[ -d "${REPO_DIR}/.claude" ]]; then
+    if [[ -n "${SHIPWRIGHT_REPO_DIR:-}" ]]; then
+        PROJECT_ROOT="$SHIPWRIGHT_REPO_DIR"
+    elif [[ -d "${REPO_DIR}/.claude" ]]; then
         PROJECT_ROOT="$REPO_DIR"
     else
         PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
@@ -212,7 +215,7 @@ extract_file_previews() {
 
         # Search for files matching keyword
         local found
-        found=$(find "$REPO_DIR" -type f \( -name "*.sh" -o -name "*.md" -o -name "*.ts" -o -name "*.json" \) \
+        found=$(find "$PROJECT_ROOT" -type f \( -name "*.sh" -o -name "*.md" -o -name "*.ts" -o -name "*.json" \) \
             -not -path "*/.git/*" \
             -not -path "*/node_modules/*" \
             -not -path "*/.claude/*" \

@@ -479,9 +479,12 @@ CFG
     local fake_script="$fake_install_dir/sw-intelligence.sh"
     ln -sf "$INTELLIGENCE_SCRIPT" "$fake_script"
 
+    local canonical_isolated
+    canonical_isolated="$(cd "$isolated_project" && pwd -P)"
     local output result repo_dir intelligence_cache
     output=$(
         unset REPO_DIR 2>/dev/null || true
+        export PROJECT_ROOT="$canonical_isolated"
         cd "$isolated_project"
         source "$fake_script" 2>/dev/null
         if _intelligence_enabled; then
@@ -531,11 +534,14 @@ CFG
     local fake_script="$fake_install_dir/sw-intelligence.sh"
     ln -sf "$INTELLIGENCE_SCRIPT" "$fake_script"
 
+    local canonical_isolated
+    canonical_isolated="$(cd "$isolated_project" && pwd -P)"
     local output result intelligence_cache
     output=$(
         # Simulate sw-pipeline.sh pre-setting REPO_DIR to install root
         REPO_DIR="$fake_install_root"
         export REPO_DIR
+        export PROJECT_ROOT="$canonical_isolated"
         cd "$isolated_project"
         source "$fake_script" 2>/dev/null
         if _intelligence_enabled; then

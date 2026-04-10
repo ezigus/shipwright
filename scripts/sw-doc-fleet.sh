@@ -99,7 +99,7 @@ cmd_audit() {
     local missing_docs=""
     for doc in $expected_docs; do
         total_checks=$((total_checks + 1))
-        if [[ -f "${REPO_DIR}/${doc}" ]]; then
+        if [[ -f "${PROJECT_ROOT}/${doc}" ]]; then
             total_score=$((total_score + 1))
         else
             missing_docs="${missing_docs} ${doc}"
@@ -190,7 +190,7 @@ cmd_audit() {
     local expected_dirs="docs docs/strategy docs/patterns docs/tmux-research"
     local missing_dirs=""
     for dir in $expected_dirs; do
-        if [[ ! -d "${REPO_DIR}/${dir}" ]]; then
+        if [[ ! -d "${PROJECT_ROOT}/${dir}" ]]; then
             missing_dirs="${missing_dirs} ${dir}"
         fi
     done
@@ -215,11 +215,11 @@ cmd_audit() {
         esac
         # Check if referenced from any other md file
         local ref_count
-        ref_count=$(grep -rl "$basename_file" "${REPO_DIR}"/*.md "${REPO_DIR}"/docs/*.md 2>/dev/null | wc -l | tr -d ' ') || ref_count=0
+        ref_count=$(grep -rl "$basename_file" "${PROJECT_ROOT}"/*.md "${PROJECT_ROOT}"/docs/*.md 2>/dev/null | wc -l | tr -d ' ') || ref_count=0
         if [[ $ref_count -eq 0 ]]; then
             orphan_count=$((orphan_count + 1))
         fi
-    done < <(find "${REPO_DIR}/docs" -name "*.md" -maxdepth 1 2>/dev/null || true)
+    done < <(find "${PROJECT_ROOT}/docs" -name "*.md" -maxdepth 1 2>/dev/null || true)
     if [[ $orphan_count -gt 3 ]]; then
         warn "${orphan_count} potentially orphan docs in docs/ (not linked from index)"
         issues_found=$((issues_found + 1))
@@ -231,9 +231,9 @@ cmd_audit() {
     # --- Check 7: Strategy alignment
     info "Checking strategy document freshness..."
     total_checks=$((total_checks + 1))
-    if [[ -f "${REPO_DIR}/STRATEGY.md" ]]; then
+    if [[ -f "${PROJECT_ROOT}/STRATEGY.md" ]]; then
         local strategy_lines
-        strategy_lines=$(wc -l < "${REPO_DIR}/STRATEGY.md" | tr -d ' ')
+        strategy_lines=$(wc -l < "${PROJECT_ROOT}/STRATEGY.md" | tr -d ' ')
         if [[ $strategy_lines -gt 50 ]]; then
             total_score=$((total_score + 1))
             success "STRATEGY.md has substance (${strategy_lines} lines)"
@@ -250,7 +250,7 @@ cmd_audit() {
     info "Checking documentation coverage..."
     total_checks=$((total_checks + 1))
     local doc_files
-    doc_files=$(find "${REPO_DIR}" -name "*.md" -not -path "*/node_modules/*" 2>/dev/null | wc -l | tr -d ' ')
+    doc_files=$(find "${PROJECT_ROOT}" -name "*.md" -not -path "*/node_modules/*" 2>/dev/null | wc -l | tr -d ' ')
     local script_files
     script_files=$(find "${REPO_DIR}/scripts" -name "*.sh" -not -name "*-test.sh" 2>/dev/null | wc -l | tr -d ' ')
     if [[ $script_files -gt 0 ]]; then
@@ -408,12 +408,12 @@ BRIEF
 
             if [[ "$mode" == "--autonomous" ]] && [[ -x "${SCRIPT_DIR}/sw-loop.sh" ]]; then
                 # Launch via loop harness for autonomous mode
-                tmux new-session -d -s "$session_name" -c "$REPO_DIR" \
+                tmux new-session -d -s "$session_name" -c "$PROJECT_ROOT" \
                     "bash \"${SCRIPT_DIR}/sw-loop.sh\" \"${agent_goal}\" --max-iterations 10 --roles docs" 2>/dev/null || true
                 success "Autonomous agent: ${CYAN}${session_name}${RESET} (loop mode)"
             else
                 # Interactive mode: show the brief and wait for user to attach
-                tmux new-session -d -s "$session_name" -c "$REPO_DIR" 2>/dev/null || true
+                tmux new-session -d -s "$session_name" -c "$PROJECT_ROOT" 2>/dev/null || true
                 # Send the brief display commands
                 tmux send-keys -t "$session_name" "cat \"${brief_file}\" && echo '' && echo 'Ready — start Claude Code in this session to begin work.'" Enter 2>/dev/null || true
                 success "Tmux session: ${CYAN}${session_name}${RESET}"
@@ -561,7 +561,7 @@ cmd_manifest() {
     # Build manifest JSON
     local docs_json="[]"
     while IFS= read -r md_file; do
-        local rel_path="${md_file#${REPO_DIR}/}"
+        local rel_path="${md_file#${PROJECT_ROOT}/}"
         local line_count
         line_count=$(wc -l < "$md_file" | tr -d ' ')
         local title=""
@@ -587,7 +587,7 @@ cmd_manifest() {
             --arg mtime "$mtime" \
             --arg audience "$audience" \
             '. += [{"path": $path, "title": $title, "lines": $lines, "last_modified": $mtime, "audience": $audience}]')
-    done < <(find "${REPO_DIR}" -name "*.md" \
+    done < <(find "${PROJECT_ROOT}" -name "*.md" \
         -not -path "*/node_modules/*" \
         -not -path "*/.git/*" \
         2>/dev/null | sort)
@@ -637,13 +637,13 @@ cmd_report() {
     # Count files by category
     local root_docs=0 claude_docs=0 docs_dir=0 agent_defs=0 pattern_docs=0 strategy_docs=0 tmux_docs=0
 
-    root_docs=$(find "${REPO_DIR}" -maxdepth 1 -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-    claude_docs=$(find "${REPO_DIR}/.claude" -maxdepth 1 -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    root_docs=$(find "${PROJECT_ROOT}" -maxdepth 1 -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    claude_docs=$(find "${PROJECT_ROOT}/.claude" -maxdepth 1 -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
     agent_defs=$(find "${PROJECT_ROOT}/.claude/agents" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-    docs_dir=$(find "${REPO_DIR}/docs" -maxdepth 1 -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-    pattern_docs=$(find "${REPO_DIR}/docs/patterns" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-    strategy_docs=$(find "${REPO_DIR}/docs/strategy" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-    tmux_docs=$(find "${REPO_DIR}/docs/tmux-research" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    docs_dir=$(find "${PROJECT_ROOT}/docs" -maxdepth 1 -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    pattern_docs=$(find "${PROJECT_ROOT}/docs/patterns" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    strategy_docs=$(find "${PROJECT_ROOT}/docs/strategy" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    tmux_docs=$(find "${PROJECT_ROOT}/docs/tmux-research" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
 
     info "Documentation Inventory"
     echo ""
@@ -668,7 +668,7 @@ cmd_report() {
         local lines
         lines=$(wc -l < "$md_file" | tr -d ' ')
         total_lines=$((total_lines + lines))
-    done < <(find "${REPO_DIR}" -name "*.md" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null)
+    done < <(find "${PROJECT_ROOT}" -name "*.md" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null)
     echo -e "  Total documentation lines: ${CYAN}${total_lines}${RESET}"
     echo ""
 

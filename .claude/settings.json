@@ -44,6 +44,17 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'exec node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/hook-handler.cjs\" route'",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [
@@ -66,6 +77,17 @@
           {
             "type": "command",
             "command": "sh -c 'exec node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/hook-handler.cjs\" session-end'",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'exec node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/auto-memory-hook.mjs\" sync'",
             "timeout": 10000
           }
         ]
@@ -119,6 +141,17 @@
             "type": "command",
             "command": "sh -c 'exec node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/hook-handler.cjs\" post-task'",
             "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'exec node \"${CLAUDE_PROJECT_DIR:-.}/.claude/helpers/hook-handler.cjs\" notify'",
+            "timeout": 3000
           }
         ]
       }
@@ -186,24 +219,24 @@
       }
     },
     "swarm": {
-      "topology": "mesh",
-      "maxAgents": 5
+      "topology": "hierarchical-mesh",
+      "maxAgents": 15
     },
     "memory": {
-      "backend": "memory",
-      "enableHNSW": false,
+      "backend": "hybrid",
+      "enableHNSW": true,
       "learningBridge": {
-        "enabled": false
+        "enabled": true
       },
       "memoryGraph": {
-        "enabled": false
+        "enabled": true
       },
       "agentScopes": {
-        "enabled": false
+        "enabled": true
       }
     },
     "neural": {
-      "enabled": false
+      "enabled": true
     },
     "daemon": {
       "autoStart": false,

@@ -11,6 +11,16 @@ VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
+
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
@@ -23,14 +33,14 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 [[ "$(type -t warn 2>/dev/null)" == "function" ]]    || warn()    { echo -e "\033[38;2;250;204;21m\033[1m⚠\033[0m $*"; }
 [[ "$(type -t error 2>/dev/null)" == "function" ]]   || error()   { echo -e "\033[38;2;248;113;113m\033[1m✗\033[0m $*" >&2; }
 # ─── Configuration ───────────────────────────────────────────────────────
-REVIEW_CONFIG="${REPO_DIR}/.claude/code-review.json"
-QUALITY_METRICS_FILE="${REPO_DIR}/.claude/pipeline-artifacts/quality-metrics.json"
+REVIEW_CONFIG="${PROJECT_ROOT}/.claude/code-review.json"
+QUALITY_METRICS_FILE="${PROJECT_ROOT}/.claude/pipeline-artifacts/quality-metrics.json"
 TRENDS_FILE="${HOME}/.shipwright/code-review-trends.jsonl"
 STRICTNESS="${STRICTNESS:-normal}"  # relaxed, normal, strict
 
 init_config() {
     [[ -f "$REVIEW_CONFIG" ]] && return 0
-    mkdir -p "${REPO_DIR}/.claude"
+    mkdir -p "${PROJECT_ROOT}/.claude"
     cat > "$REVIEW_CONFIG" <<'EOF'
 {
   "strictness": "normal",
@@ -430,7 +440,7 @@ review_changes() {
 
     info "Reviewing code changes ($review_scope)..."
 
-    mkdir -p "${REPO_DIR}/.claude/pipeline-artifacts"
+    mkdir -p "${PROJECT_ROOT}/.claude/pipeline-artifacts"
 
     local review_output
     review_output="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"scope\":\"$review_scope\",\"findings\":{}}"
@@ -439,9 +449,9 @@ review_changes() {
     # Get changed files (Bash 3.2 compatible — no mapfile)
     local changed_files=()
     if [[ "$review_scope" == "staged" ]]; then
-        while IFS= read -r _f; do [[ -n "$_f" ]] && changed_files+=("$_f"); done < <(cd "$REPO_DIR" && git diff --cached --name-only 2>/dev/null || true)
+        while IFS= read -r _f; do [[ -n "$_f" ]] && changed_files+=("$_f"); done < <(cd "$PROJECT_ROOT" && git diff --cached --name-only 2>/dev/null || true)
     else
-        while IFS= read -r _f; do [[ -n "$_f" ]] && changed_files+=("$_f"); done < <(cd "$REPO_DIR" && git diff main...HEAD --name-only 2>/dev/null || true)
+        while IFS= read -r _f; do [[ -n "$_f" ]] && changed_files+=("$_f"); done < <(cd "$PROJECT_ROOT" && git diff main...HEAD --name-only 2>/dev/null || true)
     fi
 
     [[ ${#changed_files[@]} -eq 0 ]] && { success "No changes to review"; return 0; }
@@ -449,9 +459,9 @@ review_changes() {
     # Claude-powered semantic review (logic, race conditions, API usage) when available
     local diff_content
     if [[ "$review_scope" == "staged" ]]; then
-        diff_content=$(cd "$REPO_DIR" && git diff --cached 2>/dev/null || true)
+        diff_content=$(cd "$PROJECT_ROOT" && git diff --cached 2>/dev/null || true)
     else
-        diff_content=$(cd "$REPO_DIR" && git diff main...HEAD 2>/dev/null || true)
+        diff_content=$(cd "$PROJECT_ROOT" && git diff main...HEAD 2>/dev/null || true)
     fi
     local semantic_issues=()
     if [[ -n "$diff_content" ]] && command -v claude >/dev/null 2>&1; then
@@ -464,7 +474,7 @@ review_changes() {
     fi
 
     for file in "${changed_files[@]}"; do
-        local file_path="${REPO_DIR}/${file}"
+        local file_path="${PROJECT_ROOT}/${file}"
         [[ ! -f "$file_path" ]] && continue
 
         info "Analyzing $file..."

@@ -13,6 +13,16 @@ VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
+
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
 # shellcheck source=lib/helpers.sh
@@ -40,7 +50,7 @@ _run_with_timeout() {
     fi
 }
 
-EVIDENCE_DIR="${REPO_DIR}/.claude/evidence"
+EVIDENCE_DIR="${PROJECT_ROOT}/.claude/evidence"
 MANIFEST_FILE="${EVIDENCE_DIR}/manifest.json"
 POLICY_FILE="${REPO_DIR}/config/policy.json"
 

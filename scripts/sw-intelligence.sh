@@ -8,14 +8,16 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -z "${REPO_DIR:-}" ]]; then
-    _sw_intel_candidate="$(cd "$SCRIPT_DIR/.." && pwd)"
-    if [[ -d "$_sw_intel_candidate/.claude" ]]; then
-        REPO_DIR="$_sw_intel_candidate"
+REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
     else
-        REPO_DIR="$(git rev-parse --show-toplevel 2>/dev/null || echo "$_sw_intel_candidate")"
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
     fi
-    unset _sw_intel_candidate
 fi
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -258,7 +260,7 @@ _intelligence_enabled() {
     for cfg in \
         "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/daemon-config.json" \
         "$(pwd)/.claude/daemon-config.json" \
-        "${REPO_DIR}/.claude/daemon-config.json"; do
+        "${PROJECT_ROOT}/.claude/daemon-config.json"; do
         [[ -n "$cfg" && -f "$cfg" ]] && config="$cfg" && break
     done
     if [[ -n "$config" ]]; then
@@ -1408,7 +1410,7 @@ show_help() {
 cmd_status() {
     # Find daemon-config (project root, cwd, or shipwright install)
     local config=""
-    for cfg in "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/daemon-config.json" "$(pwd)/.claude/daemon-config.json" "${REPO_DIR}/.claude/daemon-config.json"; do
+    for cfg in "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/daemon-config.json" "$(pwd)/.claude/daemon-config.json" "${PROJECT_ROOT}/.claude/daemon-config.json"; do
         [[ -n "$cfg" && -f "$cfg" ]] && config="$cfg" && break
     done
     local intel_enabled="auto"

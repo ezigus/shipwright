@@ -10,6 +10,16 @@ VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
+
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
@@ -36,7 +46,7 @@ if [[ "$(type -t emit_event 2>/dev/null)" != "function" ]]; then
   }
 fi
 # ─── Artifacts Directory ─────────────────────────────────────────────────────
-ARTIFACTS_DIR="${REPO_DIR}/.claude/pipeline-artifacts"
+ARTIFACTS_DIR="${PROJECT_ROOT}/.claude/pipeline-artifacts"
 
 # ─── Auto-detect owner/repo from git remote ──────────────────────────────────
 _gh_detect_repo() {

@@ -11,6 +11,16 @@ VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
+
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
@@ -39,7 +49,7 @@ FLEET_HOME="${HOME}/.shipwright/doc-fleet"
 FLEET_STATE="${FLEET_HOME}/state.json"
 FLEET_LOG="${FLEET_HOME}/runs.jsonl"
 FLEET_REPORT_DIR="${FLEET_HOME}/reports"
-MANIFEST_FILE="${REPO_DIR}/.claude/pipeline-artifacts/docs-manifest.json"
+MANIFEST_FILE="${PROJECT_ROOT}/.claude/pipeline-artifacts/docs-manifest.json"
 
 # Fleet agent definitions (role → focus areas → description)
 FLEET_ROLES="doc-architect claude-md strategy-curator pattern-writer readme-optimizer"
@@ -47,7 +57,7 @@ FLEET_ROLES="doc-architect claude-md strategy-curator pattern-writer readme-opti
 # ─── Ensure directories exist ──────────────────────────────────────────────
 ensure_dirs() {
     mkdir -p "$FLEET_HOME" "$FLEET_REPORT_DIR"
-    mkdir -p "${REPO_DIR}/.claude/pipeline-artifacts"
+    mkdir -p "${PROJECT_ROOT}/.claude/pipeline-artifacts"
 }
 
 # ─── Initialize fleet state ────────────────────────────────────────────────
@@ -105,11 +115,11 @@ cmd_audit() {
     # --- Check 2: CLAUDE.md freshness
     info "Checking CLAUDE.md freshness..."
     total_checks=$((total_checks + 1))
-    if [[ -f "${REPO_DIR}/.claude/CLAUDE.md" ]]; then
+    if [[ -f "${PROJECT_ROOT}/.claude/CLAUDE.md" ]]; then
         local claude_age_days=0
         if command -v stat >/dev/null 2>&1; then
             local claude_mtime
-            claude_mtime=$(file_mtime "${REPO_DIR}/.claude/CLAUDE.md")
+            claude_mtime=$(file_mtime "${PROJECT_ROOT}/.claude/CLAUDE.md")
             local now_epoch_val
             now_epoch_val=$(date +%s)
             claude_age_days=$(( (now_epoch_val - claude_mtime) / 86400 ))
@@ -130,8 +140,8 @@ cmd_audit() {
     info "Checking agent role definitions..."
     total_checks=$((total_checks + 1))
     local agent_count=0
-    if [[ -d "${REPO_DIR}/.claude/agents" ]]; then
-        agent_count=$(ls -1 "${REPO_DIR}/.claude/agents/"*.md 2>/dev/null | wc -l | tr -d ' ')
+    if [[ -d "${PROJECT_ROOT}/.claude/agents" ]]; then
+        agent_count=$(ls -1 "${PROJECT_ROOT}/.claude/agents/"*.md 2>/dev/null | wc -l | tr -d ' ')
     fi
     if [[ $agent_count -ge 5 ]]; then
         total_score=$((total_score + 1))
@@ -629,7 +639,7 @@ cmd_report() {
 
     root_docs=$(find "${REPO_DIR}" -maxdepth 1 -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
     claude_docs=$(find "${REPO_DIR}/.claude" -maxdepth 1 -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-    agent_defs=$(find "${REPO_DIR}/.claude/agents" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    agent_defs=$(find "${PROJECT_ROOT}/.claude/agents" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
     docs_dir=$(find "${REPO_DIR}/docs" -maxdepth 1 -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
     pattern_docs=$(find "${REPO_DIR}/docs/patterns" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
     strategy_docs=$(find "${REPO_DIR}/docs/strategy" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')

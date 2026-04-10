@@ -25,8 +25,18 @@ DEDUP_WINDOW_DAYS=$(policy_get ".decision.dedup_window_days" "7")
 OUTCOME_LEARNING=$(policy_get ".decision.outcome_learning_enabled" "true")
 OUTCOME_MIN_SAMPLES=$(policy_get ".decision.outcome_min_samples" "10")
 
-REPO_DIR="${_REPO_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || echo '.')}"
-DRAFTS_DIR="${REPO_DIR}/.claude/decision-drafts"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
+DRAFTS_DIR="${PROJECT_ROOT}/.claude/decision-drafts"
 
 # ─── Help ─────────────────────────────────────────────────────────────────────
 

@@ -8,16 +8,16 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -z "${REPO_DIR:-}" ]]; then
-    _sw_ctx_candidate="$(cd "$SCRIPT_DIR/.." && pwd)"
-    if [[ -n "${SHIPWRIGHT_REPO_DIR:-}" ]]; then
-        REPO_DIR="$SHIPWRIGHT_REPO_DIR"
-    elif [[ -d "$_sw_ctx_candidate/.claude" ]]; then
-        REPO_DIR="$_sw_ctx_candidate"
+REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
     else
-        REPO_DIR="$(git rev-parse --show-toplevel 2>/dev/null || echo "$_sw_ctx_candidate")"
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
     fi
-    unset _sw_ctx_candidate
 fi
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -37,10 +37,10 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_epoch() { date +%s; }
 fi
 # ─── Paths ────────────────────────────────────────────────────────────────
-ARTIFACTS_DIR="${REPO_DIR}/.claude/pipeline-artifacts"
+ARTIFACTS_DIR="${PROJECT_ROOT}/.claude/pipeline-artifacts"
 CONTEXT_BUNDLE="${ARTIFACTS_DIR}/context-bundle.md"
-CLAUDE_CONFIG="${REPO_DIR}/.claude/CLAUDE.md"
-INTELLIGENCE_CACHE="${REPO_DIR}/.claude/intelligence-cache.json"
+CLAUDE_CONFIG="${PROJECT_ROOT}/.claude/CLAUDE.md"
+INTELLIGENCE_CACHE="${PROJECT_ROOT}/.claude/intelligence-cache.json"
 MEMORY_ROOT="${HOME}/.shipwright/memory"
 
 # ─── Get repo identifier for memory lookups ────────────────────────────────
@@ -251,7 +251,7 @@ extract_architecture_decisions() {
     echo "# Architecture Decision Records"
     echo ""
 
-    local adr_file="${REPO_DIR}/.claude/ARCHITECTURE.md"
+    local adr_file="${PROJECT_ROOT}/.claude/ARCHITECTURE.md"
     if [[ -f "$adr_file" ]]; then
         head -40 "$adr_file" | sed 's/^//'
         echo ""

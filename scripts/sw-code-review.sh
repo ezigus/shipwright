@@ -11,6 +11,16 @@ VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
+
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
@@ -23,8 +33,8 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 [[ "$(type -t warn 2>/dev/null)" == "function" ]]    || warn()    { echo -e "\033[38;2;250;204;21m\033[1m⚠\033[0m $*"; }
 [[ "$(type -t error 2>/dev/null)" == "function" ]]   || error()   { echo -e "\033[38;2;248;113;113m\033[1m✗\033[0m $*" >&2; }
 # ─── Configuration ───────────────────────────────────────────────────────
-REVIEW_CONFIG="${REPO_DIR}/.claude/code-review.json"
-QUALITY_METRICS_FILE="${REPO_DIR}/.claude/pipeline-artifacts/quality-metrics.json"
+REVIEW_CONFIG="${PROJECT_ROOT}/.claude/code-review.json"
+QUALITY_METRICS_FILE="${PROJECT_ROOT}/.claude/pipeline-artifacts/quality-metrics.json"
 TRENDS_FILE="${HOME}/.shipwright/code-review-trends.jsonl"
 STRICTNESS="${STRICTNESS:-normal}"  # relaxed, normal, strict
 
@@ -430,7 +440,7 @@ review_changes() {
 
     info "Reviewing code changes ($review_scope)..."
 
-    mkdir -p "${REPO_DIR}/.claude/pipeline-artifacts"
+    mkdir -p "${PROJECT_ROOT}/.claude/pipeline-artifacts"
 
     local review_output
     review_output="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"scope\":\"$review_scope\",\"findings\":{}}"

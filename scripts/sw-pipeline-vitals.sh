@@ -10,6 +10,16 @@ VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
+
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
@@ -407,8 +417,8 @@ pipeline_emit_progress_snapshot() {
 # Output: JSON to stdout
 # ═══════════════════════════════════════════════════════════════════════════
 pipeline_compute_vitals() {
-    local state_file="${1:-${PIPELINE_STATE:-${REPO_DIR}/.claude/pipeline-state.md}}"
-    local artifacts_dir="${2:-${REPO_DIR}/.claude/pipeline-artifacts}"
+    local state_file="${1:-${PIPELINE_STATE:-${PROJECT_ROOT}/.claude/pipeline-state.md}}"
+    local artifacts_dir="${2:-${PROJECT_ROOT}/.claude/pipeline-artifacts}"
     local issue_num="${3:-}"
 
     # ── Read current pipeline state ──
@@ -686,7 +696,7 @@ pipeline_adaptive_limit() {
 # Output: ok | warn | stop
 # ═══════════════════════════════════════════════════════════════════════════
 pipeline_budget_trajectory() {
-    local state_file="${1:-${PIPELINE_STATE:-${REPO_DIR}/.claude/pipeline-state.md}}"
+    local state_file="${1:-${PIPELINE_STATE:-${PROJECT_ROOT}/.claude/pipeline-state.md}}"
 
     # Check if budget is enabled
     if [[ ! -f "$BUDGET_FILE" ]]; then
@@ -790,8 +800,8 @@ pipeline_budget_trajectory() {
 # CLI output for `shipwright vitals`
 # ═══════════════════════════════════════════════════════════════════════════
 vitals_dashboard() {
-    local state_file="${1:-${PIPELINE_STATE:-${REPO_DIR}/.claude/pipeline-state.md}}"
-    local artifacts_dir="${2:-${REPO_DIR}/.claude/pipeline-artifacts}"
+    local state_file="${1:-${PIPELINE_STATE:-${PROJECT_ROOT}/.claude/pipeline-state.md}}"
+    local artifacts_dir="${2:-${PROJECT_ROOT}/.claude/pipeline-artifacts}"
     local issue_num="${3:-}"
 
     # Compute vitals
@@ -1044,8 +1054,8 @@ main() {
     done
 
     # Defaults
-    state_file="${state_file:-${PIPELINE_STATE:-${REPO_DIR}/.claude/pipeline-state.md}}"
-    artifacts_dir="${artifacts_dir:-${REPO_DIR}/.claude/pipeline-artifacts}"
+    state_file="${state_file:-${PIPELINE_STATE:-${PROJECT_ROOT}/.claude/pipeline-state.md}}"
+    artifacts_dir="${artifacts_dir:-${PROJECT_ROOT}/.claude/pipeline-artifacts}"
 
     case "$output_mode" in
         dashboard)

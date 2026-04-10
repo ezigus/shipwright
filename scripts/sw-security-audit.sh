@@ -10,6 +10,16 @@ VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
+
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
@@ -198,7 +208,7 @@ scan_vulnerabilities() {
 generate_sbom() {
     info "Generating Software Bill of Materials..."
 
-    local sbom_file="${REPO_DIR}/.claude/pipeline-artifacts/sbom.json"
+    local sbom_file="${PROJECT_ROOT}/.claude/pipeline-artifacts/sbom.json"
     mkdir -p "$(dirname "$sbom_file")"
 
     local sbom='{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}'
@@ -294,7 +304,7 @@ analyze_network() {
 generate_compliance_report() {
     info "Generating compliance report..."
 
-    local report_file="${REPO_DIR}/.claude/pipeline-artifacts/security-compliance-report.md"
+    local report_file="${PROJECT_ROOT}/.claude/pipeline-artifacts/security-compliance-report.md"
     mkdir -p "$(dirname "$report_file")"
 
     cat > "$report_file" <<'EOF'

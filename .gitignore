@@ -31,6 +31,13 @@ dist/
 node_modules/
 *.tgz
 
+# Test coverage artifacts
+coverage/
+*.lcov
+
+# Vector databases
+ruvector.db
+
 # Website build
 website/node_modules/
 website/dist/

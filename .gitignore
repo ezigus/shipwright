@@ -35,3 +35,28 @@ node_modules/
 website/node_modules/
 website/dist/
 website/.astro/
+
+# ─── Claude-flow / ruflo install artifacts ─────────────────────────────────
+# These directories are scaffolded by `ruflo init` / `@claude-flow/cli init`
+# and should regenerate on demand. Shipwright does not depend on them being
+# present in the repo; they are orthogonal to shipwright's own domain.
+
+# Block subdirectory bundles under .claude/agents/ and .claude/skills/
+# while preserving shipwright's own top-level .md files.
+.claude/agents/*/
+.claude/skills/*/
+
+# Whole directories that are never shipwright's
+.claude/commands/
+.claude/helpers/
+.claude/memory.db
+
+# Claude-flow runtime state (daemon PIDs, metrics, swarm state, vector DBs)
+.claude-flow/
+.swarm/
+vectors.db
+
+# Root-level install artifacts (NOT .claude/CLAUDE.md, which is the legit
+# shipwright thin wrapper)
+/CLAUDE.md
+/.mcp.json

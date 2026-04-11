@@ -10,6 +10,16 @@ VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
+
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
@@ -47,7 +57,7 @@ if type bootstrap_optimization &>/dev/null 2>&1; then
 fi
 
 # ─── Intelligence Configuration ─────────────────────────────────────────────
-INTELLIGENCE_CACHE="${REPO_DIR}/.claude/intelligence-cache.json"
+INTELLIGENCE_CACHE="${PROJECT_ROOT}/.claude/intelligence-cache.json"
 INTELLIGENCE_CONFIG_DIR="${HOME}/.shipwright/optimization"
 CACHE_TTL_CONFIG="${INTELLIGENCE_CONFIG_DIR}/cache-ttl.json"
 CACHE_STATS_FILE="${INTELLIGENCE_CONFIG_DIR}/cache-stats.json"
@@ -232,8 +242,15 @@ _intelligence_adjust_cache_ttl() {
 # ─── Feature Flag ───────────────────────────────────────────────────────────
 
 _intelligence_enabled() {
-    local config="${REPO_DIR}/.claude/daemon-config.json"
-    if [[ -f "$config" ]]; then
+    local config=""
+    local cfg
+    for cfg in \
+        "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/daemon-config.json" \
+        "$(pwd)/.claude/daemon-config.json" \
+        "${PROJECT_ROOT}/.claude/daemon-config.json"; do
+        [[ -n "$cfg" && -f "$cfg" ]] && config="$cfg" && break
+    done
+    if [[ -n "$config" ]]; then
         local enabled
         enabled=$(jq -r '.intelligence.enabled | if . == null then "auto" elif . == true then "true" else "false" end' "$config" 2>/dev/null || echo "auto")
         if [[ "$enabled" == "true" ]]; then
@@ -1380,7 +1397,7 @@ show_help() {
 cmd_status() {
     # Find daemon-config (project root, cwd, or shipwright install)
     local config=""
-    for cfg in "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/daemon-config.json" "$(pwd)/.claude/daemon-config.json" "${REPO_DIR}/.claude/daemon-config.json"; do
+    for cfg in "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/daemon-config.json" "$(pwd)/.claude/daemon-config.json" "${PROJECT_ROOT}/.claude/daemon-config.json"; do
         [[ -n "$cfg" && -f "$cfg" ]] && config="$cfg" && break
     done
     local intel_enabled="auto"

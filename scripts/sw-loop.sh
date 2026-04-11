@@ -40,6 +40,8 @@ fi
 [[ -f "$SCRIPT_DIR/lib/loop-convergence.sh" ]] && source "$SCRIPT_DIR/lib/loop-convergence.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-restart.sh" ]] && source "$SCRIPT_DIR/lib/loop-restart.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-progress.sh" ]] && source "$SCRIPT_DIR/lib/loop-progress.sh"
+# RuFlo adapter — compatibility layer for ruflo health checks and timeout recovery
+[[ -f "$SCRIPT_DIR/lib/ruflo-adapter.sh" ]] && source "$SCRIPT_DIR/lib/ruflo-adapter.sh" 2>/dev/null || true
 # Context exhaustion prevention — proactive summarization before Claude hits context limits
 [[ -f "$SCRIPT_DIR/lib/loop-context-monitor.sh" ]] && source "$SCRIPT_DIR/lib/loop-context-monitor.sh"
 # Error actionability scoring and enhancement for better error context
@@ -85,7 +87,7 @@ RESUME=false
 VERBOSE=false
 MAX_ITERATIONS_EXPLICIT=false
 MAX_RESTARTS=$(_config_get_int "loop.max_restarts" 0 2>/dev/null || echo 0)
-DOD_DIFF_MAX_LINES=$(_config_get_int "loop.dod_diff_max_lines" 3000 2>/dev/null || echo 3000)
+DOD_DIFF_MAX_LINES=$(_config_get_int "loop.dod_diff_max_lines" 5000 2>/dev/null || echo 5000)
 HOLISTIC_DIFF_MAX_LINES=$(_config_get_int "loop.holistic_diff_max_lines" 1000 2>/dev/null || echo 1000)
 SESSION_RESTART=false
 RESTART_COUNT=0
@@ -160,7 +162,7 @@ show_help() {
     echo -e "  ${CYAN}--audit-agent${RESET}             Run separate auditor agent (haiku) after each iteration"
     echo -e "  ${CYAN}--quality-gates${RESET}           Enable automated quality gates before accepting completion"
     echo -e "  ${CYAN}--definition-of-done${RESET} FILE DoD checklist file — evaluated by AI against git diff"
-    echo -e "  ${CYAN}--dod-diff-max-lines${RESET} N    Max diff lines for DoD evaluator (default: 3000)"
+    echo -e "  ${CYAN}--dod-diff-max-lines${RESET} N    Max diff lines for DoD evaluator (default: 5000)"
     echo -e "  ${CYAN}--holistic-diff-max-lines${RESET} N Max diff lines for holistic gate (default: 1000)"
     echo -e "  ${CYAN}--no-auto-extend${RESET}          Disable auto-extension when max iterations reached"
     echo -e "  ${CYAN}--extension-size${RESET} N         Additional iterations per extension (default: 5)"
@@ -1266,6 +1268,7 @@ run_quality_gates() {
         return
     fi
 
+    HOLISTIC_RESULT=""   # reset: stale holistic text from a prior gate-run must not persist across iterations
     QUALITY_GATE_PASSED=true
     local gate_failures=()
 
@@ -1322,14 +1325,25 @@ check_definition_of_done() {
     # Use cumulative diff from loop start (not just HEAD~1) so the evaluator
     # can see ALL work done across every iteration, not just the latest commit.
     local diff_content
+    local _diff_range
     if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
-        diff_content="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null || echo "(no diff)")"
+        _diff_range="${LOOP_START_COMMIT}..HEAD"
+        diff_content="$(git -C "$PROJECT_ROOT" diff --stat "${_diff_range}" 2>/dev/null || echo "(no diff)")"
         diff_content="${diff_content}
 
 ## Detailed Changes (cumulative diff, capped at ${DOD_DIFF_MAX_LINES} lines)
-$(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
+$(git -C "$PROJECT_ROOT" diff "${_diff_range}" 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
     else
+        _diff_range="HEAD~1"
         diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
+    fi
+
+    # Detect actual truncation using N+1 probe against the same range used above.
+    local _extra_line
+    _extra_line=$(git -C "$PROJECT_ROOT" diff "${_diff_range}" 2>/dev/null | head -$((DOD_DIFF_MAX_LINES + 1)) | tail -1 || true)
+    if [[ -n "$_extra_line" ]]; then
+        diff_content="${diff_content}
+[DIFF TRUNCATED at ${DOD_DIFF_MAX_LINES} lines — some changes are not shown. Do not conclude 'no changes' from missing sections.]"
     fi
 
     # Also compute the full branch diff vs base branch. In compound_rebuild cycles,
@@ -1347,6 +1361,17 @@ $(git -C "$PROJECT_ROOT" diff "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -"
             | head -"${DOD_DIFF_MAX_LINES}" \
             | sed 's/<<<DOD:PASS>>>/[REDACTED:DOD:PASS]/g; s/<<<DOD:FAIL>>>/[REDACTED:DOD:FAIL]/g' \
             || echo "(none)")"
+        # Detect actual truncation by checking if git diff output exceeded the limit.
+        local _branch_was_truncated=false
+        local _branch_extra_line
+        _branch_extra_line=$(git -C "$PROJECT_ROOT" diff "${_dod_merge_base}..HEAD" 2>/dev/null | head -$((DOD_DIFF_MAX_LINES + 1)) | tail -1 || true)
+        if [[ -n "$_branch_extra_line" ]]; then
+            _branch_was_truncated=true
+        fi
+        if [[ "$_branch_was_truncated" == "true" ]]; then
+            _dod_branch_diff="${_dod_branch_diff}
+[DIFF TRUNCATED at ${DOD_DIFF_MAX_LINES} lines — some changes are not shown. Do not conclude 'no changes' from missing sections.]"
+        fi
         branch_diff_content="## Full Branch Changes vs Base (authoritative — all work including prior build loops)
 ${_dod_branch_stat}
 
@@ -2366,6 +2391,11 @@ run_single_agent_loop() {
             return 1
         }
         ITERATION=$(( ITERATION + 1 ))
+
+        # Periodic ruflo health check — attempt daemon recovery every 5 iterations
+        if (( ITERATION % 5 == 0 )) && type ruflo_health_check >/dev/null 2>&1; then
+            ruflo_health_check || true
+        fi
 
         # Reset per-iteration completion signal flags before prompt is built.
         # These cannot be reset inside compose_rejection_notice_section() because

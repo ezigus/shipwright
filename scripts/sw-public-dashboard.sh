@@ -11,6 +11,16 @@ VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
+
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
@@ -82,9 +92,9 @@ gather_pipeline_state() {
     local privacy="${1:-stages_only}"
 
     # shellcheck disable=SC2034
-    local state_file="${REPO_DIR}/.claude/pipeline-state.md"
+    local state_file="${PROJECT_ROOT}/.claude/pipeline-state.md"
     local daemon_state="${HOME}/.shipwright/daemon-state.json"
-    local pipeline_artifacts="${REPO_DIR}/.claude/pipeline-artifacts"
+    local pipeline_artifacts="${PROJECT_ROOT}/.claude/pipeline-artifacts"
 
     local pipeline_data
     pipeline_data='{

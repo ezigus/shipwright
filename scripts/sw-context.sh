@@ -8,7 +8,20 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="${SHIPWRIGHT_REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+# Honor SHIPWRIGHT_REPO_DIR if set (used by tests and external callers)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -n "${SHIPWRIGHT_REPO_DIR:-}" ]]; then
+        PROJECT_ROOT="$SHIPWRIGHT_REPO_DIR"
+    elif [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
@@ -27,10 +40,10 @@ if [[ "$(type -t now_iso 2>/dev/null)" != "function" ]]; then
   now_epoch() { date +%s; }
 fi
 # ─── Paths ────────────────────────────────────────────────────────────────
-ARTIFACTS_DIR="${REPO_DIR}/.claude/pipeline-artifacts"
+ARTIFACTS_DIR="${PROJECT_ROOT}/.claude/pipeline-artifacts"
 CONTEXT_BUNDLE="${ARTIFACTS_DIR}/context-bundle.md"
-CLAUDE_CONFIG="${REPO_DIR}/.claude/CLAUDE.md"
-INTELLIGENCE_CACHE="${REPO_DIR}/.claude/intelligence-cache.json"
+CLAUDE_CONFIG="${PROJECT_ROOT}/.claude/CLAUDE.md"
+INTELLIGENCE_CACHE="${PROJECT_ROOT}/.claude/intelligence-cache.json"
 MEMORY_ROOT="${HOME}/.shipwright/memory"
 
 # ─── Get repo identifier for memory lookups ────────────────────────────────
@@ -202,7 +215,7 @@ extract_file_previews() {
 
         # Search for files matching keyword
         local found
-        found=$(find "$REPO_DIR" -type f \( -name "*.sh" -o -name "*.md" -o -name "*.ts" -o -name "*.json" \) \
+        found=$(find "$PROJECT_ROOT" -type f \( -name "*.sh" -o -name "*.md" -o -name "*.ts" -o -name "*.json" \) \
             -not -path "*/.git/*" \
             -not -path "*/node_modules/*" \
             -not -path "*/.claude/*" \
@@ -241,7 +254,7 @@ extract_architecture_decisions() {
     echo "# Architecture Decision Records"
     echo ""
 
-    local adr_file="${REPO_DIR}/.claude/ARCHITECTURE.md"
+    local adr_file="${PROJECT_ROOT}/.claude/ARCHITECTURE.md"
     if [[ -f "$adr_file" ]]; then
         head -40 "$adr_file" | sed 's/^//'
         echo ""

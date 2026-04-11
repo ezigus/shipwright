@@ -7,9 +7,19 @@ _DAEMON_DISPATCH_LOADED=1
 DAEMON_DIR="${DAEMON_DIR:-${HOME}/.shipwright}"
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
 STATE_FILE="${STATE_FILE:-${DAEMON_DIR}/daemon-state.json}"
 LOG_DIR="${LOG_DIR:-${DAEMON_DIR}/logs}"
-WORKTREE_DIR="${WORKTREE_DIR:-${REPO_DIR}/.claude/worktrees}"
+WORKTREE_DIR="${WORKTREE_DIR:-${PROJECT_ROOT}/.claude/worktrees}"
 BASE_BRANCH="${BASE_BRANCH:-main}"
 PIPELINE_TEMPLATE="${PIPELINE_TEMPLATE:-autonomous}"
 NO_GITHUB="${NO_GITHUB:-false}"
@@ -208,7 +218,7 @@ daemon_spawn_pipeline() {
 
     # If template is "composed", copy the composed spec into the worktree
     if [[ "$PIPELINE_TEMPLATE" == "composed" ]]; then
-        local _src_composed="${REPO_DIR:-.}/.claude/pipeline-artifacts/composed-pipeline.json"
+        local _src_composed="${PROJECT_ROOT:-.}/.claude/pipeline-artifacts/composed-pipeline.json"
         if [[ -f "$_src_composed" ]]; then
             local _dst_artifacts="${work_dir}/.claude/pipeline-artifacts"
             mkdir -p "$_dst_artifacts"

@@ -2213,6 +2213,86 @@ else
     assert_fail "task_section is injected into the prompt each iteration"
 fi
 
+# ─── Issue #331: Loop cycling fixes ─────────────────────────────────────────
+echo ""
+echo -e "${DIM}  loop cycling: stale HOLISTIC_RESULT, dampening, window (#331)${RESET}"
+
+# Test 1: HOLISTIC_RESULT="" appears inside run_quality_gates (grep-based)
+if awk '/^run_quality_gates\(\)/{found=1} found && /HOLISTIC_RESULT=""/{print; exit}' \
+    "$SCRIPT_DIR/sw-loop.sh" | grep -q 'HOLISTIC_RESULT=""'; then
+    assert_pass "HOLISTIC_RESULT reset inside run_quality_gates() (#331 Bug 1)"
+else
+    assert_fail "HOLISTIC_RESULT reset inside run_quality_gates() (#331 Bug 1)" \
+        "expected 'HOLISTIC_RESULT=\"\"' inside run_quality_gates body"
+fi
+
+# Test 2: detect_stuckness triggers when tests pass but diffs are zero (conditional dampening)
+_sw331_tracking=$(mktemp "${TMPDIR:-/tmp}/sw-stuckness-331.XXXXXX")
+printf 'abc123|none|0\nabc123|none|0\nabc123|none|0\nabc123|none|0\nabc123|none|0\n' > "$_sw331_tracking"
+if (
+    export PROJECT_ROOT="/tmp" ITERATION=6 MAX_ITERATIONS=20 \
+           TEST_PASSED=true AUDIT_RESULT=pass QUALITY_GATE_PASSED=true \
+           LOG_DIR="$(dirname "$_sw331_tracking")" \
+           STUCKNESS_TRACKING_FILE="$_sw331_tracking" \
+           STUCKNESS_COUNT=0 STUCKNESS_DIAGNOSIS="" STUCKNESS_HINT=""
+    source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
+    source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
+    detect_stuckness 2>/dev/null
+    [[ -n "$STUCKNESS_HINT" ]]
+) 2>/dev/null; then
+    assert_pass "detect_stuckness: zero-diff iterations not dampened when tests pass (#331 Bug 2)"
+else
+    assert_fail "detect_stuckness: zero-diff iterations not dampened when tests pass (#331 Bug 2)" \
+        "STUCKNESS_HINT was empty — dampening incorrectly suppressed detection"
+fi
+rm -f "$_sw331_tracking"
+
+# Test 3: Signal 2 fires for 5 consecutive identical diffs (expanded window)
+_sw331_tracking3=$(mktemp "${TMPDIR:-/tmp}/sw-stuckness-331b.XXXXXX")
+printf 'deadbeef|none|0\ndeadbeef|none|0\ndeadbeef|none|0\ndeadbeef|none|0\ndeadbeef|none|0\n' > "$_sw331_tracking3"
+if (
+    export PROJECT_ROOT="/tmp" ITERATION=6 MAX_ITERATIONS=20 \
+           TEST_PASSED=false STUCKNESS_COUNT=0 STUCKNESS_DIAGNOSIS="" STUCKNESS_HINT="" \
+           LOG_DIR="$(dirname "$_sw331_tracking3")" \
+           STUCKNESS_TRACKING_FILE="$_sw331_tracking3"
+    source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
+    source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
+    detect_stuckness 2>/dev/null
+    [[ -n "$STUCKNESS_HINT" ]]
+) 2>/dev/null; then
+    assert_pass "detect_stuckness: Signal 2 fires for 5 consecutive identical diffs (#331 Bug 3)"
+else
+    assert_fail "detect_stuckness: Signal 2 fires for 5 consecutive identical diffs (#331 Bug 3)"
+fi
+rm -f "$_sw331_tracking3"
+
+# Test 4: Signal 2b cycling detector fires at exactly 4 identical diffs
+_sw331_tracking4=$(mktemp "${TMPDIR:-/tmp}/sw-stuckness-331c.XXXXXX")
+printf 'cafebabe|none|0\ncafebabe|none|0\ncafebabe|none|0\ncafebabe|none|0\n' > "$_sw331_tracking4"
+if (
+    export PROJECT_ROOT="/tmp" ITERATION=5 MAX_ITERATIONS=20 \
+           TEST_PASSED=false STUCKNESS_COUNT=0 STUCKNESS_DIAGNOSIS="" STUCKNESS_HINT="" \
+           LOG_DIR="$(dirname "$_sw331_tracking4")" \
+           STUCKNESS_TRACKING_FILE="$_sw331_tracking4"
+    source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
+    source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
+    detect_stuckness 2>/dev/null
+    [[ "$STUCKNESS_HINT" == *"cycling"* ]]
+) 2>/dev/null; then
+    assert_pass "detect_stuckness: Signal 2b cycling detector fires at 4 identical diffs (#331)"
+else
+    assert_fail "detect_stuckness: Signal 2b cycling detector fires at 4 identical diffs (#331)" \
+        "expected STUCKNESS_HINT to contain 'cycling'"
+fi
+rm -f "$_sw331_tracking4"
+
+# Test 5: DOD_DIFF_MAX_LINES default is 5000
+if grep -E "DOD_DIFF_MAX_LINES=\\\$\(_config_get_int[^)]*5000" "$SCRIPT_DIR/sw-loop.sh" | grep -q '5000'; then
+    assert_pass "DOD_DIFF_MAX_LINES default is 5000 (#331)"
+else
+    assert_fail "DOD_DIFF_MAX_LINES default is 5000 (#331)" "expected 5000 as default"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

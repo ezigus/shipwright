@@ -112,6 +112,7 @@ set -euo pipefail
 SCRIPT_DIR="$SCRIPT_DIR"
 source "\$SCRIPT_DIR/sw-security-audit.sh"
 REPO_DIR="$TEST_TEMP_DIR/repo"
+PROJECT_ROOT="$TEST_TEMP_DIR/repo"
 "\$@"
 WRAPPER
 chmod +x "$TEST_TEMP_DIR/run_sourced.sh"

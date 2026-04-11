@@ -11,6 +11,16 @@ VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
+
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
@@ -32,7 +42,7 @@ fi
 get_pr_config() {
     local key="$1"
     local default="${2:-}"
-    jq -r ".pr_lifecycle.${key} // \"${default}\"" "$REPO_DIR/.claude/daemon-config.json" 2>/dev/null || echo "$default"
+    jq -r ".pr_lifecycle.${key} // \"${default}\"" "$PROJECT_ROOT/.claude/daemon-config.json" 2>/dev/null || echo "$default"
 }
 
 # ─── GitHub API Wrappers ────────────────────────────────────────────────────

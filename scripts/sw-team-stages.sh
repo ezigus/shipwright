@@ -8,7 +8,17 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
@@ -41,7 +51,7 @@ EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
 
 # ─── Team Configuration ─────────────────────────────────────────────────────
 TEAM_STATE_DIR="${HOME}/.shipwright/team-state"
-INTELLIGENCE_CACHE="${REPO_DIR}/.claude/intelligence-cache.json"
+INTELLIGENCE_CACHE="${PROJECT_ROOT}/.claude/intelligence-cache.json"
 
 ensure_team_dir() {
     mkdir -p "$TEAM_STATE_DIR"

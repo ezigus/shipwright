@@ -10,6 +10,16 @@ VERSION="3.3.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
+PROJECT_ROOT="${PROJECT_ROOT:-}"
+if [[ -z "$PROJECT_ROOT" ]]; then
+    if [[ -d "${REPO_DIR}/.claude" ]]; then
+        PROJECT_ROOT="$REPO_DIR"
+    else
+        PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_DIR")"
+    fi
+fi
+
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
@@ -89,7 +99,7 @@ scan_secrets() {
                 break
             fi
         done
-    done < <(find "$REPO_DIR" -type f \( -name "*.sh" -o -name "*.py" -o -name "*.js" -o -name "*.json" -o -name ".env*" -o -name "*.yaml" -o -name "*.yml" \) 2>/dev/null | grep -v ".git\|node_modules\|.worktree" || true)
+    done < <(find "$PROJECT_ROOT" -type f \( -name "*.sh" -o -name "*.py" -o -name "*.js" -o -name "*.json" -o -name ".env*" -o -name "*.yaml" -o -name "*.yml" \) 2>/dev/null | grep -v ".git\|node_modules\|.worktree" || true)
 
     if [[ ${#secret_files[@]} -gt 0 ]]; then
         for file in "${secret_files[@]}"; do
@@ -100,7 +110,7 @@ scan_secrets() {
     fi
 
     # Check for .env files in git
-    if find "$REPO_DIR" -name ".env" -type f ! -path "*/.git/*" ! -path "*/.worktree/*" 2>/dev/null | grep -q .; then
+    if find "$PROJECT_ROOT" -name ".env" -type f ! -path "*/.git/*" ! -path "*/.worktree/*" 2>/dev/null | grep -q .; then
         add_finding "HIGH" "secrets" ".env file in repository" \
             ".env files containing secrets should never be committed to version control" \
             "Add .env to .gitignore. Use .env.example template instead. Document required variables in README."
@@ -118,13 +128,13 @@ scan_licenses() {
     # Detect package manager
     local has_npm=false has_pip=false has_go=false has_cargo=false
 
-    [[ -f "$REPO_DIR/package.json" ]] && has_npm=true
+    [[ -f "$PROJECT_ROOT/package.json" ]] && has_npm=true
     # shellcheck disable=SC2034
-    [[ -f "$REPO_DIR/requirements.txt" || -f "$REPO_DIR/setup.py" ]] && has_pip=true
+    [[ -f "$PROJECT_ROOT/requirements.txt" || -f "$PROJECT_ROOT/setup.py" ]] && has_pip=true
     # shellcheck disable=SC2034
-    [[ -f "$REPO_DIR/go.mod" ]] && has_go=true
+    [[ -f "$PROJECT_ROOT/go.mod" ]] && has_go=true
     # shellcheck disable=SC2034
-    [[ -f "$REPO_DIR/Cargo.toml" ]] && has_cargo=true
+    [[ -f "$PROJECT_ROOT/Cargo.toml" ]] && has_cargo=true
 
     # Check npm licenses
     if $has_npm && command -v npm >/dev/null 2>&1; then
@@ -137,15 +147,15 @@ scan_licenses() {
     fi
 
     # Check for LICENSES directory
-    if [[ ! -d "$REPO_DIR/LICENSES" ]]; then
+    if [[ ! -d "$PROJECT_ROOT/LICENSES" ]]; then
         add_finding "LOW" "licenses" "Missing LICENSES directory" \
             "No LICENSES directory found for SPDX/license documentation" \
             "Create LICENSES/ directory. Document all third-party licenses used. Generate with license scanner tools."
     fi
 
     # Detect MIT project using GPL
-    if [[ -f "$REPO_DIR/LICENSE" ]]; then
-        if grep -qi "MIT\|Apache" "$REPO_DIR/LICENSE" 2>/dev/null; then
+    if [[ -f "$PROJECT_ROOT/LICENSE" ]]; then
+        if grep -qi "MIT\|Apache" "$PROJECT_ROOT/LICENSE" 2>/dev/null; then
             # MIT/Apache project — flag GPL dependencies
             while IFS= read -r line; do
                 [[ "$line" =~ GPL|AGPL ]] && \
@@ -167,7 +177,7 @@ scan_vulnerabilities() {
     local vuln_count=0
 
     # Check npm vulnerabilities
-    if [[ -f "$REPO_DIR/package.json" ]] && command -v npm >/dev/null 2>&1; then
+    if [[ -f "$PROJECT_ROOT/package.json" ]] && command -v npm >/dev/null 2>&1; then
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             vuln_count=$((vuln_count + 1))
@@ -178,7 +188,7 @@ scan_vulnerabilities() {
     fi
 
     # Check pip vulnerabilities
-    if [[ -f "$REPO_DIR/requirements.txt" ]] && command -v pip >/dev/null 2>&1; then
+    if [[ -f "$PROJECT_ROOT/requirements.txt" ]] && command -v pip >/dev/null 2>&1; then
         if command -v safety >/dev/null 2>&1; then
             while IFS= read -r line; do
                 [[ -z "$line" ]] && continue
@@ -198,13 +208,13 @@ scan_vulnerabilities() {
 generate_sbom() {
     info "Generating Software Bill of Materials..."
 
-    local sbom_file="${REPO_DIR}/.claude/pipeline-artifacts/sbom.json"
+    local sbom_file="${PROJECT_ROOT}/.claude/pipeline-artifacts/sbom.json"
     mkdir -p "$(dirname "$sbom_file")"
 
     local sbom='{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}'
 
     # Add npm packages
-    if [[ -f "$REPO_DIR/package.json" ]] && command -v npm >/dev/null 2>&1; then
+    if [[ -f "$PROJECT_ROOT/package.json" ]] && command -v npm >/dev/null 2>&1; then
         local npm_list
         # shellcheck disable=SC2034
         npm_list=$(npm list --json 2>/dev/null || echo '{"dependencies":{}}')
@@ -217,7 +227,7 @@ generate_sbom() {
 
     # Add git commit info
     local commit=""
-    [[ -d "$REPO_DIR/.git" ]] && commit=$(cd "$REPO_DIR" && git rev-parse HEAD 2>/dev/null || echo "unknown")
+    [[ -d "$PROJECT_ROOT/.git" ]] && commit=$(cd "$PROJECT_ROOT" && git rev-parse HEAD 2>/dev/null || echo "unknown")
     sbom=$(echo "$sbom" | jq --arg c "$commit" '.metadata.component.commit = $c')
 
     # Write SBOM
@@ -237,7 +247,7 @@ audit_permissions() {
         add_finding "MEDIUM" "permissions" "World-writable file: $file" \
             "File has overly permissive permissions (mode ending in 2 or 7)" \
             "Run: chmod o-w \"$file\" to remove world-writable bit"
-    done < <(find "$REPO_DIR" -type f -perm -002 ! -path "*/.git/*" ! -path "*/.worktree/*" 2>/dev/null || true)
+    done < <(find "$PROJECT_ROOT" -type f -perm -002 ! -path "*/.git/*" ! -path "*/.worktree/*" 2>/dev/null || true)
 
     # Check for setuid/setgid binaries
     while IFS= read -r file; do
@@ -245,7 +255,7 @@ audit_permissions() {
         add_finding "HIGH" "permissions" "setuid/setgid binary: $file" \
             "Binary has setuid or setgid bit set" \
             "Review necessity. Remove if not essential. Audit access controls."
-    done < <(find "$REPO_DIR" -type f \( -perm -4000 -o -perm -2000 \) ! -path "*/.git/*" 2>/dev/null || true)
+    done < <(find "$PROJECT_ROOT" -type f \( -perm -4000 -o -perm -2000 \) ! -path "*/.git/*" 2>/dev/null || true)
 
     # Check for readable private keys
     while IFS= read -r file; do
@@ -253,7 +263,7 @@ audit_permissions() {
         add_finding "CRITICAL" "permissions" "Readable private key: $file" \
             "Private key file has permissive read permissions" \
             "Run: chmod 600 \"$file\" immediately. Rotate the key. Audit access logs."
-    done < <(find "$REPO_DIR" -type f \( -name "*.pem" -o -name "*.key" -o -name "id_rsa" \) ! -path "*/.git/*" 2>/dev/null | while read -r f; do
+    done < <(find "$PROJECT_ROOT" -type f \( -name "*.pem" -o -name "*.key" -o -name "id_rsa" \) ! -path "*/.git/*" 2>/dev/null | while read -r f; do
         [[ $(stat -f%A "$f" 2>/dev/null || stat -c%a "$f" 2>/dev/null) =~ [^0].. ]] && echo "$f"
     done || true)
 
@@ -273,7 +283,7 @@ analyze_network() {
         if [[ "$line" =~ http://|https://|curl|wget ]]; then
             urls_found+=("$line")
         fi
-    done < <(grep -r "http\|curl\|wget\|socket\|fetch\|request" "$REPO_DIR/scripts/" "$REPO_DIR/src/" 2>/dev/null | grep -v ".git\|.worktree\|Binary" || true)
+    done < <(grep -r "http\|curl\|wget\|socket\|fetch\|request" "$PROJECT_ROOT/scripts/" "$PROJECT_ROOT/src/" 2>/dev/null | grep -v ".git\|.worktree\|Binary" || true)
 
     if [[ ${#urls_found[@]} -gt 0 ]]; then
         info "Found ${#urls_found[@]} network-related operations"
@@ -294,7 +304,7 @@ analyze_network() {
 generate_compliance_report() {
     info "Generating compliance report..."
 
-    local report_file="${REPO_DIR}/.claude/pipeline-artifacts/security-compliance-report.md"
+    local report_file="${PROJECT_ROOT}/.claude/pipeline-artifacts/security-compliance-report.md"
     mkdir -p "$(dirname "$report_file")"
 
     cat > "$report_file" <<'EOF'
@@ -376,7 +386,7 @@ run_full_scan() {
     echo ""
     echo -e "${CYAN}${BOLD}╔═════════════════════════════════════════════════════════════╗${RESET}"
     echo -e "${CYAN}${BOLD}║  SHIPWRIGHT SECURITY AUDIT${RESET}"
-    echo -e "${CYAN}${BOLD}║  Repo: $(basename "$REPO_DIR")${RESET}"
+    echo -e "${CYAN}${BOLD}║  Repo: $(basename "$PROJECT_ROOT")${RESET}"
     echo -e "${CYAN}${BOLD}╚═════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
 

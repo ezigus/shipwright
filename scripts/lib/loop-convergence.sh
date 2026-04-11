@@ -221,15 +221,34 @@ detect_stuckness() {
         fi
     fi
 
-    # Signal 2: Git diff hash — last 3 iterations produced zero or identical diffs
-    if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 3 ]]; then
-        local last_three
-        last_three=$(tail -3 "$tracking_file" 2>/dev/null | cut -d'|' -f1 || true)
+    # Signal 2: Git diff hash — last 5 iterations produced zero or identical diffs
+    local _signal2_fired=false
+    if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 5 ]]; then
+        local last_five
+        last_five=$(tail -5 "$tracking_file" 2>/dev/null | cut -d'|' -f1 || true)
         local unique_hashes
-        unique_hashes=$(echo "$last_three" | sort -u | grep -v '^$' | wc -l | tr -d ' ')
-        if [[ "$unique_hashes" -le 1 ]] && [[ -n "$last_three" ]]; then
+        unique_hashes=$(echo "$last_five" | sort -u | grep -v '^$' | wc -l | tr -d ' ')
+        if [[ "$unique_hashes" -le 1 ]] && [[ -n "$last_five" ]]; then
             stuckness_signals=$((stuckness_signals + 1))
-            stuckness_reasons+=("identical or zero git diffs in last 3 iterations")
+            stuckness_reasons+=("identical or zero git diffs in last 5 iterations")
+            _signal2_fired=true
+        fi
+    fi
+
+    # Signal 2b: Explicit cycling detector — 4+ consecutive identical diffs.
+    # Runs independently of Signal 2 to maintain monotonic detection: if 4+ identical diffs
+    # are detected, it fires and keeps firing as sequences grow longer (5+, 6+, etc).
+    # This prevents non-monotonic behavior where stronger cycling evidence could reduce detection.
+    if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 4 ]]; then
+        local last_four
+        last_four=$(tail -4 "$tracking_file" 2>/dev/null | cut -d'|' -f1 || true)
+        local unique_four
+        unique_four=$(echo "$last_four" | sort -u | grep -v '^$' | wc -l | tr -d ' ')
+        local count_four
+        count_four=$(echo "$last_four" | grep -v '^$' | wc -l | tr -d ' ')
+        if [[ "$unique_four" -le 1 ]] && [[ "${count_four:-0}" -ge 4 ]]; then
+            stuckness_signals=$((stuckness_signals + 2))
+            stuckness_reasons+=("cycling: ${count_four} consecutive identical diffs (cycling detector)")
         fi
     fi
 
@@ -297,14 +316,13 @@ detect_stuckness() {
         stuckness_reasons+=("used ${progress_pct}% of iteration budget without passing tests")
     fi
 
-    # Gate-aware dampening: if tests pass and the agent has made progress overall,
-    # reduce stuckness signal count. The "no code changes" and "identical diffs" signals
-    # fire when code is already complete and the agent is fighting evaluator quirks —
-    # that's not genuine stuckness, it's "done but gates disagree."
+    # Gate-aware dampening: only when code actually changed this iteration (diff_lines > 5).
+    # Zero-diff iterations must never be dampened — that is the #324 cycling scenario.
     if [[ "${TEST_PASSED:-}" == "true" ]] && [[ "$stuckness_signals" -ge 2 ]]; then
-        # If at least one quality signal is positive, dampen by 1
-        if [[ "${AUDIT_RESULT:-}" == "pass" ]] || $QUALITY_GATE_PASSED 2>/dev/null; then
-            stuckness_signals=$((stuckness_signals - 1))
+        if [[ "${diff_lines:-0}" -gt 5 ]]; then
+            if [[ "${AUDIT_RESULT:-}" == "pass" ]] || $QUALITY_GATE_PASSED 2>/dev/null; then
+                stuckness_signals=$((stuckness_signals - 1))
+            fi
         fi
     fi
 
@@ -314,6 +332,11 @@ detect_stuckness() {
         STUCKNESS_DIAGNOSIS="${stuckness_reasons[*]}"
         if type emit_event >/dev/null 2>&1; then
             emit_event "loop.stuckness_detected" "signals=$stuckness_signals" "count=$STUCKNESS_COUNT" "iteration=$iteration" "reasons=${stuckness_reasons[*]}"
+        fi
+        if type ruflo_store >/dev/null 2>&1; then
+            ruflo_store "stuckness-iter-${iteration}" \
+                "{\"signals\":$stuckness_signals,\"reasons\":\"${stuckness_reasons[*]}\",\"iteration\":$iteration}" \
+                "learning-${REPO_HASH:-default}" "stuckness,loop,cycling" || true
         fi
         STUCKNESS_HINT="IMPORTANT: The loop appears stuck. Previous approaches have not worked. You MUST try a fundamentally different strategy. Reasons: ${stuckness_reasons[*]}"
         warn "Stuckness detected (${stuckness_signals} signals, count ${STUCKNESS_COUNT}): ${stuckness_reasons[*]}"
@@ -330,6 +353,12 @@ detect_stuckness() {
             alternatives=$(memory_inject_context "build" 2>/dev/null | grep -i "fix:" | head -3 || true)
         fi
 
+        local ruflo_patterns=""
+        if type ruflo_recall >/dev/null 2>&1; then
+            ruflo_patterns=$(ruflo_recall "loop cycling identical diff stuckness" \
+                "learning-${REPO_HASH:-default}" 2>/dev/null || true)
+        fi
+
         cat <<STUCK_SECTION
 ## Stuckness Detected
 ${STUCKNESS_HINT}
@@ -339,6 +368,9 @@ $diff_summary
 }
 ${alternatives:+Consider these alternative approaches from past fixes:
 $alternatives
+}
+${ruflo_patterns:+Ruflo recalled similar patterns from past runs:
+$ruflo_patterns
 }
 Try a fundamentally different approach:
 - Break the problem into smaller steps

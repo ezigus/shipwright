@@ -222,13 +222,20 @@ compound_audit_verify_findings() {
     local findings="$1"
     [[ -z "$findings" || "$findings" == "[]" ]] && { echo "[]"; return 0; }
 
-    # Unambiguous absence phrasings. Intentionally excludes bare "missing" /
-    # "not defined" which match too much prose (e.g. "Missing null check for
-    # import stream" must not be matched).
+    # Unambiguous absence phrasings. Excludes standalone "missing" and plain
+    # "not defined" which match too much prose; "is not defined" is retained
+    # because it is a specific compiler/runtime diagnostic phrase.
+    # (e.g. "Missing null check for import stream" does NOT match — no
+    # "missing import" substring — while "X is not defined" does match.)
     local absence_pattern='missing import|not imported|undefined (symbol|reference|identifier)|undefined:|undeclared (identifier|type)|use of unresolved|use of undeclared|unresolved reference|cannot find .* in scope|cannot find name|no such (module|type|identifier)|is not defined'
 
     local count
-    count=$(echo "$findings" | jq 'length' 2>/dev/null || echo "0")
+    # Fail-open: if jq can't parse or count the array, return original findings
+    # unchanged rather than silently dropping everything.
+    if ! count=$(echo "$findings" | jq -e 'if type == "array" then length else error("expected array") end' 2>/dev/null); then
+        echo "$findings"
+        return 0
+    fi
     [[ "$count" -eq 0 ]] && { echo "[]"; return 0; }
 
     # Collect indices of findings to keep. Build the final array in one
@@ -247,6 +254,15 @@ compound_audit_verify_findings() {
         # Normalize path: strip leading ./ and collapse //
         file="${file#./}"
         while [[ "$file" == *//* ]]; do file="${file//\/\//\/}"; done
+
+        # Safety: reject absolute paths and directory traversal from the
+        # LLM-supplied file field before using it in git show / cat.
+        # Fail-open: unsafe paths are kept, not dropped.
+        if [[ "$file" == /* || "$file" == *../* || "$file" == */.. ]]; then
+            keep_indices="${keep_indices}${keep_indices:+,}${i}"
+            i=$((i + 1))
+            continue
+        fi
 
         if [[ -n "$file" ]] && echo "$combined" | grep -qiE "$absence_pattern" 2>/dev/null; then
             symbol=""

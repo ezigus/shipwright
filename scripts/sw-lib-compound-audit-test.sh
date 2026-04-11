@@ -544,7 +544,7 @@ _repo=$(_setup_collect_repo "4")
     git -c user.email=t@t -c user.name=t commit -q -m modify
 )
 result=$(cd "$_repo" && BASE_BRANCH=main compound_audit_collect_file_contents 40000 2>/dev/null)
-assert_contains "Budget exhausted marker present" "$result" "budget exhausted"
+assert_contains "Budget exhausted marker present" "$result" "char budget exhausted at 40000"
 
 # Test 5: deleted file marker
 _repo=$(_setup_collect_repo "5")

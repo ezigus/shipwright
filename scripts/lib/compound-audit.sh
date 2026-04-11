@@ -65,7 +65,7 @@ Do NOT report non-edge-case issues."
 # ─── compound_audit_build_prompt ───────────────────────────────────────────
 # Builds the full prompt for a specific agent type.
 #
-# Usage: compound_audit_build_prompt "logic" "$diff" "$plan" "$prev_findings_json" "$test_evidence" "$file_contents"
+# Usage: compound_audit_build_prompt "logic" "$diff" "$plan" "$prev_findings_json" ["$test_evidence"] ["$file_contents"]
 compound_audit_build_prompt() {
     local agent_type="$1"
     local diff="$2"
@@ -94,8 +94,8 @@ The diff shows CHANGES only — not the complete codebase.
     local file_contents_section=""
     if [[ -n "$file_contents" ]]; then
         file_contents_section="
-## Current File State (complete files as they exist right now)
-This is ground truth. The diff above shows CHANGES only.
+## Current File State (HEAD/committed versions of all changed files)
+This is ground truth from the repository HEAD. The diff above shows CHANGES only.
 Use this section to verify imports, function definitions, and symbols before flagging them.
 
 VERIFICATION RULE: Before reporting any finding about a missing import, undefined symbol,
@@ -252,7 +252,7 @@ compound_audit_collect_file_contents() {
 
         local content_len="${#content}"
         if [[ $((total_chars + content_len)) -gt "$max_chars" ]]; then
-            output="${output}### ${file} (${line_count} lines — skipped: 40k char budget exhausted)${nl}${nl}"
+            output="${output}### ${file} (${line_count} lines — skipped: char budget exhausted at ${max_chars})${nl}${nl}"
             continue
         fi
 

@@ -70,16 +70,7 @@ EOF
 
     create_mock_claude
     create_mock_gh
-    # Stub ruflo so ruflo_detect finds a binary but it exits 1, causing
-    # ruflo_init to cleanly disable Ruflo for this test run.  Without this,
-    # ruflo_detect falls back to "npx -y ruflo@latest mcp status" on Linux CI
-    # runners (which have npx), downloads the package (~40s), and then
-    # subsequent ruflo commands fail — causing a >2-minute hang per test.
-    cat > "$TEMP_DIR/bin/ruflo" << 'RUFLO_STUB'
-#!/usr/bin/env bash
-exit 1
-RUFLO_STUB
-    chmod +x "$TEMP_DIR/bin/ruflo"
+    create_mock_ruflo
     write_e2e_template
     create_mock_project
     git init -q --bare "$TEMP_DIR/remote.git" 2>/dev/null || true
@@ -239,6 +230,15 @@ write_e2e_template() {
   ]
 }
 TMPL
+}
+
+create_mock_ruflo() {
+    cat > "$TEMP_DIR/bin/ruflo" <<'RUFLO_MOCK'
+#!/usr/bin/env bash
+# Mock ruflo — all subcommands succeed instantly
+exit 0
+RUFLO_MOCK
+    chmod +x "$TEMP_DIR/bin/ruflo"
 }
 
 create_mock_project() {

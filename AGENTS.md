@@ -660,7 +660,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 445 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 444 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1086 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 3241 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 3259 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 749 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 698 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 834 | Predictive & Proactive Intelligence |
@@ -779,7 +779,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-durable-test.sh` | 221 | Validate durable workflow engine |
 | `scripts/sw-e2e-integration-test.sh` | 352 | Real Claude + Real GitHub |
 | `scripts/sw-e2e-orchestrator-test.sh` | 157 | Test suite registry & execution |
-| `scripts/sw-e2e-smoke-test.sh` | 842 | Pipeline orchestration without API keys |
+| `scripts/sw-e2e-smoke-test.sh` | 853 | Pipeline orchestration without API keys |
 | `scripts/sw-e2e-system-test.sh` | 566 | Proves full daemon→pipeline→loop→PR flow |
 | `scripts/sw-eventbus-test.sh` | 155 | Durable event bus tests |
 | `scripts/sw-evidence-test.sh` | 214 | Unit tests for sw-evidence.sh |
@@ -851,7 +851,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-repo-dir-project-root-test.sh` | 363 | Regression tests for #335 |
 | `scripts/sw-retro-test.sh` | 171 | Sprint retrospective engine tests |
 | `scripts/sw-review-rerun-test.sh` | 307 | SHA-deduped rerun comment writer |
-| `scripts/sw-ruflo-adapter-test.sh` | 1474 |  |
+| `scripts/sw-ruflo-adapter-test.sh` | 1468 |  |
 | `scripts/sw-scale-test.sh` | 151 | Dynamic agent team scaling |
 | `scripts/sw-security-audit-test.sh` | 163 | Security auditing tests |
 | `scripts/sw-self-optimize-test.sh` | 837 | Unit tests for learning & tuning system |

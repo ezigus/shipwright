@@ -1496,6 +1496,12 @@ stage_compound_quality() {
         _cascade_plan=$(head -200 "$ARTIFACTS_DIR/plan.md" 2>/dev/null) || true
     fi
 
+    # Collect full file contents to provide ground truth for import/symbol verification
+    local _cascade_file_contents=""
+    if type compound_audit_collect_file_contents >/dev/null 2>&1; then
+        _cascade_file_contents=$(compound_audit_collect_file_contents 40000 2>/dev/null) || _cascade_file_contents=""
+    fi
+
     # Capture test evidence to prevent "diff=codebase" false criticals in audit agents
     local _cascade_test_evidence=""
     local _cascade_test_log="$ARTIFACTS_DIR/test-results.log"
@@ -1717,7 +1723,7 @@ ${_cascade_test_tail}"
             info "Running compound audit cascade (agents: $_cascade_active_agents)..."
 
             local cascade_findings
-            cascade_findings=$(compound_audit_run_cycle "$_cascade_active_agents" "$_cascade_diff" "$_cascade_plan" "$_cascade_all_findings" "$cycle" "$_cascade_test_evidence") || cascade_findings="[]"
+            cascade_findings=$(compound_audit_run_cycle "$_cascade_active_agents" "$_cascade_diff" "$_cascade_plan" "$_cascade_all_findings" "$cycle" "$_cascade_test_evidence" "$_cascade_file_contents") || cascade_findings="[]"
 
             # Dedup within this cycle
             if type compound_audit_dedup_structural >/dev/null 2>&1; then
@@ -1970,6 +1976,9 @@ All quality checks clean:
                     warn "Git diff failed after rebuild — cascade will operate without diff context"
                 elif [[ $(echo "$_cascade_diff" | wc -l) -ge 5000 ]]; then
                     warn "Diff may be truncated at 5000 lines — audit findings for files beyond this limit may be incomplete"
+                fi
+                if type compound_audit_collect_file_contents >/dev/null 2>&1; then
+                    _cascade_file_contents=$(compound_audit_collect_file_contents 40000 2>/dev/null) || _cascade_file_contents=""
                 fi
                 _cascade_prebuild_commit="$_post_rebuild_commit"
             else

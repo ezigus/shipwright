@@ -65,13 +65,14 @@ Do NOT report non-edge-case issues."
 # ─── compound_audit_build_prompt ───────────────────────────────────────────
 # Builds the full prompt for a specific agent type.
 #
-# Usage: compound_audit_build_prompt "logic" "$diff" "$plan" "$prev_findings_json" "$test_evidence"
+# Usage: compound_audit_build_prompt "logic" "$diff" "$plan" "$prev_findings_json" "$test_evidence" "$file_contents"
 compound_audit_build_prompt() {
     local agent_type="$1"
     local diff="$2"
     local plan_summary="$3"
     local prev_findings="$4"
     local test_evidence="${5:-}"
+    local file_contents="${6:-}"
 
     # Get agent-specific instructions
     local varname="_COMPOUND_AGENT_PROMPTS_${agent_type}"
@@ -90,6 +91,21 @@ The diff shows CHANGES only — not the complete codebase.
 "
     fi
 
+    local file_contents_section=""
+    if [[ -n "$file_contents" ]]; then
+        file_contents_section="
+## Current File State (complete files as they exist right now)
+This is ground truth. The diff above shows CHANGES only.
+Use this section to verify imports, function definitions, and symbols before flagging them.
+
+VERIFICATION RULE: Before reporting any finding about a missing import, undefined symbol,
+absent function, or unresolved reference — first search the 'Current File State' section
+below. If the symbol appears there, do NOT report it as missing.
+
+${file_contents}
+"
+    fi
+
     cat <<EOF
 ${specialization}
 
@@ -104,6 +120,7 @@ ${plan_summary}
 ## Previously Found Issues (do NOT repeat these)
 ${prev_findings}
 ${evidence_section}
+${file_contents_section}
 ## Output Format
 Return ONLY valid JSON (no markdown, no explanation):
 {"findings":[{"severity":"critical|high|medium|low","category":"${agent_type}","file":"path/to/file","line":0,"description":"One sentence","evidence":"The specific code","suggestion":"How to fix"}]}
@@ -178,6 +195,73 @@ _COMPOUND_TRIGGERS_security="injection|auth|secret|credential|permission|bypass|
 _COMPOUND_TRIGGERS_error_handling="catch|swallow|silent|ignore.*error|missing.*error|unchecked|unhandled"
 _COMPOUND_TRIGGERS_performance="O\\(n|loop.*loop|unbounded|pagination|cache|memory.*leak|quadratic"
 _COMPOUND_TRIGGERS_edge_case="boundary|empty.*input|null.*check|zero.*length|unicode|concurrent|race"
+
+# ─── compound_audit_collect_file_contents ──────────────────────────────────
+# Collects current full-file content for all files changed vs BASE_BRANCH.
+# Binary files, deleted files, and files exceeding 800 lines are marked with
+# a skip reason; the total char budget defaults to 40,000.
+#
+# Usage: compound_audit_collect_file_contents [max_chars=40000]
+# Output: Multi-file fenced block with real newlines, or empty string.
+compound_audit_collect_file_contents() {
+    local max_chars="${1:-40000}"
+    local base="${BASE_BRANCH:-main}"
+    local total_chars=0
+    local nl=$'\n'
+    local output=""
+
+    # --no-renames: ensures renamed files appear as delete+add pairs so the
+    # path field is a single real path (not "old => new" syntax that breaks
+    # every downstream git show / cat).
+    local numstat
+    numstat=$(git diff --no-renames --numstat "${base}...HEAD" 2>/dev/null) || return 0
+    [[ -z "$numstat" ]] && return 0
+
+    local added deleted file
+    while IFS=$'\t' read -r added deleted file; do
+        [[ -z "$file" ]] && continue
+
+        # Binary files have "-" for both counts in numstat.
+        if [[ "$added" == "-" && "$deleted" == "-" ]]; then
+            output="${output}### ${file} (binary — skipped)${nl}${nl}"
+            continue
+        fi
+
+        # Deleted: absent from worktree AND absent from HEAD tree.
+        if [[ ! -e "$file" ]] && ! git cat-file -e "HEAD:${file}" 2>/dev/null; then
+            output="${output}### ${file} (deleted)${nl}${nl}"
+            continue
+        fi
+
+        # Prefer HEAD content (authoritative post-commit state); fall back to
+        # worktree for edge cases like staged-but-uncommitted files.
+        local content=""
+        content=$(git show "HEAD:${file}" 2>/dev/null) || content=$(cat "$file" 2>/dev/null) || {
+            output="${output}### ${file} (unreadable — skipped)${nl}${nl}"
+            continue
+        }
+
+        local line_count
+        line_count=$(printf '%s' "$content" | wc -l | tr -d ' ')
+        line_count=${line_count:-0}
+
+        if [[ "$line_count" -gt 800 ]]; then
+            output="${output}### ${file} (${line_count} lines — skipped: exceeds 800-line limit)${nl}${nl}"
+            continue
+        fi
+
+        local content_len="${#content}"
+        if [[ $((total_chars + content_len)) -gt "$max_chars" ]]; then
+            output="${output}### ${file} (${line_count} lines — skipped: 40k char budget exhausted)${nl}${nl}"
+            continue
+        fi
+
+        total_chars=$((total_chars + content_len))
+        output="${output}### ${file} (${line_count} lines)${nl}\`\`\`${nl}${content}${nl}\`\`\`${nl}${nl}"
+    done <<< "$numstat"
+
+    printf '%s' "$output"
+}
 
 # ─── compound_audit_escalate ──────────────────────────────────────────────
 # Scans findings for trigger keywords, returns space-separated specialist list.
@@ -277,7 +361,7 @@ compound_audit_converged() {
 # ─── compound_audit_run_cycle ─────────────────────────────────────────────
 # Runs multiple agents in parallel and collects their findings.
 #
-# Usage: compound_audit_run_cycle "logic integration completeness" "$diff" "$plan" "$prev_findings" $cycle "$test_evidence"
+# Usage: compound_audit_run_cycle "logic integration completeness" "$diff" "$plan" "$prev_findings" $cycle "$test_evidence" "$file_contents"
 # Output: Merged JSON array of all findings
 compound_audit_run_cycle() {
     local agents="$1"
@@ -286,6 +370,7 @@ compound_audit_run_cycle() {
     local prev_findings="$4"
     local cycle="$5"
     local test_evidence="${6:-}"
+    local file_contents="${7:-}"
 
     local model="${COMPOUND_AUDIT_MODEL:-haiku}"
     local temp_dir
@@ -300,7 +385,7 @@ compound_audit_run_cycle() {
     local agent
     for agent in $agents; do
         local prompt
-        prompt=$(compound_audit_build_prompt "$agent" "$diff" "$plan_summary" "$prev_findings" "$test_evidence")
+        prompt=$(compound_audit_build_prompt "$agent" "$diff" "$plan_summary" "$prev_findings" "$test_evidence" "$file_contents")
 
         (
             local output

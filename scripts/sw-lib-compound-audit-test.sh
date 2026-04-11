@@ -89,6 +89,34 @@ assert_contains "Do NOT flag guard present in prompt" "$result" "Do NOT flag"
 result=$(compound_audit_build_prompt "logic" "diff" "plan" "[]" "95 PASS | 0 FAIL")
 assert_contains "Output Format section present after evidence" "$result" "Output Format"
 
+# Test: Current File State section absent when file_contents is empty
+result=$(compound_audit_build_prompt "logic" "diff" "plan" "[]" "" "")
+if echo "$result" | grep -q "Current File State"; then
+    assert_fail "No Current File State section when file_contents is empty"
+else
+    assert_pass "No Current File State section when file_contents is empty"
+fi
+
+# Test: Current File State section present when file_contents provided
+result=$(compound_audit_build_prompt "logic" "diff" "plan" "[]" "" "### foo.sh (10 lines)")
+assert_contains "Current File State section present" "$result" "Current File State"
+
+# Test: VERIFICATION RULE injected with file_contents
+assert_contains "VERIFICATION RULE present" "$result" "VERIFICATION RULE"
+
+# Test: file content appears verbatim
+result=$(compound_audit_build_prompt "logic" "diff" "plan" "[]" "" "### foo.sh (3 lines)"$'\n'"import FeedParsing")
+assert_contains "File content included verbatim" "$result" "import FeedParsing"
+
+# Test: Output Format section still present after file_contents injection
+result=$(compound_audit_build_prompt "logic" "diff" "plan" "[]" "" "### foo.sh (3 lines)")
+assert_contains "Output Format still present" "$result" "Output Format"
+
+# Test: 5-arg backward compat (no file_contents)
+result=$(compound_audit_build_prompt "logic" "diff --git a/x.sh" "plan" "[]" "95 PASS | 0 FAIL")
+assert_contains "5-arg caller: diff still present" "$result" "diff --git a/x.sh"
+assert_contains "5-arg caller: test evidence still present" "$result" "Test Evidence"
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # compound_audit_parse_findings
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -446,5 +474,161 @@ if [[ "$test_converged_val" != "true" ]]; then
 else
     assert_eq "false should allow loop re-entry" "pass" "fail"
 fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# compound_audit_collect_file_contents
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "compound_audit_collect_file_contents"
+
+_setup_collect_repo() {
+    local dir="$TEST_TEMP_DIR/collect-repo-$1"
+    mkdir -p "$dir"
+    (
+        cd "$dir"
+        git init -q -b main
+        git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+        # Create a feature branch so diff main...HEAD shows changes
+        git checkout -q -b feature
+    )
+    echo "$dir"
+}
+
+# Test 1: empty when no changes
+_repo=$(_setup_collect_repo "1")
+result=$(cd "$_repo" && BASE_BRANCH=main compound_audit_collect_file_contents 40000 2>/dev/null || true)
+if [[ -z "$result" ]]; then
+    assert_pass "Returns empty when no changed files"
+else
+    assert_fail "Returns empty when no changed files" "got: $result"
+fi
+
+# Test 2: fenced block with content
+_repo=$(_setup_collect_repo "2")
+(
+    cd "$_repo"
+    printf 'import FeedParsing\n# line 2\n' > foo.sh
+    git add foo.sh
+    git -c user.email=t@t -c user.name=t commit -q -m add
+    echo "# line 3" >> foo.sh
+    git add foo.sh
+    git -c user.email=t@t -c user.name=t commit -q -m modify
+)
+result=$(cd "$_repo" && BASE_BRANCH=main compound_audit_collect_file_contents 40000 2>/dev/null)
+assert_contains "Fenced block header present" "$result" "### foo.sh"
+assert_contains "Fenced block content present" "$result" "import FeedParsing"
+
+# Test 3: 800-line skip marker
+_repo=$(_setup_collect_repo "3")
+(
+    cd "$_repo"
+    seq 1 801 | awk '{print "line " $1}' > big.sh
+    git add big.sh
+    git -c user.email=t@t -c user.name=t commit -q -m add
+    echo "# change" >> big.sh
+    git add big.sh
+    git -c user.email=t@t -c user.name=t commit -q -m modify
+)
+result=$(cd "$_repo" && BASE_BRANCH=main compound_audit_collect_file_contents 40000 2>/dev/null)
+assert_contains "800-line skip marker present" "$result" "exceeds 800-line limit"
+
+# Test 4: 40k char budget exhausted
+_repo=$(_setup_collect_repo "4")
+(
+    cd "$_repo"
+    python3 -c "print('x' * 30000)" > a.sh
+    python3 -c "print('y' * 30000)" > b.sh
+    git add a.sh b.sh
+    git -c user.email=t@t -c user.name=t commit -q -m add
+    echo "# change" >> a.sh && echo "# change" >> b.sh
+    git add a.sh b.sh
+    git -c user.email=t@t -c user.name=t commit -q -m modify
+)
+result=$(cd "$_repo" && BASE_BRANCH=main compound_audit_collect_file_contents 40000 2>/dev/null)
+assert_contains "Budget exhausted marker present" "$result" "budget exhausted"
+
+# Test 5: deleted file marker
+_repo=$(_setup_collect_repo "5")
+(
+    cd "$_repo"
+    # On main: add a file
+    git checkout -q main
+    echo "content" > del.sh
+    git add del.sh
+    git -c user.email=t@t -c user.name=t commit -q -m "add on main"
+    # On feature: create the file from main then delete it (simulating removal)
+    git checkout -q feature
+    git pull -q origin main 2>/dev/null || git merge -q main 2>/dev/null || {
+        # Manual merge if automated merge fails
+        git reset -q --hard main
+    }
+    git rm -q del.sh
+    git -c user.email=t@t -c user.name=t commit -q -m "delete on feature"
+)
+result=$(cd "$_repo" && BASE_BRANCH=main compound_audit_collect_file_contents 40000 2>/dev/null)
+assert_contains "Deleted file marker present" "$result" "(deleted)"
+
+# Test 6: real newlines in output (not literal \n)
+_repo=$(_setup_collect_repo "6")
+(
+    cd "$_repo"
+    printf 'import FeedParsing\n' > foo.sh
+    git add foo.sh
+    git -c user.email=t@t -c user.name=t commit -q -m add
+    echo "# change" >> foo.sh
+    git add foo.sh
+    git -c user.email=t@t -c user.name=t commit -q -m modify
+)
+result=$(cd "$_repo" && BASE_BRANCH=main compound_audit_collect_file_contents 40000 2>/dev/null)
+if printf '%s' "$result" | grep -q '^### foo.sh'; then
+    assert_pass "Output contains real newlines"
+else
+    assert_fail "Output contains real newlines" "first line: $(printf '%s' "$result" | head -1)"
+fi
+
+# Test 7: renamed files handled via --no-renames (delete+add pair)
+_repo=$(_setup_collect_repo "7")
+(
+    cd "$_repo"
+    # On main: add the original file
+    git checkout -q main
+    echo "content" > old.sh
+    git add old.sh
+    git -c user.email=t@t -c user.name=t commit -q -m "add old.sh on main"
+    # On feature: sync from main then rename
+    git checkout -q feature
+    git reset -q --hard main
+    git mv old.sh new.sh
+    git -c user.email=t@t -c user.name=t commit -q -m rename
+)
+result=$(cd "$_repo" && BASE_BRANCH=main compound_audit_collect_file_contents 40000 2>/dev/null)
+assert_contains "Renamed file: old path marked deleted" "$result" "old.sh (deleted)"
+assert_contains "Renamed file: new path has content" "$result" "### new.sh"
+
+# Test 8: files beyond the 5000-line diff cap are still enumerated
+# This is the headline regression test for issue #341: proves the collector uses
+# git --numstat (not the truncated $_cascade_diff) so later files are covered.
+_repo=$(_setup_collect_repo "8")
+(
+    cd "$_repo"
+    i=1
+    while [[ $i -le 20 ]]; do
+        seq 1 300 | awk -v n="$i" '{print "file " n " line " $1}' > "file-${i}.sh"
+        i=$((i + 1))
+    done
+    git add .
+    git -c user.email=t@t -c user.name=t commit -q -m add-all
+    i=1
+    while [[ $i -le 20 ]]; do
+        echo "# modified" >> "file-${i}.sh"
+        i=$((i + 1))
+    done
+    git add .
+    git -c user.email=t@t -c user.name=t commit -q -m modify-all
+)
+# 20 × 300-line files = 6000+ lines combined diff (beyond 5000-line head cap).
+# With a generous budget all files should be enumerated, including file-20.sh.
+result=$(cd "$_repo" && BASE_BRANCH=main compound_audit_collect_file_contents 200000 2>/dev/null)
+assert_contains "Many-file coverage: first file present" "$result" "### file-1.sh"
+assert_contains "Many-file coverage: 20th file still present" "$result" "### file-20.sh"
 
 print_test_results

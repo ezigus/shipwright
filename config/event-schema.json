@@ -354,6 +354,22 @@
       "required": ["reason"],
       "optional": []
     },
+    "ruflo.audit_start": {
+      "required": ["max_agents"],
+      "optional": []
+    },
+    "ruflo.audit_complete": {
+      "required": ["hive_id"],
+      "optional": []
+    },
+    "ruflo.audit_failed": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.audit_fallback": {
+      "required": ["reason"],
+      "optional": []
+    },
     "ruflo.defaults_loaded": {
       "required": ["file"],
       "optional": ["max_agents"]

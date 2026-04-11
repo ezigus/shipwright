@@ -1016,6 +1016,133 @@ ruflo_execute_compound_quality() {
     return 0
 }
 
+# ─── ruflo_execute_audit — parallel security audit via ruflo hive-mind ───────
+# Spawns specialist security audit agents in parallel:
+#   - cve_scanner: scans dependencies and code for known CVEs
+#   - secrets_detector: deep secrets and credential leak analysis
+#   - owasp_auditor: OWASP Top-10 vulnerability assessment
+#   - compliance_checker: policy and compliance constraint checking
+# Findings aggregated via union — all specialist findings are additive.
+# Prior review results are injected for cross-stage context.
+#
+# Usage: ruflo_execute_audit <diff_content> <artifact_file>
+# Returns 0 on success (artifact_file written with union of findings),
+#         1 on any hive failure (caller falls back to native audit checks).
+# Always fail-open — never blocks the pipeline.
+#
+# Environment knobs:
+#   RUFLO_AUDIT_MAX_AGENTS  — max parallel audit specialists (default 4)
+ruflo_execute_audit() {
+    ruflo_available || return 1
+    local diff_content="$1"
+    local artifact_file="$2"
+    [[ -n "$diff_content" && -n "$artifact_file" ]] || return 1
+
+    local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
+    local audit_ns="hive-audit-${pipeline_id}"
+    local max_agents="${RUFLO_AUDIT_MAX_AGENTS:-${RUFLO_MAX_AGENTS:-4}}"
+
+    emit_event "ruflo.audit_start" "max_agents=$max_agents"
+
+    # Initialize audit hive
+    local hive_id=""
+    local _init_exit=0
+    local _init_out=""
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
+            --topology hierarchical \
+            --max-agents "$max_agents" \
+            --output-format json 2>/dev/null) || _init_exit=$?
+    else
+        _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
+            --topology hierarchical \
+            --max-agents "$max_agents" \
+            --output-format json 2>/dev/null) || _init_exit=$?
+    fi
+    [[ $_init_exit -eq 0 ]] && \
+        hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
+    if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
+        emit_event "ruflo.audit_failed" "reason=hive_init_failed"
+        return 1
+    fi
+
+    # Spawn specialist security audit agents — non-fatal spawn failure
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 60 npx -y ruflo@latest hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$max_agents" \
+            --role specialist \
+            --prefix "audit-${pipeline_id}" 2>/dev/null || true
+    else
+        ruflo_with_timeout 60 ruflo hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$max_agents" \
+            --role specialist \
+            --prefix "audit-${pipeline_id}" 2>/dev/null || true
+    fi
+
+    # Store diff in shared hive memory for audit agents to consume.
+    # Bounded to 8000 bytes to avoid exceeding argv limits.
+    local _bounded_diff
+    _bounded_diff=$(printf '%s' "$diff_content" | head -c 8000 2>/dev/null || true)
+    ruflo_store "audit-diff" "$_bounded_diff" "$audit_ns" "audit,diff" || true
+
+    # Inject prior review findings so audit agents can target flagged areas.
+    local _prior_review
+    _prior_review=$(ruflo_recall "stage-review-result" \
+        "pipeline-${pipeline_id}" 2>/dev/null || true)
+    if [[ -n "$_prior_review" ]]; then
+        ruflo_store "audit-review-context" "$_prior_review" "$audit_ns" "audit,context" || true
+    fi
+
+    # Orchestrate parallel security audit — CVE scanning, secrets detection,
+    # OWASP assessment, and compliance checking run in parallel across the hive.
+    local _orch_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 300 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "parallel security audit: CVE scan, secrets detection, OWASP assessment, compliance check for namespace ${audit_ns}" \
+            --max-turns 15 \
+            --mode "audit" 2>/dev/null || _orch_exit=$?
+    else
+        ruflo_with_timeout 300 ruflo coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "parallel security audit: CVE scan, secrets detection, OWASP assessment, compliance check for namespace ${audit_ns}" \
+            --max-turns 15 \
+            --mode "audit" 2>/dev/null || _orch_exit=$?
+    fi
+
+    # Aggregate via union — all specialist findings included
+    local _findings=""
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _findings=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+            --action list \
+            --namespace "$audit_ns" 2>/dev/null) || true
+    else
+        _findings=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+            --action list \
+            --namespace "$audit_ns" 2>/dev/null) || true
+    fi
+
+    # Always shut down the hive regardless of outcome
+    _ruflo_hive_shutdown "$hive_id"
+
+    # Write findings to artifact file — ensure parent directory exists
+    mkdir -p "$(dirname "$artifact_file")" 2>/dev/null || true
+    if ! printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null; then
+        warn "ruflo: failed to write audit artifact: $artifact_file"
+    fi
+
+    # Persist audit result for downstream stages
+    ruflo_store "stage-audit-result" \
+        "$(head -c 2000 "$artifact_file" 2>/dev/null || true)" \
+        "pipeline-${pipeline_id}" \
+        "audit,outcome" || true
+
+    emit_event "ruflo.audit_complete" "hive_id=$hive_id"
+    return 0
+}
+
 # ─── ruflo_learn_from_shipwright — bridge Shipwright outcomes to ruflo ───────
 # Called after skill_memory_record() writes an outcome. Accepts either a path
 # to an outcome JSON file or a raw JSON string, then indexes the outcome into

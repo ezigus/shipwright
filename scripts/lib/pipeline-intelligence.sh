@@ -1502,13 +1502,21 @@ stage_compound_quality() {
     if [[ -f "$_cascade_test_log" ]]; then
         local _cascade_test_tail
         _cascade_test_tail="$(tail -10 "$_cascade_test_log" 2>/dev/null || echo "")"
-        # Determine pass/fail from log content — avoid hardcoding a claim
+        # Determine pass/fail from log content — sidecar-first, then grep fallback
         local _cascade_test_status_line
-        if grep -qiE '(tests? passed|0 failures|0 failed|all.*passed|\bpassed\b)' "$_cascade_test_log" 2>/dev/null \
-           && ! grep -qiE '(tests? failed|[1-9][0-9]* failure|[1-9][0-9]* failed|\bFAIL\b)' "$_cascade_test_log" 2>/dev/null; then
-            _cascade_test_status_line="The full test suite was run by the pipeline BEFORE this audit and PASSED (exit 0)."
+        local _ci_ec=""
+        _ci_ec=$(pipeline_test_status 2>/dev/null || true)
+        if [[ "$_ci_ec" == "0" ]]; then
+            _cascade_test_status_line="The full test suite was run by the pipeline BEFORE this audit and PASSED (exit 0, from test-results.status.json)."
+        elif [[ -n "$_ci_ec" ]]; then
+            _cascade_test_status_line="The full test suite was run by the pipeline BEFORE this audit and FAILED (exit ${_ci_ec}, from test-results.status.json)."
         else
-            _cascade_test_status_line="The test suite was run by the pipeline BEFORE this audit (see last output lines below)."
+            if grep -qiE '(tests? passed|0 failures|0 failed|all.*passed|\bpassed\b)' "$_cascade_test_log" 2>/dev/null \
+               && ! grep -qiE '(tests? failed|[1-9][0-9]* failure|[1-9][0-9]* failed|\bFAIL\b)' "$_cascade_test_log" 2>/dev/null; then
+                _cascade_test_status_line="The full test suite was run by the pipeline BEFORE this audit and PASSED (exit 0)."
+            else
+                _cascade_test_status_line="The test suite was run by the pipeline BEFORE this audit (see last output lines below)."
+            fi
         fi
         _cascade_test_evidence="${_cascade_test_status_line}
 ${_cascade_test_tail}"

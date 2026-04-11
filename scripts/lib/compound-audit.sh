@@ -190,6 +190,140 @@ compound_audit_dedup_structural() {
     ' 2>/dev/null || echo "$findings"
 }
 
+# ─── compound_audit_verify_findings ────────────────────────────────────────
+# Layer 2 hallucination filter. Drops findings where the LLM claims a symbol
+# is missing but structural verification proves the symbol is actually present
+# in the cited file. Complements the Layer 1 full-file-context prompt (#341).
+#
+# Ground truth: git show HEAD:<file> → cat <file>. This mirrors
+# compound_audit_collect_file_contents (line 239) so the verifier inspects
+# exactly the bytes the model saw in its prompt.
+#
+# Fail-open rules (any of these → keep the finding, never drop):
+#   1. Description + evidence doesn't match the absence pattern
+#   2. No symbol could be extracted from description + evidence
+#   3. File field is empty
+#   4. File is unreadable via both git show and cat
+#   5. grep exits non-zero (symbol genuinely not in file)
+#
+# Symbol extraction covers real-world LLM phrasings observed in practice:
+#   - "import X"                        (Swift, Go, TS, Python)
+#   - "cannot find 'X' in scope"        (Swift)
+#   - "Cannot find name 'X'"            (TypeScript)
+#   - "undefined: X"                    (Go)
+#   - "'X' is not defined"              (Python / plain English)
+# Identifiers may be lowercase. Surrounding quotes are stripped.
+# Multi-symbol claims: only the first symbol is verified. If present, drop —
+# Layer 1 full-file context is the right place for comprehensive analysis.
+#
+# Usage: compound_audit_verify_findings "$findings_json_array"
+# Output: Filtered JSON array on stdout.
+compound_audit_verify_findings() {
+    local findings="$1"
+    [[ -z "$findings" || "$findings" == "[]" ]] && { echo "[]"; return 0; }
+
+    # Unambiguous absence phrasings. Excludes standalone "missing" and plain
+    # "not defined" which match too much prose; "is not defined" is retained
+    # because it is a specific compiler/runtime diagnostic phrase.
+    # (e.g. "Missing null check for import stream" does NOT match — no
+    # "missing import" substring — while "X is not defined" does match.)
+    local absence_pattern='missing import|not imported|undefined (symbol|reference|identifier)|undefined:|undeclared (identifier|type)|use of unresolved|use of undeclared|unresolved reference|cannot find .* in scope|cannot find name|no such (module|type|identifier)|is not defined'
+
+    local count
+    # Fail-open: if jq can't parse or count the array, return original findings
+    # unchanged rather than silently dropping everything.
+    if ! count=$(echo "$findings" | jq -e 'if type == "array" then length else error("expected array") end' 2>/dev/null); then
+        echo "$findings"
+        return 0
+    fi
+    [[ "$count" -eq 0 ]] && { echo "[]"; return 0; }
+
+    # Collect indices of findings to keep. Build the final array in one
+    # jq pass at the end to avoid spawning a jq process per kept finding.
+    local keep_indices=""
+    local i=0
+    while [[ "$i" -lt "$count" ]]; do
+        local finding desc evidence file combined symbol keep
+        keep=1
+        finding=$(echo "$findings" | jq -c ".[$i]" 2>/dev/null)
+        desc=$(echo "$finding" | jq -r '.description // ""' 2>/dev/null)
+        evidence=$(echo "$finding" | jq -r '.evidence // ""' 2>/dev/null)
+        file=$(echo "$finding" | jq -r '.file // ""' 2>/dev/null)
+        combined="$desc $evidence"
+
+        # Normalize path: strip leading ./ and collapse //
+        file="${file#./}"
+        while [[ "$file" == *//* ]]; do file="${file//\/\//\/}"; done
+
+        # Safety: reject absolute paths and directory traversal from the
+        # LLM-supplied file field before using it in git show / cat.
+        # Fail-open: unsafe paths are kept, not dropped.
+        if [[ "$file" == /* || "$file" == *../* || "$file" == */.. ]]; then
+            keep_indices="${keep_indices}${keep_indices:+,}${i}"
+            i=$((i + 1))
+            continue
+        fi
+
+        if [[ -n "$file" ]] && echo "$combined" | grep -qiE "$absence_pattern" 2>/dev/null; then
+            symbol=""
+
+            # Priority 1: "import X" or "import {X}"
+            symbol=$(echo "$combined" | grep -oE "import[[:space:]]+\{?[A-Za-z_][A-Za-z0-9_]*" \
+                | grep -oE "[A-Za-z_][A-Za-z0-9_]*$" | grep -v '^import$' | head -1 || true)
+
+            # Priority 2: quoted symbol after "find" / "find name"
+            if [[ -z "$symbol" ]]; then
+                symbol=$(echo "$combined" | grep -oE "find( name)?[[:space:]]+['\"\`]?[A-Za-z_][A-Za-z0-9_]*" \
+                    | grep -oE "[A-Za-z_][A-Za-z0-9_]*$" | head -1 || true)
+            fi
+
+            # Priority 3: Go-style "undefined: X"
+            if [[ -z "$symbol" ]]; then
+                symbol=$(echo "$combined" | grep -oE "undefined:[[:space:]]*[A-Za-z_][A-Za-z0-9_]*" \
+                    | grep -oE "[A-Za-z_][A-Za-z0-9_]*$" | head -1 || true)
+            fi
+
+            # Priority 4: Python / plain English "'X' is not defined"
+            if [[ -z "$symbol" ]]; then
+                symbol=$(echo "$combined" \
+                    | grep -oE "['\"\`][A-Za-z_][A-Za-z0-9_]*['\"\`][[:space:]]+is not defined" \
+                    | grep -oE "[A-Za-z_][A-Za-z0-9_]*" | head -1 || true)
+            fi
+
+            if [[ -n "$symbol" ]]; then
+                # Fetch content the same way the prompt collector does:
+                # git show HEAD:file first, fall back to worktree cat.
+                local content=""
+                content=$(git show "HEAD:${file}" 2>/dev/null) \
+                    || content=$(cat "$file" 2>/dev/null) \
+                    || content=""
+
+                if [[ -n "$content" ]] && printf '%s' "$content" | grep -qwF -- "$symbol" 2>/dev/null; then
+                    # Symbol present → finding is a hallucination → drop it.
+                    keep=0
+                    type audit_emit >/dev/null 2>&1 && \
+                        audit_emit "compound.false_positive_dropped" \
+                            "symbol=$symbol" "file=$file" "description=$desc" || true
+                fi
+                # Empty content or grep miss → fall through to keep=1.
+            fi
+        fi
+
+        if [[ "$keep" -eq 1 ]]; then
+            keep_indices="${keep_indices}${keep_indices:+,}${i}"
+        fi
+        i=$((i + 1))
+    done
+
+    if [[ -z "$keep_indices" ]]; then
+        echo "[]"
+        return 0
+    fi
+
+    # Single jq pass to materialize the kept subset.
+    echo "$findings" | jq --argjson ks "[$keep_indices]" '[.[$ks[]]]' 2>/dev/null || echo "$findings"
+}
+
 # ─── Escalation trigger keywords ──────────────────────────────────────────
 _COMPOUND_TRIGGERS_security="injection|auth|secret|credential|permission|bypass|xss|csrf|traversal|sanitiz"
 _COMPOUND_TRIGGERS_error_handling="catch|swallow|silent|ignore.*error|missing.*error|unchecked|unhandled"
@@ -412,6 +546,10 @@ compound_audit_run_cycle() {
         if [[ -f "$agent_file" ]]; then
             local agent_findings
             agent_findings=$(compound_audit_parse_findings "$(cat "$agent_file")")
+
+            # Layer 2: drop LLM-hallucinated "missing symbol" findings before
+            # stamping, emitting, or merging into the accumulated set. (#342)
+            agent_findings=$(compound_audit_verify_findings "$agent_findings") || true
 
             # Stamp each finding with the commit it was discovered at
             if [[ -n "$current_commit" ]]; then

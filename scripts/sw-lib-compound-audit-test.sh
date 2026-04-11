@@ -631,4 +631,165 @@ result=$(cd "$_repo" && BASE_BRANCH=main compound_audit_collect_file_contents 20
 assert_contains "Many-file coverage: first file present" "$result" "### file-1.sh"
 assert_contains "Many-file coverage: 20th file still present" "$result" "### file-20.sh"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# compound_audit_verify_findings
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "compound_audit_verify_findings"
+
+# Helper: create a minimal git repo for verify_findings tests
+_setup_vf_repo() {
+    local dir="$TEST_TEMP_DIR/vf-repo-$1"
+    mkdir -p "$dir"
+    (
+        cd "$dir"
+        git init -q -b main
+        git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+    )
+    echo "$dir"
+}
+
+# Test 1 — Positive drop: capitalized import exists in cited file → drop
+_repo=$(_setup_vf_repo "1")
+(
+    cd "$_repo"
+    printf 'import FeedParsing\n# other code\n' > foo.swift
+    git add foo.swift
+    git -c user.email=t@t -c user.name=t commit -q -m add
+)
+_findings='[{"severity":"critical","category":"integration","file":"foo.swift","line":1,"description":"missing import FeedParsing","evidence":"","suggestion":"add import"}]'
+result=$(cd "$_repo" && compound_audit_verify_findings "$_findings")
+count=$(echo "$result" | jq 'length')
+assert_eq "Positive drop: hallucinated import finding removed" "0" "$count"
+
+# Test 2 — Wrong-file scope: symbol in bar.swift but finding cites foo.swift → keep
+_repo=$(_setup_vf_repo "2")
+(
+    cd "$_repo"
+    printf 'import FeedParsing\n' > bar.swift
+    printf '# unrelated\n' > foo.swift
+    git add bar.swift foo.swift
+    git -c user.email=t@t -c user.name=t commit -q -m add
+)
+_findings='[{"severity":"critical","category":"integration","file":"foo.swift","line":1,"description":"missing import FeedParsing","evidence":"","suggestion":"add import"}]'
+result=$(cd "$_repo" && compound_audit_verify_findings "$_findings")
+count=$(echo "$result" | jq 'length')
+assert_eq "Wrong-file scope: finding kept when symbol absent from cited file" "1" "$count"
+
+# Test 3 — Word-boundary safety: FooBarManager exists, not Foo → keep
+_repo=$(_setup_vf_repo "3")
+(
+    cd "$_repo"
+    printf 'class FooBarManager {}\n' > foo.swift
+    git add foo.swift
+    git -c user.email=t@t -c user.name=t commit -q -m add
+)
+_findings='[{"severity":"high","category":"logic","file":"foo.swift","line":1,"description":"cannot find Foo in scope","evidence":"","suggestion":"import it"}]'
+result=$(cd "$_repo" && compound_audit_verify_findings "$_findings")
+count=$(echo "$result" | jq 'length')
+assert_eq "Word boundary: FooBarManager does not satisfy missing Foo claim" "1" "$count"
+
+# Test 4 — Lowercase quoted Swift drop: func fetchFeed exists, finding says cannot find 'fetchFeed' → drop
+_repo=$(_setup_vf_repo "4")
+(
+    cd "$_repo"
+    printf 'func fetchFeed() { return [] }\n' > foo.swift
+    git add foo.swift
+    git -c user.email=t@t -c user.name=t commit -q -m add
+)
+_findings='[{"severity":"critical","category":"integration","file":"foo.swift","line":1,"description":"cannot find '\''fetchFeed'\'' in scope","evidence":"","suggestion":"define it"}]'
+result=$(cd "$_repo" && compound_audit_verify_findings "$_findings")
+count=$(echo "$result" | jq 'length')
+assert_eq "Lowercase quoted Swift: hallucinated find-quote finding dropped" "0" "$count"
+
+# Test 5 — Go-style undefined: drop: func parseBody exists → drop
+_repo=$(_setup_vf_repo "5")
+(
+    cd "$_repo"
+    printf 'func parseBody() error { return nil }\n' > foo.go
+    git add foo.go
+    git -c user.email=t@t -c user.name=t commit -q -m add
+)
+_findings='[{"severity":"critical","category":"integration","file":"foo.go","line":1,"description":"undefined: parseBody","evidence":"","suggestion":"define it"}]'
+result=$(cd "$_repo" && compound_audit_verify_findings "$_findings")
+count=$(echo "$result" | jq 'length')
+assert_eq "Go-style undefined: hallucinated finding dropped" "0" "$count"
+
+# Test 6 — Lowercase no-symbol pass-through: "missing function parseXML" doesn't match absence pattern
+_findings='[{"severity":"medium","category":"logic","file":"foo.sh","line":5,"description":"missing function parseXML","evidence":"","suggestion":"add it"}]'
+result=$(compound_audit_verify_findings "$_findings")
+count=$(echo "$result" | jq 'length')
+assert_eq "No-symbol pass-through: absence pattern does not match 'missing function'" "1" "$count"
+
+# Test 7 — Tight absence pattern: "Missing null check for import stream" must NOT be treated as symbol-absence
+_findings='[{"severity":"high","category":"logic","file":"foo.sh","line":10,"description":"Missing null check for import stream","evidence":"","suggestion":"add null check"}]'
+result=$(compound_audit_verify_findings "$_findings")
+count=$(echo "$result" | jq 'length')
+assert_eq "Tight pattern: 'Missing null check for import stream' is kept (not a symbol claim)" "1" "$count"
+
+# Test 8 — Path normalization: ./foo.swift normalizes to foo.swift → drop
+_repo=$(_setup_vf_repo "8")
+(
+    cd "$_repo"
+    printf 'import FeedParsing\n' > foo.swift
+    git add foo.swift
+    git -c user.email=t@t -c user.name=t commit -q -m add
+)
+_findings='[{"severity":"critical","category":"integration","file":"./foo.swift","line":1,"description":"missing import FeedParsing","evidence":"","suggestion":"add import"}]'
+result=$(cd "$_repo" && compound_audit_verify_findings "$_findings")
+count=$(echo "$result" | jq 'length')
+assert_eq "Path normalization: ./foo.swift strips to foo.swift and drops correctly" "0" "$count"
+
+# Test 9 — Fail-open on unreadable file: nonexistent.swift → keep
+_repo=$(_setup_vf_repo "9")
+_findings='[{"severity":"critical","category":"integration","file":"nonexistent.swift","line":1,"description":"missing import FeedParsing","evidence":"","suggestion":"add import"}]'
+result=$(cd "$_repo" && compound_audit_verify_findings "$_findings")
+count=$(echo "$result" | jq 'length')
+assert_eq "Fail-open: unreadable file keeps finding" "1" "$count"
+
+# Test 10 — Mixed array: 3 findings, 1 drop, 2 keep; accumulator correct
+_repo=$(_setup_vf_repo "10")
+(
+    cd "$_repo"
+    printf 'import FeedParsing\n' > foo.swift
+    git add foo.swift
+    git -c user.email=t@t -c user.name=t commit -q -m add
+)
+_findings='[
+  {"severity":"high","category":"logic","file":"bar.sh","line":5,"description":"off-by-one error in loop","evidence":"i <= len","suggestion":"use <"},
+  {"severity":"critical","category":"integration","file":"foo.swift","line":1,"description":"missing import FeedParsing","evidence":"","suggestion":"add import"},
+  {"severity":"medium","category":"completeness","file":"baz.sh","line":20,"description":"spec requirement unimplemented","evidence":"TODO","suggestion":"implement"}
+]'
+result=$(cd "$_repo" && compound_audit_verify_findings "$_findings")
+count=$(echo "$result" | jq 'length')
+assert_eq "Mixed array: 2 of 3 findings survive after drop" "2" "$count"
+assert_contains "Mixed array: first real finding preserved" "$result" "off-by-one"
+assert_contains "Mixed array: third real finding preserved" "$result" "spec requirement"
+
+# Test 11 — Regex metachar safety: $foo symbol must not crash verifier
+_repo=$(_setup_vf_repo "11")
+(
+    cd "$_repo"
+    printf 'some code\n' > foo.sh
+    git add foo.sh
+    git -c user.email=t@t -c user.name=t commit -q -m add
+)
+_findings='[{"severity":"high","category":"logic","file":"foo.sh","line":1,"description":"cannot find $foo in scope","evidence":"","suggestion":"fix"}]'
+result=$(cd "$_repo" && compound_audit_verify_findings "$_findings" 2>/dev/null)
+count=$(echo "$result" | jq 'length')
+assert_eq "Metachar safety: \$foo in description does not crash verifier" "1" "$count"
+
+# Test 12 — Audit event payload: drop event emitted with symbol= and file= fields
+_repo=$(_setup_vf_repo "12")
+(
+    cd "$_repo"
+    printf 'import FeedParsing\n' > foo.swift
+    git add foo.swift
+    git -c user.email=t@t -c user.name=t commit -q -m add
+)
+_findings='[{"severity":"critical","category":"integration","file":"foo.swift","line":1,"description":"missing import FeedParsing","evidence":"","suggestion":"add import"}]'
+(cd "$_repo" && compound_audit_verify_findings "$_findings") >/dev/null
+_event_line=$(grep "false_positive_dropped" "$ARTIFACTS_DIR/pipeline-audit.jsonl" 2>/dev/null | tail -1 || true)
+assert_contains "Audit event payload: symbol field present" "$_event_line" '"symbol":"FeedParsing"'
+assert_contains "Audit event payload: file field present" "$_event_line" '"file":"foo.swift"'
+
 print_test_results

@@ -250,4 +250,74 @@ else
     assert_fail "quality_check_perf_regression"
 fi
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# pipeline_test_status / pipeline_test_passed
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "pipeline_test_status / pipeline_test_passed"
+
+# Test 1: Sidecar passing
+rm -f "$ARTIFACTS_DIR/test-results.status.json"
+echo '{"exit_code":0,"passed":true,"cmd":"npm test","finished_at":"2026-04-11T12:00:00Z"}' > "$ARTIFACTS_DIR/test-results.status.json"
+result=$(pipeline_test_status 2>/dev/null)
+assert_eq "pipeline_test_status returns 0 when sidecar passed" "0" "$result"
+if pipeline_test_passed 2>/dev/null; then
+    assert_pass "pipeline_test_passed exits 0 when sidecar passed"
+else
+    assert_fail "pipeline_test_passed should exit 0 when sidecar shows pass"
+fi
+
+# Test 2: Sidecar failing
+echo '{"exit_code":1,"passed":false,"cmd":"npm test","finished_at":"2026-04-11T12:00:00Z"}' > "$ARTIFACTS_DIR/test-results.status.json"
+result=$(pipeline_test_status 2>/dev/null)
+assert_eq "pipeline_test_status returns 1 when sidecar failed" "1" "$result"
+if pipeline_test_passed 2>/dev/null; then
+    assert_fail "pipeline_test_passed should exit non-zero when sidecar shows fail"
+else
+    assert_pass "pipeline_test_passed exits non-zero when sidecar failed"
+fi
+
+# Test 3: Sidecar missing
+rm -f "$ARTIFACTS_DIR/test-results.status.json"
+if pipeline_test_status 2>/dev/null; then
+    assert_fail "pipeline_test_status should exit non-zero when sidecar missing"
+else
+    assert_pass "pipeline_test_status exits non-zero when sidecar missing"
+fi
+if pipeline_test_passed 2>/dev/null; then
+    assert_fail "pipeline_test_passed should exit non-zero when sidecar missing"
+else
+    assert_pass "pipeline_test_passed exits non-zero when sidecar missing"
+fi
+
+# Test 4: Regression test — sidecar with noisy log (Terminated: 15, no pass markers)
+# This is the exact false-positive from the issue: log has noise but sidecar says pass
+rm -f "$ARTIFACTS_DIR/test-results.log" "$ARTIFACTS_DIR/test-results.status.json"
+echo '{"exit_code":0,"passed":true,"cmd":"npm test","finished_at":"2026-04-11T12:00:00Z"}' > "$ARTIFACTS_DIR/test-results.status.json"
+echo "Running tests...
+Test 1: PASS
+Test 2: PASS
+Terminated: 15
+Cleanup done" > "$ARTIFACTS_DIR/test-results.log"
+# DoD logic should detect pass via sidecar (not grep)
+if pipeline_test_passed 2>/dev/null; then
+    assert_pass "pipeline_test_passed uses sidecar even with noisy log"
+else
+    assert_fail "pipeline_test_passed should trust sidecar over noisy log"
+fi
+
+# Test 5: Regression test — sidecar wins over FAIL substring (Processing FAIL_SAFE_MODE.md)
+# Another false-positive: log contains "FAIL" as substring but sidecar says pass
+rm -f "$ARTIFACTS_DIR/test-results.log" "$ARTIFACTS_DIR/test-results.status.json"
+echo '{"exit_code":0,"passed":true,"cmd":"npm test","finished_at":"2026-04-11T12:00:00Z"}' > "$ARTIFACTS_DIR/test-results.status.json"
+echo "Processing FAIL_SAFE_MODE.md
+Running tests...
+All tests passed
+Exit code: 0" > "$ARTIFACTS_DIR/test-results.log"
+# DoD logic should detect pass via sidecar (not grep false-positive on FAIL_SAFE)
+if pipeline_test_passed 2>/dev/null; then
+    assert_pass "pipeline_test_passed ignores FAIL substring in filenames"
+else
+    assert_fail "pipeline_test_passed should trust sidecar over FAIL substring"
+fi
+
 print_test_results

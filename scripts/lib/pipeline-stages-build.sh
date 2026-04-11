@@ -570,6 +570,19 @@ stage_test() {
     local test_exit=0
     bash -c "$test_cmd" > "$test_log" 2>&1 || test_exit=$?
 
+    # Persist exit code for downstream consumers (avoids grep-based inference)
+    local _st_tmp
+    _st_tmp=$(mktemp "${ARTIFACTS_DIR}/test-results.status.tmp.XXXXXX")
+    if ! ( jq -nc \
+        --argjson exit_code "$test_exit" \
+        --arg cmd "$test_cmd" \
+        --arg finished "$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo '')" \
+        '{exit_code: $exit_code, passed: ($exit_code == 0), cmd: $cmd, finished_at: $finished}' \
+        > "$_st_tmp" && mv "$_st_tmp" "${ARTIFACTS_DIR}/test-results.status.json" ); then
+      rm -f "$_st_tmp"
+      warn "Failed to write test-results.status.json — downstream consumers will fall back to log parsing"
+    fi
+
     if [[ "$test_exit" -eq 0 ]]; then
         success "Tests passed"
     else

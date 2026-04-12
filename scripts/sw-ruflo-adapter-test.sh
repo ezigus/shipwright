@@ -1137,6 +1137,11 @@ if [[ "$_orch_called" == "true" ]]; then
 else
     assert_fail "ruflo_execute_audit calls coordination orchestrate" "orchestrate not invoked"
 fi
+if [[ "$_shutdown_called" == "true" ]]; then
+    assert_pass "ruflo_execute_audit calls hive-mind shutdown"
+else
+    assert_fail "ruflo_execute_audit calls hive-mind shutdown" "hive shutdown not invoked"
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Test 31: ruflo_load_defaults — no-op when no defaults file exists

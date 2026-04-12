@@ -1102,6 +1102,17 @@ ruflo_execute_audit() {
         ruflo_store "audit-review-context" "$_prior_review" "$audit_ns" "audit,context" || true
     fi
 
+    # Inject ADR context for compliance checking — enables audit agents to verify
+    # that changes comply with documented architecture decisions.
+    local _ns_hash
+    if _ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null); then
+        local _adrs
+        _adrs=$(ruflo_recall "architecture decisions" "adrs-${_ns_hash}" 2>/dev/null || true)
+        if [[ -n "$_adrs" ]]; then
+            ruflo_store "audit-adrs" "$_adrs" "$audit_ns" "adr,context" || true
+        fi
+    fi
+
     # Orchestrate parallel security audit — CVE scanning, secrets detection,
     # OWASP assessment, and compliance checking run in parallel across the hive.
     local _orch_exit=0

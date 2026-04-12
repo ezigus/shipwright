@@ -512,7 +512,7 @@ write_state() {
     {
         printf -- '---\n'
         printf 'pipeline: %s\n' "$PIPELINE_NAME"
-        printf 'goal: "%s"\n' "$GOAL"
+        printf 'goal: "%s"\n' "${GOAL//$'\n'/\\n}"
         printf 'status: %s\n' "$PIPELINE_STATUS"
         printf 'issue: "%s"\n' "${GITHUB_ISSUE:-}"
         printf 'branch: "%s"\n' "${GIT_BRANCH:-}"
@@ -562,7 +562,7 @@ resume_state() {
         if $in_frontmatter; then
             case "$line" in
                 pipeline:*)            PIPELINE_NAME="$(_trim "${line#pipeline:}")" ;;
-                goal:*)                GOAL="$(echo "${line#goal:}" | sed 's/^ *"//;s/" *$//')" ;;
+                goal:*)                local _g; _g="$(echo "${line#goal:}" | sed 's/^ *"//;s/" *$//')"; GOAL="${_g//\\n/$'\n'}" ;;
                 status:*)              PIPELINE_STATUS="$(_trim "${line#status:}")" ;;
                 issue:*)               GITHUB_ISSUE="$(echo "${line#issue:}" | sed 's/^ *"//;s/" *$//')" ;;
                 branch:*)              GIT_BRANCH="$(echo "${line#branch:}" | sed 's/^ *"//;s/" *$//')" ;;

@@ -44,7 +44,7 @@ resume_state() {
         fi
         if $in_frontmatter; then
             case "$line" in
-                goal:*)          [[ -z "$GOAL" ]] && GOAL="$(echo "${line#goal:}" | sed 's/^ *"//;s/" *$//')" ;;
+                goal:*)          if [[ -z "$GOAL" ]]; then local _g; _g="$(echo "${line#goal:}" | sed 's/^ *"//;s/" *$//')"; GOAL="${_g//\\n/$'\n'}"; fi ;;
                 iteration:*)     ITERATION="$(echo "${line#iteration:}" | tr -d ' ')" ;;
                 max_iterations:*) MAX_ITERATIONS="$(echo "${line#max_iterations:}" | tr -d ' ')" ;;
                 status:*)        STATUS="$(echo "${line#status:}" | tr -d ' ')" ;;
@@ -124,7 +124,7 @@ write_state() {
     # Use printf instead of heredoc to avoid delimiter injection from GOAL
     {
         printf -- '---\n'
-        printf 'goal: "%s"\n' "$GOAL"
+        printf 'goal: "%s"\n' "${GOAL//$'\n'/\\n}"
         printf 'iteration: %s\n' "$ITERATION"
         printf 'max_iterations: %s\n' "$MAX_ITERATIONS"
         printf 'status: %s\n' "$STATUS"

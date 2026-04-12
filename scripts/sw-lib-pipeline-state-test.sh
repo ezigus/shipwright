@@ -483,6 +483,86 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# write_state / resume_state — multi-line GOAL round-trip (issue #348)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "multi-line GOAL round-trip (issue #348)"
+
+# Restore the real write_state (earlier sections mock it).
+# gh_init / load_pipeline_config are already stubbed as no-ops above.
+_PIPELINE_STATE_LOADED=""
+check_disk_space() { return 0; }   # stub — disk space not relevant in tests
+source "$SCRIPT_DIR/lib/pipeline-state.sh"
+
+# Reset all state vars to a known baseline.
+GOAL="" CURRENT_STAGE="build" PIPELINE_STATUS="interrupted"
+STAGE_STATUSES="intake:complete" LOG_ENTRIES=""
+PIPELINE_NAME="test-pipeline" GITHUB_ISSUE="" GIT_BRANCH=""
+PR_NUMBER="" PROGRESS_COMMENT_ID="" PIPELINE_START_EPOCH=""
+
+# --- Test 1: single-line goal round-trip (regression guard) ---
+GOAL="single-line goal"
+write_state
+GOAL=""
+resume_state 2>/dev/null
+if [[ "$GOAL" == "single-line goal" ]]; then
+    assert_pass "single-line goal round-trip"
+else
+    assert_fail "single-line goal round-trip" "got: $GOAL"
+fi
+
+# --- Test 2: multi-line goal write — goal value must be escaped (contains literal \n not real newlines) ---
+GOAL="$(printf 'Fix issue 348\n\nBLOCKING: tests fail\nFocus on src/foo.sh')"
+write_state
+_goal_line=$(grep '^goal:' "$STATE_FILE" | sed 's/^goal: *"//;s/" *$//')
+# With the fix, newlines in GOAL are encoded as the two-char sequence \n in the file.
+# Check that the extracted value contains literal backslash-n (meaning it was escaped).
+# [[ glob pattern $'\\n' matches literal backslash + n ]]
+if [[ "$_goal_line" == *$'\\n'* ]]; then
+    assert_pass "multi-line goal write encodes newlines as \\n"
+else
+    assert_fail "multi-line goal write encodes newlines as \\n" "no escaped \\n found in goal line; first 60 chars: ${_goal_line:0:60}"
+fi
+
+# --- Test 3: multi-line goal — full round-trip (write then read back) ---
+GOAL=""
+resume_state 2>/dev/null
+_expected="$(printf 'Fix issue 348\n\nBLOCKING: tests fail\nFocus on src/foo.sh')"
+if [[ "$GOAL" == "$_expected" ]]; then
+    assert_pass "multi-line goal full round-trip: all content restored"
+else
+    assert_fail "multi-line goal full round-trip: all content restored" "first 80 chars: $(printf '%s' "$GOAL" | head -c 80)"
+fi
+
+# --- Test 4: empty goal write — no crash ---
+GOAL="" PIPELINE_STATUS="running"
+write_state
+assert_pass "empty goal write does not crash"
+
+# --- Test 5: goal containing a literal \n (two chars: backslash + n) ---
+# This was an ambiguous case with the simpler fix; the full backslash-escaping
+# scheme encodes literal \n as \\n so it round-trips correctly.
+GOAL=$'Contains a literal \\n backslash-n and a real\nnewline'
+write_state
+GOAL=""
+resume_state 2>/dev/null
+if [[ "$GOAL" == $'Contains a literal \\n backslash-n and a real\nnewline' ]]; then
+    assert_pass "literal \\n in goal round-trips correctly"
+else
+    assert_fail "literal \\n in goal round-trips correctly" "got: $(printf '%s' "$GOAL" | head -c 80)"
+fi
+
+# --- Test 6: goal with YAML-special chars preserved ---
+GOAL='Goal with colon: here and #hash and "quotes"'
+write_state
+GOAL=""
+resume_state 2>/dev/null
+if [[ "$GOAL" == 'Goal with colon: here and #hash and "quotes"' ]]; then
+    assert_pass "YAML special chars in goal preserved"
+else
+    assert_fail "YAML special chars in goal preserved" "got: $GOAL"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # persist_artifacts — CI_MODE guard
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "persist_artifacts"

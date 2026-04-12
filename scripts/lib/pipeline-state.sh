@@ -508,11 +508,15 @@ write_state() {
 
     # Atomic write: build content in tmp file, then mv into place.
     # This prevents partial/corrupt state files when interrupted by signals.
+    # Encode GOAL: escape backslashes first, then newlines, so that a literal \n
+    # in the goal is stored as \\n (unambiguous) while a real newline becomes \n.
     local tmp_state="${STATE_FILE}.tmp.$$"
+    local _goal_esc="${GOAL//\\/\\\\}"
+    _goal_esc="${_goal_esc//$'\n'/\\n}"
     {
         printf -- '---\n'
         printf 'pipeline: %s\n' "$PIPELINE_NAME"
-        printf 'goal: "%s"\n' "$GOAL"
+        printf 'goal: "%s"\n' "$_goal_esc"
         printf 'status: %s\n' "$PIPELINE_STATUS"
         printf 'issue: "%s"\n' "${GITHUB_ISSUE:-}"
         printf 'branch: "%s"\n' "${GIT_BRANCH:-}"
@@ -562,7 +566,12 @@ resume_state() {
         if $in_frontmatter; then
             case "$line" in
                 pipeline:*)            PIPELINE_NAME="$(_trim "${line#pipeline:}")" ;;
-                goal:*)                GOAL="$(echo "${line#goal:}" | sed 's/^ *"//;s/" *$//')" ;;
+                goal:*)
+                    local _g _s=$'\001'
+                    _g="$(echo "${line#goal:}" | sed 's/^ *"//;s/" *$//')"
+                    _g="${_g//\\\\/$_s}"
+                    _g="${_g//\\n/$'\n'}"
+                    GOAL="${_g//$_s/\\}" ;;
                 status:*)              PIPELINE_STATUS="$(_trim "${line#status:}")" ;;
                 issue:*)               GITHUB_ISSUE="$(echo "${line#issue:}" | sed 's/^ *"//;s/" *$//')" ;;
                 branch:*)              GIT_BRANCH="$(echo "${line#branch:}" | sed 's/^ *"//;s/" *$//')" ;;

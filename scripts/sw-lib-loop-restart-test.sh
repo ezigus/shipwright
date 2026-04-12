@@ -96,7 +96,19 @@ GOAL=""
 write_state
 assert_pass "empty loop goal write does not crash"
 
-# --- Test 5: goal with injection-style content (compound quality feedback pattern) ---
+# --- Test 5: goal containing a literal \n (two chars: backslash + n) ---
+# Full backslash-escaping scheme: literal \n is stored as \\n and round-trips correctly.
+GOAL=$'Contains a literal \\n backslash-n and a real\nnewline'
+write_state
+GOAL=""
+resume_state 2>/dev/null
+if [[ "$GOAL" == $'Contains a literal \\n backslash-n and a real\nnewline' ]]; then
+    assert_pass "literal \\n in loop goal round-trips correctly"
+else
+    assert_fail "literal \\n in loop goal round-trips correctly" "got: $(printf '%s' "$GOAL" | head -c 80)"
+fi
+
+# --- Test 7: goal with injection-style content (compound quality feedback pattern) ---
 GOAL="$(printf 'Original goal\n\nBLOCKING ISSUES — fix all of these before merge:\n- test_auth_flow fails\n\nFull review context:\nSee audit log for details')"
 write_state
 GOAL=""

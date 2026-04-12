@@ -44,7 +44,14 @@ resume_state() {
         fi
         if $in_frontmatter; then
             case "$line" in
-                goal:*)          if [[ -z "$GOAL" ]]; then local _g; _g="$(echo "${line#goal:}" | sed 's/^ *"//;s/" *$//')"; GOAL="${_g//\\n/$'\n'}"; fi ;;
+                goal:*)
+                    if [[ -z "$GOAL" ]]; then
+                        local _g _s=$'\001'
+                        _g="$(echo "${line#goal:}" | sed 's/^ *"//;s/" *$//')"
+                        _g="${_g//\\\\/$_s}"
+                        _g="${_g//\\n/$'\n'}"
+                        GOAL="${_g//$_s/\\}"
+                    fi ;;
                 iteration:*)     ITERATION="$(echo "${line#iteration:}" | tr -d ' ')" ;;
                 max_iterations:*) MAX_ITERATIONS="$(echo "${line#max_iterations:}" | tr -d ' ')" ;;
                 status:*)        STATUS="$(echo "${line#status:}" | tr -d ' ')" ;;
@@ -121,10 +128,14 @@ resume_state() {
 
 write_state() {
     local tmp_state="${STATE_FILE}.tmp.$$"
+    # Encode GOAL: escape backslashes first, then newlines, so that a literal \n
+    # in the goal is stored as \\n (unambiguous) while a real newline becomes \n.
+    local _goal_esc="${GOAL//\\/\\\\}"
+    _goal_esc="${_goal_esc//$'\n'/\\n}"
     # Use printf instead of heredoc to avoid delimiter injection from GOAL
     {
         printf -- '---\n'
-        printf 'goal: "%s"\n' "${GOAL//$'\n'/\\n}"
+        printf 'goal: "%s"\n' "$_goal_esc"
         printf 'iteration: %s\n' "$ITERATION"
         printf 'max_iterations: %s\n' "$MAX_ITERATIONS"
         printf 'status: %s\n' "$STATUS"

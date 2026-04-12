@@ -538,7 +538,20 @@ GOAL="" PIPELINE_STATUS="running"
 write_state
 assert_pass "empty goal write does not crash"
 
-# --- Test 5: goal with YAML-special chars preserved ---
+# --- Test 5: goal containing a literal \n (two chars: backslash + n) ---
+# This was an ambiguous case with the simpler fix; the full backslash-escaping
+# scheme encodes literal \n as \\n so it round-trips correctly.
+GOAL=$'Contains a literal \\n backslash-n and a real\nnewline'
+write_state
+GOAL=""
+resume_state 2>/dev/null
+if [[ "$GOAL" == $'Contains a literal \\n backslash-n and a real\nnewline' ]]; then
+    assert_pass "literal \\n in goal round-trips correctly"
+else
+    assert_fail "literal \\n in goal round-trips correctly" "got: $(printf '%s' "$GOAL" | head -c 80)"
+fi
+
+# --- Test 6: goal with YAML-special chars preserved ---
 GOAL='Goal with colon: here and #hash and "quotes"'
 write_state
 GOAL=""

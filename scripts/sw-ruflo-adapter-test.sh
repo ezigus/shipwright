@@ -1073,18 +1073,21 @@ else
     assert_fail "ruflo_execute_audit returns 1 when hive init fails" "got exit=$exit_code"
 fi
 
-# Test: ruflo_execute_audit returns 0 and writes artifact on success
+# Test: ruflo_execute_audit returns 0 and writes artifact on success;
+#       verifies spawn, orchestrate, and shutdown were called
 unset _RUFLO_ADAPTER_LOADED
 _test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
-cat > "$_test_tmp/ruflo" <<'MOCK'
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
 #!/usr/bin/env bash
-subcmd="${1:-}"
-if [[ "$subcmd" == "hive-mind" && "${2:-}" == "init" ]]; then
-    printf '{"hive_id":"audit-hive-999"}\n'
+subcmd="\${1:-}"
+printf '%s %s %s\\n' "\$subcmd" "\${2:-}" "\${3:-}" >> "$_call_log"
+if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "init" ]]; then
+    printf '{"hive_id":"audit-hive-999"}\\n'
     exit 0
 fi
-if [[ "$subcmd" == "hive-mind" && "${2:-}" == "memory" ]]; then
-    printf 'audit-diff: <diff stored>\nCVE-2024-1234: found in dependency\nOWASP-A01: broken access control check\n'
+if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+    printf 'audit-diff: <diff stored>\\nCVE-2024-1234: found in dependency\\nOWASP-A01: broken access control check\\n'
     exit 0
 fi
 exit 0
@@ -1101,6 +1104,12 @@ _audit_artifact_exists=false
 _audit_artifact_nonempty=false
 [[ -f "$_artifact" ]] && _audit_artifact_exists=true
 [[ -s "$_artifact" ]] && _audit_artifact_nonempty=true
+_spawn_called=false
+_orch_called=false
+_shutdown_called=false
+grep -q "^hive-mind spawn" "$_call_log" 2>/dev/null && _spawn_called=true
+grep -q "^coordination orchestrate" "$_call_log" 2>/dev/null && _orch_called=true
+grep -q "^hive-mind shutdown\|^hive-mind leave" "$_call_log" 2>/dev/null && _shutdown_called=true
 PATH="${PATH#"$_test_tmp:"}"
 rm -rf "$_test_tmp"
 if [[ $exit_code -eq 0 ]]; then
@@ -1117,6 +1126,16 @@ if [[ "$_audit_artifact_nonempty" == "true" ]]; then
     assert_pass "ruflo_execute_audit writes non-empty artifact on success"
 else
     assert_fail "ruflo_execute_audit writes non-empty artifact on success" "artifact empty"
+fi
+if [[ "$_spawn_called" == "true" ]]; then
+    assert_pass "ruflo_execute_audit calls hive-mind spawn"
+else
+    assert_fail "ruflo_execute_audit calls hive-mind spawn" "spawn not invoked"
+fi
+if [[ "$_orch_called" == "true" ]]; then
+    assert_pass "ruflo_execute_audit calls coordination orchestrate"
+else
+    assert_fail "ruflo_execute_audit calls coordination orchestrate" "orchestrate not invoked"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

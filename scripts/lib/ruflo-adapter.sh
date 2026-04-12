@@ -1046,6 +1046,8 @@ ruflo_execute_audit() {
 
     # Initialize audit hive
     local hive_id=""
+    # Trap ensures hive is cleaned up if SIGTERM or unexpected exit interrupts orchestration.
+    trap '[[ -n "${hive_id:-}" ]] && _ruflo_hive_shutdown "${hive_id}" 2>/dev/null || true' EXIT
     local _init_exit=0
     local _init_out=""
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -1084,6 +1086,11 @@ ruflo_execute_audit() {
     # Store diff in shared hive memory for audit agents to consume.
     # Bounded to 8000 bytes to avoid exceeding argv limits.
     local _bounded_diff
+    local _diff_bytes
+    _diff_bytes=$(printf '%s' "$diff_content" | wc -c 2>/dev/null || echo 0)
+    if (( _diff_bytes > 8000 )); then
+        warn "ruflo: audit diff exceeds 8KB (${_diff_bytes} bytes) — truncated to first 8000 bytes (may miss issues in larger diffs)"
+    fi
     _bounded_diff=$(printf '%s' "$diff_content" | head -c 8000 2>/dev/null || true)
     ruflo_store "audit-diff" "$_bounded_diff" "$audit_ns" "audit,diff" || true
 
@@ -1112,6 +1119,14 @@ ruflo_execute_audit() {
             --mode "audit" 2>/dev/null || _orch_exit=$?
     fi
 
+    # Fail fast if orchestration failed — no findings to aggregate
+    if [[ $_orch_exit -ne 0 ]]; then
+        warn "ruflo: orchestration failed with exit $_orch_exit"
+        _ruflo_hive_shutdown "$hive_id"
+        emit_event "ruflo.audit_failed" "reason=orchestration_failed"
+        return 1
+    fi
+
     # Aggregate via union — all specialist findings included
     local _findings=""
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -1129,8 +1144,9 @@ ruflo_execute_audit() {
 
     # Write findings to artifact file — ensure parent directory exists
     mkdir -p "$(dirname "$artifact_file")" 2>/dev/null || true
-    if ! printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null; then
+    if ! printf '%s\n' "${_findings:-}" > "$artifact_file"; then
         warn "ruflo: failed to write audit artifact: $artifact_file"
+        return 1
     fi
 
     # Persist audit result for downstream stages
@@ -1139,7 +1155,8 @@ ruflo_execute_audit() {
         "pipeline-${pipeline_id}" \
         "audit,outcome" || true
 
-    emit_event "ruflo.audit_complete" "hive_id=$hive_id"
+    emit_event "ruflo.audit_complete" "hive_id=$hive_id stage=audit"
+    trap - EXIT
     return 0
 }
 

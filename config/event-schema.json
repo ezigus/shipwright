@@ -356,19 +356,19 @@
     },
     "ruflo.audit_start": {
       "required": ["max_agents"],
-      "optional": []
+      "optional": ["stage", "issue", "job_id"]
     },
     "ruflo.audit_complete": {
       "required": ["hive_id"],
-      "optional": []
+      "optional": ["stage", "issue", "job_id", "duration_s"]
     },
     "ruflo.audit_failed": {
       "required": ["reason"],
-      "optional": []
+      "optional": ["stage", "issue", "job_id"]
     },
     "ruflo.audit_fallback": {
       "required": ["reason"],
-      "optional": []
+      "optional": ["stage", "issue", "job_id"]
     },
     "ruflo.defaults_loaded": {
       "required": ["file"],

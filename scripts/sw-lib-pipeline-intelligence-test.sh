@@ -387,9 +387,9 @@ assert_eq "skip: prev=-1 (sentinel)" "skip" "$result"
 result=$(_compound_should_plateau 5 5 5)
 assert_eq "plateau fires: stable count on cycle 5" "plateau" "$result"
 
-# Test 7: skip when count is zero and stable (zero issues — not a stagnation problem)
+# Test 7: zero stable count still fires plateau (allows quality gate to make the call)
 result=$(_compound_should_plateau 0 0 2)
-assert_eq "plateau fires: zero stable count still triggers plateau detection" "plateau" "$result"
+assert_eq "plateau fires: zero stable count triggers plateau" "plateau" "$result"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Integration: Full intelligence pipeline

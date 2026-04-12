@@ -1560,6 +1560,7 @@ ${_cascade_test_tail}"
     local _neg_prev_categories=""
 
     local cycle=0
+    local _cycles_executed=0
     while [[ "$cycle" -lt "$max_cycles" ]]; do
         cycle=$((cycle + 1))
         local all_passed=true
@@ -1936,9 +1937,13 @@ All quality checks clean:
         fi
 
         # Check for plateau: issue count unchanged between cycles.
-        # Use break (not return 1) so the quality gate below makes the final
-        # pass/fail decision — subjective findings that stabilise at a non-zero
-        # count should not hard-fail when the quality score is still acceptable.
+        # When current_issue_count > 0 (subjective/unfixable findings) use break
+        # so the quality gate makes the final pass/fail decision; the score formula
+        # will penalise real issues while allowing acceptable subjective findings to
+        # stabilise (fixes #349).
+        # When current_issue_count == 0 but all_passed=false, some failure is not
+        # tracked in the count (simulation, security-scan, etc.) — hard-fail as
+        # before to preserve the strict guarantee.
         if [[ "$(_compound_should_plateau "$current_issue_count" "$prev_issue_count" "$cycle")" == "plateau" ]]; then
             warn "Convergence: quality plateau — ${current_issue_count} issues unchanged between cycles"
             emit_event "compound.plateau" \
@@ -1946,12 +1951,20 @@ All quality checks clean:
                 "cycle=$cycle" \
                 "issue_count=$current_issue_count"
 
-            if [[ -n "$ISSUE_NUMBER" ]]; then
-                gh_comment_issue "$ISSUE_NUMBER" "⚠️ **Compound quality plateau** — ${current_issue_count} issues unchanged after cycle ${cycle}. Deferring to quality gate." 2>/dev/null || true
+            if [[ "$current_issue_count" -gt 0 ]]; then
+                if [[ -n "$ISSUE_NUMBER" ]]; then
+                    gh_comment_issue "$ISSUE_NUMBER" "⚠️ **Compound quality plateau** — ${current_issue_count} issues unchanged after cycle ${cycle}. Deferring to quality gate." 2>/dev/null || true
+                fi
+                log_stage "compound_quality" "Plateau at cycle ${cycle}/${max_cycles} (${current_issue_count} issues) — deferring to quality gate"
+                _cycles_executed=$cycle
+                break
+            else
+                if [[ -n "$ISSUE_NUMBER" ]]; then
+                    gh_comment_issue "$ISSUE_NUMBER" "⚠️ **Compound quality plateau** — untracked failures persist after cycle ${cycle}. Stopping early." 2>/dev/null || true
+                fi
+                log_stage "compound_quality" "Plateau at cycle ${cycle}/${max_cycles} — untracked failures, hard fail"
+                return 1
             fi
-
-            log_stage "compound_quality" "Plateau at cycle ${cycle}/${max_cycles} (${current_issue_count} issues) — deferring to quality gate"
-            break
         fi
         prev_issue_count="$current_issue_count"
 
@@ -2019,6 +2032,7 @@ All quality checks clean:
             info "Re-running review after rebuild..."
             stage_review 2>/dev/null || true
         fi
+        _cycles_executed=$cycle
     done
 
     # ── Quality Score Computation ──
@@ -2059,6 +2073,27 @@ All quality checks clean:
         local _arch_major
         _arch_major=$(jq '[.[] | select(.severity == "high" or .severity == "major")] | length' "$ARTIFACTS_DIR/compound-architecture-validation.json" 2>/dev/null || echo "0")
         total_major=$((total_major + ${_arch_crit:-0} + ${_arch_major:-0}))
+    fi
+    # Cascade audit findings (compound-audit-findings.json) — not in earlier sections
+    if [[ -f "$ARTIFACTS_DIR/compound-audit-findings.json" ]]; then
+        local _cas_crit
+        _cas_crit=$(jq '[.[] | select(.severity == "critical")] | length' "$ARTIFACTS_DIR/compound-audit-findings.json" 2>/dev/null || echo "0")
+        local _cas_major
+        _cas_major=$(jq '[.[] | select(.severity == "high")] | length' "$ARTIFACTS_DIR/compound-audit-findings.json" 2>/dev/null || echo "0")
+        local _cas_minor
+        _cas_minor=$(jq '[.[] | select(.severity == "medium" or .severity == "low")] | length' "$ARTIFACTS_DIR/compound-audit-findings.json" 2>/dev/null || echo "0")
+        total_critical=$((total_critical + ${_cas_crit:-0}))
+        total_major=$((total_major + ${_cas_major:-0}))
+        total_minor=$((total_minor + ${_cas_minor:-0}))
+    fi
+    # Simulation review findings — set all_passed=false in-loop but not tracked in artifact re-reads above
+    if [[ -f "$ARTIFACTS_DIR/compound-simulation-review.json" ]]; then
+        local _sim_crit
+        _sim_crit=$(jq '[.[] | select(.severity == "critical" or .severity == "high")] | length' "$ARTIFACTS_DIR/compound-simulation-review.json" 2>/dev/null || echo "0")
+        local _sim_minor
+        _sim_minor=$(jq '[.[] | select(.severity == "low" or .severity == "medium")] | length' "$ARTIFACTS_DIR/compound-simulation-review.json" 2>/dev/null || echo "0")
+        total_critical=$((total_critical + ${_sim_crit:-0}))
+        total_minor=$((total_minor + ${_sim_minor:-0}))
     fi
 
     # Apply deductions
@@ -2131,10 +2166,10 @@ All quality checks clean:
 | Minor | ${total_minor} | -$((total_minor * 2)) |
 
 DoD pass rate: ${_dod_pass_rate}%
-Quality issues remain after ${max_cycles} cycles. Check artifacts for details." 2>/dev/null || true
+Quality issues remain after ${_cycles_executed} cycles. Check artifacts for details." 2>/dev/null || true
         fi
 
-        log_stage "compound_quality" "Quality gate failed: ${quality_score}/${min_threshold} after ${max_cycles} cycles"
+        log_stage "compound_quality" "Quality gate failed: ${quality_score}/${min_threshold} after ${_cycles_executed} cycles"
         return 1
     fi
 
@@ -2147,13 +2182,13 @@ Quality issues remain after ${max_cycles} cycles. Check artifacts for details." 
         elif [[ "$quality_score" -ge 70 ]]; then
             success "Compound quality GOOD: ${quality_score}/100"
         else
-            warn "Compound quality ACCEPTABLE: ${quality_score}/${min_threshold} after ${max_cycles} cycles"
+            warn "Compound quality ACCEPTABLE: ${quality_score}/${min_threshold} after ${_cycles_executed} cycles"
         fi
 
         if [[ -n "$ISSUE_NUMBER" ]]; then
             local quality_emoji="✅"
             [[ "$quality_score" -lt 70 ]] && quality_emoji="⚠️"
-            gh_comment_issue "$ISSUE_NUMBER" "${quality_emoji} **Compound quality passed** — score ${quality_score}/${min_threshold} after ${max_cycles} cycles
+            gh_comment_issue "$ISSUE_NUMBER" "${quality_emoji} **Compound quality passed** — score ${quality_score}/${min_threshold} after ${_cycles_executed} cycles
 
 | Finding Type | Count |
 |---|---|
@@ -2164,19 +2199,19 @@ Quality issues remain after ${max_cycles} cycles. Check artifacts for details." 
 DoD pass rate: ${_dod_pass_rate}%" 2>/dev/null || true
         fi
 
-        log_stage "compound_quality" "Passed with score ${quality_score}/${min_threshold} after ${max_cycles} cycles"
+        log_stage "compound_quality" "Passed with score ${quality_score}/${min_threshold} after ${_cycles_executed} cycles"
         return 0
     fi
 
-    error "Compound quality exhausted after ${max_cycles} cycles with insufficient score"
+    error "Compound quality exhausted after ${_cycles_executed} cycles with insufficient score"
 
     if [[ -n "$ISSUE_NUMBER" ]]; then
-        gh_comment_issue "$ISSUE_NUMBER" "❌ **Compound quality failed** after ${max_cycles} cycles
+        gh_comment_issue "$ISSUE_NUMBER" "❌ **Compound quality failed** after ${_cycles_executed} cycles
 
 Quality issues remain. Check artifacts for details." 2>/dev/null || true
     fi
 
-    log_stage "compound_quality" "Failed after ${max_cycles} cycles"
+    log_stage "compound_quality" "Failed after ${_cycles_executed} cycles"
     return 1
 }
 

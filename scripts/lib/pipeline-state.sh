@@ -480,7 +480,7 @@ _cleanup_run_artifacts() {
         base="$(basename "$f")"
         case "$base" in
             pipeline-audit.jsonl|pipeline-audit.json|pipeline-audit.md|\
-            rollbacks.jsonl|last-issue.txt|error-log.jsonl)
+            rollbacks.jsonl|last-issue.txt|error-log.jsonl|composed-pipeline.json)
                 continue ;;
         esac
         rm -f "$f"
@@ -511,6 +511,7 @@ _cleanup_stale_artifacts_on_resume() {
     [[ -z "${ARTIFACTS_DIR:-}" || ! -d "$ARTIFACTS_DIR" ]] && return 0
     local epoch="${PIPELINE_RUN_EPOCH:-0}"
     [[ "$epoch" == "0" || -z "$epoch" ]] && return 0
+    type file_mtime >/dev/null 2>&1 || return 0
 
     local f base mtime
     for f in "$ARTIFACTS_DIR"/*; do
@@ -543,7 +544,7 @@ _cleanup_stale_artifacts_on_resume() {
 initialize_state() {
     PIPELINE_STATUS="running"
     PIPELINE_START_EPOCH="$(now_epoch)"
-    PIPELINE_RUN_EPOCH="$(now_epoch)"
+    PIPELINE_RUN_EPOCH="$PIPELINE_START_EPOCH"
     STARTED_AT="$(now_iso)"
     UPDATED_AT="$(now_iso)"
     STAGE_STATUSES=""
@@ -680,21 +681,17 @@ ${sid}:${sst}"
     done < "$STATE_FILE"
 
     # Backward compat: old state files won't have pipeline_run_epoch.
-    # Use the state file's own mtime as a conservative proxy for when this pipeline
-    # started — preserves artifacts from the current run while still cleaning up
-    # artifacts left by a genuinely different pipeline.  Falls back to now_epoch()
-    # only when file_mtime is unavailable (e.g., isolated test harnesses).
+    # Derive epoch from the started_at timestamp already parsed above — this is the
+    # stable anchor for "when this pipeline began" and won't drift like file mtime does.
+    # If derivation fails we leave PIPELINE_RUN_EPOCH=0, which disables stale cleanup
+    # (safe: no false deletions on upgrade).
     if [[ -z "${PIPELINE_RUN_EPOCH:-}" || "${PIPELINE_RUN_EPOCH:-0}" == "0" ]]; then
-        if type file_mtime >/dev/null 2>&1; then
-            local _sf_mtime
-            _sf_mtime=$(file_mtime "$STATE_FILE")
-            if [[ "$_sf_mtime" =~ ^[0-9]+$ && "$_sf_mtime" -gt "0" ]]; then
-                PIPELINE_RUN_EPOCH="$_sf_mtime"
-            else
-                PIPELINE_RUN_EPOCH="$(now_epoch)"
+        if [[ -n "${STARTED_AT:-}" ]] && type date_to_epoch >/dev/null 2>&1; then
+            local _derived_epoch
+            _derived_epoch="$(date_to_epoch "$STARTED_AT" 2>/dev/null || true)"
+            if [[ "$_derived_epoch" =~ ^[0-9]+$ && "$_derived_epoch" -gt "0" ]]; then
+                PIPELINE_RUN_EPOCH="$_derived_epoch"
             fi
-        else
-            PIPELINE_RUN_EPOCH="$(now_epoch)"
         fi
     fi
 

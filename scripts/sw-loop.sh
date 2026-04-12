@@ -124,6 +124,7 @@ AUDIT_RESULT=""
 HOLISTIC_RESULT=""
 COMPLETION_REJECTED=false
 QUALITY_GATE_PASSED=true
+PREV_NEW_COMMITS=0          # Commit count from previous iteration (for zero-progress detection)
 
 # ─── Multi-Test Defaults ──────────────────────────────────────────────────
 ADDITIONAL_TEST_CMDS=()   # Array of extra test commands (from --additional-test-cmds)
@@ -1591,7 +1592,7 @@ run_holistic_gate() {
 You are a final quality gate evaluating whether an autonomous coding agent has FULLY achieved its goal.
 
 ## Original Goal
-${GOAL}
+${ORIGINAL_GOAL:-$GOAL}
 
 ## Project Stats
 - Files in repo: ${file_count}
@@ -2678,16 +2679,22 @@ ${GOAL}"
                 echo -e "  ${CYAN}▸${RESET} Progress detected — continuing"
             fi
         elif [[ "${TEST_PASSED:-}" == "true" ]] && \
-             { ! $AUDIT_AGENT_ENABLED || [[ "${AUDIT_RESULT:-}" == "pass" ]]; }; then
-            # Tests passed AND audit either passed or is disabled.
-            # Implementation is verified — this is not a stuck agent.
+             { ! $AUDIT_AGENT_ENABLED || [[ "${AUDIT_RESULT:-}" == "pass" ]]; } && \
+             { ! $QUALITY_GATES_ENABLED || $QUALITY_GATE_PASSED; }; then
+            # Tests passed AND audit either passed or is disabled AND quality gates
+            # either passed or are disabled. All verification signals agree the
+            # implementation is correct — this is not a stuck agent.
             # Clear prior strikes so stale counts don't trip the breaker later.
             CONSECUTIVE_FAILURES=0
-            echo -e "  ${CYAN}▸${RESET} Tests and audit passed — skipping circuit breaker strike"
+            echo -e "  ${CYAN}▸${RESET} Tests, audit, and quality gates passed — skipping circuit breaker strike"
         else
             CONSECUTIVE_FAILURES=$(( CONSECUTIVE_FAILURES + 1 ))
             echo -e "  ${YELLOW}⚠${RESET} Low progress (${CONSECUTIVE_FAILURES}/${CIRCUIT_BREAKER_THRESHOLD} before circuit breaker)"
         fi
+
+        # Persist commit count so the next iteration's compose_prompt() can detect
+        # zero-progress (agent made no commits but quality gate is still failing).
+        PREV_NEW_COMMITS="${new_commits:-0}"
 
         # Extract summary and update state
         local summary

@@ -2294,6 +2294,102 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Bug fixes: loop stuckness — GOAL pollution, circuit-breaker escape hatch,
+# zero-progress blindness (#345)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo -e "${DIM}  loop stuckness fixes (#345)${RESET}"
+
+# ─── Fix 1: Holistic gate uses ORIGINAL_GOAL, not polluted GOAL ──────────────
+# run_holistic_gate() must inject ${ORIGINAL_GOAL:-$GOAL} so that feedback
+# accumulated in GOAL during a session does not poison the holistic assessment.
+if grep -q 'ORIGINAL_GOAL:-\$GOAL' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Fix 1: holistic gate uses \${ORIGINAL_GOAL:-\$GOAL}"
+else
+    assert_fail "Fix 1: holistic gate uses \${ORIGINAL_GOAL:-\$GOAL}" \
+        "Expected ORIGINAL_GOAL:-\$GOAL in sw-loop.sh holistic prompt; got raw \${GOAL}"
+fi
+
+# Verify the fix is specifically inside run_holistic_gate, not elsewhere
+holistic_goal_line=$(grep -n 'ORIGINAL_GOAL:-\$GOAL' "$SCRIPT_DIR/sw-loop.sh" | head -1 || true)
+if [[ -n "$holistic_goal_line" ]]; then
+    assert_pass "Fix 1: ORIGINAL_GOAL:-\$GOAL present in sw-loop.sh"
+else
+    assert_fail "Fix 1: ORIGINAL_GOAL:-\$GOAL present in sw-loop.sh"
+fi
+
+# ─── Fix 2: Circuit breaker escape hatch respects quality gates ──────────────
+# The elif branch that resets CONSECUTIVE_FAILURES=0 must also require that
+# QUALITY_GATE_PASSED is true (or quality gates are disabled). Variable is
+# QUALITY_GATE_PASSED (singular), gated by QUALITY_GATES_ENABLED.
+if grep -qE 'QUALITY_GATES_ENABLED.*QUALITY_GATE_PASSED|QUALITY_GATE_PASSED.*QUALITY_GATES_ENABLED' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Fix 2: circuit breaker escape hatch checks QUALITY_GATE_PASSED"
+else
+    assert_fail "Fix 2: circuit breaker escape hatch checks QUALITY_GATE_PASSED" \
+        "Expected QUALITY_GATES_ENABLED and QUALITY_GATE_PASSED in the elif escape-hatch branch"
+fi
+
+# Verify escape hatch still resets CONSECUTIVE_FAILURES (it should still work when gates pass)
+if grep -A5 'QUALITY_GATES_ENABLED.*QUALITY_GATE_PASSED\|QUALITY_GATE_PASSED.*QUALITY_GATES_ENABLED' \
+    "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | grep -q 'CONSECUTIVE_FAILURES=0' 2>/dev/null; then
+    assert_pass "Fix 2: CONSECUTIVE_FAILURES still resets when all gates pass"
+else
+    assert_fail "Fix 2: CONSECUTIVE_FAILURES still resets when all gates pass" \
+        "Expected CONSECUTIVE_FAILURES=0 in the escape hatch branch after quality gate guard"
+fi
+
+# ─── Fix 3a: PREV_NEW_COMMITS global initialized and persisted ───────────────
+# PREV_NEW_COMMITS=0 must be initialized in the defaults section.
+if grep -q 'PREV_NEW_COMMITS=0' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Fix 3a: PREV_NEW_COMMITS initialized to 0 in defaults"
+else
+    assert_fail "Fix 3a: PREV_NEW_COMMITS initialized to 0 in defaults" \
+        "Expected 'PREV_NEW_COMMITS=0' in sw-loop.sh defaults"
+fi
+
+# PREV_NEW_COMMITS must be set to new_commits after the circuit breaker block
+if grep -q 'PREV_NEW_COMMITS="${new_commits' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Fix 3a: PREV_NEW_COMMITS set from new_commits after circuit breaker"
+else
+    assert_fail "Fix 3a: PREV_NEW_COMMITS set from new_commits after circuit breaker" \
+        "Expected PREV_NEW_COMMITS=\"\${new_commits...}\" assignment in main loop body"
+fi
+
+# ─── Fix 3b: Zero-progress notice in compose_prompt ─────────────────────────
+# compose_prompt() in loop-iteration.sh must check PREV_NEW_COMMITS and
+# QUALITY_GATE_PASSED and inject a zero-progress warning when both indicate stuckness.
+if grep -q 'PREV_NEW_COMMITS' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "Fix 3b: loop-iteration.sh references PREV_NEW_COMMITS"
+else
+    assert_fail "Fix 3b: loop-iteration.sh references PREV_NEW_COMMITS" \
+        "Expected PREV_NEW_COMMITS check in loop-iteration.sh compose_prompt()"
+fi
+
+if grep -q 'Zero Progress Detected' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "Fix 3b: zero-progress notice text present in loop-iteration.sh"
+else
+    assert_fail "Fix 3b: zero-progress notice text present in loop-iteration.sh" \
+        "Expected 'Zero Progress Detected' string in compose_prompt() notice"
+fi
+
+# Notice must only fire when PREV_NEW_COMMITS==0 AND quality gate failed
+if grep -qE 'PREV_NEW_COMMITS.*-eq 0.*QUALITY_GATE_PASSED|QUALITY_GATE_PASSED.*PREV_NEW_COMMITS.*-eq 0' \
+    "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "Fix 3b: zero-progress notice gated on PREV_NEW_COMMITS==0 and QUALITY_GATE_PASSED==false"
+else
+    assert_fail "Fix 3b: zero-progress notice gated on PREV_NEW_COMMITS==0 and QUALITY_GATE_PASSED==false" \
+        "Expected both conditions on the same guard in loop-iteration.sh"
+fi
+
+# ─── Fix 3b: compose_prompt includes zero_progress_notice in output ──────────
+if grep -q 'zero_progress_notice' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "Fix 3b: zero_progress_notice variable used in compose_prompt output"
+else
+    assert_fail "Fix 3b: zero_progress_notice variable used in compose_prompt output"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

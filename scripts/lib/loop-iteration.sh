@@ -191,6 +191,22 @@ Fix these specific errors. Each line above is one distinct error from the test o
     local rejection_notice_section
     rejection_notice_section="$(compose_rejection_notice_section)"
 
+    # Zero-progress notice: fire when the previous iteration produced no new commits
+    # AND the quality gate is still failing. Without this, the agent reads passing
+    # tests + the same gate feedback and silently exits in seconds, making no changes.
+    local zero_progress_notice=""
+    if [[ "${PREV_NEW_COMMITS:-0}" -eq 0 ]] && [[ "${QUALITY_GATE_PASSED:-true}" == "false" ]]; then
+        zero_progress_notice="
+## Zero Progress Detected (IMPORTANT)
+Your previous iteration made NO new commits. The working tree is identical to before.
+Quality gates are still failing with the feedback shown above. You MUST either:
+  (a) make concrete code changes and commit them, OR
+  (b) state explicitly why the quality-gate feedback is incorrect, citing
+      specific file:line evidence — do not silently exit.
+Declaring LOOP_COMPLETE or exiting without committing code changes will not satisfy
+the holistic gate and will count toward the circuit-breaker failure limit."
+    fi
+
     # Memory context injection (failure patterns + past learnings)
     local memory_section=""
     if type memory_inject_context >/dev/null 2>&1; then
@@ -463,6 +479,8 @@ ${audit_feedback_section}
 ${holistic_feedback_section}
 
 ${rejection_notice_section}
+
+${zero_progress_notice}
 
 ${stuckness_section}
 

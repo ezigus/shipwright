@@ -659,6 +659,11 @@ fi  # end fallback stage_compound_quality
 stage_audit() {
     CURRENT_STAGE_ID="audit"
 
+    if [[ "${SKIP_GATES:-}" == "1" ]]; then
+        info "Audit stage skipped (SKIP_GATES=1)"
+        return 0
+    fi
+
     # Read stage config from pipeline template
     local cfg
     cfg=$(jq -r '.stages[] | select(.id == "audit") | .config // {}' "$PIPELINE_CONFIG" 2>/dev/null) || cfg="{}"

@@ -181,7 +181,7 @@ triage_score_issue() {
     local memory_score=0
     if [[ -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
         local memory_result
-        memory_result=$("$SCRIPT_DIR/sw-memory.sh" search --issue "$issue_num" --json 2>/dev/null || true)
+        memory_result=$(timeout 5 "$SCRIPT_DIR/sw-memory.sh" search --issue "$issue_num" --json 2>/dev/null || true)
         if [[ -n "$memory_result" ]]; then
             local prior_result
             prior_result=$(echo "$memory_result" | jq -r '.last_result // ""' 2>/dev/null || true)

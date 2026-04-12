@@ -2311,12 +2311,19 @@ else
         "Expected ORIGINAL_GOAL:-\$GOAL in sw-loop.sh holistic prompt; got raw \${GOAL}"
 fi
 
-# Verify the fix is specifically inside run_holistic_gate, not elsewhere
-holistic_goal_line=$(grep -n 'ORIGINAL_GOAL:-\$GOAL' "$SCRIPT_DIR/sw-loop.sh" | head -1 || true)
-if [[ -n "$holistic_goal_line" ]]; then
-    assert_pass "Fix 1: ORIGINAL_GOAL:-\$GOAL present in sw-loop.sh"
+# Verify the fix is specifically inside run_holistic_gate (not just anywhere in the file)
+holistic_gate_block=$(
+    awk '
+        /^run_holistic_gate\(\)[[:space:]]*\{/ { in_fn=1 }
+        in_fn { print }
+        in_fn && /^\}/ { exit }
+    ' "$SCRIPT_DIR/sw-loop.sh" || true
+)
+if printf '%s\n' "$holistic_gate_block" | grep -q 'ORIGINAL_GOAL:-\$GOAL'; then
+    assert_pass "Fix 1: ORIGINAL_GOAL:-\$GOAL present inside run_holistic_gate"
 else
-    assert_fail "Fix 1: ORIGINAL_GOAL:-\$GOAL present in sw-loop.sh"
+    assert_fail "Fix 1: ORIGINAL_GOAL:-\$GOAL present inside run_holistic_gate" \
+        "Expected ORIGINAL_GOAL:-\$GOAL inside run_holistic_gate in sw-loop.sh"
 fi
 
 # ─── Fix 2: Circuit breaker escape hatch respects quality gates ──────────────

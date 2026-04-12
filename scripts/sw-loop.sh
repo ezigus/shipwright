@@ -2686,7 +2686,7 @@ ${GOAL}"
             # implementation is correct — this is not a stuck agent.
             # Clear prior strikes so stale counts don't trip the breaker later.
             CONSECUTIVE_FAILURES=0
-            echo -e "  ${CYAN}▸${RESET} Tests and audit passed — skipping circuit breaker strike"
+            echo -e "  ${CYAN}▸${RESET} Tests, audit, and quality gates passed — skipping circuit breaker strike"
         else
             CONSECUTIVE_FAILURES=$(( CONSECUTIVE_FAILURES + 1 ))
             echo -e "  ${YELLOW}⚠${RESET} Low progress (${CONSECUTIVE_FAILURES}/${CIRCUIT_BREAKER_THRESHOLD} before circuit breaker)"

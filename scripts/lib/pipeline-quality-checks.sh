@@ -34,10 +34,52 @@ BASE_BRANCH="${BASE_BRANCH:-main}"
 PIPELINE_CONFIG="${PIPELINE_CONFIG:-}"
 TEST_CMD="${TEST_CMD:-}"
 
+# Returns 0 (fresh) if an artifact file was written during the current pipeline run.
+# Freshness is anchored to PIPELINE_RUN_EPOCH (set by initialize_state / resume_state).
+#
+# Primary check: JSON timestamp field (authoritative — unaffected by filesystem clock skew).
+#   - Field present and artifact_epoch >= PIPELINE_RUN_EPOCH → fresh (return 0)
+#   - Field present and artifact_epoch <  PIPELINE_RUN_EPOCH → stale (return 1, no fallback)
+# Fallback: file mtime (used when the JSON field is absent).
+# Pass-through: when PIPELINE_RUN_EPOCH is 0 or unset, always returns 0 (backward compat).
+#
+# Usage: pipeline_artifact_is_fresh <file> [json_timestamp_field]
+pipeline_artifact_is_fresh() {
+    local file="$1" ts_field="${2:-}"
+    local epoch="${PIPELINE_RUN_EPOCH:-0}"
+
+    # Backward compat: no epoch reference → treat as fresh (pass-through)
+    [[ "$epoch" == "0" || -z "$epoch" ]] && return 0
+    [[ ! -f "$file" ]] && return 1
+
+    # Primary: JSON timestamp field
+    if [[ -n "$ts_field" ]]; then
+        local ts artifact_epoch
+        ts=$(jq -r --arg f "$ts_field" '.[$f] // empty' "$file" 2>/dev/null || true)
+        if [[ -n "$ts" ]]; then
+            artifact_epoch=$(date_to_epoch "$ts" 2>/dev/null || echo "0")
+            if [[ "$artifact_epoch" =~ ^[0-9]+$ && "$artifact_epoch" -ge "$epoch" ]]; then
+                return 0
+            fi
+            # Timestamp present but stale — authoritative, do not fall through to mtime
+            return 1
+        fi
+    fi
+
+    # Fallback: file mtime (artifact has no JSON timestamp field)
+    local mtime
+    mtime=$(file_mtime "$file")
+    [[ "$mtime" =~ ^[0-9]+$ && "$mtime" -ge "$epoch" ]] && return 0
+    return 1
+}
+
 # Returns the numeric exit code from the last pipeline test run, or returns 1 if unknown.
+# When PIPELINE_RUN_EPOCH is set, stale sidecars (written by a previous pipeline run) are
+# treated as missing so downstream callers fall back to their default/safe paths.
 pipeline_test_status() {
     local _sf="${ARTIFACTS_DIR}/test-results.status.json"
     [[ -f "$_sf" ]] || return 1
+    pipeline_artifact_is_fresh "$_sf" "finished_at" || return 1
     jq -r '.exit_code // empty' "$_sf" 2>/dev/null
 }
 

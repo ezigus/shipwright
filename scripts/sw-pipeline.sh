@@ -2010,19 +2010,19 @@ pipeline_post_completion_cleanup() {
         fi
     fi
 
-    # 2. Clear per-run intelligence artifacts (not needed after completion)
-    local intel_files=(
-        "${ARTIFACTS_DIR}/classified-findings.json"
-        "${ARTIFACTS_DIR}/reassessment.json"
-        "${ARTIFACTS_DIR}/skip-stage.txt"
-        "${ARTIFACTS_DIR}/human-message.txt"
-    )
-    local f
-    for f in "${intel_files[@]}"; do
-        if [[ -f "$f" ]]; then
-            rm -f "$f"
-            cleaned=$((cleaned + 1))
-        fi
+    # 2. Clear transient intelligence/routing artifacts (not needed after completion).
+    # Note: delivery artifacts (intake.json, plan.md, review.md, etc.) are intentionally
+    # kept so they remain inspectable after a completed run.  Only remove the ephemeral
+    # files that guided decisions during the run — expanding on the original 4-file list.
+    local _f
+    for _f in \
+        "${ARTIFACTS_DIR}/classified-findings.json" \
+        "${ARTIFACTS_DIR}/reassessment.json" \
+        "${ARTIFACTS_DIR}/skip-stage.txt" \
+        "${ARTIFACTS_DIR}/human-message.txt" \
+        "${ARTIFACTS_DIR}/model-routing.log" \
+        "${ARTIFACTS_DIR}/.plan-failure-sig.txt"; do
+        [[ -f "$_f" ]] && rm -f "$_f" && cleaned=$((cleaned + 1)) || true
     done
 
     # 3. Clear stale pipeline state (mark as idle so next run starts clean)

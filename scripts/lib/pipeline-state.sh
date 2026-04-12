@@ -23,6 +23,10 @@ ISSUE_NUMBER="${ISSUE_NUMBER:-}"
 GOAL="${GOAL:-}"
 PIPELINE_NAME="${PIPELINE_NAME:-pipeline}"
 PIPELINE_STATUS="${PIPELINE_STATUS:-pending}"
+# Epoch set once at pipeline start; persisted across resumes (unlike PIPELINE_START_EPOCH,
+# which is reset on resume to measure elapsed-from-resume time).  Used to detect stale
+# artifacts from prior runs.  0 = unset / unknown (freshness checks pass through).
+PIPELINE_RUN_EPOCH="${PIPELINE_RUN_EPOCH:-0}"
 
 save_artifact() {
     local name="$1" content="$2"
@@ -460,16 +464,93 @@ ${message}
 "
 }
 
+# ─── Artifact Cleanup Helpers ─────────────────────────────────────────────────
+
+# _cleanup_run_artifacts — whitelist-based removal of per-run artifacts.
+# Preserves the cumulative audit trail; removes everything else in ARTIFACTS_DIR
+# (flat files, dotfiles, and per-run subdirectories like stage-outputs/ and wiki/).
+# Uses a case statement for the whitelist so this is Bash 3.2 compatible.
+_cleanup_run_artifacts() {
+    [[ -z "${ARTIFACTS_DIR:-}" || ! -d "$ARTIFACTS_DIR" ]] && return 0
+    local f base
+
+    # Flat files
+    for f in "$ARTIFACTS_DIR"/*; do
+        [[ -f "$f" ]] || continue
+        base="$(basename "$f")"
+        case "$base" in
+            pipeline-audit.jsonl|pipeline-audit.json|pipeline-audit.md|\
+            rollbacks.jsonl|last-issue.txt|error-log.jsonl)
+                continue ;;
+        esac
+        rm -f "$f"
+    done
+
+    # Dotfiles (.plan-failure-sig.txt, .skill-*, model-routing.log written as dot, etc.)
+    for f in "$ARTIFACTS_DIR"/.*; do
+        [[ -f "$f" ]] || continue
+        base="$(basename "$f")"
+        [[ "$base" == "." || "$base" == ".." ]] && continue
+        rm -f "$f"
+    done
+
+    # Per-run subdirectories
+    local d
+    for d in "$ARTIFACTS_DIR"/stage-outputs "$ARTIFACTS_DIR"/wiki; do
+        [[ -d "$d" ]] && rm -rf "$d"
+    done
+
+    return 0
+}
+
+# _cleanup_stale_artifacts_on_resume — mtime-based removal of artifacts that
+# predate the current pipeline run.  Catches leftovers that survived initialize_state
+# (e.g., artifacts from a genuinely different pipeline sharing the same worktree).
+# No-op when PIPELINE_RUN_EPOCH is 0/unset (backward compat).
+_cleanup_stale_artifacts_on_resume() {
+    [[ -z "${ARTIFACTS_DIR:-}" || ! -d "$ARTIFACTS_DIR" ]] && return 0
+    local epoch="${PIPELINE_RUN_EPOCH:-0}"
+    [[ "$epoch" == "0" || -z "$epoch" ]] && return 0
+
+    local f base mtime
+    for f in "$ARTIFACTS_DIR"/*; do
+        [[ -f "$f" ]] || continue
+        base="$(basename "$f")"
+        case "$base" in
+            pipeline-audit.jsonl|pipeline-audit.json|pipeline-audit.md|\
+            rollbacks.jsonl|last-issue.txt|error-log.jsonl)
+                continue ;;
+        esac
+        mtime=$(file_mtime "$f")
+        if [[ "$mtime" =~ ^[0-9]+$ && "$mtime" -lt "$epoch" ]]; then
+            rm -f "$f"
+        fi
+    done
+
+    for f in "$ARTIFACTS_DIR"/.*; do
+        [[ -f "$f" ]] || continue
+        base="$(basename "$f")"
+        [[ "$base" == "." || "$base" == ".." ]] && continue
+        mtime=$(file_mtime "$f")
+        if [[ "$mtime" =~ ^[0-9]+$ && "$mtime" -lt "$epoch" ]]; then
+            rm -f "$f"
+        fi
+    done
+
+    return 0
+}
+
 initialize_state() {
     PIPELINE_STATUS="running"
     PIPELINE_START_EPOCH="$(now_epoch)"
+    PIPELINE_RUN_EPOCH="$(now_epoch)"
     STARTED_AT="$(now_iso)"
     UPDATED_AT="$(now_iso)"
     STAGE_STATUSES=""
     STAGE_TIMINGS=""
     LOG_ENTRIES=""
-    # Clear per-run tracking files
-    rm -f "$ARTIFACTS_DIR/model-routing.log" "$ARTIFACTS_DIR/.plan-failure-sig.txt"
+    # Remove all per-run artifacts (whitelist-based); preserves cumulative audit trail
+    _cleanup_run_artifacts
     # Clear task list so stale tasks from a previous pipeline run are not injected
     [[ -n "${TASKS_FILE:-}" ]] && rm -f "$TASKS_FILE"
     write_state
@@ -525,6 +606,7 @@ write_state() {
         printf 'current_stage_description: "%s"\n' "${cur_stage_desc}"
         printf 'stage_progress: "%s"\n' "${stage_progress}"
         printf 'started_at: %s\n' "${STARTED_AT:-$(now_iso)}"
+        printf 'pipeline_run_epoch: %s\n' "${PIPELINE_RUN_EPOCH:-0}"
         printf 'updated_at: %s\n' "$(now_iso)"
         printf 'elapsed: %s\n' "${total_dur:-0s}"
         printf 'test_cmd: "%s"\n' "${TEST_CMD:-}"
@@ -582,6 +664,7 @@ resume_state() {
                 test_cmd:*)            TEST_CMD="$(echo "${line#test_cmd:}" | sed 's/^ *"//;s/" *$//')" ;;
                 pr_number:*)           PR_NUMBER="$(_trim "${line#pr_number:}")" ;;
                 progress_comment_id:*) PROGRESS_COMMENT_ID="$(_trim "${line#progress_comment_id:}")" ;;
+                pipeline_run_epoch:*)  PIPELINE_RUN_EPOCH="$(_trim "${line#pipeline_run_epoch:}")" ;;
                 "  "*)
                     local trimmed
                     trimmed="$(_trim "$line")"
@@ -595,6 +678,29 @@ ${sid}:${sst}"
             esac
         fi
     done < "$STATE_FILE"
+
+    # Backward compat: old state files won't have pipeline_run_epoch.
+    # Use the state file's own mtime as a conservative proxy for when this pipeline
+    # started — preserves artifacts from the current run while still cleaning up
+    # artifacts left by a genuinely different pipeline.  Falls back to now_epoch()
+    # only when file_mtime is unavailable (e.g., isolated test harnesses).
+    if [[ -z "${PIPELINE_RUN_EPOCH:-}" || "${PIPELINE_RUN_EPOCH:-0}" == "0" ]]; then
+        if type file_mtime >/dev/null 2>&1; then
+            local _sf_mtime
+            _sf_mtime=$(file_mtime "$STATE_FILE")
+            if [[ "$_sf_mtime" =~ ^[0-9]+$ && "$_sf_mtime" -gt "0" ]]; then
+                PIPELINE_RUN_EPOCH="$_sf_mtime"
+            else
+                PIPELINE_RUN_EPOCH="$(now_epoch)"
+            fi
+        else
+            PIPELINE_RUN_EPOCH="$(now_epoch)"
+        fi
+    fi
+
+    # Remove artifacts that predate this pipeline run (handles artifacts left by a
+    # different pipeline that previously used this worktree/artifacts directory).
+    _cleanup_stale_artifacts_on_resume
 
     LOG_ENTRIES="$(sed -n '/^## Log$/,$ { /^## Log$/d; p; }' "$STATE_FILE" 2>/dev/null || true)"
 

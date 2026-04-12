@@ -356,6 +356,42 @@ route=$(classify_quality_findings 2>/dev/null || echo "correctness")
 assert_pass "classify_quality_findings returns routing decision"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# _compound_should_plateau (issue #349)
+# Plateau detection helper: returns "plateau" when stagnation is detected,
+# "skip" otherwise. Covers the fix where return 1 was replaced with break so
+# the quality gate makes the final pass/fail decision.
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "_compound_should_plateau"
+
+# Test 1: fires when count is stable across cycles (cycle > 1, prev >= 0)
+result=$(_compound_should_plateau 3 3 2)
+assert_eq "plateau fires: stable count, cycle>1" "plateau" "$result"
+
+# Test 2: skip when count decreases (progress is being made)
+result=$(_compound_should_plateau 2 3 2)
+assert_eq "skip: count decreased" "skip" "$result"
+
+# Test 3: skip when count increases (new findings appeared)
+result=$(_compound_should_plateau 4 3 2)
+assert_eq "skip: count increased" "skip" "$result"
+
+# Test 4: skip on cycle 1 — first cycle never triggers plateau
+result=$(_compound_should_plateau 3 3 1)
+assert_eq "skip: cycle==1 never plateaus" "skip" "$result"
+
+# Test 5: skip when prev_count is sentinel -1 (before any real cycle)
+result=$(_compound_should_plateau 3 -1 2)
+assert_eq "skip: prev=-1 (sentinel)" "skip" "$result"
+
+# Test 6: fires on later cycles with stable count (e.g. cycle 5)
+result=$(_compound_should_plateau 5 5 5)
+assert_eq "plateau fires: stable count on cycle 5" "plateau" "$result"
+
+# Test 7: skip when count is zero and stable (zero issues — not a stagnation problem)
+result=$(_compound_should_plateau 0 0 2)
+assert_eq "plateau fires: zero stable count still triggers plateau detection" "plateau" "$result"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Integration: Full intelligence pipeline
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "Integration: Full intelligence pipeline"

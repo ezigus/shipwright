@@ -1112,6 +1112,25 @@ _extract_blocking_items() {
     # tmp_items and tmp_fps cleaned up by the RETURN trap above.
 }
 
+# _compound_should_plateau <current_count> <prev_count> <cycle>
+# Pure predicate: returns "plateau" when issue-count stagnation is detected,
+# "skip" otherwise. Extracted so plateau logic is unit-testable independently
+# of the compound_quality loop.
+# Plateau conditions (all must be true):
+#   - prev_count >= 0  (at least one real prior cycle, not the sentinel -1)
+#   - current_count == prev_count  (no change)
+#   - cycle > 1        (never fire on the very first cycle)
+_compound_should_plateau() {
+    local current_count="$1" prev_count="$2" cycle="$3"
+    if [[ "$prev_count" -ge 0 \
+       && "$current_count" -eq "$prev_count" \
+       && "$cycle" -gt 1 ]]; then
+        echo "plateau"
+    else
+        echo "skip"
+    fi
+}
+
 # _write_quality_feedback <route> <output_file> [blocking_items]
 # Collects all quality findings into a single markdown file. Extracted from
 # compound_rebuild_with_feedback() to allow direct testing without mocking
@@ -1441,6 +1460,14 @@ stage_compound_quality() {
         warn "Atomic write violations: ${atomic_violations} (state/config file patterns)"
         total_minor=$((total_minor + atomic_violations))
     fi
+
+    # Snapshot pre-loop totals so the post-loop quality gate can restore them
+    # before re-reading artifact files. Without this, in-loop per-cycle
+    # accumulation and post-loop file-reading count the same findings twice
+    # (or more for multi-cycle runs), inflating quality-score penalties.
+    local _preloop_critical=$total_critical
+    local _preloop_major=$total_major
+    local _preloop_minor=$total_minor
 
     # Vitals-driven adaptive cycle limit (preferred)
     # Respect the template's max_cycles as a ceiling — vitals can only reduce, not inflate
@@ -1908,8 +1935,11 @@ All quality checks clean:
             return 0
         fi
 
-        # Check for plateau: issue count unchanged between cycles
-        if [[ "$prev_issue_count" -ge 0 && "$current_issue_count" -eq "$prev_issue_count" && "$cycle" -gt 1 ]]; then
+        # Check for plateau: issue count unchanged between cycles.
+        # Use break (not return 1) so the quality gate below makes the final
+        # pass/fail decision — subjective findings that stabilise at a non-zero
+        # count should not hard-fail when the quality score is still acceptable.
+        if [[ "$(_compound_should_plateau "$current_issue_count" "$prev_issue_count" "$cycle")" == "plateau" ]]; then
             warn "Convergence: quality plateau — ${current_issue_count} issues unchanged between cycles"
             emit_event "compound.plateau" \
                 "issue=${ISSUE_NUMBER:-0}" \
@@ -1917,11 +1947,11 @@ All quality checks clean:
                 "issue_count=$current_issue_count"
 
             if [[ -n "$ISSUE_NUMBER" ]]; then
-                gh_comment_issue "$ISSUE_NUMBER" "⚠️ **Compound quality plateau** — ${current_issue_count} issues unchanged after cycle ${cycle}. Stopping early." 2>/dev/null || true
+                gh_comment_issue "$ISSUE_NUMBER" "⚠️ **Compound quality plateau** — ${current_issue_count} issues unchanged after cycle ${cycle}. Deferring to quality gate." 2>/dev/null || true
             fi
 
-            log_stage "compound_quality" "Plateau at cycle ${cycle}/${max_cycles} (${current_issue_count} issues)"
-            return 1
+            log_stage "compound_quality" "Plateau at cycle ${cycle}/${max_cycles} (${current_issue_count} issues) — deferring to quality gate"
+            break
         fi
         prev_issue_count="$current_issue_count"
 
@@ -1994,6 +2024,14 @@ All quality checks clean:
     # ── Quality Score Computation ──
     # Starting score: 100, deductions based on findings
     local quality_score=100
+
+    # Restore pre-loop totals before reading artifact files.
+    # In-loop accumulation adds findings once per cycle (inflated for multi-cycle
+    # runs); the artifact files reflect the most recent cycle state and are the
+    # authoritative source for the final quality gate count.
+    total_critical=$_preloop_critical
+    total_major=$_preloop_major
+    total_minor=$_preloop_minor
 
     # Count findings from artifact files
     if [[ -f "$ARTIFACTS_DIR/security-source-scan.json" ]]; then

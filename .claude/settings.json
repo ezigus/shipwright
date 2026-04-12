@@ -186,9 +186,9 @@
     "version": "3.0.0",
     "enabled": true,
     "platform": {
-      "os": "darwin",
-      "arch": "arm64",
-      "shell": "zsh"
+      "os": "linux",
+      "arch": "x64",
+      "shell": "bash"
     },
     "modelPreferences": {
       "default": "claude-opus-4-6",

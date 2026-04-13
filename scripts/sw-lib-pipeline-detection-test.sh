@@ -444,10 +444,10 @@ if echo "$result" | grep -q ' -s'; then
 else
     assert_fail "Storyboard-only change: syntax fallback (-s) used" "got: $result"
 fi
-if echo "$result" | grep -qE ' -t [^ ]'; then
-    assert_fail "Storyboard-only change: no -t target flag in command"
+if echo "$result" | grep -q ' -t '; then
+    assert_fail "Storyboard-only change: no -t flag in command"
 else
-    assert_pass "Storyboard-only change: no -t target flag in command"
+    assert_pass "Storyboard-only change: no -t flag in command"
 fi
 DTCFL_BASE=$(git -C "$DTCFL_DIR" rev-parse HEAD)
 
@@ -456,15 +456,15 @@ _reset_dtcfl_caches
 echo "class FooTests {}" > "$DTCFL_DIR/Sources/FooTests.swift"
 ( cd "$DTCFL_DIR" && git add "Sources/FooTests.swift" && git commit -q -m "add FooTests" )
 result=$(detect_test_cmd_for_loop "$DTCFL_BASE" 2>/dev/null || true)
-if echo "$result" | grep -qE ' -t [^ ]'; then
-    assert_pass "One Swift file: -t flag present"
+if ! echo "$result" | grep -q ' -t '; then
+    assert_pass "One Swift file: no -t flag (positional args)"
 else
-    assert_fail "One Swift file: -t flag present" "got: $result"
+    assert_fail "One Swift file: no -t flag (positional args)" "got: $result"
 fi
 if echo "$result" | grep -q 'FooTests'; then
-    assert_pass "One Swift file: target class name extracted"
+    assert_pass "One Swift file: target class name present as positional arg"
 else
-    assert_fail "One Swift file: target class name extracted" "got: $result"
+    assert_fail "One Swift file: target class name present as positional arg" "got: $result"
 fi
 DTCFL_BASE=$(git -C "$DTCFL_DIR" rev-parse HEAD)
 
@@ -474,15 +474,15 @@ echo "class BarTests {}" > "$DTCFL_DIR/Sources/BarTests.swift"
 echo "class BazTests {}" > "$DTCFL_DIR/Sources/BazTests.swift"
 ( cd "$DTCFL_DIR" && git add "Sources/BarTests.swift" "Sources/BazTests.swift" && git commit -q -m "add BarTests BazTests" )
 result=$(detect_test_cmd_for_loop "$DTCFL_BASE" 2>/dev/null || true)
-if echo "$result" | grep -qE ' -t [^ ]'; then
-    assert_pass "Multiple Swift files: -t flag present"
+if ! echo "$result" | grep -q ' -t '; then
+    assert_pass "Multiple Swift files: no -t flag (positional args)"
 else
-    assert_fail "Multiple Swift files: -t flag present" "got: $result"
+    assert_fail "Multiple Swift files: no -t flag (positional args)" "got: $result"
 fi
-if echo "$result" | grep -qE ' -t [^,]+,[^ ]'; then
-    assert_pass "Multiple Swift files: comma-separated targets"
+if echo "$result" | grep -qE 'BarTests[[:space:]]BazTests|BazTests[[:space:]]BarTests'; then
+    assert_pass "Multiple Swift files: space-separated positional targets"
 else
-    assert_fail "Multiple Swift files: comma-separated targets" "got: $result"
+    assert_fail "Multiple Swift files: space-separated positional targets" "got: $result"
 fi
 
 export PROJECT_ROOT="$_orig_project_root"

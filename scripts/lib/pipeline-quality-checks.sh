@@ -73,6 +73,48 @@ pipeline_artifact_is_fresh() {
     return 1
 }
 
+# Returns HEAD short SHA (8 chars), or "" on failure/detached HEAD/shallow clone.
+# Never exits with non-zero. Pure function, no side effects.
+_pipeline_head_sha() {
+    git rev-parse --short HEAD 2>/dev/null || true
+}
+
+# Returns 0 if artifact's stamped SHA matches current HEAD (prefix match).
+# Returns 0 (pass-through) when: no SHA found in artifact, HEAD unavailable, file missing.
+# Returns 1 when: SHA found but doesn't match HEAD.
+# Format detection by file extension:
+#   .json  → reads .[0].created_at_commit via jq (per-finding stamp)
+#   .md    → reads "created_at_commit: <sha>" from first 5 lines
+#   .log   → reads "# created_at_commit: <sha>" from first 3 lines
+pipeline_artifact_is_current() {
+    local file="$1"
+    local head_sha
+    head_sha=$(_pipeline_head_sha)
+    [[ -z "$head_sha" ]] && return 0   # HEAD unavailable — pass-through
+    [[ ! -f "$file" ]] && return 0     # Missing file — pass-through
+
+    local artifact_sha=""
+    case "$file" in
+        *.json)
+            artifact_sha=$(jq -r '.[0].created_at_commit // empty' "$file" 2>/dev/null || true)
+            ;;
+        *.md)
+            artifact_sha=$(sed -n '1,5p' "$file" 2>/dev/null | grep -m1 '^created_at_commit: ' | sed 's/^created_at_commit: //' || true)
+            ;;
+        *.log)
+            artifact_sha=$(sed -n '1,3p' "$file" 2>/dev/null | grep -m1 '^# created_at_commit: ' | sed 's/^# created_at_commit: //' || true)
+            ;;
+    esac
+
+    [[ -z "$artifact_sha" ]] && return 0   # No SHA stamp — pass-through (backward compat)
+
+    # Prefix match: short SHA lengths may vary (7 or 8 chars)
+    local min_len=${#artifact_sha}
+    [[ ${#head_sha} -lt $min_len ]] && min_len=${#head_sha}
+    [[ "${artifact_sha:0:$min_len}" == "${head_sha:0:$min_len}" ]] && return 0
+    return 1
+}
+
 # Returns the numeric exit code from the last pipeline test run, or returns 1 if unknown.
 # When PIPELINE_RUN_EPOCH is set, stale sidecars (written by a previous pipeline run) are
 # treated as missing so downstream callers fall back to their default/safe paths.
@@ -114,6 +156,15 @@ quality_check_security() {
         info "No security audit tool found — skipping"
         echo "No audit tool available" > "$audit_log"
         return 0
+    fi
+
+    # Stamp artifact with current commit SHA (prepend header line)
+    local _sec_sha
+    _sec_sha=$(_pipeline_head_sha)
+    if [[ -n "$_sec_sha" && -s "$audit_log" ]]; then
+        local _sec_tmp
+        _sec_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-audit-stamp.XXXXXX")
+        { printf '# created_at_commit: %s\n' "$_sec_sha"; cat "$audit_log"; } > "$_sec_tmp" && mv "$_sec_tmp" "$audit_log" || rm -f "$_sec_tmp"
     fi
 
     # Parse results for critical/high severity
@@ -658,6 +709,15 @@ run_adversarial_review() {
         # Save raw JSON result
         echo "$json_result" > "$ARTIFACTS_DIR/adversarial-review.json"
 
+        # Stamp each finding with current commit SHA (matches compound-audit.sh per-finding pattern)
+        local _adv_json_sha
+        _adv_json_sha=$(_pipeline_head_sha)
+        if [[ -n "$_adv_json_sha" ]]; then
+            local _adv_json_tmp
+            _adv_json_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-adv-stamp.XXXXXX")
+            jq --arg c "$_adv_json_sha" '[.[] | . + {created_at_commit: $c}]' "$ARTIFACTS_DIR/adversarial-review.json" > "$_adv_json_tmp" 2>/dev/null && mv "$_adv_json_tmp" "$ARTIFACTS_DIR/adversarial-review.json" || rm -f "$_adv_json_tmp"
+        fi
+
         # Convert JSON findings to markdown for compatibility with compound_rebuild_with_feedback
         local critical_count high_count
         critical_count=$(echo "$json_result" | jq '[.[] | select(.severity == "critical")] | length' 2>/dev/null || echo "0")
@@ -673,6 +733,15 @@ run_adversarial_review() {
             echo ""
             echo "$json_result" | jq -r '.[] | "- **[\(.severity // "unknown")]** \(.location // "unknown") — \(.description // .concern // "no description")"' 2>/dev/null || true
         } > "$ARTIFACTS_DIR/adversarial-review.md"
+
+        # Stamp markdown with current commit SHA
+        local _adv_md_sha
+        _adv_md_sha=$(_pipeline_head_sha)
+        if [[ -n "$_adv_md_sha" ]]; then
+            local _adv_md_tmp
+            _adv_md_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-adv-md-stamp.XXXXXX")
+            { printf 'created_at_commit: %s\n' "$_adv_md_sha"; cat "$ARTIFACTS_DIR/adversarial-review.md"; } > "$_adv_md_tmp" && mv "$_adv_md_tmp" "$ARTIFACTS_DIR/adversarial-review.md" || rm -f "$_adv_md_tmp"
+        fi
 
         emit_event "adversarial.delegated" \
             "issue=${ISSUE_NUMBER:-0}" \
@@ -724,6 +793,15 @@ $diff_content"
     review_output=$(_pipeline_quality_ai_text "$prompt" "haiku" "8")
 
     echo "$review_output" > "$ARTIFACTS_DIR/adversarial-review.md"
+
+    # Stamp markdown with current commit SHA
+    local _adv_inline_sha
+    _adv_inline_sha=$(_pipeline_head_sha)
+    if [[ -n "$_adv_inline_sha" ]]; then
+        local _adv_inline_tmp
+        _adv_inline_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-adv-stamp.XXXXXX")
+        { printf 'created_at_commit: %s\n' "$_adv_inline_sha"; cat "$ARTIFACTS_DIR/adversarial-review.md"; } > "$_adv_inline_tmp" && mv "$_adv_inline_tmp" "$ARTIFACTS_DIR/adversarial-review.md" || rm -f "$_adv_inline_tmp"
+    fi
 
     # Count issues by severity
     local critical_count bug_count
@@ -813,6 +891,15 @@ $diff_contents"
     review_output=$(_pipeline_quality_ai_text "$prompt" "haiku" "8")
 
     echo "$review_output" > "$ARTIFACTS_DIR/negative-review.md"
+
+    # Stamp markdown with current commit SHA
+    local _neg_sha
+    _neg_sha=$(_pipeline_head_sha)
+    if [[ -n "$_neg_sha" ]]; then
+        local _neg_tmp
+        _neg_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-neg-stamp.XXXXXX")
+        { printf 'created_at_commit: %s\n' "$_neg_sha"; cat "$ARTIFACTS_DIR/negative-review.md"; } > "$_neg_tmp" && mv "$_neg_tmp" "$ARTIFACTS_DIR/negative-review.md" || rm -f "$_neg_tmp"
+    fi
 
     # Post pre-existing findings as a comment on the current GitHub issue (informational only)
     if [[ -n "${ISSUE_NUMBER:-}" ]]; then
@@ -960,6 +1047,15 @@ run_dod_audit() {
     done < "$dod_file"
 
     echo -e "$audit_output\n\n**Score: ${passed}/${total} passed**" > "$ARTIFACTS_DIR/dod-audit.md"
+
+    # Stamp markdown with current commit SHA
+    local _dod_sha
+    _dod_sha=$(_pipeline_head_sha)
+    if [[ -n "$_dod_sha" ]]; then
+        local _dod_tmp
+        _dod_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-dod-stamp.XXXXXX")
+        { printf 'created_at_commit: %s\n' "$_dod_sha"; cat "$ARTIFACTS_DIR/dod-audit.md"; } > "$_dod_tmp" && mv "$_dod_tmp" "$ARTIFACTS_DIR/dod-audit.md" || rm -f "$_dod_tmp"
+    fi
 
     if [[ "$failed" -gt 0 ]]; then
         warn "DoD audit: ${passed}/${total} passed, ${failed} failed"

@@ -109,13 +109,22 @@ else
 fi
 
 # --- Test 7: legacy polluted goal with injection-style content is cleaned on resume ---
-# When a state file contains a goal with compound_quality injection content (from a previous
-# run bug), resume_state should strip the pollution and restore the original goal.
-GOAL="$(printf 'Original goal\n\nBLOCKING ISSUES — fix all of these before merge:\n- test_auth_flow fails\n\nFull review context:\nSee audit log for details')" ORIGINAL_GOAL=""
-write_state
+# Simulates a state file written by the OLD buggy write_state (no original_goal: field).
+# resume_state should strip the pollution and restore the original goal.
+_t7_goal="$(printf 'Original goal\n\nBLOCKING ISSUES — fix all of these before merge:\n- test_auth_flow fails\n\nFull review context:\nSee audit log for details')"
+_t7_esc="${_t7_goal//\\/\\\\}"
+_t7_esc="${_t7_esc//$'\n'/\\n}"
+{
+    printf -- '---\n'
+    printf 'goal: "%s"\n' "$_t7_esc"
+    printf 'iteration: 1\nmax_iterations: 10\nstatus: running\ntest_cmd: ""\nmodel: sonnet\nagents: 1\n'
+    printf 'consecutive_failures: 0\ntotal_commits: 0\naudit_enabled: false\naudit_agent_enabled: false\n'
+    printf 'quality_gates_enabled: false\ndod_file: ""\nauto_extend: false\nextension_count: 0\n'
+    printf 'max_extensions: 3\ndod_diff_max_lines: 500\nholistic_diff_max_lines: 1000\n'
+    printf -- '---\n\n## Log\n'
+} > "$STATE_FILE"
 GOAL=""
 resume_state 2>/dev/null
-# After resume, the goal should be stripped of the injection content
 _expected="Original goal"
 if [[ "$GOAL" == "$_expected" ]]; then
     assert_pass "resume_state strips legacy polluted BLOCKING ISSUES injection"
@@ -124,15 +133,45 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# write_state — ORIGINAL_GOAL protection (issue #362)
+# write_state — ORIGINAL_GOAL protection (issues #362, Codex P1, Codex P2)
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "write_state ORIGINAL_GOAL protection (issue #362)"
+print_test_section "write_state ORIGINAL_GOAL protection (issue #362 + Codex P1/P2)"
 
 # Reload the real write_state — do NOT re-source loop-restart.sh; use fresh module guard
 unset -f write_state
 unset -f resume_state
 _LOOP_RESTART_LOADED=""
 source "$SCRIPT_DIR/lib/loop-restart.sh"
+
+# Helper: write a legacy state file (no original_goal: field) simulating old buggy write_state
+_write_legacy_loop_state() {
+    local polluted_goal="$1"
+    local _esc="${polluted_goal//\\/\\\\}"
+    _esc="${_esc//$'\n'/\\n}"
+    {
+        printf -- '---\n'
+        printf 'goal: "%s"\n'           "$_esc"
+        printf 'iteration: %s\n'        "$ITERATION"
+        printf 'max_iterations: %s\n'   "$MAX_ITERATIONS"
+        printf 'status: %s\n'           "${STATUS:-running}"
+        printf 'test_cmd: "%s"\n'       "${TEST_CMD:-}"
+        printf 'model: %s\n'            "${MODEL:-sonnet}"
+        printf 'agents: %s\n'           "${AGENTS:-1}"
+        printf 'consecutive_failures: %s\n' "${CONSECUTIVE_FAILURES:-0}"
+        printf 'total_commits: %s\n'    "${TOTAL_COMMITS:-0}"
+        printf 'audit_enabled: %s\n'    "${AUDIT_ENABLED:-false}"
+        printf 'audit_agent_enabled: %s\n'   "${AUDIT_AGENT_ENABLED:-false}"
+        printf 'quality_gates_enabled: %s\n' "${QUALITY_GATES_ENABLED:-false}"
+        printf 'dod_file: "%s"\n'       "${DOD_FILE:-}"
+        printf 'auto_extend: %s\n'      "${AUTO_EXTEND:-false}"
+        printf 'extension_count: %s\n'  "${EXTENSION_COUNT:-0}"
+        printf 'max_extensions: %s\n'   "${MAX_EXTENSIONS:-3}"
+        printf 'dod_diff_max_lines: %s\n'       "${DOD_DIFF_MAX_LINES:-500}"
+        printf 'holistic_diff_max_lines: %s\n'  "${HOLISTIC_DIFF_MAX_LINES:-1000}"
+        printf -- '---\n\n'
+        printf '## Log\n'
+    } > "$STATE_FILE"
+}
 
 # Test A: write_state uses ORIGINAL_GOAL when GOAL is mutated
 GOAL="Original pipeline goal"
@@ -144,55 +183,56 @@ assert_contains "write_state writes ORIGINAL_GOAL not mutated GOAL" "$_saved" "O
 _blocking_count=$(echo "$_saved" | grep -c 'BLOCKING ISSUES' || true)
 assert_eq "write_state does not write BLOCKING ISSUES" "0" "$_blocking_count"
 
-# Test B: ORIGINAL_GOAL empty → falls back to GOAL (no regression)
+# Test A2: write_state persists original_goal field
+_orig_saved=$(grep '^original_goal:' "$STATE_FILE" | sed 's/^original_goal: *"//;s/" *$//')
+assert_eq "write_state persists original_goal field" "Original pipeline goal" "$_orig_saved"
+
+# Test B: ORIGINAL_GOAL empty → bootstrapped from GOAL on first non-empty write
 GOAL="Fallback goal"
 ORIGINAL_GOAL=""
 write_state
-GOAL=""
+GOAL="" ORIGINAL_GOAL=""
 resume_state 2>/dev/null
-assert_eq "write_state falls back to GOAL when ORIGINAL_GOAL empty" "Fallback goal" "$GOAL"
+assert_eq "write_state bootstraps ORIGINAL_GOAL from GOAL when not set" "Fallback goal" "$GOAL"
+assert_eq "resume_state reads ORIGINAL_GOAL from original_goal field" "Fallback goal" "$ORIGINAL_GOAL"
 
-# Test C: resume_state strips BLOCKING ISSUES from legacy polluted state
-ORIGINAL_GOAL=""
-GOAL="$(printf 'Clean goal\n\nBLOCKING ISSUES — fix all: test fails\n\nFull feedback...')"
-write_state
-GOAL=""
-ORIGINAL_GOAL=""
+# Test C: legacy state file — resume_state strips BLOCKING ISSUES (no original_goal field)
+_write_legacy_loop_state "$(printf 'Clean goal\n\nBLOCKING ISSUES — fix all: test fails\n\nFull feedback...')"
+GOAL="" ORIGINAL_GOAL=""
 resume_state 2>/dev/null
-assert_eq "resume_state strips BLOCKING ISSUES on load" "Clean goal" "$GOAL"
-assert_eq "resume_state sets ORIGINAL_GOAL after strip" "Clean goal" "$ORIGINAL_GOAL"
+assert_eq "legacy: resume_state strips BLOCKING ISSUES" "Clean goal" "$GOAL"
+assert_eq "legacy: resume_state sets ORIGINAL_GOAL after strip" "Clean goal" "$ORIGINAL_GOAL"
 
-# Test D: resume_state strips HUMAN FEEDBACK from legacy polluted state
-ORIGINAL_GOAL=""
-GOAL="$(printf 'Clean goal\n\nHUMAN FEEDBACK (received after iteration 3): fix the auth bug')"
-write_state
-GOAL=""
-ORIGINAL_GOAL=""
+# Test D: legacy state file — resume_state strips HUMAN FEEDBACK (no original_goal field)
+_write_legacy_loop_state "$(printf 'Clean goal\n\nHUMAN FEEDBACK (received after iteration 3): fix the auth bug')"
+GOAL="" ORIGINAL_GOAL=""
 resume_state 2>/dev/null
-assert_eq "resume_state strips HUMAN FEEDBACK on load" "Clean goal" "$GOAL"
+assert_eq "legacy: resume_state strips HUMAN FEEDBACK" "Clean goal" "$GOAL"
 
-# Test E: resume_state strips KNOWN FIX prefix from legacy polluted state
-ORIGINAL_GOAL=""
-GOAL="$(printf 'KNOWN FIX (from past success): retry logic\n\nClean goal')"
-write_state
-GOAL=""
-ORIGINAL_GOAL=""
+# Test E: legacy state file — resume_state strips KNOWN FIX prefix (no original_goal field)
+_write_legacy_loop_state "$(printf 'KNOWN FIX (from past success): retry logic\n\nClean goal')"
+GOAL="" ORIGINAL_GOAL=""
 resume_state 2>/dev/null
-assert_eq "resume_state strips KNOWN FIX prefix on load" "Clean goal" "$GOAL"
+assert_eq "legacy: resume_state strips KNOWN FIX prefix" "Clean goal" "$GOAL"
+
+# Test E2 (Codex P2): new state file — legitimate goal with sentinel-like text is NOT truncated
+GOAL="Fix the BLOCKING ISSUES in the auth module"
+ORIGINAL_GOAL="Fix the BLOCKING ISSUES in the auth module"
+write_state
+GOAL="" ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+assert_eq "P2: legitimate goal with sentinel text not truncated" "Fix the BLOCKING ISSUES in the auth module" "$GOAL"
 
 # Test F: no unbounded growth across 2 compound_quality cycles
 GOAL="Original"
 ORIGINAL_GOAL="Original"
 GOAL="$(printf 'Original\n\nBLOCKING ISSUES — something: fail')"
 write_state
-GOAL=""
-ORIGINAL_GOAL=""
+GOAL="" ORIGINAL_GOAL=""
 resume_state 2>/dev/null
-ORIGINAL_GOAL="$GOAL"
 GOAL="$(printf '%s\n\nBLOCKING ISSUES — something else: fail' "$GOAL")"
 write_state
-GOAL=""
-ORIGINAL_GOAL=""
+GOAL="" ORIGINAL_GOAL=""
 resume_state 2>/dev/null
 assert_eq "no unbounded growth across 2 compound_quality cycles" "Original" "$GOAL"
 

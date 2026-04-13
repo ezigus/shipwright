@@ -594,12 +594,18 @@ write_state() {
     # in the goal is stored as \\n (unambiguous) while a real newline becomes \n.
     local tmp_state="${STATE_FILE}.tmp.$$"
     local _write_goal="${ORIGINAL_GOAL:-$GOAL}"
+    # Bootstrap ORIGINAL_GOAL in memory on first non-empty write (e.g. --issue runs where
+    # intake fills GOAL after pipeline_start, leaving ORIGINAL_GOAL empty until here).
+    if [[ -z "${ORIGINAL_GOAL:-}" && -n "${_write_goal}" ]]; then
+        ORIGINAL_GOAL="$_write_goal"
+    fi
     local _goal_esc="${_write_goal//\\/\\\\}"
     _goal_esc="${_goal_esc//$'\n'/\\n}"
     {
         printf -- '---\n'
         printf 'pipeline: %s\n' "$PIPELINE_NAME"
         printf 'goal: "%s"\n' "$_goal_esc"
+        printf 'original_goal: "%s"\n' "$_goal_esc"
         printf 'status: %s\n' "$PIPELINE_STATUS"
         printf 'issue: "%s"\n' "${GITHUB_ISSUE:-}"
         printf 'branch: "%s"\n' "${GIT_BRANCH:-}"
@@ -643,6 +649,7 @@ resume_state() {
     info "Resuming pipeline from $STATE_FILE"
 
     local in_frontmatter=false
+    local _has_original_goal=false
     while IFS= read -r line; do
         if [[ "$line" == "---" ]]; then
             if $in_frontmatter; then break; else in_frontmatter=true; continue; fi
@@ -656,6 +663,13 @@ resume_state() {
                     _g="${_g//\\\\/$_s}"
                     _g="${_g//\\n/$'\n'}"
                     GOAL="${_g//$_s/\\}" ;;
+                original_goal:*)
+                    local _og _s2=$'\001'
+                    _og="$(echo "${line#original_goal:}" | sed 's/^ *"//;s/" *$//')"
+                    _og="${_og//\\\\/$_s2}"
+                    _og="${_og//\\n/$'\n'}"
+                    ORIGINAL_GOAL="${_og//$_s2/\\}"
+                    _has_original_goal=true ;;
                 status:*)              PIPELINE_STATUS="$(_trim "${line#status:}")" ;;
                 issue:*)               GITHUB_ISSUE="$(echo "${line#issue:}" | sed 's/^ *"//;s/" *$//')" ;;
                 branch:*)              GIT_BRANCH="$(echo "${line#branch:}" | sed 's/^ *"//;s/" *$//')" ;;
@@ -681,19 +695,24 @@ ${sid}:${sst}"
         fi
     done < "$STATE_FILE"
 
-    # Backward compat: strip mutation-injected content from legacy polluted state files.
-    # Uses %% to strip from first sentinel to end (bash 3.2 safe, no regex, no subshell).
-    if [[ "$GOAL" == *$'\n\nBLOCKING ISSUES'* ]];              then GOAL="${GOAL%%$'\n\nBLOCKING ISSUES'*}";              fi
-    if [[ "$GOAL" == *$'\n\nIMPORTANT — Previous build'* ]];   then GOAL="${GOAL%%$'\n\nIMPORTANT — Previous build'*}";   fi
-    if [[ "$GOAL" == *$'\n\nIMPORTANT — Code review'* ]];      then GOAL="${GOAL%%$'\n\nIMPORTANT — Code review'*}";      fi
-    if [[ "$GOAL" == *$'\n\nIMPORTANT — Architecture'* ]];     then GOAL="${GOAL%%$'\n\nIMPORTANT — Architecture'*}";     fi
-    if [[ "$GOAL" == *$'\n\nIMPORTANT — Compound quality'* ]]; then GOAL="${GOAL%%$'\n\nIMPORTANT — Compound quality'*}"; fi
-    if [[ "$GOAL" == *$'\n\nHUMAN FEEDBACK'* ]];               then GOAL="${GOAL%%$'\n\nHUMAN FEEDBACK'*}";               fi
-    if [[ "$GOAL" == *$'\n\n## Previous Session Context'* ]];  then GOAL="${GOAL%%$'\n\n## Previous Session Context'*}";  fi
-    # KNOWN FIX is prepended — strip from start through first blank line
-    if [[ "$GOAL" == "KNOWN FIX (from past success):"* ]];     then GOAL="${GOAL#*$'\n\n'}";                              fi
-    # Set ORIGINAL_GOAL so write_state uses it immediately on next call
-    ORIGINAL_GOAL="${ORIGINAL_GOAL:-$GOAL}"
+    if $_has_original_goal; then
+        # New state file: original_goal field was present — ORIGINAL_GOAL already set by parser.
+        # No sentinel stripping needed; the stored goal is already clean.
+        :
+    else
+        # Legacy state file: no original_goal field — apply backward-compat sentinel stripping.
+        # Only applies to files written before this fix. Uses %% (bash 3.2 safe, no regex).
+        if [[ "$GOAL" == *$'\n\nBLOCKING ISSUES'* ]];              then GOAL="${GOAL%%$'\n\nBLOCKING ISSUES'*}";              fi
+        if [[ "$GOAL" == *$'\n\nIMPORTANT — Previous build'* ]];   then GOAL="${GOAL%%$'\n\nIMPORTANT — Previous build'*}";   fi
+        if [[ "$GOAL" == *$'\n\nIMPORTANT — Code review'* ]];      then GOAL="${GOAL%%$'\n\nIMPORTANT — Code review'*}";      fi
+        if [[ "$GOAL" == *$'\n\nIMPORTANT — Architecture'* ]];     then GOAL="${GOAL%%$'\n\nIMPORTANT — Architecture'*}";     fi
+        if [[ "$GOAL" == *$'\n\nIMPORTANT — Compound quality'* ]]; then GOAL="${GOAL%%$'\n\nIMPORTANT — Compound quality'*}"; fi
+        if [[ "$GOAL" == *$'\n\nHUMAN FEEDBACK'* ]];               then GOAL="${GOAL%%$'\n\nHUMAN FEEDBACK'*}";               fi
+        if [[ "$GOAL" == *$'\n\n## Previous Session Context'* ]];  then GOAL="${GOAL%%$'\n\n## Previous Session Context'*}";  fi
+        # KNOWN FIX is prepended — strip from start through first blank line
+        if [[ "$GOAL" == "KNOWN FIX (from past success):"* ]];     then GOAL="${GOAL#*$'\n\n'}";                              fi
+        ORIGINAL_GOAL="${ORIGINAL_GOAL:-$GOAL}"
+    fi
 
     # Backward compat: old state files won't have pipeline_run_epoch.
     # Derive epoch from the started_at timestamp already parsed above — this is the

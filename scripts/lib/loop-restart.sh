@@ -33,6 +33,7 @@ resume_state() {
 
     # Parse YAML front matter
     local in_frontmatter=false
+    local _has_original_goal=false
     while IFS= read -r line; do
         if [[ "$line" == "---" ]]; then
             if $in_frontmatter; then
@@ -52,6 +53,13 @@ resume_state() {
                         _g="${_g//\\n/$'\n'}"
                         GOAL="${_g//$_s/\\}"
                     fi ;;
+                original_goal:*)
+                    local _og _s2=$'\001'
+                    _og="$(echo "${line#original_goal:}" | sed 's/^ *"//;s/" *$//')"
+                    _og="${_og//\\\\/$_s2}"
+                    _og="${_og//\\n/$'\n'}"
+                    ORIGINAL_GOAL="${_og//$_s2/\\}"
+                    _has_original_goal=true ;;
                 iteration:*)     ITERATION="$(echo "${line#iteration:}" | tr -d ' ')" ;;
                 max_iterations:*) MAX_ITERATIONS="$(echo "${line#max_iterations:}" | tr -d ' ')" ;;
                 status:*)        STATUS="$(echo "${line#status:}" | tr -d ' ')" ;;
@@ -73,19 +81,24 @@ resume_state() {
         fi
     done < "$STATE_FILE"
 
-    # Backward compat: strip mutation-injected content from legacy polluted state files.
-    # Uses %% to strip from first sentinel to end (bash 3.2 safe, no regex, no subshell).
-    if [[ "$GOAL" == *$'\n\nBLOCKING ISSUES'* ]];              then GOAL="${GOAL%%$'\n\nBLOCKING ISSUES'*}";              fi
-    if [[ "$GOAL" == *$'\n\nIMPORTANT — Previous build'* ]];   then GOAL="${GOAL%%$'\n\nIMPORTANT — Previous build'*}";   fi
-    if [[ "$GOAL" == *$'\n\nIMPORTANT — Code review'* ]];      then GOAL="${GOAL%%$'\n\nIMPORTANT — Code review'*}";      fi
-    if [[ "$GOAL" == *$'\n\nIMPORTANT — Architecture'* ]];     then GOAL="${GOAL%%$'\n\nIMPORTANT — Architecture'*}";     fi
-    if [[ "$GOAL" == *$'\n\nIMPORTANT — Compound quality'* ]]; then GOAL="${GOAL%%$'\n\nIMPORTANT — Compound quality'*}"; fi
-    if [[ "$GOAL" == *$'\n\nHUMAN FEEDBACK'* ]];               then GOAL="${GOAL%%$'\n\nHUMAN FEEDBACK'*}";               fi
-    if [[ "$GOAL" == *$'\n\n## Previous Session Context'* ]];  then GOAL="${GOAL%%$'\n\n## Previous Session Context'*}";  fi
-    # KNOWN FIX is prepended — strip from start through first blank line
-    if [[ "$GOAL" == "KNOWN FIX (from past success):"* ]];     then GOAL="${GOAL#*$'\n\n'}";                              fi
-    # Set ORIGINAL_GOAL so write_state uses it immediately on next call
-    ORIGINAL_GOAL="${ORIGINAL_GOAL:-$GOAL}"
+    if $_has_original_goal; then
+        # New state file: original_goal field was present — ORIGINAL_GOAL already set by parser.
+        # No sentinel stripping needed; the stored goal is already clean.
+        :
+    else
+        # Legacy state file: no original_goal field — apply backward-compat sentinel stripping.
+        # Only applies to files written before this fix. Uses %% (bash 3.2 safe, no regex).
+        if [[ "$GOAL" == *$'\n\nBLOCKING ISSUES'* ]];              then GOAL="${GOAL%%$'\n\nBLOCKING ISSUES'*}";              fi
+        if [[ "$GOAL" == *$'\n\nIMPORTANT — Previous build'* ]];   then GOAL="${GOAL%%$'\n\nIMPORTANT — Previous build'*}";   fi
+        if [[ "$GOAL" == *$'\n\nIMPORTANT — Code review'* ]];      then GOAL="${GOAL%%$'\n\nIMPORTANT — Code review'*}";      fi
+        if [[ "$GOAL" == *$'\n\nIMPORTANT — Architecture'* ]];     then GOAL="${GOAL%%$'\n\nIMPORTANT — Architecture'*}";     fi
+        if [[ "$GOAL" == *$'\n\nIMPORTANT — Compound quality'* ]]; then GOAL="${GOAL%%$'\n\nIMPORTANT — Compound quality'*}"; fi
+        if [[ "$GOAL" == *$'\n\nHUMAN FEEDBACK'* ]];               then GOAL="${GOAL%%$'\n\nHUMAN FEEDBACK'*}";               fi
+        if [[ "$GOAL" == *$'\n\n## Previous Session Context'* ]];  then GOAL="${GOAL%%$'\n\n## Previous Session Context'*}";  fi
+        # KNOWN FIX is prepended — strip from start through first blank line
+        if [[ "$GOAL" == "KNOWN FIX (from past success):"* ]];     then GOAL="${GOAL#*$'\n\n'}";                              fi
+        ORIGINAL_GOAL="${ORIGINAL_GOAL:-$GOAL}"
+    fi
 
     # CLI --max-iterations overrides state file
     if $MAX_ITERATIONS_EXPLICIT; then
@@ -145,12 +158,18 @@ write_state() {
     # Encode GOAL: escape backslashes first, then newlines, so that a literal \n
     # in the goal is stored as \\n (unambiguous) while a real newline becomes \n.
     local _write_goal="${ORIGINAL_GOAL:-$GOAL}"
+    # Bootstrap ORIGINAL_GOAL in memory on first non-empty write (handles cases where
+    # GOAL is populated after initialization, leaving ORIGINAL_GOAL empty until here).
+    if [[ -z "${ORIGINAL_GOAL:-}" && -n "${_write_goal}" ]]; then
+        ORIGINAL_GOAL="$_write_goal"
+    fi
     local _goal_esc="${_write_goal//\\/\\\\}"
     _goal_esc="${_goal_esc//$'\n'/\\n}"
     # Use printf instead of heredoc to avoid delimiter injection from GOAL
     {
         printf -- '---\n'
         printf 'goal: "%s"\n' "$_goal_esc"
+        printf 'original_goal: "%s"\n' "$_goal_esc"
         printf 'iteration: %s\n' "$ITERATION"
         printf 'max_iterations: %s\n' "$MAX_ITERATIONS"
         printf 'status: %s\n' "$STATUS"

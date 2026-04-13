@@ -675,6 +675,31 @@ stage_audit() {
 
     local issues=0
 
+    # Ruflo parallel security audit hive — run before native checks to collect
+    # specialist findings (CVE, secrets, OWASP, compliance) in parallel.
+    # Fail-open: if the hive fails, native sequential checks continue unaffected.
+    local _hive_audit_file="$ARTIFACTS_DIR/audit-hive-context.md"
+    local _hive_audit_ok=false
+    if declare -f ruflo_execute_audit >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _audit_diff_content
+        _audit_diff_content=$(cat "$ARTIFACTS_DIR/review-diff.patch" 2>/dev/null || true)
+        if [[ -n "$_audit_diff_content" ]] && \
+           ruflo_execute_audit "$_audit_diff_content" "$_hive_audit_file"; then
+            info "Ruflo parallel security audit hive complete"
+            _hive_audit_ok=true
+        else
+            warn "Ruflo security audit hive failed — continuing with native checks"
+            emit_event "ruflo.audit_fallback" "reason=hive_failed" || true
+        fi
+    fi
+
+    # Append ruflo hive audit findings before native checks run
+    if [[ "$_hive_audit_ok" == "true" && -s "$_hive_audit_file" ]]; then
+        cat "$_hive_audit_file" >> "$audit_log" 2>/dev/null || true
+    fi
+
     # ── Secret Scanning ──
     if [[ "$do_secret_scan" == "true" ]]; then
         info "Scanning for secrets in changed files..."

@@ -1023,6 +1023,127 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ruflo_execute_audit tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Test: ruflo_execute_audit returns 1 (exact) when ruflo unavailable
+unset _RUFLO_ADAPTER_LOADED
+RUFLO_AVAILABLE=false
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+exit_code=0
+ruflo_execute_audit "diff content" "$_test_tmp/audit-out.md" || exit_code=$?
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_audit returns 1 when ruflo unavailable"
+else
+    assert_fail "ruflo_execute_audit returns 1 when ruflo unavailable" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_audit returns 1 (exact) when diff_content is empty
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+exit_code=0
+ruflo_execute_audit "" "$_test_tmp/audit-out.md" || exit_code=$?
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_audit returns 1 when diff_content is empty"
+else
+    assert_fail "ruflo_execute_audit returns 1 when diff_content is empty" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_audit returns 1 (exact) when hive init fails
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_orig_path="$PATH"
+mock_binary "ruflo" 'exit 1'
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+exit_code=0
+ruflo_execute_audit "diff content here" "$_test_tmp/audit-out.md" || exit_code=$?
+PATH="$_orig_path"
+rm -f "$TEST_TEMP_DIR/bin/ruflo"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_audit returns 1 when hive init fails"
+else
+    assert_fail "ruflo_execute_audit returns 1 when hive init fails" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_audit returns 0 and writes artifact on success;
+#       verifies spawn, orchestrate, and shutdown were called
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+subcmd="\${1:-}"
+printf '%s %s %s\\n' "\$subcmd" "\${2:-}" "\${3:-}" >> "$_call_log"
+if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "init" ]]; then
+    printf '{"hive_id":"audit-hive-999"}\\n'
+    exit 0
+fi
+if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+    printf 'audit-diff: <diff stored>\\nCVE-2024-1234: found in dependency\\nOWASP-A01: broken access control check\\n'
+    exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+_artifact="$_test_tmp/audit-result.md"
+exit_code=0
+ruflo_execute_audit "diff content here" "$_artifact" || exit_code=$?
+_audit_artifact_exists=false
+_audit_artifact_nonempty=false
+[[ -f "$_artifact" ]] && _audit_artifact_exists=true
+[[ -s "$_artifact" ]] && _audit_artifact_nonempty=true
+_spawn_called=false
+_orch_called=false
+_shutdown_called=false
+grep -q "^hive-mind spawn" "$_call_log" 2>/dev/null && _spawn_called=true
+grep -q "^coordination orchestrate" "$_call_log" 2>/dev/null && _orch_called=true
+grep -q "^hive-mind shutdown\|^hive-mind leave" "$_call_log" 2>/dev/null && _shutdown_called=true
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_execute_audit returns 0 on success"
+else
+    assert_fail "ruflo_execute_audit returns 0 on success" "got exit=$exit_code"
+fi
+if [[ "$_audit_artifact_exists" == "true" ]]; then
+    assert_pass "ruflo_execute_audit writes artifact file on success"
+else
+    assert_fail "ruflo_execute_audit writes artifact file on success" "artifact missing"
+fi
+if [[ "$_audit_artifact_nonempty" == "true" ]]; then
+    assert_pass "ruflo_execute_audit writes non-empty artifact on success"
+else
+    assert_fail "ruflo_execute_audit writes non-empty artifact on success" "artifact empty"
+fi
+if [[ "$_spawn_called" == "true" ]]; then
+    assert_pass "ruflo_execute_audit calls hive-mind spawn"
+else
+    assert_fail "ruflo_execute_audit calls hive-mind spawn" "spawn not invoked"
+fi
+if [[ "$_orch_called" == "true" ]]; then
+    assert_pass "ruflo_execute_audit calls coordination orchestrate"
+else
+    assert_fail "ruflo_execute_audit calls coordination orchestrate" "orchestrate not invoked"
+fi
+if [[ "$_shutdown_called" == "true" ]]; then
+    assert_pass "ruflo_execute_audit calls hive-mind shutdown"
+else
+    assert_fail "ruflo_execute_audit calls hive-mind shutdown" "hive shutdown not invoked"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Test 31: ruflo_load_defaults — no-op when no defaults file exists
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_load_defaults — no-op when no defaults file"

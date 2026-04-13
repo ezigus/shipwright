@@ -8,6 +8,11 @@ ARTIFACTS_DIR="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 NO_GITHUB="${NO_GITHUB:-false}"
 
+# Source pipeline-quality-checks for SHA helpers (pipeline_artifact_is_current, _pipeline_head_sha)
+if [[ -f "${SCRIPT_DIR}/lib/pipeline-quality-checks.sh" ]]; then
+    source "${SCRIPT_DIR}/lib/pipeline-quality-checks.sh"
+fi
+
 # Source compound audit cascade library (fail-open)
 if [[ -f "${SCRIPT_DIR}/lib/compound-audit.sh" ]]; then
     _COMPOUND_AUDIT_LOADED=""

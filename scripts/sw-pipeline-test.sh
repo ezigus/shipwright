@@ -1891,6 +1891,40 @@ test_mark_complete_persists_plan() {
         grep -q 'plan.*persist_artifacts.*plan.md.*dod.md.*context-bundle.md'
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 59. Fresh start cleans stale checkpoints/ directory
+# ──────────────────────────────────────────────────────────────────────────────
+test_fresh_start_cleans_stale_checkpoints() {
+    local artifacts="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
+    pipeline_config_with_stages "intake" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+
+    # Plant stale checkpoint that a prior pipeline run left behind
+    mkdir -p "$artifacts/checkpoints"
+    echo '{"stage":"build","iteration":3}' > "$artifacts/checkpoints/build-checkpoint.json"
+
+    invoke_pipeline start --goal "Fresh start goal" --skip-gates
+
+    assert_exit_code 0 "pipeline should complete" &&
+    # _cleanup_run_artifacts() must remove the checkpoints/ directory entirely,
+    # not just its contents.  pipeline_post_completion_cleanup removes individual
+    # files but leaves the directory — so a surviving directory means Fix 1 is absent.
+    (
+        if [[ ! -d "$artifacts/checkpoints" ]]; then
+            return 0
+        fi
+        local remaining=0
+        for f in "$artifacts/checkpoints"/*-checkpoint.json; do
+            [[ -f "$f" ]] && remaining=$((remaining + 1))
+        done
+        if [[ "$remaining" -gt 0 ]]; then
+            echo -e "    ${RED}✗${RESET} Stale checkpoints survived fresh start: $remaining files remain"
+        else
+            echo -e "    ${RED}✗${RESET} checkpoints/ directory survived fresh start (not removed by _cleanup_run_artifacts)"
+        fi
+        return 1
+    )
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1983,6 +2017,7 @@ main() {
         "test_verify_artifacts_no_requirements:Durable: verify_stage_artifacts passes for stages with no requirements"
         "test_verify_artifacts_design_needs_plan:Durable: verify_stage_artifacts design requires plan.md"
         "test_mark_complete_persists_plan:Durable: mark_stage_complete wires persist for plan stage"
+        "test_fresh_start_cleans_stale_checkpoints:Cleanup: stale checkpoints/ removed on fresh pipeline start"
     )
 
     for entry in "${tests[@]}"; do

@@ -977,6 +977,7 @@ ${arch_lines}"
 
     # Augment goal with architecture context for re-run
     local original_goal="$GOAL"
+    trap '{ GOAL="$original_goal"; trap - RETURN; }' RETURN
     if [[ -n "$arch_context" ]]; then
         GOAL="$GOAL
 

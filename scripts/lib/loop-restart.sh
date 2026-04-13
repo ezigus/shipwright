@@ -73,6 +73,20 @@ resume_state() {
         fi
     done < "$STATE_FILE"
 
+    # Backward compat: strip mutation-injected content from legacy polluted state files.
+    # Uses %% to strip from first sentinel to end (bash 3.2 safe, no regex, no subshell).
+    if [[ "$GOAL" == *$'\n\nBLOCKING ISSUES'* ]];              then GOAL="${GOAL%%$'\n\nBLOCKING ISSUES'*}";              fi
+    if [[ "$GOAL" == *$'\n\nIMPORTANT — Previous build'* ]];   then GOAL="${GOAL%%$'\n\nIMPORTANT — Previous build'*}";   fi
+    if [[ "$GOAL" == *$'\n\nIMPORTANT — Code review'* ]];      then GOAL="${GOAL%%$'\n\nIMPORTANT — Code review'*}";      fi
+    if [[ "$GOAL" == *$'\n\nIMPORTANT — Architecture'* ]];     then GOAL="${GOAL%%$'\n\nIMPORTANT — Architecture'*}";     fi
+    if [[ "$GOAL" == *$'\n\nIMPORTANT — Compound quality'* ]]; then GOAL="${GOAL%%$'\n\nIMPORTANT — Compound quality'*}"; fi
+    if [[ "$GOAL" == *$'\n\nHUMAN FEEDBACK'* ]];               then GOAL="${GOAL%%$'\n\nHUMAN FEEDBACK'*}";               fi
+    if [[ "$GOAL" == *$'\n\n## Previous Session Context'* ]];  then GOAL="${GOAL%%$'\n\n## Previous Session Context'*}";  fi
+    # KNOWN FIX is prepended — strip from start through first blank line
+    if [[ "$GOAL" == "KNOWN FIX (from past success):"* ]];     then GOAL="${GOAL#*$'\n\n'}";                              fi
+    # Set ORIGINAL_GOAL so write_state uses it immediately on next call
+    ORIGINAL_GOAL="${ORIGINAL_GOAL:-$GOAL}"
+
     # CLI --max-iterations overrides state file
     if $MAX_ITERATIONS_EXPLICIT; then
         MAX_ITERATIONS="$cli_max_iterations"
@@ -130,7 +144,8 @@ write_state() {
     local tmp_state="${STATE_FILE}.tmp.$$"
     # Encode GOAL: escape backslashes first, then newlines, so that a literal \n
     # in the goal is stored as \\n (unambiguous) while a real newline becomes \n.
-    local _goal_esc="${GOAL//\\/\\\\}"
+    local _write_goal="${ORIGINAL_GOAL:-$GOAL}"
+    local _goal_esc="${_write_goal//\\/\\\\}"
     _goal_esc="${_goal_esc//$'\n'/\\n}"
     # Use printf instead of heredoc to avoid delimiter injection from GOAL
     {

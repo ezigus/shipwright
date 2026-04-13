@@ -59,7 +59,7 @@ source "$SCRIPT_DIR/lib/loop-restart.sh"
 print_test_section "write_state / resume_state multi-line GOAL round-trip"
 
 # --- Test 1: single-line goal round-trip (regression guard) ---
-GOAL="simple loop goal"
+GOAL="simple loop goal" ORIGINAL_GOAL=""
 write_state
 GOAL=""
 resume_state 2>/dev/null
@@ -70,7 +70,7 @@ else
 fi
 
 # --- Test 2: multi-line goal write — goal value must be escaped (contains literal \n not real newlines) ---
-GOAL="$(printf 'Fix loop tests\n\nKNOWN FIX: check src/foo.sh\nRun: npm test')"
+GOAL="$(printf 'Fix loop tests\n\nKNOWN FIX: check src/foo.sh\nRun: npm test')" ORIGINAL_GOAL=""
 write_state
 _goal_line=$(grep '^goal:' "$STATE_FILE" | sed 's/^goal: *"//;s/" *$//')
 # With the fix, newlines in GOAL are encoded as the two-char sequence \n in the file.
@@ -92,13 +92,13 @@ else
 fi
 
 # --- Test 4: empty goal write — no crash ---
-GOAL=""
+GOAL="" ORIGINAL_GOAL=""
 write_state
 assert_pass "empty loop goal write does not crash"
 
 # --- Test 5: goal containing a literal \n (two chars: backslash + n) ---
 # Full backslash-escaping scheme: literal \n is stored as \\n and round-trips correctly.
-GOAL=$'Contains a literal \\n backslash-n and a real\nnewline'
+GOAL=$'Contains a literal \\n backslash-n and a real\nnewline' ORIGINAL_GOAL=""
 write_state
 GOAL=""
 resume_state 2>/dev/null
@@ -108,16 +108,92 @@ else
     assert_fail "literal \\n in loop goal round-trips correctly" "got: $(printf '%s' "$GOAL" | head -c 80)"
 fi
 
-# --- Test 7: goal with injection-style content (compound quality feedback pattern) ---
-GOAL="$(printf 'Original goal\n\nBLOCKING ISSUES — fix all of these before merge:\n- test_auth_flow fails\n\nFull review context:\nSee audit log for details')"
+# --- Test 7: legacy polluted goal with injection-style content is cleaned on resume ---
+# When a state file contains a goal with compound_quality injection content (from a previous
+# run bug), resume_state should strip the pollution and restore the original goal.
+GOAL="$(printf 'Original goal\n\nBLOCKING ISSUES — fix all of these before merge:\n- test_auth_flow fails\n\nFull review context:\nSee audit log for details')" ORIGINAL_GOAL=""
 write_state
 GOAL=""
 resume_state 2>/dev/null
-_expected="$(printf 'Original goal\n\nBLOCKING ISSUES — fix all of these before merge:\n- test_auth_flow fails\n\nFull review context:\nSee audit log for details')"
+# After resume, the goal should be stripped of the injection content
+_expected="Original goal"
 if [[ "$GOAL" == "$_expected" ]]; then
-    assert_pass "compound quality feedback injection round-trip"
+    assert_pass "resume_state strips legacy polluted BLOCKING ISSUES injection"
 else
-    assert_fail "compound quality feedback injection round-trip" "first 80 chars: $(printf '%s' "$GOAL" | head -c 80)"
+    assert_fail "resume_state strips legacy polluted BLOCKING ISSUES injection" "got: $(printf '%s' "$GOAL" | head -c 80)"
 fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# write_state — ORIGINAL_GOAL protection (issue #362)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "write_state ORIGINAL_GOAL protection (issue #362)"
+
+# Reload the real write_state — do NOT re-source loop-restart.sh; use fresh module guard
+unset -f write_state
+unset -f resume_state
+_LOOP_RESTART_LOADED=""
+source "$SCRIPT_DIR/lib/loop-restart.sh"
+
+# Test A: write_state uses ORIGINAL_GOAL when GOAL is mutated
+GOAL="Original pipeline goal"
+ORIGINAL_GOAL="Original pipeline goal"
+GOAL="$(printf 'Original pipeline goal\n\nBLOCKING ISSUES — fix all of these before merge: tests fail')"
+write_state
+_saved=$(grep '^goal:' "$STATE_FILE" | sed 's/^goal: *"//;s/" *$//')
+assert_contains "write_state writes ORIGINAL_GOAL not mutated GOAL" "$_saved" "Original pipeline goal"
+_blocking_count=$(echo "$_saved" | grep -c 'BLOCKING ISSUES' || true)
+assert_eq "write_state does not write BLOCKING ISSUES" "0" "$_blocking_count"
+
+# Test B: ORIGINAL_GOAL empty → falls back to GOAL (no regression)
+GOAL="Fallback goal"
+ORIGINAL_GOAL=""
+write_state
+GOAL=""
+resume_state 2>/dev/null
+assert_eq "write_state falls back to GOAL when ORIGINAL_GOAL empty" "Fallback goal" "$GOAL"
+
+# Test C: resume_state strips BLOCKING ISSUES from legacy polluted state
+ORIGINAL_GOAL=""
+GOAL="$(printf 'Clean goal\n\nBLOCKING ISSUES — fix all: test fails\n\nFull feedback...')"
+write_state
+GOAL=""
+ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+assert_eq "resume_state strips BLOCKING ISSUES on load" "Clean goal" "$GOAL"
+assert_eq "resume_state sets ORIGINAL_GOAL after strip" "Clean goal" "$ORIGINAL_GOAL"
+
+# Test D: resume_state strips HUMAN FEEDBACK from legacy polluted state
+ORIGINAL_GOAL=""
+GOAL="$(printf 'Clean goal\n\nHUMAN FEEDBACK (received after iteration 3): fix the auth bug')"
+write_state
+GOAL=""
+ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+assert_eq "resume_state strips HUMAN FEEDBACK on load" "Clean goal" "$GOAL"
+
+# Test E: resume_state strips KNOWN FIX prefix from legacy polluted state
+ORIGINAL_GOAL=""
+GOAL="$(printf 'KNOWN FIX (from past success): retry logic\n\nClean goal')"
+write_state
+GOAL=""
+ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+assert_eq "resume_state strips KNOWN FIX prefix on load" "Clean goal" "$GOAL"
+
+# Test F: no unbounded growth across 2 compound_quality cycles
+GOAL="Original"
+ORIGINAL_GOAL="Original"
+GOAL="$(printf 'Original\n\nBLOCKING ISSUES — something: fail')"
+write_state
+GOAL=""
+ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+ORIGINAL_GOAL="$GOAL"
+GOAL="$(printf '%s\n\nBLOCKING ISSUES — something else: fail' "$GOAL")"
+write_state
+GOAL=""
+ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+assert_eq "no unbounded growth across 2 compound_quality cycles" "Original" "$GOAL"
 
 print_test_results

@@ -494,7 +494,7 @@ check_disk_space() { return 0; }   # stub — disk space not relevant in tests
 source "$SCRIPT_DIR/lib/pipeline-state.sh"
 
 # Reset all state vars to a known baseline.
-GOAL="" CURRENT_STAGE="build" PIPELINE_STATUS="interrupted"
+GOAL="" ORIGINAL_GOAL="" CURRENT_STAGE="build" PIPELINE_STATUS="interrupted"
 STAGE_STATUSES="intake:complete" LOG_ENTRIES=""
 PIPELINE_NAME="test-pipeline" GITHUB_ISSUE="" GIT_BRANCH=""
 PR_NUMBER="" PROGRESS_COMMENT_ID="" PIPELINE_START_EPOCH=""
@@ -512,6 +512,7 @@ fi
 
 # --- Test 2: multi-line goal write — goal value must be escaped (contains literal \n not real newlines) ---
 GOAL="$(printf 'Fix issue 348\n\nBLOCKING: tests fail\nFocus on src/foo.sh')"
+ORIGINAL_GOAL=""
 write_state
 _goal_line=$(grep '^goal:' "$STATE_FILE" | sed 's/^goal: *"//;s/" *$//')
 # With the fix, newlines in GOAL are encoded as the two-char sequence \n in the file.
@@ -534,7 +535,7 @@ else
 fi
 
 # --- Test 4: empty goal write — no crash ---
-GOAL="" PIPELINE_STATUS="running"
+GOAL="" ORIGINAL_GOAL="" PIPELINE_STATUS="running"
 write_state
 assert_pass "empty goal write does not crash"
 
@@ -542,6 +543,7 @@ assert_pass "empty goal write does not crash"
 # This was an ambiguous case with the simpler fix; the full backslash-escaping
 # scheme encodes literal \n as \\n so it round-trips correctly.
 GOAL=$'Contains a literal \\n backslash-n and a real\nnewline'
+ORIGINAL_GOAL=""
 write_state
 GOAL=""
 resume_state 2>/dev/null
@@ -553,6 +555,7 @@ fi
 
 # --- Test 6: goal with YAML-special chars preserved ---
 GOAL='Goal with colon: here and #hash and "quotes"'
+ORIGINAL_GOAL=""
 write_state
 GOAL=""
 resume_state 2>/dev/null
@@ -574,5 +577,84 @@ echo "content" > "$ARTIFACTS_DIR/plan.md"
 # Should be no-op when CI_MODE=false
 persist_artifacts "plan" "plan.md" 2>/dev/null
 assert_pass "persist_artifacts is no-op outside CI"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# write_state — ORIGINAL_GOAL protection (issue #362)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "write_state ORIGINAL_GOAL protection (issue #362)"
+
+# Reload the real write_state (clear the module guard to force re-source)
+_PIPELINE_STATE_LOADED=""
+# Provide any missing stubs that pipeline-state.sh needs
+check_disk_space()         { return 0; }
+get_stage_description()    { echo ""; }
+build_stage_progress()     { echo ""; }
+update_pipeline_status()   { :; }
+db_available()             { return 1; }
+PIPELINE_RUN_EPOCH=""
+PIPELINE_START_EPOCH=""
+source "$SCRIPT_DIR/lib/pipeline-state.sh"
+
+# Test A: write_state uses ORIGINAL_GOAL when GOAL is mutated
+GOAL="Original pipeline goal"
+ORIGINAL_GOAL="Original pipeline goal"
+GOAL="$(printf 'Original pipeline goal\n\nBLOCKING ISSUES — fix all of these before merge: tests fail')"
+write_state
+_saved=$(grep '^goal:' "$STATE_FILE" | sed 's/^goal: *"//;s/" *$//')
+assert_contains "write_state writes ORIGINAL_GOAL not mutated GOAL" "$_saved" "Original pipeline goal"
+_blocking_count=$(echo "$_saved" | grep -c 'BLOCKING ISSUES' || true)
+assert_eq "write_state does not write BLOCKING ISSUES" "0" "$_blocking_count"
+
+# Test B: ORIGINAL_GOAL empty → falls back to GOAL (no regression)
+GOAL="Fallback goal"
+ORIGINAL_GOAL=""
+write_state
+GOAL=""
+resume_state 2>/dev/null
+assert_eq "write_state falls back to GOAL when ORIGINAL_GOAL empty" "Fallback goal" "$GOAL"
+
+# Test C: resume_state strips BLOCKING ISSUES from legacy polluted state
+ORIGINAL_GOAL=""
+GOAL="$(printf 'Clean goal\n\nBLOCKING ISSUES — fix all: test fails\n\nFull feedback...')"
+write_state
+GOAL=""
+ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+assert_eq "resume_state strips BLOCKING ISSUES on load" "Clean goal" "$GOAL"
+assert_eq "resume_state sets ORIGINAL_GOAL after strip" "Clean goal" "$ORIGINAL_GOAL"
+
+# Test D: resume_state strips HUMAN FEEDBACK from legacy polluted state
+ORIGINAL_GOAL=""
+GOAL="$(printf 'Clean goal\n\nHUMAN FEEDBACK (received after iteration 3): fix the auth bug')"
+write_state
+GOAL=""
+ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+assert_eq "resume_state strips HUMAN FEEDBACK on load" "Clean goal" "$GOAL"
+
+# Test E: resume_state strips KNOWN FIX prefix from legacy polluted state
+ORIGINAL_GOAL=""
+GOAL="$(printf 'KNOWN FIX (from past success): retry logic\n\nClean goal')"
+write_state
+GOAL=""
+ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+assert_eq "resume_state strips KNOWN FIX prefix on load" "Clean goal" "$GOAL"
+
+# Test F: no unbounded growth across 2 compound_quality cycles
+GOAL="Original"
+ORIGINAL_GOAL="Original"
+GOAL="$(printf 'Original\n\nBLOCKING ISSUES — something: fail')"
+write_state
+GOAL=""
+ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+ORIGINAL_GOAL="$GOAL"
+GOAL="$(printf '%s\n\nBLOCKING ISSUES — something else: fail' "$GOAL")"
+write_state
+GOAL=""
+ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+assert_eq "no unbounded growth across 2 compound_quality cycles" "Original" "$GOAL"
 
 print_test_results

@@ -279,6 +279,7 @@ estimate_pipeline_cost() {
 
 # ─── Defaults ───────────────────────────────────────────────────────────────
 GOAL=""
+ORIGINAL_GOAL=""   # Clean goal — guards against mutation leak into write_state()
 ISSUE_NUMBER=""
 PIPELINE_NAME="standard"
 PIPELINE_CONFIG=""
@@ -1271,6 +1272,7 @@ self_healing_build_test() {
 
             # Temporarily augment the goal with error context
             local original_goal="$GOAL"
+            trap '{ GOAL="$original_goal"; trap - RETURN; }' RETURN
             GOAL="$GOAL
 
 ${memory_prefix}IMPORTANT — Previous build attempt failed tests. Fix these errors:
@@ -1496,6 +1498,7 @@ self_healing_review_build_test() {
 
         # Inject review blockers into goal for the build loop
         local original_goal="$GOAL"
+        trap '{ GOAL="$original_goal"; trap - RETURN; }' RETURN
         GOAL="$GOAL
 
 IMPORTANT — Code review found critical/security issues that MUST be fixed:
@@ -2612,6 +2615,9 @@ pipeline_start() {
         fi
         write_state 2>/dev/null || true
     fi
+
+    # Capture clean goal before any stage mutations — mirrors sw-loop.sh:415
+    ORIGINAL_GOAL="${ORIGINAL_GOAL:-$GOAL}"
 
     echo ""
     echo -e "${PURPLE}${BOLD}╔═══════════════════════════════════════════════════════════════════╗${RESET}"

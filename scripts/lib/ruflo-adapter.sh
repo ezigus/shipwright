@@ -1046,8 +1046,10 @@ ruflo_execute_audit() {
 
     # Initialize audit hive
     local hive_id=""
-    # Trap ensures hive is cleaned up if SIGTERM or unexpected exit interrupts orchestration.
-    trap '[[ -n "${hive_id:-}" ]] && _ruflo_hive_shutdown "${hive_id}" 2>/dev/null || true' EXIT
+    # Save caller's EXIT trap so we can restore it — overwriting it would skip pipeline
+    # teardown (lock release, stash restore, etc.) if the process exits while we hold the trap.
+    _RUFLO_AUDIT_PREV_EXIT_TRAP=$(trap -p EXIT 2>/dev/null || true)
+    trap '[[ -n "${hive_id:-}" ]] && _ruflo_hive_shutdown "${hive_id}" 2>/dev/null || true; if [[ -n "${_RUFLO_AUDIT_PREV_EXIT_TRAP:-}" ]]; then eval "${_RUFLO_AUDIT_PREV_EXIT_TRAP}"; else trap - EXIT; fi' EXIT
     local _init_exit=0
     local _init_out=""
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -1065,6 +1067,7 @@ ruflo_execute_audit() {
         hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
     if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
         emit_event "ruflo.audit_failed" "reason=hive_init_failed"
+        if [[ -n "${_RUFLO_AUDIT_PREV_EXIT_TRAP:-}" ]]; then eval "${_RUFLO_AUDIT_PREV_EXIT_TRAP}"; else trap - EXIT; fi
         return 1
     fi
 
@@ -1135,6 +1138,7 @@ ruflo_execute_audit() {
         warn "ruflo: orchestration failed with exit $_orch_exit"
         _ruflo_hive_shutdown "$hive_id"
         emit_event "ruflo.audit_failed" "reason=orchestration_failed"
+        if [[ -n "${_RUFLO_AUDIT_PREV_EXIT_TRAP:-}" ]]; then eval "${_RUFLO_AUDIT_PREV_EXIT_TRAP}"; else trap - EXIT; fi
         return 1
     fi
 
@@ -1157,6 +1161,7 @@ ruflo_execute_audit() {
     mkdir -p "$(dirname "$artifact_file")" 2>/dev/null || true
     if ! printf '%s\n' "${_findings:-}" > "$artifact_file"; then
         warn "ruflo: failed to write audit artifact: $artifact_file"
+        if [[ -n "${_RUFLO_AUDIT_PREV_EXIT_TRAP:-}" ]]; then eval "${_RUFLO_AUDIT_PREV_EXIT_TRAP}"; else trap - EXIT; fi
         return 1
     fi
 
@@ -1166,8 +1171,8 @@ ruflo_execute_audit() {
         "pipeline-${pipeline_id}" \
         "audit,outcome" || true
 
-    emit_event "ruflo.audit_complete" "hive_id=$hive_id stage=audit"
-    trap - EXIT
+    emit_event "ruflo.audit_complete" "hive_id=$hive_id" "stage=audit"
+    if [[ -n "${_RUFLO_AUDIT_PREV_EXIT_TRAP:-}" ]]; then eval "${_RUFLO_AUDIT_PREV_EXIT_TRAP}"; else trap - EXIT; fi
     return 0
 }
 

@@ -1586,4 +1586,73 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Test: ruflo_execute_audit preserves caller EXIT trap on failure path
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_execute_audit — preserves caller EXIT trap on failure"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_orig_path="$PATH"
+mock_binary "ruflo" 'exit 1'
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+_sentinel_fired=false
+trap '_sentinel_fired=true' EXIT
+_trap_before=$(trap -p EXIT)
+ruflo_execute_audit "diff content here" "$_test_tmp/audit-out.md" 2>/dev/null || true
+_trap_after=$(trap -p EXIT)
+trap - EXIT
+PATH="$_orig_path"
+rm -f "$TEST_TEMP_DIR/bin/ruflo"
+rm -rf "$_test_tmp"
+if [[ "$_trap_before" == "$_trap_after" ]]; then
+    assert_pass "ruflo_execute_audit restores caller EXIT trap on failure"
+else
+    assert_fail "ruflo_execute_audit restores caller EXIT trap on failure" "before: $_trap_before | after: $_trap_after"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test: ruflo_execute_audit preserves caller EXIT trap on success path
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_execute_audit — preserves caller EXIT trap on success"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+subcmd="\${1:-}"
+printf '%s %s %s\\n' "\$subcmd" "\${2:-}" "\${3:-}" >> "$_call_log"
+if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "init" ]]; then
+    printf '{"hive_id":"trap-test-hive"}\\n'
+    exit 0
+fi
+if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+    printf 'finding: none\\n'
+    exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+_artifact="$_test_tmp/audit-result.md"
+trap '_sentinel_fired=true' EXIT
+_trap_before=$(trap -p EXIT)
+ruflo_execute_audit "diff content here" "$_artifact" 2>/dev/null || true
+_trap_after=$(trap -p EXIT)
+trap - EXIT
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ "$_trap_before" == "$_trap_after" ]]; then
+    assert_pass "ruflo_execute_audit restores caller EXIT trap on success"
+else
+    assert_fail "ruflo_execute_audit restores caller EXIT trap on success" "before: $_trap_before | after: $_trap_after"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

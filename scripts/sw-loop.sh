@@ -975,17 +975,27 @@ run_test_gate() {
     local combined_output=""
     local test_timeout="${SW_TEST_TIMEOUT:-$(_config_get_int "loop.test_timeout" 900 2>/dev/null || echo 900)}"
     local _max_test_timeout="$(_config_get_int "loop.test_timeout_max" 3600 2>/dev/null || echo 3600)"
-    # Scale proportionally for multi-target commands (e.g. -t FooTests,BarTests,Packages)
+    # Scale proportionally for multi-target commands.
+    # Supports both legacy -t FooTests,BarTests form and the current positional-arg
+    # form used by ios_xcode targets (e.g. run-xcode-tests.sh FooTests BarTests Packages).
+    local _target_count=0
     local _targets_str
     _targets_str=$(echo "$active_test_cmd" | grep -oE '\-t [^ ]+' | head -1 | sed 's/-t //' || true)
     if [[ -n "$_targets_str" ]]; then
-        local _target_count
+        # Legacy -t comma-separated form
         _target_count=$(echo "$_targets_str" | tr ',' '\n' | grep -c '.' || true)
-        if [[ "${_target_count:-1}" -gt 1 ]]; then
-            local _scaled=$(( _target_count * test_timeout ))
-            [[ "$_scaled" -gt "$_max_test_timeout" ]] && _scaled="$_max_test_timeout"
-            test_timeout="$_scaled"
+    elif echo "$active_test_cmd" | grep -qE 'run-xcode-tests\.sh'; then
+        # Positional-arg form: count space-separated words after the script name
+        local _args_after_script
+        _args_after_script=$(echo "$active_test_cmd" | sed 's|.*run-xcode-tests\.sh[[:space:]]*||' || true)
+        if [[ -n "$_args_after_script" ]]; then
+            _target_count=$(echo "$_args_after_script" | wc -w | tr -d '[:space:]' || true)
         fi
+    fi
+    if [[ "${_target_count:-0}" -gt 1 ]]; then
+        local _scaled=$(( _target_count * test_timeout ))
+        [[ "$_scaled" -gt "$_max_test_timeout" ]] && _scaled="$_max_test_timeout"
+        test_timeout="$_scaled"
     fi
 
     # Run primary test command

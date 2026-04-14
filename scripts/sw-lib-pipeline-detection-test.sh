@@ -451,7 +451,7 @@ else
 fi
 DTCFL_BASE=$(git -C "$DTCFL_DIR" rev-parse HEAD)
 
-# --- Test 2: One Swift file changed → -t ClassName
+# --- Test 2: One Swift file changed → ClassName (positional arg)
 _reset_dtcfl_caches
 echo "class FooTests {}" > "$DTCFL_DIR/Sources/FooTests.swift"
 ( cd "$DTCFL_DIR" && git add "Sources/FooTests.swift" && git commit -q -m "add FooTests" )
@@ -468,7 +468,7 @@ else
 fi
 DTCFL_BASE=$(git -C "$DTCFL_DIR" rev-parse HEAD)
 
-# --- Test 3: Multiple Swift files changed → -t Class1,Class2
+# --- Test 3: Multiple Swift files changed → Class1 Class2 (positional args)
 _reset_dtcfl_caches
 echo "class BarTests {}" > "$DTCFL_DIR/Sources/BarTests.swift"
 echo "class BazTests {}" > "$DTCFL_DIR/Sources/BazTests.swift"

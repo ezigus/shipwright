@@ -985,9 +985,12 @@ run_test_gate() {
         # Legacy -t comma-separated form
         _target_count=$(echo "$_targets_str" | tr ',' '\n' | grep -c '.' || true)
     elif echo "$active_test_cmd" | grep -qE 'run-xcode-tests\.sh'; then
-        # Positional-arg form: count space-separated words after the script name
+        # Positional-arg form: count words after the script name, stopping at any shell
+        # separator (&&, ||, |, ;) so chained commands are not counted as targets.
         local _args_after_script
-        _args_after_script=$(echo "$active_test_cmd" | sed 's|.*run-xcode-tests\.sh[[:space:]]*||' || true)
+        _args_after_script=$(echo "$active_test_cmd" \
+            | sed 's|.*run-xcode-tests\.sh[[:space:]]*||; s/[[:space:]]*&&.*//; s/[[:space:]]*||.*//; s/[[:space:]]*|.*//; s/[[:space:]]*;.*//' \
+            || true)
         if [[ -n "$_args_after_script" ]]; then
             _target_count=$(echo "$_args_after_script" | wc -w | tr -d '[:space:]' || true)
         fi

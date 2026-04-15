@@ -243,12 +243,12 @@ compound_audit_verify_findings() {
     local keep_indices=""
     local i=0
     while [[ "$i" -lt "$count" ]]; do
-        local desc evidence file combined symbol keep raw_fields
+        local finding desc evidence file combined symbol keep
         keep=1
-        # Single jq call extracts all fields; join with ASCII Unit Separator (\x1f),
-        # a non-whitespace character so IFS read preserves empty fields between delimiters.
-        raw_fields=$(echo "$findings" | jq -r ".[$i] | [.description // \"\", .evidence // \"\", .file // \"\"] | join(\"\u001f\")" 2>/dev/null || true)
-        IFS=$'\x1f' read -r desc evidence file <<< "$raw_fields"
+        finding=$(echo "$findings" | jq -c ".[$i]" 2>/dev/null)
+        desc=$(echo "$finding" | jq -r '.description // ""' 2>/dev/null)
+        evidence=$(echo "$finding" | jq -r '.evidence // ""' 2>/dev/null)
+        file=$(echo "$finding" | jq -r '.file // ""' 2>/dev/null)
         combined="$desc $evidence"
 
         # Normalize path: strip leading ./ and collapse //
@@ -295,7 +295,7 @@ compound_audit_verify_findings() {
             # (e.g. excessively long names, single-char noise tokens).
             if [[ -n "$symbol" ]] && \
                [[ ${#symbol} -le 128 ]] && \
-               [[ "$symbol" =~ ^[A-Za-z_][A-Za-z0-9_]{0,127}$ ]]; then
+               [[ "$symbol" =~ ^[A-Za-z_][A-Za-z0-9_]{1,127}$ ]]; then
                 : # valid — proceed to content check below
             else
                 symbol=""

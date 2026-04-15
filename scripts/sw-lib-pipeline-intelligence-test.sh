@@ -651,4 +651,52 @@ else
     assert_pass "No unbound-variable error from RETURN trap re-fire"
 fi
 
+# ─────────────────────────────────────────────
+print_test_section "_cleanup_cycle_files"
+# ─────────────────────────────────────────────
+# _cleanup_cycle_files is defined in pipeline-intelligence.sh, already sourced above.
+# Test by temporarily overriding ARTIFACTS_DIR.
+
+_cq_orig_dir="$ARTIFACTS_DIR"
+_cq_dir="$TEST_TEMP_DIR/artifacts-cq"
+mkdir -p "$_cq_dir"
+
+# Populate cycle files and one non-cycle file
+touch "$_cq_dir/negative-review-cycle1.md"
+touch "$_cq_dir/negative-review-cycle2.md"
+touch "$_cq_dir/negative-review-cycle42.md"
+touch "$_cq_dir/negative-review.md"
+
+ARTIFACTS_DIR="$_cq_dir"
+_cleanup_cycle_files
+ARTIFACTS_DIR="$_cq_orig_dir"
+
+_cq_remaining=$(find "$_cq_dir" -maxdepth 1 -name "negative-review-cycle*.md" 2>/dev/null | wc -l | tr -d ' ')
+if [[ "$_cq_remaining" == "0" ]]; then
+    assert_pass "_cleanup_cycle_files: removes all negative-review-cycle*.md files"
+else
+    assert_fail "_cleanup_cycle_files: removes all negative-review-cycle*.md files" "$_cq_remaining files remain"
+fi
+
+if [[ -f "$_cq_dir/negative-review.md" ]]; then
+    assert_pass "_cleanup_cycle_files: preserves negative-review.md (non-cycle file)"
+else
+    assert_fail "_cleanup_cycle_files: preserves negative-review.md (non-cycle file)"
+fi
+
+# Idempotent: safe to call when no cycle files exist
+_cq_empty_dir="$TEST_TEMP_DIR/artifacts-cq-empty"
+mkdir -p "$_cq_empty_dir"
+ARTIFACTS_DIR="$_cq_empty_dir"
+_cleanup_cycle_files
+_cq_idem_exit=$?
+ARTIFACTS_DIR="$_cq_orig_dir"
+if [[ "$_cq_idem_exit" == "0" ]]; then
+    assert_pass "_cleanup_cycle_files: idempotent when no cycle files exist"
+else
+    assert_fail "_cleanup_cycle_files: idempotent when no cycle files exist" "exit $?"
+fi
+
+rm -rf "$_cq_dir" "$_cq_empty_dir"
+
 print_test_results

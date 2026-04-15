@@ -34,6 +34,11 @@ BASE_BRANCH="${BASE_BRANCH:-main}"
 PIPELINE_CONFIG="${PIPELINE_CONFIG:-}"
 TEST_CMD="${TEST_CMD:-}"
 
+# Source compat.sh for file_mtime() and date_to_epoch() used by pipeline_artifact_is_fresh()
+if [[ -f "${SCRIPT_DIR}/lib/compat.sh" ]]; then
+    source "${SCRIPT_DIR}/lib/compat.sh"
+fi
+
 # Returns 0 (fresh) if an artifact file was written during the current pipeline run.
 # Freshness is anchored to PIPELINE_RUN_EPOCH (set by initialize_state / resume_state).
 #

@@ -295,7 +295,7 @@ compound_audit_verify_findings() {
             # (e.g. excessively long names, single-char noise tokens).
             if [[ -n "$symbol" ]] && \
                [[ ${#symbol} -le 128 ]] && \
-               [[ "$symbol" =~ ^[A-Za-z_][A-Za-z0-9_]{1,127}$ ]]; then
+               [[ "$symbol" =~ ^[A-Za-z_][A-Za-z0-9_]{0,127}$ ]]; then
                 : # valid — proceed to content check below
             else
                 symbol=""

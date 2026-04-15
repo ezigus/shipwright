@@ -290,6 +290,17 @@ compound_audit_verify_findings() {
                     | grep -oE "[A-Za-z_][A-Za-z0-9_]*" | head -1 || true)
             fi
 
+            # Validate: symbol must be a non-empty proper identifier, max 128
+            # chars. Rejects crafted inputs that slip through the regexes
+            # (e.g. excessively long names, single-char noise tokens).
+            if [[ -n "$symbol" ]] && \
+               [[ ${#symbol} -le 128 ]] && \
+               [[ "$symbol" =~ ^[A-Za-z_][A-Za-z0-9_]{1,127}$ ]]; then
+                : # valid — proceed to content check below
+            else
+                symbol=""
+            fi
+
             if [[ -n "$symbol" ]]; then
                 # Fetch content the same way the prompt collector does:
                 # git show HEAD:file first, fall back to worktree cat.

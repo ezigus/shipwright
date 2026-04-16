@@ -599,10 +599,15 @@ jobs:
             PIPELINE_ARGS+=(--completed-stages "$COMPLETED_STAGES")
           fi
 
-          # Heartbeat: post progress marker every 10 minutes so watchdog knows we're alive
+          # Heartbeat: post progress marker every 10 minutes so watchdog knows we're alive.
+          # Visible body first so subscribers see content; HTML comment retained for
+          # watchdog parsing (shipwright-watchdog.yml uses `contains("SHIPWRIGHT-HEARTBEAT")`).
           (while true; do
             sleep 600
-            gh issue comment "$ISSUE_NUMBER" --body "<!-- SHIPWRIGHT-HEARTBEAT: $(date -u +%Y-%m-%dT%H:%M:%SZ):running -->" 2>/dev/null || true
+            _HB_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            _HB_DISPLAY=$(date -u '+%H:%M UTC')
+            gh issue comment "$ISSUE_NUMBER" --body "⏳ Pipeline still running — last heartbeat ${_HB_DISPLAY}
+<!-- SHIPWRIGHT-HEARTBEAT: ${_HB_TS}:running -->" 2>/dev/null || true
           done) &
           HEARTBEAT_PID=$!
 

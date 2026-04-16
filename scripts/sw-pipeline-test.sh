@@ -1979,8 +1979,10 @@ test_ci_post_stage_event_visible_body() {
     local fns result visible
     fns=$(_load_ci_post_stage_event)
     result=$(_ci_capture_body "$fns" "build" "complete" "45s")
-    visible=$(printf '%s' "$result" | grep -v '^<!--' | tr -d '[:space:]')
+    visible=$(printf '%s\n' "$result" | grep -Ev '^[[:space:]]*<!--' | tr -d '[:space:]')
     [[ -n "$visible" ]] || { echo "Expected visible comment body, got only HTML comments: $result"; return 1; }
+    printf '%s\n' "$result" | grep -Ev '^[[:space:]]*<!--' | grep -Eq 'Pipeline update|build' \
+        || { echo "Expected human-readable pipeline update text in comment body; got: $result"; return 1; }
 }
 
 test_ci_post_stage_event_retains_marker() {

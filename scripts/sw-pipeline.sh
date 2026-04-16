@@ -678,7 +678,18 @@ ci_post_stage_event() {
     [[ "${GH_AVAILABLE:-false}" != "true" ]] && return 0
 
     local stage="$1" status="$2" elapsed="${3:-0s}"
-    local comment="<!-- SHIPWRIGHT-STAGE: ${stage}:${status}:${elapsed} -->"
+    local emoji
+    case "$status" in
+        complete) emoji="✅" ;;
+        failed)   emoji="❌" ;;
+        skipped)  emoji="⏭️" ;;
+        *)        emoji="🔄" ;;
+    esac
+    # Visible body first so readers see content; HTML comment retained for
+    # watchdog parsing (shipwright-watchdog.yml uses `contains("SHIPWRIGHT-STAGE")`).
+    local comment
+    comment="${emoji} Pipeline update — \`${stage}\` stage **${status}** (${elapsed})
+<!-- SHIPWRIGHT-STAGE: ${stage}:${status}:${elapsed} -->"
     _timeout "$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)" gh issue comment "$ISSUE_NUMBER" --body "$comment" >/dev/null 2>&1 || true
 }
 

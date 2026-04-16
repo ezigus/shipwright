@@ -1925,6 +1925,102 @@ test_fresh_start_cleans_stale_checkpoints() {
     )
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# ci_post_stage_event — comment format tests (issue #258)
+# ──────────────────────────────────────────────────────────────────────────────
+
+_load_ci_post_stage_event() {
+    # Extract ci_post_stage_event into an isolated sourcing script so we can
+    # call it without the full pipeline environment.
+    local fns="$TEST_TEMP_DIR/ci-post-fns.sh"
+    cat > "$fns" <<'FEOF'
+#!/usr/bin/env bash
+set -uo pipefail
+emit_event() { true; }
+info() { true; }
+warn() { true; }
+_timeout() { local _t="$1"; shift; "$@"; }
+_config_get_int() { echo "${3:-30}"; }
+FEOF
+    sed -n '/^ci_post_stage_event()/,/^}/p' "$REAL_PIPELINE_SCRIPT" >> "$fns"
+    echo "$fns"
+}
+
+_ci_capture_body() {
+    # Helper: run ci_post_stage_event with a gh() stub that writes --body arg to
+    # a temp file (avoids >/dev/null suppression in the real function).
+    local fns="$1" stage="$2" status="$3" elapsed="$4"
+    local capture_file="$TEST_TEMP_DIR/ci-body-capture-$$.txt"
+    rm -f "$capture_file"
+    (
+        # shellcheck disable=SC1090
+        source "$fns" 2>/dev/null
+        CI_MODE=true
+        ISSUE_NUMBER=123
+        GH_AVAILABLE=true
+        gh() {
+            local prev=""
+            for arg in "$@"; do
+                if [[ "$prev" == "--body" ]]; then
+                    printf '%s' "$arg" > "$capture_file"
+                    return 0
+                fi
+                prev="$arg"
+            done
+        }
+        ci_post_stage_event "$stage" "$status" "$elapsed"
+    ) 2>/dev/null || true
+    cat "$capture_file" 2>/dev/null || true
+    rm -f "$capture_file"
+}
+
+test_ci_post_stage_event_visible_body() {
+    # Comment body must contain human-readable text (not just HTML comment)
+    local fns result visible
+    fns=$(_load_ci_post_stage_event)
+    result=$(_ci_capture_body "$fns" "build" "complete" "45s")
+    visible=$(printf '%s' "$result" | grep -v '^<!--' | tr -d '[:space:]')
+    [[ -n "$visible" ]] || { echo "Expected visible comment body, got only HTML comments: $result"; return 1; }
+}
+
+test_ci_post_stage_event_retains_marker() {
+    # HTML marker must be present for watchdog parsing
+    local fns result
+    fns=$(_load_ci_post_stage_event)
+    result=$(_ci_capture_body "$fns" "test" "complete" "2m10s")
+    printf '%s' "$result" | grep -q 'SHIPWRIGHT-STAGE' \
+        || { echo "HTML marker SHIPWRIGHT-STAGE missing from comment body"; return 1; }
+    printf '%s' "$result" | grep -q 'test:complete:2m10s' \
+        || { echo "Stage/status/elapsed missing from marker; got: $result"; return 1; }
+}
+
+test_ci_post_stage_event_failed_emoji() {
+    # Failed status should use the failure emoji
+    local fns result
+    fns=$(_load_ci_post_stage_event)
+    result=$(_ci_capture_body "$fns" "review" "failed" "1m5s")
+    printf '%s' "$result" | grep -q '❌' \
+        || { echo "Expected failure emoji in comment body; got: $result"; return 1; }
+}
+
+test_ci_post_stage_event_noop_outside_ci() {
+    # Must be a no-op when CI_MODE != true
+    local fns capture_file
+    fns=$(_load_ci_post_stage_event)
+    capture_file="$TEST_TEMP_DIR/ci-noop-$$.txt"
+    rm -f "$capture_file"
+    (
+        # shellcheck disable=SC1090
+        source "$fns" 2>/dev/null
+        CI_MODE=false
+        ISSUE_NUMBER=123
+        GH_AVAILABLE=true
+        gh() { printf 'called' > "$capture_file"; }
+        ci_post_stage_event "build" "complete" "1s"
+    ) 2>/dev/null || true
+    [[ ! -f "$capture_file" ]] || { echo "ci_post_stage_event should be no-op when CI_MODE=false"; return 1; }
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2018,6 +2114,10 @@ main() {
         "test_verify_artifacts_design_needs_plan:Durable: verify_stage_artifacts design requires plan.md"
         "test_mark_complete_persists_plan:Durable: mark_stage_complete wires persist for plan stage"
         "test_fresh_start_cleans_stale_checkpoints:Cleanup: stale checkpoints/ removed on fresh pipeline start"
+        "test_ci_post_stage_event_visible_body:CI: ci_post_stage_event posts visible comment body"
+        "test_ci_post_stage_event_retains_marker:CI: ci_post_stage_event retains SHIPWRIGHT-STAGE marker for watchdog"
+        "test_ci_post_stage_event_failed_emoji:CI: ci_post_stage_event uses failure emoji for failed status"
+        "test_ci_post_stage_event_noop_outside_ci:CI: ci_post_stage_event is no-op outside CI mode"
     )
 
     for entry in "${tests[@]}"; do

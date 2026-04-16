@@ -606,8 +606,8 @@ jobs:
             sleep 600
             _HB_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
             _HB_DISPLAY=$(date -u '+%H:%M UTC')
-            gh issue comment "$ISSUE_NUMBER" --body "⏳ Pipeline still running — last heartbeat ${_HB_DISPLAY}
-<!-- SHIPWRIGHT-HEARTBEAT: ${_HB_TS}:running -->" 2>/dev/null || true
+            _HB_BODY="⏳ Pipeline still running — last heartbeat ${_HB_DISPLAY}"$'\n'"<!-- SHIPWRIGHT-HEARTBEAT: ${_HB_TS}:running -->"
+            gh issue comment "$ISSUE_NUMBER" --body "$_HB_BODY" 2>/dev/null || true
           done) &
           HEARTBEAT_PID=$!
 

@@ -446,7 +446,7 @@ select_test_commands_for_context_json() {
                 if [[ "$pkg_count" -gt 0 ]]; then
                     [[ -n "$all_targets" ]] && all_targets="${all_targets},Packages" || all_targets="Packages"
                 fi
-                [[ -n "$all_targets" ]] && helper_flags="-t ${all_targets}"
+                [[ -n "$all_targets" ]] && helper_flags="${all_targets//,/ }"
             fi
             if [[ -n "$script" ]]; then
                 cmd="bash ./${script}"
@@ -512,7 +512,7 @@ detect_test_cmd_for_loop() {
                         || all_targets="Packages"
                 fi
                 if [[ -n "$all_targets" ]]; then
-                    helper_flags="-t ${all_targets}"
+                    helper_flags="${all_targets//,/ }"
                 else
                     # No specific targets — fall back to syntax check to avoid triggering full regression
                     local syntax_flag

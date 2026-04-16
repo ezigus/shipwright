@@ -496,7 +496,7 @@ _cleanup_run_artifacts() {
 
     # Per-run subdirectories
     local d
-    for d in "$ARTIFACTS_DIR"/stage-outputs "$ARTIFACTS_DIR"/wiki; do
+    for d in "$ARTIFACTS_DIR"/stage-outputs "$ARTIFACTS_DIR"/wiki "$ARTIFACTS_DIR"/checkpoints; do
         [[ -d "$d" ]] && rm -rf "$d"
     done
 
@@ -536,6 +536,20 @@ _cleanup_stale_artifacts_on_resume() {
         if [[ "$mtime" =~ ^[0-9]+$ && "$mtime" -lt "$epoch" ]]; then
             rm -f "$f"
         fi
+    done
+
+    # Sweep stale files inside per-run subdirectories (e.g. checkpoints/ left by a
+    # different pipeline that previously occupied this worktree).
+    local d
+    for d in "$ARTIFACTS_DIR"/checkpoints; do
+        [[ -d "$d" ]] || continue
+        for f in "$d"/*; do
+            [[ -f "$f" ]] || continue
+            mtime=$(file_mtime "$f")
+            if [[ "$mtime" =~ ^[0-9]+$ && "$mtime" -lt "$epoch" ]]; then
+                rm -f "$f"
+            fi
+        done
     done
 
     return 0

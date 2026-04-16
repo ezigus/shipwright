@@ -1586,4 +1586,141 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Test: ruflo_execute_audit restores caller EXIT trap on failure path
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_execute_audit — restores caller EXIT trap on failure"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_orig_path="$PATH"
+mock_binary "ruflo" 'exit 1'
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+_sentinel_fired=false
+trap '_sentinel_fired=true' EXIT
+_trap_before=$(trap -p EXIT)
+ruflo_execute_audit "diff content here" "$_test_tmp/audit-out.md" 2>/dev/null || true
+_trap_after=$(trap -p EXIT)
+trap - EXIT
+PATH="$_orig_path"
+rm -f "$TEST_TEMP_DIR/bin/ruflo"
+rm -rf "$_test_tmp"
+if [[ "$_trap_before" == "$_trap_after" ]]; then
+    assert_pass "ruflo_execute_audit restores caller EXIT trap on failure"
+else
+    assert_fail "ruflo_execute_audit restores caller EXIT trap on failure" "before: $_trap_before | after: $_trap_after"
+fi
+# Verify _sentinel_fired remains false (trap was restored, not fired mid-function)
+if [[ "$_sentinel_fired" == "false" ]]; then
+    assert_pass "caller EXIT sentinel did not fire during ruflo_execute_audit failure"
+else
+    assert_fail "caller EXIT sentinel did not fire during ruflo_execute_audit failure" "sentinel fired unexpectedly"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test: ruflo_execute_audit restores caller EXIT trap on success path
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_execute_audit — restores caller EXIT trap on success"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+subcmd="\${1:-}"
+printf '%s %s %s\\n' "\$subcmd" "\${2:-}" "\${3:-}" >> "$_call_log"
+if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "init" ]]; then
+    printf '{"hive_id":"trap-test-hive"}\\n'
+    exit 0
+fi
+if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+    printf 'finding: none\\n'
+    exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+_artifact="$_test_tmp/audit-result.md"
+_sentinel_fired=false
+trap '_sentinel_fired=true' EXIT
+_trap_before=$(trap -p EXIT)
+ruflo_execute_audit "diff content here" "$_artifact" 2>/dev/null || true
+_trap_after=$(trap -p EXIT)
+trap - EXIT
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ "$_trap_before" == "$_trap_after" ]]; then
+    assert_pass "ruflo_execute_audit restores caller EXIT trap on success"
+else
+    assert_fail "ruflo_execute_audit restores caller EXIT trap on success" "before: $_trap_before | after: $_trap_after"
+fi
+if [[ "$_sentinel_fired" == "false" ]]; then
+    assert_pass "caller EXIT sentinel did not fire during ruflo_execute_audit success"
+else
+    assert_fail "caller EXIT sentinel did not fire during ruflo_execute_audit success" "sentinel fired unexpectedly"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test: caller's EXIT handler runs when process exits mid-function (unexpected exit)
+# Uses a subprocess: mock ruflo sends SIGTERM to the bash process running
+# ruflo_execute_audit during orchestration, verifying the chained EXIT trap fires
+# both hive cleanup and the caller's sentinel.
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_execute_audit — chains caller EXIT handler on unexpected exit"
+
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_sentinel_file="$_test_tmp/sentinel"
+# Mock ruflo: init succeeds, orchestration sends TERM directly to the bash subprocess
+# (via a PID file written before the function call), simulating mid-function process exit.
+cat > "$_test_tmp/ruflo" << MOCK_EOF
+#!/usr/bin/env bash
+case "\${1:-}/\${2:-}" in
+    hive-mind/init)
+        printf '{"hive_id":"term-test-hive"}\n'
+        exit 0
+        ;;
+    coordination/orchestrate)
+        _target=\$(cat '$_test_tmp/subprocess.pid' 2>/dev/null || true)
+        [[ -n "\$_target" ]] && kill -TERM "\$_target" 2>/dev/null || true
+        sleep 3
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+MOCK_EOF
+chmod +x "$_test_tmp/ruflo"
+# Run in a subprocess so SIGTERM exits it cleanly without killing the test harness.
+# Writing $$ before the call lets the mock target the right bash PID.
+# A TERM trap calls exit so bash fires the chained EXIT handler on SIGTERM; the
+# chained handler (installed by ruflo_execute_audit) should run both hive cleanup
+# and the caller's sentinel touch.
+bash -c "
+    echo \$\$ > '$_test_tmp/subprocess.pid'
+    export PATH='$_test_tmp:/usr/local/bin:/usr/bin:/bin'
+    unset _RUFLO_ADAPTER_LOADED
+    source '$SCRIPT_DIR/lib/ruflo-adapter.sh'
+    RUFLO_AVAILABLE=true
+    RUFLO_USE_NPX=false
+    trap 'exit 143' TERM
+    trap 'touch \"$_sentinel_file\"' EXIT
+    ruflo_execute_audit 'diff content' '$_test_tmp/out.md' 2>/dev/null || true
+" 2>/dev/null || true
+# Give the subprocess a moment to finish writing the sentinel if TERM raced
+sleep 1
+if [[ -f "$_sentinel_file" ]]; then
+    assert_pass "chained EXIT trap fires caller handler on unexpected SIGTERM during audit"
+else
+    assert_fail "chained EXIT trap fires caller handler on unexpected SIGTERM during audit" "sentinel file not created"
+fi
+rm -rf "$_test_tmp"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

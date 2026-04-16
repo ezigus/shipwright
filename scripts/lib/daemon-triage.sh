@@ -180,15 +180,8 @@ triage_score_issue() {
     # ── 6. Memory bonus (0-10 points / -5 for prior failures) ──
     local memory_score=0
     if [[ -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
-        local memory_result memory_exit
-        memory_exit=0
-        memory_result=$(timeout 5 "$SCRIPT_DIR/sw-memory.sh" search --issue "$issue_num" --json 2>/dev/null) \
-            || memory_exit=$?
-        if [[ "$memory_exit" -eq 124 ]]; then
-            daemon_log WARN "sw-memory.sh timed out (5s) for issue ${issue_num}" >&2 || true
-        elif [[ "$memory_exit" -ne 0 ]]; then
-            daemon_log WARN "sw-memory.sh failed (exit ${memory_exit}) for issue ${issue_num}" >&2 || true
-        fi
+        local memory_result
+        memory_result=$(_timeout 5 "$SCRIPT_DIR/sw-memory.sh" search --issue "$issue_num" --json 2>/dev/null || true)
         if [[ -n "$memory_result" ]]; then
             local prior_result
             prior_result=$(echo "$memory_result" | jq -r '.last_result // ""' 2>/dev/null || true)

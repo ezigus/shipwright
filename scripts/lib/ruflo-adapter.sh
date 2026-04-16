@@ -1046,9 +1046,22 @@ ruflo_execute_audit() {
 
     # Initialize audit hive
     local hive_id=""
-    # RETURN trap (not EXIT) — fires on any function return path including set -e failures,
-    # is function-scoped, and does not clobber the caller's EXIT trap.
-    trap '[[ -n "${hive_id:-}" ]] && _ruflo_hive_shutdown "${hive_id}" 2>/dev/null || true' RETURN
+    # Save caller's EXIT trap so we can restore it and chain it on unexpected exits.
+    # Using local variables avoids leaking state across calls.
+    # _prev_exit_raw: full "trap -- '...' EXIT" string, used to restore on explicit returns.
+    # _prev_exit_body: just the handler body, embedded inline in our chained trap so that
+    # both hive cleanup AND caller teardown (lock release, stash restore, etc.) run if the
+    # process exits unexpectedly (SIGTERM, set -e, etc.) while our trap is installed.
+    local _prev_exit_raw
+    local _prev_exit_body=""
+    _prev_exit_raw=$(trap -p EXIT 2>/dev/null || true)
+    if [[ -n "$_prev_exit_raw" ]]; then
+        # Extract handler body from: trap -- 'body' EXIT
+        _prev_exit_body=$(printf '%s\n' "$_prev_exit_raw" | sed "s/^trap -- '//; s/' EXIT\$//")
+    fi
+    local _chained_trap='[[ -n "${hive_id:-}" ]] && _ruflo_hive_shutdown "${hive_id}" 2>/dev/null || true'
+    [[ -n "$_prev_exit_body" ]] && _chained_trap="${_chained_trap}; ${_prev_exit_body}"
+    trap "$_chained_trap" EXIT
     local _init_exit=0
     local _init_out=""
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -1066,6 +1079,7 @@ ruflo_execute_audit() {
         hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
     if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
         emit_event "ruflo.audit_failed" "reason=hive_init_failed"
+        if [[ -n "${_prev_exit_raw:-}" ]]; then eval "${_prev_exit_raw}"; else trap - EXIT; fi
         return 1
     fi
 
@@ -1136,6 +1150,7 @@ ruflo_execute_audit() {
         warn "ruflo: orchestration failed with exit $_orch_exit"
         _ruflo_hive_shutdown "$hive_id"
         emit_event "ruflo.audit_failed" "reason=orchestration_failed"
+        if [[ -n "${_prev_exit_raw:-}" ]]; then eval "${_prev_exit_raw}"; else trap - EXIT; fi
         return 1
     fi
 
@@ -1158,6 +1173,7 @@ ruflo_execute_audit() {
     mkdir -p "$(dirname "$artifact_file")" 2>/dev/null || true
     if ! printf '%s\n' "${_findings:-}" > "$artifact_file"; then
         warn "ruflo: failed to write audit artifact: $artifact_file"
+        if [[ -n "${_prev_exit_raw:-}" ]]; then eval "${_prev_exit_raw}"; else trap - EXIT; fi
         return 1
     fi
 
@@ -1167,7 +1183,8 @@ ruflo_execute_audit() {
         "pipeline-${pipeline_id}" \
         "audit,outcome" || true
 
-    emit_event "ruflo.audit_complete" "hive_id=$hive_id stage=audit"
+    emit_event "ruflo.audit_complete" "hive_id=$hive_id" "stage=audit"
+    if [[ -n "${_prev_exit_raw:-}" ]]; then eval "${_prev_exit_raw}"; else trap - EXIT; fi
     return 0
 }
 

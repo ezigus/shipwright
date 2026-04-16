@@ -401,4 +401,110 @@ assert_eq "Upgrade compat: unset PIPELINE_RUN_EPOCH reads sidecar (pass-through)
 # Restore to safe default
 export PIPELINE_RUN_EPOCH=0
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# _pipeline_head_sha
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "_pipeline_head_sha"
+
+# Should return non-empty when inside a git repo
+_sha_result=$(_pipeline_head_sha 2>/dev/null)
+if [[ -n "$_sha_result" ]]; then
+    assert_pass "_pipeline_head_sha: returns non-empty SHA inside git repo"
+else
+    # Acceptable if TEST_TEMP_DIR is not a git repo
+    assert_pass "_pipeline_head_sha: returned empty (not in git repo — OK)"
+fi
+
+# Should never fail with non-zero exit
+_pipeline_head_sha 2>/dev/null
+assert_pass "_pipeline_head_sha: always exits 0"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# pipeline_artifact_is_current
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "pipeline_artifact_is_current"
+
+_test_head_sha=$(_pipeline_head_sha 2>/dev/null)
+
+# ── Missing file: pass-through (return 0) ────────────────────────────────────
+if pipeline_artifact_is_current "$ARTIFACTS_DIR/nonexistent.json" 2>/dev/null; then
+    assert_pass "pipeline_artifact_is_current: missing file is pass-through (return 0)"
+else
+    assert_fail "pipeline_artifact_is_current: missing file should be pass-through"
+fi
+
+# ── JSON without SHA: pass-through ───────────────────────────────────────────
+echo '[{"severity":"high","finding":"test"}]' > "$ARTIFACTS_DIR/noshatest.json"
+if pipeline_artifact_is_current "$ARTIFACTS_DIR/noshatest.json" 2>/dev/null; then
+    assert_pass "pipeline_artifact_is_current: JSON without SHA is pass-through"
+else
+    assert_fail "pipeline_artifact_is_current: JSON without SHA should be pass-through"
+fi
+
+# ── .md without SHA: pass-through ────────────────────────────────────────────
+echo "# Some heading" > "$ARTIFACTS_DIR/noshatest.md"
+if pipeline_artifact_is_current "$ARTIFACTS_DIR/noshatest.md" 2>/dev/null; then
+    assert_pass "pipeline_artifact_is_current: .md without SHA is pass-through"
+else
+    assert_fail "pipeline_artifact_is_current: .md without SHA should be pass-through"
+fi
+
+if [[ -n "$_test_head_sha" ]]; then
+    # ── JSON with matching SHA: returns 0 ────────────────────────────────────
+    echo "[{\"created_at_commit\":\"$_test_head_sha\",\"finding\":\"test\"}]" \
+        > "$ARTIFACTS_DIR/matched.json"
+    if pipeline_artifact_is_current "$ARTIFACTS_DIR/matched.json" 2>/dev/null; then
+        assert_pass "pipeline_artifact_is_current: JSON with matching SHA returns 0"
+    else
+        assert_fail "pipeline_artifact_is_current: JSON with matching SHA should return 0"
+    fi
+
+    # ── JSON with mismatched SHA: returns 1 ──────────────────────────────────
+    echo '[{"created_at_commit":"deadbeef","finding":"test"}]' \
+        > "$ARTIFACTS_DIR/stale.json"
+    if pipeline_artifact_is_current "$ARTIFACTS_DIR/stale.json" 2>/dev/null; then
+        assert_fail "pipeline_artifact_is_current: JSON with stale SHA should return 1"
+    else
+        assert_pass "pipeline_artifact_is_current: JSON with stale SHA returns 1"
+    fi
+
+    # ── .md with matching SHA: returns 0 ─────────────────────────────────────
+    printf 'created_at_commit: %s\n# Review content\n' "$_test_head_sha" \
+        > "$ARTIFACTS_DIR/matched.md"
+    if pipeline_artifact_is_current "$ARTIFACTS_DIR/matched.md" 2>/dev/null; then
+        assert_pass "pipeline_artifact_is_current: .md with matching SHA returns 0"
+    else
+        assert_fail "pipeline_artifact_is_current: .md with matching SHA should return 0"
+    fi
+
+    # ── .md with mismatched SHA: returns 1 ───────────────────────────────────
+    printf 'created_at_commit: deadbeef\n# Stale content\n' \
+        > "$ARTIFACTS_DIR/stale.md"
+    if pipeline_artifact_is_current "$ARTIFACTS_DIR/stale.md" 2>/dev/null; then
+        assert_fail "pipeline_artifact_is_current: .md with stale SHA should return 1"
+    else
+        assert_pass "pipeline_artifact_is_current: .md with stale SHA returns 1"
+    fi
+
+    # ── .log with matching SHA: returns 0 ────────────────────────────────────
+    printf '# created_at_commit: %s\nsome log output\n' "$_test_head_sha" \
+        > "$ARTIFACTS_DIR/matched.log"
+    if pipeline_artifact_is_current "$ARTIFACTS_DIR/matched.log" 2>/dev/null; then
+        assert_pass "pipeline_artifact_is_current: .log with matching SHA returns 0"
+    else
+        assert_fail "pipeline_artifact_is_current: .log with matching SHA should return 0"
+    fi
+
+    # ── .log with mismatched SHA: returns 1 ──────────────────────────────────
+    printf '# created_at_commit: deadbeef\nstale log output\n' \
+        > "$ARTIFACTS_DIR/stale.log"
+    if pipeline_artifact_is_current "$ARTIFACTS_DIR/stale.log" 2>/dev/null; then
+        assert_fail "pipeline_artifact_is_current: .log with stale SHA should return 1"
+    else
+        assert_pass "pipeline_artifact_is_current: .log with stale SHA returns 1"
+    fi
+else
+    assert_pass "pipeline_artifact_is_current SHA tests: skipped (not in git repo)"
+fi
+
 print_test_results

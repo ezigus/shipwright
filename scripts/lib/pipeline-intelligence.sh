@@ -8,6 +8,16 @@ ARTIFACTS_DIR="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 NO_GITHUB="${NO_GITHUB:-false}"
 
+# Source compat.sh first — pipeline-quality-checks.sh depends on file_mtime() and date_to_epoch()
+if [[ -f "${SCRIPT_DIR}/lib/compat.sh" ]]; then
+    source "${SCRIPT_DIR}/lib/compat.sh"
+fi
+
+# Source pipeline-quality-checks for SHA helpers (pipeline_artifact_is_current, _pipeline_head_sha)
+if [[ -f "${SCRIPT_DIR}/lib/pipeline-quality-checks.sh" ]]; then
+    source "${SCRIPT_DIR}/lib/pipeline-quality-checks.sh"
+fi
+
 # Source compound audit cascade library (fail-open)
 if [[ -f "${SCRIPT_DIR}/lib/compound-audit.sh" ]]; then
     _COMPOUND_AUDIT_LOADED=""
@@ -274,8 +284,9 @@ $content"
     local total_blocking=$((arch_count + security_count + correctness_count + performance_count + testing_count))
 
     # Write classified findings
-    local tmp_findings
+    local tmp_findings _cf_sha
     tmp_findings="$(mktemp)"
+    _cf_sha=$(_pipeline_head_sha 2>/dev/null || true)
     jq -n \
         --argjson arch "$arch_count" \
         --argjson security "$security_count" \
@@ -287,6 +298,7 @@ $content"
         --arg route "$route" \
         --argjson needs_backtrack "$needs_backtrack" \
         --arg priority "$priority_findings" \
+        --arg sha "${_cf_sha}" \
         '{
             architecture: $arch,
             security: $security,
@@ -297,7 +309,8 @@ $content"
             total_blocking: $total_blocking,
             route: $route,
             needs_backtrack: $needs_backtrack,
-            priority_findings: $priority
+            priority_findings: $priority,
+            created_at_commit: $sha
         }' > "$tmp_findings" 2>/dev/null && mv "$tmp_findings" "$result_file" || rm -f "$tmp_findings"
 
     emit_event "intelligence.findings_classified" \
@@ -609,7 +622,7 @@ EOF
             test_ratio_passed: $test_ratio_passed,
             dod_verified: $dod_verified
         }' > "$tmp_result" 2>/dev/null
-    mv "$tmp_result" "$artifacts_dir/dod-verification.json"
+    mv "$tmp_result" "$artifacts_dir/dod-verification.json" || rm -f "$tmp_result"
 
     emit_event "pipeline.dod_verification" \
         "issue=${ISSUE_NUMBER:-0}" \
@@ -753,7 +766,7 @@ FILESEOF
         local tmp_scan
         tmp_scan=$(mktemp)
         echo "$findings" > "$tmp_scan"
-        mv "$tmp_scan" "$ARTIFACTS_DIR/security-source-scan.json"
+        mv "$tmp_scan" "$ARTIFACTS_DIR/security-source-scan.json" || rm -f "$tmp_scan"
     fi
 
     emit_event "pipeline.security_source_scan" \
@@ -1048,7 +1061,7 @@ _extract_blocking_items() {
     trap 'rm -f "$tmp_items" "$tmp_fps"' RETURN
 
     # ── 1. adversarial-review.json (intelligence path) ──
-    if [[ -f "$ARTIFACTS_DIR/adversarial-review.json" ]]; then
+    if [[ -f "$ARTIFACTS_DIR/adversarial-review.json" ]] && pipeline_artifact_is_current "$ARTIFACTS_DIR/adversarial-review.json"; then
         local adv_lines
         adv_lines=$(jq -r '.[] | select(.severity == "critical" or .severity == "high") | "\(.location // "") — \(.description // .concern // "")"' \
             "$ARTIFACTS_DIR/adversarial-review.json" 2>/dev/null || true)
@@ -1057,7 +1070,7 @@ _extract_blocking_items() {
                 _dedup_add_item "$line" "adversarial" "$tmp_fps" "$tmp_items"
             done <<< "$adv_lines"
         fi
-    elif [[ -f "$ARTIFACTS_DIR/adversarial-review.md" ]]; then
+    elif [[ -f "$ARTIFACTS_DIR/adversarial-review.md" ]] && pipeline_artifact_is_current "$ARTIFACTS_DIR/adversarial-review.md"; then
         # Fallback: parse .md for **[Critical]** / **[High]** / **[Bug]** lines (non-JSON path)
         while IFS= read -r line; do
             _dedup_add_item "$line" "adversarial" "$tmp_fps" "$tmp_items"
@@ -1067,7 +1080,7 @@ _extract_blocking_items() {
     # ── 2. security-audit.log — critical/high lines ──
     # Parsed separately from adversarial-review so security findings are never
     # demoted even when the adversarial JSON path is active.
-    if [[ -f "$ARTIFACTS_DIR/security-audit.log" ]]; then
+    if [[ -f "$ARTIFACTS_DIR/security-audit.log" ]] && pipeline_artifact_is_current "$ARTIFACTS_DIR/security-audit.log"; then
         while IFS= read -r line; do
             _dedup_add_item "$line" "security" "$tmp_fps" "$tmp_items"
         done < <(grep -iE 'critical|high' "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null || true)
@@ -1076,14 +1089,14 @@ _extract_blocking_items() {
     # ── 3. negative-review.md — [Critical] lines only ──
     # Findings were generated against a previous code snapshot; the inline label
     # tells the model to verify against current source before acting.
-    if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]]; then
+    if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]] && pipeline_artifact_is_current "$ARTIFACTS_DIR/negative-review.md"; then
         while IFS= read -r line; do
             _dedup_add_item "$line" "negative — verify against current code" "$tmp_fps" "$tmp_items"
         done < <(grep -E '\[Critical\]' "$ARTIFACTS_DIR/negative-review.md" 2>/dev/null || true)
     fi
 
     # ── 4. dod-audit.md — unchecked items ──
-    if [[ -f "$ARTIFACTS_DIR/dod-audit.md" ]]; then
+    if [[ -f "$ARTIFACTS_DIR/dod-audit.md" ]] && pipeline_artifact_is_current "$ARTIFACTS_DIR/dod-audit.md"; then
         while IFS= read -r line; do
             _dedup_add_item "$line" "dod" "$tmp_fps" "$tmp_items"
         done < <(grep -E '(❌|\[ \])' "$ARTIFACTS_DIR/dod-audit.md" 2>/dev/null || true)
@@ -1091,7 +1104,7 @@ _extract_blocking_items() {
 
     # ── 5. classified-findings.json — backtrack flag as header note ──
     local backtrack_note=""
-    if [[ -f "$ARTIFACTS_DIR/classified-findings.json" ]]; then
+    if [[ -f "$ARTIFACTS_DIR/classified-findings.json" ]] && pipeline_artifact_is_current "$ARTIFACTS_DIR/classified-findings.json"; then
         local needs_backtrack
         needs_backtrack=$(jq -r '.needs_backtrack // false' "$ARTIFACTS_DIR/classified-findings.json" 2>/dev/null || echo "false")
         if [[ "$needs_backtrack" == "true" ]]; then
@@ -1335,8 +1348,18 @@ ${route_instruction}"
     fi
 }
 
+# Removes negative-review-cycle*.md files from ARTIFACTS_DIR.
+# Called at stage_compound_quality entry and all exit paths to prevent stale
+# cycle files from accumulating across pipeline runs.
+_cleanup_cycle_files() {
+    rm -f "$ARTIFACTS_DIR"/negative-review-cycle*.md 2>/dev/null || true
+}
+
 stage_compound_quality() {
     CURRENT_STAGE_ID="compound_quality"
+
+    # Clean up any stale cycle files from prior runs before starting
+    _cleanup_cycle_files
 
     # Pre-check: verify meaningful changes exist before running expensive quality checks
     local _cq_real_changes
@@ -1823,17 +1846,17 @@ ${_cascade_test_tail}"
         # ── Convergence Detection ──
         # Count critical/high issues from all review artifacts
         local current_issue_count=0
-        if [[ -f "$ARTIFACTS_DIR/adversarial-review.md" ]]; then
+        if [[ -f "$ARTIFACTS_DIR/adversarial-review.md" ]] && pipeline_artifact_is_current "$ARTIFACTS_DIR/adversarial-review.md"; then
             local adv_issues
             adv_issues=$(grep -ciE '\*\*\[?(Critical|Bug|critical|high)\]?\*\*' "$ARTIFACTS_DIR/adversarial-review.md" 2>/dev/null || true)
             current_issue_count=$((current_issue_count + ${adv_issues:-0}))
         fi
-        if [[ -f "$ARTIFACTS_DIR/adversarial-review.json" ]]; then
+        if [[ -f "$ARTIFACTS_DIR/adversarial-review.json" ]] && pipeline_artifact_is_current "$ARTIFACTS_DIR/adversarial-review.json"; then
             local adv_json_issues
             adv_json_issues=$(jq '[.[] | select(.severity == "critical" or .severity == "high")] | length' "$ARTIFACTS_DIR/adversarial-review.json" 2>/dev/null || echo "0")
             current_issue_count=$((current_issue_count + ${adv_json_issues:-0}))
         fi
-        if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]]; then
+        if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]] && pipeline_artifact_is_current "$ARTIFACTS_DIR/negative-review.md"; then
             # Extract normalized categories (strip digits so shifted line numbers don't create false uniques)
             local _neg_current_categories=""
             _neg_current_categories=$(grep -iE '\[Critical\]' "$ARTIFACTS_DIR/negative-review.md" 2>/dev/null \
@@ -2171,6 +2194,7 @@ Quality issues remain after ${_cycles_executed} cycles. Check artifacts for deta
         fi
 
         log_stage "compound_quality" "Quality gate failed: ${quality_score}/${min_threshold} after ${_cycles_executed} cycles"
+        _cleanup_cycle_files
         return 1
     fi
 
@@ -2201,6 +2225,7 @@ DoD pass rate: ${_dod_pass_rate}%" 2>/dev/null || true
         fi
 
         log_stage "compound_quality" "Passed with score ${quality_score}/${min_threshold} after ${_cycles_executed} cycles"
+        _cleanup_cycle_files
         return 0
     fi
 
@@ -2213,6 +2238,7 @@ Quality issues remain. Check artifacts for details." 2>/dev/null || true
     fi
 
     log_stage "compound_quality" "Failed after ${_cycles_executed} cycles"
+    _cleanup_cycle_files
     return 1
 }
 

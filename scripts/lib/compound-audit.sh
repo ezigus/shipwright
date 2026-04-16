@@ -243,12 +243,12 @@ compound_audit_verify_findings() {
     local keep_indices=""
     local i=0
     while [[ "$i" -lt "$count" ]]; do
-        local finding desc evidence file combined symbol keep
+        local desc evidence file combined symbol keep raw_fields
         keep=1
-        finding=$(echo "$findings" | jq -c ".[$i]" 2>/dev/null)
-        desc=$(echo "$finding" | jq -r '.description // ""' 2>/dev/null)
-        evidence=$(echo "$finding" | jq -r '.evidence // ""' 2>/dev/null)
-        file=$(echo "$finding" | jq -r '.file // ""' 2>/dev/null)
+        # Single jq call extracts all fields; join with ASCII Unit Separator (\x1f),
+        # a non-whitespace character so IFS read preserves empty fields between delimiters.
+        raw_fields=$(echo "$findings" | jq -r ".[$i] | [.description // \"\", .evidence // \"\", .file // \"\"] | join(\"\u001f\")" 2>/dev/null || true)
+        IFS=$'\x1f' read -r desc evidence file <<< "$raw_fields"
         combined="$desc $evidence"
 
         # Normalize path: strip leading ./ and collapse //
@@ -288,6 +288,17 @@ compound_audit_verify_findings() {
                 symbol=$(echo "$combined" \
                     | grep -oE "['\"\`][A-Za-z_][A-Za-z0-9_]*['\"\`][[:space:]]+is not defined" \
                     | grep -oE "[A-Za-z_][A-Za-z0-9_]*" | head -1 || true)
+            fi
+
+            # Validate: symbol must be a non-empty proper identifier, max 128
+            # chars. Rejects crafted inputs that slip through the regexes
+            # (e.g. excessively long names, single-char noise tokens).
+            if [[ -n "$symbol" ]] && \
+               [[ ${#symbol} -le 128 ]] && \
+               [[ "$symbol" =~ ^[A-Za-z_][A-Za-z0-9_]{0,127}$ ]]; then
+                : # valid — proceed to content check below
+            else
+                symbol=""
             fi
 
             if [[ -n "$symbol" ]]; then

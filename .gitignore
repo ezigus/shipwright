@@ -62,6 +62,13 @@ website/.astro/
 .swarm/
 vectors.db
 
+# Machine-local Claude Code settings (hook paths are environment-specific)
+.claude/settings.json
+
+# AgentDB binary artifacts (regenerated at runtime)
+agentdb.rvf
+agentdb.rvf.lock
+
 # Root-level install artifacts (NOT .claude/CLAUDE.md, which is the legit
 # shipwright thin wrapper)
 /CLAUDE.md

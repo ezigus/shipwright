@@ -101,7 +101,9 @@ pipeline_artifact_is_current() {
     local artifact_sha=""
     case "$file" in
         *.json)
-            artifact_sha=$(jq -r '.[0].created_at_commit // empty' "$file" 2>/dev/null || true)
+            # Object format (e.g. classified-findings.json) uses .created_at_commit;
+            # array format (e.g. adversarial-review.json) uses .[0].created_at_commit.
+            artifact_sha=$(jq -r 'if type == "object" then .created_at_commit // empty elif type == "array" then .[0].created_at_commit // empty else empty end' "$file" 2>/dev/null || true)
             ;;
         *.md)
             artifact_sha=$(sed -n '1,5p' "$file" 2>/dev/null | grep -m1 '^created_at_commit: ' | sed 's/^created_at_commit: //' || true)

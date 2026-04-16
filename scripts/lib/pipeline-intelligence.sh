@@ -284,8 +284,9 @@ $content"
     local total_blocking=$((arch_count + security_count + correctness_count + performance_count + testing_count))
 
     # Write classified findings
-    local tmp_findings
+    local tmp_findings _cf_sha
     tmp_findings="$(mktemp)"
+    _cf_sha=$(_pipeline_head_sha 2>/dev/null || true)
     jq -n \
         --argjson arch "$arch_count" \
         --argjson security "$security_count" \
@@ -297,6 +298,7 @@ $content"
         --arg route "$route" \
         --argjson needs_backtrack "$needs_backtrack" \
         --arg priority "$priority_findings" \
+        --arg sha "${_cf_sha}" \
         '{
             architecture: $arch,
             security: $security,
@@ -307,7 +309,8 @@ $content"
             total_blocking: $total_blocking,
             route: $route,
             needs_backtrack: $needs_backtrack,
-            priority_findings: $priority
+            priority_findings: $priority,
+            created_at_commit: $sha
         }' > "$tmp_findings" 2>/dev/null && mv "$tmp_findings" "$result_file" || rm -f "$tmp_findings"
 
     emit_event "intelligence.findings_classified" \

@@ -619,7 +619,7 @@ EOF
             test_ratio_passed: $test_ratio_passed,
             dod_verified: $dod_verified
         }' > "$tmp_result" 2>/dev/null
-    mv "$tmp_result" "$artifacts_dir/dod-verification.json"
+    mv "$tmp_result" "$artifacts_dir/dod-verification.json" || rm -f "$tmp_result"
 
     emit_event "pipeline.dod_verification" \
         "issue=${ISSUE_NUMBER:-0}" \
@@ -763,7 +763,7 @@ FILESEOF
         local tmp_scan
         tmp_scan=$(mktemp)
         echo "$findings" > "$tmp_scan"
-        mv "$tmp_scan" "$ARTIFACTS_DIR/security-source-scan.json"
+        mv "$tmp_scan" "$ARTIFACTS_DIR/security-source-scan.json" || rm -f "$tmp_scan"
     fi
 
     emit_event "pipeline.security_source_scan" \

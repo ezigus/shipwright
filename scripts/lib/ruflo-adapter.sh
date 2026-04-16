@@ -1046,8 +1046,9 @@ ruflo_execute_audit() {
 
     # Initialize audit hive
     local hive_id=""
-    # Trap ensures hive is cleaned up if SIGTERM or unexpected exit interrupts orchestration.
-    trap '[[ -n "${hive_id:-}" ]] && _ruflo_hive_shutdown "${hive_id}" 2>/dev/null || true' EXIT
+    # RETURN trap (not EXIT) — fires on any function return path including set -e failures,
+    # is function-scoped, and does not clobber the caller's EXIT trap.
+    trap '[[ -n "${hive_id:-}" ]] && _ruflo_hive_shutdown "${hive_id}" 2>/dev/null || true' RETURN
     local _init_exit=0
     local _init_out=""
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -1167,7 +1168,6 @@ ruflo_execute_audit() {
         "audit,outcome" || true
 
     emit_event "ruflo.audit_complete" "hive_id=$hive_id stage=audit"
-    trap - EXIT
     return 0
 }
 

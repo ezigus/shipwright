@@ -2027,6 +2027,54 @@ test_ci_post_stage_event_noop_outside_ci() {
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Guard: run_stage_with_retry fails fast on undefined stage function
+# ──────────────────────────────────────────────────────────────────────────────
+test_run_stage_with_retry_undefined_stage() {
+    local test_cfg="$TEST_TEMP_DIR/test-retry-guard-config.json"
+    echo '{"stages":[]}' > "$test_cfg"
+
+    local test_artifacts="$TEST_TEMP_DIR/test-retry-guard-artifacts"
+    mkdir -p "$test_artifacts"
+
+    local test_bin="$TEST_TEMP_DIR/bin/test-retry-guard"
+    cat > "$test_bin" <<RETRY_GUARD_TEST
+#!/usr/bin/env bash
+set -uo pipefail
+PIPELINE_CONFIG="$test_cfg"
+ARTIFACTS_DIR="$test_artifacts"
+ISSUE_NUMBER=0
+LAST_STAGE_ERROR_CLASS=""
+LAST_STAGE_ERROR=""
+
+error()          { echo "ERROR: \$*" >&2; }
+warn()           { echo "WARN: \$*"; }
+info()           { echo "INFO: \$*"; }
+emit_event()     { true; }
+classify_error() { echo "unknown"; }
+
+source "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" 2>/dev/null || true
+
+run_stage_with_retry "nonexistent_stage_xyz_404"
+RETRY_GUARD_TEST
+    chmod +x "$test_bin"
+
+    local out exit_code=0
+    out=$(bash "$test_bin" 2>&1) || exit_code=$?
+
+    if [[ "$exit_code" -ne 1 ]]; then
+        assert_fail "run_stage_with_retry undefined stage: expected exit 1, got $exit_code"
+        return
+    fi
+
+    if ! echo "$out" | grep -qi "function not defined"; then
+        assert_fail "run_stage_with_retry undefined stage: expected 'function not defined' in output, got: $out"
+        return
+    fi
+
+    assert_pass "run_stage_with_retry with undefined stage exits 1 with actionable error"
+}
+
 main() {
     local filter="${1:-}"
 
@@ -2120,6 +2168,7 @@ main() {
         "test_ci_post_stage_event_retains_marker:CI: ci_post_stage_event retains SHIPWRIGHT-STAGE marker for watchdog"
         "test_ci_post_stage_event_failed_emoji:CI: ci_post_stage_event uses failure emoji for failed status"
         "test_ci_post_stage_event_noop_outside_ci:CI: ci_post_stage_event is no-op outside CI mode"
+        "test_run_stage_with_retry_undefined_stage:Guard: run_stage_with_retry fails fast on undefined stage function"
     )
 
     for entry in "${tests[@]}"; do

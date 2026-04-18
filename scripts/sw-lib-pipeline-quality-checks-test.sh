@@ -253,6 +253,104 @@ else
     assert_fail "quality_check_perf_regression"
 fi
 
+# --- Issue #398: partial-float / zero duration validation ---
+# Each input uses a framework-realistic prefix to exercise the specific extraction path.
+
+# pytest path (line ~372): ".34" passes jq tonumber but silently corrupts history
+rm -f "$ARTIFACTS_DIR/test-results.log" "$ARTIFACTS_DIR/perf-metrics.log"
+echo "passed in .34s" > "$ARTIFACTS_DIR/test-results.log"
+if quality_check_perf_regression 2>/dev/null; then
+    assert_pass "quality_check_perf_regression rejects pytest leading-dot float (passed in .34s)"
+else
+    assert_fail "quality_check_perf_regression rejects pytest leading-dot float (passed in .34s)"
+fi
+assert_contains "metrics log signals rejection for leading-dot float" \
+    "$(cat "$ARTIFACTS_DIR/perf-metrics.log" 2>/dev/null)" "Duration not parseable"
+
+# pytest path: "0." passes jq tonumber as 0, corrupts history with meaningless zero
+rm -f "$ARTIFACTS_DIR/test-results.log" "$ARTIFACTS_DIR/perf-metrics.log"
+echo "passed in 0.s" > "$ARTIFACTS_DIR/test-results.log"
+if quality_check_perf_regression 2>/dev/null; then
+    assert_pass "quality_check_perf_regression rejects pytest trailing dot (passed in 0.s)"
+else
+    assert_fail "quality_check_perf_regression rejects pytest trailing dot (passed in 0.s)"
+fi
+assert_contains "metrics log signals rejection for trailing-dot float" \
+    "$(cat "$ARTIFACTS_DIR/perf-metrics.log" 2>/dev/null)" "Duration not parseable"
+
+# Jest path (line ~369): lone "." crashes jq (exit 5), leaves history stale
+rm -f "$ARTIFACTS_DIR/test-results.log" "$ARTIFACTS_DIR/perf-metrics.log"
+echo "Time: . s" > "$ARTIFACTS_DIR/test-results.log"
+if quality_check_perf_regression 2>/dev/null; then
+    assert_pass "quality_check_perf_regression rejects Jest lone dot (Time: . s)"
+else
+    assert_fail "quality_check_perf_regression rejects Jest lone dot (Time: . s)"
+fi
+assert_contains "metrics log signals rejection for Jest lone dot" \
+    "$(cat "$ARTIFACTS_DIR/perf-metrics.log" 2>/dev/null)" "Duration not parseable"
+
+# Generic fallback path (line ~378): "..." crashes jq (exit 5)
+rm -f "$ARTIFACTS_DIR/test-results.log" "$ARTIFACTS_DIR/perf-metrics.log"
+echo "...s" > "$ARTIFACTS_DIR/test-results.log"
+if quality_check_perf_regression 2>/dev/null; then
+    assert_pass "quality_check_perf_regression rejects multiple dots (...s)"
+else
+    assert_fail "quality_check_perf_regression rejects multiple dots (...s)"
+fi
+assert_contains "metrics log signals rejection for multiple dots" \
+    "$(cat "$ARTIFACTS_DIR/perf-metrics.log" 2>/dev/null)" "Duration not parseable"
+
+# Zero duration: "0" is syntactically valid for jq but a meaningless baseline
+rm -f "$ARTIFACTS_DIR/test-results.log" "$ARTIFACTS_DIR/perf-metrics.log"
+echo "passed in 0s" > "$ARTIFACTS_DIR/test-results.log"
+if quality_check_perf_regression 2>/dev/null; then
+    assert_pass "quality_check_perf_regression rejects zero duration (passed in 0s)"
+else
+    assert_fail "quality_check_perf_regression rejects zero duration (passed in 0s)"
+fi
+assert_contains "metrics log signals rejection for zero duration" \
+    "$(cat "$ARTIFACTS_DIR/perf-metrics.log" 2>/dev/null)" "Duration not parseable"
+
+# Zero-valued with alternate encoding: "0.00" also numerically zero
+rm -f "$ARTIFACTS_DIR/test-results.log" "$ARTIFACTS_DIR/perf-metrics.log"
+echo "passed in 0.00s" > "$ARTIFACTS_DIR/test-results.log"
+if quality_check_perf_regression 2>/dev/null; then
+    assert_pass "quality_check_perf_regression rejects zero-valued 0.00 (passed in 0.00s)"
+else
+    assert_fail "quality_check_perf_regression rejects zero-valued 0.00 (passed in 0.00s)"
+fi
+assert_contains "metrics log signals rejection for 0.00 duration" \
+    "$(cat "$ARTIFACTS_DIR/perf-metrics.log" 2>/dev/null)" "Duration not parseable"
+
+# Valid float via Jest pattern: must be accepted and return 0
+rm -f "$ARTIFACTS_DIR/test-results.log" "$ARTIFACTS_DIR/perf-metrics.log"
+echo "Time: 12.34 s" > "$ARTIFACTS_DIR/test-results.log"
+if quality_check_perf_regression 2>/dev/null; then
+    assert_pass "quality_check_perf_regression accepts valid float (Time: 12.34 s)"
+else
+    assert_fail "quality_check_perf_regression accepts valid float (Time: 12.34 s)"
+fi
+assert_contains "metrics log records accepted duration" \
+    "$(cat "$ARTIFACTS_DIR/perf-metrics.log" 2>/dev/null)" "Test duration: 12.34s"
+
+# Silent-corruption guard: seed 3 valid history entries, feed a malformed duration,
+# assert the history file entry count is unchanged (fix prevents the corrupt append).
+_perf_hist_dir="${HOME}/.shipwright/baselines/$(echo -n "$PROJECT_ROOT" | shasum -a 256 2>/dev/null | cut -c1-12)"
+_perf_hist_file="${_perf_hist_dir}/perf-history.json"
+mkdir -p "$_perf_hist_dir"
+echo '{"durations":[10.0,11.0,12.0],"updated":"2026-01-01T00:00:00Z"}' > "$_perf_hist_file"
+_orig_count=$(jq '.durations | length' "$_perf_hist_file" 2>/dev/null || echo "0")
+rm -f "$ARTIFACTS_DIR/test-results.log"
+echo "passed in .34s" > "$ARTIFACTS_DIR/test-results.log"
+quality_check_perf_regression 2>/dev/null || true
+_post_count=$(jq '.durations | length' "$_perf_hist_file" 2>/dev/null || echo "0")
+if [[ "$_orig_count" == "$_post_count" ]]; then
+    assert_pass "quality_check_perf_regression does not corrupt perf history on bad duration"
+else
+    assert_fail "quality_check_perf_regression does not corrupt perf history on bad duration"
+fi
+rm -f "$_perf_hist_file"
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # pipeline_test_status / pipeline_test_passed
 # ═══════════════════════════════════════════════════════════════════════════════

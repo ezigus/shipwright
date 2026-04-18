@@ -681,6 +681,10 @@ ruflo_execute_build_hive() {
         [[ -f "$_init_stderr_file" ]] && _init_stderr=$(head -c 512 "$_init_stderr_file" 2>/dev/null || true)
         local _init_stdout_snip=""
         [[ -n "$_init_out" ]] && _init_stdout_snip=$(printf '%s' "$_init_out" | head -c 512 || true)
+        # Strip control characters (including ANSI escapes, CR, NUL) so event fields
+        # are safe for events.jsonl and SQL interpolation in db_add_event.
+        _init_stderr=$(printf '%s' "$_init_stderr" | tr -d '\000-\037\177' || true)
+        _init_stdout_snip=$(printf '%s' "$_init_stdout_snip" | tr -d '\000-\037\177' || true)
         rm -f "$_init_stderr_file"
         emit_event "ruflo.hive_init_failed" "topology=$topology" \
             "exit_code=$_init_exit" \
@@ -824,6 +828,10 @@ ruflo_execute_review() {
         [[ -f "$_init_stderr_file" ]] && _init_stderr=$(head -c 512 "$_init_stderr_file" 2>/dev/null || true)
         local _init_stdout_snip=""
         [[ -n "$_init_out" ]] && _init_stdout_snip=$(printf '%s' "$_init_out" | head -c 512 || true)
+        # Strip control characters (including ANSI escapes, CR, NUL) so event fields
+        # are safe for events.jsonl and SQL interpolation in db_add_event.
+        _init_stderr=$(printf '%s' "$_init_stderr" | tr -d '\000-\037\177' || true)
+        _init_stdout_snip=$(printf '%s' "$_init_stdout_snip" | tr -d '\000-\037\177' || true)
         rm -f "$_init_stderr_file"
         emit_event "ruflo.review_failed" "reason=hive_init_failed" \
             "exit_code=$_init_exit" \
@@ -964,6 +972,10 @@ ruflo_execute_compound_quality() {
         [[ -f "$_init_stderr_file" ]] && _init_stderr=$(head -c 512 "$_init_stderr_file" 2>/dev/null || true)
         local _init_stdout_snip=""
         [[ -n "$_init_out" ]] && _init_stdout_snip=$(printf '%s' "$_init_out" | head -c 512 || true)
+        # Strip control characters (including ANSI escapes, CR, NUL) so event fields
+        # are safe for events.jsonl and SQL interpolation in db_add_event.
+        _init_stderr=$(printf '%s' "$_init_stderr" | tr -d '\000-\037\177' || true)
+        _init_stdout_snip=$(printf '%s' "$_init_stdout_snip" | tr -d '\000-\037\177' || true)
         rm -f "$_init_stderr_file"
         emit_event "ruflo.cq_failed" "reason=hive_init_failed" \
             "exit_code=$_init_exit" \
@@ -1119,6 +1131,10 @@ ruflo_execute_audit() {
         [[ -f "$_init_stderr_file" ]] && _init_stderr=$(head -c 512 "$_init_stderr_file" 2>/dev/null || true)
         local _init_stdout_snip=""
         [[ -n "$_init_out" ]] && _init_stdout_snip=$(printf '%s' "$_init_out" | head -c 512 || true)
+        # Strip control characters (including ANSI escapes, CR, NUL) so event fields
+        # are safe for events.jsonl and SQL interpolation in db_add_event.
+        _init_stderr=$(printf '%s' "$_init_stderr" | tr -d '\000-\037\177' || true)
+        _init_stdout_snip=$(printf '%s' "$_init_stdout_snip" | tr -d '\000-\037\177' || true)
         rm -f "$_init_stderr_file"
         emit_event "ruflo.audit_failed" "reason=hive_init_failed" \
             "exit_code=$_init_exit" \

@@ -1923,10 +1923,13 @@ else
 fi
 
 # Test: no temp file leak on success path (ruflo_execute_build_hive)
+# Uses an isolated TMPDIR so only files created by this test run are inspected.
 print_test_section "hive-mind init — no temp file leak on success path"
 
 unset _RUFLO_ADAPTER_LOADED
 _test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+# Isolated TMPDIR: mktemp in ruflo-adapter.sh will write temp files here
+_isolated_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-tmpdir.XXXXXX")
 cat > "$_test_tmp/ruflo" <<'MOCK'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "hive-mind" && "${2:-}" == "init" ]]; then
@@ -1937,27 +1940,26 @@ exit 0
 MOCK
 chmod +x "$_test_tmp/ruflo"
 _orig_path="$PATH"
+_orig_tmpdir="${TMPDIR:-}"
 PATH="$_test_tmp:$PATH"
+export TMPDIR="$_isolated_tmp"
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
 RUFLO_USE_NPX=false
-# Use a unique tag in TMPDIR so we can count only files created by THIS test run
-_tmpdir="${TMPDIR:-/tmp}"
-_leak_marker="$_test_tmp/leak-check-$$"
 ruflo_execute_build_hive "build the feature" 2 2>/dev/null || true
-# List any ruflo-init-stderr files that appeared and are newer than our marker
+# Restore environment before assertions
+PATH="$_orig_path"
+if [[ -n "$_orig_tmpdir" ]]; then export TMPDIR="$_orig_tmpdir"; else unset TMPDIR; fi
+# Any ruflo-init-stderr.* file remaining in the isolated dir is a leak
 _leaked_files=""
-for _f in "$_tmpdir"/ruflo-init-stderr.*; do
+for _f in "$_isolated_tmp"/ruflo-init-stderr.*; do
     [[ -f "$_f" ]] && _leaked_files="$_leaked_files $_f" || true
 done
-PATH="$_orig_path"
-rm -rf "$_test_tmp"
+rm -rf "$_test_tmp" "$_isolated_tmp"
 if [[ -z "${_leaked_files// /}" ]]; then
     assert_pass "no ruflo-init-stderr temp file leak on ruflo_execute_build_hive success path"
 else
     assert_fail "no ruflo-init-stderr temp file leak on ruflo_execute_build_hive success path" "leaked:$_leaked_files"
-    # Clean up any leaked files so they don't affect other tests
-    for _f in $_leaked_files; do rm -f "$_f" 2>/dev/null || true; done
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

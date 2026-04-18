@@ -660,24 +660,39 @@ ruflo_execute_build_hive() {
     local hive_id=""
     local _init_out
     local _init_exit=0
+    local _init_stderr_file
+    _init_stderr_file=$(mktemp "${TMPDIR:-/tmp}/ruflo-init-stderr.XXXXXX")
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
         _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
             --topology "$topology" \
             --max-agents "$max_agents" \
-            --output-format json 2>/dev/null) || _init_exit=$?
+            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
     else
         _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
             --topology "$topology" \
             --max-agents "$max_agents" \
-            --output-format json 2>/dev/null) || _init_exit=$?
+            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
     fi
     [[ $_init_exit -eq 0 ]] && \
         hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
 
     if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
-        emit_event "ruflo.hive_init_failed" "topology=$topology"
+        local _init_stderr=""
+        [[ -f "$_init_stderr_file" ]] && _init_stderr=$(head -c 512 "$_init_stderr_file" 2>/dev/null || true)
+        local _init_stdout_snip=""
+        [[ -n "$_init_out" ]] && _init_stdout_snip=$(printf '%s' "$_init_out" | head -c 512 || true)
+        # Strip control characters (including ANSI escapes, CR, NUL) so event fields
+        # are safe for events.jsonl and SQL interpolation in db_add_event.
+        _init_stderr=$(printf '%s' "$_init_stderr" | tr -d '\000-\037\177' || true)
+        _init_stdout_snip=$(printf '%s' "$_init_stdout_snip" | tr -d '\000-\037\177' || true)
+        rm -f "$_init_stderr_file"
+        emit_event "ruflo.hive_init_failed" "topology=$topology" \
+            "exit_code=$_init_exit" \
+            "stderr=$_init_stderr" \
+            "stdout=$_init_stdout_snip"
         return 1
     fi
+    rm -f "$_init_stderr_file"
 
     # Spawn worker agents — spawn failures are fatal: any non-zero exit triggers
     # hive shutdown and causes the function to return 1 (caller falls back).
@@ -793,23 +808,38 @@ ruflo_execute_review() {
     local hive_id=""
     local _init_exit=0
     local _init_out=""
+    local _init_stderr_file
+    _init_stderr_file=$(mktemp "${TMPDIR:-/tmp}/ruflo-init-stderr.XXXXXX")
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
         _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
             --topology hierarchical \
             --max-agents "$max_agents" \
-            --output-format json 2>/dev/null) || _init_exit=$?
+            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
     else
         _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
             --topology hierarchical \
             --max-agents "$max_agents" \
-            --output-format json 2>/dev/null) || _init_exit=$?
+            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
     fi
     [[ $_init_exit -eq 0 ]] && \
         hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
     if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
-        emit_event "ruflo.review_failed" "reason=hive_init_failed"
+        local _init_stderr=""
+        [[ -f "$_init_stderr_file" ]] && _init_stderr=$(head -c 512 "$_init_stderr_file" 2>/dev/null || true)
+        local _init_stdout_snip=""
+        [[ -n "$_init_out" ]] && _init_stdout_snip=$(printf '%s' "$_init_out" | head -c 512 || true)
+        # Strip control characters (including ANSI escapes, CR, NUL) so event fields
+        # are safe for events.jsonl and SQL interpolation in db_add_event.
+        _init_stderr=$(printf '%s' "$_init_stderr" | tr -d '\000-\037\177' || true)
+        _init_stdout_snip=$(printf '%s' "$_init_stdout_snip" | tr -d '\000-\037\177' || true)
+        rm -f "$_init_stderr_file"
+        emit_event "ruflo.review_failed" "reason=hive_init_failed" \
+            "exit_code=$_init_exit" \
+            "stderr=$_init_stderr" \
+            "stdout=$_init_stdout_snip"
         return 1
     fi
+    rm -f "$_init_stderr_file"
 
     # Spawn specialist reviewers — spawn failures are non-fatal (proceed with fewer agents)
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -922,23 +952,38 @@ ruflo_execute_compound_quality() {
     local hive_id=""
     local _init_exit=0
     local _init_out=""
+    local _init_stderr_file
+    _init_stderr_file=$(mktemp "${TMPDIR:-/tmp}/ruflo-init-stderr.XXXXXX")
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
         _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
             --topology hierarchical \
             --max-agents "$cq_agents" \
-            --output-format json 2>/dev/null) || _init_exit=$?
+            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
     else
         _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
             --topology hierarchical \
             --max-agents "$cq_agents" \
-            --output-format json 2>/dev/null) || _init_exit=$?
+            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
     fi
     [[ $_init_exit -eq 0 ]] && \
         hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
     if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
-        emit_event "ruflo.cq_failed" "reason=hive_init_failed"
+        local _init_stderr=""
+        [[ -f "$_init_stderr_file" ]] && _init_stderr=$(head -c 512 "$_init_stderr_file" 2>/dev/null || true)
+        local _init_stdout_snip=""
+        [[ -n "$_init_out" ]] && _init_stdout_snip=$(printf '%s' "$_init_out" | head -c 512 || true)
+        # Strip control characters (including ANSI escapes, CR, NUL) so event fields
+        # are safe for events.jsonl and SQL interpolation in db_add_event.
+        _init_stderr=$(printf '%s' "$_init_stderr" | tr -d '\000-\037\177' || true)
+        _init_stdout_snip=$(printf '%s' "$_init_stdout_snip" | tr -d '\000-\037\177' || true)
+        rm -f "$_init_stderr_file"
+        emit_event "ruflo.cq_failed" "reason=hive_init_failed" \
+            "exit_code=$_init_exit" \
+            "stderr=$_init_stderr" \
+            "stdout=$_init_stdout_snip"
         return 1
     fi
+    rm -f "$_init_stderr_file"
 
     # Spawn adversarial agents — non-fatal spawn failure
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -1059,7 +1104,11 @@ ruflo_execute_audit() {
         # Extract handler body from: trap -- 'body' EXIT
         _prev_exit_body=$(printf '%s\n' "$_prev_exit_raw" | sed "s/^trap -- '//; s/' EXIT\$//")
     fi
-    local _chained_trap='[[ -n "${hive_id:-}" ]] && _ruflo_hive_shutdown "${hive_id}" 2>/dev/null || true'
+    # Declare _init_stderr_file before trap so cleanup can reference it even on
+    # abnormal exits (SIGTERM, set -e) — the trap body uses ${_init_stderr_file:-}.
+    local _init_stderr_file
+    _init_stderr_file=$(mktemp "${TMPDIR:-/tmp}/ruflo-init-stderr.XXXXXX")
+    local _chained_trap='[[ -n "${hive_id:-}" ]] && _ruflo_hive_shutdown "${hive_id}" 2>/dev/null || true; rm -f "${_init_stderr_file:-}" 2>/dev/null || true'
     [[ -n "$_prev_exit_body" ]] && _chained_trap="${_chained_trap}; ${_prev_exit_body}"
     trap "$_chained_trap" EXIT
     local _init_exit=0
@@ -1068,20 +1117,33 @@ ruflo_execute_audit() {
         _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
             --topology hierarchical \
             --max-agents "$max_agents" \
-            --output-format json 2>/dev/null) || _init_exit=$?
+            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
     else
         _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
             --topology hierarchical \
             --max-agents "$max_agents" \
-            --output-format json 2>/dev/null) || _init_exit=$?
+            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
     fi
     [[ $_init_exit -eq 0 ]] && \
         hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
     if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
-        emit_event "ruflo.audit_failed" "reason=hive_init_failed"
+        local _init_stderr=""
+        [[ -f "$_init_stderr_file" ]] && _init_stderr=$(head -c 512 "$_init_stderr_file" 2>/dev/null || true)
+        local _init_stdout_snip=""
+        [[ -n "$_init_out" ]] && _init_stdout_snip=$(printf '%s' "$_init_out" | head -c 512 || true)
+        # Strip control characters (including ANSI escapes, CR, NUL) so event fields
+        # are safe for events.jsonl and SQL interpolation in db_add_event.
+        _init_stderr=$(printf '%s' "$_init_stderr" | tr -d '\000-\037\177' || true)
+        _init_stdout_snip=$(printf '%s' "$_init_stdout_snip" | tr -d '\000-\037\177' || true)
+        rm -f "$_init_stderr_file"
+        emit_event "ruflo.audit_failed" "reason=hive_init_failed" \
+            "exit_code=$_init_exit" \
+            "stderr=$_init_stderr" \
+            "stdout=$_init_stdout_snip"
         if [[ -n "${_prev_exit_raw:-}" ]]; then eval "${_prev_exit_raw}"; else trap - EXIT; fi
         return 1
     fi
+    rm -f "$_init_stderr_file"
 
     # Spawn specialist security audit agents — non-fatal spawn failure
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then

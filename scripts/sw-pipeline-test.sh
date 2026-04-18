@@ -2046,6 +2046,9 @@ ARTIFACTS_DIR="$test_artifacts"
 ISSUE_NUMBER=0
 LAST_STAGE_ERROR_CLASS=""
 LAST_STAGE_ERROR=""
+# Redirect HOME so lib/helpers.sh writes events.jsonl to temp dir, not ~/.shipwright
+HOME="$TEST_TEMP_DIR"
+EVENTS_FILE="$TEST_TEMP_DIR/events.jsonl"
 
 error()          { echo "ERROR: \$*" >&2; }
 warn()           { echo "WARN: \$*"; }
@@ -2054,6 +2057,10 @@ emit_event()     { true; }
 classify_error() { echo "unknown"; }
 
 source "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" 2>/dev/null || true
+
+# Re-stub after sourcing in case lib/helpers.sh overrode our stubs
+emit_event()     { true; }
+classify_error() { echo "unknown"; }
 
 run_stage_with_retry "nonexistent_stage_xyz_404"
 RETRY_GUARD_TEST

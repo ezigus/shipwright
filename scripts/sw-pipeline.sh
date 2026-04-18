@@ -1033,11 +1033,14 @@ run_stage_with_retry() {
     # Without this, a missing function exits 127 and classify_error returns
     # "unknown" (no log file exists since the stage never ran), causing useless
     # retries when the stage has retries configured.
-    if ! type "stage_${stage_id}" >/dev/null 2>&1; then
+    # Use `type -t` (not plain `type`) to confirm it's a shell function, not
+    # an executable on PATH that happens to share the name.
+    if [[ "$(type -t "stage_${stage_id}" 2>/dev/null)" != "function" ]]; then
         error "stage_${stage_id}: function not defined — lib file may not have sourced correctly"
-        emit_event "stage.missing_function" \
+        emit_event "stage.failed" \
             "issue=${ISSUE_NUMBER:-0}" \
-            "stage=$stage_id"
+            "stage=$stage_id" \
+            "error_class=missing_function"
         return 1
     fi
 

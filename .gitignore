@@ -34,6 +34,8 @@ node_modules/
 # Test coverage artifacts
 coverage/
 *.lcov
+tmp_test_output.txt
+tmp_*.txt
 
 # Vector databases
 ruvector.db

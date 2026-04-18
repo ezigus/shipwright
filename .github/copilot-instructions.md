@@ -851,7 +851,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-repo-dir-project-root-test.sh` | 363 | Regression tests for #335 |
 | `scripts/sw-retro-test.sh` | 171 | Sprint retrospective engine tests |
 | `scripts/sw-review-rerun-test.sh` | 307 | SHA-deduped rerun comment writer |
-| `scripts/sw-ruflo-adapter-test.sh` | 1966 |  |
+| `scripts/sw-ruflo-adapter-test.sh` | 2253 |  |
 | `scripts/sw-scale-test.sh` | 151 | Dynamic agent team scaling |
 | `scripts/sw-security-audit-test.sh` | 163 | Security auditing tests |
 | `scripts/sw-self-optimize-test.sh` | 837 | Unit tests for learning & tuning system |

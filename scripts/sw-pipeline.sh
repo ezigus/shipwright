@@ -1029,6 +1029,21 @@ run_stage_with_retry() {
     max_retries=$(jq -r --arg id "$stage_id" '(.stages[] | select(.id == $id) | .config.retries) // 0' "$PIPELINE_CONFIG" 2>/dev/null) || true
     [[ -z "$max_retries" || "$max_retries" == "null" ]] && max_retries=0
 
+    # Guard: fail fast if stage function doesn't exist.
+    # Without this, a missing function exits 127 and classify_error returns
+    # "unknown" (no log file exists since the stage never ran), causing useless
+    # retries when the stage has retries configured.
+    # Use `type -t` (not plain `type`) to confirm it's a shell function, not
+    # an executable on PATH that happens to share the name.
+    if [[ "$(type -t "stage_${stage_id}" 2>/dev/null)" != "function" ]]; then
+        error "stage_${stage_id}: function not defined — lib file may not have sourced correctly"
+        emit_event "stage.failed" \
+            "issue=${ISSUE_NUMBER:-0}" \
+            "stage=$stage_id" \
+            "error_class=missing_function"
+        return 1
+    fi
+
     local attempt=0
     local prev_error_class=""
     while true; do

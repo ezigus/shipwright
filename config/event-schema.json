@@ -373,6 +373,30 @@
     "ruflo.defaults_loaded": {
       "required": ["file"],
       "optional": ["max_agents"]
+    },
+    "ruflo.hive_available": {
+      "required": ["hive_id", "max_agents"],
+      "optional": []
+    },
+    "ruflo.hive_unavailable": {
+      "required": ["exit_code"],
+      "optional": []
+    },
+    "ruflo.build_hive_skipped": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.review_skipped": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.cq_skipped": {
+      "required": ["reason"],
+      "optional": []
+    },
+    "ruflo.audit_skipped": {
+      "required": ["reason"],
+      "optional": []
     }
   }
 }

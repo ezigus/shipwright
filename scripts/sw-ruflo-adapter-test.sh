@@ -1714,6 +1714,48 @@ else
     assert_fail "ruflo_init daemon still available (fail-open) when hive init fails" "got: $_ruflo_avail_after"
 fi
 
+print_test_section "ruflo_init — does not set RUFLO_HIVE_AVAILABLE=true on stale inherited RUFLO_HIVE_ID"
+
+# Regression test for Codex P1: if RUFLO_HIVE_ID is inherited from a parent
+# process and hive-mind init fails, the code must clear the stale ID before
+# evaluating success, preventing RUFLO_HIVE_AVAILABLE from being set true.
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+case "${1:-}/${2:-}" in
+    init/check) exit 0 ;;
+    start/--daemon) exit 0 ;;
+    memory/import) exit 0 ;;
+    hive-mind/init) exit 1 ;;
+    *) exit 0 ;;
+esac
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_HIVE_ID="stale-hive-from-parent"   # simulates inherited env value
+RUFLO_USE_NPX=false
+RUFLO_DAEMON_STARTED=false
+ruflo_init 2>/dev/null || true
+_hive_avail="$RUFLO_HIVE_AVAILABLE"
+_hive_id_after="$RUFLO_HIVE_ID"
+PATH="$_orig_path"
+rm -rf "$_test_tmp"
+if [[ "$_hive_avail" == "false" ]]; then
+    assert_pass "ruflo_init does not set RUFLO_HIVE_AVAILABLE=true on stale inherited RUFLO_HIVE_ID"
+else
+    assert_fail "ruflo_init does not set RUFLO_HIVE_AVAILABLE=true on stale inherited RUFLO_HIVE_ID" "got: $_hive_avail"
+fi
+if [[ -z "$_hive_id_after" ]]; then
+    assert_pass "ruflo_init clears stale RUFLO_HIVE_ID when hive init fails"
+else
+    assert_fail "ruflo_init clears stale RUFLO_HIVE_ID when hive init fails" "got: $_hive_id_after"
+fi
+
 print_test_section "ruflo_init — emits ruflo.hive_available event with hive_id on success"
 
 unset _RUFLO_ADAPTER_LOADED
@@ -2168,6 +2210,44 @@ else
     assert_fail "ruflo_cleanup resets RUFLO_HIVE_ID='' after shutdown" "got: $_hive_id_after"
 fi
 
+
+print_test_section "ruflo_cleanup — shuts down hive when RUFLO_DAEMON_STARTED=false (pre-existing daemon)"
+
+# The singleton hive belongs to THIS run's ruflo_init() call regardless of
+# whether THIS run started the daemon. ruflo_cleanup must tear it down even
+# when RUFLO_DAEMON_STARTED=false (pre-existing daemon path).
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+printf '%s %s %s\n' "\${1:-}" "\${2:-}" "\${3:-}" >> "$_call_log"
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_DAEMON_STARTED=false
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="preexisting-daemon-hive"
+RUFLO_USE_NPX=false
+ruflo_cleanup 2>/dev/null || true
+_calls=$(cat "$_call_log" 2>/dev/null || true)
+PATH="$_orig_path"
+rm -rf "$_test_tmp"
+if grep -qF "hive-mind shutdown" <<< "$_calls" 2>/dev/null; then
+    assert_pass "ruflo_cleanup shuts down hive even when RUFLO_DAEMON_STARTED=false"
+else
+    assert_fail "ruflo_cleanup shuts down hive even when RUFLO_DAEMON_STARTED=false" "calls: $_calls"
+fi
+_hive_id_nodaemon="${RUFLO_HIVE_ID:-}"
+if [[ -z "$_hive_id_nodaemon" ]]; then
+    assert_pass "ruflo_cleanup clears RUFLO_HIVE_ID when RUFLO_DAEMON_STARTED=false"
+else
+    assert_fail "ruflo_cleanup clears RUFLO_HIVE_ID when RUFLO_DAEMON_STARTED=false" "got: $_hive_id_nodaemon"
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

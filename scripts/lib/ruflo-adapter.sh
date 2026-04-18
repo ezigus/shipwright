@@ -259,6 +259,11 @@ ruflo_init() {
                 --max-agents "$_hive_max_agents" \
                 --output-format json 2>/dev/null) || _hive_init_exit=$?
         fi
+        # Clear any stale inherited RUFLO_HIVE_ID before evaluating init result.
+        # The env-inherit pattern (${VAR:-}) means a stale value from a parent
+        # process could be non-empty even when this init attempt failed, which
+        # would cause the success branch to run on a stale/invalid hive ID.
+        RUFLO_HIVE_ID=""
         if [[ $_hive_init_exit -eq 0 ]]; then
             RUFLO_HIVE_ID=$(printf '%s' "$_hive_init_out" | \
                 jq -r '.hive_id // empty' 2>/dev/null || true)
@@ -290,19 +295,22 @@ ruflo_init() {
 # start the daemon (circuit-breaker may have flipped RUFLO_AVAILABLE=false
 # after startup — we still need to stop a daemon we started). Always returns 0.
 ruflo_cleanup() {
-    [[ "${RUFLO_DAEMON_STARTED:-false}" == "true" ]] || return 0
-
-    # Export memory for next run (stub — implemented in Issue 2)
-    ruflo_export_memory || true
-
-    # Shut down singleton hive after memory export, before daemon stop.
-    # hive-mind shutdown routes through the daemon — daemon must still be alive.
+    # Shut down the singleton hive unconditionally when one was started — even
+    # when RUFLO_DAEMON_STARTED=false (pre-existing daemon path). The hive
+    # session is tied to THIS run's ruflo_init() call; we must always tear it
+    # down regardless of whether we started the underlying daemon.
     if [[ -n "${RUFLO_HIVE_ID:-}" ]]; then
         _ruflo_hive_shutdown
         RUFLO_HIVE_ID=""
         RUFLO_HIVE_AVAILABLE=false
         export RUFLO_HIVE_AVAILABLE RUFLO_HIVE_ID
     fi
+
+    # Daemon stop and memory export only apply when THIS run started the daemon.
+    [[ "${RUFLO_DAEMON_STARTED:-false}" == "true" ]] || return 0
+
+    # Export memory for next run (stub — implemented in Issue 2)
+    ruflo_export_memory || true
 
     # Stop daemon with a short timeout. Call the binary directly (not the
     # _ruflo_run shell function) so system timeout(1) can exec it.
@@ -648,7 +656,11 @@ _ruflo_hive_shutdown() {
 # This ensures the singleton hive is initialized with a cap large enough to
 # accommodate the highest per-stage agent requirement.
 _ruflo_compute_max_agents() {
+    # Validate the base value — RUFLO_MAX_AGENTS can be set directly from the
+    # environment bypassing ruflo_load_defaults() integer validation. Fall back
+    # to 4 so downstream numeric comparisons never see a non-integer _max.
     local _max="${RUFLO_MAX_AGENTS:-4}"
+    [[ "$_max" =~ ^[0-9]+$ ]] || _max=4
     local _v
     for _v in "${RUFLO_HIVE_MAX_AGENTS:-}" \
               "${RUFLO_REVIEW_MAX_AGENTS:-}" \
@@ -732,8 +744,9 @@ ruflo_execute_build_hive() {
     fi
     local hive_id="$RUFLO_HIVE_ID"
 
-    # Spawn worker agents — spawn failures are fatal: any non-zero exit triggers
-    # hive shutdown and causes the function to return 1 (caller falls back).
+    # Spawn worker agents — spawn failures are fatal: any non-zero exit causes
+    # the function to return 1 so the caller falls back to native execution.
+    # Note: hive teardown is handled by ruflo_cleanup(), not per-stage shutdown.
     local _spawn_exit=0
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
         ruflo_with_timeout 60 npx -y ruflo@latest hive-mind spawn \

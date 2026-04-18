@@ -547,6 +547,14 @@ else
     assert_fail "pipeline_artifact_is_current: .md without SHA should be pass-through"
 fi
 
+# ── .log without SHA: pass-through ───────────────────────────────────────────
+echo "some log output without sha stamp" > "$ARTIFACTS_DIR/noshatest.log"
+if pipeline_artifact_is_current "$ARTIFACTS_DIR/noshatest.log" 2>/dev/null; then
+    assert_pass "pipeline_artifact_is_current: .log without SHA is pass-through"
+else
+    assert_fail "pipeline_artifact_is_current: .log without SHA should be pass-through"
+fi
+
 if [[ -n "$_test_head_sha" ]]; then
     # ── JSON with matching SHA: returns 0 ────────────────────────────────────
     echo "[{\"created_at_commit\":\"$_test_head_sha\",\"finding\":\"test\"}]" \

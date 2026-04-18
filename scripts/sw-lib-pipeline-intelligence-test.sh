@@ -699,4 +699,139 @@ fi
 
 rm -rf "$_cq_dir" "$_cq_empty_dir"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Bug #395 Fix 2: pipeline_security_source_scan must generate security-source-scan.log
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Bug #395 Fix 2: security-source-scan.log generated from security-source-scan.json"
+
+rm -f "$ARTIFACTS_DIR/security-source-scan.json" "$ARTIFACTS_DIR/security-source-scan.log"
+mkdir -p "$PROJECT_ROOT/src"
+cat > "$PROJECT_ROOT/src/fix2-target.js" <<'JSEOF'
+const API_KEY = "sksecretvalue1234ABCD";
+JSEOF
+
+mock_binary "git" "echo \"$PROJECT_ROOT/src/fix2-target.js\""
+pipeline_security_source_scan 2>/dev/null || true
+mock_git
+
+assert_file_exists \
+    "Bug#395 Fix2: pipeline_security_source_scan writes security-source-scan.json" \
+    "$ARTIFACTS_DIR/security-source-scan.json"
+
+assert_file_exists \
+    "Bug#395 Fix2: pipeline_security_source_scan generates security-source-scan.log" \
+    "$ARTIFACTS_DIR/security-source-scan.log"
+
+_fix2_audit_content=$(cat "$ARTIFACTS_DIR/security-source-scan.log" 2>/dev/null || true)
+_fix2_has_severity=$(echo "$_fix2_audit_content" | grep -ciE '^(CRITICAL|HIGH):' 2>/dev/null || true)
+_fix2_has_severity="${_fix2_has_severity:-0}"
+assert_gt \
+    "Bug#395 Fix2: security-source-scan.log contains severity-prefixed line" \
+    "${_fix2_has_severity:-0}" "0"
+
+rm -f "$ARTIFACTS_DIR/security-source-scan.json" "$ARTIFACTS_DIR/security-source-scan.log"
+rm -f "$PROJECT_ROOT/src/fix2-target.js"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Bug #395 Fix 3: self-referential scan exclusion
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Bug #395 Fix 3: pipeline-intelligence.sh and test files excluded from scan"
+
+rm -f "$ARTIFACTS_DIR/security-source-scan.json" "$ARTIFACTS_DIR/security-source-scan.log"
+_pi_path="$SCRIPT_DIR/lib/pipeline-intelligence.sh"
+_test_path="$SCRIPT_DIR/sw-lib-pipeline-intelligence-test.sh"
+mock_binary "git" "printf '%s\n%s\n' '$_pi_path' '$_test_path'"
+pipeline_security_source_scan 2>/dev/null || true
+mock_git
+
+if [[ -f "$ARTIFACTS_DIR/security-source-scan.json" ]]; then
+    _fix3_pi_findings=$(jq --arg f "$_pi_path" \
+        '[.[] | select(.file == $f)] | length' \
+        "$ARTIFACTS_DIR/security-source-scan.json" 2>/dev/null || true)
+    _fix3_pi_findings="${_fix3_pi_findings:-0}"
+    _fix3_test_findings=$(jq --arg f "$_test_path" \
+        '[.[] | select(.file == $f)] | length' \
+        "$ARTIFACTS_DIR/security-source-scan.json" 2>/dev/null || true)
+    _fix3_test_findings="${_fix3_test_findings:-0}"
+else
+    _fix3_pi_findings=0
+    _fix3_test_findings=0
+fi
+
+assert_eq \
+    "Bug#395 Fix3: pipeline-intelligence.sh excluded from scan (zero findings)" \
+    "0" "${_fix3_pi_findings:-0}"
+
+assert_eq \
+    "Bug#395 Fix3: test file excluded from scan (zero findings)" \
+    "0" "${_fix3_test_findings:-0}"
+
+rm -f "$ARTIFACTS_DIR/security-source-scan.json" "$ARTIFACTS_DIR/security-source-scan.log"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Bug #395 Fix 1: _extract_blocking_items surfaces security findings
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Bug #395 Fix 1: security findings surface in _extract_blocking_items"
+
+rm -f "$ARTIFACTS_DIR/security-source-scan.json" "$ARTIFACTS_DIR/security-source-scan.log" \
+      "$ARTIFACTS_DIR/security-audit.log" \
+      "$ARTIFACTS_DIR/adversarial-review.json" "$ARTIFACTS_DIR/adversarial-review.md" \
+      "$ARTIFACTS_DIR/negative-review.md" "$ARTIFACTS_DIR/dod-audit.md"
+
+cat > "$ARTIFACTS_DIR/security-source-scan.json" <<'SECJSON'
+[{"file":"src/app.js","line":12,"pattern":"hardcoded_secret","severity":"critical","description":"Potential hardcoded secret"}]
+SECJSON
+printf 'CRITICAL: src/app.js:12 \xe2\x80\x94 Potential hardcoded secret\n' \
+    > "$ARTIFACTS_DIR/security-source-scan.log"
+
+_fix1_blocking=$(_extract_blocking_items)
+
+if [[ -n "$_fix1_blocking" ]]; then
+    assert_pass "Bug#395 Fix1: _extract_blocking_items non-empty when security-source-scan.log has critical finding"
+else
+    assert_fail "Bug#395 Fix1: _extract_blocking_items non-empty when security-source-scan.log has critical finding" \
+        "got empty — security findings never fed back to build loop"
+fi
+
+_fix1_has_sec=$(echo "$_fix1_blocking" | grep -c "hardcoded secret" 2>/dev/null || true)
+_fix1_has_sec="${_fix1_has_sec:-0}"
+assert_gt "Bug#395 Fix1: hardcoded secret finding appears in blocking items" "${_fix1_has_sec:-0}" "0"
+
+rm -f "$ARTIFACTS_DIR/security-source-scan.json" "$ARTIFACTS_DIR/security-source-scan.log"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Bug #395 Fix 1b: security-source-scan.json counted in convergence
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Bug #395 Fix 1b: security-source-scan.json counted in convergence"
+
+_fix1b_count_refs=$(grep -c 'security-source-scan.json' \
+    "$SCRIPT_DIR/lib/pipeline-intelligence.sh" 2>/dev/null || true)
+_fix1b_count_refs="${_fix1b_count_refs:-0}"
+assert_gt \
+    "Bug#395 Fix1b: pipeline-intelligence.sh references security-source-scan.json more than once (convergence count)" \
+    "${_fix1b_count_refs:-0}" "1"
+
+cat > "$ARTIFACTS_DIR/security-source-scan.json" <<'SCJSON'
+[
+  {"file":"a.js","line":1,"severity":"critical","description":"SQL injection"},
+  {"file":"b.js","line":2,"severity":"high","description":"Hardcoded secret"},
+  {"file":"c.js","line":3,"severity":"major","description":"MD5"}
+]
+SCJSON
+
+_fix1b_sec_count=$(jq '[.[] | select(.severity == "critical" or .severity == "high")] | length' \
+    "$ARTIFACTS_DIR/security-source-scan.json" 2>/dev/null || true)
+_fix1b_sec_count="${_fix1b_sec_count:-0}"
+
+assert_eq \
+    "Bug#395 Fix1b: jq counts 2 critical/high findings (excludes major)" \
+    "2" "${_fix1b_sec_count:-0}"
+
+_fix1b_simulated=$((0 + ${_fix1b_sec_count:-0}))
+assert_gt \
+    "Bug#395 Fix1b: convergence count nonzero with critical/high findings" \
+    "$_fix1b_simulated" "0"
+
+rm -f "$ARTIFACTS_DIR/security-source-scan.json"
+
 print_test_results

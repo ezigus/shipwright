@@ -396,6 +396,17 @@ $tail_output" "haiku" "4" | grep -oE '^[0-9.]+$' | head -1 || true)
         fi
     fi
 
+    # Validate: require at least one leading digit before any decimal point.
+    # Rejects: ".", ".34", "0.", "..." — guards against partial-float extraction
+    # by the [0-9.]+ character-class regex and the AI fallback (issue #398).
+    # Uses grep -qE for Bash 3.2 compatibility (no [[ =~ ]] capture groups).
+    if [[ -n "$duration_ms" ]]; then
+        if ! echo "$duration_ms" | grep -qE '^[0-9]+(\.[0-9]+)?$' || \
+           [[ "$duration_ms" == "0" ]] || [[ "$duration_ms" == "0.0" ]]; then
+            duration_ms=""
+        fi
+    fi
+
     if [[ -z "$duration_ms" ]]; then
         info "Could not extract test duration — skipping perf check"
         echo "Duration not parseable" > "$metrics_log"

@@ -396,13 +396,14 @@ $tail_output" "haiku" "4" | grep -oE '^[0-9.]+$' | head -1 || true)
         fi
     fi
 
-    # Validate: require at least one leading digit before any decimal point.
-    # Rejects: ".", ".34", "0.", "..." — guards against partial-float extraction
-    # by the [0-9.]+ character-class regex and the AI fallback (issue #398).
-    # Uses grep -qE for Bash 3.2 compatibility (no [[ =~ ]] capture groups).
+    # Validate: require at least one leading digit before any decimal point,
+    # and require the value to be numerically > 0.
+    # Rejects: ".", ".34", "0.", "...", "0", "0.0", "0.00", "00" — guards
+    # against partial-float extraction by [0-9.]+ and the AI fallback (#398).
+    # Uses printf+grep -qE and awk -v for Bash 3.2 compatibility.
     if [[ -n "$duration_ms" ]]; then
-        if ! echo "$duration_ms" | grep -qE '^[0-9]+(\.[0-9]+)?$' || \
-           [[ "$duration_ms" == "0" ]] || [[ "$duration_ms" == "0.0" ]]; then
+        if ! printf '%s\n' "$duration_ms" | grep -qE '^[0-9]+(\.[0-9]+)?$' || \
+           ! awk -v d="$duration_ms" 'BEGIN { exit !(d > 0) }'; then
             duration_ms=""
         fi
     fi

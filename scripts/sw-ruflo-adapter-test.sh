@@ -767,17 +767,14 @@ _test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
 # Write mock directly (single-quoted heredoc) so $1/$2 are not expanded at write time
 cat > "$_test_tmp/ruflo" <<'MOCK'
 #!/usr/bin/env bash
-subcmd="${1:-}"
-if [[ "$subcmd" == "hive-mind" && "${2:-}" == "init" ]]; then
-    printf '{"hive_id":"test-hive-123"}\n'
-    exit 0
-fi
 exit 0
 MOCK
 chmod +x "$_test_tmp/ruflo"
 PATH="$_test_tmp:$PATH"
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-hive-123"
 RUFLO_USE_NPX=false
 exit_code=0
 ruflo_execute_build_hive "build the feature" 5 || exit_code=$?
@@ -797,10 +794,6 @@ _agent_count_file="$_test_tmp/agent-count.txt"
 cat > "$_test_tmp/ruflo" <<MOCK
 #!/usr/bin/env bash
 subcmd="\${1:-}"
-if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "init" ]]; then
-    printf '{"hive_id":"test-hive-456"}\n'
-    exit 0
-fi
 if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "spawn" ]]; then
     while [[ \$# -gt 0 ]]; do
         if [[ "\$1" == "--count" ]]; then printf '%s' "\$2" > "$_agent_count_file"; fi
@@ -813,6 +806,8 @@ chmod +x "$_test_tmp/ruflo"
 PATH="$_test_tmp:$PATH"
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-hive-456"
 RUFLO_USE_NPX=false
 RUFLO_HIVE_MAX_AGENTS=2
 ruflo_execute_build_hive "build the feature" 5 || true
@@ -865,6 +860,7 @@ _orig_path="$PATH"
 mock_binary "ruflo" 'exit 1'
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=false
 RUFLO_USE_NPX=false
 exit_code=0
 ruflo_execute_review "diff content here" "$_test_tmp/review-out.md" || exit_code=$?
@@ -883,10 +879,6 @@ _test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
 cat > "$_test_tmp/ruflo" <<'MOCK'
 #!/usr/bin/env bash
 subcmd="${1:-}"
-if [[ "$subcmd" == "hive-mind" && "${2:-}" == "init" ]]; then
-    printf '{"hive_id":"review-hive-789"}\n'
-    exit 0
-fi
 if [[ "$subcmd" == "hive-mind" && "${2:-}" == "memory" ]]; then
     printf 'review-diff: <diff content stored>\nreview-adrs: <adr context>\n'
     exit 0
@@ -897,6 +889,8 @@ chmod +x "$_test_tmp/ruflo"
 PATH="$_test_tmp:$PATH"
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="review-hive-789"
 RUFLO_USE_NPX=false
 _artifact="$_test_tmp/review-result.md"
 exit_code=0
@@ -963,6 +957,7 @@ _orig_path="$PATH"
 mock_binary "ruflo" 'exit 1'
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=false
 RUFLO_USE_NPX=false
 exit_code=0
 ruflo_execute_compound_quality "diff content here" "$_test_tmp/cq-out.md" || exit_code=$?
@@ -981,10 +976,6 @@ _test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
 cat > "$_test_tmp/ruflo" <<'MOCK'
 #!/usr/bin/env bash
 subcmd="${1:-}"
-if [[ "$subcmd" == "hive-mind" && "${2:-}" == "init" ]]; then
-    printf '{"hive_id":"cq-hive-999"}\n'
-    exit 0
-fi
 if [[ "$subcmd" == "hive-mind" && "${2:-}" == "memory" ]]; then
     printf 'cq-diff: <diff stored>\ncq-review-context: <review>\n'
     exit 0
@@ -995,6 +986,8 @@ chmod +x "$_test_tmp/ruflo"
 PATH="$_test_tmp:$PATH"
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="cq-hive-999"
 RUFLO_USE_NPX=false
 _artifact="$_test_tmp/cq-result.md"
 exit_code=0
@@ -1074,7 +1067,7 @@ else
 fi
 
 # Test: ruflo_execute_audit returns 0 and writes artifact on success;
-#       verifies spawn, orchestrate, and shutdown were called
+#       verifies spawn and orchestrate were called
 unset _RUFLO_ADAPTER_LOADED
 _test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
 _call_log="$_test_tmp/ruflo-calls.log"
@@ -1082,10 +1075,6 @@ cat > "$_test_tmp/ruflo" <<MOCK
 #!/usr/bin/env bash
 subcmd="\${1:-}"
 printf '%s %s %s\\n' "\$subcmd" "\${2:-}" "\${3:-}" >> "$_call_log"
-if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "init" ]]; then
-    printf '{"hive_id":"audit-hive-999"}\\n'
-    exit 0
-fi
 if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "memory" ]]; then
     printf 'audit-diff: <diff stored>\\nCVE-2024-1234: found in dependency\\nOWASP-A01: broken access control check\\n'
     exit 0
@@ -1096,6 +1085,8 @@ chmod +x "$_test_tmp/ruflo"
 PATH="$_test_tmp:$PATH"
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="audit-hive-999"
 RUFLO_USE_NPX=false
 _artifact="$_test_tmp/audit-result.md"
 exit_code=0
@@ -1106,10 +1097,8 @@ _audit_artifact_nonempty=false
 [[ -s "$_artifact" ]] && _audit_artifact_nonempty=true
 _spawn_called=false
 _orch_called=false
-_shutdown_called=false
 grep -q "^hive-mind spawn" "$_call_log" 2>/dev/null && _spawn_called=true
 grep -q "^coordination orchestrate" "$_call_log" 2>/dev/null && _orch_called=true
-grep -q "^hive-mind shutdown\|^hive-mind leave" "$_call_log" 2>/dev/null && _shutdown_called=true
 PATH="${PATH#"$_test_tmp:"}"
 rm -rf "$_test_tmp"
 if [[ $exit_code -eq 0 ]]; then
@@ -1136,11 +1125,6 @@ if [[ "$_orch_called" == "true" ]]; then
     assert_pass "ruflo_execute_audit calls coordination orchestrate"
 else
     assert_fail "ruflo_execute_audit calls coordination orchestrate" "orchestrate not invoked"
-fi
-if [[ "$_shutdown_called" == "true" ]]; then
-    assert_pass "ruflo_execute_audit calls hive-mind shutdown"
-else
-    assert_fail "ruflo_execute_audit calls hive-mind shutdown" "hive shutdown not invoked"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1586,158 +1570,357 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test: ruflo_execute_audit restores caller EXIT trap on failure path
+# Section A: _ruflo_compute_max_agents helper
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_execute_audit — restores caller EXIT trap on failure"
+print_test_section "_ruflo_compute_max_agents — returns RUFLO_MAX_AGENTS when no stage-specific vars set"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+unset RUFLO_HIVE_MAX_AGENTS RUFLO_REVIEW_MAX_AGENTS RUFLO_CQ_MAX_AGENTS RUFLO_AUDIT_MAX_AGENTS
+RUFLO_MAX_AGENTS=4
+_result=$(_ruflo_compute_max_agents)
+if [[ "$_result" == "4" ]]; then
+    assert_pass "_ruflo_compute_max_agents returns RUFLO_MAX_AGENTS when no stage vars set"
+else
+    assert_fail "_ruflo_compute_max_agents returns RUFLO_MAX_AGENTS when no stage vars set" "got: $_result"
+fi
+
+print_test_section "_ruflo_compute_max_agents — returns stage-specific max when RUFLO_HIVE_MAX_AGENTS > RUFLO_MAX_AGENTS"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+unset RUFLO_REVIEW_MAX_AGENTS RUFLO_CQ_MAX_AGENTS RUFLO_AUDIT_MAX_AGENTS
+RUFLO_MAX_AGENTS=4
+RUFLO_HIVE_MAX_AGENTS=8
+_result=$(_ruflo_compute_max_agents)
+if [[ "$_result" == "8" ]]; then
+    assert_pass "_ruflo_compute_max_agents returns RUFLO_HIVE_MAX_AGENTS when it exceeds RUFLO_MAX_AGENTS"
+else
+    assert_fail "_ruflo_compute_max_agents returns RUFLO_HIVE_MAX_AGENTS when it exceeds RUFLO_MAX_AGENTS" "got: $_result"
+fi
+
+print_test_section "_ruflo_compute_max_agents — returns max across all stage vars (RUFLO_AUDIT_MAX_AGENTS highest)"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_MAX_AGENTS=4
+RUFLO_HIVE_MAX_AGENTS=5
+RUFLO_REVIEW_MAX_AGENTS=6
+RUFLO_CQ_MAX_AGENTS=7
+RUFLO_AUDIT_MAX_AGENTS=10
+_result=$(_ruflo_compute_max_agents)
+if [[ "$_result" == "10" ]]; then
+    assert_pass "_ruflo_compute_max_agents returns max across all stage-specific vars"
+else
+    assert_fail "_ruflo_compute_max_agents returns max across all stage-specific vars" "got: $_result"
+fi
+
+print_test_section "_ruflo_compute_max_agents — ignores non-integer values in stage vars"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_MAX_AGENTS=4
+RUFLO_HIVE_MAX_AGENTS="not-a-number"
+RUFLO_REVIEW_MAX_AGENTS="3.5"
+RUFLO_CQ_MAX_AGENTS=""
+RUFLO_AUDIT_MAX_AGENTS=6
+_result=$(_ruflo_compute_max_agents)
+if [[ "$_result" == "6" ]]; then
+    assert_pass "_ruflo_compute_max_agents ignores non-integer stage var values"
+else
+    assert_fail "_ruflo_compute_max_agents ignores non-integer stage var values" "got: $_result"
+fi
+unset RUFLO_HIVE_MAX_AGENTS RUFLO_REVIEW_MAX_AGENTS RUFLO_CQ_MAX_AGENTS RUFLO_AUDIT_MAX_AGENTS
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Section B: Singleton lifecycle — ruflo_init()
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_init — sets RUFLO_HIVE_AVAILABLE=true and RUFLO_HIVE_ID on hive init success"
 
 unset _RUFLO_ADAPTER_LOADED
 _test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+case "${1:-}/${2:-}" in
+    init/check) exit 0 ;;
+    start/--daemon) exit 0 ;;
+    memory/import) exit 0 ;;
+    hive-mind/init) printf '{"hive_id":"singleton-hive-001"}\n'; exit 0 ;;
+    *) exit 0 ;;
+esac
+MOCK
+chmod +x "$_test_tmp/ruflo"
 _orig_path="$PATH"
-mock_binary "ruflo" 'exit 1'
+PATH="$_test_tmp:$PATH"
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-RUFLO_AVAILABLE=true
+RUFLO_AVAILABLE=false
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_HIVE_ID=""
 RUFLO_USE_NPX=false
-_sentinel_fired=false
-trap '_sentinel_fired=true' EXIT
-_trap_before=$(trap -p EXIT)
-ruflo_execute_audit "diff content here" "$_test_tmp/audit-out.md" 2>/dev/null || true
-_trap_after=$(trap -p EXIT)
-trap - EXIT
+RUFLO_DAEMON_STARTED=false
+ruflo_init 2>/dev/null || true
+_hive_avail="$RUFLO_HIVE_AVAILABLE"
+_hive_id="$RUFLO_HIVE_ID"
 PATH="$_orig_path"
-rm -f "$TEST_TEMP_DIR/bin/ruflo"
 rm -rf "$_test_tmp"
-if [[ "$_trap_before" == "$_trap_after" ]]; then
-    assert_pass "ruflo_execute_audit restores caller EXIT trap on failure"
+if [[ "$_hive_avail" == "true" ]]; then
+    assert_pass "ruflo_init sets RUFLO_HIVE_AVAILABLE=true on hive init success"
 else
-    assert_fail "ruflo_execute_audit restores caller EXIT trap on failure" "before: $_trap_before | after: $_trap_after"
+    assert_fail "ruflo_init sets RUFLO_HIVE_AVAILABLE=true on hive init success" "got: $_hive_avail"
 fi
-# Verify _sentinel_fired remains false (trap was restored, not fired mid-function)
-if [[ "$_sentinel_fired" == "false" ]]; then
-    assert_pass "caller EXIT sentinel did not fire during ruflo_execute_audit failure"
+if [[ "$_hive_id" == "singleton-hive-001" ]]; then
+    assert_pass "ruflo_init sets RUFLO_HIVE_ID from hive-mind init output"
 else
-    assert_fail "caller EXIT sentinel did not fire during ruflo_execute_audit failure" "sentinel fired unexpectedly"
+    assert_fail "ruflo_init sets RUFLO_HIVE_ID from hive-mind init output" "got: $_hive_id"
 fi
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Test: ruflo_execute_audit restores caller EXIT trap on success path
-# ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_execute_audit — restores caller EXIT trap on success"
+print_test_section "ruflo_init — leaves RUFLO_HIVE_AVAILABLE=false when hive init fails (fail-open)"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+case "${1:-}/${2:-}" in
+    init/check) exit 0 ;;
+    start/--daemon) exit 0 ;;
+    memory/import) exit 0 ;;
+    hive-mind/init) exit 1 ;;
+    *) exit 0 ;;
+esac
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_HIVE_ID=""
+RUFLO_USE_NPX=false
+RUFLO_DAEMON_STARTED=false
+_init_exit=0
+ruflo_init 2>/dev/null || _init_exit=$?
+_hive_avail="$RUFLO_HIVE_AVAILABLE"
+_ruflo_avail_after="$RUFLO_AVAILABLE"
+PATH="$_orig_path"
+rm -rf "$_test_tmp"
+if [[ "$_hive_avail" == "false" ]]; then
+    assert_pass "ruflo_init leaves RUFLO_HIVE_AVAILABLE=false when hive init fails"
+else
+    assert_fail "ruflo_init leaves RUFLO_HIVE_AVAILABLE=false when hive init fails" "got: $_hive_avail"
+fi
+if [[ "$_ruflo_avail_after" == "true" ]]; then
+    assert_pass "ruflo_init daemon still available (fail-open) when hive init fails"
+else
+    assert_fail "ruflo_init daemon still available (fail-open) when hive init fails" "got: $_ruflo_avail_after"
+fi
+
+print_test_section "ruflo_init — does not set RUFLO_HIVE_AVAILABLE=true on stale inherited RUFLO_HIVE_ID"
+
+# Regression test for Codex P1: if RUFLO_HIVE_ID is inherited from a parent
+# process and hive-mind init fails, the code must clear the stale ID before
+# evaluating success, preventing RUFLO_HIVE_AVAILABLE from being set true.
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+case "${1:-}/${2:-}" in
+    init/check) exit 0 ;;
+    start/--daemon) exit 0 ;;
+    memory/import) exit 0 ;;
+    hive-mind/init) exit 1 ;;
+    *) exit 0 ;;
+esac
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_HIVE_ID="stale-hive-from-parent"   # simulates inherited env value
+RUFLO_USE_NPX=false
+RUFLO_DAEMON_STARTED=false
+ruflo_init 2>/dev/null || true
+_hive_avail="$RUFLO_HIVE_AVAILABLE"
+_hive_id_after="$RUFLO_HIVE_ID"
+PATH="$_orig_path"
+rm -rf "$_test_tmp"
+if [[ "$_hive_avail" == "false" ]]; then
+    assert_pass "ruflo_init does not set RUFLO_HIVE_AVAILABLE=true on stale inherited RUFLO_HIVE_ID"
+else
+    assert_fail "ruflo_init does not set RUFLO_HIVE_AVAILABLE=true on stale inherited RUFLO_HIVE_ID" "got: $_hive_avail"
+fi
+if [[ -z "$_hive_id_after" ]]; then
+    assert_pass "ruflo_init clears stale RUFLO_HIVE_ID when hive init fails"
+else
+    assert_fail "ruflo_init clears stale RUFLO_HIVE_ID when hive init fails" "got: $_hive_id_after"
+fi
+
+print_test_section "ruflo_init — emits ruflo.hive_available event with hive_id on success"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_event_file="$_test_tmp/events.txt"
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+case "${1:-}/${2:-}" in
+    init/check) exit 0 ;;
+    start/--daemon) exit 0 ;;
+    memory/import) exit 0 ;;
+    hive-mind/init) printf '{"hive_id":"event-test-hive"}\n'; exit 0 ;;
+    *) exit 0 ;;
+esac
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_HIVE_ID=""
+RUFLO_USE_NPX=false
+RUFLO_DAEMON_STARTED=false
+emit_event() { printf '%s\n' "$*" >> "$_event_file"; }
+ruflo_init 2>/dev/null || true
+_captured_event=$(cat "$_event_file" 2>/dev/null || true)
+PATH="$_orig_path"
+rm -rf "$_test_tmp"
+if grep -qF "ruflo.hive_available" <<< "$_captured_event" 2>/dev/null; then
+    assert_pass "ruflo_init emits ruflo.hive_available event on hive init success"
+else
+    assert_fail "ruflo_init emits ruflo.hive_available event on hive init success" "events: $_captured_event"
+fi
+if grep -qF "hive_id=event-test-hive" <<< "$_captured_event" 2>/dev/null; then
+    assert_pass "ruflo_init includes hive_id in ruflo.hive_available event"
+else
+    assert_fail "ruflo_init includes hive_id in ruflo.hive_available event" "events: $_captured_event"
+fi
+
+print_test_section "ruflo_init — emits ruflo.hive_unavailable event on hive init failure"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_event_file="$_test_tmp/events.txt"
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+case "${1:-}/${2:-}" in
+    init/check) exit 0 ;;
+    start/--daemon) exit 0 ;;
+    memory/import) exit 0 ;;
+    hive-mind/init) exit 1 ;;
+    *) exit 0 ;;
+esac
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_HIVE_ID=""
+RUFLO_USE_NPX=false
+RUFLO_DAEMON_STARTED=false
+emit_event() { printf '%s\n' "$*" >> "$_event_file"; }
+ruflo_init 2>/dev/null || true
+_captured_event=$(cat "$_event_file" 2>/dev/null || true)
+PATH="$_orig_path"
+rm -rf "$_test_tmp"
+if grep -qF "ruflo.hive_unavailable" <<< "$_captured_event" 2>/dev/null; then
+    assert_pass "ruflo_init emits ruflo.hive_unavailable event on hive init failure"
+else
+    assert_fail "ruflo_init emits ruflo.hive_unavailable event on hive init failure" "events: $_captured_event"
+fi
+
+print_test_section "ruflo_init — skips hive init when RUFLO_HIVE_AVAILABLE already true (idempotent)"
 
 unset _RUFLO_ADAPTER_LOADED
 _test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
 _call_log="$_test_tmp/ruflo-calls.log"
 cat > "$_test_tmp/ruflo" <<MOCK
 #!/usr/bin/env bash
-subcmd="\${1:-}"
-printf '%s %s %s\\n' "\$subcmd" "\${2:-}" "\${3:-}" >> "$_call_log"
-if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "init" ]]; then
-    printf '{"hive_id":"trap-test-hive"}\\n'
-    exit 0
-fi
-if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "memory" ]]; then
-    printf 'finding: none\\n'
-    exit 0
-fi
-exit 0
-MOCK
-chmod +x "$_test_tmp/ruflo"
-_orig_path="$PATH"
-PATH="$_test_tmp:$PATH"
-source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-RUFLO_AVAILABLE=true
-RUFLO_USE_NPX=false
-_artifact="$_test_tmp/audit-result.md"
-_sentinel_fired=false
-trap '_sentinel_fired=true' EXIT
-_trap_before=$(trap -p EXIT)
-ruflo_execute_audit "diff content here" "$_artifact" 2>/dev/null || true
-_trap_after=$(trap -p EXIT)
-trap - EXIT
-PATH="${PATH#"$_test_tmp:"}"
-rm -rf "$_test_tmp"
-if [[ "$_trap_before" == "$_trap_after" ]]; then
-    assert_pass "ruflo_execute_audit restores caller EXIT trap on success"
-else
-    assert_fail "ruflo_execute_audit restores caller EXIT trap on success" "before: $_trap_before | after: $_trap_after"
-fi
-if [[ "$_sentinel_fired" == "false" ]]; then
-    assert_pass "caller EXIT sentinel did not fire during ruflo_execute_audit success"
-else
-    assert_fail "caller EXIT sentinel did not fire during ruflo_execute_audit success" "sentinel fired unexpectedly"
-fi
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Test: caller's EXIT handler runs when process exits mid-function (unexpected exit)
-# Uses a subprocess: mock ruflo sends SIGTERM to the bash process running
-# ruflo_execute_audit during orchestration, verifying the chained EXIT trap fires
-# both hive cleanup and the caller's sentinel.
-# ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_execute_audit — chains caller EXIT handler on unexpected exit"
-
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
-_sentinel_file="$_test_tmp/sentinel"
-# Mock ruflo: init succeeds, orchestration sends TERM directly to the bash subprocess
-# (via a PID file written before the function call), simulating mid-function process exit.
-cat > "$_test_tmp/ruflo" << MOCK_EOF
-#!/usr/bin/env bash
+printf '%s %s\n' "\${1:-}" "\${2:-}" >> "$_call_log"
 case "\${1:-}/\${2:-}" in
-    hive-mind/init)
-        printf '{"hive_id":"term-test-hive"}\n'
-        exit 0
-        ;;
-    coordination/orchestrate)
-        _target=\$(cat '$_test_tmp/subprocess.pid' 2>/dev/null || true)
-        [[ -n "\$_target" ]] && kill -TERM "\$_target" 2>/dev/null || true
-        sleep 3
-        exit 0
-        ;;
-    *)
-        exit 0
-        ;;
+    init/check) exit 0 ;;
+    start/--daemon) exit 0 ;;
+    memory/import) exit 0 ;;
+    hive-mind/init) printf '{"hive_id":"should-not-appear"}\n'; exit 0 ;;
+    *) exit 0 ;;
 esac
-MOCK_EOF
+MOCK
 chmod +x "$_test_tmp/ruflo"
-# Run in a subprocess so SIGTERM exits it cleanly without killing the test harness.
-# Writing $$ before the call lets the mock target the right bash PID.
-# A TERM trap calls exit so bash fires the chained EXIT handler on SIGTERM; the
-# chained handler (installed by ruflo_execute_audit) should run both hive cleanup
-# and the caller's sentinel touch.
-bash -c "
-    echo \$\$ > '$_test_tmp/subprocess.pid'
-    export PATH='$_test_tmp:/usr/local/bin:/usr/bin:/bin'
-    unset _RUFLO_ADAPTER_LOADED
-    source '$SCRIPT_DIR/lib/ruflo-adapter.sh'
-    RUFLO_AVAILABLE=true
-    RUFLO_USE_NPX=false
-    trap 'exit 143' TERM
-    trap 'touch \"$_sentinel_file\"' EXIT
-    ruflo_execute_audit 'diff content' '$_test_tmp/out.md' 2>/dev/null || true
-" 2>/dev/null || true
-# Give the subprocess a moment to finish writing the sentinel if TERM raced
-sleep 1
-if [[ -f "$_sentinel_file" ]]; then
-    assert_pass "chained EXIT trap fires caller handler on unexpected SIGTERM during audit"
-else
-    assert_fail "chained EXIT trap fires caller handler on unexpected SIGTERM during audit" "sentinel file not created"
-fi
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="pre-existing-hive"
+RUFLO_USE_NPX=false
+RUFLO_DAEMON_STARTED=false
+ruflo_init 2>/dev/null || true
+_calls=$(cat "$_call_log" 2>/dev/null || true)
+PATH="$_orig_path"
 rm -rf "$_test_tmp"
+if ! grep -qF "hive-mind init" <<< "$_calls" 2>/dev/null; then
+    assert_pass "ruflo_init skips hive-mind init when RUFLO_HIVE_AVAILABLE already true"
+else
+    assert_fail "ruflo_init skips hive-mind init when RUFLO_HIVE_AVAILABLE already true" "calls: $_calls"
+fi
+if [[ "$RUFLO_HIVE_ID" == "pre-existing-hive" ]]; then
+    assert_pass "ruflo_init preserves existing RUFLO_HIVE_ID when skipping"
+else
+    assert_fail "ruflo_init preserves existing RUFLO_HIVE_ID when skipping" "got: $RUFLO_HIVE_ID"
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Diagnostic stderr tests — hive-mind init failure enrichment
+# Section C: Gate checks — ruflo_execute_build_hive
 # ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_execute_build_hive — returns 1 immediately when RUFLO_HIVE_AVAILABLE=false"
 
-# Test: ruflo_execute_build_hive emits exit_code and stderr on hive init failure
-print_test_section "ruflo_execute_build_hive — emits diagnostic fields on hive init failure"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_USE_NPX=false
+_exit=0
+ruflo_execute_build_hive "build goal" 5 2>/dev/null || _exit=$?
+if [[ "$_exit" -eq 1 ]]; then
+    assert_pass "ruflo_execute_build_hive returns 1 when RUFLO_HIVE_AVAILABLE=false"
+else
+    assert_fail "ruflo_execute_build_hive returns 1 when RUFLO_HIVE_AVAILABLE=false" "got: $_exit"
+fi
+
+print_test_section "ruflo_execute_build_hive — emits ruflo.build_hive_skipped reason=hive_unavailable"
 
 unset _RUFLO_ADAPTER_LOADED
 _test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
 _event_file="$_test_tmp/events.txt"
-cat > "$_test_tmp/ruflo" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "hive-mind" && "${2:-}" == "init" ]]; then
-    printf 'already initialized\n' >&2
-    exit 1
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_USE_NPX=false
+emit_event() { printf '%s\n' "$*" >> "$_event_file"; }
+ruflo_execute_build_hive "build goal" 5 2>/dev/null || true
+_captured_event=$(cat "$_event_file" 2>/dev/null || true)
+rm -rf "$_test_tmp"
+if grep -qF "ruflo.build_hive_skipped" <<< "$_captured_event" 2>/dev/null; then
+    assert_pass "ruflo_execute_build_hive emits ruflo.build_hive_skipped when hive unavailable"
+else
+    assert_fail "ruflo_execute_build_hive emits ruflo.build_hive_skipped when hive unavailable" "events: $_captured_event"
 fi
+if grep -qF "reason=hive_unavailable" <<< "$_captured_event" 2>/dev/null; then
+    assert_pass "ruflo_execute_build_hive includes reason=hive_unavailable in skipped event"
+else
+    assert_fail "ruflo_execute_build_hive includes reason=hive_unavailable in skipped event" "events: $_captured_event"
+fi
+
+print_test_section "ruflo_execute_build_hive — uses RUFLO_HIVE_ID from env (no hive init call) when RUFLO_HIVE_AVAILABLE=true"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+printf '%s %s\n' "\${1:-}" "\${2:-}" >> "$_call_log"
 exit 0
 MOCK
 chmod +x "$_test_tmp/ruflo"
@@ -1745,48 +1928,67 @@ _orig_path="$PATH"
 PATH="$_test_tmp:$PATH"
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="shared-hive-abc"
 RUFLO_USE_NPX=false
-emit_event() {
-    printf '%s\n' "$*" >> "$_event_file"
-}
-exit_code=0
-ruflo_execute_build_hive "build the feature" 5 2>/dev/null || exit_code=$?
+ruflo_execute_build_hive "build goal" 2 2>/dev/null || true
+_calls=$(cat "$_call_log" 2>/dev/null || true)
 PATH="$_orig_path"
-_captured_event=$(cat "$_event_file" 2>/dev/null || true)
 rm -rf "$_test_tmp"
-if [[ $exit_code -ne 0 ]]; then
-    assert_pass "ruflo_execute_build_hive returns 1 when hive init fails (diagnostic test)"
+if ! grep -qF "hive-mind init" <<< "$_calls" 2>/dev/null; then
+    assert_pass "ruflo_execute_build_hive does not call hive-mind init when RUFLO_HIVE_AVAILABLE=true"
 else
-    assert_fail "ruflo_execute_build_hive returns 1 when hive init fails (diagnostic test)" "got exit=0"
-fi
-if grep -qF "exit_code=1" <<< "$_captured_event" 2>/dev/null; then
-    assert_pass "ruflo_execute_build_hive emit_event includes exit_code=1 on hive init failure"
-else
-    assert_fail "ruflo_execute_build_hive emit_event includes exit_code=1 on hive init failure" "event: $_captured_event"
-fi
-if grep -qF "stderr=" <<< "$_captured_event" 2>/dev/null; then
-    assert_pass "ruflo_execute_build_hive emit_event includes stderr= field on hive init failure"
-else
-    assert_fail "ruflo_execute_build_hive emit_event includes stderr= field on hive init failure" "event: $_captured_event"
-fi
-if grep -qF "already initialized" <<< "$_captured_event" 2>/dev/null; then
-    assert_pass "ruflo_execute_build_hive emit_event captures stderr text on hive init failure"
-else
-    assert_fail "ruflo_execute_build_hive emit_event captures stderr text on hive init failure" "event: $_captured_event"
+    assert_fail "ruflo_execute_build_hive does not call hive-mind init when RUFLO_HIVE_AVAILABLE=true" "calls: $_calls"
 fi
 
-# Test: ruflo_execute_review emits exit_code and stderr on hive init failure
-print_test_section "ruflo_execute_review — emits diagnostic fields on hive init failure"
+# ═══════════════════════════════════════════════════════════════════════════════
+# Section C: Gate checks — ruflo_execute_review
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_execute_review — returns 1 immediately when RUFLO_HIVE_AVAILABLE=false"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_USE_NPX=false
+_exit=0
+ruflo_execute_review "diff content" "$_test_tmp/out.md" 2>/dev/null || _exit=$?
+rm -rf "$_test_tmp"
+if [[ "$_exit" -eq 1 ]]; then
+    assert_pass "ruflo_execute_review returns 1 when RUFLO_HIVE_AVAILABLE=false"
+else
+    assert_fail "ruflo_execute_review returns 1 when RUFLO_HIVE_AVAILABLE=false" "got: $_exit"
+fi
+
+print_test_section "ruflo_execute_review — emits ruflo.review_skipped reason=hive_unavailable"
 
 unset _RUFLO_ADAPTER_LOADED
 _test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
 _event_file="$_test_tmp/events.txt"
-cat > "$_test_tmp/ruflo" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "hive-mind" && "${2:-}" == "init" ]]; then
-    printf 'already initialized\n' >&2
-    exit 1
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_USE_NPX=false
+emit_event() { printf '%s\n' "$*" >> "$_event_file"; }
+ruflo_execute_review "diff content" "$_test_tmp/out.md" 2>/dev/null || true
+_captured_event=$(cat "$_event_file" 2>/dev/null || true)
+rm -rf "$_test_tmp"
+if grep -qF "ruflo.review_skipped" <<< "$_captured_event" 2>/dev/null; then
+    assert_pass "ruflo_execute_review emits ruflo.review_skipped when hive unavailable"
+else
+    assert_fail "ruflo_execute_review emits ruflo.review_skipped when hive unavailable" "events: $_captured_event"
 fi
+
+print_test_section "ruflo_execute_review — uses RUFLO_HIVE_ID from env (no hive init call) when RUFLO_HIVE_AVAILABLE=true"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+printf '%s %s\n' "\${1:-}" "\${2:-}" >> "$_call_log"
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then printf 'finding: none\n'; fi
 exit 0
 MOCK
 chmod +x "$_test_tmp/ruflo"
@@ -1794,48 +1996,67 @@ _orig_path="$PATH"
 PATH="$_test_tmp:$PATH"
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="shared-hive-xyz"
 RUFLO_USE_NPX=false
-emit_event() {
-    printf '%s\n' "$*" >> "$_event_file"
-}
-exit_code=0
-ruflo_execute_review "diff content here" "$_test_tmp/review-out.md" 2>/dev/null || exit_code=$?
+ruflo_execute_review "diff content" "$_test_tmp/out.md" 2>/dev/null || true
+_calls=$(cat "$_call_log" 2>/dev/null || true)
 PATH="$_orig_path"
-_captured_event=$(cat "$_event_file" 2>/dev/null || true)
 rm -rf "$_test_tmp"
-if [[ $exit_code -eq 1 ]]; then
-    assert_pass "ruflo_execute_review returns 1 when hive init fails (diagnostic test)"
+if ! grep -qF "hive-mind init" <<< "$_calls" 2>/dev/null; then
+    assert_pass "ruflo_execute_review does not call hive-mind init when RUFLO_HIVE_AVAILABLE=true"
 else
-    assert_fail "ruflo_execute_review returns 1 when hive init fails (diagnostic test)" "got exit=$exit_code"
-fi
-if grep -qF "exit_code=1" <<< "$_captured_event" 2>/dev/null; then
-    assert_pass "ruflo_execute_review emit_event includes exit_code=1 on hive init failure"
-else
-    assert_fail "ruflo_execute_review emit_event includes exit_code=1 on hive init failure" "event: $_captured_event"
-fi
-if grep -qF "stderr=" <<< "$_captured_event" 2>/dev/null; then
-    assert_pass "ruflo_execute_review emit_event includes stderr= field on hive init failure"
-else
-    assert_fail "ruflo_execute_review emit_event includes stderr= field on hive init failure" "event: $_captured_event"
-fi
-if grep -qF "already initialized" <<< "$_captured_event" 2>/dev/null; then
-    assert_pass "ruflo_execute_review emit_event captures stderr text on hive init failure"
-else
-    assert_fail "ruflo_execute_review emit_event captures stderr text on hive init failure" "event: $_captured_event"
+    assert_fail "ruflo_execute_review does not call hive-mind init when RUFLO_HIVE_AVAILABLE=true" "calls: $_calls"
 fi
 
-# Test: ruflo_execute_compound_quality emits exit_code and stderr on hive init failure
-print_test_section "ruflo_execute_compound_quality — emits diagnostic fields on hive init failure"
+# ═══════════════════════════════════════════════════════════════════════════════
+# Section C: Gate checks — ruflo_execute_compound_quality
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_execute_compound_quality — returns 1 immediately when RUFLO_HIVE_AVAILABLE=false"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_USE_NPX=false
+_exit=0
+ruflo_execute_compound_quality "diff content" "$_test_tmp/out.md" 2>/dev/null || _exit=$?
+rm -rf "$_test_tmp"
+if [[ "$_exit" -eq 1 ]]; then
+    assert_pass "ruflo_execute_compound_quality returns 1 when RUFLO_HIVE_AVAILABLE=false"
+else
+    assert_fail "ruflo_execute_compound_quality returns 1 when RUFLO_HIVE_AVAILABLE=false" "got: $_exit"
+fi
+
+print_test_section "ruflo_execute_compound_quality — emits ruflo.cq_skipped reason=hive_unavailable"
 
 unset _RUFLO_ADAPTER_LOADED
 _test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
 _event_file="$_test_tmp/events.txt"
-cat > "$_test_tmp/ruflo" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "hive-mind" && "${2:-}" == "init" ]]; then
-    printf 'already initialized\n' >&2
-    exit 1
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_USE_NPX=false
+emit_event() { printf '%s\n' "$*" >> "$_event_file"; }
+ruflo_execute_compound_quality "diff content" "$_test_tmp/out.md" 2>/dev/null || true
+_captured_event=$(cat "$_event_file" 2>/dev/null || true)
+rm -rf "$_test_tmp"
+if grep -qF "ruflo.cq_skipped" <<< "$_captured_event" 2>/dev/null; then
+    assert_pass "ruflo_execute_compound_quality emits ruflo.cq_skipped when hive unavailable"
+else
+    assert_fail "ruflo_execute_compound_quality emits ruflo.cq_skipped when hive unavailable" "events: $_captured_event"
 fi
+
+print_test_section "ruflo_execute_compound_quality — uses RUFLO_HIVE_ID from env (no hive init call) when RUFLO_HIVE_AVAILABLE=true"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+printf '%s %s\n' "\${1:-}" "\${2:-}" >> "$_call_log"
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then printf 'finding: none\n'; fi
 exit 0
 MOCK
 chmod +x "$_test_tmp/ruflo"
@@ -1843,123 +2064,189 @@ _orig_path="$PATH"
 PATH="$_test_tmp:$PATH"
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="shared-hive-cq"
 RUFLO_USE_NPX=false
-emit_event() {
-    printf '%s\n' "$*" >> "$_event_file"
-}
-exit_code=0
-ruflo_execute_compound_quality "diff content here" "$_test_tmp/cq-out.md" 2>/dev/null || exit_code=$?
+ruflo_execute_compound_quality "diff content" "$_test_tmp/out.md" 2>/dev/null || true
+_calls=$(cat "$_call_log" 2>/dev/null || true)
 PATH="$_orig_path"
-_captured_event=$(cat "$_event_file" 2>/dev/null || true)
 rm -rf "$_test_tmp"
-if [[ $exit_code -eq 1 ]]; then
-    assert_pass "ruflo_execute_compound_quality returns 1 when hive init fails (diagnostic test)"
+if ! grep -qF "hive-mind init" <<< "$_calls" 2>/dev/null; then
+    assert_pass "ruflo_execute_compound_quality does not call hive-mind init when RUFLO_HIVE_AVAILABLE=true"
 else
-    assert_fail "ruflo_execute_compound_quality returns 1 when hive init fails (diagnostic test)" "got exit=$exit_code"
-fi
-if grep -qF "exit_code=1" <<< "$_captured_event" 2>/dev/null; then
-    assert_pass "ruflo_execute_compound_quality emit_event includes exit_code=1 on hive init failure"
-else
-    assert_fail "ruflo_execute_compound_quality emit_event includes exit_code=1 on hive init failure" "event: $_captured_event"
-fi
-if grep -qF "stderr=" <<< "$_captured_event" 2>/dev/null; then
-    assert_pass "ruflo_execute_compound_quality emit_event includes stderr= field on hive init failure"
-else
-    assert_fail "ruflo_execute_compound_quality emit_event includes stderr= field on hive init failure" "event: $_captured_event"
-fi
-if grep -qF "already initialized" <<< "$_captured_event" 2>/dev/null; then
-    assert_pass "ruflo_execute_compound_quality emit_event captures stderr text on hive init failure"
-else
-    assert_fail "ruflo_execute_compound_quality emit_event captures stderr text on hive init failure" "event: $_captured_event"
+    assert_fail "ruflo_execute_compound_quality does not call hive-mind init when RUFLO_HIVE_AVAILABLE=true" "calls: $_calls"
 fi
 
-# Test: ruflo_execute_audit emits exit_code and stderr on hive init failure
-print_test_section "ruflo_execute_audit — emits diagnostic fields on hive init failure"
+# ═══════════════════════════════════════════════════════════════════════════════
+# Section C: Gate checks — ruflo_execute_audit
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_execute_audit — returns 1 immediately when RUFLO_HIVE_AVAILABLE=false"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_USE_NPX=false
+_exit=0
+ruflo_execute_audit "diff content" "$_test_tmp/out.md" 2>/dev/null || _exit=$?
+rm -rf "$_test_tmp"
+if [[ "$_exit" -eq 1 ]]; then
+    assert_pass "ruflo_execute_audit returns 1 when RUFLO_HIVE_AVAILABLE=false"
+else
+    assert_fail "ruflo_execute_audit returns 1 when RUFLO_HIVE_AVAILABLE=false" "got: $_exit"
+fi
+
+print_test_section "ruflo_execute_audit — emits ruflo.audit_skipped reason=hive_unavailable"
 
 unset _RUFLO_ADAPTER_LOADED
 _test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
 _event_file="$_test_tmp/events.txt"
-cat > "$_test_tmp/ruflo" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "hive-mind" && "${2:-}" == "init" ]]; then
-    printf 'already initialized\n' >&2
-    exit 1
-fi
-exit 0
-MOCK
-chmod +x "$_test_tmp/ruflo"
-_orig_path="$PATH"
-PATH="$_test_tmp:$PATH"
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=false
 RUFLO_USE_NPX=false
-emit_event() {
-    printf '%s\n' "$*" >> "$_event_file"
-}
-exit_code=0
-ruflo_execute_audit "diff content here" "$_test_tmp/audit-out.md" 2>/dev/null || exit_code=$?
-PATH="$_orig_path"
+emit_event() { printf '%s\n' "$*" >> "$_event_file"; }
+ruflo_execute_audit "diff content" "$_test_tmp/out.md" 2>/dev/null || true
 _captured_event=$(cat "$_event_file" 2>/dev/null || true)
 rm -rf "$_test_tmp"
-if [[ $exit_code -eq 1 ]]; then
-    assert_pass "ruflo_execute_audit returns 1 when hive init fails (diagnostic test)"
+if grep -qF "ruflo.audit_skipped" <<< "$_captured_event" 2>/dev/null; then
+    assert_pass "ruflo_execute_audit emits ruflo.audit_skipped when hive unavailable"
 else
-    assert_fail "ruflo_execute_audit returns 1 when hive init fails (diagnostic test)" "got exit=$exit_code"
-fi
-if grep -qF "exit_code=1" <<< "$_captured_event" 2>/dev/null; then
-    assert_pass "ruflo_execute_audit emit_event includes exit_code=1 on hive init failure"
-else
-    assert_fail "ruflo_execute_audit emit_event includes exit_code=1 on hive init failure" "event: $_captured_event"
-fi
-if grep -qF "stderr=" <<< "$_captured_event" 2>/dev/null; then
-    assert_pass "ruflo_execute_audit emit_event includes stderr= field on hive init failure"
-else
-    assert_fail "ruflo_execute_audit emit_event includes stderr= field on hive init failure" "event: $_captured_event"
-fi
-if grep -qF "already initialized" <<< "$_captured_event" 2>/dev/null; then
-    assert_pass "ruflo_execute_audit emit_event captures stderr text on hive init failure"
-else
-    assert_fail "ruflo_execute_audit emit_event captures stderr text on hive init failure" "event: $_captured_event"
+    assert_fail "ruflo_execute_audit emits ruflo.audit_skipped when hive unavailable" "events: $_captured_event"
 fi
 
-# Test: no temp file leak on success path (ruflo_execute_build_hive)
-# Uses an isolated TMPDIR so only files created by this test run are inspected.
-print_test_section "hive-mind init — no temp file leak on success path"
+print_test_section "ruflo_execute_audit — uses RUFLO_HIVE_ID from env (no hive init call) when RUFLO_HIVE_AVAILABLE=true"
 
 unset _RUFLO_ADAPTER_LOADED
 _test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
-# Isolated TMPDIR: mktemp in ruflo-adapter.sh will write temp files here
-_isolated_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-tmpdir.XXXXXX")
-cat > "$_test_tmp/ruflo" <<'MOCK'
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
 #!/usr/bin/env bash
-if [[ "${1:-}" == "hive-mind" && "${2:-}" == "init" ]]; then
-    printf '{"hive_id":"test-success-123"}\n'
-    exit 0
-fi
+printf '%s %s\n' "\${1:-}" "\${2:-}" >> "$_call_log"
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then printf 'finding: none\n'; fi
 exit 0
 MOCK
 chmod +x "$_test_tmp/ruflo"
 _orig_path="$PATH"
-_orig_tmpdir="${TMPDIR:-}"
 PATH="$_test_tmp:$PATH"
-export TMPDIR="$_isolated_tmp"
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="shared-hive-audit"
 RUFLO_USE_NPX=false
-ruflo_execute_build_hive "build the feature" 2 2>/dev/null || true
-# Restore environment before assertions
+ruflo_execute_audit "diff content" "$_test_tmp/out.md" 2>/dev/null || true
+_calls=$(cat "$_call_log" 2>/dev/null || true)
 PATH="$_orig_path"
-if [[ -n "$_orig_tmpdir" ]]; then export TMPDIR="$_orig_tmpdir"; else unset TMPDIR; fi
-# Any ruflo-init-stderr.* file remaining in the isolated dir is a leak
-_leaked_files=""
-for _f in "$_isolated_tmp"/ruflo-init-stderr.*; do
-    [[ -f "$_f" ]] && _leaked_files="$_leaked_files $_f" || true
-done
-rm -rf "$_test_tmp" "$_isolated_tmp"
-if [[ -z "${_leaked_files// /}" ]]; then
-    assert_pass "no ruflo-init-stderr temp file leak on ruflo_execute_build_hive success path"
+rm -rf "$_test_tmp"
+if ! grep -qF "hive-mind init" <<< "$_calls" 2>/dev/null; then
+    assert_pass "ruflo_execute_audit does not call hive-mind init when RUFLO_HIVE_AVAILABLE=true"
 else
-    assert_fail "no ruflo-init-stderr temp file leak on ruflo_execute_build_hive success path" "leaked:$_leaked_files"
+    assert_fail "ruflo_execute_audit does not call hive-mind init when RUFLO_HIVE_AVAILABLE=true" "calls: $_calls"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Section D: Cleanup — ruflo_cleanup shuts down hive
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_cleanup — shuts down hive when RUFLO_HIVE_ID is set"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+printf '%s %s %s\n' "\${1:-}" "\${2:-}" "\${3:-}" >> "$_call_log"
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_DAEMON_STARTED=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="cleanup-test-hive"
+RUFLO_USE_NPX=false
+ruflo_cleanup 2>/dev/null || true
+_calls=$(cat "$_call_log" 2>/dev/null || true)
+PATH="$_orig_path"
+rm -rf "$_test_tmp"
+if grep -qF "hive-mind shutdown" <<< "$_calls" 2>/dev/null; then
+    assert_pass "ruflo_cleanup calls hive-mind shutdown when RUFLO_HIVE_ID is set"
+else
+    assert_fail "ruflo_cleanup calls hive-mind shutdown when RUFLO_HIVE_ID is set" "calls: $_calls"
+fi
+
+print_test_section "ruflo_cleanup — resets RUFLO_HIVE_AVAILABLE=false and RUFLO_HIVE_ID='' after shutdown"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_DAEMON_STARTED=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="cleanup-reset-hive"
+RUFLO_USE_NPX=false
+ruflo_cleanup 2>/dev/null || true
+_hive_avail_after="$RUFLO_HIVE_AVAILABLE"
+_hive_id_after="$RUFLO_HIVE_ID"
+PATH="$_orig_path"
+rm -rf "$_test_tmp"
+if [[ "$_hive_avail_after" == "false" ]]; then
+    assert_pass "ruflo_cleanup resets RUFLO_HIVE_AVAILABLE=false after shutdown"
+else
+    assert_fail "ruflo_cleanup resets RUFLO_HIVE_AVAILABLE=false after shutdown" "got: $_hive_avail_after"
+fi
+if [[ -z "$_hive_id_after" ]]; then
+    assert_pass "ruflo_cleanup resets RUFLO_HIVE_ID='' after shutdown"
+else
+    assert_fail "ruflo_cleanup resets RUFLO_HIVE_ID='' after shutdown" "got: $_hive_id_after"
+fi
+
+
+print_test_section "ruflo_cleanup — shuts down hive when RUFLO_DAEMON_STARTED=false (pre-existing daemon)"
+
+# The singleton hive belongs to THIS run's ruflo_init() call regardless of
+# whether THIS run started the daemon. ruflo_cleanup must tear it down even
+# when RUFLO_DAEMON_STARTED=false (pre-existing daemon path).
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+printf '%s %s %s\n' "\${1:-}" "\${2:-}" "\${3:-}" >> "$_call_log"
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_DAEMON_STARTED=false
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="preexisting-daemon-hive"
+RUFLO_USE_NPX=false
+ruflo_cleanup 2>/dev/null || true
+_calls=$(cat "$_call_log" 2>/dev/null || true)
+PATH="$_orig_path"
+rm -rf "$_test_tmp"
+if grep -qF "hive-mind shutdown" <<< "$_calls" 2>/dev/null; then
+    assert_pass "ruflo_cleanup shuts down hive even when RUFLO_DAEMON_STARTED=false"
+else
+    assert_fail "ruflo_cleanup shuts down hive even when RUFLO_DAEMON_STARTED=false" "calls: $_calls"
+fi
+_hive_id_nodaemon="${RUFLO_HIVE_ID:-}"
+if [[ -z "$_hive_id_nodaemon" ]]; then
+    assert_pass "ruflo_cleanup clears RUFLO_HIVE_ID when RUFLO_DAEMON_STARTED=false"
+else
+    assert_fail "ruflo_cleanup clears RUFLO_HIVE_ID when RUFLO_DAEMON_STARTED=false" "got: $_hive_id_nodaemon"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

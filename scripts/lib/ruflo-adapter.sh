@@ -25,7 +25,10 @@ RUFLO_AVAILABLE="${RUFLO_AVAILABLE:-false}"
 RUFLO_USE_NPX="${RUFLO_USE_NPX:-false}"        # true when ruflo is only available via npx (not a local binary)
 RUFLO_DAEMON_STARTED="${RUFLO_DAEMON_STARTED:-false}" # true only when THIS run started the daemon via ruflo start --daemon
 RUFLO_FAILURE_COUNT="${RUFLO_FAILURE_COUNT:-0}"      # incremented by circuit-breaker; reset on recovery
-export RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_FAILURE_COUNT
+RUFLO_HIVE_AVAILABLE="${RUFLO_HIVE_AVAILABLE:-false}" # true when singleton hive-mind is initialized
+RUFLO_HIVE_ID="${RUFLO_HIVE_ID:-}"                   # hive-mind session ID set by ruflo_init()
+export RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_FAILURE_COUNT \
+       RUFLO_HIVE_AVAILABLE RUFLO_HIVE_ID
 
 # ─── Fallback helpers (no-op when helpers.sh is already sourced) ─────────────
 # Use declare -f (not type) to check for shell functions only — type matches
@@ -236,6 +239,53 @@ ruflo_init() {
     # Import memory from previous run (stub — implemented in Issue 2)
     ruflo_import_memory || true
 
+    # ── Singleton hive-mind init ──────────────────────────────────────────────
+    # Called once here at pipeline start. Each stage (build, review, cq, audit)
+    # spawns and orchestrates its own goal on this shared hive — no per-stage init.
+    # Max cap = max of all stage-specific agent env vars so every stage fits.
+    if [[ "${RUFLO_HIVE_AVAILABLE:-false}" != "true" ]]; then
+        local _hive_max_agents
+        _hive_max_agents=$(_ruflo_compute_max_agents)
+        local _hive_init_out=""
+        local _hive_init_exit=0
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            _hive_init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
+                --topology hierarchical \
+                --max-agents "$_hive_max_agents" \
+                --output-format json 2>/dev/null) || _hive_init_exit=$?
+        else
+            _hive_init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
+                --topology hierarchical \
+                --max-agents "$_hive_max_agents" \
+                --output-format json 2>/dev/null) || _hive_init_exit=$?
+        fi
+        # Clear any stale inherited RUFLO_HIVE_ID before evaluating init result.
+        # The env-inherit pattern (${VAR:-}) means a stale value from a parent
+        # process could be non-empty even when this init attempt failed, which
+        # would cause the success branch to run on a stale/invalid hive ID.
+        RUFLO_HIVE_ID=""
+        if [[ $_hive_init_exit -eq 0 ]]; then
+            RUFLO_HIVE_ID=$(printf '%s' "$_hive_init_out" | \
+                jq -r '.hive_id // empty' 2>/dev/null || true)
+        fi
+        if [[ -n "${RUFLO_HIVE_ID:-}" ]]; then
+            RUFLO_HIVE_AVAILABLE=true
+            export RUFLO_HIVE_AVAILABLE RUFLO_HIVE_ID
+            emit_event "ruflo.hive_available" "hive_id=$RUFLO_HIVE_ID" \
+                "max_agents=$_hive_max_agents"
+        else
+            # Fail-open: daemon remains available even if hive init fails
+            emit_event "ruflo.hive_unavailable" "exit_code=$_hive_init_exit"
+        fi
+        # Defensive EXIT trap: covers future callers that don't set their own cleanup.
+        # Only set when no trap exists — avoids overwriting sw-pipeline.sh's own trap.
+        local _existing_trap
+        _existing_trap=$(trap -p EXIT 2>/dev/null || true)
+        if [[ -z "$_existing_trap" ]]; then
+            trap 'ruflo_cleanup 2>/dev/null || true' EXIT
+        fi
+    fi
+
     export RUFLO_AVAILABLE
     return 0
 }
@@ -245,6 +295,18 @@ ruflo_init() {
 # start the daemon (circuit-breaker may have flipped RUFLO_AVAILABLE=false
 # after startup — we still need to stop a daemon we started). Always returns 0.
 ruflo_cleanup() {
+    # Shut down the singleton hive unconditionally when one was started — even
+    # when RUFLO_DAEMON_STARTED=false (pre-existing daemon path). The hive
+    # session is tied to THIS run's ruflo_init() call; we must always tear it
+    # down regardless of whether we started the underlying daemon.
+    if [[ -n "${RUFLO_HIVE_ID:-}" ]]; then
+        _ruflo_hive_shutdown
+        RUFLO_HIVE_ID=""
+        RUFLO_HIVE_AVAILABLE=false
+        export RUFLO_HIVE_AVAILABLE RUFLO_HIVE_ID
+    fi
+
+    # Daemon stop and memory export only apply when THIS run started the daemon.
     [[ "${RUFLO_DAEMON_STARTED:-false}" == "true" ]] || return 0
 
     # Export memory for next run (stub — implemented in Issue 2)
@@ -574,7 +636,7 @@ ruflo_execute_build_single() {
 # pipeline during cleanup.
 # Always returns 0.
 _ruflo_hive_shutdown() {
-    local hive_id="${1:-}"
+    local hive_id="${1:-${RUFLO_HIVE_ID:-}}"
     [[ -n "$hive_id" ]] || return 0
     local _shutdown_timeout="${RUFLO_HIVE_SHUTDOWN_TIMEOUT_SECONDS:-15}"
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -587,6 +649,26 @@ _ruflo_hive_shutdown() {
             >/dev/null 2>&1 || true
     fi
     return 0
+}
+
+# ─── _ruflo_compute_max_agents — compute hive init max-agents cap ─────────────
+# Returns the maximum of RUFLO_MAX_AGENTS and all stage-specific agent cap vars.
+# This ensures the singleton hive is initialized with a cap large enough to
+# accommodate the highest per-stage agent requirement.
+_ruflo_compute_max_agents() {
+    # Validate the base value — RUFLO_MAX_AGENTS can be set directly from the
+    # environment bypassing ruflo_load_defaults() integer validation. Fall back
+    # to 4 so downstream numeric comparisons never see a non-integer _max.
+    local _max="${RUFLO_MAX_AGENTS:-4}"
+    [[ "$_max" =~ ^[0-9]+$ ]] || _max=4
+    local _v
+    for _v in "${RUFLO_HIVE_MAX_AGENTS:-}" \
+              "${RUFLO_REVIEW_MAX_AGENTS:-}" \
+              "${RUFLO_CQ_MAX_AGENTS:-}" \
+              "${RUFLO_AUDIT_MAX_AGENTS:-}"; do
+        [[ "$_v" =~ ^[0-9]+$ ]] && [[ "$_v" -gt "$_max" ]] && _max="$_v"
+    done
+    printf '%s' "$_max"
 }
 
 # ─── ruflo_execute_build_hive — execute build via a ruflo hive-mind swarm ────
@@ -655,47 +737,16 @@ ruflo_execute_build_hive() {
         [[ -n "$_recommended_topology" ]] && topology="$_recommended_topology"
     fi
 
-    # Initialize the hive-mind session — wrapped in ruflo_with_timeout so a hung
-    # init command doesn't stall the build stage indefinitely.
-    local hive_id=""
-    local _init_out
-    local _init_exit=0
-    local _init_stderr_file
-    _init_stderr_file=$(mktemp "${TMPDIR:-/tmp}/ruflo-init-stderr.XXXXXX")
-    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
-            --topology "$topology" \
-            --max-agents "$max_agents" \
-            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
-    else
-        _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
-            --topology "$topology" \
-            --max-agents "$max_agents" \
-            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
-    fi
-    [[ $_init_exit -eq 0 ]] && \
-        hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
-
-    if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
-        local _init_stderr=""
-        [[ -f "$_init_stderr_file" ]] && _init_stderr=$(head -c 512 "$_init_stderr_file" 2>/dev/null || true)
-        local _init_stdout_snip=""
-        [[ -n "$_init_out" ]] && _init_stdout_snip=$(printf '%s' "$_init_out" | head -c 512 || true)
-        # Strip control characters (including ANSI escapes, CR, NUL) so event fields
-        # are safe for events.jsonl and SQL interpolation in db_add_event.
-        _init_stderr=$(printf '%s' "$_init_stderr" | tr -d '\000-\037\177' || true)
-        _init_stdout_snip=$(printf '%s' "$_init_stdout_snip" | tr -d '\000-\037\177' || true)
-        rm -f "$_init_stderr_file"
-        emit_event "ruflo.hive_init_failed" "topology=$topology" \
-            "exit_code=$_init_exit" \
-            "stderr=$_init_stderr" \
-            "stdout=$_init_stdout_snip"
+    # Gate: hive must be initialized by ruflo_init() before stages run
+    if [[ "${RUFLO_HIVE_AVAILABLE:-false}" != "true" ]]; then
+        emit_event "ruflo.build_hive_skipped" "reason=hive_unavailable"
         return 1
     fi
-    rm -f "$_init_stderr_file"
+    local hive_id="$RUFLO_HIVE_ID"
 
-    # Spawn worker agents — spawn failures are fatal: any non-zero exit triggers
-    # hive shutdown and causes the function to return 1 (caller falls back).
+    # Spawn worker agents — spawn failures are fatal: any non-zero exit causes
+    # the function to return 1 so the caller falls back to native execution.
+    # Note: hive teardown is handled by ruflo_cleanup(), not per-stage shutdown.
     local _spawn_exit=0
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
         ruflo_with_timeout 60 npx -y ruflo@latest hive-mind spawn \
@@ -712,7 +763,6 @@ ruflo_execute_build_hive() {
     if [[ $_spawn_exit -ne 0 ]]; then
         warn "Ruflo hive spawn failed (hive_id=$hive_id) — aborting hive build"
         emit_event "ruflo.hive_spawn_failed" "hive_id=$hive_id"
-        _ruflo_hive_shutdown "$hive_id"
         return 1
     fi
 
@@ -731,9 +781,6 @@ ruflo_execute_build_hive() {
             --max-turns "$max_turns" \
             --mode "pipeline" 2>/dev/null || _orch_exit=$?
     fi
-
-    # Always shut down the hive regardless of outcome
-    _ruflo_hive_shutdown "$hive_id"
 
     if [[ $_orch_exit -eq 0 ]]; then
         emit_event "ruflo.hive_build_complete" \
@@ -804,42 +851,12 @@ ruflo_execute_review() {
         fi
     fi
 
-    # Initialize review hive — wrapped in ruflo_with_timeout to prevent hangs
-    local hive_id=""
-    local _init_exit=0
-    local _init_out=""
-    local _init_stderr_file
-    _init_stderr_file=$(mktemp "${TMPDIR:-/tmp}/ruflo-init-stderr.XXXXXX")
-    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
-            --topology hierarchical \
-            --max-agents "$max_agents" \
-            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
-    else
-        _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
-            --topology hierarchical \
-            --max-agents "$max_agents" \
-            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
-    fi
-    [[ $_init_exit -eq 0 ]] && \
-        hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
-    if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
-        local _init_stderr=""
-        [[ -f "$_init_stderr_file" ]] && _init_stderr=$(head -c 512 "$_init_stderr_file" 2>/dev/null || true)
-        local _init_stdout_snip=""
-        [[ -n "$_init_out" ]] && _init_stdout_snip=$(printf '%s' "$_init_out" | head -c 512 || true)
-        # Strip control characters (including ANSI escapes, CR, NUL) so event fields
-        # are safe for events.jsonl and SQL interpolation in db_add_event.
-        _init_stderr=$(printf '%s' "$_init_stderr" | tr -d '\000-\037\177' || true)
-        _init_stdout_snip=$(printf '%s' "$_init_stdout_snip" | tr -d '\000-\037\177' || true)
-        rm -f "$_init_stderr_file"
-        emit_event "ruflo.review_failed" "reason=hive_init_failed" \
-            "exit_code=$_init_exit" \
-            "stderr=$_init_stderr" \
-            "stdout=$_init_stdout_snip"
+    # Gate: hive must be initialized by ruflo_init() before stages run
+    if [[ "${RUFLO_HIVE_AVAILABLE:-false}" != "true" ]]; then
+        emit_event "ruflo.review_skipped" "reason=hive_unavailable"
         return 1
     fi
-    rm -f "$_init_stderr_file"
+    local hive_id="$RUFLO_HIVE_ID"
 
     # Spawn specialist reviewers — spawn failures are non-fatal (proceed with fewer agents)
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -905,9 +922,6 @@ ruflo_execute_review() {
             --namespace "$review_ns" 2>/dev/null) || true
     fi
 
-    # Always shut down the hive regardless of outcome
-    _ruflo_hive_shutdown "$hive_id"
-
     # Write findings to artifact file — ensure parent directory exists
     mkdir -p "$(dirname "$artifact_file")" 2>/dev/null || true
     if ! printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null; then
@@ -948,42 +962,12 @@ ruflo_execute_compound_quality() {
 
     emit_event "ruflo.cq_start"
 
-    # Initialize adversarial quality hive
-    local hive_id=""
-    local _init_exit=0
-    local _init_out=""
-    local _init_stderr_file
-    _init_stderr_file=$(mktemp "${TMPDIR:-/tmp}/ruflo-init-stderr.XXXXXX")
-    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
-            --topology hierarchical \
-            --max-agents "$cq_agents" \
-            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
-    else
-        _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
-            --topology hierarchical \
-            --max-agents "$cq_agents" \
-            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
-    fi
-    [[ $_init_exit -eq 0 ]] && \
-        hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
-    if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
-        local _init_stderr=""
-        [[ -f "$_init_stderr_file" ]] && _init_stderr=$(head -c 512 "$_init_stderr_file" 2>/dev/null || true)
-        local _init_stdout_snip=""
-        [[ -n "$_init_out" ]] && _init_stdout_snip=$(printf '%s' "$_init_out" | head -c 512 || true)
-        # Strip control characters (including ANSI escapes, CR, NUL) so event fields
-        # are safe for events.jsonl and SQL interpolation in db_add_event.
-        _init_stderr=$(printf '%s' "$_init_stderr" | tr -d '\000-\037\177' || true)
-        _init_stdout_snip=$(printf '%s' "$_init_stdout_snip" | tr -d '\000-\037\177' || true)
-        rm -f "$_init_stderr_file"
-        emit_event "ruflo.cq_failed" "reason=hive_init_failed" \
-            "exit_code=$_init_exit" \
-            "stderr=$_init_stderr" \
-            "stdout=$_init_stdout_snip"
+    # Gate: hive must be initialized by ruflo_init() before stages run
+    if [[ "${RUFLO_HIVE_AVAILABLE:-false}" != "true" ]]; then
+        emit_event "ruflo.cq_skipped" "reason=hive_unavailable"
         return 1
     fi
-    rm -f "$_init_stderr_file"
+    local hive_id="$RUFLO_HIVE_ID"
 
     # Spawn adversarial agents — non-fatal spawn failure
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -1042,9 +1026,6 @@ ruflo_execute_compound_quality() {
             --namespace "$cq_ns" 2>/dev/null) || true
     fi
 
-    # Always shut down the hive regardless of outcome
-    _ruflo_hive_shutdown "$hive_id"
-
     # Write findings to artifact file — ensure parent directory exists
     mkdir -p "$(dirname "$artifact_file")" 2>/dev/null || true
     if ! printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null; then
@@ -1089,61 +1070,12 @@ ruflo_execute_audit() {
 
     emit_event "ruflo.audit_start" "max_agents=$max_agents"
 
-    # Initialize audit hive
-    local hive_id=""
-    # Save caller's EXIT trap so we can restore it and chain it on unexpected exits.
-    # Using local variables avoids leaking state across calls.
-    # _prev_exit_raw: full "trap -- '...' EXIT" string, used to restore on explicit returns.
-    # _prev_exit_body: just the handler body, embedded inline in our chained trap so that
-    # both hive cleanup AND caller teardown (lock release, stash restore, etc.) run if the
-    # process exits unexpectedly (SIGTERM, set -e, etc.) while our trap is installed.
-    local _prev_exit_raw
-    local _prev_exit_body=""
-    _prev_exit_raw=$(trap -p EXIT 2>/dev/null || true)
-    if [[ -n "$_prev_exit_raw" ]]; then
-        # Extract handler body from: trap -- 'body' EXIT
-        _prev_exit_body=$(printf '%s\n' "$_prev_exit_raw" | sed "s/^trap -- '//; s/' EXIT\$//")
-    fi
-    # Declare _init_stderr_file before trap so cleanup can reference it even on
-    # abnormal exits (SIGTERM, set -e) — the trap body uses ${_init_stderr_file:-}.
-    local _init_stderr_file
-    _init_stderr_file=$(mktemp "${TMPDIR:-/tmp}/ruflo-init-stderr.XXXXXX")
-    local _chained_trap='[[ -n "${hive_id:-}" ]] && _ruflo_hive_shutdown "${hive_id}" 2>/dev/null || true; rm -f "${_init_stderr_file:-}" 2>/dev/null || true'
-    [[ -n "$_prev_exit_body" ]] && _chained_trap="${_chained_trap}; ${_prev_exit_body}"
-    trap "$_chained_trap" EXIT
-    local _init_exit=0
-    local _init_out=""
-    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        _init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
-            --topology hierarchical \
-            --max-agents "$max_agents" \
-            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
-    else
-        _init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
-            --topology hierarchical \
-            --max-agents "$max_agents" \
-            --output-format json 2>"$_init_stderr_file") || _init_exit=$?
-    fi
-    [[ $_init_exit -eq 0 ]] && \
-        hive_id=$(printf '%s' "$_init_out" | jq -r '.hive_id // empty' 2>/dev/null || true)
-    if [[ $_init_exit -ne 0 || -z "$hive_id" ]]; then
-        local _init_stderr=""
-        [[ -f "$_init_stderr_file" ]] && _init_stderr=$(head -c 512 "$_init_stderr_file" 2>/dev/null || true)
-        local _init_stdout_snip=""
-        [[ -n "$_init_out" ]] && _init_stdout_snip=$(printf '%s' "$_init_out" | head -c 512 || true)
-        # Strip control characters (including ANSI escapes, CR, NUL) so event fields
-        # are safe for events.jsonl and SQL interpolation in db_add_event.
-        _init_stderr=$(printf '%s' "$_init_stderr" | tr -d '\000-\037\177' || true)
-        _init_stdout_snip=$(printf '%s' "$_init_stdout_snip" | tr -d '\000-\037\177' || true)
-        rm -f "$_init_stderr_file"
-        emit_event "ruflo.audit_failed" "reason=hive_init_failed" \
-            "exit_code=$_init_exit" \
-            "stderr=$_init_stderr" \
-            "stdout=$_init_stdout_snip"
-        if [[ -n "${_prev_exit_raw:-}" ]]; then eval "${_prev_exit_raw}"; else trap - EXIT; fi
+    # Gate: hive must be initialized by ruflo_init() before stages run
+    if [[ "${RUFLO_HIVE_AVAILABLE:-false}" != "true" ]]; then
+        emit_event "ruflo.audit_skipped" "reason=hive_unavailable"
         return 1
     fi
-    rm -f "$_init_stderr_file"
+    local hive_id="$RUFLO_HIVE_ID"
 
     # Spawn specialist security audit agents — non-fatal spawn failure
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -1210,9 +1142,7 @@ ruflo_execute_audit() {
     # Fail fast if orchestration failed — no findings to aggregate
     if [[ $_orch_exit -ne 0 ]]; then
         warn "ruflo: orchestration failed with exit $_orch_exit"
-        _ruflo_hive_shutdown "$hive_id"
         emit_event "ruflo.audit_failed" "reason=orchestration_failed"
-        if [[ -n "${_prev_exit_raw:-}" ]]; then eval "${_prev_exit_raw}"; else trap - EXIT; fi
         return 1
     fi
 
@@ -1228,14 +1158,10 @@ ruflo_execute_audit() {
             --namespace "$audit_ns" 2>/dev/null) || true
     fi
 
-    # Always shut down the hive regardless of outcome
-    _ruflo_hive_shutdown "$hive_id"
-
     # Write findings to artifact file — ensure parent directory exists
     mkdir -p "$(dirname "$artifact_file")" 2>/dev/null || true
     if ! printf '%s\n' "${_findings:-}" > "$artifact_file"; then
         warn "ruflo: failed to write audit artifact: $artifact_file"
-        if [[ -n "${_prev_exit_raw:-}" ]]; then eval "${_prev_exit_raw}"; else trap - EXIT; fi
         return 1
     fi
 
@@ -1246,7 +1172,6 @@ ruflo_execute_audit() {
         "audit,outcome" || true
 
     emit_event "ruflo.audit_complete" "hive_id=$hive_id" "stage=audit"
-    if [[ -n "${_prev_exit_raw:-}" ]]; then eval "${_prev_exit_raw}"; else trap - EXIT; fi
     return 0
 }
 

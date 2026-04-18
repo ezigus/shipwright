@@ -659,6 +659,16 @@ pipeline_security_source_scan() {
 
     while IFS= read -r file; do
         [[ -z "$file" || ! -f "$file" ]] && continue
+        # Bug #395 Fix 3: exclude scanner infrastructure and test fixtures.
+        # pipeline-intelligence.sh grep patterns match themselves when scanned;
+        # test files contain intentional vulnerable heredocs as fixtures.
+        # Use basename-only match to avoid false positives from temp dir names.
+        local _basename
+        _basename="${file##*/}"
+        if [[ "$_basename" == "pipeline-intelligence.sh" || "$_basename" == *-test.sh || \
+              "$_basename" == *fixture* ]]; then
+            continue
+        fi
         # Only scan code files
         case "$file" in
             *.ts|*.js|*.tsx|*.jsx|*.py|*.go|*.rs|*.java|*.rb|*.php|*.sh) ;;
@@ -767,6 +777,15 @@ FILESEOF
         tmp_scan=$(mktemp)
         echo "$findings" > "$tmp_scan"
         mv "$tmp_scan" "$ARTIFACTS_DIR/security-source-scan.json" || rm -f "$tmp_scan"
+        # Bug #395 Fix 2: generate security-source-scan.log so _extract_blocking_items
+        # and _write_quality_feedback can surface findings in the rebuild prompt.
+        # Uses a separate file from security-audit.log (written by quality_check_security
+        # for npm audit) to avoid collision. Format: SEVERITY: file:line — message.
+        # "major" is normalized to "HIGH" so grep -iE 'critical|high' catches all severity 2+.
+        jq -r '.[] | (if .severity == "major" then "HIGH" else (.severity | ascii_upcase) end) as $sev |
+            "\($sev): \(.file // "unknown"):\(.line // "?") \u2014 \(.message // .description // "finding") [original: \(.severity)]"' \
+            "$ARTIFACTS_DIR/security-source-scan.json" \
+            > "$ARTIFACTS_DIR/security-source-scan.log" 2>/dev/null || true
     fi
 
     emit_event "pipeline.security_source_scan" \
@@ -1077,13 +1096,20 @@ _extract_blocking_items() {
         done < <(grep -iE '\*\*\[?(Critical|High|Bug)\]?\*\*' "$ARTIFACTS_DIR/adversarial-review.md" 2>/dev/null || true)
     fi
 
-    # ── 2. security-audit.log — critical/high lines ──
+    # ── 2. security-audit.log / security-source-scan.log — critical/high lines ──
     # Parsed separately from adversarial-review so security findings are never
     # demoted even when the adversarial JSON path is active.
+    # security-audit.log: written by quality_check_security (npm audit).
+    # security-source-scan.log: written by pipeline_security_source_scan (source grep).
     if [[ -f "$ARTIFACTS_DIR/security-audit.log" ]] && pipeline_artifact_is_current "$ARTIFACTS_DIR/security-audit.log"; then
         while IFS= read -r line; do
             _dedup_add_item "$line" "security" "$tmp_fps" "$tmp_items"
         done < <(grep -iE 'critical|high' "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null || true)
+    fi
+    if [[ -f "$ARTIFACTS_DIR/security-source-scan.log" ]] && pipeline_artifact_is_current "$ARTIFACTS_DIR/security-source-scan.log"; then
+        while IFS= read -r line; do
+            _dedup_add_item "$line" "security-source" "$tmp_fps" "$tmp_items"
+        done < <(grep -iE 'critical|high' "$ARTIFACTS_DIR/security-source-scan.log" 2>/dev/null || true)
     fi
 
     # ── 3. negative-review.md — [Critical] lines only ──
@@ -1181,10 +1207,18 @@ _write_quality_feedback() {
         echo "## Review Findings"
         echo ""
 
-        # Security findings
-        if [[ "$route" == "security" || -f "$ARTIFACTS_DIR/security-audit.log" ]] && grep -qiE 'critical|high' "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null; then
+        # Security findings (npm audit via security-audit.log and source scan via security-source-scan.log)
+        local _show_sec=false
+        if [[ -f "$ARTIFACTS_DIR/security-audit.log" ]] && grep -qiE 'critical|high' "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null; then
+            _show_sec=true
+        fi
+        if [[ -f "$ARTIFACTS_DIR/security-source-scan.log" ]] && grep -qiE 'critical|high' "$ARTIFACTS_DIR/security-source-scan.log" 2>/dev/null; then
+            _show_sec=true
+        fi
+        if $_show_sec; then
             echo "### 🔴 PRIORITY: Security Findings (fix these first)"
-            cat "$ARTIFACTS_DIR/security-audit.log"
+            [[ -f "$ARTIFACTS_DIR/security-audit.log" ]] && cat "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null || true
+            [[ -f "$ARTIFACTS_DIR/security-source-scan.log" ]] && cat "$ARTIFACTS_DIR/security-source-scan.log" 2>/dev/null || true
             echo ""
             echo "Security issues MUST be resolved before any other changes."
             echo ""
@@ -1894,6 +1928,17 @@ ${_cascade_test_tail}"
             current_issue_count=$((current_issue_count + ${cascade_crit_count:-0}))
         fi
 
+        # Bug #395 Fix 1: include security source scan critical/high findings in
+        # convergence count so they reach the quality-gate branch (current_issue_count > 0),
+        # not the hard-fail branch (count=0, all_passed=false).
+        # pipeline_artifact_is_current guards against stale artifacts from prior runs.
+        if [[ -f "$ARTIFACTS_DIR/security-source-scan.json" ]] && pipeline_artifact_is_current "$ARTIFACTS_DIR/security-source-scan.json"; then
+            local sec_crit_count
+            sec_crit_count=$(jq '[.[] | select(.severity == "critical" or .severity == "high" or .severity == "major")] | length' \
+                "$ARTIFACTS_DIR/security-source-scan.json" 2>/dev/null || echo "0")
+            current_issue_count=$((current_issue_count + ${sec_crit_count:-0}))
+        fi
+
         emit_event "compound.cycle" \
             "issue=${ISSUE_NUMBER:-0}" \
             "cycle=$cycle" \
@@ -1966,8 +2011,9 @@ All quality checks clean:
         # will penalise real issues while allowing acceptable subjective findings to
         # stabilise (fixes #349).
         # When current_issue_count == 0 but all_passed=false, some failure is not
-        # tracked in the count (simulation, security-scan, etc.) — hard-fail as
+        # tracked in the count (e.g. developer simulation failures) — hard-fail as
         # before to preserve the strict guarantee.
+        # Note: security findings are now counted via security-source-scan.json (Fix #395).
         if [[ "$(_compound_should_plateau "$current_issue_count" "$prev_issue_count" "$cycle")" == "plateau" ]]; then
             warn "Convergence: quality plateau — ${current_issue_count} issues unchanged between cycles"
             emit_event "compound.plateau" \

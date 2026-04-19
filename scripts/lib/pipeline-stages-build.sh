@@ -134,7 +134,8 @@ ${tdd_context}"
         local tdd_key="test_first-${SHIPWRIGHT_PIPELINE_ID:-unknown}-$(date +%s)"
         local tdd_outcome
         tdd_outcome=$(jq -n --arg goal "${GOAL:-}" --arg task "${TASK_TYPE:-feature}" \
-            '{goal: $goal, task_type: $task, tests_generated: true}' 2>/dev/null || echo '{}')
+            --arg wrote "$wrote_any" \
+            '{goal: $goal, task_type: $task, tests_generated: ($wrote == "true")}' 2>/dev/null || echo '{}')
         ruflo_store "$tdd_key" "$tdd_outcome" \
             "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" \
             "tdd,test_first,${TASK_TYPE:-feature}" 2>/dev/null || true

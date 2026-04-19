@@ -1395,22 +1395,24 @@ ruflo_ci_memory_push() {
     _ruflo_ci_merge_with_remote "$export_file" || true
 
     # Push with retry — concurrent pipelines race on this branch
+    # Each attempt gets a fresh workspace so _ruflo_ci_do_push can re-init cleanly
     local pushed=false attempt jitter push_dir
-    push_dir=$(mktemp -d 2>/dev/null) || {
-        emit_event "ruflo.ci_push_skip" "reason=mktemp_failed"
-        return 0
-    }
     for attempt in 1 2 3; do
+        push_dir=$(mktemp -d "${TMPDIR:-/tmp}/ruflo-ci-push.XXXXXX" 2>/dev/null) || {
+            emit_event "ruflo.ci_push_skip" "reason=mktemp_failed"
+            return 0
+        }
         if _ruflo_ci_do_push "$push_dir" "$export_file"; then
+            rm -rf "$push_dir" 2>/dev/null || true
             pushed=true
             break
         fi
+        rm -rf "$push_dir" 2>/dev/null || true
         jitter=$(( RANDOM % 8 + 2 ))
         emit_event "ruflo.ci_push_retry" "attempt=$attempt" "wait=${jitter}s"
         sleep "$jitter"
         _ruflo_ci_merge_with_remote "$export_file" || true
     done
-    rm -rf "$push_dir" 2>/dev/null || true
 
     if [[ "$pushed" == "true" ]]; then
         emit_event "ruflo.ci_push_ok" "file=$export_file"
@@ -1427,7 +1429,7 @@ ruflo_ci_memory_push() {
 _ruflo_ci_merge_with_remote() {
     local export_file="$1"
     local remote_tmp
-    remote_tmp=$(mktemp 2>/dev/null) || return 0
+    remote_tmp=$(mktemp "${TMPDIR:-/tmp}/ruflo-remote-memory.XXXXXX" 2>/dev/null) || return 0
     if git fetch origin ruflo-memory 2>/dev/null && \
        git show "origin/ruflo-memory:memory-export.json" > "$remote_tmp" 2>/dev/null; then
         local merged
@@ -1448,30 +1450,24 @@ _ruflo_ci_do_push() {
 
     local repo_url
     repo_url=$(git remote get-url origin 2>/dev/null) || return 1
-    # Inject GITHUB_TOKEN for push authentication in GitHub Actions
-    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-        repo_url=$(printf '%s' "$repo_url" | \
-            sed 's|https://github.com/|https://x-access-token:'"${GITHUB_TOKEN}"'@github.com/|')
-    fi
 
     (
         cd "$work_dir"
         git init -q 2>/dev/null || exit 1
         git remote add origin "$repo_url" 2>/dev/null || exit 1
-        if git fetch origin ruflo-memory 2>/dev/null; then
-            git checkout -b ruflo-memory origin/ruflo-memory 2>/dev/null || exit 1
-        else
-            git checkout --orphan ruflo-memory 2>/dev/null || exit 1
+        # Inject GITHUB_TOKEN via header — avoids token appearing in URLs/logs
+        if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+            git config http.extraheader "Authorization: bearer ${GITHUB_TOKEN}"
         fi
+        # Always create a fresh orphan commit — preserves single-snapshot semantics
+        # (merge with remote was already done by _ruflo_ci_merge_with_remote)
+        git checkout --orphan ruflo-memory 2>/dev/null || exit 1
         cp "$export_file" memory-export.json || exit 1
         git config user.name "shipwright[bot]"
         git config user.email "shipwright[bot]@users.noreply.github.com"
         git add memory-export.json
-        if git diff --cached --quiet 2>/dev/null; then
-            exit 0  # nothing changed — treat as success
-        fi
         git commit -m "chore: persist ruflo memory [skip ci]" 2>/dev/null || exit 1
-        git push origin ruflo-memory 2>/dev/null
+        git push --force origin ruflo-memory 2>/dev/null
     )
     return $?
 }
@@ -1487,6 +1483,7 @@ ruflo_prune_memory_export() {
     local max_age_days="${2:-90}"
     [[ -f "$file" ]] || return 0
     command -v jq >/dev/null 2>&1 || return 0
+    [[ "$max_age_days" =~ ^[0-9]+$ ]] || max_age_days=90
 
     local cutoff_s
     cutoff_s=$(( $(date +%s) - max_age_days * 86400 ))
@@ -1517,7 +1514,14 @@ ruflo_prune_memory_export() {
 ruflo_merge_memory_exports() {
     local remote_file="$1"
     local local_file="$2"
-    command -v jq >/dev/null 2>&1 || { cat "$local_file" 2>/dev/null; return 0; }
+    command -v jq >/dev/null 2>&1 || {
+        if [[ -f "$local_file" ]]; then
+            cat "$local_file" 2>/dev/null || true
+        elif [[ -f "$remote_file" ]]; then
+            cat "$remote_file" 2>/dev/null || true
+        fi
+        return 0
+    }
 
     if [[ -f "$remote_file" && -f "$local_file" ]]; then
         # .[0] = remote baseline, .[1] = local — local wins on key conflict

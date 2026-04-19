@@ -2065,7 +2065,7 @@ print_test_section "ruflo_prune_memory_export — removes stale, keeps recent an
 
 unset _RUFLO_ADAPTER_LOADED
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-_prune_file=$(mktemp)
+_prune_file=$(mktemp "${TMPDIR:-/tmp}/sw-ruflo-prune.XXXXXX")
 _now=$(date +%s)
 _old=$(( _now - 100 * 86400 ))
 _recent=$(( _now - 10 * 86400 ))
@@ -2096,8 +2096,8 @@ print_test_section "ruflo_merge_memory_exports — local wins on conflict, remot
 
 unset _RUFLO_ADAPTER_LOADED
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-_remote_file=$(mktemp)
-_local_file=$(mktemp)
+_remote_file=$(mktemp "${TMPDIR:-/tmp}/sw-ruflo-remote-memory.XXXXXX")
+_local_file=$(mktemp "${TMPDIR:-/tmp}/sw-ruflo-local-memory.XXXXXX")
 printf '{"key1":"remote_val","key2":"remote_only"}\n' > "$_remote_file"
 printf '{"key1":"local_val","key3":"local_only"}\n' > "$_local_file"
 _merged=$(ruflo_merge_memory_exports "$_remote_file" "$_local_file")

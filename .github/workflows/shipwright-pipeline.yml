@@ -421,6 +421,13 @@ jobs:
           fi
         continue-on-error: true
 
+      - name: Restore ruflo memory from orphan branch
+        run: |
+          source scripts/lib/ruflo-adapter.sh
+          ruflo_detect || true
+          ruflo_ci_memory_pull
+        continue-on-error: true
+
       - name: Pre-flight auth check
         run: |
           if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
@@ -876,6 +883,14 @@ jobs:
         with:
           path: .claude-flow/data/
           key: ruflo-memory-${{ github.repository }}-${{ github.run_number }}
+        continue-on-error: true
+
+      - name: Persist ruflo memory to orphan branch
+        if: always() && steps.claim_check.outputs.skip != 'true'
+        run: |
+          source scripts/lib/ruflo-adapter.sh
+          ruflo_detect || true
+          ruflo_ci_memory_push
         continue-on-error: true
 
       # Gatekeeper: ensure job fails if pipeline failed (triggers auto-retry)

@@ -2250,4 +2250,161 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Tests: ruflo_ci_memory_pull, ruflo_ci_memory_push, ruflo_prune_memory_export,
+#        ruflo_merge_memory_exports  (feat: 08a — CI memory persistence)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_test_section "ruflo_ci_memory_pull — no-op when CI is not set"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+unset CI
+_pull_exit=0
+ruflo_ci_memory_pull || _pull_exit=$?
+if [[ $_pull_exit -eq 0 ]]; then
+    assert_pass "ruflo_ci_memory_pull returns 0 when CI is unset (no-op)"
+else
+    assert_fail "ruflo_ci_memory_pull returns 0 when CI is unset (no-op)" "exit=$_pull_exit"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "ruflo_ci_memory_pull — no-op when ruflo unavailable"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+CI=true
+RUFLO_AVAILABLE=false
+export CI RUFLO_AVAILABLE
+_pull_exit=0
+ruflo_ci_memory_pull || _pull_exit=$?
+if [[ $_pull_exit -eq 0 ]]; then
+    assert_pass "ruflo_ci_memory_pull returns 0 when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_ci_memory_pull returns 0 when RUFLO_AVAILABLE=false" "exit=$_pull_exit"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "ruflo_ci_memory_pull — returns 0 when orphan branch absent"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+mock_binary "ruflo" 'exit 0'
+# git fetch returns 1 so ruflo-memory branch is absent
+cat > "$_test_tmp/git" <<'MOCK'
+#!/usr/bin/env bash
+case "${1:-}" in
+    fetch) exit 1 ;;
+    remote) printf 'https://github.com/test/repo.git\n'; exit 0 ;;
+    *) exit 0 ;;
+esac
+MOCK
+chmod +x "$_test_tmp/git"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+CI=true
+export RUFLO_AVAILABLE CI
+_pull_exit=0
+ruflo_ci_memory_pull || _pull_exit=$?
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $_pull_exit -eq 0 ]]; then
+    assert_pass "ruflo_ci_memory_pull returns 0 when orphan branch does not exist"
+else
+    assert_fail "ruflo_ci_memory_pull returns 0 when orphan branch does not exist" "exit=$_pull_exit"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "ruflo_ci_memory_push — no-op when CI is not set"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+unset CI
+_push_exit=0
+ruflo_ci_memory_push || _push_exit=$?
+if [[ $_push_exit -eq 0 ]]; then
+    assert_pass "ruflo_ci_memory_push returns 0 when CI is unset (no-op)"
+else
+    assert_fail "ruflo_ci_memory_push returns 0 when CI is unset (no-op)" "exit=$_push_exit"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "ruflo_ci_memory_push — no-op when ruflo unavailable"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+CI=true
+RUFLO_AVAILABLE=false
+export CI RUFLO_AVAILABLE
+_push_exit=0
+ruflo_ci_memory_push || _push_exit=$?
+if [[ $_push_exit -eq 0 ]]; then
+    assert_pass "ruflo_ci_memory_push returns 0 when RUFLO_AVAILABLE=false"
+else
+    assert_fail "ruflo_ci_memory_push returns 0 when RUFLO_AVAILABLE=false" "exit=$_push_exit"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "ruflo_prune_memory_export — removes stale, keeps recent and no-timestamp"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+_prune_file=$(mktemp "${TMPDIR:-/tmp}/sw-ruflo-prune.XXXXXX")
+_now=$(date +%s)
+_old=$(( _now - 100 * 86400 ))
+_recent=$(( _now - 10 * 86400 ))
+printf '{"keep":{"timestamp":%d},"drop":{"timestamp":%d},"no_ts":"value"}\n' \
+    "$_recent" "$_old" > "$_prune_file"
+ruflo_prune_memory_export "$_prune_file" 90
+_pruned=$(cat "$_prune_file")
+rm -f "$_prune_file"
+
+if printf '%s\n' "$_pruned" | jq -e '.keep' >/dev/null 2>&1; then
+    assert_pass "ruflo_prune_memory_export keeps entry within max_age"
+else
+    assert_fail "ruflo_prune_memory_export keeps entry within max_age" "output: $_pruned"
+fi
+if ! printf '%s\n' "$_pruned" | jq -e '.drop' >/dev/null 2>&1; then
+    assert_pass "ruflo_prune_memory_export removes entry beyond max_age"
+else
+    assert_fail "ruflo_prune_memory_export removes entry beyond max_age" "output: $_pruned"
+fi
+if printf '%s\n' "$_pruned" | jq -e '.no_ts' >/dev/null 2>&1; then
+    assert_pass "ruflo_prune_memory_export keeps entry without timestamp field"
+else
+    assert_fail "ruflo_prune_memory_export keeps entry without timestamp field" "output: $_pruned"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "ruflo_merge_memory_exports — local wins on conflict, remote keys preserved"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+_remote_file=$(mktemp "${TMPDIR:-/tmp}/sw-ruflo-remote-memory.XXXXXX")
+_local_file=$(mktemp "${TMPDIR:-/tmp}/sw-ruflo-local-memory.XXXXXX")
+printf '{"key1":"remote_val","key2":"remote_only"}\n' > "$_remote_file"
+printf '{"key1":"local_val","key3":"local_only"}\n' > "$_local_file"
+_merged=$(ruflo_merge_memory_exports "$_remote_file" "$_local_file")
+rm -f "$_remote_file" "$_local_file"
+
+if printf '%s\n' "$_merged" | jq -e '.key1 == "local_val"' >/dev/null 2>&1; then
+    assert_pass "ruflo_merge_memory_exports: local value wins on key conflict"
+else
+    assert_fail "ruflo_merge_memory_exports: local value wins on key conflict" "merged: $_merged"
+fi
+if printf '%s\n' "$_merged" | jq -e '.key2 == "remote_only"' >/dev/null 2>&1; then
+    assert_pass "ruflo_merge_memory_exports: remote-only keys are preserved"
+else
+    assert_fail "ruflo_merge_memory_exports: remote-only keys are preserved" "merged: $_merged"
+fi
+if printf '%s\n' "$_merged" | jq -e '.key3 == "local_only"' >/dev/null 2>&1; then
+    assert_pass "ruflo_merge_memory_exports: local-only keys present in merge"
+else
+    assert_fail "ruflo_merge_memory_exports: local-only keys present in merge" "merged: $_merged"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

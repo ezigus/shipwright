@@ -992,4 +992,140 @@ fi
 export GITHUB_ISSUE="#42"
 mock_binary "sw" 'mkdir -p src; echo "// auth" > src/auth.js'
 
+# ─── Tests: stage_test_first ──────────────────────────────────────────────────
+print_test_section "stage_test_first"
+
+_tdd_prompt_log="$TEST_TEMP_DIR/tdd-prompt-capture.log"
+
+# Test: stage_test_first returns 0 when ruflo unavailable (no recall)
+ruflo_available() { return 1; }
+cat > "$TEST_TEMP_DIR/bin/claude" <<CMOCK
+#!/usr/bin/env bash
+cat > "$_tdd_prompt_log"
+printf '\`\`\`tests/auth.test.js\n// test\n\`\`\`\n'
+CMOCK
+chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+rm -f "$_tdd_prompt_log"
+set +e
+stage_test_first 2>/dev/null
+_tff_rc=$?
+set -e
+[[ $_tff_rc -eq 0 ]] && assert_pass "stage_test_first returns 0 when ruflo unavailable" \
+                      || assert_fail "stage_test_first returns 0 when ruflo unavailable" "exit $_tff_rc"
+
+# Test: integration — tdd_prompt contains injected recall results when available
+ruflo_available() { return 0; }
+ruflo_recall_similar_outcomes() {
+    printf '{"results":["Use describe/it blocks for JWT tests","Mock authService for unit tests"]}\n'
+}
+ruflo_store() { return 0; }
+
+cat > "$TEST_TEMP_DIR/bin/claude" <<CMOCK
+#!/usr/bin/env bash
+cat > "$_tdd_prompt_log"
+printf '\`\`\`tests/auth.test.js\n// test content\n\`\`\`\n'
+CMOCK
+chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+rm -f "$_tdd_prompt_log"
+set +e
+stage_test_first 2>/dev/null
+set -e
+
+if [[ -f "$_tdd_prompt_log" ]]; then
+    _captured_prompt=$(cat "$_tdd_prompt_log")
+    assert_contains "tdd_prompt injected with recall section header" "$_captured_prompt" "Similar Past Test Generations"
+    assert_contains "tdd_prompt contains first recall result" "$_captured_prompt" "describe/it blocks"
+else
+    assert_fail "tdd_prompt injection" "claude was never invoked — prompt capture file missing"
+fi
+
+# Test: empty recall results — tdd_prompt must NOT contain recall section
+ruflo_recall_similar_outcomes() {
+    printf '{"results":[]}\n'
+}
+
+cat > "$TEST_TEMP_DIR/bin/claude" <<CMOCK
+#!/usr/bin/env bash
+cat > "$_tdd_prompt_log"
+printf '\`\`\`tests/auth.test.js\n// test\n\`\`\`\n'
+CMOCK
+chmod +x "$TEST_TEMP_DIR/bin/claude"
+
+rm -f "$_tdd_prompt_log"
+set +e
+stage_test_first 2>/dev/null
+set -e
+
+if [[ -f "$_tdd_prompt_log" ]]; then
+    _captured_empty=$(cat "$_tdd_prompt_log")
+    if [[ "$_captured_empty" != *"Similar Past Test Generations"* ]]; then
+        assert_pass "empty recall: tdd_prompt has no recall section"
+    else
+        assert_fail "empty recall: tdd_prompt has no recall section" "recall section present despite empty results"
+    fi
+else
+    assert_pass "empty recall: stage ran and completed"
+fi
+
+# Test: SHIPWRIGHT_PIPELINE_ID unset — stage returns 0 and skips storage (no key collision)
+ruflo_available() { return 0; }
+ruflo_recall_similar_outcomes() { printf '{"results":[]}\n'; }
+_ruflo_store_called=false
+ruflo_store() { _ruflo_store_called=true; return 0; }
+cat > "$TEST_TEMP_DIR/bin/claude" <<CMOCK
+#!/usr/bin/env bash
+cat > "$_tdd_prompt_log"
+printf '\`\`\`tests/auth.test.js\n// test\n\`\`\`\n'
+CMOCK
+chmod +x "$TEST_TEMP_DIR/bin/claude"
+_saved_pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-}"
+unset SHIPWRIGHT_PIPELINE_ID
+rm -f "$_tdd_prompt_log"
+set +e
+stage_test_first 2>/dev/null
+_tff_unset_rc=$?
+set -e
+[[ -n "$_saved_pipeline_id" ]] && SHIPWRIGHT_PIPELINE_ID="$_saved_pipeline_id"
+[[ $_tff_unset_rc -eq 0 ]] && assert_pass "stage_test_first returns 0 when SHIPWRIGHT_PIPELINE_ID unset" \
+                            || assert_fail "stage_test_first returns 0 when SHIPWRIGHT_PIPELINE_ID unset" "exit $_tff_unset_rc"
+[[ "$_ruflo_store_called" != "true" ]] && assert_pass "ruflo_store skipped when SHIPWRIGHT_PIPELINE_ID unset" \
+                                       || assert_fail "ruflo_store skipped when SHIPWRIGHT_PIPELINE_ID unset" "store was called despite missing pipeline ID"
+
+# Restore standard claude mock
+mock_binary "claude" 'prompt=""
+use_json=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -p) prompt="${2:-}"; shift 2 ;;
+    --output-format) [[ "${2:-}" == "json" ]] && use_json=true; shift 2 ;;
+    --output-format=*) [[ "${1#*=}" == "json" ]] && use_json=true; shift ;;
+    --model|--max-turns|--disallowed-tools) [[ $# -gt 1 ]] && shift 2 || shift ;;
+    --print|--dangerously-skip-permissions) shift ;;
+    --*=*) shift ;;
+    --*) [[ $# -gt 1 && "${2:-}" != -* ]] && shift 2 || shift ;;
+    *) prompt="${1:-}"; shift ;;
+  esac
+done
+plan="# Implementation Plan
+
+## Files to Modify
+- src/auth.js
+
+### Task Checklist
+- [ ] Create auth module
+- [ ] Add JWT validation
+
+### Definition of Done
+- [ ] All tests pass
+"
+if [[ "$use_json" == "true" ]]; then
+  jq -n --arg result "$plan" "{type:\"result\",result:\$result,usage:{input_tokens:10,output_tokens:20}}"
+else
+  printf "%s\n" "$plan"
+fi'
+
+unset -f ruflo_available ruflo_recall_similar_outcomes ruflo_store
+
 print_test_results

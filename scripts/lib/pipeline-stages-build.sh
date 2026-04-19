@@ -18,6 +18,18 @@ stage_test_first() {
         requirements="${GOAL:-}: ${ISSUE_BODY:-}"
     fi
 
+    # ── Semantic recall: find similar past TDD test generations ──────────────
+    local tdd_context=""
+    if ruflo_available; then
+        tdd_context=$(ruflo_recall_similar_outcomes "${TASK_TYPE:-feature}" "${ISSUE_LABELS:-}" 2>/dev/null) || true
+        if [[ -n "$tdd_context" && "$tdd_context" != *'"results":[]'* ]]; then
+            tdd_context=$(printf '%s' "$tdd_context" | jq -r '.results[]? | "- \(.)"' 2>/dev/null | head -5 || true)
+            tdd_context=$(printf '%.2000s' "$tdd_context")
+        else
+            tdd_context=""
+        fi
+    fi
+
     local tdd_prompt="You are writing tests BEFORE implementation (TDD).
 
 Based on the following plan/requirements, generate test files that define the expected behavior. These tests should FAIL initially (since the implementation doesn't exist yet) but define the correct interface and behavior.
@@ -39,6 +51,13 @@ Output format: For each test file, use a fenced code block with the file path as
 \`\`\`
 
 Create files in the appropriate project directories (e.g. tests/, __tests__/, src/**/*.test.ts) per project convention."
+    if [[ -n "$tdd_context" ]]; then
+        tdd_prompt="${tdd_prompt}
+
+## Similar Past Test Generations
+From previous pipelines with the same task type:
+${tdd_context}"
+    fi
 
     local model="${CLAUDE_MODEL:-${MODEL:-sonnet}}"
     [[ -z "$model" || "$model" == "null" ]] && model="sonnet"
@@ -108,6 +127,22 @@ Create files in the appropriate project directories (e.g. tests/, __tests__/, sr
         success "TDD tests generated"
     else
         warn "No test files extracted from TDD output — check format"
+    fi
+
+    # ── Store TDD generation outcome for future recall ────────────────────────
+    if ruflo_available && [[ "$wrote_any" == "true" ]]; then
+        if [[ -z "${SHIPWRIGHT_PIPELINE_ID:-}" ]]; then
+            warn "SHIPWRIGHT_PIPELINE_ID unset — skipping TDD outcome storage to prevent key collision"
+        else
+            local tdd_key="test_first-${SHIPWRIGHT_PIPELINE_ID}-$(date +%s)"
+            local tdd_outcome
+            tdd_outcome=$(jq -n --arg goal "${GOAL:-}" --arg task "${TASK_TYPE:-feature}" \
+                --arg wrote "$wrote_any" \
+                '{goal: $goal, task_type: $task, tests_generated: ($wrote == "true")}' 2>/dev/null || echo '{}')
+            ruflo_store "$tdd_key" "$tdd_outcome" \
+                "pipeline-${SHIPWRIGHT_PIPELINE_ID}" \
+                "tdd,test_first,${TASK_TYPE:-feature}" 2>/dev/null || true
+        fi
     fi
 
     return 0

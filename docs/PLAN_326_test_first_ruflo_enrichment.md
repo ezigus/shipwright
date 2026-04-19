@@ -33,7 +33,7 @@ All variables are exported by `pipeline-stages.sh` (lines 17–31) and inherited
 | `ISSUE_LABELS` | pipeline-stages-intake.sh line 20 / pipeline-stages.sh line 27 | Comma-separated label list | Part of composite second param to `ruflo_recall_similar_outcomes()` |
 | `TASK_TYPE` | pipeline-stages-intake.sh line 51 / pipeline-stages.sh line 30 | Result of `detect_task_type()` or default "feature" | First param to `ruflo_recall_similar_outcomes()` |
 | `INTELLIGENCE_ISSUE_TYPE` | pipeline-stages.sh line 31 (default: "backend") | Detected issue type or "backend" | Not used directly; TASK_TYPE is the correct param |
-| `SHIPWRIGHT_PIPELINE_ID` | sw-pipeline.sh line 534 | Format: `pipeline-$$-${ISSUE_NUMBER}` | Namespace for `ruflo_store()` |
+| `SHIPWRIGHT_PIPELINE_ID` | sw-pipeline.sh line 534 | Format: `pipeline-$$-${ISSUE_NUMBER}` | Used in the `ruflo_store()` key; storage namespace is `learning-<repo_hash>` |
 | `ARTIFACTS_DIR` | pipeline-stages.sh line 17 | Default: `.claude/pipeline-artifacts` | Already used in `stage_test_first()` |
 
 ### ✅ Ruflo-Adapter Is Available to `stage_test_first()`

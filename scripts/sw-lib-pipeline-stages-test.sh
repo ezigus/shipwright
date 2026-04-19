@@ -1069,6 +1069,30 @@ else
     assert_pass "empty recall: stage ran and completed"
 fi
 
+# Test: SHIPWRIGHT_PIPELINE_ID unset — stage returns 0 and skips storage (no key collision)
+ruflo_available() { return 0; }
+ruflo_recall_similar_outcomes() { printf '{"results":[]}\n'; }
+_ruflo_store_called=false
+ruflo_store() { _ruflo_store_called=true; return 0; }
+cat > "$TEST_TEMP_DIR/bin/claude" <<CMOCK
+#!/usr/bin/env bash
+cat > "$_tdd_prompt_log"
+printf '\`\`\`tests/auth.test.js\n// test\n\`\`\`\n'
+CMOCK
+chmod +x "$TEST_TEMP_DIR/bin/claude"
+_saved_pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-}"
+unset SHIPWRIGHT_PIPELINE_ID
+rm -f "$_tdd_prompt_log"
+set +e
+stage_test_first 2>/dev/null
+_tff_unset_rc=$?
+set -e
+[[ -n "$_saved_pipeline_id" ]] && SHIPWRIGHT_PIPELINE_ID="$_saved_pipeline_id"
+[[ $_tff_unset_rc -eq 0 ]] && assert_pass "stage_test_first returns 0 when SHIPWRIGHT_PIPELINE_ID unset" \
+                            || assert_fail "stage_test_first returns 0 when SHIPWRIGHT_PIPELINE_ID unset" "exit $_tff_unset_rc"
+[[ "$_ruflo_store_called" != "true" ]] && assert_pass "ruflo_store skipped when SHIPWRIGHT_PIPELINE_ID unset" \
+                                       || assert_fail "ruflo_store skipped when SHIPWRIGHT_PIPELINE_ID unset" "store was called despite missing pipeline ID"
+
 # Restore standard claude mock
 mock_binary "claude" 'prompt=""
 use_json=false

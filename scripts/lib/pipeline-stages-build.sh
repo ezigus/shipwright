@@ -131,14 +131,18 @@ ${tdd_context}"
 
     # ── Store TDD generation outcome for future recall ────────────────────────
     if ruflo_available && [[ "$wrote_any" == "true" ]]; then
-        local tdd_key="test_first-${SHIPWRIGHT_PIPELINE_ID:-unknown}-$(date +%s)"
-        local tdd_outcome
-        tdd_outcome=$(jq -n --arg goal "${GOAL:-}" --arg task "${TASK_TYPE:-feature}" \
-            --arg wrote "$wrote_any" \
-            '{goal: $goal, task_type: $task, tests_generated: ($wrote == "true")}' 2>/dev/null || echo '{}')
-        ruflo_store "$tdd_key" "$tdd_outcome" \
-            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" \
-            "tdd,test_first,${TASK_TYPE:-feature}" 2>/dev/null || true
+        if [[ -z "${SHIPWRIGHT_PIPELINE_ID:-}" ]]; then
+            warn "SHIPWRIGHT_PIPELINE_ID unset — skipping TDD outcome storage to prevent key collision"
+        else
+            local tdd_key="test_first-${SHIPWRIGHT_PIPELINE_ID}-$(date +%s)"
+            local tdd_outcome
+            tdd_outcome=$(jq -n --arg goal "${GOAL:-}" --arg task "${TASK_TYPE:-feature}" \
+                --arg wrote "$wrote_any" \
+                '{goal: $goal, task_type: $task, tests_generated: ($wrote == "true")}' 2>/dev/null || echo '{}')
+            ruflo_store "$tdd_key" "$tdd_outcome" \
+                "pipeline-${SHIPWRIGHT_PIPELINE_ID}" \
+                "tdd,test_first,${TASK_TYPE:-feature}" 2>/dev/null || true
+        fi
     fi
 
     return 0

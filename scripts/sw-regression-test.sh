@@ -52,9 +52,16 @@ echo "hello"
 EOF
     chmod +x "$TEST_TEMP_DIR/repo/scripts/dummy.sh"
 
+    # Provide a minimal test-results.json so collect_test_metrics does not fall
+    # back to running the full sw-pipeline-test.sh suite (which would time out).
+    cat > "$TEST_TEMP_DIR/repo/.claude/pipeline-artifacts/test-results.json" <<'EOF'
+{"summary":{"passed":10,"failed":0}}
+EOF
+
     export PATH="$TEST_TEMP_DIR/bin:$PATH"
     export HOME="$TEST_TEMP_DIR/home"
     export NO_GITHUB=true
+    export REPO_DIR="$TEST_TEMP_DIR/repo"
 }
 
 _test_cleanup_hook() { cleanup_test_env; }

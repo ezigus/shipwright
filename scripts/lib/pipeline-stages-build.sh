@@ -616,6 +616,21 @@ stage_test() {
     local test_log="$ARTIFACTS_DIR/test-results.log"
 
     info "Running tests: ${DIM}$test_cmd${RESET}"
+
+    # ── Recall historical flakiness patterns from ruflo ──────────────────
+    local _ruflo_flakiness_ctx=""
+    if declare -f ruflo_recall >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        _ruflo_flakiness_ctx=$(ruflo_recall "test flakiness patterns failures" \
+            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" 2>/dev/null || true)
+        _ruflo_flakiness_ctx=$(printf '%.2000s' "${_ruflo_flakiness_ctx:-}")
+        if [[ -n "$_ruflo_flakiness_ctx" ]]; then
+            info "Ruflo recall: historical test patterns found"
+            info "${DIM}${_ruflo_flakiness_ctx}${RESET}"
+        fi
+    fi
+
     local test_exit=0
     bash -c "$test_cmd" > "$test_log" 2>&1 || test_exit=$?
 
@@ -661,6 +676,17 @@ $(tail -30 "$test_log" 2>/dev/null | strip_ansi || true)"
 \`\`\`
 ${log_excerpt}
 \`\`\`"
+        fi
+        # Store failed test result in ruflo for flakiness tracking
+        if declare -f ruflo_store >/dev/null 2>&1 && \
+           declare -f ruflo_available >/dev/null 2>&1 && \
+           ruflo_available; then
+            local _fail_test_count
+            _fail_test_count=$(grep -cE 'PASS|FAIL|✓|✗|ok [0-9]' "$test_log" 2>/dev/null || echo "0")
+            ruflo_store "stage-test-result" \
+                "Tests FAILED (exit $test_exit). Count: ${_fail_test_count}. Cmd: ${test_cmd}. Coverage: 0%. Time: $(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo unknown)." \
+                "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" \
+                "test,stage_test,failed" 2>/dev/null || true
         fi
         return 1
     fi
@@ -715,11 +741,16 @@ ${test_summary}
     _cov_tmp=$(mktemp "${ARTIFACTS_DIR}/test-coverage.json.tmp.XXXXXX")
     printf '{"coverage_pct":%d}' "${_cov_pct:-0}" > "$_cov_tmp" && mv "$_cov_tmp" "$ARTIFACTS_DIR/test-coverage.json" || rm -f "$_cov_tmp"
 
-    # Store test results in ruflo for cross-stage context
-    if declare -f ruflo_store >/dev/null 2>&1 && [[ -f "$ARTIFACTS_DIR/test-results.log" ]]; then
+    # Store test results in ruflo for cross-stage context and flakiness tracking
+    if declare -f ruflo_store >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _pass_test_count
+        _pass_test_count=$(grep -cE 'PASS|FAIL|✓|✗|ok [0-9]' "$test_log" 2>/dev/null || echo "0")
         ruflo_store "stage-test-result" \
-            "Tests passed. Coverage: ${_cov_pct:-0}%." \
-            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
+            "Tests PASSED. Count: ${_pass_test_count}. Cmd: ${test_cmd}. Coverage: ${_cov_pct:-0}%. Time: $(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo unknown)." \
+            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" \
+            "test,stage_test,passed" 2>/dev/null || true
     fi
 
     log_stage "test" "Tests passed${coverage:+ (coverage: ${coverage}%)}"

@@ -1764,6 +1764,8 @@ test_persist_artifacts_exists() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_persist_artifacts_ci_guard() {
     (
+        # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
+        unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
         # Source pipeline — sets ARTIFACTS_DIR="" so we must set vars AFTER source
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
@@ -1788,6 +1790,8 @@ test_persist_artifacts_ci_guard() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_present() {
     (
+        # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
+        unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1806,6 +1810,8 @@ test_verify_artifacts_present() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_missing() {
     (
+        # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
+        unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1827,6 +1833,8 @@ test_verify_artifacts_missing() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_empty() {
     (
+        # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
+        unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1848,6 +1856,8 @@ test_verify_artifacts_empty() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_no_requirements() {
     (
+        # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
+        unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1866,6 +1876,8 @@ test_verify_artifacts_no_requirements() {
 # ──────────────────────────────────────────────────────────────────────────────
 test_verify_artifacts_design_needs_plan() {
     (
+        # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
+        unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 

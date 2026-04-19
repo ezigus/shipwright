@@ -20,14 +20,15 @@ stage_test_first() {
 
     # ── Semantic recall: find similar past TDD test generations ──────────────
     local tdd_context=""
-    if ruflo_available; then
-        tdd_context=$(ruflo_recall_similar_outcomes "${TASK_TYPE:-feature}" "${ISSUE_LABELS:-}" 2>/dev/null) || true
-        if [[ -n "$tdd_context" && "$tdd_context" != *'"results":[]'* ]]; then
-            tdd_context=$(printf '%s' "$tdd_context" | jq -r '.results[]? | "- \(.)"' 2>/dev/null | head -5 || true)
-            tdd_context=$(printf '%.2000s' "$tdd_context")
-        else
-            tdd_context=""
-        fi
+    if declare -f ruflo_recall_similar_outcomes >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _recall_requirements _recall_query
+        _recall_requirements=$(printf '%s' "$requirements" | tr '\n' ' ' | cut -c1-800 2>/dev/null || true)
+        _recall_query="${ISSUE_LABELS:-}"
+        [[ -n "$_recall_requirements" ]] && _recall_query="${_recall_query:+${_recall_query}; }requirements: ${_recall_requirements}"
+        tdd_context=$(ruflo_recall_similar_outcomes "${TASK_TYPE:-feature}" "$_recall_query" 2>/dev/null) || true
+        tdd_context=$(printf '%.2000s' "${tdd_context:-}")
     fi
 
     local tdd_prompt="You are writing tests BEFORE implementation (TDD).
@@ -70,6 +71,7 @@ ${tdd_context}"
 
     # Parse output: extract fenced code blocks and write to files
     local wrote_any=false
+    local written_files=""
     local block_path="" in_block=false block_content=""
     while IFS= read -r line; do
         if [[ "$line" =~ ^\`\`\`([a-zA-Z0-9_/\.\-]+)$ ]]; then
@@ -80,6 +82,7 @@ ${tdd_context}"
                 mkdir -p "$out_dir" 2>/dev/null || true
                 if echo "$block_content" > "$out_file" 2>/dev/null; then
                     wrote_any=true
+                    written_files="${written_files:+${written_files},}${block_path}"
                     info "  Wrote: $block_path"
                 fi
             fi
@@ -94,6 +97,7 @@ ${tdd_context}"
                 mkdir -p "$out_dir" 2>/dev/null || true
                 if echo "$block_content" > "$out_file" 2>/dev/null; then
                     wrote_any=true
+                    written_files="${written_files:+${written_files},}${block_path}"
                     info "  Wrote: $block_path"
                 fi
             fi
@@ -114,6 +118,7 @@ ${tdd_context}"
         mkdir -p "$out_dir" 2>/dev/null || true
         if echo "$block_content" > "$out_file" 2>/dev/null; then
             wrote_any=true
+            written_files="${written_files:+${written_files},}${block_path}"
             info "  Wrote: $block_path"
         fi
     fi
@@ -130,18 +135,27 @@ ${tdd_context}"
     fi
 
     # ── Store TDD generation outcome for future recall ────────────────────────
-    if ruflo_available && [[ "$wrote_any" == "true" ]]; then
+    # Uses the learning-<repo_hash> namespace so future ruflo_recall_similar_outcomes
+    # calls (which query that namespace) can retrieve these stored outcomes.
+    if declare -f ruflo_store >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       declare -f _ruflo_resolve_repo_hash >/dev/null 2>&1 && \
+       ruflo_available && [[ "$wrote_any" == "true" ]]; then
         if [[ -z "${SHIPWRIGHT_PIPELINE_ID:-}" ]]; then
             warn "SHIPWRIGHT_PIPELINE_ID unset — skipping TDD outcome storage to prevent key collision"
         else
-            local tdd_key="test_first-${SHIPWRIGHT_PIPELINE_ID}-$(date +%s)"
-            local tdd_outcome
-            tdd_outcome=$(jq -n --arg goal "${GOAL:-}" --arg task "${TASK_TYPE:-feature}" \
-                --arg wrote "$wrote_any" \
-                '{goal: $goal, task_type: $task, tests_generated: ($wrote == "true")}' 2>/dev/null || echo '{}')
-            ruflo_store "$tdd_key" "$tdd_outcome" \
-                "pipeline-${SHIPWRIGHT_PIPELINE_ID}" \
-                "tdd,test_first,${TASK_TYPE:-feature}" 2>/dev/null || true
+            local _tdd_ns_hash
+            _tdd_ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || true
+            if [[ -n "$_tdd_ns_hash" ]]; then
+                local tdd_key="test_first-${SHIPWRIGHT_PIPELINE_ID}-$(date +%s)"
+                local tdd_outcome
+                tdd_outcome=$(jq -n --arg goal "${GOAL:-}" --arg task "${TASK_TYPE:-feature}" \
+                    --arg files "${written_files:-}" \
+                    '{goal: $goal, task_type: $task, tests_generated: true, files_written: $files}' 2>/dev/null || echo '{}')
+                ruflo_store "$tdd_key" "$tdd_outcome" \
+                    "learning-${_tdd_ns_hash}" \
+                    "tdd,test_first,${TASK_TYPE:-feature}" 2>/dev/null || true
+            fi
         fi
     fi
 

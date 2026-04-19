@@ -1017,7 +1017,7 @@ set -e
 # Test: integration — tdd_prompt contains injected recall results when available
 ruflo_available() { return 0; }
 ruflo_recall_similar_outcomes() {
-    printf '{"results":["Use describe/it blocks for JWT tests","Mock authService for unit tests"]}\n'
+    printf 'Use describe/it blocks for JWT tests\nMock authService for unit tests\n'
 }
 ruflo_store() { return 0; }
 
@@ -1043,7 +1043,7 @@ fi
 
 # Test: empty recall results — tdd_prompt must NOT contain recall section
 ruflo_recall_similar_outcomes() {
-    printf '{"results":[]}\n'
+    printf ''
 }
 
 cat > "$TEST_TEMP_DIR/bin/claude" <<CMOCK
@@ -1071,7 +1071,7 @@ fi
 
 # Test: SHIPWRIGHT_PIPELINE_ID unset — stage returns 0 and skips storage (no key collision)
 ruflo_available() { return 0; }
-ruflo_recall_similar_outcomes() { printf '{"results":[]}\n'; }
+ruflo_recall_similar_outcomes() { printf ''; }
 _ruflo_store_called=false
 ruflo_store() { _ruflo_store_called=true; return 0; }
 cat > "$TEST_TEMP_DIR/bin/claude" <<CMOCK

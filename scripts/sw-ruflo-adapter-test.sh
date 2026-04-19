@@ -2414,30 +2414,27 @@ print_test_section "stage_test_first — ruflo recall happy path"
 unset _RUFLO_ADAPTER_LOADED
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
 
-# Mock ruflo_recall_similar_outcomes to return a fake result
+# Mock ruflo_recall_similar_outcomes to return plain-text recall output,
+# matching the adapter contract (raw CLI output, not JSON).
 ruflo_recall_similar_outcomes() {
-    echo '{"results":["- Past TDD pattern: use vitest describe blocks","- Past TDD pattern: mock external deps"]}'
+    printf 'Past TDD pattern: use vitest describe blocks\nPast TDD pattern: mock external deps\n'
 }
 ruflo_store() { return 0; }
 RUFLO_AVAILABLE=true
 
 _recall_result=$(ruflo_recall_similar_outcomes "feature" "tdd,backend" 2>/dev/null || true)
-_tdd_context=""
-if [[ -n "$_recall_result" && "$_recall_result" != *'"results":[]'* ]]; then
-    _tdd_context=$(printf '%s' "$_recall_result" | jq -r '.results[]? | "- \(.)"' 2>/dev/null | head -5 || true)
-    _tdd_context=$(printf '%.2000s' "$_tdd_context")
-fi
+_tdd_context=$(printf '%.2000s' "${_recall_result:-}")
 
 if [[ -n "$_tdd_context" ]]; then
     assert_pass "stage_test_first recall: tdd_context populated from ruflo results"
 else
-    assert_fail "stage_test_first recall: tdd_context populated from ruflo results" "got empty context"
+    assert_fail "stage_test_first recall: tdd_context populated from ruflo results" "got empty recall output"
 fi
 
 if printf '%s\n' "$_tdd_context" | grep -q "vitest"; then
-    assert_pass "stage_test_first recall: extracted result lines contain expected content"
+    assert_pass "stage_test_first recall: raw recall output contains expected content"
 else
-    assert_fail "stage_test_first recall: extracted result lines contain expected content" "got: $_tdd_context"
+    assert_fail "stage_test_first recall: raw recall output contains expected content" "got: $_tdd_context"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2466,20 +2463,27 @@ ruflo_store() {
     echo "KEY=$1 NS=$3 TAGS=$4" >> "$_store_call_log"
     return 0
 }
+# Provide a deterministic repo hash for the test
+_ruflo_resolve_repo_hash() { echo "testhash123"; }
 
 RUFLO_AVAILABLE=true
 SHIPWRIGHT_PIPELINE_ID="pipeline-99-42"
 GOAL="add authentication"
 TASK_TYPE="feature"
+written_files="tests/auth.test.js"
 
 wrote_any=true
 if ruflo_available && [[ "$wrote_any" == "true" ]]; then
-    _tdd_key="test_first-${SHIPWRIGHT_PIPELINE_ID:-unknown}-$(date +%s)"
-    _tdd_outcome=$(jq -n --arg goal "${GOAL:-}" --arg task "${TASK_TYPE:-feature}" \
-        '{goal: $goal, task_type: $task, tests_generated: true}' 2>/dev/null || echo '{}')
-    ruflo_store "$_tdd_key" "$_tdd_outcome" \
-        "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" \
-        "tdd,test_first,${TASK_TYPE:-feature}" 2>/dev/null || true
+    _tdd_ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || true
+    if [[ -n "$_tdd_ns_hash" ]]; then
+        _tdd_key="test_first-${SHIPWRIGHT_PIPELINE_ID:-unknown}-$(date +%s)"
+        _tdd_outcome=$(jq -n --arg goal "${GOAL:-}" --arg task "${TASK_TYPE:-feature}" \
+            --arg files "${written_files:-}" \
+            '{goal: $goal, task_type: $task, tests_generated: true, files_written: $files}' 2>/dev/null || echo '{}')
+        ruflo_store "$_tdd_key" "$_tdd_outcome" \
+            "learning-${_tdd_ns_hash}" \
+            "tdd,test_first,${TASK_TYPE:-feature}" 2>/dev/null || true
+    fi
 fi
 
 if [[ -f "$_store_call_log" ]]; then
@@ -2488,10 +2492,10 @@ else
     assert_fail "stage_test_first store: ruflo_store called when wrote_any=true" "store log not created"
 fi
 
-if grep -q "NS=pipeline-pipeline-99-42" "$_store_call_log" 2>/dev/null; then
-    assert_pass "stage_test_first store: namespace contains pipeline ID"
+if grep -q "NS=learning-testhash123" "$_store_call_log" 2>/dev/null; then
+    assert_pass "stage_test_first store: namespace uses learning- prefix for future recall"
 else
-    assert_fail "stage_test_first store: namespace contains pipeline ID" "got: $(cat "$_store_call_log" 2>/dev/null)"
+    assert_fail "stage_test_first store: namespace uses learning- prefix for future recall" "got: $(cat "$_store_call_log" 2>/dev/null)"
 fi
 
 if grep -q "TAGS=tdd,test_first,feature" "$_store_call_log" 2>/dev/null; then

@@ -26,10 +26,11 @@ This leads to **reinvention of test patterns** on each pipeline run and **lost i
 
 ## Context & Constraints
 
-### Technology Stack
-- **Language**: TypeScript / Node.js
-- **Test Framework**: Vitest (`*.test.js` pattern)
-- **Source Directory**: `src/`
+### Stage Contract
+- **Stage Contract**: `test_first` is repo-agnostic and follows project conventions for language, test framework, and file layout
+- **Current Repository Example**: TypeScript / Node.js
+- **Current Test Convention Example**: Vitest (`*.test.js` pattern)
+- **Current Source Layout Example**: `src/`
 - **Pipeline Framework**: Shipwright (shell-based orchestration)
 - **Memory System**: Ruflo (semantic recall via shell functions)
 

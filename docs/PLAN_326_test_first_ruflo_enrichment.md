@@ -10,9 +10,9 @@
 ## Verification of Assumptions (Completed)
 
 ### ✅ File Structure Verified
-- **`stage_test_first()` location**: `/Volumes/zHardDrive/code/shipwright/scripts/lib/pipeline-stages-build.sh` lines 6–114
-- **Reference pattern (`stage_plan()`)**: `/Volumes/zHardDrive/code/shipwright/scripts/lib/pipeline-stages-intake.sh` lines 118–202
-- **Ruflo adapter location**: `/Volumes/zHardDrive/code/shipwright/scripts/lib/ruflo-adapter.sh` (functions verified below)
+- **`stage_test_first()` location**: `scripts/lib/pipeline-stages-build.sh` lines 6–114
+- **Reference pattern (`stage_plan()`)**: `scripts/lib/pipeline-stages-intake.sh` lines 118–202
+- **Ruflo adapter location**: `scripts/lib/ruflo-adapter.sh` (functions verified below)
 
 ### ✅ Ruflo Functions Verified
 All three functions exist and are accessible:
@@ -29,8 +29,8 @@ All variables are exported by `pipeline-stages.sh` (lines 17–31) and inherited
 
 | Variable | Set In | Value | Usage in Plan |
 |----------|--------|-------|---------------|
-| `GOAL` | pipeline-stages-intake.sh line 51 / pipeline-stages.sh line 29 | Issue title or explicit goal | Query input for recall |
-| `ISSUE_LABELS` | pipeline-stages-intake.sh line 20 / pipeline-stages.sh line 27 | Comma-separated label list | Second param to `ruflo_recall_similar_outcomes()` |
+| `GOAL` | pipeline-stages-intake.sh line 51 / pipeline-stages.sh line 29 | Issue title or explicit goal | Included via requirements snippet in second param to `ruflo_recall_similar_outcomes()` |
+| `ISSUE_LABELS` | pipeline-stages-intake.sh line 20 / pipeline-stages.sh line 27 | Comma-separated label list | Part of composite second param to `ruflo_recall_similar_outcomes()` |
 | `TASK_TYPE` | pipeline-stages-intake.sh line 51 / pipeline-stages.sh line 30 | Result of `detect_task_type()` or default "feature" | First param to `ruflo_recall_similar_outcomes()` |
 | `INTELLIGENCE_ISSUE_TYPE` | pipeline-stages.sh line 31 (default: "backend") | Detected issue type or "backend" | Not used directly; TASK_TYPE is the correct param |
 | `SHIPWRIGHT_PIPELINE_ID` | sw-pipeline.sh line 534 | Format: `pipeline-$$-${ISSUE_NUMBER}` | Namespace for `ruflo_store()` |

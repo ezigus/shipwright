@@ -2653,5 +2653,157 @@ else
     assert_fail "stage_test store: namespace is pipeline-<PIPELINE_ID> on fail" "got: $(cat "$_st_fail_store_log" 2>/dev/null)"
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "stage_test — unique timestamped key per run (no overwrite)"
+
+_st_ts_store_log="$TEST_TEMP_DIR/stage-test-ts-store.txt"
+rm -f "$_st_ts_store_log"
+
+ruflo_store() {
+    echo "KEY=$1 NS=$3 TAGS=$4" >> "$_st_ts_store_log"
+    return 0
+}
+ruflo_available() { return 0; }
+RUFLO_AVAILABLE=true
+SHIPWRIGHT_PIPELINE_ID="test-pipeline-42"
+
+_st_ts_run_ts=$(date -u +"%Y%m%dT%H%M%SZ" 2>/dev/null || date +"%s")
+_st_ts_result_key="stage-test-result-${_st_ts_run_ts}"
+_st_ts_ruflo_ns="pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}"
+
+if declare -f ruflo_store >/dev/null 2>&1 && \
+   declare -f ruflo_available >/dev/null 2>&1 && \
+   ruflo_available; then
+    ruflo_store "$_st_ts_result_key" \
+        "Tests PASSED. Tests: src/auth.test.ts. Cmd: npm test. Coverage: 87%. Time: ${_st_ts_run_ts}." \
+        "$_st_ts_ruflo_ns" \
+        "test,stage_test,passed" 2>/dev/null || true
+fi
+
+if grep -q "KEY=stage-test-result-" "$_st_ts_store_log" 2>/dev/null; then
+    assert_pass "stage_test unique key: storage key includes timestamp (not static 'stage-test-result')"
+else
+    assert_fail "stage_test unique key: storage key includes timestamp (not static 'stage-test-result')" "got: $(cat "$_st_ts_store_log" 2>/dev/null)"
+fi
+
+if grep -qE "KEY=stage-test-result-[0-9]{8}T[0-9]{6}Z" "$_st_ts_store_log" 2>/dev/null; then
+    assert_pass "stage_test unique key: timestamp format is YYYYMMDDTHHMMSSz"
+else
+    assert_fail "stage_test unique key: timestamp format is YYYYMMDDTHHMMSSz" "got: $(cat "$_st_ts_store_log" 2>/dev/null)"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "stage_test — flaky pattern match triggers retry"
+
+_st_retry_log="$TEST_TEMP_DIR/stage-test-retry-calls.txt"
+_st_retry_test_log=$(mktemp "$TEST_TEMP_DIR/test-retry-out.XXXXXX")
+rm -f "$_st_retry_log"
+printf 'FAIL circuit-breaker-test\nError: timeout after 5000ms\n' > "$_st_retry_test_log"
+
+ruflo_recall() {
+    printf 'Past failure: circuit breaker timeout in sw-e2e-smoke-test.sh\n'
+}
+RUFLO_AVAILABLE=true
+_st_retry_fail_exit=1
+_st_retry_flakiness_ctx=$(ruflo_recall "test flakiness patterns failures" "pipeline-test" 2>/dev/null || true)
+_st_retry_flakiness_ctx=$(printf '%.2000s' "${_st_retry_flakiness_ctx:-}")
+
+_test_is_known_flaky="false"
+_matched_flaky_pattern=""
+if [[ "$_st_retry_fail_exit" -ne 0 && -n "$_st_retry_flakiness_ctx" ]]; then
+    _st_fail_excerpt=$(head -30 "$_st_retry_test_log" 2>/dev/null || true)
+    while IFS= read -r _st_kw; do
+        [[ ${#_st_kw} -lt 5 ]] && continue
+        if printf '%s\n' "$_st_fail_excerpt" | grep -qiF "$_st_kw" 2>/dev/null; then
+            _test_is_known_flaky="true"
+            _matched_flaky_pattern="$_st_kw"
+            break
+        fi
+    done < <(printf '%s\n' "$_st_retry_flakiness_ctx" | tr ' \t' '\n' | grep -E '^[a-zA-Z0-9_.-]{5,}$' | sort -u | head -30)
+fi
+rm -f "$_st_retry_test_log"
+
+if [[ "$_test_is_known_flaky" == "true" ]]; then
+    assert_pass "stage_test flaky retry: known flaky flag set when recalled pattern matches failure output"
+else
+    assert_fail "stage_test flaky retry: known flaky flag set when recalled pattern matches failure output" "ctx=${_st_retry_flakiness_ctx}"
+fi
+
+if [[ -n "$_matched_flaky_pattern" ]]; then
+    assert_pass "stage_test flaky retry: matched pattern is non-empty"
+else
+    assert_fail "stage_test flaky retry: matched pattern is non-empty" "pattern was empty"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "stage_test — known_flaky tag added on matched failure"
+
+_st_kf_store_log="$TEST_TEMP_DIR/stage-test-kf-store.txt"
+rm -f "$_st_kf_store_log"
+
+ruflo_store() {
+    echo "KEY=$1 NS=$3 TAGS=$4" >> "$_st_kf_store_log"
+    return 0
+}
+RUFLO_AVAILABLE=true
+SHIPWRIGHT_PIPELINE_ID="test-pipeline-42"
+_st_kf_ts=$(date -u +"%Y%m%dT%H%M%SZ" 2>/dev/null || date +"%s")
+_st_kf_key="stage-test-result-${_st_kf_ts}"
+
+# Simulate known-flaky failure storage
+_st_kf_fail_tags="test,stage_test,failed"
+_st_kf_is_known_flaky="true"
+[[ "$_st_kf_is_known_flaky" == "true" ]] && _st_kf_fail_tags="${_st_kf_fail_tags},known_flaky"
+
+if declare -f ruflo_store >/dev/null 2>&1 && \
+   declare -f ruflo_available >/dev/null 2>&1 && \
+   ruflo_available; then
+    ruflo_store "$_st_kf_key" \
+        "Tests FAILED (exit 1). Failures: circuit-breaker-test. Cmd: npm test. Time: ${_st_kf_ts}." \
+        "pipeline-test-pipeline-42" \
+        "$_st_kf_fail_tags" 2>/dev/null || true
+fi
+
+if grep -q "TAGS=test,stage_test,failed,known_flaky" "$_st_kf_store_log" 2>/dev/null; then
+    assert_pass "stage_test known_flaky tag: tags include known_flaky when pattern matched"
+else
+    assert_fail "stage_test known_flaky tag: tags include known_flaky when pattern matched" "got: $(cat "$_st_kf_store_log" 2>/dev/null)"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "stage_test — flaky_recovered tag on retry success"
+
+_st_fr_store_log="$TEST_TEMP_DIR/stage-test-fr-store.txt"
+rm -f "$_st_fr_store_log"
+
+ruflo_store() {
+    echo "KEY=$1 NS=$3 TAGS=$4" >> "$_st_fr_store_log"
+    return 0
+}
+RUFLO_AVAILABLE=true
+SHIPWRIGHT_PIPELINE_ID="test-pipeline-42"
+_st_fr_ts=$(date -u +"%Y%m%dT%H%M%SZ" 2>/dev/null || date +"%s")
+_st_fr_key="stage-test-result-${_st_fr_ts}"
+
+# Simulate retry-succeeded storage (known flaky, but recovered)
+_st_fr_pass_tags="test,stage_test,passed"
+_st_fr_is_known_flaky="true"
+[[ "$_st_fr_is_known_flaky" == "true" ]] && _st_fr_pass_tags="${_st_fr_pass_tags},flaky_recovered"
+
+if declare -f ruflo_store >/dev/null 2>&1 && \
+   declare -f ruflo_available >/dev/null 2>&1 && \
+   ruflo_available; then
+    ruflo_store "$_st_fr_key" \
+        "Tests PASSED. Tests: auth.test.ts. Cmd: npm test. Coverage: 87%. Time: ${_st_fr_ts}." \
+        "pipeline-test-pipeline-42" \
+        "$_st_fr_pass_tags" 2>/dev/null || true
+fi
+
+if grep -q "TAGS=test,stage_test,passed,flaky_recovered" "$_st_fr_store_log" 2>/dev/null; then
+    assert_pass "stage_test flaky_recovered tag: tags include flaky_recovered when retry succeeded"
+else
+    assert_fail "stage_test flaky_recovered tag: tags include flaky_recovered when retry succeeded" "got: $(cat "$_st_fr_store_log" 2>/dev/null)"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

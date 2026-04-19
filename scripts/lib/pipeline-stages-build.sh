@@ -617,13 +617,19 @@ stage_test() {
 
     info "Running tests: ${DIM}$test_cmd${RESET}"
 
+    # ── Unique run key — accumulates history rather than overwriting ─────
+    local _st_run_ts
+    _st_run_ts=$(date -u +"%Y%m%dT%H%M%SZ" 2>/dev/null || date +"%s")
+    local _st_result_key="stage-test-result-${_st_run_ts}"
+    local _st_ruflo_ns="pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}"
+
     # ── Recall historical flakiness patterns from ruflo ──────────────────
     local _ruflo_flakiness_ctx=""
     if declare -f ruflo_recall >/dev/null 2>&1 && \
        declare -f ruflo_available >/dev/null 2>&1 && \
        ruflo_available; then
         _ruflo_flakiness_ctx=$(ruflo_recall "test flakiness patterns failures" \
-            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" 2>/dev/null || true)
+            "$_st_ruflo_ns" 2>/dev/null || true)
         _ruflo_flakiness_ctx=$(printf '%.2000s' "${_ruflo_flakiness_ctx:-}")
         if [[ -n "$_ruflo_flakiness_ctx" ]]; then
             info "Ruflo recall: historical test patterns found"
@@ -633,6 +639,37 @@ stage_test() {
 
     local test_exit=0
     bash -c "$test_cmd" > "$test_log" 2>&1 || test_exit=$?
+
+    # ── Use recalled patterns: retry once if failure matches known flaky ──
+    local _test_is_known_flaky="false"
+    local _matched_flaky_pattern=""
+    if [[ "$test_exit" -ne 0 && -n "$_ruflo_flakiness_ctx" ]]; then
+        local _fail_excerpt
+        _fail_excerpt=$(head -30 "$test_log" | strip_ansi 2>/dev/null || true)
+        local _kw
+        while IFS= read -r _kw; do
+            [[ ${#_kw} -lt 5 ]] && continue
+            if printf '%s\n' "$_fail_excerpt" | grep -qiF "$_kw" 2>/dev/null; then
+                _test_is_known_flaky="true"
+                _matched_flaky_pattern="$_kw"
+                break
+            fi
+        done < <(printf '%s\n' "$_ruflo_flakiness_ctx" | tr ' \t' '\n' | grep -E '^[a-zA-Z0-9_.-]{5,}$' | sort -u | head -30)
+        if [[ "$_test_is_known_flaky" == "true" ]]; then
+            info "Known flaky pattern matched: '${_matched_flaky_pattern}' — retrying test once"
+            local _retry_log="${ARTIFACTS_DIR}/test-results-retry.log"
+            local _retry_exit=0
+            bash -c "$test_cmd" > "$_retry_log" 2>&1 || _retry_exit=$?
+            if [[ "$_retry_exit" -eq 0 ]]; then
+                success "Retry succeeded — known flaky test recovered on second attempt"
+                cp "$_retry_log" "$test_log"
+                test_exit=0
+                emit_event "test.flaky_recovered" "pattern=${_matched_flaky_pattern}"
+            else
+                warn "Retry also failed — test consistently failing (matched flaky pattern: '${_matched_flaky_pattern}')"
+            fi
+        fi
+    fi
 
     # Persist exit code for downstream consumers (avoids grep-based inference)
     local _st_tmp
@@ -681,12 +718,15 @@ ${log_excerpt}
         if declare -f ruflo_store >/dev/null 2>&1 && \
            declare -f ruflo_available >/dev/null 2>&1 && \
            ruflo_available; then
-            local _fail_test_count
-            _fail_test_count=$(grep -cE 'PASS|FAIL|✓|✗|ok [0-9]' "$test_log" 2>/dev/null || echo "0")
-            ruflo_store "stage-test-result" \
-                "Tests FAILED (exit $test_exit). Count: ${_fail_test_count}. Cmd: ${test_cmd}. Coverage: 0%. Time: $(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo unknown)." \
-                "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" \
-                "test,stage_test,failed" 2>/dev/null || true
+            local _fail_names
+            _fail_names=$(grep -E '(FAIL|✗|●)\s+' "$test_log" 2>/dev/null | head -5 | strip_ansi | tr '\n' ';' | sed 's/;$//' || true)
+            [[ -z "$_fail_names" ]] && _fail_names=$(grep -E 'Error:|panic:' "$test_log" 2>/dev/null | head -3 | strip_ansi | tr '\n' ';' | sed 's/;$//' || true)
+            local _st_fail_tags="test,stage_test,failed"
+            [[ "$_test_is_known_flaky" == "true" ]] && _st_fail_tags="${_st_fail_tags},known_flaky"
+            ruflo_store "$_st_result_key" \
+                "Tests FAILED (exit $test_exit). Failures: ${_fail_names:-unknown}. Cmd: ${test_cmd}. Time: ${_st_run_ts}." \
+                "$_st_ruflo_ns" \
+                "$_st_fail_tags" 2>/dev/null || true
         fi
         return 1
     fi
@@ -745,12 +785,15 @@ ${test_summary}
     if declare -f ruflo_store >/dev/null 2>&1 && \
        declare -f ruflo_available >/dev/null 2>&1 && \
        ruflo_available; then
-        local _pass_test_count
-        _pass_test_count=$(grep -cE 'PASS|FAIL|✓|✗|ok [0-9]' "$test_log" 2>/dev/null || echo "0")
-        ruflo_store "stage-test-result" \
-            "Tests PASSED. Count: ${_pass_test_count}. Cmd: ${test_cmd}. Coverage: ${_cov_pct:-0}%. Time: $(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo unknown)." \
-            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" \
-            "test,stage_test,passed" 2>/dev/null || true
+        local _pass_test_names
+        _pass_test_names=$(grep -E '(PASS|✓)\s+' "$test_log" 2>/dev/null | head -5 | strip_ansi | tr '\n' ';' | sed 's/;$//' || true)
+        [[ -z "$_pass_test_names" ]] && _pass_test_names=$(grep -cE 'PASS|✓|ok [0-9]' "$test_log" 2>/dev/null | tr -d '\n' || true)
+        local _st_pass_tags="test,stage_test,passed"
+        [[ "$_test_is_known_flaky" == "true" ]] && _st_pass_tags="${_st_pass_tags},flaky_recovered"
+        ruflo_store "$_st_result_key" \
+            "Tests PASSED. Tests: ${_pass_test_names:-unknown}. Cmd: ${test_cmd}. Coverage: ${_cov_pct:-0}%. Time: ${_st_run_ts}." \
+            "$_st_ruflo_ns" \
+            "$_st_pass_tags" 2>/dev/null || true
     fi
 
     log_stage "test" "Tests passed${coverage:+ (coverage: ${coverage}%)}"

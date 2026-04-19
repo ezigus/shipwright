@@ -445,6 +445,67 @@ export TEST_CMD="echo FAIL; exit 1"
 stage_test 2>/dev/null || rc=$?
 [[ $rc -eq 1 ]] && assert_pass "Stage test returns 1 on test failure"
 
+# ─── Tests: stage_test — ruflo integration (direct call) ─────────────────────
+
+# Test: ruflo recall/store skipped when ruflo_available returns false
+unset -f ruflo_recall ruflo_store ruflo_available 2>/dev/null || true
+_st_int_store_called=false
+ruflo_available() { return 1; }
+ruflo_recall()    { echo "should-not-be-called"; }
+ruflo_store()     { _st_int_store_called=true; return 0; }
+export SHIPWRIGHT_PIPELINE_ID="int-test-123"
+export TEST_CMD="echo 'All 4 tests passed'"
+stage_test 2>/dev/null
+[[ "$_st_int_store_called" != "true" ]] \
+    && assert_pass "stage_test: ruflo_store skipped when ruflo_available returns false" \
+    || assert_fail "stage_test: ruflo_store skipped when ruflo_available returns false" \
+                   "store was called despite ruflo unavailable"
+
+# Test: ruflo_recall invoked and ruflo_store called with passed tag when ruflo available
+# (Use files to observe function calls — variable assignments in $() subshells don't propagate)
+_st_int_recall_file="$TEST_TEMP_DIR/st-int-recall.txt"
+_st_int_store_file="$TEST_TEMP_DIR/st-int-store.txt"
+rm -f "$_st_int_recall_file" "$_st_int_store_file"
+ruflo_available() { return 0; }
+ruflo_recall()    { touch "$_st_int_recall_file"; printf ''; }
+ruflo_store()     { echo "TAGS=${4:-}" >> "$_st_int_store_file"; return 0; }
+export _st_int_recall_file _st_int_store_file
+export TEST_CMD="echo 'All 4 tests passed'"
+stage_test 2>/dev/null
+[[ -f "$_st_int_recall_file" ]] \
+    && assert_pass "stage_test: ruflo_recall invoked when ruflo available" \
+    || assert_fail "stage_test: ruflo_recall invoked when ruflo available" \
+                   "recall not called"
+[[ -f "$_st_int_store_file" ]] \
+    && assert_pass "stage_test: ruflo_store called on success when ruflo available" \
+    || assert_fail "stage_test: ruflo_store called on success when ruflo available" \
+                   "store not called"
+grep -q "passed" "$_st_int_store_file" 2>/dev/null \
+    && assert_pass "stage_test: ruflo_store tags include passed on success" \
+    || assert_fail "stage_test: ruflo_store tags include passed on success" \
+                   "got: $(cat "$_st_int_store_file" 2>/dev/null)"
+
+# Test: ruflo_store called with failed tag when tests fail
+_st_int_fail_store_file="$TEST_TEMP_DIR/st-int-fail-store.txt"
+rm -f "$_st_int_fail_store_file"
+ruflo_available() { return 0; }
+ruflo_recall()    { printf ''; }
+ruflo_store()     { echo "TAGS=${4:-}" >> "$_st_int_fail_store_file"; return 0; }
+export _st_int_fail_store_file
+export TEST_CMD="echo FAIL; exit 1"
+stage_test 2>/dev/null || true
+[[ -f "$_st_int_fail_store_file" ]] \
+    && assert_pass "stage_test: ruflo_store called on failure when ruflo available" \
+    || assert_fail "stage_test: ruflo_store called on failure when ruflo available" \
+                   "store not called on failure"
+grep -q "failed" "$_st_int_fail_store_file" 2>/dev/null \
+    && assert_pass "stage_test: ruflo_store tags include failed on test failure" \
+    || assert_fail "stage_test: ruflo_store tags include failed on test failure" \
+                   "got: $(cat "$_st_int_fail_store_file" 2>/dev/null)"
+
+unset -f ruflo_available ruflo_recall ruflo_store 2>/dev/null || true
+unset SHIPWRIGHT_PIPELINE_ID 2>/dev/null || true
+
 # ─── Tests: stage_review ────────────────────────────────────────────────────
 print_test_section "stage_review"
 

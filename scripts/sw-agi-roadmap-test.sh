@@ -36,16 +36,19 @@ SKIP=0
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/sw-agi-test.XXXXXX")
 cleanup() { rm -rf "$TEST_TMP" 2>/dev/null || true; }
 _test_cleanup_hook() { cleanup; }
-# ── Sandbox mktemp shim ──────────────────────────────────────────────────────
+# ── Sandbox mktemp shim (macOS only) ─────────────────────────────────────────
 # macOS plain `mktemp` (no template) ignores $TMPDIR and uses /var/folders,
 # which is write-blocked in the Claude Code sandbox.  Inject a shim that
 # routes templateless calls through a writable directory so subprocess scripts
 # (sw-pm.sh, sw-predictive.sh, sw-swarm.sh) can create temp files.
+# Linux mktemp respects $TMPDIR natively so no shim is needed there.
 _SAFE_TMP="$TEST_TMP/_tmp"
 mkdir -p "$_SAFE_TMP"
-printf '#!/usr/bin/env bash\n_s="%s"\nif [[ $# -eq 0 ]]; then exec /usr/bin/mktemp "$_s/tmp.XXXXXX"; fi\nif [[ $# -eq 1 && "$1" == "-d" ]]; then exec /usr/bin/mktemp -d "$_s/tmpd.XXXXXX"; fi\nexec /usr/bin/mktemp "$@"\n' \
-    "$_SAFE_TMP" > "$TEST_TMP/mktemp"
-chmod +x "$TEST_TMP/mktemp"
+if [[ "$(uname -s 2>/dev/null)" == "Darwin" ]]; then
+    printf '#!/usr/bin/env bash\n_s="%s"\nif [[ $# -eq 0 ]]; then exec /usr/bin/mktemp "$_s/tmp.XXXXXX"; fi\nif [[ $# -eq 1 && "$1" == "-d" ]]; then exec /usr/bin/mktemp -d "$_s/tmpd.XXXXXX"; fi\nexec /usr/bin/mktemp "$@"\n' \
+        "$_SAFE_TMP" > "$TEST_TMP/mktemp"
+    chmod +x "$TEST_TMP/mktemp"
+fi
 export PATH="$TEST_TMP:$PATH"
 
 # ══════════════════════════════════════════════════════════════════════════════

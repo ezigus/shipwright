@@ -683,8 +683,10 @@ stage_test() {
                 # Validate that retry passed the SAME tests (not a different subset
                 # due to environment changes). Compare test counts from both runs.
                 local _orig_test_count _retry_test_count
-                _orig_test_count=$(grep -cE 'PASS|FAIL|✓|✗|ok [0-9]' "$test_log" 2>/dev/null || echo "0")
-                _retry_test_count=$(grep -cE 'PASS|FAIL|✓|✗|ok [0-9]' "$_retry_log" 2>/dev/null || echo "0")
+                _orig_test_count=$(grep -cE 'PASS|FAIL|✓|✗|ok [0-9]' "$test_log" 2>/dev/null || true)
+                _orig_test_count=${_orig_test_count:-0}
+                _retry_test_count=$(grep -cE 'PASS|FAIL|✓|✗|ok [0-9]' "$_retry_log" 2>/dev/null || true)
+                _retry_test_count=${_retry_test_count:-0}
                 # If retry ran significantly fewer tests (>50% drop), likely an
                 # environment change (e.g., dependency installed, config altered)
                 # rather than a genuine flaky recovery.
@@ -758,7 +760,7 @@ ${log_excerpt}
            [[ -n "$_st_ruflo_ns" ]] && \
            ruflo_available; then
             local _fail_names
-            _fail_names=$(grep -E '(FAIL|✗|●)\s+' "$test_log" 2>/dev/null | head -5 | strip_ansi | tr '\n' ';' | sed 's/;$//' || true)
+            _fail_names=$(grep -E '(FAIL|✗|●)[[:space:]]+' "$test_log" 2>/dev/null | head -5 | strip_ansi | tr '\n' ';' | sed 's/;$//' || true)
             [[ -z "$_fail_names" ]] && _fail_names=$(grep -E 'Error:|panic:' "$test_log" 2>/dev/null | head -3 | strip_ansi | tr '\n' ';' | sed 's/;$//' || true)
             local _st_fail_tags="test,stage_test,failed"
             [[ "$_test_is_known_flaky" == "true" ]] && _st_fail_tags="${_st_fail_tags},known_flaky"
@@ -826,7 +828,7 @@ ${test_summary}
        [[ -n "$_st_ruflo_ns" ]] && \
        ruflo_available; then
         local _pass_test_names
-        _pass_test_names=$(grep -E '(PASS|✓)\s+' "$test_log" 2>/dev/null | head -5 | strip_ansi | tr '\n' ';' | sed 's/;$//' || true)
+        _pass_test_names=$(grep -E '(PASS|✓)[[:space:]]+' "$test_log" 2>/dev/null | head -5 | strip_ansi | tr '\n' ';' | sed 's/;$//' || true)
         [[ -z "$_pass_test_names" ]] && _pass_test_names=$(grep -cE 'PASS|✓|ok [0-9]' "$test_log" 2>/dev/null | tr -d '\n' || true)
         local _st_pass_tags="test,stage_test,passed"
         [[ "$_test_is_known_flaky" == "true" ]] && _st_pass_tags="${_st_pass_tags},flaky_recovered"

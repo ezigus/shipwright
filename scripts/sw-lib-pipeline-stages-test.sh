@@ -508,6 +508,33 @@ grep -q "failed" "$_st_int_fail_store_file" 2>/dev/null \
 unset -f ruflo_available ruflo_recall ruflo_store _ruflo_resolve_repo_hash 2>/dev/null || true
 unset SHIPWRIGHT_PIPELINE_ID 2>/dev/null || true
 
+# Test: retry on known flaky pattern — recovers on second attempt
+# Use a counter file so state persists across bash -c subshells
+_st_int_retry_store_file="$TEST_TEMP_DIR/st-int-retry-store.txt"
+_st_int_retry_counter="$TEST_TEMP_DIR/st-int-retry-counter.txt"
+rm -f "$_st_int_retry_store_file" "$_st_int_retry_counter"
+echo "0" > "$_st_int_retry_counter"
+_ruflo_resolve_repo_hash() { printf 'testhash456'; }
+ruflo_available() { return 0; }
+ruflo_recall()    { printf 'timeout connection'; }   # known flaky keywords
+ruflo_store()     { echo "TAGS=${4:-}" >> "$_st_int_retry_store_file"; return 0; }
+# First invocation fails with a keyword matching ruflo recall; second succeeds
+export _st_int_retry_counter
+export TEST_CMD='cnt=$(cat "$_st_int_retry_counter" 2>/dev/null || echo 0); if [[ "$cnt" -eq 0 ]]; then echo 1 > "$_st_int_retry_counter"; echo "Error: timeout"; exit 1; fi; echo "All tests passed"'
+export _st_int_retry_store_file
+_st_retry_rc=0
+stage_test 2>/dev/null || _st_retry_rc=$?
+[[ "$_st_retry_rc" -eq 0 ]] \
+    && assert_pass "stage_test: retry recovers when flaky pattern matches on second attempt" \
+    || assert_fail "stage_test: retry recovers when flaky pattern matches on second attempt" \
+                   "expected exit 0, got $_st_retry_rc"
+[[ -f "$_st_int_retry_store_file" ]] && grep -q "flaky_recovered" "$_st_int_retry_store_file" 2>/dev/null \
+    && assert_pass "stage_test: flaky_recovered tag stored after successful retry" \
+    || assert_fail "stage_test: flaky_recovered tag stored after successful retry" \
+                   "tags: $(cat "$_st_int_retry_store_file" 2>/dev/null)"
+unset -f ruflo_available ruflo_recall ruflo_store _ruflo_resolve_repo_hash 2>/dev/null || true
+unset _st_int_retry_counter _st_int_retry_store_file 2>/dev/null || true
+
 # ─── Tests: stage_review ────────────────────────────────────────────────────
 print_test_section "stage_review"
 

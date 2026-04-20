@@ -516,11 +516,11 @@ rm -f "$_st_int_retry_store_file" "$_st_int_retry_counter"
 echo "0" > "$_st_int_retry_counter"
 _ruflo_resolve_repo_hash() { printf 'testhash456'; }
 ruflo_available() { return 0; }
-ruflo_recall()    { printf 'timeout connection'; }   # known flaky keywords
+ruflo_recall()    { printf 'connection-timeout intermittent'; }   # 8+ char keyword that matches failure
 ruflo_store()     { echo "TAGS=${4:-}" >> "$_st_int_retry_store_file"; return 0; }
 # First invocation fails with a keyword matching ruflo recall; second succeeds
 export _st_int_retry_counter
-export TEST_CMD='cnt=$(cat "$_st_int_retry_counter" 2>/dev/null || echo 0); if [[ "$cnt" -eq 0 ]]; then echo 1 > "$_st_int_retry_counter"; echo "Error: timeout"; exit 1; fi; echo "All tests passed"'
+export TEST_CMD='cnt=$(cat "$_st_int_retry_counter" 2>/dev/null || echo 0); if [[ "$cnt" -eq 0 ]]; then echo 1 > "$_st_int_retry_counter"; echo "Error: connection-timeout"; exit 1; fi; echo "All tests passed"'
 export _st_int_retry_store_file
 _st_retry_rc=0
 stage_test 2>/dev/null || _st_retry_rc=$?

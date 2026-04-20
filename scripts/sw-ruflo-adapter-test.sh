@@ -2687,7 +2687,8 @@ ruflo_available() { return 0; }
 RUFLO_AVAILABLE=true
 
 _st_ts_run_ts=$(date -u +"%Y%m%dT%H%M%SZ" 2>/dev/null || date +"%s")
-_st_ts_result_key="stage-test-result-${_st_ts_run_ts}"
+_st_ts_run_uid="${_st_ts_run_ts}-$$-${RANDOM}"
+_st_ts_result_key="stage-test-result-${_st_ts_run_uid}"
 _st_ts_ruflo_ns=""
 if declare -f _ruflo_resolve_repo_hash >/dev/null 2>&1; then
     _st_ts_ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || true
@@ -2698,7 +2699,7 @@ if declare -f ruflo_store >/dev/null 2>&1 && \
    declare -f ruflo_available >/dev/null 2>&1 && \
    ruflo_available; then
     ruflo_store "$_st_ts_result_key" \
-        "Tests PASSED. Tests: src/auth.test.ts. Cmd: npm test. Coverage: 87%. Time: ${_st_ts_run_ts}." \
+        "Tests PASSED. Tests: src/auth.test.ts. Cmd: npm test. Coverage: 87%. Time: ${_st_ts_run_uid}." \
         "$_st_ts_ruflo_ns" \
         "test,stage_test,passed" 2>/dev/null || true
 fi
@@ -2709,10 +2710,10 @@ else
     assert_fail "stage_test unique key: storage key includes timestamp (not static 'stage-test-result')" "got: $(cat "$_st_ts_store_log" 2>/dev/null)"
 fi
 
-if grep -qE "KEY=stage-test-result-[0-9]{8}T[0-9]{6}Z" "$_st_ts_store_log" 2>/dev/null; then
-    assert_pass "stage_test unique key: timestamp format is YYYYMMDDTHHMMSSz"
+if grep -qE "KEY=stage-test-result-[0-9]{8}T[0-9]{6}Z-[0-9]+-[0-9]+" "$_st_ts_store_log" 2>/dev/null; then
+    assert_pass "stage_test unique key: format is timestamp-PID-RANDOM (collision-safe)"
 else
-    assert_fail "stage_test unique key: timestamp format is YYYYMMDDTHHMMSSz" "got: $(cat "$_st_ts_store_log" 2>/dev/null)"
+    assert_fail "stage_test unique key: format is timestamp-PID-RANDOM (collision-safe)" "got: $(cat "$_st_ts_store_log" 2>/dev/null)"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2724,7 +2725,8 @@ rm -f "$_st_retry_log"
 printf 'FAIL circuit-breaker-test\nError: timeout after 5000ms\n' > "$_st_retry_test_log"
 
 ruflo_recall() {
-    printf 'Past failure: circuit breaker timeout in sw-e2e-smoke-test.sh\n'
+    # Recall returns hyphenated test names that are 8+ chars for reliable matching
+    printf 'Past failure: circuit-breaker-test timeout in sw-e2e-smoke-test.sh\n'
 }
 RUFLO_AVAILABLE=true
 _st_retry_fail_exit=1
@@ -2733,16 +2735,18 @@ _st_retry_flakiness_ctx=$(printf '%.2000s' "${_st_retry_flakiness_ctx:-}")
 
 _test_is_known_flaky="false"
 _matched_flaky_pattern=""
+_st_stopwords="received|expected|function|actually|returned|argument|property|undefined|contains|resource|standard|platform"
 if [[ "$_st_retry_fail_exit" -ne 0 && -n "$_st_retry_flakiness_ctx" ]]; then
     _st_fail_excerpt=$(head -30 "$_st_retry_test_log" 2>/dev/null || true)
     while IFS= read -r _st_kw; do
-        [[ ${#_st_kw} -lt 5 ]] && continue
+        [[ ${#_st_kw} -lt 8 ]] && continue
+        printf '%s' "$_st_kw" | grep -qiE "^(${_st_stopwords})$" 2>/dev/null && continue
         if printf '%s\n' "$_st_fail_excerpt" | grep -qiF "$_st_kw" 2>/dev/null; then
             _test_is_known_flaky="true"
             _matched_flaky_pattern="$_st_kw"
             break
         fi
-    done < <(printf '%s\n' "$_st_retry_flakiness_ctx" | tr ' \t' '\n' | grep -E '^[a-zA-Z0-9_.-]{5,}$' | sort -u | head -30)
+    done < <(printf '%s\n' "$_st_retry_flakiness_ctx" | tr ' \t' '\n' | grep -E '^[a-zA-Z0-9_.-]{8,}$' | sort -u | head -30)
 fi
 rm -f "$_st_retry_test_log"
 

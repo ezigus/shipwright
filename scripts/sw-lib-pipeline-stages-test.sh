@@ -535,6 +535,29 @@ stage_test 2>/dev/null || _st_retry_rc=$?
 unset -f ruflo_available ruflo_recall ruflo_store _ruflo_resolve_repo_hash 2>/dev/null || true
 unset _st_int_retry_counter _st_int_retry_store_file 2>/dev/null || true
 
+# Test: flaky pattern matched even when failure appears beyond first 30 lines of log
+# (validates head+tail excerpt extraction rather than head-only)
+_st_int_tail_retry_store="$TEST_TEMP_DIR/st-int-tail-retry-store.txt"
+_st_int_tail_counter="$TEST_TEMP_DIR/st-int-tail-counter.txt"
+rm -f "$_st_int_tail_retry_store" "$_st_int_tail_counter"
+echo "0" > "$_st_int_tail_counter"
+_ruflo_resolve_repo_hash() { printf 'testhailhash'; }
+ruflo_available() { return 0; }
+ruflo_recall()    { printf 'sporadic'; }   # known flaky keyword
+ruflo_store()     { echo "TAGS=${4:-}" >> "$_st_int_tail_retry_store"; return 0; }
+# Failure message at line 35+ — beyond the old head-30 window
+export _st_int_tail_counter
+export _st_int_tail_retry_store
+export TEST_CMD='cnt=$(cat "$_st_int_tail_counter" 2>/dev/null || echo 0); if [[ "$cnt" -eq 0 ]]; then echo 1 > "$_st_int_tail_counter"; printf "line\n%.0s" {1..35}; echo "Error: sporadic failure"; exit 1; fi; echo "All tests passed"'
+_st_tail_rc=0
+stage_test 2>/dev/null || _st_tail_rc=$?
+[[ "$_st_tail_rc" -eq 0 ]] \
+    && assert_pass "stage_test: flaky pattern matched when failure is beyond first 30 lines" \
+    || assert_fail "stage_test: flaky pattern matched when failure is beyond first 30 lines" \
+                   "expected exit 0 (retry recovery), got $_st_tail_rc"
+unset -f ruflo_available ruflo_recall ruflo_store _ruflo_resolve_repo_hash 2>/dev/null || true
+unset _st_int_tail_counter _st_int_tail_retry_store 2>/dev/null || true
+
 # ─── Tests: stage_review ────────────────────────────────────────────────────
 print_test_section "stage_review"
 

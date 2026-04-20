@@ -654,7 +654,9 @@ stage_test() {
     local _matched_flaky_pattern=""
     if [[ "$test_exit" -ne 0 && -n "$_ruflo_flakiness_ctx" ]]; then
         local _fail_excerpt
-        _fail_excerpt=$(head -30 "$test_log" | strip_ansi 2>/dev/null || true)
+        # Capture both head (setup/infra errors) and tail (test failure summaries)
+        # Most runners (jest, vitest, go test) print the failure summary at the end.
+        _fail_excerpt=$({ head -20 "$test_log"; tail -40 "$test_log"; } | strip_ansi 2>/dev/null || true)
         local _kw
         while IFS= read -r _kw; do
             [[ ${#_kw} -lt 5 ]] && continue

@@ -621,12 +621,21 @@ stage_test() {
     local _st_run_ts
     _st_run_ts=$(date -u +"%Y%m%dT%H%M%SZ" 2>/dev/null || date +"%s")
     local _st_result_key="stage-test-result-${_st_run_ts}"
-    local _st_ruflo_ns="pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}"
+    # Resolve a stable, cross-run namespace via repo hash (same approach as
+    # stage_test_first and ruflo_recall_similar_outcomes). pipeline-${ID} would
+    # create a fresh namespace each run, making flakiness recall impossible.
+    local _st_ruflo_ns=""
+    if declare -f _ruflo_resolve_repo_hash >/dev/null 2>&1; then
+        local _st_ns_hash
+        _st_ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || true
+        _st_ruflo_ns="${_st_ns_hash:+learning-${_st_ns_hash}}"
+    fi
 
     # ── Recall historical flakiness patterns from ruflo ──────────────────
     local _ruflo_flakiness_ctx=""
     if declare -f ruflo_recall >/dev/null 2>&1 && \
        declare -f ruflo_available >/dev/null 2>&1 && \
+       [[ -n "$_st_ruflo_ns" ]] && \
        ruflo_available; then
         _ruflo_flakiness_ctx=$(ruflo_recall "test flakiness patterns failures" \
             "$_st_ruflo_ns" 2>/dev/null || true)
@@ -717,6 +726,7 @@ ${log_excerpt}
         # Store failed test result in ruflo for flakiness tracking
         if declare -f ruflo_store >/dev/null 2>&1 && \
            declare -f ruflo_available >/dev/null 2>&1 && \
+           [[ -n "$_st_ruflo_ns" ]] && \
            ruflo_available; then
             local _fail_names
             _fail_names=$(grep -E '(FAIL|✗|●)\s+' "$test_log" 2>/dev/null | head -5 | strip_ansi | tr '\n' ';' | sed 's/;$//' || true)
@@ -784,6 +794,7 @@ ${test_summary}
     # Store test results in ruflo for cross-stage context and flakiness tracking
     if declare -f ruflo_store >/dev/null 2>&1 && \
        declare -f ruflo_available >/dev/null 2>&1 && \
+       [[ -n "$_st_ruflo_ns" ]] && \
        ruflo_available; then
         local _pass_test_names
         _pass_test_names=$(grep -E '(PASS|✓)\s+' "$test_log" 2>/dev/null | head -5 | strip_ansi | tr '\n' ';' | sed 's/;$//' || true)

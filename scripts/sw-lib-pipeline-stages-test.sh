@@ -466,6 +466,7 @@ stage_test 2>/dev/null
 _st_int_recall_file="$TEST_TEMP_DIR/st-int-recall.txt"
 _st_int_store_file="$TEST_TEMP_DIR/st-int-store.txt"
 rm -f "$_st_int_recall_file" "$_st_int_store_file"
+_ruflo_resolve_repo_hash() { printf 'testhash123'; }
 ruflo_available() { return 0; }
 ruflo_recall()    { touch "$_st_int_recall_file"; printf ''; }
 ruflo_store()     { echo "TAGS=${4:-}" >> "$_st_int_store_file"; return 0; }
@@ -488,6 +489,7 @@ grep -q "passed" "$_st_int_store_file" 2>/dev/null \
 # Test: ruflo_store called with failed tag when tests fail
 _st_int_fail_store_file="$TEST_TEMP_DIR/st-int-fail-store.txt"
 rm -f "$_st_int_fail_store_file"
+_ruflo_resolve_repo_hash() { printf 'testhash123'; }
 ruflo_available() { return 0; }
 ruflo_recall()    { printf ''; }
 ruflo_store()     { echo "TAGS=${4:-}" >> "$_st_int_fail_store_file"; return 0; }
@@ -503,7 +505,7 @@ grep -q "failed" "$_st_int_fail_store_file" 2>/dev/null \
     || assert_fail "stage_test: ruflo_store tags include failed on test failure" \
                    "got: $(cat "$_st_int_fail_store_file" 2>/dev/null)"
 
-unset -f ruflo_available ruflo_recall ruflo_store 2>/dev/null || true
+unset -f ruflo_available ruflo_recall ruflo_store _ruflo_resolve_repo_hash 2>/dev/null || true
 unset SHIPWRIGHT_PIPELINE_ID 2>/dev/null || true
 
 # ─── Tests: stage_review ────────────────────────────────────────────────────

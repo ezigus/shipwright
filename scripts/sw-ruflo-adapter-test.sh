@@ -2535,20 +2535,27 @@ print_test_section "stage_test — ruflo recall called before test run"
 _st_recall_log="$TEST_TEMP_DIR/stage-test-recall-calls.txt"
 rm -f "$_st_recall_log"
 
+_ruflo_resolve_repo_hash() { printf 'testhash123'; }
 ruflo_recall() {
     echo "QUERY=$1 NS=$2" >> "$_st_recall_log"
     printf 'Past failure: circuit breaker timeout in sw-e2e-smoke-test.sh\n'
 }
 ruflo_store() { return 0; }
 RUFLO_AVAILABLE=true
-SHIPWRIGHT_PIPELINE_ID="test-pipeline-42"
+
+_st_ruflo_ns=""
+if declare -f _ruflo_resolve_repo_hash >/dev/null 2>&1; then
+    _st_ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || true
+    _st_ruflo_ns="${_st_ns_hash:+learning-${_st_ns_hash}}"
+fi
 
 _st_flakiness_ctx=""
 if declare -f ruflo_recall >/dev/null 2>&1 && \
    declare -f ruflo_available >/dev/null 2>&1 && \
+   [[ -n "$_st_ruflo_ns" ]] && \
    ruflo_available; then
     _st_flakiness_ctx=$(ruflo_recall "test flakiness patterns failures" \
-        "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" 2>/dev/null || true)
+        "$_st_ruflo_ns" 2>/dev/null || true)
     _st_flakiness_ctx=$(printf '%.2000s' "${_st_flakiness_ctx:-}")
 fi
 
@@ -2558,10 +2565,10 @@ else
     assert_fail "stage_test recall: ruflo_recall invoked when ruflo available" "recall log not created"
 fi
 
-if grep -q "NS=pipeline-test-pipeline-42" "$_st_recall_log" 2>/dev/null; then
-    assert_pass "stage_test recall: namespace is pipeline-<PIPELINE_ID>"
+if grep -q "NS=learning-testhash123" "$_st_recall_log" 2>/dev/null; then
+    assert_pass "stage_test recall: namespace uses learning- prefix for cross-run recall"
 else
-    assert_fail "stage_test recall: namespace is pipeline-<PIPELINE_ID>" "got: $(cat "$_st_recall_log" 2>/dev/null)"
+    assert_fail "stage_test recall: namespace uses learning- prefix for cross-run recall" "got: $(cat "$_st_recall_log" 2>/dev/null)"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2585,23 +2592,29 @@ print_test_section "stage_test — ruflo store called with passed tag on success
 _st_pass_store_log="$TEST_TEMP_DIR/stage-test-pass-store.txt"
 rm -f "$_st_pass_store_log"
 
+_ruflo_resolve_repo_hash() { printf 'testhash123'; }
 ruflo_store() {
     echo "KEY=$1 NS=$3 TAGS=$4" >> "$_st_pass_store_log"
     return 0
 }
 RUFLO_AVAILABLE=true
-SHIPWRIGHT_PIPELINE_ID="test-pipeline-42"
 _test_cmd="npm test"
 _cov_pct=87
 _test_log_content="PASS src/auth.test.ts"
 _pass_test_count=1
+_st_pass_ns=""
+if declare -f _ruflo_resolve_repo_hash >/dev/null 2>&1; then
+    _st_pass_ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || true
+    _st_pass_ns="${_st_pass_ns_hash:+learning-${_st_pass_ns_hash}}"
+fi
 
 if declare -f ruflo_store >/dev/null 2>&1 && \
    declare -f ruflo_available >/dev/null 2>&1 && \
+   [[ -n "$_st_pass_ns" ]] && \
    ruflo_available; then
     ruflo_store "stage-test-result" \
         "Tests PASSED. Count: ${_pass_test_count}. Cmd: ${_test_cmd}. Coverage: ${_cov_pct:-0}%. Time: $(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo unknown)." \
-        "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" \
+        "$_st_pass_ns" \
         "test,stage_test,passed" 2>/dev/null || true
 fi
 
@@ -2611,10 +2624,10 @@ else
     assert_fail "stage_test store: tags contain passed on success" "got: $(cat "$_st_pass_store_log" 2>/dev/null)"
 fi
 
-if grep -q "NS=pipeline-test-pipeline-42" "$_st_pass_store_log" 2>/dev/null; then
-    assert_pass "stage_test store: namespace is pipeline-<PIPELINE_ID> on pass"
+if grep -q "NS=learning-testhash123" "$_st_pass_store_log" 2>/dev/null; then
+    assert_pass "stage_test store: namespace uses learning- prefix for cross-run recall on pass"
 else
-    assert_fail "stage_test store: namespace is pipeline-<PIPELINE_ID> on pass" "got: $(cat "$_st_pass_store_log" 2>/dev/null)"
+    assert_fail "stage_test store: namespace uses learning- prefix for cross-run recall on pass" "got: $(cat "$_st_pass_store_log" 2>/dev/null)"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2623,21 +2636,27 @@ print_test_section "stage_test — ruflo store called with failed tag on failure
 _st_fail_store_log="$TEST_TEMP_DIR/stage-test-fail-store.txt"
 rm -f "$_st_fail_store_log"
 
+_ruflo_resolve_repo_hash() { printf 'testhash123'; }
 ruflo_store() {
     echo "KEY=$1 NS=$3 TAGS=$4" >> "$_st_fail_store_log"
     return 0
 }
 RUFLO_AVAILABLE=true
-SHIPWRIGHT_PIPELINE_ID="test-pipeline-42"
 _fail_test_exit=1
 _fail_test_count=3
+_st_fail_ns=""
+if declare -f _ruflo_resolve_repo_hash >/dev/null 2>&1; then
+    _st_fail_ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || true
+    _st_fail_ns="${_st_fail_ns_hash:+learning-${_st_fail_ns_hash}}"
+fi
 
 if declare -f ruflo_store >/dev/null 2>&1 && \
    declare -f ruflo_available >/dev/null 2>&1 && \
+   [[ -n "$_st_fail_ns" ]] && \
    ruflo_available; then
     ruflo_store "stage-test-result" \
         "Tests FAILED (exit $_fail_test_exit). Count: ${_fail_test_count}. Cmd: npm test. Coverage: 0%. Time: $(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo unknown)." \
-        "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" \
+        "$_st_fail_ns" \
         "test,stage_test,failed" 2>/dev/null || true
 fi
 
@@ -2647,10 +2666,10 @@ else
     assert_fail "stage_test store: tags contain failed on test failure" "got: $(cat "$_st_fail_store_log" 2>/dev/null)"
 fi
 
-if grep -q "NS=pipeline-test-pipeline-42" "$_st_fail_store_log" 2>/dev/null; then
-    assert_pass "stage_test store: namespace is pipeline-<PIPELINE_ID> on fail"
+if grep -q "NS=learning-testhash123" "$_st_fail_store_log" 2>/dev/null; then
+    assert_pass "stage_test store: namespace uses learning- prefix for cross-run recall on fail"
 else
-    assert_fail "stage_test store: namespace is pipeline-<PIPELINE_ID> on fail" "got: $(cat "$_st_fail_store_log" 2>/dev/null)"
+    assert_fail "stage_test store: namespace uses learning- prefix for cross-run recall on fail" "got: $(cat "$_st_fail_store_log" 2>/dev/null)"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2659,17 +2678,21 @@ print_test_section "stage_test — unique timestamped key per run (no overwrite)
 _st_ts_store_log="$TEST_TEMP_DIR/stage-test-ts-store.txt"
 rm -f "$_st_ts_store_log"
 
+_ruflo_resolve_repo_hash() { printf 'testhash123'; }
 ruflo_store() {
     echo "KEY=$1 NS=$3 TAGS=$4" >> "$_st_ts_store_log"
     return 0
 }
 ruflo_available() { return 0; }
 RUFLO_AVAILABLE=true
-SHIPWRIGHT_PIPELINE_ID="test-pipeline-42"
 
 _st_ts_run_ts=$(date -u +"%Y%m%dT%H%M%SZ" 2>/dev/null || date +"%s")
 _st_ts_result_key="stage-test-result-${_st_ts_run_ts}"
-_st_ts_ruflo_ns="pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}"
+_st_ts_ruflo_ns=""
+if declare -f _ruflo_resolve_repo_hash >/dev/null 2>&1; then
+    _st_ts_ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || true
+    _st_ts_ruflo_ns="${_st_ts_ns_hash:+learning-${_st_ts_ns_hash}}"
+fi
 
 if declare -f ruflo_store >/dev/null 2>&1 && \
    declare -f ruflo_available >/dev/null 2>&1 && \
@@ -2705,7 +2728,7 @@ ruflo_recall() {
 }
 RUFLO_AVAILABLE=true
 _st_retry_fail_exit=1
-_st_retry_flakiness_ctx=$(ruflo_recall "test flakiness patterns failures" "pipeline-test" 2>/dev/null || true)
+_st_retry_flakiness_ctx=$(ruflo_recall "test flakiness patterns failures" "learning-testhash123" 2>/dev/null || true)
 _st_retry_flakiness_ctx=$(printf '%.2000s' "${_st_retry_flakiness_ctx:-}")
 
 _test_is_known_flaky="false"
@@ -2760,7 +2783,7 @@ if declare -f ruflo_store >/dev/null 2>&1 && \
    ruflo_available; then
     ruflo_store "$_st_kf_key" \
         "Tests FAILED (exit 1). Failures: circuit-breaker-test. Cmd: npm test. Time: ${_st_kf_ts}." \
-        "pipeline-test-pipeline-42" \
+        "learning-testhash123" \
         "$_st_kf_fail_tags" 2>/dev/null || true
 fi
 
@@ -2795,7 +2818,7 @@ if declare -f ruflo_store >/dev/null 2>&1 && \
    ruflo_available; then
     ruflo_store "$_st_fr_key" \
         "Tests PASSED. Tests: auth.test.ts. Cmd: npm test. Coverage: 87%. Time: ${_st_fr_ts}." \
-        "pipeline-test-pipeline-42" \
+        "learning-testhash123" \
         "$_st_fr_pass_tags" 2>/dev/null || true
 fi
 

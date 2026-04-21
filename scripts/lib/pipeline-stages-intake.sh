@@ -132,13 +132,20 @@ stage_intake() {
             _intake_ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || true
         fi
         if [[ -z "$_intake_ns_hash" ]]; then
-            _intake_ns_hash=$(printf '%s' "${PROJECT_ROOT:-$PWD}" | shasum -a 256 2>/dev/null | cut -c1-12 \
-                || printf '%s' "${PROJECT_ROOT:-$PWD}" | sha256sum 2>/dev/null | cut -c1-12 \
-                || echo "local")
+            local _hash_input="${PROJECT_ROOT:-$PWD}"
+            _intake_ns_hash=$(printf '%s' "$_hash_input" | shasum -a 256 2>/dev/null | cut -c1-12 \
+                || printf '%s' "$_hash_input" | sha256sum 2>/dev/null | cut -c1-12 \
+                || true)
         fi
-        ruflo_store "stage-intake-result" \
-            "Issue type: ${INTELLIGENCE_ISSUE_TYPE:-${TASK_TYPE}}. Labels: ${ISSUE_LABELS:-none}. Task type: ${TASK_TYPE:-feature}. Goal: ${GOAL:-}." \
-            "learning-${_intake_ns_hash}" || true
+        if [[ -z "$_intake_ns_hash" || "$_intake_ns_hash" == "local" ]]; then
+            warn "Ruflo: failed to compute repo hash for memory namespace (shasum/sha256sum unavailable) — skipping intake store to prevent namespace collision"
+        else
+            if ! ruflo_store "stage-intake-result" \
+                "Issue type: ${INTELLIGENCE_ISSUE_TYPE:-${TASK_TYPE}}. Labels: ${ISSUE_LABELS:-none}. Task type: ${TASK_TYPE:-feature}. Goal: ${GOAL:-}." \
+                "learning-${_intake_ns_hash}"; then
+                warn "Ruflo: failed to store intake context (memory unavailable, downstream stages will lack historical patterns)"
+            fi
+        fi
     fi
 
     log_stage "intake" "Goal: $GOAL

@@ -239,6 +239,63 @@ set -e
 unset -f ruflo_available ruflo_recall_similar_outcomes ruflo_store 2>/dev/null || true
 unset INTELLIGENCE_INTAKE_CTX 2>/dev/null || true
 
+# stage_intake: hash computation fails (empty hash) — store must be skipped, not crash
+_intake_hash_fail_store_called=0
+ruflo_available() { return 0; }
+ruflo_recall_similar_outcomes() { echo "prior pattern"; }
+ruflo_store() { _intake_hash_fail_store_called=1; return 0; }
+_ruflo_resolve_repo_hash() { return 1; }  # hash resolution fails
+export -f ruflo_available ruflo_recall_similar_outcomes ruflo_store _ruflo_resolve_repo_hash
+# Temporarily shadow shasum and sha256sum so hash computation falls through to empty
+shasum() { return 1; }
+sha256sum() { return 1; }
+export -f shasum sha256sum
+export GOAL="Test hash fail"
+export ISSUE_NUMBER=""
+rm -f "$ARTIFACTS_DIR/intake.json"
+set +e
+stage_intake 2>/dev/null
+intake_hash_fail_rc=$?
+set -e
+[[ $intake_hash_fail_rc -eq 0 ]] && assert_pass "Intake succeeds when hash computation fails" || assert_fail "Intake hash fail should not crash" "exit $intake_hash_fail_rc"
+[[ "$_intake_hash_fail_store_called" -eq 0 ]] && assert_pass "ruflo_store skipped when hash is empty" || assert_fail "ruflo_store called despite empty hash" ""
+unset -f ruflo_available ruflo_recall_similar_outcomes ruflo_store _ruflo_resolve_repo_hash shasum sha256sum 2>/dev/null || true
+
+# stage_intake: hash resolves to literal "local" — store must be skipped to prevent collision
+_intake_local_hash_store_called=0
+ruflo_available() { return 0; }
+ruflo_recall_similar_outcomes() { echo "prior pattern"; }
+ruflo_store() { _intake_local_hash_store_called=1; return 0; }
+_ruflo_resolve_repo_hash() { echo "local"; }  # returns the forbidden fallback value
+export -f ruflo_available ruflo_recall_similar_outcomes ruflo_store _ruflo_resolve_repo_hash
+export GOAL="Test local hash"
+export ISSUE_NUMBER=""
+rm -f "$ARTIFACTS_DIR/intake.json"
+set +e
+stage_intake 2>/dev/null
+intake_local_hash_rc=$?
+set -e
+[[ $intake_local_hash_rc -eq 0 ]] && assert_pass "Intake succeeds when hash is 'local'" || assert_fail "Intake local hash should not crash" "exit $intake_local_hash_rc"
+[[ "$_intake_local_hash_store_called" -eq 0 ]] && assert_pass "ruflo_store skipped when hash is 'local'" || assert_fail "ruflo_store called despite 'local' hash" ""
+unset -f ruflo_available ruflo_recall_similar_outcomes ruflo_store _ruflo_resolve_repo_hash 2>/dev/null || true
+
+# stage_intake: ruflo_store fails (non-zero exit) — intake must still succeed (fail-open)
+_intake_store_fail_warned=0
+ruflo_available() { return 0; }
+ruflo_recall_similar_outcomes() { echo "prior pattern"; }
+ruflo_store() { return 1; }  # simulate storage failure
+export -f ruflo_available ruflo_recall_similar_outcomes ruflo_store
+export GOAL="Test store fail"
+export ISSUE_NUMBER=""
+rm -f "$ARTIFACTS_DIR/intake.json"
+set +e
+stage_intake 2>/dev/null
+intake_store_fail_rc=$?
+set -e
+[[ $intake_store_fail_rc -eq 0 ]] && assert_pass "Intake succeeds when ruflo_store fails" || assert_fail "Intake should not fail when ruflo_store fails" "exit $intake_store_fail_rc"
+unset -f ruflo_available ruflo_recall_similar_outcomes ruflo_store 2>/dev/null || true
+unset INTELLIGENCE_INTAKE_CTX 2>/dev/null || true
+
 # ─── Tests: stage_plan ──────────────────────────────────────────────────────
 print_test_section "stage_plan"
 

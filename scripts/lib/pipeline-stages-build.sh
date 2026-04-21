@@ -336,10 +336,16 @@ ${_skill_prompts}
         # 2. Strip C0 control characters (except HT \011 and LF \012) to prevent
         #    escape-sequence injection from a compromised memory store.
         # 3. Truncate to 2000 chars to prevent context flooding.
+        local _raw_recall_ctx="$_build_recall_ctx"
         _build_recall_ctx=$(printf '%s\n' "${_build_recall_ctx}" \
             | grep -v '^#' \
             | tr -d '\000-\010\013-\037\177')
         _build_recall_ctx=$(printf '%.2000s' "${_build_recall_ctx}")
+        # Warn if sanitization stripped any content — this indicates a compromised
+        # or malformed memory store entry and may warrant operator investigation.
+        if [[ "$_raw_recall_ctx" != "$_build_recall_ctx" && -n "$_raw_recall_ctx" ]]; then
+            warn "Ruflo: recall output was sanitized before injection (potential injection attempt or malformed data)"
+        fi
         if [[ -n "$_build_recall_ctx" ]]; then
             enriched_goal="${enriched_goal}
 

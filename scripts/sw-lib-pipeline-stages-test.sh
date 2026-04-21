@@ -599,7 +599,9 @@ if [[ -f "$_build_recall_capture" ]]; then
         assert_pass "stage_build: no recall section when ruflo unavailable"
     fi
 else
-    assert_pass "stage_build: recall guard skipped when ruflo unavailable"
+    # If capture file is missing, sw loop was never called — that's a real failure.
+    # stage_build should always invoke sw loop (recall is only skipped, not the loop itself).
+    assert_fail "stage_build: no recall section when ruflo unavailable" "capture file missing — sw loop was not invoked"
 fi
 unset -f ruflo_available ruflo_recall_similar_outcomes 2>/dev/null || true
 
@@ -622,7 +624,8 @@ if [[ -f "$_build_recall_capture" ]]; then
         assert_pass "stage_build: no recall section for empty recall output"
     fi
 else
-    assert_pass "stage_build: stage ran with empty recall output"
+    # Capture file missing means sw loop was never called — real failure.
+    assert_fail "stage_build: no recall section for empty recall output" "capture file missing — sw loop was not invoked"
 fi
 unset -f ruflo_available ruflo_recall_similar_outcomes 2>/dev/null || true
 

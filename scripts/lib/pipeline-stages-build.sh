@@ -315,15 +315,25 @@ ${_skill_prompts}
     if declare -f ruflo_recall_similar_outcomes >/dev/null 2>&1 && \
        declare -f ruflo_available >/dev/null 2>&1 && \
        ruflo_available; then
-        local _build_recall_query
+        local _build_recall_query _build_recall_ctx
         _build_recall_query="${GOAL:-}"
         [[ -n "${ISSUE_LABELS:-}" ]] && _build_recall_query="${_build_recall_query}; labels: ${ISSUE_LABELS}"
-        local _build_recall_ctx
-        _build_recall_ctx=$(ruflo_recall_similar_outcomes "${TASK_TYPE:-feature}" "$_build_recall_query" 2>/dev/null) || true
-        _build_recall_ctx=$(printf '%.2000s' "${_build_recall_ctx:-}")
-        # Sanitize: strip markdown heading markers to prevent structural prompt injection.
-        # Recall is expected plain text; ## headers could hijack the prompt hierarchy.
-        _build_recall_ctx=$(printf '%s' "${_build_recall_ctx}" | sed 's/^#\{1,\} *//')
+        _build_recall_ctx=""
+        # Warn on failure so a broken memory system is visible to operators.
+        _build_recall_ctx=$(ruflo_recall_similar_outcomes "${TASK_TYPE:-feature}" "$_build_recall_query" 2>/dev/null) || {
+            warn "Ruflo recall unavailable or failed — proceeding without historical context"
+        }
+        # Sanitize recall output before injecting into the prompt:
+        # 1. Strip entire lines starting with '#' (markdown headers). Removing the whole
+        #    line is safer than stripping only the prefix — bare header text is still an
+        #    instruction fragment that Claude could interpret as a directive.
+        # 2. Strip C0 control characters (except HT \011 and LF \012) to prevent
+        #    escape-sequence injection from a compromised memory store.
+        # 3. Truncate to 2000 chars to prevent context flooding.
+        _build_recall_ctx=$(printf '%s\n' "${_build_recall_ctx}" \
+            | grep -v '^#' \
+            | tr -d '\000-\010\013-\037\177')
+        _build_recall_ctx=$(printf '%.2000s' "${_build_recall_ctx}")
         if [[ -n "$_build_recall_ctx" ]]; then
             enriched_goal="${enriched_goal}
 

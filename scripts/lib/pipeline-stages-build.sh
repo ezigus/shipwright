@@ -311,6 +311,25 @@ ${_skill_prompts}
 "
     fi
 
+    # ── Ruflo: recall similar build outcomes for historical context ────────────
+    if declare -f ruflo_recall_similar_outcomes >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _build_recall_query
+        _build_recall_query="${GOAL:-}"
+        [[ -n "${ISSUE_LABELS:-}" ]] && _build_recall_query="${_build_recall_query}; labels: ${ISSUE_LABELS}"
+        local _build_recall_ctx
+        _build_recall_ctx=$(ruflo_recall_similar_outcomes "${TASK_TYPE:-feature}" "$_build_recall_query" 2>/dev/null) || true
+        _build_recall_ctx=$(printf '%.2000s' "${_build_recall_ctx:-}")
+        if [[ -n "$_build_recall_ctx" ]]; then
+            enriched_goal="${enriched_goal}
+
+## Historical Build Context
+${_build_recall_ctx}"
+            info "Ruflo: injected historical build context (${#_build_recall_ctx} chars)"
+        fi
+    fi
+
     loop_args+=("$enriched_goal")
 
     # Build loop args from pipeline config + CLI overrides

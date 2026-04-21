@@ -519,6 +519,110 @@ echo "// auth" > src/auth.js
 git add src/auth.js 2>/dev/null || true
 git commit -m "feat: add auth" --allow-empty 2>/dev/null || true'
 
+# ─── Tests: stage_build — ruflo_recall_similar_outcomes injection ────────────
+print_test_section "stage_build ruflo recall injection"
+
+_build_recall_capture="$TEST_TEMP_DIR/build-recall-goal.txt"
+
+# Re-create capturing sw mock for goal inspection
+cat > "$TEST_TEMP_DIR/bin/sw" <<'SWMOCK'
+#!/usr/bin/env bash
+set -- "$@"
+_saw_loop=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    loop) _saw_loop=true; shift ;;
+    --*) shift; [[ $# -gt 0 ]] && shift ;;
+    *) if [[ "$_saw_loop" == true && -n "${CAPTURED_BUILD_PROMPT:-}" ]]; then
+           printf '%s' "$1" > "${CAPTURED_BUILD_PROMPT}"
+           _saw_loop=false
+       fi
+       shift ;;
+  esac
+done
+SWMOCK
+chmod +x "$TEST_TEMP_DIR/bin/sw"
+
+# Test: recall results injected under ## Historical Build Context header
+unset -f ruflo_recall_similar_outcomes ruflo_available 2>/dev/null || true
+ruflo_available() { return 0; }
+ruflo_recall_similar_outcomes() { printf 'prior: fixed auth middleware\nprior: added JWT refresh'; }
+export -f ruflo_available ruflo_recall_similar_outcomes
+
+rm -f "$_build_recall_capture"
+set +e
+CAPTURED_BUILD_PROMPT="$_build_recall_capture" stage_build 2>/dev/null || true
+set -e
+
+if [[ -f "$_build_recall_capture" ]]; then
+    _build_goal=$(cat "$_build_recall_capture")
+    if echo "$_build_goal" | grep -q "## Historical Build Context"; then
+        assert_pass "stage_build: recall injected under ## Historical Build Context"
+    else
+        assert_fail "stage_build: recall injected under ## Historical Build Context" "section missing from goal"
+    fi
+    if echo "$_build_goal" | grep -q "fixed auth middleware"; then
+        assert_pass "stage_build: recall content present in enriched_goal"
+    else
+        assert_fail "stage_build: recall content present in enriched_goal" "recall text missing from goal"
+    fi
+else
+    assert_fail "stage_build: goal captured for recall test" "capture file missing"
+fi
+unset -f ruflo_available ruflo_recall_similar_outcomes 2>/dev/null || true
+
+# Test: no ## Historical Build Context when ruflo_available returns false
+unset -f ruflo_recall_similar_outcomes ruflo_available 2>/dev/null || true
+ruflo_available() { return 1; }
+ruflo_recall_similar_outcomes() { printf 'should-not-appear'; }
+export -f ruflo_available ruflo_recall_similar_outcomes
+
+rm -f "$_build_recall_capture"
+set +e
+CAPTURED_BUILD_PROMPT="$_build_recall_capture" stage_build 2>/dev/null || true
+set -e
+
+if [[ -f "$_build_recall_capture" ]]; then
+    _build_goal_unavail=$(cat "$_build_recall_capture")
+    if echo "$_build_goal_unavail" | grep -q "## Historical Build Context"; then
+        assert_fail "stage_build: no recall section when ruflo unavailable" "section present despite ruflo unavailable"
+    else
+        assert_pass "stage_build: no recall section when ruflo unavailable"
+    fi
+else
+    assert_pass "stage_build: recall guard skipped when ruflo unavailable"
+fi
+unset -f ruflo_available ruflo_recall_similar_outcomes 2>/dev/null || true
+
+# Test: empty recall output — no ## Historical Build Context section
+unset -f ruflo_recall_similar_outcomes ruflo_available 2>/dev/null || true
+ruflo_available() { return 0; }
+ruflo_recall_similar_outcomes() { printf ''; }
+export -f ruflo_available ruflo_recall_similar_outcomes
+
+rm -f "$_build_recall_capture"
+set +e
+CAPTURED_BUILD_PROMPT="$_build_recall_capture" stage_build 2>/dev/null || true
+set -e
+
+if [[ -f "$_build_recall_capture" ]]; then
+    _build_goal_empty=$(cat "$_build_recall_capture")
+    if echo "$_build_goal_empty" | grep -q "## Historical Build Context"; then
+        assert_fail "stage_build: no recall section for empty recall output" "section present despite empty recall"
+    else
+        assert_pass "stage_build: no recall section for empty recall output"
+    fi
+else
+    assert_pass "stage_build: stage ran with empty recall output"
+fi
+unset -f ruflo_available ruflo_recall_similar_outcomes 2>/dev/null || true
+
+# Restore sw mock for subsequent tests
+mock_binary "sw" 'mkdir -p src
+echo "// auth" > src/auth.js
+git add src/auth.js 2>/dev/null || true
+git commit -m "feat: add auth" --allow-empty 2>/dev/null || true'
+
 # ─── Tests: stage_test ──────────────────────────────────────────────────────
 print_test_section "stage_test"
 

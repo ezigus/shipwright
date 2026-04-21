@@ -321,6 +321,9 @@ ${_skill_prompts}
         local _build_recall_ctx
         _build_recall_ctx=$(ruflo_recall_similar_outcomes "${TASK_TYPE:-feature}" "$_build_recall_query" 2>/dev/null) || true
         _build_recall_ctx=$(printf '%.2000s' "${_build_recall_ctx:-}")
+        # Sanitize: strip markdown heading markers to prevent structural prompt injection.
+        # Recall is expected plain text; ## headers could hijack the prompt hierarchy.
+        _build_recall_ctx=$(printf '%s' "${_build_recall_ctx}" | sed 's/^#\{1,\} *//')
         if [[ -n "$_build_recall_ctx" ]]; then
             enriched_goal="${enriched_goal}
 

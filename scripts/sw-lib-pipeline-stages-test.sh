@@ -203,6 +203,42 @@ rm -f "$ARTIFACTS_DIR/intake.json"
 stage_intake 2>/dev/null || true
 [[ -f "$ARTIFACTS_DIR/intake.json" ]] && assert_pass "Intake inline artifact" || assert_pass "Intake attempted"
 
+# stage_intake: ruflo no-op path (ruflo_store undefined — must not fail)
+export GOAL="Add rate limiting"
+export ISSUE_NUMBER=""
+unset ruflo_store 2>/dev/null || true
+unset ruflo_recall_similar_outcomes 2>/dev/null || true
+unset ruflo_available 2>/dev/null || true
+unset INTELLIGENCE_INTAKE_CTX 2>/dev/null || true
+rm -f "$ARTIFACTS_DIR/intake.json"
+set +e
+stage_intake 2>/dev/null
+intake_noop_rc=$?
+set -e
+[[ $intake_noop_rc -eq 0 ]] && assert_pass "Intake succeeds without ruflo" || assert_fail "Intake ruflo no-op" "exit $intake_noop_rc"
+
+# stage_intake: ruflo available — INTELLIGENCE_INTAKE_CTX exported on recall hit
+unset INTELLIGENCE_INTAKE_CTX 2>/dev/null || true
+ruflo_store_called=0
+ruflo_recall_called=0
+ruflo_available() { return 0; }
+ruflo_recall_similar_outcomes() { ruflo_recall_called=1; echo "prior: fixed auth bug in backend"; }
+ruflo_store() { ruflo_store_called=1; return 0; }
+export -f ruflo_available ruflo_recall_similar_outcomes ruflo_store
+export GOAL="Fix auth timeout"
+export ISSUE_NUMBER=""
+rm -f "$ARTIFACTS_DIR/intake.json"
+set +e
+stage_intake 2>/dev/null
+intake_ruflo_rc=$?
+set -e
+[[ $intake_ruflo_rc -eq 0 ]] && assert_pass "Intake with ruflo succeeds" || assert_fail "Intake with ruflo" "exit $intake_ruflo_rc"
+[[ "${INTELLIGENCE_INTAKE_CTX:-}" == *"prior"* ]] && assert_pass "INTELLIGENCE_INTAKE_CTX set from ruflo recall" || assert_fail "INTELLIGENCE_INTAKE_CTX not set" "${INTELLIGENCE_INTAKE_CTX:-<empty>}"
+[[ "$ruflo_store_called" -eq 1 ]] && assert_pass "ruflo_store called during intake" || assert_fail "ruflo_store not called" ""
+# Clean up test stubs
+unset -f ruflo_available ruflo_recall_similar_outcomes ruflo_store 2>/dev/null || true
+unset INTELLIGENCE_INTAKE_CTX 2>/dev/null || true
+
 # ─── Tests: stage_plan ──────────────────────────────────────────────────────
 print_test_section "stage_plan"
 

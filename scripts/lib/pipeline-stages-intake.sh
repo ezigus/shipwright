@@ -107,6 +107,27 @@ stage_intake() {
         fi
     fi
 
+    # 8. Ruflo: recall historical context for similar issues (fail-open)
+    if declare -f ruflo_recall_similar_outcomes >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _ruflo_intake_ctx
+        _ruflo_intake_ctx=$(ruflo_recall_similar_outcomes \
+            "${INTELLIGENCE_ISSUE_TYPE:-backend}" "${ISSUE_LABELS:-}" 2>/dev/null || true)
+        if [[ -n "$_ruflo_intake_ctx" ]]; then
+            INTELLIGENCE_INTAKE_CTX=$(printf '%.2000s' "$_ruflo_intake_ctx")
+            export INTELLIGENCE_INTAKE_CTX
+            info "Ruflo: recalled historical context for ${INTELLIGENCE_ISSUE_TYPE:-backend} issues"
+        fi
+    fi
+
+    # 9. Ruflo: store intake classification for downstream stage access
+    if declare -f ruflo_store >/dev/null 2>&1; then
+        ruflo_store "stage-intake-result" \
+            "Issue type: ${INTELLIGENCE_ISSUE_TYPE:-backend}. Labels: ${ISSUE_LABELS:-none}. Task type: ${TASK_TYPE:-feature}. Goal: ${GOAL:-}." \
+            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
+    fi
+
     log_stage "intake" "Goal: $GOAL
 Type: $TASK_TYPE → template: $suggested_template
 Branch: $GIT_BRANCH
@@ -404,6 +425,14 @@ ${_prior_context}"
 Ruflo MCP tools are available in this session. Use mcp__ruflo__memory_store to persist
 important decisions and mcp__ruflo__memory_search to recall prior context from namespace
 'pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}'."
+    fi
+
+    # Inject intake-stage historical context (set by stage_intake ruflo recall)
+    if [[ -n "${INTELLIGENCE_INTAKE_CTX:-}" ]]; then
+        plan_prompt="${plan_prompt}
+
+## Intake Context (historical patterns from ruflo)
+${INTELLIGENCE_INTAKE_CTX}"
     fi
 
     # Guard total prompt size
@@ -940,6 +969,14 @@ ${_prior_context}"
 Ruflo MCP tools are available in this session. Use mcp__ruflo__memory_store to persist
 important decisions and mcp__ruflo__memory_search to recall prior context from namespace
 'pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}'."
+    fi
+
+    # Inject intake-stage historical context (set by stage_intake ruflo recall)
+    if [[ -n "${INTELLIGENCE_INTAKE_CTX:-}" ]]; then
+        design_prompt="${design_prompt}
+
+## Intake Context (historical patterns from ruflo)
+${INTELLIGENCE_INTAKE_CTX}"
     fi
 
     # Guard total prompt size

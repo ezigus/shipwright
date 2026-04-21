@@ -269,7 +269,7 @@ echo ""
 echo -e "${DIM}  json extraction robustness${RESET}"
 # Extract the function from sw-loop.sh and test it in isolation (can't source
 # sw-loop.sh because it has no source guard — main() runs unconditionally)
-tmpdir=$(mktemp -d)
+tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")
 _fn_file="$tmpdir/_extract_fn.sh"
 sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh" > "$_fn_file"
 bash <<EXTRACT_TEST 2>/dev/null
@@ -328,7 +328,7 @@ fi
 # ─── Test 21: _extract_text_from_json — nested objects and binary ─────────────
 echo ""
 echo -e "${DIM}  json extraction edge cases${RESET}"
-tmpdir2=$(mktemp -d)
+tmpdir2=$(mktemp -d "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")
 _fn_file2="$tmpdir2/_extract_fn.sh"
 sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh" > "$_fn_file2"
 bash <<EXTRACT_TEST2 2>/dev/null
@@ -358,7 +358,7 @@ rm -rf "$tmpdir2"
 # ─── Test 21b: _extract_text_from_json — JSON object (not array) ──────────────
 echo ""
 echo -e "${DIM}  json extraction for JSON objects${RESET}"
-tmpdir3=$(mktemp -d)
+tmpdir3=$(mktemp -d "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")
 _fn_file3="$tmpdir3/_extract_fn.sh"
 sed -n '/^_extract_text_from_json()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh" > "$_fn_file3"
 bash <<EXTRACT_TEST3 2>"$tmpdir3/stderr.log"
@@ -752,7 +752,7 @@ echo ""
 echo -e "${DIM}  validate_claude_output${RESET}"
 
 _validate_fn=$(sed -n '/^validate_claude_output()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")
-_valid_tmp=$(mktemp -d)
+_valid_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")
 # Use real git for repo setup (bypass mock from setup_env)
 _valid_git=$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git 2>/dev/null)
 (cd "$_valid_tmp" && "$_valid_git" init -q && "$_valid_git" config user.email "t@t" && "$_valid_git" config user.name "T")
@@ -1541,7 +1541,7 @@ _test_safe_git_stage() {
     local real_git
     real_git="$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git 2>/dev/null)" || return 1
     local tmpdir
-    tmpdir="$(mktemp -d)"
+    tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
     # shellcheck disable=SC2064
     trap "rm -rf '$tmpdir'" RETURN
     "$real_git" init -q "$tmpdir"
@@ -1591,7 +1591,7 @@ _build_test_repo() {
     local _real_git
     _real_git=$(PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin command -v git 2>/dev/null) || return 1
     local _tmpdir
-    _tmpdir=$(mktemp -d)
+    _tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")
     "$_real_git" init -q "$_tmpdir"
     "$_real_git" -C "$_tmpdir" config user.email "test@test.com"
     "$_real_git" -C "$_tmpdir" config user.name "test"
@@ -1946,7 +1946,7 @@ else
 fi
 
 # Test: DOD_DIFF_MAX_LINES actually truncates (behavioral)
-_trunc_tmpdir="$(mktemp -d)"
+_trunc_tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/sw-loop-test.XXXXXX")"
 seq 1 20 > "$_trunc_tmpdir/bigdiff.txt"
 DOD_DIFF_MAX_LINES=5
 _trunc_result="$(cat "$_trunc_tmpdir/bigdiff.txt" | head -"${DOD_DIFF_MAX_LINES}")"

@@ -36,6 +36,20 @@ SKIP=0
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/sw-agi-test.XXXXXX")
 cleanup() { rm -rf "$TEST_TMP" 2>/dev/null || true; }
 _test_cleanup_hook() { cleanup; }
+# ── Sandbox mktemp shim (macOS only) ─────────────────────────────────────────
+# macOS plain `mktemp` (no template) ignores $TMPDIR and uses /var/folders,
+# which is write-blocked in the Claude Code sandbox.  Inject a shim that
+# routes templateless calls through a writable directory so subprocess scripts
+# (sw-pm.sh, sw-predictive.sh, sw-swarm.sh) can create temp files.
+# Linux mktemp respects $TMPDIR natively so no shim is needed there.
+_SAFE_TMP="$TEST_TMP/_tmp"
+mkdir -p "$_SAFE_TMP"
+if [[ "$(uname -s 2>/dev/null)" == "Darwin" ]]; then
+    printf '#!/usr/bin/env bash\n_s="%s"\nif [[ $# -eq 0 ]]; then exec /usr/bin/mktemp "$_s/tmp.XXXXXX"; fi\nif [[ $# -eq 1 && "$1" == "-d" ]]; then exec /usr/bin/mktemp -d "$_s/tmpd.XXXXXX"; fi\nexec /usr/bin/mktemp "$@"\n' \
+        "$_SAFE_TMP" > "$TEST_TMP/mktemp"
+    chmod +x "$TEST_TMP/mktemp"
+fi
+export PATH="$TEST_TMP:$PATH"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # P1: FEEDBACK LOOPS — Discovery, Memory, PM, Failure Learning
@@ -171,7 +185,7 @@ test_pm_recommend_json_flag() {
 test_pm_learn_functional() {
     local out pm_home="$TEST_TMP/pm-home"
     mkdir -p "$pm_home/.shipwright"
-    out=$(HOME="$pm_home" PM_STATE_DIR="$pm_home/.shipwright" NO_GITHUB=true bash "$SCRIPT_DIR/sw-pm.sh" learn 42 success 2>&1 || true)
+    out=$(HOME="$pm_home" TMPDIR="$TEST_TMP" PM_STATE_DIR="$pm_home/.shipwright" NO_GITHUB=true bash "$SCRIPT_DIR/sw-pm.sh" learn 42 success 2>&1 || true)
     echo "$out" | grep -qi "recorded\|captured\|success" || { echo "learn should confirm recording: $out"; return 1; }
 }
 
@@ -213,14 +227,14 @@ test_predictive_anomaly_functional() {
     local predictive_home="$TEST_TMP/predictive-home"
     mkdir -p "$predictive_home/.shipwright/baselines"
     # Set baseline to 100 (using HOME override so BASELINES_DIR points to test dir)
-    HOME="$predictive_home" bash "$SCRIPT_DIR/sw-predictive.sh" baseline "build" "duration_s" 100 2>/dev/null || true
+    HOME="$predictive_home" TMPDIR="$TEST_TMP" bash "$SCRIPT_DIR/sw-predictive.sh" baseline "build" "duration_s" 100 2>/dev/null || true
     # Verify baseline was written
     local baseline_file
     baseline_file=$(find "$predictive_home" -name "default.json" 2>/dev/null | head -1)
     [[ -f "${baseline_file:-/nonexistent}" ]] || { echo "Baseline file not created"; return 1; }
     # Check anomaly for 500 against baseline 100 (5x should be anomalous)
     local sev
-    sev=$(HOME="$predictive_home" bash "$SCRIPT_DIR/sw-predictive.sh" anomaly "build" "duration_s" 500 2>/dev/null || echo "normal")
+    sev=$(HOME="$predictive_home" TMPDIR="$TEST_TMP" bash "$SCRIPT_DIR/sw-predictive.sh" anomaly "build" "duration_s" 500 2>/dev/null || echo "normal")
     [[ "$sev" == "normal" ]] && { echo "Expected anomaly for 5x baseline, got normal"; return 1; }
     return 0
 }
@@ -572,7 +586,7 @@ test_swarm_spawn_retire_functional() {
     mkdir -p "$swarm_home/.shipwright/swarm"
     local reg="$swarm_home/.shipwright/swarm/registry.json"
     # Spawn an agent
-    HOME="$swarm_home" NO_GITHUB=true bash "$SCRIPT_DIR/sw-swarm.sh" spawn standard 2>/dev/null || true
+    HOME="$swarm_home" TMPDIR="$TEST_TMP" NO_GITHUB=true bash "$SCRIPT_DIR/sw-swarm.sh" spawn standard 2>/dev/null || true
     # Check registry has an agent
     [[ -f "$reg" ]] || { echo "Registry not created after spawn"; return 1; }
     local count
@@ -583,7 +597,7 @@ test_swarm_spawn_retire_functional() {
     agent_id=$(jq -r '.agents[0].id // empty' "$reg" 2>/dev/null)
     [[ -n "$agent_id" ]] || { echo "No agent ID in registry"; return 1; }
     # Retire it
-    HOME="$swarm_home" NO_GITHUB=true bash "$SCRIPT_DIR/sw-swarm.sh" retire "$agent_id" 2>/dev/null || true
+    HOME="$swarm_home" TMPDIR="$TEST_TMP" NO_GITHUB=true bash "$SCRIPT_DIR/sw-swarm.sh" retire "$agent_id" 2>/dev/null || true
     # Verify count dropped
     count=$(jq -r '.active_count // 0' "$reg" 2>/dev/null)
     [[ "$count" -eq 0 ]] || { echo "Active count should be 0 after retire, got $count"; return 1; }

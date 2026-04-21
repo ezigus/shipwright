@@ -218,6 +218,10 @@
       "required": ["stage"],
       "optional": ["issue"]
     },
+    "test.flaky_recovered": {
+      "required": [],
+      "optional": ["pattern"]
+    },
     "ruflo.init": {
       "required": [],
       "optional": ["available"]

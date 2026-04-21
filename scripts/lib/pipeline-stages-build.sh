@@ -616,8 +616,100 @@ stage_test() {
     local test_log="$ARTIFACTS_DIR/test-results.log"
 
     info "Running tests: ${DIM}$test_cmd${RESET}"
+
+    # ── Unique run key — accumulates history rather than overwriting ─────
+    # Include PID + random suffix to prevent collisions from parallel runs
+    # or rapid retries within the same second.
+    local _st_run_ts
+    _st_run_ts=$(date -u +"%Y%m%dT%H%M%SZ" 2>/dev/null || date +"%s")
+    local _st_run_uid="${_st_run_ts}-$$-${RANDOM}"
+    local _st_result_key="stage-test-result-${_st_run_uid}"
+    # Resolve a stable, cross-run namespace via repo hash (same approach as
+    # stage_test_first and ruflo_recall_similar_outcomes). pipeline-${ID} would
+    # create a fresh namespace each run, making flakiness recall impossible.
+    local _st_ruflo_ns=""
+    if declare -f _ruflo_resolve_repo_hash >/dev/null 2>&1; then
+        local _st_ns_hash
+        _st_ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || true
+        _st_ruflo_ns="${_st_ns_hash:+learning-${_st_ns_hash}}"
+    fi
+
+    # ── Recall historical flakiness patterns from ruflo ──────────────────
+    local _ruflo_flakiness_ctx=""
+    if declare -f ruflo_recall >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       [[ -n "$_st_ruflo_ns" ]] && \
+       ruflo_available; then
+        _ruflo_flakiness_ctx=$(ruflo_recall "test flakiness patterns failures" \
+            "$_st_ruflo_ns" 2>/dev/null || true)
+        _ruflo_flakiness_ctx=$(printf '%.2000s' "${_ruflo_flakiness_ctx:-}")
+        if [[ -n "$_ruflo_flakiness_ctx" ]]; then
+            info "Ruflo recall: historical test patterns found"
+            info "${DIM}${_ruflo_flakiness_ctx}${RESET}"
+        fi
+    fi
+
     local test_exit=0
     bash -c "$test_cmd" > "$test_log" 2>&1 || test_exit=$?
+
+    # ── Use recalled patterns: retry once if failure matches known flaky ──
+    local _test_is_known_flaky="false"
+    local _matched_flaky_pattern=""
+    if [[ "$test_exit" -ne 0 && -n "$_ruflo_flakiness_ctx" ]]; then
+        local _fail_excerpt
+        # Capture both head (setup/infra errors) and tail (test failure summaries)
+        # Most runners (jest, vitest, go test) print the failure summary at the end.
+        _fail_excerpt=$({ head -20 "$test_log"; tail -40 "$test_log"; } | strip_ansi 2>/dev/null || true)
+        # Extract keywords: require 8+ chars to avoid matching common words
+        # like "after", "error", "tests" that appear in most failure output.
+        # Also filter out a stop-list of generic terms that cause false positives.
+        local _kw _st_stopwords="received|expected|function|actually|returned|argument|property|undefined|contains|resource|standard|platform"
+        while IFS= read -r _kw; do
+            [[ ${#_kw} -lt 8 ]] && continue
+            # Skip generic words that appear in almost any test output
+            printf '%s' "$_kw" | grep -qiE "^(${_st_stopwords})$" 2>/dev/null && continue
+            if printf '%s\n' "$_fail_excerpt" | grep -qiF "$_kw" 2>/dev/null; then
+                _test_is_known_flaky="true"
+                _matched_flaky_pattern="$_kw"
+                break
+            fi
+        done < <(printf '%s\n' "$_ruflo_flakiness_ctx" | tr ' \t' '\n' | grep -E '^[a-zA-Z0-9_.-]{8,}$' | sort -u | head -30)
+        if [[ "$_test_is_known_flaky" == "true" ]]; then
+            info "Known flaky pattern matched: '${_matched_flaky_pattern}' — retrying test once"
+            local _retry_log="${ARTIFACTS_DIR}/test-results-retry.log"
+            local _retry_exit=0
+            bash -c "$test_cmd" > "$_retry_log" 2>&1 || _retry_exit=$?
+            if [[ "$_retry_exit" -eq 0 ]]; then
+                # Validate that retry passed the SAME tests (not a different subset
+                # due to environment changes). Compare test counts from both runs.
+                local _orig_test_count _retry_test_count
+                _orig_test_count=$(grep -cE 'PASS|FAIL|✓|✗|ok [0-9]' "$test_log" 2>/dev/null || true)
+                _orig_test_count=${_orig_test_count:-0}
+                _retry_test_count=$(grep -cE 'PASS|FAIL|✓|✗|ok [0-9]' "$_retry_log" 2>/dev/null || true)
+                _retry_test_count=${_retry_test_count:-0}
+                # If retry ran significantly fewer tests (>50% drop), likely an
+                # environment change (e.g., dependency installed, config altered)
+                # rather than a genuine flaky recovery.
+                local _count_valid="true"
+                if [[ "$_orig_test_count" -gt 2 && "$_retry_test_count" -gt 0 ]]; then
+                    local _half=$(( _orig_test_count / 2 ))
+                    if [[ "$_retry_test_count" -lt "$_half" ]]; then
+                        _count_valid="false"
+                    fi
+                fi
+                if [[ "$_count_valid" == "true" ]]; then
+                    success "Retry succeeded — known flaky test recovered on second attempt"
+                    cp "$_retry_log" "$test_log"
+                    test_exit=0
+                    emit_event "test.flaky_recovered" "pattern=${_matched_flaky_pattern}"
+                else
+                    warn "Retry passed but ran fewer tests (${_retry_test_count} vs ${_orig_test_count}) — environment may have changed; not marking as flaky recovery"
+                fi
+            else
+                warn "Retry also failed — test consistently failing (matched flaky pattern: '${_matched_flaky_pattern}')"
+            fi
+        fi
+    fi
 
     # Persist exit code for downstream consumers (avoids grep-based inference)
     local _st_tmp
@@ -661,6 +753,21 @@ $(tail -30 "$test_log" 2>/dev/null | strip_ansi || true)"
 \`\`\`
 ${log_excerpt}
 \`\`\`"
+        fi
+        # Store failed test result in ruflo for flakiness tracking
+        if declare -f ruflo_store >/dev/null 2>&1 && \
+           declare -f ruflo_available >/dev/null 2>&1 && \
+           [[ -n "$_st_ruflo_ns" ]] && \
+           ruflo_available; then
+            local _fail_names
+            _fail_names=$(grep -E '(FAIL|✗|●)[[:space:]]+' "$test_log" 2>/dev/null | head -5 | strip_ansi | tr '\n' ';' | sed 's/;$//' || true)
+            [[ -z "$_fail_names" ]] && _fail_names=$(grep -E 'Error:|panic:' "$test_log" 2>/dev/null | head -3 | strip_ansi | tr '\n' ';' | sed 's/;$//' || true)
+            local _st_fail_tags="test,stage_test,failed"
+            [[ "$_test_is_known_flaky" == "true" ]] && _st_fail_tags="${_st_fail_tags},known_flaky"
+            ruflo_store "$_st_result_key" \
+                "Tests FAILED (exit $test_exit). Failures: ${_fail_names:-unknown}. Cmd: ${test_cmd}. Time: ${_st_run_uid}." \
+                "$_st_ruflo_ns" \
+                "$_st_fail_tags" 2>/dev/null || true
         fi
         return 1
     fi
@@ -715,11 +822,20 @@ ${test_summary}
     _cov_tmp=$(mktemp "${ARTIFACTS_DIR}/test-coverage.json.tmp.XXXXXX")
     printf '{"coverage_pct":%d}' "${_cov_pct:-0}" > "$_cov_tmp" && mv "$_cov_tmp" "$ARTIFACTS_DIR/test-coverage.json" || rm -f "$_cov_tmp"
 
-    # Store test results in ruflo for cross-stage context
-    if declare -f ruflo_store >/dev/null 2>&1 && [[ -f "$ARTIFACTS_DIR/test-results.log" ]]; then
-        ruflo_store "stage-test-result" \
-            "Tests passed. Coverage: ${_cov_pct:-0}%." \
-            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
+    # Store test results in ruflo for cross-stage context and flakiness tracking
+    if declare -f ruflo_store >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       [[ -n "$_st_ruflo_ns" ]] && \
+       ruflo_available; then
+        local _pass_test_names
+        _pass_test_names=$(grep -E '(PASS|✓)[[:space:]]+' "$test_log" 2>/dev/null | head -5 | strip_ansi | tr '\n' ';' | sed 's/;$//' || true)
+        [[ -z "$_pass_test_names" ]] && _pass_test_names=$(grep -cE 'PASS|✓|ok [0-9]' "$test_log" 2>/dev/null | tr -d '\n' || true)
+        local _st_pass_tags="test,stage_test,passed"
+        [[ "$_test_is_known_flaky" == "true" ]] && _st_pass_tags="${_st_pass_tags},flaky_recovered"
+        ruflo_store "$_st_result_key" \
+            "Tests PASSED. Tests: ${_pass_test_names:-unknown}. Cmd: ${test_cmd}. Coverage: ${_cov_pct:-0}%. Time: ${_st_run_uid}." \
+            "$_st_ruflo_ns" \
+            "$_st_pass_tags" 2>/dev/null || true
     fi
 
     log_stage "test" "Tests passed${coverage:+ (coverage: ${coverage}%)}"

@@ -445,6 +445,119 @@ export TEST_CMD="echo FAIL; exit 1"
 stage_test 2>/dev/null || rc=$?
 [[ $rc -eq 1 ]] && assert_pass "Stage test returns 1 on test failure"
 
+# ─── Tests: stage_test — ruflo integration (direct call) ─────────────────────
+
+# Test: ruflo recall/store skipped when ruflo_available returns false
+unset -f ruflo_recall ruflo_store ruflo_available 2>/dev/null || true
+_st_int_store_called=false
+ruflo_available() { return 1; }
+ruflo_recall()    { echo "should-not-be-called"; }
+ruflo_store()     { _st_int_store_called=true; return 0; }
+export SHIPWRIGHT_PIPELINE_ID="int-test-123"
+export TEST_CMD="echo 'All 4 tests passed'"
+stage_test 2>/dev/null
+[[ "$_st_int_store_called" != "true" ]] \
+    && assert_pass "stage_test: ruflo_store skipped when ruflo_available returns false" \
+    || assert_fail "stage_test: ruflo_store skipped when ruflo_available returns false" \
+                   "store was called despite ruflo unavailable"
+
+# Test: ruflo_recall invoked and ruflo_store called with passed tag when ruflo available
+# (Use files to observe function calls — variable assignments in $() subshells don't propagate)
+_st_int_recall_file="$TEST_TEMP_DIR/st-int-recall.txt"
+_st_int_store_file="$TEST_TEMP_DIR/st-int-store.txt"
+rm -f "$_st_int_recall_file" "$_st_int_store_file"
+_ruflo_resolve_repo_hash() { printf 'testhash123'; }
+ruflo_available() { return 0; }
+ruflo_recall()    { touch "$_st_int_recall_file"; printf ''; }
+ruflo_store()     { echo "TAGS=${4:-}" >> "$_st_int_store_file"; return 0; }
+export _st_int_recall_file _st_int_store_file
+export TEST_CMD="echo 'All 4 tests passed'"
+stage_test 2>/dev/null
+[[ -f "$_st_int_recall_file" ]] \
+    && assert_pass "stage_test: ruflo_recall invoked when ruflo available" \
+    || assert_fail "stage_test: ruflo_recall invoked when ruflo available" \
+                   "recall not called"
+[[ -f "$_st_int_store_file" ]] \
+    && assert_pass "stage_test: ruflo_store called on success when ruflo available" \
+    || assert_fail "stage_test: ruflo_store called on success when ruflo available" \
+                   "store not called"
+grep -q "passed" "$_st_int_store_file" 2>/dev/null \
+    && assert_pass "stage_test: ruflo_store tags include passed on success" \
+    || assert_fail "stage_test: ruflo_store tags include passed on success" \
+                   "got: $(cat "$_st_int_store_file" 2>/dev/null)"
+
+# Test: ruflo_store called with failed tag when tests fail
+_st_int_fail_store_file="$TEST_TEMP_DIR/st-int-fail-store.txt"
+rm -f "$_st_int_fail_store_file"
+_ruflo_resolve_repo_hash() { printf 'testhash123'; }
+ruflo_available() { return 0; }
+ruflo_recall()    { printf ''; }
+ruflo_store()     { echo "TAGS=${4:-}" >> "$_st_int_fail_store_file"; return 0; }
+export _st_int_fail_store_file
+export TEST_CMD="echo FAIL; exit 1"
+stage_test 2>/dev/null || true
+[[ -f "$_st_int_fail_store_file" ]] \
+    && assert_pass "stage_test: ruflo_store called on failure when ruflo available" \
+    || assert_fail "stage_test: ruflo_store called on failure when ruflo available" \
+                   "store not called on failure"
+grep -q "failed" "$_st_int_fail_store_file" 2>/dev/null \
+    && assert_pass "stage_test: ruflo_store tags include failed on test failure" \
+    || assert_fail "stage_test: ruflo_store tags include failed on test failure" \
+                   "got: $(cat "$_st_int_fail_store_file" 2>/dev/null)"
+
+unset -f ruflo_available ruflo_recall ruflo_store _ruflo_resolve_repo_hash 2>/dev/null || true
+unset SHIPWRIGHT_PIPELINE_ID 2>/dev/null || true
+
+# Test: retry on known flaky pattern — recovers on second attempt
+# Use a counter file so state persists across bash -c subshells
+_st_int_retry_store_file="$TEST_TEMP_DIR/st-int-retry-store.txt"
+_st_int_retry_counter="$TEST_TEMP_DIR/st-int-retry-counter.txt"
+rm -f "$_st_int_retry_store_file" "$_st_int_retry_counter"
+echo "0" > "$_st_int_retry_counter"
+_ruflo_resolve_repo_hash() { printf 'testhash456'; }
+ruflo_available() { return 0; }
+ruflo_recall()    { printf 'connection-timeout intermittent'; }   # 8+ char keyword that matches failure
+ruflo_store()     { echo "TAGS=${4:-}" >> "$_st_int_retry_store_file"; return 0; }
+# First invocation fails with a keyword matching ruflo recall; second succeeds
+export _st_int_retry_counter
+export TEST_CMD='cnt=$(cat "$_st_int_retry_counter" 2>/dev/null || echo 0); if [[ "$cnt" -eq 0 ]]; then echo 1 > "$_st_int_retry_counter"; echo "Error: connection-timeout"; exit 1; fi; echo "All tests passed"'
+export _st_int_retry_store_file
+_st_retry_rc=0
+stage_test 2>/dev/null || _st_retry_rc=$?
+[[ "$_st_retry_rc" -eq 0 ]] \
+    && assert_pass "stage_test: retry recovers when flaky pattern matches on second attempt" \
+    || assert_fail "stage_test: retry recovers when flaky pattern matches on second attempt" \
+                   "expected exit 0, got $_st_retry_rc"
+[[ -f "$_st_int_retry_store_file" ]] && grep -q "flaky_recovered" "$_st_int_retry_store_file" 2>/dev/null \
+    && assert_pass "stage_test: flaky_recovered tag stored after successful retry" \
+    || assert_fail "stage_test: flaky_recovered tag stored after successful retry" \
+                   "tags: $(cat "$_st_int_retry_store_file" 2>/dev/null)"
+unset -f ruflo_available ruflo_recall ruflo_store _ruflo_resolve_repo_hash 2>/dev/null || true
+unset _st_int_retry_counter _st_int_retry_store_file 2>/dev/null || true
+
+# Test: flaky pattern matched even when failure appears beyond first 30 lines of log
+# (validates head+tail excerpt extraction rather than head-only)
+_st_int_tail_retry_store="$TEST_TEMP_DIR/st-int-tail-retry-store.txt"
+_st_int_tail_counter="$TEST_TEMP_DIR/st-int-tail-counter.txt"
+rm -f "$_st_int_tail_retry_store" "$_st_int_tail_counter"
+echo "0" > "$_st_int_tail_counter"
+_ruflo_resolve_repo_hash() { printf 'testhailhash'; }
+ruflo_available() { return 0; }
+ruflo_recall()    { printf 'sporadic'; }   # known flaky keyword
+ruflo_store()     { echo "TAGS=${4:-}" >> "$_st_int_tail_retry_store"; return 0; }
+# Failure message at line 35+ — beyond the old head-30 window
+export _st_int_tail_counter
+export _st_int_tail_retry_store
+export TEST_CMD='cnt=$(cat "$_st_int_tail_counter" 2>/dev/null || echo 0); if [[ "$cnt" -eq 0 ]]; then echo 1 > "$_st_int_tail_counter"; printf "line\n%.0s" {1..35}; echo "Error: sporadic failure"; exit 1; fi; echo "All tests passed"'
+_st_tail_rc=0
+stage_test 2>/dev/null || _st_tail_rc=$?
+[[ "$_st_tail_rc" -eq 0 ]] \
+    && assert_pass "stage_test: flaky pattern matched when failure is beyond first 30 lines" \
+    || assert_fail "stage_test: flaky pattern matched when failure is beyond first 30 lines" \
+                   "expected exit 0 (retry recovery), got $_st_tail_rc"
+unset -f ruflo_available ruflo_recall ruflo_store _ruflo_resolve_repo_hash 2>/dev/null || true
+unset _st_int_tail_counter _st_int_tail_retry_store 2>/dev/null || true
+
 # ─── Tests: stage_review ────────────────────────────────────────────────────
 print_test_section "stage_review"
 

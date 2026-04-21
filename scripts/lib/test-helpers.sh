@@ -45,6 +45,19 @@ AUTO_TEST_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sw-test-auto.XXXXXX")
 TEST_TEMP_DIR="$AUTO_TEST_TEMP_DIR"
 mkdir -p "$TEST_TEMP_DIR/home/.shipwright"
 mkdir -p "$TEST_TEMP_DIR/bin"
+mkdir -p "$TEST_TEMP_DIR/_tmp"
+# Sandbox mktemp shim — macOS plain `mktemp`/`mktemp -d` (no template) ignores
+# $TMPDIR and uses /var/folders which is write-blocked in the sandbox.
+# Route templateless calls through a writable directory.
+# Linux mktemp respects $TMPDIR natively so no shim is needed there; installing
+# one would break test setup_env() loops that do `ln -sf "$(command -v mktemp)"`
+# because command -v resolves to the shim itself (same-file ln error).
+if [[ "$(uname -s 2>/dev/null)" == "Darwin" ]]; then
+    printf '#!/usr/bin/env bash\n_s="%s"\nif [[ $# -eq 0 ]]; then exec /usr/bin/mktemp "$_s/tmp.XXXXXX"; fi\nif [[ $# -eq 1 && "$1" == "-d" ]]; then exec /usr/bin/mktemp -d "$_s/tmpd.XXXXXX"; fi\nexec /usr/bin/mktemp "$@"\n' \
+        "$TEST_TEMP_DIR/_tmp" > "$TEST_TEMP_DIR/bin/mktemp"
+    chmod +x "$TEST_TEMP_DIR/bin/mktemp"
+fi
+export PATH="$TEST_TEMP_DIR/bin:$PATH"
 # ─── Child-process killer (used by master trap) ──────────────────────────────
 _kill_test_children() {
     local pids
@@ -208,6 +221,14 @@ shift  # skip the timeout duration
 exec "$@"
 TIMEOUT_EOF
         chmod +x "$TEST_TEMP_DIR/bin/timeout"
+    fi
+
+    # Sandbox mktemp shim — macOS only (see auto-init comment above for rationale).
+    mkdir -p "$TEST_TEMP_DIR/_tmp"
+    if [[ "$(uname -s 2>/dev/null)" == "Darwin" ]]; then
+        printf '#!/usr/bin/env bash\n_s="%s"\nif [[ $# -eq 0 ]]; then exec /usr/bin/mktemp "$_s/tmp.XXXXXX"; fi\nif [[ $# -eq 1 && "$1" == "-d" ]]; then exec /usr/bin/mktemp -d "$_s/tmpd.XXXXXX"; fi\nexec /usr/bin/mktemp "$@"\n' \
+            "$TEST_TEMP_DIR/_tmp" > "$TEST_TEMP_DIR/bin/mktemp"
+        chmod +x "$TEST_TEMP_DIR/bin/mktemp"
     fi
 }
 

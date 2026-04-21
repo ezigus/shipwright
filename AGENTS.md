@@ -745,11 +745,11 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-adapters-test.sh` | 197 | Structural/smoke tests for terminal & deploy |
 | `scripts/sw-adaptive-test.sh` | 206 | Validate data-driven pipeline tuning |
 | `scripts/sw-adversarial-test.sh` | 258 | Validate adversarial agent code review |
-| `scripts/sw-agi-roadmap-test.sh` | 858 | Tests every feature we implemented |
+| `scripts/sw-agi-roadmap-test.sh` | 872 | Tests every feature we implemented |
 | `scripts/sw-ai-provider-test.sh` | 86 | Router + adapter normalization tests |
 | `scripts/sw-ai-test.sh` | 68 |  |
 | `scripts/sw-architecture-enforcer-test.sh` | 301 | Validate architecture model |
-| `scripts/sw-auth-test.sh` | 141 | Validate OAuth authentication commands |
+| `scripts/sw-auth-test.sh` | 150 | Validate OAuth authentication commands |
 | `scripts/sw-autonomous-e2e-test.sh` | 293 | Autonomous Loop E2E Test |
 | `scripts/sw-autonomous-test.sh` | 207 | AI-building-AI master controller tests |
 | `scripts/sw-budget-chaos-test.sh` | 252 | Budget Exhaustion & Chaos Tests |
@@ -820,7 +820,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 837 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 616 | Unit tests for quality |
-| `scripts/sw-lib-pipeline-stages-test.sh` | 1131 | Unit tests for stage functions |
+| `scripts/sw-lib-pipeline-stages-test.sh` | 1244 | Unit tests for stage functions |
 | `scripts/sw-lib-pipeline-state-test.sh` | 690 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 281 | Validate agent pane log viewing, searching, |
@@ -833,7 +833,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-oversight-test.sh` | 164 | Quality oversight board tests |
 | `scripts/sw-patrol-meta-test.sh` | 306 | Validate self-improvement patrol |
 | `scripts/sw-pipeline-composer-test.sh` | 632 | Test Suite |
-| `scripts/sw-pipeline-test.sh` | 2214 | E2E validation invoking the REAL pipeline |
+| `scripts/sw-pipeline-test.sh` | 2226 | E2E validation invoking the REAL pipeline |
 | `scripts/sw-pipeline-vitals-test.sh` | 226 | Validate pipeline health scoring |
 | `scripts/sw-pm-test.sh` | 225 | Autonomous PM Agent test suite |
 | `scripts/sw-policy-e2e-test.sh` | 290 | Verify config/policy.json is honored |
@@ -845,7 +845,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-quality-test.sh` | 227 | Validate ruthless quality validation engine |
 | `scripts/sw-reaper-test.sh` | 232 | Validate automatic tmux pane cleanup |
 | `scripts/sw-recruit-test.sh` | 1399 | Test suite for AGI-level agent recruitment system |
-| `scripts/sw-regression-test.sh` | 258 | Validate regression detection pipeline |
+| `scripts/sw-regression-test.sh` | 265 | Validate regression detection pipeline |
 | `scripts/sw-release-manager-test.sh` | 206 | Validate release pipeline |
 | `scripts/sw-release-test.sh` | 200 | Release train automation |
 | `scripts/sw-remote-test.sh` | 396 | Validate machine registry, atomic writes, |
@@ -853,7 +853,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-repo-dir-project-root-test.sh` | 363 | Regression tests for #335 |
 | `scripts/sw-retro-test.sh` | 171 | Sprint retrospective engine tests |
 | `scripts/sw-review-rerun-test.sh` | 307 | SHA-deduped rerun comment writer |
-| `scripts/sw-ruflo-adapter-test.sh` | 2531 |  |
+| `scripts/sw-ruflo-adapter-test.sh` | 2836 |  |
 | `scripts/sw-scale-test.sh` | 151 | Dynamic agent team scaling |
 | `scripts/sw-security-audit-test.sh` | 163 | Security auditing tests |
 | `scripts/sw-self-optimize-test.sh` | 837 | Unit tests for learning & tuning system |

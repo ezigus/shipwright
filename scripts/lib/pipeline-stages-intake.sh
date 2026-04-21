@@ -5,6 +5,8 @@ _PIPELINE_STAGES_INTAKE_LOADED=1
 
 stage_intake() {
     CURRENT_STAGE_ID="intake"
+    # Clear stale context from any previous pipeline run in the same shell process
+    unset INTELLIGENCE_INTAKE_CTX 2>/dev/null || true
     local project_lang
     project_lang=$(detect_project_lang)
     info "Project: ${BOLD}$project_lang${RESET}"
@@ -107,12 +109,51 @@ stage_intake() {
         fi
     fi
 
+    # 8. Ruflo: recall historical context for similar issues (fail-open)
+    if declare -f ruflo_recall_similar_outcomes >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _ruflo_intake_ctx
+        _ruflo_intake_ctx=$(ruflo_recall_similar_outcomes \
+            "${INTELLIGENCE_ISSUE_TYPE:-${TASK_TYPE}}" "${ISSUE_LABELS:-}" 2>/dev/null || true)
+        if [[ -n "$_ruflo_intake_ctx" ]]; then
+            INTELLIGENCE_INTAKE_CTX=$(printf '%.2000s' "$_ruflo_intake_ctx")
+            export INTELLIGENCE_INTAKE_CTX
+            info "Ruflo: recalled historical context for ${INTELLIGENCE_ISSUE_TYPE:-${TASK_TYPE}} issues"
+        fi
+    fi
+
+    # 9. Ruflo: store intake classification for downstream stage access.
+    # Use a deterministic repo-scoped namespace to avoid collisions when
+    # SHIPWRIGHT_PIPELINE_ID is unset (prevents all runs sharing "pipeline-unknown").
+    if declare -f ruflo_store >/dev/null 2>&1; then
+        local _intake_ns_hash=""
+        if declare -f _ruflo_resolve_repo_hash >/dev/null 2>&1; then
+            _intake_ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || true
+        fi
+        if [[ -z "$_intake_ns_hash" ]]; then
+            local _hash_input="${PROJECT_ROOT:-$PWD}"
+            _intake_ns_hash=$(printf '%s' "$_hash_input" | shasum -a 256 2>/dev/null | cut -c1-12 \
+                || printf '%s' "$_hash_input" | sha256sum 2>/dev/null | cut -c1-12 \
+                || true)
+        fi
+        if [[ -z "$_intake_ns_hash" || "$_intake_ns_hash" == "local" ]]; then
+            warn "Ruflo: failed to compute repo hash for memory namespace (shasum/sha256sum unavailable) — skipping intake store to prevent namespace collision"
+        else
+            if ! ruflo_store "stage-intake-result" \
+                "Issue type: ${INTELLIGENCE_ISSUE_TYPE:-${TASK_TYPE}}. Labels: ${ISSUE_LABELS:-none}. Task type: ${TASK_TYPE:-feature}. Goal: ${GOAL:-}." \
+                "learning-${_intake_ns_hash}"; then
+                warn "Ruflo: failed to store intake context (memory unavailable, downstream stages will lack historical patterns)"
+            fi
+        fi
+    fi
+
     log_stage "intake" "Goal: $GOAL
 Type: $TASK_TYPE → template: $suggested_template
 Branch: $GIT_BRANCH
 Language: $project_lang
 Test cmd: ${TEST_CMD:-none detected}
-Issue type: ${INTELLIGENCE_ISSUE_TYPE:-backend}"
+Issue type: ${INTELLIGENCE_ISSUE_TYPE:-${TASK_TYPE}}"
 }
 
 stage_plan() {
@@ -404,6 +445,14 @@ ${_prior_context}"
 Ruflo MCP tools are available in this session. Use mcp__ruflo__memory_store to persist
 important decisions and mcp__ruflo__memory_search to recall prior context from namespace
 'pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}'."
+    fi
+
+    # Inject intake-stage historical context (set by stage_intake ruflo recall)
+    if [[ -n "${INTELLIGENCE_INTAKE_CTX:-}" ]]; then
+        plan_prompt="${plan_prompt}
+
+## Intake Context (historical patterns from ruflo)
+$(printf '%s\n' "${INTELLIGENCE_INTAKE_CTX}")"
     fi
 
     # Guard total prompt size
@@ -940,6 +989,14 @@ ${_prior_context}"
 Ruflo MCP tools are available in this session. Use mcp__ruflo__memory_store to persist
 important decisions and mcp__ruflo__memory_search to recall prior context from namespace
 'pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}'."
+    fi
+
+    # Inject intake-stage historical context (set by stage_intake ruflo recall)
+    if [[ -n "${INTELLIGENCE_INTAKE_CTX:-}" ]]; then
+        design_prompt="${design_prompt}
+
+## Intake Context (historical patterns from ruflo)
+$(printf '%s\n' "${INTELLIGENCE_INTAKE_CTX}")"
     fi
 
     # Guard total prompt size

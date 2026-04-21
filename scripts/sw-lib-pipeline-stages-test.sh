@@ -561,19 +561,22 @@ CAPTURED_BUILD_PROMPT="$_build_recall_capture" stage_build 2>/dev/null || true
 set -e
 
 if [[ -f "$_build_recall_capture" ]]; then
+    # This file is written by the sw mock when sw loop is called — proving
+    # that the enriched goal (with recall context) actually reached the loop
+    # invocation, not just that it was set in a local variable.
     _build_goal=$(cat "$_build_recall_capture")
     if echo "$_build_goal" | grep -q "## Historical Build Context"; then
-        assert_pass "stage_build: recall injected under ## Historical Build Context"
+        assert_pass "stage_build: ## Historical Build Context header present in sw loop invocation"
     else
-        assert_fail "stage_build: recall injected under ## Historical Build Context" "section missing from goal"
+        assert_fail "stage_build: ## Historical Build Context header present in sw loop invocation" "section missing from sw loop goal arg"
     fi
     if echo "$_build_goal" | grep -q "fixed auth middleware"; then
-        assert_pass "stage_build: recall content present in enriched_goal"
+        assert_pass "stage_build: recall content present in sw loop invocation"
     else
-        assert_fail "stage_build: recall content present in enriched_goal" "recall text missing from goal"
+        assert_fail "stage_build: recall content present in sw loop invocation" "recall text missing from sw loop goal arg"
     fi
 else
-    assert_fail "stage_build: goal captured for recall test" "capture file missing"
+    assert_fail "stage_build: sw loop invoked with captured goal for recall test" "capture file missing — sw loop may not have been called or CAPTURED_BUILD_PROMPT not inherited"
 fi
 unset -f ruflo_available ruflo_recall_similar_outcomes 2>/dev/null || true
 

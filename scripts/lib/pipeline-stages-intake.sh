@@ -5,6 +5,8 @@ _PIPELINE_STAGES_INTAKE_LOADED=1
 
 stage_intake() {
     CURRENT_STAGE_ID="intake"
+    # Clear stale context from any previous pipeline run in the same shell process
+    unset INTELLIGENCE_INTAKE_CTX 2>/dev/null || true
     local project_lang
     project_lang=$(detect_project_lang)
     info "Project: ${BOLD}$project_lang${RESET}"
@@ -113,19 +115,30 @@ stage_intake() {
        ruflo_available; then
         local _ruflo_intake_ctx
         _ruflo_intake_ctx=$(ruflo_recall_similar_outcomes \
-            "${INTELLIGENCE_ISSUE_TYPE:-backend}" "${ISSUE_LABELS:-}" 2>/dev/null || true)
+            "${INTELLIGENCE_ISSUE_TYPE:-${TASK_TYPE}}" "${ISSUE_LABELS:-}" 2>/dev/null || true)
         if [[ -n "$_ruflo_intake_ctx" ]]; then
             INTELLIGENCE_INTAKE_CTX=$(printf '%.2000s' "$_ruflo_intake_ctx")
             export INTELLIGENCE_INTAKE_CTX
-            info "Ruflo: recalled historical context for ${INTELLIGENCE_ISSUE_TYPE:-backend} issues"
+            info "Ruflo: recalled historical context for ${INTELLIGENCE_ISSUE_TYPE:-${TASK_TYPE}} issues"
         fi
     fi
 
-    # 9. Ruflo: store intake classification for downstream stage access
+    # 9. Ruflo: store intake classification for downstream stage access.
+    # Use a deterministic repo-scoped namespace to avoid collisions when
+    # SHIPWRIGHT_PIPELINE_ID is unset (prevents all runs sharing "pipeline-unknown").
     if declare -f ruflo_store >/dev/null 2>&1; then
+        local _intake_ns_hash=""
+        if declare -f _ruflo_resolve_repo_hash >/dev/null 2>&1; then
+            _intake_ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || true
+        fi
+        if [[ -z "$_intake_ns_hash" ]]; then
+            _intake_ns_hash=$(printf '%s' "${PROJECT_ROOT:-$PWD}" | shasum -a 256 2>/dev/null | cut -c1-12 \
+                || printf '%s' "${PROJECT_ROOT:-$PWD}" | sha256sum 2>/dev/null | cut -c1-12 \
+                || echo "local")
+        fi
         ruflo_store "stage-intake-result" \
-            "Issue type: ${INTELLIGENCE_ISSUE_TYPE:-backend}. Labels: ${ISSUE_LABELS:-none}. Task type: ${TASK_TYPE:-feature}. Goal: ${GOAL:-}." \
-            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
+            "Issue type: ${INTELLIGENCE_ISSUE_TYPE:-${TASK_TYPE}}. Labels: ${ISSUE_LABELS:-none}. Task type: ${TASK_TYPE:-feature}. Goal: ${GOAL:-}." \
+            "learning-${_intake_ns_hash}" || true
     fi
 
     log_stage "intake" "Goal: $GOAL
@@ -133,7 +146,7 @@ Type: $TASK_TYPE → template: $suggested_template
 Branch: $GIT_BRANCH
 Language: $project_lang
 Test cmd: ${TEST_CMD:-none detected}
-Issue type: ${INTELLIGENCE_ISSUE_TYPE:-backend}"
+Issue type: ${INTELLIGENCE_ISSUE_TYPE:-${TASK_TYPE}}"
 }
 
 stage_plan() {
@@ -432,7 +445,7 @@ important decisions and mcp__ruflo__memory_search to recall prior context from n
         plan_prompt="${plan_prompt}
 
 ## Intake Context (historical patterns from ruflo)
-${INTELLIGENCE_INTAKE_CTX}"
+$(printf '%s\n' "${INTELLIGENCE_INTAKE_CTX}")"
     fi
 
     # Guard total prompt size
@@ -976,7 +989,7 @@ important decisions and mcp__ruflo__memory_search to recall prior context from n
         design_prompt="${design_prompt}
 
 ## Intake Context (historical patterns from ruflo)
-${INTELLIGENCE_INTAKE_CTX}"
+$(printf '%s\n' "${INTELLIGENCE_INTAKE_CTX}")"
     fi
 
     # Guard total prompt size

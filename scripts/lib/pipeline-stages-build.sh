@@ -317,7 +317,13 @@ ${_skill_prompts}
        ruflo_available; then
         local _build_recall_query _build_recall_ctx
         _build_recall_query="${GOAL:-}"
-        [[ -n "${ISSUE_LABELS:-}" ]] && _build_recall_query="${_build_recall_query}; labels: ${ISSUE_LABELS}"
+        if [[ -n "${ISSUE_LABELS:-}" ]]; then
+            # Strip characters that could malform the query if the recall system
+            # treats the query as structured/DSL input (e.g. quotes, semicolons).
+            local _safe_labels
+            _safe_labels=$(printf '%s' "${ISSUE_LABELS}" | tr -d '";\`\\')
+            _build_recall_query="${_build_recall_query}; labels: ${_safe_labels}"
+        fi
         _build_recall_ctx=""
         # Warn on failure so a broken memory system is visible to operators.
         _build_recall_ctx=$(ruflo_recall_similar_outcomes "${TASK_TYPE:-feature}" "$_build_recall_query" 2>/dev/null) || {

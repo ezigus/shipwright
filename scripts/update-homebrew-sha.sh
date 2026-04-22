@@ -15,7 +15,7 @@ if [[ -z "$TAG" ]]; then
     exit 1
 fi
 VERSION_NUM="${TAG#v}"
-REPO="${SHIPWRIGHT_GITHUB_REPO:-sethdford/shipwright}"
+REPO="${SHIPWRIGHT_GITHUB_REPO:-ezigus/shipwright}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FORMULA="${REPO_ROOT}/homebrew/shipwright.rb"
 BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"

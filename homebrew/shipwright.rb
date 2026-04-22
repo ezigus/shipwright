@@ -11,16 +11,16 @@ class Shipwright < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/sethdford/shipwright/releases/download/v#{version}/shipwright-darwin-arm64.tar.gz"
-      sha256 "af727fcaf01ffb9cebcbb00ae8c710d377267f78b0f106feb033b2b3c047a154"
+      sha256 "b8666765f2935d487ce8ed4c161bf743882c7307373231b1b019cf539f3b3828"
     else
       url "https://github.com/sethdford/shipwright/releases/download/v#{version}/shipwright-darwin-x86_64.tar.gz"
-      sha256 "af727fcaf01ffb9cebcbb00ae8c710d377267f78b0f106feb033b2b3c047a154"
+      sha256 "b8666765f2935d487ce8ed4c161bf743882c7307373231b1b019cf539f3b3828"
     end
   end
 
   on_linux do
     url "https://github.com/sethdford/shipwright/releases/download/v#{version}/shipwright-linux-x86_64.tar.gz"
-    sha256 "af727fcaf01ffb9cebcbb00ae8c710d377267f78b0f106feb033b2b3c047a154"
+    sha256 "b8666765f2935d487ce8ed4c161bf743882c7307373231b1b019cf539f3b3828"
   end
 
   depends_on "bash"

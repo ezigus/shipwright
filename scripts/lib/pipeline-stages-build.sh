@@ -311,6 +311,50 @@ ${_skill_prompts}
 "
     fi
 
+    # ── Ruflo: recall similar build outcomes for historical context ────────────
+    if declare -f ruflo_recall_similar_outcomes >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _build_recall_query _build_recall_ctx
+        _build_recall_query="${GOAL:-}"
+        if [[ -n "${ISSUE_LABELS:-}" ]]; then
+            # Strip characters that could malform the query if the recall system
+            # treats the query as structured/DSL input (e.g. quotes, semicolons).
+            local _safe_labels
+            _safe_labels=$(printf '%s' "${ISSUE_LABELS}" | tr -d '";\`\\')
+            _build_recall_query="${_build_recall_query}; labels: ${_safe_labels}"
+        fi
+        _build_recall_ctx=""
+        # ruflo_recall_similar_outcomes is fail-open: it always exits 0 and prints an
+        # empty string when the underlying search fails. The || true is defensive only.
+        _build_recall_ctx=$(ruflo_recall_similar_outcomes "${TASK_TYPE:-feature}" "$_build_recall_query" 2>/dev/null) || true
+        # Sanitize recall output before injecting into the prompt:
+        # 1. Strip entire lines starting with '#' (markdown headers). Removing the whole
+        #    line is safer than stripping only the prefix — bare header text is still an
+        #    instruction fragment that Claude could interpret as a directive.
+        #    Use sed (not grep -v) so the pipeline exits 0 even when all lines are filtered.
+        # 2. Strip C0 control characters (except HT \011 and LF \012) to prevent
+        #    escape-sequence injection from a compromised memory store.
+        # 3. Truncate to 2000 chars to prevent context flooding.
+        local _raw_recall_ctx="$_build_recall_ctx"
+        _build_recall_ctx=$(printf '%s\n' "${_build_recall_ctx}" \
+            | sed '/^#/d' \
+            | tr -d '\000-\010\013-\037\177')
+        _build_recall_ctx=$(printf '%.2000s' "${_build_recall_ctx}")
+        # Warn if sanitization stripped any content — this indicates a compromised
+        # or malformed memory store entry and may warrant operator investigation.
+        if [[ "$_raw_recall_ctx" != "$_build_recall_ctx" && -n "$_raw_recall_ctx" ]]; then
+            warn "Ruflo: recall output was sanitized before injection (potential injection attempt or malformed data)"
+        fi
+        if [[ -n "$_build_recall_ctx" ]]; then
+            enriched_goal="${enriched_goal}
+
+## Historical Build Context
+${_build_recall_ctx}"
+            info "Ruflo: injected historical build context (${#_build_recall_ctx} chars)"
+        fi
+    fi
+
     loop_args+=("$enriched_goal")
 
     # Build loop args from pipeline config + CLI overrides

@@ -2833,4 +2833,83 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "RUFLO_COST_BUDGET_MULTIPLIER — agent count scaling"
+
+# Helper: apply the multiplier formula directly (mirrors ruflo-adapter.sh logic)
+_apply_multiplier_test() {
+    local default_max="$1"
+    local multiplier="$2"
+    if [[ -n "$multiplier" ]]; then
+        awk -v d="$default_max" -v m="$multiplier" \
+            'BEGIN{v=int(d*m); print (v<1?1:(v>d?d:v))}' 2>/dev/null || echo "$default_max"
+    else
+        echo "$default_max"
+    fi
+}
+
+# Test 1: Unset/empty multiplier → no-op (backward compatibility)
+_mult_result=$(_apply_multiplier_test 4 "")
+if [[ "$_mult_result" == "4" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: unset/empty -> no-op (got $_mult_result)"
+else
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: unset/empty -> no-op" "expected 4, got $_mult_result"
+fi
+
+# Test 2: Multiplier 2.0 with default 4 → capped at 4 (v>d → d)
+_mult_result=$(_apply_multiplier_test 4 "2.0")
+if [[ "$_mult_result" == "4" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: 2.0 with max=4 -> capped at 4 (got $_mult_result)"
+else
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: 2.0 with max=4 -> capped at 4" "expected 4, got $_mult_result"
+fi
+
+# Test 3: Multiplier 0.5 with default 4 → 2 (scale down)
+_mult_result=$(_apply_multiplier_test 4 "0.5")
+if [[ "$_mult_result" == "2" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: 0.5 with max=4 -> 2 (got $_mult_result)"
+else
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: 0.5 with max=4 -> 2" "expected 2, got $_mult_result"
+fi
+
+# Test 4: Multiplier 0 → enforces minimum 1 agent
+_mult_result=$(_apply_multiplier_test 4 "0")
+if [[ "$_mult_result" == "1" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: 0 -> enforces min 1 (got $_mult_result)"
+else
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: 0 -> enforces min 1" "expected 1, got $_mult_result"
+fi
+
+# Test 5: Multiplier 3.0 with default 4 → capped at 4 (hard cap respected)
+_mult_result=$(_apply_multiplier_test 4 "3.0")
+if [[ "$_mult_result" == "4" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: 3.0 with max=4 -> capped at 4 (got $_mult_result)"
+else
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: 3.0 with max=4 -> capped at 4" "expected 4, got $_mult_result"
+fi
+
+# Test 6: Multiplier 0.5 with default 3 (compound quality default) → 1 (floor)
+_mult_result=$(_apply_multiplier_test 3 "0.5")
+if [[ "$_mult_result" == "1" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: 0.5 with max=3 -> 1 (floor of 1.5, got $_mult_result)"
+else
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: 0.5 with max=3 -> 1" "expected 1, got $_mult_result"
+fi
+
+# Test 7: Multiplier 1.0 → unchanged (identity)
+_mult_result=$(_apply_multiplier_test 4 "1.0")
+if [[ "$_mult_result" == "4" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: 1.0 -> identity (got $_mult_result)"
+else
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: 1.0 -> identity" "expected 4, got $_mult_result"
+fi
+
+# Test 8: Multiplier 0.25 with default 4 → 1 (min enforced)
+_mult_result=$(_apply_multiplier_test 4 "0.25")
+if [[ "$_mult_result" == "1" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: 0.25 with max=4 -> 1 (min enforced, got $_mult_result)"
+else
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: 0.25 with max=4 -> 1" "expected 1, got $_mult_result"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

@@ -92,7 +92,7 @@ HOLISTIC_DIFF_MAX_LINES=$(_config_get_int "loop.holistic_diff_max_lines" 1000 2>
 SESSION_RESTART=false
 RESTART_COUNT=0
 REPO_OVERRIDE=""
-VERSION="3.3.0"
+VERSION="3.6.0"
 
 # ─── Token Tracking ─────────────────────────────────────────────────────────
 LOOP_INPUT_TOKENS=0

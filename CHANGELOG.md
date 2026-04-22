@@ -7,6 +7,96 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [3.6.0] — 2026-04-22
+
+### Ruflo Deep Stage Integration
+
+Every pipeline stage from intake through build now has ruflo semantic recall injected, completing the full memory chain across the autonomous pipeline.
+
+- **Build stage recall** — `ruflo_recall_similar_outcomes` injected into `stage_build` before hive execution; prior fix patterns surface before Claude starts iterating
+- **Intake stage memory** — ruflo recall and store wired into `stage_intake` for issue classification context; prior outcomes for the same issue type seed the classification prompt
+- **Test stage flakiness memory** — test stage results persisted in ruflo; historical flakiness patterns recalled on retry to distinguish genuinely broken vs. flaky failures
+- **TDD / test_first enrichment** — ruflo semantic recall injected into `stage_test_first` so generated tests are informed by prior test patterns for the same task type
+- **Audit stage hive** — `stage_audit` now dispatches to `ruflo_execute_audit` with four parallel specialists (CVE scanner, secrets detector, OWASP auditor, compliance checker)
+- **Learning feedback loop closed** — `ruflo_learn_from_shipwright` called after every pipeline outcome; learning bridge connects Shipwright outcomes to ruflo memory
+
+### Ruflo Infrastructure
+
+- **Singleton hive-mind init** — eliminated 120s pipeline overhead by initializing the hive once per pipeline run instead of per stage; `RUFLO_HIVE_ID` shared across stages
+- **Memory persistence across CI runs** — ruflo memory persisted to an orphan git branch (`ruflo/memory`); CI runners inherit learning from prior runs without external storage
+- **Daemon recovery path** — `--force` recovery added when daemon start fails after init check passes
+- **Hive-mind stderr capture** — actionable diagnostics at all hive-mind init call sites
+- **TTY/pipe fixes** — `CI=true` injection, stdin redirect from `/dev/null`, and `cut: Broken pipe` elimination in `_ruflo_run`
+- **Timeout compatibility** — BSD/GNU `timeout` incompatibility fixed; recoverable circuit breaker added
+
+### Pipeline Reliability
+
+- **git-SHA artifact anchoring** — pipeline artifacts stamped with the git SHA at stage completion; stale artifacts from prior runs no longer cause false `AUDIT:FAIL`
+- **Dead cycle file cleanup** — stale lock and cycle files purged on fresh pipeline start
+- **Duration format validation** — `jq` partial-float corruption prevented by validating duration string before parsing
+- **Undefined stage guard** — `run_stage_with_retry` now guards against undefined stage functions instead of silently failing
+
+### Ruflo Queen-Collapse Roadmap (Issues Filed)
+
+A comprehensive analysis (three-session review) identified that all existing hive functions use raw union aggregation with no queen/collapse. The following issues were filed for Phase 01–03 implementation:
+
+- **#414** `[01.1]` Wire `RUFLO_COST_BUDGET_MULTIPLIER` into agent counts (dead config activated)
+- **#417** `[01.2]` Cross-stage drift detector — plan.md vs git diff
+- **#415** `[01.3]` Queen collapse for `ruflo_execute_review` — dedup and rank
+- **#416** `[01.4]` Queen collapse for `ruflo_execute_audit` — severity promotion
+- **#418** `[02.1]` Wire `ruflo_execute_compound_quality` into active stage
+- **#419** `[02.2]` Queen collapse for compound quality — conflict surfacing
+- **#420** `[02.3]` Seed hive specialists with historical recall
+- **#421** `[02.4]` PR stage ruflo memory bookend
+- **#422** `[03.1]` Self-heal hypothesis hive
+- **#423** `[03.2]` Plan stage multi-agent divergence with queen collapse
+- **#424** `[03.3]` Cost-routed queen — haiku specialists, opus queen [blocked on ruflo upstream]
+
+---
+
+## [3.5.0] — 2026-04-10
+
+### Loop Quality
+
+- **GOAL pollution fix** — GOAL mutations from error injection no longer leak into persisted pipeline state; GOAL is now read-only after the initial write
+- **Circuit-breaker escape hatch** — when the circuit breaker fires on a healthy run, a recovery path allows resumption without a full restart
+- **Zero-progress blindness** — stuckness detector now tracks diff hash, error hash, and exit code across iterations; identical triplets trigger escalation instead of silent retry
+- **25-iteration empty-diff cycling fix** — loop now detects when Claude produces no diff and terminates gracefully instead of consuming all remaining iterations
+
+### Compound Quality
+
+- **Hallucinated finding elimination** — structural verification pass drops findings that reference symbols not present in the actual diff; false positives from compound analysis eliminated
+- **Test exit code sidecar** — test pass/fail now recorded in a sidecar file, replacing fragile grep-based detection; eliminates false DoD failures from log-format variance
+- **Audit prompt enrichment** — full file contents injected into audit prompts for better context; previously only the diff was available
+- **Plateau defers to quality gate** — compound plateau detection now defers to the quality gate result instead of double-counting; fixes double-penalization of marginal diffs
+
+### Pipeline Hardening
+
+- **Newline escaping in GOAL** — newlines in GOAL escaped on write and unescaped on read; fixed JSON corruption in pipeline state files
+- **Stale artifact prevention** — pipeline artifacts validated against current git SHA before use; stale artifacts from interrupted runs no longer cause `AUDIT:FAIL`
+- **Checkpoint cleanup on fresh start** — `checkpoints/` directory purged on new pipeline run to prevent resume from stale state
+- **Heartbeat and stage-marker visibility** — pipeline progress comments now appear correctly in GitHub PR timeline
+- **Security findings fed back to build loop** — `stage_audit` findings injected into the build loop goal on re-entry; Claude now sees security issues on the next iteration
+- **YAML literal block scalar fix** — issue comment body newlines no longer break the GitHub Actions workflow YAML
+
+### Detection & Platform
+
+- **iOS/Xcode detection** — `ios_xcode` task type detection switched to positional args (was using `-t` flag, broke on certain git configurations)
+- **Dead code removal** — automated dead code patrol identified and removed 1 file with unused functions
+- **`REPO_DIR`/`PROJECT_ROOT` split** — 22 scripts fixed to use the correct root variable for PATH-installed vs. in-repo invocations; resolves intelligence engine failures on `PATH` installs
+
+### Ruflo Foundation (Prerequisites for 3.6)
+
+- **Adapter, scaffolding, MCP lifecycle** — ruflo 01/08: full adapter detection, health check, and circuit-breaker pattern
+- **Memory bridge** — ruflo 02/08: dual-path CLI and MCP integration for Shipwright↔ruflo memory exchange
+- **Single-agent and hive build execution** — ruflo 03a–03b/08: `ruflo_execute_build_single` and `ruflo_execute_build_hive` with Q-learning agent selection
+- **Parallel review and compound_quality hive** — ruflo 04/08: `ruflo_execute_review` and `ruflo_execute_compound_quality` with union aggregation
+- **Shipwright↔ruflo learning bridge** — ruflo 05/08: outcome learning connected bidirectionally
+- **Project-level defaults** — ruflo 06/08: `defaults.json` keys for all ruflo tunables (`max_agents`, `cost_budget_multiplier`, `circuit_breaker_timeout_s`, `learning_bridge`, `q_learning_routing`)
+- **CI runner install** — ruflo 07/08: ruflo installed and health-checked in CI runner before pipeline starts
+
+---
+
 ## [3.2.0] — 2026-02-27
 
 ### Context Engineering & Intelligence

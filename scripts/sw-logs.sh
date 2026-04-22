@@ -5,7 +5,7 @@
 # ║  Captures tmux pane scrollback and provides log browsing/search.        ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 # shellcheck disable=SC2034
-VERSION="3.3.0"
+VERSION="3.6.0"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 

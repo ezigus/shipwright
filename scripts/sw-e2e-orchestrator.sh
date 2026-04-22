@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.3.0"
+VERSION="3.6.0"
 
 # ─── Script directory resolution ────────────────────────────────────────────
 SOURCE="${BASH_SOURCE[0]}"

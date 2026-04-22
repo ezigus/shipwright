@@ -68,9 +68,19 @@ now_epoch() { date +%s; }
 # Appends JSON events to ~/.shipwright/events.jsonl for metrics/traceability
 EVENTS_FILE="${EVENTS_FILE:-${HOME}/.shipwright/events.jsonl}"
 
+# Memoized repo slug for emit_event. Assignment must happen outside subshells so the
+# cached value persists across calls within the same shell session.
+_EMIT_REPO_SLUG=""
+
 emit_event() {
     local event_type="$1"
     shift
+
+    # Memoize repo slug in parent shell (not inside $(...)) so cache actually persists.
+    if [[ -z "$_EMIT_REPO_SLUG" ]]; then
+        _EMIT_REPO_SLUG=$(_sw_github_repo 2>/dev/null || _sw_repo_hash 2>/dev/null || echo "unknown")
+    fi
+    set -- "repo=${_EMIT_REPO_SLUG}" "$@"
 
     # Try SQLite first (via sw-db.sh's db_add_event)
     if type db_add_event >/dev/null 2>&1; then
@@ -368,6 +378,28 @@ _sw_github_url() {
     local repo
     repo="$(_sw_github_repo)"
     echo "https://github.com/${repo}"
+}
+
+# Compute 12-char repo hash from git remote origin URL (Bash 3.2-safe).
+# Returns REPO_HASH env var value if already set (avoids redundant subprocesses).
+_sw_repo_hash() {
+    if [[ -n "${REPO_HASH:-}" ]]; then
+        printf '%s' "$REPO_HASH"
+        return
+    fi
+    local _origin
+    _origin=$(git config --get remote.origin.url 2>/dev/null || echo "local-$(basename "$PWD")")
+    local _hash=""
+    if command -v shasum >/dev/null 2>&1; then
+        _hash=$(printf '%s' "$_origin" | shasum -a 256 2>/dev/null | cut -c1-12) || true
+    elif command -v sha256sum >/dev/null 2>&1; then
+        _hash=$(printf '%s' "$_origin" | sha256sum 2>/dev/null | cut -c1-12) || true
+    fi
+    if [[ -n "$_hash" ]]; then
+        printf '%s' "$_hash"
+    else
+        echo "unknown"
+    fi
 }
 
 # ─── ANSI Escape Code Stripping ─────────────────────────────────────────

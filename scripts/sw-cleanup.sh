@@ -547,20 +547,77 @@ else
     echo -e "  ${DIM}Not in a git repository.${RESET}"
 fi
 
+# ─── 9. Corrupted State Backups ────────────────────────────────────────────
+
+echo ""
+echo -e "${BOLD}Corrupted State Backups${RESET}  ${DIM}~/.shipwright/daemon-state.json.corrupted.*${RESET}"
+echo -e "${DIM}────────────────────────────────────────${RESET}"
+
+CORRUPTED_STATE_FILE="$HOME/.shipwright/daemon-state.json"
+CORRUPTED_FOUND=0
+CORRUPTED_REMOVED=0
+if ls "${CORRUPTED_STATE_FILE}.corrupted."* >/dev/null 2>&1; then
+    corrupted_count=$(ls "${CORRUPTED_STATE_FILE}.corrupted."* 2>/dev/null | wc -l | tr -d ' ')
+    corrupted_count=${corrupted_count:-0}
+    CORRUPTED_FOUND=$corrupted_count
+    if [[ $corrupted_count -gt 5 ]]; then
+        if $FORCE; then
+            to_remove=$(ls -t "${CORRUPTED_STATE_FILE}.corrupted."* 2>/dev/null | tail -n +6)
+            if [[ -n "$to_remove" ]]; then
+                echo "$to_remove" | xargs rm -f 2>/dev/null || true
+                CORRUPTED_REMOVED=$((corrupted_count - 5))
+            fi
+            echo -e "  ${RED}✗${RESET} Pruned corrupted state backups ${DIM}(kept 5 of ${corrupted_count})${RESET}"
+        else
+            echo -e "  ${YELLOW}○${RESET} Would prune corrupted state backups ${DIM}(${corrupted_count} found, would keep 5)${RESET}"
+        fi
+    else
+        echo -e "  ${DIM}${corrupted_count} corrupted backup(s) — within limit (≤5).${RESET}"
+    fi
+else
+    echo -e "  ${DIM}No corrupted state backups.${RESET}"
+fi
+
+# ─── 10. Pipeline Task Files ───────────────────────────────────────────────
+
+echo ""
+echo -e "${BOLD}Pipeline Task Files${RESET}  ${DIM}pipeline-tasks*.md (>1 day old)${RESET}"
+echo -e "${DIM}────────────────────────────────────────${RESET}"
+
+PIPELINE_TASKS_FOUND=0
+PIPELINE_TASKS_REMOVED=0
+while IFS= read -r pt_file; do
+    [[ -f "$pt_file" ]] || continue
+    PIPELINE_TASKS_FOUND=$((PIPELINE_TASKS_FOUND + 1))
+    pt_name=$(basename "$pt_file")
+    if $FORCE; then
+        rm -f "$pt_file"
+        PIPELINE_TASKS_REMOVED=$((PIPELINE_TASKS_REMOVED + 1))
+        echo -e "  ${RED}✗${RESET} Removed: ${pt_name}"
+    else
+        echo -e "  ${YELLOW}○${RESET} Would remove: ${pt_name}"
+    fi
+done < <(find "$PROJECT_ROOT" -maxdepth 1 -name "pipeline-tasks*.md" -mtime +1 -type f 2>/dev/null)
+
+if [[ "$PIPELINE_TASKS_FOUND" -eq 0 ]]; then
+    echo -e "  ${DIM}No stale pipeline task files.${RESET}"
+fi
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 
 echo ""
 echo -e "${DIM}────────────────────────────────────────${RESET}"
 
-TOTAL_FOUND=$((WINDOWS_FOUND + SWARM_SESSIONS_FOUND + SWARM_REGISTRY_REMOVED + TEAM_DIRS_FOUND + TASK_DIRS_FOUND + ARTIFACTS_FOUND + CHECKPOINTS_FOUND + HEARTBEATS_FOUND + BRANCHES_FOUND + STATE_RESET))
+TOTAL_FOUND=$((WINDOWS_FOUND + SWARM_SESSIONS_FOUND + SWARM_REGISTRY_REMOVED + TEAM_DIRS_FOUND + TASK_DIRS_FOUND + ARTIFACTS_FOUND + CHECKPOINTS_FOUND + HEARTBEATS_FOUND + BRANCHES_FOUND + STATE_RESET + CORRUPTED_FOUND + PIPELINE_TASKS_FOUND))
 
 if $FORCE; then
-    TOTAL_CLEANED=$((WINDOWS_KILLED + SWARM_SESSIONS_KILLED + SWARM_REGISTRY_REMOVED + TEAM_DIRS_REMOVED + TASK_DIRS_REMOVED + ARTIFACTS_REMOVED + CHECKPOINTS_REMOVED + HEARTBEATS_REMOVED + BRANCHES_REMOVED + STATE_RESET))
+    TOTAL_CLEANED=$((WINDOWS_KILLED + SWARM_SESSIONS_KILLED + SWARM_REGISTRY_REMOVED + TEAM_DIRS_REMOVED + TASK_DIRS_REMOVED + ARTIFACTS_REMOVED + CHECKPOINTS_REMOVED + HEARTBEATS_REMOVED + BRANCHES_REMOVED + STATE_RESET + CORRUPTED_REMOVED + PIPELINE_TASKS_REMOVED))
     if [[ $TOTAL_CLEANED -gt 0 ]]; then
         success "Cleaned ${TOTAL_CLEANED} items"
         echo -e "  ${DIM}windows: ${WINDOWS_KILLED}, swarm sessions: ${SWARM_SESSIONS_KILLED}, swarm registry: ${SWARM_REGISTRY_REMOVED}${RESET}"
         echo -e "  ${DIM}teams: ${TEAM_DIRS_REMOVED}, tasks: ${TASK_DIRS_REMOVED}, artifacts: ${ARTIFACTS_REMOVED}${RESET}"
         echo -e "  ${DIM}checkpoints: ${CHECKPOINTS_REMOVED}, heartbeats: ${HEARTBEATS_REMOVED}, branches: ${BRANCHES_REMOVED}, state: ${STATE_RESET}${RESET}"
+        echo -e "  ${DIM}corrupted backups pruned: ${CORRUPTED_REMOVED}, pipeline task files: ${PIPELINE_TASKS_REMOVED}${RESET}"
     else
         success "Nothing to clean up."
     fi

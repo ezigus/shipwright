@@ -325,20 +325,20 @@ ${_skill_prompts}
             _build_recall_query="${_build_recall_query}; labels: ${_safe_labels}"
         fi
         _build_recall_ctx=""
-        # Warn on failure so a broken memory system is visible to operators.
-        _build_recall_ctx=$(ruflo_recall_similar_outcomes "${TASK_TYPE:-feature}" "$_build_recall_query" 2>/dev/null) || {
-            warn "Ruflo recall unavailable or failed — proceeding without historical context"
-        }
+        # ruflo_recall_similar_outcomes is fail-open: it always exits 0 and prints an
+        # empty string when the underlying search fails. The || true is defensive only.
+        _build_recall_ctx=$(ruflo_recall_similar_outcomes "${TASK_TYPE:-feature}" "$_build_recall_query" 2>/dev/null) || true
         # Sanitize recall output before injecting into the prompt:
         # 1. Strip entire lines starting with '#' (markdown headers). Removing the whole
         #    line is safer than stripping only the prefix — bare header text is still an
         #    instruction fragment that Claude could interpret as a directive.
+        #    Use sed (not grep -v) so the pipeline exits 0 even when all lines are filtered.
         # 2. Strip C0 control characters (except HT \011 and LF \012) to prevent
         #    escape-sequence injection from a compromised memory store.
         # 3. Truncate to 2000 chars to prevent context flooding.
         local _raw_recall_ctx="$_build_recall_ctx"
         _build_recall_ctx=$(printf '%s\n' "${_build_recall_ctx}" \
-            | grep -v '^#' \
+            | sed '/^#/d' \
             | tr -d '\000-\010\013-\037\177')
         _build_recall_ctx=$(printf '%.2000s' "${_build_recall_ctx}")
         # Warn if sanitization stripped any content — this indicates a compromised

@@ -661,6 +661,43 @@ else
 fi
 unset -f ruflo_available ruflo_recall_similar_outcomes 2>/dev/null || true
 
+# Test: recall output consisting entirely of markdown headers — stage_build must not abort
+# and no injection should occur (all content was filtered by sanitization).
+# Regression guard against grep -v '^#' exiting 1 under pipefail aborting stage_build.
+unset -f ruflo_recall_similar_outcomes ruflo_available 2>/dev/null || true
+ruflo_available() { return 0; }
+ruflo_recall_similar_outcomes() {
+    printf '## Header One\n# Header Two'
+}
+export -f ruflo_available ruflo_recall_similar_outcomes
+
+rm -f "$_build_recall_capture"
+set +e
+CAPTURED_BUILD_PROMPT="$_build_recall_capture" stage_build 2>/dev/null || true
+set -e
+
+# Proof that stage_build didn't abort before reaching sw loop: the capture file
+# is written by the sw mock only when `sw loop` is actually invoked. If the
+# sanitization pipeline had aborted stage_build (e.g. grep -v exiting 1 under
+# pipefail), the capture file would be missing.
+if [[ -f "$_build_recall_capture" ]]; then
+    assert_pass "stage_build: header-only recall output does not abort stage (sw loop reached)"
+else
+    assert_fail "stage_build: header-only recall output does not abort stage (sw loop reached)" "capture file missing — stage_build aborted before invoking sw loop"
+fi
+
+if [[ -f "$_build_recall_capture" ]]; then
+    _build_goal_header_only=$(cat "$_build_recall_capture")
+    if echo "$_build_goal_header_only" | grep -q "## Header One"; then
+        assert_fail "stage_build: header-only recall fully filtered from prompt" "header content was injected despite all lines being headers"
+    else
+        assert_pass "stage_build: header-only recall fully filtered from prompt"
+    fi
+else
+    assert_fail "stage_build: header-only sanitization test — goal captured via sw loop" "capture file missing"
+fi
+unset -f ruflo_available ruflo_recall_similar_outcomes 2>/dev/null || true
+
 # Restore sw mock for subsequent tests
 mock_binary "sw" 'mkdir -p src
 echo "// auth" > src/auth.js

@@ -13,7 +13,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="3.3.0"
+VERSION="3.6.0"
 
 # Score an error message for actionability
 # Input: error message (string)

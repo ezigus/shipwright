@@ -728,6 +728,26 @@ if [[ -f "$DASHBOARD_SRC/server.ts" ]]; then
     success "Dashboard files installed → ~/.local/share/shipwright/dashboard/"
 fi
 
+# ─── Ruflo & agentic-flow setup ───────────────────────────────────────────────
+if command -v npm &>/dev/null; then
+    echo ""
+    echo -e "${CYAN}${BOLD}Setting up ruflo & agentic-flow...${RESET}"
+    if ! command -v ruflo &>/dev/null; then
+        npm install -g ruflo@latest 2>/dev/null && success "Installed ruflo" || warn "ruflo install failed — skipping"
+    else
+        success "ruflo already installed ($(ruflo --version 2>/dev/null || echo 'unknown version'))"
+    fi
+    if ! command -v agentic-flow &>/dev/null; then
+        npm install -g agentic-flow@latest 2>/dev/null && success "Installed agentic-flow" || warn "agentic-flow install failed — skipping"
+    else
+        success "agentic-flow already installed ($(agentic-flow --version 2>/dev/null || echo 'unknown version'))"
+    fi
+    if command -v ruflo &>/dev/null; then
+        ruflo doctor --fix 2>/dev/null || true
+        ruflo memory configure --backend hybrid 2>/dev/null && success "ruflo vector memory configured" || true
+    fi
+fi
+
 # ─── Validation ───────────────────────────────────────────────────────────────
 echo ""
 echo -e "${CYAN}${BOLD}Running doctor...${RESET}"

@@ -1633,6 +1633,85 @@ fi
 unset RUFLO_HIVE_MAX_AGENTS RUFLO_REVIEW_MAX_AGENTS RUFLO_CQ_MAX_AGENTS RUFLO_AUDIT_MAX_AGENTS
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Section A2: RUFLO_COST_BUDGET_MULTIPLIER inline clamping logic
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "RUFLO_COST_BUDGET_MULTIPLIER=2.0 — scales up to 8 within hard cap of 12 (base=4)"
+
+_base=4
+_hard_cap=12
+_result=$(awk -v d="$_base" -v m="2.0" -v cap="$_hard_cap" 'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}')
+if [[ "$_result" == "8" ]]; then
+    assert_pass "multiplier=2.0 with base=4 hard_cap=12 scales up to 8"
+else
+    assert_fail "multiplier=2.0 with base=4 hard_cap=12 scales up to 8" "got: $_result"
+fi
+
+print_test_section "RUFLO_COST_BUDGET_MULTIPLIER=4.0 — clamps to hard cap (base=4 hard_cap=12 → 12)"
+
+_base=4
+_hard_cap=12
+_result=$(awk -v d="$_base" -v m="4.0" -v cap="$_hard_cap" 'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}')
+if [[ "$_result" == "12" ]]; then
+    assert_pass "multiplier=4.0 with base=4 hard_cap=12 clamps at hard cap (12)"
+else
+    assert_fail "multiplier=4.0 with base=4 hard_cap=12 clamps at hard cap (12)" "got: $_result"
+fi
+
+print_test_section "RUFLO_COST_BUDGET_MULTIPLIER=0.5 — scales down by 50% (base=10 → 5)"
+
+_base=10
+_hard_cap=12
+_result=$(awk -v d="$_base" -v m="0.5" -v cap="$_hard_cap" 'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}')
+if [[ "$_result" == "5" ]]; then
+    assert_pass "multiplier=0.5 with base=10 returns 5"
+else
+    assert_fail "multiplier=0.5 with base=10 returns 5" "got: $_result"
+fi
+
+print_test_section "RUFLO_COST_BUDGET_MULTIPLIER=0.1 — clamps to minimum 1 (base=10 → 1)"
+
+_base=10
+_hard_cap=12
+_result=$(awk -v d="$_base" -v m="0.1" -v cap="$_hard_cap" 'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}')
+if [[ "$_result" == "1" ]]; then
+    assert_pass "multiplier=0.1 with base=10 clamps to min 1"
+else
+    assert_fail "multiplier=0.1 with base=10 clamps to min 1" "got: $_result"
+fi
+
+print_test_section "RUFLO_COST_BUDGET_MULTIPLIER=invalid — fallback preserves original value"
+
+_base=4
+_hard_cap=12
+_multiplier_invalid="invalid"
+if [[ -n "${_multiplier_invalid:-}" ]] && [[ "${_multiplier_invalid}" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+    _result=$(awk -v d="$_base" -v m="$_multiplier_invalid" -v cap="$_hard_cap" 'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}' 2>/dev/null || echo "$_base")
+else
+    _result="$_base"
+fi
+if [[ "$_result" == "4" ]]; then
+    assert_pass "invalid multiplier falls back to original base value (4)"
+else
+    assert_fail "invalid multiplier falls back to original base value (4)" "got: $_result"
+fi
+
+print_test_section "RUFLO_COST_BUDGET_MULTIPLIER unset — agent count unchanged (backward compat)"
+
+_base=4
+_hard_cap=12
+_multiplier=""
+if [[ -n "${_multiplier:-}" ]]; then
+    _result=$(awk -v d="$_base" -v m="$_multiplier" -v cap="$_hard_cap" 'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}' 2>/dev/null || echo "$_base")
+else
+    _result="$_base"
+fi
+if [[ "$_result" == "4" ]]; then
+    assert_pass "unset multiplier preserves original agent count (4)"
+else
+    assert_fail "unset multiplier preserves original agent count (4)" "got: $_result"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Section B: Singleton lifecycle — ruflo_init()
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_init — sets RUFLO_HIVE_AVAILABLE=true and RUFLO_HIVE_ID on hive init success"
@@ -2835,13 +2914,25 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "RUFLO_COST_BUDGET_MULTIPLIER — agent count scaling"
 
-# Helper: apply the multiplier formula directly (mirrors ruflo-adapter.sh logic)
+# Helper: apply the multiplier formula with cap validation (mirrors ruflo-adapter.sh logic).
+# Args: default_max multiplier [hard_cap]
+# Validates hard_cap to a positive integer (default 12) and raises it to at least
+# default_max so a multiplier of 1.0 can never reduce an explicitly configured baseline.
 _apply_multiplier_test() {
     local default_max="$1"
     local multiplier="$2"
+    local hard_cap="${3:-12}"
+    # Mirror production validation: non-numeric or <1 falls back to 12
+    if ! [[ "$hard_cap" =~ ^[0-9]+$ ]] || (( hard_cap < 1 )); then
+        hard_cap=12
+    fi
+    # Ensure cap is never below the configured baseline
+    if (( hard_cap < default_max )); then
+        hard_cap="$default_max"
+    fi
     if [[ -n "$multiplier" ]]; then
-        awk -v d="$default_max" -v m="$multiplier" \
-            'BEGIN{v=int(d*m); print (v<1?1:(v>d?d:v))}' 2>/dev/null || echo "$default_max"
+        awk -v d="$default_max" -v m="$multiplier" -v cap="$hard_cap" \
+            'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}' 2>/dev/null || echo "$default_max"
     else
         echo "$default_max"
     fi
@@ -2855,12 +2946,12 @@ else
     assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: unset/empty -> no-op" "expected 4, got $_mult_result"
 fi
 
-# Test 2: Multiplier 2.0 with default 4 → capped at 4 (v>d → d)
-_mult_result=$(_apply_multiplier_test 4 "2.0")
-if [[ "$_mult_result" == "4" ]]; then
-    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: 2.0 with max=4 -> capped at 4 (got $_mult_result)"
+# Test 2: Multiplier 2.0 with default 4, hard_cap 12 → 8 (scale up within cap)
+_mult_result=$(_apply_multiplier_test 4 "2.0" 12)
+if [[ "$_mult_result" == "8" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: 2.0 with max=4 hard_cap=12 -> 8 (got $_mult_result)"
 else
-    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: 2.0 with max=4 -> capped at 4" "expected 4, got $_mult_result"
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: 2.0 with max=4 hard_cap=12 -> 8" "expected 8, got $_mult_result"
 fi
 
 # Test 3: Multiplier 0.5 with default 4 → 2 (scale down)
@@ -2879,12 +2970,12 @@ else
     assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: 0 -> enforces min 1" "expected 1, got $_mult_result"
 fi
 
-# Test 5: Multiplier 3.0 with default 4 → capped at 4 (hard cap respected)
-_mult_result=$(_apply_multiplier_test 4 "3.0")
-if [[ "$_mult_result" == "4" ]]; then
-    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: 3.0 with max=4 -> capped at 4 (got $_mult_result)"
+# Test 5: Multiplier 3.0 with default 4, hard_cap 12 → 12 (clamped at hard cap)
+_mult_result=$(_apply_multiplier_test 4 "3.0" 12)
+if [[ "$_mult_result" == "12" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: 3.0 with max=4 hard_cap=12 -> 12 (got $_mult_result)"
 else
-    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: 3.0 with max=4 -> capped at 4" "expected 4, got $_mult_result"
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: 3.0 with max=4 hard_cap=12 -> 12" "expected 12, got $_mult_result"
 fi
 
 # Test 6: Multiplier 0.5 with default 3 (compound quality default) → 1 (floor)
@@ -2909,6 +3000,39 @@ if [[ "$_mult_result" == "1" ]]; then
     assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: 0.25 with max=4 -> 1 (min enforced, got $_mult_result)"
 else
     assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: 0.25 with max=4 -> 1" "expected 1, got $_mult_result"
+fi
+
+# Hard-cap edge cases (validation logic)
+# Test 9: hard_cap=0 → falls back to 12; 2.0 * 4 = 8 (within fallback cap)
+_mult_result=$(_apply_multiplier_test 4 "2.0" 0)
+if [[ "$_mult_result" == "8" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: hard_cap=0 falls back to 12; 2.0*4 -> 8 (got $_mult_result)"
+else
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: hard_cap=0 falls back to 12; 2.0*4 -> 8" "expected 8, got $_mult_result"
+fi
+
+# Test 10: hard_cap=non-numeric → falls back to 12; 2.0 * 4 = 8
+_mult_result=$(_apply_multiplier_test 4 "2.0" "bad")
+if [[ "$_mult_result" == "8" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: hard_cap=non-numeric falls back to 12; 2.0*4 -> 8 (got $_mult_result)"
+else
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: hard_cap=non-numeric falls back to 12; 2.0*4 -> 8" "expected 8, got $_mult_result"
+fi
+
+# Test 11: hard_cap < baseline (cap=2, base=6) → effective cap raised to 6; multiplier=1.0 preserves baseline
+_mult_result=$(_apply_multiplier_test 6 "1.0" 2)
+if [[ "$_mult_result" == "6" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: hard_cap below baseline raised to baseline; 1.0*6 -> 6 (got $_mult_result)"
+else
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: hard_cap below baseline raised to baseline; 1.0*6 -> 6" "expected 6, got $_mult_result"
+fi
+
+# Test 12: hard_cap < baseline with scale-up → effective cap = baseline; result clamped at baseline
+_mult_result=$(_apply_multiplier_test 6 "2.0" 2)
+if [[ "$_mult_result" == "6" ]]; then
+    assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: hard_cap below baseline raised to baseline; 2.0*6 clamped -> 6 (got $_mult_result)"
+else
+    assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: hard_cap below baseline raised to baseline; 2.0*6 clamped -> 6" "expected 6, got $_mult_result"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

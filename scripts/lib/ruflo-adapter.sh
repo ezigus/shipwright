@@ -832,20 +832,33 @@ ruflo_execute_build_hive() {
 # Always fail-open — never blocks the pipeline.
 #
 # Environment knobs:
-#   RUFLO_REVIEW_MAX_AGENTS  — max parallel reviewers (default 4)
+#   RUFLO_REVIEW_MAX_AGENTS       — max parallel reviewers (default 4)
+#   RUFLO_REVIEW_HARD_MAX_AGENTS  — hard cap when budget multiplier scales up (default 12)
 ruflo_execute_review() {
     ruflo_available || return 1
     local diff_content="$1"
     local artifact_file="$2"
     [[ -n "$diff_content" && -n "$artifact_file" ]] || return 1
 
-    # RUFLO_REVIEW_MAX_AGENTS (function-level) overrides RUFLO_MAX_AGENTS (global default)
+    # RUFLO_REVIEW_MAX_AGENTS (function-level) overrides RUFLO_MAX_AGENTS (global default).
+    # RUFLO_REVIEW_HARD_MAX_AGENTS caps budget-scaled values so multipliers > 1.0 can
+    # increase agent count up to a hard ceiling rather than being clamped to the base.
     local max_agents="${RUFLO_REVIEW_MAX_AGENTS:-${RUFLO_MAX_AGENTS:-4}}"
-    # Apply cost budget multiplier if set (fail-open: fallback to original on awk error)
-    if [[ -n "${RUFLO_COST_BUDGET_MULTIPLIER:-}" ]]; then
+    local _review_hard_cap="${RUFLO_REVIEW_HARD_MAX_AGENTS:-12}"
+    # Validate hard cap: must be a positive integer; default to 12 if invalid.
+    # Also ensure the cap is never below the configured baseline so a multiplier
+    # of 1.0 cannot inadvertently reduce an explicitly set max_agents.
+    if ! [[ "$_review_hard_cap" =~ ^[0-9]+$ ]] || (( _review_hard_cap < 1 )); then
+        _review_hard_cap=12
+    fi
+    if (( _review_hard_cap < max_agents )); then
+        _review_hard_cap="$max_agents"
+    fi
+    if [[ -n "${RUFLO_COST_BUDGET_MULTIPLIER:-}" ]] && \
+       [[ "${RUFLO_COST_BUDGET_MULTIPLIER}" =~ ^[0-9]*\.?[0-9]+$ ]]; then
         local _default_max="$max_agents"
-        max_agents=$(awk -v d="$_default_max" -v m="${RUFLO_COST_BUDGET_MULTIPLIER}" \
-            'BEGIN{v=int(d*m); print (v<1?1:(v>d?d:v))}' 2>/dev/null || echo "$_default_max")
+        max_agents=$(awk -v d="$_default_max" -v m="${RUFLO_COST_BUDGET_MULTIPLIER}" -v cap="$_review_hard_cap" \
+            'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}' 2>/dev/null || echo "$max_agents")
     fi
     # Use pipeline_id when available; fall back to epoch+PID to ensure namespace
     # uniqueness across concurrent runs when SHIPWRIGHT_PIPELINE_ID is unset.
@@ -990,13 +1003,24 @@ ruflo_execute_compound_quality() {
 
     local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
     local cq_ns="hive-cq-${pipeline_id}"
-    # Adversarial quality agents: RUFLO_CQ_MAX_AGENTS > RUFLO_MAX_AGENTS > default(3)
+    # Adversarial quality agents: RUFLO_CQ_MAX_AGENTS > RUFLO_MAX_AGENTS > default(3).
+    # RUFLO_CQ_HARD_MAX_AGENTS caps budget-scaled values so multipliers > 1.0 can
+    # increase agent count up to a hard ceiling rather than being clamped to the base.
     local cq_agents="${RUFLO_CQ_MAX_AGENTS:-${RUFLO_MAX_AGENTS:-3}}"
-    # Apply cost budget multiplier if set (fail-open: fallback to original on awk error)
-    if [[ -n "${RUFLO_COST_BUDGET_MULTIPLIER:-}" ]]; then
-        local _default_max="$cq_agents"
-        cq_agents=$(awk -v d="$_default_max" -v m="${RUFLO_COST_BUDGET_MULTIPLIER}" \
-            'BEGIN{v=int(d*m); print (v<1?1:(v>d?d:v))}' 2>/dev/null || echo "$_default_max")
+    local _cq_hard_cap="${RUFLO_CQ_HARD_MAX_AGENTS:-12}"
+    # Validate hard cap: must be a positive integer; default to 12 if invalid.
+    # Ensure cap is never below the baseline so multiplier=1.0 cannot reduce cq_agents.
+    if ! [[ "$_cq_hard_cap" =~ ^[0-9]+$ ]] || (( _cq_hard_cap < 1 )); then
+        _cq_hard_cap=12
+    fi
+    if (( _cq_hard_cap < cq_agents )); then
+        _cq_hard_cap="$cq_agents"
+    fi
+    if [[ -n "${RUFLO_COST_BUDGET_MULTIPLIER:-}" ]] && \
+       [[ "${RUFLO_COST_BUDGET_MULTIPLIER}" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+        local _default_cq="$cq_agents"
+        cq_agents=$(awk -v d="$_default_cq" -v m="${RUFLO_COST_BUDGET_MULTIPLIER}" -v cap="$_cq_hard_cap" \
+            'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}' 2>/dev/null || echo "$cq_agents")
     fi
 
     emit_event "ruflo.cq_start"
@@ -1096,7 +1120,8 @@ ruflo_execute_compound_quality() {
 # Always fail-open — never blocks the pipeline.
 #
 # Environment knobs:
-#   RUFLO_AUDIT_MAX_AGENTS  — max parallel audit specialists (default 4)
+#   RUFLO_AUDIT_MAX_AGENTS       — max parallel audit specialists (default 4)
+#   RUFLO_AUDIT_HARD_MAX_AGENTS  — hard cap when budget multiplier scales up (default 12)
 ruflo_execute_audit() {
     ruflo_available || return 1
     local diff_content="$1"
@@ -1106,11 +1131,20 @@ ruflo_execute_audit() {
     local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
     local audit_ns="hive-audit-${pipeline_id}"
     local max_agents="${RUFLO_AUDIT_MAX_AGENTS:-${RUFLO_MAX_AGENTS:-4}}"
-    # Apply cost budget multiplier if set (fail-open: fallback to original on awk error)
-    if [[ -n "${RUFLO_COST_BUDGET_MULTIPLIER:-}" ]]; then
+    local _audit_hard_cap="${RUFLO_AUDIT_HARD_MAX_AGENTS:-12}"
+    # Validate hard cap: must be a positive integer; default to 12 if invalid.
+    # Ensure cap is never below the baseline so multiplier=1.0 cannot reduce max_agents.
+    if ! [[ "$_audit_hard_cap" =~ ^[0-9]+$ ]] || (( _audit_hard_cap < 1 )); then
+        _audit_hard_cap=12
+    fi
+    if (( _audit_hard_cap < max_agents )); then
+        _audit_hard_cap="$max_agents"
+    fi
+    if [[ -n "${RUFLO_COST_BUDGET_MULTIPLIER:-}" ]] && \
+       [[ "${RUFLO_COST_BUDGET_MULTIPLIER}" =~ ^[0-9]*\.?[0-9]+$ ]]; then
         local _default_max="$max_agents"
-        max_agents=$(awk -v d="$_default_max" -v m="${RUFLO_COST_BUDGET_MULTIPLIER}" \
-            'BEGIN{v=int(d*m); print (v<1?1:(v>d?d:v))}' 2>/dev/null || echo "$_default_max")
+        max_agents=$(awk -v d="$_default_max" -v m="${RUFLO_COST_BUDGET_MULTIPLIER}" -v cap="$_audit_hard_cap" \
+            'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}' 2>/dev/null || echo "$max_agents")
     fi
 
     emit_event "ruflo.audit_start" "max_agents=$max_agents"

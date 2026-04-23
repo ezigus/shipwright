@@ -406,8 +406,12 @@ init_state() {
         if ! jq '.' "$STATE_FILE" >/dev/null 2>&1; then
             daemon_log WARN "Corrupted state file detected — backing up and resetting"
             cp "$STATE_FILE" "${STATE_FILE}.corrupted.$(date +%s)" 2>/dev/null || true
-            # Prune: keep only the 5 most recent .corrupted.* backups (filenames are epoch-suffixed — safe for ls)
-            ls -t "${STATE_FILE}.corrupted."* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+            # Prune: keep only the 5 most recent .corrupted.* backups.
+            # Use find to avoid "Argument list too long" when thousands of backups exist.
+            find "$(dirname "$STATE_FILE")" -maxdepth 1 -type f \
+                -name "$(basename "$STATE_FILE").corrupted.*" -print 2>/dev/null \
+                | sort -r | tail -n +6 \
+                | while IFS= read -r _cf; do rm -f "$_cf" 2>/dev/null || true; done
             rm -f "$STATE_FILE"
             # Re-initialize as fresh state (recursive call with file removed)
             init_state
@@ -476,8 +480,12 @@ get_active_count() {
     if ! jq empty "$STATE_FILE" 2>/dev/null; then
         daemon_log WARN "State file corrupted mid-flight — backing up and resetting"
         cp "$STATE_FILE" "${STATE_FILE}.corrupted.$(date +%s)" 2>/dev/null || true
-        # Prune: keep only the 5 most recent .corrupted.* backups (filenames are epoch-suffixed — safe for ls)
-        ls -t "${STATE_FILE}.corrupted."* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+        # Prune: keep only the 5 most recent .corrupted.* backups.
+        # Use find to avoid "Argument list too long" when thousands of backups exist.
+        find "$(dirname "$STATE_FILE")" -maxdepth 1 -type f \
+            -name "$(basename "$STATE_FILE").corrupted.*" -print 2>/dev/null \
+            | sort -r | tail -n +6 \
+            | while IFS= read -r _cf; do rm -f "$_cf" 2>/dev/null || true; done
         init_state
         return
     fi

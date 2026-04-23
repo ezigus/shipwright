@@ -909,9 +909,8 @@ fi
 # Corrupted state backup count check
 _sw_state_file="$HOME/.shipwright/daemon-state.json"
 _sw_corrupted_count=0
-if ls "${_sw_state_file}.corrupted."* >/dev/null 2>&1; then
-    _sw_corrupted_count=$(ls "${_sw_state_file}.corrupted."* 2>/dev/null | wc -l | tr -d ' ')
-fi
+_sw_corrupted_count=$(find "$(dirname "$_sw_state_file")" -maxdepth 1 -type f \
+    -name "$(basename "$_sw_state_file").corrupted.*" -print 2>/dev/null | wc -l | tr -d ' ')
 _sw_corrupted_count=${_sw_corrupted_count:-0}
 if [[ $_sw_corrupted_count -gt 10 ]]; then
     check_warn "HIGH: ${_sw_corrupted_count} corrupted state backup(s) — run 'shipwright cleanup' to prune"

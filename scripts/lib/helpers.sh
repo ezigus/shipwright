@@ -78,9 +78,20 @@ emit_event() {
 
     # Memoize repo slug in parent shell (not inside $(...)) so cache actually persists.
     if [[ -z "$_EMIT_REPO_SLUG" ]]; then
-        _EMIT_REPO_SLUG=$(_sw_github_repo 2>/dev/null || _sw_repo_hash 2>/dev/null || echo "unknown")
+        _EMIT_REPO_SLUG=$(_sw_detect_repo_slug 2>/dev/null || _sw_repo_hash 2>/dev/null || echo "unknown")
     fi
-    set -- "repo=${_EMIT_REPO_SLUG}" "$@"
+    # Inject repo only when no caller-supplied repo= key is already present.
+    local _has_repo=0
+    local _kv
+    for _kv in "$@"; do
+        if [[ "${_kv%%=*}" == "repo" ]]; then
+            _has_repo=1
+            break
+        fi
+    done
+    if [[ $_has_repo -eq 0 ]]; then
+        set -- "repo=${_EMIT_REPO_SLUG}" "$@"
+    fi
 
     # Try SQLite first (via sw-db.sh's db_add_event)
     if type db_add_event >/dev/null 2>&1; then
@@ -360,6 +371,18 @@ _sw_github_repo() {
     else
         echo "${SHIPWRIGHT_GITHUB_REPO:-sethdford/shipwright}"
     fi
+}
+
+# Like _sw_github_repo but returns non-zero when no GitHub remote is detected.
+# Used by emit_event so the fallback to _sw_repo_hash is reachable.
+_sw_detect_repo_slug() {
+    local remote_url
+    remote_url="$(git remote get-url origin 2>/dev/null || echo "")"
+    if [[ "$remote_url" =~ github\.com[:/]([^/]+)/([^/.]+) ]]; then
+        echo "${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+        return 0
+    fi
+    return 1
 }
 
 _sw_github_owner() {

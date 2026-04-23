@@ -556,24 +556,24 @@ echo -e "${DIM}─────────────────────�
 CORRUPTED_STATE_FILE="$HOME/.shipwright/daemon-state.json"
 CORRUPTED_FOUND=0
 CORRUPTED_REMOVED=0
-if ls "${CORRUPTED_STATE_FILE}.corrupted."* >/dev/null 2>&1; then
-    corrupted_count=$(ls "${CORRUPTED_STATE_FILE}.corrupted."* 2>/dev/null | wc -l | tr -d ' ')
-    corrupted_count=${corrupted_count:-0}
-    CORRUPTED_FOUND=$corrupted_count
-    if [[ $corrupted_count -gt 5 ]]; then
-        if $FORCE; then
-            to_remove=$(ls -t "${CORRUPTED_STATE_FILE}.corrupted."* 2>/dev/null | tail -n +6)
-            if [[ -n "$to_remove" ]]; then
-                echo "$to_remove" | xargs rm -f 2>/dev/null || true
-                CORRUPTED_REMOVED=$((corrupted_count - 5))
-            fi
-            echo -e "  ${RED}✗${RESET} Pruned corrupted state backups ${DIM}(kept 5 of ${corrupted_count})${RESET}"
-        else
-            echo -e "  ${YELLOW}○${RESET} Would prune corrupted state backups ${DIM}(${corrupted_count} found, would keep 5)${RESET}"
-        fi
+# Use find to avoid "Argument list too long" when thousands of backups exist.
+corrupted_count=$(find "$(dirname "$CORRUPTED_STATE_FILE")" -maxdepth 1 -type f \
+    -name "$(basename "$CORRUPTED_STATE_FILE").corrupted.*" -print 2>/dev/null | wc -l | tr -d ' ')
+corrupted_count=${corrupted_count:-0}
+CORRUPTED_FOUND=$corrupted_count
+if [[ $corrupted_count -gt 5 ]]; then
+    if $FORCE; then
+        find "$(dirname "$CORRUPTED_STATE_FILE")" -maxdepth 1 -type f \
+            -name "$(basename "$CORRUPTED_STATE_FILE").corrupted.*" -print 2>/dev/null \
+            | sort -r | tail -n +6 \
+            | while IFS= read -r _cf; do rm -f "$_cf" 2>/dev/null || true; done
+        CORRUPTED_REMOVED=$((corrupted_count - 5))
+        echo -e "  ${RED}✗${RESET} Pruned corrupted state backups ${DIM}(kept 5 of ${corrupted_count})${RESET}"
     else
-        echo -e "  ${DIM}${corrupted_count} corrupted backup(s) — within limit (≤5).${RESET}"
+        echo -e "  ${YELLOW}○${RESET} Would prune corrupted state backups ${DIM}(${corrupted_count} found, would keep 5)${RESET}"
     fi
+elif [[ $corrupted_count -gt 0 ]]; then
+    echo -e "  ${DIM}${corrupted_count} corrupted backup(s) — within limit (≤5).${RESET}"
 else
     echo -e "  ${DIM}No corrupted state backups.${RESET}"
 fi
@@ -597,7 +597,7 @@ while IFS= read -r pt_file; do
     else
         echo -e "  ${YELLOW}○${RESET} Would remove: ${pt_name}"
     fi
-done < <(find "$PROJECT_ROOT" -maxdepth 1 -name "pipeline-tasks*.md" -mtime +1 -type f 2>/dev/null)
+done < <(find "$PROJECT_ROOT/.claude" -maxdepth 1 -name "pipeline-tasks*.md" -mtime +1 -type f 2>/dev/null)
 
 if [[ "$PIPELINE_TASKS_FOUND" -eq 0 ]]; then
     echo -e "  ${DIM}No stale pipeline task files.${RESET}"

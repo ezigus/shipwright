@@ -50,6 +50,10 @@
       "required": ["cost_usd"],
       "optional": ["model", "tokens_in", "tokens_out", "stage", "repo"]
     },
+    "cost.record": {
+      "required": ["cost_usd"],
+      "optional": ["model", "tokens_in", "tokens_out", "stage", "repo"]
+    },
     "intelligence.analysis": {
       "required": ["analysis_type"],
       "optional": ["result", "cache_hit"]

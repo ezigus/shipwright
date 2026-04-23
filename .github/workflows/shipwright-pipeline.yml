@@ -427,6 +427,8 @@ jobs:
             echo "RUFLO_FORCE_DISABLE=true" >> "$GITHUB_ENV"
             exit 1
           fi
+          # Initialize vector memory database so ruflo memory features work during the run
+          ruflo memory configure --backend hybrid 2>/dev/null || true
         continue-on-error: true
 
       - name: Restore ruflo memory from orphan branch

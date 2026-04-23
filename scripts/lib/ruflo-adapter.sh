@@ -395,32 +395,38 @@ ruflo_with_timeout() {
         # as ruflo_with_timeout returns, regardless of surviving grandchildren.
         # See issue #426.
         local _rft_tmp
-        _rft_tmp=$(mktemp "${TMPDIR:-/tmp}/ruflo_timeout.XXXXXX")
-        ( "$@" ) >"$_rft_tmp" &
-        local bg_pid=$!
-        local waited=0
-        while kill -0 "$bg_pid" 2>/dev/null && [[ "$waited" -lt "$timeout_s" ]]; do
-            sleep 1
-            waited=$(( waited + 1 ))
-        done
-        if kill -0 "$bg_pid" 2>/dev/null; then
-            # Kill child processes first (e.g. ruflo binary spawned by the function)
-            # then the wrapper subshell. pkill -P kills by parent PID, which works
-            # even without a dedicated process group (non-interactive shell, no set -m).
-            if command -v pkill >/dev/null 2>&1; then
-                pkill -TERM -P "$bg_pid" 2>/dev/null || true
-            fi
-            kill "$bg_pid" 2>/dev/null || true
-            wait "$bg_pid" 2>/dev/null || true
-            rm -f "$_rft_tmp"
-            exit_code=124  # match timeout(1)'s exit code
+        if ! _rft_tmp=$(mktemp "${TMPDIR:-/tmp}/ruflo_timeout.XXXXXX" 2>/dev/null); then
+            # mktemp failed (e.g. /tmp full or unwriteable).  Ruflo is fail-open:
+            # trip the circuit breaker without running the command so this error
+            # cannot abort the calling pipeline via set -e.
+            exit_code=1
         else
-            wait "$bg_pid" 2>/dev/null || exit_code=$?
-            if [[ $exit_code -eq 0 ]]; then
-                cat "$_rft_tmp" 2>/dev/null || true
+            ( "$@" ) >"$_rft_tmp" &
+            local bg_pid=$!
+            local waited=0
+            while kill -0 "$bg_pid" 2>/dev/null && [[ "$waited" -lt "$timeout_s" ]]; do
+                sleep 1
+                waited=$(( waited + 1 ))
+            done
+            if kill -0 "$bg_pid" 2>/dev/null; then
+                # Kill child processes first (e.g. ruflo binary spawned by the function)
+                # then the wrapper subshell. pkill -P kills by parent PID, which works
+                # even without a dedicated process group (non-interactive shell, no set -m).
+                if command -v pkill >/dev/null 2>&1; then
+                    pkill -TERM -P "$bg_pid" 2>/dev/null || true
+                fi
+                kill "$bg_pid" 2>/dev/null || true
+                wait "$bg_pid" 2>/dev/null || true
+                rm -f "$_rft_tmp"
+                exit_code=124  # match timeout(1)'s exit code
+            else
+                wait "$bg_pid" 2>/dev/null || exit_code=$?
+                if [[ $exit_code -eq 0 ]]; then
+                    cat "$_rft_tmp" 2>/dev/null || true
+                fi
+                rm -f "$_rft_tmp"
             fi
-            rm -f "$_rft_tmp"
-        fi
+        fi  # mktemp guard
     elif type _timeout >/dev/null 2>&1; then
         _timeout "$timeout_s" "$@" || exit_code=$?
     elif command -v timeout >/dev/null 2>&1; then

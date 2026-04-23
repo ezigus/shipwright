@@ -56,9 +56,14 @@ echo ""
 # $() returns as soon as ruflo_with_timeout returns regardless of survivors.
 echo "--- Test 1: \$() unblocks despite orphaned grandchild -----------"
 
+# _spawns_grandchild uses a two-level tree so that pkill -TERM -P $bg_pid kills
+# only the intermediate shell (direct child), leaving its 'sleep 9871' child
+# (grandchild) as an orphan.  Without the fix the orphan holds the $() pipe FD;
+# with the fix it can only write to the temp file so $() unblocks immediately.
+# The unusual sleep duration (9871) avoids colliding with unrelated processes.
 _spawns_grandchild() {
-    sleep 300 &   # grandchild — survives direct-child kill without the fix
-    sleep 300     # direct child — killed by ruflo_with_timeout
+    sh -c 'sleep 9871 & wait' &  # intermediate shell is direct child of bg_pid;
+    wait                          # sleep 9871 is grandchild — survives pkill -P
 }
 
 RUFLO_FAILURE_COUNT=0; export RUFLO_FAILURE_COUNT
@@ -69,8 +74,8 @@ _t1_elapsed=$(( $(date +%s) - _t1_start ))
 assert_lt   "$_t1_elapsed"  6   "\$() returns within 6 seconds (timeout=2 + 4s buffer)"
 assert_empty "$_t1_result"      "output is empty on timeout (partial output discarded)"
 
-# Best-effort cleanup of test grandchildren.
-pkill -f "sleep 300" 2>/dev/null || true
+# Kill only our test grandchildren by their unique duration, not all sleeps.
+pkill -f "sleep 9871" 2>/dev/null || true
 
 # ─── Test 2: Successful call passes stdout through ───────────────────────────
 # The temp-file redirect must still return output to the caller on clean exit.

@@ -427,6 +427,8 @@ jobs:
             echo "RUFLO_FORCE_DISABLE=true" >> "$GITHUB_ENV"
             exit 1
           fi
+          # Install agentic-flow for native embeddings and semantic routing
+          npm install -g agentic-flow@latest 2>/dev/null || true
           # Initialize vector memory database so ruflo memory features work during the run
           ruflo memory configure --backend hybrid 2>/dev/null || true
         continue-on-error: true

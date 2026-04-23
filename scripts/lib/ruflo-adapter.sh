@@ -845,6 +845,15 @@ ruflo_execute_review() {
     # increase agent count up to a hard ceiling rather than being clamped to the base.
     local max_agents="${RUFLO_REVIEW_MAX_AGENTS:-${RUFLO_MAX_AGENTS:-4}}"
     local _review_hard_cap="${RUFLO_REVIEW_HARD_MAX_AGENTS:-12}"
+    # Validate hard cap: must be a positive integer; default to 12 if invalid.
+    # Also ensure the cap is never below the configured baseline so a multiplier
+    # of 1.0 cannot inadvertently reduce an explicitly set max_agents.
+    if ! [[ "$_review_hard_cap" =~ ^[0-9]+$ ]] || (( _review_hard_cap < 1 )); then
+        _review_hard_cap=12
+    fi
+    if (( _review_hard_cap < max_agents )); then
+        _review_hard_cap="$max_agents"
+    fi
     if [[ -n "${RUFLO_COST_BUDGET_MULTIPLIER:-}" ]] && \
        [[ "${RUFLO_COST_BUDGET_MULTIPLIER}" =~ ^[0-9]*\.?[0-9]+$ ]]; then
         local _default_max="$max_agents"
@@ -999,6 +1008,14 @@ ruflo_execute_compound_quality() {
     # increase agent count up to a hard ceiling rather than being clamped to the base.
     local cq_agents="${RUFLO_CQ_MAX_AGENTS:-${RUFLO_MAX_AGENTS:-3}}"
     local _cq_hard_cap="${RUFLO_CQ_HARD_MAX_AGENTS:-12}"
+    # Validate hard cap: must be a positive integer; default to 12 if invalid.
+    # Ensure cap is never below the baseline so multiplier=1.0 cannot reduce cq_agents.
+    if ! [[ "$_cq_hard_cap" =~ ^[0-9]+$ ]] || (( _cq_hard_cap < 1 )); then
+        _cq_hard_cap=12
+    fi
+    if (( _cq_hard_cap < cq_agents )); then
+        _cq_hard_cap="$cq_agents"
+    fi
     if [[ -n "${RUFLO_COST_BUDGET_MULTIPLIER:-}" ]] && \
        [[ "${RUFLO_COST_BUDGET_MULTIPLIER}" =~ ^[0-9]*\.?[0-9]+$ ]]; then
         local _default_cq="$cq_agents"
@@ -1115,6 +1132,14 @@ ruflo_execute_audit() {
     local audit_ns="hive-audit-${pipeline_id}"
     local max_agents="${RUFLO_AUDIT_MAX_AGENTS:-${RUFLO_MAX_AGENTS:-4}}"
     local _audit_hard_cap="${RUFLO_AUDIT_HARD_MAX_AGENTS:-12}"
+    # Validate hard cap: must be a positive integer; default to 12 if invalid.
+    # Ensure cap is never below the baseline so multiplier=1.0 cannot reduce max_agents.
+    if ! [[ "$_audit_hard_cap" =~ ^[0-9]+$ ]] || (( _audit_hard_cap < 1 )); then
+        _audit_hard_cap=12
+    fi
+    if (( _audit_hard_cap < max_agents )); then
+        _audit_hard_cap="$max_agents"
+    fi
     if [[ -n "${RUFLO_COST_BUDGET_MULTIPLIER:-}" ]] && \
        [[ "${RUFLO_COST_BUDGET_MULTIPLIER}" =~ ^[0-9]*\.?[0-9]+$ ]]; then
         local _default_max="$max_agents"

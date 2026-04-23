@@ -1635,20 +1635,33 @@ unset RUFLO_HIVE_MAX_AGENTS RUFLO_REVIEW_MAX_AGENTS RUFLO_CQ_MAX_AGENTS RUFLO_AU
 # ═══════════════════════════════════════════════════════════════════════════════
 # Section A2: RUFLO_COST_BUDGET_MULTIPLIER inline clamping logic
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "RUFLO_COST_BUDGET_MULTIPLIER=2.0 — scales up to hard cap (base=4 → clamped to 4)"
+print_test_section "RUFLO_COST_BUDGET_MULTIPLIER=2.0 — scales up to 8 within hard cap of 12 (base=4)"
 
 _base=4
-_result=$(awk -v d="$_base" -v m="2.0" 'BEGIN{v=int(d*m); print (v<1?1:(v>d?d:v))}')
-if [[ "$_result" == "4" ]]; then
-    assert_pass "multiplier=2.0 with base=4 clamps at base cap (4)"
+_hard_cap=12
+_result=$(awk -v d="$_base" -v m="2.0" -v cap="$_hard_cap" 'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}')
+if [[ "$_result" == "8" ]]; then
+    assert_pass "multiplier=2.0 with base=4 hard_cap=12 scales up to 8"
 else
-    assert_fail "multiplier=2.0 with base=4 clamps at base cap (4)" "got: $_result"
+    assert_fail "multiplier=2.0 with base=4 hard_cap=12 scales up to 8" "got: $_result"
+fi
+
+print_test_section "RUFLO_COST_BUDGET_MULTIPLIER=4.0 — clamps to hard cap (base=4 hard_cap=12 → 12)"
+
+_base=4
+_hard_cap=12
+_result=$(awk -v d="$_base" -v m="4.0" -v cap="$_hard_cap" 'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}')
+if [[ "$_result" == "12" ]]; then
+    assert_pass "multiplier=4.0 with base=4 hard_cap=12 clamps at hard cap (12)"
+else
+    assert_fail "multiplier=4.0 with base=4 hard_cap=12 clamps at hard cap (12)" "got: $_result"
 fi
 
 print_test_section "RUFLO_COST_BUDGET_MULTIPLIER=0.5 — scales down by 50% (base=10 → 5)"
 
 _base=10
-_result=$(awk -v d="$_base" -v m="0.5" 'BEGIN{v=int(d*m); print (v<1?1:(v>d?d:v))}')
+_hard_cap=12
+_result=$(awk -v d="$_base" -v m="0.5" -v cap="$_hard_cap" 'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}')
 if [[ "$_result" == "5" ]]; then
     assert_pass "multiplier=0.5 with base=10 returns 5"
 else
@@ -1658,7 +1671,8 @@ fi
 print_test_section "RUFLO_COST_BUDGET_MULTIPLIER=0.1 — clamps to minimum 1 (base=10 → 1)"
 
 _base=10
-_result=$(awk -v d="$_base" -v m="0.1" 'BEGIN{v=int(d*m); print (v<1?1:(v>d?d:v))}')
+_hard_cap=12
+_result=$(awk -v d="$_base" -v m="0.1" -v cap="$_hard_cap" 'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}')
 if [[ "$_result" == "1" ]]; then
     assert_pass "multiplier=0.1 with base=10 clamps to min 1"
 else
@@ -1668,9 +1682,10 @@ fi
 print_test_section "RUFLO_COST_BUDGET_MULTIPLIER=invalid — fallback preserves original value"
 
 _base=4
+_hard_cap=12
 _multiplier_invalid="invalid"
 if [[ -n "${_multiplier_invalid:-}" ]] && [[ "${_multiplier_invalid}" =~ ^[0-9]*\.?[0-9]+$ ]]; then
-    _result=$(awk -v d="$_base" -v m="$_multiplier_invalid" 'BEGIN{v=int(d*m); print (v<1?1:(v>d?d:v))}' 2>/dev/null || echo "$_base")
+    _result=$(awk -v d="$_base" -v m="$_multiplier_invalid" -v cap="$_hard_cap" 'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}' 2>/dev/null || echo "$_base")
 else
     _result="$_base"
 fi
@@ -1683,9 +1698,10 @@ fi
 print_test_section "RUFLO_COST_BUDGET_MULTIPLIER unset — agent count unchanged (backward compat)"
 
 _base=4
+_hard_cap=12
 _multiplier=""
 if [[ -n "${_multiplier:-}" ]]; then
-    _result=$(awk -v d="$_base" -v m="$_multiplier" 'BEGIN{v=int(d*m); print (v<1?1:(v>d?d:v))}' 2>/dev/null || echo "$_base")
+    _result=$(awk -v d="$_base" -v m="$_multiplier" -v cap="$_hard_cap" 'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}' 2>/dev/null || echo "$_base")
 else
     _result="$_base"
 fi

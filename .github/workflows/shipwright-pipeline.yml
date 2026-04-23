@@ -409,14 +409,22 @@ jobs:
         run: |
           _ruflo_install_err="$(mktemp)"
           _ruflo_doctor_err="$(mktemp)"
-          if ! npm install -g @claude-flow/cli@latest 2>"$_ruflo_install_err"; then
+          # Disable the npx fallback in CI regardless of install outcome.
+          # The npx path spawns a deep process tree; if ruflo_with_timeout orphans
+          # any grandchildren they hold the $() pipe FD open indefinitely (#426).
+          echo "RUFLO_NPX_FALLBACK=0" >> "$GITHUB_ENV"
+          if ! npm install -g ruflo@latest 2>"$_ruflo_install_err"; then
             echo "::warning::Failed to install ruflo — pipeline will run without it"
             cat "$_ruflo_install_err"
+            # RUFLO_FORCE_DISABLE prevents ruflo_detect() from re-enabling ruflo
+            # even if a stale binary is present on PATH (#426).
+            echo "RUFLO_FORCE_DISABLE=true" >> "$GITHUB_ENV"
             exit 1
           fi
           if ! ruflo doctor --fix 2>"$_ruflo_doctor_err"; then
             echo "::warning::ruflo doctor --fix failed — pipeline will run without ruflo"
             cat "$_ruflo_doctor_err"
+            echo "RUFLO_FORCE_DISABLE=true" >> "$GITHUB_ENV"
             exit 1
           fi
         continue-on-error: true

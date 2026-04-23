@@ -845,6 +845,13 @@ echo -e "${PURPLE}${BOLD}  HEARTBEATS & CHECKPOINTS${RESET}"
 echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
 
 HEARTBEAT_DIR="$HOME/.shipwright/heartbeats"
+
+# Ensure REPO_HASH is available for cross-repo checks (may not be set when doctor is run standalone)
+if [[ -z "${REPO_HASH:-}" ]] && type _sw_repo_hash >/dev/null 2>&1; then
+    REPO_HASH=$(_sw_repo_hash 2>/dev/null || echo "")
+    export REPO_HASH
+fi
+
 if [[ -d "$HEARTBEAT_DIR" ]]; then
     check_pass "Heartbeat directory: ${HEARTBEAT_DIR/#$HOME/\~}"
     # Check permissions
@@ -880,8 +887,35 @@ if [[ -d "$HEARTBEAT_DIR" ]]; then
         check_warn "Stale heartbeats: ${hb_stale} (>120s old)"
         echo -e "    ${DIM}Clean up with: shipwright heartbeat clear <job-id>${RESET}"
     fi
+
+    # Cross-repo heartbeat check: detect heartbeats from other repos (indicates concurrent pipelines)
+    if [[ -n "${REPO_HASH:-}" ]]; then
+        foreign_hb_count=0
+        for hb_file in "${HEARTBEAT_DIR}"/*.json; do
+            [[ -f "$hb_file" ]] || continue
+            hb_name=$(basename "$hb_file" .json)
+            if [[ "$hb_name" != "${REPO_HASH}-"* ]]; then
+                foreign_hb_count=$((foreign_hb_count + 1))
+            fi
+        done
+        if [[ $foreign_hb_count -gt 0 ]]; then
+            check_warn "Found ${foreign_hb_count} heartbeat(s) not matching this repo (other repos or pre-upgrade files) — run 'shipwright cleanup' to prune"
+        fi
+    fi
 else
     info "  No heartbeat directory ${DIM}(created automatically when agents run)${RESET}"
+fi
+
+# Corrupted state backup count check
+_sw_state_file="$HOME/.shipwright/daemon-state.json"
+_sw_corrupted_count=0
+_sw_corrupted_count=$(find "$(dirname "$_sw_state_file")" -maxdepth 1 -type f \
+    -name "$(basename "$_sw_state_file").corrupted.*" -print 2>/dev/null | wc -l | tr -d ' ')
+_sw_corrupted_count=${_sw_corrupted_count:-0}
+if [[ $_sw_corrupted_count -gt 10 ]]; then
+    check_warn "HIGH: ${_sw_corrupted_count} corrupted state backup(s) — run 'shipwright cleanup' to prune"
+else
+    check_pass "Corrupted state backups: ${_sw_corrupted_count} (within limit)"
 fi
 
 # Checkpoint directory

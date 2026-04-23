@@ -5,6 +5,7 @@
 # ║         REPO_HASH-prefixed pipeline/heartbeat IDs, cost repo field,      ║
 # ║         cleanup section variables                                         ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
+# shellcheck disable=SC2218  # emit_event is sourced from helpers.sh before use; stub override appears later for daemon-state isolation
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 

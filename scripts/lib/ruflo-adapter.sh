@@ -77,9 +77,10 @@ ruflo_detect() {
     fi
 
     # Fallback: npx (~5-10s — only runs when no local binary is found)
-    # Note: -y auto-installs ruflo@latest; consider setting RUFLO_NPX_FALLBACK=0
-    # to disable this path in security-sensitive or air-gapped environments.
-    if command -v npx >/dev/null 2>&1; then
+    # Set RUFLO_NPX_FALLBACK=0 to disable in CI or air-gapped environments;
+    # the npx path spawns a deep process tree that amplifies the FD-hang risk
+    # described in issue #426.
+    if [[ "${RUFLO_NPX_FALLBACK:-1}" != "0" ]] && command -v npx >/dev/null 2>&1; then
         if npx -y ruflo@latest mcp status &>/dev/null; then
             RUFLO_AVAILABLE=true
             RUFLO_USE_NPX=true
@@ -94,7 +95,11 @@ ruflo_detect() {
 
 # ─── ruflo_available — boolean check ─────────────────────────────────────────
 # Returns 0 (true) if ruflo is available, 1 (false) otherwise.
+# RUFLO_FORCE_DISABLE=true unconditionally returns false regardless of what
+# ruflo_detect() found — use this in CI when install fails to prevent any
+# call from reaching ruflo_with_timeout (issue #426).
 ruflo_available() {
+    [[ "${RUFLO_FORCE_DISABLE:-}" != "true" ]] && \
     [[ "${RUFLO_AVAILABLE:-false}" == "true" ]]
 }
 
@@ -380,7 +385,18 @@ ruflo_with_timeout() {
     if [[ "$cmd_type" == "function" ]]; then
         # Shell functions can't be exec'd by timeout(1) — run in background
         # subshell and poll until done or wall-clock limit reached.
-        ( "$@" ) &
+        #
+        # Stdout is redirected to a temp file rather than inheriting the $()
+        # pipe FD.  Without this, orphaned grandchildren (e.g. npx processes
+        # spawned by the ruflo binary) keep the write end of the pipe open
+        # even after pkill kills the direct child, so the enclosing $() at the
+        # call site blocks indefinitely despite the circuit breaker firing.
+        # Writing to a regular file severs that FD chain: $() unblocks as soon
+        # as ruflo_with_timeout returns, regardless of surviving grandchildren.
+        # See issue #426.
+        local _rft_tmp
+        _rft_tmp=$(mktemp "${TMPDIR:-/tmp}/ruflo_timeout.XXXXXX")
+        ( "$@" ) >"$_rft_tmp" &
         local bg_pid=$!
         local waited=0
         while kill -0 "$bg_pid" 2>/dev/null && [[ "$waited" -lt "$timeout_s" ]]; do
@@ -396,9 +412,14 @@ ruflo_with_timeout() {
             fi
             kill "$bg_pid" 2>/dev/null || true
             wait "$bg_pid" 2>/dev/null || true
+            rm -f "$_rft_tmp"
             exit_code=124  # match timeout(1)'s exit code
         else
             wait "$bg_pid" 2>/dev/null || exit_code=$?
+            if [[ $exit_code -eq 0 ]]; then
+                cat "$_rft_tmp" 2>/dev/null || true
+            fi
+            rm -f "$_rft_tmp"
         fi
     elif type _timeout >/dev/null 2>&1; then
         _timeout "$timeout_s" "$@" || exit_code=$?

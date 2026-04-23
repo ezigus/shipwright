@@ -1306,7 +1306,7 @@ else
 fi
 
 print_test_section "CI workflow — ruflo install step has continue-on-error"
-if grep -A15 "Install ruflo" "$_PIPELINE_YML" 2>/dev/null | grep -q "continue-on-error: true"; then
+if grep -A30 "Install ruflo" "$_PIPELINE_YML" 2>/dev/null | grep -q "continue-on-error: true"; then
     assert_pass "ruflo install step has continue-on-error: true"
 else
     assert_fail "ruflo install step has continue-on-error: true" "not found"

@@ -5,50 +5,54 @@
   "event_types": {
     "pipeline.started": {
       "required": ["job_id"],
-      "optional": ["issue", "goal", "template"]
+      "optional": ["issue", "goal", "template", "repo"]
     },
     "pipeline.completed": {
       "required": ["job_id"],
-      "optional": ["duration_s", "result"]
+      "optional": ["duration_s", "result", "repo"]
     },
     "pipeline.failed": {
       "required": ["job_id"],
-      "optional": ["error", "stage"]
+      "optional": ["error", "stage", "repo"]
     },
-    "stage.started": { "required": ["stage"], "optional": ["issue", "job_id"] },
+    "stage.started": { "required": ["stage"], "optional": ["issue", "job_id", "repo"] },
     "stage.completed": {
       "required": ["stage"],
-      "optional": ["issue", "job_id", "duration_s", "result"]
+      "optional": ["issue", "job_id", "duration_s", "result", "repo"]
     },
     "stage.failed": {
       "required": ["stage"],
-      "optional": ["issue", "job_id", "error", "error_class", "duration_s"]
+      "optional": ["issue", "job_id", "error", "error_class", "duration_s", "repo"]
     },
-    "daemon.started": { "required": [], "optional": ["pid", "mode"] },
-    "daemon.stopped": { "required": [], "optional": ["reason"] },
+    "daemon.started": { "required": [], "optional": ["pid", "mode", "repo"] },
+    "daemon.stopped": { "required": [], "optional": ["reason", "repo"] },
     "daemon.claimed": { "required": ["issue"], "optional": ["repo", "title"] },
-    "daemon.released": { "required": ["issue"], "optional": ["reason"] },
+    "daemon.released": { "required": ["issue"], "optional": ["reason", "repo"] },
     "daemon.spawn": {
       "required": ["issue"],
-      "optional": ["template", "worktree"]
+      "optional": ["template", "worktree", "repo"]
     },
     "daemon.complete": {
       "required": ["issue"],
-      "optional": ["result", "duration_s"]
+      "optional": ["result", "duration_s", "repo"]
     },
     "daemon.failure": {
       "required": ["issue"],
-      "optional": ["error", "retry_count"]
+      "optional": ["error", "retry_count", "repo"]
     },
-    "loop.started": { "required": [], "optional": ["goal", "test_cmd"] },
+    "loop.started": { "required": [], "optional": ["goal", "test_cmd", "repo"] },
     "loop.iteration": {
       "required": ["iteration"],
-      "optional": ["test_result"]
+      "optional": ["test_result", "repo"]
     },
-    "loop.completed": { "required": [], "optional": ["iterations", "result"] },
+    "loop.completed": { "required": [], "optional": ["iterations", "result", "repo"] },
     "cost.recorded": {
       "required": ["cost_usd"],
-      "optional": ["model", "tokens_in", "tokens_out", "stage"]
+      "optional": ["model", "tokens_in", "tokens_out", "stage", "repo"]
+    },
+    "cost.record": {
+      "required": ["cost_usd"],
+      "optional": ["model", "tokens_in", "tokens_out", "stage", "repo"]
     },
     "intelligence.analysis": {
       "required": ["analysis_type"],

@@ -531,24 +531,17 @@ setup_dirs() {
     export ARTIFACTS_DIR  # Export so child processes (sw-loop.sh) can write audit events
     TASKS_FILE="$STATE_DIR/pipeline-tasks${ISSUE_NUMBER:+-${ISSUE_NUMBER}}.md"
     mkdir -p "$STATE_DIR" "$ARTIFACTS_DIR"
-    export SHIPWRIGHT_PIPELINE_ID="pipeline-$$-${ISSUE_NUMBER:-0}"
-    export SHIPWRIGHT_ACTIVE=1
-    export SHIPWRIGHT_SOURCE="${SHIPWRIGHT_SOURCE:-pipeline}"
 
-    # Compute repo hash for ruflo namespace isolation (matches sw-memory.sh repo_hash())
-    # Uses shasum -a 256 of origin URL — consistent with ~/.shipwright/memory/<hash>/ dirs.
+    # Compute repo hash first — used in SHIPWRIGHT_PIPELINE_ID and heartbeat job IDs.
+    # Delegates to _sw_repo_hash() in helpers.sh (shared with sw-memory.sh pattern).
     if [[ -z "${REPO_HASH:-}" ]]; then
-        local _repo_origin
-        _repo_origin=$(git config --get remote.origin.url 2>/dev/null || echo "local-$(basename "$PWD")")
-        if command -v shasum >/dev/null 2>&1; then
-            REPO_HASH=$(printf '%s' "$_repo_origin" | shasum -a 256 2>/dev/null | cut -c1-12 || echo "unknown")
-        elif command -v sha256sum >/dev/null 2>&1; then
-            REPO_HASH=$(printf '%s' "$_repo_origin" | sha256sum 2>/dev/null | cut -c1-12 || echo "unknown")
-        else
-            REPO_HASH="unknown"
-        fi
+        REPO_HASH=$(_sw_repo_hash)
         export REPO_HASH
     fi
+
+    export SHIPWRIGHT_PIPELINE_ID="${REPO_HASH:+${REPO_HASH}-}pipeline-$$-${ISSUE_NUMBER:-0}"
+    export SHIPWRIGHT_ACTIVE=1
+    export SHIPWRIGHT_SOURCE="${SHIPWRIGHT_SOURCE:-pipeline}"
 }
 
 # ─── Pipeline Config Loading ───────────────────────────────────────────────
@@ -626,7 +619,7 @@ COST_MODEL_RATES='{"opus":{"input":15,"output":75},"sonnet":{"input":3,"output":
 HEARTBEAT_PID=""
 
 start_heartbeat() {
-    local job_id="${PIPELINE_NAME:-pipeline-$$}"
+    local job_id="${REPO_HASH:+${REPO_HASH}-}${PIPELINE_NAME:-pipeline-$$}"
     (
         while true; do
             "$SCRIPT_DIR/sw-heartbeat.sh" write "$job_id" \

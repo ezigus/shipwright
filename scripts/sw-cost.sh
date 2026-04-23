@@ -162,6 +162,7 @@ cost_record() {
            --arg stage "$stage" \
            --arg issue "$issue" \
            --arg cost "$cost_usd" \
+           --arg repo "${REPO_HASH:-unknown}" \
            --arg ts "$(now_iso)" \
            --argjson epoch "$(now_epoch)" \
            '.entries += [{
@@ -170,6 +171,7 @@ cost_record() {
                model: $model,
                stage: $stage,
                issue: $issue,
+               repo: $repo,
                cost_usd: ($cost | tonumber),
                ts: $ts,
                ts_epoch: $epoch

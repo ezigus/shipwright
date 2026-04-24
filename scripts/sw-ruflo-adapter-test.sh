@@ -92,6 +92,7 @@ esac'
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_available"
 
+unset RUFLO_FORCE_DISABLE 2>/dev/null || true
 RUFLO_AVAILABLE=true
 if ruflo_available; then
     assert_pass "ruflo_available returns 0 when RUFLO_AVAILABLE=true"

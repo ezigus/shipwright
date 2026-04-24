@@ -12,12 +12,13 @@ detect_plan_drift() {
     local project_root="${2:-.}"
     local plan_file="${artifacts_dir}/plan.md"
 
-    # Fail-open: no plan.md → no warnings
+    # Fail-open: empty artifacts_dir or no plan.md → no warnings
+    [[ -n "$artifacts_dir" ]] || return 0
     [[ -s "$plan_file" ]] || return 0
 
-    # Extract the "## Files to Modify" section (lines between this heading and next ## heading)
+    # Extract the "## Files to Modify" section (case-insensitive heading match)
     local section
-    section=$(awk '/^## Files to Modify/{found=1; next} found && /^## /{exit} found{print}' "$plan_file" 2>/dev/null) || return 0
+    section=$(awk 'tolower($0) ~ /^## files to modify/{found=1; next} found && /^## /{exit} found{print}' "$plan_file" 2>/dev/null) || return 0
 
     # Fail-open: section not found → no warnings
     [[ -n "$section" ]] || return 0
@@ -42,20 +43,25 @@ detect_plan_drift() {
         echo "$line" | grep -q '^[[:space:]]*- ' || continue
 
         local planned_file=""
+        local _from_backtick=false
         # Prefer backtick-quoted path: `path/to/file.sh`
         if echo "$line" | grep -q '`[^`]*`'; then
             planned_file=$(echo "$line" | sed "s/.*\`\([^\`]*\)\`.*/\1/")
+            _from_backtick=true
         else
             # Fall back to first token after "- "
             planned_file=$(echo "$line" | sed 's/^[[:space:]]*- //' | awk '{print $1}')
         fi
 
         [[ -z "$planned_file" ]] && continue
-        # Skip tokens that don't look like file paths (must contain / or .)
-        echo "$planned_file" | grep -qE '(\.|/)' || continue
+        # For plain-text tokens (non-backtick), require . or / to filter common English words.
+        # Backtick-quoted tokens are trusted as file paths (covers Makefile, Dockerfile, etc.)
+        if [[ "$_from_backtick" != "true" ]]; then
+            echo "$planned_file" | grep -qE '(\.|/)' || continue
+        fi
 
-        # Check if this planned file appears in the actual changed files
-        if ! echo "$actual_changed" | grep -qF "$planned_file"; then
+        # Check if this planned file appears in the actual changed files (whole-line match)
+        if ! echo "$actual_changed" | grep -qxF "$planned_file"; then
             drift_warnings="${drift_warnings}[DRIFT-WARNING] Planned file not modified: ${planned_file}
 "
         fi
@@ -274,7 +280,9 @@ ${test_summary}
 
     # Detect plan-to-build drift: warn when planned files were not touched by the build
     local _drift_warnings=""
-    _drift_warnings=$(detect_plan_drift "${ARTIFACTS_DIR:-}" "${PROJECT_ROOT:-.}" 2>/dev/null || true)
+    if [[ -n "${ARTIFACTS_DIR:-}" ]]; then
+        _drift_warnings=$(detect_plan_drift "$ARTIFACTS_DIR" "${PROJECT_ROOT:-.}" 2>/dev/null || true)
+    fi
     if [[ -n "$_drift_warnings" ]]; then
         review_prompt+="
 ## Cross-Stage Drift Detected

@@ -185,4 +185,79 @@ else
     assert_fail "Expected 2 drift warnings" "got ${missing_count:-0}"
 fi
 
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_plan_drift: case-insensitive section header"
+# ═══════════════════════════════════════════════════════════════════════════════
+
+cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
+# Implementation Plan
+
+## files to modify
+
+- `src/missing-ci.js` — CI fix
+
+## Notes
+done
+PLAN
+
+result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+assert_contains "Drift warning with lowercase section header" "$result" "src/missing-ci.js"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_plan_drift: backtick-quoted Makefile (no . or /)"
+# ═══════════════════════════════════════════════════════════════════════════════
+
+cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
+# Plan
+
+## Files to Modify
+
+- `Makefile` — update build targets
+
+## Notes
+done
+PLAN
+
+result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+assert_contains "Drift warning for backtick-quoted Makefile" "$result" "Makefile"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_plan_drift: whole-line match — no false positive for substring"
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Commit only src/widget.js.backup — which is a substring superset of src/widget.js.
+# With grep -qF (substring match), "src/widget.js" would match "src/widget.js.backup"
+# and produce a false negative (no drift warning). With grep -qxF it correctly detects drift.
+(
+    cd "$PROJ"
+    echo "// backup" > src/widget.js.backup
+    git add src/widget.js.backup
+    git commit -q -m "chore: add widget backup"
+)
+
+cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
+# Plan
+
+## Files to Modify
+
+- `src/widget.js` — planned file (only .backup was committed)
+
+## Notes
+done
+PLAN
+
+result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+assert_contains "Whole-line match: src/widget.js not matched by src/widget.js.backup" "$result" "src/widget.js"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_plan_drift: fail-open — empty artifacts_dir"
+# ═══════════════════════════════════════════════════════════════════════════════
+
+result=$(detect_plan_drift "" "$PROJ" 2>/dev/null)
+if [[ -z "$result" ]]; then
+    assert_pass "No warnings when artifacts_dir is empty (fail-open)"
+else
+    assert_fail "Should return empty when artifacts_dir is empty" "$result"
+fi
+
 print_test_results

@@ -1303,19 +1303,22 @@ run_quality_gates() {
 
     # Gate 3: No TODO/FIXME/HACK/XXX in new source code
     # Exclude .claude/, docs/plans/, and markdown files (which legitimately contain task markers)
-    local todo_count
-    todo_count="$(git -C "$PROJECT_ROOT" diff HEAD~1 -- ':!.claude/' ':!docs/plans/' ':!*.md' 2>/dev/null \
-        | grep -cE '^\+.*(TODO|FIXME|HACK|XXX)' || true)"
+    # -c diff.noprefix=false ensures +++ b/<path> prefix is always present regardless of user config.
+    # Capture once with --unified=0; use the same output for both counting and location extraction.
+    # NOTE: --unified=0 is required — awk tracks line numbers by counting only added lines.
+    # Context lines are absent with this flag; changing the diff flags would cause lineno drift.
+    # file=$0; sub(...) handles paths with spaces by copying the full header line, then stripping
+    # the +++ b/ prefix. /^\+/ && !/^\+\+\+/ counts ALL added lines (including empty ones) so
+    # lineno stays accurate when blank lines precede a marker.
+    local _todo_diff todo_count
+    _todo_diff="$(git -C "$PROJECT_ROOT" -c diff.noprefix=false diff HEAD~1 --unified=0 \
+        -- ':!.claude/' ':!docs/plans/' ':!*.md' 2>/dev/null || true)"
+    todo_count="$(printf '%s\n' "$_todo_diff" | grep -cE '^\+[^+].*(TODO|FIXME|HACK|XXX)' || true)"
     todo_count="${todo_count:-0}"
     if [[ "${todo_count:-0}" -gt 0 ]]; then
         gate_failures+=("${todo_count} TODO/FIXME/HACK/XXX markers in new code")
-        # NOTE: --unified=0 is required — awk tracks line numbers by counting only added lines.
-        # Context lines are absent with this flag; changing the diff flags would cause lineno drift.
-        # file=$0 + sub() handles paths with spaces; /^\+/ && !/^\+\+\+/ counts ALL added lines
-        # (including empty ones) so lineno stays accurate when blank lines precede a marker.
         local _todo_locations
-        _todo_locations="$(git -C "$PROJECT_ROOT" diff HEAD~1 --unified=0 \
-            -- ':!.claude/' ':!docs/plans/' ':!*.md' 2>/dev/null \
+        _todo_locations="$(printf '%s\n' "$_todo_diff" \
           | awk '
               /^\+\+\+ / { file=$0; sub(/^\+\+\+ b\//,"",file) }
               /^@@ /     { s=$3; sub(/^[^+]*\+/,"",s); sub(/,.*/,"",s); lineno=int(s)-1 }
@@ -1536,7 +1539,7 @@ DOD_PROMPT
         _dod_detail="$(jq -r '
           .items[] | select(.satisfied == false) |
           "- " + .item + "\n" +
-          (if ((.files // []) | length) > 0 then "  Files: " + ((.files // []) | join(", ")) + "\n" else "" end) +
+          (if ((.files | type) == "array") and ((.files | length) > 0) then "  Files: " + (.files | join(", ")) + "\n" else "" end) +
           (if .hint then "  Fix: " + .hint else "" end)
         ' "$dod_clean" 2>/dev/null | head -20 || true)"
         if [[ -n "$_dod_detail" ]]; then

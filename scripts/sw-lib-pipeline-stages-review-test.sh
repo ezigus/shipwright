@@ -351,4 +351,29 @@ else
         "unexpected warnings: $result"
 fi
 
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_plan_drift: Files to Modify section present but empty (no bullets)"
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# A plan.md where the "## Files to Modify" section exists but contains no
+# bullet items (e.g., author added the heading but didn't list files yet).
+# Expect: no drift warnings — nothing to check.
+cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
+# Plan
+
+## Files to Modify
+
+(no files listed yet)
+
+## Notes
+done
+PLAN
+
+result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+if [[ -z "$result" ]]; then
+    assert_pass "No drift warnings when Files to Modify section has no bullet items"
+else
+    assert_fail "Should return empty when no bullet items in section" "$result"
+fi
+
 print_test_results

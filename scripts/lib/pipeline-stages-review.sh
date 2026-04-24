@@ -54,6 +54,8 @@ detect_plan_drift() {
         fi
 
         [[ -z "$planned_file" ]] && continue
+        # Strip leading "./" — git diff --name-only never emits it, but authors may write it
+        planned_file="${planned_file#./}"
         # For plain-text tokens (non-backtick), require . or / to filter common English words.
         # Backtick-quoted tokens are trusted as file paths (covers Makefile, Dockerfile, etc.)
         if [[ "$_from_backtick" != "true" ]]; then

@@ -307,4 +307,48 @@ result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
 assert_contains "Drift warning for setup.py (root file with extension)" "$result" "setup.py"
 assert_contains "Drift warning for config.toml (root file with extension)" "$result" "config.toml"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_plan_drift: ./-prefixed paths normalised to match git output"
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Authors sometimes write - `./src/auth.js` in plan.md.
+# git diff --name-only never emits the ./ prefix, so we must strip it before comparing.
+cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
+# Plan
+
+## Files to Modify
+
+- `./src/auth.js` — main auth module (already committed as src/auth.js)
+- `./tests/auth.test.js` — unit tests (not yet committed)
+
+## Notes
+done
+PLAN
+
+# src/auth.js is already committed on the feature branch (from earlier tests).
+# tests/auth.test.js has NOT been committed, so it should trigger drift.
+result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+assert_contains "Drift warning for ./tests/auth.test.js after ./ strip" "$result" "tests/auth.test.js"
+if echo "$result" | grep -q "src/auth.js"; then
+    assert_fail "No false positive for ./src/auth.js when src/auth.js is changed" \
+        "drift warning emitted for a file that was actually modified"
+else
+    assert_pass "No false positive for ./src/auth.js when src/auth.js is changed"
+fi
+
+# Now commit tests/auth.test.js — no drift warnings expected
+(
+    cd "$PROJ"
+    echo "// auth tests" > tests/auth.test.js
+    git add tests/auth.test.js
+    git commit -q -m "test: add auth tests"
+)
+result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+if [[ -z "$result" ]]; then
+    assert_pass "No drift when both ./-prefixed planned files are modified"
+else
+    assert_fail "No drift when both ./-prefixed planned files are modified" \
+        "unexpected warnings: $result"
+fi
+
 print_test_results

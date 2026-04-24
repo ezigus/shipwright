@@ -46,7 +46,7 @@ detect_plan_drift() {
         local _from_backtick=false
         # Prefer backtick-quoted path: `path/to/file.sh`
         if echo "$line" | grep -q '`[^`]*`'; then
-            planned_file=$(echo "$line" | sed "s/.*\`\([^\`]*\)\`.*/\1/")
+            planned_file=$(echo "$line" | sed "s/^[^\`]*\`\([^\`]*\)\`.*/\1/")
             _from_backtick=true
         else
             # Fall back to first token after "- "

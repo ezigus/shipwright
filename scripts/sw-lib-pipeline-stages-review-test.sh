@@ -260,4 +260,51 @@ else
     assert_fail "Should return empty when artifacts_dir is empty" "$result"
 fi
 
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_plan_drift: multiple backtick items per line — first file extracted"
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# A bullet with two backtick-quoted tokens on the same line.
+# The first (`src/first.js`) is the planned file; `utils/second.js` is incidental context.
+# Only src/first.js should be checked; utils/second.js should not generate a warning.
+cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
+# Plan
+
+## Files to Modify
+
+- `src/first.js` — primary change, also affects `utils/second.js`
+
+## Notes
+done
+PLAN
+
+result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+assert_contains "Drift warning for first backtick-quoted file" "$result" "src/first.js"
+if echo "$result" | grep -q "utils/second.js"; then
+    assert_fail "No drift warning for incidental second backtick item" "utils/second.js appeared in warnings"
+else
+    assert_pass "No spurious drift warning for incidental second backtick item"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_plan_drift: root file with extension (setup.py, config.toml)"
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Files at repo root with extensions (no slash) should be checked for drift.
+cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
+# Plan
+
+## Files to Modify
+
+- `setup.py` — update package metadata
+- `config.toml` — add new section
+
+## Notes
+done
+PLAN
+
+result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+assert_contains "Drift warning for setup.py (root file with extension)" "$result" "setup.py"
+assert_contains "Drift warning for config.toml (root file with extension)" "$result" "config.toml"
+
 print_test_results

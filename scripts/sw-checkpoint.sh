@@ -234,7 +234,7 @@ cmd_save() {
 
     # Build checkpoint JSON with jq for proper escaping
     local tmp_file
-    tmp_file="$(mktemp)"
+    tmp_file="$(mktemp "${TMPDIR:-/tmp}/sw-checkpoint.XXXXXX")"
 
     jq -n \
         --arg stage "$stage" \

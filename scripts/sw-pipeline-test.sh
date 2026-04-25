@@ -2094,6 +2094,55 @@ RETRY_GUARD_TEST
     assert_pass "run_stage_with_retry with undefined stage exits 1 with actionable error"
 }
 
+test_partial_work_push_condition() {
+    local wf="$TEST_TEMP_DIR/shipwright-pipeline.yml"
+    cp "$REPO_DIR/.github/workflows/shipwright-pipeline.yml" "$wf" 2>/dev/null || {
+        assert_fail "partial-work push condition: workflow file not found"
+        return
+    }
+
+    local step_block if_line
+    step_block=$(
+        awk '
+            /^[[:space:]]*-[[:space:]]+name:/ {
+                if (in_target) {
+                    exit
+                }
+                if ($0 ~ /Push partial work on/) {
+                    in_target=1
+                }
+            }
+            in_target {
+                print
+            }
+        ' "$wf"
+    )
+
+    if [[ -z "$step_block" ]]; then
+        assert_fail "partial-work push condition: could not extract workflow step block"
+        return
+    fi
+
+    if_line=$(printf '%s\n' "$step_block" | grep -m1 '^[[:space:]]*if:')
+
+    if [[ -z "$if_line" ]]; then
+        assert_fail "partial-work push condition: step missing if: line"
+        return
+    fi
+
+    if printf '%s\n' "$if_line" | grep -qE "if:[[:space:]]*failure\(\)[[:space:]]*&&"; then
+        assert_fail "partial-work push condition: step still uses bare failure() — regression of issue #437"
+        return
+    fi
+
+    if ! printf '%s\n' "$if_line" | grep -q "failure() || cancelled()"; then
+        assert_fail "partial-work push condition: step must use (failure() || cancelled()), got: $if_line"
+        return
+    fi
+
+    assert_pass "partial-work push handles both failure and cancelled (issue #437)"
+}
+
 main() {
     local filter="${1:-}"
 
@@ -2188,6 +2237,7 @@ main() {
         "test_ci_post_stage_event_failed_emoji:CI: ci_post_stage_event uses failure emoji for failed status"
         "test_ci_post_stage_event_noop_outside_ci:CI: ci_post_stage_event is no-op outside CI mode"
         "test_run_stage_with_retry_undefined_stage:Guard: run_stage_with_retry fails fast on undefined stage function"
+        "test_partial_work_push_condition:CI: partial-work push triggers on failure OR cancelled (issue #437)"
     )
 
     for entry in "${tests[@]}"; do

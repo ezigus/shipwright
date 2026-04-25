@@ -2089,6 +2089,237 @@ else
     assert_fail "ruflo_execute_review does not call hive-mind init when RUFLO_HIVE_AVAILABLE=true" "calls: $_calls"
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Queen Collapse Synthesis — union artifact written first (fail-open base)"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/artifact.md"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'finding: issue1\nfinding: issue2\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_review "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_artifact_content=$(cat "$_artifact" 2>/dev/null || true)
+rm -rf "$_test_tmp"
+if [[ -n "$_artifact_content" ]]; then
+    assert_pass "Queen Collapse: union artifact written (fail-open base exists)"
+else
+    assert_fail "Queen Collapse: union artifact written (fail-open base exists)" "artifact empty"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Queen Collapse Synthesis — synthesis orchestration attempted"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/artifact.md"
+_call_log="$_test_tmp/calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+printf '%s %s\n' "\${1:-}" "\${2:-}" >> "$_call_log"
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'issue1\nissue2\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_review "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_calls=$(cat "$_call_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+if grep -qF "coordination orchestrate" <<< "$_calls"; then
+    assert_pass "Queen Collapse: coordination orchestrate called for synthesis"
+else
+    assert_fail "Queen Collapse: coordination orchestrate called for synthesis" "calls: $_calls"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Queen Collapse Synthesis — synthesis goal includes dedup and ranking"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/artifact.md"
+_goal_log="$_test_tmp/goal.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'finding1\nfinding2\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  for arg in "\$@"; do
+    if [[ "\$arg" == --goal ]]; then
+      next=1
+    elif [[ -n "\${next:-}" ]]; then
+      printf '%s\n' "\$arg" >> "$_goal_log"
+      next=0
+    fi
+  done
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_review "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_goal=$(cat "$_goal_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+if grep -qi "dedup\|rank\|severity" <<< "$_goal"; then
+    assert_pass "Queen Collapse: synthesis goal mentions dedup/rank/severity"
+else
+    assert_fail "Queen Collapse: synthesis goal mentions dedup/rank/severity" "goal: $_goal"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Queen Collapse Synthesis — fail-open: union preserved on synthesis failure"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/artifact.md"
+_union_content="finding1\nfinding2\nfinding3"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf '%s\n' "$_union_content"
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  exit 1
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_review "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_artifact_content=$(cat "$_artifact" 2>/dev/null || true)
+rm -rf "$_test_tmp"
+if grep -q "finding1\|finding2\|finding3" <<< "$_artifact_content"; then
+    assert_pass "Queen Collapse: fail-open preserves union on synthesis failure"
+else
+    assert_fail "Queen Collapse: fail-open preserves union on synthesis failure" "artifact: $_artifact_content"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Queen Collapse Synthesis — synthesis uses separate namespace (no re-consumption)"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/artifact.md"
+_ns_log="$_test_tmp/ns.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  for arg in "\$@"; do
+    if [[ "\$arg" == --namespace ]]; then
+      next=1
+    elif [[ -n "\${next:-}" ]]; then
+      printf '%s\n' "\$arg" >> "$_ns_log"
+      next=0
+    fi
+  done
+  printf 'finding1\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_review "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_namespaces=$(cat "$_ns_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+_has_review_ns=$(grep -c "review\|hive-review" <<< "$_namespaces" || echo 0)
+_has_synth_ns=$(grep -c "synth" <<< "$_namespaces" || echo 0)
+if [[ $_has_review_ns -gt 0 ]] && [[ $_has_synth_ns -gt 0 ]]; then
+    assert_pass "Queen Collapse: uses separate synth namespace"
+else
+    assert_fail "Queen Collapse: uses separate synth namespace" "ns: $_namespaces"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Queen Collapse Synthesis — telemetry event emitted with exit code"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/artifact.md"
+_event_log="$_test_tmp/events.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'finding\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-hive"
+RUFLO_USE_NPX=false
+emit_event() { printf '%s\n' "$*" >> "$_event_log"; }
+ruflo_execute_review "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_events=$(cat "$_event_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+if grep -q "ruflo.review_synth_complete" <<< "$_events" && grep -q "exit=" <<< "$_events"; then
+    assert_pass "Queen Collapse: telemetry event emitted with exit code"
+else
+    assert_fail "Queen Collapse: telemetry event emitted with exit code" "events: $_events"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Section C: Gate checks — ruflo_execute_compound_quality
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -157,6 +157,39 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_plan_drift: fail-open — BASE_BRANCH absent (no false positives)"
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# When the configured base branch doesn't exist, git diff --name-only <base>..HEAD fails.
+# Falling back to git diff --name-only HEAD returns empty on a clean working tree,
+# which would make every planned file appear drifted (false positive). Correct behaviour
+# is fail-open: return no warnings when the base branch is absent.
+
+cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
+# Plan
+
+## Files to Modify
+
+- `src/auth.js` — something
+
+## Notes
+done
+PLAN
+
+_saved_base="${BASE_BRANCH:-main}"
+BASE_BRANCH="nonexistent-branch-xyz-987"
+export BASE_BRANCH
+result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+BASE_BRANCH="$_saved_base"
+export BASE_BRANCH
+
+if [[ -z "$result" ]]; then
+    assert_pass "No false-positive drift warnings when BASE_BRANCH branch is absent"
+else
+    assert_fail "Should return empty when BASE_BRANCH branch is absent (fail-open)" "$result"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "detect_plan_drift: multiple planned files, partial drift"
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -31,12 +31,14 @@ detect_plan_drift() {
         actual_changed=$( (cd "$project_root" && _safe_base_diff --name-only) 2>/dev/null) || _git_ok=false
     else
         # Validate that the base branch exists before using it in git diff.
-        # If absent, fall back to staged-vs-HEAD (different semantics but best-effort).
+        # If absent, fail-open (no warnings) — using git diff HEAD as a fallback would
+        # compare the working tree against HEAD, which on a clean repo returns empty,
+        # causing every planned file to appear drifted (false positives).
         local _base="${BASE_BRANCH:-main}"
         if (cd "$project_root" && git rev-parse --verify "$_base" >/dev/null 2>&1); then
             actual_changed=$(cd "$project_root" && git diff --name-only "${_base}..HEAD" 2>/dev/null) || _git_ok=false
         else
-            actual_changed=$(cd "$project_root" && git diff --name-only HEAD 2>/dev/null) || _git_ok=false
+            _git_ok=false
         fi
     fi
     [[ "$_git_ok" == "true" ]] || return 0

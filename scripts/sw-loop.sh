@@ -974,6 +974,7 @@ run_test_gate() {
     local all_passed=true
     local test_results="[]"
     local combined_output=""
+    local failed_output=""
     local test_timeout="${SW_TEST_TIMEOUT:-$(_config_get_int "loop.test_timeout" 900 2>/dev/null || echo 900)}"
     local _max_test_timeout="$(_config_get_int "loop.test_timeout_max" 3600 2>/dev/null || echo 3600)"
     # Scale proportionally for multi-target commands.
@@ -1026,8 +1027,13 @@ run_test_gate() {
                 '. + [{"command": $cmd, "exit_code": $exit, "duration_s": $dur}]')
         fi
 
-        [[ "$exit_code" -ne 0 ]] && all_passed=false
-        combined_output+="$(cat "$test_log" 2>/dev/null)"$'\n'
+        local _primary_out
+        _primary_out="$(cat "$test_log" 2>/dev/null)"
+        combined_output+="$_primary_out"$'\n'
+        if [[ "$exit_code" -ne 0 ]]; then
+            all_passed=false
+            failed_output+="$_primary_out"$'\n'
+        fi
     fi
 
     # Run additional test commands (discovered or explicit)
@@ -1052,9 +1058,10 @@ run_test_gate() {
             extra_wrapper="gtimeout ${test_timeout} bash -c $(printf '%q' "$extra_cmd")"
         fi
 
-        local start_ts exit_code=0
+        local start_ts exit_code=0 _extra_out=""
         start_ts=$(date +%s)
-        bash -c "$extra_wrapper" >> "$extra_log" 2>&1 || exit_code=$?
+        _extra_out=$(bash -c "$extra_wrapper" 2>&1) || exit_code=$?
+        echo "$_extra_out" >> "$extra_log"
         local duration=$(( $(date +%s) - start_ts ))
 
         if command -v jq >/dev/null 2>&1; then
@@ -1063,8 +1070,11 @@ run_test_gate() {
                 '. + [{"command": $cmd, "exit_code": $exit, "duration_s": $dur}]')
         fi
 
-        [[ "$exit_code" -ne 0 ]] && all_passed=false
-        combined_output+="$(cat "$extra_log" 2>/dev/null)"$'\n'
+        combined_output+="$_extra_out"$'\n'
+        if [[ "$exit_code" -ne 0 ]]; then
+            all_passed=false
+            failed_output+="=== $extra_cmd ==="$'\n'"$_extra_out"$'\n'
+        fi
     done
 
     # Write structured test evidence
@@ -1081,7 +1091,11 @@ run_test_gate() {
     fi
 
     TEST_PASSED=$all_passed
-    TEST_OUTPUT="$(echo "$combined_output" | tail -50 | strip_ansi)"
+    if [[ "$all_passed" == "false" ]] && [[ -n "$failed_output" ]]; then
+        TEST_OUTPUT="$(echo "$failed_output" | tail -80 | strip_ansi)"
+    else
+        TEST_OUTPUT="$(echo "$combined_output" | tail -50 | strip_ansi)"
+    fi
 }
 
 write_error_summary() {

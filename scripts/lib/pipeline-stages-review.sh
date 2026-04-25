@@ -3,6 +3,85 @@
 [[ -n "${_PIPELINE_STAGES_REVIEW_LOADED:-}" ]] && return 0
 _PIPELINE_STAGES_REVIEW_LOADED=1
 
+# detect_plan_drift — compare plan.md "## Files to Modify" against git diff
+# Inputs:  $1=artifacts_dir  $2=project_root
+# Output:  newline-separated [DRIFT-WARNING] lines, or empty string
+# Behavior: fail-open — returns empty string if plan.md missing, parse fails, or git fails
+detect_plan_drift() {
+    local artifacts_dir="${1:-}"
+    local project_root="${2:-.}"
+    local plan_file="${artifacts_dir}/plan.md"
+
+    # Fail-open: empty artifacts_dir or no plan.md → no warnings
+    [[ -n "$artifacts_dir" ]] || return 0
+    [[ -s "$plan_file" ]] || return 0
+
+    # Extract the "## Files to Modify" section (case-insensitive heading match).
+    # Accepts h2 (##) or h3 (###) headings with optional trailing colon.
+    local section
+    section=$(awk 'tolower($0) ~ /^###? files to modify[[:space:]]*:?[[:space:]]*$/{found=1; next} found && /^##[#]* /{exit} found{print}' "$plan_file" 2>/dev/null) || return 0
+
+    # Fail-open: section not found → no warnings
+    [[ -n "$section" ]] || return 0
+
+    # Get actual changed files; fail-open if git fails entirely
+    local actual_changed=""
+    local _git_ok=true
+    if declare -f _safe_base_diff >/dev/null 2>&1; then
+        actual_changed=$( (cd "$project_root" && _safe_base_diff --name-only) 2>/dev/null) || _git_ok=false
+    else
+        # Validate that the base branch exists before using it in git diff.
+        # If absent, fail-open (no warnings) — using git diff HEAD as a fallback would
+        # compare the working tree against HEAD, which on a clean repo returns empty,
+        # causing every planned file to appear drifted (false positives).
+        local _base="${BASE_BRANCH:-main}"
+        if (cd "$project_root" && git rev-parse --verify "$_base" >/dev/null 2>&1); then
+            actual_changed=$(cd "$project_root" && git diff --name-only "${_base}..HEAD" 2>/dev/null) || _git_ok=false
+        else
+            _git_ok=false
+        fi
+    fi
+    [[ "$_git_ok" == "true" ]] || return 0
+
+    local drift_warnings=""
+
+    # Parse bullet list items from the section
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        # Only process bullet items (lines starting with optional whitespace + "- ")
+        echo "$line" | grep -q '^[[:space:]]*- ' || continue
+
+        local planned_file=""
+        local _from_backtick=false
+        # Prefer backtick-quoted path: `path/to/file.sh`
+        if echo "$line" | grep -q '`[^`]*`'; then
+            planned_file=$(echo "$line" | sed "s/^[^\`]*\`\([^\`]*\)\`.*/\1/")
+            _from_backtick=true
+        else
+            # Fall back to first token after "- "
+            planned_file=$(echo "$line" | sed 's/^[[:space:]]*- //' | awk '{print $1}')
+        fi
+
+        [[ -z "$planned_file" ]] && continue
+        # Strip leading "./" — git diff --name-only never emits it, but authors may write it
+        planned_file="${planned_file#./}"
+        # For plain-text tokens (non-backtick), require . or / to filter common English words.
+        # Backtick-quoted tokens are trusted as file paths (covers Makefile, Dockerfile, etc.)
+        if [[ "$_from_backtick" != "true" ]]; then
+            echo "$planned_file" | grep -qE '(\.|/)' || continue
+        fi
+
+        # Check if this planned file appears in the actual changed files (whole-line match,
+        # case-insensitive to handle macOS/Windows where git may normalize path casing)
+        if ! echo "$actual_changed" | grep -qixF "$planned_file"; then
+            drift_warnings="${drift_warnings}[DRIFT-WARNING] Planned file not modified: ${planned_file}
+"
+        fi
+    done <<< "$section"
+
+    printf '%s' "$drift_warnings"
+}
+
 stage_review() {
     CURRENT_STAGE_ID="review"
     # Consume retry context if this is a retry attempt
@@ -209,6 +288,21 @@ tests have already verified. The diff shows only CHANGES — not the complete co
 Last test output lines:
 ${test_summary}
 "
+    fi
+
+    # Detect plan-to-build drift: warn when planned files were not touched by the build
+    local _drift_warnings=""
+    if [[ -n "${ARTIFACTS_DIR:-}" ]]; then
+        _drift_warnings=$(detect_plan_drift "$ARTIFACTS_DIR" "${PROJECT_ROOT:-.}" 2>/dev/null || true)
+    fi
+    if [[ -n "$_drift_warnings" ]]; then
+        review_prompt+="
+## Cross-Stage Drift Detected
+The following files were planned but not modified by the build:
+${_drift_warnings}
+Reviewer: Verify whether these files were intentionally skipped or represent incomplete implementation.
+"
+        emit_event "review.drift_detected" "issue=${ISSUE_NUMBER:-0}" || true
     fi
 
     review_prompt+="

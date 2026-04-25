@@ -2093,7 +2093,7 @@ fi
 print_test_section "Queen Collapse Synthesis — union artifact written first (fail-open base)"
 
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_test_tmp=$(mktemp -d)
 _artifact="$_test_tmp/artifact.md"
 cat > "$_test_tmp/ruflo" <<MOCK
 #!/usr/bin/env bash
@@ -2129,7 +2129,7 @@ fi
 print_test_section "Queen Collapse Synthesis — synthesis orchestration attempted"
 
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_test_tmp=$(mktemp -d)
 _artifact="$_test_tmp/artifact.md"
 _call_log="$_test_tmp/calls.log"
 cat > "$_test_tmp/ruflo" <<MOCK
@@ -2164,7 +2164,7 @@ fi
 print_test_section "Queen Collapse Synthesis — synthesis goal includes dedup and ranking"
 
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_test_tmp=$(mktemp -d)
 _artifact="$_test_tmp/artifact.md"
 _goal_log="$_test_tmp/goal.log"
 cat > "$_test_tmp/ruflo" <<MOCK
@@ -2209,7 +2209,7 @@ fi
 print_test_section "Queen Collapse Synthesis — fail-open: union preserved on synthesis failure"
 
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_test_tmp=$(mktemp -d)
 _artifact="$_test_tmp/artifact.md"
 _union_content="finding1\nfinding2\nfinding3"
 cat > "$_test_tmp/ruflo" <<MOCK
@@ -2246,7 +2246,7 @@ fi
 print_test_section "Queen Collapse Synthesis — synthesis uses separate namespace (no re-consumption)"
 
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_test_tmp=$(mktemp -d)
 _artifact="$_test_tmp/artifact.md"
 _ns_log="$_test_tmp/ns.log"
 cat > "$_test_tmp/ruflo" <<MOCK
@@ -2290,7 +2290,7 @@ fi
 print_test_section "Queen Collapse Synthesis — telemetry event emitted with exit code"
 
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_test_tmp=$(mktemp -d)
 _artifact="$_test_tmp/artifact.md"
 _event_log="$_test_tmp/events.log"
 cat > "$_test_tmp/ruflo" <<MOCK

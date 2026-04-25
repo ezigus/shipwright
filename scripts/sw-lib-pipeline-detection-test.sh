@@ -491,7 +491,7 @@ _PIPELINE_DETECT_HELPER_CAPS_CACHE=""
 
 # Restore mock git
 if [[ -f "$TEST_TEMP_DIR/bin/git.mock" ]]; then
-    mv "$TEST_TEMP_DIR/bin/git.mock" "$TEST_TEMP_DIR/bin/git"
+    rm -f "$TEST_TEMP_DIR/bin/git" && mv "$TEST_TEMP_DIR/bin/git.mock" "$TEST_TEMP_DIR/bin/git"
 fi
 
 print_test_results

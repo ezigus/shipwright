@@ -2094,6 +2094,31 @@ RETRY_GUARD_TEST
     assert_pass "run_stage_with_retry with undefined stage exits 1 with actionable error"
 }
 
+test_partial_work_push_condition() {
+    local wf="$TEST_TEMP_DIR/shipwright-pipeline.yml"
+    cp "$REPO_DIR/.github/workflows/shipwright-pipeline.yml" "$wf" 2>/dev/null || {
+        assert_fail "partial-work push condition: workflow file not found"
+        return
+    }
+
+    if ! grep -q "Push partial work on" "$wf"; then
+        assert_fail "partial-work push condition: 'Push partial work on' step not found in workflow"
+        return
+    fi
+
+    if grep -A1 "Push partial work on" "$wf" | grep -qE "if:[[:space:]]*failure\(\)[[:space:]]*&&"; then
+        assert_fail "partial-work push condition: step still uses bare failure() — regression of issue #437"
+        return
+    fi
+
+    if ! grep -A1 "Push partial work on" "$wf" | grep -q "failure() || cancelled()"; then
+        assert_fail "partial-work push condition: step must use (failure() || cancelled()), got: $(grep -A1 'Push partial work on' "$wf" | grep 'if:')"
+        return
+    fi
+
+    assert_pass "partial-work push handles both failure and cancelled (issue #437)"
+}
+
 main() {
     local filter="${1:-}"
 
@@ -2188,6 +2213,7 @@ main() {
         "test_ci_post_stage_event_failed_emoji:CI: ci_post_stage_event uses failure emoji for failed status"
         "test_ci_post_stage_event_noop_outside_ci:CI: ci_post_stage_event is no-op outside CI mode"
         "test_run_stage_with_retry_undefined_stage:Guard: run_stage_with_retry fails fast on undefined stage function"
+        "test_partial_work_push_condition:CI: partial-work push triggers on failure OR cancelled (issue #437)"
     )
 
     for entry in "${tests[@]}"; do

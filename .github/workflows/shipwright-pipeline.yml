@@ -796,17 +796,26 @@ jobs:
           )"
           fi
 
-      - name: Push partial work on failure
-        if: failure() && steps.claim_check.outputs.skip != 'true'
+      - name: Push partial work on exit
+        if: (failure() || cancelled()) && steps.claim_check.outputs.skip != 'true'
         run: |
           BRANCH="shipwright/issue-${ISSUE_NUMBER}"
+          HAS_DIFF=0
           if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
             git add -A 2>/dev/null || true
             git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
+            HAS_DIFF=1
           fi
-          # Push branch (force to overwrite previous WIP)
-          git push origin "HEAD:refs/heads/$BRANCH" --force 2>/dev/null || true
-          echo "Partial work pushed to branch: $BRANCH"
+          AHEAD=$(git rev-list --count "@{u}..HEAD" 2>/dev/null || echo "0")
+          if [ "$HAS_DIFF" = "0" ] && [ "$AHEAD" = "0" ]; then
+            echo "No partial work to push (no diff, no commits ahead). Skipping."
+            exit 0
+          fi
+          if timeout 120 git push origin "HEAD:refs/heads/$BRANCH" --force; then
+            echo "Partial work pushed to branch: $BRANCH"
+          else
+            echo "WARN: partial-work push timed out or failed (non-fatal); branch may be stale"
+          fi
 
       - name: Upload pipeline artifacts
         if: always() && steps.claim_check.outputs.skip != 'true'

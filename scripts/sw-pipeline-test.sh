@@ -2054,8 +2054,8 @@ LSEOF
     invoke_pipeline start --goal "test model resolution" --model sonnet --dry-run
 
     assert_exit_code 0 "dry-run with --model sonnet should succeed" &&
-    assert_output_contains "sonnet" "CLI flag --model sonnet should appear in dry-run output" &&
-    assert_output_not_contains "^opus$" "opus should not appear as the selected model when sonnet is specified"
+    assert_output_contains "sonnet" "CLI --model sonnet should appear in dry-run output" &&
+    assert_output_not_contains "opus" "opus should not appear anywhere in dry-run output when sonnet is specified"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────

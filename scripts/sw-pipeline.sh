@@ -1878,8 +1878,10 @@ run_pipeline() {
             audit_emit "stage.start" "stage=$id" || true
         fi
 
-        local stage_model_used="$(get_effective_model)"
+        local stage_model_used=""
         if run_stage_with_retry "$id"; then
+            # Resolve after stage runs so loop-state.md reflects this stage's model
+            stage_model_used="$(get_effective_model)"
             mark_stage_complete "$id"
             completed=$((completed + 1))
             # Capture project pattern after intake (for memory context in later stages)
@@ -1925,9 +1927,10 @@ run_pipeline() {
                 && [[ -s "$ARTIFACTS_DIR/review-blockers.md" ]]; then
                 info "Review blocked — attempting review self-healing rebuild..."
                 if self_healing_review_build_test; then
+                    stage_model_used="$(get_effective_model)"
                     mark_stage_complete "$id"
                     completed=$((completed + 1))
-                    echo "${id}|${stage_model_used:-$(get_effective_model)}|true" >> "${ARTIFACTS_DIR}/model-routing.log"
+                    echo "${id}|${stage_model_used}|true" >> "${ARTIFACTS_DIR}/model-routing.log"
                     continue
                 fi
                 # Self-healing exhausted — fall through to normal failure
@@ -2757,7 +2760,8 @@ pipeline_start() {
     PIPELINE_EXIT_CODE="$exit_code"
 
     # Compute total cost for pipeline.completed (prefer actual from Claude when available)
-    local model_key="${MODEL:-sonnet}"
+    local model_key
+    model_key="$(get_effective_model)"
     local total_cost
     if [[ -n "${TOTAL_COST_USD:-}" && "${TOTAL_COST_USD}" != "0" && "${TOTAL_COST_USD}" != "null" ]]; then
         total_cost="${TOTAL_COST_USD}"
@@ -2988,7 +2992,8 @@ pipeline_start() {
     fi
 
     # Emit cost event — prefer actual cost from Claude CLI when available
-    local model_key="${MODEL:-sonnet}"
+    local model_key
+    model_key="$(get_effective_model)"
     local total_cost
     if [[ -n "${TOTAL_COST_USD:-}" && "${TOTAL_COST_USD}" != "0" && "${TOTAL_COST_USD}" != "null" ]]; then
         total_cost="${TOTAL_COST_USD}"

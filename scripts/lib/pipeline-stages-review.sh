@@ -69,8 +69,9 @@ detect_plan_drift() {
             echo "$planned_file" | grep -qE '(\.|/)' || continue
         fi
 
-        # Check if this planned file appears in the actual changed files (whole-line match)
-        if ! echo "$actual_changed" | grep -qxF "$planned_file"; then
+        # Check if this planned file appears in the actual changed files (whole-line match,
+        # case-insensitive to handle macOS/Windows where git may normalize path casing)
+        if ! echo "$actual_changed" | grep -qixF "$planned_file"; then
             drift_warnings="${drift_warnings}[DRIFT-WARNING] Planned file not modified: ${planned_file}
 "
         fi

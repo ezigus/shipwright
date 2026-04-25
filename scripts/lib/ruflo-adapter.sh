@@ -975,6 +975,54 @@ ruflo_execute_review() {
         # Fail-open: caller checks -s before injecting context, so empty = no-op
     fi
 
+    # ─── Queen collapse: synthesis pass to dedup & rank findings ───────────────
+    # Post-write synthesis: union is committed to disk first, becomes fallback.
+    # Seed synthesis namespace with artifact head, orchestrate dedup+ranking,
+    # read result, overwrite artifact only on success. Fail-open on all errors.
+    local _synth_ns="hive-review-synth-${pipeline_id}"
+
+    # Seed synthesis namespace with first 6000 bytes of union artifact
+    local _artifact_head
+    _artifact_head=$(head -c 6000 "$artifact_file" 2>/dev/null || echo "")
+    if [[ -n "$_artifact_head" ]]; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            ruflo_store "review-union-findings" "$_artifact_head" "$_synth_ns" "review,synthesis" 2>/dev/null || true
+        else
+            ruflo_store "review-union-findings" "$_artifact_head" "$_synth_ns" "review,synthesis" 2>/dev/null || true
+        fi
+    fi
+
+    # Run synthesis orchestration pass: dedup + severity ranking
+    local _synth_exit=0
+    local _synth_goal="Deduplicate and rank findings by severity (Critical/Bug/Security/Warning/Suggestion). Promote findings endorsed by multiple specialists. Output structured Markdown with severity labels."
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 120 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    else
+        ruflo_with_timeout 120 ruflo coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    fi
+
+    # Read synthesis result from hive memory — only if orchestration succeeded
+    local _synth_result=""
+    if [[ "$_synth_exit" -eq 0 ]]; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            _synth_result=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+                --action list --namespace "$_synth_ns" 2>/dev/null || true)
+        else
+            _synth_result=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+                --action list --namespace "$_synth_ns" 2>/dev/null || true)
+        fi
+    fi
+
+    # Overwrite artifact with synthesis result if successful (fail-open: keep union on any error)
+    if [[ -n "$_synth_result" ]] && [[ "$_synth_exit" -eq 0 ]]; then
+        printf '%s\n' "$_synth_result" > "$artifact_file" 2>/dev/null || true
+    fi
+
+    # Emit telemetry for observability
+    emit_event "ruflo.review_synth_complete" "exit=${_synth_exit}" "namespace=${_synth_ns}"
+
     # Persist review result for downstream stage context (PR, audit stages)
     ruflo_store "stage-review-result" \
         "$(head -c 2000 "$artifact_file" 2>/dev/null || true)" \

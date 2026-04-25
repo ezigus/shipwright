@@ -376,4 +376,119 @@ else
     assert_fail "Should return empty when no bullet items in section" "$result"
 fi
 
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_plan_drift: h3 heading (### Files to Modify)"
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Some plan authors use h3 headings; the parser should handle this.
+cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
+# Plan
+
+## Overview
+
+Some context.
+
+### Files to Modify
+
+- `src/h3-test.js` — feature file (not committed)
+
+## Notes
+done
+PLAN
+
+result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+assert_contains "Drift warning with h3 section header" "$result" "src/h3-test.js"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_plan_drift: heading with trailing colon (## Files to Modify:)"
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Some plan authors add a trailing colon; the parser should handle this.
+cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
+# Plan
+
+## Files to Modify:
+
+- `src/colon-test.js` — feature file (not committed)
+
+## Notes
+done
+PLAN
+
+result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+assert_contains "Drift warning with trailing-colon section header" "$result" "src/colon-test.js"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Integration Test 1: drift warnings appear in review prompt when files unmodified
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Integration: drift warnings embedded in review prompt when files unmodified"
+
+# Plan lists a file NOT committed on the feature branch — drift expected
+cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
+# Plan
+
+## Files to Modify
+
+- `src/auth.js` — modified (committed earlier)
+- `src/unmodified-integration.js` — NOT committed (drift expected)
+
+## Notes
+done
+PLAN
+
+_drift=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+
+# Simulate the review-prompt drift section assembly (mirrors stage_review() lines 288-296)
+_review_prompt=""
+if [[ -n "$_drift" ]]; then
+    _review_prompt="## Cross-Stage Drift Detected
+The following files were planned but not modified by the build:
+${_drift}
+Reviewer: Verify whether these files were intentionally skipped or represent incomplete implementation."
+fi
+
+assert_contains "Drift warning in assembled review prompt" "$_review_prompt" \
+    "[DRIFT-WARNING] Planned file not modified: src/unmodified-integration.js"
+assert_contains "Drift section heading in review prompt" "$_review_prompt" \
+    "## Cross-Stage Drift Detected"
+if echo "$_review_prompt" | grep -q "src/auth.js"; then
+    assert_fail "No false positive for committed file in review prompt" \
+        "src/auth.js appeared in drift section"
+else
+    assert_pass "No false positive: committed file absent from drift section"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Integration Test 2: no drift warnings in review prompt when all planned files modified
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Integration: no drift warnings in review prompt when all planned files modified"
+
+# Plan lists only files that ARE committed on the feature branch
+cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
+# Plan
+
+## Files to Modify
+
+- `src/auth.js` — committed earlier (no drift expected)
+- `src/config.js` — committed earlier (no drift expected)
+
+## Notes
+done
+PLAN
+
+_drift=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+
+_review_prompt=""
+if [[ -n "$_drift" ]]; then
+    _review_prompt="## Cross-Stage Drift Detected
+${_drift}"
+fi
+
+if [[ -z "$_review_prompt" ]]; then
+    assert_pass "Review prompt contains no drift section when all planned files modified"
+else
+    assert_fail "Review prompt should have no drift section when all planned files modified" \
+        "$_review_prompt"
+fi
+
 print_test_results

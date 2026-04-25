@@ -836,11 +836,72 @@ stages:
 Goal: Abort test feature
 STATE
 
+    # Pre-populate the per-run task and loop state files that a real pipeline
+    # would have written by the time abort is invoked. The fix must remove
+    # these so a subsequent pipeline run does not inherit stale context.
+    cat > "$TEST_TEMP_DIR/project/.claude/pipeline-tasks.md" <<'TASKS'
+# Pipeline Tasks
+- Issue: none
+- [ ] Stale task from aborted run
+TASKS
+    cat > "$TEST_TEMP_DIR/project/.claude/pipeline-tasks-42.md" <<'TASKS'
+# Pipeline Tasks
+- Issue: 42
+- [ ] Stale issue-scoped task
+TASKS
+    cat > "$TEST_TEMP_DIR/project/.claude/tasks.md" <<'CC_TASKS'
+# Tasks — Abort test feature
+
+## Status: In Progress
+## Checklist
+- [ ] Stale Claude Code task
+CC_TASKS
+    cat > "$TEST_TEMP_DIR/project/.claude/loop-state.md" <<'LOOP'
+---
+goal: Abort test feature
+iteration: 3
+model: sonnet
+---
+LOOP
+
     invoke_pipeline abort
 
     assert_exit_code 0 "abort should succeed" &&
     assert_state_contains "status: aborted" "state shows aborted" &&
-    assert_output_contains "aborted" "abort message"
+    assert_output_contains "aborted" "abort message" &&
+    assert_file_not_exists ".claude/pipeline-tasks.md" "abort clears pipeline-tasks.md" &&
+    assert_file_not_exists ".claude/pipeline-tasks-42.md" "abort clears issue-scoped pipeline-tasks file" &&
+    assert_file_not_exists ".claude/tasks.md" "abort clears Claude Code tasks.md" &&
+    assert_file_not_exists ".claude/loop-state.md" "abort clears loop-state.md"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 13b. Abort is idempotent — re-aborting an already-aborted pipeline is a no-op
+# ──────────────────────────────────────────────────────────────────────────────
+test_abort_idempotent() {
+    mkdir -p "$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
+    cat > "$TEST_TEMP_DIR/project/.claude/pipeline-state.md" <<'STATE'
+---
+pipeline: standard
+goal: "Already aborted"
+status: aborted
+issue: ""
+branch: "feat/aborted"
+current_stage: build
+started_at: 2024-01-01T00:00:00Z
+updated_at: 2024-01-01T00:00:00Z
+elapsed: 30s
+stages:
+  intake: complete
+---
+STATE
+    # No pre-populated task/loop files: an already-aborted run should
+    # short-circuit before touching anything.
+
+    invoke_pipeline abort
+
+    assert_exit_code 0 "re-abort should succeed" &&
+    assert_output_contains "already aborted" "reports already aborted"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2241,7 +2302,8 @@ main() {
         "test_resume:Resume continues from partial state"
         "test_resume_from_running:Resume from running status (killed process)"
         "test_resume_empty_stages_recovers_from_log:Resume recovers stages from log when stages section is empty"
-        "test_abort:Abort marks pipeline as aborted"
+        "test_abort:Abort marks pipeline as aborted and clears stale task/loop state"
+        "test_abort_idempotent:Abort on already-aborted pipeline is a no-op"
         "test_dry_run:Dry run shows config, no artifacts"
         "test_self_healing:Self-healing build→test retry loop"
         "test_intelligent_skip_docs_label:Intelligence: Skip stages for documentation issues"

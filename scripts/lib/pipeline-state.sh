@@ -633,6 +633,7 @@ write_state() {
         printf 'elapsed: %s\n' "${total_dur:-0s}"
         printf 'test_cmd: "%s"\n' "${TEST_CMD:-}"
         printf 'pr_number: %s\n' "${PR_NUMBER:-}"
+        printf 'model: %s\n' "$(get_effective_model)"
         printf 'progress_comment_id: %s\n' "${PROGRESS_COMMENT_ID:-}"
         printf 'stages:\n'
         printf '%s' "${stages_yaml}"

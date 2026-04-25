@@ -526,3 +526,31 @@ safe_git_stage() {
     fi
 }
 
+# ─── Model Resolution Helpers ────────────────────────────────────
+# get_pipeline_model: for pre-loop sites (startup, dry-run, pipeline.started).
+# Loop-state.md does not exist yet at these call sites.
+# Priority: $MODEL (CLI flag) → pipeline config .defaults.model → "opus"
+get_pipeline_model() {
+    if [[ -n "${MODEL:-}" ]]; then echo "$MODEL"; return; fi
+    if [[ -n "${PIPELINE_CONFIG:-}" && -f "${PIPELINE_CONFIG:-/dev/null}" ]]; then
+        local _m
+        _m=$(jq -r '.defaults.model // ""' "$PIPELINE_CONFIG" 2>/dev/null || echo "")
+        if [[ -n "$_m" && "$_m" != "null" ]]; then echo "$_m"; return; fi
+    fi
+    echo "opus"
+}
+
+# get_effective_model: for post-stage / telemetry sites.
+# Reads loop-state.md when present so recorded model matches what actually ran.
+# Priority: loop-state.md model: → $CLAUDE_MODEL → $MODEL → pipeline config → "opus"
+get_effective_model() {
+    local _loop_state="${STATE_DIR:-.claude}/loop-state.md"
+    if [[ -f "$_loop_state" ]]; then
+        local _m
+        _m=$(grep -m1 '^model: ' "$_loop_state" 2>/dev/null | sed 's/^model: //' | tr -d '"')
+        if [[ -n "$_m" && "$_m" != "null" ]]; then echo "$_m"; return; fi
+    fi
+    if [[ -n "${CLAUDE_MODEL:-}" ]]; then echo "$CLAUDE_MODEL"; return; fi
+    get_pipeline_model
+}
+

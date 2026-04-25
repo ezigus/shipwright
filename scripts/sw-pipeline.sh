@@ -1847,7 +1847,7 @@ run_pipeline() {
                 if [[ "$use_recommended" == "true" ]]; then
                     export CLAUDE_MODEL="$recommended_model"
                 else
-                    export CLAUDE_MODEL="opus"
+                    export CLAUDE_MODEL="opus" # A/B control arm: opus is intentional — do not replace with get_effective_model()
                 fi
 
                 emit_event "intelligence.model_ab" \
@@ -1878,7 +1878,7 @@ run_pipeline() {
             audit_emit "stage.start" "stage=$id" || true
         fi
 
-        local stage_model_used="${CLAUDE_MODEL:-${MODEL:-opus}}"
+        local stage_model_used="$(get_effective_model)"
         if run_stage_with_retry "$id"; then
             mark_stage_complete "$id"
             completed=$((completed + 1))
@@ -1927,7 +1927,7 @@ run_pipeline() {
                 if self_healing_review_build_test; then
                     mark_stage_complete "$id"
                     completed=$((completed + 1))
-                    echo "${id}|${stage_model_used:-opus}|true" >> "${ARTIFACTS_DIR}/model-routing.log"
+                    echo "${id}|${stage_model_used:-$(get_effective_model)}|true" >> "${ARTIFACTS_DIR}/model-routing.log"
                     continue
                 fi
                 # Self-healing exhausted — fall through to normal failure
@@ -2195,7 +2195,7 @@ run_dry_run() {
 
     # Build model (per-stage override or default)
     local default_model stage_model
-    default_model=$(jq -r '.defaults.model // "opus"' "$PIPELINE_CONFIG")
+    default_model=$(get_pipeline_model)
     stage_model="$MODEL"
     [[ -z "$stage_model" ]] && stage_model="$default_model"
 
@@ -2668,7 +2668,7 @@ pipeline_start() {
         echo -e "  ${BOLD}Gates:${RESET}       ${gate_count} approval gate(s)"
     fi
 
-    echo -e "  ${BOLD}Model:${RESET}       ${MODEL:-$(jq -r '.defaults.model // "opus"' "$PIPELINE_CONFIG")}"
+    echo -e "  ${BOLD}Model:${RESET}       $(get_pipeline_model)"
     echo -e "  ${BOLD}Self-heal:${RESET}   ${BUILD_TEST_RETRIES} retry cycle(s)"
 
     if [[ "$GH_AVAILABLE" == "true" ]]; then
@@ -2739,7 +2739,7 @@ pipeline_start() {
         "complexity=${INTELLIGENCE_COMPLEXITY:-0}" \
         "machine=$(hostname 2>/dev/null || echo "unknown")" \
         "pipeline=${PIPELINE_NAME}" \
-        "model=${MODEL:-opus}" \
+        "model=$(get_pipeline_model)" \
         "goal=${GOAL}"
 
     # Record pipeline run in SQLite for dashboard visibility

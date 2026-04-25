@@ -2040,6 +2040,62 @@ test_ci_post_stage_event_noop_outside_ci() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Model resolution: CLI flag (MODEL=sonnet) wins over config default
+# ──────────────────────────────────────────────────────────────────────────────
+test_model_resolution() {
+    # Write a loop-state.md as if the loop chose haiku (post-stage context)
+    mkdir -p "$TEST_TEMP_DIR/project/.claude"
+    cat > "$TEST_TEMP_DIR/project/.claude/loop-state.md" <<'LSEOF'
+model: haiku
+iteration: 2
+LSEOF
+
+    # Run dry-run with --model sonnet — get_pipeline_model() must honor the CLI flag
+    invoke_pipeline start --goal "test model resolution" --model sonnet --dry-run
+
+    assert_exit_code 0 "dry-run with --model sonnet should succeed" &&
+    assert_output_contains "sonnet" "CLI flag --model sonnet should appear in dry-run output" &&
+    assert_output_not_contains "^opus$" "opus should not appear as the selected model when sonnet is specified"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Model resolution: no CLI flag falls back to pipeline config default
+# ──────────────────────────────────────────────────────────────────────────────
+test_model_resolution_no_flag() {
+    # Override standard template so defaults.model is "sonnet"
+    cat > "$TEST_TEMP_DIR/templates/pipelines/standard.json" <<'TMPL'
+{
+  "name": "standard",
+  "description": "Test pipeline with sonnet default model",
+  "defaults": { "test_cmd": "npm test", "model": "sonnet", "agents": 1 },
+  "stages": [
+    { "id": "intake",   "enabled": true,  "gate": "auto", "config": {} },
+    { "id": "plan",     "enabled": true,  "gate": "auto", "config": {} },
+    { "id": "build",    "enabled": true,  "gate": "auto", "config": { "max_iterations": 20 } },
+    { "id": "test",     "enabled": true,  "gate": "auto", "config": { "coverage_min": 0 } },
+    { "id": "review",   "enabled": true,  "gate": "auto", "config": {} },
+    { "id": "pr",       "enabled": true,  "gate": "auto", "config": { "wait_ci": false } },
+    { "id": "deploy",   "enabled": false, "gate": "auto", "config": {} },
+    { "id": "validate", "enabled": false, "gate": "auto", "config": {} }
+  ]
+}
+TMPL
+
+    # Write loop-state.md showing the loop chose sonnet (get_effective_model reads this)
+    mkdir -p "$TEST_TEMP_DIR/project/.claude"
+    cat > "$TEST_TEMP_DIR/project/.claude/loop-state.md" <<'LSEOF'
+model: sonnet
+iteration: 1
+LSEOF
+
+    # Run dry-run with no MODEL env var — get_pipeline_model() should read config default
+    invoke_pipeline start --goal "test model resolution no flag" --dry-run
+
+    assert_exit_code 0 "dry-run without MODEL flag should succeed" &&
+    assert_output_contains "sonnet" "pipeline config default model=sonnet should appear in dry-run output"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Guard: run_stage_with_retry fails fast on undefined stage function
 # ──────────────────────────────────────────────────────────────────────────────
 test_run_stage_with_retry_undefined_stage() {
@@ -2238,6 +2294,8 @@ main() {
         "test_ci_post_stage_event_noop_outside_ci:CI: ci_post_stage_event is no-op outside CI mode"
         "test_run_stage_with_retry_undefined_stage:Guard: run_stage_with_retry fails fast on undefined stage function"
         "test_partial_work_push_condition:CI: partial-work push triggers on failure OR cancelled (issue #437)"
+        "test_model_resolution:Model: CLI flag MODEL=sonnet wins over config default in dry-run"
+        "test_model_resolution_no_flag:Model: pipeline config default model used when no CLI flag set"
     )
 
     for entry in "${tests[@]}"; do

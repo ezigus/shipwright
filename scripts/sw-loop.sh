@@ -122,6 +122,7 @@ DOD_FILE=""
 QUALITY_GATES_ENABLED=false
 AUDIT_RESULT=""
 HOLISTIC_RESULT=""
+QUALITY_GATE_DETAIL=""
 COMPLETION_REJECTED=false
 QUALITY_GATE_PASSED=true
 PREV_NEW_COMMITS=0          # Commit count from previous iteration (for zero-progress detection)
@@ -1282,7 +1283,8 @@ run_quality_gates() {
         return
     fi
 
-    HOLISTIC_RESULT=""   # reset: stale holistic text from a prior gate-run must not persist across iterations
+    HOLISTIC_RESULT=""       # reset: stale holistic text from a prior gate-run must not persist across iterations
+    QUALITY_GATE_DETAIL=""   # reset: stale gate detail must not persist across iterations
     QUALITY_GATE_PASSED=true
     local gate_failures=()
 
@@ -1301,12 +1303,36 @@ run_quality_gates() {
 
     # Gate 3: No TODO/FIXME/HACK/XXX in new source code
     # Exclude .claude/, docs/plans/, and markdown files (which legitimately contain task markers)
-    local todo_count
-    todo_count="$(git -C "$PROJECT_ROOT" diff HEAD~1 -- ':!.claude/' ':!docs/plans/' ':!*.md' 2>/dev/null \
-        | grep -cE '^\+.*(TODO|FIXME|HACK|XXX)' || true)"
+    # -c diff.noprefix=false ensures +++ b/<path> prefix is always present regardless of user config.
+    # Capture once with --unified=0; use the same output for both counting and location extraction.
+    # NOTE: --unified=0 is required — awk tracks line numbers by counting only added lines.
+    # Context lines are absent with this flag; changing the diff flags would cause lineno drift.
+    # file=$0; sub(...) handles paths with spaces by copying the full header line, then stripping
+    # the +++ b/ prefix. /^\+/ && !/^\+\+\+/ counts ALL added lines (including empty ones) so
+    # lineno stays accurate when blank lines precede a marker.
+    local _todo_diff todo_count
+    _todo_diff="$(git -C "$PROJECT_ROOT" -c diff.noprefix=false diff HEAD~1 --unified=0 \
+        -- ':!.claude/' ':!docs/plans/' ':!*.md' 2>/dev/null || true)"
+    todo_count="$(printf '%s\n' "$_todo_diff" | grep -cE '^\+[^+].*(TODO|FIXME|HACK|XXX)' || true)"
     todo_count="${todo_count:-0}"
     if [[ "${todo_count:-0}" -gt 0 ]]; then
         gate_failures+=("${todo_count} TODO/FIXME/HACK/XXX markers in new code")
+        local _todo_locations
+        _todo_locations="$(printf '%s\n' "$_todo_diff" \
+          | awk '
+              /^\+\+\+ / { file=$0; sub(/^\+\+\+ b\//,"",file) }
+              /^@@ /     { s=$3; sub(/^[^+]*\+/,"",s); sub(/,.*/,"",s); lineno=int(s)-1 }
+              /^\+/ && !/^\+\+\+/ {
+                lineno++
+                if (index($0,"TODO") || index($0,"FIXME") || index($0,"HACK") || index($0,"XXX"))
+                  print file ":" lineno ": " substr($0,2)
+              }
+            ' | head -10 || true)"
+        if [[ -n "$_todo_locations" ]]; then
+            QUALITY_GATE_DETAIL="${QUALITY_GATE_DETAIL}
+### TODO/FIXME markers to remove
+${_todo_locations}"
+        fi
     fi
 
     # Gate 4: Definition of Done (if DOD_FILE set)
@@ -1437,6 +1463,14 @@ IMPORTANT: Respond with a JSON object followed by a verdict line. No prose, no m
 - For each DoD item, add an entry to "items" with the item text and whether it passes.
 - In "summary", briefly explain your verdict (1-2 sentences max).
 
+For each unsatisfied item, if you can identify specific files from the diffs above, also include:
+- "files": array of specific file paths to create or modify
+- "hint": one sentence describing the exact change needed
+These fields are optional — only include them when you have high confidence from the diff context.
+
+Example of an unsatisfied item with optional fields:
+{"item":"Dashboard returns new fields","satisfied":false,"reason":"No TypeScript changes","files":["dashboard/src/types/api.ts","dashboard/src/core/api.ts"],"hint":"Add stageCosts field to FleetState interface and wire it in fetchMetrics()"}
+
 On the line immediately after the JSON object, output exactly one of:
   <<<DOD:PASS>>>
   <<<DOD:FAIL>>>
@@ -1499,6 +1533,20 @@ DOD_PROMPT
         echo -e "  ${YELLOW}⚠${RESET} Definition of Done: not satisfied"
         # Surface failing items for diagnostics
         jq -r '.items[] | select(.satisfied == false) | "  - \(.item): " + (.reason // "not satisfied")' "$dod_clean" 2>/dev/null || true
+        # Extract optional file:hint details and store for next-iteration prompt injection.
+        # Uses null-safe // [] so missing "files" field does not cause jq errors.
+        local _dod_detail
+        _dod_detail="$(jq -r '
+          .items[] | select(.satisfied == false) |
+          "- " + .item + "\n" +
+          (if ((.files | type) == "array") and ((.files | length) > 0) then "  Files: " + (.files | join(", ")) + "\n" else "" end) +
+          (if .hint then "  Fix: " + .hint else "" end)
+        ' "$dod_clean" 2>/dev/null | head -20 || true)"
+        if [[ -n "$_dod_detail" ]]; then
+            QUALITY_GATE_DETAIL="${QUALITY_GATE_DETAIL}
+### Definition of Done — unsatisfied items
+${_dod_detail}"
+        fi
         # Fallback: only when jq parse failed (dod_verdict empty) — not when jq returned "fail".
         # Without this guard, prose in a legitimately-parsed "fail" summary (e.g. "all requirements
         # are now satisfied") could match the legacy pattern and incorrectly flip the verdict to pass.
@@ -1759,6 +1807,17 @@ ${HOLISTIC_RESULT}
 
 Address ALL gaps before declaring the goal complete.
 HOLISTIC_FEEDBACK
+}
+
+compose_quality_gate_detail_section() {
+    if [[ -z "${QUALITY_GATE_DETAIL:-}" ]]; then
+        return
+    fi
+    cat <<GATE_DETAIL
+## Quality Gate Failure — Specific Locations
+Fix these exact issues before attempting LOOP_COMPLETE again:
+${QUALITY_GATE_DETAIL}
+GATE_DETAIL
 }
 
 compose_rejection_notice_section() {

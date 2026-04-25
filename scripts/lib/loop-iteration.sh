@@ -188,6 +188,8 @@ Fix these specific errors. Each line above is one distinct error from the test o
     audit_feedback_section="$(compose_audit_feedback_section)"
     local holistic_feedback_section
     holistic_feedback_section="$(compose_holistic_feedback_section)"
+    local quality_gate_detail_section
+    quality_gate_detail_section="$(compose_quality_gate_detail_section)"
     local rejection_notice_section
     rejection_notice_section="$(compose_rejection_notice_section)"
 
@@ -478,6 +480,8 @@ ${audit_feedback_section}
 
 ${holistic_feedback_section}
 
+${quality_gate_detail_section:+$quality_gate_detail_section
+}
 ${rejection_notice_section}
 
 ${zero_progress_notice}

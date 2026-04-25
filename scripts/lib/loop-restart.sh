@@ -213,7 +213,7 @@ check_fatal_error() {
         local match
         match=$(grep -iE "$fatal_patterns" "$log_file" 2>/dev/null | head -1 | cut -c1-120)
         error "Fatal CLI error: $match"
-        return 1  # fatal error detected
+        return 0  # fatal error detected — abort loop
     fi
 
     # Non-zero exit + tiny output = likely CLI crash
@@ -225,7 +225,7 @@ check_fatal_error() {
             local content
             content=$(head -3 "$log_file" 2>/dev/null | cut -c1-120)
             error "CLI exited $cli_exit_code with minimal output: $content"
-            return 0
+            return 1  # not conclusively fatal — let circuit breaker handle retries
         fi
     fi
 

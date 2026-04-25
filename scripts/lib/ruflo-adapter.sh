@@ -642,10 +642,10 @@ ruflo_execute_build_single() {
     local _exit_code=0
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
         ruflo_with_timeout 600 npx -y ruflo@latest agent spawn \
-            --goal "$goal" --max-turns "$max_turns" || _exit_code=$?
+            --type coder --goal "$goal" --max-turns "$max_turns" || _exit_code=$?
     else
         ruflo_with_timeout 600 ruflo agent spawn \
-            --goal "$goal" --max-turns "$max_turns" || _exit_code=$?
+            --type coder --goal "$goal" --max-turns "$max_turns" || _exit_code=$?
     fi
 
     if [[ $_exit_code -eq 0 ]]; then

@@ -2101,18 +2101,42 @@ test_partial_work_push_condition() {
         return
     }
 
-    if ! grep -q "Push partial work on" "$wf"; then
-        assert_fail "partial-work push condition: 'Push partial work on' step not found in workflow"
+    local step_block if_line
+    step_block=$(
+        awk '
+            /^[[:space:]]*-[[:space:]]+name:/ {
+                if (in_target) {
+                    exit
+                }
+                if ($0 ~ /Push partial work on/) {
+                    in_target=1
+                }
+            }
+            in_target {
+                print
+            }
+        ' "$wf"
+    )
+
+    if [[ -z "$step_block" ]]; then
+        assert_fail "partial-work push condition: could not extract workflow step block"
         return
     fi
 
-    if grep -A1 "Push partial work on" "$wf" | grep -qE "if:[[:space:]]*failure\(\)[[:space:]]*&&"; then
+    if_line=$(printf '%s\n' "$step_block" | grep -m1 '^[[:space:]]*if:')
+
+    if [[ -z "$if_line" ]]; then
+        assert_fail "partial-work push condition: step missing if: line"
+        return
+    fi
+
+    if printf '%s\n' "$if_line" | grep -qE "if:[[:space:]]*failure\(\)[[:space:]]*&&"; then
         assert_fail "partial-work push condition: step still uses bare failure() — regression of issue #437"
         return
     fi
 
-    if ! grep -A1 "Push partial work on" "$wf" | grep -q "failure() || cancelled()"; then
-        assert_fail "partial-work push condition: step must use (failure() || cancelled()), got: $(grep -A1 'Push partial work on' "$wf" | grep 'if:')"
+    if ! printf '%s\n' "$if_line" | grep -q "failure() || cancelled()"; then
+        assert_fail "partial-work push condition: step must use (failure() || cancelled()), got: $if_line"
         return
     fi
 

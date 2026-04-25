@@ -806,7 +806,7 @@ jobs:
             git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
             HAS_DIFF=1
           fi
-          AHEAD=$(git rev-list --count "@{u}..HEAD" 2>/dev/null || echo "0")
+          AHEAD=$(git rev-list --count "origin/${BRANCH}..HEAD" 2>/dev/null || echo "1")
           if [ "$HAS_DIFF" = "0" ] && [ "$AHEAD" = "0" ]; then
             echo "No partial work to push (no diff, no commits ahead). Skipping."
             exit 0

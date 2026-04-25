@@ -19,7 +19,7 @@ detect_plan_drift() {
     # Extract the "## Files to Modify" section (case-insensitive heading match).
     # Accepts h2 (##) or h3 (###) headings with optional trailing colon.
     local section
-    section=$(awk 'tolower($0) ~ /^###? files to modify[[:space:]]*:?[[:space:]]*$/{found=1; next} found && /^##[#]* /{exit} found{print}' "$plan_file" 2>/dev/null) || return 0
+    section=$(awk 'tolower($0) ~ /^###? files to modify[[:space:]]*:?[[:space:]]*$/{found=1; next} found && /^## /{exit} found{print}' "$plan_file" 2>/dev/null) || return 0
 
     # Fail-open: section not found → no warnings
     [[ -n "$section" ]] || return 0

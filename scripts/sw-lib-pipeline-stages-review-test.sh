@@ -470,6 +470,33 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "detect_plan_drift: h3 subsection within Files to Modify does not truncate"
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# An h3 (###) heading inside the section must not cause early exit —
+# files listed after the subsection heading must still be detected as drifted.
+cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
+# Plan
+
+## Files to Modify
+
+### Core Files
+
+- `src/core.js` — core feature file (not committed)
+
+### Test Files
+
+- `src/core.test.js` — test file (not committed)
+
+## Notes
+done
+PLAN
+
+result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
+assert_contains "h3 subsection: core file drift detected" "$result" "src/core.js"
+assert_contains "h3 subsection: test file after subsection heading detected" "$result" "src/core.test.js"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "detect_plan_drift: heading with trailing colon (## Files to Modify:)"
 # ═══════════════════════════════════════════════════════════════════════════════
 

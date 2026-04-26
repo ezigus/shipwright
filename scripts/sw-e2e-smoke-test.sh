@@ -478,7 +478,7 @@ run_test() {
     else
         echo -e "${RED}✗ FAILED${RESET}"
         FAIL=$((FAIL + 1))
-        FAILURES+=("$test_name")
+        FAILURES[${#FAILURES[@]}]="$test_name"
     fi
 }
 
@@ -826,7 +826,7 @@ test_admission_refuses_concurrent_pipeline() {
     # Using a real live PID exercises the live-PID branch of reap_stale_pipeline_locks.
     sleep 600 &
     local sibling_pid=$!
-    ADMISSION_TEST_SLEEP_PIDS+=("$sibling_pid")
+    ADMISSION_TEST_SLEEP_PIDS[${#ADMISSION_TEST_SLEEP_PIDS[@]}]="$sibling_pid"
     _admission_plant_lock "$active_dir" "$sibling_pid"
 
     _invoke_pipeline_with_admission_env "$active_dir" 0 1 \

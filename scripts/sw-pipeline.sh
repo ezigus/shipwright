@@ -246,10 +246,14 @@ count_active_pipeline_locks() {
 }
 
 # Atomically write $SHIPWRIGHT_ACTIVE_PIPELINES_DIR/<pid>.json with metadata.
-# Returns rc=0 on success, 1 on filesystem error.
+# Returns rc=0 on success, 1 on filesystem error (including missing jq).
 write_active_pipeline_lock() {
     local dir="$SHIPWRIGHT_ACTIVE_PIPELINES_DIR"
     mkdir -p "$dir" 2>/dev/null || return 1
+    if ! command -v jq >/dev/null 2>&1; then
+        error "jq is required by the pipeline admission gate but was not found — install jq and retry (brew install jq / apt install jq)"
+        return 1
+    fi
     local pid="$_PIPELINE_PID"
     local lock_file="$dir/$pid.json"
     local tmp="$dir/$pid.json.tmp.$$"
@@ -515,6 +519,16 @@ TASKS_FILE=""
 # host via the env vars below.
 SHIPWRIGHT_MAX_ACTIVE_PIPELINES="${SHIPWRIGHT_MAX_ACTIVE_PIPELINES:-1}"
 SHIPWRIGHT_MIN_FREE_GB="${SHIPWRIGHT_MIN_FREE_GB:-4}"
+# Validate env vars are integers; reset to safe defaults on bad input so
+# arithmetic comparisons in check_admission_gate never receive non-numeric values.
+if [[ ! "$SHIPWRIGHT_MAX_ACTIVE_PIPELINES" =~ ^[1-9][0-9]*$ ]]; then
+    warn "SHIPWRIGHT_MAX_ACTIVE_PIPELINES='$SHIPWRIGHT_MAX_ACTIVE_PIPELINES' is not a positive integer — resetting to 1"
+    SHIPWRIGHT_MAX_ACTIVE_PIPELINES=1
+fi
+if [[ ! "$SHIPWRIGHT_MIN_FREE_GB" =~ ^[0-9]+$ ]]; then
+    warn "SHIPWRIGHT_MIN_FREE_GB='$SHIPWRIGHT_MIN_FREE_GB' is not a non-negative integer — resetting to 4"
+    SHIPWRIGHT_MIN_FREE_GB=4
+fi
 SHIPWRIGHT_ACTIVE_PIPELINES_DIR="${SHIPWRIGHT_ACTIVE_PIPELINES_DIR:-$HOME/.shipwright/active-pipelines}"
 # Capture once at top-level so trap-time `$$` (which would resolve in any
 # subshell that wraps cleanup) cannot drift to a different PID.

@@ -96,7 +96,7 @@ assert_fail() {
     local detail="${2:-}"
     TOTAL=$((TOTAL + 1))
     FAIL=$((FAIL + 1))
-    FAILURES+=("$desc")
+    FAILURES[${#FAILURES[@]}]="$desc"
     echo -e "  ${RED}✗${RESET} ${desc}"
     [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
 }

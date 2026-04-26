@@ -342,4 +342,13 @@ else
         "got arm: $_g6_arm"
 fi
 
+# Emit explicit "$PASS/$TOTAL pass" as the final visible line for DoD audit
+# parsers. print_test_results() exits internally, so we install an EXIT trap
+# that wraps the helper's existing cleanup hook to print the count line last.
+_emit_pass_count_then_cleanup() {
+    printf '%s/%s pass\n' "$PASS" "$TOTAL"
+    _test_harness_cleanup
+}
+trap '_emit_pass_count_then_cleanup' EXIT
+
 print_test_results

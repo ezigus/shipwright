@@ -559,6 +559,8 @@ ${_build_recall_ctx}"
 
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-build.log"
     export PIPELINE_JOB_ID="${PIPELINE_NAME:-pipeline-$$}"
+    # Per-iteration cost sidecar (issue #87) — read by sw-loop.sh's record_iteration_cost.
+    export ITER_COST_JSONL="${ARTIFACTS_DIR}/loop-iteration-costs.jsonl"
     sw loop "${loop_args[@]}" < /dev/null 2>"$_token_log" || {
         local _loop_exit=$?
         parse_claude_tokens "$_token_log"

@@ -40,6 +40,9 @@ fi
 [[ -f "$SCRIPT_DIR/lib/loop-convergence.sh" ]] && source "$SCRIPT_DIR/lib/loop-convergence.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-restart.sh" ]] && source "$SCRIPT_DIR/lib/loop-restart.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-progress.sh" ]] && source "$SCRIPT_DIR/lib/loop-progress.sh"
+# Per-iteration cost recording (issue #87) — record_iteration_cost reads $ITER_COST_JSONL
+# which is exported by the pipeline before invoking `sw loop`.
+[[ -f "$SCRIPT_DIR/lib/cost/iteration.sh" ]] && source "$SCRIPT_DIR/lib/cost/iteration.sh"
 # RuFlo adapter — compatibility layer for ruflo health checks and timeout recovery
 [[ -f "$SCRIPT_DIR/lib/ruflo-adapter.sh" ]] && source "$SCRIPT_DIR/lib/ruflo-adapter.sh" 2>/dev/null || true
 # Context exhaustion prevention — proactive summarization before Claude hits context limits
@@ -2557,9 +2560,25 @@ ${GOAL}"
         local commits_before
         commits_before="$(git_commit_count)"
 
+        # Snapshot token counters for per-iteration cost attribution (issue #87).
+        # These snapshots are only needed when ITER_COST_JSONL is set, because
+        # record_iteration_cost returns early when that sidecar path is unset.
+        _ITER_SNAP_INPUT="${LOOP_INPUT_TOKENS:-0}"
+        _ITER_SNAP_OUTPUT="${LOOP_OUTPUT_TOKENS:-0}"
+        _ITER_SNAP_COST_MC="${LOOP_COST_MILLICENTS:-0}"
+
         # Run Claude
         local exit_code=0
         run_claude_iteration || exit_code=$?
+
+        # Record per-iteration delta to the pipeline's loop-iteration-costs.jsonl sidecar.
+        # No-ops silently when ITER_COST_JSONL is not exported (e.g. standalone `sw loop`).
+        # Note: this path is only reached in single-agent mode. Multi-agent runs go through
+        # launch_multi_agent and do not currently record per-iteration iteration costs to
+        # the sidecar. Iteration attribution for --agents>1 is a future enhancement.
+        if type record_iteration_cost >/dev/null 2>&1; then
+            record_iteration_cost "$ITERATION" 2>/dev/null || true
+        fi
 
         local log_file="$LOG_DIR/iteration-${ITERATION}.log"
 

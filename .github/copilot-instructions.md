@@ -761,7 +761,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-context-test.sh` | 219 | Context Engine for Pipeline Stages tests |
 | `scripts/sw-cost-test.sh` | 240 | Validate token usage & cost intelligence |
 | `scripts/sw-cross-repo-isolation-test.sh` | 424 | Issue #425 |
-| `scripts/sw-daemon-test.sh` | 2202 | Unit tests for daemon metrics, health, alerting |
+| `scripts/sw-daemon-test.sh` | 2204 | Unit tests for daemon metrics, health, alerting |
 | `scripts/sw-dashboard-e2e-test.sh` | 595 | full live validation |
 | `scripts/sw-dashboard-test.sh` | 250 | validates dashboard structure |
 | `scripts/sw-db-test.sh` | 971 | SQLite Persistence Layer Test Suite |
@@ -819,7 +819,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 837 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 616 | Unit tests for quality |
-| `scripts/sw-lib-pipeline-stages-review-test.sh` | 564 | Unit tests for cross-stage drift detector |
+| `scripts/sw-lib-pipeline-stages-review-test.sh` | 589 | Unit tests for cross-stage drift detector |
 | `scripts/sw-lib-pipeline-stages-test.sh` | 1522 | Unit tests for stage functions |
 | `scripts/sw-lib-pipeline-state-test.sh` | 690 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |

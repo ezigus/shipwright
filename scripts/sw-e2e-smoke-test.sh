@@ -764,6 +764,178 @@ test_pipeline_exit_code_default() {
     return 1
 }
 
+# ─── Admission gate E2E ─────────────────────────────────────────────────────
+# These tests stand in for the "two real pipelines" manual procedure: they
+# drive the real pipeline binary end-to-end with a planted lock representing
+# a sibling pipeline still running, and assert refusal + diagnostics.
+
+# Track sleep PIDs we plant so the harness can clean them up if a test aborts
+ADMISSION_TEST_SLEEP_PIDS=()
+
+_kill_admission_sleeps() {
+    local pid
+    for pid in "${ADMISSION_TEST_SLEEP_PIDS[@]:-}"; do
+        [[ -z "$pid" ]] && continue
+        kill "$pid" 2>/dev/null || true
+    done
+    ADMISSION_TEST_SLEEP_PIDS=()
+}
+
+# Override the harness cleanup hook to also reap any planted sleeps.
+_test_cleanup_hook() { _kill_admission_sleeps; cleanup_env; }
+
+_admission_setup_dir() {
+    # Per-call active-pipelines dir, isolated from the host's real one.
+    local dir="$TEST_TEMP_DIR/admission/$1"
+    rm -rf "$dir" 2>/dev/null || true
+    mkdir -p "$dir"
+    echo "$dir"
+}
+
+_admission_plant_lock() {
+    # Args: dir pid started_at
+    local dir="$1" pid="$2" started_at="${3:-2026-04-26T00:00:00Z}"
+    cat > "$dir/$pid.json" <<EOF
+{"pid":$pid,"started_at":"$started_at","issue_or_goal":"sibling-pipeline","repo":"$TEST_TEMP_DIR/project","pipeline_template":"standard"}
+EOF
+}
+
+_invoke_pipeline_with_admission_env() {
+    # Like invoke_pipeline but lets us pass extra env (admission dir, thresholds)
+    local active_dir="$1" min_gb="$2" max_active="$3"
+    shift 3
+    PIPELINE_OUTPUT=""
+    PIPELINE_EXIT=0
+    PIPELINE_OUTPUT=$(
+        cd "$TEST_TEMP_DIR/project"
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        SHIPWRIGHT_ACTIVE_PIPELINES_DIR="$active_dir" \
+        SHIPWRIGHT_MIN_FREE_GB="$min_gb" \
+        SHIPWRIGHT_MAX_ACTIVE_PIPELINES="$max_active" \
+        bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" "$@" 2>&1
+    ) || PIPELINE_EXIT=$?
+}
+
+# 20. Concurrent pipeline refused when a sibling lock is held by a live PID
+# ──────────────────────────────────────────────────────────────────────────────
+test_admission_refuses_concurrent_pipeline() {
+    local active_dir
+    active_dir=$(_admission_setup_dir concurrency)
+
+    # Spawn a long-living process to stand in for "another pipeline running".
+    # Using a real live PID exercises the live-PID branch of reap_stale_pipeline_locks.
+    sleep 600 &
+    local sibling_pid=$!
+    ADMISSION_TEST_SLEEP_PIDS+=("$sibling_pid")
+    _admission_plant_lock "$active_dir" "$sibling_pid"
+
+    _invoke_pipeline_with_admission_env "$active_dir" 0 1 \
+        start --issue 99 --dry-run --skip-gates
+
+    # Kill the sibling immediately so subsequent tests aren't blocked.
+    kill "$sibling_pid" 2>/dev/null || true
+    wait "$sibling_pid" 2>/dev/null || true
+
+    if [[ "$PIPELINE_EXIT" -eq 0 ]]; then
+        echo -e "    ${RED}✗${RESET} Pipeline should have refused but exited 0"
+        echo "$PIPELINE_OUTPUT" | tail -8 | sed 's/^/      /'
+        return 1
+    fi
+    if ! printf '%s\n' "$PIPELINE_OUTPUT" | grep -qE "Refusing to start.*active pipeline"; then
+        echo -e "    ${RED}✗${RESET} Missing concurrency refusal diagnostic"
+        echo "$PIPELINE_OUTPUT" | tail -8 | sed 's/^/      /'
+        return 1
+    fi
+    if ! printf '%s\n' "$PIPELINE_OUTPUT" | grep -qE "pid=$sibling_pid"; then
+        echo -e "    ${RED}✗${RESET} Diagnostic should name blocking pid=$sibling_pid"
+        echo "$PIPELINE_OUTPUT" | tail -8 | sed 's/^/      /'
+        return 1
+    fi
+    return 0
+}
+
+# 21. Stale lock from a dead PID is reaped — pipeline admitted on retry
+# ──────────────────────────────────────────────────────────────────────────────
+test_admission_reaps_stale_lock() {
+    local active_dir
+    active_dir=$(_admission_setup_dir stale)
+    # 999999 is overwhelmingly likely to be a dead PID on any host.
+    _admission_plant_lock "$active_dir" 999999
+
+    _invoke_pipeline_with_admission_env "$active_dir" 0 1 \
+        start --issue 99 --dry-run --skip-gates
+
+    if [[ "$PIPELINE_EXIT" -ne 0 ]]; then
+        echo -e "    ${RED}✗${RESET} Stale lock should have been reaped but pipeline failed (exit=$PIPELINE_EXIT)"
+        echo "$PIPELINE_OUTPUT" | tail -8 | sed 's/^/      /'
+        return 1
+    fi
+    if [[ -f "$active_dir/999999.json" ]]; then
+        echo -e "    ${RED}✗${RESET} Stale lock file should have been removed"
+        return 1
+    fi
+    return 0
+}
+
+# 22. Free-memory floor refusal: setting an unreachable threshold blocks start
+# ──────────────────────────────────────────────────────────────────────────────
+test_admission_refuses_low_memory() {
+    local active_dir
+    active_dir=$(_admission_setup_dir memory)
+    # Cap so high no real host satisfies it — exercises the memory branch.
+    _invoke_pipeline_with_admission_env "$active_dir" 999999 1 \
+        start --issue 99 --dry-run --skip-gates
+
+    if [[ "$PIPELINE_EXIT" -eq 0 ]]; then
+        echo -e "    ${RED}✗${RESET} Pipeline should have refused on low memory but exited 0"
+        return 1
+    fi
+    if ! printf '%s\n' "$PIPELINE_OUTPUT" | grep -qE "Refusing to start.*GB free memory"; then
+        echo -e "    ${RED}✗${RESET} Missing memory refusal diagnostic"
+        echo "$PIPELINE_OUTPUT" | tail -8 | sed 's/^/      /'
+        return 1
+    fi
+    if ! printf '%s\n' "$PIPELINE_OUTPUT" | grep -qE "min=999999 GB"; then
+        echo -e "    ${RED}✗${RESET} Diagnostic should name configured min threshold"
+        return 1
+    fi
+    return 0
+}
+
+# 23. Lock is released on normal exit so the next pipeline is admitted
+# ──────────────────────────────────────────────────────────────────────────────
+test_admission_lock_released_after_run() {
+    local active_dir
+    active_dir=$(_admission_setup_dir release)
+    _invoke_pipeline_with_admission_env "$active_dir" 0 1 \
+        start --issue 99 --dry-run --skip-gates
+    if [[ "$PIPELINE_EXIT" -ne 0 ]]; then
+        echo -e "    ${RED}✗${RESET} First pipeline should succeed (exit=$PIPELINE_EXIT)"
+        echo "$PIPELINE_OUTPUT" | tail -8 | sed 's/^/      /'
+        return 1
+    fi
+    # After exit, the active-pipelines dir should be empty (lock released by trap).
+    local remaining
+    remaining=$(find "$active_dir" -maxdepth 1 -name '*.json' -type f 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$remaining" -ne 0 ]]; then
+        echo -e "    ${RED}✗${RESET} Lock not released — $remaining file(s) remain in $active_dir"
+        find "$active_dir" -maxdepth 1 -name '*.json' -type f -exec cat {} \; | sed 's/^/      /'
+        return 1
+    fi
+    # Reset project state between invocations so the unrelated
+    # "pipeline already in progress" guard (per-project state file) doesn't
+    # interfere with what we're actually verifying — admission release.
+    reset_test
+    _invoke_pipeline_with_admission_env "$active_dir" 0 1 \
+        start --issue 100 --dry-run --skip-gates
+    if [[ "$PIPELINE_EXIT" -ne 0 ]]; then
+        echo -e "    ${RED}✗${RESET} Follow-up pipeline should succeed after release (exit=$PIPELINE_EXIT)"
+        echo "$PIPELINE_OUTPUT" | tail -8 | sed 's/^/      /'
+        return 1
+    fi
+    return 0
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -815,6 +987,10 @@ main() {
         "test_headless_flag:Headless flag sets skip-gates"
         "test_autonomous_template_all_auto:Autonomous template all-auto gates"
         "test_pipeline_exit_code_default:Pipeline exit code default is 1 (failure)"
+        "test_admission_refuses_concurrent_pipeline:Admission gate refuses second concurrent pipeline"
+        "test_admission_reaps_stale_lock:Admission gate reaps stale lock and admits"
+        "test_admission_refuses_low_memory:Admission gate refuses on low free memory"
+        "test_admission_lock_released_after_run:Admission lock released after pipeline exit"
     )
 
     for entry in "${tests[@]}"; do

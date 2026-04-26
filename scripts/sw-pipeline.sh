@@ -509,9 +509,10 @@ TASKS_FILE=""
 # ─── Per-host admission gate ────────────────────────────────────────────────
 # Concurrent pipelines on a single host can exhaust memory and OOM-kill the
 # machine (16 GB host saw 2 pipelines + a process leak go over). The gate
-# below enforces a hardcoded host-level concurrency cap and a free-memory
-# floor; layered above the existing per-issue durable lock.
-# TODO: make these configurable once we have per-tier capacity profiles.
+# below enforces a host-level concurrency cap and a free-memory floor;
+# layered above the existing per-issue durable lock. Defaults are safe for
+# the lowest-end developer host (16 GB / 4-core); operators can override per
+# host via the env vars below.
 SHIPWRIGHT_MAX_ACTIVE_PIPELINES="${SHIPWRIGHT_MAX_ACTIVE_PIPELINES:-1}"
 SHIPWRIGHT_MIN_FREE_GB="${SHIPWRIGHT_MIN_FREE_GB:-4}"
 SHIPWRIGHT_ACTIVE_PIPELINES_DIR="${SHIPWRIGHT_ACTIVE_PIPELINES_DIR:-$HOME/.shipwright/active-pipelines}"

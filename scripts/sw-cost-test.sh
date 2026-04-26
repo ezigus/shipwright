@@ -51,6 +51,7 @@ assert_fail() {
     FAILURES+=("$desc")
     echo -e "  ${RED}✗${RESET} ${desc}"
     [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
+    return 0
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -229,6 +230,225 @@ if echo "$dash_output" | grep -q "Avg budget used"; then
     assert_pass "Dashboard shows avg budget utilization"
 else
     assert_fail "Dashboard shows avg budget utilization"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TESTS: per-iteration and stage-level cost attribution (issue #87)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo -e "${BOLD}Per-Iteration and Stage-Level Cost Attribution${RESET}"
+
+# ── Test 1: cost_generate_breakdown with sidecar data ──────────────────────────
+_bd_dir="$TEST_TEMP_DIR/breakdown-test"
+mkdir -p "$_bd_dir"
+_now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+printf '%s\n' \
+    "{\"iteration\":1,\"input_tokens\":5000,\"output_tokens\":2000,\"cost_usd\":0.045,\"ts\":\"${_now}\"}" \
+    "{\"iteration\":2,\"input_tokens\":4000,\"output_tokens\":1800,\"cost_usd\":0.039,\"ts\":\"${_now}\"}" \
+    "{\"iteration\":3,\"input_tokens\":3500,\"output_tokens\":1500,\"cost_usd\":0.033,\"ts\":\"${_now}\"}" \
+    > "$_bd_dir/loop-iteration-costs.jsonl"
+printf '%s\n' \
+    "{\"stage\":\"build\",\"input_tokens\":12500,\"output_tokens\":5300,\"model\":\"sonnet\",\"ts\":\"${_now}\"}" \
+    "{\"stage\":\"review\",\"input_tokens\":3000,\"output_tokens\":1000,\"model\":\"sonnet\",\"ts\":\"${_now}\"}" \
+    > "$_bd_dir/stage-costs.jsonl"
+
+_bd_out=$(env HOME="$TEST_TEMP_DIR/home" PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+    bash "$SCRIPT_DIR/sw-cost.sh" breakdown "$_bd_dir" "test-pipeline" "87" 2>&1) || true
+
+if [[ -f "$_bd_dir/cost-breakdown.json" ]]; then
+    assert_pass "cost_generate_breakdown creates cost-breakdown.json"
+    _iter_count=$(jq '.summary.iteration_count' "$_bd_dir/cost-breakdown.json" 2>/dev/null || echo "")
+    _stage_count=$(jq '.by_stage | length' "$_bd_dir/cost-breakdown.json" 2>/dev/null || echo "")
+    _iter_len=$(jq '.by_iteration | length' "$_bd_dir/cost-breakdown.json" 2>/dev/null || echo "")
+    if [[ "$_iter_count" == "3" ]]; then
+        assert_pass "breakdown: summary.iteration_count == 3"
+    else
+        assert_fail "breakdown: summary.iteration_count == 3" "got: ${_iter_count}"
+    fi
+    if [[ "$_stage_count" == "2" ]]; then
+        assert_pass "breakdown: by_stage has 2 entries"
+    else
+        assert_fail "breakdown: by_stage has 2 entries" "got: ${_stage_count}"
+    fi
+    if [[ "$_iter_len" == "3" ]]; then
+        assert_pass "breakdown: by_iteration has 3 entries"
+    else
+        assert_fail "breakdown: by_iteration has 3 entries" "got: ${_iter_len}"
+    fi
+else
+    assert_fail "cost_generate_breakdown creates cost-breakdown.json" "output: $(echo "$_bd_out" | tail -3)"
+    assert_fail "breakdown: summary.iteration_count == 3"
+    assert_fail "breakdown: by_stage has 2 entries"
+    assert_fail "breakdown: by_iteration has 3 entries"
+fi
+
+# ── Test 2: cost_generate_breakdown with no sidecars ───────────────────────────
+_bd_empty="$TEST_TEMP_DIR/breakdown-empty"
+mkdir -p "$_bd_empty"
+env HOME="$TEST_TEMP_DIR/home" PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+    bash "$SCRIPT_DIR/sw-cost.sh" breakdown "$_bd_empty" "empty-pipeline" "" 2>&1 || true
+
+if [[ -f "$_bd_empty/cost-breakdown.json" ]]; then
+    _empty_iter=$(jq '.by_iteration | length' "$_bd_empty/cost-breakdown.json" 2>/dev/null || echo "err")
+    _empty_stage=$(jq '.by_stage | length' "$_bd_empty/cost-breakdown.json" 2>/dev/null || echo "err")
+    if [[ "$_empty_iter" == "0" && "$_empty_stage" == "0" ]]; then
+        assert_pass "breakdown with no sidecars produces valid JSON with empty arrays"
+    else
+        assert_fail "breakdown with no sidecars produces valid JSON with empty arrays" \
+            "by_iteration=${_empty_iter} by_stage=${_empty_stage}"
+    fi
+else
+    assert_fail "breakdown with no sidecars produces valid JSON with empty arrays"
+fi
+
+# ── Test 3: --by-iteration flag ─────────────────────────────────────────────────
+_bd_flag_dir="$TEST_TEMP_DIR/breakdown-flag"
+mkdir -p "$_bd_flag_dir"
+printf '%s\n' \
+    "{\"pipeline_id\":\"p1\",\"issue\":\"87\",\"generated_at\":\"${_now}\",\"summary\":{\"total_input_tokens\":12500,\"total_output_tokens\":5300,\"iteration_count\":2,\"stage_count\":1},\"by_stage\":[{\"stage\":\"build\",\"input_tokens\":12500,\"output_tokens\":5300}],\"by_iteration\":[{\"iteration\":1,\"input_tokens\":5000,\"output_tokens\":2000,\"cost_usd\":0.045,\"ts\":\"${_now}\"},{\"iteration\":2,\"input_tokens\":4000,\"output_tokens\":1800,\"cost_usd\":0.039,\"ts\":\"${_now}\"}]}" \
+    > "$_bd_flag_dir/cost-breakdown.json"
+
+_iter_output=$(env HOME="$TEST_TEMP_DIR/home" PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+    ARTIFACTS_DIR="$_bd_flag_dir" \
+    bash "$SCRIPT_DIR/sw-cost.sh" show --by-iteration 2>&1) || true
+if echo "$_iter_output" | grep -qi "by iteration\|BY ITERATION"; then
+    assert_pass "--by-iteration flag renders iteration section"
+else
+    assert_fail "--by-iteration flag renders iteration section" "output: $(echo "$_iter_output" | grep -i iter | head -3)"
+fi
+
+_no_iter_output=$(env HOME="$TEST_TEMP_DIR/home" PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+    bash "$SCRIPT_DIR/sw-cost.sh" show --by-iteration 2>&1) || true
+if echo "$_no_iter_output" | grep -qi "no iteration data\|no.*iteration\|iteration.*data"; then
+    assert_pass "--by-iteration with no artifact shows graceful message"
+else
+    assert_fail "--by-iteration with no artifact shows graceful message" "output: $(echo "$_no_iter_output" | tail -3)"
+fi
+
+# ── Test 4: record_iteration_cost from lib/loop-cost.sh ───────────────────────
+_loop_cost_lib="$SCRIPT_DIR/lib/loop-cost.sh"
+if [[ -f "$_loop_cost_lib" ]]; then
+    _iter_sidecar="$TEST_TEMP_DIR/test-iter-costs.jsonl"
+    (
+        # Source the lib in a subshell to avoid polluting test environment
+        ITER_COST_JSONL="$_iter_sidecar"
+        LOOP_INPUT_TOKENS=0
+        LOOP_OUTPUT_TOKENS=0
+        LOOP_COST_MILLICENTS=0
+        # shellcheck source=/dev/null
+        source "$_loop_cost_lib"
+        # Iteration 1
+        _ITER_SNAP_INPUT=0; _ITER_SNAP_OUTPUT=0; _ITER_SNAP_COST_MC=0
+        LOOP_INPUT_TOKENS=5000; LOOP_OUTPUT_TOKENS=2000; LOOP_COST_MILLICENTS=450
+        record_iteration_cost 1
+        # Iteration 2
+        _ITER_SNAP_INPUT=5000; _ITER_SNAP_OUTPUT=2000; _ITER_SNAP_COST_MC=450
+        LOOP_INPUT_TOKENS=9000; LOOP_OUTPUT_TOKENS=3800; LOOP_COST_MILLICENTS=840
+        record_iteration_cost 2
+        # Iteration 3
+        _ITER_SNAP_INPUT=9000; _ITER_SNAP_OUTPUT=3800; _ITER_SNAP_COST_MC=840
+        LOOP_INPUT_TOKENS=12500; LOOP_OUTPUT_TOKENS=5300; LOOP_COST_MILLICENTS=1170
+        record_iteration_cost 3
+    )
+    _line_count=$(wc -l < "$_iter_sidecar" 2>/dev/null | tr -d ' ' || echo "0")
+    _iter3_num=$(jq -r 'select(.iteration==3) | .iteration' "$_iter_sidecar" 2>/dev/null | head -1 || echo "")
+    _iter1_input=$(jq -r 'select(.iteration==1) | .input_tokens' "$_iter_sidecar" 2>/dev/null | head -1 || echo "")
+    if [[ "$_line_count" == "3" ]]; then
+        assert_pass "record_iteration_cost: sidecar has 3 lines"
+    else
+        assert_fail "record_iteration_cost: sidecar has 3 lines" "got: ${_line_count}"
+    fi
+    if [[ "$_iter3_num" == "3" ]]; then
+        assert_pass "record_iteration_cost: iteration numbers are 1/2/3"
+    else
+        assert_fail "record_iteration_cost: iteration numbers are 1/2/3" "got iter3: ${_iter3_num}"
+    fi
+    if [[ "$_iter1_input" == "5000" ]]; then
+        assert_pass "record_iteration_cost: iteration 1 delta input_tokens correct (5000)"
+    else
+        assert_fail "record_iteration_cost: iteration 1 delta input_tokens correct (5000)" "got: ${_iter1_input}"
+    fi
+else
+    assert_fail "record_iteration_cost: lib/loop-cost.sh exists" "file not found: $_loop_cost_lib"
+    assert_fail "record_iteration_cost: sidecar has 3 lines"
+    assert_fail "record_iteration_cost: iteration numbers are 1/2/3"
+    assert_fail "record_iteration_cost: iteration 1 delta input_tokens correct (5000)"
+fi
+
+# ── Test 5: record_stage_cost_start/end from lib/stage-cost.sh ─────────────────
+_stage_cost_lib="$SCRIPT_DIR/lib/stage-cost.sh"
+if [[ -f "$_stage_cost_lib" ]]; then
+    _stage_sidecar_dir="$TEST_TEMP_DIR/stage-cost-test"
+    mkdir -p "$_stage_sidecar_dir"
+    (
+        ARTIFACTS_DIR="$_stage_sidecar_dir"
+        TOTAL_INPUT_TOKENS=0
+        TOTAL_OUTPUT_TOKENS=0
+        MODEL="sonnet"
+        ISSUE_NUMBER="87"
+        # Stub cost_record as noop so the lib works without sw-cost.sh loaded
+        cost_record() { return 0; }
+        emit_event() { return 0; }
+        # shellcheck source=/dev/null
+        source "$_stage_cost_lib"
+        record_stage_cost_start "plan"
+        TOTAL_INPUT_TOKENS=8000
+        TOTAL_OUTPUT_TOKENS=3000
+        record_stage_cost_end "plan"
+    )
+    if [[ -f "$_stage_sidecar_dir/stage-costs.jsonl" ]]; then
+        _sc_stage=$(jq -r '.stage' "$_stage_sidecar_dir/stage-costs.jsonl" 2>/dev/null | head -1)
+        _sc_input=$(jq -r '.input_tokens' "$_stage_sidecar_dir/stage-costs.jsonl" 2>/dev/null | head -1)
+        if [[ "$_sc_stage" == "plan" ]]; then
+            assert_pass "record_stage_cost_end: stage-costs.jsonl has stage=plan"
+        else
+            assert_fail "record_stage_cost_end: stage-costs.jsonl has stage=plan" "got: ${_sc_stage}"
+        fi
+        if [[ "$_sc_input" == "8000" ]]; then
+            assert_pass "record_stage_cost_end: input_tokens delta correct (8000)"
+        else
+            assert_fail "record_stage_cost_end: input_tokens delta correct (8000)" "got: ${_sc_input}"
+        fi
+    else
+        assert_fail "record_stage_cost_end: stage-costs.jsonl has stage=plan" "file not created"
+        assert_fail "record_stage_cost_end: input_tokens delta correct (8000)"
+    fi
+else
+    assert_fail "record_stage_cost_end: lib/stage-cost.sh exists" "file not found: $_stage_cost_lib"
+    assert_fail "record_stage_cost_end: stage-costs.jsonl has stage=plan"
+    assert_fail "record_stage_cost_end: input_tokens delta correct (8000)"
+fi
+
+# ── Test 6: AC#1 regression — 4 distinct stages in by_stage ──────────────────
+_bd_ac1="$TEST_TEMP_DIR/breakdown-ac1"
+mkdir -p "$_bd_ac1"
+printf '%s\n' \
+    "{\"stage\":\"plan\",\"input_tokens\":8000,\"output_tokens\":3000,\"model\":\"sonnet\",\"ts\":\"${_now}\"}" \
+    "{\"stage\":\"design\",\"input_tokens\":6000,\"output_tokens\":2500,\"model\":\"sonnet\",\"ts\":\"${_now}\"}" \
+    "{\"stage\":\"build\",\"input_tokens\":12500,\"output_tokens\":5300,\"model\":\"sonnet\",\"ts\":\"${_now}\"}" \
+    "{\"stage\":\"review\",\"input_tokens\":3000,\"output_tokens\":1000,\"model\":\"sonnet\",\"ts\":\"${_now}\"}" \
+    > "$_bd_ac1/stage-costs.jsonl"
+
+env HOME="$TEST_TEMP_DIR/home" PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+    bash "$SCRIPT_DIR/sw-cost.sh" breakdown "$_bd_ac1" "ac1-test" "87" 2>&1 || true
+
+if [[ -f "$_bd_ac1/cost-breakdown.json" ]]; then
+    _ac1_stages=$(jq '[.by_stage[].stage] | sort | unique | length' "$_bd_ac1/cost-breakdown.json" 2>/dev/null || echo "0")
+    _ac1_all_nonzero=$(jq '[.by_stage[] | select(.input_tokens > 0)] | length' "$_bd_ac1/cost-breakdown.json" 2>/dev/null || echo "0")
+    if [[ "$_ac1_stages" == "4" ]]; then
+        assert_pass "AC#1 regression: by_stage has 4 distinct stage names (not just 'pipeline')"
+    else
+        assert_fail "AC#1 regression: by_stage has 4 distinct stage names" "got: ${_ac1_stages}"
+    fi
+    if [[ "$_ac1_all_nonzero" == "4" ]]; then
+        assert_pass "AC#1 regression: all 4 stages have non-zero input_tokens"
+    else
+        assert_fail "AC#1 regression: all 4 stages have non-zero input_tokens" "got: ${_ac1_all_nonzero}"
+    fi
+else
+    assert_fail "AC#1 regression: by_stage has 4 distinct stage names"
+    assert_fail "AC#1 regression: all 4 stages have non-zero input_tokens"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

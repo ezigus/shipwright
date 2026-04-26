@@ -575,6 +575,89 @@ cost_update_pricing() {
     emit_event "cost.pricing_updated" "model=$model" "input_per_m=$input_price" "output_per_m=$output_price"
 }
 
+# ─── Breakdown Artifact ─────────────────────────────────────────────────────
+
+# cost_generate_breakdown <artifacts_dir> [pipeline_id] [issue]
+# Generates cost-breakdown.json from pipeline-local sidecars only.
+# Reads:  <artifacts_dir>/stage-costs.jsonl       — per-stage token deltas
+#         <artifacts_dir>/loop-iteration-costs.jsonl — per-iteration deltas
+# Writes: <artifacts_dir>/cost-breakdown.json     (atomic via tmp+mv)
+#
+# Never queries global costs.json — sidecars are pipeline-isolated, avoiding
+# concurrent-pipeline cross-contamination and resume-epoch drift issues.
+cost_generate_breakdown() {
+    local artifacts_dir="${1:-}"
+    local pipeline_id="${2:-unknown}"
+    local issue="${3:-}"
+    [[ -z "$artifacts_dir" ]] && { warn "cost_generate_breakdown: missing artifacts_dir"; return 1; }
+    mkdir -p "$artifacts_dir" 2>/dev/null || true
+
+    local stage_jsonl="${artifacts_dir}/stage-costs.jsonl"
+    local iter_jsonl="${artifacts_dir}/loop-iteration-costs.jsonl"
+    local out_file="${artifacts_dir}/cost-breakdown.json"
+    local tmp_file
+    tmp_file=$(mktemp "${out_file}.XXXXXX")
+
+    local stage_json="[]"
+    if [[ -f "$stage_jsonl" ]]; then
+        stage_json=$(jq -s '
+            group_by(.stage) |
+            map({
+                stage: .[0].stage,
+                input_tokens: ([.[].input_tokens] | add // 0),
+                output_tokens: ([.[].output_tokens] | add // 0),
+                count: length
+            }) |
+            sort_by(-.input_tokens)
+        ' "$stage_jsonl" 2>/dev/null) || stage_json="[]"
+    fi
+
+    local iter_json="[]"
+    if [[ -f "$iter_jsonl" ]]; then
+        iter_json=$(jq -s 'sort_by(.iteration)' "$iter_jsonl" 2>/dev/null) || iter_json="[]"
+    fi
+
+    local iter_count stage_count total_input total_output
+    iter_count=$(echo "$iter_json"  | jq 'length'              2>/dev/null || echo "0")
+    stage_count=$(echo "$stage_json" | jq 'length'              2>/dev/null || echo "0")
+    total_input=$(echo "$stage_json" | jq '[.[].input_tokens]  | add // 0' 2>/dev/null || echo "0")
+    total_output=$(echo "$stage_json" | jq '[.[].output_tokens] | add // 0' 2>/dev/null || echo "0")
+
+    jq -n \
+        --arg pipeline_id "$pipeline_id" \
+        --arg issue "$issue" \
+        --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+        --argjson by_stage "$stage_json" \
+        --argjson by_iteration "$iter_json" \
+        --argjson iter_count "$iter_count" \
+        --argjson stage_count "$stage_count" \
+        --argjson total_input "$total_input" \
+        --argjson total_output "$total_output" \
+        '{
+            pipeline_id: $pipeline_id,
+            issue: $issue,
+            generated_at: $ts,
+            summary: {
+                total_input_tokens: $total_input,
+                total_output_tokens: $total_output,
+                iteration_count: $iter_count,
+                stage_count: $stage_count
+            },
+            by_stage: $by_stage,
+            by_iteration: $by_iteration
+        }' > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$out_file" || {
+        warn "cost_generate_breakdown: failed to write ${out_file}"
+        rm -f "$tmp_file" 2>/dev/null || true
+        return 1
+    }
+    success "cost-breakdown.json written (${stage_count} stages, ${iter_count} iterations)"
+    emit_event "cost.breakdown_generated" \
+        "pipeline_id=${pipeline_id}" \
+        "issue=${issue}" \
+        "stages=${stage_count}" \
+        "iterations=${iter_count}" 2>/dev/null || true
+}
+
 # ─── Dashboard ─────────────────────────────────────────────────────────────
 
 cost_dashboard() {
@@ -582,15 +665,19 @@ cost_dashboard() {
     local json_output=false
     local by_stage=false
     local by_issue=false
+    local by_iteration=false
+    local artifacts_dir="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --period)  period_days="${2:-7}"; shift 2 ;;
-            --period=*) period_days="${1#--period=}"; shift ;;
-            --json)    json_output=true; shift ;;
-            --by-stage) by_stage=true; shift ;;
-            --by-issue) by_issue=true; shift ;;
-            *)         shift ;;
+            --period)       period_days="${2:-7}"; shift 2 ;;
+            --period=*)     period_days="${1#--period=}"; shift ;;
+            --json)         json_output=true; shift ;;
+            --by-stage)     by_stage=true; shift ;;
+            --by-issue)     by_issue=true; shift ;;
+            --by-iteration) by_iteration=true; shift ;;
+            --artifacts-dir) artifacts_dir="${2:-}"; shift 2 ;;
+            *)              shift ;;
         esac
     done
 
@@ -755,6 +842,31 @@ cost_dashboard() {
                 printf "    %-20s %-12s %s\n" "$issue" "$cost" "$count"
             done
         echo ""
+    fi
+
+    # Iteration breakdown — reads pipeline-local artifact, NOT historical aggregation
+    if [[ "$by_iteration" == "true" ]]; then
+        local breakdown_file="${artifacts_dir}/cost-breakdown.json"
+        if [[ -f "$breakdown_file" ]]; then
+            local iter_data
+            iter_data=$(jq '.by_iteration' "$breakdown_file" 2>/dev/null || echo "[]")
+            local iter_len
+            iter_len=$(echo "$iter_data" | jq 'length' 2>/dev/null || echo "0")
+            if [[ "$iter_len" -gt 0 ]]; then
+                echo -e "${BOLD}  BY ITERATION${RESET}  ${DIM}(most-recent pipeline run — not historical aggregation)${RESET}"
+                echo "$iter_data" | jq -r '.[] | "\(.iteration)\t\(.input_tokens)\t\(.output_tokens)\t\(.cost_usd)"' 2>/dev/null | \
+                    while IFS=$'\t' read -r iter input output cost; do
+                        printf "    iter %-4s  in: %-8s out: %-8s cost: \$%s\n" "$iter" "$input" "$output" "$cost"
+                    done
+                echo ""
+            else
+                echo -e "${DIM}  no iteration data (run a pipeline with cost tracking first)${RESET}"
+                echo ""
+            fi
+        else
+            echo -e "${DIM}  no iteration data (run a pipeline with cost tracking first)${RESET}"
+            echo ""
+        fi
     fi
 
     # Budget
@@ -931,6 +1043,8 @@ show_help() {
     echo -e "  ${CYAN}show${RESET} --json                   JSON output"
     echo -e "  ${CYAN}show${RESET} --by-stage               Breakdown by pipeline stage"
     echo -e "  ${CYAN}show${RESET} --by-issue               Breakdown by issue"
+    echo -e "  ${CYAN}show${RESET} --by-iteration           Per-iteration breakdown (most-recent pipeline artifact)"
+    echo -e "  ${CYAN}breakdown${RESET} <artifacts_dir> [pipeline_id] [issue]  Generate cost-breakdown.json artifact"
     echo -e "  ${CYAN}budget set${RESET} <amount>            Set daily budget (USD)"
     echo -e "  ${CYAN}budget show${RESET}                    Show current budget/usage"
     echo ""
@@ -1000,6 +1114,9 @@ case "$SUBCOMMAND" in
         ;;
     update-pricing)
         cost_update_pricing "$@"
+        ;;
+    breakdown)
+        cost_generate_breakdown "$@"
         ;;
     help|--help|-h)
         show_help

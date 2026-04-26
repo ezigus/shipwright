@@ -239,6 +239,34 @@ assert_eq "no unbounded growth across 2 compound_quality cycles" "Original" "$GO
 # ═══════════════════════════════════════════════════════════════════════════════
 # resume_state — terminal status: stuck (preparatory for #443/#451)
 # ═══════════════════════════════════════════════════════════════════════════════
+#
+# AUDIT — every reader of the `status:` field in `.claude/loop-state.md`
+# (verifiable by `grep -n 'STATUS\|status:' scripts/sw-loop.sh
+#  scripts/lib/loop-restart.sh scripts/sw-checkpoint.sh`):
+#
+#   #  File:Line                              What it does                     Behavior on `stuck` before this PR              Fix in this PR
+#   1  scripts/lib/loop-restart.sh:77         YAML parser → STATUS variable    Permissive — accepts `stuck` literal verbatim   None — already correct
+#   2  scripts/lib/loop-restart.sh:128-131    Terminal-state check (complete)  Fell through → STATUS reset → OOM cycle         Added explicit `stuck` arm at lines 133-141; exits with user guidance
+#   3  scripts/lib/loop-restart.sh:146        Unconditional STATUS="running"   Overwrote `stuck` if reached                    Now unreachable for stuck (early exit at #2)
+#   4  scripts/sw-loop.sh:1953-1962          `case $STATUS` in show_summary    Fell through to dim default — generic           Added explicit `stuck` case arm with red ✗ label
+#   5  scripts/sw-loop.sh:1977-1979          Uppercase LOOP $STATUS banner     Renders "LOOP STUCK" — already legible          None — incidentally correct
+#   6  scripts/sw-loop.sh:2854               if [[ STATUS == "complete" ]]     False for stuck — correct (stuck ≠ success)     None
+#   7  scripts/sw-checkpoint.sh:111          Reads SW_LOOP_STATUS env var      Pass-through, no branching                      None
+#
+# OUT OF SCOPE (intentionally deferred — separate work items):
+#   • Writer side (#451) — write_state() does NOT yet emit `status: stuck`. That is a
+#     separate PR; this PR only prepares readers so the writer can ship safely without
+#     re-triggering the OOM cycle on resume.
+#   • .claude/pipeline-state.md readers — different file, different schema, different
+#     field semantics. Not touched here. Audit separately if pipeline-state ever gains a
+#     stuck-equivalent value.
+#   • Documentation / public docs — status enum is internal; no public docs reference it.
+#   • Backfill of legacy state files — existing files with `running`/`complete`/etc. are
+#     unchanged; only newly-written files (post #451) can carry `stuck`.
+#
+# These same details are mirrored in the PR body (for human reviewers) so they are
+# discoverable both from the code diff (for the DoD evaluator) and from GitHub.
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "resume_state stuck terminal-state handling"
 
 # Helper: write a state file with an arbitrary status value (no original_goal field

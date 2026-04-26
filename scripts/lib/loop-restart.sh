@@ -28,6 +28,18 @@ resume_state() {
 
     info "Resuming from $STATE_FILE"
 
+    # Status field values written by write_state() / set throughout the loop:
+    #   running          — active iteration in progress (resumable)
+    #   complete         — <<<LOOP:PASS>>> accepted (terminal)
+    #   stuck            — no progress for too many iterations (terminal, NOT resumable)
+    #   circuit_breaker  — too many consecutive failures (terminal)
+    #   max_iterations   — hit MAX_ITERATIONS (resumable with --max-iterations bump)
+    #   interrupted      — user Ctrl-C (resumable)
+    #   error            — fatal CLI/API error (terminal)
+    #   budget_exhausted — daily token budget hit (terminal)
+    # Resume policy below: explicit terminal-status checks refuse resume; everything
+    # else falls through to STATUS="running" reset on line 134.
+
     # Save CLI values before parsing state (CLI takes precedence)
     local cli_max_iterations="$MAX_ITERATIONS"
 

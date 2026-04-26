@@ -1958,6 +1958,7 @@ show_summary() {
         budget_exhausted) status_display="${RED}✗ Budget exhausted${RESET}" ;;
         interrupted)      status_display="${YELLOW}⚠ Interrupted by user${RESET}" ;;
         error)            status_display="${RED}✗ Error${RESET}" ;;
+        stuck)            status_display="${RED}✗ Stuck (no progress — loop terminated)${RESET}" ;;
         *)                status_display="${DIM}$STATUS${RESET}" ;;
     esac
 

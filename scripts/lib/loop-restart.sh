@@ -20,6 +20,17 @@ initialize_state() {
 }
 
 resume_state() {
+    # Known status values in loop-state.md (the `status:` YAML field):
+    #   running            - loop is in progress
+    #   complete           - loop finished successfully (LOOP:PASS accepted)
+    #   stuck              - loop terminated because no progress was being made (no resume)
+    #   circuit_breaker    - too many consecutive failures (terminal)
+    #   max_iterations     - hit max-iterations cap (resumable with --max-iterations)
+    #   interrupted        - user-interrupted (resumable)
+    #   error              - generic error (terminal unless re-tried)
+    #   budget_exhausted   - out of budget (terminal)
+    # Resume policy: only `complete` and `stuck` short-circuit resume here; every
+    # other value falls through to STATUS="running" and re-enters the loop.
     if [[ ! -f "$STATE_FILE" ]]; then
         error "No state file found at $STATE_FILE"
         echo -e "  Start a new loop instead: ${DIM}shipwright loop \"<goal>\"${RESET}"
@@ -115,6 +126,14 @@ resume_state() {
 
     if [[ "$STATUS" == "complete" ]]; then
         warn "Previous loop completed. Start a new one or edit the state file."
+        exit 0
+    fi
+
+    if [[ "$STATUS" == "stuck" ]]; then
+        warn "Previous loop terminated as stuck (no progress detected)."
+        echo -e "  Refusing to resume; investigate before restarting:"
+        echo -e "    ${DIM}shipwright memory show${RESET}    # captured failure patterns"
+        echo -e "    ${DIM}shipwright loop \"<new goal>\"${RESET}  # start fresh after diagnosis"
         exit 0
     fi
 

@@ -236,4 +236,110 @@ GOAL="" ORIGINAL_GOAL=""
 resume_state 2>/dev/null
 assert_eq "no unbounded growth across 2 compound_quality cycles" "Original" "$GOAL"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# resume_state — 'stuck' terminal status handling (issue #443)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "resume_state stuck status handling (issue #443)"
+
+# Helper: invoke resume_state in a subshell so its `exit` does not kill the test
+# runner, while still capturing stderr (where warn writes) and the resulting
+# STATUS so we can assert short-circuit behavior.
+_run_resume_capture() {
+    # Run in a subshell with fresh stderr capture; export marker so we can
+    # detect whether resume_state actually returned (non-stuck/non-complete) or
+    # short-circuited via exit (stuck/complete terminal states).
+    local _out
+    _out="$(
+        set +e
+        resume_state 2>&1
+        printf 'AFTER_RESUME_STATUS=%s\n' "${STATUS:-}"
+    )"
+    printf '%s' "$_out"
+}
+
+# --- G1: status=stuck causes resume_state to short-circuit via `exit 0` ---
+# Detection: when the function exits, the AFTER_RESUME_STATUS marker line never
+# prints inside the subshell. So marker ABSENT == short-circuited correctly.
+GOAL="some active goal" ORIGINAL_GOAL="some active goal"
+STATUS="stuck"
+write_state
+GOAL="" ORIGINAL_GOAL=""
+STATUS="stuck"  # simulate parser populating STATUS before guard check
+_g1_out="$(_run_resume_capture)"
+if [[ "$_g1_out" != *"AFTER_RESUME_STATUS="* ]]; then
+    assert_pass "G1: resume_state short-circuits via exit when status is stuck"
+else
+    assert_fail "G1: resume_state short-circuits via exit when status is stuck" \
+        "marker present (function did not exit): $(echo "$_g1_out" | grep AFTER_RESUME_STATUS)"
+fi
+
+# --- G1b: warning output mentions the word "stuck" so users know why ---
+if [[ "$_g1_out" == *stuck* ]]; then
+    assert_pass "G1b: stuck-status warning output mentions 'stuck'"
+else
+    assert_fail "G1b: stuck-status warning output mentions 'stuck'" \
+        "no 'stuck' found in: $(printf '%s' "$_g1_out" | head -c 200)"
+fi
+
+# --- G2: regression — status=running still resumes (does not short-circuit) ---
+# When the function falls through to the end, it explicitly sets STATUS="running"
+# and returns; the marker line then prints with STATUS=running.
+GOAL="resumable goal" ORIGINAL_GOAL="resumable goal"
+STATUS="running"
+write_state
+GOAL="" ORIGINAL_GOAL=""
+STATUS="running"
+_g2_out="$(_run_resume_capture)"
+if [[ "$_g2_out" == *"AFTER_RESUME_STATUS=running"* ]]; then
+    assert_pass "G2: regression — running status still resumes through to STATUS reset"
+else
+    assert_fail "G2: regression — running status still resumes through to STATUS reset" \
+        "marker line: $(echo "$_g2_out" | grep AFTER_RESUME_STATUS)"
+fi
+
+# --- G3: regression — status=complete still short-circuits via exit ---
+GOAL="finished goal" ORIGINAL_GOAL="finished goal"
+STATUS="complete"
+write_state
+GOAL="" ORIGINAL_GOAL=""
+STATUS="complete"
+_g3_out="$(_run_resume_capture)"
+if [[ "$_g3_out" != *"AFTER_RESUME_STATUS="* ]]; then
+    assert_pass "G3: regression — complete status still short-circuits resume via exit"
+else
+    assert_fail "G3: regression — complete status still short-circuits resume via exit" \
+        "marker present (function did not exit): $(echo "$_g3_out" | grep AFTER_RESUME_STATUS)"
+fi
+
+# --- G4: write_state round-trips STATUS=stuck verbatim to the file ---
+GOAL="round-trip goal" ORIGINAL_GOAL="round-trip goal"
+STATUS="stuck"
+write_state
+_g4_status_line=$(grep '^status:' "$STATE_FILE" | head -1)
+if [[ "$_g4_status_line" == "status: stuck" ]]; then
+    assert_pass "G4: write_state round-trips STATUS=stuck verbatim"
+else
+    assert_fail "G4: write_state round-trips STATUS=stuck verbatim" \
+        "got: $_g4_status_line"
+fi
+
+# --- G5: show_summary in sw-loop.sh has an explicit 'stuck)' case arm ---
+_g5_count=$(grep -c '^[[:space:]]*stuck)' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
+_g5_count="${_g5_count:-0}"
+if [[ "$_g5_count" -ge 1 ]]; then
+    assert_pass "G5: sw-loop.sh show_summary has an explicit 'stuck)' case arm"
+else
+    assert_fail "G5: sw-loop.sh show_summary has an explicit 'stuck)' case arm" \
+        "expected >=1 occurrence of 'stuck)' in sw-loop.sh, got: $_g5_count"
+fi
+
+# --- G6: that case arm's display string contains the word 'stuck' (legible) ---
+_g6_arm=$(grep -E '^[[:space:]]*stuck\)' "$SCRIPT_DIR/sw-loop.sh" | head -1)
+if [[ "$_g6_arm" == *[Ss]tuck* ]]; then
+    assert_pass "G6: stuck) case arm display string mentions 'stuck'"
+else
+    assert_fail "G6: stuck) case arm display string mentions 'stuck'" \
+        "got arm: $_g6_arm"
+fi
+
 print_test_results

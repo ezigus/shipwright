@@ -480,9 +480,9 @@ else
 fi
 
 if grep -q 'cost_generate_breakdown "\$ARTIFACTS_DIR"' "$_pipeline_sh"; then
-    assert_pass "sw-pipeline.sh invokes cost_generate_breakdown at pipeline end"
+    assert_pass "sw-pipeline.sh invokes cost_generate_breakdown from cleanup_on_exit"
 else
-    assert_fail "sw-pipeline.sh invokes cost_generate_breakdown at pipeline end"
+    assert_fail "sw-pipeline.sh invokes cost_generate_breakdown from cleanup_on_exit"
 fi
 
 if grep -q 'lib/cost/iteration.sh' "$_loop_sh"; then

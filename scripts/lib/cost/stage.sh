@@ -29,7 +29,8 @@ record_stage_cost_start() {
     [[ "$stage" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 0
     eval "_STAGE_SNAP_INPUT_${stage}=\${TOTAL_INPUT_TOKENS:-0}"
     eval "_STAGE_SNAP_OUTPUT_${stage}=\${TOTAL_OUTPUT_TOKENS:-0}"
-    eval "_STAGE_SNAP_MODEL_${stage}=\${MODEL:-sonnet}"
+    # Prefer CLAUDE_MODEL (set by intelligence routing) over MODEL (--model flag) over default.
+    eval "_STAGE_SNAP_MODEL_${stage}=\${CLAUDE_MODEL:-\${MODEL:-sonnet}}"
 }
 
 # record_stage_cost_end <stage_name>

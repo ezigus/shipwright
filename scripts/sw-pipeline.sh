@@ -3036,8 +3036,11 @@ pipeline_start() {
         "model=$model_key" \
         "cost_usd=$total_cost"
 
-    # Persist cost entry to costs.json + SQLite (was missing — tokens accumulated but never written)
-    if type cost_record >/dev/null 2>&1; then
+    # Persist a pipeline-level cost entry only when stage attribution is NOT active.
+    # When record_stage_cost_end is loaded, each stage delta is already written to
+    # costs.json individually, so writing a pipeline total here would double-count
+    # every token in budget checks and dashboard aggregations.
+    if type cost_record >/dev/null 2>&1 && ! type record_stage_cost_end >/dev/null 2>&1; then
         cost_record "$TOTAL_INPUT_TOKENS" "$TOTAL_OUTPUT_TOKENS" "$model_key" "pipeline" "${ISSUE_NUMBER:-}" 2>/dev/null || true
     fi
     # cost_generate_breakdown runs from cleanup_on_exit so it fires on every exit path.

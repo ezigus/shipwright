@@ -2560,8 +2560,8 @@ ${GOAL}"
         commits_before="$(git_commit_count)"
 
         # Snapshot token counters for per-iteration cost attribution (issue #87).
-        # Set even when ITER_COST_JSONL is unset — record_iteration_cost short-circuits
-        # in that case but expects the snapshot vars to be defined (loud-fail check).
+        # These snapshots are only needed when ITER_COST_JSONL is set, because
+        # record_iteration_cost returns early when that sidecar path is unset.
         _ITER_SNAP_INPUT="${LOOP_INPUT_TOKENS:-0}"
         _ITER_SNAP_OUTPUT="${LOOP_OUTPUT_TOKENS:-0}"
         _ITER_SNAP_COST_MC="${LOOP_COST_MILLICENTS:-0}"
@@ -2572,6 +2572,9 @@ ${GOAL}"
 
         # Record per-iteration delta to the pipeline's loop-iteration-costs.jsonl sidecar.
         # No-ops silently when ITER_COST_JSONL is not exported (e.g. standalone `sw loop`).
+        # Note: this path is only reached in single-agent mode. Multi-agent runs go through
+        # launch_multi_agent and do not currently record per-iteration iteration costs to
+        # the sidecar. Iteration attribution for --agents>1 is a future enhancement.
         if type record_iteration_cost >/dev/null 2>&1; then
             record_iteration_cost "$ITERATION" 2>/dev/null || true
         fi

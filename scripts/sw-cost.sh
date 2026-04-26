@@ -601,7 +601,10 @@ cost_generate_breakdown() {
     local iter_jsonl="${artifacts_dir}/loop-iteration-costs.jsonl"
     local out_file="${artifacts_dir}/cost-breakdown.json"
     local tmp_file
-    tmp_file=$(mktemp "${out_file}.XXXXXX")
+    if ! tmp_file=$(mktemp "${out_file}.XXXXXX" 2>/dev/null) || [[ -z "$tmp_file" ]]; then
+        warn "cost_generate_breakdown: failed to create temporary file for ${out_file}"
+        return 1
+    fi
 
     local stage_json="[]"
     if [[ -f "$stage_jsonl" ]]; then
@@ -611,6 +614,7 @@ cost_generate_breakdown() {
             split("\n") |
             map(select(length > 0) | . as $line | try ($line|fromjson) catch empty) |
             map(select(.stage != null)) |
+            sort_by(.stage) |
             group_by(.stage) |
             map({
                 stage: .[0].stage,
@@ -618,7 +622,7 @@ cost_generate_breakdown() {
                 output_tokens: ([.[].output_tokens // 0] | add),
                 cost_usd: ([.[].cost_usd // 0] | add | . * 1000000 | round / 1000000),
                 count: length,
-                models: ([.[].model // "unknown"] | unique | sort)
+                models: ([.[].model // "unknown"] | sort | unique)
             }) |
             sort_by(-.input_tokens)
         ' "$stage_jsonl" 2>/dev/null) || stage_json="[]"

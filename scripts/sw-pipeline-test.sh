@@ -836,11 +836,72 @@ stages:
 Goal: Abort test feature
 STATE
 
+    # Pre-populate the per-run task and loop state files that a real pipeline
+    # would have written by the time abort is invoked. The fix must remove
+    # these so a subsequent pipeline run does not inherit stale context.
+    cat > "$TEST_TEMP_DIR/project/.claude/pipeline-tasks.md" <<'TASKS'
+# Pipeline Tasks
+- Issue: none
+- [ ] Stale task from aborted run
+TASKS
+    cat > "$TEST_TEMP_DIR/project/.claude/pipeline-tasks-42.md" <<'TASKS'
+# Pipeline Tasks
+- Issue: 42
+- [ ] Stale issue-scoped task
+TASKS
+    cat > "$TEST_TEMP_DIR/project/.claude/tasks.md" <<'CC_TASKS'
+# Tasks — Abort test feature
+
+## Status: In Progress
+## Checklist
+- [ ] Stale Claude Code task
+CC_TASKS
+    cat > "$TEST_TEMP_DIR/project/.claude/loop-state.md" <<'LOOP'
+---
+goal: Abort test feature
+iteration: 3
+model: sonnet
+---
+LOOP
+
     invoke_pipeline abort
 
     assert_exit_code 0 "abort should succeed" &&
     assert_state_contains "status: aborted" "state shows aborted" &&
-    assert_output_contains "aborted" "abort message"
+    assert_output_contains "aborted" "abort message" &&
+    assert_file_not_exists ".claude/pipeline-tasks.md" "abort clears pipeline-tasks.md" &&
+    assert_file_not_exists ".claude/pipeline-tasks-42.md" "abort clears issue-scoped pipeline-tasks file" &&
+    assert_file_not_exists ".claude/tasks.md" "abort clears Claude Code tasks.md" &&
+    assert_file_not_exists ".claude/loop-state.md" "abort clears loop-state.md"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 13b. Abort is idempotent — re-aborting an already-aborted pipeline is a no-op
+# ──────────────────────────────────────────────────────────────────────────────
+test_abort_idempotent() {
+    mkdir -p "$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
+    cat > "$TEST_TEMP_DIR/project/.claude/pipeline-state.md" <<'STATE'
+---
+pipeline: standard
+goal: "Already aborted"
+status: aborted
+issue: ""
+branch: "feat/aborted"
+current_stage: build
+started_at: 2024-01-01T00:00:00Z
+updated_at: 2024-01-01T00:00:00Z
+elapsed: 30s
+stages:
+  intake: complete
+---
+STATE
+    # No pre-populated task/loop files: an already-aborted run should
+    # short-circuit before touching anything.
+
+    invoke_pipeline abort
+
+    assert_exit_code 0 "re-abort should succeed" &&
+    assert_output_contains "already aborted" "reports already aborted"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2040,6 +2101,62 @@ test_ci_post_stage_event_noop_outside_ci() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Model resolution: CLI flag (MODEL=sonnet) wins over config default
+# ──────────────────────────────────────────────────────────────────────────────
+test_model_resolution() {
+    # Write a loop-state.md as if the loop chose haiku (post-stage context)
+    mkdir -p "$TEST_TEMP_DIR/project/.claude"
+    cat > "$TEST_TEMP_DIR/project/.claude/loop-state.md" <<'LSEOF'
+model: haiku
+iteration: 2
+LSEOF
+
+    # Run dry-run with --model sonnet — get_pipeline_model() must honor the CLI flag
+    invoke_pipeline start --goal "test model resolution" --model sonnet --dry-run
+
+    assert_exit_code 0 "dry-run with --model sonnet should succeed" &&
+    assert_output_contains "sonnet" "CLI --model sonnet should appear in dry-run output" &&
+    assert_output_not_contains "opus" "opus should not appear anywhere in dry-run output when sonnet is specified"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Model resolution: no CLI flag falls back to pipeline config default
+# ──────────────────────────────────────────────────────────────────────────────
+test_model_resolution_no_flag() {
+    # Override standard template so defaults.model is "sonnet"
+    cat > "$TEST_TEMP_DIR/templates/pipelines/standard.json" <<'TMPL'
+{
+  "name": "standard",
+  "description": "Test pipeline with sonnet default model",
+  "defaults": { "test_cmd": "npm test", "model": "sonnet", "agents": 1 },
+  "stages": [
+    { "id": "intake",   "enabled": true,  "gate": "auto", "config": {} },
+    { "id": "plan",     "enabled": true,  "gate": "auto", "config": {} },
+    { "id": "build",    "enabled": true,  "gate": "auto", "config": { "max_iterations": 20 } },
+    { "id": "test",     "enabled": true,  "gate": "auto", "config": { "coverage_min": 0 } },
+    { "id": "review",   "enabled": true,  "gate": "auto", "config": {} },
+    { "id": "pr",       "enabled": true,  "gate": "auto", "config": { "wait_ci": false } },
+    { "id": "deploy",   "enabled": false, "gate": "auto", "config": {} },
+    { "id": "validate", "enabled": false, "gate": "auto", "config": {} }
+  ]
+}
+TMPL
+
+    # Write loop-state.md showing the loop chose sonnet (get_effective_model reads this)
+    mkdir -p "$TEST_TEMP_DIR/project/.claude"
+    cat > "$TEST_TEMP_DIR/project/.claude/loop-state.md" <<'LSEOF'
+model: sonnet
+iteration: 1
+LSEOF
+
+    # Run dry-run with no MODEL env var — get_pipeline_model() should read config default
+    invoke_pipeline start --goal "test model resolution no flag" --dry-run
+
+    assert_exit_code 0 "dry-run without MODEL flag should succeed" &&
+    assert_output_contains "sonnet" "pipeline config default model=sonnet should appear in dry-run output"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Guard: run_stage_with_retry fails fast on undefined stage function
 # ──────────────────────────────────────────────────────────────────────────────
 test_run_stage_with_retry_undefined_stage() {
@@ -2094,6 +2211,55 @@ RETRY_GUARD_TEST
     assert_pass "run_stage_with_retry with undefined stage exits 1 with actionable error"
 }
 
+test_partial_work_push_condition() {
+    local wf="$TEST_TEMP_DIR/shipwright-pipeline.yml"
+    cp "$REPO_DIR/.github/workflows/shipwright-pipeline.yml" "$wf" 2>/dev/null || {
+        assert_fail "partial-work push condition: workflow file not found"
+        return
+    }
+
+    local step_block if_line
+    step_block=$(
+        awk '
+            /^[[:space:]]*-[[:space:]]+name:/ {
+                if (in_target) {
+                    exit
+                }
+                if ($0 ~ /Push partial work on/) {
+                    in_target=1
+                }
+            }
+            in_target {
+                print
+            }
+        ' "$wf"
+    )
+
+    if [[ -z "$step_block" ]]; then
+        assert_fail "partial-work push condition: could not extract workflow step block"
+        return
+    fi
+
+    if_line=$(printf '%s\n' "$step_block" | grep -m1 '^[[:space:]]*if:')
+
+    if [[ -z "$if_line" ]]; then
+        assert_fail "partial-work push condition: step missing if: line"
+        return
+    fi
+
+    if printf '%s\n' "$if_line" | grep -qE "if:[[:space:]]*failure\(\)[[:space:]]*&&"; then
+        assert_fail "partial-work push condition: step still uses bare failure() — regression of issue #437"
+        return
+    fi
+
+    if ! printf '%s\n' "$if_line" | grep -q "failure() || cancelled()"; then
+        assert_fail "partial-work push condition: step must use (failure() || cancelled()), got: $if_line"
+        return
+    fi
+
+    assert_pass "partial-work push handles both failure and cancelled (issue #437)"
+}
+
 main() {
     local filter="${1:-}"
 
@@ -2136,7 +2302,8 @@ main() {
         "test_resume:Resume continues from partial state"
         "test_resume_from_running:Resume from running status (killed process)"
         "test_resume_empty_stages_recovers_from_log:Resume recovers stages from log when stages section is empty"
-        "test_abort:Abort marks pipeline as aborted"
+        "test_abort:Abort marks pipeline as aborted and clears stale task/loop state"
+        "test_abort_idempotent:Abort on already-aborted pipeline is a no-op"
         "test_dry_run:Dry run shows config, no artifacts"
         "test_self_healing:Self-healing build→test retry loop"
         "test_intelligent_skip_docs_label:Intelligence: Skip stages for documentation issues"
@@ -2188,6 +2355,9 @@ main() {
         "test_ci_post_stage_event_failed_emoji:CI: ci_post_stage_event uses failure emoji for failed status"
         "test_ci_post_stage_event_noop_outside_ci:CI: ci_post_stage_event is no-op outside CI mode"
         "test_run_stage_with_retry_undefined_stage:Guard: run_stage_with_retry fails fast on undefined stage function"
+        "test_partial_work_push_condition:CI: partial-work push triggers on failure OR cancelled (issue #437)"
+        "test_model_resolution:Model: CLI flag MODEL=sonnet wins over config default in dry-run"
+        "test_model_resolution_no_flag:Model: pipeline config default model used when no CLI flag set"
     )
 
     for entry in "${tests[@]}"; do

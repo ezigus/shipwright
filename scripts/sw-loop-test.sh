@@ -920,6 +920,175 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# run_test_gate BEHAVIOR TESTS (functional)
+# Exercises the actual run_test_gate function in a real bash subshell.
+# ═══════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${DIM}  run_test_gate: TEST_OUTPUT content on failure${RESET}"
+
+# Helper: run run_test_gate in an isolated subshell sourcing only the minimum
+# needed from sw-loop.sh (extracted via brace-counting awk).  Writes results
+# to temp files; prints the temp dir path so the caller can assert on them.
+_run_test_gate_isolated() {
+    local test_cmd="${1:-}"
+    local extra_cmd="${2:-}"
+    local log_dir
+    log_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-rtg-test.XXXXXX")"
+
+    # Write a self-contained runner script to avoid heredoc quoting issues
+    local runner="${log_dir}/runner.sh"
+    # Extract run_test_gate via brace-counting awk (robust against inner braces)
+    local fn_src
+    fn_src=$(awk '/^run_test_gate\(\)/{found=1; count=0} found{for(i=1;i<=length($0);i++){if(substr($0,i,1)=="{")count++; if(substr($0,i,1)=="}")count--}; print; if(found && count==0 && NR>1){exit}}' \
+        "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null)
+
+    cat > "$runner" <<RUNNER
+#!/usr/bin/env bash
+set -euo pipefail
+strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
+emit_event()    { :; }
+audit_emit()    { :; }
+_config_get_int() { echo "\${3:-\${4:-900}}"; }
+detect_created_test_files() { :; }
+# Color stubs — run_test_gate uses these for echo -e output
+DIM="" RESET="" GREEN="" RED="" YELLOW="" CYAN="" BOLD=""
+
+$(printf '%s\n' "$fn_src")
+
+TEST_CMD=$(printf '%q' "$test_cmd")
+ADDITIONAL_TEST_CMDS=()
+$([ -n "$extra_cmd" ] && printf 'ADDITIONAL_TEST_CMDS=(%q)\n' "$extra_cmd")
+FAST_TEST_CMD="" FAST_TEST_INTERVAL=5 ITERATION=1
+LOG_DIR=$(printf '%q' "$log_dir")
+LOOP_START_COMMIT="" TEST_PASSED="" TEST_OUTPUT="" TEST_LOG_FILE=""
+
+run_test_gate
+
+echo "\$TEST_PASSED" > $(printf '%q' "$log_dir")/result.passed
+printf '%s' "\$TEST_OUTPUT" > $(printf '%q' "$log_dir")/result.output
+RUNNER
+    bash "$runner" >/dev/null 2>&1 || true
+    echo "$log_dir"
+}
+
+# Test 1: primary fails, no additional — TEST_OUTPUT shows the failure
+_rtg_dir=$(_run_test_gate_isolated "echo 'PRIMARY_FAILURE_MARKER'; exit 1" "" 2>/dev/null || true)
+if [[ -f "$_rtg_dir/result.passed" ]]; then
+    _rtg_passed=$(cat "$_rtg_dir/result.passed")
+    _rtg_out=$(cat "$_rtg_dir/result.output")
+    if [[ "$_rtg_passed" == "false" ]] && echo "$_rtg_out" | grep -q "PRIMARY_FAILURE_MARKER"; then
+        assert_pass "run_test_gate: primary fails — TEST_OUTPUT contains failure output"
+    else
+        assert_fail "run_test_gate: primary fails — TEST_OUTPUT contains failure output" \
+            "passed=$_rtg_passed output=$(echo "$_rtg_out" | head -3)"
+    fi
+    rm -rf "$_rtg_dir"
+else
+    assert_fail "run_test_gate: primary fails — TEST_OUTPUT contains failure output" "subshell setup failed"
+fi
+
+# Test 2: primary passes — TEST_PASSED=true, TEST_OUTPUT shows passing output
+_rtg_dir=$(_run_test_gate_isolated "echo 'PRIMARY_PASS_MARKER'" "" 2>/dev/null || true)
+if [[ -f "$_rtg_dir/result.passed" ]]; then
+    _rtg_passed=$(cat "$_rtg_dir/result.passed")
+    _rtg_out=$(cat "$_rtg_dir/result.output")
+    if [[ "$_rtg_passed" == "true" ]] && echo "$_rtg_out" | grep -q "PRIMARY_PASS_MARKER"; then
+        assert_pass "run_test_gate: primary passes — TEST_PASSED=true"
+    else
+        assert_fail "run_test_gate: primary passes — TEST_PASSED=true" \
+            "passed=$_rtg_passed out=$(echo "$_rtg_out" | head -3)"
+    fi
+    rm -rf "$_rtg_dir"
+else
+    assert_fail "run_test_gate: primary passes — TEST_PASSED=true" "subshell setup failed"
+fi
+
+# Test 3 (the bug): primary fails, additional passes with >50 lines of output —
+# TEST_OUTPUT must show primary failure, not be swamped by the passing output.
+# The additional command prints 60 lines so tail -50 of combined output hides
+# the primary failure under the current (unfixed) code.
+_rtg_dir=$(_run_test_gate_isolated \
+    "echo 'PRIMARY_FAILURE_MARKER'; exit 1" \
+    "for i in \$(seq 1 60); do echo \"ADDITIONAL_PASS_LINE_\$i\"; done" 2>/dev/null || true)
+if [[ -f "$_rtg_dir/result.passed" ]]; then
+    _rtg_passed=$(cat "$_rtg_dir/result.passed")
+    _rtg_out=$(cat "$_rtg_dir/result.output")
+    _has_failure=false
+    _hides_pass=false
+    echo "$_rtg_out" | grep -q "PRIMARY_FAILURE_MARKER" && _has_failure=true
+    # Passing additional output alone (without the failure) would mislead Claude
+    if ! echo "$_rtg_out" | grep -q "PRIMARY_FAILURE_MARKER" && \
+         echo "$_rtg_out" | grep -q "ADDITIONAL_PASS_MARKER"; then
+        _hides_pass=true
+    fi
+    if [[ "$_rtg_passed" == "false" ]] && [[ "$_has_failure" == "true" ]]; then
+        assert_pass "run_test_gate: primary fails + additional passes — TEST_OUTPUT shows primary failure"
+    else
+        assert_fail "run_test_gate: primary fails + additional passes — TEST_OUTPUT shows primary failure" \
+            "hides_failure=$_hides_pass passed=$_rtg_passed out=$(echo "$_rtg_out" | head -5)"
+    fi
+    rm -rf "$_rtg_dir"
+else
+    assert_fail "run_test_gate: primary fails + additional passes — TEST_OUTPUT shows primary failure" "subshell setup failed"
+fi
+
+# Test 4: primary fails, additional also fails — TEST_OUTPUT shows both failures
+_rtg_dir=$(_run_test_gate_isolated \
+    "echo 'PRIMARY_FAILURE_MARKER'; exit 1" \
+    "echo 'EXTRA_FAILURE_MARKER'; exit 1" 2>/dev/null || true)
+if [[ -f "$_rtg_dir/result.passed" ]]; then
+    _rtg_passed=$(cat "$_rtg_dir/result.passed")
+    _rtg_out=$(cat "$_rtg_dir/result.output")
+    if [[ "$_rtg_passed" == "false" ]] && \
+       echo "$_rtg_out" | grep -q "PRIMARY_FAILURE_MARKER" && \
+       echo "$_rtg_out" | grep -q "EXTRA_FAILURE_MARKER"; then
+        assert_pass "run_test_gate: primary + additional both fail — TEST_OUTPUT shows both failures"
+    else
+        assert_fail "run_test_gate: primary + additional both fail — TEST_OUTPUT shows both failures" \
+            "passed=$_rtg_passed out=$(echo "$_rtg_out" | head -5)"
+    fi
+    rm -rf "$_rtg_dir"
+else
+    assert_fail "run_test_gate: primary + additional both fail — TEST_OUTPUT shows both failures" "subshell setup failed"
+fi
+
+# Test 5: extra command output not duplicated (cumulative-read bug)
+# Two extra commands that fail: check combined_output doesn't repeat first command's lines
+_rtg_dir2="$(mktemp -d "${TMPDIR:-/tmp}/sw-rtg-dup-test.XXXXXX")"
+_fn_src5=$(awk '/^run_test_gate\(\)/{found=1; count=0} found{for(i=1;i<=length($0);i++){if(substr($0,i,1)=="{")count++; if(substr($0,i,1)=="}")count--}; print; if(found && count==0 && NR>1){exit}}' \
+    "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null)
+_runner5="${_rtg_dir2}/runner5.sh"
+cat > "$_runner5" <<DUP_RUNNER
+#!/usr/bin/env bash
+set -euo pipefail
+strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
+emit_event() { :; }; audit_emit() { :; }; _config_get_int() { echo "\${3:-\${4:-900}}"; }
+detect_created_test_files() { :; }
+DIM="" RESET="" GREEN="" RED="" YELLOW="" CYAN="" BOLD=""
+$(printf '%s\n' "$_fn_src5")
+TEST_CMD="true"
+ADDITIONAL_TEST_CMDS=("echo EXTRA_LINE_ALPHA; exit 1" "echo EXTRA_LINE_BETA; exit 1")
+FAST_TEST_CMD="" FAST_TEST_INTERVAL=5 ITERATION=1
+LOG_DIR="${_rtg_dir2}" LOOP_START_COMMIT="" TEST_PASSED="" TEST_OUTPUT="" TEST_LOG_FILE=""
+run_test_gate
+count=\$(echo "\$TEST_OUTPUT" | grep -cxF "EXTRA_LINE_ALPHA" || true)
+echo "\$count" > "${_rtg_dir2}/alpha_count"
+DUP_RUNNER
+bash "$_runner5" 2>/dev/null || true
+if [[ -f "$_rtg_dir2/alpha_count" ]]; then
+    _alpha_count=$(cat "$_rtg_dir2/alpha_count")
+    if [[ "${_alpha_count:-0}" -le 1 ]]; then
+        assert_pass "run_test_gate: extra command output not duplicated in TEST_OUTPUT"
+    else
+        assert_fail "run_test_gate: extra command output not duplicated in TEST_OUTPUT" \
+            "EXTRA_LINE_ALPHA appeared ${_alpha_count} times (expected 1)"
+    fi
+    rm -rf "$_rtg_dir2"
+else
+    assert_fail "run_test_gate: extra command output not duplicated in TEST_OUTPUT" "subshell setup failed"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # VERIFICATION GAP TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
 echo ""

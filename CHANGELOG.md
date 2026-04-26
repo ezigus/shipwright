@@ -7,6 +7,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+### Pipeline Admission Gate (Memory Budget Guard)
+
+Concurrent pipelines on the same host could OOM the machine because nothing tracked active pipeline count or free memory before starting another run. Pipeline starts and resumes now go through a per-host admission gate.
+
+- **Per-host lock registry** at `~/.shipwright/active-pipelines/<pid>.json` written atomically on `pipeline start` and `pipeline resume`, removed by an idempotent EXIT trap on every exit path
+- **Concurrency cap**: at most one active pipeline per host (override via `SHIPWRIGHT_MAX_ACTIVE_PIPELINES`); enforced after stale-lock reaping with a post-write race recheck (lowest-PID wins)
+- **Memory floor**: refuse new starts when `<4 GB` free (override via `SHIPWRIGHT_MIN_FREE_GB`); cross-platform probe (`MemAvailable` on Linux, `vm_stat` on macOS), fail-closed on probe error
+- **Actionable refusal diagnostic**: names blocking pipeline's PID, `started_at`, `issue_or_goal`, `repo`, `pipeline_template`, and the policy limits that triggered the refusal
+- **`shipwright doctor`**: new `ACTIVE PIPELINES & MEMORY` section lists live/stale locks, warns at capacity, and warns when free memory is below the floor
+- **Stale-lock reaper**: locks held by dead PIDs are removed before the count check, so a crashed pipeline does not permanently block the host
+- **Test coverage**: 18 unit tests (`sw-pipeline-memory-guard-test.sh`) and 4 e2e admission tests (`sw-e2e-smoke-test.sh` #20–23) covering positive admission, concurrency refusal, stale reap, low-memory refusal, and lock release on exit
+
+### Test Harness
+
+- **E2E smoke harness**: `invoke_pipeline` and the headless-detection test now isolate `SHIPWRIGHT_ACTIVE_PIPELINES_DIR` per run, so dry-run smoke tests do not see the host's real lock dir when the harness itself runs from inside a live pipeline (e.g. the loop)
+
 ## [3.6.0] — 2026-04-22
 
 ### Ruflo Deep Stage Integration

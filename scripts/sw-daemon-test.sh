@@ -1751,11 +1751,13 @@ test_retry_skips_non_retryable() {
     _search="$daemon_src"
     [[ -f "${DAEMON_LIB_DIR}/daemon-failure.sh" ]] && _search="$daemon_src ${DAEMON_LIB_DIR}/daemon-failure.sh"
     _on_failure_ctx="$(grep -A 80 'daemon_on_failure()' $_search 2>/dev/null || true)"
-    echo "$_on_failure_ctx" | grep -q 'auth_error' || \
+    # Use bash pattern matching to avoid echo|grep pipes — grep -q exits early causing
+    # SIGPIPE on echo, which with pipefail produces a false failure on CI.
+    [[ "$_on_failure_ctx" == *"auth_error"* ]] || \
         { echo "Missing auth_error case in retry logic"; return 1; }
-    echo "$_on_failure_ctx" | grep -q 'invalid_issue' || \
+    [[ "$_on_failure_ctx" == *"invalid_issue"* ]] || \
         { echo "Missing invalid_issue case in retry logic"; return 1; }
-    echo "$_on_failure_ctx" | grep -q 'skip.*retry\|skipping retry' || \
+    [[ "$_on_failure_ctx" == *"skip"*"retry"* ]] || [[ "$_on_failure_ctx" == *"skipping retry"* ]] || \
         { echo "Missing skip retry action for non-retryable failures"; return 1; }
 }
 

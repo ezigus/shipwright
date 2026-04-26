@@ -42,7 +42,7 @@ resume_state() {
     # 4 | scripts/lib/loop-restart.sh:write_state| write_state emits STATUS verbatim  | Round-trips `stuck` correctly  | None — already correct
     # 5 | scripts/sw-loop.sh:~1961               | case "$STATUS" in show_summary()   | Falls through to dim default   | Add explicit `stuck)` arm with red ✗
     # 6 | scripts/sw-loop.sh:~1978               | Uppercase `LOOP $STATUS` banner    | Renders `LOOP STUCK` legibly   | None
-    # 7 | scripts/sw-loop.sh:~2830               | Sets STATUS="stuck_restart"        | Different value; not terminal  | None — must NOT conflate with `stuck`
+    # 7 | scripts/sw-loop.sh:~2830               | Sets STATUS="stuck_restart"        | Different value; not terminal  | None — must NOT conflate with `stuck`; never written to state file (in-memory only)
     # 8 | scripts/sw-loop.sh:~2854               | if [[ "$STATUS" == "complete" ]]   | False for stuck — correct      | None
     # 9 | scripts/sw-checkpoint.sh:~111          | Reads SW_LOOP_STATUS env           | Pass-through, no branching     | None
     #
@@ -54,6 +54,18 @@ resume_state() {
     fi
 
     info "Resuming from $STATE_FILE"
+
+    # Status field values written by write_state() / set throughout the loop:
+    #   running          — active iteration in progress (resumable)
+    #   complete         — <<<LOOP:PASS>>> accepted (terminal)
+    #   stuck            — no progress for too many iterations (terminal, NOT resumable)
+    #   circuit_breaker  — too many consecutive failures (terminal)
+    #   max_iterations   — hit MAX_ITERATIONS (resumable with --max-iterations bump)
+    #   interrupted      — user Ctrl-C (resumable)
+    #   error            — fatal CLI/API error (terminal)
+    #   budget_exhausted — daily token budget hit (terminal)
+    # Resume policy below: explicit terminal-status checks refuse resume; everything
+    # else falls through to STATUS="running" reset on line 134.
 
     # Save CLI values before parsing state (CLI takes precedence)
     local cli_max_iterations="$MAX_ITERATIONS"
@@ -145,12 +157,17 @@ resume_state() {
         exit 0
     fi
 
+    # Stuck is a terminal state — the loop made no progress for too many iterations
+    # and write_state() will eventually emit it. Refuse to resume so we don't re-enter
+    # the same OOM/no-progress cycle. User must investigate, fix, then start a new loop.
+    # exit 2 (not 0) so callers and CI can distinguish stuck from clean completion.
     if [[ "$STATUS" == "stuck" ]]; then
         warn "Previous loop terminated as stuck (no progress detected)."
-        echo -e "  Refusing to resume; investigate before restarting:"
-        echo -e "    ${DIM}shipwright memory show${RESET}    # captured failure patterns"
-        echo -e "    ${DIM}shipwright loop \"<new goal>\"${RESET}  # start fresh after diagnosis"
-        exit 0
+        info "  Refusing to resume; investigate before restarting:"
+        info "    ${DIM}shipwright memory show${RESET}    # captured failure patterns"
+        info "    ${DIM}cat $STATE_FILE${RESET}          # review loop state"
+        info "    ${DIM}shipwright loop \"<new goal>\"${RESET}  # start fresh after diagnosis"
+        exit 2
     fi
 
     # Reset circuit breaker on resume

@@ -134,7 +134,7 @@ RUFLO_NPX_FALLBACK=0;    export RUFLO_NPX_FALLBACK
 RUFLO_USE_NPX=false;     export RUFLO_USE_NPX
 RUFLO_AVAILABLE=false;   export RUFLO_AVAILABLE
 
-_fake_dir="$(mktemp -d)"
+_fake_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-timeout.XXXXXX")"
 _sentinel="${TMPDIR:-/tmp}/_sw426_npx_called"
 rm -f "$_sentinel"
 

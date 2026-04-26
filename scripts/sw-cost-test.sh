@@ -40,20 +40,6 @@ MOCKEOF
 
 _test_cleanup_hook() { cleanup_test_env; }
 
-assert_pass() {
-    local desc="$1"
-    echo -e "  ${GREEN}✓${RESET} ${desc}"
-}
-
-assert_fail() {
-    local desc="$1"
-    local detail="${2:-}"
-    FAILURES+=("$desc")
-    echo -e "  ${RED}✗${RESET} ${desc}"
-    [[ -n "$detail" ]] && echo -e "    ${DIM}${detail}${RESET}"
-    return 0
-}
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -327,7 +313,7 @@ else
 fi
 
 # ── Test 4: record_iteration_cost from lib/loop-cost.sh ───────────────────────
-_loop_cost_lib="$SCRIPT_DIR/lib/loop-cost.sh"
+_loop_cost_lib="$SCRIPT_DIR/lib/cost/iteration.sh"
 if [[ -f "$_loop_cost_lib" ]]; then
     _iter_sidecar="$TEST_TEMP_DIR/test-iter-costs.jsonl"
     (
@@ -370,14 +356,14 @@ if [[ -f "$_loop_cost_lib" ]]; then
         assert_fail "record_iteration_cost: iteration 1 delta input_tokens correct (5000)" "got: ${_iter1_input}"
     fi
 else
-    assert_fail "record_iteration_cost: lib/loop-cost.sh exists" "file not found: $_loop_cost_lib"
+    assert_fail "record_iteration_cost: lib/cost/iteration.sh exists" "file not found: $_loop_cost_lib"
     assert_fail "record_iteration_cost: sidecar has 3 lines"
     assert_fail "record_iteration_cost: iteration numbers are 1/2/3"
     assert_fail "record_iteration_cost: iteration 1 delta input_tokens correct (5000)"
 fi
 
 # ── Test 5: record_stage_cost_start/end from lib/stage-cost.sh ─────────────────
-_stage_cost_lib="$SCRIPT_DIR/lib/stage-cost.sh"
+_stage_cost_lib="$SCRIPT_DIR/lib/cost/stage.sh"
 if [[ -f "$_stage_cost_lib" ]]; then
     _stage_sidecar_dir="$TEST_TEMP_DIR/stage-cost-test"
     mkdir -p "$_stage_sidecar_dir"
@@ -400,6 +386,8 @@ if [[ -f "$_stage_cost_lib" ]]; then
     if [[ -f "$_stage_sidecar_dir/stage-costs.jsonl" ]]; then
         _sc_stage=$(jq -r '.stage' "$_stage_sidecar_dir/stage-costs.jsonl" 2>/dev/null | head -1)
         _sc_input=$(jq -r '.input_tokens' "$_stage_sidecar_dir/stage-costs.jsonl" 2>/dev/null | head -1)
+        _sc_ts_epoch=$(jq -r '.ts_epoch // empty' "$_stage_sidecar_dir/stage-costs.jsonl" 2>/dev/null | head -1)
+        _sc_issue=$(jq -r '.issue // empty' "$_stage_sidecar_dir/stage-costs.jsonl" 2>/dev/null | head -1)
         if [[ "$_sc_stage" == "plan" ]]; then
             assert_pass "record_stage_cost_end: stage-costs.jsonl has stage=plan"
         else
@@ -410,14 +398,28 @@ if [[ -f "$_stage_cost_lib" ]]; then
         else
             assert_fail "record_stage_cost_end: input_tokens delta correct (8000)" "got: ${_sc_input}"
         fi
+        if [[ -n "$_sc_ts_epoch" ]] && [[ "$_sc_ts_epoch" =~ ^[0-9]+$ ]]; then
+            assert_pass "record_stage_cost_end: ts_epoch field present and numeric (schema parity)"
+        else
+            assert_fail "record_stage_cost_end: ts_epoch field present and numeric" "got: '${_sc_ts_epoch}'"
+        fi
+        if [[ "$_sc_issue" == "87" ]]; then
+            assert_pass "record_stage_cost_end: issue field propagated from ISSUE_NUMBER"
+        else
+            assert_fail "record_stage_cost_end: issue field propagated from ISSUE_NUMBER" "got: '${_sc_issue}'"
+        fi
     else
         assert_fail "record_stage_cost_end: stage-costs.jsonl has stage=plan" "file not created"
         assert_fail "record_stage_cost_end: input_tokens delta correct (8000)"
+        assert_fail "record_stage_cost_end: ts_epoch field present and numeric"
+        assert_fail "record_stage_cost_end: issue field propagated from ISSUE_NUMBER"
     fi
 else
-    assert_fail "record_stage_cost_end: lib/stage-cost.sh exists" "file not found: $_stage_cost_lib"
+    assert_fail "record_stage_cost_end: lib/cost/stage.sh exists" "file not found: $_stage_cost_lib"
     assert_fail "record_stage_cost_end: stage-costs.jsonl has stage=plan"
     assert_fail "record_stage_cost_end: input_tokens delta correct (8000)"
+    assert_fail "record_stage_cost_end: ts_epoch field present and numeric"
+    assert_fail "record_stage_cost_end: issue field propagated from ISSUE_NUMBER"
 fi
 
 # ── Test 6: AC#1 regression — 4 distinct stages in by_stage ──────────────────
@@ -449,6 +451,259 @@ if [[ -f "$_bd_ac1/cost-breakdown.json" ]]; then
 else
     assert_fail "AC#1 regression: by_stage has 4 distinct stage names"
     assert_fail "AC#1 regression: all 4 stages have non-zero input_tokens"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TESTS: pipeline integration wiring (issue #87)
+# Grep-based — confirm libs are sourced, brackets are inserted, sidecars are wired.
+# Cheap and fast; does not run the pipeline end-to-end.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo -e "${BOLD}Pipeline Integration Wiring${RESET}"
+
+_pipeline_sh="$SCRIPT_DIR/sw-pipeline.sh"
+_loop_sh="$SCRIPT_DIR/sw-loop.sh"
+_build_sh="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
+
+if grep -q 'lib/cost/stage.sh' "$_pipeline_sh"; then
+    assert_pass "sw-pipeline.sh sources lib/cost/stage.sh"
+else
+    assert_fail "sw-pipeline.sh sources lib/cost/stage.sh"
+fi
+
+if grep -q 'record_stage_cost_start "\$stage_id"' "$_pipeline_sh" && \
+   grep -q 'record_stage_cost_end "\$stage_id"' "$_pipeline_sh"; then
+    assert_pass "run_stage_with_retry brackets every stage with start/end"
+else
+    assert_fail "run_stage_with_retry brackets every stage with start/end"
+fi
+
+if grep -q 'cost_generate_breakdown "\$ARTIFACTS_DIR"' "$_pipeline_sh"; then
+    assert_pass "sw-pipeline.sh invokes cost_generate_breakdown at pipeline end"
+else
+    assert_fail "sw-pipeline.sh invokes cost_generate_breakdown at pipeline end"
+fi
+
+if grep -q 'lib/cost/iteration.sh' "$_loop_sh"; then
+    assert_pass "sw-loop.sh sources lib/cost/iteration.sh"
+else
+    assert_fail "sw-loop.sh sources lib/cost/iteration.sh"
+fi
+
+if grep -q '_ITER_SNAP_INPUT=' "$_loop_sh" && \
+   grep -q 'record_iteration_cost "\$ITERATION"' "$_loop_sh"; then
+    assert_pass "sw-loop.sh snapshots and records each iteration's cost"
+else
+    assert_fail "sw-loop.sh snapshots and records each iteration's cost"
+fi
+
+if grep -q 'export ITER_COST_JSONL=' "$_build_sh"; then
+    assert_pass "stage_build exports ITER_COST_JSONL to sw loop subprocess"
+else
+    assert_fail "stage_build exports ITER_COST_JSONL to sw loop subprocess"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TESTS: end-to-end bracket pattern (issue #87 functional verification)
+# Simulates run_stage_with_retry's bracketing using real lib functions and asserts
+# the produced cost-breakdown.json has per-stage cost_usd and a coherent summary.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo -e "${BOLD}End-to-End Bracket Pattern${RESET}"
+
+_e2e_dir="$TEST_TEMP_DIR/e2e-bracket"
+mkdir -p "$_e2e_dir"
+(
+    set +u  # libs may reference unset vars under strict mode in subshell setup
+    ARTIFACTS_DIR="$_e2e_dir"
+    TOTAL_INPUT_TOKENS=0
+    TOTAL_OUTPUT_TOKENS=0
+    MODEL="sonnet"
+    ISSUE_NUMBER="87"
+    SHIPWRIGHT_PIPELINE_ID="e2e-test-pipeline"
+    cost_record() { return 0; }
+    emit_event() { return 0; }
+    # Real cost_calculate from sw-cost.sh would normally be sourced; provide a
+    # cheap stand-in so the sidecar gets a non-zero cost_usd field.
+    cost_calculate() {
+        # sonnet rates: $3/M input, $15/M output → simple linear
+        awk -v it="$1" -v ot="$2" 'BEGIN { printf "%.6f", (it/1000000)*3 + (ot/1000000)*15 }'
+    }
+    # shellcheck source=/dev/null
+    source "$SCRIPT_DIR/lib/cost/stage.sh"
+
+    # Simulate plan stage: 8000 in, 3000 out
+    record_stage_cost_start "plan"
+    TOTAL_INPUT_TOKENS=$((TOTAL_INPUT_TOKENS + 8000))
+    TOTAL_OUTPUT_TOKENS=$((TOTAL_OUTPUT_TOKENS + 3000))
+    record_stage_cost_end "plan"
+
+    # Simulate design stage: 6000 in, 2500 out
+    record_stage_cost_start "design"
+    TOTAL_INPUT_TOKENS=$((TOTAL_INPUT_TOKENS + 6000))
+    TOTAL_OUTPUT_TOKENS=$((TOTAL_OUTPUT_TOKENS + 2500))
+    record_stage_cost_end "design"
+
+    # Simulate build stage with retry: first attempt 5000/2000, retry 7500/3300
+    record_stage_cost_start "build"
+    TOTAL_INPUT_TOKENS=$((TOTAL_INPUT_TOKENS + 5000))
+    TOTAL_OUTPUT_TOKENS=$((TOTAL_OUTPUT_TOKENS + 2000))
+    record_stage_cost_end "build"  # first attempt failed
+    record_stage_cost_start "build"
+    TOTAL_INPUT_TOKENS=$((TOTAL_INPUT_TOKENS + 7500))
+    TOTAL_OUTPUT_TOKENS=$((TOTAL_OUTPUT_TOKENS + 3300))
+    record_stage_cost_end "build"  # second attempt succeeded
+)
+
+# Also seed iteration sidecar so breakdown is comprehensive
+printf '%s\n' \
+    "{\"iteration\":1,\"input_tokens\":3000,\"output_tokens\":1200,\"cost_usd\":0.027,\"ts\":\"${_now}\"}" \
+    "{\"iteration\":2,\"input_tokens\":4500,\"output_tokens\":2100,\"cost_usd\":0.0455,\"ts\":\"${_now}\"}" \
+    > "$_e2e_dir/loop-iteration-costs.jsonl"
+
+env HOME="$TEST_TEMP_DIR/home" PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+    bash "$SCRIPT_DIR/sw-cost.sh" breakdown "$_e2e_dir" "e2e-test-pipeline" "87" >/dev/null 2>&1 || true
+
+if [[ -f "$_e2e_dir/cost-breakdown.json" ]]; then
+    # Three logical stages: plan, design, build. Build has 2 records (retry).
+    _e2e_stages=$(jq '[.by_stage[].stage] | sort | unique | length' "$_e2e_dir/cost-breakdown.json")
+    if [[ "$_e2e_stages" == "3" ]]; then
+        assert_pass "e2e: 3 distinct stages (plan, design, build) recorded"
+    else
+        assert_fail "e2e: 3 distinct stages recorded" "got: ${_e2e_stages}"
+    fi
+
+    # Build's combined input should be 5000 + 7500 = 12500
+    _e2e_build_in=$(jq -r '.by_stage[] | select(.stage=="build") | .input_tokens' "$_e2e_dir/cost-breakdown.json")
+    if [[ "$_e2e_build_in" == "12500" ]]; then
+        assert_pass "e2e: build stage aggregates retry deltas (5000+7500=12500)"
+    else
+        assert_fail "e2e: build stage aggregates retry deltas" "got: ${_e2e_build_in}"
+    fi
+
+    # Each stage must have non-zero cost_usd (AC#1: tokens AND cost)
+    _e2e_cost_count=$(jq '[.by_stage[] | select(.cost_usd > 0)] | length' "$_e2e_dir/cost-breakdown.json")
+    if [[ "$_e2e_cost_count" == "3" ]]; then
+        assert_pass "e2e: every stage has non-zero cost_usd (AC#1)"
+    else
+        assert_fail "e2e: every stage has non-zero cost_usd" "got: ${_e2e_cost_count}"
+    fi
+
+    # Summary total_cost_usd must include both stage and iteration costs
+    _e2e_total_cost=$(jq -r '.summary.total_cost_usd // 0' "$_e2e_dir/cost-breakdown.json")
+    if awk -v t="$_e2e_total_cost" 'BEGIN { exit !(t > 0) }' 2>/dev/null; then
+        assert_pass "e2e: summary.total_cost_usd > 0"
+    else
+        assert_fail "e2e: summary.total_cost_usd > 0" "got: ${_e2e_total_cost}"
+    fi
+
+    # Summary uses stage data as authoritative (iterations are sub-breakdown of build,
+    # so summing both would double-count the build stage).
+    _e2e_total_in=$(jq -r '.summary.total_input_tokens // 0' "$_e2e_dir/cost-breakdown.json")
+    # Stages: 8000 + 6000 + 12500 = 26500.
+    if [[ "$_e2e_total_in" == "26500" ]]; then
+        assert_pass "e2e: summary.total_input_tokens = stage total (no double-count)"
+    else
+        assert_fail "e2e: summary.total_input_tokens = stage total" "got: ${_e2e_total_in}"
+    fi
+
+    # Breakdown stages must carry a models[] array (model attribution preserved after group_by)
+    _e2e_models_count=$(jq '[.by_stage[] | select((.models | type) == "array")] | length' "$_e2e_dir/cost-breakdown.json" 2>/dev/null || echo "0")
+    if [[ "$_e2e_models_count" == "3" ]]; then
+        assert_pass "e2e: every stage has models[] array (model attribution preserved)"
+    else
+        assert_fail "e2e: every stage has models[] array" "got: ${_e2e_models_count} stages with models"
+    fi
+else
+    assert_fail "e2e: cost-breakdown.json produced"
+    assert_fail "e2e: 3 distinct stages recorded"
+    assert_fail "e2e: build stage aggregates retry deltas"
+    assert_fail "e2e: every stage has non-zero cost_usd"
+    assert_fail "e2e: summary.total_cost_usd > 0"
+    assert_fail "e2e: summary.total_input_tokens unions stages + iterations"
+    assert_fail "e2e: every stage has models[] array"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TESTS: malformed-line resilience (jq filters drop bad records gracefully)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo -e "${BOLD}Resilience to Malformed Sidecar Lines${RESET}"
+
+_resil_dir="$TEST_TEMP_DIR/resil"
+mkdir -p "$_resil_dir"
+{
+    echo '{"stage":"plan","input_tokens":1000,"output_tokens":500,"cost_usd":0.001,"model":"sonnet","ts":"'"${_now}"'"}'
+    echo 'this is not valid json'
+    echo '{"input_tokens":999}'  # missing .stage — should be filtered
+    echo '{"stage":"build","input_tokens":2000,"output_tokens":800,"cost_usd":0.005,"model":"sonnet","ts":"'"${_now}"'"}'
+} > "$_resil_dir/stage-costs.jsonl"
+
+{
+    echo '{"iteration":1,"input_tokens":500,"output_tokens":200,"cost_usd":0.001,"ts":"'"${_now}"'"}'
+    echo '{"iteration":"bad","input_tokens":99}'  # iteration not numeric — should be filtered
+    echo '{"iteration":2,"input_tokens":700,"output_tokens":300,"cost_usd":0.0015,"ts":"'"${_now}"'"}'
+} > "$_resil_dir/loop-iteration-costs.jsonl"
+
+env HOME="$TEST_TEMP_DIR/home" PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+    bash "$SCRIPT_DIR/sw-cost.sh" breakdown "$_resil_dir" "resil-test" "" >/dev/null 2>&1 || true
+
+if [[ -f "$_resil_dir/cost-breakdown.json" ]]; then
+    _resil_stages=$(jq '.by_stage | length' "$_resil_dir/cost-breakdown.json")
+    _resil_iters=$(jq '.by_iteration | length' "$_resil_dir/cost-breakdown.json")
+    if [[ "$_resil_stages" == "2" ]]; then
+        assert_pass "malformed stage lines filtered (kept 2 of 4)"
+    else
+        assert_fail "malformed stage lines filtered (kept 2 of 4)" "got: ${_resil_stages}"
+    fi
+    if [[ "$_resil_iters" == "2" ]]; then
+        assert_pass "non-numeric iteration filtered (kept 2 of 3)"
+    else
+        assert_fail "non-numeric iteration filtered (kept 2 of 3)" "got: ${_resil_iters}"
+    fi
+else
+    assert_fail "malformed stage lines filtered (kept 2 of 4)"
+    assert_fail "non-numeric iteration filtered (kept 2 of 3)"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TESTS: --by-iteration auto-generates breakdown from sidecars
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo -e "${BOLD}--by-iteration Auto-Regeneration${RESET}"
+
+_auto_dir="$TEST_TEMP_DIR/auto-regen"
+mkdir -p "$_auto_dir"
+# Sidecars present, but cost-breakdown.json absent — show should regenerate it.
+printf '%s\n' \
+    "{\"iteration\":1,\"input_tokens\":1500,\"output_tokens\":600,\"cost_usd\":0.0135,\"ts\":\"${_now}\"}" \
+    > "$_auto_dir/loop-iteration-costs.jsonl"
+
+# Need cost data so the dashboard runs
+cat > "$TEST_TEMP_DIR/home/.shipwright/costs.json" <<COSTEOF
+{"entries":[{"ts":"${_mock_ts}","ts_epoch":${_mock_epoch},"input_tokens":1000,"output_tokens":500,"cost_usd":0.01,"model":"sonnet","stage":"build","issue":"87"}],"summary":{}}
+COSTEOF
+
+_auto_out=$(env HOME="$TEST_TEMP_DIR/home" PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+    ARTIFACTS_DIR="$_auto_dir" \
+    bash "$SCRIPT_DIR/sw-cost.sh" show --by-iteration --period 30 2>&1) || true
+
+if [[ -f "$_auto_dir/cost-breakdown.json" ]]; then
+    assert_pass "--by-iteration auto-regenerates cost-breakdown.json from sidecars"
+else
+    assert_fail "--by-iteration auto-regenerates cost-breakdown.json from sidecars" \
+        "no cost-breakdown.json in $_auto_dir"
+fi
+
+if echo "$_auto_out" | grep -qE 'iter +1 +'; then
+    assert_pass "--by-iteration prints iteration row after auto-regen"
+else
+    assert_fail "--by-iteration prints iteration row after auto-regen" \
+        "output tail: $(echo "$_auto_out" | tail -5)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

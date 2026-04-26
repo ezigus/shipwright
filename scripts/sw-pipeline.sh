@@ -118,6 +118,10 @@ fi
 # shellcheck source=sw-cost.sh
 # for cost_record persistence to costs.json + DB
 [[ -f "$SCRIPT_DIR/sw-cost.sh" ]] && source "$SCRIPT_DIR/sw-cost.sh"
+# shellcheck source=lib/cost/stage.sh
+# Per-stage cost attribution helpers (issue #87). Must source AFTER sw-cost.sh
+# so that cost_calculate / cost_record are available when stages bracket themselves.
+[[ -f "$SCRIPT_DIR/lib/cost/stage.sh" ]] && source "$SCRIPT_DIR/lib/cost/stage.sh"
 # shellcheck source=lib/skill-registry.sh
 # for skill_analyze_outcome (AI outcome learning)
 [[ -f "$SCRIPT_DIR/lib/skill-registry.sh" ]] && source "$SCRIPT_DIR/lib/skill-registry.sh"
@@ -697,6 +701,14 @@ cleanup_on_exit() {
     [[ "${_cleanup_done:-}" == "true" ]] && return 0
     _cleanup_done=true
 
+    # Generate cost-breakdown.json from sidecars on every exit path (issue #87 AC#4).
+    # Doing this here (rather than only after the success block at line ~3038) means
+    # an aborted/interrupted pipeline still produces an artifact for forensics.
+    if type cost_generate_breakdown >/dev/null 2>&1 && [[ -n "${ARTIFACTS_DIR:-}" ]] && [[ -d "$ARTIFACTS_DIR" ]]; then
+        local _bd_pid="${SHIPWRIGHT_PIPELINE_ID:-pipeline-$$-${ISSUE_NUMBER:-0}}"
+        cost_generate_breakdown "$ARTIFACTS_DIR" "$_bd_pid" "${ISSUE_NUMBER:-}" >/dev/null 2>&1 || true
+    fi
+
     # Cleanup ruflo MCP server
     if type ruflo_cleanup >/dev/null 2>&1; then
         ruflo_cleanup || true
@@ -1040,8 +1052,21 @@ run_stage_with_retry() {
     local attempt=0
     local prev_error_class=""
     while true; do
+        # Bracket every stage attempt for per-stage cost attribution (issue #87).
+        # _start snapshots token totals; _end records the delta to stage-costs.jsonl
+        # and the global cost ledger. Re-snapshotting on retry is intentional —
+        # each attempt's delta is the cost incurred during that attempt.
+        if type record_stage_cost_start >/dev/null 2>&1; then
+            record_stage_cost_start "$stage_id"
+        fi
         if "stage_${stage_id}"; then
+            if type record_stage_cost_end >/dev/null 2>&1; then
+                record_stage_cost_end "$stage_id"
+            fi
             return 0
+        fi
+        if type record_stage_cost_end >/dev/null 2>&1; then
+            record_stage_cost_end "$stage_id"
         fi
 
         # Capture error_class and error snippet for stage.failed / pipeline.completed events
@@ -3015,6 +3040,7 @@ pipeline_start() {
     if type cost_record >/dev/null 2>&1; then
         cost_record "$TOTAL_INPUT_TOKENS" "$TOTAL_OUTPUT_TOKENS" "$model_key" "pipeline" "${ISSUE_NUMBER:-}" 2>/dev/null || true
     fi
+    # cost_generate_breakdown runs from cleanup_on_exit so it fires on every exit path.
 
     # Record pipeline outcome for Thompson sampling / outcome-based learning
     if type db_record_outcome >/dev/null 2>&1; then

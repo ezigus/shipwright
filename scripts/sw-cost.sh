@@ -118,7 +118,12 @@ cost_calculate() {
             output_rate="$HAIKU_OUTPUT_PER_M"
             ;;
         *)
-            # Default to sonnet pricing for unknown models
+            # Default to sonnet pricing for unknown models — warn once per process
+            # so operators notice when a new model string is not yet in the case list.
+            if [[ -z "${_COST_CALC_WARN_FIRED:-}" ]]; then
+                _COST_CALC_WARN_FIRED=1
+                echo "warn: cost_calculate: unrecognized model '${model}'; using sonnet pricing (update case list if incorrect)" >&2
+            fi
             input_rate="$SONNET_INPUT_PER_M"
             output_rate="$SONNET_OUTPUT_PER_M"
             ;;
@@ -175,7 +180,7 @@ cost_record() {
                cost_usd: ($cost | tonumber),
                ts: $ts,
                ts_epoch: $epoch
-           }] | .entries = (.entries | .[-1000:])' \
+           }] | .entries = (.entries | .[-10000:])' \
            "$COST_FILE" > "$tmp_file" 2>/dev/null; then
             error "Cost jq transformation failed — entry may be lost"
             rm -f "$tmp_file"
@@ -600,13 +605,20 @@ cost_generate_breakdown() {
 
     local stage_json="[]"
     if [[ -f "$stage_jsonl" ]]; then
-        stage_json=$(jq -s '
+        # Read raw lines and parse each with try/catch so a malformed line in the middle
+        # of the file does not poison the whole aggregation. Filter records missing .stage.
+        stage_json=$(jq -Rcs '
+            split("\n") |
+            map(select(length > 0) | . as $line | try ($line|fromjson) catch empty) |
+            map(select(.stage != null)) |
             group_by(.stage) |
             map({
                 stage: .[0].stage,
-                input_tokens: ([.[].input_tokens] | add // 0),
-                output_tokens: ([.[].output_tokens] | add // 0),
-                count: length
+                input_tokens: ([.[].input_tokens // 0] | add),
+                output_tokens: ([.[].output_tokens // 0] | add),
+                cost_usd: ([.[].cost_usd // 0] | add | . * 1000000 | round / 1000000),
+                count: length,
+                models: ([.[].model // "unknown"] | unique | sort)
             }) |
             sort_by(-.input_tokens)
         ' "$stage_jsonl" 2>/dev/null) || stage_json="[]"
@@ -614,14 +626,33 @@ cost_generate_breakdown() {
 
     local iter_json="[]"
     if [[ -f "$iter_jsonl" ]]; then
-        iter_json=$(jq -s 'sort_by(.iteration)' "$iter_jsonl" 2>/dev/null) || iter_json="[]"
+        iter_json=$(jq -Rcs '
+            split("\n") |
+            map(select(length > 0) | . as $line | try ($line|fromjson) catch empty) |
+            map(select(.iteration|type=="number")) |
+            sort_by(.iteration)
+        ' "$iter_jsonl" 2>/dev/null) || iter_json="[]"
     fi
 
-    local iter_count stage_count total_input total_output
-    iter_count=$(echo "$iter_json"  | jq 'length'              2>/dev/null || echo "0")
-    stage_count=$(echo "$stage_json" | jq 'length'              2>/dev/null || echo "0")
-    total_input=$(echo "$stage_json" | jq '[.[].input_tokens]  | add // 0' 2>/dev/null || echo "0")
-    total_output=$(echo "$stage_json" | jq '[.[].output_tokens] | add // 0' 2>/dev/null || echo "0")
+    local iter_count stage_count total_input total_output total_cost
+    iter_count=$(echo "$iter_json"  | jq 'length' 2>/dev/null || echo "0")
+    stage_count=$(echo "$stage_json" | jq 'length' 2>/dev/null || echo "0")
+    # Roll-up rule: stage data is authoritative because it covers the whole pipeline.
+    # Iteration data is a sub-breakdown of the build stage and would double-count if
+    # added on top. We fall back to iteration-only totals only when no stage data
+    # exists at all (e.g. a standalone `sw loop` outside the pipeline).
+    if [[ "$stage_count" -gt 0 ]]; then
+        total_input=$(echo "$stage_json"  | jq '[.[].input_tokens  // 0] | add // 0' 2>/dev/null || echo "0")
+        total_output=$(echo "$stage_json" | jq '[.[].output_tokens // 0] | add // 0' 2>/dev/null || echo "0")
+        total_cost=$(echo "$stage_json"   | jq '[.[].cost_usd // 0] | add // 0 | . * 1000000 | round / 1000000' 2>/dev/null || echo "0")
+    else
+        total_input=$(echo "$iter_json"   | jq '[.[].input_tokens  // 0] | add // 0' 2>/dev/null || echo "0")
+        total_output=$(echo "$iter_json"  | jq '[.[].output_tokens // 0] | add // 0' 2>/dev/null || echo "0")
+        total_cost=$(echo "$iter_json"    | jq '[.[].cost_usd // 0] | add // 0 | . * 1000000 | round / 1000000' 2>/dev/null || echo "0")
+    fi
+    # Defensive numeric coercion — empty strings would break --argjson below.
+    : "${total_input:=0}" "${total_output:=0}" "${total_cost:=0}"
+    : "${iter_count:=0}" "${stage_count:=0}"
 
     jq -n \
         --arg pipeline_id "$pipeline_id" \
@@ -633,6 +664,7 @@ cost_generate_breakdown() {
         --argjson stage_count "$stage_count" \
         --argjson total_input "$total_input" \
         --argjson total_output "$total_output" \
+        --argjson total_cost "$total_cost" \
         '{
             pipeline_id: $pipeline_id,
             issue: $issue,
@@ -640,6 +672,7 @@ cost_generate_breakdown() {
             summary: {
                 total_input_tokens: $total_input,
                 total_output_tokens: $total_output,
+                total_cost_usd: $total_cost,
                 iteration_count: $iter_count,
                 stage_count: $stage_count
             },
@@ -847,6 +880,12 @@ cost_dashboard() {
     # Iteration breakdown — reads pipeline-local artifact, NOT historical aggregation
     if [[ "$by_iteration" == "true" ]]; then
         local breakdown_file="${artifacts_dir}/cost-breakdown.json"
+        # If breakdown is absent but raw sidecars exist, regenerate on demand so users
+        # who skip the explicit `breakdown` invocation still see iteration data.
+        if [[ ! -f "$breakdown_file" ]] && \
+           { [[ -f "${artifacts_dir}/loop-iteration-costs.jsonl" ]] || [[ -f "${artifacts_dir}/stage-costs.jsonl" ]]; }; then
+            cost_generate_breakdown "$artifacts_dir" "${SHIPWRIGHT_PIPELINE_ID:-unknown}" "${ISSUE_NUMBER:-}" >/dev/null 2>&1 || true
+        fi
         if [[ -f "$breakdown_file" ]]; then
             local iter_data
             iter_data=$(jq '.by_iteration' "$breakdown_file" 2>/dev/null || echo "[]")
@@ -860,11 +899,12 @@ cost_dashboard() {
                     done
                 echo ""
             else
-                echo -e "${DIM}  no iteration data (run a pipeline with cost tracking first)${RESET}"
+                echo -e "${DIM}  no iteration data in ${breakdown_file}${RESET}"
                 echo ""
             fi
         else
-            echo -e "${DIM}  no iteration data (run a pipeline with cost tracking first)${RESET}"
+            echo -e "${DIM}  no iteration data — checked ${artifacts_dir}/cost-breakdown.json${RESET}"
+            echo -e "${DIM}  run a pipeline first, or pass --artifacts-dir <dir>${RESET}"
             echo ""
         fi
     fi

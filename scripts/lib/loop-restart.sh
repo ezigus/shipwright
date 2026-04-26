@@ -28,6 +28,18 @@ resume_state() {
 
     info "Resuming from $STATE_FILE"
 
+    # Status field values written by write_state() / set throughout the loop:
+    #   running          — active iteration in progress (resumable)
+    #   complete         — <<<LOOP:PASS>>> accepted (terminal)
+    #   stuck            — no progress for too many iterations (terminal, NOT resumable)
+    #   circuit_breaker  — too many consecutive failures (terminal)
+    #   max_iterations   — hit MAX_ITERATIONS (resumable with --max-iterations bump)
+    #   interrupted      — user Ctrl-C (resumable)
+    #   error            — fatal CLI/API error (terminal)
+    #   budget_exhausted — daily token budget hit (terminal)
+    # Resume policy below: explicit terminal-status checks refuse resume; everything
+    # else falls through to STATUS="running" reset on line 134.
+
     # Save CLI values before parsing state (CLI takes precedence)
     local cli_max_iterations="$MAX_ITERATIONS"
 
@@ -115,6 +127,16 @@ resume_state() {
 
     if [[ "$STATUS" == "complete" ]]; then
         warn "Previous loop completed. Start a new one or edit the state file."
+        exit 0
+    fi
+
+    # Stuck is a terminal state — the loop made no progress for too many iterations
+    # and write_state() will eventually emit it. Refuse to resume so we don't re-enter
+    # the same OOM/no-progress cycle. User must investigate, fix, then start a new loop.
+    if [[ "$STATUS" == "stuck" ]]; then
+        warn "Previous loop is stuck (no progress detected). Investigate and start a new loop."
+        echo -e "  Review state: ${DIM}cat $STATE_FILE${RESET}"
+        echo -e "  Start fresh:  ${DIM}shipwright loop \"<goal>\"${RESET}"
         exit 0
     fi
 

@@ -18,28 +18,39 @@ detect_plan_drift() {
 
     # Extract the "## Files to Modify" section (case-insensitive heading match).
     # Accepts h2 (##) or h3 (###) headings with optional trailing colon.
+    # Stops at the next h2 OR at known sibling h3 sections that follow in Shipwright plans
+    # (Implementation Steps, Task Checklist, Testing Approach, Definition of Done).
+    # Does NOT stop at deeper h3 subheadings within the section (e.g. ### Core Files).
     local section
-    section=$(awk 'tolower($0) ~ /^###? files to modify[[:space:]]*:?[[:space:]]*$/{found=1; next} found && /^## /{exit} found{print}' "$plan_file" 2>/dev/null) || return 0
+    section=$(awk '
+        tolower($0) ~ /^###? files to modify[[:space:]]*:?[[:space:]]*$/ { found=1; next }
+        found && /^## / { exit }
+        found && /^### / {
+            h = tolower($0)
+            sub(/^###[[:space:]]+/, "", h)
+            gsub(/[[:space:]]*:[[:space:]]*$/, "", h)
+            gsub(/[[:space:]]+/, " ", h)
+            if (h ~ /^(implementation steps|task checklist|testing approach|definition of done)$/) exit
+        }
+        found { print }
+    ' "$plan_file" 2>/dev/null) || return 0
 
     # Fail-open: section not found → no warnings
     [[ -n "$section" ]] || return 0
 
-    # Get actual changed files; fail-open if git fails entirely
+    # Get actual changed files; fail-open if git fails entirely.
+    # Validate base branch first — _safe_base_diff falls back to HEAD~5 when BASE_BRANCH
+    # is unverifiable, which produces misleading drift results.
     local actual_changed=""
     local _git_ok=true
+    local _base="${BASE_BRANCH:-main}"
+    if ! (cd "$project_root" && git rev-parse --verify "$_base" >/dev/null 2>&1); then
+        return 0
+    fi
     if declare -f _safe_base_diff >/dev/null 2>&1; then
         actual_changed=$( (cd "$project_root" && _safe_base_diff --name-only) 2>/dev/null) || _git_ok=false
     else
-        # Validate that the base branch exists before using it in git diff.
-        # If absent, fail-open (no warnings) — using git diff HEAD as a fallback would
-        # compare the working tree against HEAD, which on a clean repo returns empty,
-        # causing every planned file to appear drifted (false positives).
-        local _base="${BASE_BRANCH:-main}"
-        if (cd "$project_root" && git rev-parse --verify "$_base" >/dev/null 2>&1); then
-            actual_changed=$(cd "$project_root" && git diff --name-only "${_base}..HEAD" 2>/dev/null) || _git_ok=false
-        else
-            _git_ok=false
-        fi
+        actual_changed=$(cd "$project_root" && git diff --name-only "${_base}..HEAD" 2>/dev/null) || _git_ok=false
     fi
     [[ "$_git_ok" == "true" ]] || return 0
 

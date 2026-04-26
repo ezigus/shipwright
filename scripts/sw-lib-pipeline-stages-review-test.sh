@@ -457,16 +457,14 @@ cat > "$ARTIFACTS_DIR/plan.md" <<'PLAN'
 done
 PLAN
 
-result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null)
-# On a real case-insensitive filesystem git would report src/CaseTestAuth.js or src/casetestauth.js.
-# We simulate the plan using lowercase; the committed file may show as src/CaseTestAuth.js.
-# With -i flag, grep -qixF should match regardless of case difference.
-# However the test git repo may be case-sensitive (Linux CI). We only assert fail-open behavior:
-# the function must not crash; warnings may or may not appear based on filesystem sensitivity.
-if [[ $? -eq 0 ]]; then
-    assert_pass "Case-insensitive path comparison: function completes without error"
-else
+# Plan has src/casetestauth.js (lowercase); git committed src/CaseTestAuth.js (mixed).
+# grep -qixF matches case-insensitively, so no drift warning should be emitted.
+if ! result=$(detect_plan_drift "$ARTIFACTS_DIR" "$PROJ" 2>/dev/null); then
     assert_fail "Case-insensitive path comparison: function should not error"
+elif [[ "$result" == *"src/casetestauth.js"* ]] || [[ "$result" == *"src/CaseTestAuth.js"* ]]; then
+    assert_fail "Case-insensitive path comparison: should not flag case-only path differences as drift"
+else
+    assert_pass "Case-insensitive path comparison: ignores case-only path differences"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

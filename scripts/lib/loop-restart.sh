@@ -118,6 +118,16 @@ resume_state() {
         exit 0
     fi
 
+    # Stuck is a terminal state — the loop made no progress for too many iterations
+    # and write_state() will eventually emit it. Refuse to resume so we don't re-enter
+    # the same OOM/no-progress cycle. User must investigate, fix, then start a new loop.
+    if [[ "$STATUS" == "stuck" ]]; then
+        warn "Previous loop is stuck (no progress detected). Investigate and start a new loop."
+        echo -e "  Review state: ${DIM}cat $STATE_FILE${RESET}"
+        echo -e "  Start fresh:  ${DIM}shipwright loop \"<goal>\"${RESET}"
+        exit 0
+    fi
+
     # Reset circuit breaker on resume
     CONSECUTIVE_FAILURES=0
     START_EPOCH="$(now_epoch)"

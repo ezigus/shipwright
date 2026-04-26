@@ -1962,6 +1962,7 @@ show_summary() {
         interrupted)      status_display="${YELLOW}⚠ Interrupted by user${RESET}" ;;
         error)            status_display="${RED}✗ Error${RESET}" ;;
         stuck)            status_display="${RED}✗ Stuck (no progress — loop terminated)${RESET}" ;;
+        stuck_restart)    status_display="${YELLOW}⚠ Stuck — restarting session${RESET}" ;;
         *)                status_display="${DIM}$STATUS${RESET}" ;;
     esac
 

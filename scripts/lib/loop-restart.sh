@@ -20,6 +20,33 @@ initialize_state() {
 }
 
 resume_state() {
+    # Known status values in loop-state.md (the `status:` YAML field):
+    #   running            - loop is in progress
+    #   complete           - loop finished successfully (LOOP:PASS accepted)
+    #   stuck              - loop terminated because no progress was being made (no resume)
+    #   circuit_breaker    - too many consecutive failures (terminal)
+    #   max_iterations     - hit max-iterations cap (resumable with --max-iterations)
+    #   interrupted        - user-interrupted (resumable)
+    #   error              - generic error (terminal unless re-tried)
+    #   budget_exhausted   - out of budget (terminal)
+    # Resume policy: only `complete` and `stuck` short-circuit resume here; every
+    # other value falls through to STATUS="running" and re-enters the loop.
+    #
+    # 9-row audit table — every reader of the `status:` field in loop-state.md
+    # (this comment is the canonical equivalent of the audit table in PR #456):
+    #
+    # # | File:Line                              | What it does                       | Behavior on `stuck`            | Action in this PR
+    # 1 | scripts/lib/loop-restart.sh:65         | YAML parser → STATUS variable      | Permissive; accepts `stuck`    | None — already correct
+    # 2 | scripts/lib/loop-restart.sh:127        | Terminal check (only `complete` exits) | Short-circuit before fallthrough | This branch — explicit stuck arm
+    # 3 | scripts/lib/loop-restart.sh:~145       | Unconditional STATUS="running" reset | Overwrites stuck if reached  | Now unreachable for stuck (early exit at #2)
+    # 4 | scripts/lib/loop-restart.sh:write_state| write_state emits STATUS verbatim  | Round-trips `stuck` correctly  | None — already correct
+    # 5 | scripts/sw-loop.sh:~1961               | case "$STATUS" in show_summary()   | Falls through to dim default   | Add explicit `stuck)` arm with red ✗
+    # 6 | scripts/sw-loop.sh:~1978               | Uppercase `LOOP $STATUS` banner    | Renders `LOOP STUCK` legibly   | None
+    # 7 | scripts/sw-loop.sh:~2830               | Sets STATUS="stuck_restart"        | Different value; not terminal  | None — must NOT conflate with `stuck`; never written to state file (in-memory only)
+    # 8 | scripts/sw-loop.sh:~2854               | if [[ "$STATUS" == "complete" ]]   | False for stuck — correct      | None
+    # 9 | scripts/sw-checkpoint.sh:~111          | Reads SW_LOOP_STATUS env           | Pass-through, no branching     | None
+    #
+    # Three of nine sites need code changes: #2, #3 (collateral), #5. Six are call-outs only.
     if [[ ! -f "$STATE_FILE" ]]; then
         error "No state file found at $STATE_FILE"
         echo -e "  Start a new loop instead: ${DIM}shipwright loop \"<goal>\"${RESET}"
@@ -133,11 +160,14 @@ resume_state() {
     # Stuck is a terminal state — the loop made no progress for too many iterations
     # and write_state() will eventually emit it. Refuse to resume so we don't re-enter
     # the same OOM/no-progress cycle. User must investigate, fix, then start a new loop.
+    # exit 2 (not 0) so callers and CI can distinguish stuck from clean completion.
     if [[ "$STATUS" == "stuck" ]]; then
-        warn "Previous loop is stuck (no progress detected). Investigate and start a new loop."
-        echo -e "  Review state: ${DIM}cat $STATE_FILE${RESET}"
-        echo -e "  Start fresh:  ${DIM}shipwright loop \"<goal>\"${RESET}"
-        exit 0
+        warn "Previous loop terminated as stuck (no progress detected)."
+        info "  Refusing to resume; investigate before restarting:"
+        info "    ${DIM}shipwright memory show${RESET}    # captured failure patterns"
+        info "    ${DIM}cat $STATE_FILE${RESET}          # review loop state"
+        info "    ${DIM}shipwright loop \"<new goal>\"${RESET}  # start fresh after diagnosis"
+        exit 2
     fi
 
     # Reset circuit breaker on resume

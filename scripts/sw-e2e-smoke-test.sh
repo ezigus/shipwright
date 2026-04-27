@@ -981,6 +981,14 @@ main() {
 
     echo -e "${DIM}Setting up mock environment...${RESET}"
     setup_env
+    # Snapshot after setup_env so any Node processes it starts are included
+    # in the baseline — measuring only processes added by the tests themselves.
+    # Note: pgrep -c -f 'node ' counts all host Node processes; unrelated
+    # processes starting/stopping during the run can skew the delta, so the
+    # check is a best-effort heuristic rather than a precise assertion.
+    local node_before
+    node_before=$(pgrep -c -f 'node ' 2>/dev/null || echo "0")
+    node_before=$(echo "$node_before" | tr -d '[:space:]')
     echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEST_TEMP_DIR${RESET}"
     echo ""
 
@@ -1021,6 +1029,22 @@ main() {
 
         run_test "$desc" "$fn"
     done
+
+    # ── Process-leak delta check ──────────────────────────────────────────
+    local node_after node_delta
+    node_after=$(pgrep -c -f 'node ' 2>/dev/null || echo "0")
+    node_after=$(echo "$node_after" | tr -d '[:space:]')
+    node_delta=$(( node_after - node_before ))
+    if [[ "$node_delta" -gt 0 ]]; then
+        echo -e "${RED}✗ Process leak detected: $node_delta extra Node process(es) after tests (before=$node_before after=$node_after)${RESET}"
+        FAIL=$(( FAIL + 1 ))
+        TOTAL=$(( TOTAL + 1 ))
+        FAILURES+=("Process leak: $node_delta extra Node process(es)")
+    else
+        echo -e "${GREEN}✓${RESET} No Node process leak (before=$node_before after=$node_after delta=$node_delta)"
+        PASS=$(( PASS + 1 ))
+        TOTAL=$(( TOTAL + 1 ))
+    fi
 
     # ── Summary ───────────────────────────────────────────────────────────
     echo ""

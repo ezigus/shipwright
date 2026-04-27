@@ -27,8 +27,9 @@ RUFLO_DAEMON_STARTED="${RUFLO_DAEMON_STARTED:-false}" # true only when THIS run 
 RUFLO_FAILURE_COUNT="${RUFLO_FAILURE_COUNT:-0}"      # incremented by circuit-breaker; reset on recovery
 RUFLO_HIVE_AVAILABLE="${RUFLO_HIVE_AVAILABLE:-false}" # true when singleton hive-mind is initialized
 RUFLO_HIVE_ID="${RUFLO_HIVE_ID:-}"                   # hive-mind session ID set by ruflo_init()
+RUFLO_RECALL_TIMEOUT="${RUFLO_RECALL_TIMEOUT:-30}"   # timeout for ruflo memory recall operations
 export RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_FAILURE_COUNT \
-       RUFLO_HIVE_AVAILABLE RUFLO_HIVE_ID
+       RUFLO_HIVE_AVAILABLE RUFLO_HIVE_ID RUFLO_RECALL_TIMEOUT
 
 # ─── Fallback helpers (no-op when helpers.sh is already sourced) ─────────────
 # Use declare -f (not type) to check for shell functions only — type matches
@@ -111,6 +112,7 @@ ruflo_available() {
 #   RUFLO_MAX_AGENTS            — hard cap on parallel agents across all hives
 #   RUFLO_COST_BUDGET_MULTIPLIER — multiplier applied to per-stage cost budget
 #   RUFLO_CIRCUIT_BREAKER_TIMEOUT — default ruflo_with_timeout seconds
+#   RUFLO_RECALL_TIMEOUT        — timeout for ruflo memory recall operations (default: 30s)
 #   RUFLO_LEARNING_BRIDGE       — enable/disable ruflo<->Shipwright learning bridge
 #   RUFLO_Q_LEARNING            — enable/disable Q-learning agent router
 ruflo_load_defaults() {
@@ -146,6 +148,7 @@ ruflo_load_defaults() {
     if [[ -n "$_v" ]] && [[ "$_v" =~ ^[0-9]+$ ]]; then
         RUFLO_CIRCUIT_BREAKER_TIMEOUT="$_v"; export RUFLO_CIRCUIT_BREAKER_TIMEOUT
     fi
+    RUFLO_RECALL_TIMEOUT="${RUFLO_RECALL_TIMEOUT:-30}"; export RUFLO_RECALL_TIMEOUT
 
     _v=$(jq -r '(.ruflo.learning_bridge | select(. != null)) | tostring' "$_defaults_file" 2>/dev/null || true)
     [[ -n "$_v" ]] && { RUFLO_LEARNING_BRIDGE="$_v"; export RUFLO_LEARNING_BRIDGE; }
@@ -363,15 +366,60 @@ ruflo_health_check() {
     return 0
 }
 
+# ─── _kill_process_tree — send a signal to a PID and all its descendants ──────
+# Collects the full descendant list via BFS *before* killing anything, so that
+# re-parenting (child → init) cannot cause grandchildren to escape the sweep.
+# Bash 3.2 compatible — no associative arrays, no extended syntax.
+_kill_process_tree() {
+    local sig="$1"
+    local root="$2"
+    local all_pids frontier new_frontier p c children
+
+    if ! command -v pgrep >/dev/null 2>&1; then
+        # No pgrep — best-effort single-level kill only.
+        kill "-$sig" "$root" 2>/dev/null || true
+        return
+    fi
+
+    # BFS: collect every descendant before touching any of them.
+    all_pids=""
+    frontier="$root"
+    while [[ -n "$frontier" ]]; do
+        new_frontier=""
+        for p in $frontier; do
+            children=$(pgrep -P "$p" 2>/dev/null || true)
+            for c in $children; do
+                all_pids="${all_pids}${all_pids:+ }$c"
+                new_frontier="${new_frontier}${new_frontier:+ }$c"
+            done
+        done
+        frontier="$new_frontier"
+    done
+
+    # Kill all descendants (collected before any were killed).
+    for p in $all_pids; do
+        kill "-$sig" "$p" 2>/dev/null || true
+    done
+    # Kill root last.
+    kill "-$sig" "$root" 2>/dev/null || true
+}
+
 # ─── ruflo_with_timeout — run a ruflo command with recoverable circuit-breaker ─
-# Shell functions are run in a background subshell + poll so they get a real
-# wall-clock bound (timeout(1) can only exec binaries, not functions).
+# All commands run in a background subshell with stdout to a temp file and BFS
+# process-tree kill on timeout.  This handles both shell functions (which
+# timeout(1) cannot exec) and external binaries (whose Node child processes
+# timeout(1) does not kill recursively).  The temp file severs the $() pipe FD
+# so the caller unblocks immediately on timeout regardless of surviving
+# grandchildren. (#426, #441)
 # Failures increment RUFLO_FAILURE_COUNT; ruflo is only disabled after
 # RUFLO_MAX_FAILURES (default 5) consecutive failures — transient errors recover.
 # Usage: ruflo_with_timeout <seconds> <command...>
 # Returns 0 on success, 1 on failure. Returns 1 immediately when ruflo is disabled.
 ruflo_with_timeout() {
     local timeout_s="${1:-30}"
+    # Guard against non-numeric timeout (e.g. env var set to a string) to
+    # prevent arithmetic evaluation errors under set -e. Fail-open to 30s.
+    if ! [[ "$timeout_s" =~ ^[0-9]+$ ]]; then timeout_s=30; fi
     shift
 
     if [[ $# -eq 0 ]]; then
@@ -379,62 +427,60 @@ ruflo_with_timeout() {
     fi
 
     local exit_code=0
-    local cmd_type
-    cmd_type=$(type -t "$1" 2>/dev/null || true)
-
-    if [[ "$cmd_type" == "function" ]]; then
-        # Shell functions can't be exec'd by timeout(1) — run in background
-        # subshell and poll until done or wall-clock limit reached.
-        #
-        # Stdout is redirected to a temp file rather than inheriting the $()
-        # pipe FD.  Without this, orphaned grandchildren (e.g. npx processes
-        # spawned by the ruflo binary) keep the write end of the pipe open
-        # even after pkill kills the direct child, so the enclosing $() at the
-        # call site blocks indefinitely despite the circuit breaker firing.
-        # Writing to a regular file severs that FD chain: $() unblocks as soon
-        # as ruflo_with_timeout returns, regardless of surviving grandchildren.
-        # See issue #426.
-        local _rft_tmp
-        if ! _rft_tmp=$(mktemp "${TMPDIR:-/tmp}/ruflo_timeout.XXXXXX" 2>/dev/null); then
-            # mktemp failed (e.g. /tmp full or unwriteable).  Ruflo is fail-open:
-            # trip the circuit breaker without running the command so this error
-            # cannot abort the calling pipeline via set -e.
-            exit_code=1
-        else
-            ( "$@" ) >"$_rft_tmp" &
-            local bg_pid=$!
-            local waited=0
-            while kill -0 "$bg_pid" 2>/dev/null && [[ "$waited" -lt "$timeout_s" ]]; do
-                sleep 1
-                waited=$(( waited + 1 ))
-            done
-            if kill -0 "$bg_pid" 2>/dev/null; then
-                # Kill child processes first (e.g. ruflo binary spawned by the function)
-                # then the wrapper subshell. pkill -P kills by parent PID, which works
-                # even without a dedicated process group (non-interactive shell, no set -m).
-                if command -v pkill >/dev/null 2>&1; then
-                    pkill -TERM -P "$bg_pid" 2>/dev/null || true
-                fi
-                kill "$bg_pid" 2>/dev/null || true
-                wait "$bg_pid" 2>/dev/null || true
-                rm -f "$_rft_tmp"
-                exit_code=124  # match timeout(1)'s exit code
-            else
-                wait "$bg_pid" 2>/dev/null || exit_code=$?
-                if [[ $exit_code -eq 0 ]]; then
-                    cat "$_rft_tmp" 2>/dev/null || true
-                fi
-                rm -f "$_rft_tmp"
-            fi
-        fi  # mktemp guard
-    elif type _timeout >/dev/null 2>&1; then
-        _timeout "$timeout_s" "$@" || exit_code=$?
-    elif command -v timeout >/dev/null 2>&1; then
-        timeout "$timeout_s" "$@" || exit_code=$?
+    # Run every command in a background subshell so we can BFS-kill the full
+    # process tree on timeout — covers both shell functions and external binaries
+    # that spawn Node children (e.g. ruflo agentdb workers). (#426, #441)
+    local _rft_tmp
+    if ! _rft_tmp=$(mktemp "${TMPDIR:-/tmp}/ruflo_timeout.XXXXXX" 2>/dev/null); then
+        # mktemp failed (e.g. /tmp full or unwriteable).  Ruflo is fail-open:
+        # trip the circuit breaker without running the command so this error
+        # cannot abort the calling pipeline via set -e.
+        exit_code=1
     else
-        # No timeout binary available — run directly (no wall-clock bound)
-        "$@" || exit_code=$?
-    fi
+        # Defensive trap: clean up the temp file even when the process is
+        # killed externally (e.g. SIGTERM from a test-runner timeout). The
+        # explicit rm -f below handles the normal path; this trap is the
+        # safety net for unexpected termination. (#441)
+        # shellcheck disable=SC2064
+        trap "rm -f '$_rft_tmp' 2>/dev/null || true" EXIT TERM
+        ( "$@" ) >"$_rft_tmp" &
+        local bg_pid=$!
+        # Poll with adaptive backoff: 0.1s for the first 10 ticks (1 s fast
+        # window) to handle short-lived operations cheaply, then 1s intervals
+        # for the remainder. Avoids the 10x scheduler overhead of flat 0.1s
+        # polling while still responding quickly to fast MCP/mock calls. (#441)
+        local waited_ds=0
+        local timeout_ds=$(( timeout_s * 10 ))
+        while kill -0 "$bg_pid" 2>/dev/null && [[ "$waited_ds" -lt "$timeout_ds" ]]; do
+            if [[ "$waited_ds" -lt 10 ]]; then
+                sleep 0.1
+                waited_ds=$(( waited_ds + 1 ))
+            else
+                sleep 1
+                waited_ds=$(( waited_ds + 10 ))
+            fi
+        done
+        if kill -0 "$bg_pid" 2>/dev/null; then
+            # Kill the entire process subtree so grandchildren (e.g. Node
+            # agentdb workers spawned by ruflo) are reaped alongside the
+            # direct child. SIGTERM first; SIGKILL after 1 s grace period
+            # for processes that need time to flush/clean up. (#441)
+            _kill_process_tree TERM "$bg_pid"
+            sleep 1
+            _kill_process_tree KILL "$bg_pid"
+            wait "$bg_pid" 2>/dev/null || true
+            rm -f "$_rft_tmp"
+            trap - EXIT TERM
+            exit_code=124  # match timeout(1)'s exit code
+        else
+            wait "$bg_pid" 2>/dev/null || exit_code=$?
+            if [[ $exit_code -eq 0 ]]; then
+                cat "$_rft_tmp" 2>/dev/null || true
+            fi
+            rm -f "$_rft_tmp"
+            trap - EXIT TERM
+        fi
+    fi  # mktemp guard
 
     if [[ $exit_code -ne 0 ]]; then
         RUFLO_FAILURE_COUNT=$(( RUFLO_FAILURE_COUNT + 1 ))
@@ -473,7 +519,7 @@ ruflo_store() {
 ruflo_recall() {
     ruflo_available || { echo ""; return 0; }
     local query="$1" namespace="${2:-default}"
-    ruflo_with_timeout "${RUFLO_CIRCUIT_BREAKER_TIMEOUT:-10}" _ruflo_run_quiet memory search \
+    ruflo_with_timeout "${RUFLO_RECALL_TIMEOUT:-30}" _ruflo_run_quiet memory search \
         --query "$query" --namespace "$namespace" --limit 3 || echo ""
 }
 

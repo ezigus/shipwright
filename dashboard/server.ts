@@ -2866,6 +2866,15 @@ const server = Bun.serve({
               });
               continue;
             }
+            // Validate pid is a safe integer before using in execSync
+            if (!Number.isInteger(pid) || pid <= 0) {
+              results.push({
+                issue: issueNum,
+                ok: false,
+                error: `Invalid PID: ${pid}`,
+              });
+              continue;
+            }
             switch (action) {
               case "pause":
                 execSync(`kill -STOP ${pid}`);
@@ -4393,13 +4402,23 @@ const server = Bun.serve({
             },
           );
         }
+        const sanitizeHost = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 253);
+        const sanitizeSshUser = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 64);
+        const sanitizeSwPath = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-/]/g, "").slice(0, 256);
         const newMachine: Record<string, unknown> = {
           name,
-          host,
+          host: sanitizeHost(host),
           role: (body.role as string) || "worker",
-          max_workers: (body.max_workers as number) || 4,
-          ssh_user: (body.ssh_user as string) || undefined,
-          shipwright_path: (body.shipwright_path as string) || undefined,
+          max_workers: parseInt(String(body.max_workers ?? 4), 10) || 4,
+          ssh_user: body.ssh_user
+            ? sanitizeSshUser(body.ssh_user as string)
+            : undefined,
+          shipwright_path: body.shipwright_path
+            ? sanitizeSwPath(body.shipwright_path as string)
+            : undefined,
           registered_at: new Date().toISOString(),
         };
         data.machines.push(newMachine);
@@ -4457,21 +4476,48 @@ const server = Bun.serve({
             },
           );
         }
+        const patchSanitizeHost = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 253);
+        const patchSanitizeSshUser = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 64);
+        const patchSanitizeSwPath = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-/]/g, "").slice(0, 256);
         // Update allowed fields
-        if (body.max_workers !== undefined)
-          data.machines[idx].max_workers = body.max_workers;
+        if (body.max_workers !== undefined) {
+          const _mw = parseInt(String(body.max_workers), 10);
+          if (isNaN(_mw) || _mw < 0) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                error: "max_workers must be a non-negative integer",
+              }),
+            );
+            return;
+          }
+          data.machines[idx].max_workers = _mw;
+        }
         if (body.role !== undefined) data.machines[idx].role = body.role;
         if (body.ssh_user !== undefined)
-          data.machines[idx].ssh_user = body.ssh_user;
+          data.machines[idx].ssh_user = patchSanitizeSshUser(
+            body.ssh_user as string,
+          );
         if (body.shipwright_path !== undefined)
-          data.machines[idx].shipwright_path = body.shipwright_path;
+          data.machines[idx].shipwright_path = patchSanitizeSwPath(
+            body.shipwright_path as string,
+          );
+        if (body.host !== undefined)
+          data.machines[idx].host = patchSanitizeHost(body.host as string);
 
         // If scaling, attempt to send command to remote machine
         if (body.max_workers !== undefined) {
           const machine = data.machines[idx];
-          const sshUser = (machine.ssh_user as string) || "";
-          const mHost = (machine.host as string) || "";
-          const swPath = (machine.shipwright_path as string) || "shipwright";
+          const sshUser = patchSanitizeSshUser(
+            (machine.ssh_user as string) || "",
+          );
+          const mHost = patchSanitizeHost((machine.host as string) || "");
+          const swPath = patchSanitizeSwPath(
+            (machine.shipwright_path as string) || "shipwright",
+          );
           if (
             sshUser &&
             mHost &&
@@ -4479,9 +4525,27 @@ const server = Bun.serve({
             mHost !== "127.0.0.1"
           ) {
             try {
-              execSync(
-                `ssh -o ConnectTimeout=5 ${sshUser}@${mHost} "${swPath} daemon scale ${body.max_workers}" 2>/dev/null`,
-                { timeout: 10000 },
+              const maxWorkersRaw = parseInt(String(body.max_workers), 10);
+              // Validate maxWorkers is a safe integer (>= 0)
+              if (!Number.isInteger(maxWorkersRaw) || maxWorkersRaw < 0) {
+                throw new Error(`Invalid max_workers: ${body.max_workers}`);
+              }
+              const maxWorkers = maxWorkersRaw;
+              // Validate swPath matches safe pattern (alphanumeric, slashes, dots, dashes)
+              if (!/^[a-zA-Z0-9._\/-]+$/.test(swPath)) {
+                throw new Error(`Invalid shipwright_path: ${swPath}`);
+              }
+              // Use spawnSync with args array to eliminate shell injection surface
+              const { spawnSync } = await import("child_process");
+              spawnSync(
+                "ssh",
+                [
+                  "-o",
+                  "ConnectTimeout=5",
+                  `${sshUser}@${mHost}`,
+                  `${swPath} daemon scale ${maxWorkers}`,
+                ],
+                { timeout: 10000, stdio: "pipe" },
               );
             } catch {
               // Remote scale command failed — update saved anyway
@@ -4526,9 +4590,17 @@ const server = Bun.serve({
           );
         }
 
-        const sshUser = (machine.ssh_user as string) || "";
-        const mHost = (machine.host as string) || "";
-        const swPath = (machine.shipwright_path as string) || "shipwright";
+        const sanitizeSshUserR = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 64);
+        const sanitizeHostR = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 253);
+        const sanitizeSwPathR = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-/]/g, "").slice(0, 256);
+        const sshUser = sanitizeSshUserR((machine.ssh_user as string) || "");
+        const mHost = sanitizeHostR((machine.host as string) || "");
+        const swPath = sanitizeSwPathR(
+          (machine.shipwright_path as string) || "shipwright",
+        );
         let daemonRunning = false;
         let reachable = false;
 
@@ -5289,7 +5361,11 @@ const server = Bun.serve({
         let config: Record<string, unknown> = {};
         for (const p of configPaths) {
           if (existsSync(p)) {
-            config = JSON.parse(readFileSync(p, "utf-8"));
+            try {
+              config = JSON.parse(readFileSync(p, "utf-8"));
+            } catch {
+              // corrupt/invalid JSON — return empty config
+            }
             break;
           }
         }
@@ -5369,7 +5445,9 @@ const server = Bun.serve({
           }
           // If no token provided but tokens exist, check if developer is already registered
           else {
-            const existingKey = `${body.developer_id}@${body.machine_name}`;
+            const sanitizeForCheck = (s: string) =>
+              (s || "").replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 64);
+            const existingKey = `${body.developer_id}@${sanitizeForCheck(body.machine_name as string)}`;
             if (!developerRegistry.has(existingKey)) {
               return new Response(
                 JSON.stringify({
@@ -5388,12 +5466,15 @@ const server = Bun.serve({
           }
         }
 
-        const key = `${body.developer_id}@${body.machine_name}`;
+        const sanitizeMachineName = (s: string) =>
+          (s || "").replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 64);
+        const machineName = sanitizeMachineName(body.machine_name as string);
+        const key = `${body.developer_id}@${machineName}`;
 
         developerRegistry.set(key, {
           developer_id: body.developer_id,
-          machine_name: body.machine_name,
-          hostname: body.hostname || body.machine_name,
+          machine_name: machineName,
+          hostname: body.hostname || machineName,
           platform: body.platform || "unknown",
           last_heartbeat: Date.now(),
           daemon_running: body.daemon_running || false,
@@ -5412,7 +5493,7 @@ const server = Bun.serve({
               JSON.stringify({
                 ...e,
                 from_developer: body.developer_id,
-                from_machine: body.machine_name,
+                from_machine: machineName,
               }),
             )
             .join("\n");
@@ -5514,9 +5595,32 @@ const server = Bun.serve({
     if (pathname === "/api/claim" && req.method === "POST") {
       try {
         const body = (await req.json()) as any;
-        const issue = body.issue as number;
-        const machine = (body.machine || body.machine_name) as string;
-        const repo = (body.repo as string) || "";
+        const issue = parseInt(String(body.issue), 10);
+        if (!Number.isFinite(issue) || issue <= 0) {
+          return new Response(
+            JSON.stringify({ approved: false, error: "Invalid issue number" }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+            },
+          );
+        }
+        const rawMachine =
+          ((body.machine || body.machine_name) as string) || "";
+        const machine = rawMachine
+          .replace(/[^a-zA-Z0-9_.\-]/g, "")
+          .slice(0, 64);
+        if (!machine) {
+          return new Response(
+            JSON.stringify({ approved: false, error: "Invalid machine name" }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+            },
+          );
+        }
+        const rawRepo = (body.repo as string) || "";
+        const repo = rawRepo.replace(/[^a-zA-Z0-9_.\-\/]/g, "").slice(0, 128);
 
         // Check for existing claimed:* label
         const repoFlag = repo ? ` -R ${repo}` : "";
@@ -5661,9 +5765,22 @@ const server = Bun.serve({
     if (pathname === "/api/claim/release" && req.method === "POST") {
       try {
         const body = (await req.json()) as any;
-        const issue = body.issue as number;
-        const machine = ((body.machine || body.machine_name) as string) || "";
-        const repo = (body.repo as string) || "";
+        const issue = parseInt(String(body.issue), 10);
+        if (!Number.isFinite(issue) || issue <= 0) {
+          return new Response(
+            JSON.stringify({ approved: false, error: "Invalid issue number" }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+            },
+          );
+        }
+        const machine = (((body.machine || body.machine_name) as string) || "")
+          .replace(/[^a-zA-Z0-9_.\-]/g, "")
+          .slice(0, 64);
+        const repo = ((body.repo as string) || "")
+          .replace(/[^a-zA-Z0-9_.\-\/]/g, "")
+          .slice(0, 128);
 
         const repoFlag = repo ? ` -R ${repo}` : "";
         const label = machine ? `claimed:${machine}` : "";

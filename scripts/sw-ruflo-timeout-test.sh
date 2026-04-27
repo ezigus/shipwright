@@ -23,6 +23,9 @@ assert_eq() {
 assert_lt() {
     if [[ "$1" -lt "$2" ]]; then pass "$3"; else fail "$3 (expected < $2, got $1)"; fi
 }
+assert_le() {
+    if [[ "$1" -le "$2" ]]; then pass "$3"; else fail "$3 (expected <= $2, got $1)"; fi
+}
 assert_empty() {
     if [[ -z "$1" ]]; then pass "$2"; else fail "$2 (expected empty, got '$1')"; fi
 }
@@ -179,22 +182,95 @@ echo "--- Test 6: temp file cleaned up after timeout ------------------"
 _slow_function() { sleep 30; }
 
 RUFLO_FAILURE_COUNT=0; export RUFLO_FAILURE_COUNT
-_t6_before=$(find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+# Use { find ... || true; } so find's non-zero exit (e.g. TMPDIR permission
+# sub-dirs on macOS) does not make the pipe fail and trigger || echo "0",
+# which would concatenate two outputs into "3\n0" — an unparseable integer.
+_t6_before=$( { find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null || true; } | wc -l | tr -d ' ')
 ruflo_with_timeout 1 _slow_function >/dev/null 2>&1 || true
-_t6_after=$(find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+_t6_after=$( { find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null || true; } | wc -l | tr -d ' ')
 
-assert_eq "$_t6_after" "$_t6_before" "no ruflo_timeout.* temp files leaked after timeout"
+# Use <= not == : the OS may clean stale files during the 1-second grace-period
+# sleep inside ruflo_with_timeout, so pre-existing files can disappear. What we
+# care about is that we didn't ADD any new leaked files (count didn't increase).
+assert_le "${_t6_after:-0}" "${_t6_before:-0}" "no ruflo_timeout.* temp files leaked after timeout"
 
 # ─── Test 7: Temp file cleaned up after success ───────────────────────────────
 echo ""
 echo "--- Test 7: temp file cleaned up after success ------------------"
 
 RUFLO_FAILURE_COUNT=0; export RUFLO_FAILURE_COUNT
-_t7_before=$(find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+_t7_before=$( { find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null || true; } | wc -l | tr -d ' ')
 ruflo_with_timeout 5 _emits_output >/dev/null 2>&1 || true
-_t7_after=$(find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+_t7_after=$( { find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null || true; } | wc -l | tr -d ' ')
 
-assert_eq "$_t7_after" "$_t7_before" "no ruflo_timeout.* temp files leaked after success"
+assert_le "${_t7_after:-0}" "${_t7_before:-0}" "no ruflo_timeout.* temp files leaked after success"
+
+# ─── Test 8: All descendants killed after timeout (issue #441) ───────────────
+# Verifies that _kill_process_tree reaps the full process subtree — not just
+# direct children — so ruflo grandchildren (e.g. Node agentdb workers) do not
+# accumulate as orphaned processes across loop iterations.
+echo ""
+echo "--- Test 8: all descendants killed after timeout (issue #441) ---"
+
+# Use unique sleep duration based on shell PID to avoid cross-run collision
+_T8_SLEEP_ID="98$(printf '%05d' $$)"
+
+_spawns_deep_tree() {
+    sh -c "sleep $_T8_SLEEP_ID & wait" &
+    wait
+}
+
+# Pre-clean orphaned sleep processes left by any previous test run so
+# historical leaks don't cause a false failure in the current-run assertion.
+pkill -f "sleep $_T8_SLEEP_ID" 2>/dev/null || true
+sleep 0.3
+
+RUFLO_FAILURE_COUNT=0; export RUFLO_FAILURE_COUNT
+ruflo_with_timeout 2 _spawns_deep_tree >/dev/null 2>&1 || true
+sleep 2  # allow SIGKILL grace period + reaping
+
+_t8_survivors=$(pgrep -f "sleep $_T8_SLEEP_ID" 2>/dev/null || true)
+if [[ -z "$_t8_survivors" ]]; then
+    pass "grandchild process fully reaped after timeout (no leak)"
+else
+    pkill -f "sleep $_T8_SLEEP_ID" 2>/dev/null || true
+    fail "grandchild survived timeout — process leak detected (pids: $_t8_survivors)"
+fi
+
+# ─── Test 9: External binary path also reaps full tree (issue #441) ─────────
+# Before the unified fix, external binaries (cmd_type != "function") went through
+# timeout(1) which kills only the direct child — leaving Node grandchildren alive.
+# After the fix, all commands use background subshell + BFS kill, so even a binary
+# that spawns a grandchild gets its full subtree reaped on timeout.
+echo ""
+echo "--- Test 9: external binary also reaps full tree (issue #441) ---"
+
+_rft_sleep_bin=$(mktemp "${TMPDIR:-/tmp}/rft_sleeper_bin.XXXXXX" 2>/dev/null)
+# Use a PID-derived unique marker so concurrent test runs don't collide.
+_t9_marker="9873sw$$"
+cat > "$_rft_sleep_bin" <<BINEOF
+#!/usr/bin/env sh
+# Simulates a binary that spawns a grandchild (e.g. Node worker).
+sh -c 'sleep ${_t9_marker} & wait' &
+wait
+BINEOF
+chmod +x "$_rft_sleep_bin"
+
+pkill -f "sleep ${_t9_marker}" 2>/dev/null || true
+sleep 0.3
+
+RUFLO_FAILURE_COUNT=0; export RUFLO_FAILURE_COUNT
+ruflo_with_timeout 2 "$_rft_sleep_bin" >/dev/null 2>&1 || true
+sleep 2  # allow SIGKILL grace period + reaping
+
+_t9_survivors=$(pgrep -f "sleep ${_t9_marker}" 2>/dev/null || true)
+if [[ -z "$_t9_survivors" ]]; then
+    pass "external binary grandchild fully reaped after timeout (no leak)"
+else
+    pkill -f "sleep ${_t9_marker}" 2>/dev/null || true
+    fail "external binary grandchild survived timeout — process leak (pids: $_t9_survivors)"
+fi
+rm -f "$_rft_sleep_bin" 2>/dev/null || true
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

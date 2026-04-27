@@ -39,12 +39,11 @@ detect_plan_drift() {
     [[ -n "$section" ]] || return 0
 
     # Get actual changed files; fail-open if git fails entirely.
-    # Validate base branch first — _safe_base_diff falls back to HEAD~5 when BASE_BRANCH
-    # is unverifiable, which produces misleading drift results.
+    # Validate base branch — check local ref first, then origin/<base>.
     local actual_changed=""
     local _git_ok=true
     local _base="${BASE_BRANCH:-main}"
-    if ! (cd "$project_root" && git rev-parse --verify "$_base" >/dev/null 2>&1); then
+    if ! (cd "$project_root" && { git rev-parse --verify "$_base" >/dev/null 2>&1 || git rev-parse --verify "origin/$_base" >/dev/null 2>&1; }); then
         return 0
     fi
     if declare -f _safe_base_diff >/dev/null 2>&1; then

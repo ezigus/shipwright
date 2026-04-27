@@ -349,6 +349,8 @@ invoke_pipeline() {
     # lock in ~/.shipwright/active-pipelines/. Each invocation gets a fresh
     # empty dir; the dedicated admission-gate tests below override this with
     # their own _invoke_pipeline_with_admission_env helper.
+    # SHIPWRIGHT_MIN_FREE_GB=0 disables the memory threshold for general tests
+    # so they are not affected by the host's actual available RAM.
     local _admit_dir="$TEST_TEMP_DIR/admit-default"
     mkdir -p "$_admit_dir"
     rm -f "$_admit_dir"/*.json 2>/dev/null || true
@@ -357,6 +359,7 @@ invoke_pipeline() {
         cd "$TEST_TEMP_DIR/project"
         PATH="$TEST_TEMP_DIR/bin:$PATH" \
         SHIPWRIGHT_ACTIVE_PIPELINES_DIR="$_admit_dir" \
+        SHIPWRIGHT_MIN_FREE_GB=0 \
         bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
     ) || PIPELINE_EXIT=$?
 }
@@ -742,6 +745,7 @@ test_headless_auto_detection() {
         cd "$TEST_TEMP_DIR/project"
         PATH="$TEST_TEMP_DIR/bin:$PATH" \
         SHIPWRIGHT_ACTIVE_PIPELINES_DIR="$_admit_dir" \
+        SHIPWRIGHT_MIN_FREE_GB=0 \
         bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" start --issue 42 --dry-run < /dev/null 2>&1
     ) || PIPELINE_EXIT=$?
     assert_exit_code 0 "dry-run should succeed in headless mode" &&

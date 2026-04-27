@@ -2725,8 +2725,9 @@ pipeline_start() {
         error "Failed to write pipeline lock at $SHIPWRIGHT_ACTIVE_PIPELINES_DIR — check permissions/disk"
         exit 1
     fi
-    # Race re-check: two near-simultaneous starts could both pass the gate.
-    # Higher-PID process backs off so the lower-PID one keeps the slot.
+    # Race re-check: two near-simultaneous starts could both pass the gate
+    # before either writes its lock. Tiebreaker is lowest-PID-wins (not FIFO):
+    # deterministic and deadlock-free. Higher-PID process backs off.
     local _post_active
     _post_active=$(count_active_pipeline_locks)
     if [[ "$_post_active" -gt "$SHIPWRIGHT_MAX_ACTIVE_PIPELINES" ]]; then
@@ -2741,6 +2742,7 @@ pipeline_start() {
         done
         if [[ "$_lowest_pid" != "$_PIPELINE_PID" ]]; then
             release_active_pipeline_lock
+            emit_event "pipeline.admission_race_lost" "our_pid=$_PIPELINE_PID" "winner_pid=$_lowest_pid" 2>/dev/null || true
             error "Refusing to start: lost admission race to pid=$_lowest_pid"
             exit 1
         fi
@@ -3338,6 +3340,27 @@ pipeline_resume() {
     if ! write_active_pipeline_lock; then
         error "Failed to write pipeline lock at $SHIPWRIGHT_ACTIVE_PIPELINES_DIR — check permissions/disk"
         exit 1
+    fi
+    # Race re-check: same lowest-PID-wins tiebreaker as pipeline_start to
+    # prevent two simultaneous resumes from both bypassing the admission gate.
+    local _post_active
+    _post_active=$(count_active_pipeline_locks)
+    if [[ "$_post_active" -gt "$SHIPWRIGHT_MAX_ACTIVE_PIPELINES" ]]; then
+        local _lock _other_pid _lowest_pid="$_PIPELINE_PID"
+        for _lock in "$SHIPWRIGHT_ACTIVE_PIPELINES_DIR"/*.json; do
+            [[ -f "$_lock" ]] || continue
+            _other_pid=$(jq -r '.pid // empty' "$_lock" 2>/dev/null || true)
+            [[ -z "$_other_pid" || ! "$_other_pid" =~ ^[0-9]+$ ]] && continue
+            if [[ "$_other_pid" -lt "$_lowest_pid" ]]; then
+                _lowest_pid="$_other_pid"
+            fi
+        done
+        if [[ "$_lowest_pid" != "$_PIPELINE_PID" ]]; then
+            release_active_pipeline_lock
+            emit_event "pipeline.admission_race_lost" "our_pid=$_PIPELINE_PID" "winner_pid=$_lowest_pid" 2>/dev/null || true
+            error "Refusing to resume: lost admission race to pid=$_lowest_pid"
+            exit 1
+        fi
     fi
 
     echo ""

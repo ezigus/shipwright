@@ -834,4 +834,125 @@ assert_gt \
 
 rm -f "$ARTIFACTS_DIR/security-source-scan.json"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# pipeline_run_ruflo_cq_hive (issue #418 — wire ruflo_execute_compound_quality)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "pipeline_run_ruflo_cq_hive"
+
+# Capture emit_event calls into a log so we can verify telemetry reasons.
+_ruflo_cq_event_log="$TEST_TEMP_DIR/ruflo-cq-events.log"
+emit_event() {
+    printf '%s\n' "$*" >> "$_ruflo_cq_event_log"
+}
+
+_ruflo_cq_artifact="$ARTIFACTS_DIR/cq-hive-context.md"
+
+# Test 1: RUFLO_CQ_ENABLED=false short-circuits — no ruflo call, returns 1.
+ruflo_available() { return 0; }
+ruflo_execute_compound_quality() {
+    echo "should not be called" > "$_ruflo_cq_artifact"
+    return 0
+}
+: > "$_ruflo_cq_event_log"
+rm -f "$_ruflo_cq_artifact"
+
+RUFLO_CQ_ENABLED=false
+_cq_exit=0
+pipeline_run_ruflo_cq_hive "diff" "$_ruflo_cq_artifact" >/dev/null 2>&1 || _cq_exit=$?
+assert_eq "RUFLO_CQ_ENABLED=false: helper returns 1" "1" "$_cq_exit"
+if [[ ! -f "$_ruflo_cq_artifact" ]]; then
+    assert_pass "RUFLO_CQ_ENABLED=false: ruflo_execute_compound_quality is not invoked"
+else
+    assert_fail "RUFLO_CQ_ENABLED=false: ruflo_execute_compound_quality is not invoked" \
+        "artifact unexpectedly written"
+fi
+assert_contains "RUFLO_CQ_ENABLED=false: emits cq_skipped reason=disabled" \
+    "$(cat "$_ruflo_cq_event_log" 2>/dev/null || true)" "reason=disabled"
+unset RUFLO_CQ_ENABLED
+
+# Test 2: ruflo_available=false → skipped with reason=unavailable, returns 1.
+ruflo_available() { return 1; }
+ruflo_execute_compound_quality() {
+    echo "should not be called" > "$_ruflo_cq_artifact"
+    return 0
+}
+: > "$_ruflo_cq_event_log"
+rm -f "$_ruflo_cq_artifact"
+
+_cq_exit=0
+pipeline_run_ruflo_cq_hive "diff" "$_ruflo_cq_artifact" >/dev/null 2>&1 || _cq_exit=$?
+assert_eq "ruflo unavailable: helper returns 1" "1" "$_cq_exit"
+if [[ ! -f "$_ruflo_cq_artifact" ]]; then
+    assert_pass "ruflo unavailable: ruflo_execute_compound_quality is not invoked"
+else
+    assert_fail "ruflo unavailable: ruflo_execute_compound_quality is not invoked" \
+        "artifact unexpectedly written"
+fi
+assert_contains "ruflo unavailable: emits cq_skipped reason=unavailable" \
+    "$(cat "$_ruflo_cq_event_log" 2>/dev/null || true)" "reason=unavailable"
+
+# Test 3: empty diff → skipped with reason=empty_diff, returns 1.
+ruflo_available() { return 0; }
+ruflo_execute_compound_quality() {
+    echo "should not be called" > "$_ruflo_cq_artifact"
+    return 0
+}
+: > "$_ruflo_cq_event_log"
+rm -f "$_ruflo_cq_artifact"
+
+_cq_exit=0
+pipeline_run_ruflo_cq_hive "" "$_ruflo_cq_artifact" >/dev/null 2>&1 || _cq_exit=$?
+assert_eq "empty diff: helper returns 1" "1" "$_cq_exit"
+assert_contains "empty diff: emits cq_skipped reason=empty_diff" \
+    "$(cat "$_ruflo_cq_event_log" 2>/dev/null || true)" "reason=empty_diff"
+
+# Test 4: happy path — ruflo available, hive succeeds, returns 0 with cq_complete.
+ruflo_available() { return 0; }
+ruflo_execute_compound_quality() {
+    local _diff="$1"
+    local _out="$2"
+    printf 'hive findings for: %s\n' "$_diff" > "$_out"
+    return 0
+}
+: > "$_ruflo_cq_event_log"
+rm -f "$_ruflo_cq_artifact"
+
+_cq_exit=0
+pipeline_run_ruflo_cq_hive "diff content here" "$_ruflo_cq_artifact" >/dev/null 2>&1 || _cq_exit=$?
+assert_eq "happy path: helper returns 0" "0" "$_cq_exit"
+assert_file_exists "happy path: hive artifact written" "$_ruflo_cq_artifact"
+assert_contains "happy path: emits ruflo.cq_complete" \
+    "$(cat "$_ruflo_cq_event_log" 2>/dev/null || true)" "ruflo.cq_complete"
+
+# Test 5: hive failure → returns 1, emits cq_fallback so native checks continue.
+ruflo_available() { return 0; }
+ruflo_execute_compound_quality() {
+    return 1
+}
+: > "$_ruflo_cq_event_log"
+rm -f "$_ruflo_cq_artifact"
+
+_cq_exit=0
+pipeline_run_ruflo_cq_hive "diff content" "$_ruflo_cq_artifact" >/dev/null 2>&1 || _cq_exit=$?
+assert_eq "hive failure: helper returns 1" "1" "$_cq_exit"
+assert_contains "hive failure: emits ruflo.cq_fallback so caller falls back" \
+    "$(cat "$_ruflo_cq_event_log" 2>/dev/null || true)" "ruflo.cq_fallback"
+
+# Test 6: missing artifact_file argument → returns 1 without side effects.
+_cq_exit=0
+pipeline_run_ruflo_cq_hive "diff" "" >/dev/null 2>&1 || _cq_exit=$?
+assert_eq "missing artifact_file arg: helper returns 1" "1" "$_cq_exit"
+
+# Test 7: stage_compound_quality calls into pipeline_run_ruflo_cq_hive
+# (verifies wiring is present in source, not just helper behavior).
+_cq_wiring_refs=$(grep -c 'pipeline_run_ruflo_cq_hive' \
+    "$SCRIPT_DIR/lib/pipeline-intelligence.sh" 2>/dev/null || true)
+_cq_wiring_refs="${_cq_wiring_refs:-0}"
+assert_gt "stage_compound_quality wires pipeline_run_ruflo_cq_hive (issue #418)" \
+    "$_cq_wiring_refs" "1"
+
+# Restore real emit_event stub for any later sections (none currently).
+emit_event() { :; }
+unset -f ruflo_available ruflo_execute_compound_quality 2>/dev/null || true
+
 print_test_results

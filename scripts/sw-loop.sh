@@ -427,15 +427,21 @@ fi
 # Validate --context-file path (if provided by pipeline)
 if [[ -n "$LOOP_CONTEXT_FILE" ]]; then
     PROJECT_ROOT="$(git rev-parse --show-toplevel)"
-    if [[ "$LOOP_CONTEXT_FILE" != "$PROJECT_ROOT"* ]]; then
-        error "context-file must be inside project root ($PROJECT_ROOT)"
-        exit 1
-    fi
+    # Use trailing-slash boundary to reject sibling-prefix paths like
+    # /workspace/shipwright-evil/x.md when PROJECT_ROOT=/workspace/shipwright
+    case "$LOOP_CONTEXT_FILE" in
+        "${PROJECT_ROOT}/"*) : ;;
+        *)
+            error "context-file must be inside project root ($PROJECT_ROOT)"
+            exit 1
+            ;;
+    esac
 fi
 
-# Layer B: Strip synthesized sections from GOAL before preserving as ORIGINAL_GOAL
-# Defense-in-depth: if the build stage passed an enriched goal, scrub it here.
-if declare -f _strip_synthesized_sections >/dev/null 2>&1; then
+# Layer B: Strip synthesized sections from GOAL before preserving as ORIGINAL_GOAL.
+# Only applied when --context-file was passed (i.e. invoked by the pipeline build stage),
+# so standalone sw-loop invocations with multi-section user goals are never truncated.
+if [[ -n "$LOOP_CONTEXT_FILE" ]] && declare -f _strip_synthesized_sections >/dev/null 2>&1; then
     GOAL="$(_strip_synthesized_sections "$GOAL")"
 fi
 

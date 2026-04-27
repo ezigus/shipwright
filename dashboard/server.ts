@@ -5289,7 +5289,11 @@ const server = Bun.serve({
         let config: Record<string, unknown> = {};
         for (const p of configPaths) {
           if (existsSync(p)) {
-            config = JSON.parse(readFileSync(p, "utf-8"));
+            try {
+              config = JSON.parse(readFileSync(p, "utf-8"));
+            } catch {
+              // corrupt/invalid JSON — return empty config
+            }
             break;
           }
         }

@@ -186,20 +186,24 @@ stage_build() {
         memory_context=$(bash "$SCRIPT_DIR/sw-memory.sh" inject "build" 2>/dev/null) || true
     fi
 
-    # Build enriched goal with compact context (avoids prompt bloat)
-    local enriched_goal
-    enriched_goal=$(_pipeline_compact_goal "$GOAL" "$plan_file" "$design_file")
+    # Build clean goal (no synthesis context)
+    local clean_goal
+    clean_goal="$GOAL"
+
+    # Build synthesized context separately (Layer A: sidecar delivery)
+    local build_context_body
+    build_context_body=$(_pipeline_compact_goal "$GOAL" "$plan_file" "$design_file")
 
     # TDD: when test_first ran, tell build to make existing tests pass
     if [[ "${TDD_ENABLED:-false}" == "true" || "${PIPELINE_TDD:-}" == "true" ]]; then
-        enriched_goal="${enriched_goal}
+        build_context_body="${build_context_body}
 
 IMPORTANT (TDD mode): Test files already exist and define the expected behavior. Write implementation code to make ALL tests pass. Do not delete or modify the test files."
     fi
 
     # Inject memory context
     if [[ -n "$memory_context" ]]; then
-        enriched_goal="${enriched_goal}
+        build_context_body="${build_context_body}
 
 Historical context (lessons from previous pipelines):
 ${memory_context}"
@@ -210,7 +214,7 @@ ${memory_context}"
         local build_discoveries
         build_discoveries=$("$SCRIPT_DIR/sw-discovery.sh" inject "src/*,*.ts,*.tsx,*.js" 2>/dev/null | head -20 || true)
         if [[ -n "$build_discoveries" ]]; then
-            enriched_goal="${enriched_goal}
+            build_context_body="${build_context_body}
 
 Discoveries from other pipelines:
 ${build_discoveries}"
@@ -240,7 +244,7 @@ ${build_discoveries}"
         local build_hotspots
         build_hotspots=$(gh_file_change_frequency 2>/dev/null | head -5 || true)
         if [[ -n "$build_hotspots" ]]; then
-            enriched_goal="${enriched_goal}
+            build_context_body="${build_context_body}
 
 File hotspots (most frequently changed — review these carefully):
 ${build_hotspots}"
@@ -252,7 +256,7 @@ ${build_hotspots}"
         local build_alerts
         build_alerts=$(gh_security_alerts 2>/dev/null | head -3 || true)
         if [[ -n "$build_alerts" ]]; then
-            enriched_goal="${enriched_goal}
+            build_context_body="${build_context_body}
 
 Active security alerts (do not introduce new vulnerabilities):
 ${build_alerts}"
@@ -267,7 +271,7 @@ ${build_alerts}"
         local coverage_baseline
         coverage_baseline=$(jq -r '.coverage_percent // empty' "$coverage_file_build" 2>/dev/null || true)
         if [[ -n "$coverage_baseline" ]]; then
-            enriched_goal="${enriched_goal}
+            build_context_body="${build_context_body}
 
 Coverage baseline: ${coverage_baseline}% — do not decrease coverage."
         fi
@@ -280,7 +284,7 @@ Coverage baseline: ${coverage_baseline}% — do not decrease coverage."
         local prevention_text
         prevention_text=$(bash "$SCRIPT_DIR/sw-predictive.sh" inject-prevention "build" "$issue_json_build" 2>/dev/null || true)
         if [[ -n "$prevention_text" ]]; then
-            enriched_goal="${enriched_goal}
+            build_context_body="${build_context_body}
 
 ${prevention_text}"
         fi
@@ -304,7 +308,7 @@ ${prevention_text}"
     fi
     if [[ -n "$_skill_prompts" ]]; then
         _skill_prompts=$(prune_context_section "skills" "$_skill_prompts" 8000)
-        enriched_goal="${enriched_goal}
+        build_context_body="${build_context_body}
 
 ## Skill Guidance (${INTELLIGENCE_ISSUE_TYPE:-backend} issue, AI-selected)
 ${_skill_prompts}
@@ -347,7 +351,7 @@ ${_skill_prompts}
             warn "Ruflo: recall output was sanitized before injection (potential injection attempt or malformed data)"
         fi
         if [[ -n "$_build_recall_ctx" ]]; then
-            enriched_goal="${enriched_goal}
+            build_context_body="${build_context_body}
 
 ## Historical Build Context
 ${_build_recall_ctx}"
@@ -355,7 +359,16 @@ ${_build_recall_ctx}"
         fi
     fi
 
-    loop_args+=("$enriched_goal")
+    # Layer A: Write synthesized context to sidecar (atomic write)
+    local _ctx_file="${ARTIFACTS_DIR}/build-context.md"
+    local _ctx_tmp="${_ctx_file}.tmp.$$"
+    printf '%s\n' "$build_context_body" > "$_ctx_tmp"
+    mv "$_ctx_tmp" "$_ctx_file"
+    info "Build context written to ${_ctx_file} ($(wc -c < "$_ctx_file") bytes)"
+
+    # Pass clean goal to loop (not enriched with context)
+    loop_args+=("$clean_goal")
+    loop_args+=(--context-file "$_ctx_file")
 
     # Build loop args from pipeline config + CLI overrides
     CURRENT_STAGE_ID="build"

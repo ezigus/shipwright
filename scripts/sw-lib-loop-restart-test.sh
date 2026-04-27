@@ -370,6 +370,40 @@ else
     assert_fail "show_summary stuck display string mentions stuck" "got: $_stuck_arm"
 fi
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Layer C: resume_state — unified synthesis sentinel stripping (#444)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Layer C: resume_state sentinel stripping (issue #444)"
+
+# Source goal-sanitize helper
+source "$SCRIPT_DIR/lib/goal-sanitize.sh" 2>/dev/null || {
+    assert_fail "goal-sanitize.sh not found" "cannot load $_GOAL_SANITIZE_PATH"
+}
+
+# Test H1: resume_state strips ## Plan Summary from original_goal field
+_write_state_with_status "running" "$(printf 'Clean goal\n\n## Plan Summary\nCompile plan here')"
+GOAL="" ORIGINAL_GOAL="" STATUS=""
+resume_state 2>/dev/null
+assert_eq "resume_state strips ## Plan Summary from original_goal" "Clean goal" "$ORIGINAL_GOAL"
+
+# Test H2: resume_state strips ## Skill Guidance from original_goal field
+_write_state_with_status "running" "$(printf 'Clean goal\n\n## Skill Guidance\nGuide content here')"
+GOAL="" ORIGINAL_GOAL="" STATUS=""
+resume_state 2>/dev/null
+assert_eq "resume_state strips ## Skill Guidance from original_goal" "Clean goal" "$ORIGINAL_GOAL"
+
+# Test H3: resume_state strips ## Historical Build Context from original_goal field
+_write_state_with_status "running" "$(printf 'Clean goal\n\n## Historical Build Context\nHistory here')"
+GOAL="" ORIGINAL_GOAL="" STATUS=""
+resume_state 2>/dev/null
+assert_eq "resume_state strips ## Historical Build Context from original_goal" "Clean goal" "$ORIGINAL_GOAL"
+
+# Test H4: legacy — resume_state strips ## Plan Summary from goal field when no original_goal field
+_write_legacy_loop_state "$(printf 'Clean goal\n\n## Plan Summary\nPlan details')"
+GOAL="" ORIGINAL_GOAL="" STATUS=""
+resume_state 2>/dev/null
+assert_eq "legacy: resume_state strips ## Plan Summary from goal" "Clean goal" "$GOAL"
+
 # Emit explicit "$PASS/$TOTAL pass" as the final visible line for DoD audit parsers.
 printf '%s/%s pass\n' "$PASS" "$TOTAL"
 print_test_results

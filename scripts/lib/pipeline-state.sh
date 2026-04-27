@@ -3,6 +3,10 @@
 [[ -n "${_PIPELINE_STATE_LOADED:-}" ]] && return 0
 _PIPELINE_STATE_LOADED=1
 
+# Source goal sanitization helper (strips synthesized sections from goals)
+# shellcheck source=goal-sanitize.sh
+[[ -f "$(dirname "${BASH_SOURCE[0]}")/goal-sanitize.sh" ]] && source "$(dirname "${BASH_SOURCE[0]}")/goal-sanitize.sh"
+
 # Ensure _trim is available (normally provided by helpers.sh, but this file
 # may be sourced in test harnesses that stub helpers instead of sourcing them).
 if ! type _trim >/dev/null 2>&1; then
@@ -604,22 +608,20 @@ write_state() {
 
     # Atomic write: build content in tmp file, then mv into place.
     # This prevents partial/corrupt state files when interrupted by signals.
-    # Encode GOAL: escape backslashes first, then newlines, so that a literal \n
-    # in the goal is stored as \\n (unambiguous) while a real newline becomes \n.
-    local tmp_state="${STATE_FILE}.tmp.$$"
-    local _write_goal="${ORIGINAL_GOAL:-$GOAL}"
-    # Bootstrap ORIGINAL_GOAL in memory on first non-empty write (e.g. --issue runs where
-    # intake fills GOAL after pipeline_start, leaving ORIGINAL_GOAL empty until here).
-    if [[ -z "${ORIGINAL_GOAL:-}" && -n "${_write_goal}" ]]; then
-        ORIGINAL_GOAL="$_write_goal"
+    # Always persist ORIGINAL_GOAL (clean) to both goal: and original_goal: fields.
+    # Bootstrap ORIGINAL_GOAL from GOAL on first non-empty write for the --issue flow
+    # where intake calls write_state with GOAL set and ORIGINAL_GOAL still empty.
+    if [[ -z "${ORIGINAL_GOAL:-}" && -n "${GOAL:-}" ]]; then
+        ORIGINAL_GOAL="$GOAL"
     fi
-    local _goal_esc="${_write_goal//\\/\\\\}"
-    _goal_esc="${_goal_esc//$'\n'/\\n}"
+    local tmp_state="${STATE_FILE}.tmp.$$"
+    local _orig_goal_esc="${ORIGINAL_GOAL//\\/\\\\}"
+    _orig_goal_esc="${_orig_goal_esc//$'\n'/\\n}"
     {
         printf -- '---\n'
         printf 'pipeline: %s\n' "$PIPELINE_NAME"
-        printf 'goal: "%s"\n' "$_goal_esc"
-        printf 'original_goal: "%s"\n' "$_goal_esc"
+        printf 'goal: "%s"\n' "$_orig_goal_esc"
+        printf 'original_goal: "%s"\n' "$_orig_goal_esc"
         printf 'status: %s\n' "$PIPELINE_STATUS"
         printf 'issue: "%s"\n' "${GITHUB_ISSUE:-}"
         printf 'branch: "%s"\n' "${GIT_BRANCH:-}"
@@ -711,21 +713,31 @@ ${sid}:${sst}"
     done < "$STATE_FILE"
 
     if $_has_original_goal; then
-        # New state file: original_goal field was present — ORIGINAL_GOAL already set by parser.
-        # No sentinel stripping needed; the stored goal is already clean.
-        :
+        # New state file: original_goal field was present.
+        # Apply unified sentinel stripping to BOTH fields — defense in depth.
+        # If ORIGINAL_GOAL somehow has synthesis pollution, clean it.
+        if declare -f _strip_synthesized_sections >/dev/null 2>&1; then
+            ORIGINAL_GOAL="$(_strip_synthesized_sections "$ORIGINAL_GOAL")"
+            GOAL="${GOAL:-$ORIGINAL_GOAL}"
+            GOAL="$(_strip_synthesized_sections "$GOAL")"
+        fi
     else
         # Legacy state file: no original_goal field — apply backward-compat sentinel stripping.
-        # Only applies to files written before this fix. Uses %% (bash 3.2 safe, no regex).
-        if [[ "$GOAL" == *$'\n\nBLOCKING ISSUES'* ]];              then GOAL="${GOAL%%$'\n\nBLOCKING ISSUES'*}";              fi
-        if [[ "$GOAL" == *$'\n\nIMPORTANT — Previous build'* ]];   then GOAL="${GOAL%%$'\n\nIMPORTANT — Previous build'*}";   fi
-        if [[ "$GOAL" == *$'\n\nIMPORTANT — Code review'* ]];      then GOAL="${GOAL%%$'\n\nIMPORTANT — Code review'*}";      fi
-        if [[ "$GOAL" == *$'\n\nIMPORTANT — Architecture'* ]];     then GOAL="${GOAL%%$'\n\nIMPORTANT — Architecture'*}";     fi
-        if [[ "$GOAL" == *$'\n\nIMPORTANT — Compound quality'* ]]; then GOAL="${GOAL%%$'\n\nIMPORTANT — Compound quality'*}"; fi
-        if [[ "$GOAL" == *$'\n\nHUMAN FEEDBACK'* ]];               then GOAL="${GOAL%%$'\n\nHUMAN FEEDBACK'*}";               fi
-        if [[ "$GOAL" == *$'\n\n## Previous Session Context'* ]];  then GOAL="${GOAL%%$'\n\n## Previous Session Context'*}";  fi
-        # KNOWN FIX is prepended — strip from start through first blank line
-        if [[ "$GOAL" == "KNOWN FIX (from past success):"* ]];     then GOAL="${GOAL#*$'\n\n'}";                              fi
+        # Uses the unified helper if available, fallback to inline sentinels.
+        if declare -f _strip_synthesized_sections >/dev/null 2>&1; then
+            GOAL="$(_strip_synthesized_sections "$GOAL")"
+        else
+            # Fallback (if goal-sanitize.sh failed to load) — inline legacy sentinels only
+            if [[ "$GOAL" == *$'\n\nBLOCKING ISSUES'* ]];              then GOAL="${GOAL%%$'\n\nBLOCKING ISSUES'*}";              fi
+            if [[ "$GOAL" == *$'\n\nIMPORTANT — Previous build'* ]];   then GOAL="${GOAL%%$'\n\nIMPORTANT — Previous build'*}";   fi
+            if [[ "$GOAL" == *$'\n\nIMPORTANT — Code review'* ]];      then GOAL="${GOAL%%$'\n\nIMPORTANT — Code review'*}";      fi
+            if [[ "$GOAL" == *$'\n\nIMPORTANT — Architecture'* ]];     then GOAL="${GOAL%%$'\n\nIMPORTANT — Architecture'*}";     fi
+            if [[ "$GOAL" == *$'\n\nIMPORTANT — Compound quality'* ]]; then GOAL="${GOAL%%$'\n\nIMPORTANT — Compound quality'*}"; fi
+            if [[ "$GOAL" == *$'\n\nHUMAN FEEDBACK'* ]];               then GOAL="${GOAL%%$'\n\nHUMAN FEEDBACK'*}";               fi
+            if [[ "$GOAL" == *$'\n\n## Previous Session Context'* ]];  then GOAL="${GOAL%%$'\n\n## Previous Session Context'*}";  fi
+            # KNOWN FIX is prepended — strip from start through first blank line
+            if [[ "$GOAL" == "KNOWN FIX (from past success):"* ]];     then GOAL="${GOAL#*$'\n\n'}";                              fi
+        fi
         ORIGINAL_GOAL="${ORIGINAL_GOAL:-$GOAL}"
     fi
 

@@ -221,18 +221,19 @@ resume_state() {
 
 write_state() {
     local tmp_state="${STATE_FILE}.tmp.$$"
-    # Encode GOAL and ORIGINAL_GOAL separately so they never converge to the same
-    # synthesized value.  ORIGINAL_GOAL must be set by the caller (sw-loop.sh line 419)
-    # before the first write_state call; the lazy bootstrap is removed to prevent
-    # contamination when ORIGINAL_GOAL is still empty and GOAL is already mutated.
-    local _goal_esc="${GOAL//\\/\\\\}"
-    _goal_esc="${_goal_esc//$'\n'/\\n}"
+    # Always persist ORIGINAL_GOAL (clean) to both goal: and original_goal: fields.
+    # Layer A+B ensure GOAL is clean before this is called in normal operation, but
+    # bootstrap here for the --issue pipeline flow where intake calls write_state
+    # with GOAL set from the issue title and ORIGINAL_GOAL still empty.
+    if [[ -z "${ORIGINAL_GOAL:-}" && -n "${GOAL:-}" ]]; then
+        ORIGINAL_GOAL="$GOAL"
+    fi
     local _orig_goal_esc="${ORIGINAL_GOAL//\\/\\\\}"
     _orig_goal_esc="${_orig_goal_esc//$'\n'/\\n}"
     # Use printf instead of heredoc to avoid delimiter injection from GOAL
     {
         printf -- '---\n'
-        printf 'goal: "%s"\n' "$_goal_esc"
+        printf 'goal: "%s"\n' "$_orig_goal_esc"
         printf 'original_goal: "%s"\n' "$_orig_goal_esc"
         printf 'iteration: %s\n' "$ITERATION"
         printf 'max_iterations: %s\n' "$MAX_ITERATIONS"

@@ -608,19 +608,19 @@ write_state() {
 
     # Atomic write: build content in tmp file, then mv into place.
     # This prevents partial/corrupt state files when interrupted by signals.
-    # Encode GOAL and ORIGINAL_GOAL separately: escape backslashes first, then newlines,
-    # so that a literal \n in the goal is stored as \\n (unambiguous) while a real
-    # newline becomes \n.  Never merge both fields into one variable — that's how
-    # synthesized content from GOAL contaminates ORIGINAL_GOAL permanently.
+    # Always persist ORIGINAL_GOAL (clean) to both goal: and original_goal: fields.
+    # Bootstrap ORIGINAL_GOAL from GOAL on first non-empty write for the --issue flow
+    # where intake calls write_state with GOAL set and ORIGINAL_GOAL still empty.
+    if [[ -z "${ORIGINAL_GOAL:-}" && -n "${GOAL:-}" ]]; then
+        ORIGINAL_GOAL="$GOAL"
+    fi
     local tmp_state="${STATE_FILE}.tmp.$$"
-    local _goal_esc="${GOAL//\\/\\\\}"
-    _goal_esc="${_goal_esc//$'\n'/\\n}"
     local _orig_goal_esc="${ORIGINAL_GOAL//\\/\\\\}"
     _orig_goal_esc="${_orig_goal_esc//$'\n'/\\n}"
     {
         printf -- '---\n'
         printf 'pipeline: %s\n' "$PIPELINE_NAME"
-        printf 'goal: "%s"\n' "$_goal_esc"
+        printf 'goal: "%s"\n' "$_orig_goal_esc"
         printf 'original_goal: "%s"\n' "$_orig_goal_esc"
         printf 'status: %s\n' "$PIPELINE_STATUS"
         printf 'issue: "%s"\n' "${GITHUB_ISSUE:-}"

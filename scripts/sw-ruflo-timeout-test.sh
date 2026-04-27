@@ -242,7 +242,7 @@ fi
 echo ""
 echo "--- Test 9: external binary also reaps full tree (issue #441) ---"
 
-_rft_sleep_bin=$(mktemp "${TMPDIR:-/tmp}/rft_sleeper_bin.XXXXXX" 2>/dev/null)
+_rft_sleep_bin=$(mktemp "${TMPDIR}/rft_sleeper_bin.XXXXXX" 2>/dev/null)
 cat > "$_rft_sleep_bin" <<'BINEOF'
 #!/usr/bin/env sh
 # Simulates a binary that spawns a grandchild (e.g. Node worker).

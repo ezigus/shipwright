@@ -236,4 +236,140 @@ GOAL="" ORIGINAL_GOAL=""
 resume_state 2>/dev/null
 assert_eq "no unbounded growth across 2 compound_quality cycles" "Original" "$GOAL"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# resume_state — terminal status: stuck (preparatory for #443/#451)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# AUDIT — every reader of the `status:` field in `.claude/loop-state.md`
+# (verifiable by `grep -n 'STATUS\|status:' scripts/sw-loop.sh
+#  scripts/lib/loop-restart.sh scripts/sw-checkpoint.sh`):
+#
+#   #  File:Line                              What it does                     Behavior on `stuck` before this PR              Fix in this PR
+#   1  scripts/lib/loop-restart.sh:77         YAML parser → STATUS variable    Permissive — accepts `stuck` literal verbatim   None — already correct
+#   2  scripts/lib/loop-restart.sh:128-131    Terminal-state check (complete)  Fell through → STATUS reset → OOM cycle         Added explicit `stuck` arm; exits with user guidance
+#   3  scripts/lib/loop-restart.sh:146        Unconditional STATUS="running"   Overwrote `stuck` if reached                    Now unreachable for stuck (early exit at #2)
+#   4  scripts/sw-loop.sh:show_summary        `case $STATUS` in show_summary   Fell through to dim default — generic           Added explicit `stuck` case arm with red ✗ label
+#   5  scripts/sw-loop.sh:LOOP banner         Uppercase LOOP $STATUS banner    Renders "LOOP STUCK" — already legible          None — incidentally correct
+#   6  scripts/sw-loop.sh:complete check      if [[ STATUS == "complete" ]]    False for stuck — correct (stuck ≠ success)     None
+#   7  scripts/sw-checkpoint.sh               Reads SW_LOOP_STATUS env var     Pass-through, no branching                      None
+#
+# OUT OF SCOPE (intentionally deferred — separate work items):
+#   • Writer side (#451) — write_state() does NOT yet emit `status: stuck`.
+#   • .claude/pipeline-state.md readers — different file, different schema.
+#   • Documentation / public docs — status enum is internal.
+#   • Backfill of legacy state files — unchanged.
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "resume_state stuck terminal-state handling"
+
+# Helper: write a state file with an arbitrary status value
+_write_state_with_status() {
+    local _status="$1"
+    local _goal="${2:-Test goal}"
+    local _esc="${_goal//\\/\\\\}"
+    _esc="${_esc//$'\n'/\\n}"
+    {
+        printf -- '---\n'
+        printf 'goal: "%s"\n'           "$_esc"
+        printf 'original_goal: "%s"\n'  "$_esc"
+        printf 'iteration: %s\n'        "${ITERATION:-1}"
+        printf 'max_iterations: %s\n'   "${MAX_ITERATIONS:-10}"
+        printf 'status: %s\n'           "$_status"
+        printf 'test_cmd: "%s"\n'       "${TEST_CMD:-}"
+        printf 'model: %s\n'            "${MODEL:-sonnet}"
+        printf 'agents: %s\n'           "${AGENTS:-1}"
+        printf 'consecutive_failures: 0\ntotal_commits: 0\naudit_enabled: false\n'
+        printf 'audit_agent_enabled: false\nquality_gates_enabled: false\ndod_file: ""\n'
+        printf 'auto_extend: false\nextension_count: 0\nmax_extensions: 3\n'
+        printf 'dod_diff_max_lines: 500\nholistic_diff_max_lines: 1000\n'
+        printf -- '---\n\n## Log\n'
+    } > "$STATE_FILE"
+}
+
+# Test G1: resume_state on stuck status exits cleanly (no resume, no STATUS overwrite)
+_write_state_with_status "stuck" "Stuck loop goal"
+_g1_output="$(GOAL="" ORIGINAL_GOAL="" bash -c "
+    set +e
+    source '$SCRIPT_DIR/lib/test-helpers.sh' 2>/dev/null
+    export STATE_FILE='$STATE_FILE' MAX_ITERATIONS='$MAX_ITERATIONS' MAX_ITERATIONS_EXPLICIT=false
+    export PROJECT_ROOT='$PROJECT_ROOT' SCRIPT_DIR='$SCRIPT_DIR' DIM='' RESET=''
+    export ITERATION=1 STATUS='' TEST_CMD='' MODEL=sonnet AGENTS=1
+    export CONSECUTIVE_FAILURES=0 TOTAL_COMMITS=0 LOG_ENTRIES=''
+    export AUDIT_ENABLED=false AUDIT_AGENT_ENABLED=false QUALITY_GATES_ENABLED=false
+    export DOD_FILE='' AUTO_EXTEND=false EXTENSION_COUNT=0 MAX_EXTENSIONS=3
+    export DOD_DIFF_MAX_LINES=500 HOLISTIC_DIFF_MAX_LINES=1000
+    export LOOP_START_COMMIT=abc123 GOAL='' ORIGINAL_GOAL=''
+    now_iso(){ date -u +'%Y-%m-%dT%H:%M:%SZ'; }; now_epoch(){ date +%s; }
+    info(){ echo \"\$*\"; }; success(){ echo \"\$*\"; }
+    warn(){ echo \"WARN:\$*\"; }; error(){ echo \"ERR:\$*\" >&2; }
+    _LOOP_RESTART_LOADED=''
+    source '$SCRIPT_DIR/lib/loop-restart.sh'
+    resume_state 2>&1
+    echo \"AFTER_RESUME_STATUS=\$STATUS\"
+" || true)"
+if echo "$_g1_output" | grep -q "AFTER_RESUME_STATUS="; then
+    assert_fail "resume_state exits when status is stuck" "execution continued past resume_state; output: $_g1_output"
+else
+    assert_pass "resume_state exits when status is stuck"
+fi
+assert_contains "resume_state warns about stuck state" "$_g1_output" "stuck"
+
+# Test G2: terminal check distinguishes stuck from running (running must still resume)
+_write_state_with_status "running" "Resumable loop"
+GOAL="" ORIGINAL_GOAL="" STATUS=""
+resume_state 2>/dev/null
+assert_eq "resume_state still resumes when status is running" "running" "$STATUS"
+
+# Test G3: complete still terminates (regression guard — pre-existing behavior preserved)
+_write_state_with_status "complete" "Done loop"
+_g3_output="$(GOAL="" ORIGINAL_GOAL="" bash -c "
+    set +e
+    export STATE_FILE='$STATE_FILE' MAX_ITERATIONS='$MAX_ITERATIONS' MAX_ITERATIONS_EXPLICIT=false
+    export PROJECT_ROOT='$PROJECT_ROOT' SCRIPT_DIR='$SCRIPT_DIR' DIM='' RESET=''
+    export ITERATION=1 STATUS='' TEST_CMD='' MODEL=sonnet AGENTS=1
+    export CONSECUTIVE_FAILURES=0 TOTAL_COMMITS=0 LOG_ENTRIES=''
+    export AUDIT_ENABLED=false AUDIT_AGENT_ENABLED=false QUALITY_GATES_ENABLED=false
+    export DOD_FILE='' AUTO_EXTEND=false EXTENSION_COUNT=0 MAX_EXTENSIONS=3
+    export DOD_DIFF_MAX_LINES=500 HOLISTIC_DIFF_MAX_LINES=1000
+    export LOOP_START_COMMIT=abc123 GOAL='' ORIGINAL_GOAL=''
+    now_iso(){ date -u +'%Y-%m-%dT%H:%M:%SZ'; }; now_epoch(){ date +%s; }
+    info(){ echo \"\$*\"; }; success(){ echo \"\$*\"; }
+    warn(){ echo \"WARN:\$*\"; }; error(){ echo \"ERR:\$*\" >&2; }
+    _LOOP_RESTART_LOADED=''
+    source '$SCRIPT_DIR/lib/loop-restart.sh'
+    resume_state 2>&1
+    echo \"AFTER_RESUME_STATUS=\$STATUS\"
+" || true)"
+if echo "$_g3_output" | grep -q "AFTER_RESUME_STATUS="; then
+    assert_fail "resume_state exits when status is complete (regression guard)" "got: $_g3_output"
+else
+    assert_pass "resume_state exits when status is complete (regression guard)"
+fi
+
+# Test G4: write_state preserves a stuck status set by the writer (no transformation)
+GOAL="Stuck round-trip" ORIGINAL_GOAL="Stuck round-trip"
+STATUS="stuck"
+write_state
+_persisted_status=$(grep '^status:' "$STATE_FILE" | sed 's/^status: *//')
+assert_eq "write_state persists stuck status verbatim" "stuck" "$_persisted_status"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# show_summary — stuck status display (preparatory for #443/#451)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "sw-loop.sh show_summary stuck case"
+
+_loop_script="$SCRIPT_DIR/sw-loop.sh"
+if grep -q '^[[:space:]]*stuck)[[:space:]]*status_display=' "$_loop_script"; then
+    assert_pass "show_summary has explicit stuck case arm"
+else
+    assert_fail "show_summary has explicit stuck case arm" "no 'stuck)' arm found in $_loop_script"
+fi
+_stuck_arm=$(grep -E '^[[:space:]]*stuck\)[[:space:]]*status_display=' "$_loop_script" | head -1)
+if echo "$_stuck_arm" | grep -qi 'stuck'; then
+    assert_pass "show_summary stuck display string mentions stuck"
+else
+    assert_fail "show_summary stuck display string mentions stuck" "got: $_stuck_arm"
+fi
+
+# Emit explicit "$PASS/$TOTAL pass" as the final visible line for DoD audit parsers.
+printf '%s/%s pass\n' "$PASS" "$TOTAL"
 print_test_results

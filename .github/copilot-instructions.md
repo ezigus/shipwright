@@ -614,7 +614,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-code-review.sh` | 707 | Clean Code & Architecture Analysis |
 | `scripts/sw-connect.sh` | 624 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 613 | Context Engine for Pipeline Stages |
-| `scripts/sw-cost.sh` | 1015 | Token Usage & Cost Intelligence |
+| `scripts/sw-cost.sh` | 1176 | Token Usage & Cost Intelligence |
 | `scripts/sw-daemon.sh` | 1526 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 510 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 1939 | SQLite Persistence Layer |
@@ -626,7 +626,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-doc-fleet.sh` | 825 | Documentation Fleet Orchestrator |
 | `scripts/sw-docs-agent.sh` | 525 | Auto-sync README, wiki, API docs |
 | `scripts/sw-docs.sh` | 626 | Documentation Keeper |
-| `scripts/sw-doctor.sh` | 1289 | Validate Shipwright setup |
+| `scripts/sw-doctor.sh` | 1344 | Validate Shipwright setup |
 | `scripts/sw-dora.sh` | 605 | DORA Metrics Dashboard with Engineering Intelligence |
 | `scripts/sw-durable.sh` | 708 | Durable Workflow Engine |
 | `scripts/sw-e2e-orchestrator.sh` | 536 | Test suite registry & execution |
@@ -649,7 +649,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 703 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 643 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 353 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 2960 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 2980 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 2114 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 473 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 606 | Intelligent Model Routing & Cost Optimization |
@@ -658,7 +658,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 445 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 444 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1086 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 3317 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 3346 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 749 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 698 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 834 | Predictive & Proactive Intelligence |
@@ -759,9 +759,9 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-code-review-test.sh` | 174 | Clean code & architecture analysis tests |
 | `scripts/sw-connect-test.sh` | 822 | Validate dashboard connection, heartbeat |
 | `scripts/sw-context-test.sh` | 219 | Context Engine for Pipeline Stages tests |
-| `scripts/sw-cost-test.sh` | 240 | Validate token usage & cost intelligence |
+| `scripts/sw-cost-test.sh` | 715 | Validate token usage & cost intelligence |
 | `scripts/sw-cross-repo-isolation-test.sh` | 424 | Issue #425 |
-| `scripts/sw-daemon-test.sh` | 2202 | Unit tests for daemon metrics, health, alerting |
+| `scripts/sw-daemon-test.sh` | 2204 | Unit tests for daemon metrics, health, alerting |
 | `scripts/sw-dashboard-e2e-test.sh` | 595 | full live validation |
 | `scripts/sw-dashboard-test.sh` | 250 | validates dashboard structure |
 | `scripts/sw-db-test.sh` | 971 | SQLite Persistence Layer Test Suite |
@@ -815,11 +815,11 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-error-actionability-test.sh` | 149 |  |
 | `scripts/sw-lib-goal-mutation-test.sh` | 71 | issue #362 |
 | `scripts/sw-lib-helpers-test.sh` | 318 | Unit tests for shared helper functions |
-| `scripts/sw-lib-loop-restart-test.sh` | 239 | Unit tests for loop state |
+| `scripts/sw-lib-loop-restart-test.sh` | 389 | Unit tests for loop state |
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 837 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 616 | Unit tests for quality |
-| `scripts/sw-lib-pipeline-stages-review-test.sh` | 564 | Unit tests for cross-stage drift detector |
+| `scripts/sw-lib-pipeline-stages-review-test.sh` | 589 | Unit tests for cross-stage drift detector |
 | `scripts/sw-lib-pipeline-stages-test.sh` | 1522 | Unit tests for stage functions |
 | `scripts/sw-lib-pipeline-state-test.sh` | 690 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |

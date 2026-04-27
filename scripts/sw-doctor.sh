@@ -1007,7 +1007,62 @@ doctor_check_active_pipelines() {
 doctor_check_active_pipelines
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 11. Remote Machines
+# 11. Cost Intelligence
+# ═════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${PURPLE}${BOLD}  COST INTELLIGENCE${RESET}"
+echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+
+# Cost data files
+_cost_json="${HOME}/.shipwright/costs.json"
+if [[ -f "$_cost_json" ]]; then
+    if jq -e '.entries | type == "array"' "$_cost_json" >/dev/null 2>&1; then
+        _cost_count=$(jq '.entries | length' "$_cost_json" 2>/dev/null || echo "0")
+        check_pass "Cost ledger: ${_cost_count} entries"
+    else
+        check_fail "Cost ledger: invalid schema (missing .entries array)"
+    fi
+else
+    info "  Cost ledger not found ${DIM}(created after first pipeline run)${RESET}"
+fi
+
+# cost-breakdown.json schema validation — look for the most recent one
+_bd_dir=".claude/pipeline-artifacts"
+if [[ -f "$_bd_dir/cost-breakdown.json" ]] && command -v jq >/dev/null 2>&1; then
+    _bd_valid=true
+    # Required top-level fields
+    for _bd_field in pipeline_id generated_at summary by_stage by_iteration; do
+        if ! jq -e ".${_bd_field}" "$_bd_dir/cost-breakdown.json" >/dev/null 2>&1; then
+            check_fail "cost-breakdown.json: missing required field '.${_bd_field}'"
+            _bd_valid=false
+        fi
+    done
+    # Required summary sub-fields
+    for _bd_sum_field in total_input_tokens total_output_tokens total_cost_usd; do
+        if ! jq -e ".summary.${_bd_sum_field} | numbers" "$_bd_dir/cost-breakdown.json" >/dev/null 2>&1; then
+            check_warn "cost-breakdown.json: .summary.${_bd_sum_field} is not a number"
+            _bd_valid=false
+        fi
+    done
+    # Totals should be non-negative
+    _bd_cost=$(jq -r '.summary.total_cost_usd // -1' "$_bd_dir/cost-breakdown.json" 2>/dev/null || echo "-1")
+    if awk -v v="$_bd_cost" 'BEGIN { exit !(v >= 0) }' 2>/dev/null; then
+        : # ok
+    else
+        check_warn "cost-breakdown.json: .summary.total_cost_usd is negative (${_bd_cost})"
+        _bd_valid=false
+    fi
+    if [[ "$_bd_valid" == "true" ]]; then
+        _bd_stages=$(jq '.summary.stage_count // 0' "$_bd_dir/cost-breakdown.json" 2>/dev/null || echo "0")
+        _bd_iters=$(jq '.summary.iteration_count // 0' "$_bd_dir/cost-breakdown.json" 2>/dev/null || echo "0")
+        check_pass "cost-breakdown.json: valid schema (${_bd_stages} stages, ${_bd_iters} iterations)"
+    fi
+else
+    info "  No cost-breakdown.json ${DIM}(generated after each pipeline run)${RESET}"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 12. Remote Machines
 # ═════════════════════════════════════════════════════════════════════════════
 echo ""
 echo -e "${PURPLE}${BOLD}  REMOTE MACHINES${RESET}"
@@ -1046,7 +1101,7 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 12. Team Connectivity
+# 13. Team Connectivity
 # ═════════════════════════════════════════════════════════════════════════════
 echo ""
 echo -e "${PURPLE}${BOLD}  TEAM CONNECTIVITY${RESET}"
@@ -1117,7 +1172,7 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 13. GitHub Integration
+# 14. GitHub Integration
 # ═════════════════════════════════════════════════════════════════════════════
 echo ""
 echo -e "${PURPLE}${BOLD}  GITHUB INTEGRATION${RESET}"
@@ -1198,7 +1253,7 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 14. Dashboard & Dependencies
+# 15. Dashboard & Dependencies
 # ═════════════════════════════════════════════════════════════════════════════
 echo ""
 echo -e "${PURPLE}${BOLD}  DASHBOARD & DEPENDENCIES${RESET}"
@@ -1256,7 +1311,7 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 15. Database Health
+# 16. Database Health
 # ═════════════════════════════════════════════════════════════════════════════
 echo ""
 echo -e "${PURPLE}${BOLD}  DATABASE HEALTH${RESET}"
@@ -1310,7 +1365,7 @@ echo ""
 doctor_check_intelligence
 
 # ═════════════════════════════════════════════════════════════════════════════
-# 14. Platform health (AGI-level self-improvement)
+# 17. Platform health (AGI-level self-improvement)
 # ═════════════════════════════════════════════════════════════════════════════
 echo -e "${PURPLE}${BOLD}  PLATFORM HEALTH${RESET}"
 echo -e "${DIM}  ──────────────────────────────────────────${RESET}"

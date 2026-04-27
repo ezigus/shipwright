@@ -755,7 +755,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-chaos-test.sh` | 387 | Fault injection & recovery validation |
 | `scripts/sw-checkpoint-test.sh` | 341 | Validate checkpoint save/restore |
 | `scripts/sw-ci-test.sh` | 198 | GitHub Actions CI/CD orchestration tests |
-| `scripts/sw-cleanup-test.sh` | 176 | Clean up orphaned sessions & artifacts |
+| `scripts/sw-cleanup-test.sh` | 178 | Clean up orphaned sessions & artifacts |
 | `scripts/sw-code-review-test.sh` | 174 | Clean code & architecture analysis tests |
 | `scripts/sw-connect-test.sh` | 822 | Validate dashboard connection, heartbeat |
 | `scripts/sw-context-test.sh` | 219 | Context Engine for Pipeline Stages tests |
@@ -778,7 +778,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-durable-test.sh` | 221 | Validate durable workflow engine |
 | `scripts/sw-e2e-integration-test.sh` | 352 | Real Claude + Real GitHub |
 | `scripts/sw-e2e-orchestrator-test.sh` | 157 | Test suite registry & execution |
-| `scripts/sw-e2e-smoke-test.sh` | 1047 | Pipeline orchestration without API keys |
+| `scripts/sw-e2e-smoke-test.sh` | 1071 | Pipeline orchestration without API keys |
 | `scripts/sw-e2e-system-test.sh` | 569 | Proves full daemon→pipeline→loop→PR flow |
 | `scripts/sw-eventbus-test.sh` | 155 | Durable event bus tests |
 | `scripts/sw-evidence-test.sh` | 214 | Unit tests for sw-evidence.sh |
@@ -855,7 +855,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-retro-test.sh` | 171 | Sprint retrospective engine tests |
 | `scripts/sw-review-rerun-test.sh` | 307 | SHA-deduped rerun comment writer |
 | `scripts/sw-ruflo-adapter-test.sh` | 3271 |  |
-| `scripts/sw-ruflo-timeout-test.sh` | 206 | regression tests for ruflo_with_timeout FD hang (#426) |
+| `scripts/sw-ruflo-timeout-test.sh` | 282 | regression tests for ruflo_with_timeout FD hang (#426) |
 | `scripts/sw-scale-test.sh` | 151 | Dynamic agent team scaling |
 | `scripts/sw-security-audit-test.sh` | 163 | Security auditing tests |
 | `scripts/sw-self-optimize-test.sh` | 837 | Unit tests for learning & tuning system |

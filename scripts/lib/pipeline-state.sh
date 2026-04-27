@@ -604,24 +604,20 @@ write_state() {
 
     # Atomic write: build content in tmp file, then mv into place.
     # This prevents partial/corrupt state files when interrupted by signals.
-    # Encode GOAL: escape backslashes first, then newlines, so that a literal \n
-    # in the goal is stored as \\n (unambiguous) while a real newline becomes \n.
+    # Encode GOAL and ORIGINAL_GOAL separately: escape backslashes first, then newlines,
+    # so that a literal \n in the goal is stored as \\n (unambiguous) while a real
+    # newline becomes \n.  Never merge both fields into one variable — that's how
+    # synthesized content from GOAL contaminates ORIGINAL_GOAL permanently.
     local tmp_state="${STATE_FILE}.tmp.$$"
-    local _write_goal="${ORIGINAL_GOAL:-$GOAL}"
-    # Bootstrap ORIGINAL_GOAL in memory on first non-empty write (e.g. --issue runs where
-    # intake fills GOAL after pipeline_start, leaving ORIGINAL_GOAL empty until here).
-    # Safe because callers (sw-pipeline.sh, sw-loop.sh) set ORIGINAL_GOAL before the first
-    # write_state call when GOAL may already be mutated, preventing contamination.
-    if [[ -z "${ORIGINAL_GOAL:-}" && -n "${_write_goal}" ]]; then
-        ORIGINAL_GOAL="$_write_goal"
-    fi
-    local _goal_esc="${_write_goal//\\/\\\\}"
+    local _goal_esc="${GOAL//\\/\\\\}"
     _goal_esc="${_goal_esc//$'\n'/\\n}"
+    local _orig_goal_esc="${ORIGINAL_GOAL//\\/\\\\}"
+    _orig_goal_esc="${_orig_goal_esc//$'\n'/\\n}"
     {
         printf -- '---\n'
         printf 'pipeline: %s\n' "$PIPELINE_NAME"
         printf 'goal: "%s"\n' "$_goal_esc"
-        printf 'original_goal: "%s"\n' "$_goal_esc"
+        printf 'original_goal: "%s"\n' "$_orig_goal_esc"
         printf 'status: %s\n' "$PIPELINE_STATUS"
         printf 'issue: "%s"\n' "${GITHUB_ISSUE:-}"
         printf 'branch: "%s"\n' "${GIT_BRANCH:-}"

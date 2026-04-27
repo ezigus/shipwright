@@ -304,7 +304,10 @@ else
     assert_fail "--by-iteration flag renders iteration section" "output: $(echo "$_iter_output" | grep -i iter | head -3)"
 fi
 
+_no_iter_dir="$TEST_TEMP_DIR/no-iter-artifacts"
+mkdir -p "$_no_iter_dir"
 _no_iter_output=$(env HOME="$TEST_TEMP_DIR/home" PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+    ARTIFACTS_DIR="$_no_iter_dir" \
     bash "$SCRIPT_DIR/sw-cost.sh" show --by-iteration 2>&1) || true
 if echo "$_no_iter_output" | grep -qi "no iteration data\|no.*iteration\|iteration.*data"; then
     assert_pass "--by-iteration with no artifact shows graceful message"

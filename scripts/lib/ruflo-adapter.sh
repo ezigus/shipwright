@@ -420,6 +420,12 @@ ruflo_with_timeout() {
             # cannot abort the calling pipeline via set -e.
             exit_code=1
         else
+            # Defensive trap: clean up the temp file even when the process is
+            # killed externally (e.g. SIGTERM from a test-runner timeout). The
+            # explicit rm -f below handles the normal path; this trap is the
+            # safety net for unexpected termination. (#441)
+            # shellcheck disable=SC2064
+            trap "rm -f '$_rft_tmp' 2>/dev/null || true" EXIT TERM
             ( "$@" ) >"$_rft_tmp" &
             local bg_pid=$!
             local waited=0
@@ -437,6 +443,7 @@ ruflo_with_timeout() {
                 _kill_process_tree KILL "$bg_pid"
                 wait "$bg_pid" 2>/dev/null || true
                 rm -f "$_rft_tmp"
+                trap - EXIT TERM
                 exit_code=124  # match timeout(1)'s exit code
             else
                 wait "$bg_pid" 2>/dev/null || exit_code=$?
@@ -444,6 +451,7 @@ ruflo_with_timeout() {
                     cat "$_rft_tmp" 2>/dev/null || true
                 fi
                 rm -f "$_rft_tmp"
+                trap - EXIT TERM
             fi
         fi  # mktemp guard
     elif type _timeout >/dev/null 2>&1; then

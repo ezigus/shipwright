@@ -622,8 +622,9 @@ jobs:
           # Heartbeat: post progress marker every 10 minutes so watchdog knows we're alive.
           # Visible body first so subscribers see content; HTML comment retained for
           # watchdog parsing (shipwright-watchdog.yml uses `contains("SHIPWRIGHT-HEARTBEAT")`).
-          (while true; do
-            sleep 600
+          (trap 'kill %1 2>/dev/null; exit 0' TERM; while true; do
+            sleep 600 &
+            wait $!
             _HB_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
             _HB_DISPLAY=$(date -u '+%H:%M UTC')
             _HB_BODY="⏳ Pipeline still running — last heartbeat ${_HB_DISPLAY}"$'\n'"<!-- SHIPWRIGHT-HEARTBEAT: ${_HB_TS}:running -->"

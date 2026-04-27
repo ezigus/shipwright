@@ -196,6 +196,30 @@ _t7_after=$(find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null | wc -l |
 
 assert_eq "$_t7_after" "$_t7_before" "no ruflo_timeout.* temp files leaked after success"
 
+# ─── Test 8: All descendants killed after timeout (issue #441) ───────────────
+# Verifies that _kill_process_tree reaps the full process subtree — not just
+# direct children — so ruflo grandchildren (e.g. Node agentdb workers) do not
+# accumulate as orphaned processes across loop iterations.
+echo ""
+echo "--- Test 8: all descendants killed after timeout (issue #441) ---"
+
+_spawns_deep_tree() {
+    sh -c 'sleep 9872 & wait' &
+    wait
+}
+
+RUFLO_FAILURE_COUNT=0; export RUFLO_FAILURE_COUNT
+ruflo_with_timeout 2 _spawns_deep_tree >/dev/null 2>&1 || true
+sleep 2  # allow SIGKILL grace period + reaping
+
+_t8_survivors=$(pgrep -f "sleep 9872" 2>/dev/null || true)
+if [[ -z "$_t8_survivors" ]]; then
+    pass "grandchild process fully reaped after timeout (no leak)"
+else
+    pkill -f "sleep 9872" 2>/dev/null || true
+    fail "grandchild survived timeout — process leak detected (pids: $_t8_survivors)"
+fi
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "----------------------------------------------------------------"

@@ -363,6 +363,24 @@ ruflo_health_check() {
     return 0
 }
 
+# ─── _kill_process_tree — send a signal to a PID and all its descendants ──────
+# Walks the process tree depth-first using pgrep so that grandchildren (e.g.
+# Node agentdb workers spawned by ruflo) are killed along with their parents.
+# Falls back to plain kill when pgrep is unavailable.
+# Bash 3.2 compatible — no associative arrays, no extended syntax.
+_kill_process_tree() {
+    local sig="$1"
+    local root="$2"
+    local children c
+    if command -v pgrep >/dev/null 2>&1; then
+        children=$(pgrep -P "$root" 2>/dev/null || true)
+        for c in $children; do
+            _kill_process_tree "$sig" "$c"
+        done
+    fi
+    kill "-$sig" "$root" 2>/dev/null || true
+}
+
 # ─── ruflo_with_timeout — run a ruflo command with recoverable circuit-breaker ─
 # Shell functions are run in a background subshell + poll so they get a real
 # wall-clock bound (timeout(1) can only exec binaries, not functions).
@@ -409,13 +427,13 @@ ruflo_with_timeout() {
                 waited=$(( waited + 1 ))
             done
             if kill -0 "$bg_pid" 2>/dev/null; then
-                # Kill child processes first (e.g. ruflo binary spawned by the function)
-                # then the wrapper subshell. pkill -P kills by parent PID, which works
-                # even without a dedicated process group (non-interactive shell, no set -m).
-                if command -v pkill >/dev/null 2>&1; then
-                    pkill -TERM -P "$bg_pid" 2>/dev/null || true
-                fi
-                kill "$bg_pid" 2>/dev/null || true
+                # Kill the entire process subtree so grandchildren (e.g. Node
+                # agentdb workers spawned by ruflo) are reaped alongside the
+                # direct child. SIGTERM first; SIGKILL after 1 s grace period
+                # for processes that need time to flush/clean up. (#441)
+                _kill_process_tree TERM "$bg_pid"
+                sleep 1
+                _kill_process_tree KILL "$bg_pid"
                 wait "$bg_pid" 2>/dev/null || true
                 rm -f "$_rft_tmp"
                 exit_code=124  # match timeout(1)'s exit code

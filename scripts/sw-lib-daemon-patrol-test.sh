@@ -321,6 +321,53 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# patrol_dead_code: respects .gitignore
+# Regression test for false-positive issues where gitignored test fixtures
+# (e.g. src/circular-import.js) get repeatedly flagged as dead code.
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "patrol_dead_code respects .gitignore"
+
+REAL_GIT="$(PATH="$ORIG_PATH" command -v git 2>/dev/null || true)"
+if [[ -z "$REAL_GIT" || ! -x "$REAL_GIT" ]]; then
+    assert_pass "patrol_dead_code gitignore test (skipped — no real git available)"
+else
+    DEAD_REPO="$TEST_TEMP_DIR/dead-code-repo"
+    mkdir -p "$DEAD_REPO/src"
+    cat > "$DEAD_REPO/package.json" <<'PJSON'
+{ "name": "fixture", "version": "0.0.0" }
+PJSON
+    cat > "$DEAD_REPO/.gitignore" <<'GITIGNORE'
+/src/
+GITIGNORE
+    cat > "$DEAD_REPO/src/circular-import.js" <<'JSFILE'
+module.exports = {};
+JSFILE
+
+    (
+        cd "$DEAD_REPO"
+        # Bypass the mock git for the entire patrol invocation so real
+        # git check-ignore can evaluate .gitignore patterns.
+        export PATH="$ORIG_PATH"
+        git init -q -b main 2>/dev/null || git init -q
+        git config user.email "test@test.com"
+        git config user.name "Test"
+        git add .gitignore package.json
+        git commit -q -m "init" 2>/dev/null || true
+
+        NO_GITHUB=true PATROL_DRY_RUN=true \
+            daemon_patrol --once --dry-run >"$TEST_TEMP_DIR/patrol-dead.out" 2>&1 || true
+    )
+
+    dead_out=$(cat "$TEST_TEMP_DIR/patrol-dead.out" 2>/dev/null || echo "")
+    if echo "$dead_out" | grep -q "circular-import.js"; then
+        assert_fail "patrol_dead_code skips gitignored files" \
+            "expected no mention of circular-import.js in patrol output"
+    else
+        assert_pass "patrol_dead_code skips gitignored files"
+    fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Edge cases and error handling
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "Edge cases and error handling"

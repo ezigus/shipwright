@@ -288,12 +288,26 @@ Auto-detected by \`shipwright daemon patrol\` on $(now_iso)." \
         local findings=0
         local dead_files=""
 
+        # Detect git repo so we can filter out gitignored files (e.g. test
+        # fixtures left in a gitignored /src/ directory) from being flagged.
+        local in_git_repo="false"
+        if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            in_git_repo="true"
+        fi
+
         # For JS/TS projects: find exported files not imported anywhere
         if [[ -f "package.json" ]] || [[ -f "tsconfig.json" ]]; then
             local src_dirs=("src" "lib" "app")
             for dir in "${src_dirs[@]}"; do
                 [[ -d "$dir" ]] || continue
                 while IFS= read -r file; do
+                    # Skip files ignored by .gitignore — these aren't real
+                    # sources (test fixtures, generated artifacts, etc.)
+                    if [[ "$in_git_repo" == "true" ]] && \
+                       git check-ignore -q "$file" 2>/dev/null; then
+                        continue
+                    fi
+
                     local basename_no_ext
                     basename_no_ext=$(basename "$file" | sed 's/\.\(ts\|js\|tsx\|jsx\)$//')
                     # Skip index files and test files

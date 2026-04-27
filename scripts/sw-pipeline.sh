@@ -850,6 +850,7 @@ stop_heartbeat() {
 # ─── CI Helpers ───────────────────────────────────────────────────────────
 
 ci_push_partial_work() {
+    local push_timeout="${1:-5}"   # 5s default for SIGTERM grace path; watchdog passes 120
     [[ "${CI_MODE:-false}" != "true" ]] && return 0
     [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
 
@@ -863,7 +864,7 @@ ci_push_partial_work() {
     fi
 
     # Push branch (create if needed, force to overwrite previous WIP)
-    if ! git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null; then
+    if ! _timeout "$push_timeout" git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null; then
         warn "git push failed for $branch — remote may be out of sync"
         emit_event "pipeline.push_failed" "branch=$branch"
     fi
@@ -901,6 +902,43 @@ cleanup_on_exit() {
     [[ "${_cleanup_done:-}" == "true" ]] && return 0
     _cleanup_done=true
 
+    # Reap soft-timeout watchdog on every exit path — prevents PID recycling hazard.
+    if [[ -n "${_WATCHDOG_PID:-}" ]]; then
+        kill "$_WATCHDOG_PID" 2>/dev/null || true
+        wait "$_WATCHDOG_PID" 2>/dev/null || true
+        _WATCHDOG_PID=""
+    fi
+
+    # Only mark as interrupted and post GitHub comment if actually signal-driven.
+    # On clean completions the pipeline stages handle their own state/comments.
+    if [[ "$_PIPELINE_SIGNALED" == "true" && "$PIPELINE_STATUS" == "running" && -n "$STATE_FILE" ]]; then
+        PIPELINE_STATUS="interrupted"
+        UPDATED_AT="$(now_iso)"
+        write_state 2>/dev/null || true
+        echo ""
+        warn "Pipeline interrupted — state saved."
+        echo -e "  Resume: ${DIM}shipwright pipeline resume${RESET}"
+
+        # Push partial work in CI mode — skip if watchdog already pushed at T-5min
+        # to avoid a spurious pipeline.push_failed event on an already-clean tree.
+        # Use 30s timeout here (vs watchdog's 120s) — we still have most of the
+        # SIGTERM grace window since this runs before ruflo_cleanup/cost breakdown.
+        if [[ "${_SOFT_TIMEOUT_FIRED:-false}" != "true" ]]; then
+            ci_push_partial_work 30
+        fi
+
+        # Cancel lingering in_progress GitHub Check Runs
+        pipeline_cancel_check_runs 2>/dev/null || true
+
+        # Update GitHub
+        if [[ -n "${ISSUE_NUMBER:-}" && "${GH_AVAILABLE:-false}" == "true" ]]; then
+            if ! _timeout "$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)" gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Pipeline interrupted** at stage: ${CURRENT_STAGE_ID:-unknown}" 2>/dev/null; then
+                warn "gh issue comment failed — status update may not have been posted"
+                emit_event "pipeline.comment_failed" "issue=$ISSUE_NUMBER"
+            fi
+        fi
+    fi
+
     # Generate cost-breakdown.json from sidecars on every exit path (issue #87 AC#4).
     # Doing this here (rather than only after the success block at line ~3038) means
     # an aborted/interrupted pipeline still produces an artifact for forensics.
@@ -916,31 +954,6 @@ cleanup_on_exit() {
 
     # Stop heartbeat writer
     stop_heartbeat
-
-    # Only mark as interrupted and post GitHub comment if actually signal-driven.
-    # On clean completions the pipeline stages handle their own state/comments.
-    if [[ "$_PIPELINE_SIGNALED" == "true" && "$PIPELINE_STATUS" == "running" && -n "$STATE_FILE" ]]; then
-        PIPELINE_STATUS="interrupted"
-        UPDATED_AT="$(now_iso)"
-        write_state 2>/dev/null || true
-        echo ""
-        warn "Pipeline interrupted — state saved."
-        echo -e "  Resume: ${DIM}shipwright pipeline resume${RESET}"
-
-        # Push partial work in CI mode so retries can pick it up
-        ci_push_partial_work
-
-        # Cancel lingering in_progress GitHub Check Runs
-        pipeline_cancel_check_runs 2>/dev/null || true
-
-        # Update GitHub
-        if [[ -n "${ISSUE_NUMBER:-}" && "${GH_AVAILABLE:-false}" == "true" ]]; then
-            if ! _timeout "$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)" gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Pipeline interrupted** at stage: ${CURRENT_STAGE_ID:-unknown}" 2>/dev/null; then
-                warn "gh issue comment failed — status update may not have been posted"
-                emit_event "pipeline.comment_failed" "issue=$ISSUE_NUMBER"
-            fi
-        fi
-    fi
 
     # Restore stashed changes
     if [[ "$STASHED_CHANGES" == "true" ]]; then
@@ -979,8 +992,22 @@ _signal_cleanup() {
     cleanup_on_exit
 }
 
+# Soft-timeout watchdog handler — push WIP branch and keep running.
+# Pipeline continues until SIGTERM at the hard deadline triggers normal cleanup.
+_SOFT_TIMEOUT_FIRED=false
+_soft_timeout_handler() {
+    [[ "${_SOFT_TIMEOUT_FIRED}" == "true" ]] && return 0
+    _SOFT_TIMEOUT_FIRED=true
+    warn "Soft timeout — pushing WIP branch (pipeline continues until hard deadline)"
+    ci_push_partial_work 120
+    emit_event "pipeline.soft_timeout_push" \
+               "issue=${ISSUE_NUMBER:-}" \
+               "timeout_min=${SHIPWRIGHT_JOB_TIMEOUT_MINUTES:-180}" 2>/dev/null || true
+}
+
 trap cleanup_on_exit EXIT
 trap _signal_cleanup SIGINT SIGTERM
+trap _soft_timeout_handler USR1
 
 # ─── Pre-flight Validation ─────────────────────────────────────────────────
 
@@ -3014,6 +3041,26 @@ pipeline_start() {
     # Durable WAL: publish pipeline start event
     if type publish_event >/dev/null 2>&1; then
         publish_event "pipeline.started" "{\"issue\":\"${ISSUE_NUMBER:-0}\",\"pipeline\":\"${PIPELINE_NAME}\",\"goal\":\"${GOAL:0:200}\"}" 2>/dev/null || true
+    fi
+
+    # Soft-timeout watchdog — fires SIGUSR1 5 min before GHA hard timeout so we
+    # can push the WIP branch while the process is still healthy. The pipeline
+    # keeps running; SIGTERM/SIGKILL at the deadline is the fallback.
+    # Kill any stale watchdog before overwriting the PID (guard against re-entry).
+    if [[ -n "${_WATCHDOG_PID:-}" ]]; then
+        kill "${_WATCHDOG_PID}" 2>/dev/null || true
+    fi
+    _WATCHDOG_PID=""
+    if [[ "${CI_MODE:-false}" == "true" && -n "${ISSUE_NUMBER:-}" ]]; then
+        local _job_timeout_min="${SHIPWRIGHT_JOB_TIMEOUT_MINUTES:-180}"
+        if [[ "$_job_timeout_min" =~ ^[0-9]+$ ]] && (( _job_timeout_min > 5 )); then
+            local _watchdog_delay_sec=$(( (_job_timeout_min - 5) * 60 ))
+            ( sleep "$_watchdog_delay_sec" && kill -0 $$ 2>/dev/null && kill -USR1 $$ 2>/dev/null ) &
+            _WATCHDOG_PID=$!
+            emit_event "pipeline.watchdog_armed" \
+                       "issue=${ISSUE_NUMBER}" \
+                       "fires_in_sec=${_watchdog_delay_sec}" 2>/dev/null || true
+        fi
     fi
 
     run_pipeline

@@ -182,25 +182,28 @@ echo "--- Test 6: temp file cleaned up after timeout ------------------"
 _slow_function() { sleep 30; }
 
 RUFLO_FAILURE_COUNT=0; export RUFLO_FAILURE_COUNT
-_t6_before=$(find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+# Use { find ... || true; } so find's non-zero exit (e.g. TMPDIR permission
+# sub-dirs on macOS) does not make the pipe fail and trigger || echo "0",
+# which would concatenate two outputs into "3\n0" — an unparseable integer.
+_t6_before=$( { find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null || true; } | wc -l | tr -d ' ')
 ruflo_with_timeout 1 _slow_function >/dev/null 2>&1 || true
-_t6_after=$(find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+_t6_after=$( { find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null || true; } | wc -l | tr -d ' ')
 
 # Use <= not == : the OS may clean stale files during the 1-second grace-period
 # sleep inside ruflo_with_timeout, so pre-existing files can disappear. What we
 # care about is that we didn't ADD any new leaked files (count didn't increase).
-assert_le "$_t6_after" "$_t6_before" "no ruflo_timeout.* temp files leaked after timeout"
+assert_le "${_t6_after:-0}" "${_t6_before:-0}" "no ruflo_timeout.* temp files leaked after timeout"
 
 # ─── Test 7: Temp file cleaned up after success ───────────────────────────────
 echo ""
 echo "--- Test 7: temp file cleaned up after success ------------------"
 
 RUFLO_FAILURE_COUNT=0; export RUFLO_FAILURE_COUNT
-_t7_before=$(find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+_t7_before=$( { find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null || true; } | wc -l | tr -d ' ')
 ruflo_with_timeout 5 _emits_output >/dev/null 2>&1 || true
-_t7_after=$(find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+_t7_after=$( { find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null || true; } | wc -l | tr -d ' ')
 
-assert_le "$_t7_after" "$_t7_before" "no ruflo_timeout.* temp files leaked after success"
+assert_le "${_t7_after:-0}" "${_t7_before:-0}" "no ruflo_timeout.* temp files leaked after success"
 
 # ─── Test 8: All descendants killed after timeout (issue #441) ───────────────
 # Verifies that _kill_process_tree reaps the full process subtree — not just
@@ -213,6 +216,11 @@ _spawns_deep_tree() {
     sh -c 'sleep 9872 & wait' &
     wait
 }
+
+# Pre-clean orphaned sleep 9872 processes left by any previous test run so
+# historical leaks don't cause a false failure in the current-run assertion.
+pkill -f "sleep 9872" 2>/dev/null || true
+sleep 0.3
 
 RUFLO_FAILURE_COUNT=0; export RUFLO_FAILURE_COUNT
 ruflo_with_timeout 2 _spawns_deep_tree >/dev/null 2>&1 || true

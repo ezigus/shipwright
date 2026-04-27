@@ -365,20 +365,40 @@ ruflo_health_check() {
 }
 
 # ─── _kill_process_tree — send a signal to a PID and all its descendants ──────
-# Walks the process tree depth-first using pgrep so that grandchildren (e.g.
-# Node agentdb workers spawned by ruflo) are killed along with their parents.
-# Falls back to plain kill when pgrep is unavailable.
+# Collects the full descendant list via BFS *before* killing anything, so that
+# re-parenting (child → init) cannot cause grandchildren to escape the sweep.
 # Bash 3.2 compatible — no associative arrays, no extended syntax.
 _kill_process_tree() {
     local sig="$1"
     local root="$2"
-    local children c
-    if command -v pgrep >/dev/null 2>&1; then
-        children=$(pgrep -P "$root" 2>/dev/null || true)
-        for c in $children; do
-            _kill_process_tree "$sig" "$c"
-        done
+    local all_pids frontier new_frontier p c children
+
+    if ! command -v pgrep >/dev/null 2>&1; then
+        # No pgrep — best-effort single-level kill only.
+        kill "-$sig" "$root" 2>/dev/null || true
+        return
     fi
+
+    # BFS: collect every descendant before touching any of them.
+    all_pids=""
+    frontier="$root"
+    while [[ -n "$frontier" ]]; do
+        new_frontier=""
+        for p in $frontier; do
+            children=$(pgrep -P "$p" 2>/dev/null || true)
+            for c in $children; do
+                all_pids="${all_pids}${all_pids:+ }$c"
+                new_frontier="${new_frontier}${new_frontier:+ }$c"
+            done
+        done
+        frontier="$new_frontier"
+    done
+
+    # Kill all descendants (collected before any were killed).
+    for p in $all_pids; do
+        kill "-$sig" "$p" 2>/dev/null || true
+    done
+    # Kill root last.
     kill "-$sig" "$root" 2>/dev/null || true
 }
 

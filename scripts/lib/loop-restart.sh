@@ -3,6 +3,10 @@
 [[ -n "${_LOOP_RESTART_LOADED:-}" ]] && return 0
 _LOOP_RESTART_LOADED=1
 
+# Source goal sanitization helper (strips synthesized sections from goals)
+# shellcheck source=goal-sanitize.sh
+[[ -f "$(dirname "${BASH_SOURCE[0]}")/goal-sanitize.sh" ]] && source "$(dirname "${BASH_SOURCE[0]}")/goal-sanitize.sh"
+
 # ─── State Management ────────────────────────────────────────────────────────
 
 initialize_state() {
@@ -121,21 +125,31 @@ resume_state() {
     done < "$STATE_FILE"
 
     if $_has_original_goal; then
-        # New state file: original_goal field was present — ORIGINAL_GOAL already set by parser.
-        # No sentinel stripping needed; the stored goal is already clean.
-        :
+        # New state file: original_goal field was present.
+        # Apply unified sentinel stripping to BOTH fields — defense in depth.
+        # If ORIGINAL_GOAL somehow has synthesis pollution, clean it.
+        if declare -f _strip_synthesized_sections >/dev/null 2>&1; then
+            ORIGINAL_GOAL="$(_strip_synthesized_sections "$ORIGINAL_GOAL")"
+            GOAL="${GOAL:-$ORIGINAL_GOAL}"
+            GOAL="$(_strip_synthesized_sections "$GOAL")"
+        fi
     else
         # Legacy state file: no original_goal field — apply backward-compat sentinel stripping.
-        # Only applies to files written before this fix. Uses %% (bash 3.2 safe, no regex).
-        if [[ "$GOAL" == *$'\n\nBLOCKING ISSUES'* ]];              then GOAL="${GOAL%%$'\n\nBLOCKING ISSUES'*}";              fi
-        if [[ "$GOAL" == *$'\n\nIMPORTANT — Previous build'* ]];   then GOAL="${GOAL%%$'\n\nIMPORTANT — Previous build'*}";   fi
-        if [[ "$GOAL" == *$'\n\nIMPORTANT — Code review'* ]];      then GOAL="${GOAL%%$'\n\nIMPORTANT — Code review'*}";      fi
-        if [[ "$GOAL" == *$'\n\nIMPORTANT — Architecture'* ]];     then GOAL="${GOAL%%$'\n\nIMPORTANT — Architecture'*}";     fi
-        if [[ "$GOAL" == *$'\n\nIMPORTANT — Compound quality'* ]]; then GOAL="${GOAL%%$'\n\nIMPORTANT — Compound quality'*}"; fi
-        if [[ "$GOAL" == *$'\n\nHUMAN FEEDBACK'* ]];               then GOAL="${GOAL%%$'\n\nHUMAN FEEDBACK'*}";               fi
-        if [[ "$GOAL" == *$'\n\n## Previous Session Context'* ]];  then GOAL="${GOAL%%$'\n\n## Previous Session Context'*}";  fi
-        # KNOWN FIX is prepended — strip from start through first blank line
-        if [[ "$GOAL" == "KNOWN FIX (from past success):"* ]];     then GOAL="${GOAL#*$'\n\n'}";                              fi
+        # Uses the unified helper if available, fallback to inline sentinels.
+        if declare -f _strip_synthesized_sections >/dev/null 2>&1; then
+            GOAL="$(_strip_synthesized_sections "$GOAL")"
+        else
+            # Fallback (if goal-sanitize.sh failed to load) — inline legacy sentinels only
+            if [[ "$GOAL" == *$'\n\nBLOCKING ISSUES'* ]];              then GOAL="${GOAL%%$'\n\nBLOCKING ISSUES'*}";              fi
+            if [[ "$GOAL" == *$'\n\nIMPORTANT — Previous build'* ]];   then GOAL="${GOAL%%$'\n\nIMPORTANT — Previous build'*}";   fi
+            if [[ "$GOAL" == *$'\n\nIMPORTANT — Code review'* ]];      then GOAL="${GOAL%%$'\n\nIMPORTANT — Code review'*}";      fi
+            if [[ "$GOAL" == *$'\n\nIMPORTANT — Architecture'* ]];     then GOAL="${GOAL%%$'\n\nIMPORTANT — Architecture'*}";     fi
+            if [[ "$GOAL" == *$'\n\nIMPORTANT — Compound quality'* ]]; then GOAL="${GOAL%%$'\n\nIMPORTANT — Compound quality'*}"; fi
+            if [[ "$GOAL" == *$'\n\nHUMAN FEEDBACK'* ]];               then GOAL="${GOAL%%$'\n\nHUMAN FEEDBACK'*}";               fi
+            if [[ "$GOAL" == *$'\n\n## Previous Session Context'* ]];  then GOAL="${GOAL%%$'\n\n## Previous Session Context'*}";  fi
+            # KNOWN FIX is prepended — strip from start through first blank line
+            if [[ "$GOAL" == "KNOWN FIX (from past success):"* ]];     then GOAL="${GOAL#*$'\n\n'}";                              fi
+        fi
         ORIGINAL_GOAL="${ORIGINAL_GOAL:-$GOAL}"
     fi
 

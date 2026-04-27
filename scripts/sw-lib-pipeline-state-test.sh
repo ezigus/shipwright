@@ -687,4 +687,56 @@ GOAL="" ORIGINAL_GOAL=""
 resume_state 2>/dev/null
 assert_eq "no unbounded growth across 2 compound_quality cycles" "Original" "$GOAL"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Layer C: resume_state — unified synthesis sentinel stripping (#444)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Layer C: resume_state sentinel stripping (issue #444)"
+
+# Source goal-sanitize helper
+source "$SCRIPT_DIR/lib/goal-sanitize.sh" 2>/dev/null || {
+    assert_fail "goal-sanitize.sh not found" "cannot load helper"
+}
+
+# Helper: write a pipeline state file with new original_goal field
+_write_pipeline_state_with_original() {
+    local goal="$1"
+    local _esc="${goal//\\/\\\\}"
+    _esc="${_esc//$'\n'/\\n}"
+    {
+        printf -- '---\n'
+        printf 'pipeline: %s\n' "$PIPELINE_NAME"
+        printf 'goal: "%s"\n' "$_esc"
+        printf 'original_goal: "%s"\n' "$_esc"
+        printf 'status: %s\n' "${PIPELINE_STATUS:-running}"
+        printf 'current_stage: %s\n' "${CURRENT_STAGE:-}"
+        printf 'stages:\n'
+        printf -- '---\n\n'
+        printf '## Log\n'
+    } > "$STATE_FILE"
+}
+
+# Test H1: resume_state strips ## Plan Summary from original_goal field
+_write_pipeline_state_with_original "$(printf 'Clean goal\n\n## Plan Summary\nCompile plan here')"
+GOAL="" ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+assert_eq "resume_state strips ## Plan Summary from original_goal" "Clean goal" "$ORIGINAL_GOAL"
+
+# Test H2: resume_state strips ## Skill Guidance from original_goal field
+_write_pipeline_state_with_original "$(printf 'Clean goal\n\n## Skill Guidance\nGuide content here')"
+GOAL="" ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+assert_eq "resume_state strips ## Skill Guidance from original_goal" "Clean goal" "$ORIGINAL_GOAL"
+
+# Test H3: resume_state strips ## Historical Build Context from original_goal field
+_write_pipeline_state_with_original "$(printf 'Clean goal\n\n## Historical Build Context\nHistory here')"
+GOAL="" ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+assert_eq "resume_state strips ## Historical Build Context from original_goal" "Clean goal" "$ORIGINAL_GOAL"
+
+# Test H4: legacy — resume_state strips ## Plan Summary from goal field when no original_goal field
+_write_legacy_state "$(printf 'Clean goal\n\n## Plan Summary\nPlan details')"
+GOAL="" ORIGINAL_GOAL=""
+resume_state 2>/dev/null
+assert_eq "legacy: resume_state strips ## Plan Summary from goal" "Clean goal" "$GOAL"
+
 print_test_results

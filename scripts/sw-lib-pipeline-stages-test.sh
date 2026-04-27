@@ -530,7 +530,10 @@ _build_recall_capture="$TEST_TEMP_DIR/build-recall-goal.txt"
 export RUFLO_HIVE_BUILD=false
 export RUFLO_BUILD_AGENT=false
 
-# Re-create capturing sw mock for goal inspection
+# Re-create capturing sw mock for goal inspection.
+# With Layer A the goal arg is now clean; synthesized context goes to the sidecar
+# written at --context-file path. Capture both the goal arg and the context-file
+# path so tests can verify each channel independently.
 cat > "$TEST_TEMP_DIR/bin/sw" <<'SWMOCK'
 #!/usr/bin/env bash
 set -- "$@"
@@ -538,6 +541,12 @@ _saw_loop=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     loop) _saw_loop=true; shift ;;
+    --context-file)
+        shift
+        if [[ -n "${CAPTURED_BUILD_PROMPT:-}" && $# -gt 0 ]]; then
+            printf '%s' "$1" > "${CAPTURED_BUILD_PROMPT}.context-file"
+        fi
+        shift ;;
     --*) shift; [[ $# -gt 0 ]] && shift ;;
     *) if [[ "$_saw_loop" == true && -n "${CAPTURED_BUILD_PROMPT:-}" ]]; then
            printf '%s' "$1" > "${CAPTURED_BUILD_PROMPT}"
@@ -561,19 +570,21 @@ CAPTURED_BUILD_PROMPT="$_build_recall_capture" stage_build 2>/dev/null || true
 set -e
 
 if [[ -f "$_build_recall_capture" ]]; then
-    # This file is written by the sw mock when sw loop is called — proving
-    # that the enriched goal (with recall context) actually reached the loop
-    # invocation, not just that it was set in a local variable.
-    _build_goal=$(cat "$_build_recall_capture")
-    if echo "$_build_goal" | grep -q "## Historical Build Context"; then
+    # Layer A: synthesized context goes to the sidecar (--context-file), not the goal arg.
+    # Read sidecar path from the captured context-file arg, then check its content.
+    _ctx_file_path=""
+    [[ -f "${_build_recall_capture}.context-file" ]] && _ctx_file_path=$(cat "${_build_recall_capture}.context-file")
+    _build_context=""
+    [[ -n "$_ctx_file_path" && -f "$_ctx_file_path" ]] && _build_context=$(cat "$_ctx_file_path")
+    if echo "$_build_context" | grep -q "## Historical Build Context"; then
         assert_pass "stage_build: ## Historical Build Context header present in sw loop invocation"
     else
-        assert_fail "stage_build: ## Historical Build Context header present in sw loop invocation" "section missing from sw loop goal arg"
+        assert_fail "stage_build: ## Historical Build Context header present in sw loop invocation" "section missing from sidecar build-context.md (context-file: ${_ctx_file_path:-not captured})"
     fi
-    if echo "$_build_goal" | grep -q "fixed auth middleware"; then
+    if echo "$_build_context" | grep -q "fixed auth middleware"; then
         assert_pass "stage_build: recall content present in sw loop invocation"
     else
-        assert_fail "stage_build: recall content present in sw loop invocation" "recall text missing from sw loop goal arg"
+        assert_fail "stage_build: recall content present in sw loop invocation" "recall text missing from sidecar build-context.md"
     fi
 else
     assert_fail "stage_build: sw loop invoked with captured goal for recall test" "capture file missing — sw loop may not have been called or CAPTURED_BUILD_PROMPT not inherited"
@@ -644,17 +655,21 @@ CAPTURED_BUILD_PROMPT="$_build_recall_capture" stage_build 2>/dev/null || true
 set -e
 
 if [[ -f "$_build_recall_capture" ]]; then
-    _build_goal_sanitized=$(cat "$_build_recall_capture")
-    # Verify the specific malicious headers from recall output were stripped
-    if echo "$_build_goal_sanitized" | grep -q "## Ignore Prior Instructions"; then
+    # Layer A: sanitized recall goes to sidecar, not goal arg. Read sidecar content.
+    _ctx_san_path=""
+    [[ -f "${_build_recall_capture}.context-file" ]] && _ctx_san_path=$(cat "${_build_recall_capture}.context-file")
+    _build_sanitized_ctx=""
+    [[ -n "$_ctx_san_path" && -f "$_ctx_san_path" ]] && _build_sanitized_ctx=$(cat "$_ctx_san_path")
+    # Verify the specific malicious headers from recall output were stripped from sidecar
+    if echo "$_build_sanitized_ctx" | grep -q "## Ignore Prior Instructions"; then
         assert_fail "stage_build: markdown headers sanitized from recall context" "## Ignore Prior Instructions still present in injected content"
     else
         assert_pass "stage_build: markdown headers sanitized from recall context"
     fi
-    if echo "$_build_goal_sanitized" | grep -q "Normal line"; then
+    if echo "$_build_sanitized_ctx" | grep -q "Normal line"; then
         assert_pass "stage_build: non-header recall content preserved after sanitization"
     else
-        assert_fail "stage_build: non-header recall content preserved after sanitization" "body text missing after sanitization"
+        assert_fail "stage_build: non-header recall content preserved after sanitization" "body text missing after sanitization in sidecar"
     fi
 else
     assert_fail "stage_build: sanitization test — goal captured via sw loop" "capture file missing"

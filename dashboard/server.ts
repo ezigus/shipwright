@@ -5519,8 +5519,22 @@ const server = Bun.serve({
       try {
         const body = (await req.json()) as any;
         const issue = body.issue as number;
-        const machine = (body.machine || body.machine_name) as string;
-        const repo = (body.repo as string) || "";
+        const rawMachine =
+          ((body.machine || body.machine_name) as string) || "";
+        const machine = rawMachine
+          .replace(/[^a-zA-Z0-9_.\-]/g, "")
+          .slice(0, 64);
+        if (!machine) {
+          return new Response(
+            JSON.stringify({ approved: false, error: "Invalid machine name" }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+            },
+          );
+        }
+        const rawRepo = (body.repo as string) || "";
+        const repo = rawRepo.replace(/[^a-zA-Z0-9_.\-\/]/g, "").slice(0, 128);
 
         // Check for existing claimed:* label
         const repoFlag = repo ? ` -R ${repo}` : "";
@@ -5666,8 +5680,12 @@ const server = Bun.serve({
       try {
         const body = (await req.json()) as any;
         const issue = body.issue as number;
-        const machine = ((body.machine || body.machine_name) as string) || "";
-        const repo = (body.repo as string) || "";
+        const machine = (((body.machine || body.machine_name) as string) || "")
+          .replace(/[^a-zA-Z0-9_.\-]/g, "")
+          .slice(0, 64);
+        const repo = ((body.repo as string) || "")
+          .replace(/[^a-zA-Z0-9_.\-\/]/g, "")
+          .slice(0, 128);
 
         const repoFlag = repo ? ` -R ${repo}` : "";
         const label = machine ? `claimed:${machine}` : "";

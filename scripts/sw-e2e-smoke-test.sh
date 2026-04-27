@@ -838,7 +838,7 @@ main() {
     node_after=$(pgrep -c -f 'node ' 2>/dev/null || echo "0")
     node_after=$(echo "$node_after" | tr -d '[:space:]')
     node_delta=$(( node_after - node_before ))
-    if [[ "$node_delta" -gt 2 ]]; then
+    if [[ "$node_delta" -gt 0 ]]; then
         echo -e "${RED}✗ Process leak detected: $node_delta extra Node process(es) after tests (before=$node_before after=$node_after)${RESET}"
         FAIL=$(( FAIL + 1 ))
         TOTAL=$(( TOTAL + 1 ))

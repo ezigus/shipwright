@@ -448,15 +448,20 @@ ruflo_with_timeout() {
             trap "rm -f '$_rft_tmp' 2>/dev/null || true" EXIT TERM
             ( "$@" ) >"$_rft_tmp" &
             local bg_pid=$!
-            # Poll at 0.1-second intervals so fast operations (e.g. mock ruflo
-            # binaries in tests, quick MCP calls) don't pay a 1-second minimum
-            # overhead per invocation. Track elapsed time in deciseconds to avoid
-            # floating-point arithmetic (Bash 3.2 integers only). (#441)
+            # Poll with adaptive backoff: 0.1s for the first 10 ticks (1 s fast
+            # window) to handle short-lived operations cheaply, then 1s intervals
+            # for the remainder. Avoids the 10x scheduler overhead of flat 0.1s
+            # polling while still responding quickly to fast MCP/mock calls. (#441)
             local waited_ds=0
             local timeout_ds=$(( timeout_s * 10 ))
             while kill -0 "$bg_pid" 2>/dev/null && [[ "$waited_ds" -lt "$timeout_ds" ]]; do
-                sleep 0.1
-                waited_ds=$(( waited_ds + 1 ))
+                if [[ "$waited_ds" -lt 10 ]]; then
+                    sleep 0.1
+                    waited_ds=$(( waited_ds + 1 ))
+                else
+                    sleep 1
+                    waited_ds=$(( waited_ds + 10 ))
+                fi
             done
             if kill -0 "$bg_pid" 2>/dev/null; then
                 # Kill the entire process subtree so grandchildren (e.g. Node

@@ -10,7 +10,10 @@ beforeAll((done) => {
   server = http.createServer(app).listen(0, done);
 });
 
-afterAll((done) => server.close(done));
+afterAll((done) => {
+  server.closeAllConnections?.();
+  server.close(done);
+});
 
 describe("GET /health", () => {
   it("should return 200 with status ok", async () => {

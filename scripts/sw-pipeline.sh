@@ -3055,7 +3055,7 @@ pipeline_start() {
         local _job_timeout_min="${SHIPWRIGHT_JOB_TIMEOUT_MINUTES:-180}"
         if [[ "$_job_timeout_min" =~ ^[0-9]+$ ]] && (( _job_timeout_min > 5 )); then
             local _watchdog_delay_sec=$(( (_job_timeout_min - 5) * 60 ))
-            ( sleep "$_watchdog_delay_sec" && kill -0 $$ 2>/dev/null && kill -USR1 $$ 2>/dev/null ) &
+            ( trap 'kill %1 2>/dev/null; exit 0' TERM; sleep "$_watchdog_delay_sec" & wait $!; kill -0 $$ 2>/dev/null && kill -USR1 $$ 2>/dev/null ) &
             _WATCHDOG_PID=$!
             emit_event "pipeline.watchdog_armed" \
                        "issue=${ISSUE_NUMBER}" \

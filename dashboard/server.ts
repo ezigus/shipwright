@@ -2866,6 +2866,15 @@ const server = Bun.serve({
               });
               continue;
             }
+            // Validate pid is a safe integer before using in execSync
+            if (!Number.isInteger(pid) || pid <= 0) {
+              results.push({
+                issue: issueNum,
+                ok: false,
+                error: `Invalid PID: ${pid}`,
+              });
+              continue;
+            }
             switch (action) {
               case "pause":
                 execSync(`kill -STOP ${pid}`);
@@ -4506,10 +4515,27 @@ const server = Bun.serve({
             mHost !== "127.0.0.1"
           ) {
             try {
-              const maxWorkers = parseInt(String(body.max_workers), 10) || 0;
-              execSync(
-                `ssh -o ConnectTimeout=5 ${sshUser}@${mHost} "${swPath} daemon scale ${maxWorkers}" 2>/dev/null`,
-                { timeout: 10000 },
+              const maxWorkersRaw = parseInt(String(body.max_workers), 10);
+              // Validate maxWorkers is a safe integer (>= 0)
+              if (!Number.isInteger(maxWorkersRaw) || maxWorkersRaw < 0) {
+                throw new Error(`Invalid max_workers: ${body.max_workers}`);
+              }
+              const maxWorkers = maxWorkersRaw;
+              // Validate swPath matches safe pattern (alphanumeric, slashes, dots, dashes)
+              if (!/^[a-zA-Z0-9._\/-]+$/.test(swPath)) {
+                throw new Error(`Invalid shipwright_path: ${swPath}`);
+              }
+              // Use spawnSync with args array to eliminate shell injection surface
+              const { spawnSync } = await import("child_process");
+              spawnSync(
+                "ssh",
+                [
+                  "-o",
+                  "ConnectTimeout=5",
+                  `${sshUser}@${mHost}`,
+                  `${swPath} daemon scale ${maxWorkers}`,
+                ],
+                { timeout: 10000, stdio: "pipe" },
               );
             } catch {
               // Remote scale command failed — update saved anyway

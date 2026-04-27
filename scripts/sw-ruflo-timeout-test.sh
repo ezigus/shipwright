@@ -212,25 +212,28 @@ assert_le "${_t7_after:-0}" "${_t7_before:-0}" "no ruflo_timeout.* temp files le
 echo ""
 echo "--- Test 8: all descendants killed after timeout (issue #441) ---"
 
+# Use unique sleep duration based on shell PID to avoid cross-run collision
+_T8_SLEEP_ID="98$(printf '%05d' $$)"
+
 _spawns_deep_tree() {
-    sh -c 'sleep 9872 & wait' &
+    sh -c "sleep $_T8_SLEEP_ID & wait" &
     wait
 }
 
-# Pre-clean orphaned sleep 9872 processes left by any previous test run so
+# Pre-clean orphaned sleep processes left by any previous test run so
 # historical leaks don't cause a false failure in the current-run assertion.
-pkill -f "sleep 9872" 2>/dev/null || true
+pkill -f "sleep $_T8_SLEEP_ID" 2>/dev/null || true
 sleep 0.3
 
 RUFLO_FAILURE_COUNT=0; export RUFLO_FAILURE_COUNT
 ruflo_with_timeout 2 _spawns_deep_tree >/dev/null 2>&1 || true
 sleep 2  # allow SIGKILL grace period + reaping
 
-_t8_survivors=$(pgrep -f "sleep 9872" 2>/dev/null || true)
+_t8_survivors=$(pgrep -f "sleep $_T8_SLEEP_ID" 2>/dev/null || true)
 if [[ -z "$_t8_survivors" ]]; then
     pass "grandchild process fully reaped after timeout (no leak)"
 else
-    pkill -f "sleep 9872" 2>/dev/null || true
+    pkill -f "sleep $_T8_SLEEP_ID" 2>/dev/null || true
     fail "grandchild survived timeout — process leak detected (pids: $_t8_survivors)"
 fi
 

@@ -27,8 +27,9 @@ RUFLO_DAEMON_STARTED="${RUFLO_DAEMON_STARTED:-false}" # true only when THIS run 
 RUFLO_FAILURE_COUNT="${RUFLO_FAILURE_COUNT:-0}"      # incremented by circuit-breaker; reset on recovery
 RUFLO_HIVE_AVAILABLE="${RUFLO_HIVE_AVAILABLE:-false}" # true when singleton hive-mind is initialized
 RUFLO_HIVE_ID="${RUFLO_HIVE_ID:-}"                   # hive-mind session ID set by ruflo_init()
+RUFLO_RECALL_TIMEOUT="${RUFLO_RECALL_TIMEOUT:-30}"   # timeout for ruflo memory recall operations
 export RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_FAILURE_COUNT \
-       RUFLO_HIVE_AVAILABLE RUFLO_HIVE_ID
+       RUFLO_HIVE_AVAILABLE RUFLO_HIVE_ID RUFLO_RECALL_TIMEOUT
 
 # ─── Fallback helpers (no-op when helpers.sh is already sourced) ─────────────
 # Use declare -f (not type) to check for shell functions only — type matches
@@ -111,6 +112,7 @@ ruflo_available() {
 #   RUFLO_MAX_AGENTS            — hard cap on parallel agents across all hives
 #   RUFLO_COST_BUDGET_MULTIPLIER — multiplier applied to per-stage cost budget
 #   RUFLO_CIRCUIT_BREAKER_TIMEOUT — default ruflo_with_timeout seconds
+#   RUFLO_RECALL_TIMEOUT        — timeout for ruflo memory recall operations (default: 30s)
 #   RUFLO_LEARNING_BRIDGE       — enable/disable ruflo<->Shipwright learning bridge
 #   RUFLO_Q_LEARNING            — enable/disable Q-learning agent router
 ruflo_load_defaults() {

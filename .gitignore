@@ -80,3 +80,6 @@ agentdb.rvf.lock
 # A src/ directory at the repo root is never intentional and would be picked up
 # by the dead-code patrol as an orphaned JS file (e.g. src/circular-import.js).
 /src/
+
+# Bun build cache
+Library/

@@ -5554,7 +5554,16 @@ const server = Bun.serve({
     if (pathname === "/api/claim" && req.method === "POST") {
       try {
         const body = (await req.json()) as any;
-        const issue = body.issue as number;
+        const issue = parseInt(String(body.issue), 10);
+        if (!Number.isFinite(issue) || issue <= 0) {
+          return new Response(
+            JSON.stringify({ approved: false, error: "Invalid issue number" }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+            },
+          );
+        }
         const rawMachine =
           ((body.machine || body.machine_name) as string) || "";
         const machine = rawMachine
@@ -5715,7 +5724,16 @@ const server = Bun.serve({
     if (pathname === "/api/claim/release" && req.method === "POST") {
       try {
         const body = (await req.json()) as any;
-        const issue = body.issue as number;
+        const issue = parseInt(String(body.issue), 10);
+        if (!Number.isFinite(issue) || issue <= 0) {
+          return new Response(
+            JSON.stringify({ approved: false, error: "Invalid issue number" }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+            },
+          );
+        }
         const machine = (((body.machine || body.machine_name) as string) || "")
           .replace(/[^a-zA-Z0-9_.\-]/g, "")
           .slice(0, 64);

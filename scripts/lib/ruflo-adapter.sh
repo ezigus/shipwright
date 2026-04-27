@@ -12,7 +12,7 @@
 # ║      && source "$SCRIPT_DIR/lib/ruflo-adapter.sh" 2>/dev/null || true    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
-VERSION="3.6.0"
+VERSION="3.6.1"
 
 # ─── Double-source guard ──────────────────────────────────────────────────────
 [[ -n "${_RUFLO_ADAPTER_LOADED:-}" ]] && return 0

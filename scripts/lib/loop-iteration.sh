@@ -362,15 +362,12 @@ ${last_error}"
         fi
     fi
 
-    # When stuck, truncate to the high-level objective only (first paragraph).
-    # Use ORIGINAL_GOAL (not GOAL) so memory-injected prefixes like "KNOWN FIX: ..."
-    # don't replace the actual task objective. Use printf to avoid echo mis-parsing
-    # goals that start with -n/-e or contain backslash escapes.
-    local prompt_goal="$GOAL"
+    # Always use ORIGINAL_GOAL so memory-injected prefixes (KNOWN FIX, BLOCKING ISSUES, etc.)
+    # never inflate the ## Your Goal section. When stuck, truncate to the first paragraph only.
+    local prompt_goal="${ORIGINAL_GOAL:-$GOAL}"
     if [[ "$stuckness_detected" == "true" ]]; then
-        local _base_goal="${ORIGINAL_GOAL:-$GOAL}"
-        prompt_goal="$(printf '%s\n' "$_base_goal" | awk 'NR==1{print; next} /^[[:space:]]*$/{exit} {print}')"
-        [[ -z "$prompt_goal" ]] && prompt_goal="$_base_goal"
+        prompt_goal="$(printf '%s\n' "$prompt_goal" | awk 'NR==1{print; next} /^[[:space:]]*$/{exit} {print}')"
+        [[ -z "$prompt_goal" ]] && prompt_goal="${ORIGINAL_GOAL:-$GOAL}"
     fi
 
     # Session restart context — inject previous session progress

@@ -2896,6 +2896,8 @@ pipeline_start() {
                 warn "CI resume: failed to create or checkout branch ${GIT_BRANCH}"
             fi
         fi
+        # Capture clean goal before write_state — prevents lazy bootstrap contamination
+        ORIGINAL_GOAL="${ORIGINAL_GOAL:-$GOAL}"
         write_state 2>/dev/null || true
     fi
 

@@ -610,6 +610,8 @@ write_state() {
     local _write_goal="${ORIGINAL_GOAL:-$GOAL}"
     # Bootstrap ORIGINAL_GOAL in memory on first non-empty write (e.g. --issue runs where
     # intake fills GOAL after pipeline_start, leaving ORIGINAL_GOAL empty until here).
+    # Safe because callers (sw-pipeline.sh, sw-loop.sh) set ORIGINAL_GOAL before the first
+    # write_state call when GOAL may already be mutated, preventing contamination.
     if [[ -z "${ORIGINAL_GOAL:-}" && -n "${_write_goal}" ]]; then
         ORIGINAL_GOAL="$_write_goal"
     fi

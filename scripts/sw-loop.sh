@@ -136,6 +136,9 @@ ADDITIONAL_TEST_CMDS=()   # Array of extra test commands (from --additional-test
 # ─── Context Budget ──────────────────────────────────────────────────────────
 CONTEXT_BUDGET_CHARS="${CONTEXT_BUDGET_CHARS:-200000}"  # Max prompt chars before trimming
 
+# ─── Pipeline Context File (Layer A sidecar) ──────────────────────────────────
+LOOP_CONTEXT_FILE="${LOOP_CONTEXT_FILE:-}"  # Sidecar with synthesized build context
+
 # ─── Parse Arguments ──────────────────────────────────────────────────────────
 show_help() {
     echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${VERSION}${RESET} — ${BOLD}Continuous Loop${RESET}"
@@ -307,6 +310,12 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --roles=*) AGENT_ROLES="${1#--roles=}"; shift ;;
+        --context-file)
+            LOOP_CONTEXT_FILE="${2:-}"
+            [[ -z "$LOOP_CONTEXT_FILE" ]] && { error "Missing value for --context-file"; exit 1; }
+            shift 2
+            ;;
+        --context-file=*) LOOP_CONTEXT_FILE="${1#--context-file=}"; shift ;;
         --help|-h)
             show_help
             exit 0
@@ -413,6 +422,21 @@ fi
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     error "Not inside a git repository. The loop requires git for progress tracking."
     exit 1
+fi
+
+# Validate --context-file path (if provided by pipeline)
+if [[ -n "$LOOP_CONTEXT_FILE" ]]; then
+    PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+    if [[ "$LOOP_CONTEXT_FILE" != "$PROJECT_ROOT"* ]]; then
+        error "context-file must be inside project root ($PROJECT_ROOT)"
+        exit 1
+    fi
+fi
+
+# Layer B: Strip synthesized sections from GOAL before preserving as ORIGINAL_GOAL
+# Defense-in-depth: if the build stage passed an enriched goal, scrub it here.
+if declare -f _strip_synthesized_sections >/dev/null 2>&1; then
+    GOAL="$(_strip_synthesized_sections "$GOAL")"
 fi
 
 # Preserve original goal before any appending (memory fixes, human feedback)

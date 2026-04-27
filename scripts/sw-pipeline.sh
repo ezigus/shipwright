@@ -176,6 +176,175 @@ format_duration() {
     fi
 }
 
+# ─── Memory budget guard helpers ────────────────────────────────────────────
+# Probe free memory in whole GB. Cross-platform (Linux /proc/meminfo, macOS
+# vm_stat). On any probe failure returns 0 — fail-closed so the admission
+# gate refuses rather than admitting on bad signal.
+get_free_memory_gb() {
+    local kb=0
+    if [[ -r /proc/meminfo ]]; then
+        # Prefer MemAvailable (kernel 3.14+); fall back to MemFree.
+        kb=$(awk '/^MemAvailable:/ {print $2; exit}' /proc/meminfo 2>/dev/null || echo "")
+        if [[ -z "$kb" || ! "$kb" =~ ^[0-9]+$ ]]; then
+            kb=$(awk '/^MemFree:/ {print $2; exit}' /proc/meminfo 2>/dev/null || echo "0")
+        fi
+    elif command -v vm_stat >/dev/null 2>&1 && command -v pagesize >/dev/null 2>&1; then
+        # macOS: approximate MemAvailable as (free + inactive) * pagesize.
+        # Just "free" undercounts and would over-block on a healthy host.
+        local pagesz free_pages inactive_pages
+        pagesz=$(pagesize 2>/dev/null || echo "4096")
+        free_pages=$(vm_stat 2>/dev/null | awk -F'[: .]+' '/Pages free/ {print $3; exit}')
+        inactive_pages=$(vm_stat 2>/dev/null | awk -F'[: .]+' '/Pages inactive/ {print $3; exit}')
+        free_pages="${free_pages:-0}"
+        inactive_pages="${inactive_pages:-0}"
+        if [[ "$free_pages" =~ ^[0-9]+$ && "$inactive_pages" =~ ^[0-9]+$ && "$pagesz" =~ ^[0-9]+$ ]]; then
+            local bytes=$(( (free_pages + inactive_pages) * pagesz ))
+            kb=$(( bytes / 1024 ))
+        fi
+    fi
+    [[ ! "$kb" =~ ^[0-9]+$ ]] && kb=0
+    # Integer GB (rounds down — conservative; a host with 4.9 GB reports 4).
+    echo $(( kb / 1024 / 1024 ))
+}
+
+# kill -0 idiom — is the given PID alive and signalable by us?
+pid_exists() {
+    local pid="$1"
+    [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null
+}
+
+# Walk active-pipelines/, unlink any entry whose PID is no longer alive.
+# Echoes count reaped. Always returns 0; reaping is best-effort.
+reap_stale_pipeline_locks() {
+    local dir="$SHIPWRIGHT_ACTIVE_PIPELINES_DIR"
+    [[ -d "$dir" ]] || { echo "0"; return 0; }
+    local reaped=0
+    local lock pid
+    for lock in "$dir"/*.json; do
+        [[ -f "$lock" ]] || continue
+        pid=$(jq -r '.pid // empty' "$lock" 2>/dev/null || true)
+        # Fall back to filename when JSON is corrupted.
+        if [[ -z "$pid" || ! "$pid" =~ ^[0-9]+$ ]]; then
+            pid=$(basename "$lock" .json)
+        fi
+        if ! pid_exists "$pid"; then
+            rm -f "$lock" 2>/dev/null || true
+            reaped=$((reaped + 1))
+            emit_event "pipeline.lock_reaped" "pid=$pid" 2>/dev/null || true
+        fi
+    done
+    echo "$reaped"
+    return 0
+}
+
+# Count live entries (assumes reap has already run). Stdout: integer.
+count_active_pipeline_locks() {
+    local dir="$SHIPWRIGHT_ACTIVE_PIPELINES_DIR"
+    [[ -d "$dir" ]] || { echo "0"; return 0; }
+    local n=0 lock
+    for lock in "$dir"/*.json; do
+        [[ -f "$lock" ]] && n=$((n + 1))
+    done
+    echo "$n"
+}
+
+# Atomically write $SHIPWRIGHT_ACTIVE_PIPELINES_DIR/<pid>.json with metadata.
+# Returns rc=0 on success, 1 on filesystem error (including missing jq).
+write_active_pipeline_lock() {
+    local dir="$SHIPWRIGHT_ACTIVE_PIPELINES_DIR"
+    mkdir -p "$dir" 2>/dev/null || return 1
+    if ! command -v jq >/dev/null 2>&1; then
+        error "jq is required by the pipeline admission gate but was not found — install jq and retry (brew install jq / apt install jq)"
+        return 1
+    fi
+    local pid="$_PIPELINE_PID"
+    local lock_file="$dir/$pid.json"
+    local tmp="$dir/$pid.json.tmp.$$"
+    local started_at issue_or_goal repo_path
+    started_at="$(now_iso)"
+    issue_or_goal="${ISSUE_NUMBER:-${GOAL:-unknown}}"
+    repo_path="${ORIGINAL_REPO_DIR:-$(pwd)}"
+    if ! jq -n \
+        --arg pid "$pid" \
+        --arg started_at "$started_at" \
+        --arg issue_or_goal "$issue_or_goal" \
+        --arg repo "$repo_path" \
+        --arg pipeline_template "${PIPELINE_NAME:-standard}" \
+        '{pid: ($pid|tonumber), started_at: $started_at, issue_or_goal: $issue_or_goal, repo: $repo, pipeline_template: $pipeline_template}' \
+        > "$tmp" 2>/dev/null; then
+        rm -f "$tmp" 2>/dev/null || true
+        return 1
+    fi
+    if ! mv "$tmp" "$lock_file" 2>/dev/null; then
+        rm -f "$tmp" 2>/dev/null || true
+        return 1
+    fi
+    _ACTIVE_PIPELINE_LOCK_FILE="$lock_file"
+    emit_event "pipeline.lock_acquired" "pid=$pid" "issue_or_goal=$issue_or_goal" 2>/dev/null || true
+    return 0
+}
+
+# Idempotent — safe to call from EXIT/SIGINT/SIGTERM traps.
+release_active_pipeline_lock() {
+    local lock_file="$_ACTIVE_PIPELINE_LOCK_FILE"
+    [[ -z "$lock_file" ]] && lock_file="$SHIPWRIGHT_ACTIVE_PIPELINES_DIR/$_PIPELINE_PID.json"
+    if [[ -f "$lock_file" ]]; then
+        rm -f "$lock_file" 2>/dev/null || true
+        emit_event "pipeline.lock_released" "pid=$_PIPELINE_PID" 2>/dev/null || true
+    fi
+    _ACTIVE_PIPELINE_LOCK_FILE=""
+    return 0
+}
+
+# Format the "blocked by" diagnostic lines for a single lock file.
+# Stdout: human-readable two lines (PID summary + age).
+_describe_blocking_lock() {
+    local lock="$1"
+    [[ -f "$lock" ]] || return 0
+    local pid started issue repo template
+    pid=$(jq -r '.pid // "?"' "$lock" 2>/dev/null || echo "?")
+    started=$(jq -r '.started_at // "?"' "$lock" 2>/dev/null || echo "?")
+    issue=$(jq -r '.issue_or_goal // "?"' "$lock" 2>/dev/null || echo "?")
+    repo=$(jq -r '.repo // "?"' "$lock" 2>/dev/null || echo "?")
+    template=$(jq -r '.pipeline_template // "?"' "$lock" 2>/dev/null || echo "?")
+    echo "    pid=$pid started=$started issue=$issue repo=$repo template=$template"
+}
+
+# Enforce concurrency cap and free-memory floor.
+# rc=0 admit, rc=1 refuse. On refuse, writes diagnostic to stderr.
+check_admission_gate() {
+    mkdir -p "$SHIPWRIGHT_ACTIVE_PIPELINES_DIR" 2>/dev/null || true
+    reap_stale_pipeline_locks >/dev/null 2>&1 || true
+
+    local active
+    active=$(count_active_pipeline_locks)
+    if [[ "$active" -ge "$SHIPWRIGHT_MAX_ACTIVE_PIPELINES" ]]; then
+        error "Refusing to start: $active active pipeline(s) already running (max=$SHIPWRIGHT_MAX_ACTIVE_PIPELINES per host)"
+        echo -e "${DIM}  Concurrent pipelines can OOM the host. Wait for the running pipeline to finish.${RESET}" >&2
+        echo -e "${DIM}  Blocking pipeline(s):${RESET}" >&2
+        local lock
+        for lock in "$SHIPWRIGHT_ACTIVE_PIPELINES_DIR"/*.json; do
+            [[ -f "$lock" ]] && _describe_blocking_lock "$lock" >&2
+        done
+        echo -e "${DIM}  Inspect: shipwright doctor${RESET}" >&2
+        emit_event "pipeline.admission_refused" "reason=concurrency" "active=$active" "max=$SHIPWRIGHT_MAX_ACTIVE_PIPELINES" 2>/dev/null || true
+        return 1
+    fi
+
+    local free_gb
+    free_gb=$(get_free_memory_gb)
+    if [[ "$free_gb" -lt "$SHIPWRIGHT_MIN_FREE_GB" ]]; then
+        error "Refusing to start: only ${free_gb} GB free memory (min=${SHIPWRIGHT_MIN_FREE_GB} GB required)"
+        echo -e "${DIM}  Free memory below safety threshold — host risks OOM under pipeline load.${RESET}" >&2
+        echo -e "${DIM}  Free up RAM (close apps, kill orphan agents) and retry, or set SHIPWRIGHT_MIN_FREE_GB=N to override.${RESET}" >&2
+        emit_event "pipeline.admission_refused" "reason=memory" "free_gb=$free_gb" "min_gb=$SHIPWRIGHT_MIN_FREE_GB" 2>/dev/null || true
+        return 1
+    fi
+
+    return 0
+}
+
 # Rotate event log if needed (standalone mode — daemon has its own rotation in poll loop)
 rotate_event_log_if_needed() {
     local events_file="${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}"
@@ -345,6 +514,31 @@ STATE_FILE=""
 ARTIFACTS_DIR=""
 TASKS_FILE=""
 
+# ─── Per-host admission gate ────────────────────────────────────────────────
+# Concurrent pipelines on a single host can exhaust memory and OOM-kill the
+# machine (16 GB host saw 2 pipelines + a process leak go over). The gate
+# below enforces a host-level concurrency cap and a free-memory floor;
+# layered above the existing per-issue durable lock. Defaults are safe for
+# the lowest-end developer host (16 GB / 4-core); operators can override per
+# host via the env vars below.
+SHIPWRIGHT_MAX_ACTIVE_PIPELINES="${SHIPWRIGHT_MAX_ACTIVE_PIPELINES:-1}"
+SHIPWRIGHT_MIN_FREE_GB="${SHIPWRIGHT_MIN_FREE_GB:-4}"
+# Validate env vars are integers; reset to safe defaults on bad input so
+# arithmetic comparisons in check_admission_gate never receive non-numeric values.
+if [[ ! "$SHIPWRIGHT_MAX_ACTIVE_PIPELINES" =~ ^[1-9][0-9]*$ ]]; then
+    warn "SHIPWRIGHT_MAX_ACTIVE_PIPELINES='$SHIPWRIGHT_MAX_ACTIVE_PIPELINES' is not a positive integer — resetting to 1"
+    SHIPWRIGHT_MAX_ACTIVE_PIPELINES=1
+fi
+if [[ ! "$SHIPWRIGHT_MIN_FREE_GB" =~ ^[0-9]+$ ]]; then
+    warn "SHIPWRIGHT_MIN_FREE_GB='$SHIPWRIGHT_MIN_FREE_GB' is not a non-negative integer — resetting to 4"
+    SHIPWRIGHT_MIN_FREE_GB=4
+fi
+SHIPWRIGHT_ACTIVE_PIPELINES_DIR="${SHIPWRIGHT_ACTIVE_PIPELINES_DIR:-$HOME/.shipwright/active-pipelines}"
+# Capture once at top-level so trap-time `$$` (which would resolve in any
+# subshell that wraps cleanup) cannot drift to a different PID.
+_PIPELINE_PID="$$"
+_ACTIVE_PIPELINE_LOCK_FILE=""
+
 # ─── Help ───────────────────────────────────────────────────────────────────
 
 show_help() {
@@ -418,6 +612,12 @@ show_help() {
     echo -e "  • Slack: --slack-webhook <url>"
     echo -e "  • Custom webhook: set SHIPWRIGHT_WEBHOOK_URL env var"
     echo -e "  • Events: start, stage complete, failure, self-heal, done"
+    echo ""
+    echo -e "${BOLD}ADMISSION GATE${RESET}  ${DIM}(per-host concurrency + memory floor)${RESET}"
+    echo -e "  • Refuses ${BOLD}start${RESET} / ${BOLD}resume${RESET} when too many pipelines are live or free RAM is low"
+    echo -e "  • ${CYAN}SHIPWRIGHT_MAX_ACTIVE_PIPELINES${RESET}=N   max concurrent pipelines per host (default: 1)"
+    echo -e "  • ${CYAN}SHIPWRIGHT_MIN_FREE_GB${RESET}=N            min free memory in GB to admit (default: 4)"
+    echo -e "  • Inspect locks: ${CYAN}shipwright doctor${RESET}  ${DIM}(ACTIVE PIPELINES & MEMORY section)${RESET}"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
     echo -e "  ${DIM}# From GitHub issue (fully autonomous)${RESET}"
@@ -751,6 +951,10 @@ cleanup_on_exit() {
     if [[ -n "${_PIPELINE_LOCK_ID:-}" ]] && type release_lock >/dev/null 2>&1; then
         release_lock "$_PIPELINE_LOCK_ID" 2>/dev/null || true
     fi
+
+    # Release per-host admission lock — idempotent, safe to call even if
+    # pipeline_start was refused before write_active_pipeline_lock ran.
+    release_active_pipeline_lock 2>/dev/null || true
 
     # Kill the entire process group only on signal-driven exits and only when we
     # are the group leader (i.e., launched via setsid). Skipping on clean exits
@@ -2512,6 +2716,38 @@ pipeline_start() {
 
     setup_dirs
 
+    # Per-host admission gate: enforce concurrency cap and free-memory floor
+    # to prevent concurrent pipelines from OOM-killing the host.
+    if ! check_admission_gate; then
+        exit 1
+    fi
+    if ! write_active_pipeline_lock; then
+        error "Failed to write pipeline lock at $SHIPWRIGHT_ACTIVE_PIPELINES_DIR — check permissions/disk"
+        exit 1
+    fi
+    # Race re-check: two near-simultaneous starts could both pass the gate
+    # before either writes its lock. Tiebreaker is lowest-PID-wins (not FIFO):
+    # deterministic and deadlock-free. Higher-PID process backs off.
+    local _post_active
+    _post_active=$(count_active_pipeline_locks)
+    if [[ "$_post_active" -gt "$SHIPWRIGHT_MAX_ACTIVE_PIPELINES" ]]; then
+        local _lock _other_pid _lowest_pid="$_PIPELINE_PID"
+        for _lock in "$SHIPWRIGHT_ACTIVE_PIPELINES_DIR"/*.json; do
+            [[ -f "$_lock" ]] || continue
+            _other_pid=$(jq -r '.pid // empty' "$_lock" 2>/dev/null || true)
+            [[ -z "$_other_pid" || ! "$_other_pid" =~ ^[0-9]+$ ]] && continue
+            if [[ "$_other_pid" -lt "$_lowest_pid" ]]; then
+                _lowest_pid="$_other_pid"
+            fi
+        done
+        if [[ "$_lowest_pid" != "$_PIPELINE_PID" ]]; then
+            release_active_pipeline_lock
+            emit_event "pipeline.admission_race_lost" "our_pid=$_PIPELINE_PID" "winner_pid=$_lowest_pid" 2>/dev/null || true
+            error "Refusing to start: lost admission race to pid=$_lowest_pid"
+            exit 1
+        fi
+    fi
+
     # Acquire durable lock to prevent concurrent pipelines on the same issue/goal
     _PIPELINE_LOCK_ID=""
     if type acquire_lock >/dev/null 2>&1; then
@@ -3096,6 +3332,37 @@ pipeline_resume() {
     # setup_dirs runs before resume_state, so ISSUE_NUMBER was empty during the first call.
     TASKS_FILE="${STATE_DIR}/pipeline-tasks${ISSUE_NUMBER:+-${ISSUE_NUMBER}}.md"
     load_pipeline_config
+
+    # Resume is a fresh process — re-claim a host slot through the same gate.
+    if ! check_admission_gate; then
+        exit 1
+    fi
+    if ! write_active_pipeline_lock; then
+        error "Failed to write pipeline lock at $SHIPWRIGHT_ACTIVE_PIPELINES_DIR — check permissions/disk"
+        exit 1
+    fi
+    # Race re-check: same lowest-PID-wins tiebreaker as pipeline_start to
+    # prevent two simultaneous resumes from both bypassing the admission gate.
+    local _post_active
+    _post_active=$(count_active_pipeline_locks)
+    if [[ "$_post_active" -gt "$SHIPWRIGHT_MAX_ACTIVE_PIPELINES" ]]; then
+        local _lock _other_pid _lowest_pid="$_PIPELINE_PID"
+        for _lock in "$SHIPWRIGHT_ACTIVE_PIPELINES_DIR"/*.json; do
+            [[ -f "$_lock" ]] || continue
+            _other_pid=$(jq -r '.pid // empty' "$_lock" 2>/dev/null || true)
+            [[ -z "$_other_pid" || ! "$_other_pid" =~ ^[0-9]+$ ]] && continue
+            if [[ "$_other_pid" -lt "$_lowest_pid" ]]; then
+                _lowest_pid="$_other_pid"
+            fi
+        done
+        if [[ "$_lowest_pid" != "$_PIPELINE_PID" ]]; then
+            release_active_pipeline_lock
+            emit_event "pipeline.admission_race_lost" "our_pid=$_PIPELINE_PID" "winner_pid=$_lowest_pid" 2>/dev/null || true
+            error "Refusing to resume: lost admission race to pid=$_lowest_pid"
+            exit 1
+        fi
+    fi
+
     echo ""
     run_pipeline
 }

@@ -936,6 +936,77 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 10b. Active Pipelines & Memory Budget
+# ═════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${PURPLE}${BOLD}  ACTIVE PIPELINES & MEMORY${RESET}"
+echo -e "${DIM}  ──────────────────────────────────────────${RESET}"
+
+doctor_check_active_pipelines() {
+    local dir="${SHIPWRIGHT_ACTIVE_PIPELINES_DIR:-$HOME/.shipwright/active-pipelines}"
+    local max_active="${SHIPWRIGHT_MAX_ACTIVE_PIPELINES:-1}"
+    local min_free_gb="${SHIPWRIGHT_MIN_FREE_GB:-4}"
+
+    if [[ ! -d "$dir" ]]; then
+        info "  No active-pipelines directory ${DIM}(created on first pipeline start)${RESET}"
+    else
+        local live=0 stale=0 lock pid started issue repo template
+        for lock in "$dir"/*.json; do
+            [[ -f "$lock" ]] || continue
+            pid=$(jq -r '.pid // empty' "$lock" 2>/dev/null || true)
+            if [[ -z "$pid" || ! "$pid" =~ ^[0-9]+$ ]]; then
+                stale=$((stale + 1))
+                continue
+            fi
+            if kill -0 "$pid" 2>/dev/null; then
+                live=$((live + 1))
+                started=$(jq -r '.started_at // "?"' "$lock" 2>/dev/null || echo "?")
+                issue=$(jq -r '.issue_or_goal // "?"' "$lock" 2>/dev/null || echo "?")
+                repo=$(jq -r '.repo // "?"' "$lock" 2>/dev/null || echo "?")
+                template=$(jq -r '.pipeline_template // "?"' "$lock" 2>/dev/null || echo "?")
+                info "  pid=$pid started=$started issue=$issue repo=$repo template=$template"
+            else
+                stale=$((stale + 1))
+            fi
+        done
+        if [[ "$live" -ge "$max_active" ]]; then
+            check_warn "Active pipelines: $live / $max_active (host at capacity — new starts will be refused)"
+        else
+            check_pass "Active pipelines: $live / $max_active"
+        fi
+        if [[ "$stale" -gt 0 ]]; then
+            check_warn "Stale pipeline locks: $stale (will be reaped on next pipeline start)"
+        fi
+    fi
+
+    # Free memory readout (cross-platform best-effort).
+    local free_kb=0
+    if [[ -r /proc/meminfo ]]; then
+        free_kb=$(awk '/^MemAvailable:/ {print $2; exit}' /proc/meminfo 2>/dev/null || echo "")
+        [[ -z "$free_kb" || ! "$free_kb" =~ ^[0-9]+$ ]] && \
+            free_kb=$(awk '/^MemFree:/ {print $2; exit}' /proc/meminfo 2>/dev/null || echo "0")
+    elif command -v vm_stat >/dev/null 2>&1 && command -v pagesize >/dev/null 2>&1; then
+        local pagesz fp ip
+        pagesz=$(pagesize 2>/dev/null || echo "4096")
+        fp=$(vm_stat 2>/dev/null | awk -F'[: .]+' '/Pages free/ {print $3; exit}')
+        ip=$(vm_stat 2>/dev/null | awk -F'[: .]+' '/Pages inactive/ {print $3; exit}')
+        fp="${fp:-0}"; ip="${ip:-0}"
+        if [[ "$fp" =~ ^[0-9]+$ && "$ip" =~ ^[0-9]+$ && "$pagesz" =~ ^[0-9]+$ ]]; then
+            free_kb=$(( (fp + ip) * pagesz / 1024 ))
+        fi
+    fi
+    [[ ! "$free_kb" =~ ^[0-9]+$ ]] && free_kb=0
+    local free_gb=$(( free_kb / 1024 / 1024 ))
+    if [[ "$free_gb" -ge "$min_free_gb" ]]; then
+        check_pass "Free memory: ${free_gb} GB (min required: ${min_free_gb} GB)"
+    else
+        check_warn "Free memory: ${free_gb} GB (below ${min_free_gb} GB threshold — new pipelines will be refused)"
+    fi
+}
+
+doctor_check_active_pipelines
+
+# ═════════════════════════════════════════════════════════════════════════════
 # 11. Cost Intelligence
 # ═════════════════════════════════════════════════════════════════════════════
 echo ""

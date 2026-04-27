@@ -246,27 +246,28 @@ echo ""
 echo "--- Test 9: external binary also reaps full tree (issue #441) ---"
 
 _rft_sleep_bin=$(mktemp "${TMPDIR:-/tmp}/rft_sleeper_bin.XXXXXX" 2>/dev/null)
-cat > "$_rft_sleep_bin" <<'BINEOF'
+# Use a PID-derived unique marker so concurrent test runs don't collide.
+_t9_marker="9873sw$$"
+cat > "$_rft_sleep_bin" <<BINEOF
 #!/usr/bin/env sh
 # Simulates a binary that spawns a grandchild (e.g. Node worker).
-# Uses a unique duration (9873) to safely identify survivors.
-sh -c 'sleep 9873 & wait' &
+sh -c 'sleep ${_t9_marker} & wait' &
 wait
 BINEOF
 chmod +x "$_rft_sleep_bin"
 
-pkill -f "sleep 9873" 2>/dev/null || true
+pkill -f "sleep ${_t9_marker}" 2>/dev/null || true
 sleep 0.3
 
 RUFLO_FAILURE_COUNT=0; export RUFLO_FAILURE_COUNT
 ruflo_with_timeout 2 "$_rft_sleep_bin" >/dev/null 2>&1 || true
 sleep 2  # allow SIGKILL grace period + reaping
 
-_t9_survivors=$(pgrep -f "sleep 9873" 2>/dev/null || true)
+_t9_survivors=$(pgrep -f "sleep ${_t9_marker}" 2>/dev/null || true)
 if [[ -z "$_t9_survivors" ]]; then
     pass "external binary grandchild fully reaped after timeout (no leak)"
 else
-    pkill -f "sleep 9873" 2>/dev/null || true
+    pkill -f "sleep ${_t9_marker}" 2>/dev/null || true
     fail "external binary grandchild survived timeout — process leak (pids: $_t9_survivors)"
 fi
 rm -f "$_rft_sleep_bin" 2>/dev/null || true

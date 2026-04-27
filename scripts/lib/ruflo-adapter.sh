@@ -417,6 +417,9 @@ _kill_process_tree() {
 # Returns 0 on success, 1 on failure. Returns 1 immediately when ruflo is disabled.
 ruflo_with_timeout() {
     local timeout_s="${1:-30}"
+    # Guard against non-numeric timeout (e.g. env var set to a string) to
+    # prevent arithmetic evaluation errors under set -e. Fail-open to 30s.
+    if ! [[ "$timeout_s" =~ ^[0-9]+$ ]]; then timeout_s=30; fi
     shift
 
     if [[ $# -eq 0 ]]; then

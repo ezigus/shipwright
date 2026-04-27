@@ -4483,9 +4483,19 @@ const server = Bun.serve({
         const patchSanitizeSwPath = (s: string) =>
           s.replace(/[^a-zA-Z0-9._\-/]/g, "").slice(0, 256);
         // Update allowed fields
-        if (body.max_workers !== undefined)
-          data.machines[idx].max_workers =
-            parseInt(String(body.max_workers), 10) || 0;
+        if (body.max_workers !== undefined) {
+          const _mw = parseInt(String(body.max_workers), 10);
+          if (isNaN(_mw) || _mw < 0) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                error: "max_workers must be a non-negative integer",
+              }),
+            );
+            return;
+          }
+          data.machines[idx].max_workers = _mw;
+        }
         if (body.role !== undefined) data.machines[idx].role = body.role;
         if (body.ssh_user !== undefined)
           data.machines[idx].ssh_user = patchSanitizeSshUser(

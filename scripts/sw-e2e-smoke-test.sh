@@ -789,13 +789,16 @@ main() {
         exit 1
     fi
 
-    # Snapshot node process count before any tests run
+    echo -e "${DIM}Setting up mock environment...${RESET}"
+    setup_env
+    # Snapshot after setup_env so any Node processes it starts are included
+    # in the baseline — measuring only processes added by the tests themselves.
+    # Note: pgrep -c -f 'node ' counts all host Node processes; unrelated
+    # processes starting/stopping during the run can skew the delta, so the
+    # check is a best-effort heuristic rather than a precise assertion.
     local node_before
     node_before=$(pgrep -c -f 'node ' 2>/dev/null || echo "0")
     node_before=$(echo "$node_before" | tr -d '[:space:]')
-
-    echo -e "${DIM}Setting up mock environment...${RESET}"
-    setup_env
     echo -e "${GREEN}✓${RESET} Environment ready: ${DIM}$TEST_TEMP_DIR${RESET}"
     echo ""
 

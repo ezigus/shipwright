@@ -140,8 +140,13 @@ guard_prompt_size() {
 # These helpers return empty output instead of crashing under set -euo pipefail.
 _safe_base_log() {
     local branch="${BASE_BRANCH:-main}"
-    git rev-parse --verify "$branch" >/dev/null 2>&1 || { echo ""; return 0; }
-    git log "$@" "${branch}..HEAD" 2>/dev/null || true
+    if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+        git log "$@" "${branch}..HEAD" 2>/dev/null || true
+    elif git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+        git log "$@" "origin/${branch}..HEAD" 2>/dev/null || true
+    else
+        echo ""
+    fi
 }
 
 _safe_base_diff() {

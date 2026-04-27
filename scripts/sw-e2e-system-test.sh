@@ -275,7 +275,10 @@ invoke_pipeline() {
         _timeout_cmd="gtimeout 120"
     fi
     # shellcheck disable=SC2034
+    # SHIPWRIGHT_MIN_FREE_GB=0 disables the memory threshold so system tests
+    # are not affected by the CI runner's actual available RAM.
     PIPELINE_OUTPUT=$(cd "$TEMP_DIR/project" && PATH="$TEMP_DIR/bin:$PATH" HOME="$TEMP_DIR/home" \
+        SHIPWRIGHT_MIN_FREE_GB=0 \
         $_timeout_cmd bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$@" 2>&1) || PIPELINE_EXIT=$?
 }
 

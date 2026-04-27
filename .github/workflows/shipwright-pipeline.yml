@@ -823,9 +823,8 @@ jobs:
       - name: Diagnose exit signals (issue #463)
         if: always() && steps.claim_check.outputs.skip != 'true'
         run: |
-          echo "failure(): ${{ failure() }}"
-          echo "cancelled(): ${{ cancelled() }}"
-          echo "Branch on origin: $(git ls-remote --heads origin shipwright/issue-${ISSUE_NUMBER} 2>/dev/null || echo none)"
+          echo "job.status: ${{ job.status }}"
+          echo "Branch on origin: $(git ls-remote --heads origin "shipwright/issue-${ISSUE_NUMBER}" 2>/dev/null || echo none)"
 
       - name: Upload pipeline artifacts
         if: always() && steps.claim_check.outputs.skip != 'true'

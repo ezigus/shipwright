@@ -22,11 +22,7 @@
   "pipeline_template": "autonomous",
   "auto_template": false,
   "last_optimization": {
-<<<<<<< Updated upstream
     "timestamp": "2026-04-03T11:14:38Z",
-=======
-    "timestamp": "2026-03-27T00:06:00Z",
->>>>>>> Stashed changes
     "adjustments": "merge stage recommended (deploy freq 0.0/week); "
   }
 }

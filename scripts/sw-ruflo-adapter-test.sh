@@ -1725,7 +1725,7 @@ case "${1:-}/${2:-}" in
     init/check) exit 0 ;;
     start/--daemon) exit 0 ;;
     memory/import) exit 0 ;;
-    hive-mind/init) printf '{"hive_id":"singleton-hive-001"}\n'; exit 0 ;;
+    hive-mind/init) printf '| hive-1234567890-abc001 |\n'; exit 0 ;;
     *) exit 0 ;;
 esac
 MOCK
@@ -1748,7 +1748,7 @@ if [[ "$_hive_avail" == "true" ]]; then
 else
     assert_fail "ruflo_init sets RUFLO_HIVE_AVAILABLE=true on hive init success" "got: $_hive_avail"
 fi
-if [[ "$_hive_id" == "singleton-hive-001" ]]; then
+if [[ "$_hive_id" == "hive-1234567890-abc001" ]]; then
     assert_pass "ruflo_init sets RUFLO_HIVE_ID from hive-mind init output"
 else
     assert_fail "ruflo_init sets RUFLO_HIVE_ID from hive-mind init output" "got: $_hive_id"
@@ -1847,7 +1847,7 @@ case "${1:-}/${2:-}" in
     init/check) exit 0 ;;
     start/--daemon) exit 0 ;;
     memory/import) exit 0 ;;
-    hive-mind/init) printf '{"hive_id":"event-test-hive"}\n'; exit 0 ;;
+    hive-mind/init) printf '| hive-9999999999-evt001 |\n'; exit 0 ;;
     *) exit 0 ;;
 esac
 MOCK
@@ -1870,7 +1870,7 @@ if grep -qF "ruflo.hive_available" <<< "$_captured_event" 2>/dev/null; then
 else
     assert_fail "ruflo_init emits ruflo.hive_available event on hive init success" "events: $_captured_event"
 fi
-if grep -qF "hive_id=event-test-hive" <<< "$_captured_event" 2>/dev/null; then
+if grep -qF "hive_id=hive-9999999999-evt001" <<< "$_captured_event" 2>/dev/null; then
     assert_pass "ruflo_init includes hive_id in ruflo.hive_available event"
 else
     assert_fail "ruflo_init includes hive_id in ruflo.hive_available event" "events: $_captured_event"

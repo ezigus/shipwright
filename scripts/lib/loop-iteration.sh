@@ -370,6 +370,19 @@ ${last_error}"
         [[ -z "$prompt_goal" ]] && prompt_goal="${ORIGINAL_GOAL:-$GOAL}"
     fi
 
+    # Pipeline context section (Layer A: sidecar delivery of synthesized context)
+    local pipeline_context_section=""
+    if [[ -n "${LOOP_CONTEXT_FILE:-}" && -f "${LOOP_CONTEXT_FILE:-}" ]]; then
+        local _ctx
+        _ctx="$(cat "$LOOP_CONTEXT_FILE" 2>/dev/null || true)"
+        if [[ -n "$_ctx" ]]; then
+            pipeline_context_section="## Pipeline Context
+${_ctx}
+
+"
+        fi
+    fi
+
     # Session restart context — inject previous session progress
     local restart_section=""
     if [[ "$SESSION_RESTART" == "true" ]] && [[ -f "$LOG_DIR/progress.md" ]]; then
@@ -429,7 +442,7 @@ ${resume_section}
 ## Your Goal
 ${prompt_goal}
 
-${cumulative_section}
+${pipeline_context_section}${cumulative_section}
 ${task_section:+## Task Progress
 $task_section
 

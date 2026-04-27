@@ -1,272 +1,209 @@
-# Implementation Plan: Sync Fork with Upstream (v3.1.0 → v3.2.4)
+# Implementation Plan: Fix Ruflo Memory Calls Process Leak (Issue #441)
 
-## Summary
+**Issue**: Every loop iteration leaks child Node processes from `ruflo_with_timeout` → 385 leaked procs × ~4 MB = ~1.5 GB permanently held.
 
-Merge 42 upstream commits from `sethdford/shipwright` into `ezigus/shipwright`, resolving 11 file conflicts while preserving 38 local commits (bug fixes, smart test targeting, macOS compatibility, hardcoded test_cmd removal).
+**Status**: Plan phase (detailed analysis complete)
 
-**Upstream version is actually v3.2.4** (not v3.2.0 as originally stated — upstream has continued past the v3.2.0 tag).
+---
 
-## Merge Statistics
+## Root Cause Analysis
 
-| Metric                      | Value        |
-| --------------------------- | ------------ |
-| Merge base                  | `846b47f`    |
-| Local commits since base    | 38           |
-| Upstream commits since base | 42           |
-| Files changed upstream-only | 211          |
-| Files changed fork-only     | 159          |
-| Files changed on both sides | 33           |
-| **Actual git conflicts**    | **11 files** |
-| Auto-merged successfully    | 22 files     |
+### Root Cause Hypothesis (Ranked by Likelihood)
+
+**1. CONFIRMED — Process Group Not Isolated (95% confidence)**
+   - Current: `ruflo_with_timeout` uses `pkill -TERM -P "$bg_pid"` to kill direct children only
+   - Problem: When ruflo spawns Node → Node spawns grandchildren (agentdb workers, LLM processes), grandchildren's parent is Node, not `$bg_pid`
+   - Evidence: 
+     - `scripts/lib/ruflo-adapter.sh:416` — `pkill -TERM -P "$bg_pid"` only kills **direct children** by parent PID
+     - Line 414 comment: "without a dedicated process group" — admits no process group isolation
+     - Line 404: `( "$@" ) >"$_rft_tmp" &` — no `setsid` to create process group
+   - Confirmation: When timeout fires, Node process is killed (line 418), but its children become orphaned and adopted by init
+
+**2. SECONDARY — Incomplete Signal Propagation (40% confidence)**
+   - Even if `pkill -TERM` fires, a 1-second gap between TERM and KILL (implicit in current code) may allow grandchildren to ignore SIGTERM
+   - Evidence: No explicit `--kill-after` or grace period with `sleep` between TERM and KILL
+   - How to confirm: Check if processes respond to SIGTERM or need SIGKILL
+
+**3. TERTIARY — Exit Trap Not Cleaning Process Groups (20% confidence)**
+   - `ruflo_cleanup` at line 290 does not explicitly kill process groups from failed `ruflo_with_timeout` calls
+   - Evidence: `ruflo_cleanup` only called on EXIT, not after each `ruflo_with_timeout` timeout
+   - How to confirm: Trace EXIT trap behavior during multi-iteration loop
+
+### Evidence Gathered
+
+| Item | Location | Finding |
+|------|----------|---------|
+| Function under test | `scripts/lib/ruflo-adapter.sh:373–437` | Uses `pkill -P` (direct children only), no `setsid` |
+| Shell function spawn | Line 404 | `( "$@" ) >"$_rft_tmp" &` — no process group isolation |
+| Child kill logic | Lines 415–419 | TERM kill via `pkill -P`, then `kill`, then `wait` |
+| Grace period | Lines 407–421 | 1-second polling loop; no explicit TERM→KILL gap |
+| Test coverage | `scripts/sw-ruflo-timeout-test.sh` | Tests FD cleanup and output, but NOT process cleanup |
+| Process leak signal | Issue #441 | "385 leaked procs × 4 MB = 1.5 GB over ~260 iterations" |
+| Related issue | `scripts/lib/ruflo-adapter.sh:396` | Issue #426 fixed FD hang with temp file; process leak is separate |
+
+---
+
+## Fix Strategy
+
+**Approach**: Use POSIX process groups (`setsid` + negative PID in `kill`) to capture all descendants, then apply explicit TERM→KILL sequence with bash 3.2 compatibility.
+
+**Core Changes**:
+1. **Line 404**: Add `setsid` to create process group
+2. **Lines 415–419**: Replace `pkill -P` with `kill -TERM -<negative-bg_pid>` (process group TERM)
+3. **Add grace period**: Explicit `sleep 1` + `kill -KILL -<negative-bg_pid>` (process group KILL)
+4. **Add test**: New Test 8 verifies zero orphaned processes after 10 consecutive timeouts
+5. **Add integration check**: Smoke test measures baseline process count
+
+---
 
 ## Files to Modify
 
-### Conflict Resolution (11 files — manual merge required)
+1. **`scripts/lib/ruflo-adapter.sh`** — Process group isolation + TERM→KILL + cleanup
+2. **`scripts/sw-ruflo-timeout-test.sh`** — Test 8 for orphan verification
+3. **`scripts/sw-e2e-smoke-test.sh`** — Process baseline measurement
 
-| File                                  | Resolution Strategy                                                                                                     |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `.claude/CLAUDE.md`                   | **Keep local** — thin wrapper philosophy; upstream only changed AUTO table line counts                                  |
-| `.claude/intelligence-cache.json`     | **Delete** — ephemeral cache, deleted locally, regenerates on demand                                                    |
-| `.claude/platform-hygiene.json`       | **Delete** — ephemeral scan results, deleted locally, regenerates on demand                                             |
-| `scripts/lib/pipeline-detection.sh`   | **Merge both** — keep local multi-lang detection + add upstream `set -u` safety defaults                                |
-| `scripts/sw-hygiene.sh`               | **Merge both** — keep local perf optimization + add upstream shellcheck directives                                      |
-| `scripts/sw-otel.sh`                  | **Merge both** — keep local Bash 3.2 compat fixes + add upstream shellcheck directives                                  |
-| `scripts/sw-pipeline.sh`              | **Merge both** — keep local 500-char goal compaction + add upstream env vars (`SHIPWRIGHT_ACTIVE`, `TEST_CMD_EXPLICIT`) |
-| `scripts/sw-tmux-status.sh`           | **Keep local** — changes converged (both remove `local p a`); add upstream SC2155 directive                             |
-| `templates/pipelines/autonomous.json` | **Merge both** — remove hardcoded `test_cmd` (local fix) + accept full model names + add `audit` stage from upstream    |
-| `templates/pipelines/cost-aware.json` | **Merge both** — remove hardcoded `test_cmd` + accept full model names + add `audit` stage                              |
-| `templates/pipelines/full.json`       | **Merge both** — remove hardcoded `test_cmd` + accept full model names + add `audit` stage                              |
+---
 
-### Auto-Merged Files (22 files — verify correctness)
+## Implementation Steps (In Order)
 
-These merged cleanly but need post-merge validation:
+### Phase 1: Core Fix (ruflo-adapter.sh)
 
-- `.gitignore`, `README.md`, `config/defaults.json`, `package.json`
-- `scripts/lib/daemon-dispatch.sh`, `scripts/lib/pipeline-stages.sh`
-- `scripts/sw-daemon.sh`, `scripts/sw-daemon-test.sh`
-- `scripts/sw-code-review-test.sh`, `scripts/sw-docs-agent-test.sh`
-- `scripts/sw-e2e-system-test.sh`, `scripts/sw-hygiene-test.sh`
-- `scripts/sw-init-test.sh`, `scripts/sw-lib-daemon-dispatch-test.sh`
-- `scripts/sw-loop.sh`, `scripts/sw-pipeline-test.sh`
-- `scripts/sw-prep.sh`, `scripts/sw-regression.sh`
-- `scripts/sw-self-optimize.sh`, `scripts/sw-self-optimize-test.sh`
-- `scripts/sw-strategic-test.sh`, `scripts/sw-team-stages.sh`
+**Task 1.1**: Add helper function for process group kill
+- **File**: `scripts/lib/ruflo-adapter.sh` (insert before line 373)
+- **Acceptance**: Function handles both process group (`kill -s <sig> -<pid>`) and fallback (`pkill -P`)
 
-### New Files from Upstream (~24 net-new files)
+**Task 1.2**: Modify background spawn to use setsid (line 404)
+- **File**: `scripts/lib/ruflo-adapter.sh:404`
+- **Change**: `( "$@" )` → `( setsid "$@" )`
+- **Acceptance**: Subshell runs in its own process group
 
-Key additions arriving from upstream:
+**Task 1.3**: Replace pkill -P with process group kill (line 416)
+- **File**: `scripts/lib/ruflo-adapter.sh:416`
+- **Change**: Call helper to send SIGTERM to entire process group
+- **Acceptance**: Process group TERM sent to all descendants
 
-- `.claudeignore` — context window optimization
-- `.gitmodules` + `skipper` — Skipper submodule
-- `scripts/sw-chaos-test.sh` — chaos testing
-- `scripts/sw-lib-daemon-patrol-test.sh` — patrol test
-- `dashboard/src/canvas/*` — Shipyard dashboard tab (pixel art)
-- `dashboard/src/views/shipyard.ts` — Shipyard view
-- `dashboard/src/design/submarine-theme.ts` — submarine theme
-- `docs/plans/*` — Skipper integration design docs
-- `AUDIT-*.md`, `.claude/*-AUDIT*.md` — audit reports
-- `TEST_RESULTS.md` — test results artifact
+**Task 1.4**: Add TERM→KILL grace period
+- **File**: `scripts/lib/ruflo-adapter.sh` (after line 416)
+- **Code**: `sleep 1` then `kill -KILL -<bg_pid>` to entire process group
+- **Acceptance**: 1-second grace period, then SIGKILL to process group
 
-### Post-Merge Version
+**Task 1.5**: Verify temp cleanup executes regardless
+- **File**: `scripts/lib/ruflo-adapter.sh:420`
+- **Check**: `rm -f "$_rft_tmp"` still executes on all code paths
+- **Acceptance**: No leaked temp files
 
-- `package.json` version will be `3.2.4` (from upstream auto-merge)
-- All script `VERSION=` headers arrive via upstream's changes
+### Phase 2: Regression Test
 
-## Implementation Steps
+**Task 2.1**: Add Test 8 for process leak detection
+- **File**: `scripts/sw-ruflo-timeout-test.sh` (after line 197)
+- **Test**: Run 10 iterations of timeout, spawn grandchild per iteration, verify zero survivors
+- **Acceptance**: Test 8 passes, no orphaned processes remain
 
-### Phase 1: Preparation (Steps 1–3)
+**Task 2.2**: Update test comments
+- **File**: `scripts/sw-ruflo-timeout-test.sh:2` (header comment)
+- **Change**: Add "and process leak (#441)" to comment
+- **Acceptance**: Comment reflects both issues #426 and #441
 
-**Step 1.** Ensure we're on the merge branch `ci/chore-sync-fork-with-upstream-sethdford-37` (already checked out).
+### Phase 3: Integration Check
 
-**Step 2.** Fetch latest upstream:
+**Task 3.1**: Add baseline process measurement to smoke test
+- **File**: `scripts/sw-e2e-smoke-test.sh` (before first test)
+- **Code**: Capture `pgrep -c -f "node|ruflo"` baseline
+- **Acceptance**: Baseline printed at start of smoke test
 
-```bash
-git fetch upstream
-```
+**Task 3.2**: Add process delta check at smoke test end
+- **File**: `scripts/sw-e2e-smoke-test.sh` (after final test)
+- **Code**: Measure final process count, compute delta, assert ≤ 3
+- **Acceptance**: Process delta reported in summary
 
-**Step 3.** Begin the merge:
-
-```bash
-git merge upstream/main --no-ff -m "chore: merge upstream v3.2.4 into fork (42 commits)"
-```
-
-This will stop with 11 conflicts to resolve.
-
-### Phase 2: Conflict Resolution (Steps 4–14)
-
-**Step 4.** Resolve `.claude/CLAUDE.md`:
-
-- Keep the local thin wrapper (18-line version referencing centralized standards)
-- `git checkout --ours .claude/CLAUDE.md && git add .claude/CLAUDE.md`
-
-**Step 5.** Resolve `.claude/intelligence-cache.json`:
-
-- Accept local deletion (ephemeral cache)
-- `git rm .claude/intelligence-cache.json`
-
-**Step 6.** Resolve `.claude/platform-hygiene.json`:
-
-- Accept local deletion (ephemeral scan artifact)
-- `git rm .claude/platform-hygiene.json`
-
-**Step 7.** Resolve `scripts/lib/pipeline-detection.sh`:
-
-- Start from local version (has multi-lang environment detection)
-- Cherry-pick upstream's safety defaults: `PROJECT_ROOT="${PROJECT_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"` and similar `SCRIPT_DIR` default
-- Add upstream's comment change ("default branch prefix mapping")
-- Verify all upstream shellcheck directives are present
-
-**Step 8.** Resolve `scripts/sw-hygiene.sh`:
-
-- Start from local version (has timeout optimization + index scan)
-- Bump VERSION to `3.2.4`
-- Add upstream's shellcheck disable directives (SC2155, SC2046, SC2034, SC2038, SC2318)
-- Verify no upstream functional changes were lost
-
-**Step 9.** Resolve `scripts/sw-otel.sh`:
-
-- Start from local version (has Bash 3.2 array init + arithmetic fixes)
-- Bump VERSION to `3.2.4`
-- Add upstream's shellcheck disable directives (SC2034 etc.)
-- Keep local's `active_pipelines=$((active_pipelines - 1))` with bounds check
-
-**Step 10.** Resolve `scripts/sw-pipeline.sh`:
-
-- Start from local version (has 500-char goal compaction + artifact references)
-- Bump VERSION to `3.2.4`
-- Add upstream's `export SHIPWRIGHT_ACTIVE=1` and `export SHIPWRIGHT_SOURCE=pipeline` in `setup_dirs()`
-- Add upstream's `TEST_CMD_EXPLICIT` flag handling
-- Add upstream's shellcheck directives
-- Add upstream's composed pipeline cache TTL config lookup
-
-**Step 11.** Resolve `scripts/sw-tmux-status.sh`:
-
-- Keep local version (variable initialization fix)
-- Bump VERSION to `3.2.4`
-- Add upstream's `# shellcheck disable=SC2155` directive if not already present
-
-**Step 12.** Resolve `templates/pipelines/autonomous.json`:
-
-- Start from upstream version (has `audit` stage + full model names)
-- Remove `"test_cmd": "npm test"` from `defaults` (local fix #25)
-- Result: full model names + audit stage + no hardcoded test_cmd
-
-**Step 13.** Resolve `templates/pipelines/cost-aware.json`:
-
-- Same approach as autonomous.json
-- Remove `"test_cmd": "npm test"` from `defaults`
-- Keep upstream's full model IDs (`claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`)
-- Keep upstream's `audit` stage
-
-**Step 14.** Resolve `templates/pipelines/full.json`:
-
-- Same approach as autonomous.json
-- Remove `"test_cmd": "npm test"` from `defaults`
-- Keep upstream's full model names + audit stage with `blocking: true`
-
-### Phase 3: Finalize Merge (Steps 15–16)
-
-**Step 15.** Stage all resolved files:
-
-```bash
-git add -A
-```
-
-**Step 16.** Complete the merge commit:
-
-```bash
-git commit --no-edit
-```
-
-### Phase 4: Post-Merge Verification (Steps 17–18)
-
-**Step 17.** Check version consistency:
-
-- `package.json` should show `3.2.4` from auto-merge
-- Run `grep -r 'VERSION=' scripts/sw-*.sh | grep '3.1.0'` to find any scripts still at old version
-- If any remain, update them to `3.2.4`
-
-**Step 18.** Verify local fixes preserved:
-
-- Smart test targeting in `sw-loop.sh` (PRs #19–#22) — changes intact
-- Hardcoded test_cmd removal (PR #25) — no `"test_cmd": "npm test"` in templates
-- Status --json flag (PR #36) — `sw-status.sh` changes intact
-
-### Phase 5: Validation (Steps 19–22)
-
-**Step 19.** Run the full test suite:
-
-```bash
-npm test
-```
-
-All test suites must pass. If new upstream tests fail, investigate and fix.
-
-**Step 20.** Run version consistency check:
-
-```bash
-./scripts/check-version-consistency.sh
-```
-
-**Step 21.** Spot-check new upstream features:
-
-- Verify `audit` stage exists in pipeline template configs
-- Verify `.claudeignore` is present
-- Verify new dashboard Shipyard files exist
-- Verify Skipper submodule reference exists (`.gitmodules`)
-
-**Step 22.** Fix any test failures introduced by the merge.
-
-### Phase 6: PR (Step 23)
-
-**Step 23.** Open PR: `ci/chore-sync-fork-with-upstream-sethdford-37` → `main`
+---
 
 ## Task Checklist
 
-- [ ] Task 1: Fetch upstream and start merge (`git merge upstream/main --no-ff`)
-- [ ] Task 2: Resolve `.claude/CLAUDE.md` — keep local thin wrapper
-- [ ] Task 3: Resolve `.claude/intelligence-cache.json` and `.claude/platform-hygiene.json` — delete both
-- [ ] Task 4: Resolve `scripts/lib/pipeline-detection.sh` — merge local detection + upstream safety
-- [ ] Task 5: Resolve `scripts/sw-hygiene.sh` — merge local perf + upstream linting
-- [ ] Task 6: Resolve `scripts/sw-otel.sh` — merge local Bash 3.2 compat + upstream linting
-- [ ] Task 7: Resolve `scripts/sw-pipeline.sh` — merge local goal compaction + upstream env vars
-- [ ] Task 8: Resolve `scripts/sw-tmux-status.sh` — keep local + upstream SC2155
-- [ ] Task 9: Resolve 3 pipeline templates — remove test_cmd + keep audit stage + full model names
-- [ ] Task 10: Complete merge commit
-- [ ] Task 11: Verify version consistency (all files at 3.2.4)
-- [ ] Task 12: Verify local fixes preserved (smart targeting, test_cmd removal, status --json)
-- [ ] Task 13: Run `npm test` — full suite, 0 failures
-- [ ] Task 14: Fix any test failures from the merge
-- [ ] Task 15: Open PR: `ci/chore-sync-fork-with-upstream-sethdford-37` → `main`
+- [ ] Task 1.1: Add `_kill_process_group` helper to ruflo-adapter.sh
+- [ ] Task 1.2: Update line 404 to use `setsid`
+- [ ] Task 1.3: Replace `pkill -P` with process group kill
+- [ ] Task 1.4: Add `sleep 1` + SIGKILL to process group
+- [ ] Task 1.5: Verify temp cleanup on all paths
+- [ ] Task 2.1: Add Test 8 (10-iteration orphan check)
+- [ ] Task 2.2: Update test header comment
+- [ ] Task 3.1: Add baseline measurement to smoke test
+- [ ] Task 3.2: Add process delta check at smoke test end
+- [ ] Verify Test 8 passes with zero orphans
+- [ ] Verify smoke test shows process delta ≤ 3
+- [ ] Manual verification: 10 iterations with ≤1 proc delta per iteration
+
+---
 
 ## Testing Approach
 
-1. **Full test suite** (`npm test`): All 102+ test suites must pass
-2. **Version consistency**: `./scripts/check-version-consistency.sh` — all VERSION= headers, package.json, and README badge must read `3.2.4`
-3. **Spot-check new features**: Verify audit stage in templates, `.claudeignore` present, Shipyard dashboard files exist
-4. **Regression check**: Verify local fixes preserved:
-   - Smart test targeting (PRs #19–#22) — `sw-loop.sh` changes intact
-   - Hardcoded test_cmd removal (PR #25) — no `"test_cmd": "npm test"` in templates
-   - Status --json flag (PR #36) — `sw-status.sh` changes intact
-   - macOS broken pipe assertions (PR #17) — test hardening intact
+### Unit Tests
+1. `bash scripts/sw-ruflo-timeout-test.sh`
+   - All 8 tests pass (including new Test 8)
+   - No "sleep 999" orphans survive
+
+### Integration Tests
+1. `bash scripts/sw-e2e-smoke-test.sh`
+   - All smoke tests pass
+   - Process delta ≤ 3 (allow variance)
+
+### Manual Verification
+```bash
+# Run 10 iterations, measure leaked procs each time
+for i in {1..10}; do
+    _before=$(pgrep -c -f "node" 2>/dev/null || echo "0")
+    bash -c 'source scripts/lib/ruflo-adapter.sh; ruflo_store "test-$i" "val-$i" 2>/dev/null' || true
+    sleep 1
+    _after=$(pgrep -c -f "node" 2>/dev/null || echo "0")
+    _delta=$(( _after - _before ))
+    echo "Iteration $i: delta=$_delta procs"
+done
+```
+Success: All deltas ≤ 1
+
+---
+
+## Risk Analysis
+
+| Risk | Mitigation |
+|------|-----------|
+| `setsid` unavailable | Fallback to `pkill -P` (still better than nothing) |
+| Negative PID unsupported | Helper function catches error, falls back |
+| Grace period too short | 1 sec is conservative; Node responds <100ms |
+| Grace period too long | Acceptable; worst-case +260 secs for full test run |
+| EXIT trap interference | Only called once; no re-entrancy issues |
+| Flock contention | Process group kill ensures all locks released |
+| Temp file not cleaned | Cleanup code runs regardless of kill path |
+
+---
 
 ## Definition of Done
 
-- [ ] All 11 merge conflicts resolved correctly
-- [ ] Local bug fixes preserved (goal compaction, test_cmd removal, macOS compat, smart targeting)
-- [ ] Upstream features present (audit stage, context engineering, shellcheck fixes, intelligence defaults, Shipyard dashboard)
-- [ ] `package.json` version is `3.2.4`
-- [ ] `npm test` passes with 0 failures
-- [ ] Version consistency verified across all files
-- [ ] PR opened against `main` with clear description of merge resolution decisions
-- [ ] No regressions in pipeline stages, loop behavior, or status --json output
+✓ **Code changes merged**:
+- [ ] `_kill_process_group` helper implemented
+- [ ] `setsid` added to line 404
+- [ ] TERM→KILL sequence via process groups
+- [ ] Grace period implemented
+- [ ] Temp cleanup verified
 
-## Risks and Mitigations
+✓ **Tests passing**:
+- [ ] All 8 tests pass in sw-ruflo-timeout-test.sh
+- [ ] Smoke test shows delta ≤ 3
+- [ ] Manual 10-iteration test shows delta ≤ 1/iteration
 
-| Risk                                                                                           | Mitigation                                                                                 |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Shellcheck fixes in 163 upstream scripts may re-introduce warnings in locally modified scripts | Run shellcheck on locally-modified scripts post-merge                                      |
-| New upstream test suites may fail if they depend on features not present in fork's environment | Investigate failures individually; skip env-specific tests if needed                       |
-| Skipper submodule reference may not resolve (different repo access)                            | Verify `.gitmodules` URL is accessible; if not, skip submodule init                        |
-| Auto-merged files may have subtle semantic conflicts despite no textual conflicts              | Review auto-merged files for correctness, especially `sw-loop.sh` and `pipeline-stages.sh` |
-| Version 3.2.4 may not match expectations (issue says v3.2.0)                                   | Upstream has continued past v3.2.0; accept 3.2.4 as current upstream HEAD                  |
+✓ **Metrics verified**:
+- [ ] **Zero new orphaned processes** after timeout
+- [ ] **No FD hang regression** (Tests 1–7 still pass)
+- [ ] **10-iteration manual test** shows no unbounded leak
+
+---
+
+## Alternatives Considered
+
+| Alternative | Pros | Cons | Why Not |
+|-------------|------|------|---------|
+| Kill by name (`pkill -f "ruflo"`) | Simple | Kills unrelated processes, broad blast radius | Too risky |
+| GNU timeout --kill-after | Standard tool | Not on macOS, must fallback anyway | Bash 3.2 requires custom |
+| EXIT trap only | Single cleanup point | Doesn't clean mid-loop; 1.5GB leak persists | Doesn't solve issue |
+| **Process groups + TERM→KILL** | **Captures all descendants** | **Slightly more code** | **Selected — POSIX, reliable, works in bash 3.2+** |
+

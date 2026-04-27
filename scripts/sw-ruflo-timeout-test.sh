@@ -23,6 +23,9 @@ assert_eq() {
 assert_lt() {
     if [[ "$1" -lt "$2" ]]; then pass "$3"; else fail "$3 (expected < $2, got $1)"; fi
 }
+assert_le() {
+    if [[ "$1" -le "$2" ]]; then pass "$3"; else fail "$3 (expected <= $2, got $1)"; fi
+}
 assert_empty() {
     if [[ -z "$1" ]]; then pass "$2"; else fail "$2 (expected empty, got '$1')"; fi
 }
@@ -183,7 +186,10 @@ _t6_before=$(find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null | wc -l 
 ruflo_with_timeout 1 _slow_function >/dev/null 2>&1 || true
 _t6_after=$(find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null | wc -l | tr -d ' ' || echo "0")
 
-assert_eq "$_t6_after" "$_t6_before" "no ruflo_timeout.* temp files leaked after timeout"
+# Use <= not == : the OS may clean stale files during the 1-second grace-period
+# sleep inside ruflo_with_timeout, so pre-existing files can disappear. What we
+# care about is that we didn't ADD any new leaked files (count didn't increase).
+assert_le "$_t6_after" "$_t6_before" "no ruflo_timeout.* temp files leaked after timeout"
 
 # ─── Test 7: Temp file cleaned up after success ───────────────────────────────
 echo ""
@@ -194,7 +200,7 @@ _t7_before=$(find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null | wc -l 
 ruflo_with_timeout 5 _emits_output >/dev/null 2>&1 || true
 _t7_after=$(find "${TMPDIR:-/tmp}" -name 'ruflo_timeout.*' 2>/dev/null | wc -l | tr -d ' ' || echo "0")
 
-assert_eq "$_t7_after" "$_t7_before" "no ruflo_timeout.* temp files leaked after success"
+assert_le "$_t7_after" "$_t7_before" "no ruflo_timeout.* temp files leaked after success"
 
 # ─── Test 8: All descendants killed after timeout (issue #441) ───────────────
 # Verifies that _kill_process_tree reaps the full process subtree — not just

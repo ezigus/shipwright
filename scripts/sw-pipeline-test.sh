@@ -397,6 +397,8 @@ invoke_pipeline() {
     # the real ~/.shipwright/ (which may be outside sandbox write allowlists).
     # Isolate intelligence env vars from parent pipeline to prevent test pollution.
     # Tests that need these should set _TEST_INTELLIGENCE_COMPLEXITY instead.
+    # SHIPWRIGHT_MIN_FREE_GB=0 disables the memory threshold so pipeline unit
+    # tests are not affected by the host's actual available RAM.
     PIPELINE_OUTPUT=$(
         cd "$TEST_TEMP_DIR/project"
         HOME="$TEST_TEMP_DIR" \
@@ -404,6 +406,7 @@ invoke_pipeline() {
         PATH="$TEST_TEMP_DIR/bin:$PATH" \
         INTELLIGENCE_COMPLEXITY="${_TEST_INTELLIGENCE_COMPLEXITY:-}" \
         INTELLIGENCE_ISSUE_TYPE="${_TEST_INTELLIGENCE_ISSUE_TYPE:-}" \
+        SHIPWRIGHT_MIN_FREE_GB=0 \
         bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
     ) || PIPELINE_EXIT=$?
 }

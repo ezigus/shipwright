@@ -428,7 +428,7 @@ ruflo_with_timeout() {
     # process tree on timeout — covers both shell functions and external binaries
     # that spawn Node children (e.g. ruflo agentdb workers). (#426, #441)
     local _rft_tmp
-    if ! _rft_tmp=$(mktemp "${TMPDIR}/ruflo_timeout.XXXXXX" 2>/dev/null); then
+    if ! _rft_tmp=$(mktemp "${TMPDIR:-/tmp}/ruflo_timeout.XXXXXX" 2>/dev/null); then
         # mktemp failed (e.g. /tmp full or unwriteable).  Ruflo is fail-open:
         # trip the circuit breaker without running the command so this error
         # cannot abort the calling pipeline via set -e.

@@ -259,13 +259,11 @@ ruflo_init() {
         if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
             _hive_init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
                 --topology hierarchical \
-                --max-agents "$_hive_max_agents" \
-                --output-format json 2>/dev/null) || _hive_init_exit=$?
+                --max-agents "$_hive_max_agents" 2>/dev/null) || _hive_init_exit=$?
         else
             _hive_init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
                 --topology hierarchical \
-                --max-agents "$_hive_max_agents" \
-                --output-format json 2>/dev/null) || _hive_init_exit=$?
+                --max-agents "$_hive_max_agents" 2>/dev/null) || _hive_init_exit=$?
         fi
         # Clear any stale inherited RUFLO_HIVE_ID before evaluating init result.
         # The env-inherit pattern (${VAR:-}) means a stale value from a parent
@@ -273,8 +271,10 @@ ruflo_init() {
         # would cause the success branch to run on a stale/invalid hive ID.
         RUFLO_HIVE_ID=""
         if [[ $_hive_init_exit -eq 0 ]]; then
+            # --output-format json is ignored by ruflo hive-mind init; it always
+            # emits an ASCII table. Extract the hive ID directly from the table row.
             RUFLO_HIVE_ID=$(printf '%s' "$_hive_init_out" | \
-                jq -r '.hive_id // empty' 2>/dev/null || true)
+                grep -oE 'hive-[0-9]+-[a-z0-9]+' | head -1 || true)
         fi
         if [[ -n "${RUFLO_HIVE_ID:-}" ]]; then
             RUFLO_HIVE_AVAILABLE=true

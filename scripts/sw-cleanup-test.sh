@@ -167,6 +167,8 @@ assert_contains "summary shows --force hint" "$output" "--force"
 # ─── Test 11: --test-orphans flag ─────────────────────────────────────────
 echo ""
 echo -e "${BOLD}  Test Orphan Reaper${RESET}"
+# Pre-clean any orphans from previous test runs so the assertion below sees a clean state.
+bash "$SCRIPT_DIR/sw-cleanup.sh" --test-orphans >/dev/null 2>&1 || true
 output=$(bash "$SCRIPT_DIR/sw-cleanup.sh" --test-orphans 2>&1) && rc=0 || rc=$?
 assert_eq "--test-orphans exits zero" "0" "$rc"
 assert_contains "--test-orphans reports no orphans" "$output" "No orphaned test processes found"

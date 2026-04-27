@@ -4393,13 +4393,23 @@ const server = Bun.serve({
             },
           );
         }
+        const sanitizeHost = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 253);
+        const sanitizeSshUser = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 64);
+        const sanitizeSwPath = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-/]/g, "").slice(0, 256);
         const newMachine: Record<string, unknown> = {
           name,
-          host,
+          host: sanitizeHost(host),
           role: (body.role as string) || "worker",
-          max_workers: (body.max_workers as number) || 4,
-          ssh_user: (body.ssh_user as string) || undefined,
-          shipwright_path: (body.shipwright_path as string) || undefined,
+          max_workers: parseInt(String(body.max_workers ?? 4), 10) || 4,
+          ssh_user: body.ssh_user
+            ? sanitizeSshUser(body.ssh_user as string)
+            : undefined,
+          shipwright_path: body.shipwright_path
+            ? sanitizeSwPath(body.shipwright_path as string)
+            : undefined,
           registered_at: new Date().toISOString(),
         };
         data.machines.push(newMachine);
@@ -4457,21 +4467,38 @@ const server = Bun.serve({
             },
           );
         }
+        const patchSanitizeHost = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 253);
+        const patchSanitizeSshUser = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 64);
+        const patchSanitizeSwPath = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-/]/g, "").slice(0, 256);
         // Update allowed fields
         if (body.max_workers !== undefined)
-          data.machines[idx].max_workers = body.max_workers;
+          data.machines[idx].max_workers =
+            parseInt(String(body.max_workers), 10) || 0;
         if (body.role !== undefined) data.machines[idx].role = body.role;
         if (body.ssh_user !== undefined)
-          data.machines[idx].ssh_user = body.ssh_user;
+          data.machines[idx].ssh_user = patchSanitizeSshUser(
+            body.ssh_user as string,
+          );
         if (body.shipwright_path !== undefined)
-          data.machines[idx].shipwright_path = body.shipwright_path;
+          data.machines[idx].shipwright_path = patchSanitizeSwPath(
+            body.shipwright_path as string,
+          );
+        if (body.host !== undefined)
+          data.machines[idx].host = patchSanitizeHost(body.host as string);
 
         // If scaling, attempt to send command to remote machine
         if (body.max_workers !== undefined) {
           const machine = data.machines[idx];
-          const sshUser = (machine.ssh_user as string) || "";
-          const mHost = (machine.host as string) || "";
-          const swPath = (machine.shipwright_path as string) || "shipwright";
+          const sshUser = patchSanitizeSshUser(
+            (machine.ssh_user as string) || "",
+          );
+          const mHost = patchSanitizeHost((machine.host as string) || "");
+          const swPath = patchSanitizeSwPath(
+            (machine.shipwright_path as string) || "shipwright",
+          );
           if (
             sshUser &&
             mHost &&
@@ -4479,8 +4506,9 @@ const server = Bun.serve({
             mHost !== "127.0.0.1"
           ) {
             try {
+              const maxWorkers = parseInt(String(body.max_workers), 10) || 0;
               execSync(
-                `ssh -o ConnectTimeout=5 ${sshUser}@${mHost} "${swPath} daemon scale ${body.max_workers}" 2>/dev/null`,
+                `ssh -o ConnectTimeout=5 ${sshUser}@${mHost} "${swPath} daemon scale ${maxWorkers}" 2>/dev/null`,
                 { timeout: 10000 },
               );
             } catch {
@@ -4526,9 +4554,17 @@ const server = Bun.serve({
           );
         }
 
-        const sshUser = (machine.ssh_user as string) || "";
-        const mHost = (machine.host as string) || "";
-        const swPath = (machine.shipwright_path as string) || "shipwright";
+        const sanitizeSshUserR = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 64);
+        const sanitizeHostR = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 253);
+        const sanitizeSwPathR = (s: string) =>
+          s.replace(/[^a-zA-Z0-9._\-/]/g, "").slice(0, 256);
+        const sshUser = sanitizeSshUserR((machine.ssh_user as string) || "");
+        const mHost = sanitizeHostR((machine.host as string) || "");
+        const swPath = sanitizeSwPathR(
+          (machine.shipwright_path as string) || "shipwright",
+        );
         let daemonRunning = false;
         let reachable = false;
 

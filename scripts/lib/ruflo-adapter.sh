@@ -146,6 +146,7 @@ ruflo_load_defaults() {
     if [[ -n "$_v" ]] && [[ "$_v" =~ ^[0-9]+$ ]]; then
         RUFLO_CIRCUIT_BREAKER_TIMEOUT="$_v"; export RUFLO_CIRCUIT_BREAKER_TIMEOUT
     fi
+    RUFLO_RECALL_TIMEOUT="${RUFLO_RECALL_TIMEOUT:-30}"; export RUFLO_RECALL_TIMEOUT
 
     _v=$(jq -r '(.ruflo.learning_bridge | select(. != null)) | tostring' "$_defaults_file" 2>/dev/null || true)
     [[ -n "$_v" ]] && { RUFLO_LEARNING_BRIDGE="$_v"; export RUFLO_LEARNING_BRIDGE; }
@@ -491,7 +492,7 @@ ruflo_store() {
 ruflo_recall() {
     ruflo_available || { echo ""; return 0; }
     local query="$1" namespace="${2:-default}"
-    ruflo_with_timeout "${RUFLO_CIRCUIT_BREAKER_TIMEOUT:-10}" _ruflo_run_quiet memory search \
+    ruflo_with_timeout "${RUFLO_RECALL_TIMEOUT:-30}" _ruflo_run_quiet memory search \
         --query "$query" --namespace "$namespace" --limit 3 || echo ""
 }
 

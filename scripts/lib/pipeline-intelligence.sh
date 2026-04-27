@@ -1389,6 +1389,55 @@ _cleanup_cycle_files() {
     rm -f "$ARTIFACTS_DIR"/negative-review-cycle*.md 2>/dev/null || true
 }
 
+# pipeline_run_ruflo_cq_hive — invoke ruflo adversarial quality hive (issue #418)
+# Runs ruflo_execute_compound_quality once per stage to collect parallel
+# adversarial findings (negative tests, DoD audit, E2E coverage) before the
+# native cascade begins. Findings are written to artifact_file so the cascade
+# audit agents and downstream consumers can ingest hive context.
+#
+# Usage: pipeline_run_ruflo_cq_hive <diff_content> <artifact_file>
+# Returns 0 when hive completed and produced findings; 1 otherwise.
+# Always fail-open — caller continues native checks regardless of return code.
+#
+# Env knobs:
+#   RUFLO_CQ_ENABLED — set to "false" to opt out (default: enabled when ruflo
+#                      is available). Native checks always run regardless.
+pipeline_run_ruflo_cq_hive() {
+    local diff_content="${1:-}"
+    local artifact_file="${2:-}"
+    [[ -n "$artifact_file" ]] || return 1
+
+    # Opt-out gate: explicit false skips the hive without trying ruflo.
+    if [[ "${RUFLO_CQ_ENABLED:-true}" == "false" ]]; then
+        emit_event "ruflo.cq_skipped" "reason=disabled" 2>/dev/null || true
+        return 1
+    fi
+
+    # Capability gate: adapter functions must be loaded and ruflo available.
+    if ! declare -f ruflo_execute_compound_quality >/dev/null 2>&1 \
+        || ! declare -f ruflo_available >/dev/null 2>&1 \
+        || ! ruflo_available; then
+        emit_event "ruflo.cq_skipped" "reason=unavailable" 2>/dev/null || true
+        return 1
+    fi
+
+    # Empty diff means nothing to audit — skip without burning a hive.
+    if [[ -z "$diff_content" ]]; then
+        emit_event "ruflo.cq_skipped" "reason=empty_diff" 2>/dev/null || true
+        return 1
+    fi
+
+    if ruflo_execute_compound_quality "$diff_content" "$artifact_file"; then
+        info "Ruflo adversarial quality hive complete"
+        emit_event "ruflo.cq_complete" "stage=compound_quality" 2>/dev/null || true
+        return 0
+    fi
+
+    warn "Ruflo compound quality hive failed — continuing with native checks"
+    emit_event "ruflo.cq_fallback" "reason=hive_failed" 2>/dev/null || true
+    return 1
+}
+
 stage_compound_quality() {
     CURRENT_STAGE_ID="compound_quality"
 
@@ -1579,6 +1628,25 @@ stage_compound_quality() {
     local _cascade_plan=""
     if [[ -f "$ARTIFACTS_DIR/plan.md" ]]; then
         _cascade_plan=$(head -200 "$ARTIFACTS_DIR/plan.md" 2>/dev/null) || true
+    fi
+
+    # ── Ruflo adversarial quality hive (issue #418) ──
+    # Run the parallel adversarial quality hive once per stage. Findings are
+    # written to a sidecar artifact (cq-hive-context.md) and a bounded head is
+    # injected into _cascade_plan so audit agents see hive results as context.
+    # Fail-open: native checks proceed regardless of hive outcome.
+    local _hive_cq_file="$ARTIFACTS_DIR/cq-hive-context.md"
+    if pipeline_run_ruflo_cq_hive "$_cascade_diff" "$_hive_cq_file"; then
+        if [[ -s "$_hive_cq_file" ]]; then
+            local _hive_cq_head
+            _hive_cq_head=$(head -c 3000 "$_hive_cq_file" 2>/dev/null || true)
+            if [[ -n "$_hive_cq_head" ]]; then
+                _cascade_plan="${_cascade_plan}
+
+## Ruflo Adversarial Quality Hive Findings
+${_hive_cq_head}"
+            fi
+        fi
     fi
 
     # Collect full file contents to provide ground truth for import/symbol verification

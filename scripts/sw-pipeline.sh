@@ -3276,14 +3276,16 @@ pipeline_start() {
         optimize_analyze_outcome "$STATE_FILE" 2>/dev/null || true
     fi
 
-    # Auto-learn after pipeline completion (non-blocking)
+    # Auto-learn after pipeline completion (non-blocking).
+    # Both stdout and stderr are suppressed so this background subshell does not
+    # hold the write end of the "| tee" pipe open after the pipeline exits.
     if type optimize_tune_templates &>/dev/null; then
         (
             optimize_tune_templates 2>/dev/null
             optimize_learn_iterations 2>/dev/null
             optimize_route_models 2>/dev/null
             optimize_learn_risk_keywords 2>/dev/null
-        ) &
+        ) >/dev/null 2>&1 &
     fi
 
     if type memory_finalize_pipeline >/dev/null 2>&1; then

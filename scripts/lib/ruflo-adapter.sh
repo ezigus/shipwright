@@ -403,8 +403,12 @@ _kill_process_tree() {
 }
 
 # ─── ruflo_with_timeout — run a ruflo command with recoverable circuit-breaker ─
-# Shell functions are run in a background subshell + poll so they get a real
-# wall-clock bound (timeout(1) can only exec binaries, not functions).
+# All commands run in a background subshell with stdout to a temp file and BFS
+# process-tree kill on timeout.  This handles both shell functions (which
+# timeout(1) cannot exec) and external binaries (whose Node child processes
+# timeout(1) does not kill recursively).  The temp file severs the $() pipe FD
+# so the caller unblocks immediately on timeout regardless of surviving
+# grandchildren. (#426, #441)
 # Failures increment RUFLO_FAILURE_COUNT; ruflo is only disabled after
 # RUFLO_MAX_FAILURES (default 5) consecutive failures — transient errors recover.
 # Usage: ruflo_with_timeout <seconds> <command...>
@@ -418,80 +422,60 @@ ruflo_with_timeout() {
     fi
 
     local exit_code=0
-    local cmd_type
-    cmd_type=$(type -t "$1" 2>/dev/null || true)
-
-    if [[ "$cmd_type" == "function" ]]; then
-        # Shell functions can't be exec'd by timeout(1) — run in background
-        # subshell and poll until done or wall-clock limit reached.
-        #
-        # Stdout is redirected to a temp file rather than inheriting the $()
-        # pipe FD.  Without this, orphaned grandchildren (e.g. npx processes
-        # spawned by the ruflo binary) keep the write end of the pipe open
-        # even after pkill kills the direct child, so the enclosing $() at the
-        # call site blocks indefinitely despite the circuit breaker firing.
-        # Writing to a regular file severs that FD chain: $() unblocks as soon
-        # as ruflo_with_timeout returns, regardless of surviving grandchildren.
-        # See issue #426.
-        local _rft_tmp
-        if ! _rft_tmp=$(mktemp "${TMPDIR:-/tmp}/ruflo_timeout.XXXXXX" 2>/dev/null); then
-            # mktemp failed (e.g. /tmp full or unwriteable).  Ruflo is fail-open:
-            # trip the circuit breaker without running the command so this error
-            # cannot abort the calling pipeline via set -e.
-            exit_code=1
-        else
-            # Defensive trap: clean up the temp file even when the process is
-            # killed externally (e.g. SIGTERM from a test-runner timeout). The
-            # explicit rm -f below handles the normal path; this trap is the
-            # safety net for unexpected termination. (#441)
-            # shellcheck disable=SC2064
-            trap "rm -f '$_rft_tmp' 2>/dev/null || true" EXIT TERM
-            ( "$@" ) >"$_rft_tmp" &
-            local bg_pid=$!
-            # Poll with adaptive backoff: 0.1s for the first 10 ticks (1 s fast
-            # window) to handle short-lived operations cheaply, then 1s intervals
-            # for the remainder. Avoids the 10x scheduler overhead of flat 0.1s
-            # polling while still responding quickly to fast MCP/mock calls. (#441)
-            local waited_ds=0
-            local timeout_ds=$(( timeout_s * 10 ))
-            while kill -0 "$bg_pid" 2>/dev/null && [[ "$waited_ds" -lt "$timeout_ds" ]]; do
-                if [[ "$waited_ds" -lt 10 ]]; then
-                    sleep 0.1
-                    waited_ds=$(( waited_ds + 1 ))
-                else
-                    sleep 1
-                    waited_ds=$(( waited_ds + 10 ))
-                fi
-            done
-            if kill -0 "$bg_pid" 2>/dev/null; then
-                # Kill the entire process subtree so grandchildren (e.g. Node
-                # agentdb workers spawned by ruflo) are reaped alongside the
-                # direct child. SIGTERM first; SIGKILL after 1 s grace period
-                # for processes that need time to flush/clean up. (#441)
-                _kill_process_tree TERM "$bg_pid"
-                sleep 1
-                _kill_process_tree KILL "$bg_pid"
-                wait "$bg_pid" 2>/dev/null || true
-                rm -f "$_rft_tmp"
-                trap - EXIT TERM
-                exit_code=124  # match timeout(1)'s exit code
-            else
-                wait "$bg_pid" 2>/dev/null || exit_code=$?
-                if [[ $exit_code -eq 0 ]]; then
-                    cat "$_rft_tmp" 2>/dev/null || true
-                fi
-                rm -f "$_rft_tmp"
-                trap - EXIT TERM
-            fi
-        fi  # mktemp guard
-    elif type _timeout >/dev/null 2>&1; then
-        _timeout "$timeout_s" "$@" || exit_code=$?
-    elif command -v timeout >/dev/null 2>&1; then
-        timeout "$timeout_s" "$@" || exit_code=$?
+    # Run every command in a background subshell so we can BFS-kill the full
+    # process tree on timeout — covers both shell functions and external binaries
+    # that spawn Node children (e.g. ruflo agentdb workers). (#426, #441)
+    local _rft_tmp
+    if ! _rft_tmp=$(mktemp "${TMPDIR:-/tmp}/ruflo_timeout.XXXXXX" 2>/dev/null); then
+        # mktemp failed (e.g. /tmp full or unwriteable).  Ruflo is fail-open:
+        # trip the circuit breaker without running the command so this error
+        # cannot abort the calling pipeline via set -e.
+        exit_code=1
     else
-        # No timeout binary available — run directly (no wall-clock bound)
-        "$@" || exit_code=$?
-    fi
+        # Defensive trap: clean up the temp file even when the process is
+        # killed externally (e.g. SIGTERM from a test-runner timeout). The
+        # explicit rm -f below handles the normal path; this trap is the
+        # safety net for unexpected termination. (#441)
+        # shellcheck disable=SC2064
+        trap "rm -f '$_rft_tmp' 2>/dev/null || true" EXIT TERM
+        ( "$@" ) >"$_rft_tmp" &
+        local bg_pid=$!
+        # Poll with adaptive backoff: 0.1s for the first 10 ticks (1 s fast
+        # window) to handle short-lived operations cheaply, then 1s intervals
+        # for the remainder. Avoids the 10x scheduler overhead of flat 0.1s
+        # polling while still responding quickly to fast MCP/mock calls. (#441)
+        local waited_ds=0
+        local timeout_ds=$(( timeout_s * 10 ))
+        while kill -0 "$bg_pid" 2>/dev/null && [[ "$waited_ds" -lt "$timeout_ds" ]]; do
+            if [[ "$waited_ds" -lt 10 ]]; then
+                sleep 0.1
+                waited_ds=$(( waited_ds + 1 ))
+            else
+                sleep 1
+                waited_ds=$(( waited_ds + 10 ))
+            fi
+        done
+        if kill -0 "$bg_pid" 2>/dev/null; then
+            # Kill the entire process subtree so grandchildren (e.g. Node
+            # agentdb workers spawned by ruflo) are reaped alongside the
+            # direct child. SIGTERM first; SIGKILL after 1 s grace period
+            # for processes that need time to flush/clean up. (#441)
+            _kill_process_tree TERM "$bg_pid"
+            sleep 1
+            _kill_process_tree KILL "$bg_pid"
+            wait "$bg_pid" 2>/dev/null || true
+            rm -f "$_rft_tmp"
+            trap - EXIT TERM
+            exit_code=124  # match timeout(1)'s exit code
+        else
+            wait "$bg_pid" 2>/dev/null || exit_code=$?
+            if [[ $exit_code -eq 0 ]]; then
+                cat "$_rft_tmp" 2>/dev/null || true
+            fi
+            rm -f "$_rft_tmp"
+            trap - EXIT TERM
+        fi
+    fi  # mktemp guard
 
     if [[ $exit_code -ne 0 ]]; then
         RUFLO_FAILURE_COUNT=$(( RUFLO_FAILURE_COUNT + 1 ))

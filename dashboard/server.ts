@@ -5409,7 +5409,9 @@ const server = Bun.serve({
           }
           // If no token provided but tokens exist, check if developer is already registered
           else {
-            const existingKey = `${body.developer_id}@${body.machine_name}`;
+            const sanitizeForCheck = (s: string) =>
+              (s || "").replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 64);
+            const existingKey = `${body.developer_id}@${sanitizeForCheck(body.machine_name as string)}`;
             if (!developerRegistry.has(existingKey)) {
               return new Response(
                 JSON.stringify({
@@ -5428,12 +5430,15 @@ const server = Bun.serve({
           }
         }
 
-        const key = `${body.developer_id}@${body.machine_name}`;
+        const sanitizeMachineName = (s: string) =>
+          (s || "").replace(/[^a-zA-Z0-9._\-]/g, "").slice(0, 64);
+        const machineName = sanitizeMachineName(body.machine_name as string);
+        const key = `${body.developer_id}@${machineName}`;
 
         developerRegistry.set(key, {
           developer_id: body.developer_id,
-          machine_name: body.machine_name,
-          hostname: body.hostname || body.machine_name,
+          machine_name: machineName,
+          hostname: body.hostname || machineName,
           platform: body.platform || "unknown",
           last_heartbeat: Date.now(),
           daemon_running: body.daemon_running || false,
@@ -5452,7 +5457,7 @@ const server = Bun.serve({
               JSON.stringify({
                 ...e,
                 from_developer: body.developer_id,
-                from_machine: body.machine_name,
+                from_machine: machineName,
               }),
             )
             .join("\n");

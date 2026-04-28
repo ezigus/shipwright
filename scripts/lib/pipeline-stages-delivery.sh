@@ -26,13 +26,18 @@ stage_pr() {
 
     # ── Ruflo: recall audit/review context from prior stages (fail-open) ──
     # Bookend lives before the local-mode skip so memory is always read/written.
+    # Use output redirection (not $()) so the function runs in the current
+    # shell — required when ruflo_recall is a mock that records side effects.
     local audit_summary=""
     if declare -f ruflo_recall >/dev/null 2>&1 && \
        declare -f ruflo_available >/dev/null 2>&1 && \
        ruflo_available; then
-        local _ruflo_pr_ctx
-        _ruflo_pr_ctx=$(ruflo_recall "audit and review findings for ${TASK_TYPE:-feature}" \
-            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" 2>/dev/null || true)
+        local _ruflo_pr_tmp _ruflo_pr_ctx=""
+        _ruflo_pr_tmp=$(mktemp 2>/dev/null) || _ruflo_pr_tmp="${ARTIFACTS_DIR:-/tmp}/.ruflo-pr-recall.$$"
+        ruflo_recall "audit and review findings for ${TASK_TYPE:-feature}" \
+            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" > "$_ruflo_pr_tmp" 2>/dev/null || true
+        [[ -s "$_ruflo_pr_tmp" ]] && _ruflo_pr_ctx=$(cat "$_ruflo_pr_tmp" 2>/dev/null || true)
+        rm -f "$_ruflo_pr_tmp"
         # Sanitize: strip header lines + control chars, truncate to keep PR body tight
         if [[ -n "$_ruflo_pr_ctx" ]]; then
             _ruflo_pr_ctx=$(printf '%s\n' "${_ruflo_pr_ctx}" \

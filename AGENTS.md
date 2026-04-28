@@ -810,7 +810,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-compound-audit-test.sh` | 795 |  |
 | `scripts/sw-lib-daemon-dispatch-test.sh` | 414 | Unit tests for spawn/reap/queue |
 | `scripts/sw-lib-daemon-failure-test.sh` | 213 | Unit tests for failure handling |
-| `scripts/sw-lib-daemon-patrol-test.sh` | 343 | Unit tests for all patrol functions |
+| `scripts/sw-lib-daemon-patrol-test.sh` | 406 | Unit tests for all patrol functions |
 | `scripts/sw-lib-daemon-poll-test.sh` | 344 | Unit tests for poll, health, cleanup |
 | `scripts/sw-lib-daemon-state-test.sh` | 383 | Unit tests for state management |
 | `scripts/sw-lib-daemon-triage-test.sh` | 267 | Unit tests for triage scoring |

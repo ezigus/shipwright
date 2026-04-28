@@ -443,7 +443,7 @@ ruflo_with_timeout() {
         # safety net for unexpected termination. (#441)
         # shellcheck disable=SC2064
         trap "rm -f '$_rft_tmp' 2>/dev/null || true" EXIT TERM
-        ( "$@" ) >"$_rft_tmp" &
+        ( "$@" ) >"$_rft_tmp" 2>/dev/null &
         local bg_pid=$!
         # Poll with adaptive backoff: 0.1s for the first 10 ticks (1 s fast
         # window) to handle short-lived operations cheaply, then 1s intervals

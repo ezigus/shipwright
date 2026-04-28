@@ -336,6 +336,10 @@ ${last_error}"
     local stuckness_detected=false
     [[ "$_stuck_ret" -eq 0 ]] && stuckness_detected=true
 
+    # Propagate stuckness verdict to caller (run_claude_iteration/run_single_agent_loop)
+    # so loop can be halted immediately when stuckness is detected on THIS iteration
+    export STUCKNESS_DETECTED_THIS_ITERATION="$stuckness_detected"
+
     # Strategy exploration when stuck — inject as a dedicated section, NOT appended to GOAL.
     # Appending to GOAL mixes "implement these tasks" with "try a different approach" in the
     # same section, creating contradictory directives. Keep them separate.

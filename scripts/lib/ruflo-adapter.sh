@@ -443,6 +443,10 @@ ruflo_with_timeout() {
         # safety net for unexpected termination. (#441)
         # shellcheck disable=SC2064
         trap "rm -f '$_rft_tmp' 2>/dev/null || true" EXIT TERM
+        # stderr is suppressed rather than merged into _rft_tmp intentionally:
+        # callers often capture output via $() and expect clean text/JSON; mixing
+        # stderr would corrupt those values.  ruflo_with_timeout emits its own
+        # warn()/emit_event diagnostics on failure via the circuit-breaker path. (#484)
         ( "$@" ) >"$_rft_tmp" 2>/dev/null &
         local bg_pid=$!
         # Poll with adaptive backoff: 0.1s for the first 10 ticks (1 s fast

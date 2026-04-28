@@ -2626,6 +2626,18 @@ ${GOAL}"
             return 1
         fi
 
+        # Honor stuckness detection: if detect_stuckness() returned success this iteration,
+        # halt immediately with status: stuck (not stuck_restart). This prevents the
+        # infinite loop where Claude keeps getting spawned despite hitting stuckness.
+        if [[ "${STUCKNESS_DETECTED_THIS_ITERATION:-false}" == "true" ]]; then
+            STATUS="stuck"
+            write_state
+            write_progress
+            warn "Stuckness detected on iteration $ITERATION — halting loop with status: stuck"
+            show_summary
+            return 1
+        fi
+
         # Context exhaustion prevention — check cumulative token usage
         if type check_context_exhaustion >/dev/null 2>&1 && check_context_exhaustion; then
             local _ctx_pct

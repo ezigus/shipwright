@@ -279,33 +279,33 @@ echo -e "${BOLD}  8. Merge Deduplication (auto-retry)${RESET}"
 # Simulate:
 #   printf '%s\n%s\n' "$RAW_STAGES" "$BRANCH_STAGES" | sort -u | grep -v '^$'
 
+# merge_stages mirrors production line 220 of shipwright-auto-retry.yml exactly:
+#   printf '%s\n%s\n' "$RAW_STAGES" "$BRANCH_STAGES" | sort -u | grep -v '^$' || true
+# Both inputs must be newline-separated (as they are in the real workflow).
 merge_stages() {
     local RAW_STAGES="$1"
     local BRANCH_STAGES="$2"
     printf '%s\n%s\n' "$RAW_STAGES" "$BRANCH_STAGES" \
-        | tr ',' '\n' \
         | sort -u \
         | grep -v '^$' \
-        | tr '\n' ',' \
-        | sed 's/,$//' \
         || true
 }
 
-# Overlapping entries — no duplicates in result
-MERGED=$(merge_stages "intake,plan,design" "intake,plan")
-INTAKE_COUNT=$(printf '%s' "$MERGED" | tr ',' '\n' | grep -cxF "intake" || true)
+# Overlapping entries — no duplicates in result (newline-separated inputs)
+MERGED=$(merge_stages "$(printf 'intake\nplan\ndesign\n')" "$(printf 'intake\nplan\n')")
+INTAKE_COUNT=$(printf '%s' "$MERGED" | grep -cxF "intake" || true)
 assert_eq "merge: 'intake' appears exactly once" "1" "$INTAKE_COUNT"
 
-PLAN_COUNT=$(printf '%s' "$MERGED" | tr ',' '\n' | grep -cxF "plan" || true)
+PLAN_COUNT=$(printf '%s' "$MERGED" | grep -cxF "plan" || true)
 assert_eq "merge: 'plan' appears exactly once" "1" "$PLAN_COUNT"
 
-DESIGN_COUNT=$(printf '%s' "$MERGED" | tr ',' '\n' | grep -cxF "design" || true)
+DESIGN_COUNT=$(printf '%s' "$MERGED" | grep -cxF "design" || true)
 assert_eq "merge: 'design' included from RAW_STAGES only" "1" "$DESIGN_COUNT"
 
 # Disjoint sets — all entries present
-MERGED2=$(merge_stages "intake,plan" "design,build")
+MERGED2=$(merge_stages "$(printf 'intake\nplan\n')" "$(printf 'design\nbuild\n')")
 for s in intake plan design build; do
-    if printf '%s' "$MERGED2" | tr ',' '\n' | grep -qxF "$s"; then
+    if printf '%s' "$MERGED2" | grep -qxF "$s"; then
         assert_pass "merge disjoint: '$s' present in result"
     else
         assert_fail "merge disjoint: '$s' present in result" "'$s' missing from: $MERGED2"
@@ -313,9 +313,17 @@ for s in intake plan design build; do
 done
 
 # Empty RAW_STAGES — result equals BRANCH_STAGES
-MERGED3=$(merge_stages "" "intake,plan")
-assert_contains "merge: empty RAW uses BRANCH_STAGES" "$MERGED3" "intake"
-assert_contains "merge: empty RAW uses BRANCH_STAGES" "$MERGED3" "plan"
+MERGED3=$(merge_stages "" "$(printf 'intake\nplan\n')")
+if printf '%s' "$MERGED3" | grep -qxF "intake"; then
+    assert_pass "merge: empty RAW uses BRANCH_STAGES (intake)"
+else
+    assert_fail "merge: empty RAW uses BRANCH_STAGES (intake)" "got: $MERGED3"
+fi
+if printf '%s' "$MERGED3" | grep -qxF "plan"; then
+    assert_pass "merge: empty RAW uses BRANCH_STAGES (plan)"
+else
+    assert_fail "merge: empty RAW uses BRANCH_STAGES (plan)" "got: $MERGED3"
+fi
 
 # Both empty — result is empty
 MERGED4=$(merge_stages "" "")

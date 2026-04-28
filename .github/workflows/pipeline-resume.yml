@@ -50,25 +50,30 @@ jobs:
           set -euo pipefail
           BRANCH="shipwright/issue-${ISSUE_NUMBER}"
 
-          # ── 1. Guard: bail if a pipeline run is already in progress ──────────
+          # ── 1. Guard: bail if a pipeline run for this issue is already in progress ─
+          # Filter by displayTitle (run-name: "Shipwright Pipeline #N") to avoid
+          # blocking resumes for different issues — the pipeline has per-issue
+          # concurrency groups already, so repo-wide detection would be too broad.
           ACTIVE=$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow shipwright-pipeline.yml \
-            --json status \
-            --jq '[.[] | select(.status == "in_progress" or .status == "queued")] | length' \
+            --status in_progress \
+            --limit 50 \
+            --json displayTitle \
+            --jq "[.[] | select(.displayTitle | contains(\"#${ISSUE_NUMBER}\"))] | length" \
             2>/dev/null || echo "0")
           if [[ "${ACTIVE:-0}" -gt 0 ]]; then
-            echo "A Shipwright Pipeline run is already in progress or queued — aborting resume to avoid duplicate work."
+            echo "A Shipwright Pipeline run for issue #${ISSUE_NUMBER} is already in progress — aborting resume."
             gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$(cat <<EOF
           :warning: **Pipeline Resume Aborted**
 
-          A pipeline run is already **in progress or queued** for this repository.
+          A pipeline run for issue #${ISSUE_NUMBER} is already **in progress**.
           Resume was not dispatched to avoid duplicate work.
 
           Check [workflow runs](${{ github.server_url }}/${{ github.repository }}/actions/workflows/shipwright-pipeline.yml) and retry once the active run finishes.
           EOF
           )"
-            exit 1
+            exit 0
           fi
 
           # ── 2. Resolve completed stages ──────────────────────────────────────

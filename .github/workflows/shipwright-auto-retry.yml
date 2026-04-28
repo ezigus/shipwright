@@ -211,7 +211,8 @@ jobs:
             BRANCH_STAGES=$(printf '%s' "$STATE_B64" | base64 -d 2>/dev/null \
               | grep -E '^\s+[a-z_]+: complete' \
               | sed 's/^[[:space:]]*//' \
-              | sed 's/: complete$//' || true)
+              | sed 's/: complete$//' \
+              | sort -u || true)
           fi
           # Merge both sources; keep newline-separated through the merge for correct sort -u deduplication
           RAW_STAGES=$(printf '%s\n%s\n' "$RAW_STAGES" "$BRANCH_STAGES" | sort -u | grep -v '^$' || true)

@@ -598,8 +598,7 @@ jobs:
         if: steps.claim_check.outputs.skip != 'true' && env.AUTH_SKIP != 'true'
         id: pipeline
         run: |
-          set +e          # Don't abort on failure — we capture the exit code
-          set -o pipefail # CRITICAL: preserve pipeline exit code through | tee
+          set +e  # Don't abort on failure — we capture the exit code
 
           PIPELINE_ARGS=(
             --issue "$ISSUE_NUMBER"
@@ -634,12 +633,27 @@ jobs:
           done) &
           HEARTBEAT_PID=$!
 
-          shipwright pipeline start "${PIPELINE_ARGS[@]}" 2>&1 | tee /tmp/pipeline.log
-          PIPELINE_EXIT=${PIPESTATUS[0]}  # Get exit code of pipeline, not tee
+          # Run pipeline writing directly to log file — avoids pipe-lifetime hang.
+          # Any background grandchildren that hold the write FD open cannot block
+          # us because we wait on the PID, not on pipe EOF. (#426, #484)
+          > /tmp/pipeline.log
+          shipwright pipeline start "${PIPELINE_ARGS[@]}" >> /tmp/pipeline.log 2>&1 &
+          PIPELINE_PID=$!
 
-          # Stop heartbeat
+          # Stream full log to GHA stdout for real-time step visibility.
+          # -n +1 starts from line 1 so no startup lines are missed even if the
+          # pipeline wrote before tail began following.  --pid exits tail
+          # automatically when the pipeline process exits — no sleep needed.
+          tail -n +1 --pid="$PIPELINE_PID" -f /tmp/pipeline.log &
+          TAIL_PID=$!
+
+          wait $PIPELINE_PID
+          PIPELINE_EXIT=$?
+
+          # Stop heartbeat; tail exits automatically via --pid.
           kill $HEARTBEAT_PID 2>/dev/null || true
           wait $HEARTBEAT_PID 2>/dev/null || true
+          wait $TAIL_PID 2>/dev/null || true
 
           echo "exit_code=$PIPELINE_EXIT" >> "$GITHUB_OUTPUT"
 

@@ -168,11 +168,9 @@ jobs:
           echo "Failed stage: ${FAILED_STAGE:-unknown}"
           echo "Last error: ${LAST_ERROR:-none}"
 
-          echo "error_category=$ERROR_CATEGORY" >> "$GITHUB_OUTPUT"
-          echo "failed_stage=${FAILED_STAGE:-unknown}" >> "$GITHUB_OUTPUT"
-
-          # Multi-line outputs
           {
+            echo "error_category=$ERROR_CATEGORY"
+            echo "failed_stage=${FAILED_STAGE:-unknown}"
             echo "last_error<<EOF"
             echo "${LAST_ERROR:-No error message extracted}"
             echo "EOF"
@@ -183,7 +181,6 @@ jobs:
         id: strategy
         run: |
           ISSUE_NUMBER="${{ steps.extract.outputs.issue_number }}"
-          RUN_ID="${{ steps.extract.outputs.run_id }}"
           ERROR_CATEGORY="${{ steps.categorize.outputs.error_category }}"
 
           # Read retry count from issue comments (hidden HTML marker)
@@ -201,6 +198,24 @@ jobs:
           # Extract completed stages from stage event comments
           # Only skip pre-build stages on retry — build must always re-run to produce code changes
           RAW_STAGES=$(echo "$COMMENTS" | grep -oE 'SHIPWRIGHT-STAGE: [a-z_]+:complete' | sed 's/SHIPWRIGHT-STAGE: //' | sed 's/:complete//' | sort -u || echo "")
+
+          # Supplement comment-based detection with the branch's authoritative state file.
+          # This job has no actions/checkout, so git commands would fail — use gh api instead.
+          # grep -E + sed avoids the GNU grep -P dependency (portable to all GHA runners).
+          BRANCH="shipwright/issue-${ISSUE_NUMBER}"
+          STATE_B64=$(gh api \
+            "repos/$GITHUB_REPOSITORY/contents/.claude/pipeline-state.md?ref=$BRANCH" \
+            --jq '.content' 2>/dev/null) || STATE_B64=""
+          BRANCH_STAGES=""
+          if [[ -n "$STATE_B64" ]]; then
+            BRANCH_STAGES=$(printf '%s' "$STATE_B64" | base64 -d 2>/dev/null \
+              | grep -E '^\s+[a-z_]+: complete' \
+              | sed 's/^[[:space:]]*//' \
+              | sed 's/: complete$//' || true)
+          fi
+          # Merge both sources; keep newline-separated through the merge for correct sort -u deduplication
+          RAW_STAGES=$(printf '%s\n%s\n' "$RAW_STAGES" "$BRANCH_STAGES" | sort -u | grep -v '^$' || true)
+
           COMPLETED_STAGES=""
           for stage in $RAW_STAGES; do
             case "$stage" in
@@ -215,30 +230,36 @@ jobs:
           # ── INFRA errors: never retry, alert immediately ──
           if [[ "$ERROR_CATEGORY" == "INFRA" ]]; then
             echo "INFRA error detected — skipping retry, creating alert"
-            echo "should_retry=false" >> "$GITHUB_OUTPUT"
-            echo "skip_reason=infra" >> "$GITHUB_OUTPUT"
-            echo "retry_count=$RETRY_COUNT" >> "$GITHUB_OUTPUT"
-            echo "last_stage=$LAST_STAGE" >> "$GITHUB_OUTPUT"
-            echo "completed_stages=$COMPLETED_STAGES" >> "$GITHUB_OUTPUT"
+            {
+              echo "should_retry=false"
+              echo "skip_reason=infra"
+              echo "retry_count=$RETRY_COUNT"
+              echo "last_stage=$LAST_STAGE"
+              echo "completed_stages=$COMPLETED_STAGES"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           if [[ "$RETRY_COUNT" -ge 3 ]]; then
             echo "Max retries (3) reached for issue #$ISSUE_NUMBER — giving up"
-            echo "should_retry=false" >> "$GITHUB_OUTPUT"
-            echo "skip_reason=exhausted" >> "$GITHUB_OUTPUT"
-            echo "retry_count=$RETRY_COUNT" >> "$GITHUB_OUTPUT"
-            echo "last_stage=$LAST_STAGE" >> "$GITHUB_OUTPUT"
-            echo "completed_stages=$COMPLETED_STAGES" >> "$GITHUB_OUTPUT"
+            {
+              echo "should_retry=false"
+              echo "skip_reason=exhausted"
+              echo "retry_count=$RETRY_COUNT"
+              echo "last_stage=$LAST_STAGE"
+              echo "completed_stages=$COMPLETED_STAGES"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           NEXT_RETRY=$((RETRY_COUNT + 1))
-          echo "retry_count=$NEXT_RETRY" >> "$GITHUB_OUTPUT"
-          echo "should_retry=true" >> "$GITHUB_OUTPUT"
-          echo "skip_reason=" >> "$GITHUB_OUTPUT"
-          echo "last_stage=$LAST_STAGE" >> "$GITHUB_OUTPUT"
-          echo "completed_stages=$COMPLETED_STAGES" >> "$GITHUB_OUTPUT"
+          {
+            echo "retry_count=$NEXT_RETRY"
+            echo "should_retry=true"
+            echo "skip_reason="
+            echo "last_stage=$LAST_STAGE"
+            echo "completed_stages=$COMPLETED_STAGES"
+          } >> "$GITHUB_OUTPUT"
 
           # ── Adaptive strategy based on error category ──
           case "$ERROR_CATEGORY" in
@@ -393,7 +414,6 @@ jobs:
         run: |
           ISSUE_NUMBER="${{ steps.extract.outputs.issue_number }}"
           FAILED_RUN="${{ steps.extract.outputs.run_id }}"
-          ERROR_CATEGORY="${{ steps.categorize.outputs.error_category }}"
           FAILED_STAGE="${{ steps.categorize.outputs.failed_stage }}"
           LAST_ERROR="${{ steps.categorize.outputs.last_error }}"
 

@@ -3379,6 +3379,15 @@ pipeline_start() {
 pipeline_resume() {
     setup_dirs
     resume_state
+
+    # Refuse to resume if pipeline is stuck (terminal state)
+    if [[ "${STATUS:-}" == "stuck" ]]; then
+        error "Cannot resume: pipeline halted with status: stuck"
+        error "The loop detected cycling and no further progress is possible."
+        error "Review the error log and try: shipwright pipeline start --goal \"...\""
+        exit 2
+    fi
+
     # Recompute TASKS_FILE now that ISSUE_NUMBER has been populated from the state file.
     # setup_dirs runs before resume_state, so ISSUE_NUMBER was empty during the first call.
     TASKS_FILE="${STATE_DIR}/pipeline-tasks${ISSUE_NUMBER:+-${ISSUE_NUMBER}}.md"

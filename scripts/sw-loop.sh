@@ -2631,6 +2631,11 @@ ${GOAL}"
         # infinite loop where Claude keeps getting spawned despite hitting stuckness.
         if [[ "${STUCKNESS_DETECTED_THIS_ITERATION:-false}" == "true" ]]; then
             STATUS="stuck"
+            type emit_event >/dev/null 2>&1 && emit_event "loop.stuck" \
+                "iteration=$ITERATION" \
+                "diagnosis=${STUCKNESS_DIAGNOSIS:-cycling}" \
+                "signals=${STUCKNESS_COUNT:-0}" \
+                "job_id=${PIPELINE_JOB_ID:-loop-$$}"
             write_state
             write_progress
             warn "Stuckness detected on iteration $ITERATION — halting loop with status: stuck"

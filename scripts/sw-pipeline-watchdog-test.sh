@@ -1117,7 +1117,7 @@ test_watchdog_armed_event_emitted() {
         found { print }
     ' "$REAL_PIPELINE_SCRIPT")
 
-    if printf '%s\n' "$fn_block" | grep -q 'watchdog_armed'; then
+    if [[ "$fn_block" == *watchdog_armed* ]]; then
         return 0
     fi
     echo -e "    ${RED}✗${RESET} pipeline.watchdog_armed event not emitted after watchdog spawn"

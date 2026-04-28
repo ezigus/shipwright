@@ -288,12 +288,30 @@ Auto-detected by \`shipwright daemon patrol\` on $(now_iso)." \
         local findings=0
         local dead_files=""
 
+        # Detect git repo so we can restrict dead-code scanning to files that
+        # are actually tracked. This skips gitignored fixtures (e.g. transient
+        # /src/ artifacts) AND untracked/uncommitted files that aren't yet
+        # part of the codebase.
+        local in_git_repo="false"
+        if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            in_git_repo="true"
+        fi
+
         # For JS/TS projects: find exported files not imported anywhere
         if [[ -f "package.json" ]] || [[ -f "tsconfig.json" ]]; then
             local src_dirs=("src" "lib" "app")
             for dir in "${src_dirs[@]}"; do
                 [[ -d "$dir" ]] || continue
                 while IFS= read -r file; do
+                    # Inside a git repo, only consider files that git tracks.
+                    # `git ls-files --error-unmatch` returns non-zero for
+                    # gitignored, untracked, or never-staged files — all of
+                    # which are NOT real source candidates for dead code.
+                    if [[ "$in_git_repo" == "true" ]] && \
+                       ! git ls-files --error-unmatch "$file" >/dev/null 2>&1; then
+                        continue
+                    fi
+
                     local basename_no_ext
                     basename_no_ext=$(basename "$file" | sed 's/\.\(ts\|js\|tsx\|jsx\)$//')
                     # Skip index files and test files

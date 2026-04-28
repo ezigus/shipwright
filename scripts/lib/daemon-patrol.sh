@@ -288,8 +288,10 @@ Auto-detected by \`shipwright daemon patrol\` on $(now_iso)." \
         local findings=0
         local dead_files=""
 
-        # Detect git repo so we can filter out gitignored files (e.g. test
-        # fixtures left in a gitignored /src/ directory) from being flagged.
+        # Detect git repo so we can restrict dead-code scanning to files that
+        # are actually tracked. This skips gitignored fixtures (e.g. transient
+        # /src/ artifacts) AND untracked/uncommitted files that aren't yet
+        # part of the codebase.
         local in_git_repo="false"
         if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
             in_git_repo="true"
@@ -301,10 +303,12 @@ Auto-detected by \`shipwright daemon patrol\` on $(now_iso)." \
             for dir in "${src_dirs[@]}"; do
                 [[ -d "$dir" ]] || continue
                 while IFS= read -r file; do
-                    # Skip files ignored by .gitignore — these aren't real
-                    # sources (test fixtures, generated artifacts, etc.)
+                    # Inside a git repo, only consider files that git tracks.
+                    # `git ls-files --error-unmatch` returns non-zero for
+                    # gitignored, untracked, or never-staged files — all of
+                    # which are NOT real source candidates for dead code.
                     if [[ "$in_git_repo" == "true" ]] && \
-                       git check-ignore -q "$file" 2>/dev/null; then
+                       ! git ls-files --error-unmatch "$file" >/dev/null 2>&1; then
                         continue
                     fi
 

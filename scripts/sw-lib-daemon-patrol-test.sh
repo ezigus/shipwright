@@ -321,36 +321,46 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# patrol_dead_code: respects .gitignore
-# Regression test for false-positive issues where gitignored test fixtures
-# (e.g. src/circular-import.js) get repeatedly flagged as dead code.
+# patrol_dead_code: only scans tracked files
+# Regression test for false-positive issues where ephemeral or unstaged JS
+# files get flagged. Covers two scenarios:
+#   (a) gitignored fixtures (e.g. /src/ excluded via .gitignore)
+#   (b) untracked working-tree files that have not been committed yet
+# Both must be skipped — only files known to git count as real dead code.
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "patrol_dead_code respects .gitignore"
+print_test_section "patrol_dead_code only scans tracked files"
 
 REAL_GIT="$(PATH="$ORIG_PATH" command -v git 2>/dev/null || true)"
 if [[ -z "$REAL_GIT" || ! -x "$REAL_GIT" ]]; then
-    assert_pass "patrol_dead_code gitignore test (skipped — no real git available)"
+    assert_pass "patrol_dead_code tracked-files test (skipped — no real git available)"
 else
     DEAD_REPO="$TEST_TEMP_DIR/dead-code-repo"
-    mkdir -p "$DEAD_REPO/src"
+    mkdir -p "$DEAD_REPO/src" "$DEAD_REPO/lib"
     cat > "$DEAD_REPO/package.json" <<'PJSON'
 { "name": "fixture", "version": "0.0.0" }
 PJSON
     cat > "$DEAD_REPO/.gitignore" <<'GITIGNORE'
 /src/
 GITIGNORE
+    # (a) gitignored fixture
     cat > "$DEAD_REPO/src/circular-import.js" <<'JSFILE'
+module.exports = {};
+JSFILE
+    # (b) untracked-but-not-ignored working-tree file
+    cat > "$DEAD_REPO/lib/uncommitted-orphan.js" <<'JSFILE'
 module.exports = {};
 JSFILE
 
     (
         cd "$DEAD_REPO"
         # Bypass the mock git for the entire patrol invocation so real
-        # git check-ignore can evaluate .gitignore patterns.
+        # git can evaluate gitignore + ls-files membership.
         export PATH="$ORIG_PATH"
         git init -q -b main 2>/dev/null || git init -q
         git config user.email "test@test.com"
         git config user.name "Test"
+        # Commit only .gitignore + package.json — leave both JS files
+        # outside the index.
         git add .gitignore package.json
         git commit -q -m "init" 2>/dev/null || true
 
@@ -364,6 +374,12 @@ JSFILE
             "expected no mention of circular-import.js in patrol output"
     else
         assert_pass "patrol_dead_code skips gitignored files"
+    fi
+    if echo "$dead_out" | grep -q "uncommitted-orphan.js"; then
+        assert_fail "patrol_dead_code skips untracked working-tree files" \
+            "expected no mention of uncommitted-orphan.js in patrol output"
+    else
+        assert_pass "patrol_dead_code skips untracked working-tree files"
     fi
 fi
 

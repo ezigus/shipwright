@@ -3687,7 +3687,8 @@ fi
 # Test: orchestration functions invoke _ruflo_seed_specialist_history before orchestration
 print_test_section "ruflo_execute_review — invokes _ruflo_seed_specialist_history before orchestrate"
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_test_tmp="$TEST_TEMP_DIR/seed-review-$$"
+mkdir -p "$_test_tmp"
 # Mock ruflo binary so spawn / orchestrate / memory commands all succeed
 cat > "$_test_tmp/ruflo" <<'MOCK'
 #!/usr/bin/env bash
@@ -3743,7 +3744,8 @@ fi
 
 print_test_section "ruflo_execute_compound_quality — invokes _ruflo_seed_specialist_history"
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_test_tmp="$TEST_TEMP_DIR/seed-cq-$$"
+mkdir -p "$_test_tmp"
 cat > "$_test_tmp/ruflo" <<'MOCK'
 #!/usr/bin/env bash
 exit 0
@@ -3777,7 +3779,8 @@ fi
 
 print_test_section "ruflo_execute_audit — invokes _ruflo_seed_specialist_history"
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_test_tmp="$TEST_TEMP_DIR/seed-audit-$$"
+mkdir -p "$_test_tmp"
 cat > "$_test_tmp/ruflo" <<'MOCK'
 #!/usr/bin/env bash
 exit 0
@@ -3811,7 +3814,8 @@ fi
 
 print_test_section "ruflo_execute_build_hive — invokes _ruflo_seed_specialist_history"
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_test_tmp="$TEST_TEMP_DIR/seed-build-$$"
+mkdir -p "$_test_tmp"
 cat > "$_test_tmp/ruflo" <<'MOCK'
 #!/usr/bin/env bash
 exit 0

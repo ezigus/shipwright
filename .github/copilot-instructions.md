@@ -834,6 +834,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta-test.sh` | 306 | Validate self-improvement patrol |
 | `scripts/sw-pipeline-composer-test.sh` | 632 | Test Suite |
 | `scripts/sw-pipeline-memory-guard-test.sh` | 190 |  |
+| `scripts/sw-pipeline-resume-test.sh` | 410 | Validate workflow shell logic |
 | `scripts/sw-pipeline-test.sh` | 2399 | E2E validation invoking the REAL pipeline |
 | `scripts/sw-pipeline-vitals-test.sh` | 226 | Validate pipeline health scoring |
 | `scripts/sw-pipeline-watchdog-test.sh` | 1292 | Watchdog / ci_push_partial_work tests |

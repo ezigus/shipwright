@@ -595,6 +595,61 @@ _ruflo_resolve_repo_hash() {
     printf '%s' "$_hash"
 }
 
+# ─── _ruflo_seed_specialist_history — seed hive specialists with prior learnings ─
+# Recalls historical outcomes from learning-${repo_hash} (cross-pipeline
+# memory) and stores a bounded slice into the per-stage hive namespace so
+# specialist agents can read past lessons before orchestration starts.
+#
+# Usage: _ruflo_seed_specialist_history <stage_name> <stage_namespace>
+#   stage_name      — short label used in the recall query and stored key
+#                     (e.g., "build", "review", "quality", "audit")
+#   stage_namespace — per-pipeline hive namespace (e.g. "hive-review-${pid}")
+#
+# Always returns 0 (fail-open). Skips when:
+#   - ruflo is unavailable
+#   - either argument is empty
+#   - repo hash cannot be resolved (prevents cross-repo namespace pollution)
+#   - the recall returns no results
+#
+# Environment knobs:
+#   RUFLO_HISTORY_MAX_BYTES — max bytes of recalled history seeded (default 4000)
+_ruflo_seed_specialist_history() {
+    ruflo_available || return 0
+    local stage_name="$1" stage_ns="$2"
+    [[ -n "$stage_name" && -n "$stage_ns" ]] || return 0
+
+    # Repo-scoped namespace — skip if hash unavailable to prevent cross-repo leaks
+    local _ns_hash
+    _ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || return 0
+
+    # TASK_TYPE / ISSUE_LABELS are populated by the intake stage; default
+    # gracefully when invoked outside a full pipeline (e.g. ad-hoc build).
+    local _task_type="${TASK_TYPE:-feature}"
+    local _labels="${ISSUE_LABELS:-}"
+    local _query="${stage_name} stage outcomes for ${_task_type} ${_labels}"
+
+    local _history
+    _history=$(ruflo_recall "$_query" "learning-${_ns_hash}" 2>/dev/null || true)
+    [[ -n "$_history" ]] || return 0
+
+    # Bound to keep argv small and avoid tripping the circuit-breaker on very
+    # large recall payloads. Validate knob: must be a positive integer.
+    local _max_bytes="${RUFLO_HISTORY_MAX_BYTES:-4000}"
+    if ! [[ "$_max_bytes" =~ ^[0-9]+$ ]] || (( _max_bytes < 1 )); then
+        _max_bytes=4000
+    fi
+    local _bounded
+    _bounded=$(printf '%s' "$_history" | head -c "$_max_bytes" 2>/dev/null || true)
+    [[ -n "$_bounded" ]] || return 0
+
+    ruflo_store "${stage_name}-history-context" "$_bounded" \
+        "$stage_ns" "${stage_name},history,context" || true
+
+    emit_event "ruflo.specialist_history_seeded" \
+        "stage=${stage_name}" "namespace=${stage_ns}" "bytes=${#_bounded}"
+    return 0
+}
+
 # ─── ruflo_index_shipwright_memory — index ~/.shipwright/memory/ into ruflo ───
 # Indexes architecture and skill files from the repo's memory directory into
 # ruflo HNSW storage for semantic retrieval by pipeline stages.
@@ -843,6 +898,12 @@ ruflo_execute_build_hive() {
         return 1
     fi
 
+    # Seed historical recall context into the hive memory namespace before
+    # orchestration so the freshly spawned workers see prior pipeline lessons.
+    # Per-pipeline namespace keeps history scoped to this run's hive.
+    local _build_history_ns="hive-build-${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
+    _ruflo_seed_specialist_history "build" "$_build_history_ns" || true
+
     # Orchestrate the build goal across the hive
     local _orch_exit=0
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -985,6 +1046,11 @@ ruflo_execute_review() {
             ruflo_store "review-adrs" "$_adrs" "$review_ns" "adr,context" || true
         fi
     fi
+
+    # Seed historical recall context — past review outcomes from prior pipelines
+    # (failure patterns, recurring code-review themes) are injected so the
+    # specialist agents can pattern-match against history before orchestration.
+    _ruflo_seed_specialist_history "review" "$review_ns" || true
 
     # Orchestrate parallel review across the hive — each specialist agent analyses
     # the diff from their domain perspective (security, code_quality, test_gap,
@@ -1162,6 +1228,11 @@ ruflo_execute_compound_quality() {
     if [[ -n "$_prior_review" ]]; then
         ruflo_store "cq-review-context" "$_prior_review" "$cq_ns" "quality,context" || true
     fi
+
+    # Seed historical recall context — prior compound-quality outcomes (e.g.
+    # recurring DoD misses, common edge cases) inform adversarial agents
+    # before orchestration so they can target known-weak areas.
+    _ruflo_seed_specialist_history "quality" "$cq_ns" || true
 
     # Orchestrate adversarial quality checks — agents run negative testing,
     # DoD auditing, and E2E scenario validation in parallel.
@@ -1357,6 +1428,11 @@ ruflo_execute_audit() {
             ruflo_store "audit-adrs" "$_adrs" "$audit_ns" "adr,context" || true
         fi
     fi
+
+    # Seed historical recall context — past audit outcomes (recurring CVE
+    # categories, repeated secrets-detection hits) are surfaced to specialists
+    # before orchestration so they can prioritise known-risk areas.
+    _ruflo_seed_specialist_history "audit" "$audit_ns" || true
 
     # Orchestrate parallel security audit — CVE scanning, secrets detection,
     # OWASP assessment, and compliance checking run in parallel across the hive.

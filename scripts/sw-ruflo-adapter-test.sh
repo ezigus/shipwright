@@ -3517,4 +3517,331 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# _ruflo_seed_specialist_history — seed hive specialists with prior pipeline learnings
+# ═══════════════════════════════════════════════════════════════════════════════
+# Reset emit_event so leaked overrides from earlier tests (which point at deleted
+# temp dirs) do not pollute stderr when the seed helper emits its observability
+# event. The lib's own fallback emit_event is a no-op.
+emit_event() { :; }
+
+# Test: _ruflo_seed_specialist_history — no-op when ruflo unavailable
+print_test_section "_ruflo_seed_specialist_history — no-op when unavailable"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+exit_code=0
+_ruflo_seed_specialist_history "review" "hive-review-test" || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "_ruflo_seed_specialist_history returns 0 (fail-open) when RUFLO_AVAILABLE=false"
+else
+    assert_fail "_ruflo_seed_specialist_history returns 0 (fail-open) when RUFLO_AVAILABLE=false" "exit_code=$exit_code"
+fi
+
+# Test: _ruflo_seed_specialist_history — no-op when stage_name is empty
+print_test_section "_ruflo_seed_specialist_history — no-op when args missing"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+exit_code=0
+_ruflo_seed_specialist_history "" "hive-review-test" || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "_ruflo_seed_specialist_history returns 0 when stage_name empty"
+else
+    assert_fail "_ruflo_seed_specialist_history returns 0 when stage_name empty" "exit_code=$exit_code"
+fi
+exit_code=0
+_ruflo_seed_specialist_history "review" "" || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "_ruflo_seed_specialist_history returns 0 when stage_ns empty"
+else
+    assert_fail "_ruflo_seed_specialist_history returns 0 when stage_ns empty" "exit_code=$exit_code"
+fi
+
+# Test: _ruflo_seed_specialist_history — skips when repo hash unavailable
+print_test_section "_ruflo_seed_specialist_history — skips when repo hash unresolvable"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+# Override _ruflo_resolve_repo_hash to fail (no repo) so the helper short-circuits
+_resolve_orig=$(declare -f _ruflo_resolve_repo_hash)
+_ruflo_resolve_repo_hash() { return 1; }
+# Track that ruflo_recall is NOT called when repo hash is missing
+_seed_recall_log="$TEST_TEMP_DIR/seed-recall-noop.log"
+rm -f "$_seed_recall_log"
+ruflo_recall() { echo "RECALL_CALLED" >> "$_seed_recall_log"; echo ""; }
+exit_code=0
+_ruflo_seed_specialist_history "review" "hive-review-test" || exit_code=$?
+unset -f _ruflo_resolve_repo_hash
+eval "$_resolve_orig"
+unset -f ruflo_recall
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "_ruflo_seed_specialist_history returns 0 when repo hash unresolvable"
+else
+    assert_fail "_ruflo_seed_specialist_history returns 0 when repo hash unresolvable" "exit_code=$exit_code"
+fi
+if [[ ! -f "$_seed_recall_log" ]]; then
+    assert_pass "_ruflo_seed_specialist_history does NOT call ruflo_recall when repo hash unresolvable"
+else
+    assert_fail "_ruflo_seed_specialist_history does NOT call ruflo_recall when repo hash unresolvable" \
+        "got: $(cat "$_seed_recall_log" 2>/dev/null)"
+fi
+
+# Test: _ruflo_seed_specialist_history — happy path stores recalled context
+print_test_section "_ruflo_seed_specialist_history — happy path stores recalled context"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+# Mock repo hash and ruflo_recall to return a known historical payload
+_resolve_orig=$(declare -f _ruflo_resolve_repo_hash)
+_ruflo_resolve_repo_hash() { printf 'testhash9876'; }
+_seed_recall_log="$TEST_TEMP_DIR/seed-recall-happy.log"
+rm -f "$_seed_recall_log"
+ruflo_recall() {
+    echo "QUERY=$1 NS=$2" >> "$_seed_recall_log"
+    printf 'past-failure-1: null pointer in auth flow\npast-failure-2: missing input validation\n'
+}
+_seed_store_log="$TEST_TEMP_DIR/seed-store-happy.log"
+rm -f "$_seed_store_log"
+ruflo_store() {
+    echo "KEY=$1 NS=$3 TAGS=$4 VALUE_LEN=${#2}" >> "$_seed_store_log"
+}
+TASK_TYPE="bug" ISSUE_LABELS="security,backend" \
+    _ruflo_seed_specialist_history "review" "hive-review-pipeline-42" || true
+unset -f _ruflo_resolve_repo_hash
+eval "$_resolve_orig"
+unset -f ruflo_recall ruflo_store
+
+if [[ -f "$_seed_recall_log" ]] && grep -q "NS=learning-testhash9876" "$_seed_recall_log" 2>/dev/null; then
+    assert_pass "_ruflo_seed_specialist_history queries learning-<repo_hash> namespace"
+else
+    assert_fail "_ruflo_seed_specialist_history queries learning-<repo_hash> namespace" \
+        "got: $(cat "$_seed_recall_log" 2>/dev/null)"
+fi
+if grep -q "QUERY=review stage outcomes for bug security,backend" "$_seed_recall_log" 2>/dev/null; then
+    assert_pass "_ruflo_seed_specialist_history query includes stage_name, TASK_TYPE and ISSUE_LABELS"
+else
+    assert_fail "_ruflo_seed_specialist_history query includes stage_name, TASK_TYPE and ISSUE_LABELS" \
+        "got: $(cat "$_seed_recall_log" 2>/dev/null)"
+fi
+if [[ -f "$_seed_store_log" ]] && grep -q "KEY=review-history-context NS=hive-review-pipeline-42" "$_seed_store_log" 2>/dev/null; then
+    assert_pass "_ruflo_seed_specialist_history stores into stage namespace under <stage>-history-context key"
+else
+    assert_fail "_ruflo_seed_specialist_history stores into stage namespace under <stage>-history-context key" \
+        "got: $(cat "$_seed_store_log" 2>/dev/null)"
+fi
+if grep -q "TAGS=review,history,context" "$_seed_store_log" 2>/dev/null; then
+    assert_pass "_ruflo_seed_specialist_history tags stored entry with stage,history,context"
+else
+    assert_fail "_ruflo_seed_specialist_history tags stored entry with stage,history,context" \
+        "got: $(cat "$_seed_store_log" 2>/dev/null)"
+fi
+
+# Test: _ruflo_seed_specialist_history — skips store when recall returns empty
+print_test_section "_ruflo_seed_specialist_history — skips store on empty recall"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+_resolve_orig=$(declare -f _ruflo_resolve_repo_hash)
+_ruflo_resolve_repo_hash() { printf 'testhash0000'; }
+ruflo_recall() { echo ""; }
+_empty_store_log="$TEST_TEMP_DIR/seed-store-empty.log"
+rm -f "$_empty_store_log"
+ruflo_store() { echo "STORE_CALLED" >> "$_empty_store_log"; }
+_ruflo_seed_specialist_history "audit" "hive-audit-test" || true
+unset -f _ruflo_resolve_repo_hash
+eval "$_resolve_orig"
+unset -f ruflo_recall ruflo_store
+if [[ ! -f "$_empty_store_log" ]]; then
+    assert_pass "_ruflo_seed_specialist_history does NOT call ruflo_store when recall is empty"
+else
+    assert_fail "_ruflo_seed_specialist_history does NOT call ruflo_store when recall is empty" \
+        "got: $(cat "$_empty_store_log" 2>/dev/null)"
+fi
+
+# Test: _ruflo_seed_specialist_history — bounds payload to RUFLO_HISTORY_MAX_BYTES
+print_test_section "_ruflo_seed_specialist_history — payload bounded by RUFLO_HISTORY_MAX_BYTES"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+_resolve_orig=$(declare -f _ruflo_resolve_repo_hash)
+_ruflo_resolve_repo_hash() { printf 'testhash5555'; }
+# Generate a recall payload larger than the configured cap
+ruflo_recall() {
+    head -c 9000 /dev/zero | tr '\0' 'X'
+}
+_bounded_store_log="$TEST_TEMP_DIR/seed-store-bounded.log"
+rm -f "$_bounded_store_log"
+ruflo_store() { echo "VALUE_LEN=${#2}" >> "$_bounded_store_log"; }
+RUFLO_HISTORY_MAX_BYTES=200 _ruflo_seed_specialist_history "build" "hive-build-test" || true
+unset -f _ruflo_resolve_repo_hash
+eval "$_resolve_orig"
+unset -f ruflo_recall ruflo_store
+unset RUFLO_HISTORY_MAX_BYTES
+if [[ -f "$_bounded_store_log" ]] && grep -q "VALUE_LEN=200" "$_bounded_store_log" 2>/dev/null; then
+    assert_pass "_ruflo_seed_specialist_history bounds payload to RUFLO_HISTORY_MAX_BYTES (200)"
+else
+    assert_fail "_ruflo_seed_specialist_history bounds payload to RUFLO_HISTORY_MAX_BYTES (200)" \
+        "got: $(cat "$_bounded_store_log" 2>/dev/null)"
+fi
+
+# Test: orchestration functions invoke _ruflo_seed_specialist_history before orchestration
+print_test_section "ruflo_execute_review — invokes _ruflo_seed_specialist_history before orchestrate"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+# Mock ruflo binary so spawn / orchestrate / memory commands all succeed
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="seed-review-hive"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="seed-test-pipeline"
+# Track _ruflo_seed_specialist_history invocation and order with respect to orchestrate
+_seed_order_log="$TEST_TEMP_DIR/seed-order-review.log"
+rm -f "$_seed_order_log"
+_ruflo_seed_specialist_history() {
+    echo "SEED stage=$1 ns=$2" >> "$_seed_order_log"
+    return 0
+}
+# Override the inner orchestration shim by overriding ruflo_with_timeout to log
+_orig_with_timeout=$(declare -f ruflo_with_timeout)
+ruflo_with_timeout() {
+    local _to="$1"; shift
+    if [[ "${1:-}" == "ruflo" && "${2:-}" == "coordination" && "${3:-}" == "orchestrate" ]]; then
+        echo "ORCHESTRATE" >> "$_seed_order_log"
+    fi
+    return 0
+}
+_ruflo_artifact="$_test_tmp/review-out.md"
+ruflo_execute_review "diff content" "$_ruflo_artifact" >/dev/null 2>&1 || true
+unset -f _ruflo_seed_specialist_history ruflo_with_timeout
+eval "$_orig_with_timeout"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if grep -q "SEED stage=review" "$_seed_order_log" 2>/dev/null; then
+    assert_pass "ruflo_execute_review invokes _ruflo_seed_specialist_history with stage=review"
+else
+    assert_fail "ruflo_execute_review invokes _ruflo_seed_specialist_history with stage=review" \
+        "log: $(cat "$_seed_order_log" 2>/dev/null)"
+fi
+# Verify SEED appears before ORCHESTRATE
+if grep -n "SEED\|ORCHESTRATE" "$_seed_order_log" 2>/dev/null | awk -F: '
+    /SEED/  { seed=NR }
+    /ORCHESTRATE/ { orch=NR }
+    END { exit (seed && orch && seed < orch ? 0 : 1) }
+'; then
+    assert_pass "ruflo_execute_review seeds history BEFORE orchestration"
+else
+    assert_fail "ruflo_execute_review seeds history BEFORE orchestration" \
+        "log: $(cat "$_seed_order_log" 2>/dev/null)"
+fi
+
+print_test_section "ruflo_execute_compound_quality — invokes _ruflo_seed_specialist_history"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="seed-cq-hive"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="seed-test-pipeline-cq"
+_seed_cq_log="$TEST_TEMP_DIR/seed-order-cq.log"
+rm -f "$_seed_cq_log"
+_ruflo_seed_specialist_history() {
+    echo "SEED stage=$1 ns=$2" >> "$_seed_cq_log"; return 0
+}
+_orig_with_timeout=$(declare -f ruflo_with_timeout)
+ruflo_with_timeout() { return 0; }
+ruflo_execute_compound_quality "diff content" "$_test_tmp/cq-out.md" >/dev/null 2>&1 || true
+unset -f _ruflo_seed_specialist_history ruflo_with_timeout
+eval "$_orig_with_timeout"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if grep -q "SEED stage=quality" "$_seed_cq_log" 2>/dev/null; then
+    assert_pass "ruflo_execute_compound_quality invokes _ruflo_seed_specialist_history with stage=quality"
+else
+    assert_fail "ruflo_execute_compound_quality invokes _ruflo_seed_specialist_history with stage=quality" \
+        "log: $(cat "$_seed_cq_log" 2>/dev/null)"
+fi
+
+print_test_section "ruflo_execute_audit — invokes _ruflo_seed_specialist_history"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="seed-audit-hive"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="seed-test-pipeline-audit"
+_seed_audit_log="$TEST_TEMP_DIR/seed-order-audit.log"
+rm -f "$_seed_audit_log"
+_ruflo_seed_specialist_history() {
+    echo "SEED stage=$1 ns=$2" >> "$_seed_audit_log"; return 0
+}
+_orig_with_timeout=$(declare -f ruflo_with_timeout)
+ruflo_with_timeout() { return 0; }
+ruflo_execute_audit "diff content" "$_test_tmp/audit-out.md" >/dev/null 2>&1 || true
+unset -f _ruflo_seed_specialist_history ruflo_with_timeout
+eval "$_orig_with_timeout"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if grep -q "SEED stage=audit" "$_seed_audit_log" 2>/dev/null; then
+    assert_pass "ruflo_execute_audit invokes _ruflo_seed_specialist_history with stage=audit"
+else
+    assert_fail "ruflo_execute_audit invokes _ruflo_seed_specialist_history with stage=audit" \
+        "log: $(cat "$_seed_audit_log" 2>/dev/null)"
+fi
+
+print_test_section "ruflo_execute_build_hive — invokes _ruflo_seed_specialist_history"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="seed-build-hive"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="seed-test-pipeline-build"
+_seed_build_log="$TEST_TEMP_DIR/seed-order-build.log"
+rm -f "$_seed_build_log"
+_ruflo_seed_specialist_history() {
+    echo "SEED stage=$1 ns=$2" >> "$_seed_build_log"; return 0
+}
+_orig_with_timeout=$(declare -f ruflo_with_timeout)
+ruflo_with_timeout() { return 0; }
+ruflo_execute_build_hive "build the feature" 5 >/dev/null 2>&1 || true
+unset -f _ruflo_seed_specialist_history ruflo_with_timeout
+eval "$_orig_with_timeout"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if grep -q "SEED stage=build" "$_seed_build_log" 2>/dev/null; then
+    assert_pass "ruflo_execute_build_hive invokes _ruflo_seed_specialist_history with stage=build"
+else
+    assert_fail "ruflo_execute_build_hive invokes _ruflo_seed_specialist_history with stage=build" \
+        "log: $(cat "$_seed_build_log" 2>/dev/null)"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

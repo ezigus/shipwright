@@ -1088,7 +1088,12 @@ ruflo_execute_review() {
 #   - negative_tester: writes failing tests for uncovered edge cases
 #   - dod_auditor: checks Definition of Done criteria
 #   - e2e_validator: end-to-end scenario coverage
-# Findings aggregated via union (same principle as ruflo_execute_review).
+# Findings aggregated via union (same principle as ruflo_execute_review), then
+# a queen-collapse synthesis pass runs in a separate namespace to surface
+# CONFLICTS between adversarial agents (one agent flags vs another clears) and
+# rank consensus findings by severity. The union artifact is committed to disk
+# first as the fail-open baseline; the artifact is overwritten with the
+# synthesis result only when synthesis orchestration succeeds.
 #
 # Usage: ruflo_execute_compound_quality <diff_content> <artifact_file>
 # Returns 0 on success, 1 on any hive failure (caller falls back to native checks).
@@ -1192,6 +1197,60 @@ ruflo_execute_compound_quality() {
     if ! printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null; then
         warn "ruflo: failed to write compound quality artifact: $artifact_file"
     fi
+
+    # ─── Queen collapse: synthesis pass to surface conflicts between agents ──
+    # Adversarial CQ specialists (negative_tester, dod_auditor, e2e_validator)
+    # frequently disagree — one may report a gap that another considers covered.
+    # Union-only output buries those disagreements as duplicate-looking findings.
+    # The queen synthesis pass prompts the hive to surface those conflicts as a
+    # distinct section of the artifact so cascade audit agents see them.
+    #
+    # Post-write synthesis: union is committed to disk first as the fail-open
+    # baseline. We seed a separate synthesis namespace with the artifact head,
+    # orchestrate a conflict-surfacing pass, read the result, and overwrite the
+    # artifact only on success. Any failure preserves the union artifact.
+    local _synth_ns="hive-cq-synth-${pipeline_id}"
+
+    # Seed synthesis namespace with first 6000 bytes of union artifact
+    local _artifact_head
+    _artifact_head=$(head -c 6000 "$artifact_file" 2>/dev/null || echo "")
+    if [[ -n "$_artifact_head" ]]; then
+        ruflo_store "cq-union-findings" "$_artifact_head" "$_synth_ns" "quality,synthesis" 2>/dev/null || true
+    fi
+
+    # Run synthesis orchestration pass: surface conflicts between adversarial
+    # agents alongside agreed findings. Goal explicitly names "conflict" so the
+    # hive separates contradictions (one agent flags, another clears) from
+    # consensus findings (multiple agents flag the same gap).
+    local _synth_exit=0
+    local _synth_goal="Surface conflicts between adversarial CQ agents (negative_tester, dod_auditor, e2e_validator). Output structured Markdown with sections: '## Conflicts' (findings where agents disagree — list each side), '## Consensus' (findings endorsed by multiple agents, ranked by severity Critical/Bug/Warning/Suggestion), '## Single-source' (unique agent findings). Preserve original agent attribution."
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 120 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    else
+        ruflo_with_timeout 120 ruflo coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    fi
+
+    # Read synthesis result from hive memory — only if orchestration succeeded
+    local _synth_result=""
+    if [[ "$_synth_exit" -eq 0 ]]; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            _synth_result=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+                --action list --namespace "$_synth_ns" 2>/dev/null || true)
+        else
+            _synth_result=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+                --action list --namespace "$_synth_ns" 2>/dev/null || true)
+        fi
+    fi
+
+    # Overwrite artifact with synthesis result if successful (fail-open: keep union on any error)
+    if [[ -n "$_synth_result" ]] && [[ "$_synth_exit" -eq 0 ]]; then
+        printf '%s\n' "$_synth_result" > "$artifact_file" 2>/dev/null || true
+    fi
+
+    # Emit telemetry for observability
+    emit_event "ruflo.cq_synth_complete" "exit=${_synth_exit}" "namespace=${_synth_ns}"
 
     # Persist compound quality result for downstream stages
     ruflo_store "stage-cq-result" \

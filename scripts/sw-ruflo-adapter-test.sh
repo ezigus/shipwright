@@ -2389,6 +2389,255 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Queen Collapse Synthesis — ruflo_execute_compound_quality (issue #419)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "CQ Queen Collapse — union artifact written first (fail-open base)"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_artifact="$_test_tmp/cq-artifact.md"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'negative_tester: gap1\ndod_auditor: missing-doc\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-cq-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_compound_quality "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_artifact_content=$(cat "$_artifact" 2>/dev/null || true)
+rm -rf "$_test_tmp"
+if [[ -n "$_artifact_content" ]]; then
+    assert_pass "CQ Queen Collapse: union artifact written (fail-open base exists)"
+else
+    assert_fail "CQ Queen Collapse: union artifact written (fail-open base exists)" "artifact empty"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "CQ Queen Collapse — synthesis orchestration attempted"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_artifact="$_test_tmp/cq-artifact.md"
+_call_log="$_test_tmp/calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+printf '%s %s\n' "\${1:-}" "\${2:-}" >> "$_call_log"
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'negative_tester: gap1\ndod_auditor: covered\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-cq-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_compound_quality "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_calls=$(cat "$_call_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+# CQ already calls coordination orchestrate once for the adversarial pass; the
+# synthesis pass adds a second call. Require at least 2 to confirm synthesis ran.
+_orch_count=$(grep -c "^coordination orchestrate" <<< "$_calls" 2>/dev/null || echo 0)
+_orch_count="${_orch_count//[^0-9]/}"
+if (( ${_orch_count:-0} >= 2 )); then
+    assert_pass "CQ Queen Collapse: coordination orchestrate called for synthesis (adversarial + synth)"
+else
+    assert_fail "CQ Queen Collapse: coordination orchestrate called for synthesis (adversarial + synth)" "count=$_orch_count calls: $_calls"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "CQ Queen Collapse — synthesis goal surfaces conflicts between agents"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_artifact="$_test_tmp/cq-artifact.md"
+_goal_log="$_test_tmp/goal.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'negative_tester: gap1\ndod_auditor: gap1-covered\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  for arg in "\$@"; do
+    if [[ "\$arg" == --goal ]]; then
+      next=1
+    elif [[ -n "\${next:-}" ]]; then
+      printf '%s\n' "\$arg" >> "$_goal_log"
+      next=0
+    fi
+  done
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-cq-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_compound_quality "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_goal=$(cat "$_goal_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+# The synthesis goal must explicitly mention conflict surfacing.
+if grep -qi "conflict" <<< "$_goal" && grep -qi "consensus\|disagree\|severity" <<< "$_goal"; then
+    assert_pass "CQ Queen Collapse: synthesis goal surfaces conflicts/consensus"
+else
+    assert_fail "CQ Queen Collapse: synthesis goal surfaces conflicts/consensus" "goal: $_goal"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "CQ Queen Collapse — fail-open: union preserved on synthesis failure"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_artifact="$_test_tmp/cq-artifact.md"
+# Track which orchestrate call this is (1=adversarial, 2=synthesis); synth fails.
+_orch_state="$_test_tmp/orch_count"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'cq_finding_a\ncq_finding_b\ncq_finding_c\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  n=\$(cat "$_orch_state" 2>/dev/null || echo 0)
+  n=\$((n + 1))
+  printf '%d' "\$n" > "$_orch_state"
+  if [[ "\$n" -ge 2 ]]; then
+    exit 1
+  fi
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-cq-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_compound_quality "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_artifact_content=$(cat "$_artifact" 2>/dev/null || true)
+rm -rf "$_test_tmp"
+if grep -q "cq_finding_a\|cq_finding_b\|cq_finding_c" <<< "$_artifact_content"; then
+    assert_pass "CQ Queen Collapse: fail-open preserves union on synthesis failure"
+else
+    assert_fail "CQ Queen Collapse: fail-open preserves union on synthesis failure" "artifact: $_artifact_content"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "CQ Queen Collapse — synthesis uses separate namespace (no re-consumption)"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_artifact="$_test_tmp/cq-artifact.md"
+_ns_log="$_test_tmp/ns.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  for arg in "\$@"; do
+    if [[ "\$arg" == --namespace ]]; then
+      next=1
+    elif [[ -n "\${next:-}" ]]; then
+      printf '%s\n' "\$arg" >> "$_ns_log"
+      next=0
+    fi
+  done
+  printf 'cq_finding\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-cq-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_compound_quality "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_namespaces=$(cat "$_ns_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+_has_cq_ns=$(grep -c "hive-cq-" <<< "$_namespaces" || echo 0)
+_has_synth_ns=$(grep -c "hive-cq-synth" <<< "$_namespaces" || echo 0)
+_has_cq_ns="${_has_cq_ns//[^0-9]/}"
+_has_synth_ns="${_has_synth_ns//[^0-9]/}"
+if (( ${_has_cq_ns:-0} > 0 )) && (( ${_has_synth_ns:-0} > 0 )); then
+    assert_pass "CQ Queen Collapse: uses separate hive-cq-synth namespace"
+else
+    assert_fail "CQ Queen Collapse: uses separate hive-cq-synth namespace" "ns: $_namespaces"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "CQ Queen Collapse — telemetry event emitted with exit code"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_artifact="$_test_tmp/cq-artifact.md"
+_event_log="$_test_tmp/events.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'cq_finding\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-cq-hive"
+RUFLO_USE_NPX=false
+emit_event() { printf '%s\n' "$*" >> "$_event_log"; }
+ruflo_execute_compound_quality "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_events=$(cat "$_event_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+if grep -q "ruflo.cq_synth_complete" <<< "$_events" && grep -q "exit=" <<< "$_events"; then
+    assert_pass "CQ Queen Collapse: telemetry event emitted with exit code"
+else
+    assert_fail "CQ Queen Collapse: telemetry event emitted with exit code" "events: $_events"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Section C: Gate checks — ruflo_execute_audit
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_execute_audit — returns 1 immediately when RUFLO_HIVE_AVAILABLE=false"

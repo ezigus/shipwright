@@ -522,7 +522,7 @@ TASKS_FILE=""
 # the lowest-end developer host (16 GB / 4-core); operators can override per
 # host via the env vars below.
 SHIPWRIGHT_MAX_ACTIVE_PIPELINES="${SHIPWRIGHT_MAX_ACTIVE_PIPELINES:-1}"
-SHIPWRIGHT_MIN_FREE_GB="${SHIPWRIGHT_MIN_FREE_GB:-4}"
+SHIPWRIGHT_MIN_FREE_GB="${SHIPWRIGHT_MIN_FREE_GB:-1}"
 # Validate env vars are integers; reset to safe defaults on bad input so
 # arithmetic comparisons in check_admission_gate never receive non-numeric values.
 if [[ ! "$SHIPWRIGHT_MAX_ACTIVE_PIPELINES" =~ ^[1-9][0-9]*$ ]]; then
@@ -530,8 +530,8 @@ if [[ ! "$SHIPWRIGHT_MAX_ACTIVE_PIPELINES" =~ ^[1-9][0-9]*$ ]]; then
     SHIPWRIGHT_MAX_ACTIVE_PIPELINES=1
 fi
 if [[ ! "$SHIPWRIGHT_MIN_FREE_GB" =~ ^[0-9]+$ ]]; then
-    warn "SHIPWRIGHT_MIN_FREE_GB='$SHIPWRIGHT_MIN_FREE_GB' is not a non-negative integer — resetting to 4"
-    SHIPWRIGHT_MIN_FREE_GB=4
+    warn "SHIPWRIGHT_MIN_FREE_GB='$SHIPWRIGHT_MIN_FREE_GB' is not a non-negative integer — resetting to 1"
+    SHIPWRIGHT_MIN_FREE_GB=1
 fi
 SHIPWRIGHT_ACTIVE_PIPELINES_DIR="${SHIPWRIGHT_ACTIVE_PIPELINES_DIR:-$HOME/.shipwright/active-pipelines}"
 # Capture once at top-level so trap-time `$$` (which would resolve in any
@@ -616,7 +616,7 @@ show_help() {
     echo -e "${BOLD}ADMISSION GATE${RESET}  ${DIM}(per-host concurrency + memory floor)${RESET}"
     echo -e "  • Refuses ${BOLD}start${RESET} / ${BOLD}resume${RESET} when too many pipelines are live or free RAM is low"
     echo -e "  • ${CYAN}SHIPWRIGHT_MAX_ACTIVE_PIPELINES${RESET}=N   max concurrent pipelines per host (default: 1)"
-    echo -e "  • ${CYAN}SHIPWRIGHT_MIN_FREE_GB${RESET}=N            min free memory in GB to admit (default: 4)"
+    echo -e "  • ${CYAN}SHIPWRIGHT_MIN_FREE_GB${RESET}=N            min free memory in GB to admit (default: 1)"
     echo -e "  • Inspect locks: ${CYAN}shipwright doctor${RESET}  ${DIM}(ACTIVE PIPELINES & MEMORY section)${RESET}"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
@@ -856,6 +856,14 @@ ci_push_partial_work() {
 
     local branch="shipwright/issue-${ISSUE_NUMBER}"
 
+    # Snapshot events.jsonl into the repo so it survives the ephemeral runner disk
+    # and gets pushed with the WIP commit — enables post-mortem watchdog analysis.
+    if [[ -f "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" ]]; then
+        mkdir -p ".shipwright" 2>/dev/null || true
+        cp "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" \
+           ".shipwright/events-${ISSUE_NUMBER}-${GITHUB_RUN_ID:-local}.jsonl" 2>/dev/null || true
+    fi
+
     # Only push if we have uncommitted changes (excluding daemon-config.json runtime writes)
     if ! git diff --quiet -- ':!.claude/daemon-config.json' 2>/dev/null || \
        ! git diff --cached --quiet -- ':!.claude/daemon-config.json' 2>/dev/null; then
@@ -919,14 +927,6 @@ cleanup_on_exit() {
         warn "Pipeline interrupted — state saved."
         echo -e "  Resume: ${DIM}shipwright pipeline resume${RESET}"
 
-        # Push partial work in CI mode — skip if watchdog already pushed at T-5min
-        # to avoid a spurious pipeline.push_failed event on an already-clean tree.
-        # Use 30s timeout here (vs watchdog's 120s) — we still have most of the
-        # SIGTERM grace window since this runs before ruflo_cleanup/cost breakdown.
-        if [[ "${_SOFT_TIMEOUT_FIRED:-false}" != "true" ]]; then
-            ci_push_partial_work 30
-        fi
-
         # Cancel lingering in_progress GitHub Check Runs
         pipeline_cancel_check_runs 2>/dev/null || true
 
@@ -937,6 +937,16 @@ cleanup_on_exit() {
                 emit_event "pipeline.comment_failed" "issue=$ISSUE_NUMBER"
             fi
         fi
+    fi
+
+    # Push WIP on any non-zero CI exit — signal-driven OR stage-failure.
+    # Skip if watchdog already pushed at T-5min (idempotency); skip on success (exit 0).
+    # Use 30s timeout — runs before ruflo_cleanup/cost breakdown in the grace window.
+    if [[ "${CI_MODE:-false}" == "true" \
+          && -n "${ISSUE_NUMBER:-}" \
+          && "$exit_code" -ne 0 \
+          && "${_SOFT_TIMEOUT_FIRED:-false}" != "true" ]]; then
+        ci_push_partial_work 30
     fi
 
     # Generate cost-breakdown.json from sidecars on every exit path (issue #87 AC#4).
@@ -998,6 +1008,7 @@ _SOFT_TIMEOUT_FIRED=false
 _soft_timeout_handler() {
     [[ "${_SOFT_TIMEOUT_FIRED}" == "true" ]] && return 0
     _SOFT_TIMEOUT_FIRED=true
+    echo "[WATCHDOG-TRAP] $(date -u +%FT%TZ) USR1 trap running in parent pid=$$" >&2
     warn "Soft timeout — pushing WIP branch (pipeline continues until hard deadline)"
     ci_push_partial_work 120
     emit_event "pipeline.soft_timeout_push" \
@@ -3057,11 +3068,12 @@ pipeline_start() {
         local _job_timeout_min="${SHIPWRIGHT_JOB_TIMEOUT_MINUTES:-180}"
         if [[ "$_job_timeout_min" =~ ^[0-9]+$ ]] && (( _job_timeout_min > 5 )); then
             local _watchdog_delay_sec=$(( (_job_timeout_min - 5) * 60 ))
-            ( trap 'kill %1 2>/dev/null; exit 0' TERM; sleep "$_watchdog_delay_sec" & wait $!; kill -0 $$ 2>/dev/null && kill -USR1 $$ 2>/dev/null ) &
+            ( trap 'kill %1 2>/dev/null; exit 0' TERM; sleep "$_watchdog_delay_sec" & wait $!; kill -0 $$ 2>/dev/null || exit 0; echo "[WATCHDOG-FIRE] $(date -u +%FT%TZ) sending USR1 to pid=$$" >&2; kill -USR1 $$ 2>/dev/null ) &
             _WATCHDOG_PID=$!
             emit_event "pipeline.watchdog_armed" \
                        "issue=${ISSUE_NUMBER}" \
                        "fires_in_sec=${_watchdog_delay_sec}" 2>/dev/null || true
+            echo "[WATCHDOG-ARM] $(date -u +%FT%TZ) delay=${_watchdog_delay_sec}s pid=$$" >&2
         fi
     fi
 

@@ -1207,6 +1207,161 @@ TMPL
     return 1
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 25–28. cleanup_on_exit: new ungated WIP push block (Phase 1 fix)
+# These four tests verify the gate fix: push on any non-zero CI exit,
+# not only on signal-driven exits.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_write_cleanup_runner() {
+    # Helper: writes a runner script that calls cleanup_on_exit with the given
+    # state variables. Args: runner_path push_log_path [extra_state_lines...]
+    local runner="$1" push_log="$2"
+    shift 2
+    local extra_state="${*:-}"
+
+    cat > "$runner" <<RUNNER_HDR
+#!/usr/bin/env bash
+set -uo pipefail
+# Minimal stubs — no set -e so (exit N) sets \$? without aborting script
+emit_event()               { true; }
+info()                     { true; }
+warn()                     { true; }
+error()                    { true; }
+now_iso()                  { echo "2024-01-01T00:00:00Z"; }
+write_state()              { true; }
+_timeout()                 { local _t="\$1"; shift; "\$@"; }
+_config_get_int()          { echo "30"; }
+pipeline_cancel_check_runs() { true; }
+stop_heartbeat()           { true; }
+release_active_pipeline_lock() { true; }
+DIM="" RESET="" BOLD="" GREEN="" RED="" CYAN="" PURPLE=""
+
+# Track push calls
+ci_push_partial_work() {
+    echo "PUSH_CALLED:\${1:-default}" >> "$push_log"
+}
+
+# Default state (override via extra_state lines below)
+PIPELINE_STATUS="running"
+STATE_FILE="state"
+_PIPELINE_SIGNALED=false
+_SOFT_TIMEOUT_FIRED=false
+CI_MODE=true
+ISSUE_NUMBER=463
+STASHED_CHANGES=false
+_cleanup_done=""
+_WATCHDOG_PID=""
+ARTIFACTS_DIR=""
+_PIPELINE_LOCK_ID=""
+GH_AVAILABLE=false
+
+$extra_state
+
+$(awk '
+    /^cleanup_on_exit\(\)/ { in_fn=1 }
+    in_fn { print }
+    in_fn && /^\}$/ { in_fn=0 }
+' "$REAL_PIPELINE_SCRIPT")
+RUNNER_HDR
+}
+
+# 25. Stage failure (exit_code=1, _PIPELINE_SIGNALED=false) must push WIP.
+test_cleanup_pushes_on_stage_failure() {
+    local push_log="$TEST_TEMP_DIR/push-stage-fail-$$.txt"
+    local runner="$TEST_TEMP_DIR/bin/cleanup-stage-fail-$$.sh"
+    rm -f "$push_log"
+
+    _write_cleanup_runner "$runner" "$push_log"
+    echo 'echo "REACHED" >> '"$push_log" >> "$runner"
+    echo '(exit 1); cleanup_on_exit' >> "$runner"
+    chmod +x "$runner"
+    bash "$runner" 2>/dev/null || true
+
+    if ! grep -q "REACHED" "$push_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} Runner did not reach cleanup_on_exit"
+        return 1
+    fi
+    if ! grep -q "PUSH_CALLED:" "$push_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} ci_push_partial_work not called on stage failure (exit_code=1, _PIPELINE_SIGNALED=false)"
+        return 1
+    fi
+    rm -f "$push_log" "$runner"
+    return 0
+}
+
+# 26. Success (exit_code=0) must NOT push WIP.
+test_cleanup_skips_push_on_success() {
+    local push_log="$TEST_TEMP_DIR/push-success-$$.txt"
+    local runner="$TEST_TEMP_DIR/bin/cleanup-success-$$.sh"
+    rm -f "$push_log"
+
+    _write_cleanup_runner "$runner" "$push_log"
+    echo 'echo "REACHED" >> '"$push_log" >> "$runner"
+    echo '(exit 0); cleanup_on_exit' >> "$runner"
+    chmod +x "$runner"
+    bash "$runner" 2>/dev/null || true
+
+    if ! grep -q "REACHED" "$push_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} Runner did not reach cleanup_on_exit"
+        return 1
+    fi
+    if grep -q "PUSH_CALLED:" "$push_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} ci_push_partial_work was called on success (exit_code=0) — should be skipped"
+        return 1
+    fi
+    rm -f "$push_log" "$runner"
+    return 0
+}
+
+# 27. When _SOFT_TIMEOUT_FIRED=true (watchdog already pushed) must NOT push again.
+test_cleanup_skips_push_when_soft_timeout_fired() {
+    local push_log="$TEST_TEMP_DIR/push-soft-fired-$$.txt"
+    local runner="$TEST_TEMP_DIR/bin/cleanup-soft-fired-$$.sh"
+    rm -f "$push_log"
+
+    _write_cleanup_runner "$runner" "$push_log" '_SOFT_TIMEOUT_FIRED=true'
+    echo 'echo "REACHED" >> '"$push_log" >> "$runner"
+    echo '(exit 1); cleanup_on_exit' >> "$runner"
+    chmod +x "$runner"
+    bash "$runner" 2>/dev/null || true
+
+    if ! grep -q "REACHED" "$push_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} Runner did not reach cleanup_on_exit"
+        return 1
+    fi
+    if grep -q "PUSH_CALLED:" "$push_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} ci_push_partial_work called when _SOFT_TIMEOUT_FIRED=true — watchdog already pushed"
+        return 1
+    fi
+    rm -f "$push_log" "$runner"
+    return 0
+}
+
+# 28. When CI_MODE=false must NOT push.
+test_cleanup_skips_push_when_not_ci() {
+    local push_log="$TEST_TEMP_DIR/push-no-ci-$$.txt"
+    local runner="$TEST_TEMP_DIR/bin/cleanup-no-ci-$$.sh"
+    rm -f "$push_log"
+
+    _write_cleanup_runner "$runner" "$push_log" 'CI_MODE=false'
+    echo 'echo "REACHED" >> '"$push_log" >> "$runner"
+    echo '(exit 1); cleanup_on_exit' >> "$runner"
+    chmod +x "$runner"
+    bash "$runner" 2>/dev/null || true
+
+    if ! grep -q "REACHED" "$push_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} Runner did not reach cleanup_on_exit"
+        return 1
+    fi
+    if grep -q "PUSH_CALLED:" "$push_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} ci_push_partial_work called when CI_MODE=false"
+        return 1
+    fi
+    rm -f "$push_log" "$runner"
+    return 0
+}
+
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1215,9 +1370,9 @@ main() {
     local filter="${1:-}"
 
     echo ""
-    echo -e "${PURPLE}${BOLD}╔═══════════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "${PURPLE}${BOLD}║  shipwright watchdog test — Issue #463 (ci_push + soft-timeout)  ║${RESET}"
-    echo -e "${PURPLE}${BOLD}╚═══════════════════════════════════════════════════════════════════╝${RESET}"
+    echo -e "${PURPLE}${BOLD}╔══════════════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${PURPLE}${BOLD}║  shipwright watchdog test — Issue #463 (ci_push + soft-timeout)     ║${RESET}"
+    echo -e "${PURPLE}${BOLD}╚══════════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
 
     if [[ ! -f "$REAL_PIPELINE_SCRIPT" ]]; then
@@ -1256,6 +1411,10 @@ main() {
         "test_watchdog_armed_event_emitted:Watchdog spawn: pipeline.watchdog_armed event emitted"
         "test_soft_timeout_emits_event:Watchdog: _soft_timeout_handler emits soft_timeout_push event"
         "test_watchdog_armed_event_logged_in_e2e:E2E: watchdog armed event in events log (intake pipeline)"
+        "test_cleanup_pushes_on_stage_failure:cleanup_on_exit: pushes WIP on stage failure (exit_code=1, not signaled)"
+        "test_cleanup_skips_push_on_success:cleanup_on_exit: skips push on success (exit_code=0)"
+        "test_cleanup_skips_push_when_soft_timeout_fired:cleanup_on_exit: skips push when _SOFT_TIMEOUT_FIRED=true"
+        "test_cleanup_skips_push_when_not_ci:cleanup_on_exit: skips push when CI_MODE=false"
     )
 
     for entry in "${tests[@]}"; do

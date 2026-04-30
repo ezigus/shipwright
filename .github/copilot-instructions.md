@@ -658,7 +658,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 445 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 444 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1086 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 3673 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 3688 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 749 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 698 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 834 | Predictive & Proactive Intelligence |
@@ -837,7 +837,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-pipeline-resume-test.sh` | 410 | Validate workflow shell logic |
 | `scripts/sw-pipeline-test.sh` | 2399 | E2E validation invoking the REAL pipeline |
 | `scripts/sw-pipeline-vitals-test.sh` | 226 | Validate pipeline health scoring |
-| `scripts/sw-pipeline-watchdog-test.sh` | 1292 | Watchdog / ci_push_partial_work tests |
+| `scripts/sw-pipeline-watchdog-test.sh` | 1451 | Watchdog / ci_push_partial_work tests |
 | `scripts/sw-pm-test.sh` | 225 | Autonomous PM Agent test suite |
 | `scripts/sw-policy-e2e-test.sh` | 290 | Verify config/policy.json is honored |
 | `scripts/sw-pr-lifecycle-test.sh` | 317 | Validate autonomous PR management |

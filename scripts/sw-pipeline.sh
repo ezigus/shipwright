@@ -858,10 +858,13 @@ ci_push_partial_work() {
 
     # Snapshot events.jsonl into the repo so it survives the ephemeral runner disk
     # and gets pushed with the WIP commit — enables post-mortem watchdog analysis.
+    # Stage immediately after copy so git diff --cached detects it even when it is
+    # the only change (untracked files are invisible to git diff --quiet).
     if [[ -f "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" ]]; then
         mkdir -p ".shipwright" 2>/dev/null || true
-        cp "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" \
-           ".shipwright/events-${ISSUE_NUMBER}-${GITHUB_RUN_ID:-local}.jsonl" 2>/dev/null || true
+        local _events_snap=".shipwright/events-${ISSUE_NUMBER}-${GITHUB_RUN_ID:-local}.jsonl"
+        cp "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" "$_events_snap" 2>/dev/null || true
+        git add "$_events_snap" 2>/dev/null || true
     fi
 
     # Only push if we have uncommitted changes (excluding daemon-config.json runtime writes)

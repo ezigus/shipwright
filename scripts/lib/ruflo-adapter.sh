@@ -1477,6 +1477,68 @@ ruflo_execute_audit() {
         return 1
     fi
 
+    # ─── Queen collapse: synthesis pass to dedup & promote severity ────────────
+    # Audit specialists (cve_scanner, secrets_detector, owasp_auditor,
+    # compliance_checker) frequently report the same vulnerability from
+    # different angles — e.g. a hardcoded credential surfaces in both
+    # secrets_detector and owasp_auditor (A07: identification & auth failures).
+    # Union-only output makes the same risk appear N times, drowning the
+    # pipeline's PR review in low-signal duplicates.
+    #
+    # Post-write synthesis: the union artifact is committed to disk first as
+    # the fail-open baseline. We seed a separate synthesis namespace with the
+    # artifact head, orchestrate a security-severity dedup+promotion pass, read
+    # the result, and overwrite the artifact only on success. Any failure
+    # preserves the union artifact unchanged.
+    #
+    # Severity scale follows CVSS-aligned audit conventions
+    # (Critical > High > Medium > Low > Info), distinct from the review-stage
+    # scale (Critical > Bug > Security > Warning > Suggestion). Multi-specialist
+    # endorsement promotes a finding by one level (e.g. two specialists
+    # agreeing on a Medium finding promotes it to High).
+    local _synth_ns="hive-audit-synth-${pipeline_id}"
+
+    # Seed synthesis namespace with first 6000 bytes of union artifact
+    local _artifact_head
+    _artifact_head=$(head -c 6000 "$artifact_file" 2>/dev/null || echo "")
+    if [[ -n "$_artifact_head" ]]; then
+        ruflo_store "audit-union-findings" "$_artifact_head" "$_synth_ns" "audit,synthesis" 2>/dev/null || true
+    fi
+
+    # Run synthesis orchestration pass: dedup + severity promotion. The goal
+    # explicitly names the audit severity scale (Critical/High/Medium/Low/Info)
+    # and the promotion rule so the queen agent applies consistent ranking
+    # across pipeline runs.
+    local _synth_exit=0
+    local _synth_goal="Deduplicate and rank security audit findings by severity (Critical/High/Medium/Low/Info). Merge findings reporting the same vulnerability from different specialists (cve_scanner, secrets_detector, owasp_auditor, compliance_checker) into a single entry preserving each specialist's evidence. Promote severity by one level when 2+ specialists endorse the same finding (consensus boost). Output structured Markdown with severity labels and specialist attribution."
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 120 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    else
+        ruflo_with_timeout 120 ruflo coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    fi
+
+    # Read synthesis result from hive memory — only if orchestration succeeded
+    local _synth_result=""
+    if [[ "$_synth_exit" -eq 0 ]]; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            _synth_result=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+                --action list --namespace "$_synth_ns" 2>/dev/null || true)
+        else
+            _synth_result=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+                --action list --namespace "$_synth_ns" 2>/dev/null || true)
+        fi
+    fi
+
+    # Overwrite artifact with synthesis result if successful (fail-open: keep union on any error)
+    if [[ -n "$_synth_result" ]] && [[ "$_synth_exit" -eq 0 ]]; then
+        printf '%s\n' "$_synth_result" > "$artifact_file" 2>/dev/null || true
+    fi
+
+    # Emit telemetry for observability
+    emit_event "ruflo.audit_synth_complete" "exit=${_synth_exit}" "namespace=${_synth_ns}"
+
     # Persist audit result for downstream stages
     ruflo_store "stage-audit-result" \
         "$(head -c 2000 "$artifact_file" 2>/dev/null || true)" \

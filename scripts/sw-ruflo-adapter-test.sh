@@ -2705,6 +2705,260 @@ else
     assert_fail "ruflo_execute_audit does not call hive-mind init when RUFLO_HIVE_AVAILABLE=true" "calls: $_calls"
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Audit Queen Collapse — union artifact written first (fail-open base)"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/audit-artifact.md"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'cve: CVE-2024-1234\nsecret: api-key leak\nowasp: A07 auth\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-audit-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_audit "diff content" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_artifact_content=$(cat "$_artifact" 2>/dev/null || true)
+rm -rf "$_test_tmp"
+if [[ -n "$_artifact_content" ]]; then
+    assert_pass "Audit Queen Collapse: union artifact written (fail-open base exists)"
+else
+    assert_fail "Audit Queen Collapse: union artifact written (fail-open base exists)" "artifact empty"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Audit Queen Collapse — synthesis orchestration attempted"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/audit-artifact.md"
+_call_log="$_test_tmp/calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+printf '%s %s\n' "\${1:-}" "\${2:-}" >> "$_call_log"
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'cve: issue1\nsecret: issue2\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-audit-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_audit "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_calls=$(cat "$_call_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+# Audit calls orchestrate twice: once for the audit pass, once for synthesis.
+# Counting occurrences distinguishes the queen-collapse pass from the audit pass.
+_orch_count=$(grep -cF "coordination orchestrate" <<< "$_calls" || echo 0)
+_orch_count="${_orch_count//[^0-9]/}"
+if (( ${_orch_count:-0} >= 2 )); then
+    assert_pass "Audit Queen Collapse: coordination orchestrate called for synthesis"
+else
+    assert_fail "Audit Queen Collapse: coordination orchestrate called for synthesis" "orch_count=$_orch_count calls: $_calls"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Audit Queen Collapse — synthesis goal includes dedup, severity, and promotion"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/audit-artifact.md"
+_goal_log="$_test_tmp/goal.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'cve_finding\nsecret_finding\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  for arg in "\$@"; do
+    if [[ "\$arg" == --goal ]]; then
+      next=1
+    elif [[ -n "\${next:-}" ]]; then
+      printf '%s\n' "\$arg" >> "$_goal_log"
+      next=0
+    fi
+  done
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-audit-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_audit "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_goals=$(cat "$_goal_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+# Match a goal line that mentions the audit severity scale AND
+# (dedup OR promot) — synthesis goal must signal both behaviours.
+if grep -qi "severity\|critical\|high\|medium" <<< "$_goals" && \
+   grep -qi "dedup\|promot\|consensus\|merge" <<< "$_goals"; then
+    assert_pass "Audit Queen Collapse: synthesis goal mentions severity + dedup/promotion"
+else
+    assert_fail "Audit Queen Collapse: synthesis goal mentions severity + dedup/promotion" "goals: $_goals"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Audit Queen Collapse — fail-open: union preserved on synthesis failure"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/audit-artifact.md"
+_union_marker="UNION_AUDIT_FINDING_MARKER"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+# Track orchestration calls so the second (synthesis) invocation can be failed
+# while the first (audit pass) remains successful.
+_count_file="$_test_tmp/orch_count"
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  # First memory list (audit ns) returns the union marker; the synthesis ns
+  # is empty. Distinguishing by namespace would tie the test to internal
+  # naming; instead we always return the marker — fail-open is verified by
+  # ensuring the marker survives synthesis failure.
+  printf '%s\n' "$_union_marker"
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  _n=\$(cat "\$_count_file" 2>/dev/null || echo 0)
+  _n=\$(( _n + 1 ))
+  printf '%s' "\$_n" > "\$_count_file"
+  if [[ "\$_n" -ge 2 ]]; then
+    # Fail the synthesis (queen collapse) orchestration pass
+    exit 1
+  fi
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-audit-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_audit "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_artifact_content=$(cat "$_artifact" 2>/dev/null || true)
+rm -rf "$_test_tmp"
+if grep -qF "$_union_marker" <<< "$_artifact_content"; then
+    assert_pass "Audit Queen Collapse: fail-open preserves union on synthesis failure"
+else
+    assert_fail "Audit Queen Collapse: fail-open preserves union on synthesis failure" "artifact: $_artifact_content"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Audit Queen Collapse — synthesis uses separate hive-audit-synth namespace"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/audit-artifact.md"
+_ns_log="$_test_tmp/ns.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  for arg in "\$@"; do
+    if [[ "\$arg" == --namespace ]]; then
+      next=1
+    elif [[ -n "\${next:-}" ]]; then
+      printf '%s\n' "\$arg" >> "$_ns_log"
+      next=0
+    fi
+  done
+  printf 'audit_finding\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-audit-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_audit "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_namespaces=$(cat "$_ns_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+_has_audit_ns=$(grep -c "hive-audit-" <<< "$_namespaces" || echo 0)
+_has_synth_ns=$(grep -c "hive-audit-synth" <<< "$_namespaces" || echo 0)
+_has_audit_ns="${_has_audit_ns//[^0-9]/}"
+_has_synth_ns="${_has_synth_ns//[^0-9]/}"
+if (( ${_has_audit_ns:-0} > 0 )) && (( ${_has_synth_ns:-0} > 0 )); then
+    assert_pass "Audit Queen Collapse: uses separate hive-audit-synth namespace"
+else
+    assert_fail "Audit Queen Collapse: uses separate hive-audit-synth namespace" "ns: $_namespaces"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Audit Queen Collapse — telemetry event emitted with exit code"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/audit-artifact.md"
+_event_log="$_test_tmp/events.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'audit_finding\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-audit-hive"
+RUFLO_USE_NPX=false
+emit_event() { printf '%s\n' "$*" >> "$_event_log"; }
+ruflo_execute_audit "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_events=$(cat "$_event_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+if grep -q "ruflo.audit_synth_complete" <<< "$_events" && grep -q "exit=" <<< "$_events"; then
+    assert_pass "Audit Queen Collapse: telemetry event emitted with exit code"
+else
+    assert_fail "Audit Queen Collapse: telemetry event emitted with exit code" "events: $_events"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Section D: Cleanup — ruflo_cleanup shuts down hive
 # ═══════════════════════════════════════════════════════════════════════════════

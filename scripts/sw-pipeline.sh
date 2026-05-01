@@ -2532,12 +2532,16 @@ run_dry_run() {
         stage_enabled=$(echo "$stage_json" | jq -r '.enabled')
         stage_gate=$(echo "$stage_json" | jq -r '.gate')
 
-        # Determine stage model (config override or default)
-        stage_config_model=$(echo "$stage_json" | jq -r '.config.model // ""')
-        if [[ -n "$stage_config_model" && "$stage_config_model" != "null" ]]; then
-            stage_model_display="$stage_config_model"
+        # Determine stage model: CLI --model flag wins; else per-stage config; else default
+        if [[ -n "${MODEL:-}" ]]; then
+            stage_model_display="$MODEL"
         else
-            stage_model_display="$default_model"
+            stage_config_model=$(echo "$stage_json" | jq -r '.config.model // ""')
+            if [[ -n "$stage_config_model" && "$stage_config_model" != "null" ]]; then
+                stage_model_display="$stage_config_model"
+            else
+                stage_model_display="$default_model"
+            fi
         fi
 
         # Format enabled

@@ -482,7 +482,7 @@ $(printf '%s\n' "${INTELLIGENCE_INTAKE_CTX}")"
         _timeout "$_plan_timeout" claude --print --model "$plan_model" --max-turns 25 \
             --disallowed-tools "EnterPlanMode,ExitPlanMode" \
             --dangerously-skip-permissions "$plan_prompt" < /dev/null > "$plan_file" 2>"$_token_log" &
-        _claude_bg_pid=$!
+        local _claude_bg_pid=$!
         wait "$_claude_bg_pid"
         _plan_exit=$?
         if [[ "$_plan_exit" -eq 124 ]]; then
@@ -1024,7 +1024,7 @@ $(printf '%s\n' "${INTELLIGENCE_INTAKE_CTX}")"
         --disallowed-tools "EnterPlanMode,ExitPlanMode" \
         --dangerously-skip-permissions \
         "$design_prompt" < /dev/null > "$design_file" 2>"$_token_log" &
-    _claude_bg_pid=$!
+    local _claude_bg_pid=$!
     wait "$_claude_bg_pid" || true
     parse_claude_tokens "$_token_log"
 

@@ -883,6 +883,7 @@ ci_push_partial_work() {
         echo "[WIP-PUSH-FAIL] $(date -u +%FT%TZ) branch=$branch exit=${_push_rc}" >&2
         warn "git push failed for $branch — remote may be out of sync"
         emit_event "pipeline.push_failed" "branch=$branch exit=${_push_rc}"
+        return "$_push_rc"
     fi
 }
 

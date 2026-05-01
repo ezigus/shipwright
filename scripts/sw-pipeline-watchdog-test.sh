@@ -609,7 +609,7 @@ test_soft_timeout_calls_push_with_120() {
         in_fn && /^\}/ { in_fn=0 }
     ' "$REAL_PIPELINE_SCRIPT")
 
-    if ! printf '%s\n' "$fn_block" | grep -qE "ci_push_partial_work[[:space:]]+120"; then
+    if ! printf '%s\n' "$fn_block" | grep -qF "ci_push_partial_work 120"; then
         echo -e "    ${RED}✗${RESET} _soft_timeout_handler does not call ci_push_partial_work with 120"
         return 1
     fi
@@ -932,12 +932,12 @@ test_watchdog_delay_calculation() {
     # Must compute delay using (_job_timeout_min - 5) * 60 arithmetic.
     # The actual code: _watchdog_delay_sec=$(( (_job_timeout_min - 5) * 60 ))
     # Match for '_job_timeout_min - 5' and '* 60' anywhere in the block.
-    if ! printf '%s\n' "$fn_block" | grep -qE '_job_timeout_min[[:space:]]*-[[:space:]]*5'; then
+    if ! printf '%s\n' "$fn_block" | grep -qF '_job_timeout_min - 5'; then
         echo -e "    ${RED}✗${RESET} Watchdog delay formula '_job_timeout_min - 5' not found"
         echo "    Block: $(printf '%s\n' "$fn_block" | grep -E 'delay|_watchdog' | head -3)"
         return 1
     fi
-    if ! printf '%s\n' "$fn_block" | grep -qE '\*[[:space:]]*60'; then
+    if ! printf '%s\n' "$fn_block" | grep -qF '* 60'; then
         echo -e "    ${RED}✗${RESET} Watchdog delay formula '* 60' (convert to seconds) not found"
         echo "    Block: $(printf '%s\n' "$fn_block" | grep -E 'delay|_watchdog' | head -3)"
         return 1
@@ -1029,7 +1029,7 @@ test_watchdog_spawn_inside_pipeline_start() {
         fi
         # End of pipeline_start: a line that is just '^}' resets the context
         # (simple heuristic: top-level closing brace at column 0)
-        if $in_pipeline_start && printf '%s\n' "$line" | grep -qE '^\}[[:space:]]*$'; then
+        if $in_pipeline_start && printf '%s\n' "$line" | grep -qE '^\}[	 ]*$'; then
             in_pipeline_start=false
         fi
     done < "$REAL_PIPELINE_SCRIPT"

@@ -1158,7 +1158,7 @@ fi
 
 # Test: ruflo_execute_plan_hive returns 1 (exact) when hive is unavailable
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_test_tmp=$(mktemp -d)
 _orig_path="$PATH"
 mock_binary "ruflo" 'exit 1'
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
@@ -1178,7 +1178,7 @@ fi
 
 # Test: ruflo_execute_plan_hive returns 1 when planners produce no output
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_test_tmp=$(mktemp -d)
 cat > "$_test_tmp/ruflo" <<'MOCK'
 #!/usr/bin/env bash
 # Always succeed but return empty memory list
@@ -1209,7 +1209,7 @@ fi
 # Test: ruflo_execute_plan_hive returns 0 and emits plan on stdout on success;
 #       verifies spawn and orchestrate were called
 unset _RUFLO_ADAPTER_LOADED
-_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_test_tmp=$(mktemp -d)
 _call_log="$_test_tmp/ruflo-calls.log"
 cat > "$_test_tmp/ruflo" <<MOCK
 #!/usr/bin/env bash

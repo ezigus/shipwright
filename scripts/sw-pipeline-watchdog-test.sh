@@ -921,7 +921,7 @@ test_watchdog_delay_calculation() {
     fn_block=$(awk '
         /Soft-timeout watchdog/ { in_block=1 }
         in_block { print }
-        in_block && /_WATCHDOG_PID=\$!/ { in_block=0 }
+        in_block && /_WATCHDOG_PID=[$]!/ { in_block=0 }
     ' "$REAL_PIPELINE_SCRIPT")
 
     if [[ -z "$fn_block" ]]; then
@@ -1112,7 +1112,7 @@ test_watchdog_armed_event_emitted() {
     fn_block=$(awk '
         /Soft-timeout watchdog/ { in_block=1 }
         in_block { print }
-        in_block && /_WATCHDOG_PID=\$!/ { found=1 }
+        in_block && /_WATCHDOG_PID=[$]!/ { found=1 }
         found && /emit_event/ { print; exit }
         found { print }
     ' "$REAL_PIPELINE_SCRIPT")

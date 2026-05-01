@@ -1549,6 +1549,227 @@ ruflo_execute_audit() {
     return 0
 }
 
+# ─── ruflo_execute_plan_hive — multi-agent planning divergence with queen collapse
+# Spawns specialist planner agents in parallel:
+#   - risk-averse: minimize blast radius, prefer smallest safe change
+#   - scope-minimal: implement ONLY what is explicitly asked, no extras
+#   - performance-first (optional, when 3 agents): optimize for build loop speed
+# Each planner writes an independent plan to a shared hive namespace.
+# A queen-synthesis pass merges plans into one coherent plan that preserves
+# the safest scope and clearest steps, surfacing strategy divergences.
+#
+# Usage: ruflo_execute_plan_hive <goal> [issue_body]
+# Returns 0 on success — synthesized plan written to stdout.
+#         1 on any unrecoverable hive error — caller MUST fall back to native.
+# Always fail-open from the pipeline's perspective (caller falls back).
+# stdin is not used; callers may safely redirect it.
+#
+# Side effects:
+#   - writes to hive namespaces hive-plan-<pid> and plan-synth-<pid>
+#   - emits ruflo.plan_hive_{start,complete,failed,synthesis_fallback} events
+#
+# Environment knobs:
+#   RUFLO_PLAN_MAX_AGENTS       — number of planner specialists (default 2; max 3)
+#   RUFLO_PLAN_HARD_MAX_AGENTS  — hard cap when budget multiplier scales up (default 3)
+ruflo_execute_plan_hive() {
+    ruflo_available || return 1
+    local goal="$1"
+    local issue_body="${2:-}"
+    [[ -n "$goal" ]] || return 1
+
+    local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
+    local plan_ns="hive-plan-${pipeline_id}"
+    local synth_ns="plan-synth-${pipeline_id}"
+    # Planner specialists default to 2 (risk-averse + scope-minimal); cap at 3 to
+    # avoid runaway token cost. Budget multiplier may scale up to the hard cap.
+    local plan_agents="${RUFLO_PLAN_MAX_AGENTS:-2}"
+    local _plan_hard_cap="${RUFLO_PLAN_HARD_MAX_AGENTS:-3}"
+    if ! [[ "$_plan_hard_cap" =~ ^[0-9]+$ ]] || (( _plan_hard_cap < 1 )); then
+        _plan_hard_cap=3
+    fi
+    if (( _plan_hard_cap < plan_agents )); then
+        _plan_hard_cap="$plan_agents"
+    fi
+    if [[ -n "${RUFLO_COST_BUDGET_MULTIPLIER:-}" ]] && \
+       [[ "${RUFLO_COST_BUDGET_MULTIPLIER}" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+        local _default_plan="$plan_agents"
+        plan_agents=$(awk -v d="$_default_plan" -v m="${RUFLO_COST_BUDGET_MULTIPLIER}" -v cap="$_plan_hard_cap" \
+            'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}' 2>/dev/null || echo "$plan_agents")
+    fi
+
+    emit_event "ruflo.plan_hive_start" "max_agents=$plan_agents" "namespace=$plan_ns"
+
+    # Gate: hive must be initialized by ruflo_init() before stages run
+    if [[ "${RUFLO_HIVE_AVAILABLE:-false}" != "true" ]]; then
+        emit_event "ruflo.plan_hive_failed" "reason=hive_unavailable"
+        return 1
+    fi
+    local hive_id="$RUFLO_HIVE_ID"
+
+    # Spawn specialist planner agents — non-fatal spawn failure
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 60 npx -y ruflo@latest hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$plan_agents" \
+            --role specialist \
+            --prefix "planner-${pipeline_id}" 2>/dev/null || true
+    else
+        ruflo_with_timeout 60 ruflo hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$plan_agents" \
+            --role specialist \
+            --prefix "planner-${pipeline_id}" 2>/dev/null || true
+    fi
+
+    # Store goal, issue body, and task type for planners to consume.
+    # Issue body is bounded to 8000 bytes to avoid argv limits.
+    ruflo_store "plan-goal" "$goal" "$plan_ns" "plan,goal" || true
+    if [[ -n "$issue_body" ]]; then
+        local _bounded_issue
+        _bounded_issue=$(printf '%s' "$issue_body" | head -c 8000 2>/dev/null || true)
+        ruflo_store "plan-issue" "$_bounded_issue" "$plan_ns" "plan,issue" || true
+    fi
+    ruflo_store "plan-task-type" "${TASK_TYPE:-feature}" "$plan_ns" "plan,context" || true
+
+    # Seed historical recall context — past planning outcomes (recurring scope
+    # creep, repeat root-cause patterns) inform planners before orchestration.
+    _ruflo_seed_specialist_history "plan" "$plan_ns" || true
+
+    # Orchestrate planner agents with explicit strategy constraints. The goal
+    # names each planner role and the required output structure so each
+    # specialist writes to a distinct key in the namespace.
+    local plan_goal
+    if (( plan_agents >= 3 )); then
+        plan_goal="Multi-agent planning divergence: spawn three specialist planners (risk-averse, scope-minimal, performance-first) each producing an independent implementation plan in namespace ${plan_ns}.
+
+Risk-averse planner: minimize blast radius, smallest safe change, flag scope creep, prefer additive changes over invasive refactors. Write to key 'planner-risk-averse-plan'.
+Scope-minimal planner: implement ONLY what is explicitly asked, zero extras, no speculative abstractions. Write to key 'planner-scope-minimal-plan'.
+Performance-first planner: optimize for build loop iteration speed, prefer changes that reduce future test or rebuild time. Write to key 'planner-performance-first-plan'.
+
+Each plan must follow this structure: '## Files to Modify', '## Implementation Steps', '## Task Checklist' (5-15 checkbox items), '## Testing Approach', '## Definition of Done'."
+    else
+        plan_goal="Multi-agent planning divergence: spawn two specialist planners (risk-averse, scope-minimal) each producing an independent implementation plan in namespace ${plan_ns}.
+
+Risk-averse planner: minimize blast radius, smallest safe change, flag scope creep, prefer additive changes over invasive refactors. Write to key 'planner-risk-averse-plan'.
+Scope-minimal planner: implement ONLY what is explicitly asked, zero extras, no speculative abstractions. Write to key 'planner-scope-minimal-plan'.
+
+Each plan must follow this structure: '## Files to Modify', '## Implementation Steps', '## Task Checklist' (5-15 checkbox items), '## Testing Approach', '## Definition of Done'."
+    fi
+
+    local _orch_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 300 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "$plan_goal" \
+            --max-turns 15 \
+            --mode "planning" 2>/dev/null || _orch_exit=$?
+    else
+        ruflo_with_timeout 300 ruflo coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "$plan_goal" \
+            --max-turns 15 \
+            --mode "planning" 2>/dev/null || _orch_exit=$?
+    fi
+
+    # Fail fast if orchestration failed — no plans to synthesize
+    if [[ $_orch_exit -ne 0 ]]; then
+        warn "ruflo: plan orchestration failed with exit $_orch_exit"
+        emit_event "ruflo.plan_hive_failed" "reason=orchestration_failed" "exit=$_orch_exit"
+        return 1
+    fi
+
+    # Aggregate via union — collect each planner's plan from the namespace
+    local _union_plans=""
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _union_plans=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+            --action list \
+            --namespace "$plan_ns" 2>/dev/null) || true
+    else
+        _union_plans=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+            --action list \
+            --namespace "$plan_ns" 2>/dev/null) || true
+    fi
+
+    # If union is empty, we have no plans at all — fail so caller falls back
+    if [[ -z "$_union_plans" ]]; then
+        warn "ruflo: planners produced no output in namespace $plan_ns"
+        emit_event "ruflo.plan_hive_failed" "reason=empty_union"
+        return 1
+    fi
+
+    # ─── Queen collapse: synthesis pass to merge plans into one coherent plan ──
+    # Two or three planners diverge by design. Returning the raw union confuses
+    # the downstream validation gate (multiple "## Files to Modify" sections,
+    # conflicting task counts). The queen synthesis pass merges them into ONE
+    # plan that preserves the safest scope from risk-averse, the clearest steps
+    # from scope-minimal, and surfaces real divergences in a dedicated section.
+    #
+    # Seed the synthesis namespace with the union (head-bounded to avoid argv
+    # limits), then orchestrate a synthesis pass with --mode synthesis.
+    local _union_head
+    _union_head=$(printf '%s' "$_union_plans" | head -c 8000 2>/dev/null || echo "")
+    if [[ -n "$_union_head" ]]; then
+        ruflo_store "plan-union" "$_union_head" "$synth_ns" "plan,synthesis" 2>/dev/null || true
+    fi
+
+    local _synth_goal="Plan synthesis: merge multiple independent planner outputs from namespace ${plan_ns} into one coherent implementation plan.
+
+Preserve:
+- Safest scope from risk-averse planner (minimal blast radius, additive changes)
+- Clearest steps from scope-minimal planner (no extras, no speculative abstractions)
+- Build-loop optimizations from performance-first planner (when present)
+
+Surface real divergences (where planners disagree on scope or approach) in a dedicated '## Strategy Divergences' section. Omit that section when planners agree.
+
+Output exactly ONE plan with this structure (in this order): '## Files to Modify', '## Implementation Steps' (numbered, ordered safest-first), '## Task Checklist' (5-15 checkbox items, '- [ ]' format), '## Strategy Divergences' (only if planners diverged), '## Testing Approach', '## Definition of Done'.
+
+Write the synthesized plan to namespace ${synth_ns} under key 'plan-synthesized'."
+
+    local _synth_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 120 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    else
+        ruflo_with_timeout 120 ruflo coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    fi
+
+    # Read synthesis result from hive memory — only if orchestration succeeded
+    local _synth_result=""
+    if [[ "$_synth_exit" -eq 0 ]]; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            _synth_result=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+                --action list --namespace "$synth_ns" 2>/dev/null || true)
+        else
+            _synth_result=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+                --action list --namespace "$synth_ns" 2>/dev/null || true)
+        fi
+    fi
+
+    # Emit the synthesized plan if we got one; otherwise emit the union as a
+    # fallback (the validation gate may still accept it, and pipeline can
+    # always retry). Either way, return 0 so the caller writes the result.
+    if [[ -n "$_synth_result" ]] && [[ "$_synth_exit" -eq 0 ]]; then
+        printf '%s\n' "$_synth_result"
+        emit_event "ruflo.plan_hive_complete" "hive_id=$hive_id" "synthesis=ok" "namespace=$synth_ns"
+    else
+        # Fallback to union when synthesis fails — surface telemetry so we can
+        # diagnose synthesis flakiness without breaking the pipeline.
+        printf '%s\n' "$_union_plans"
+        emit_event "ruflo.plan_hive_synthesis_fallback" "synth_exit=$_synth_exit" "namespace=$plan_ns"
+        emit_event "ruflo.plan_hive_complete" "hive_id=$hive_id" "synthesis=fallback"
+    fi
+
+    # Persist plan result for downstream stages (bounded preview)
+    local _plan_preview="${_synth_result:-$_union_plans}"
+    ruflo_store "stage-plan-result" \
+        "$(printf '%s' "$_plan_preview" | head -c 2000 2>/dev/null || true)" \
+        "pipeline-${pipeline_id}" \
+        "plan,outcome" || true
+
+    return 0
+}
+
 # ─── ruflo_learn_from_shipwright — bridge Shipwright outcomes to ruflo ───────
 # Called after skill_memory_record() writes an outcome. Accepts either a path
 # to an outcome JSON file or a raw JSON string, then indexes the outcome into

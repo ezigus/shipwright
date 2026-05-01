@@ -476,9 +476,14 @@ $(printf '%s\n' "${INTELLIGENCE_INTAKE_CTX}")"
     _plan_timeout=$(_config_get_int "plan.claude_timeout" 3600 2>/dev/null || echo 3600)
     for _plan_attempt in 1 2 3; do
         : > "$plan_file"
+        # Run claude in background so bash's wait builtin handles it — unlike a
+        # foreground call, wait IS interruptible by USR1/INT/TERM traps, allowing
+        # the watchdog to push the WIP branch before the GHA job hard-kills the runner.
         _timeout "$_plan_timeout" claude --print --model "$plan_model" --max-turns 25 \
             --disallowed-tools "EnterPlanMode,ExitPlanMode" \
-            --dangerously-skip-permissions "$plan_prompt" < /dev/null > "$plan_file" 2>"$_token_log"
+            --dangerously-skip-permissions "$plan_prompt" < /dev/null > "$plan_file" 2>"$_token_log" &
+        local _claude_bg_pid=$!
+        wait "$_claude_bg_pid"
         _plan_exit=$?
         if [[ "$_plan_exit" -eq 124 ]]; then
             warn "Plan stage timed out (attempt ${_plan_attempt}/3, limit=${_plan_timeout}s) — retrying"
@@ -1012,10 +1017,15 @@ $(printf '%s\n' "${INTELLIGENCE_INTAKE_CTX}")"
     fi
 
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-design.log"
+    # Run claude in background so bash's wait builtin handles it — interruptible by
+    # USR1/INT/TERM traps unlike a blocking foreground call. Allows watchdog to push
+    # the WIP branch on GHA timeout without waiting for claude to finish.
     claude --print --model "$design_model" --max-turns 25 \
         --disallowed-tools "EnterPlanMode,ExitPlanMode" \
         --dangerously-skip-permissions \
-        "$design_prompt" < /dev/null > "$design_file" 2>"$_token_log" || true
+        "$design_prompt" < /dev/null > "$design_file" 2>"$_token_log" &
+    local _claude_bg_pid=$!
+    wait "$_claude_bg_pid" || true
     parse_claude_tokens "$_token_log"
 
     # Claude may write to disk via tools instead of stdout — rescue those files

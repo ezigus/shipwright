@@ -2504,6 +2504,7 @@ run_single_agent_loop() {
         # Pre-checks (before incrementing — ITERATION tracks completed count)
         check_circuit_breaker || break
         check_max_iterations || break
+        check_time_budget || break
         check_budget_gate || {
             STATUS="budget_exhausted"
             write_state
@@ -2962,6 +2963,9 @@ run_loop_with_restarts() {
         TEST_PASSED=""
         TEST_OUTPUT=""
         TEST_LOG_FILE=""
+        # Preserve LOOP_START_EPOCH across restarts — time budget is wall-clock from
+        # the very first loop invocation, not from each session restart.
+        : "${LOOP_START_EPOCH:=$(now_epoch 2>/dev/null || echo 0)}"
         # Reset GOAL to original — prevent unbounded growth from memory/human injections
         GOAL="$ORIGINAL_GOAL"
         # Reset per-session token counters on every restart — cumulative totals from

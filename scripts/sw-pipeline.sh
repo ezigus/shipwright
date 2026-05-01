@@ -814,6 +814,12 @@ REVIEW_BUILD_RETRIES=$(_config_get_int "pipeline.review_build_retries" 2 2>/dev/
 STASHED_CHANGES=false
 SELF_HEAL_COUNT=0
 
+# Cycling halt: cumulative consecutive test-failure cap across pipeline invocations.
+# Reads `pipeline-state.md` log to detect when external automation keeps re-entering
+# the build stage after exhausted self-healing. Set to 0 to disable (escape hatch).
+SW_PIPELINE_MAX_BUILD_RETRIES=${SW_PIPELINE_MAX_BUILD_RETRIES:-3}
+PIPELINE_STUCK_CYCLING=false
+
 # ─── Cost Tracking ───────────────────────────────────────────────────────
 TOTAL_INPUT_TOKENS=0
 TOTAL_OUTPUT_TOKENS=0
@@ -1419,6 +1425,52 @@ run_stage_with_retry() {
     done
 }
 
+# ─── Cycling Halt: Cumulative Test-Failure Counter ────────────────────────
+# Reads `## Log` section of pipeline-state.md and returns the trailing run of
+# consecutive `test` stage failures. Resets to 0 on any `test` `complete` entry.
+# Survives daemon/pipeline restarts because the log is persisted to disk.
+#
+# Bash 3.2 compatible: no associative arrays, POSIX ERE in [[ =~ ]] only.
+count_consecutive_test_failures() {
+    local state_file="${1:-${STATE_FILE:-}}"
+    if [[ -z "$state_file" || ! -f "$state_file" ]]; then
+        echo 0
+        return 0
+    fi
+
+    local in_log=0 current_stage="" outcomes=""
+    while IFS= read -r line; do
+        if [[ "$line" == "## Log" ]]; then
+            in_log=1
+            continue
+        fi
+        [[ "$in_log" -eq 0 ]] && continue
+        if [[ "$line" =~ ^###[[:space:]]+([a-z_]+)[[:space:]]+ ]]; then
+            current_stage="${BASH_REMATCH[1]}"
+            continue
+        fi
+        if [[ "$current_stage" == "test" ]]; then
+            if [[ "$line" =~ ^complete ]]; then
+                outcomes="$outcomes pass"
+                current_stage=""
+            elif [[ "$line" =~ ^failed ]]; then
+                outcomes="$outcomes fail"
+                current_stage=""
+            fi
+        fi
+    done < "$state_file"
+
+    local count=0 word
+    for word in $outcomes; do
+        if [[ "$word" == "fail" ]]; then
+            count=$((count + 1))
+        elif [[ "$word" == "pass" ]]; then
+            count=0
+        fi
+    done
+    echo "$count"
+}
+
 # ─── Self-Healing Build→Test Feedback Loop ─────────────────────────────────
 # When tests fail after a build, this captures the error and re-runs the build
 # with the error context, so Claude can fix the issue automatically.
@@ -1479,6 +1531,28 @@ self_healing_build_test() {
 
     while [[ "$cycle" -le "$max_cycles" ]]; do
         cycle=$((cycle + 1))
+
+        # ── Cycling Halt: cumulative cap across pipeline invocations ──
+        # External automation (daemon, autonomous pipeline) may re-enter build
+        # after self-healing exhausts. Persistent log of test failures detects
+        # this and halts with a distinct `stuck_cycling` state.
+        local _max_build_retries="${SW_PIPELINE_MAX_BUILD_RETRIES:-3}"
+        if [[ "$_max_build_retries" -gt 0 ]]; then
+            local _consec_failures
+            _consec_failures=$(count_consecutive_test_failures)
+            if [[ "$_consec_failures" -ge "$_max_build_retries" ]]; then
+                PIPELINE_STUCK_CYCLING=true
+                log_stage "pipeline" "stuck_cycling: ${_consec_failures} consecutive test failures (cap=${_max_build_retries}). Override: SW_PIPELINE_MAX_BUILD_RETRIES=0"
+                update_status "stuck_cycling" "build"
+                error "Pipeline halted: ${_consec_failures} consecutive test failures reached cap of ${_max_build_retries}"
+                warn "Override: SW_PIPELINE_MAX_BUILD_RETRIES=0 shipwright pipeline resume"
+                emit_event "pipeline.stuck_cycling" \
+                    "issue=${ISSUE_NUMBER:-0}" \
+                    "consecutive_failures=${_consec_failures}" \
+                    "cap=${_max_build_retries}" || true
+                return 1
+            fi
+        fi
 
         if [[ "$cycle" -gt 1 ]]; then
             SELF_HEAL_COUNT=$((SELF_HEAL_COUNT + 1))
@@ -1966,6 +2040,10 @@ run_pipeline() {
                     info "Complexity reassessment: ${reassessment}"
                 fi
             else
+                if [[ "${PIPELINE_STUCK_CYCLING:-false}" == "true" ]]; then
+                    # Cycling halt already wrote `status: stuck_cycling` — preserve it.
+                    return 1
+                fi
                 update_status "failed" "test"
                 error "Pipeline failed: build→test self-healing exhausted"
                 return 1
@@ -2169,7 +2247,9 @@ run_pipeline() {
             local stage_dur_s
             stage_dur_s=$(( $(now_epoch) - stage_start_epoch ))
             error "Pipeline failed at stage: ${BOLD}$id${RESET}"
-            update_status "failed" "$id"
+            if [[ "${PIPELINE_STUCK_CYCLING:-false}" != "true" ]]; then
+                update_status "failed" "$id"
+            fi
             emit_event "stage.failed" \
                 "issue=${ISSUE_NUMBER:-0}" \
                 "stage=$id" \
@@ -3405,13 +3485,14 @@ pipeline_status() {
 
     local status_icon
     case "$p_status" in
-        running)     status_icon="${CYAN}●${RESET}" ;;
-        complete)    status_icon="${GREEN}✓${RESET}" ;;
-        paused)      status_icon="${YELLOW}⏸${RESET}" ;;
-        interrupted) status_icon="${YELLOW}⚡${RESET}" ;;
-        failed)      status_icon="${RED}✗${RESET}" ;;
-        aborted)     status_icon="${RED}◼${RESET}" ;;
-        *)           status_icon="${DIM}○${RESET}" ;;
+        running)        status_icon="${CYAN}●${RESET}" ;;
+        complete)       status_icon="${GREEN}✓${RESET}" ;;
+        paused)         status_icon="${YELLOW}⏸${RESET}" ;;
+        interrupted)    status_icon="${YELLOW}⚡${RESET}" ;;
+        failed)         status_icon="${RED}✗${RESET}" ;;
+        aborted)        status_icon="${RED}◼${RESET}" ;;
+        stuck_cycling)  status_icon="${YELLOW}⚠${RESET}" ;;
+        *)              status_icon="${DIM}○${RESET}" ;;
     esac
 
     echo -e "  ${BOLD}Pipeline:${RESET}  $p_name"

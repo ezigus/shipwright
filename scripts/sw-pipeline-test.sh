@@ -2263,6 +2263,275 @@ test_partial_work_push_condition() {
     assert_pass "partial-work push handles both failure and cancelled (issue #437)"
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Cycling Halt: count_consecutive_test_failures() parses pipeline-state.md log
+# and returns trailing-failure count; resets on `complete`, ignores non-test stages.
+# ──────────────────────────────────────────────────────────────────────────────
+test_count_consecutive_test_failures_parsing() {
+    local script="$TEST_TEMP_DIR/scripts/sw-pipeline.sh"
+    local helper="$TEST_TEMP_DIR/count-helper.sh"
+    local state_file="$TEST_TEMP_DIR/state-fixture.md"
+
+    # Extract just the function so we can call it standalone (no full pipeline init)
+    awk '/^count_consecutive_test_failures\(\) \{/,/^\}/' "$script" > "$helper"
+
+    if ! grep -q "count_consecutive_test_failures" "$helper"; then
+        assert_fail "cycling halt: count_consecutive_test_failures function not found in sw-pipeline.sh"
+        return
+    fi
+
+    _run_count() {
+        local expected="$1" label="$2"
+        local got
+        got=$(bash -c "source \"$helper\"; count_consecutive_test_failures \"$state_file\"")
+        if [[ "$got" -ne "$expected" ]]; then
+            assert_fail "cycling halt parser: expected=$expected got=$got — $label"
+            return 1
+        fi
+        return 0
+    }
+
+    # Missing file → 0
+    rm -f "$state_file"
+    _run_count 0 "missing state file" || return
+
+    # Empty file → 0
+    : > "$state_file"
+    _run_count 0 "empty state file" || return
+
+    # No test entries → 0
+    cat > "$state_file" <<'STATE_EOF'
+## Log
+
+### intake (10:00:00)
+complete (1m)
+
+### plan (10:01:00)
+complete (5m)
+STATE_EOF
+    _run_count 0 "no test entries" || return
+
+    # Three consecutive failures → 3
+    cat > "$state_file" <<'STATE_EOF'
+## Log
+
+### test (10:00:00)
+failed (1m)
+
+### test (10:01:00)
+failed (1m)
+
+### test (10:02:00)
+failed (1m)
+STATE_EOF
+    _run_count 3 "3 consecutive failures" || return
+
+    # Pass then 2 failures → 2 (counter resets on pass)
+    cat > "$state_file" <<'STATE_EOF'
+## Log
+
+### test (10:00:00)
+failed (1m)
+
+### test (10:01:00)
+complete (2m)
+
+### test (10:02:00)
+failed (1m)
+
+### test (10:03:00)
+failed (1m)
+STATE_EOF
+    _run_count 2 "counter resets on test complete" || return
+
+    # Pass after failures → 0
+    cat > "$state_file" <<'STATE_EOF'
+## Log
+
+### test (10:00:00)
+failed (1m)
+
+### test (10:01:00)
+failed (1m)
+
+### test (10:02:00)
+complete (2m)
+STATE_EOF
+    _run_count 0 "trailing pass resets to 0" || return
+
+    # Build failures don't count, only test stage
+    cat > "$state_file" <<'STATE_EOF'
+## Log
+
+### test (10:00:00)
+failed (1m)
+
+### build (10:01:00)
+failed (1m)
+
+### test (10:02:00)
+failed (1m)
+STATE_EOF
+    _run_count 2 "non-test stages ignored" || return
+
+    assert_pass "cycling halt parser handles 7 scenarios correctly"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cycling Halt: pipeline halts with `status: stuck_cycling` when consecutive test
+# failures reach SW_PIPELINE_MAX_BUILD_RETRIES, even across pipeline invocations.
+# ──────────────────────────────────────────────────────────────────────────────
+test_stuck_cycling_halts_after_max_build_retries() {
+    pipeline_config_with_stages "intake,plan,build,test" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+
+    # Test command that always fails — guarantees a fresh test failure on this run.
+    local fail_cmd="$TEST_TEMP_DIR/bin/always-fail-test"
+    cat > "$fail_cmd" <<'FAIL_EOF'
+#!/usr/bin/env bash
+echo "FAIL: assertion failed"
+exit 1
+FAIL_EOF
+    chmod +x "$fail_cmd"
+
+    # Pre-seed the state file with N-1 prior consecutive test failures so the
+    # cap fires on this invocation. Place under .claude/ where pipeline reads/writes.
+    local proj="$TEST_TEMP_DIR/project"
+    mkdir -p "$proj/.claude"
+    cat > "$proj/.claude/pipeline-state.md" <<'PRESEED'
+---
+pipeline: standard
+goal: "trigger cycling halt"
+original_goal: "trigger cycling halt"
+status: running
+issue: ""
+branch: "main"
+template: "standard"
+current_stage: build
+started_at: 2026-04-30T00:00:00Z
+pipeline_run_epoch: 1700000000
+updated_at: 2026-04-30T00:00:00Z
+elapsed: 0s
+test_cmd: "false"
+pr_number:
+model: opus
+progress_comment_id:
+stages:
+  intake: complete
+  plan: complete
+  build: failed
+  test: failed
+---
+
+## Log
+
+### intake (00:00:00)
+complete (1s)
+
+### plan (00:00:01)
+complete (1s)
+
+### test (00:00:10)
+failed (1s)
+
+### test (00:00:20)
+failed (1s)
+PRESEED
+
+    # With cap=2 and 2 prior failures, the cycling halt should fire immediately
+    # on the first build_test cycle (count_consecutive_test_failures already returns 2).
+    SW_PIPELINE_MAX_BUILD_RETRIES=2 \
+        invoke_pipeline resume --skip-gates --test-cmd "$fail_cmd" --self-heal 5
+
+    # Expect non-zero exit and stuck_cycling marker in state file.
+    if [[ "$PIPELINE_EXIT" -eq 0 ]]; then
+        assert_fail "cycling halt: pipeline should fail when cap reached, got exit 0"
+        return
+    fi
+
+    assert_state_contains "status: stuck_cycling" "stuck_cycling status persisted" &&
+    assert_state_contains "stuck_cycling: 2 consecutive test failures" "diagnostic log entry written" &&
+    assert_output_contains "Pipeline halted" "user-visible halt message" &&
+    assert_output_contains "SW_PIPELINE_MAX_BUILD_RETRIES=0" "override hint shown"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cycling Halt: SW_PIPELINE_MAX_BUILD_RETRIES=0 disables the cap (escape hatch).
+# ──────────────────────────────────────────────────────────────────────────────
+test_stuck_cycling_disabled_when_max_retries_zero() {
+    pipeline_config_with_stages "intake,plan,build,test" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+
+    local fail_cmd="$TEST_TEMP_DIR/bin/always-fail-test"
+    cat > "$fail_cmd" <<'FAIL_EOF'
+#!/usr/bin/env bash
+exit 1
+FAIL_EOF
+    chmod +x "$fail_cmd"
+
+    # Pre-seed with many prior failures
+    local proj="$TEST_TEMP_DIR/project"
+    mkdir -p "$proj/.claude"
+    cat > "$proj/.claude/pipeline-state.md" <<'PRESEED'
+---
+pipeline: standard
+goal: "verify escape hatch"
+original_goal: "verify escape hatch"
+status: running
+issue: ""
+branch: "main"
+template: "standard"
+current_stage: build
+started_at: 2026-04-30T00:00:00Z
+pipeline_run_epoch: 1700000000
+updated_at: 2026-04-30T00:00:00Z
+elapsed: 0s
+test_cmd: "false"
+pr_number:
+model: opus
+progress_comment_id:
+stages:
+  intake: complete
+  plan: complete
+---
+
+## Log
+
+### test (00:00:10)
+failed (1s)
+
+### test (00:00:20)
+failed (1s)
+
+### test (00:00:30)
+failed (1s)
+
+### test (00:00:40)
+failed (1s)
+
+### test (00:00:50)
+failed (1s)
+PRESEED
+
+    # With cap=0, pipeline must NOT halt with stuck_cycling — normal exhaustion only.
+    SW_PIPELINE_MAX_BUILD_RETRIES=0 \
+        invoke_pipeline resume --skip-gates --test-cmd "$fail_cmd" --self-heal 1
+
+    assert_state_not_contains "status: stuck_cycling" "stuck_cycling NOT set with cap=0"
+}
+
+# Helper for the disabled test (assert state file does NOT contain pattern)
+assert_state_not_contains() {
+    local pattern="$1" label="${2:-state exclusion}"
+    local full_path="$TEST_TEMP_DIR/project/.claude/pipeline-state.md"
+    if [[ ! -f "$full_path" ]]; then
+        return 0
+    fi
+    if grep -qE "$pattern" "$full_path"; then
+        echo -e "    ${RED}✗${RESET} State unexpectedly contains: $pattern ($label)"
+        return 1
+    fi
+    return 0
+}
+
 main() {
     local filter="${1:-}"
 
@@ -2361,6 +2630,9 @@ main() {
         "test_partial_work_push_condition:CI: partial-work push triggers on failure OR cancelled (issue #437)"
         "test_model_resolution:Model: CLI flag MODEL=sonnet wins over config default in dry-run"
         "test_model_resolution_no_flag:Model: pipeline config default model used when no CLI flag set"
+        "test_count_consecutive_test_failures_parsing:Cycling: count_consecutive_test_failures parses log correctly (issue #448)"
+        "test_stuck_cycling_halts_after_max_build_retries:Cycling: halts with stuck_cycling after max consecutive test failures (issue #448)"
+        "test_stuck_cycling_disabled_when_max_retries_zero:Cycling: SW_PIPELINE_MAX_BUILD_RETRIES=0 disables cap (escape hatch)"
     )
 
     for entry in "${tests[@]}"; do

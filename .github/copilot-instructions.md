@@ -650,7 +650,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-linear.sh` | 643 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 353 | View and search agent pane logs |
 | `scripts/sw-loop.sh` | 3032 | Continuous agent loop harness for Claude Code |
-| `scripts/sw-memory.sh` | 2114 | Persistent Learning & Context System |
+| `scripts/sw-memory.sh` | 2115 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 473 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 606 | Intelligent Model Routing & Cost Optimization |
 | `scripts/sw-otel.sh` | 625 | OpenTelemetry Observability |

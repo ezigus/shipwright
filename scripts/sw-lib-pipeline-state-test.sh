@@ -739,4 +739,79 @@ GOAL="" ORIGINAL_GOAL=""
 resume_state 2>/dev/null
 assert_eq "legacy: resume_state strips ## Plan Summary from goal" "Clean goal" "$GOAL"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Cycling halt propagation: self_healing_review_build_test delegates to
+# self_healing_build_test — verify that a cycling halt fired inside the inner
+# function propagates correctly through the review self-heal path (issue #448 DoD).
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Review self-heal path: cycling halt propagation (issue #448 DoD)"
+
+_PIPELINE_SCRIPT="$SCRIPT_DIR/sw-pipeline.sh"
+if [[ ! -f "$_PIPELINE_SCRIPT" ]]; then
+    assert_fail "sw-pipeline.sh not found: $_PIPELINE_SCRIPT" "cannot test review cycling halt propagation"
+else
+    _review_helper="$TEST_TEMP_DIR/review-cycling-helper.sh"
+    # Extract self_healing_review_build_test function body
+    awk '/^self_healing_review_build_test\(\) \{/,/^\}/' "$_PIPELINE_SCRIPT" > "$_review_helper"
+
+    if ! grep -q "self_healing_review_build_test" "$_review_helper"; then
+        assert_fail "self_healing_review_build_test function not found in sw-pipeline.sh" \
+            "cycling halt: review delegation function missing"
+    else
+        # Run in a subshell to avoid polluting test state
+        _review_result=$(bash -c '
+            source "'"$_review_helper"'"
+
+            # Mock dependencies
+            REVIEW_BUILD_RETRIES=1
+            SELF_HEAL_COUNT=0
+            GOAL="test goal"
+            ARTIFACTS_DIR="'"$TEST_TEMP_DIR"'/review-artifacts"
+            mkdir -p "$ARTIFACTS_DIR"
+            echo "- **[Critical]** test blocker" > "$ARTIFACTS_DIR/review-blockers.md"
+            PIPELINE_STUCK_CYCLING=false
+            ISSUE_NUMBER=""
+
+            # Stub out helper functions
+            info()    { :; }
+            warn()    { :; }
+            error()   { echo "$*" >&2; }
+            success() { :; }
+            gh_comment_issue() { :; }
+            update_status() { :; }
+            record_stage_start() { :; }
+            set_stage_status() { :; }
+            run_stage_with_retry() { :; }
+            mark_stage_complete() { :; }
+            get_stage_timing() { echo "0s"; }
+            emit_event() { :; }
+
+            # Mock self_healing_build_test to simulate cycling halt firing:
+            # sets the flag and returns 1 (same as the real implementation)
+            self_healing_build_test() {
+                PIPELINE_STUCK_CYCLING=true
+                return 1
+            }
+
+            self_healing_review_build_test
+            ret=$?
+            echo "STUCK=$PIPELINE_STUCK_CYCLING"
+            exit $ret
+        ' 2>/dev/null) || _review_exit=$?
+        : "${_review_exit:=0}"
+
+        if [[ "$_review_exit" -eq 0 ]]; then
+            assert_fail "cycling halt: self_healing_review_build_test should return non-zero when self_healing_build_test fires cycling halt"
+        else
+            assert_pass "cycling halt: self_healing_review_build_test propagates non-zero exit from self_healing_build_test"
+        fi
+
+        if echo "$_review_result" | grep -q "STUCK=true"; then
+            assert_pass "cycling halt: PIPELINE_STUCK_CYCLING=true propagates through review self-heal path"
+        else
+            assert_fail "cycling halt: PIPELINE_STUCK_CYCLING should be true after cycling halt via review path"
+        fi
+    fi
+fi
+
 print_test_results

@@ -10,13 +10,24 @@ _LOOP_CONVERGENCE_LOADED=1
 : "${_STUCKNESS_RECALL_CACHE_FP:=}"
 
 # Compute a stable fingerprint of (signals, reasons) so identical detection
-# patterns can be deduplicated. md5/md5sum fallback matches line ~202 below.
+# patterns can be deduplicated. Falls back to cksum (POSIX-mandatory) when
+# md5/md5sum are unavailable, ensuring the output is always a valid 12-char
+# lowercase hex string and never empty.
 _stuckness_fingerprint() {
     local signals="${1:-0}"
     local reasons="${2:-}"
-    printf '%s\n%s\n' "$signals" "$reasons" \
-        | (md5 -q 2>/dev/null || md5sum 2>/dev/null | cut -d' ' -f1) \
-        | cut -c1-12
+    local _raw _hash
+    _raw=$(printf '%s\n%s\n' "$signals" "$reasons")
+    _hash=$(printf '%s' "$_raw" \
+        | (md5 -q 2>/dev/null || md5sum 2>/dev/null | awk '{print $1}') \
+        | cut -c1-12)
+    # Validate: must be exactly 12 lowercase hex chars; cksum fallback if not.
+    if [[ "${#_hash}" -ne 12 ]] || ! [[ "$_hash" =~ ^[0-9a-f]+$ ]]; then
+        local _crc
+        _crc=$(printf '%s' "$_raw" | cksum | awk '{print $1}')
+        _hash=$(printf '%012x' "${_crc:-0}")
+    fi
+    printf '%s' "$_hash"
 }
 
 # ─── Convergence Detection ────────────────────────────────────────────────────
@@ -379,6 +390,8 @@ detect_stuckness() {
         # Throttle: skip ruflo subprocesses when (signals, reasons) fingerprint
         # is unchanged from the last detection. Fingerprint persists in LOG_DIR
         # so it survives session restarts within the same loop run.
+        # Note: parallel --worktree pipelines each have their own LOG_DIR, so
+        # each pipeline's throttle is independent — no cross-process locking needed.
         local _fp _prev_fp _fp_file=""
         _fp=$(_stuckness_fingerprint "$stuckness_signals" "${stuckness_reasons[*]}")
         if [[ -n "${LOG_DIR:-}" ]]; then
@@ -393,8 +406,11 @@ detect_stuckness() {
         fi
 
         if type ruflo_store >/dev/null 2>&1 && [[ "$_fp" != "$_prev_fp" ]]; then
+            local _reasons_escaped="${stuckness_reasons[*]}"
+            _reasons_escaped="${_reasons_escaped//\\/\\\\}"
+            _reasons_escaped="${_reasons_escaped//\"/\\\"}"
             ruflo_store "stuckness-iter-${iteration}" \
-                "{\"signals\":$stuckness_signals,\"reasons\":\"${stuckness_reasons[*]}\",\"iteration\":$iteration}" \
+                "{\"signals\":$stuckness_signals,\"reasons\":\"${_reasons_escaped}\",\"iteration\":$iteration}" \
                 "learning-${REPO_HASH:-default}" "stuckness,loop,cycling" || true
         fi
         STUCKNESS_HINT="IMPORTANT: The loop appears stuck. Previous approaches have not worked. You MUST try a fundamentally different strategy. Reasons: ${stuckness_reasons[*]}"

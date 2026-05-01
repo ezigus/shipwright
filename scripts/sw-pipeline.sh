@@ -1532,28 +1532,6 @@ self_healing_build_test() {
     while [[ "$cycle" -le "$max_cycles" ]]; do
         cycle=$((cycle + 1))
 
-        # ── Cycling Halt: cumulative cap across pipeline invocations ──
-        # External automation (daemon, autonomous pipeline) may re-enter build
-        # after self-healing exhausts. Persistent log of test failures detects
-        # this and halts with a distinct `stuck_cycling` state.
-        local _max_build_retries="${SW_PIPELINE_MAX_BUILD_RETRIES:-3}"
-        if [[ "$_max_build_retries" -gt 0 ]]; then
-            local _consec_failures
-            _consec_failures=$(count_consecutive_test_failures)
-            if [[ "$_consec_failures" -ge "$_max_build_retries" ]]; then
-                PIPELINE_STUCK_CYCLING=true
-                log_stage "pipeline" "stuck_cycling: ${_consec_failures} consecutive test failures (cap=${_max_build_retries}). Override: SW_PIPELINE_MAX_BUILD_RETRIES=0"
-                update_status "stuck_cycling" "build"
-                error "Pipeline halted: ${_consec_failures} consecutive test failures reached cap of ${_max_build_retries}"
-                warn "Override: SW_PIPELINE_MAX_BUILD_RETRIES=0 shipwright pipeline resume"
-                emit_event "pipeline.stuck_cycling" \
-                    "issue=${ISSUE_NUMBER:-0}" \
-                    "consecutive_failures=${_consec_failures}" \
-                    "cap=${_max_build_retries}" || true
-                return 1
-            fi
-        fi
-
         if [[ "$cycle" -gt 1 ]]; then
             SELF_HEAL_COUNT=$((SELF_HEAL_COUNT + 1))
             echo ""
@@ -1722,6 +1700,39 @@ Focus on fixing the failing tests while keeping all passing tests working."
             last_test_error=$(grep -vE '^\s*\{ platform:|Available destinations|The requested device|no available devices' "$test_log" 2>/dev/null | tail -15 || echo "Test command failed with no output")
         fi
         mark_stage_failed "test"
+
+        # ── Cycling Halt: cumulative cap across pipeline invocations ──
+        # External automation (daemon, autonomous pipeline) may re-enter build
+        # after self-healing exhausts. Persistent log of test failures detects
+        # this and halts with a distinct `stuck_cycling` state.
+        #
+        # IMPORTANT: This check runs AFTER the current cycle's test failure has
+        # been logged via mark_stage_failed (which calls log_stage + write_state).
+        # Reading the count BEFORE running the cycle would falsely halt fresh
+        # resumes whose first attempt hasn't run yet (#448 review feedback).
+        local _max_build_retries="${SW_PIPELINE_MAX_BUILD_RETRIES:-3}"
+        if [[ "$_max_build_retries" -gt 0 ]]; then
+            local _consec_failures
+            _consec_failures=$(count_consecutive_test_failures)
+            if [[ "$_consec_failures" -ge "$_max_build_retries" ]]; then
+                PIPELINE_STUCK_CYCLING=true
+                if declare -f log_stage >/dev/null 2>&1; then
+                    log_stage "pipeline" "stuck_cycling: ${_consec_failures} consecutive test failures (cap=${_max_build_retries}). Override: SW_PIPELINE_MAX_BUILD_RETRIES=0"
+                fi
+                update_status "stuck_cycling" "build"
+                error "Pipeline halted: ${_consec_failures} consecutive test failures reached cap of ${_max_build_retries}"
+                if [[ "$_max_build_retries" -eq 0 ]]; then
+                    warn "Cycling halt is disabled (SW_PIPELINE_MAX_BUILD_RETRIES=0)"
+                else
+                    warn "Override: SW_PIPELINE_MAX_BUILD_RETRIES=0 shipwright pipeline resume"
+                fi
+                emit_event "pipeline.stuck_cycling" \
+                    "issue=${ISSUE_NUMBER:-0}" \
+                    "consecutive_failures=${_consec_failures}" \
+                    "cap=${_max_build_retries}" || true
+                return 1
+            fi
+        fi
 
         # ── Convergence Detection ──
         # Hash the error output to detect repeated failures

@@ -38,6 +38,12 @@ fi
 # Source loop sub-modules for modular iteration management
 [[ -f "$SCRIPT_DIR/lib/loop-iteration.sh" ]] && source "$SCRIPT_DIR/lib/loop-iteration.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-convergence.sh" ]] && source "$SCRIPT_DIR/lib/loop-convergence.sh"
+# Goal sanitization (Layer B): unified _strip_synthesized_sections helper.
+# Sourced directly so standalone `sw loop` invocations also have it available,
+# not just paths that transitively pull it via loop-restart.sh / pipeline-state.sh
+# (#448 review feedback).
+# shellcheck source=lib/goal-sanitize.sh
+[[ -f "$SCRIPT_DIR/lib/goal-sanitize.sh" ]] && source "$SCRIPT_DIR/lib/goal-sanitize.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-restart.sh" ]] && source "$SCRIPT_DIR/lib/loop-restart.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-progress.sh" ]] && source "$SCRIPT_DIR/lib/loop-progress.sh"
 # Per-iteration cost recording (issue #87) — record_iteration_cost reads $ITER_COST_JSONL
@@ -441,8 +447,27 @@ fi
 # Layer B: Strip synthesized sections from GOAL before preserving as ORIGINAL_GOAL.
 # Only applied when --context-file was passed (i.e. invoked by the pipeline build stage),
 # so standalone sw-loop invocations with multi-section user goals are never truncated.
-if [[ -n "$LOOP_CONTEXT_FILE" ]] && declare -f _strip_synthesized_sections >/dev/null 2>&1; then
-    GOAL="$(_strip_synthesized_sections "$GOAL")"
+if [[ -n "$LOOP_CONTEXT_FILE" ]]; then
+    if declare -f _strip_synthesized_sections >/dev/null 2>&1; then
+        GOAL="$(_strip_synthesized_sections "$GOAL")"
+    else
+        # Fallback: goal-sanitize.sh failed to load. Apply inline legacy sentinels
+        # so the LOOP_CONTEXT_FILE invariant (clean goal in the loop) still holds.
+        if [[ "$GOAL" == "KNOWN FIX (from past success):"* ]];     then GOAL="${GOAL#*$'\n\n'}";                              fi
+        if [[ "$GOAL" == *$'\n\n## Plan Summary'* ]];              then GOAL="${GOAL%%$'\n\n## Plan Summary'*}";              fi
+        if [[ "$GOAL" == *$'\n\n## Key Design Decisions'* ]];      then GOAL="${GOAL%%$'\n\n## Key Design Decisions'*}";      fi
+        if [[ "$GOAL" == *$'\n\nBLOCKING ISSUES'* ]];              then GOAL="${GOAL%%$'\n\nBLOCKING ISSUES'*}";              fi
+        if [[ "$GOAL" == *$'\n\nIMPORTANT — Previous build'* ]];   then GOAL="${GOAL%%$'\n\nIMPORTANT — Previous build'*}";   fi
+        if [[ "$GOAL" == *$'\n\nIMPORTANT — Code review'* ]];      then GOAL="${GOAL%%$'\n\nIMPORTANT — Code review'*}";      fi
+        if [[ "$GOAL" == *$'\n\nIMPORTANT — Architecture'* ]];     then GOAL="${GOAL%%$'\n\nIMPORTANT — Architecture'*}";     fi
+        if [[ "$GOAL" == *$'\n\nIMPORTANT — Compound quality'* ]]; then GOAL="${GOAL%%$'\n\nIMPORTANT — Compound quality'*}"; fi
+        if [[ "$GOAL" == *$'\n\nHUMAN FEEDBACK'* ]];               then GOAL="${GOAL%%$'\n\nHUMAN FEEDBACK'*}";               fi
+        if [[ "$GOAL" == *$'\n\n## Previous Session Context'* ]];  then GOAL="${GOAL%%$'\n\n## Previous Session Context'*}";  fi
+        if [[ "$GOAL" == *$'\n\nWARNING: Memory system'* ]];       then GOAL="${GOAL%%$'\n\nWARNING: Memory system'*}";       fi
+        if [[ "$GOAL" == *$'\n\nHistorical context'* ]];           then GOAL="${GOAL%%$'\n\nHistorical context'*}";           fi
+        if [[ "$GOAL" == *$'\n\nDiscoveries from'* ]];             then GOAL="${GOAL%%$'\n\nDiscoveries from'*}";             fi
+        if [[ "$GOAL" == *$'\n\n## Skill Guidance'* ]];            then GOAL="${GOAL%%$'\n\n## Skill Guidance'*}";            fi
+    fi
 fi
 
 # Preserve original goal before any appending (memory fixes, human feedback)

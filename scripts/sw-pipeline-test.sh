@@ -2393,8 +2393,10 @@ exit 1
 FAIL_EOF
     chmod +x "$fail_cmd"
 
-    # Pre-seed the state file with N-1 prior consecutive test failures so the
-    # cap fires on this invocation. Place under .claude/ where pipeline reads/writes.
+    # Pre-seed the state file with N-1 prior consecutive test failures. The check
+    # runs AFTER the current cycle's test failure is logged, so a fresh resume gets
+    # one shot before halting (#448 review feedback). With cap=2 and 1 prior failure,
+    # the new cycle's failure brings the count to 2 → halt.
     local proj="$TEST_TEMP_DIR/project"
     mkdir -p "$proj/.claude"
     cat > "$proj/.claude/pipeline-state.md" <<'PRESEED'
@@ -2432,13 +2434,11 @@ complete (1s)
 
 ### test (00:00:10)
 failed (1s)
-
-### test (00:00:20)
-failed (1s)
 PRESEED
 
-    # With cap=2 and 2 prior failures, the cycling halt should fire immediately
-    # on the first build_test cycle (count_consecutive_test_failures already returns 2).
+    # With cap=2 and 1 prior failure, the build runs, the test fails (logging
+    # failure #2), then the cycling halt fires post-failure-log → halt with
+    # "stuck_cycling: 2 consecutive test failures".
     SW_PIPELINE_MAX_BUILD_RETRIES=2 \
         invoke_pipeline resume --skip-gates --test-cmd "$fail_cmd" --self-heal 5
 
@@ -2452,6 +2452,81 @@ PRESEED
     assert_state_contains "stuck_cycling: 2 consecutive test failures" "diagnostic log entry written" &&
     assert_output_contains "Pipeline halted" "user-visible halt message" &&
     assert_output_contains "SW_PIPELINE_MAX_BUILD_RETRIES=0" "override hint shown"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cycling Halt: fresh resume gets at least one shot before halting.
+# Regression for #448 review feedback: the check must run AFTER the current
+# cycle's test result is logged, not BEFORE — otherwise a fresh resume halts
+# immediately on stale prior failures even if the new attempt would have run.
+# ──────────────────────────────────────────────────────────────────────────────
+test_stuck_cycling_runs_one_cycle_before_halting_on_resume() {
+    pipeline_config_with_stages "intake,plan,build,test" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+
+    local fail_cmd="$TEST_TEMP_DIR/bin/always-fail-test"
+    cat > "$fail_cmd" <<'FAIL_EOF'
+#!/usr/bin/env bash
+echo "FAIL: assertion failed"
+exit 1
+FAIL_EOF
+    chmod +x "$fail_cmd"
+
+    local proj="$TEST_TEMP_DIR/project"
+    mkdir -p "$proj/.claude"
+    # Pre-seed with cap-many failures already. The OLD bug would halt
+    # immediately without running the test command. The fix runs one cycle.
+    cat > "$proj/.claude/pipeline-state.md" <<'PRESEED'
+---
+pipeline: standard
+goal: "fresh resume must run one cycle"
+original_goal: "fresh resume must run one cycle"
+status: running
+issue: ""
+branch: "main"
+template: "standard"
+current_stage: build
+started_at: 2026-04-30T00:00:00Z
+pipeline_run_epoch: 1700000000
+updated_at: 2026-04-30T00:00:00Z
+elapsed: 0s
+test_cmd: "false"
+pr_number:
+model: opus
+progress_comment_id:
+stages:
+  intake: complete
+  plan: complete
+  build: failed
+  test: failed
+---
+
+## Log
+
+### test (00:00:10)
+failed (1s)
+
+### test (00:00:20)
+failed (1s)
+
+### test (00:00:30)
+failed (1s)
+PRESEED
+
+    SW_PIPELINE_MAX_BUILD_RETRIES=3 \
+        invoke_pipeline resume --skip-gates --test-cmd "$fail_cmd" --self-heal 1
+
+    # The fix moved the cycling halt check to AFTER mark_stage_failed "test",
+    # so the test stage MUST run on a fresh resume even with cap-many prior
+    # failures. The OLD bug halted at the top of the loop before any new cycle.
+    if ! printf '%s\n' "$PIPELINE_OUTPUT" | grep -q "Stage: test \[cycle 1\]"; then
+        assert_fail "cycling halt: fresh resume halted before running the new test cycle (regression of #448 fix)"
+        echo "      DEBUG: PIPELINE_EXIT=$PIPELINE_EXIT"
+        echo "      DEBUG: PIPELINE_OUTPUT (last 30 lines):"
+        echo "$PIPELINE_OUTPUT" | tail -30 | sed 's/^/        /'
+        return
+    fi
+
+    assert_state_contains "status: stuck_cycling" "stuck_cycling status set after fresh cycle ran"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2632,6 +2707,7 @@ main() {
         "test_model_resolution_no_flag:Model: pipeline config default model used when no CLI flag set"
         "test_count_consecutive_test_failures_parsing:Cycling: count_consecutive_test_failures parses log correctly (issue #448)"
         "test_stuck_cycling_halts_after_max_build_retries:Cycling: halts with stuck_cycling after max consecutive test failures (issue #448)"
+        "test_stuck_cycling_runs_one_cycle_before_halting_on_resume:Cycling: fresh resume runs one cycle before halting (issue #448 review fix)"
         "test_stuck_cycling_disabled_when_max_retries_zero:Cycling: SW_PIPELINE_MAX_BUILD_RETRIES=0 disables cap (escape hatch)"
     )
 

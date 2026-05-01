@@ -409,6 +409,9 @@ detect_stuckness() {
             local _reasons_escaped="${stuckness_reasons[*]}"
             _reasons_escaped="${_reasons_escaped//\\/\\\\}"
             _reasons_escaped="${_reasons_escaped//\"/\\\"}"
+            _reasons_escaped="${_reasons_escaped//$'\n'/\\n}"
+            _reasons_escaped="${_reasons_escaped//$'\r'/\\r}"
+            _reasons_escaped="${_reasons_escaped//$'\t'/\\t}"
             ruflo_store "stuckness-iter-${iteration}" \
                 "{\"signals\":$stuckness_signals,\"reasons\":\"${_reasons_escaped}\",\"iteration\":$iteration}" \
                 "learning-${REPO_HASH:-default}" "stuckness,loop,cycling" || true

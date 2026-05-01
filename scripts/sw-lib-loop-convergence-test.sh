@@ -173,6 +173,37 @@ _t5_warn=$(_count "$WARN_CALLS")
 assert_eq "Test 5: emit_event fired on every detection (4 total)" "4" "$_t5_emit"
 assert_eq "Test 5: warn fired on every detection (4 total)" "4" "$_t5_warn"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 6 — JSON escaping handles control characters in stuckness reasons
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Test 6: JSON escaping handles newline, CR, and tab in reasons"
+
+# Validate the escaping pattern directly (same sequence used in loop-convergence.sh).
+_t6_raw=$'reason with newline\nand tab\there'
+_t6_escaped="$_t6_raw"
+_t6_escaped="${_t6_escaped//\\/\\\\}"
+_t6_escaped="${_t6_escaped//\"/\\\"}"
+_t6_escaped="${_t6_escaped//$'\n'/\\n}"
+_t6_escaped="${_t6_escaped//$'\r'/\\r}"
+_t6_escaped="${_t6_escaped//$'\t'/\\t}"
+
+# After escaping, printf '%s' produces zero newline characters (wc -l = 0)
+_t6_lines=$(printf '%s' "$_t6_escaped" | wc -l | tr -d ' ')
+if [[ "$_t6_lines" -eq 0 ]]; then
+    assert_pass "Test 6: no raw newlines remain after escaping"
+else
+    assert_fail "Test 6: no raw newlines remain after escaping" "found ${_t6_lines} raw newline(s)"
+fi
+
+# The escaped string must be longer: each control char expands from 1 to 2 chars
+_t6_raw_len=${#_t6_raw}
+_t6_esc_len=${#_t6_escaped}
+if [[ "$_t6_esc_len" -gt "$_t6_raw_len" ]]; then
+    assert_pass "Test 6: escaped string is longer (control chars expanded)"
+else
+    assert_fail "Test 6: escaped string is longer" "raw_len=${_t6_raw_len} esc_len=${_t6_esc_len}"
+fi
+
 # Emit explicit "$PASS/$TOTAL pass" as the final visible line for DoD audit parsers.
 printf '%s/%s pass\n' "$PASS" "$TOTAL"
 print_test_results

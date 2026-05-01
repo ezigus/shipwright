@@ -373,8 +373,12 @@ ${last_error}"
     # Pipeline context section (Layer A: sidecar delivery of synthesized context)
     local pipeline_context_section=""
     if [[ -n "${LOOP_CONTEXT_FILE:-}" && -f "${LOOP_CONTEXT_FILE:-}" ]]; then
-        local _ctx
-        _ctx="$(cat "$LOOP_CONTEXT_FILE" 2>/dev/null || true)"
+        local _ctx=""
+        if [[ -r "${LOOP_CONTEXT_FILE}" ]]; then
+            _ctx="$(cat "$LOOP_CONTEXT_FILE" 2>/dev/null || true)"
+        else
+            warn "context-file '${LOOP_CONTEXT_FILE}' exists but is not readable — proceeding without pipeline context"
+        fi
         if [[ -n "$_ctx" ]]; then
             pipeline_context_section="## Pipeline Context
 ${_ctx}

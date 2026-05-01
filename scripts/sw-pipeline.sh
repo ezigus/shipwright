@@ -3461,6 +3461,10 @@ pipeline_resume() {
     # Read directly from the state file because resume_state() unconditionally
     # rewrites PIPELINE_STATUS to "running" before returning (#448 review feedback).
     if [[ -f "$STATE_FILE" ]]; then
+        if [[ ! -r "$STATE_FILE" ]]; then
+            error "State file '$STATE_FILE' exists but is not readable — cannot verify pipeline state before resume"
+            exit 1
+        fi
         local _persisted_status
         _persisted_status=$(sed -n 's/^status: *//p' "$STATE_FILE" | head -1)
         if [[ "$_persisted_status" == "stuck_cycling" ]]; then

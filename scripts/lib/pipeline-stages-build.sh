@@ -363,7 +363,7 @@ ${_build_recall_ctx}"
     local _ctx_file="${ARTIFACTS_DIR}/build-context.md"
     local _ctx_tmp="${_ctx_file}.tmp.$$"
     printf '%s\n' "$build_context_body" > "$_ctx_tmp"
-    mv "$_ctx_tmp" "$_ctx_file"
+    mv "$_ctx_tmp" "$_ctx_file" || { error "Failed to write build context to ${_ctx_file}"; return 1; }
     info "Build context written to ${_ctx_file} ($(wc -c < "$_ctx_file") bytes)"
 
     # Pass clean goal to loop (not enriched with context)

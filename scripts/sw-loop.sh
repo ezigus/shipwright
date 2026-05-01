@@ -481,6 +481,13 @@ if [[ -n "$LOOP_CONTEXT_FILE" ]]; then
     unset _real_project_root _target _hops _link _ctx_dir _real_ctx_dir _real_ctx
 fi
 
+# If the context file already exists at invocation time, verify it is readable.
+# (Path validation above only confirms the path is within project root.)
+if [[ -n "${LOOP_CONTEXT_FILE:-}" && -e "${LOOP_CONTEXT_FILE}" && ! -r "${LOOP_CONTEXT_FILE}" ]]; then
+    error "context-file '$LOOP_CONTEXT_FILE' exists but is not readable"
+    exit 1
+fi
+
 # Layer B: Strip synthesized sections from GOAL before preserving as ORIGINAL_GOAL.
 # Only applied when --context-file was passed (i.e. invoked by the pipeline build stage),
 # so standalone sw-loop invocations with multi-section user goals are never truncated.

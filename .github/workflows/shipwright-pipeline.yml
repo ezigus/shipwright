@@ -49,6 +49,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  checks: write
 
 jobs:
   # ────────────────────────────────────────────────────────────────────────────
@@ -827,8 +828,11 @@ jobs:
           git fetch origin "$BRANCH" 2>/dev/null || true
           REMOTE_EXISTS=$(git ls-remote --heads origin "$BRANCH" 2>/dev/null | head -1)
           AHEAD=$(git rev-list --count "origin/${BRANCH}..HEAD" 2>/dev/null || echo "0")
-          if [ -z "$REMOTE_EXISTS" ] && [ "$AHEAD" = "0" ]; then
-            echo "No partial work and no existing remote branch — skipping push."
+          # Only skip when the WIP branch already exists AND HEAD is not ahead of it.
+          # When the branch is absent, always push to create the WIP reference so
+          # shipwright pipeline resume can find partial work.
+          if [ -n "$REMOTE_EXISTS" ] && [ "$AHEAD" = "0" ]; then
+            echo "WIP branch already up to date — skipping push."
             exit 0
           fi
           if timeout 120 git push origin "HEAD:refs/heads/$BRANCH" --force; then

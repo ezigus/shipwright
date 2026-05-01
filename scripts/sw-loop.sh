@@ -430,44 +430,71 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     exit 1
 fi
 
-# Validate --context-file path (if provided by pipeline)
+# Validate --context-file path (if provided by pipeline).
+# Resolves symlinks AND `..` so an attacker can't bypass the prefix check with a
+# crafted path like `/workspace/shipwright/../sensitive.md` or a symlink that
+# resolves outside PROJECT_ROOT (#448 review feedback).
+#
+# Bash 3.2 / macOS portable: `readlink -f` is GNU-only, so we walk the symlink
+# chain manually with a bounded loop, then `cd ... && pwd -P` the parent dir to
+# strip any remaining `..` segments and per-component symlinks.
 if [[ -n "$LOOP_CONTEXT_FILE" ]]; then
     PROJECT_ROOT="$(git rev-parse --show-toplevel)"
-    # Use trailing-slash boundary to reject sibling-prefix paths like
-    # /workspace/shipwright-evil/x.md when PROJECT_ROOT=/workspace/shipwright
-    case "$LOOP_CONTEXT_FILE" in
-        "${PROJECT_ROOT}/"*) : ;;
+    # Canonicalize PROJECT_ROOT (handles macOS /var → /private/var).
+    _real_project_root="$(cd "$PROJECT_ROOT" && pwd -P)"
+
+    # Walk symlinks at the leaf (max 32 hops; bounded to defeat symlink loops).
+    _target="$LOOP_CONTEXT_FILE"
+    _hops=0
+    while [[ -L "$_target" ]]; do
+        if [[ "$_hops" -ge 32 ]]; then
+            error "context-file path '$LOOP_CONTEXT_FILE' has too many symlink hops (>32) — possible symlink loop"
+            exit 1
+        fi
+        _link="$(readlink "$_target")"
+        case "$_link" in
+            /*) _target="$_link" ;;
+            *)  _target="$(dirname "$_target")/$_link" ;;
+        esac
+        _hops=$((_hops + 1))
+    done
+
+    # Canonicalize the (possibly resolved) target. The file may not exist yet
+    # (pipeline writes it before invoking sw-loop), so resolve the parent
+    # directory and append the basename — `cd ... && pwd -P` collapses
+    # symlinks AND `..` in the directory portion.
+    _ctx_dir="$(dirname "$_target")"
+    if [[ ! -d "$_ctx_dir" ]]; then
+        error "context-file path '$LOOP_CONTEXT_FILE' (resolved: $_target) parent directory does not exist"
+        exit 1
+    fi
+    _real_ctx_dir="$(cd "$_ctx_dir" && pwd -P)"
+    _real_ctx="${_real_ctx_dir}/$(basename "$_target")"
+
+    case "$_real_ctx" in
+        "${_real_project_root}/"*) : ;;
         *)
-            error "context-file must be inside project root ($PROJECT_ROOT)"
+            error "context-file path '$LOOP_CONTEXT_FILE' (resolved: $_real_ctx) must be inside project root '$_real_project_root'"
             exit 1
             ;;
     esac
+    unset _real_project_root _target _hops _link _ctx_dir _real_ctx_dir _real_ctx
 fi
 
 # Layer B: Strip synthesized sections from GOAL before preserving as ORIGINAL_GOAL.
 # Only applied when --context-file was passed (i.e. invoked by the pipeline build stage),
 # so standalone sw-loop invocations with multi-section user goals are never truncated.
+#
+# Fail hard if goal-sanitize.sh isn't loaded — a stale inline fallback list would
+# silently leave new synthesis sections in the goal and pollute the agent prompt
+# (#448 review feedback). The helper is sourced unconditionally above (line 46),
+# so this only fires if the file was deleted/corrupted.
 if [[ -n "$LOOP_CONTEXT_FILE" ]]; then
-    if declare -f _strip_synthesized_sections >/dev/null 2>&1; then
-        GOAL="$(_strip_synthesized_sections "$GOAL")"
-    else
-        # Fallback: goal-sanitize.sh failed to load. Apply inline legacy sentinels
-        # so the LOOP_CONTEXT_FILE invariant (clean goal in the loop) still holds.
-        if [[ "$GOAL" == "KNOWN FIX (from past success):"* ]];     then GOAL="${GOAL#*$'\n\n'}";                              fi
-        if [[ "$GOAL" == *$'\n\n## Plan Summary'* ]];              then GOAL="${GOAL%%$'\n\n## Plan Summary'*}";              fi
-        if [[ "$GOAL" == *$'\n\n## Key Design Decisions'* ]];      then GOAL="${GOAL%%$'\n\n## Key Design Decisions'*}";      fi
-        if [[ "$GOAL" == *$'\n\nBLOCKING ISSUES'* ]];              then GOAL="${GOAL%%$'\n\nBLOCKING ISSUES'*}";              fi
-        if [[ "$GOAL" == *$'\n\nIMPORTANT — Previous build'* ]];   then GOAL="${GOAL%%$'\n\nIMPORTANT — Previous build'*}";   fi
-        if [[ "$GOAL" == *$'\n\nIMPORTANT — Code review'* ]];      then GOAL="${GOAL%%$'\n\nIMPORTANT — Code review'*}";      fi
-        if [[ "$GOAL" == *$'\n\nIMPORTANT — Architecture'* ]];     then GOAL="${GOAL%%$'\n\nIMPORTANT — Architecture'*}";     fi
-        if [[ "$GOAL" == *$'\n\nIMPORTANT — Compound quality'* ]]; then GOAL="${GOAL%%$'\n\nIMPORTANT — Compound quality'*}"; fi
-        if [[ "$GOAL" == *$'\n\nHUMAN FEEDBACK'* ]];               then GOAL="${GOAL%%$'\n\nHUMAN FEEDBACK'*}";               fi
-        if [[ "$GOAL" == *$'\n\n## Previous Session Context'* ]];  then GOAL="${GOAL%%$'\n\n## Previous Session Context'*}";  fi
-        if [[ "$GOAL" == *$'\n\nWARNING: Memory system'* ]];       then GOAL="${GOAL%%$'\n\nWARNING: Memory system'*}";       fi
-        if [[ "$GOAL" == *$'\n\nHistorical context'* ]];           then GOAL="${GOAL%%$'\n\nHistorical context'*}";           fi
-        if [[ "$GOAL" == *$'\n\nDiscoveries from'* ]];             then GOAL="${GOAL%%$'\n\nDiscoveries from'*}";             fi
-        if [[ "$GOAL" == *$'\n\n## Skill Guidance'* ]];            then GOAL="${GOAL%%$'\n\n## Skill Guidance'*}";            fi
+    if ! declare -f _strip_synthesized_sections >/dev/null 2>&1; then
+        error "goal-sanitize.sh failed to load — cannot strip synthesis from goal. Expected: $SCRIPT_DIR/lib/goal-sanitize.sh"
+        exit 1
     fi
+    GOAL="$(_strip_synthesized_sections "$GOAL")"
 fi
 
 # Preserve original goal before any appending (memory fixes, human feedback)

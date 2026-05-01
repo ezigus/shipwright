@@ -1431,6 +1431,12 @@ run_stage_with_retry() {
 # Survives daemon/pipeline restarts because the log is persisted to disk.
 #
 # Bash 3.2 compatible: no associative arrays, POSIX ERE in [[ =~ ]] only.
+#
+# Format hardening (#448 review feedback): the stage-header regex accepts any
+# non-whitespace stage id (digits, uppercase, custom stage names like `test_2`)
+# so the parser doesn't silently drop entries when the log format drifts. We
+# also warn (to stderr — log-only) when a non-empty log contains no `### test`
+# headers at all, which would silently disable the cycling halt.
 count_consecutive_test_failures() {
     local state_file="${1:-${STATE_FILE:-}}"
     if [[ -z "$state_file" || ! -f "$state_file" ]]; then
@@ -1438,15 +1444,19 @@ count_consecutive_test_failures() {
         return 0
     fi
 
-    local in_log=0 current_stage="" outcomes=""
+    local in_log=0 current_stage="" outcomes="" saw_log_section=0 saw_any_test_header=0
     while IFS= read -r line; do
         if [[ "$line" == "## Log" ]]; then
             in_log=1
+            saw_log_section=1
             continue
         fi
         [[ "$in_log" -eq 0 ]] && continue
-        if [[ "$line" =~ ^###[[:space:]]+([a-z_]+)[[:space:]]+ ]]; then
+        # Accept any stage id token (e.g. test, test_2, build, COMPOUND_QUALITY).
+        # Outcome matching below filters to the `test` stage specifically.
+        if [[ "$line" =~ ^###[[:space:]]+([^[:space:]]+)[[:space:]]+ ]]; then
             current_stage="${BASH_REMATCH[1]}"
+            [[ "$current_stage" == "test" ]] && saw_any_test_header=1
             continue
         fi
         if [[ "$current_stage" == "test" ]]; then
@@ -1459,6 +1469,17 @@ count_consecutive_test_failures() {
             fi
         fi
     done < "$state_file"
+
+    # Defensive warning: log present but no `test` stage entries parsed. Either
+    # the pipeline genuinely never reached the test stage (legitimate 0) or
+    # the log format drifted and the parser silently missed entries. We only
+    # warn when a literal `### test` header is visible in the file but the
+    # parser failed to recognize it — a real format-drift signal.
+    if [[ "$saw_log_section" -eq 1 && "$saw_any_test_header" -eq 0 ]]; then
+        if grep -qE '^###[[:space:]]+test[[:space:]]' "$state_file" 2>/dev/null; then
+            echo "WARN: count_consecutive_test_failures: state file '$state_file' contains '### test' headers that the parser failed to recognize — log format may have drifted; cycling halt may be disabled" >&2
+        fi
+    fi
 
     local count=0 word
     for word in $outcomes; do

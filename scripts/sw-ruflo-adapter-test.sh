@@ -1129,6 +1129,145 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ruflo_execute_plan_hive tests — multi-agent planning divergence
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Test: ruflo_execute_plan_hive returns 1 (exact) when ruflo unavailable
+unset _RUFLO_ADAPTER_LOADED
+RUFLO_AVAILABLE=false
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+exit_code=0
+ruflo_execute_plan_hive "Add a getter method" "Issue body details" >/dev/null || exit_code=$?
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_plan_hive returns 1 when ruflo unavailable"
+else
+    assert_fail "ruflo_execute_plan_hive returns 1 when ruflo unavailable" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_plan_hive returns 1 (exact) when goal is empty
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+exit_code=0
+ruflo_execute_plan_hive "" "issue body" >/dev/null || exit_code=$?
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_plan_hive returns 1 when goal is empty"
+else
+    assert_fail "ruflo_execute_plan_hive returns 1 when goal is empty" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_plan_hive returns 1 (exact) when hive is unavailable
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_orig_path="$PATH"
+mock_binary "ruflo" 'exit 1'
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_USE_NPX=false
+exit_code=0
+ruflo_execute_plan_hive "Add a getter method" "issue body" >/dev/null || exit_code=$?
+PATH="$_orig_path"
+rm -f "$TEST_TEMP_DIR/bin/ruflo"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_plan_hive returns 1 when hive unavailable"
+else
+    assert_fail "ruflo_execute_plan_hive returns 1 when hive unavailable" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_plan_hive returns 1 when planners produce no output
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+# Always succeed but return empty memory list
+subcmd="${1:-}"
+if [[ "$subcmd" == "hive-mind" && "${2:-}" == "memory" ]]; then
+    # empty list — simulates planners failing to write
+    exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="plan-hive-test"
+RUFLO_USE_NPX=false
+exit_code=0
+ruflo_execute_plan_hive "Add a getter method" "issue body" >/dev/null 2>&1 || exit_code=$?
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_plan_hive returns 1 when union is empty"
+else
+    assert_fail "ruflo_execute_plan_hive returns 1 when union is empty" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_plan_hive returns 0 and emits plan on stdout on success;
+#       verifies spawn and orchestrate were called
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+subcmd="\${1:-}"
+printf '%s %s %s\\n' "\$subcmd" "\${2:-}" "\${3:-}" >> "$_call_log"
+if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+    printf '## Files to Modify\\nfoo.sh\\n## Implementation Steps\\n1. step\\n## Task Checklist\\n- [ ] task\\n## Testing Approach\\nrun tests\\n## Definition of Done\\nall green\\n'
+    exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="plan-hive-success"
+RUFLO_USE_NPX=false
+_plan_out="$_test_tmp/plan-out.md"
+exit_code=0
+ruflo_execute_plan_hive "Add a getter method" "issue body" > "$_plan_out" 2>/dev/null || exit_code=$?
+_plan_out_exists=false
+_plan_out_nonempty=false
+[[ -f "$_plan_out" ]] && _plan_out_exists=true
+[[ -s "$_plan_out" ]] && _plan_out_nonempty=true
+_spawn_called=false
+_orch_called=false
+grep -q "^hive-mind spawn" "$_call_log" 2>/dev/null && _spawn_called=true
+grep -q "^coordination orchestrate" "$_call_log" 2>/dev/null && _orch_called=true
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_execute_plan_hive returns 0 on success"
+else
+    assert_fail "ruflo_execute_plan_hive returns 0 on success" "got exit=$exit_code"
+fi
+if [[ "$_plan_out_exists" == "true" ]]; then
+    assert_pass "ruflo_execute_plan_hive emits plan content on stdout"
+else
+    assert_fail "ruflo_execute_plan_hive emits plan content on stdout" "stdout missing"
+fi
+if [[ "$_plan_out_nonempty" == "true" ]]; then
+    assert_pass "ruflo_execute_plan_hive emits non-empty plan on stdout"
+else
+    assert_fail "ruflo_execute_plan_hive emits non-empty plan on stdout" "stdout empty"
+fi
+if [[ "$_spawn_called" == "true" ]]; then
+    assert_pass "ruflo_execute_plan_hive calls hive-mind spawn"
+else
+    assert_fail "ruflo_execute_plan_hive calls hive-mind spawn" "spawn not invoked"
+fi
+if [[ "$_orch_called" == "true" ]]; then
+    assert_pass "ruflo_execute_plan_hive calls coordination orchestrate"
+else
+    assert_fail "ruflo_execute_plan_hive calls coordination orchestrate" "orchestrate not invoked"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Test 31: ruflo_load_defaults — no-op when no defaults file exists
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_load_defaults — no-op when no defaults file"

@@ -1430,7 +1430,8 @@ run_stage_with_retry() {
 # consecutive `test` stage failures. Resets to 0 on any `test` `complete` entry.
 # Survives daemon/pipeline restarts because the log is persisted to disk.
 #
-# Bash 3.2 compatible: no associative arrays, POSIX ERE in [[ =~ ]] only.
+# Bash 3.2 compatible: no associative arrays; stage extraction uses sed instead of
+# BASH_REMATCH array indexing to avoid any ambiguity on Bash 3.2 (macOS default).
 #
 # Format hardening (#448 review feedback): the stage-header regex accepts any
 # non-whitespace stage id (digits, uppercase, custom stage names like `test_2`)
@@ -1454,8 +1455,9 @@ count_consecutive_test_failures() {
         [[ "$in_log" -eq 0 ]] && continue
         # Accept any stage id token (e.g. test, test_2, build, COMPOUND_QUALITY).
         # Outcome matching below filters to the `test` stage specifically.
-        if [[ "$line" =~ ^###[[:space:]]+([^[:space:]]+)[[:space:]]+ ]]; then
-            current_stage="${BASH_REMATCH[1]}"
+        # sed extraction avoids BASH_REMATCH array indexing for Bash 3.2 portability.
+        if [[ "$line" =~ ^###[[:space:]] ]]; then
+            current_stage=$(printf '%s\n' "$line" | sed -E 's/^###[[:space:]]+([^[:space:]]+)[[:space:]].*/\1/')
             [[ "$current_stage" == "test" ]] && saw_any_test_header=1
             continue
         fi
@@ -1478,6 +1480,9 @@ count_consecutive_test_failures() {
     if [[ "$saw_log_section" -eq 1 && "$saw_any_test_header" -eq 0 ]]; then
         if grep -qE '^###[[:space:]]+test[[:space:]]' "$state_file" 2>/dev/null; then
             echo "WARN: count_consecutive_test_failures: state file '$state_file' contains '### test' headers that the parser failed to recognize — log format may have drifted; cycling halt may be disabled" >&2
+            emit_event "pipeline.cycling_halt_disabled" \
+                "reason=log_format_drift" \
+                "state_file=${state_file}" || true
         fi
     fi
 
@@ -1732,6 +1737,14 @@ Focus on fixing the failing tests while keeping all passing tests working."
         # Reading the count BEFORE running the cycle would falsely halt fresh
         # resumes whose first attempt hasn't run yet (#448 review feedback).
         local _max_build_retries="${SW_PIPELINE_MAX_BUILD_RETRIES:-3}"
+        # Bounds validation: negative or non-integer values silently disable the cycling
+        # halt (the -gt 0 check below would be false), re-introducing the #448 bug.
+        case "$_max_build_retries" in
+            ''|*[!0-9]*)
+                warn "SW_PIPELINE_MAX_BUILD_RETRIES='${_max_build_retries}' is not a non-negative integer; using default of 3"
+                _max_build_retries=3
+                ;;
+        esac
         if [[ "$_max_build_retries" -gt 0 ]]; then
             local _consec_failures
             _consec_failures=$(count_consecutive_test_failures)

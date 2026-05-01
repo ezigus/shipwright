@@ -855,6 +855,7 @@ ci_push_partial_work() {
     [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
 
     local branch="shipwright/issue-${ISSUE_NUMBER}"
+    echo "[WIP-PUSH-START] $(date -u +%FT%TZ) issue=${ISSUE_NUMBER} timeout=${push_timeout}s caller=${FUNCNAME[1]:-top}" >&2
 
     # Snapshot events.jsonl into the repo so it survives the ephemeral runner disk
     # and gets pushed with the WIP commit — enables post-mortem watchdog analysis.
@@ -875,9 +876,13 @@ ci_push_partial_work() {
     fi
 
     # Push branch (create if needed, force to overwrite previous WIP)
-    if ! _timeout "$push_timeout" git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null; then
+    if _timeout "$push_timeout" git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null; then
+        echo "[WIP-PUSH-OK] $(date -u +%FT%TZ) branch=$branch" >&2
+    else
+        local _push_rc=$?
+        echo "[WIP-PUSH-FAIL] $(date -u +%FT%TZ) branch=$branch exit=${_push_rc}" >&2
         warn "git push failed for $branch — remote may be out of sync"
-        emit_event "pipeline.push_failed" "branch=$branch"
+        emit_event "pipeline.push_failed" "branch=$branch exit=${_push_rc}"
     fi
 }
 
@@ -944,12 +949,12 @@ cleanup_on_exit() {
 
     # Push WIP on any non-zero CI exit — signal-driven OR stage-failure.
     # Skip if watchdog already pushed at T-5min (idempotency); skip on success (exit 0).
-    # Use 30s timeout — runs before ruflo_cleanup/cost breakdown in the grace window.
+    # Use 60s timeout — stage-failure path needs headroom for first-time remote branch creation.
     if [[ "${CI_MODE:-false}" == "true" \
           && -n "${ISSUE_NUMBER:-}" \
           && "$exit_code" -ne 0 \
           && "${_SOFT_TIMEOUT_FIRED:-false}" != "true" ]]; then
-        ci_push_partial_work 30
+        ci_push_partial_work 60
     fi
 
     # Generate cost-breakdown.json from sidecars on every exit path (issue #87 AC#4).
@@ -3071,7 +3076,20 @@ pipeline_start() {
         local _job_timeout_min="${SHIPWRIGHT_JOB_TIMEOUT_MINUTES:-180}"
         if [[ "$_job_timeout_min" =~ ^[0-9]+$ ]] && (( _job_timeout_min > 5 )); then
             local _watchdog_delay_sec=$(( (_job_timeout_min - 5) * 60 ))
-            ( trap 'kill %1 2>/dev/null; exit 0' TERM; sleep "$_watchdog_delay_sec" & wait $!; kill -0 $$ 2>/dev/null || exit 0; echo "[WATCHDOG-FIRE] $(date -u +%FT%TZ) sending USR1 to pid=$$" >&2; kill -USR1 $$ 2>/dev/null ) &
+            (
+              trap 'kill %1 2>/dev/null; exit 0' TERM
+              sleep "$_watchdog_delay_sec" & wait $!
+              kill -0 $$ 2>/dev/null || exit 0
+              echo "[WATCHDOG-FIRE] $(date -u +%FT%TZ) pushing WIP from subshell (parent may be blocked) pid=$$" >&2
+              # Push directly — parent USR1 trap defers until foreground completes;
+              # subshell is unblocked and can push while the parent is stuck.
+              if ci_push_partial_work 120; then
+                echo "[WATCHDOG-PUSH-OK] $(date -u +%FT%TZ)" >&2
+              else
+                echo "[WATCHDOG-PUSH-FAIL] $(date -u +%FT%TZ) exit=$?" >&2
+              fi
+              kill -USR1 $$ 2>/dev/null
+            ) &
             _WATCHDOG_PID=$!
             emit_event "pipeline.watchdog_armed" \
                        "issue=${ISSUE_NUMBER}" \

@@ -103,6 +103,28 @@ check_circuit_breaker() {
     return 0
 }
 
+check_time_budget() {
+    # Guard: stop starting a new iteration if <20 min remains in the GHA job.
+    # Uses SHIPWRIGHT_JOB_TIMEOUT_MINUTES (set by the pipeline) and the LOOP_START_EPOCH
+    # recorded at loop initialization. Prevents the loop from beginning an iteration
+    # it cannot finish, leaving time for the watchdog push and cleanup.
+    local _job_timeout_min="${SHIPWRIGHT_JOB_TIMEOUT_MINUTES:-0}"
+    [[ -z "${LOOP_START_EPOCH:-}" || "$_job_timeout_min" -le 0 ]] 2>/dev/null && return 0
+    local _now _elapsed_min _remaining_min
+    _now=$(now_epoch 2>/dev/null) || return 0
+    _elapsed_min=$(( (_now - LOOP_START_EPOCH) / 60 ))
+    _remaining_min=$(( _job_timeout_min - _elapsed_min ))
+    if (( _remaining_min < 20 )); then
+        warn "Less than 20 min remaining in GHA job (${_remaining_min}m) — stopping build loop to allow cleanup"
+        emit_event "loop.time_budget_exhausted" \
+            "elapsed_min=${_elapsed_min}" \
+            "remaining_min=${_remaining_min}" \
+            "iteration=${ITERATION:-0}" 2>/dev/null || true
+        return 1
+    fi
+    return 0
+}
+
 check_max_iterations() {
     if [[ "$ITERATION" -le "$MAX_ITERATIONS" ]]; then
         return 0

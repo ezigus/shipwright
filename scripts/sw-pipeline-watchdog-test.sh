@@ -1362,6 +1362,174 @@ test_cleanup_skips_push_when_not_ci() {
     return 0
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 29. Watchdog subshell calls ci_push_partial_work directly before USR1
+#     This covers the case where the parent is blocked in a long claude --print
+#     call and Bash defers the USR1 trap until the foreground command returns.
+# ─────────────────────────────────────────────────────────────────────────────
+test_watchdog_subshell_calls_push_before_usr1() {
+    # Verify the watchdog subshell block in the pipeline script contains both
+    # a direct ci_push_partial_work call AND the USR1 signal, in that order.
+    local watchdog_block
+    watchdog_block=$(awk '
+        /trap .kill %1.*TERM/ && !found_start { in_sub=1 }
+        in_sub { print; line_count++ }
+        in_sub && /kill -USR1/ { print "---END---"; in_sub=0 }
+    ' "$REAL_PIPELINE_SCRIPT")
+
+    if [[ -z "$watchdog_block" ]]; then
+        echo -e "    ${RED}✗${RESET} Could not extract watchdog subshell block from pipeline script"
+        return 1
+    fi
+
+    # ci_push_partial_work 120 must appear before kill -USR1
+    local push_line usr1_line
+    push_line=$(printf '%s\n' "$watchdog_block" | grep -n "ci_push_partial_work 120" | head -1 | cut -d: -f1)
+    usr1_line=$(printf '%s\n' "$watchdog_block" | grep -n "kill -USR1" | head -1 | cut -d: -f1)
+
+    if [[ -z "$push_line" ]]; then
+        echo -e "    ${RED}✗${RESET} ci_push_partial_work 120 not found in watchdog subshell"
+        return 1
+    fi
+    if [[ -z "$usr1_line" ]]; then
+        echo -e "    ${RED}✗${RESET} kill -USR1 not found in watchdog subshell"
+        return 1
+    fi
+    if (( push_line >= usr1_line )); then
+        echo -e "    ${RED}✗${RESET} ci_push_partial_work (line ${push_line}) must appear before kill -USR1 (line ${usr1_line})"
+        return 1
+    fi
+
+    # [WATCHDOG-PUSH-OK] and [WATCHDOG-PUSH-FAIL] markers must be present
+    if ! printf '%s\n' "$watchdog_block" | grep -q "WATCHDOG-PUSH-OK"; then
+        echo -e "    ${RED}✗${RESET} [WATCHDOG-PUSH-OK] marker missing from watchdog subshell"
+        return 1
+    fi
+    if ! printf '%s\n' "$watchdog_block" | grep -q "WATCHDOG-PUSH-FAIL"; then
+        echo -e "    ${RED}✗${RESET} [WATCHDOG-PUSH-FAIL] marker missing from watchdog subshell"
+        return 1
+    fi
+
+    return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 30. [WIP-PUSH-START], [WIP-PUSH-OK], and [WIP-PUSH-FAIL] markers emitted
+# ─────────────────────────────────────────────────────────────────────────────
+test_wip_push_telemetry_markers_emitted() {
+    local push_log="$TEST_TEMP_DIR/wip-telemetry-$$.txt"
+    local stderr_log="$TEST_TEMP_DIR/wip-telemetry-stderr-$$.txt"
+    rm -f "$push_log" "$stderr_log"
+
+    # ── Success path: git push succeeds ──────────────────────────────────────
+    local runner_ok="$TEST_TEMP_DIR/bin/wip-telemetry-ok-$$.sh"
+    cat > "$runner_ok" <<RUNNER_OK
+#!/usr/bin/env bash
+set -uo pipefail
+export PATH="$TEST_TEMP_DIR/bin:\$PATH"
+export HOME="$TEST_TEMP_DIR"
+export CI_MODE=true
+export ISSUE_NUMBER=9999
+export EVENTS_FILE="/dev/null"
+
+emit_event()     { true; }
+warn()           { true; }
+safe_git_stage() { true; }
+_timeout()       { local _t="\$1"; shift; "\$@"; }
+
+# Mock git: push succeeds, all other git calls silently succeed
+git() {
+    case "\$*" in
+        *"push origin"*) return 0 ;;
+        *"diff --quiet"*) return 1 ;;  # pretend there are changes
+        *) return 0 ;;
+    esac
+}
+export -f git
+
+$(awk '
+    /^ci_push_partial_work\(\)/ { in_fn=1 }
+    in_fn { print }
+    in_fn && /^\}$/ { in_fn=0 }
+' "$REAL_PIPELINE_SCRIPT")
+
+ci_push_partial_work 120
+RUNNER_OK
+    chmod +x "$runner_ok"
+    bash "$runner_ok" 2>"$stderr_log" || true
+
+    if ! grep -q "\[WIP-PUSH-START\]" "$stderr_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} [WIP-PUSH-START] not emitted on success path"
+        cat "$stderr_log" 2>/dev/null | sed 's/^/      /' || true
+        return 1
+    fi
+    if ! grep -q "\[WIP-PUSH-OK\]" "$stderr_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} [WIP-PUSH-OK] not emitted when git push succeeds"
+        cat "$stderr_log" 2>/dev/null | sed 's/^/      /' || true
+        return 1
+    fi
+    if grep -q "\[WIP-PUSH-FAIL\]" "$stderr_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} [WIP-PUSH-FAIL] emitted on success path — should not appear"
+        return 1
+    fi
+
+    # ── Failure path: git push fails ─────────────────────────────────────────
+    local runner_fail="$TEST_TEMP_DIR/bin/wip-telemetry-fail-$$.sh"
+    rm -f "$stderr_log"
+    cat > "$runner_fail" <<RUNNER_FAIL
+#!/usr/bin/env bash
+set -uo pipefail
+export PATH="$TEST_TEMP_DIR/bin:\$PATH"
+export HOME="$TEST_TEMP_DIR"
+export CI_MODE=true
+export ISSUE_NUMBER=9999
+export EVENTS_FILE="/dev/null"
+
+emit_event()     { true; }
+warn()           { true; }
+safe_git_stage() { true; }
+_timeout()       { local _t="\$1"; shift; "\$@"; }
+
+# Mock git: push fails, diff pretends there are changes
+git() {
+    case "\$*" in
+        *"push origin"*) return 1 ;;
+        *"diff --quiet"*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+export -f git
+
+$(awk '
+    /^ci_push_partial_work\(\)/ { in_fn=1 }
+    in_fn { print }
+    in_fn && /^\}$/ { in_fn=0 }
+' "$REAL_PIPELINE_SCRIPT")
+
+ci_push_partial_work 120
+RUNNER_FAIL
+    chmod +x "$runner_fail"
+    bash "$runner_fail" 2>"$stderr_log" || true
+
+    if ! grep -q "\[WIP-PUSH-START\]" "$stderr_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} [WIP-PUSH-START] not emitted on failure path"
+        cat "$stderr_log" 2>/dev/null | sed 's/^/      /' || true
+        return 1
+    fi
+    if ! grep -q "\[WIP-PUSH-FAIL\]" "$stderr_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} [WIP-PUSH-FAIL] not emitted when git push fails"
+        cat "$stderr_log" 2>/dev/null | sed 's/^/      /' || true
+        return 1
+    fi
+    if grep -q "\[WIP-PUSH-OK\]" "$stderr_log" 2>/dev/null; then
+        echo -e "    ${RED}✗${RESET} [WIP-PUSH-OK] emitted on failure path — should not appear"
+        return 1
+    fi
+
+    rm -f "$push_log" "$stderr_log" "$runner_ok" "$runner_fail"
+    return 0
+}
+
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1415,6 +1583,8 @@ main() {
         "test_cleanup_skips_push_on_success:cleanup_on_exit: skips push on success (exit_code=0)"
         "test_cleanup_skips_push_when_soft_timeout_fired:cleanup_on_exit: skips push when _SOFT_TIMEOUT_FIRED=true"
         "test_cleanup_skips_push_when_not_ci:cleanup_on_exit: skips push when CI_MODE=false"
+        "test_watchdog_subshell_calls_push_before_usr1:Watchdog subshell: ci_push_partial_work 120 called before USR1 signal"
+        "test_wip_push_telemetry_markers_emitted:[WIP-PUSH-*]: START/OK emitted on success; START/FAIL emitted on push failure"
     )
 
     for entry in "${tests[@]}"; do

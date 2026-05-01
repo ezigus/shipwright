@@ -2684,6 +2684,157 @@ PRESEED
     assert_state_not_contains "status: stuck_cycling" "stuck_cycling NOT set with cap=0"
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Cycling Halt: resume of a `stuck_cycling` pipeline is refused unless the
+# operator opts in via SW_PIPELINE_MAX_BUILD_RETRIES=0.
+# Regression for #448 [Concern] #1: terminal-state guard on resume.
+# ──────────────────────────────────────────────────────────────────────────────
+test_stuck_cycling_resume_refused_without_override() {
+    pipeline_config_with_stages "intake,plan,build,test" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+
+    local proj="$TEST_TEMP_DIR/project"
+    mkdir -p "$proj/.claude"
+    # Pre-seed with status: stuck_cycling (terminal halt state).
+    cat > "$proj/.claude/pipeline-state.md" <<'PRESEED'
+---
+pipeline: standard
+goal: "verify stuck_cycling resume guard"
+original_goal: "verify stuck_cycling resume guard"
+status: stuck_cycling
+issue: ""
+branch: "main"
+template: "standard"
+current_stage: build
+started_at: 2026-04-30T00:00:00Z
+pipeline_run_epoch: 1700000000
+updated_at: 2026-04-30T00:00:00Z
+elapsed: 0s
+test_cmd: "false"
+pr_number:
+model: opus
+progress_comment_id:
+stages:
+  intake: complete
+  plan: complete
+  build: failed
+  test: failed
+---
+
+## Log
+
+### test (00:00:10)
+failed (1s)
+
+### test (00:00:20)
+failed (1s)
+PRESEED
+
+    # Resume without override — must refuse with exit 2.
+    invoke_pipeline resume --skip-gates --self-heal 1
+
+    assert_exit_code 2 "resume refused with exit code 2" &&
+    assert_output_contains "stuck_cycling" "diagnostic message mentions stuck_cycling" &&
+    assert_output_contains "SW_PIPELINE_MAX_BUILD_RETRIES=0" "override hint shown" &&
+    assert_state_contains "status: stuck_cycling" "state file unchanged after refusal"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cycling Halt: resume of a `stuck_cycling` pipeline IS allowed when the
+# operator explicitly disables the cap via SW_PIPELINE_MAX_BUILD_RETRIES=0.
+# ──────────────────────────────────────────────────────────────────────────────
+test_stuck_cycling_resume_allowed_with_override() {
+    pipeline_config_with_stages "intake,plan,build,test" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+
+    local fail_cmd="$TEST_TEMP_DIR/bin/always-fail-test"
+    cat > "$fail_cmd" <<'FAIL_EOF'
+#!/usr/bin/env bash
+exit 1
+FAIL_EOF
+    chmod +x "$fail_cmd"
+
+    local proj="$TEST_TEMP_DIR/project"
+    mkdir -p "$proj/.claude"
+    cat > "$proj/.claude/pipeline-state.md" <<'PRESEED'
+---
+pipeline: standard
+goal: "verify stuck_cycling override resume"
+original_goal: "verify stuck_cycling override resume"
+status: stuck_cycling
+issue: ""
+branch: "main"
+template: "standard"
+current_stage: build
+started_at: 2026-04-30T00:00:00Z
+pipeline_run_epoch: 1700000000
+updated_at: 2026-04-30T00:00:00Z
+elapsed: 0s
+test_cmd: "false"
+pr_number:
+model: opus
+progress_comment_id:
+stages:
+  intake: complete
+  plan: complete
+---
+
+## Log
+
+### test (00:00:10)
+failed (1s)
+PRESEED
+
+    # With cap disabled, resume proceeds (no exit 2 refusal).
+    SW_PIPELINE_MAX_BUILD_RETRIES=0 \
+        invoke_pipeline resume --skip-gates --test-cmd "$fail_cmd" --self-heal 1
+
+    # Refusal would have exited 2 BEFORE reaching the test cycle.
+    if [[ "$PIPELINE_EXIT" -eq 2 ]] && printf '%s\n' "$PIPELINE_OUTPUT" | grep -q "refusing to resume"; then
+        assert_fail "stuck_cycling override: resume was refused despite SW_PIPELINE_MAX_BUILD_RETRIES=0"
+        return
+    fi
+    assert_output_contains "cap disabled" "override warning shown when proceeding"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cycling Halt: fresh `pipeline start` is refused when the existing state file
+# shows a previous run halted in `stuck_cycling`. Prevents silent overwrite.
+# ──────────────────────────────────────────────────────────────────────────────
+test_stuck_cycling_start_refused() {
+    pipeline_config_with_stages "intake,plan,build,test" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+
+    local proj="$TEST_TEMP_DIR/project"
+    mkdir -p "$proj/.claude"
+    cat > "$proj/.claude/pipeline-state.md" <<'PRESEED'
+---
+pipeline: standard
+goal: "verify stuck_cycling start guard"
+original_goal: "verify stuck_cycling start guard"
+status: stuck_cycling
+issue: ""
+branch: "main"
+template: "standard"
+current_stage: build
+started_at: 2026-04-30T00:00:00Z
+pipeline_run_epoch: 1700000000
+updated_at: 2026-04-30T00:00:00Z
+elapsed: 0s
+test_cmd: "false"
+pr_number:
+model: opus
+progress_comment_id:
+stages:
+  intake: complete
+---
+PRESEED
+
+    invoke_pipeline start --goal "should be refused" --skip-gates
+
+    assert_exit_code 2 "start refused with exit code 2" &&
+    assert_output_contains "stuck_cycling" "diagnostic message mentions stuck_cycling" &&
+    assert_output_contains "shipwright pipeline abort" "abort hint shown" &&
+    assert_state_contains "status: stuck_cycling" "state file unchanged after refusal"
+}
+
 # Helper for the disabled test (assert state file does NOT contain pattern)
 assert_state_not_contains() {
     local pattern="$1" label="${2:-state exclusion}"
@@ -2801,6 +2952,9 @@ main() {
         "test_stuck_cycling_halts_after_max_build_retries:Cycling: halts with stuck_cycling after max consecutive test failures (issue #448)"
         "test_stuck_cycling_runs_one_cycle_before_halting_on_resume:Cycling: fresh resume runs one cycle before halting (issue #448 review fix)"
         "test_stuck_cycling_disabled_when_max_retries_zero:Cycling: SW_PIPELINE_MAX_BUILD_RETRIES=0 disables cap (escape hatch)"
+        "test_stuck_cycling_resume_refused_without_override:Cycling: resume refuses stuck_cycling without override (issue #448 review fix)"
+        "test_stuck_cycling_resume_allowed_with_override:Cycling: resume proceeds with SW_PIPELINE_MAX_BUILD_RETRIES=0 override"
+        "test_stuck_cycling_start_refused:Cycling: fresh start refuses to overwrite stuck_cycling state"
     )
 
     for entry in "${tests[@]}"; do

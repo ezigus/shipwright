@@ -2894,6 +2894,16 @@ pipeline_start() {
             echo -e "  Abort it:  ${DIM}shipwright pipeline abort${RESET}"
             exit 1
         fi
+        # `stuck_cycling` is a guardrail state — block fresh starts that would
+        # silently overwrite the halt record. Operator must abort or override.
+        if [[ "$existing_status" == "stuck_cycling" ]]; then
+            error "Previous pipeline halted in 'stuck_cycling' state — refusing to start a new one."
+            echo -e "  ${DIM}The previous run halted after consecutive test failures.${RESET}"
+            echo -e "  Abort and start fresh: ${BOLD}shipwright pipeline abort${RESET}"
+            echo -e "  Resume with cap disabled: ${BOLD}SW_PIPELINE_MAX_BUILD_RETRIES=0 shipwright pipeline resume${RESET}"
+            emit_event "pipeline.start_refused" "reason=stuck_cycling" 2>/dev/null || true
+            exit 2
+        fi
     fi
 
     # Pre-flight checks
@@ -3445,6 +3455,31 @@ pipeline_start() {
 
 pipeline_resume() {
     setup_dirs
+
+    # Refuse to resume a `stuck_cycling` pipeline unless the operator has
+    # explicitly disabled the cap via SW_PIPELINE_MAX_BUILD_RETRIES=0.
+    # Read directly from the state file because resume_state() unconditionally
+    # rewrites PIPELINE_STATUS to "running" before returning (#448 review feedback).
+    if [[ -f "$STATE_FILE" ]]; then
+        local _persisted_status
+        _persisted_status=$(sed -n 's/^status: *//p' "$STATE_FILE" | head -1)
+        if [[ "$_persisted_status" == "stuck_cycling" ]]; then
+            local _max_retries_resume="${SW_PIPELINE_MAX_BUILD_RETRIES:-3}"
+            if [[ "$_max_retries_resume" != "0" ]]; then
+                error "Pipeline is in 'stuck_cycling' state — refusing to resume."
+                echo -e "  ${DIM}The previous run halted after consecutive test failures.${RESET}"
+                echo -e "  ${DIM}Investigate the failures, then either:${RESET}"
+                echo -e "    1. Fix the underlying issue and resume with cap disabled:"
+                echo -e "       ${BOLD}SW_PIPELINE_MAX_BUILD_RETRIES=0 shipwright pipeline resume${RESET}"
+                echo -e "    2. Abort and start fresh: ${BOLD}shipwright pipeline abort${RESET}"
+                emit_event "pipeline.resume_refused" "reason=stuck_cycling" "max_retries=$_max_retries_resume" 2>/dev/null || true
+                exit 2
+            fi
+            warn "Resuming stuck_cycling pipeline with SW_PIPELINE_MAX_BUILD_RETRIES=0 (cap disabled)."
+            emit_event "pipeline.stuck_cycling_resume_override" "max_retries=0" 2>/dev/null || true
+        fi
+    fi
+
     resume_state
     # Recompute TASKS_FILE now that ISSUE_NUMBER has been populated from the state file.
     # setup_dirs runs before resume_state, so ISSUE_NUMBER was empty during the first call.

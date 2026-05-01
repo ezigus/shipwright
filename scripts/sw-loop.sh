@@ -1409,27 +1409,37 @@ run_quality_gates() {
     # file=$0; sub(...) handles paths with spaces by copying the full header line, then stripping
     # the +++ b/ prefix. /^\+/ && !/^\+\+\+/ counts ALL added lines (including empty ones) so
     # lineno stays accurate when blank lines precede a marker.
+    # Marker patterns are assembled from shell-quoted fragments so this source
+    # itself does not contain the literal marker substrings (which would
+    # self-flag). The X-marker uses X{3} (quantifier) with a non-X boundary on
+    # each side, so mktemp templates like X{6} (six contiguous X's) are
+    # excluded as legitimate template syntax rather than task markers.
+    local _m_t _m_f _m_h _m_alt
+    _m_t='T''O''D''O'
+    _m_f='F''I''X''M''E'
+    _m_h='H''A''C''K'
+    _m_alt="${_m_t}|${_m_f}|${_m_h}"
     local _todo_diff todo_count
     _todo_diff="$(git -C "$PROJECT_ROOT" -c diff.noprefix=false diff HEAD~1 --unified=0 \
         -- ':!.claude/' ':!docs/plans/' ':!*.md' 2>/dev/null || true)"
-    todo_count="$(printf '%s\n' "$_todo_diff" | grep -cE '^\+[^+].*(TODO|FIXME|HACK|XXX)' || true)"
+    todo_count="$(printf '%s\n' "$_todo_diff" | grep -cE "^\+[^+].*(${_m_alt}|([^X]|^)X{3}([^X]|$))" || true)"
     todo_count="${todo_count:-0}"
     if [[ "${todo_count:-0}" -gt 0 ]]; then
-        gate_failures+=("${todo_count} TODO/FIXME/HACK/XXX markers in new code")
+        gate_failures+=("${todo_count} task-marker(s) in new code")
         local _todo_locations
         _todo_locations="$(printf '%s\n' "$_todo_diff" \
-          | awk '
+          | awk -v t="$_m_t" -v f="$_m_f" -v h="$_m_h" '
               /^\+\+\+ / { file=$0; sub(/^\+\+\+ b\//,"",file) }
               /^@@ /     { s=$3; sub(/^[^+]*\+/,"",s); sub(/,.*/,"",s); lineno=int(s)-1 }
               /^\+/ && !/^\+\+\+/ {
                 lineno++
-                if (index($0,"TODO") || index($0,"FIXME") || index($0,"HACK") || index($0,"XXX"))
+                if (index($0,t) || index($0,f) || index($0,h) || match($0,/([^X]|^)X{3}([^X]|$)/))
                   print file ":" lineno ": " substr($0,2)
               }
             ' | head -10 || true)"
         if [[ -n "$_todo_locations" ]]; then
             QUALITY_GATE_DETAIL="${QUALITY_GATE_DETAIL}
-### TODO/FIXME markers to remove
+### Task markers to remove
 ${_todo_locations}"
         fi
     fi

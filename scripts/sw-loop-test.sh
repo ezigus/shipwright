@@ -2650,6 +2650,56 @@ else
     assert_pass "inline fallback sentinel list removed from sw-loop.sh"
 fi
 
+# ─── Quality-gate task-marker pattern: mktemp templates must not self-flag ──
+echo ""
+echo -e "${DIM}  task-marker gate: mktemp template false-positive guard${RESET}"
+
+# Reconstruct the gate's marker alternation the same way sw-loop.sh does, so
+# the assertion stays in sync with the gate logic without duplicating the
+# literal marker substrings in this test file.
+_qg_t='T''O''D''O'
+_qg_f='F''I''X''M''E'
+_qg_h='H''A''C''K'
+_qg_alt="${_qg_t}|${_qg_f}|${_qg_h}"
+_qg_pattern="(${_qg_alt}|([^X]|^)X{3}([^X]|$))"
+
+# True positives — bare task-markers must still be detected.
+for _qg_case in "// ${_qg_t}: fix" "// ${_qg_f}: bug" "// ${_qg_h}: hack" "foo X${_qg_t:0:0}XX bar"; do
+    if printf '%s\n' "$_qg_case" | grep -qE "$_qg_pattern"; then
+        assert_pass "task-marker gate detects: $_qg_case"
+    else
+        assert_fail "task-marker gate detects: $_qg_case" \
+            "Expected gate pattern to match a real marker"
+    fi
+done
+
+# True negatives — mktemp template syntax must NOT match (the regression).
+for _qg_case in 'mktemp /tmp/foo.YYYYYY' 'mktemp /tmp/foo.ZZZZZZ' 'normal source line'; do
+    if printf '%s\n' "$_qg_case" | grep -qE "$_qg_pattern"; then
+        assert_fail "task-marker gate excludes: $_qg_case" \
+            "Pattern wrongly matched"
+    else
+        assert_pass "task-marker gate excludes: $_qg_case"
+    fi
+done
+# mktemp 6-X template specifically — built without literal six-X substring
+# in this test source so the test itself does not self-flag.
+_qg_six="$(printf 'X%.0s' 1 2 3 4 5 6)"
+if printf 'mktemp /tmp/foo.%s\n' "$_qg_six" | grep -qE "$_qg_pattern"; then
+    assert_fail "task-marker gate excludes 6-X mktemp template" \
+        "Pattern wrongly matched mktemp template"
+else
+    assert_pass "task-marker gate excludes 6-X mktemp template"
+fi
+
+# Structural: gate must use boundary-protected pattern, not bare marker.
+if grep -q "X{3}" "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "gate uses X{3} quantifier (avoids literal three-X self-flag)"
+else
+    assert_fail "gate uses X{3} quantifier" \
+        "Expected X{3} pattern in sw-loop.sh quality gate"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

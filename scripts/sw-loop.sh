@@ -1131,6 +1131,15 @@ run_test_gate() {
     fi
 }
 
+# Strip lines that are clearly test-pass markers so words like "fail-open"
+# inside passing test descriptions don't get flagged as errors.
+# Why: shipwright test output prints lines like "✓ Test 4: ... (fail-open ...)"
+# for PASSING tests. The unfiltered grep below was matching the substring "fail",
+# producing false positives that trip the holistic gate's circuit breaker.
+_strip_passing_test_lines() {
+    grep -vE '✓|^[[:space:]]*(Test [0-9]+:|PASS\b|ok\b)|[0-9]+/[0-9]+ pass\b|All .* passed\b' || true
+}
+
 write_error_summary() {
     local error_json="$LOG_DIR/error-summary.json"
 
@@ -1141,7 +1150,10 @@ write_error_summary() {
         local build_had_errors=false
         if [[ -f "$build_log" ]]; then
             local build_err_count
-            build_err_count=$(tail -30 "$build_log" 2>/dev/null | grep -ciE '(error|fail|exception|panic|FATAL)' || true)
+            build_err_count=$(tail -30 "$build_log" 2>/dev/null \
+                | strip_ansi \
+                | _strip_passing_test_lines \
+                | grep -ciE '(error|fail|exception|panic|FATAL)' || true)
             [[ "${build_err_count:-0}" -gt 0 ]] && build_had_errors=true
         fi
         if [[ "$build_had_errors" != "true" ]]; then
@@ -1161,7 +1173,11 @@ write_error_summary() {
 
     # Extract error lines (last 30 lines, grep for error patterns)
     local error_lines_raw
-    error_lines_raw=$(tail -30 "$source_log" 2>/dev/null | strip_ansi | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' | head -10 || true)
+    error_lines_raw=$(tail -30 "$source_log" 2>/dev/null \
+        | strip_ansi \
+        | _strip_passing_test_lines \
+        | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' \
+        | head -10 || true)
 
     local error_count=0
     if [[ -n "$error_lines_raw" ]]; then

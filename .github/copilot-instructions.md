@@ -856,7 +856,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-repo-dir-project-root-test.sh` | 363 | Regression tests for #335 |
 | `scripts/sw-retro-test.sh` | 171 | Sprint retrospective engine tests |
 | `scripts/sw-review-rerun-test.sh` | 307 | SHA-deduped rerun comment writer |
-| `scripts/sw-ruflo-adapter-test.sh` | 3851 |  |
+| `scripts/sw-ruflo-adapter-test.sh` | 4105 |  |
 | `scripts/sw-ruflo-timeout-test.sh` | 282 | regression tests for ruflo_with_timeout FD hang (#426) |
 | `scripts/sw-scale-test.sh` | 151 | Dynamic agent team scaling |
 | `scripts/sw-security-audit-test.sh` | 163 | Security auditing tests |

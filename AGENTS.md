@@ -857,6 +857,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-remote-test.sh` | 396 | Validate machine registry, atomic writes, |
 | `scripts/sw-replay-test.sh` | 167 | Pipeline run replay & timeline viewing |
 | `scripts/sw-repo-dir-project-root-test.sh` | 363 | Regression tests for #335 |
+| `scripts/sw-resume-test.sh` | 267 | TDD tests for WIP branch resume logic |
 | `scripts/sw-retro-test.sh` | 171 | Sprint retrospective engine tests |
 | `scripts/sw-review-rerun-test.sh` | 307 | SHA-deduped rerun comment writer |
 | `scripts/sw-ruflo-adapter-test.sh` | 4244 |  |

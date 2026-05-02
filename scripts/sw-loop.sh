@@ -2556,6 +2556,9 @@ run_single_agent_loop() {
     # Track applied memory fix patterns for outcome recording
     _applied_fix_pattern=""
     STUCKNESS_COUNT=0
+    LOOP_FAILURE_DIAGNOSIS=""
+    LOOP_CLOSED_LOOP_FIX=""
+    LOOP_HUMAN_FEEDBACK=""
     STUCKNESS_TRACKING_FILE="$LOG_DIR/stuckness-tracking.txt"
     : > "$STUCKNESS_TRACKING_FILE" 2>/dev/null || true
     : > "${LOG_DIR:-/tmp}/strategy-attempts.txt" 2>/dev/null || true
@@ -2624,7 +2627,10 @@ run_single_agent_loop() {
                 GOAL="${GOAL}
 
 ${_diagnosis}"
+                LOOP_FAILURE_DIAGNOSIS="$_diagnosis"
                 info "Failure diagnosis injected (classification from error pattern)"
+            else
+                LOOP_FAILURE_DIAGNOSIS=""
             fi
 
             # Memory-based fix suggestion (from past successful fixes)
@@ -2643,7 +2649,10 @@ ${_diagnosis}"
                 GOAL="KNOWN FIX (from past success): ${_fix_suggestion}
 
 ${GOAL}"
+                LOOP_CLOSED_LOOP_FIX="$_fix_suggestion"
                 info "Memory fix injected: ${_fix_suggestion:0:80}"
+            else
+                LOOP_CLOSED_LOOP_FIX=""
             fi
 
             # Analyze failure via Claude (background, non-blocking) for richer root_cause/fix in memory
@@ -2654,6 +2663,10 @@ ${GOAL}"
                     _MEM_ANALYZE_PID=$!
                 fi
             fi
+        else
+            # Tests passed — clear previous iteration's guidance so stale info doesn't bleed forward
+            LOOP_FAILURE_DIAGNOSIS=""
+            LOOP_CLOSED_LOOP_FIX=""
         fi
 
         # Capture commit count before Claude runs so Claude-initiated commits are included in delta
@@ -2932,6 +2945,7 @@ $summary
 
         # Human intervention: check for human message between iterations
         local human_msg_file="$STATE_DIR/pipeline-artifacts/human-message.txt"
+        LOOP_HUMAN_FEEDBACK=""
         if [[ -f "$human_msg_file" ]]; then
             local human_msg
             human_msg="$(cat "$human_msg_file" 2>/dev/null || true)"
@@ -2941,6 +2955,7 @@ $summary
                 GOAL="${GOAL}
 
 HUMAN FEEDBACK (received after iteration $ITERATION): $human_msg"
+                LOOP_HUMAN_FEEDBACK="$human_msg"
                 rm -f "$human_msg_file"
             fi
         fi

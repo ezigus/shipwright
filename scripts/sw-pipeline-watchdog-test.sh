@@ -917,29 +917,13 @@ RUNNER
 # ─────────────────────────────────────────────────────────────────────────────
 test_watchdog_delay_calculation() {
     # For SHIPWRIGHT_JOB_TIMEOUT_MINUTES=6, delay must be (6-5)*60 = 60 seconds.
-    local fn_block
-    fn_block=$(awk '
-        /Soft-timeout watchdog/ { in_block=1 }
-        in_block { print }
-        in_block && /_WATCHDOG_PID=[$]!/ { in_block=0 }
-    ' "$REAL_PIPELINE_SCRIPT")
-
-    if [[ -z "$fn_block" ]]; then
-        echo -e "    ${RED}✗${RESET} Watchdog spawn block not found in pipeline script"
-        return 1
-    fi
-
-    # Must compute delay using (_job_timeout_min - 5) * 60 arithmetic.
-    # The actual code: _watchdog_delay_sec=$(( (_job_timeout_min - 5) * 60 ))
-    # Match for '_job_timeout_min - 5' and '* 60' anywhere in the block.
-    if ! printf '%s\n' "$fn_block" | grep -qF '_job_timeout_min - 5'; then
-        echo -e "    ${RED}✗${RESET} Watchdog delay formula '_job_timeout_min - 5' not found"
-        echo "    Block: $(printf '%s\n' "$fn_block" | grep -E 'delay|_watchdog' | head -3)"
-        return 1
-    fi
-    if ! printf '%s\n' "$fn_block" | grep -qF '* 60'; then
-        echo -e "    ${RED}✗${RESET} Watchdog delay formula '* 60' (convert to seconds) not found"
-        echo "    Block: $(printf '%s\n' "$fn_block" | grep -E 'delay|_watchdog' | head -3)"
+    # Grep the file directly for the exact formula — no awk block extraction needed.
+    # The formula lives in the spawn block only; a fixed-string match is unambiguous.
+    if ! grep -qF '_watchdog_delay_sec=$(( (_job_timeout_min - 5) * 60 ))' "$REAL_PIPELINE_SCRIPT"; then
+        echo -e "    ${RED}✗${RESET} Watchdog delay formula '_watchdog_delay_sec=\$(( (_job_timeout_min - 5) * 60 ))' not found in pipeline script"
+        echo "    Expected: local _watchdog_delay_sec=\$(( (_job_timeout_min - 5) * 60 ))"
+        echo "    Actual matches:"
+        grep '_watchdog_delay_sec' "$REAL_PIPELINE_SCRIPT" | head -5 || echo "    (none)"
         return 1
     fi
     return 0

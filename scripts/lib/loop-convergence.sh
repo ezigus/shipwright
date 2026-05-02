@@ -8,6 +8,7 @@ _LOOP_CONVERGENCE_LOADED=1
 # $LOG_DIR survives session restarts within the same loop run.
 : "${_STUCKNESS_RECALL_CACHE:=}"
 : "${_STUCKNESS_RECALL_CACHE_FP:=}"
+: "${_STUCKNESS_RECALL_CACHE_VALID:=false}"
 
 # Compute a stable fingerprint of (signals, reasons) so identical detection
 # patterns can be deduplicated. Falls back to cksum (POSIX-mandatory) when
@@ -388,11 +389,12 @@ detect_stuckness() {
         fi
 
         # Throttle: skip ruflo subprocesses when (signals, reasons) fingerprint
-        # is unchanged from the last detection. Fingerprint persists in LOG_DIR
-        # so it survives session restarts within the same loop run.
+        # is unchanged from the last detection. The on-disk fingerprint in LOG_DIR
+        # survives session restarts; both ruflo_store and ruflo_recall are gated
+        # on it so neither re-spawns after a restart for an unchanged pattern.
         # Note: parallel --worktree pipelines each have their own LOG_DIR, so
         # each pipeline's throttle is independent — no cross-process locking needed.
-        local _fp _prev_fp _fp_file=""
+        local _fp _prev_fp _fp_file="" _fp_new=false _ruflo_fired=false
         _fp=$(_stuckness_fingerprint "$stuckness_signals" "${stuckness_reasons[*]}")
         if [[ -n "${LOG_DIR:-}" ]]; then
             _fp_file="$LOG_DIR/.last-stuckness-fingerprint"
@@ -404,8 +406,9 @@ detect_stuckness() {
         else
             _prev_fp=""   # fail-open: missing LOG_DIR forces "differs" branch
         fi
+        [[ "$_fp" != "$_prev_fp" ]] && _fp_new=true
 
-        if type ruflo_store >/dev/null 2>&1 && [[ "$_fp" != "$_prev_fp" ]]; then
+        if "$_fp_new" && type ruflo_store >/dev/null 2>&1; then
             local _reasons_escaped="${stuckness_reasons[*]}"
             _reasons_escaped="${_reasons_escaped//\\/\\\\}"
             _reasons_escaped="${_reasons_escaped//\"/\\\"}"
@@ -415,6 +418,7 @@ detect_stuckness() {
             ruflo_store "stuckness-iter-${iteration}" \
                 "{\"signals\":$stuckness_signals,\"reasons\":\"${_reasons_escaped}\",\"iteration\":$iteration}" \
                 "learning-${REPO_HASH:-default}" "stuckness,loop,cycling" || true
+            _ruflo_fired=true
         fi
         STUCKNESS_HINT="IMPORTANT: The loop appears stuck. Previous approaches have not worked. You MUST try a fundamentally different strategy. Reasons: ${stuckness_reasons[*]}"
         warn "Stuckness detected (${stuckness_signals} signals, count ${STUCKNESS_COUNT}): ${stuckness_reasons[*]}"
@@ -432,17 +436,21 @@ detect_stuckness() {
         fi
 
         local ruflo_patterns=""
-        if [[ "$_fp" == "$_STUCKNESS_RECALL_CACHE_FP" ]] && [[ -n "$_STUCKNESS_RECALL_CACHE" ]]; then
+        if [[ "$_fp" == "$_STUCKNESS_RECALL_CACHE_FP" ]] && [[ "$_STUCKNESS_RECALL_CACHE_VALID" == "true" ]]; then
             ruflo_patterns="$_STUCKNESS_RECALL_CACHE"
-        elif type ruflo_recall >/dev/null 2>&1; then
+        elif "$_fp_new" && type ruflo_recall >/dev/null 2>&1; then
             ruflo_patterns=$(ruflo_recall "loop cycling identical diff stuckness" \
                 "learning-${REPO_HASH:-default}" 2>/dev/null || true)
             _STUCKNESS_RECALL_CACHE="$ruflo_patterns"
             _STUCKNESS_RECALL_CACHE_FP="$_fp"
+            _STUCKNESS_RECALL_CACHE_VALID=true
+            _ruflo_fired=true
         fi
 
-        # Atomically persist fingerprint when it differs (after the calls fired).
-        if [[ "$_fp" != "$_prev_fp" ]] && [[ -n "$_fp_file" ]]; then
+        # Atomically persist fingerprint after ruflo subprocesses were attempted.
+        # Gating on _ruflo_fired prevents a transient failure from locking in a
+        # fingerprint that would suppress retries on the next iteration.
+        if "$_ruflo_fired" && [[ -n "$_fp_file" ]]; then
             local _tmp="${_fp_file}.tmp.$$"
             if printf '%s\n' "$_fp" > "$_tmp" 2>/dev/null; then
                 mv "$_tmp" "$_fp_file" 2>/dev/null || rm -f "$_tmp"

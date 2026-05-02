@@ -2584,10 +2584,10 @@ else
         "function not found in sw-loop.sh"
 fi
 
-# Sample output that mirrors sw-lib-loop-convergence-test.sh "Test 4" output.
-# Without the filter, all three lines match grep -iE '(fail|error|...)'.
+# Sample: confirmed pass-marker lines that must be stripped.
+# Section headers ("Test N: description") are intentionally NOT stripped —
+# they provide failure context and may be the only signal for a failing test.
 _swl_sample=$(cat <<'SAMPLE'
-  Test 4: missing fingerprint file fails open (both calls fire)
   ✓ Test 4: ruflo_store fired on missing fingerprint (fail-open, now 3)
   ✓ Test 4: ruflo_recall fired on missing fingerprint (fail-open, now 3)
   All 14 tests passed
@@ -2604,10 +2604,22 @@ _swl_filtered_count=$(printf '%s' "$_swl_filtered" | grep -c . 2>/dev/null || tr
 _swl_filtered_count=${_swl_filtered_count:-0}
 
 if [[ "$_swl_filtered_count" -eq 0 ]]; then
-    assert_pass "#447: passing-test lines with 'fail-open' are filtered out (0 false positives)"
+    assert_pass "#447: confirmed pass-marker lines with 'fail-open' are filtered out (0 false positives)"
 else
-    assert_fail "#447: passing-test lines with 'fail-open' are filtered out" \
+    assert_fail "#447: confirmed pass-marker lines with 'fail-open' are filtered out" \
         "expected 0, got $_swl_filtered_count: $_swl_filtered"
+fi
+
+# Section headers ("Test N: description") must survive the filter — they provide
+# failure context. Verify a header containing "fail" is NOT stripped.
+_swl_header_kept=$(printf '%s\n' "  Test 4: missing fingerprint file fails open (both calls fire)" \
+    | _strip_passing_test_lines \
+    | grep -iE '(fail)' || true)
+if [[ -n "$_swl_header_kept" ]]; then
+    assert_pass "#447: section headers with 'fail' survive the filter (not stripped)"
+else
+    assert_fail "#447: section headers with 'fail' survive the filter" \
+        "section header was incorrectly stripped"
 fi
 
 # Real error lines must still pass through the filter.

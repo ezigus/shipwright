@@ -61,7 +61,7 @@ QUALITY_GATE_PASSED() { return 1; }
 
 # ── Source the module under test (fresh load) ────────────────────────────────
 _LOOP_CONVERGENCE_LOADED=""
-unset _STUCKNESS_RECALL_CACHE _STUCKNESS_RECALL_CACHE_FP || true
+unset _STUCKNESS_RECALL_CACHE _STUCKNESS_RECALL_CACHE_FP _STUCKNESS_RECALL_CACHE_VALID || true
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/loop-convergence.sh"
 
@@ -152,6 +152,7 @@ print_test_section "Test 4: missing fingerprint file fails open (both calls fire
 rm -f "$LOG_DIR/.last-stuckness-fingerprint"
 _STUCKNESS_RECALL_CACHE=""
 _STUCKNESS_RECALL_CACHE_FP=""
+_STUCKNESS_RECALL_CACHE_VALID=false
 export ITERATION=8
 # Keep same fixture from Test 3 (fingerprint will be identical to Test 3 result),
 # but missing file means we cannot detect that — fail-open path must fire.
@@ -203,6 +204,32 @@ if [[ "$_t6_esc_len" -gt "$_t6_raw_len" ]]; then
 else
     assert_fail "Test 6: escaped string is longer" "raw_len=${_t6_raw_len} esc_len=${_t6_esc_len}"
 fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 7 — session restart: in-process cache cleared, fingerprint file intact
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Test 7: session restart — fingerprint file present, cache cleared"
+
+# Simulate a shell-session restart: the LOG_DIR and its fingerprint file
+# survive (same loop run), but the in-process cache variables are gone.
+# ruflo_recall must NOT re-spawn for an unchanged pattern; ruflo_store must
+# also stay suppressed. emit_event and warn must still fire.
+_STUCKNESS_RECALL_CACHE=""
+_STUCKNESS_RECALL_CACHE_FP=""
+_STUCKNESS_RECALL_CACHE_VALID=false
+export ITERATION=9
+# Keep same fixture as Tests 3/4 (err=none) — fingerprint file still holds its fp.
+detect_stuckness > /dev/null 2>&1 || true
+
+_t7_store=$(_count "$STORE_CALLS")
+_t7_recall=$(_count "$RECALL_CALLS")
+assert_eq "Test 7: ruflo_store NOT called (fingerprint file matches, now still 3)" "3" "$_t7_store"
+assert_eq "Test 7: ruflo_recall NOT called after restart for unchanged pattern (still 3)" "3" "$_t7_recall"
+
+_t7_emit=$(_count "$EMIT_CALLS")
+_t7_warn=$(_count "$WARN_CALLS")
+assert_eq "Test 7: emit_event still fires on restart detection (now 5)" "5" "$_t7_emit"
+assert_eq "Test 7: warn still fires on restart detection (now 5)" "5" "$_t7_warn"
 
 # Emit explicit "$PASS/$TOTAL pass" as the final visible line for DoD audit parsers.
 printf '%s/%s pass\n' "$PASS" "$TOTAL"

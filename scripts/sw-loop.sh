@@ -1131,13 +1131,17 @@ run_test_gate() {
     fi
 }
 
-# Strip lines that are clearly test-pass markers so words like "fail-open"
-# inside passing test descriptions don't get flagged as errors.
-# Why: shipwright test output prints lines like "✓ Test 4: ... (fail-open ...)"
-# for PASSING tests. The unfiltered grep below was matching the substring "fail",
-# producing false positives that trip the holistic gate's circuit breaker.
+# Strip confirmed pass-marker lines so words like "fail-open" inside passing
+# test descriptions don't get flagged as errors by write_error_summary.
+# Why: shipwright test output prints "✓ Test 4: ... (fail-open ...)" for
+# PASSING assertions; the unfiltered grep matched the substring "fail" and
+# tripped the holistic gate's circuit breaker.
+# Note: section-header lines ("Test N: description") are intentionally kept
+# — they may be the only context for a failure that appears on the same line.
+# Note: PASS/ok use explicit ([[:space:]]|$) boundaries instead of \b because
+# \b is a GNU extension not guaranteed in all POSIX ERE implementations.
 _strip_passing_test_lines() {
-    grep -vE '✓|^[[:space:]]*(Test [0-9]+:|PASS\b|ok\b)|[0-9]+/[0-9]+ pass\b|All .* passed\b' || true
+    grep -vE '✓|^[[:space:]]*(PASS([[:space:]]|$)|ok([[:space:]]|$))|[0-9]+/[0-9]+ pass([[:space:]]|$)|All .* passed' || true
 }
 
 write_error_summary() {

@@ -62,7 +62,6 @@ website/.astro/
 # Whole directories that are never shipwright's
 .claude/commands/
 .claude/memory.db
-.claude/helpers/
 
 # Claude-flow runtime state (daemon PIDs, metrics, swarm state, vector DBs)
 .claude-flow/

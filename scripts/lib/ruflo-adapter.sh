@@ -482,6 +482,11 @@ ruflo_with_timeout() {
         fi
     fi  # mktemp guard
 
+    # Belt-and-suspenders: purge temp file even when an unusual execution path
+    # (e.g. zombie bg_pid keeping kill-0 alive until timeout, set-e early exit
+    # before rm -f, trap not cleared) left it behind.
+    [[ -n "${_rft_tmp:-}" ]] && rm -f "$_rft_tmp" 2>/dev/null; true
+
     if [[ $exit_code -ne 0 ]]; then
         RUFLO_FAILURE_COUNT=$(( RUFLO_FAILURE_COUNT + 1 ))
         export RUFLO_FAILURE_COUNT

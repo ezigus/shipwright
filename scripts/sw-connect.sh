@@ -176,6 +176,7 @@ run_heartbeat_loop() {
     local backoff=5
     local max_backoff=30
     local consecutive_failures=0
+    local _hb_sleep_pid=""
 
     # Load invite token from team config if present (for auth)
     local invite_token=""
@@ -184,7 +185,7 @@ run_heartbeat_loop() {
     fi
 
     # Trap for graceful shutdown
-    trap 'send_disconnect "$dashboard_url" "$developer_id" "$machine_name"; exit 0' SIGTERM SIGINT
+    trap '[[ -n "$_hb_sleep_pid" ]] && kill "$_hb_sleep_pid" 2>/dev/null || true; send_disconnect "$dashboard_url" "$developer_id" "$machine_name"; exit 0' SIGTERM SIGINT
 
     info "Connect heartbeat started (PID $$)"
     info "Dashboard: ${dashboard_url}"
@@ -257,7 +258,7 @@ run_heartbeat_loop() {
             if [[ "$consecutive_failures" -le 3 ]]; then
                 echo "$(now_iso) WARN: Dashboard unreachable (HTTP $http_code), retrying in ${backoff}s" >> "$CONNECT_LOG"
             fi
-            sleep "$backoff"
+            sleep "$backoff" & _hb_sleep_pid=$!; wait "$_hb_sleep_pid" 2>/dev/null || true; _hb_sleep_pid=""
             # Exponential backoff: 5 → 10 → 20 → 30 (capped)
             backoff=$((backoff * 2))
             if [[ "$backoff" -gt "$max_backoff" ]]; then
@@ -266,7 +267,7 @@ run_heartbeat_loop() {
             continue
         fi
 
-        sleep "$HEARTBEAT_INTERVAL"
+        sleep "$HEARTBEAT_INTERVAL" & _hb_sleep_pid=$!; wait "$_hb_sleep_pid" 2>/dev/null || true; _hb_sleep_pid=""
     done
 }
 

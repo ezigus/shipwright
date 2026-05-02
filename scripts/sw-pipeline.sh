@@ -831,6 +831,9 @@ HEARTBEAT_PID=""
 start_heartbeat() {
     local job_id="${REPO_HASH:+${REPO_HASH}-}${PIPELINE_NAME:-pipeline-$$}"
     (
+        _hb_sleep_pid=""
+        # Kill the active sleep child on SIGTERM so it doesn't orphan to init.
+        trap '[[ -n "$_hb_sleep_pid" ]] && kill "$_hb_sleep_pid" 2>/dev/null || true; exit 0' TERM
         while true; do
             "$SCRIPT_DIR/sw-heartbeat.sh" write "$job_id" \
                 --pid $$ \
@@ -838,7 +841,10 @@ start_heartbeat() {
                 --stage "${CURRENT_STAGE_ID:-unknown}" \
                 --iteration "0" \
                 --activity "$(get_stage_description "${CURRENT_STAGE_ID:-}" 2>/dev/null || echo "Running pipeline")" 2>/dev/null || true
-            sleep "$(_config_get_int "pipeline.heartbeat_interval" 30 2>/dev/null || echo 30)"
+            sleep "$(_config_get_int "pipeline.heartbeat_interval" 30 2>/dev/null || echo 30)" &
+            _hb_sleep_pid=$!
+            wait "$_hb_sleep_pid" 2>/dev/null || true
+            _hb_sleep_pid=""
         done
     ) >/dev/null 2>&1 &
     HEARTBEAT_PID=$!

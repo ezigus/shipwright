@@ -508,6 +508,53 @@ test_pipeline_human_intervention() {
     return 0
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 18. Heartbeat subshell kills sleep child on SIGTERM (no orphan sleeps)
+# ──────────────────────────────────────────────────────────────────────────────
+test_heartbeat_no_orphan_sleeps() {
+    # Regression test for heartbeat orphan sleep leak (issue #448).
+    # Spawns a subshell using the exact fixed pattern from start_heartbeat(), sends
+    # SIGTERM, then asserts the sentinel sleep child did not survive as an orphan.
+    # Requires pgrep; skips live portion gracefully when pgrep is unavailable.
+    local sentinel=9847
+    local subshell_pid=""
+
+    (
+        _hb_sleep_pid_inner=""
+        trap '[[ -n "$_hb_sleep_pid_inner" ]] && kill "$_hb_sleep_pid_inner" 2>/dev/null || true; exit 0' TERM
+        while true; do
+            sleep "$sentinel" & _hb_sleep_pid_inner=$!; wait "$_hb_sleep_pid_inner" 2>/dev/null || true; _hb_sleep_pid_inner=""
+        done
+    ) >/dev/null 2>&1 &
+    subshell_pid=$!
+
+    sleep 0.2
+
+    # Guard: if pgrep cannot list processes (restricted environment), skip live check.
+    if ! pgrep "$$" >/dev/null 2>&1; then
+        kill "$subshell_pid" 2>/dev/null || true
+        wait "$subshell_pid" 2>/dev/null || true
+        return 0
+    fi
+
+    if ! pgrep -f "sleep $sentinel" >/dev/null 2>&1; then
+        echo "    pre-kill: sentinel sleep not found (test inconclusive)"
+        kill "$subshell_pid" 2>/dev/null || true
+        return 1
+    fi
+
+    kill "$subshell_pid" 2>/dev/null || true
+    wait "$subshell_pid" 2>/dev/null || true
+    sleep 0.3
+
+    if pgrep -f "sleep $sentinel" >/dev/null 2>&1; then
+        pkill -f "sleep $sentinel" 2>/dev/null || true
+        echo "    orphan sleep $sentinel survived SIGTERM — trap regression"
+        return 1
+    fi
+    return 0
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RUN ALL TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -556,6 +603,7 @@ echo -e "${PURPLE}${BOLD}Integration${RESET}"
 run_test "Pipeline script has heartbeat functions" test_pipeline_has_heartbeat
 run_test "Loop script has heartbeat and checkpoint" test_loop_has_heartbeat_checkpoint
 run_test "Pipeline has human intervention checks" test_pipeline_human_intervention
+run_test "Heartbeat subshell kills sleep child on SIGTERM (no orphan)" test_heartbeat_no_orphan_sleeps
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════

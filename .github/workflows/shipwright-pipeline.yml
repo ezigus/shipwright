@@ -373,7 +373,7 @@ jobs:
             '#!/usr/bin/env bash' \
             'set -e' \
             'subject=$(head -1 "$1")' \
-            "if echo \"\$subject\" | grep -qiE 'Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error'; then" \
+            "if echo \"\$subject\" | grep -qiE 'Invalid API key|authentication_error|API key expired'; then" \
             '  echo "::error::commit-msg hook rejected: subject contains API error pattern"' \
             '  echo "Subject was: $subject"' \
             '  exit 1' \
@@ -481,9 +481,9 @@ jobs:
             git fetch origin "$BRANCH" 2>/dev/null || true
 
             BRANCH_CONTENT=$(git log -5 --format='%s' "origin/$BRANCH" 2>/dev/null || echo "")
-            if echo "$BRANCH_CONTENT" | grep -qiE 'Invalid API key|authentication_error|API key expired'; then
+            if echo "$BRANCH_CONTENT" | grep -qiE 'Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error'; then
               POLLUTED_SUBJECT=$(git log -5 --format='%s' "origin/$BRANCH" 2>/dev/null \
-                | grep -iE 'Invalid API key|authentication_error|API key expired' | head -1 || echo "unknown")
+                | grep -iE 'Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error' | head -1 || echo "unknown")
               echo "::warning::Partial work branch appears polluted with API errors — deleting. Trigger commit subject: ${POLLUTED_SUBJECT}"
               git push origin --delete "$BRANCH" 2>/dev/null || true
             else

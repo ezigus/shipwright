@@ -2921,7 +2921,7 @@ pipeline_start() {
     # CI resume: restore branch + goal context when intake is skipped
     if [[ -n "${COMPLETED_STAGES:-}" ]] && echo "$COMPLETED_STAGES" | tr ',' '\n' | grep -qx "intake"; then
         # Intake was completed in a previous run — restore context
-        # The workflow merges the partial work branch, so code changes are on HEAD
+        # The workflow checks out the partial work branch directly, so code changes are on HEAD
 
         # Restore GOAL from issue if not already set
         if [[ -z "$GOAL" && -n "$ISSUE_NUMBER" ]]; then

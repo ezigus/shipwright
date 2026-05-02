@@ -2687,6 +2687,21 @@ ${_diagnosis}"
                 LOOP_FAILURE_DIAGNOSIS=""
             fi
 
+            # Self-heal hypothesis hive — root-cause triage on test failure (gated by RUFLO_SELF_HEAL_HIVE=true).
+            # Function is fail-open: returns 0 always, prints empty stdout when skipped/failed.
+            local _hypothesis=""
+            if [[ "${RUFLO_SELF_HEAL_HIVE:-false}" == "true" ]] \
+               && type ruflo_execute_self_heal_hive >/dev/null 2>&1; then
+                _hypothesis=$(ruflo_execute_self_heal_hive "${TEST_OUTPUT:-}" "$_changed_files" 2>/dev/null || true)
+            fi
+            if [[ -n "$_hypothesis" ]]; then
+                GOAL="${GOAL}
+
+## Self-Heal Hypothesis (hive-selected)
+${_hypothesis}"
+                info "Self-heal hypothesis injected (cheapest verification path)"
+            fi
+
             # Memory-based fix suggestion (from past successful fixes)
             local _last_error=""
             local _prev_log="$LOG_DIR/iteration-$(( ITERATION - 1 )).log"

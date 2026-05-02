@@ -839,7 +839,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-pipeline-resume-test.sh` | 410 | Validate workflow shell logic |
 | `scripts/sw-pipeline-test.sh` | 3006 | E2E validation invoking the REAL pipeline |
 | `scripts/sw-pipeline-vitals-test.sh` | 226 | Validate pipeline health scoring |
-| `scripts/sw-pipeline-watchdog-test.sh` | 1621 | Watchdog / ci_push_partial_work tests |
+| `scripts/sw-pipeline-watchdog-test.sh` | 1605 | Watchdog / ci_push_partial_work tests |
 | `scripts/sw-pm-test.sh` | 225 | Autonomous PM Agent test suite |
 | `scripts/sw-policy-e2e-test.sh` | 290 | Verify config/policy.json is honored |
 | `scripts/sw-pr-lifecycle-test.sh` | 317 | Validate autonomous PR management |

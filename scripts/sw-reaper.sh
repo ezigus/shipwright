@@ -374,8 +374,10 @@ run_oneshot() {
 run_watch() {
     acquire_pid_lock
 
-    # Clean up on exit
-    trap 'release_pid_lock; echo ""; info "Reaper stopped."; exit 0' SIGTERM SIGINT EXIT
+    local _watch_sleep_pid=""
+
+    # Clean up on exit — kill backgrounded sleep to prevent orphan grandchildren
+    trap '[[ -n "$_watch_sleep_pid" ]] && kill "$_watch_sleep_pid" 2>/dev/null || true; release_pid_lock; echo ""; info "Reaper stopped."; exit 0' SIGTERM SIGINT EXIT
 
     info "Reaper watching ${DIM}(interval: ${INTERVAL}s, grace: ${GRACE_PERIOD}s, PID: $$)${RESET}"
     log "START interval=${INTERVAL} grace=${GRACE_PERIOD} pid=$$"
@@ -394,7 +396,7 @@ run_watch() {
             echo -e "${DIM}  [$(date '+%H:%M:%S')] scanned ${SCAN_SCANNED}, all healthy${RESET}"
         fi
 
-        sleep "$INTERVAL"
+        sleep "$INTERVAL" & _watch_sleep_pid=$!; wait "$_watch_sleep_pid" 2>/dev/null || true; _watch_sleep_pid=""
     done
 }
 

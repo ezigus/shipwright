@@ -2036,15 +2036,16 @@ ruflo_execute_self_heal_hive() {
     # Seed historical recall (past root-causes for similar failures)
     _ruflo_seed_specialist_history "self-heal" "$heal_ns" || true
 
-    # ── Spawn specialists (15s budget, non-fatal) ──
+    # ── Spawn specialists (12s budget, non-fatal) ──
+    # Total hive budget ≤ 55s: spawn 12 + triage 20 + read 5 + synth 8 + read 5 = 50s
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        ruflo_with_timeout 15 npx -y ruflo@latest hive-mind spawn \
+        ruflo_with_timeout 12 npx -y ruflo@latest hive-mind spawn \
             --hive-id "$hive_id" \
             --count "$heal_agents" \
             --role specialist \
             --prefix "self-heal-${pipeline_id}" 2>/dev/null || true
     else
-        ruflo_with_timeout 15 ruflo hive-mind spawn \
+        ruflo_with_timeout 12 ruflo hive-mind spawn \
             --hive-id "$hive_id" \
             --count "$heal_agents" \
             --role specialist \
@@ -2070,13 +2071,13 @@ Each hypothesis block must contain exactly these four labeled lines (plain text)
 
     local _triage_exit=0
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        ruflo_with_timeout 30 npx -y ruflo@latest coordination orchestrate \
+        ruflo_with_timeout 20 npx -y ruflo@latest coordination orchestrate \
             --hive-id "$hive_id" \
             --goal "$triage_goal" \
             --max-turns 5 \
             --mode triage 2>/dev/null || _triage_exit=$?
     else
-        ruflo_with_timeout 30 ruflo coordination orchestrate \
+        ruflo_with_timeout 20 ruflo coordination orchestrate \
             --hive-id "$hive_id" \
             --goal "$triage_goal" \
             --max-turns 5 \
@@ -2089,13 +2090,13 @@ Each hypothesis block must contain exactly these four labeled lines (plain text)
         return 0
     fi
 
-    # ── Read specialist outputs from namespace ──
+    # ── Read specialist outputs from namespace (5s budget) ──
     local _union=""
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        _union=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+        _union=$(ruflo_with_timeout 5 npx -y ruflo@latest hive-mind memory \
             --action list --namespace "$heal_ns" 2>/dev/null) || true
     else
-        _union=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+        _union=$(ruflo_with_timeout 5 ruflo hive-mind memory \
             --action list --namespace "$heal_ns" 2>/dev/null) || true
     fi
 
@@ -2118,27 +2119,27 @@ Each hypothesis block must contain exactly these four labeled lines (plain text)
 
     local _synth_exit=0
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        ruflo_with_timeout 10 npx -y ruflo@latest coordination orchestrate \
+        ruflo_with_timeout 8 npx -y ruflo@latest coordination orchestrate \
             --hive-id "$hive_id" \
             --goal "$synth_goal" \
             --max-turns 2 \
             --mode synthesis 2>/dev/null || _synth_exit=$?
     else
-        ruflo_with_timeout 10 ruflo coordination orchestrate \
+        ruflo_with_timeout 8 ruflo coordination orchestrate \
             --hive-id "$hive_id" \
             --goal "$synth_goal" \
             --max-turns 2 \
             --mode synthesis 2>/dev/null || _synth_exit=$?
     fi
 
-    # ── Read selected hypothesis ──
+    # ── Read selected hypothesis (5s budget) ──
     local _selected=""
     if [[ $_synth_exit -eq 0 ]]; then
         if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-            _selected=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+            _selected=$(ruflo_with_timeout 5 npx -y ruflo@latest hive-mind memory \
                 --action get --key "self-heal-selected" --namespace "$heal_ns" 2>/dev/null || true)
         else
-            _selected=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+            _selected=$(ruflo_with_timeout 5 ruflo hive-mind memory \
                 --action get --key "self-heal-selected" --namespace "$heal_ns" 2>/dev/null || true)
         fi
     fi

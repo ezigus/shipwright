@@ -4403,6 +4403,121 @@ else
 fi
 unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
 
+# Test: triage orchestrate fails — returns 0 empty, no synthesis attempted
+print_test_section "ruflo_execute_self_heal_hive — triage failure short-circuits"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+subcmd="\${1:-}"
+sub2="\${2:-}"
+sub3="\${3:-}"
+printf '%s %s %s\\n' "\$subcmd" "\$sub2" "\$sub3" >> "$_call_log"
+# Triage orchestrate fails — anything --mode triage or first orchestrate returns non-zero
+if [[ "\$subcmd" == "coordination" && "\$sub2" == "orchestrate" ]]; then
+    for arg in "\$@"; do
+        if [[ "\$arg" == "triage" ]]; then
+            exit 7
+        fi
+    done
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-triage-fail"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="self-heal-triage-fail-pipeline"
+exit_code=0
+_heal_out=$(ruflo_execute_self_heal_hive "test failed: assertion" "src/foo.js" 2>/dev/null) || exit_code=$?
+# Synthesis must NOT be invoked after triage failure
+_synth_called=false
+grep -q "coordination orchestrate.*synthesis\|synthesis" "$_call_log" 2>/dev/null && _synth_called=true
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 0 && -z "$_heal_out" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive returns 0 empty when triage orchestrate fails"
+else
+    assert_fail "ruflo_execute_self_heal_hive returns 0 empty when triage orchestrate fails" \
+        "exit=$exit_code stdout=$_heal_out"
+fi
+if [[ "$_synth_called" == "false" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive does not invoke synthesis after triage failure"
+else
+    assert_fail "ruflo_execute_self_heal_hive does not invoke synthesis after triage failure" \
+        "synthesis was invoked"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: synthesis fails — falls back to printing union of hypotheses
+print_test_section "ruflo_execute_self_heal_hive — synthesis failure falls back to union"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+subcmd="\${1:-}"
+sub2="\${2:-}"
+# Triage succeeds. Synthesis fails (--mode synthesis returns non-zero).
+if [[ "\$subcmd" == "coordination" && "\$sub2" == "orchestrate" ]]; then
+    for arg in "\$@"; do
+        if [[ "\$arg" == "synthesis" ]]; then
+            exit 9
+        fi
+    done
+    exit 0
+fi
+# Memory list returns three hypothesis blocks; memory get returns empty
+# (because synthesis never wrote self-heal-selected).
+if [[ "\$subcmd" == "hive-mind" && "\$sub2" == "memory" ]]; then
+    _is_list=false
+    _is_get=false
+    for arg in "\$@"; do
+        [[ "\$arg" == "list" ]] && _is_list=true
+        [[ "\$arg" == "get" ]] && _is_get=true
+    done
+    if [[ "\$_is_list" == "true" ]]; then
+        printf 'hypothesis-mock-boundary: H1\\nhypothesis-async-timing: H2\\nhypothesis-schema-type: H3\\n'
+    fi
+    # get returns empty by default — exits 0 with no stdout
+    exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-synth-fail"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="self-heal-synth-fail-pipeline"
+_heal_out_file="$_test_tmp/heal-out.txt"
+exit_code=0
+ruflo_execute_self_heal_hive "boom" "x.js" > "$_heal_out_file" 2>/dev/null || exit_code=$?
+_heal_has_union=false
+grep -q "hypothesis-mock-boundary\|hypothesis-async-timing\|hypothesis-schema-type" \
+    "$_heal_out_file" 2>/dev/null && _heal_has_union=true
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_execute_self_heal_hive returns 0 when synthesis fails"
+else
+    assert_fail "ruflo_execute_self_heal_hive returns 0 when synthesis fails" "exit=$exit_code"
+fi
+if [[ "$_heal_has_union" == "true" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive falls back to union when synthesis fails"
+else
+    assert_fail "ruflo_execute_self_heal_hive falls back to union when synthesis fails" \
+        "stdout: $(cat "$_heal_out_file" 2>/dev/null)"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
 # Test: bash 3.2 compliance — no associative arrays or case-conversion expansions
 # in the new function (regression guard against future maintenance).
 print_test_section "ruflo_execute_self_heal_hive — bash 3.2 compliance"

@@ -2695,6 +2695,10 @@ ${_diagnosis}"
                 _hypothesis=$(ruflo_execute_self_heal_hive "${TEST_OUTPUT:-}" "$_changed_files" 2>/dev/null || true)
             fi
             if [[ -n "$_hypothesis" ]]; then
+                # Strip loop-control sentinels so a malformed hypothesis cannot
+                # prematurely terminate the loop or corrupt the goal format.
+                _hypothesis="${_hypothesis//<<<}"
+                _hypothesis="${_hypothesis//>>>}"
                 GOAL="${GOAL}
 
 ## Self-Heal Hypothesis (hive-selected)

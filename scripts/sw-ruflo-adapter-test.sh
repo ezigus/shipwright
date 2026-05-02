@@ -4295,6 +4295,41 @@ else
 fi
 unset RUFLO_SELF_HEAL_HIVE
 
+# Test: empty RUFLO_HIVE_ID — returns 0 with empty stdout, emits warning event
+print_test_section "ruflo_execute_self_heal_hive — empty hive_id skips with warning"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID=""
+RUFLO_USE_NPX=false
+_emit_log_ehid="$TEST_TEMP_DIR/emit-ehid.log"
+emit_event() { printf '%s\n' "$*" >> "$_emit_log_ehid"; }
+warn() { printf 'WARN: %s\n' "$*" >> "$_emit_log_ehid"; }
+exit_code=0
+_heal_out=$(ruflo_execute_self_heal_hive "test failed" "foo.sh" 2>/dev/null) || exit_code=$?
+if [[ $exit_code -eq 0 && -z "$_heal_out" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive returns 0 empty when RUFLO_HIVE_ID is empty"
+else
+    assert_fail "ruflo_execute_self_heal_hive returns 0 empty when RUFLO_HIVE_ID is empty" \
+        "exit=$exit_code stdout=$_heal_out"
+fi
+if grep -q "empty_hive_id" "$_emit_log_ehid" 2>/dev/null; then
+    assert_pass "ruflo_execute_self_heal_hive emits skipped event for empty hive_id"
+else
+    assert_fail "ruflo_execute_self_heal_hive emits skipped event for empty hive_id" \
+        "$(cat "$_emit_log_ehid" 2>/dev/null)"
+fi
+if grep -q "WARN:" "$_emit_log_ehid" 2>/dev/null; then
+    assert_pass "ruflo_execute_self_heal_hive emits warn for empty hive_id"
+else
+    assert_fail "ruflo_execute_self_heal_hive emits warn for empty hive_id" \
+        "no warn line found in $(cat "$_emit_log_ehid" 2>/dev/null)"
+fi
+unset RUFLO_SELF_HEAL_HIVE
+unset -f emit_event warn
+
 # Test: empty namespace post-orchestrate — returns 0 with empty stdout
 print_test_section "ruflo_execute_self_heal_hive — empty specialist output"
 unset _RUFLO_ADAPTER_LOADED

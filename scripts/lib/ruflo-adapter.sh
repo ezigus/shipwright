@@ -18,27 +18,6 @@ VERSION="3.6.1"
 [[ -n "${_RUFLO_ADAPTER_LOADED:-}" ]] && return 0
 _RUFLO_ADAPTER_LOADED=1
 
-# ─── Optional MCP bridge wrapper ─────────────────────────────────────────────
-# Sourced for SW_RUFLO_BACKEND=mcp routing in ruflo_store() (and future
-# ruflo_recall in #503). The wrapper has its own _RUFLO_MCP_CALL_LOADED guard
-# and ${VAR:-default} semantics, so re-sourcing is a no-op. File-existence
-# gate keeps the adapter usable in installs where the wrapper hasn't been
-# packaged; ruflo_store() additionally checks `declare -f ruflo_mcp_call`
-# before routing through it.
-_ruflo_adapter_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
-if [[ -f "$_ruflo_adapter_dir/ruflo-mcp-call.sh" ]]; then
-    # shellcheck source=scripts/lib/ruflo-mcp-call.sh
-    source "$_ruflo_adapter_dir/ruflo-mcp-call.sh" || true
-    # Validate that sourcing produced the expected public functions.
-    # Guards against truncated/corrupt files and version mismatches that
-    # would cause ruflo_store to silently skip the MCP path on every call.
-    if ! declare -f ruflo_mcp_call >/dev/null 2>&1 \
-       || ! declare -f ruflo_bridge_available >/dev/null 2>&1; then
-        printf 'ruflo-adapter: ruflo-mcp-call.sh sourced but missing expected functions — MCP path disabled\n' >&2
-    fi
-fi
-unset _ruflo_adapter_dir
-
 # ─── State ───────────────────────────────────────────────────────────────────
 # Use ${VAR:-default} to preserve values inherited from a parent process (e.g.
 # sw-pipeline.sh) when ruflo-adapter.sh is sourced in a subprocess like sw-loop.sh.
@@ -529,146 +508,28 @@ ruflo_with_timeout() {
     return 0
 }
 
-# ─── _ruflo_store_cli — CLI-backed store implementation ──────────────────────
-# Internal helper. Identical body to the legacy ruflo_store() — extracted so
-# the dispatcher can call it both as the default path and as the fail-open
-# fallback when SW_RUFLO_BACKEND=mcp but the bridge errors. Same contract:
-# fail-open, returns 0, bounded by the circuit-breaker timeout.
-_ruflo_store_cli() {
+# ─── ruflo_store — store a value in ruflo memory via CLI ─────────────────────
+# Usage: ruflo_store <key> <value> [namespace] [tags]
+# No-op when ruflo is unavailable. Always returns 0 (fail-open).
+# On timeout, circuit-breaker disables ruflo for the remainder of the run.
+ruflo_store() {
+    ruflo_available || return 0
     local key="$1" value="$2" namespace="${3:-default}" tags="${4:-}"
     ruflo_with_timeout "${RUFLO_CIRCUIT_BREAKER_TIMEOUT:-10}" _ruflo_run_quiet memory store \
         --key "$key" --value "$value" --namespace "$namespace" \
         ${tags:+--tags "$tags"} || true
 }
 
-# ─── ruflo_store — dispatcher: route to MCP bridge or CLI ────────────────────
-# Usage: ruflo_store <key> <value> [namespace] [tags]
-# No-op when ruflo is unavailable. Always returns 0 (fail-open).
-#
-# Routing (SW_RUFLO_BACKEND, default "cli"):
-#   "mcp"  + bridge up + wrapper sourced → ruflo_mcp_call memory_store ...
-#                                          (no new ruflo subprocess)
-#   "mcp"  + bridge error                → CLI fallback (preserves all args)
-#   "mcp"  + bridge down                 → CLI fallback + warn (no ping/spawn cost
-#                                          beyond the bounded `nc -w 1` probe)
-#   "cli"  / unset / anything else       → CLI path (legacy behavior)
-#
-# `tags` is intentionally NOT forwarded to the bridge: the v1.1 memory_store
-# wire schema is `{key,value,namespace?}` only (see docs/ruflo-mcp-transport.md
-# §5). The CLI fallback path still receives tags in full.
-ruflo_store() {
-    ruflo_available || return 0
-    local key="$1" value="$2" namespace="${3:-default}" tags="${4:-}"
-
-    if [[ "${SW_RUFLO_BACKEND:-cli}" == "mcp" ]]; then
-        if declare -f ruflo_mcp_call >/dev/null 2>&1 \
-           && declare -f ruflo_bridge_available >/dev/null 2>&1 \
-           && ruflo_bridge_available; then
-            # Capture stderr (not /dev/null'd) so a partially-broken bridge
-            # doesn't silently degrade to CLI without operator visibility.
-            # We still discard stdout — the response JSON is internal.
-            local _mcp_err
-            _mcp_err=$(ruflo_mcp_call memory_store \
-                "key=$key" "value=$value" "namespace=$namespace" 2>&1 1>/dev/null) \
-                && { return 0; } \
-                || true
-            warn "ruflo MCP memory_store failed — falling back to CLI: ${_mcp_err:-<no stderr>}"
-            emit_event "ruflo.mcp_store_fallback" \
-                "namespace=$namespace" "reason=${_mcp_err:-bridge_error}"
-            _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
-            return 0
-        fi
-        warn "SW_RUFLO_BACKEND=mcp requested but bridge unavailable — using CLI fallback"
-        emit_event "ruflo.mcp_store_fallback" \
-            "namespace=$namespace" "reason=bridge_unavailable"
-    fi
-    _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
-    return 0
-}
-
-# ─── _ruflo_recall_cli — CLI-backed recall implementation ───────────────────
-# Internal helper. Identical body to the legacy ruflo_recall() — extracted so
-# the dispatcher can call it both as the default path and as the fail-open
-# fallback when SW_RUFLO_BACKEND=mcp but the bridge errors. Same contract:
-# fail-open, returns 0, prints "" on timeout, bounded by the recall timeout.
-_ruflo_recall_cli() {
-    local query="$1" namespace="${2:-default}"
-    ruflo_with_timeout "${RUFLO_RECALL_TIMEOUT:-30}" _ruflo_run_quiet memory search \
-        --query "$query" --namespace "$namespace" --limit 3 || echo ""
-}
-
-# ─── ruflo_recall — dispatcher: route to MCP bridge or CLI ───────────────────
+# ─── ruflo_recall — semantic search in ruflo memory via CLI ───────────────────
 # Usage: ruflo_recall <query> [namespace]
 # Prints matching results to stdout. Returns empty string when ruflo unavailable.
-# Always returns 0 (fail-open). On timeout, the circuit-breaker disables ruflo
-# for the remainder of the run (CLI path only — MCP timeout is bounded by
-# RUFLO_BRIDGE_TIMEOUT inside the wrapper).
-#
-# Routing (SW_RUFLO_BACKEND, default "cli"):
-#   "mcp"  + bridge up + wrapper sourced → ruflo_mcp_call memory_search ...
-#                                          (no new ruflo subprocess)
-#   "mcp"  + bridge error                → CLI fallback (preserves search args)
-#   "mcp"  + bridge down                 → CLI fallback + warn (no spawn cost
-#                                          beyond the bounded `nc -w 1` probe)
-#   "cli"  / unset / anything else       → CLI path (legacy behavior)
-#
-# MCP response unwrapping: the bridge wraps ruflo's reply as
-# `{"success":true,"result":{...}}`. We extract `.result` via jq and emit it as
-# compact JSON — Shipwright's recall consumers (prompt context blocks, the
-# learning bridge, _ruflo_seed_specialist_history) treat the output as opaque
-# text, so JSON vs plain-text rendering is interchangeable for them.
-# `ruflo_recall_similar_outcomes` inherits this routing transparently because
-# it delegates here.
+# No-op when ruflo is unavailable. Always returns 0 (fail-open).
+# On timeout, circuit-breaker disables ruflo for the remainder of the run.
 ruflo_recall() {
     ruflo_available || { echo ""; return 0; }
     local query="$1" namespace="${2:-default}"
-
-    if [[ "${SW_RUFLO_BACKEND:-cli}" == "mcp" ]]; then
-        if declare -f ruflo_mcp_call >/dev/null 2>&1 \
-           && declare -f ruflo_bridge_available >/dev/null 2>&1 \
-           && ruflo_bridge_available; then
-            # Capture stderr in a temp file so partially-broken bridge state
-            # surfaces via warn() rather than silently degrading to CLI.
-            # Stdout is the response JSON which we need for .result extraction.
-            local _err_file _mcp_resp _mcp_exit=0 _err_text=""
-            _err_file=$(mktemp "${TMPDIR:-/tmp}/ruflo_recall.XXXXXX" 2>/dev/null) \
-                || _err_file=""
-            if [[ -n "$_err_file" ]]; then
-                _mcp_resp=$(ruflo_mcp_call memory_search \
-                    "query=$query" "namespace=$namespace" "limit=3" \
-                    2>"$_err_file") || _mcp_exit=$?
-                _err_text=$(cat "$_err_file" 2>/dev/null || true)
-                rm -f "$_err_file" 2>/dev/null || true
-            else
-                _mcp_resp=$(ruflo_mcp_call memory_search \
-                    "query=$query" "namespace=$namespace" "limit=3" \
-                    2>/dev/null) || _mcp_exit=$?
-            fi
-            if [[ $_mcp_exit -eq 0 ]]; then
-                # `// empty` filters null so we print "" rather than the literal
-                # "null" string when the bridge omits a result field.
-                if command -v jq >/dev/null 2>&1; then
-                    printf '%s' "$_mcp_resp" \
-                        | jq -c '.result // empty' 2>/dev/null || true
-                else
-                    # jq absent (rare — also required by the wrapper itself)
-                    # — emit the raw response so callers still see something.
-                    printf '%s' "$_mcp_resp"
-                fi
-                return 0
-            fi
-            warn "ruflo MCP memory_search failed — falling back to CLI: ${_err_text:-<no stderr>}"
-            emit_event "ruflo.mcp_recall_fallback" \
-                "namespace=$namespace" "reason=${_err_text:-bridge_error}"
-            _ruflo_recall_cli "$query" "$namespace"
-            return 0
-        fi
-        warn "SW_RUFLO_BACKEND=mcp requested but bridge unavailable — using CLI fallback"
-        emit_event "ruflo.mcp_recall_fallback" \
-            "namespace=$namespace" "reason=bridge_unavailable"
-    fi
-    _ruflo_recall_cli "$query" "$namespace"
-    return 0
+    ruflo_with_timeout "${RUFLO_RECALL_TIMEOUT:-30}" _ruflo_run_quiet memory search \
+        --query "$query" --namespace "$namespace" --limit 3 || echo ""
 }
 
 # ─── _ruflo_repo_hash_candidates — emit candidate hashes for memory dir lookup ─
@@ -739,47 +600,6 @@ _ruflo_resolve_repo_hash() {
     printf '%s' "$_hash"
 }
 
-# ─── _ruflo_sanitize_query_token — strip control chars, bound length ─────────
-# Sanitizes externally-influenced values (TASK_TYPE, ISSUE_LABELS, etc.) before
-# they are concatenated into a recall query string passed to the ruflo CLI.
-# Removes ALL ASCII control characters (0x00-0x1F and 0x7F DEL) and collapses
-# consecutive whitespace into single spaces, then bounds the result to
-# RUFLO_QUERY_TOKEN_MAX_BYTES (default 256).
-#
-# Why strip everything (not just \n/\r/\t):
-#   - Terminal escape sequences (ESC, BEL) cause display corruption when logged
-#   - Embedded NUL/control chars create cache misses for semantically-equal
-#     queries with different byte representations
-#   - Defence-in-depth even though `--query "$q"` quotes the CLI argument
-#
-# Bash 3.2 compatible — uses `tr` (POSIX) for the cntrl-class deletion since
-# pure-bash control-class detection requires bash 4+ extended pattern matching.
-# Empty input → empty output (caller decides default).
-_ruflo_sanitize_query_token() {
-    local _raw="${1:-}"
-    [[ -n "$_raw" ]] || { printf ''; return 0; }
-    local _max="${RUFLO_QUERY_TOKEN_MAX_BYTES:-256}"
-    if ! [[ "$_max" =~ ^[0-9]+$ ]] || (( _max < 1 )); then
-        _max=256
-    fi
-    # 1) Replace ASCII control chars (incl. NUL, ESC, BEL, DEL) with a space
-    #    — keeps adjacent tokens separated for search relevance instead of
-    #    merging "feature\nbug" into "featurebug".
-    # 2) Squeeze runs of whitespace into a single space (consistent shape,
-    #    cache-friendly: identical bytes for semantically-equal queries).
-    # 3) Trim leading/trailing whitespace via parameter expansion.
-    # 4) Bound by byte count to keep argv small.
-    local _clean
-    _clean=$(printf '%s' "$_raw" \
-        | tr '[:cntrl:]' ' ' \
-        | tr -s '[:space:]' ' ' \
-        | head -c "$_max" 2>/dev/null) || _clean=""
-    # Trim — bash 3.2 safe, no extglob required.
-    _clean="${_clean# }"
-    _clean="${_clean% }"
-    printf '%s' "$_clean"
-}
-
 # ─── _ruflo_seed_specialist_history — seed hive specialists with prior learnings ─
 # Recalls historical outcomes from learning-${repo_hash} (cross-pipeline
 # memory) and stores a bounded slice into the per-stage hive namespace so
@@ -809,16 +629,12 @@ _ruflo_seed_specialist_history() {
 
     # TASK_TYPE / ISSUE_LABELS are populated by the intake stage; default
     # gracefully when invoked outside a full pipeline (e.g. ad-hoc build).
-    # Sanitize via _ruflo_sanitize_query_token — strips ALL ASCII control
-    # characters (0x00-0x1F, 0x7F) and bounds the byte length. These values
-    # come from GitHub issue metadata; the comprehensive strip prevents
-    # terminal escapes when logged, downstream parsing surprises, and cache
-    # misses from semantically-equal queries with differing byte representations.
-    local _task_type
-    _task_type=$(_ruflo_sanitize_query_token "${TASK_TYPE:-feature}")
-    [[ -n "$_task_type" ]] || _task_type="feature"
-    local _labels
-    _labels=$(_ruflo_sanitize_query_token "${ISSUE_LABELS:-}")
+    local _task_type="${TASK_TYPE:-feature}"
+    # Sanitize labels: strip shell metacharacters ($, `, ;, |, &, <, >) that
+    # could be interpreted if ruflo does further expansion on the query value.
+    # Commas, hyphens, and other label-legal characters are preserved.
+    local _labels_raw="${ISSUE_LABELS:-}"
+    local _labels="${_labels_raw//[$\`\;\|\&\<\>]/}"
     local _query="${stage_name} stage outcomes for ${_task_type} ${_labels}"
 
     local _history
@@ -2006,6 +1822,13 @@ ruflo_execute_self_heal_hive() {
     local heal_ns="hive-self-heal-${pipeline_id}"
     local hive_id="${RUFLO_HIVE_ID:-}"
 
+    # ── Gate 4: hive_id must be non-empty — ruflo calls with --hive-id "" fail silently ──
+    if [[ -z "$hive_id" ]]; then
+        emit_event "ruflo.self_heal_hive_skipped" "reason=empty_hive_id"
+        warn "self-heal hive: RUFLO_HIVE_ID is empty — skipping (hive not initialized by ruflo_init)"
+        return 0
+    fi
+
     # Specialist count — hard cap at 4, default 3
     local heal_agents="${RUFLO_SELF_HEAL_MAX_AGENTS:-3}"
     if ! [[ "$heal_agents" =~ ^[0-9]+$ ]] || (( heal_agents < 1 )); then
@@ -2214,10 +2037,6 @@ ruflo_learn_from_shipwright() {
 # Supplements Shipwright's file-based skill selection with semantic vector search.
 # Returns matching outcomes to stdout. Returns empty string when unavailable or
 # when repo hash cannot be determined (to prevent cross-repo namespace pollution).
-#
-# Backend routing: delegates to ruflo_recall, which dispatches between the MCP
-# bridge (SW_RUFLO_BACKEND=mcp) and the CLI fallback. No backend-aware logic
-# here — keeps the dispatcher in one place so future transports apply uniformly.
 ruflo_recall_similar_outcomes() {
     ruflo_available || { echo ""; return 0; }
     local task_type="$1" issue_labels="${2:-}"

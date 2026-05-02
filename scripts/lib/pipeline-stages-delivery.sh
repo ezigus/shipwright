@@ -24,6 +24,33 @@ stage_pr() {
     local test_log="$ARTIFACTS_DIR/test-results.log"
     local review_file="$ARTIFACTS_DIR/review.md"
 
+    # ── Ruflo: recall audit/review context from prior stages (fail-open) ──
+    # Bookend lives before the local-mode skip so memory is always read/written.
+    # Use output redirection (not $()) so the function runs in the current
+    # shell — required when ruflo_recall is a mock that records side effects.
+    local audit_summary=""
+    if declare -f ruflo_recall >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        local _ruflo_pr_tmp _ruflo_pr_ctx=""
+        _ruflo_pr_tmp=$(mktemp 2>/dev/null) || _ruflo_pr_tmp="${ARTIFACTS_DIR:-/tmp}/.ruflo-pr-recall.$$"
+        ruflo_recall "audit and review findings for ${TASK_TYPE:-feature}" \
+            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" > "$_ruflo_pr_tmp" 2>/dev/null || true
+        [[ -s "$_ruflo_pr_tmp" ]] && _ruflo_pr_ctx=$(cat "$_ruflo_pr_tmp" 2>/dev/null || true)
+        rm -f "$_ruflo_pr_tmp"
+        # Sanitize: strip header lines + control chars, truncate to keep PR body tight
+        if [[ -n "$_ruflo_pr_ctx" ]]; then
+            _ruflo_pr_ctx=$(printf '%s\n' "${_ruflo_pr_ctx}" \
+                | sed '/^#/d' \
+                | tr -d '\000-\010\013-\037\177')
+            _ruflo_pr_ctx=$(printf '%.800s' "${_ruflo_pr_ctx}")
+            if [[ -n "$_ruflo_pr_ctx" ]]; then
+                audit_summary="**Audit context (ruflo):** prior-stage findings recalled"
+                info "Ruflo: recalled audit/review context (${#_ruflo_pr_ctx} chars) for PR description"
+            fi
+        fi
+    fi
+
     # ── Skip PR in local/no-github mode ──
     if [[ "${NO_GITHUB:-false}" == "true" || "${SHIPWRIGHT_LOCAL:-}" == "1" || "${LOCAL_MODE:-false}" == "true" ]]; then
         info "Skipping PR stage — running in local/no-github mode"
@@ -43,6 +70,12 @@ stage_pr() {
             _safe_base_diff --stat || true
         } > ".claude/pr-draft.md" 2>/dev/null || true
         emit_event "pr.skipped" "issue=${ISSUE_NUMBER:-0}" "reason=local_mode"
+        # Store local PR draft outcome to close the bookend (fail-open)
+        if declare -f ruflo_store >/dev/null 2>&1; then
+            ruflo_store "stage-pr-result" \
+                "PR skipped (local mode). Branch: ${branch_name:-unknown}. Commits: ${commit_count:-0}. Goal: ${GOAL:-}." \
+                "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
+        fi
         return 0
     fi
 
@@ -271,6 +304,7 @@ ${test_summary:-No test output}
 ${review_summary}
 ${simulation_summary}
 ${arch_summary}
+${audit_summary}
 
 ${closes_line}
 
@@ -414,6 +448,13 @@ EOF
 
     # Extract PR number
     PR_NUMBER=$(echo "$pr_url" | grep -oE '[0-9]+$' || true)
+
+    # ── Ruflo: store PR result for downstream stages (fail-open) ──
+    if declare -f ruflo_store >/dev/null 2>&1 && [[ -n "$pr_url" ]]; then
+        ruflo_store "stage-pr-result" \
+            "PR created: ${pr_url}. Issue: ${ISSUE_NUMBER:-none}. Branch: ${GIT_BRANCH:-unknown}. Files: ${real_file_count:-0}. Goal: ${GOAL:-}." \
+            "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
+    fi
 
     # ── Intelligent Reviewer Selection (GraphQL-enhanced) ──
     if [[ "${NO_GITHUB:-false}" != "true" && -n "$PR_NUMBER" && -z "$reviewers" ]]; then

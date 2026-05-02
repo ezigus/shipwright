@@ -1129,6 +1129,145 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ruflo_execute_plan_hive tests — multi-agent planning divergence
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Test: ruflo_execute_plan_hive returns 1 (exact) when ruflo unavailable
+unset _RUFLO_ADAPTER_LOADED
+RUFLO_AVAILABLE=false
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+exit_code=0
+ruflo_execute_plan_hive "Add a getter method" "Issue body details" >/dev/null || exit_code=$?
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_plan_hive returns 1 when ruflo unavailable"
+else
+    assert_fail "ruflo_execute_plan_hive returns 1 when ruflo unavailable" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_plan_hive returns 1 (exact) when goal is empty
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+exit_code=0
+ruflo_execute_plan_hive "" "issue body" >/dev/null || exit_code=$?
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_plan_hive returns 1 when goal is empty"
+else
+    assert_fail "ruflo_execute_plan_hive returns 1 when goal is empty" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_plan_hive returns 1 (exact) when hive is unavailable
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_orig_path="$PATH"
+mock_binary "ruflo" 'exit 1'
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_USE_NPX=false
+exit_code=0
+ruflo_execute_plan_hive "Add a getter method" "issue body" >/dev/null || exit_code=$?
+PATH="$_orig_path"
+rm -f "$TEST_TEMP_DIR/bin/ruflo"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_plan_hive returns 1 when hive unavailable"
+else
+    assert_fail "ruflo_execute_plan_hive returns 1 when hive unavailable" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_plan_hive returns 1 when planners produce no output
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+# Always succeed but return empty memory list
+subcmd="${1:-}"
+if [[ "$subcmd" == "hive-mind" && "${2:-}" == "memory" ]]; then
+    # empty list — simulates planners failing to write
+    exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="plan-hive-test"
+RUFLO_USE_NPX=false
+exit_code=0
+ruflo_execute_plan_hive "Add a getter method" "issue body" >/dev/null 2>&1 || exit_code=$?
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 1 ]]; then
+    assert_pass "ruflo_execute_plan_hive returns 1 when union is empty"
+else
+    assert_fail "ruflo_execute_plan_hive returns 1 when union is empty" "got exit=$exit_code"
+fi
+
+# Test: ruflo_execute_plan_hive returns 0 and emits plan on stdout on success;
+#       verifies spawn and orchestrate were called
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+subcmd="\${1:-}"
+printf '%s %s %s\\n' "\$subcmd" "\${2:-}" "\${3:-}" >> "$_call_log"
+if [[ "\$subcmd" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+    printf '## Files to Modify\\nfoo.sh\\n## Implementation Steps\\n1. step\\n## Task Checklist\\n- [ ] task\\n## Testing Approach\\nrun tests\\n## Definition of Done\\nall green\\n'
+    exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="plan-hive-success"
+RUFLO_USE_NPX=false
+_plan_out="$_test_tmp/plan-out.md"
+exit_code=0
+ruflo_execute_plan_hive "Add a getter method" "issue body" > "$_plan_out" 2>/dev/null || exit_code=$?
+_plan_out_exists=false
+_plan_out_nonempty=false
+[[ -f "$_plan_out" ]] && _plan_out_exists=true
+[[ -s "$_plan_out" ]] && _plan_out_nonempty=true
+_spawn_called=false
+_orch_called=false
+grep -q "^hive-mind spawn" "$_call_log" 2>/dev/null && _spawn_called=true
+grep -q "^coordination orchestrate" "$_call_log" 2>/dev/null && _orch_called=true
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_execute_plan_hive returns 0 on success"
+else
+    assert_fail "ruflo_execute_plan_hive returns 0 on success" "got exit=$exit_code"
+fi
+if [[ "$_plan_out_exists" == "true" ]]; then
+    assert_pass "ruflo_execute_plan_hive emits plan content on stdout"
+else
+    assert_fail "ruflo_execute_plan_hive emits plan content on stdout" "stdout missing"
+fi
+if [[ "$_plan_out_nonempty" == "true" ]]; then
+    assert_pass "ruflo_execute_plan_hive emits non-empty plan on stdout"
+else
+    assert_fail "ruflo_execute_plan_hive emits non-empty plan on stdout" "stdout empty"
+fi
+if [[ "$_spawn_called" == "true" ]]; then
+    assert_pass "ruflo_execute_plan_hive calls hive-mind spawn"
+else
+    assert_fail "ruflo_execute_plan_hive calls hive-mind spawn" "spawn not invoked"
+fi
+if [[ "$_orch_called" == "true" ]]; then
+    assert_pass "ruflo_execute_plan_hive calls coordination orchestrate"
+else
+    assert_fail "ruflo_execute_plan_hive calls coordination orchestrate" "orchestrate not invoked"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Test 31: ruflo_load_defaults — no-op when no defaults file exists
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_load_defaults — no-op when no defaults file"
@@ -1725,7 +1864,7 @@ case "${1:-}/${2:-}" in
     init/check) exit 0 ;;
     start/--daemon) exit 0 ;;
     memory/import) exit 0 ;;
-    hive-mind/init) printf '{"hive_id":"singleton-hive-001"}\n'; exit 0 ;;
+    hive-mind/init) printf '| hive-1234567890-abc001 |\n'; exit 0 ;;
     *) exit 0 ;;
 esac
 MOCK
@@ -1748,7 +1887,7 @@ if [[ "$_hive_avail" == "true" ]]; then
 else
     assert_fail "ruflo_init sets RUFLO_HIVE_AVAILABLE=true on hive init success" "got: $_hive_avail"
 fi
-if [[ "$_hive_id" == "singleton-hive-001" ]]; then
+if [[ "$_hive_id" == "hive-1234567890-abc001" ]]; then
     assert_pass "ruflo_init sets RUFLO_HIVE_ID from hive-mind init output"
 else
     assert_fail "ruflo_init sets RUFLO_HIVE_ID from hive-mind init output" "got: $_hive_id"
@@ -1847,7 +1986,7 @@ case "${1:-}/${2:-}" in
     init/check) exit 0 ;;
     start/--daemon) exit 0 ;;
     memory/import) exit 0 ;;
-    hive-mind/init) printf '{"hive_id":"event-test-hive"}\n'; exit 0 ;;
+    hive-mind/init) printf '| hive-9999999999-evt001 |\n'; exit 0 ;;
     *) exit 0 ;;
 esac
 MOCK
@@ -1870,7 +2009,7 @@ if grep -qF "ruflo.hive_available" <<< "$_captured_event" 2>/dev/null; then
 else
     assert_fail "ruflo_init emits ruflo.hive_available event on hive init success" "events: $_captured_event"
 fi
-if grep -qF "hive_id=event-test-hive" <<< "$_captured_event" 2>/dev/null; then
+if grep -qF "hive_id=hive-9999999999-evt001" <<< "$_captured_event" 2>/dev/null; then
     assert_pass "ruflo_init includes hive_id in ruflo.hive_available event"
 else
     assert_fail "ruflo_init includes hive_id in ruflo.hive_available event" "events: $_captured_event"
@@ -2389,6 +2528,255 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Queen Collapse Synthesis — ruflo_execute_compound_quality (issue #419)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "CQ Queen Collapse — union artifact written first (fail-open base)"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_artifact="$_test_tmp/cq-artifact.md"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'negative_tester: gap1\ndod_auditor: missing-doc\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-cq-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_compound_quality "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_artifact_content=$(cat "$_artifact" 2>/dev/null || true)
+rm -rf "$_test_tmp"
+if [[ -n "$_artifact_content" ]]; then
+    assert_pass "CQ Queen Collapse: union artifact written (fail-open base exists)"
+else
+    assert_fail "CQ Queen Collapse: union artifact written (fail-open base exists)" "artifact empty"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "CQ Queen Collapse — synthesis orchestration attempted"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_artifact="$_test_tmp/cq-artifact.md"
+_call_log="$_test_tmp/calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+printf '%s %s\n' "\${1:-}" "\${2:-}" >> "$_call_log"
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'negative_tester: gap1\ndod_auditor: covered\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-cq-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_compound_quality "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_calls=$(cat "$_call_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+# CQ already calls coordination orchestrate once for the adversarial pass; the
+# synthesis pass adds a second call. Require at least 2 to confirm synthesis ran.
+_orch_count=$(grep -c "^coordination orchestrate" <<< "$_calls" 2>/dev/null || echo 0)
+_orch_count="${_orch_count//[^0-9]/}"
+if (( ${_orch_count:-0} >= 2 )); then
+    assert_pass "CQ Queen Collapse: coordination orchestrate called for synthesis (adversarial + synth)"
+else
+    assert_fail "CQ Queen Collapse: coordination orchestrate called for synthesis (adversarial + synth)" "count=$_orch_count calls: $_calls"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "CQ Queen Collapse — synthesis goal surfaces conflicts between agents"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_artifact="$_test_tmp/cq-artifact.md"
+_goal_log="$_test_tmp/goal.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'negative_tester: gap1\ndod_auditor: gap1-covered\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  for arg in "\$@"; do
+    if [[ "\$arg" == --goal ]]; then
+      next=1
+    elif [[ -n "\${next:-}" ]]; then
+      printf '%s\n' "\$arg" >> "$_goal_log"
+      next=0
+    fi
+  done
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-cq-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_compound_quality "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_goal=$(cat "$_goal_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+# The synthesis goal must explicitly mention conflict surfacing.
+if grep -qi "conflict" <<< "$_goal" && grep -qi "consensus\|disagree\|severity" <<< "$_goal"; then
+    assert_pass "CQ Queen Collapse: synthesis goal surfaces conflicts/consensus"
+else
+    assert_fail "CQ Queen Collapse: synthesis goal surfaces conflicts/consensus" "goal: $_goal"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "CQ Queen Collapse — fail-open: union preserved on synthesis failure"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_artifact="$_test_tmp/cq-artifact.md"
+# Track which orchestrate call this is (1=adversarial, 2=synthesis); synth fails.
+_orch_state="$_test_tmp/orch_count"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'cq_finding_a\ncq_finding_b\ncq_finding_c\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  n=\$(cat "$_orch_state" 2>/dev/null || echo 0)
+  n=\$((n + 1))
+  printf '%d' "\$n" > "$_orch_state"
+  if [[ "\$n" -ge 2 ]]; then
+    exit 1
+  fi
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-cq-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_compound_quality "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_artifact_content=$(cat "$_artifact" 2>/dev/null || true)
+rm -rf "$_test_tmp"
+if grep -q "cq_finding_a\|cq_finding_b\|cq_finding_c" <<< "$_artifact_content"; then
+    assert_pass "CQ Queen Collapse: fail-open preserves union on synthesis failure"
+else
+    assert_fail "CQ Queen Collapse: fail-open preserves union on synthesis failure" "artifact: $_artifact_content"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "CQ Queen Collapse — synthesis uses separate namespace (no re-consumption)"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_artifact="$_test_tmp/cq-artifact.md"
+_ns_log="$_test_tmp/ns.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  for arg in "\$@"; do
+    if [[ "\$arg" == --namespace ]]; then
+      next=1
+    elif [[ -n "\${next:-}" ]]; then
+      printf '%s\n' "\$arg" >> "$_ns_log"
+      next=0
+    fi
+  done
+  printf 'cq_finding\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-cq-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_compound_quality "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_namespaces=$(cat "$_ns_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+_has_cq_ns=$(grep -c "hive-cq-" <<< "$_namespaces" || echo 0)
+_has_synth_ns=$(grep -c "hive-cq-synth" <<< "$_namespaces" || echo 0)
+_has_cq_ns="${_has_cq_ns//[^0-9]/}"
+_has_synth_ns="${_has_synth_ns//[^0-9]/}"
+if (( ${_has_cq_ns:-0} > 0 )) && (( ${_has_synth_ns:-0} > 0 )); then
+    assert_pass "CQ Queen Collapse: uses separate hive-cq-synth namespace"
+else
+    assert_fail "CQ Queen Collapse: uses separate hive-cq-synth namespace" "ns: $_namespaces"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "CQ Queen Collapse — telemetry event emitted with exit code"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_artifact="$_test_tmp/cq-artifact.md"
+_event_log="$_test_tmp/events.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'cq_finding\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-cq-hive"
+RUFLO_USE_NPX=false
+emit_event() { printf '%s\n' "$*" >> "$_event_log"; }
+ruflo_execute_compound_quality "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_events=$(cat "$_event_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+if grep -q "ruflo.cq_synth_complete" <<< "$_events" && grep -q "exit=" <<< "$_events"; then
+    assert_pass "CQ Queen Collapse: telemetry event emitted with exit code"
+else
+    assert_fail "CQ Queen Collapse: telemetry event emitted with exit code" "events: $_events"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Section C: Gate checks — ruflo_execute_audit
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_execute_audit — returns 1 immediately when RUFLO_HIVE_AVAILABLE=false"
@@ -2454,6 +2842,260 @@ if ! grep -qF "hive-mind init" <<< "$_calls" 2>/dev/null; then
     assert_pass "ruflo_execute_audit does not call hive-mind init when RUFLO_HIVE_AVAILABLE=true"
 else
     assert_fail "ruflo_execute_audit does not call hive-mind init when RUFLO_HIVE_AVAILABLE=true" "calls: $_calls"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Audit Queen Collapse — union artifact written first (fail-open base)"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/audit-artifact.md"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'cve: CVE-2024-1234\nsecret: api-key leak\nowasp: A07 auth\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-audit-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_audit "diff content" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_artifact_content=$(cat "$_artifact" 2>/dev/null || true)
+rm -rf "$_test_tmp"
+if [[ -n "$_artifact_content" ]]; then
+    assert_pass "Audit Queen Collapse: union artifact written (fail-open base exists)"
+else
+    assert_fail "Audit Queen Collapse: union artifact written (fail-open base exists)" "artifact empty"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Audit Queen Collapse — synthesis orchestration attempted"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/audit-artifact.md"
+_call_log="$_test_tmp/calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+printf '%s %s\n' "\${1:-}" "\${2:-}" >> "$_call_log"
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'cve: issue1\nsecret: issue2\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-audit-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_audit "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_calls=$(cat "$_call_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+# Audit calls orchestrate twice: once for the audit pass, once for synthesis.
+# Counting occurrences distinguishes the queen-collapse pass from the audit pass.
+_orch_count=$(grep -cF "coordination orchestrate" <<< "$_calls" || echo 0)
+_orch_count="${_orch_count//[^0-9]/}"
+if (( ${_orch_count:-0} >= 2 )); then
+    assert_pass "Audit Queen Collapse: coordination orchestrate called for synthesis"
+else
+    assert_fail "Audit Queen Collapse: coordination orchestrate called for synthesis" "orch_count=$_orch_count calls: $_calls"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Audit Queen Collapse — synthesis goal includes dedup, severity, and promotion"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/audit-artifact.md"
+_goal_log="$_test_tmp/goal.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'cve_finding\nsecret_finding\n'
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  for arg in "\$@"; do
+    if [[ "\$arg" == --goal ]]; then
+      next=1
+    elif [[ -n "\${next:-}" ]]; then
+      printf '%s\n' "\$arg" >> "$_goal_log"
+      next=0
+    fi
+  done
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-audit-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_audit "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_goals=$(cat "$_goal_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+# Match a goal line that mentions the audit severity scale AND
+# (dedup OR promot) — synthesis goal must signal both behaviours.
+if grep -qi "severity\|critical\|high\|medium" <<< "$_goals" && \
+   grep -qi "dedup\|promot\|consensus\|merge" <<< "$_goals"; then
+    assert_pass "Audit Queen Collapse: synthesis goal mentions severity + dedup/promotion"
+else
+    assert_fail "Audit Queen Collapse: synthesis goal mentions severity + dedup/promotion" "goals: $_goals"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Audit Queen Collapse — fail-open: union preserved on synthesis failure"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/audit-artifact.md"
+_union_marker="UNION_AUDIT_FINDING_MARKER"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+# Track orchestration calls so the second (synthesis) invocation can be failed
+# while the first (audit pass) remains successful.
+_count_file="$_test_tmp/orch_count"
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  # First memory list (audit ns) returns the union marker; the synthesis ns
+  # is empty. Distinguishing by namespace would tie the test to internal
+  # naming; instead we always return the marker — fail-open is verified by
+  # ensuring the marker survives synthesis failure.
+  printf '%s\n' "$_union_marker"
+  exit 0
+fi
+if [[ "\${1:-}" == "coordination" && "\${2:-}" == "orchestrate" ]]; then
+  _n=\$(cat "\$_count_file" 2>/dev/null || echo 0)
+  _n=\$(( _n + 1 ))
+  printf '%s' "\$_n" > "\$_count_file"
+  if [[ "\$_n" -ge 2 ]]; then
+    # Fail the synthesis (queen collapse) orchestration pass
+    exit 1
+  fi
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-audit-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_audit "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_artifact_content=$(cat "$_artifact" 2>/dev/null || true)
+rm -rf "$_test_tmp"
+if grep -qF "$_union_marker" <<< "$_artifact_content"; then
+    assert_pass "Audit Queen Collapse: fail-open preserves union on synthesis failure"
+else
+    assert_fail "Audit Queen Collapse: fail-open preserves union on synthesis failure" "artifact: $_artifact_content"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Audit Queen Collapse — synthesis uses separate hive-audit-synth namespace"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/audit-artifact.md"
+_ns_log="$_test_tmp/ns.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  for arg in "\$@"; do
+    if [[ "\$arg" == --namespace ]]; then
+      next=1
+    elif [[ -n "\${next:-}" ]]; then
+      printf '%s\n' "\$arg" >> "$_ns_log"
+      next=0
+    fi
+  done
+  printf 'audit_finding\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-audit-hive"
+RUFLO_USE_NPX=false
+emit_event() { :; }
+ruflo_execute_audit "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_namespaces=$(cat "$_ns_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+_has_audit_ns=$(grep -c "hive-audit-" <<< "$_namespaces" || echo 0)
+_has_synth_ns=$(grep -c "hive-audit-synth" <<< "$_namespaces" || echo 0)
+_has_audit_ns="${_has_audit_ns//[^0-9]/}"
+_has_synth_ns="${_has_synth_ns//[^0-9]/}"
+if (( ${_has_audit_ns:-0} > 0 )) && (( ${_has_synth_ns:-0} > 0 )); then
+    assert_pass "Audit Queen Collapse: uses separate hive-audit-synth namespace"
+else
+    assert_fail "Audit Queen Collapse: uses separate hive-audit-synth namespace" "ns: $_namespaces"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "Audit Queen Collapse — telemetry event emitted with exit code"
+
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/sw-ruflo-adapter-test.XXXXXX")
+_artifact="$_test_tmp/audit-artifact.md"
+_event_log="$_test_tmp/events.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "hive-mind" && "\${2:-}" == "memory" ]]; then
+  printf 'audit_finding\n'
+  exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+_orig_path="$PATH"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="test-audit-hive"
+RUFLO_USE_NPX=false
+emit_event() { printf '%s\n' "$*" >> "$_event_log"; }
+ruflo_execute_audit "diff" "$_artifact" 2>/dev/null || true
+PATH="$_orig_path"
+_events=$(cat "$_event_log" 2>/dev/null || echo "")
+rm -rf "$_test_tmp"
+if grep -q "ruflo.audit_synth_complete" <<< "$_events" && grep -q "exit=" <<< "$_events"; then
+    assert_pass "Audit Queen Collapse: telemetry event emitted with exit code"
+else
+    assert_fail "Audit Queen Collapse: telemetry event emitted with exit code" "events: $_events"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3265,6 +3907,337 @@ if [[ "$_mult_result" == "6" ]]; then
     assert_pass "RUFLO_COST_BUDGET_MULTIPLIER: hard_cap below baseline raised to baseline; 2.0*6 clamped -> 6 (got $_mult_result)"
 else
     assert_fail "RUFLO_COST_BUDGET_MULTIPLIER: hard_cap below baseline raised to baseline; 2.0*6 clamped -> 6" "expected 6, got $_mult_result"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# _ruflo_seed_specialist_history — seed hive specialists with prior pipeline learnings
+# ═══════════════════════════════════════════════════════════════════════════════
+# Reset emit_event so leaked overrides from earlier tests (which point at deleted
+# temp dirs) do not pollute stderr when the seed helper emits its observability
+# event. The lib's own fallback emit_event is a no-op.
+emit_event() { :; }
+
+# Test: _ruflo_seed_specialist_history — no-op when ruflo unavailable
+print_test_section "_ruflo_seed_specialist_history — no-op when unavailable"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=false
+exit_code=0
+_ruflo_seed_specialist_history "review" "hive-review-test" || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "_ruflo_seed_specialist_history returns 0 (fail-open) when RUFLO_AVAILABLE=false"
+else
+    assert_fail "_ruflo_seed_specialist_history returns 0 (fail-open) when RUFLO_AVAILABLE=false" "exit_code=$exit_code"
+fi
+
+# Test: _ruflo_seed_specialist_history — no-op when stage_name is empty
+print_test_section "_ruflo_seed_specialist_history — no-op when args missing"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+exit_code=0
+_ruflo_seed_specialist_history "" "hive-review-test" || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "_ruflo_seed_specialist_history returns 0 when stage_name empty"
+else
+    assert_fail "_ruflo_seed_specialist_history returns 0 when stage_name empty" "exit_code=$exit_code"
+fi
+exit_code=0
+_ruflo_seed_specialist_history "review" "" || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "_ruflo_seed_specialist_history returns 0 when stage_ns empty"
+else
+    assert_fail "_ruflo_seed_specialist_history returns 0 when stage_ns empty" "exit_code=$exit_code"
+fi
+
+# Test: _ruflo_seed_specialist_history — skips when repo hash unavailable
+print_test_section "_ruflo_seed_specialist_history — skips when repo hash unresolvable"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+# Override _ruflo_resolve_repo_hash to fail (no repo) so the helper short-circuits
+_resolve_orig=$(declare -f _ruflo_resolve_repo_hash)
+_ruflo_resolve_repo_hash() { return 1; }
+# Track that ruflo_recall is NOT called when repo hash is missing
+_seed_recall_log="$TEST_TEMP_DIR/seed-recall-noop.log"
+rm -f "$_seed_recall_log"
+ruflo_recall() { echo "RECALL_CALLED" >> "$_seed_recall_log"; echo ""; }
+exit_code=0
+_ruflo_seed_specialist_history "review" "hive-review-test" || exit_code=$?
+unset -f _ruflo_resolve_repo_hash
+eval "$_resolve_orig"
+unset -f ruflo_recall
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "_ruflo_seed_specialist_history returns 0 when repo hash unresolvable"
+else
+    assert_fail "_ruflo_seed_specialist_history returns 0 when repo hash unresolvable" "exit_code=$exit_code"
+fi
+if [[ ! -f "$_seed_recall_log" ]]; then
+    assert_pass "_ruflo_seed_specialist_history does NOT call ruflo_recall when repo hash unresolvable"
+else
+    assert_fail "_ruflo_seed_specialist_history does NOT call ruflo_recall when repo hash unresolvable" \
+        "got: $(cat "$_seed_recall_log" 2>/dev/null)"
+fi
+
+# Test: _ruflo_seed_specialist_history — happy path stores recalled context
+print_test_section "_ruflo_seed_specialist_history — happy path stores recalled context"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+# Mock repo hash and ruflo_recall to return a known historical payload
+_resolve_orig=$(declare -f _ruflo_resolve_repo_hash)
+_ruflo_resolve_repo_hash() { printf 'testhash9876'; }
+_seed_recall_log="$TEST_TEMP_DIR/seed-recall-happy.log"
+rm -f "$_seed_recall_log"
+ruflo_recall() {
+    echo "QUERY=$1 NS=$2" >> "$_seed_recall_log"
+    printf 'past-failure-1: null pointer in auth flow\npast-failure-2: missing input validation\n'
+}
+_seed_store_log="$TEST_TEMP_DIR/seed-store-happy.log"
+rm -f "$_seed_store_log"
+ruflo_store() {
+    echo "KEY=$1 NS=$3 TAGS=$4 VALUE_LEN=${#2}" >> "$_seed_store_log"
+}
+TASK_TYPE="bug" ISSUE_LABELS="security,backend" \
+    _ruflo_seed_specialist_history "review" "hive-review-pipeline-42" || true
+unset -f _ruflo_resolve_repo_hash
+eval "$_resolve_orig"
+unset -f ruflo_recall ruflo_store
+
+if [[ -f "$_seed_recall_log" ]] && grep -q "NS=learning-testhash9876" "$_seed_recall_log" 2>/dev/null; then
+    assert_pass "_ruflo_seed_specialist_history queries learning-<repo_hash> namespace"
+else
+    assert_fail "_ruflo_seed_specialist_history queries learning-<repo_hash> namespace" \
+        "got: $(cat "$_seed_recall_log" 2>/dev/null)"
+fi
+if grep -q "QUERY=review stage outcomes for bug security,backend" "$_seed_recall_log" 2>/dev/null; then
+    assert_pass "_ruflo_seed_specialist_history query includes stage_name, TASK_TYPE and ISSUE_LABELS"
+else
+    assert_fail "_ruflo_seed_specialist_history query includes stage_name, TASK_TYPE and ISSUE_LABELS" \
+        "got: $(cat "$_seed_recall_log" 2>/dev/null)"
+fi
+if [[ -f "$_seed_store_log" ]] && grep -q "KEY=review-history-context NS=hive-review-pipeline-42" "$_seed_store_log" 2>/dev/null; then
+    assert_pass "_ruflo_seed_specialist_history stores into stage namespace under <stage>-history-context key"
+else
+    assert_fail "_ruflo_seed_specialist_history stores into stage namespace under <stage>-history-context key" \
+        "got: $(cat "$_seed_store_log" 2>/dev/null)"
+fi
+if grep -q "TAGS=review,history,context" "$_seed_store_log" 2>/dev/null; then
+    assert_pass "_ruflo_seed_specialist_history tags stored entry with stage,history,context"
+else
+    assert_fail "_ruflo_seed_specialist_history tags stored entry with stage,history,context" \
+        "got: $(cat "$_seed_store_log" 2>/dev/null)"
+fi
+
+# Test: _ruflo_seed_specialist_history — skips store when recall returns empty
+print_test_section "_ruflo_seed_specialist_history — skips store on empty recall"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+_resolve_orig=$(declare -f _ruflo_resolve_repo_hash)
+_ruflo_resolve_repo_hash() { printf 'testhash0000'; }
+ruflo_recall() { echo ""; }
+_empty_store_log="$TEST_TEMP_DIR/seed-store-empty.log"
+rm -f "$_empty_store_log"
+ruflo_store() { echo "STORE_CALLED" >> "$_empty_store_log"; }
+_ruflo_seed_specialist_history "audit" "hive-audit-test" || true
+unset -f _ruflo_resolve_repo_hash
+eval "$_resolve_orig"
+unset -f ruflo_recall ruflo_store
+if [[ ! -f "$_empty_store_log" ]]; then
+    assert_pass "_ruflo_seed_specialist_history does NOT call ruflo_store when recall is empty"
+else
+    assert_fail "_ruflo_seed_specialist_history does NOT call ruflo_store when recall is empty" \
+        "got: $(cat "$_empty_store_log" 2>/dev/null)"
+fi
+
+# Test: _ruflo_seed_specialist_history — bounds payload to RUFLO_HISTORY_MAX_BYTES
+print_test_section "_ruflo_seed_specialist_history — payload bounded by RUFLO_HISTORY_MAX_BYTES"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+_resolve_orig=$(declare -f _ruflo_resolve_repo_hash)
+_ruflo_resolve_repo_hash() { printf 'testhash5555'; }
+# Generate a recall payload larger than the configured cap
+ruflo_recall() {
+    head -c 9000 /dev/zero | tr '\0' 'X'
+}
+_bounded_store_log="$TEST_TEMP_DIR/seed-store-bounded.log"
+rm -f "$_bounded_store_log"
+ruflo_store() { echo "VALUE_LEN=${#2}" >> "$_bounded_store_log"; }
+RUFLO_HISTORY_MAX_BYTES=200 _ruflo_seed_specialist_history "build" "hive-build-test" || true
+unset -f _ruflo_resolve_repo_hash
+eval "$_resolve_orig"
+unset -f ruflo_recall ruflo_store
+unset RUFLO_HISTORY_MAX_BYTES
+if [[ -f "$_bounded_store_log" ]] && grep -q "VALUE_LEN=200" "$_bounded_store_log" 2>/dev/null; then
+    assert_pass "_ruflo_seed_specialist_history bounds payload to RUFLO_HISTORY_MAX_BYTES (200)"
+else
+    assert_fail "_ruflo_seed_specialist_history bounds payload to RUFLO_HISTORY_MAX_BYTES (200)" \
+        "got: $(cat "$_bounded_store_log" 2>/dev/null)"
+fi
+
+# Test: orchestration functions invoke _ruflo_seed_specialist_history before orchestration
+print_test_section "ruflo_execute_review — invokes _ruflo_seed_specialist_history before orchestrate"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp="$TEST_TEMP_DIR/seed-review-$$"
+mkdir -p "$_test_tmp"
+# Mock ruflo binary so spawn / orchestrate / memory commands all succeed
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="seed-review-hive"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="seed-test-pipeline"
+# Track _ruflo_seed_specialist_history invocation and order with respect to orchestrate
+_seed_order_log="$TEST_TEMP_DIR/seed-order-review.log"
+rm -f "$_seed_order_log"
+_ruflo_seed_specialist_history() {
+    echo "SEED stage=$1 ns=$2" >> "$_seed_order_log"
+    return 0
+}
+# Override the inner orchestration shim by overriding ruflo_with_timeout to log
+_orig_with_timeout=$(declare -f ruflo_with_timeout)
+ruflo_with_timeout() {
+    local _to="$1"; shift
+    if [[ "${1:-}" == "ruflo" && "${2:-}" == "coordination" && "${3:-}" == "orchestrate" ]]; then
+        echo "ORCHESTRATE" >> "$_seed_order_log"
+    fi
+    return 0
+}
+_ruflo_artifact="$_test_tmp/review-out.md"
+ruflo_execute_review "diff content" "$_ruflo_artifact" >/dev/null 2>&1 || true
+unset -f _ruflo_seed_specialist_history ruflo_with_timeout
+eval "$_orig_with_timeout"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if grep -q "SEED stage=review" "$_seed_order_log" 2>/dev/null; then
+    assert_pass "ruflo_execute_review invokes _ruflo_seed_specialist_history with stage=review"
+else
+    assert_fail "ruflo_execute_review invokes _ruflo_seed_specialist_history with stage=review" \
+        "log: $(cat "$_seed_order_log" 2>/dev/null)"
+fi
+# Verify SEED appears before ORCHESTRATE
+if grep -n "SEED\|ORCHESTRATE" "$_seed_order_log" 2>/dev/null | awk -F: '
+    /SEED/  { seed=NR }
+    /ORCHESTRATE/ { orch=NR }
+    END { exit (seed && orch && seed < orch ? 0 : 1) }
+'; then
+    assert_pass "ruflo_execute_review seeds history BEFORE orchestration"
+else
+    assert_fail "ruflo_execute_review seeds history BEFORE orchestration" \
+        "log: $(cat "$_seed_order_log" 2>/dev/null)"
+fi
+
+print_test_section "ruflo_execute_compound_quality — invokes _ruflo_seed_specialist_history"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp="$TEST_TEMP_DIR/seed-cq-$$"
+mkdir -p "$_test_tmp"
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="seed-cq-hive"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="seed-test-pipeline-cq"
+_seed_cq_log="$TEST_TEMP_DIR/seed-order-cq.log"
+rm -f "$_seed_cq_log"
+_ruflo_seed_specialist_history() {
+    echo "SEED stage=$1 ns=$2" >> "$_seed_cq_log"; return 0
+}
+_orig_with_timeout=$(declare -f ruflo_with_timeout)
+ruflo_with_timeout() { return 0; }
+ruflo_execute_compound_quality "diff content" "$_test_tmp/cq-out.md" >/dev/null 2>&1 || true
+unset -f _ruflo_seed_specialist_history ruflo_with_timeout
+eval "$_orig_with_timeout"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if grep -q "SEED stage=quality" "$_seed_cq_log" 2>/dev/null; then
+    assert_pass "ruflo_execute_compound_quality invokes _ruflo_seed_specialist_history with stage=quality"
+else
+    assert_fail "ruflo_execute_compound_quality invokes _ruflo_seed_specialist_history with stage=quality" \
+        "log: $(cat "$_seed_cq_log" 2>/dev/null)"
+fi
+
+print_test_section "ruflo_execute_audit — invokes _ruflo_seed_specialist_history"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp="$TEST_TEMP_DIR/seed-audit-$$"
+mkdir -p "$_test_tmp"
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="seed-audit-hive"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="seed-test-pipeline-audit"
+_seed_audit_log="$TEST_TEMP_DIR/seed-order-audit.log"
+rm -f "$_seed_audit_log"
+_ruflo_seed_specialist_history() {
+    echo "SEED stage=$1 ns=$2" >> "$_seed_audit_log"; return 0
+}
+_orig_with_timeout=$(declare -f ruflo_with_timeout)
+ruflo_with_timeout() { return 0; }
+ruflo_execute_audit "diff content" "$_test_tmp/audit-out.md" >/dev/null 2>&1 || true
+unset -f _ruflo_seed_specialist_history ruflo_with_timeout
+eval "$_orig_with_timeout"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if grep -q "SEED stage=audit" "$_seed_audit_log" 2>/dev/null; then
+    assert_pass "ruflo_execute_audit invokes _ruflo_seed_specialist_history with stage=audit"
+else
+    assert_fail "ruflo_execute_audit invokes _ruflo_seed_specialist_history with stage=audit" \
+        "log: $(cat "$_seed_audit_log" 2>/dev/null)"
+fi
+
+print_test_section "ruflo_execute_build_hive — invokes _ruflo_seed_specialist_history"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp="$TEST_TEMP_DIR/seed-build-$$"
+mkdir -p "$_test_tmp"
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="seed-build-hive"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="seed-test-pipeline-build"
+_seed_build_log="$TEST_TEMP_DIR/seed-order-build.log"
+rm -f "$_seed_build_log"
+_ruflo_seed_specialist_history() {
+    echo "SEED stage=$1 ns=$2" >> "$_seed_build_log"; return 0
+}
+_orig_with_timeout=$(declare -f ruflo_with_timeout)
+ruflo_with_timeout() { return 0; }
+ruflo_execute_build_hive "build the feature" 5 >/dev/null 2>&1 || true
+unset -f _ruflo_seed_specialist_history ruflo_with_timeout
+eval "$_orig_with_timeout"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if grep -q "SEED stage=build" "$_seed_build_log" 2>/dev/null; then
+    assert_pass "ruflo_execute_build_hive invokes _ruflo_seed_specialist_history with stage=build"
+else
+    assert_fail "ruflo_execute_build_hive invokes _ruflo_seed_specialist_history with stage=build" \
+        "log: $(cat "$_seed_build_log" 2>/dev/null)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

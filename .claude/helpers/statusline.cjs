@@ -152,7 +152,7 @@ function getModelName() {
                 const ts = usage[id] && usage[id].lastUsedAt ? new Date(usage[id].lastUsedAt).getTime() : 0;
                 if (ts > latest) { latest = ts; modelId = id; }
               }
-              if (modelId.includes('opus')) return 'Opus 4.6 (1M context)';
+              if (modelId.includes('opus')) return 'Opus 4.7';
               if (modelId.includes('sonnet')) return 'Sonnet 4.6';
               if (modelId.includes('haiku')) return 'Haiku 4.5';
               return modelId.split('-').slice(1, 3).join(' ');
@@ -168,7 +168,7 @@ function getModelName() {
   const settings = getSettings();
   if (settings && settings.model) {
     const m = settings.model;
-    if (m.includes('opus')) return 'Opus 4.6 (1M context)';
+    if (m.includes('opus')) return 'Opus 4.7';
     if (m.includes('sonnet')) return 'Sonnet 4.6';
     if (m.includes('haiku')) return 'Haiku 4.5';
   }
@@ -616,7 +616,7 @@ function generateStatusline() {
 
   // Header
   // Read version from package.json
-  let pkgVersion = '3.5';
+  let pkgVersion = '3.6';
   try {
     const pkgPath = path.join(CWD, 'node_modules', '@claude-flow', 'cli', 'package.json');
     if (fs.existsSync(pkgPath)) {

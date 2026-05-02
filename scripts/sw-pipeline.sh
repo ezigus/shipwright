@@ -15,7 +15,7 @@ trap '' SIGPIPE
 # Prevent git from blocking on HTTPS credential prompts in any pipeline stage
 export GIT_TERMINAL_PROMPT=0
 
-VERSION="3.6.0"
+VERSION="3.6.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -522,7 +522,7 @@ TASKS_FILE=""
 # the lowest-end developer host (16 GB / 4-core); operators can override per
 # host via the env vars below.
 SHIPWRIGHT_MAX_ACTIVE_PIPELINES="${SHIPWRIGHT_MAX_ACTIVE_PIPELINES:-1}"
-SHIPWRIGHT_MIN_FREE_GB="${SHIPWRIGHT_MIN_FREE_GB:-4}"
+SHIPWRIGHT_MIN_FREE_GB="${SHIPWRIGHT_MIN_FREE_GB:-1}"
 # Validate env vars are integers; reset to safe defaults on bad input so
 # arithmetic comparisons in check_admission_gate never receive non-numeric values.
 if [[ ! "$SHIPWRIGHT_MAX_ACTIVE_PIPELINES" =~ ^[1-9][0-9]*$ ]]; then
@@ -530,8 +530,8 @@ if [[ ! "$SHIPWRIGHT_MAX_ACTIVE_PIPELINES" =~ ^[1-9][0-9]*$ ]]; then
     SHIPWRIGHT_MAX_ACTIVE_PIPELINES=1
 fi
 if [[ ! "$SHIPWRIGHT_MIN_FREE_GB" =~ ^[0-9]+$ ]]; then
-    warn "SHIPWRIGHT_MIN_FREE_GB='$SHIPWRIGHT_MIN_FREE_GB' is not a non-negative integer — resetting to 4"
-    SHIPWRIGHT_MIN_FREE_GB=4
+    warn "SHIPWRIGHT_MIN_FREE_GB='$SHIPWRIGHT_MIN_FREE_GB' is not a non-negative integer — resetting to 1"
+    SHIPWRIGHT_MIN_FREE_GB=1
 fi
 SHIPWRIGHT_ACTIVE_PIPELINES_DIR="${SHIPWRIGHT_ACTIVE_PIPELINES_DIR:-$HOME/.shipwright/active-pipelines}"
 # Capture once at top-level so trap-time `$$` (which would resolve in any
@@ -616,7 +616,7 @@ show_help() {
     echo -e "${BOLD}ADMISSION GATE${RESET}  ${DIM}(per-host concurrency + memory floor)${RESET}"
     echo -e "  • Refuses ${BOLD}start${RESET} / ${BOLD}resume${RESET} when too many pipelines are live or free RAM is low"
     echo -e "  • ${CYAN}SHIPWRIGHT_MAX_ACTIVE_PIPELINES${RESET}=N   max concurrent pipelines per host (default: 1)"
-    echo -e "  • ${CYAN}SHIPWRIGHT_MIN_FREE_GB${RESET}=N            min free memory in GB to admit (default: 4)"
+    echo -e "  • ${CYAN}SHIPWRIGHT_MIN_FREE_GB${RESET}=N            min free memory in GB to admit (default: 1)"
     echo -e "  • Inspect locks: ${CYAN}shipwright doctor${RESET}  ${DIM}(ACTIVE PIPELINES & MEMORY section)${RESET}"
     echo ""
     echo -e "${BOLD}EXAMPLES${RESET}"
@@ -865,10 +865,23 @@ stop_heartbeat() {
 # ─── CI Helpers ───────────────────────────────────────────────────────────
 
 ci_push_partial_work() {
+    local push_timeout="${1:-5}"   # 5s default for SIGTERM grace path; watchdog passes 120
     [[ "${CI_MODE:-false}" != "true" ]] && return 0
     [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
 
     local branch="shipwright/issue-${ISSUE_NUMBER}"
+    echo "[WIP-PUSH-START] $(date -u +%FT%TZ) issue=${ISSUE_NUMBER} timeout=${push_timeout}s caller=${FUNCNAME[1]:-top}" >&2
+
+    # Snapshot events.jsonl into the repo so it survives the ephemeral runner disk
+    # and gets pushed with the WIP commit — enables post-mortem watchdog analysis.
+    # Stage immediately after copy so git diff --cached detects it even when it is
+    # the only change (untracked files are invisible to git diff --quiet).
+    if [[ -f "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" ]]; then
+        mkdir -p ".shipwright" 2>/dev/null || true
+        local _events_snap=".shipwright/events-${ISSUE_NUMBER}-${GITHUB_RUN_ID:-local}.jsonl"
+        cp "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" "$_events_snap" 2>/dev/null || true
+        git add "$_events_snap" 2>/dev/null || true
+    fi
 
     # Only push if we have uncommitted changes (excluding daemon-config.json runtime writes)
     if ! git diff --quiet -- ':!.claude/daemon-config.json' 2>/dev/null || \
@@ -878,9 +891,14 @@ ci_push_partial_work() {
     fi
 
     # Push branch (create if needed, force to overwrite previous WIP)
-    if ! git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null; then
+    if _timeout "$push_timeout" git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null; then
+        echo "[WIP-PUSH-OK] $(date -u +%FT%TZ) branch=$branch" >&2
+    else
+        local _push_rc=$?
+        echo "[WIP-PUSH-FAIL] $(date -u +%FT%TZ) branch=$branch exit=${_push_rc}" >&2
         warn "git push failed for $branch — remote may be out of sync"
-        emit_event "pipeline.push_failed" "branch=$branch"
+        emit_event "pipeline.push_failed" "branch=$branch exit=${_push_rc}"
+        return "$_push_rc"
     fi
 }
 
@@ -916,6 +934,45 @@ cleanup_on_exit() {
     [[ "${_cleanup_done:-}" == "true" ]] && return 0
     _cleanup_done=true
 
+    # Reap soft-timeout watchdog on every exit path — prevents PID recycling hazard.
+    if [[ -n "${_WATCHDOG_PID:-}" ]]; then
+        kill "$_WATCHDOG_PID" 2>/dev/null || true
+        wait "$_WATCHDOG_PID" 2>/dev/null || true
+        _WATCHDOG_PID=""
+    fi
+
+    # Only mark as interrupted and post GitHub comment if actually signal-driven.
+    # On clean completions the pipeline stages handle their own state/comments.
+    if [[ "$_PIPELINE_SIGNALED" == "true" && "$PIPELINE_STATUS" == "running" && -n "$STATE_FILE" ]]; then
+        PIPELINE_STATUS="interrupted"
+        UPDATED_AT="$(now_iso)"
+        write_state 2>/dev/null || true
+        echo ""
+        warn "Pipeline interrupted — state saved."
+        echo -e "  Resume: ${DIM}shipwright pipeline resume${RESET}"
+
+        # Cancel lingering in_progress GitHub Check Runs
+        pipeline_cancel_check_runs 2>/dev/null || true
+
+        # Update GitHub
+        if [[ -n "${ISSUE_NUMBER:-}" && "${GH_AVAILABLE:-false}" == "true" ]]; then
+            if ! _timeout "$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)" gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Pipeline interrupted** at stage: ${CURRENT_STAGE_ID:-unknown}" 2>/dev/null; then
+                warn "gh issue comment failed — status update may not have been posted"
+                emit_event "pipeline.comment_failed" "issue=$ISSUE_NUMBER"
+            fi
+        fi
+    fi
+
+    # Push WIP on any non-zero CI exit — signal-driven OR stage-failure.
+    # Skip if watchdog already pushed at T-5min (idempotency); skip on success (exit 0).
+    # Use 60s timeout — stage-failure path needs headroom for first-time remote branch creation.
+    if [[ "${CI_MODE:-false}" == "true" \
+          && -n "${ISSUE_NUMBER:-}" \
+          && "$exit_code" -ne 0 \
+          && "${_SOFT_TIMEOUT_FIRED:-false}" != "true" ]]; then
+        ci_push_partial_work 60
+    fi
+
     # Generate cost-breakdown.json from sidecars on every exit path (issue #87 AC#4).
     # Doing this here (rather than only after the success block at line ~3038) means
     # an aborted/interrupted pipeline still produces an artifact for forensics.
@@ -931,31 +988,6 @@ cleanup_on_exit() {
 
     # Stop heartbeat writer
     stop_heartbeat
-
-    # Only mark as interrupted and post GitHub comment if actually signal-driven.
-    # On clean completions the pipeline stages handle their own state/comments.
-    if [[ "$_PIPELINE_SIGNALED" == "true" && "$PIPELINE_STATUS" == "running" && -n "$STATE_FILE" ]]; then
-        PIPELINE_STATUS="interrupted"
-        UPDATED_AT="$(now_iso)"
-        write_state 2>/dev/null || true
-        echo ""
-        warn "Pipeline interrupted — state saved."
-        echo -e "  Resume: ${DIM}shipwright pipeline resume${RESET}"
-
-        # Push partial work in CI mode so retries can pick it up
-        ci_push_partial_work
-
-        # Cancel lingering in_progress GitHub Check Runs
-        pipeline_cancel_check_runs 2>/dev/null || true
-
-        # Update GitHub
-        if [[ -n "${ISSUE_NUMBER:-}" && "${GH_AVAILABLE:-false}" == "true" ]]; then
-            if ! _timeout "$(_config_get_int "network.gh_timeout" 30 2>/dev/null || echo 30)" gh issue comment "$ISSUE_NUMBER" --body "⏸️ **Pipeline interrupted** at stage: ${CURRENT_STAGE_ID:-unknown}" 2>/dev/null; then
-                warn "gh issue comment failed — status update may not have been posted"
-                emit_event "pipeline.comment_failed" "issue=$ISSUE_NUMBER"
-            fi
-        fi
-    fi
 
     # Restore stashed changes
     if [[ "$STASHED_CHANGES" == "true" ]]; then
@@ -994,8 +1026,23 @@ _signal_cleanup() {
     cleanup_on_exit
 }
 
+# Soft-timeout watchdog handler — push WIP branch and keep running.
+# Pipeline continues until SIGTERM at the hard deadline triggers normal cleanup.
+_SOFT_TIMEOUT_FIRED=false
+_soft_timeout_handler() {
+    [[ "${_SOFT_TIMEOUT_FIRED}" == "true" ]] && return 0
+    _SOFT_TIMEOUT_FIRED=true
+    echo "[WATCHDOG-TRAP] $(date -u +%FT%TZ) USR1 trap running in parent pid=$$" >&2
+    warn "Soft timeout — pushing WIP branch (pipeline continues until hard deadline)"
+    ci_push_partial_work 120
+    emit_event "pipeline.soft_timeout_push" \
+               "issue=${ISSUE_NUMBER:-}" \
+               "timeout_min=${SHIPWRIGHT_JOB_TIMEOUT_MINUTES:-180}" 2>/dev/null || true
+}
+
 trap cleanup_on_exit EXIT
 trap _signal_cleanup SIGINT SIGTERM
+trap _soft_timeout_handler USR1
 
 # ─── Pre-flight Validation ─────────────────────────────────────────────────
 
@@ -3166,6 +3213,40 @@ pipeline_start() {
         publish_event "pipeline.started" "{\"issue\":\"${ISSUE_NUMBER:-0}\",\"pipeline\":\"${PIPELINE_NAME}\",\"goal\":\"${GOAL:0:200}\"}" 2>/dev/null || true
     fi
 
+    # Soft-timeout watchdog — fires SIGUSR1 5 min before GHA hard timeout so we
+    # can push the WIP branch while the process is still healthy. The pipeline
+    # keeps running; SIGTERM/SIGKILL at the deadline is the fallback.
+    # Kill any stale watchdog before overwriting the PID (guard against re-entry).
+    if [[ -n "${_WATCHDOG_PID:-}" ]]; then
+        kill "${_WATCHDOG_PID}" 2>/dev/null || true
+    fi
+    _WATCHDOG_PID=""
+    if [[ "${CI_MODE:-false}" == "true" && -n "${ISSUE_NUMBER:-}" ]]; then
+        local _job_timeout_min="${SHIPWRIGHT_JOB_TIMEOUT_MINUTES:-180}"
+        if [[ "$_job_timeout_min" =~ ^[0-9]+$ ]] && (( _job_timeout_min > 5 )); then
+            local _watchdog_delay_sec=$(( (_job_timeout_min - 5) * 60 ))
+            (
+              trap 'kill %1 2>/dev/null; exit 0' TERM
+              sleep "$_watchdog_delay_sec" & wait $!
+              kill -0 $$ 2>/dev/null || exit 0
+              echo "[WATCHDOG-FIRE] $(date -u +%FT%TZ) pushing WIP from subshell (parent may be blocked) pid=$$" >&2
+              # Push directly — parent USR1 trap defers until foreground completes;
+              # subshell is unblocked and can push while the parent is stuck.
+              if ci_push_partial_work 120; then
+                echo "[WATCHDOG-PUSH-OK] $(date -u +%FT%TZ)" >&2
+              else
+                echo "[WATCHDOG-PUSH-FAIL] $(date -u +%FT%TZ) exit=$?" >&2
+              fi
+              kill -USR1 $$ 2>/dev/null
+            ) &
+            _WATCHDOG_PID=$!
+            emit_event "pipeline.watchdog_armed" \
+                       "issue=${ISSUE_NUMBER}" \
+                       "fires_in_sec=${_watchdog_delay_sec}" 2>/dev/null || true
+            echo "[WATCHDOG-ARM] $(date -u +%FT%TZ) delay=${_watchdog_delay_sec}s pid=$$" >&2
+        fi
+    fi
+
     run_pipeline
     local exit_code=$?
     PIPELINE_EXIT_CODE="$exit_code"
@@ -3377,14 +3458,16 @@ pipeline_start() {
         optimize_analyze_outcome "$STATE_FILE" 2>/dev/null || true
     fi
 
-    # Auto-learn after pipeline completion (non-blocking)
+    # Auto-learn after pipeline completion (non-blocking).
+    # Both stdout and stderr are suppressed so this background subshell does not
+    # hold the write end of the "| tee" pipe open after the pipeline exits.
     if type optimize_tune_templates &>/dev/null; then
         (
             optimize_tune_templates 2>/dev/null
             optimize_learn_iterations 2>/dev/null
             optimize_route_models 2>/dev/null
             optimize_learn_risk_keywords 2>/dev/null
-        ) &
+        ) >/dev/null 2>&1 &
     fi
 
     if type memory_finalize_pipeline >/dev/null 2>&1; then
@@ -3507,6 +3590,15 @@ pipeline_resume() {
     fi
 
     resume_state
+
+    # Refuse to resume if pipeline is stuck (terminal state)
+    if [[ "${STATUS:-}" == "stuck" ]]; then
+        error "Cannot resume: pipeline halted with status: stuck"
+        error "The loop detected cycling and no further progress is possible."
+        error "Review the error log and try: shipwright pipeline start --goal \"...\""
+        exit 2
+    fi
+
     # Recompute TASKS_FILE now that ISSUE_NUMBER has been populated from the state file.
     # setup_dirs runs before resume_state, so ISSUE_NUMBER was empty during the first call.
     TASKS_FILE="${STATE_DIR}/pipeline-tasks${ISSUE_NUMBER:+-${ISSUE_NUMBER}}.md"

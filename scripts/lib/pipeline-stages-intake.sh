@@ -474,11 +474,44 @@ $(printf '%s\n' "${INTELLIGENCE_INTAKE_CTX}")"
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-plan.log"
     local _plan_attempt _plan_timeout _plan_exit
     _plan_timeout=$(_config_get_int "plan.claude_timeout" 3600 2>/dev/null || echo 3600)
+
+    # ── Optional: hive-based multi-agent planning divergence (RUFLO_PLAN_HIVE) ──
+    # When RUFLO_PLAN_HIVE=true and ruflo is available, dispatch to the planning
+    # hive first. Two specialist planners (risk-averse, scope-minimal) produce
+    # divergent plans which a queen synthesis pass merges into one coherent
+    # plan. Cost: ~2-3x baseline tokens vs single-agent. Default: false. Any
+    # hive failure falls through to the native Claude call below (fail-open).
+    local _plan_hive_used=false
+    if [[ "${RUFLO_PLAN_HIVE:-false}" == "true" ]] && \
+       declare -f ruflo_execute_plan_hive >/dev/null 2>&1 && \
+       declare -f ruflo_available >/dev/null 2>&1 && \
+       ruflo_available; then
+        info "Plan stage: attempting hive-based multi-agent planning (RUFLO_PLAN_HIVE=true)"
+        : > "$plan_file"
+        if ruflo_execute_plan_hive "$GOAL" "${ISSUE_BODY:-}" > "$plan_file" 2>>"$_token_log"; then
+            if [[ -s "$plan_file" ]]; then
+                _plan_hive_used=true
+                info "Plan stage: hive synthesis produced a plan ($(wc -l < "$plan_file" | tr -d ' ') lines)"
+            else
+                warn "Plan stage: hive returned empty plan — falling back to native Claude"
+            fi
+        else
+            warn "Plan stage: hive failed — falling back to native Claude"
+        fi
+    fi
+
+    # Native Claude path runs when hive is disabled, unavailable, or failed.
+    if [[ "$_plan_hive_used" != "true" ]]; then
     for _plan_attempt in 1 2 3; do
         : > "$plan_file"
+        # Run claude in background so bash's wait builtin handles it — unlike a
+        # foreground call, wait IS interruptible by USR1/INT/TERM traps, allowing
+        # the watchdog to push the WIP branch before the GHA job hard-kills the runner.
         _timeout "$_plan_timeout" claude --print --model "$plan_model" --max-turns 25 \
             --disallowed-tools "EnterPlanMode,ExitPlanMode" \
-            --dangerously-skip-permissions "$plan_prompt" < /dev/null > "$plan_file" 2>"$_token_log"
+            --dangerously-skip-permissions "$plan_prompt" < /dev/null > "$plan_file" 2>"$_token_log" &
+        local _claude_bg_pid=$!
+        wait "$_claude_bg_pid"
         _plan_exit=$?
         if [[ "$_plan_exit" -eq 124 ]]; then
             warn "Plan stage timed out (attempt ${_plan_attempt}/3, limit=${_plan_timeout}s) — retrying"
@@ -503,6 +536,7 @@ Claude exhausted its turn budget (\`--max-turns 25\`) while exploring the codeba
         break
     done
     parse_claude_tokens "$_token_log"
+    fi  # end native Claude path (when _plan_hive_used != true)
 
     # Claude may write to disk via tools instead of stdout — rescue those files
     local _plan_rescue
@@ -1012,10 +1046,15 @@ $(printf '%s\n' "${INTELLIGENCE_INTAKE_CTX}")"
     fi
 
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-design.log"
+    # Run claude in background so bash's wait builtin handles it — interruptible by
+    # USR1/INT/TERM traps unlike a blocking foreground call. Allows watchdog to push
+    # the WIP branch on GHA timeout without waiting for claude to finish.
     claude --print --model "$design_model" --max-turns 25 \
         --disallowed-tools "EnterPlanMode,ExitPlanMode" \
         --dangerously-skip-permissions \
-        "$design_prompt" < /dev/null > "$design_file" 2>"$_token_log" || true
+        "$design_prompt" < /dev/null > "$design_file" 2>"$_token_log" &
+    local _claude_bg_pid=$!
+    wait "$_claude_bg_pid" || true
     parse_claude_tokens "$_token_log"
 
     # Claude may write to disk via tools instead of stdout — rescue those files

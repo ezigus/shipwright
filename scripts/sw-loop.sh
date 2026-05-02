@@ -101,7 +101,7 @@ HOLISTIC_DIFF_MAX_LINES=$(_config_get_int "loop.holistic_diff_max_lines" 1000 2>
 SESSION_RESTART=false
 RESTART_COUNT=0
 REPO_OVERRIDE=""
-VERSION="3.6.0"
+VERSION="3.6.1"
 
 # ─── Token Tracking ─────────────────────────────────────────────────────────
 LOOP_INPUT_TOKENS=0
@@ -2576,6 +2576,7 @@ run_single_agent_loop() {
         # Pre-checks (before incrementing — ITERATION tracks completed count)
         check_circuit_breaker || break
         check_max_iterations || break
+        check_time_budget || break
         check_budget_gate || {
             STATUS="budget_exhausted"
             write_state
@@ -2704,6 +2705,23 @@ ${GOAL}"
             write_state
             write_progress
             error "Fatal CLI error detected — aborting loop (see iteration log)"
+            show_summary
+            return 1
+        fi
+
+        # Honor stuckness detection: if detect_stuckness() returned success this iteration,
+        # halt immediately with status: stuck (not stuck_restart). This prevents the
+        # infinite loop where Claude keeps getting spawned despite hitting stuckness.
+        if [[ "${STUCKNESS_DETECTED_THIS_ITERATION:-false}" == "true" ]]; then
+            STATUS="stuck"
+            type emit_event >/dev/null 2>&1 && emit_event "loop.stuck" \
+                "iteration=$ITERATION" \
+                "diagnosis=${STUCKNESS_DIAGNOSIS:-cycling}" \
+                "signals=${STUCKNESS_COUNT:-0}" \
+                "job_id=${PIPELINE_JOB_ID:-loop-$$}"
+            write_state
+            write_progress
+            warn "Stuckness detected on iteration $ITERATION — halting loop with status: stuck"
             show_summary
             return 1
         fi
@@ -3029,6 +3047,9 @@ run_loop_with_restarts() {
         TEST_PASSED=""
         TEST_OUTPUT=""
         TEST_LOG_FILE=""
+        # Preserve LOOP_START_EPOCH across restarts — time budget is wall-clock from
+        # the very first loop invocation, not from each session restart.
+        : "${LOOP_START_EPOCH:=$(now_epoch 2>/dev/null || echo 0)}"
         # Reset GOAL to original — prevent unbounded growth from memory/human injections
         GOAL="$ORIGINAL_GOAL"
         # Reset per-session token counters on every restart — cumulative totals from

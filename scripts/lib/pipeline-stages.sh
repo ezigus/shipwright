@@ -140,14 +140,25 @@ guard_prompt_size() {
 # These helpers return empty output instead of crashing under set -euo pipefail.
 _safe_base_log() {
     local branch="${BASE_BRANCH:-main}"
-    git rev-parse --verify "$branch" >/dev/null 2>&1 || { echo ""; return 0; }
-    git log "$@" "${branch}..HEAD" 2>/dev/null || true
+    if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+        git log "$@" "${branch}..HEAD" 2>/dev/null || true
+    elif git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+        git log "$@" "origin/${branch}..HEAD" 2>/dev/null || true
+    else
+        echo ""
+    fi
 }
 
 _safe_base_diff() {
     local branch="${BASE_BRANCH:-main}"
-    git rev-parse --verify "$branch" >/dev/null 2>&1 || { git diff HEAD~5 "$@" 2>/dev/null || true; return 0; }
-    git diff "${branch}...HEAD" "$@" 2>/dev/null || true
+    if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+        git diff "${branch}...HEAD" "$@" 2>/dev/null || true
+    elif git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+        git diff "origin/${branch}...HEAD" "$@" 2>/dev/null || true
+    else
+        echo "[warn] _safe_base_diff: neither $branch nor origin/$branch verifiable; using HEAD~5" >&2
+        git diff HEAD~5 "$@" 2>/dev/null || true
+    fi
 }
 
 show_stage_preview() {

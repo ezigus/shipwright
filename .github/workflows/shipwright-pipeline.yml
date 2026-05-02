@@ -49,6 +49,7 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
+  checks: write
 
 jobs:
   # ────────────────────────────────────────────────────────────────────────────
@@ -355,6 +356,7 @@ jobs:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       NO_COLOR: "1"
+      SHIPWRIGHT_JOB_TIMEOUT_MINUTES: "180"   # MUST match timeout-minutes: 180 above
 
     steps:
       - uses: actions/checkout@v4
@@ -597,8 +599,7 @@ jobs:
         if: steps.claim_check.outputs.skip != 'true' && env.AUTH_SKIP != 'true'
         id: pipeline
         run: |
-          set +e          # Don't abort on failure — we capture the exit code
-          set -o pipefail # CRITICAL: preserve pipeline exit code through | tee
+          set +e  # Don't abort on failure — we capture the exit code
 
           PIPELINE_ARGS=(
             --issue "$ISSUE_NUMBER"
@@ -621,8 +622,11 @@ jobs:
           # Heartbeat: post progress marker every 10 minutes so watchdog knows we're alive.
           # Visible body first so subscribers see content; HTML comment retained for
           # watchdog parsing (shipwright-watchdog.yml uses `contains("SHIPWRIGHT-HEARTBEAT")`).
-          (while true; do
-            sleep 600
+          (sleep_pid=""; trap 'if [[ -n "${sleep_pid:-}" ]]; then kill "$sleep_pid" 2>/dev/null || true; fi; exit 0' TERM; while true; do
+            sleep 600 &
+            sleep_pid=$!
+            wait "$sleep_pid"
+            sleep_pid=""
             _HB_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
             _HB_DISPLAY=$(date -u '+%H:%M UTC')
             _HB_BODY="⏳ Pipeline still running — last heartbeat ${_HB_DISPLAY}"$'\n'"<!-- SHIPWRIGHT-HEARTBEAT: ${_HB_TS}:running -->"
@@ -630,12 +634,27 @@ jobs:
           done) &
           HEARTBEAT_PID=$!
 
-          shipwright pipeline start "${PIPELINE_ARGS[@]}" 2>&1 | tee /tmp/pipeline.log
-          PIPELINE_EXIT=${PIPESTATUS[0]}  # Get exit code of pipeline, not tee
+          # Run pipeline writing directly to log file — avoids pipe-lifetime hang.
+          # Any background grandchildren that hold the write FD open cannot block
+          # us because we wait on the PID, not on pipe EOF. (#426, #484)
+          > /tmp/pipeline.log
+          shipwright pipeline start "${PIPELINE_ARGS[@]}" >> /tmp/pipeline.log 2>&1 &
+          PIPELINE_PID=$!
 
-          # Stop heartbeat
+          # Stream full log to GHA stdout for real-time step visibility.
+          # -n +1 starts from line 1 so no startup lines are missed even if the
+          # pipeline wrote before tail began following.  --pid exits tail
+          # automatically when the pipeline process exits — no sleep needed.
+          tail -n +1 --pid="$PIPELINE_PID" -f /tmp/pipeline.log &
+          TAIL_PID=$!
+
+          wait $PIPELINE_PID
+          PIPELINE_EXIT=$?
+
+          # Stop heartbeat; tail exits automatically via --pid.
           kill $HEARTBEAT_PID 2>/dev/null || true
           wait $HEARTBEAT_PID 2>/dev/null || true
+          wait $TAIL_PID 2>/dev/null || true
 
           echo "exit_code=$PIPELINE_EXIT" >> "$GITHUB_OUTPUT"
 
@@ -800,22 +819,33 @@ jobs:
         if: (failure() || cancelled()) && steps.claim_check.outputs.skip != 'true'
         run: |
           BRANCH="shipwright/issue-${ISSUE_NUMBER}"
-          HAS_DIFF=0
           if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
             git add -A 2>/dev/null || true
             git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
-            HAS_DIFF=1
           fi
-          AHEAD=$(git rev-list --count "origin/${BRANCH}..HEAD" 2>/dev/null || echo "1")
-          if [ "$HAS_DIFF" = "0" ] && [ "$AHEAD" = "0" ]; then
-            echo "No partial work to push (no diff, no commits ahead). Skipping."
+          # Refresh tracking ref from server — local ref may be stale after an
+          # interrupted push (git optimistically updates it before the pack arrives).
+          git fetch origin "$BRANCH" 2>/dev/null || true
+          REMOTE_EXISTS=$(git ls-remote --heads origin "$BRANCH" 2>/dev/null | head -1)
+          AHEAD=$(git rev-list --count "origin/${BRANCH}..HEAD" 2>/dev/null || echo "0")
+          # Only skip when the WIP branch already exists AND HEAD is not ahead of it.
+          # When the branch is absent, always push to create the WIP reference so
+          # shipwright pipeline resume can find partial work.
+          if [ -n "$REMOTE_EXISTS" ] && [ "$AHEAD" = "0" ]; then
+            echo "WIP branch already up to date — skipping push."
             exit 0
           fi
           if timeout 120 git push origin "HEAD:refs/heads/$BRANCH" --force; then
             echo "Partial work pushed to branch: $BRANCH"
           else
-            echo "WARN: partial-work push timed out or failed (non-fatal); branch may be stale"
+            echo "WARN: partial-work push timed out or failed (non-fatal)"
           fi
+
+      - name: Diagnose exit signals (issue #463)
+        if: always() && steps.claim_check.outputs.skip != 'true'
+        run: |
+          echo "job.status: ${{ job.status }}"
+          echo "Branch on origin: $(git ls-remote --heads origin "shipwright/issue-${ISSUE_NUMBER}" 2>/dev/null || echo none)"
 
       - name: Upload pipeline artifacts
         if: always() && steps.claim_check.outputs.skip != 'true'

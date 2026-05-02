@@ -17,6 +17,9 @@ initialize_state() {
     STATUS="running"
     LOG_ENTRIES=""
 
+    # Record loop start epoch for time-budget guard (check_time_budget in loop-convergence.sh)
+    LOOP_START_EPOCH="$(now_epoch 2>/dev/null || echo 0)"
+
     # Record starting commit for cumulative diff in quality gates
     LOOP_START_COMMIT="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")"
 

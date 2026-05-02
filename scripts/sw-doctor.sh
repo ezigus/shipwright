@@ -4,7 +4,7 @@
 # ║                                                                          ║
 # ║  Checks prerequisites, installed files, PATH, and common issues.        ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="3.6.0"
+VERSION="3.6.1"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -945,7 +945,7 @@ echo -e "${DIM}  ─────────────────────
 doctor_check_active_pipelines() {
     local dir="${SHIPWRIGHT_ACTIVE_PIPELINES_DIR:-$HOME/.shipwright/active-pipelines}"
     local max_active="${SHIPWRIGHT_MAX_ACTIVE_PIPELINES:-1}"
-    local min_free_gb="${SHIPWRIGHT_MIN_FREE_GB:-4}"
+    local min_free_gb="${SHIPWRIGHT_MIN_FREE_GB:-1}"
 
     if [[ ! -d "$dir" ]]; then
         info "  No active-pipelines directory ${DIM}(created on first pipeline start)${RESET}"

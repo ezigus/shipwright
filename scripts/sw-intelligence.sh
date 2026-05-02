@@ -6,9 +6,17 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.0"
+VERSION="3.6.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_repo_dir_explicit="${REPO_DIR:+yes}"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+# PATH-install fallback: when auto-derived REPO_DIR has no .claude or package.json,
+# the script is likely installed to a PATH dir (e.g. ~/.local/bin); use git root instead.
+if [[ "$_repo_dir_explicit" != "yes" && ! -d "${REPO_DIR}/.claude" && ! -f "${REPO_DIR}/package.json" ]]; then
+    _git_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    [[ -n "$_git_root" ]] && REPO_DIR="$_git_root"
+fi
+unset _repo_dir_explicit _git_root
 
 # Derive PROJECT_ROOT: the user's git repo (distinct from shipwright install root)
 PROJECT_ROOT="${PROJECT_ROOT:-}"
@@ -245,9 +253,9 @@ _intelligence_enabled() {
     local config=""
     local cfg
     for cfg in \
+        "${PROJECT_ROOT}/.claude/daemon-config.json" \
         "$(git rev-parse --show-toplevel 2>/dev/null)/.claude/daemon-config.json" \
-        "$(pwd)/.claude/daemon-config.json" \
-        "${PROJECT_ROOT}/.claude/daemon-config.json"; do
+        "$(pwd)/.claude/daemon-config.json"; do
         [[ -n "$cfg" && -f "$cfg" ]] && config="$cfg" && break
     done
     if [[ -n "$config" ]]; then

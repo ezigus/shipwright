@@ -12,7 +12,7 @@
 # ║      && source "$SCRIPT_DIR/lib/ruflo-adapter.sh" 2>/dev/null || true    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
-VERSION="3.6.0"
+VERSION="3.6.1"
 
 # ─── Double-source guard ──────────────────────────────────────────────────────
 [[ -n "${_RUFLO_ADAPTER_LOADED:-}" ]] && return 0
@@ -259,13 +259,11 @@ ruflo_init() {
         if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
             _hive_init_out=$(ruflo_with_timeout 30 npx -y ruflo@latest hive-mind init \
                 --topology hierarchical \
-                --max-agents "$_hive_max_agents" \
-                --output-format json 2>/dev/null) || _hive_init_exit=$?
+                --max-agents "$_hive_max_agents" 2>/dev/null) || _hive_init_exit=$?
         else
             _hive_init_out=$(ruflo_with_timeout 30 ruflo hive-mind init \
                 --topology hierarchical \
-                --max-agents "$_hive_max_agents" \
-                --output-format json 2>/dev/null) || _hive_init_exit=$?
+                --max-agents "$_hive_max_agents" 2>/dev/null) || _hive_init_exit=$?
         fi
         # Clear any stale inherited RUFLO_HIVE_ID before evaluating init result.
         # The env-inherit pattern (${VAR:-}) means a stale value from a parent
@@ -273,8 +271,10 @@ ruflo_init() {
         # would cause the success branch to run on a stale/invalid hive ID.
         RUFLO_HIVE_ID=""
         if [[ $_hive_init_exit -eq 0 ]]; then
+            # --output-format json is ignored by ruflo hive-mind init; it always
+            # emits an ASCII table. Extract the hive ID directly from the table row.
             RUFLO_HIVE_ID=$(printf '%s' "$_hive_init_out" | \
-                jq -r '.hive_id // empty' 2>/dev/null || true)
+                grep -oE 'hive-[0-9]+-[a-z0-9]+' | head -1 || true)
         fi
         if [[ -n "${RUFLO_HIVE_ID:-}" ]]; then
             RUFLO_HIVE_AVAILABLE=true
@@ -443,7 +443,11 @@ ruflo_with_timeout() {
         # safety net for unexpected termination. (#441)
         # shellcheck disable=SC2064
         trap "rm -f '$_rft_tmp' 2>/dev/null || true" EXIT TERM
-        ( "$@" ) >"$_rft_tmp" &
+        # stderr is suppressed rather than merged into _rft_tmp intentionally:
+        # callers often capture output via $() and expect clean text/JSON; mixing
+        # stderr would corrupt those values.  ruflo_with_timeout emits its own
+        # warn()/emit_event diagnostics on failure via the circuit-breaker path. (#484)
+        ( "$@" ) >"$_rft_tmp" 2>/dev/null &
         local bg_pid=$!
         # Poll with adaptive backoff: 0.1s for the first 10 ticks (1 s fast
         # window) to handle short-lived operations cheaply, then 1s intervals
@@ -594,6 +598,61 @@ _ruflo_resolve_repo_hash() {
     fi
     [[ -n "$_hash" ]] || return 1
     printf '%s' "$_hash"
+}
+
+# ─── _ruflo_seed_specialist_history — seed hive specialists with prior learnings ─
+# Recalls historical outcomes from learning-${repo_hash} (cross-pipeline
+# memory) and stores a bounded slice into the per-stage hive namespace so
+# specialist agents can read past lessons before orchestration starts.
+#
+# Usage: _ruflo_seed_specialist_history <stage_name> <stage_namespace>
+#   stage_name      — short label used in the recall query and stored key
+#                     (e.g., "build", "review", "quality", "audit")
+#   stage_namespace — per-pipeline hive namespace (e.g. "hive-review-${pid}")
+#
+# Always returns 0 (fail-open). Skips when:
+#   - ruflo is unavailable
+#   - either argument is empty
+#   - repo hash cannot be resolved (prevents cross-repo namespace pollution)
+#   - the recall returns no results
+#
+# Environment knobs:
+#   RUFLO_HISTORY_MAX_BYTES — max bytes of recalled history seeded (default 4000)
+_ruflo_seed_specialist_history() {
+    ruflo_available || return 0
+    local stage_name="$1" stage_ns="$2"
+    [[ -n "$stage_name" && -n "$stage_ns" ]] || return 0
+
+    # Repo-scoped namespace — skip if hash unavailable to prevent cross-repo leaks
+    local _ns_hash
+    _ns_hash=$(_ruflo_resolve_repo_hash 2>/dev/null) || return 0
+
+    # TASK_TYPE / ISSUE_LABELS are populated by the intake stage; default
+    # gracefully when invoked outside a full pipeline (e.g. ad-hoc build).
+    local _task_type="${TASK_TYPE:-feature}"
+    local _labels="${ISSUE_LABELS:-}"
+    local _query="${stage_name} stage outcomes for ${_task_type} ${_labels}"
+
+    local _history
+    _history=$(ruflo_recall "$_query" "learning-${_ns_hash}" 2>/dev/null || true)
+    [[ -n "$_history" ]] || return 0
+
+    # Bound to keep argv small and avoid tripping the circuit-breaker on very
+    # large recall payloads. Validate knob: must be a positive integer.
+    local _max_bytes="${RUFLO_HISTORY_MAX_BYTES:-4000}"
+    if ! [[ "$_max_bytes" =~ ^[0-9]+$ ]] || (( _max_bytes < 1 )); then
+        _max_bytes=4000
+    fi
+    local _bounded
+    _bounded=$(printf '%s' "$_history" | head -c "$_max_bytes" 2>/dev/null || true)
+    [[ -n "$_bounded" ]] || return 0
+
+    ruflo_store "${stage_name}-history-context" "$_bounded" \
+        "$stage_ns" "${stage_name},history,context" || true
+
+    emit_event "ruflo.specialist_history_seeded" \
+        "stage=${stage_name}" "namespace=${stage_ns}" "bytes=${#_bounded}"
+    return 0
 }
 
 # ─── ruflo_index_shipwright_memory — index ~/.shipwright/memory/ into ruflo ───
@@ -844,6 +903,12 @@ ruflo_execute_build_hive() {
         return 1
     fi
 
+    # Seed historical recall context into the hive memory namespace before
+    # orchestration so the freshly spawned workers see prior pipeline lessons.
+    # Per-pipeline namespace keeps history scoped to this run's hive.
+    local _build_history_ns="hive-build-${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
+    _ruflo_seed_specialist_history "build" "$_build_history_ns" || true
+
     # Orchestrate the build goal across the hive
     local _orch_exit=0
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -987,6 +1052,11 @@ ruflo_execute_review() {
         fi
     fi
 
+    # Seed historical recall context — past review outcomes from prior pipelines
+    # (failure patterns, recurring code-review themes) are injected so the
+    # specialist agents can pattern-match against history before orchestration.
+    _ruflo_seed_specialist_history "review" "$review_ns" || true
+
     # Orchestrate parallel review across the hive — each specialist agent analyses
     # the diff from their domain perspective (security, code_quality, test_gap,
     # architecture). Results are written to the shared hive memory namespace.
@@ -1089,7 +1159,12 @@ ruflo_execute_review() {
 #   - negative_tester: writes failing tests for uncovered edge cases
 #   - dod_auditor: checks Definition of Done criteria
 #   - e2e_validator: end-to-end scenario coverage
-# Findings aggregated via union (same principle as ruflo_execute_review).
+# Findings aggregated via union (same principle as ruflo_execute_review), then
+# a queen-collapse synthesis pass runs in a separate namespace to surface
+# CONFLICTS between adversarial agents (one agent flags vs another clears) and
+# rank consensus findings by severity. The union artifact is committed to disk
+# first as the fail-open baseline; the artifact is overwritten with the
+# synthesis result only when synthesis orchestration succeeds.
 #
 # Usage: ruflo_execute_compound_quality <diff_content> <artifact_file>
 # Returns 0 on success, 1 on any hive failure (caller falls back to native checks).
@@ -1159,6 +1234,11 @@ ruflo_execute_compound_quality() {
         ruflo_store "cq-review-context" "$_prior_review" "$cq_ns" "quality,context" || true
     fi
 
+    # Seed historical recall context — prior compound-quality outcomes (e.g.
+    # recurring DoD misses, common edge cases) inform adversarial agents
+    # before orchestration so they can target known-weak areas.
+    _ruflo_seed_specialist_history "quality" "$cq_ns" || true
+
     # Orchestrate adversarial quality checks — agents run negative testing,
     # DoD auditing, and E2E scenario validation in parallel.
     local _orch_exit=0
@@ -1193,6 +1273,60 @@ ruflo_execute_compound_quality() {
     if ! printf '%s\n' "${_findings:-}" > "$artifact_file" 2>/dev/null; then
         warn "ruflo: failed to write compound quality artifact: $artifact_file"
     fi
+
+    # ─── Queen collapse: synthesis pass to surface conflicts between agents ──
+    # Adversarial CQ specialists (negative_tester, dod_auditor, e2e_validator)
+    # frequently disagree — one may report a gap that another considers covered.
+    # Union-only output buries those disagreements as duplicate-looking findings.
+    # The queen synthesis pass prompts the hive to surface those conflicts as a
+    # distinct section of the artifact so cascade audit agents see them.
+    #
+    # Post-write synthesis: union is committed to disk first as the fail-open
+    # baseline. We seed a separate synthesis namespace with the artifact head,
+    # orchestrate a conflict-surfacing pass, read the result, and overwrite the
+    # artifact only on success. Any failure preserves the union artifact.
+    local _synth_ns="hive-cq-synth-${pipeline_id}"
+
+    # Seed synthesis namespace with first 6000 bytes of union artifact
+    local _artifact_head
+    _artifact_head=$(head -c 6000 "$artifact_file" 2>/dev/null || echo "")
+    if [[ -n "$_artifact_head" ]]; then
+        ruflo_store "cq-union-findings" "$_artifact_head" "$_synth_ns" "quality,synthesis" 2>/dev/null || true
+    fi
+
+    # Run synthesis orchestration pass: surface conflicts between adversarial
+    # agents alongside agreed findings. Goal explicitly names "conflict" so the
+    # hive separates contradictions (one agent flags, another clears) from
+    # consensus findings (multiple agents flag the same gap).
+    local _synth_exit=0
+    local _synth_goal="Surface conflicts between adversarial CQ agents (negative_tester, dod_auditor, e2e_validator). Output structured Markdown with sections: '## Conflicts' (findings where agents disagree — list each side), '## Consensus' (findings endorsed by multiple agents, ranked by severity Critical/Bug/Warning/Suggestion), '## Single-source' (unique agent findings). Preserve original agent attribution."
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 120 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    else
+        ruflo_with_timeout 120 ruflo coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    fi
+
+    # Read synthesis result from hive memory — only if orchestration succeeded
+    local _synth_result=""
+    if [[ "$_synth_exit" -eq 0 ]]; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            _synth_result=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+                --action list --namespace "$_synth_ns" 2>/dev/null || true)
+        else
+            _synth_result=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+                --action list --namespace "$_synth_ns" 2>/dev/null || true)
+        fi
+    fi
+
+    # Overwrite artifact with synthesis result if successful (fail-open: keep union on any error)
+    if [[ -n "$_synth_result" ]] && [[ "$_synth_exit" -eq 0 ]]; then
+        printf '%s\n' "$_synth_result" > "$artifact_file" 2>/dev/null || true
+    fi
+
+    # Emit telemetry for observability
+    emit_event "ruflo.cq_synth_complete" "exit=${_synth_exit}" "namespace=${_synth_ns}"
 
     # Persist compound quality result for downstream stages
     ruflo_store "stage-cq-result" \
@@ -1300,6 +1434,11 @@ ruflo_execute_audit() {
         fi
     fi
 
+    # Seed historical recall context — past audit outcomes (recurring CVE
+    # categories, repeated secrets-detection hits) are surfaced to specialists
+    # before orchestration so they can prioritise known-risk areas.
+    _ruflo_seed_specialist_history "audit" "$audit_ns" || true
+
     # Orchestrate parallel security audit — CVE scanning, secrets detection,
     # OWASP assessment, and compliance checking run in parallel across the hive.
     local _orch_exit=0
@@ -1343,6 +1482,68 @@ ruflo_execute_audit() {
         return 1
     fi
 
+    # ─── Queen collapse: synthesis pass to dedup & promote severity ────────────
+    # Audit specialists (cve_scanner, secrets_detector, owasp_auditor,
+    # compliance_checker) frequently report the same vulnerability from
+    # different angles — e.g. a hardcoded credential surfaces in both
+    # secrets_detector and owasp_auditor (A07: identification & auth failures).
+    # Union-only output makes the same risk appear N times, drowning the
+    # pipeline's PR review in low-signal duplicates.
+    #
+    # Post-write synthesis: the union artifact is committed to disk first as
+    # the fail-open baseline. We seed a separate synthesis namespace with the
+    # artifact head, orchestrate a security-severity dedup+promotion pass, read
+    # the result, and overwrite the artifact only on success. Any failure
+    # preserves the union artifact unchanged.
+    #
+    # Severity scale follows CVSS-aligned audit conventions
+    # (Critical > High > Medium > Low > Info), distinct from the review-stage
+    # scale (Critical > Bug > Security > Warning > Suggestion). Multi-specialist
+    # endorsement promotes a finding by one level (e.g. two specialists
+    # agreeing on a Medium finding promotes it to High).
+    local _synth_ns="hive-audit-synth-${pipeline_id}"
+
+    # Seed synthesis namespace with first 6000 bytes of union artifact
+    local _artifact_head
+    _artifact_head=$(head -c 6000 "$artifact_file" 2>/dev/null || echo "")
+    if [[ -n "$_artifact_head" ]]; then
+        ruflo_store "audit-union-findings" "$_artifact_head" "$_synth_ns" "audit,synthesis" 2>/dev/null || true
+    fi
+
+    # Run synthesis orchestration pass: dedup + severity promotion. The goal
+    # explicitly names the audit severity scale (Critical/High/Medium/Low/Info)
+    # and the promotion rule so the queen agent applies consistent ranking
+    # across pipeline runs.
+    local _synth_exit=0
+    local _synth_goal="Deduplicate and rank security audit findings by severity (Critical/High/Medium/Low/Info). Merge findings reporting the same vulnerability from different specialists (cve_scanner, secrets_detector, owasp_auditor, compliance_checker) into a single entry preserving each specialist's evidence. Promote severity by one level when 2+ specialists endorse the same finding (consensus boost). Output structured Markdown with severity labels and specialist attribution."
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 120 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    else
+        ruflo_with_timeout 120 ruflo coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    fi
+
+    # Read synthesis result from hive memory — only if orchestration succeeded
+    local _synth_result=""
+    if [[ "$_synth_exit" -eq 0 ]]; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            _synth_result=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+                --action list --namespace "$_synth_ns" 2>/dev/null || true)
+        else
+            _synth_result=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+                --action list --namespace "$_synth_ns" 2>/dev/null || true)
+        fi
+    fi
+
+    # Overwrite artifact with synthesis result if successful (fail-open: keep union on any error)
+    if [[ -n "$_synth_result" ]] && [[ "$_synth_exit" -eq 0 ]]; then
+        printf '%s\n' "$_synth_result" > "$artifact_file" 2>/dev/null || true
+    fi
+
+    # Emit telemetry for observability
+    emit_event "ruflo.audit_synth_complete" "exit=${_synth_exit}" "namespace=${_synth_ns}"
+
     # Persist audit result for downstream stages
     ruflo_store "stage-audit-result" \
         "$(head -c 2000 "$artifact_file" 2>/dev/null || true)" \
@@ -1350,6 +1551,227 @@ ruflo_execute_audit() {
         "audit,outcome" || true
 
     emit_event "ruflo.audit_complete" "hive_id=$hive_id" "stage=audit"
+    return 0
+}
+
+# ─── ruflo_execute_plan_hive — multi-agent planning divergence with queen collapse
+# Spawns specialist planner agents in parallel:
+#   - risk-averse: minimize blast radius, prefer smallest safe change
+#   - scope-minimal: implement ONLY what is explicitly asked, no extras
+#   - performance-first (optional, when 3 agents): optimize for build loop speed
+# Each planner writes an independent plan to a shared hive namespace.
+# A queen-synthesis pass merges plans into one coherent plan that preserves
+# the safest scope and clearest steps, surfacing strategy divergences.
+#
+# Usage: ruflo_execute_plan_hive <goal> [issue_body]
+# Returns 0 on success — synthesized plan written to stdout.
+#         1 on any unrecoverable hive error — caller MUST fall back to native.
+# Always fail-open from the pipeline's perspective (caller falls back).
+# stdin is not used; callers may safely redirect it.
+#
+# Side effects:
+#   - writes to hive namespaces hive-plan-<pid> and plan-synth-<pid>
+#   - emits ruflo.plan_hive_{start,complete,failed,synthesis_fallback} events
+#
+# Environment knobs:
+#   RUFLO_PLAN_MAX_AGENTS       — number of planner specialists (default 2; max 3)
+#   RUFLO_PLAN_HARD_MAX_AGENTS  — hard cap when budget multiplier scales up (default 3)
+ruflo_execute_plan_hive() {
+    ruflo_available || return 1
+    local goal="$1"
+    local issue_body="${2:-}"
+    [[ -n "$goal" ]] || return 1
+
+    local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
+    local plan_ns="hive-plan-${pipeline_id}"
+    local synth_ns="plan-synth-${pipeline_id}"
+    # Planner specialists default to 2 (risk-averse + scope-minimal); cap at 3 to
+    # avoid runaway token cost. Budget multiplier may scale up to the hard cap.
+    local plan_agents="${RUFLO_PLAN_MAX_AGENTS:-2}"
+    local _plan_hard_cap="${RUFLO_PLAN_HARD_MAX_AGENTS:-3}"
+    if ! [[ "$_plan_hard_cap" =~ ^[0-9]+$ ]] || (( _plan_hard_cap < 1 )); then
+        _plan_hard_cap=3
+    fi
+    if (( _plan_hard_cap < plan_agents )); then
+        _plan_hard_cap="$plan_agents"
+    fi
+    if [[ -n "${RUFLO_COST_BUDGET_MULTIPLIER:-}" ]] && \
+       [[ "${RUFLO_COST_BUDGET_MULTIPLIER}" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+        local _default_plan="$plan_agents"
+        plan_agents=$(awk -v d="$_default_plan" -v m="${RUFLO_COST_BUDGET_MULTIPLIER}" -v cap="$_plan_hard_cap" \
+            'BEGIN{v=int(d*m); print (v<1?1:(v>cap?cap:v))}' 2>/dev/null || echo "$plan_agents")
+    fi
+
+    emit_event "ruflo.plan_hive_start" "max_agents=$plan_agents" "namespace=$plan_ns"
+
+    # Gate: hive must be initialized by ruflo_init() before stages run
+    if [[ "${RUFLO_HIVE_AVAILABLE:-false}" != "true" ]]; then
+        emit_event "ruflo.plan_hive_failed" "reason=hive_unavailable"
+        return 1
+    fi
+    local hive_id="$RUFLO_HIVE_ID"
+
+    # Spawn specialist planner agents — non-fatal spawn failure
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 60 npx -y ruflo@latest hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$plan_agents" \
+            --role specialist \
+            --prefix "planner-${pipeline_id}" 2>/dev/null || true
+    else
+        ruflo_with_timeout 60 ruflo hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$plan_agents" \
+            --role specialist \
+            --prefix "planner-${pipeline_id}" 2>/dev/null || true
+    fi
+
+    # Store goal, issue body, and task type for planners to consume.
+    # Issue body is bounded to 8000 bytes to avoid argv limits.
+    ruflo_store "plan-goal" "$goal" "$plan_ns" "plan,goal" || true
+    if [[ -n "$issue_body" ]]; then
+        local _bounded_issue
+        _bounded_issue=$(printf '%s' "$issue_body" | head -c 8000 2>/dev/null || true)
+        ruflo_store "plan-issue" "$_bounded_issue" "$plan_ns" "plan,issue" || true
+    fi
+    ruflo_store "plan-task-type" "${TASK_TYPE:-feature}" "$plan_ns" "plan,context" || true
+
+    # Seed historical recall context — past planning outcomes (recurring scope
+    # creep, repeat root-cause patterns) inform planners before orchestration.
+    _ruflo_seed_specialist_history "plan" "$plan_ns" || true
+
+    # Orchestrate planner agents with explicit strategy constraints. The goal
+    # names each planner role and the required output structure so each
+    # specialist writes to a distinct key in the namespace.
+    local plan_goal
+    if (( plan_agents >= 3 )); then
+        plan_goal="Multi-agent planning divergence: spawn three specialist planners (risk-averse, scope-minimal, performance-first) each producing an independent implementation plan in namespace ${plan_ns}.
+
+Risk-averse planner: minimize blast radius, smallest safe change, flag scope creep, prefer additive changes over invasive refactors. Write to key 'planner-risk-averse-plan'.
+Scope-minimal planner: implement ONLY what is explicitly asked, zero extras, no speculative abstractions. Write to key 'planner-scope-minimal-plan'.
+Performance-first planner: optimize for build loop iteration speed, prefer changes that reduce future test or rebuild time. Write to key 'planner-performance-first-plan'.
+
+Each plan must follow this structure: '## Files to Modify', '## Implementation Steps', '## Task Checklist' (5-15 checkbox items), '## Testing Approach', '## Definition of Done'."
+    else
+        plan_goal="Multi-agent planning divergence: spawn two specialist planners (risk-averse, scope-minimal) each producing an independent implementation plan in namespace ${plan_ns}.
+
+Risk-averse planner: minimize blast radius, smallest safe change, flag scope creep, prefer additive changes over invasive refactors. Write to key 'planner-risk-averse-plan'.
+Scope-minimal planner: implement ONLY what is explicitly asked, zero extras, no speculative abstractions. Write to key 'planner-scope-minimal-plan'.
+
+Each plan must follow this structure: '## Files to Modify', '## Implementation Steps', '## Task Checklist' (5-15 checkbox items), '## Testing Approach', '## Definition of Done'."
+    fi
+
+    local _orch_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 300 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "$plan_goal" \
+            --max-turns 15 \
+            --mode "planning" 2>/dev/null || _orch_exit=$?
+    else
+        ruflo_with_timeout 300 ruflo coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "$plan_goal" \
+            --max-turns 15 \
+            --mode "planning" 2>/dev/null || _orch_exit=$?
+    fi
+
+    # Fail fast if orchestration failed — no plans to synthesize
+    if [[ $_orch_exit -ne 0 ]]; then
+        warn "ruflo: plan orchestration failed with exit $_orch_exit"
+        emit_event "ruflo.plan_hive_failed" "reason=orchestration_failed" "exit=$_orch_exit"
+        return 1
+    fi
+
+    # Aggregate via union — collect each planner's plan from the namespace
+    local _union_plans=""
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _union_plans=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+            --action list \
+            --namespace "$plan_ns" 2>/dev/null) || true
+    else
+        _union_plans=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+            --action list \
+            --namespace "$plan_ns" 2>/dev/null) || true
+    fi
+
+    # If union is empty, we have no plans at all — fail so caller falls back
+    if [[ -z "$_union_plans" ]]; then
+        warn "ruflo: planners produced no output in namespace $plan_ns"
+        emit_event "ruflo.plan_hive_failed" "reason=empty_union"
+        return 1
+    fi
+
+    # ─── Queen collapse: synthesis pass to merge plans into one coherent plan ──
+    # Two or three planners diverge by design. Returning the raw union confuses
+    # the downstream validation gate (multiple "## Files to Modify" sections,
+    # conflicting task counts). The queen synthesis pass merges them into ONE
+    # plan that preserves the safest scope from risk-averse, the clearest steps
+    # from scope-minimal, and surfaces real divergences in a dedicated section.
+    #
+    # Seed the synthesis namespace with the union (head-bounded to avoid argv
+    # limits), then orchestrate a synthesis pass with --mode synthesis.
+    local _union_head
+    _union_head=$(printf '%s' "$_union_plans" | head -c 8000 2>/dev/null || echo "")
+    if [[ -n "$_union_head" ]]; then
+        ruflo_store "plan-union" "$_union_head" "$synth_ns" "plan,synthesis" 2>/dev/null || true
+    fi
+
+    local _synth_goal="Plan synthesis: merge multiple independent planner outputs from namespace ${plan_ns} into one coherent implementation plan.
+
+Preserve:
+- Safest scope from risk-averse planner (minimal blast radius, additive changes)
+- Clearest steps from scope-minimal planner (no extras, no speculative abstractions)
+- Build-loop optimizations from performance-first planner (when present)
+
+Surface real divergences (where planners disagree on scope or approach) in a dedicated '## Strategy Divergences' section. Omit that section when planners agree.
+
+Output exactly ONE plan with this structure (in this order): '## Files to Modify', '## Implementation Steps' (numbered, ordered safest-first), '## Task Checklist' (5-15 checkbox items, '- [ ]' format), '## Strategy Divergences' (only if planners diverged), '## Testing Approach', '## Definition of Done'.
+
+Write the synthesized plan to namespace ${synth_ns} under key 'plan-synthesized'."
+
+    local _synth_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 120 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    else
+        ruflo_with_timeout 120 ruflo coordination orchestrate \
+            --hive-id "$hive_id" --goal "$_synth_goal" --max-turns 5 --mode synthesis 2>/dev/null || _synth_exit=$?
+    fi
+
+    # Read synthesis result from hive memory — only if orchestration succeeded
+    local _synth_result=""
+    if [[ "$_synth_exit" -eq 0 ]]; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            _synth_result=$(ruflo_with_timeout 10 npx -y ruflo@latest hive-mind memory \
+                --action list --namespace "$synth_ns" 2>/dev/null || true)
+        else
+            _synth_result=$(ruflo_with_timeout 10 ruflo hive-mind memory \
+                --action list --namespace "$synth_ns" 2>/dev/null || true)
+        fi
+    fi
+
+    # Emit the synthesized plan if we got one; otherwise emit the union as a
+    # fallback (the validation gate may still accept it, and pipeline can
+    # always retry). Either way, return 0 so the caller writes the result.
+    if [[ -n "$_synth_result" ]] && [[ "$_synth_exit" -eq 0 ]]; then
+        printf '%s\n' "$_synth_result"
+        emit_event "ruflo.plan_hive_complete" "hive_id=$hive_id" "synthesis=ok" "namespace=$synth_ns"
+    else
+        # Fallback to union when synthesis fails — surface telemetry so we can
+        # diagnose synthesis flakiness without breaking the pipeline.
+        printf '%s\n' "$_union_plans"
+        emit_event "ruflo.plan_hive_synthesis_fallback" "synth_exit=$_synth_exit" "namespace=$plan_ns"
+        emit_event "ruflo.plan_hive_complete" "hive_id=$hive_id" "synthesis=fallback"
+    fi
+
+    # Persist plan result for downstream stages (bounded preview)
+    local _plan_preview="${_synth_result:-$_union_plans}"
+    ruflo_store "stage-plan-result" \
+        "$(printf '%s' "$_plan_preview" | head -c 2000 2>/dev/null || true)" \
+        "pipeline-${pipeline_id}" \
+        "plan,outcome" || true
+
     return 0
 }
 

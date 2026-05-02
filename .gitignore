@@ -23,6 +23,9 @@ demo/*.gif
 .claude/code-review.json
 .claude/hygiene-report.json
 
+# Shipwright runtime event logs (per-issue/per-run JSONL streams)
+.shipwright/events-*.jsonl
+
 # Generated changelogs (produced by sw-changelog.sh)
 CHANGELOG-*.md
 

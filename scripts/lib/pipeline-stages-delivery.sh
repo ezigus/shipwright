@@ -115,6 +115,9 @@ stage_pr() {
     real_files=$(_safe_base_diff --name-only | grep -v '^\.claude/' || true)
     if [[ -z "$real_files" ]]; then
         error "No real code changes detected — only pipeline artifacts (.claude/ logs)."
+        error "Likely causes: (a) WIP branch was discarded — check 'Check for partial work branch' step in CI,"
+        error "  (b) build agent didn't reproduce prior work (check ruflo/Claude errors in build log),"
+        error "  (c) changes already on main — verify: git log origin/main..HEAD"
         error "The build agent did not produce meaningful changes. Skipping PR creation."
         emit_event "pr.rejected" "issue=${ISSUE_NUMBER:-0}" "reason=no_real_changes"
         # Mark issue so auto-retry knows not to retry empty builds

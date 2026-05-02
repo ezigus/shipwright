@@ -367,6 +367,19 @@ jobs:
         run: |
           git config user.name "shipwright[bot]"
           git config user.email "shipwright[bot]@users.noreply.github.com"
+          # Reject commits whose subject contains Anthropic/Claude API error markers.
+          mkdir -p .git/hooks
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'set -e' \
+            'subject=$(head -1 "$1")' \
+            "if echo \"\$subject\" | grep -qiE 'Invalid API key|authentication_error|API key expired'; then" \
+            '  echo "::error::commit-msg hook rejected: subject contains API error pattern"' \
+            '  echo "Subject was: $subject"' \
+            '  exit 1' \
+            'fi' \
+            > .git/hooks/commit-msg
+          chmod +x .git/hooks/commit-msg
 
       - name: Restore persistent state
         run: |
@@ -463,22 +476,24 @@ jobs:
       - name: Check for partial work branch
         run: |
           BRANCH="shipwright/issue-${ISSUE_NUMBER}"
-          if git ls-remote --heads origin "$BRANCH" 2>/dev/null | grep -q "$BRANCH"; then
+          if git ls-remote --heads --exit-code origin "$BRANCH" >/dev/null 2>&1; then
             echo "Found partial work branch: $BRANCH"
             git fetch origin "$BRANCH" 2>/dev/null || true
 
-            # Check if branch is polluted with API error artifacts
-            LAST_MSG=$(git log -1 --format='%s' "origin/$BRANCH" 2>/dev/null || echo "")
             BRANCH_CONTENT=$(git log -5 --format='%s' "origin/$BRANCH" 2>/dev/null || echo "")
-            if echo "$BRANCH_CONTENT" | grep -qiE 'Invalid API key|authentication_error|API key expired'; then
-              echo "WARNING: Partial work branch appears polluted with API errors — deleting and starting fresh"
+            if echo "$BRANCH_CONTENT" | grep -qiE 'Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error'; then
+              POLLUTED_SUBJECT=$(git log -5 --format='%s' "origin/$BRANCH" 2>/dev/null \
+                | grep -iE 'Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error' | head -1 || echo "unknown")
+              echo "::warning::Partial work branch appears polluted with API errors — deleting. Trigger commit subject: ${POLLUTED_SUBJECT}"
               git push origin --delete "$BRANCH" 2>/dev/null || true
             else
-              echo "Merging partial work branch..."
-              git merge "origin/$BRANCH" --no-edit 2>/dev/null || {
-                echo "Merge conflict on partial branch — starting fresh"
-                git merge --abort 2>/dev/null || true
-              }
+              # -B force-resets local ref to remote tip — correct when consuming WIP branch.
+              if git checkout -B "$BRANCH" "origin/$BRANCH" 2>/dev/null; then
+                echo "GIT_BRANCH=${BRANCH}" >> "$GITHUB_ENV"
+                echo "Checked out ${BRANCH} — continuing from prior work"
+              else
+                echo "::warning::Could not checkout ${BRANCH} — starting fresh on main (investigate checkout failure)"
+              fi
             fi
           fi
 
@@ -820,6 +835,11 @@ jobs:
         run: |
           BRANCH="shipwright/issue-${ISSUE_NUMBER}"
           if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+            # Defense-in-depth: ensure runtime artifacts never get committed to WIP
+            git rm --cached -r --ignore-unmatch \
+              .claude/pipeline-artifacts .claude/loop-logs \
+              .claude/daemon-config.json .claude/helpers \
+              .claude-flow 2>/dev/null || true
             git add -A 2>/dev/null || true
             git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
           fi

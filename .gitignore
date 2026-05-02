@@ -22,6 +22,10 @@ demo/*.gif
 .claude/intelligence-cache.json
 .claude/code-review.json
 .claude/hygiene-report.json
+.claude/scheduled_tasks.lock
+
+# Shipwright runtime event logs (per-issue/per-run JSONL streams)
+.shipwright/events-*.jsonl
 
 # Generated changelogs (produced by sw-changelog.sh)
 CHANGELOG-*.md

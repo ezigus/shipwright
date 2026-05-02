@@ -650,6 +650,61 @@ test_disconnect_sends_payload() {
     return 0
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Process Lifecycle: run_heartbeat_loop kills sleep child on SIGTERM (no orphan)
+# ──────────────────────────────────────────────────────────────────────────────
+test_run_heartbeat_loop_kills_sleep_on_sigterm() {
+    # Regression for issue #448: run_heartbeat_loop() must kill its sleep child
+    # on SIGTERM rather than leaving it orphaned to init/launchd.
+    # Part 1: static check that the fix is present in the real function.
+    local connect_script="$SCRIPT_DIR/sw-connect.sh"
+    local sentinel=9843
+
+    if ! grep -q '_hb_sleep_pid' "$connect_script" 2>/dev/null; then
+        echo "    run_heartbeat_loop() missing _hb_sleep_pid tracking"
+        return 1
+    fi
+    if ! grep -q 'trap.*_hb_sleep_pid' "$connect_script" 2>/dev/null; then
+        echo "    run_heartbeat_loop() missing SIGTERM trap for _hb_sleep_pid"
+        return 1
+    fi
+
+    # Part 2: live-process orphan test — spawn the exact pattern from run_heartbeat_loop()
+    # and verify SIGTERM kills the sleep child (sentinel duration makes it unambiguous).
+    # Guard: skip live portion when pgrep cannot list processes (restricted environment).
+    if ! pgrep "$$" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local subshell_pid=""
+    (
+        _hb_sleep_pid=""
+        trap '[[ -n "$_hb_sleep_pid" ]] && kill "$_hb_sleep_pid" 2>/dev/null || true; exit 0' SIGTERM SIGINT
+        while true; do
+            sleep "$sentinel" & _hb_sleep_pid=$!; wait "$_hb_sleep_pid" 2>/dev/null || true; _hb_sleep_pid=""
+        done
+    ) >/dev/null 2>&1 &
+    subshell_pid=$!
+
+    sleep 0.2
+    if ! pgrep -f "sleep $sentinel" >/dev/null 2>&1; then
+        echo "    pre-kill: sentinel sleep $sentinel not found (test inconclusive)"
+        kill "$subshell_pid" 2>/dev/null || true
+        return 1
+    fi
+
+    kill "$subshell_pid" 2>/dev/null || true
+    wait "$subshell_pid" 2>/dev/null || true
+    sleep 0.3
+
+    if pgrep -f "sleep $sentinel" >/dev/null 2>&1; then
+        pkill -f "sleep $sentinel" 2>/dev/null || true
+        echo "    orphan sleep $sentinel survived SIGTERM — trap regression in run_heartbeat_loop()"
+        return 1
+    fi
+    return 0
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION & UTILITIES
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -788,6 +843,11 @@ echo ""
 echo -e "${PURPLE}${BOLD}Heartbeat & Disconnect Payloads${RESET}"
 run_test "Heartbeat payload includes required fields" test_heartbeat_payload_fields
 run_test "Send disconnect sends proper payload" test_disconnect_sends_payload
+echo ""
+
+# Process Lifecycle
+echo -e "${PURPLE}${BOLD}Process Lifecycle${RESET}"
+run_test "run_heartbeat_loop kills sleep child on SIGTERM (no orphan)" test_run_heartbeat_loop_kills_sleep_on_sigterm
 echo ""
 
 # Configuration & Utilities

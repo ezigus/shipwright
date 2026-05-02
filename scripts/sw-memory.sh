@@ -687,15 +687,16 @@ memory_analyze_failure() {
     fi
 
     # Gather log context — use the specific log file if it exists,
-    # otherwise glob for any logs in the artifacts directory
+    # otherwise glob for stage-specific logs in the artifacts directory
     local log_tail=""
     if [[ -f "$log_file" ]]; then
         log_tail=$(tail -200 "$log_file" 2>/dev/null || true)
     else
-        # Try to find stage-specific logs in the same directory
+        # Try to find stage-specific logs in the same directory using stage name
+        # Pattern matches: ${stage}*.log (includes ${stage}-*.log, ${stage}-results.log, etc.)
         local log_dir
         log_dir=$(dirname "$log_file" 2>/dev/null || echo ".")
-        log_tail=$(tail -200 "$log_dir"/*.log 2>/dev/null || true)
+        log_tail=$(tail -200 "$log_dir"/${stage}*.log 2>/dev/null || true)
     fi
 
     if [[ -z "$log_tail" ]]; then

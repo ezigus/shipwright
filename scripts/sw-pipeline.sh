@@ -814,6 +814,12 @@ REVIEW_BUILD_RETRIES=$(_config_get_int "pipeline.review_build_retries" 2 2>/dev/
 STASHED_CHANGES=false
 SELF_HEAL_COUNT=0
 
+# Cycling halt: cap on consecutive test-stage failures across pipeline invocations.
+# Despite the name (kept for backward compatibility), this counts test-stage failures,
+# not build iterations — set SW_PIPELINE_MAX_BUILD_RETRIES=0 to disable (escape hatch).
+SW_PIPELINE_MAX_BUILD_RETRIES=${SW_PIPELINE_MAX_BUILD_RETRIES:-3}
+PIPELINE_STUCK_CYCLING=false
+
 # ─── Cost Tracking ───────────────────────────────────────────────────────
 TOTAL_INPUT_TOKENS=0
 TOTAL_OUTPUT_TOKENS=0
@@ -821,10 +827,15 @@ COST_MODEL_RATES='{"opus":{"input":15,"output":75},"sonnet":{"input":3,"output":
 
 # ─── Heartbeat ────────────────────────────────────────────────────────────────
 HEARTBEAT_PID=""
+HEARTBEAT_JOB_ID=""
 
 start_heartbeat() {
-    local job_id="${REPO_HASH:+${REPO_HASH}-}${PIPELINE_NAME:-pipeline-$$}"
+    HEARTBEAT_JOB_ID="${REPO_HASH:+${REPO_HASH}-}${PIPELINE_NAME:-pipeline-$$}"
+    local job_id="$HEARTBEAT_JOB_ID"
     (
+        _hb_sleep_pid=""
+        # Kill the active sleep child on SIGTERM so it doesn't orphan to init.
+        trap '[[ -n "$_hb_sleep_pid" ]] && kill "$_hb_sleep_pid" 2>/dev/null || true; exit 0' TERM
         while true; do
             "$SCRIPT_DIR/sw-heartbeat.sh" write "$job_id" \
                 --pid $$ \
@@ -832,7 +843,10 @@ start_heartbeat() {
                 --stage "${CURRENT_STAGE_ID:-unknown}" \
                 --iteration "0" \
                 --activity "$(get_stage_description "${CURRENT_STAGE_ID:-}" 2>/dev/null || echo "Running pipeline")" 2>/dev/null || true
-            sleep "$(_config_get_int "pipeline.heartbeat_interval" 30 2>/dev/null || echo 30)"
+            sleep "$(_config_get_int "pipeline.heartbeat_interval" 30 2>/dev/null || echo 30)" &
+            _hb_sleep_pid=$!
+            wait "$_hb_sleep_pid" 2>/dev/null || true
+            _hb_sleep_pid=""
         done
     ) >/dev/null 2>&1 &
     HEARTBEAT_PID=$!
@@ -842,8 +856,9 @@ stop_heartbeat() {
     if [[ -n "${HEARTBEAT_PID:-}" ]]; then
         kill "$HEARTBEAT_PID" 2>/dev/null || true
         wait "$HEARTBEAT_PID" 2>/dev/null || true
-        "$SCRIPT_DIR/sw-heartbeat.sh" clear "${PIPELINE_NAME:-pipeline-$$}" 2>/dev/null || true
+        "$SCRIPT_DIR/sw-heartbeat.sh" clear "${HEARTBEAT_JOB_ID:-${PIPELINE_NAME:-pipeline-$$}}" 2>/dev/null || true
         HEARTBEAT_PID=""
+        HEARTBEAT_JOB_ID=""
     fi
 }
 
@@ -1466,6 +1481,78 @@ run_stage_with_retry() {
     done
 }
 
+# ─── Cycling Halt: Cumulative Test-Failure Counter ────────────────────────
+# Reads `## Log` section of pipeline-state.md and returns the trailing run of
+# consecutive `test` stage failures. Resets to 0 on any `test` `complete` entry.
+# Survives daemon/pipeline restarts because the log is persisted to disk.
+#
+# Bash 3.2 compatible: no associative arrays; stage extraction uses sed instead of
+# BASH_REMATCH array indexing to avoid any ambiguity on Bash 3.2 (macOS default).
+#
+# Format hardening (#448 review feedback): the stage-header regex accepts any
+# non-whitespace stage id (digits, uppercase, custom stage names like `test_2`)
+# so the parser doesn't silently drop entries when the log format drifts. We
+# also warn (to stderr — log-only) when a non-empty log contains no `### test`
+# headers at all, which would silently disable the cycling halt.
+count_consecutive_test_failures() {
+    local state_file="${1:-${STATE_FILE:-}}"
+    if [[ -z "$state_file" || ! -f "$state_file" ]]; then
+        echo 0
+        return 0
+    fi
+
+    local in_log=0 current_stage="" outcomes="" saw_log_section=0 saw_any_test_header=0
+    while IFS= read -r line; do
+        if [[ "$line" == "## Log" ]]; then
+            in_log=1
+            saw_log_section=1
+            continue
+        fi
+        [[ "$in_log" -eq 0 ]] && continue
+        # Accept any stage id token (e.g. test, test_2, build, COMPOUND_QUALITY).
+        # Outcome matching below filters to the `test` stage specifically.
+        # sed extraction avoids BASH_REMATCH array indexing for Bash 3.2 portability.
+        if [[ "$line" =~ ^###[[:space:]] ]]; then
+            current_stage=$(printf '%s\n' "$line" | sed -E 's/^###[[:space:]]+([^[:space:]]+)[[:space:]].*/\1/')
+            [[ "$current_stage" == "test" ]] && saw_any_test_header=1
+            continue
+        fi
+        if [[ "$current_stage" == "test" ]]; then
+            if [[ "$line" =~ ^complete ]]; then
+                outcomes="$outcomes pass"
+                current_stage=""
+            elif [[ "$line" =~ ^failed ]]; then
+                outcomes="$outcomes fail"
+                current_stage=""
+            fi
+        fi
+    done < "$state_file"
+
+    # Defensive warning: log present but no `test` stage entries parsed. Either
+    # the pipeline genuinely never reached the test stage (legitimate 0) or
+    # the log format drifted and the parser silently missed entries. We only
+    # warn when a literal `### test` header is visible in the file but the
+    # parser failed to recognize it — a real format-drift signal.
+    if [[ "$saw_log_section" -eq 1 && "$saw_any_test_header" -eq 0 ]]; then
+        if grep -qE '^(##|####)[[:space:]]+test[[:space:]]' "$state_file" 2>/dev/null; then
+            echo "WARN: count_consecutive_test_failures: state file '$state_file' contains 'test' stage headers at an unexpected heading level — log format may have drifted; cycling halt may be disabled" >&2
+            emit_event "pipeline.cycling_halt_disabled" \
+                "reason=log_format_drift" \
+                "state_file=${state_file}" || true
+        fi
+    fi
+
+    local count=0 word
+    for word in $outcomes; do
+        if [[ "$word" == "fail" ]]; then
+            count=$((count + 1))
+        elif [[ "$word" == "pass" ]]; then
+            count=0
+        fi
+    done
+    echo "$count"
+}
+
 # ─── Self-Healing Build→Test Feedback Loop ─────────────────────────────────
 # When tests fail after a build, this captures the error and re-runs the build
 # with the error context, so Claude can fix the issue automatically.
@@ -1695,6 +1782,47 @@ Focus on fixing the failing tests while keeping all passing tests working."
             last_test_error=$(grep -vE '^\s*\{ platform:|Available destinations|The requested device|no available devices' "$test_log" 2>/dev/null | tail -15 || echo "Test command failed with no output")
         fi
         mark_stage_failed "test"
+
+        # ── Cycling Halt: cumulative cap across pipeline invocations ──
+        # External automation (daemon, autonomous pipeline) may re-enter build
+        # after self-healing exhausts. Persistent log of test failures detects
+        # this and halts with a distinct `stuck_cycling` state.
+        #
+        # IMPORTANT: This check runs AFTER the current cycle's test failure has
+        # been logged via mark_stage_failed (which calls log_stage + write_state).
+        # Reading the count BEFORE running the cycle would falsely halt fresh
+        # resumes whose first attempt hasn't run yet (#448 review feedback).
+        local _max_build_retries="${SW_PIPELINE_MAX_BUILD_RETRIES:-3}"
+        # Bounds validation: negative or non-integer values silently disable the cycling
+        # halt (the -gt 0 check below would be false), re-introducing the #448 bug.
+        case "$_max_build_retries" in
+            ''|*[!0-9]*)
+                warn "SW_PIPELINE_MAX_BUILD_RETRIES='${_max_build_retries}' is not a non-negative integer; using default of 3"
+                _max_build_retries=3
+                ;;
+        esac
+        if [[ "$_max_build_retries" -gt 0 ]]; then
+            local _consec_failures
+            _consec_failures=$(count_consecutive_test_failures)
+            if [[ "$_consec_failures" -ge "$_max_build_retries" ]]; then
+                PIPELINE_STUCK_CYCLING=true
+                if declare -f log_stage >/dev/null 2>&1; then
+                    log_stage "pipeline" "stuck_cycling: ${_consec_failures} consecutive test failures (cap=${_max_build_retries}). Override: SW_PIPELINE_MAX_BUILD_RETRIES=0"
+                fi
+                update_status "stuck_cycling" "build"
+                error "Pipeline halted: ${_consec_failures} consecutive test failures reached cap of ${_max_build_retries}"
+                if [[ "$_max_build_retries" -eq 0 ]]; then
+                    warn "Cycling halt is disabled (SW_PIPELINE_MAX_BUILD_RETRIES=0)"
+                else
+                    warn "Override: SW_PIPELINE_MAX_BUILD_RETRIES=0 shipwright pipeline resume"
+                fi
+                emit_event "pipeline.stuck_cycling" \
+                    "issue=${ISSUE_NUMBER:-0}" \
+                    "consecutive_failures=${_consec_failures}" \
+                    "cap=${_max_build_retries}" || true
+                return 1
+            fi
+        fi
 
         # ── Convergence Detection ──
         # Hash the error output to detect repeated failures
@@ -2013,6 +2141,10 @@ run_pipeline() {
                     info "Complexity reassessment: ${reassessment}"
                 fi
             else
+                if [[ "${PIPELINE_STUCK_CYCLING:-false}" == "true" ]]; then
+                    # Cycling halt already wrote `status: stuck_cycling` — preserve it.
+                    return 1
+                fi
                 update_status "failed" "test"
                 error "Pipeline failed: build→test self-healing exhausted"
                 return 1
@@ -2216,7 +2348,9 @@ run_pipeline() {
             local stage_dur_s
             stage_dur_s=$(( $(now_epoch) - stage_start_epoch ))
             error "Pipeline failed at stage: ${BOLD}$id${RESET}"
-            update_status "failed" "$id"
+            if [[ "${PIPELINE_STUCK_CYCLING:-false}" != "true" ]]; then
+                update_status "failed" "$id"
+            fi
             emit_event "stage.failed" \
                 "issue=${ISSUE_NUMBER:-0}" \
                 "stage=$id" \
@@ -2499,12 +2633,16 @@ run_dry_run() {
         stage_enabled=$(echo "$stage_json" | jq -r '.enabled')
         stage_gate=$(echo "$stage_json" | jq -r '.gate')
 
-        # Determine stage model (config override or default)
-        stage_config_model=$(echo "$stage_json" | jq -r '.config.model // ""')
-        if [[ -n "$stage_config_model" && "$stage_config_model" != "null" ]]; then
-            stage_model_display="$stage_config_model"
+        # Determine stage model: CLI --model flag wins; else per-stage config; else default
+        if [[ -n "${MODEL:-}" ]]; then
+            stage_model_display="$MODEL"
         else
-            stage_model_display="$default_model"
+            stage_config_model=$(echo "$stage_json" | jq -r '.config.model // ""')
+            if [[ -n "$stage_config_model" && "$stage_config_model" != "null" ]]; then
+                stage_model_display="$stage_config_model"
+            else
+                stage_model_display="$default_model"
+            fi
         fi
 
         # Format enabled
@@ -2824,6 +2962,16 @@ pipeline_start() {
             echo -e "  Resume it: ${DIM}shipwright pipeline resume${RESET}"
             echo -e "  Abort it:  ${DIM}shipwright pipeline abort${RESET}"
             exit 1
+        fi
+        # `stuck_cycling` is a guardrail state — block fresh starts that would
+        # silently overwrite the halt record. Operator must abort or override.
+        if [[ "$existing_status" == "stuck_cycling" ]]; then
+            error "Previous pipeline halted in 'stuck_cycling' state — refusing to start a new one."
+            echo -e "  ${DIM}The previous run halted after consecutive test failures.${RESET}"
+            echo -e "  Abort and start fresh: ${BOLD}shipwright pipeline abort${RESET}"
+            echo -e "  Resume with cap disabled: ${BOLD}SW_PIPELINE_MAX_BUILD_RETRIES=0 shipwright pipeline resume${RESET}"
+            emit_event "pipeline.start_refused" "reason=stuck_cycling" 2>/dev/null || true
+            exit 2
         fi
     fi
 
@@ -3412,6 +3560,35 @@ pipeline_start() {
 
 pipeline_resume() {
     setup_dirs
+
+    # Refuse to resume a `stuck_cycling` pipeline unless the operator has
+    # explicitly disabled the cap via SW_PIPELINE_MAX_BUILD_RETRIES=0.
+    # Read directly from the state file because resume_state() unconditionally
+    # rewrites PIPELINE_STATUS to "running" before returning (#448 review feedback).
+    if [[ -f "$STATE_FILE" ]]; then
+        if [[ ! -r "$STATE_FILE" ]]; then
+            error "State file '$STATE_FILE' exists but is not readable — cannot verify pipeline state before resume"
+            exit 1
+        fi
+        local _persisted_status
+        _persisted_status=$(sed -n 's/^status: *//p' "$STATE_FILE" | head -1)
+        if [[ "$_persisted_status" == "stuck_cycling" ]]; then
+            local _max_retries_resume="${SW_PIPELINE_MAX_BUILD_RETRIES:-3}"
+            if [[ "$_max_retries_resume" != "0" ]]; then
+                error "Pipeline is in 'stuck_cycling' state — refusing to resume."
+                echo -e "  ${DIM}The previous run halted after consecutive test failures.${RESET}"
+                echo -e "  ${DIM}Investigate the failures, then either:${RESET}"
+                echo -e "    1. Fix the underlying issue and resume with cap disabled:"
+                echo -e "       ${BOLD}SW_PIPELINE_MAX_BUILD_RETRIES=0 shipwright pipeline resume${RESET}"
+                echo -e "    2. Abort and start fresh: ${BOLD}shipwright pipeline abort${RESET}"
+                emit_event "pipeline.resume_refused" "reason=stuck_cycling" "max_retries=$_max_retries_resume" 2>/dev/null || true
+                exit 2
+            fi
+            warn "Resuming stuck_cycling pipeline with SW_PIPELINE_MAX_BUILD_RETRIES=0 (cap disabled)."
+            emit_event "pipeline.stuck_cycling_resume_override" "max_retries=0" 2>/dev/null || true
+        fi
+    fi
+
     resume_state
 
     # Refuse to resume if pipeline is stuck (terminal state)
@@ -3497,13 +3674,14 @@ pipeline_status() {
 
     local status_icon
     case "$p_status" in
-        running)     status_icon="${CYAN}●${RESET}" ;;
-        complete)    status_icon="${GREEN}✓${RESET}" ;;
-        paused)      status_icon="${YELLOW}⏸${RESET}" ;;
-        interrupted) status_icon="${YELLOW}⚡${RESET}" ;;
-        failed)      status_icon="${RED}✗${RESET}" ;;
-        aborted)     status_icon="${RED}◼${RESET}" ;;
-        *)           status_icon="${DIM}○${RESET}" ;;
+        running)        status_icon="${CYAN}●${RESET}" ;;
+        complete)       status_icon="${GREEN}✓${RESET}" ;;
+        paused)         status_icon="${YELLOW}⏸${RESET}" ;;
+        interrupted)    status_icon="${YELLOW}⚡${RESET}" ;;
+        failed)         status_icon="${RED}✗${RESET}" ;;
+        aborted)        status_icon="${RED}◼${RESET}" ;;
+        stuck_cycling)  status_icon="${YELLOW}⚠${RESET}" ;;
+        *)              status_icon="${DIM}○${RESET}" ;;
     esac
 
     echo -e "  ${BOLD}Pipeline:${RESET}  $p_name"

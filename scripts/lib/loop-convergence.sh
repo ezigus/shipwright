@@ -3,6 +3,33 @@
 [[ -n "${_LOOP_CONVERGENCE_LOADED:-}" ]] && return 0
 _LOOP_CONVERGENCE_LOADED=1
 
+# Module-scope cache for stuckness detector ruflo throttling (issue #447).
+# Survives within a single shell process; the on-disk fingerprint file in
+# $LOG_DIR survives session restarts within the same loop run.
+: "${_STUCKNESS_RECALL_CACHE:=}"
+: "${_STUCKNESS_RECALL_CACHE_FP:=}"
+
+# Compute a stable fingerprint of (signals, reasons) so identical detection
+# patterns can be deduplicated. Falls back to cksum (POSIX-mandatory) when
+# md5/md5sum are unavailable, ensuring the output is always a valid 12-char
+# lowercase hex string and never empty.
+_stuckness_fingerprint() {
+    local signals="${1:-0}"
+    local reasons="${2:-}"
+    local _raw _hash
+    _raw=$(printf '%s\n%s\n' "$signals" "$reasons")
+    _hash=$(printf '%s' "$_raw" \
+        | (md5 -q 2>/dev/null || md5sum 2>/dev/null | awk '{print $1}') \
+        | cut -c1-12)
+    # Validate: must be exactly 12 lowercase hex chars; cksum fallback if not.
+    if [[ "${#_hash}" -ne 12 ]] || ! [[ "$_hash" =~ ^[0-9a-f]+$ ]]; then
+        local _crc
+        _crc=$(printf '%s' "$_raw" | cksum | awk '{print $1}')
+        _hash=$(printf '%012x' "${_crc:-0}")
+    fi
+    printf '%s' "$_hash"
+}
+
 # ─── Convergence Detection ────────────────────────────────────────────────────
 
 track_iteration_velocity() {
@@ -359,9 +386,34 @@ detect_stuckness() {
         if type emit_event >/dev/null 2>&1; then
             emit_event "loop.stuckness_detected" "signals=$stuckness_signals" "count=$STUCKNESS_COUNT" "iteration=$iteration" "reasons=${stuckness_reasons[*]}"
         fi
-        if type ruflo_store >/dev/null 2>&1; then
+
+        # Throttle: skip ruflo subprocesses when (signals, reasons) fingerprint
+        # is unchanged from the last detection. Fingerprint persists in LOG_DIR
+        # so it survives session restarts within the same loop run.
+        # Note: parallel --worktree pipelines each have their own LOG_DIR, so
+        # each pipeline's throttle is independent — no cross-process locking needed.
+        local _fp _prev_fp _fp_file=""
+        _fp=$(_stuckness_fingerprint "$stuckness_signals" "${stuckness_reasons[*]}")
+        if [[ -n "${LOG_DIR:-}" ]]; then
+            _fp_file="$LOG_DIR/.last-stuckness-fingerprint"
+            if [[ -f "$_fp_file" ]]; then
+                _prev_fp=$(cat "$_fp_file" 2>/dev/null || true)
+            else
+                _prev_fp=""
+            fi
+        else
+            _prev_fp=""   # fail-open: missing LOG_DIR forces "differs" branch
+        fi
+
+        if type ruflo_store >/dev/null 2>&1 && [[ "$_fp" != "$_prev_fp" ]]; then
+            local _reasons_escaped="${stuckness_reasons[*]}"
+            _reasons_escaped="${_reasons_escaped//\\/\\\\}"
+            _reasons_escaped="${_reasons_escaped//\"/\\\"}"
+            _reasons_escaped="${_reasons_escaped//$'\n'/\\n}"
+            _reasons_escaped="${_reasons_escaped//$'\r'/\\r}"
+            _reasons_escaped="${_reasons_escaped//$'\t'/\\t}"
             ruflo_store "stuckness-iter-${iteration}" \
-                "{\"signals\":$stuckness_signals,\"reasons\":\"${stuckness_reasons[*]}\",\"iteration\":$iteration}" \
+                "{\"signals\":$stuckness_signals,\"reasons\":\"${_reasons_escaped}\",\"iteration\":$iteration}" \
                 "learning-${REPO_HASH:-default}" "stuckness,loop,cycling" || true
         fi
         STUCKNESS_HINT="IMPORTANT: The loop appears stuck. Previous approaches have not worked. You MUST try a fundamentally different strategy. Reasons: ${stuckness_reasons[*]}"
@@ -380,9 +432,23 @@ detect_stuckness() {
         fi
 
         local ruflo_patterns=""
-        if type ruflo_recall >/dev/null 2>&1; then
+        if [[ "$_fp" == "$_STUCKNESS_RECALL_CACHE_FP" ]] && [[ -n "$_STUCKNESS_RECALL_CACHE" ]]; then
+            ruflo_patterns="$_STUCKNESS_RECALL_CACHE"
+        elif type ruflo_recall >/dev/null 2>&1; then
             ruflo_patterns=$(ruflo_recall "loop cycling identical diff stuckness" \
                 "learning-${REPO_HASH:-default}" 2>/dev/null || true)
+            _STUCKNESS_RECALL_CACHE="$ruflo_patterns"
+            _STUCKNESS_RECALL_CACHE_FP="$_fp"
+        fi
+
+        # Atomically persist fingerprint when it differs (after the calls fired).
+        if [[ "$_fp" != "$_prev_fp" ]] && [[ -n "$_fp_file" ]]; then
+            local _tmp="${_fp_file}.tmp.$$"
+            if printf '%s\n' "$_fp" > "$_tmp" 2>/dev/null; then
+                mv "$_tmp" "$_fp_file" 2>/dev/null || rm -f "$_tmp"
+            else
+                rm -f "$_tmp" 2>/dev/null || true
+            fi
         fi
 
         cat <<STUCK_SECTION

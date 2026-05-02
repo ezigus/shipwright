@@ -1,30 +1,30 @@
-# Tasks — fix(harness): no memory budget guard — concurrent pipelines OOM the host
+# Tasks — Stuckness detector floods ruflo with redundant subprocess spawns (throttle writes)
 
-## Status: In Progress
-Pipeline: autonomous | Branch: fix/fix-harness-no-memory-budget-guard-concu-445
+## Status: Complete
+Pipeline: autonomous | Branch: fix/stuckness-detector-floods-ruflo-with-red-447
 
 ## Checklist
-- [x] Helper functions added to `sw-pipeline.sh`
-- [x] Default thresholds + env-override + integer validation
-- [x] `pipeline_start` calls gate + write + post-write race recheck
-- [x] `pipeline_resume` re-claims a slot through the same gate
-- [x] EXIT trap calls `release_active_pipeline_lock` idempotently (safe even when start was refused before write)
-- [x] `sw-doctor.sh` lists active pipelines and free memory
-- [x] Unit tests in `sw-pipeline-memory-guard-test.sh` (18 cases)
-- [x] E2E tests #20–23 in `sw-e2e-smoke-test.sh`
-- [ ] Re-run unit + e2e suites in CI to confirm green on this branch
-- [ ] Manually verify `shipwright doctor` output in three states: zero locks, one live lock, one stale lock
-- [ ] Confirm `CHANGELOG.md` entry exists; add if missing
-- [ ] Spot-check `docs/` for stale "no concurrency awareness" claims
-- [x] Lock at `~/.shipwright/active-pipelines/<pid>.json` written on `start`/`resume`, deleted on EXIT (idempotent)
-- [x] Concurrency cap: at most one active pipeline per host (overridable via `SHIPWRIGHT_MAX_ACTIVE_PIPELINES`); enforced after stale reaping
-- [x] Memory floor: refuse start when `<4 GB` free (overridable via `SHIPWRIGHT_MIN_FREE_GB`); cross-platform probe; fail-closed on probe failure
-- [x] Refusal diagnostic names blocking pipeline's PID, `started_at`, `issue_or_goal`, `repo`, `pipeline_template`, and policy limits
-- [x] `shipwright doctor` lists active pipelines + free memory; warns at capacity or below floor
-- [x] Unit + e2e tests pass
-- [ ] CI re-run on this branch confirms green
-- [ ] CHANGELOG entry added if missing
+- [x] **Unit test** — `scripts/sw-lib-loop-convergence-test.sh` (14/14 assertions): first detection, identical detection, changed reasons re-arms, missing fingerprint fail-open, observability preserved, JSON escaping
+- [x] **Regression test** — `bash scripts/sw-lib-loop-restart-test.sh` (28/28 pass)
+- [x] **Regression test** — `bash scripts/sw-loop-test.sh` (237/237 pass)
+- [x] **Pipeline test** — `./scripts/sw-pipeline-test.sh` (72/72 pass)
+- [x] **Wire convergence test into npm test** — added to `package.json` `scripts.test`
+- [x] Read `scripts/lib/loop-convergence.sh:336-411` and confirm only the two call sites spawn ruflo subprocesses
+- [x] Add module-scope `_STUCKNESS_RECALL_CACHE` and `_STUCKNESS_RECALL_CACHE_FP` vars with `:=` defaults
+- [x] Add `_stuckness_fingerprint` helper (signals + reasons → md5[0..11], with cksum fallback)
+- [x] Compute fingerprint and read prior fingerprint inside the `signals >= 2` gate
+- [x] Wrap `ruflo_store` call — only invoke when fingerprint differs
+- [x] Wrap `ruflo_recall` call — reuse cache on hit, populate on miss
+- [x] Atomically write fingerprint via tmp+mv after a non-skipped call
+- [x] Preserve `emit_event` and `warn` — verified outside the throttle gate
+- [x] Preserve `|| true` on both ruflo calls (fail-open on subprocess error)
+- [x] Verify Bash 3.2 compatibility (no `declare -A`, no `${var,,}`, no `readarray`)
+- [x] Create `scripts/sw-lib-loop-convergence-test.sh` with 6 test cases
+- [x] Test 1: first detection — store + recall called once, fingerprint file written
+- [x] Test 2: identical detection — store + recall NOT called (cache hit)
+- [x] Test 3: changed reasons — store + recall fire again, fingerprint updated
+- [x] Test 4: fingerprint file deleted — fail-open path exercised
 
 ## Notes
-- Generated from pipeline plan at 2026-04-26T03:18:01Z
+- Generated from pipeline plan at 2026-05-01T20:43:10Z
 - Pipeline will update status as tasks complete

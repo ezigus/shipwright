@@ -374,11 +374,40 @@ ${last_error}"
         [[ -z "$prompt_goal" ]] && prompt_goal="${ORIGINAL_GOAL:-$GOAL}"
     fi
 
+    # Iteration guidance: failure diagnosis, memory KNOWN FIX, and human feedback
+    # These are exported by sw-loop.sh but NOT in GOAL (compose_prompt uses ORIGINAL_GOAL),
+    # so they must be delivered here rather than being silently dropped.
+    local iteration_guidance_section=""
+    local _ig_parts=""
+    if [[ -n "${LOOP_CLOSED_LOOP_FIX:-}" ]]; then
+        _ig_parts="${_ig_parts}KNOWN FIX (from past success): ${LOOP_CLOSED_LOOP_FIX}
+
+"
+    fi
+    if [[ -n "${LOOP_FAILURE_DIAGNOSIS:-}" ]]; then
+        _ig_parts="${_ig_parts}${LOOP_FAILURE_DIAGNOSIS}
+
+"
+    fi
+    if [[ -n "${LOOP_HUMAN_FEEDBACK:-}" ]]; then
+        _ig_parts="${_ig_parts}HUMAN FEEDBACK: ${LOOP_HUMAN_FEEDBACK}
+
+"
+    fi
+    if [[ -n "$_ig_parts" ]]; then
+        iteration_guidance_section="## Iteration Guidance
+${_ig_parts}"
+    fi
+
     # Pipeline context section (Layer A: sidecar delivery of synthesized context)
     local pipeline_context_section=""
     if [[ -n "${LOOP_CONTEXT_FILE:-}" && -f "${LOOP_CONTEXT_FILE:-}" ]]; then
-        local _ctx
-        _ctx="$(cat "$LOOP_CONTEXT_FILE" 2>/dev/null || true)"
+        local _ctx=""
+        if [[ -r "${LOOP_CONTEXT_FILE}" ]]; then
+            _ctx="$(cat "$LOOP_CONTEXT_FILE" 2>/dev/null || true)"
+        else
+            warn "context-file '${LOOP_CONTEXT_FILE}' exists but is not readable — proceeding without pipeline context"
+        fi
         if [[ -n "$_ctx" ]]; then
             pipeline_context_section="## Pipeline Context
 ${_ctx}
@@ -460,6 +489,8 @@ ${git_log}
 ${test_section}
 
 ${error_summary_section:+$error_summary_section
+}
+${iteration_guidance_section:+$iteration_guidance_section
 }
 ${memory_section:+## Memory Context
 $memory_section

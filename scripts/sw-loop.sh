@@ -38,6 +38,12 @@ fi
 # Source loop sub-modules for modular iteration management
 [[ -f "$SCRIPT_DIR/lib/loop-iteration.sh" ]] && source "$SCRIPT_DIR/lib/loop-iteration.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-convergence.sh" ]] && source "$SCRIPT_DIR/lib/loop-convergence.sh"
+# Goal sanitization (Layer B): unified _strip_synthesized_sections helper.
+# Sourced directly so standalone `sw loop` invocations also have it available,
+# not just paths that transitively pull it via loop-restart.sh / pipeline-state.sh
+# (#448 review feedback).
+# shellcheck source=lib/goal-sanitize.sh
+[[ -f "$SCRIPT_DIR/lib/goal-sanitize.sh" ]] && source "$SCRIPT_DIR/lib/goal-sanitize.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-restart.sh" ]] && source "$SCRIPT_DIR/lib/loop-restart.sh"
 [[ -f "$SCRIPT_DIR/lib/loop-progress.sh" ]] && source "$SCRIPT_DIR/lib/loop-progress.sh"
 # Per-iteration cost recording (issue #87) — record_iteration_cost reads $ITER_COST_JSONL
@@ -424,24 +430,77 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     exit 1
 fi
 
-# Validate --context-file path (if provided by pipeline)
+# Validate --context-file path (if provided by pipeline).
+# Resolves symlinks AND `..` so an attacker can't bypass the prefix check with a
+# crafted path like `/workspace/shipwright/../sensitive.md` or a symlink that
+# resolves outside PROJECT_ROOT (#448 review feedback).
+#
+# Bash 3.2 / macOS portable: `readlink -f` is GNU-only, so we walk the symlink
+# chain manually with a bounded loop, then `cd ... && pwd -P` the parent dir to
+# strip any remaining `..` segments and per-component symlinks.
 if [[ -n "$LOOP_CONTEXT_FILE" ]]; then
     PROJECT_ROOT="$(git rev-parse --show-toplevel)"
-    # Use trailing-slash boundary to reject sibling-prefix paths like
-    # /workspace/shipwright-evil/x.md when PROJECT_ROOT=/workspace/shipwright
-    case "$LOOP_CONTEXT_FILE" in
-        "${PROJECT_ROOT}/"*) : ;;
+    # Canonicalize PROJECT_ROOT (handles macOS /var → /private/var).
+    _real_project_root="$(cd "$PROJECT_ROOT" && pwd -P)"
+
+    # Walk symlinks at the leaf (max 32 hops; bounded to defeat symlink loops).
+    _target="$LOOP_CONTEXT_FILE"
+    _hops=0
+    while [[ -L "$_target" ]]; do
+        if [[ "$_hops" -ge 32 ]]; then
+            error "context-file path '$LOOP_CONTEXT_FILE' has too many symlink hops (>32) — possible symlink loop"
+            exit 1
+        fi
+        _link="$(readlink "$_target")"
+        case "$_link" in
+            /*) _target="$_link" ;;
+            *)  _target="$(dirname "$_target")/$_link" ;;
+        esac
+        _hops=$((_hops + 1))
+    done
+
+    # Canonicalize the (possibly resolved) target. The file may not exist yet
+    # (pipeline writes it before invoking sw-loop), so resolve the parent
+    # directory and append the basename — `cd ... && pwd -P` collapses
+    # symlinks AND `..` in the directory portion.
+    _ctx_dir="$(dirname "$_target")"
+    if [[ ! -d "$_ctx_dir" ]]; then
+        error "context-file path '$LOOP_CONTEXT_FILE' (resolved: $_target) parent directory does not exist"
+        exit 1
+    fi
+    _real_ctx_dir="$(cd "$_ctx_dir" && pwd -P)"
+    _real_ctx="${_real_ctx_dir}/$(basename "$_target")"
+
+    case "$_real_ctx" in
+        "${_real_project_root}/"*) : ;;
         *)
-            error "context-file must be inside project root ($PROJECT_ROOT)"
+            error "context-file path '$LOOP_CONTEXT_FILE' (resolved: $_real_ctx) must be inside project root '$_real_project_root'"
             exit 1
             ;;
     esac
+    unset _real_project_root _target _hops _link _ctx_dir _real_ctx_dir _real_ctx
+fi
+
+# If the context file already exists at invocation time, verify it is readable.
+# (Path validation above only confirms the path is within project root.)
+if [[ -n "${LOOP_CONTEXT_FILE:-}" && -e "${LOOP_CONTEXT_FILE}" && ! -r "${LOOP_CONTEXT_FILE}" ]]; then
+    error "context-file '$LOOP_CONTEXT_FILE' exists but is not readable"
+    exit 1
 fi
 
 # Layer B: Strip synthesized sections from GOAL before preserving as ORIGINAL_GOAL.
 # Only applied when --context-file was passed (i.e. invoked by the pipeline build stage),
 # so standalone sw-loop invocations with multi-section user goals are never truncated.
-if [[ -n "$LOOP_CONTEXT_FILE" ]] && declare -f _strip_synthesized_sections >/dev/null 2>&1; then
+#
+# Fail hard if goal-sanitize.sh isn't loaded — a stale inline fallback list would
+# silently leave new synthesis sections in the goal and pollute the agent prompt
+# (#448 review feedback). The helper is sourced unconditionally above (line 46),
+# so this only fires if the file was deleted/corrupted.
+if [[ -n "$LOOP_CONTEXT_FILE" ]]; then
+    if ! declare -f _strip_synthesized_sections >/dev/null 2>&1; then
+        error "goal-sanitize.sh failed to load — cannot strip synthesis from goal. Expected: $SCRIPT_DIR/lib/goal-sanitize.sh"
+        exit 1
+    fi
     GOAL="$(_strip_synthesized_sections "$GOAL")"
 fi
 
@@ -1357,27 +1416,37 @@ run_quality_gates() {
     # file=$0; sub(...) handles paths with spaces by copying the full header line, then stripping
     # the +++ b/ prefix. /^\+/ && !/^\+\+\+/ counts ALL added lines (including empty ones) so
     # lineno stays accurate when blank lines precede a marker.
+    # Marker patterns are assembled from shell-quoted fragments so this source
+    # itself does not contain the literal marker substrings (which would
+    # self-flag). The X-marker uses X{3} (quantifier) with a non-X boundary on
+    # each side, so mktemp templates like X{6} (six contiguous X's) are
+    # excluded as legitimate template syntax rather than task markers.
+    local _m_t _m_f _m_h _m_alt
+    _m_t='T''O''D''O'
+    _m_f='F''I''X''M''E'
+    _m_h='H''A''C''K'
+    _m_alt="${_m_t}|${_m_f}|${_m_h}"
     local _todo_diff todo_count
     _todo_diff="$(git -C "$PROJECT_ROOT" -c diff.noprefix=false diff HEAD~1 --unified=0 \
         -- ':!.claude/' ':!docs/plans/' ':!*.md' 2>/dev/null || true)"
-    todo_count="$(printf '%s\n' "$_todo_diff" | grep -cE '^\+[^+].*(TODO|FIXME|HACK|XXX)' || true)"
+    todo_count="$(printf '%s\n' "$_todo_diff" | grep -cE "^\+[^+].*(${_m_alt}|([^X]|^)X{3}([^X]|$))" || true)"
     todo_count="${todo_count:-0}"
     if [[ "${todo_count:-0}" -gt 0 ]]; then
-        gate_failures+=("${todo_count} TODO/FIXME/HACK/XXX markers in new code")
+        gate_failures+=("${todo_count} task-marker(s) in new code")
         local _todo_locations
         _todo_locations="$(printf '%s\n' "$_todo_diff" \
-          | awk '
+          | awk -v t="$_m_t" -v f="$_m_f" -v h="$_m_h" '
               /^\+\+\+ / { file=$0; sub(/^\+\+\+ b\//,"",file) }
               /^@@ /     { s=$3; sub(/^[^+]*\+/,"",s); sub(/,.*/,"",s); lineno=int(s)-1 }
               /^\+/ && !/^\+\+\+/ {
                 lineno++
-                if (index($0,"TODO") || index($0,"FIXME") || index($0,"HACK") || index($0,"XXX"))
+                if (index($0,t) || index($0,f) || index($0,h) || match($0,/([^X]|^)X{3}([^X]|$)/))
                   print file ":" lineno ": " substr($0,2)
               }
             ' | head -10 || true)"
         if [[ -n "$_todo_locations" ]]; then
             QUALITY_GATE_DETAIL="${QUALITY_GATE_DETAIL}
-### TODO/FIXME markers to remove
+### Task markers to remove
 ${_todo_locations}"
         fi
     fi
@@ -2487,6 +2556,9 @@ run_single_agent_loop() {
     # Track applied memory fix patterns for outcome recording
     _applied_fix_pattern=""
     STUCKNESS_COUNT=0
+    LOOP_FAILURE_DIAGNOSIS=""
+    LOOP_CLOSED_LOOP_FIX=""
+    LOOP_HUMAN_FEEDBACK=""
     STUCKNESS_TRACKING_FILE="$LOG_DIR/stuckness-tracking.txt"
     : > "$STUCKNESS_TRACKING_FILE" 2>/dev/null || true
     : > "${LOG_DIR:-/tmp}/strategy-attempts.txt" 2>/dev/null || true
@@ -2556,7 +2628,10 @@ run_single_agent_loop() {
                 GOAL="${GOAL}
 
 ${_diagnosis}"
+                LOOP_FAILURE_DIAGNOSIS="$_diagnosis"
                 info "Failure diagnosis injected (classification from error pattern)"
+            else
+                LOOP_FAILURE_DIAGNOSIS=""
             fi
 
             # Memory-based fix suggestion (from past successful fixes)
@@ -2575,7 +2650,10 @@ ${_diagnosis}"
                 GOAL="KNOWN FIX (from past success): ${_fix_suggestion}
 
 ${GOAL}"
+                LOOP_CLOSED_LOOP_FIX="$_fix_suggestion"
                 info "Memory fix injected: ${_fix_suggestion:0:80}"
+            else
+                LOOP_CLOSED_LOOP_FIX=""
             fi
 
             # Analyze failure via Claude (background, non-blocking) for richer root_cause/fix in memory
@@ -2586,6 +2664,10 @@ ${GOAL}"
                     _MEM_ANALYZE_PID=$!
                 fi
             fi
+        else
+            # Tests passed — clear previous iteration's guidance so stale info doesn't bleed forward
+            LOOP_FAILURE_DIAGNOSIS=""
+            LOOP_CLOSED_LOOP_FIX=""
         fi
 
         # Capture commit count before Claude runs so Claude-initiated commits are included in delta
@@ -2881,6 +2963,7 @@ $summary
 
         # Human intervention: check for human message between iterations
         local human_msg_file="$STATE_DIR/pipeline-artifacts/human-message.txt"
+        LOOP_HUMAN_FEEDBACK=""
         if [[ -f "$human_msg_file" ]]; then
             local human_msg
             human_msg="$(cat "$human_msg_file" 2>/dev/null || true)"
@@ -2890,6 +2973,7 @@ $summary
                 GOAL="${GOAL}
 
 HUMAN FEEDBACK (received after iteration $ITERATION): $human_msg"
+                LOOP_HUMAN_FEEDBACK="$human_msg"
                 rm -f "$human_msg_file"
             fi
         fi

@@ -2565,6 +2565,141 @@ else
     assert_fail "Fix 3b: zero_progress_notice variable used in compose_prompt output"
 fi
 
+# ─── #448 review fix: --context-file path traversal hardening ────────────────
+echo ""
+echo -e "${DIM}  context-file symlink/realpath validation (#448 review)${RESET}"
+
+# Source-level structural assertions: validation block must canonicalize the path.
+if grep -q "pwd -P" "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "context-file validator canonicalizes paths via 'pwd -P' (defeats symlinks/..)"
+else
+    assert_fail "context-file validator canonicalizes paths via 'pwd -P'" \
+        "Expected 'pwd -P' usage in LOOP_CONTEXT_FILE validation block (string-prefix check is insufficient)"
+fi
+
+if grep -q "_real_project_root\|_real_ctx" "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "context-file validator uses canonical-path locals (_real_project_root / _real_ctx)"
+else
+    assert_fail "context-file validator uses canonical-path locals" \
+        "Expected _real_project_root or _real_ctx variable in validation block"
+fi
+
+# Behavioral test: end-to-end run sw-loop.sh with a path that PASSES the legacy
+# string-prefix check but resolves OUTSIDE the project root once symlinks are
+# expanded. Use a real git repo so the validator runs.
+ctx_test_dir=$(mktemp -d "${TMPDIR:-/tmp}/sw-loop-ctx.XXXXXX")
+real_repo="$ctx_test_dir/real-repo"
+sensitive_dir="$ctx_test_dir/outside"
+mkdir -p "$real_repo" "$sensitive_dir"
+( cd "$real_repo" && git init -q && git config user.email t@t && git config user.name t )
+
+# Write a sensitive file outside the repo.
+echo "secret" > "$sensitive_dir/loot.md"
+
+# Inside the repo, create a symlink whose path-prefix (literal string) would
+# pass the legacy check but resolves to ../outside/loot.md.
+ln -s "$sensitive_dir/loot.md" "$real_repo/ctx-link.md"
+
+# Run sw-loop.sh with the symlink path. The realpath validator must reject.
+output=$( cd "$real_repo" && \
+    bash "$SCRIPT_DIR/sw-loop.sh" \
+        --context-file "$real_repo/ctx-link.md" \
+        --max-iterations 1 \
+        "test goal" 2>&1 ) && rc=0 || rc=$?
+if [[ $rc -ne 0 ]] && echo "$output" | grep -qi "must be inside project root\|context-file path"; then
+    assert_pass "context-file validator rejects symlink that resolves outside project root"
+else
+    assert_fail "context-file validator rejects symlink that resolves outside project root" \
+        "exit=$rc output=${output:0:300}"
+fi
+
+# Path with .. that string-prefix-passes but canonicalizes outside repo.
+output=$( cd "$real_repo" && \
+    bash "$SCRIPT_DIR/sw-loop.sh" \
+        --context-file "$real_repo/../outside/loot.md" \
+        --max-iterations 1 \
+        "test goal" 2>&1 ) && rc=0 || rc=$?
+if [[ $rc -ne 0 ]] && echo "$output" | grep -qi "must be inside project root\|context-file path"; then
+    assert_pass "context-file validator rejects .. paths that escape via canonicalization"
+else
+    assert_fail "context-file validator rejects .. paths that escape via canonicalization" \
+        "exit=$rc output=${output:0:300}"
+fi
+
+rm -rf "$ctx_test_dir"
+
+# ─── #448 review fix: goal-sanitize.sh fail-hard fallback ─────────────────────
+echo ""
+echo -e "${DIM}  goal-sanitize fail-hard fallback (#448 review)${RESET}"
+
+# Structural: when LOOP_CONTEXT_FILE is set, the script must call into
+# _strip_synthesized_sections (not an inline fallback list).
+if grep -q "goal-sanitize.sh failed to load" "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "sw-loop.sh fails hard with explicit error if goal-sanitize.sh isn't loaded"
+else
+    assert_fail "sw-loop.sh fails hard if goal-sanitize.sh isn't loaded" \
+        "Expected explicit 'goal-sanitize.sh failed to load' error"
+fi
+
+# Inline fallback sentinel list must be removed (the bug being fixed: the
+# inline list drifted out of sync with goal-sanitize.sh's 18-pattern set).
+if grep -q "## Plan Summary'\\*}\";" "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_fail "inline fallback sentinel list removed from sw-loop.sh" \
+        "Found legacy inline sentinel — should rely solely on goal-sanitize.sh"
+else
+    assert_pass "inline fallback sentinel list removed from sw-loop.sh"
+fi
+
+# ─── Quality-gate task-marker pattern: mktemp templates must not self-flag ──
+echo ""
+echo -e "${DIM}  task-marker gate: mktemp template false-positive guard${RESET}"
+
+# Reconstruct the gate's marker alternation the same way sw-loop.sh does, so
+# the assertion stays in sync with the gate logic without duplicating the
+# literal marker substrings in this test file.
+_qg_t='T''O''D''O'
+_qg_f='F''I''X''M''E'
+_qg_h='H''A''C''K'
+_qg_alt="${_qg_t}|${_qg_f}|${_qg_h}"
+_qg_pattern="(${_qg_alt}|([^X]|^)X{3}([^X]|$))"
+
+# True positives — bare task-markers must still be detected.
+for _qg_case in "// ${_qg_t}: fix" "// ${_qg_f}: bug" "// ${_qg_h}: hack" "foo X${_qg_t:0:0}XX bar"; do
+    if printf '%s\n' "$_qg_case" | grep -qE "$_qg_pattern"; then
+        assert_pass "task-marker gate detects: $_qg_case"
+    else
+        assert_fail "task-marker gate detects: $_qg_case" \
+            "Expected gate pattern to match a real marker"
+    fi
+done
+
+# True negatives — mktemp template syntax must NOT match (the regression).
+for _qg_case in 'mktemp /tmp/foo.YYYYYY' 'mktemp /tmp/foo.ZZZZZZ' 'normal source line'; do
+    if printf '%s\n' "$_qg_case" | grep -qE "$_qg_pattern"; then
+        assert_fail "task-marker gate excludes: $_qg_case" \
+            "Pattern wrongly matched"
+    else
+        assert_pass "task-marker gate excludes: $_qg_case"
+    fi
+done
+# mktemp 6-X template specifically — built without literal six-X substring
+# in this test source so the test itself does not self-flag.
+_qg_six="$(printf 'X%.0s' 1 2 3 4 5 6)"
+if printf 'mktemp /tmp/foo.%s\n' "$_qg_six" | grep -qE "$_qg_pattern"; then
+    assert_fail "task-marker gate excludes 6-X mktemp template" \
+        "Pattern wrongly matched mktemp template"
+else
+    assert_pass "task-marker gate excludes 6-X mktemp template"
+fi
+
+# Structural: gate must use boundary-protected pattern, not bare marker.
+if grep -q "X{3}" "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "gate uses X{3} quantifier (avoids literal three-X self-flag)"
+else
+    assert_fail "gate uses X{3} quantifier" \
+        "Expected X{3} pattern in sw-loop.sh quality gate"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -1,30 +1,19 @@
-# Tasks — fix(harness): no memory budget guard — concurrent pipelines OOM the host
+# Tasks — Stuckness detector floods ruflo with redundant subprocess spawns (throttle writes)
 
-## Status: In Progress
-Pipeline: autonomous | Branch: fix/fix-harness-no-memory-budget-guard-concu-445
+## Status: Complete (verification only — fix already merged on branch)
+Pipeline: autonomous | Branch: fix/stuckness-detector-floods-ruflo-with-red-447
 
 ## Checklist
-- [x] Helper functions added to `sw-pipeline.sh`
-- [x] Default thresholds + env-override + integer validation
-- [x] `pipeline_start` calls gate + write + post-write race recheck
-- [x] `pipeline_resume` re-claims a slot through the same gate
-- [x] EXIT trap calls `release_active_pipeline_lock` idempotently (safe even when start was refused before write)
-- [x] `sw-doctor.sh` lists active pipelines and free memory
-- [x] Unit tests in `sw-pipeline-memory-guard-test.sh` (18 cases)
-- [x] E2E tests #20–23 in `sw-e2e-smoke-test.sh`
-- [ ] Re-run unit + e2e suites in CI to confirm green on this branch
-- [ ] Manually verify `shipwright doctor` output in three states: zero locks, one live lock, one stale lock
-- [ ] Confirm `CHANGELOG.md` entry exists; add if missing
-- [ ] Spot-check `docs/` for stale "no concurrency awareness" claims
-- [x] Lock at `~/.shipwright/active-pipelines/<pid>.json` written on `start`/`resume`, deleted on EXIT (idempotent)
-- [x] Concurrency cap: at most one active pipeline per host (overridable via `SHIPWRIGHT_MAX_ACTIVE_PIPELINES`); enforced after stale reaping
-- [x] Memory floor: refuse start when `<4 GB` free (overridable via `SHIPWRIGHT_MIN_FREE_GB`); cross-platform probe; fail-closed on probe failure
-- [x] Refusal diagnostic names blocking pipeline's PID, `started_at`, `issue_or_goal`, `repo`, `pipeline_template`, and policy limits
-- [x] `shipwright doctor` lists active pipelines + free memory; warns at capacity or below floor
-- [x] Unit + e2e tests pass
-- [ ] CI re-run on this branch confirms green
-- [ ] CHANGELOG entry added if missing
+- [x] `bash scripts/sw-lib-loop-convergence-test.sh` → 14/14 pass on HEAD `c7ec297`
+- [x] Re-inspected `scripts/lib/loop-convergence.sh:383-477`; both `ruflo_*` call sites are fingerprint-gated, no unguarded calls
+- [x] `grep ruflo_(store|recall|memory)` across `scripts/lib/loop-*.sh` + `scripts/sw-loop.sh` → only `detect_stuckness()` invokes them per iteration
+- [x] `_stuckness_fingerprint()` returns 12 hex chars on Linux (md5sum path verified); cksum fallback uses `printf '%012x'` so width is guaranteed
+- [x] `bash scripts/sw-lib-loop-restart-test.sh` → 28/28 pass (regression on adjacent loop state machinery)
+- [x] `.gitignore`: `.claude/loop-logs/` (line 19) covers `$LOG_DIR/.last-stuckness-fingerprint`; `.shipwright/events-*.jsonl` (line 27) covers per-PID event logs
+- [x] Worktree isolation correct: each pipeline writes its own `$LOG_DIR/.last-stuckness-fingerprint` — no cross-process locking needed
+- [x] No code change required this iteration — fix landed in `fb2a9f4` + `f97a523`, hardened, tested, wired into `npm test` via `cf75977`
+- [x] Issue #447 acceptance checklist remains 6/6 satisfied
 
 ## Notes
-- Generated from pipeline plan at 2026-04-26T03:18:01Z
-- Pipeline will update status as tasks complete
+- Generated from pipeline plan at 2026-05-02T15:45:51Z
+- Iteration 1 verification confirmed all acceptance criteria are satisfied; no further code changes warranted

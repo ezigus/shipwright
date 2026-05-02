@@ -2565,6 +2565,84 @@ else
     assert_fail "Fix 3b: zero_progress_notice variable used in compose_prompt output"
 fi
 
+# ─── #447: write_error_summary must not flag passing tests as errors ─────────
+# Regression: lines like "✓ Test 4: ... (fail-open ...)" are PASSING tests but
+# the unfiltered grep was matching the substring "fail" and counting them as
+# errors. Flooded errors-collected.json on green builds and tripped the
+# holistic gate's circuit breaker. _strip_passing_test_lines prevents this.
+echo ""
+echo -e "${DIM}  #447 regression — write_error_summary passing-test filter${RESET}"
+
+# Extract the _strip_passing_test_lines function from sw-loop.sh and eval it in
+# this test scope. Avoids sourcing the full script (which would run main()).
+_swl_helper_def=$(awk '/^_strip_passing_test_lines\(\) \{/,/^\}/' "$SCRIPT_DIR/sw-loop.sh")
+if [[ -n "$_swl_helper_def" ]]; then
+    assert_pass "#447: _strip_passing_test_lines defined in sw-loop.sh"
+    eval "$_swl_helper_def"
+else
+    assert_fail "#447: _strip_passing_test_lines defined in sw-loop.sh" \
+        "function not found in sw-loop.sh"
+fi
+
+# Sample: confirmed pass-marker lines that must be stripped.
+# Section headers ("Test N: description") are intentionally NOT stripped —
+# they provide failure context and may be the only signal for a failing test.
+_swl_sample=$(cat <<'SAMPLE'
+  ✓ Test 4: ruflo_store fired on missing fingerprint (fail-open, now 3)
+  ✓ Test 4: ruflo_recall fired on missing fingerprint (fail-open, now 3)
+  All 14 tests passed
+14/14 pass
+SAMPLE
+)
+
+# Filter, then count lines that the error grep would still flag.
+_swl_filtered=$(printf '%s\n' "$_swl_sample" \
+    | _strip_passing_test_lines \
+    | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' \
+    || true)
+_swl_filtered_count=$(printf '%s' "$_swl_filtered" | grep -c . 2>/dev/null || true)
+_swl_filtered_count=${_swl_filtered_count:-0}
+
+if [[ "$_swl_filtered_count" -eq 0 ]]; then
+    assert_pass "#447: confirmed pass-marker lines with 'fail-open' are filtered out (0 false positives)"
+else
+    assert_fail "#447: confirmed pass-marker lines with 'fail-open' are filtered out" \
+        "expected 0, got $_swl_filtered_count: $_swl_filtered"
+fi
+
+# Section headers ("Test N: description") must survive the filter — they provide
+# failure context. Verify a header containing "fail" is NOT stripped.
+_swl_header_kept=$(printf '%s\n' "  Test 4: missing fingerprint file fails open (both calls fire)" \
+    | _strip_passing_test_lines \
+    | grep -iE '(fail)' || true)
+if [[ -n "$_swl_header_kept" ]]; then
+    assert_pass "#447: section headers with 'fail' survive the filter (not stripped)"
+else
+    assert_fail "#447: section headers with 'fail' survive the filter" \
+        "section header was incorrectly stripped"
+fi
+
+# Real error lines must still pass through the filter.
+_swl_real_errors=$(cat <<'SAMPLE'
+  ✗ Test 7: actually broken assertion
+FAIL src/foo.test.js
+TypeError: cannot read property 'x' of undefined
+SAMPLE
+)
+_swl_kept=$(printf '%s\n' "$_swl_real_errors" \
+    | _strip_passing_test_lines \
+    | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' \
+    || true)
+_swl_kept_count=$(printf '%s' "$_swl_kept" | grep -c . 2>/dev/null || true)
+_swl_kept_count=${_swl_kept_count:-0}
+
+if [[ "$_swl_kept_count" -ge 3 ]]; then
+    assert_pass "#447: real error lines (FAIL, ✗, TypeError) survive the filter"
+else
+    assert_fail "#447: real error lines (FAIL, ✗, TypeError) survive the filter" \
+        "expected >=3, got $_swl_kept_count: $_swl_kept"
+fi
+
 # ─── #448 review fix: --context-file path traversal hardening ────────────────
 echo ""
 echo -e "${DIM}  context-file symlink/realpath validation (#448 review)${RESET}"

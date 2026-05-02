@@ -137,6 +137,9 @@ cmd_reaper() {
 
     ensure_eventbus_dir
 
+    local _reaper_sleep_pid=""
+    trap '[[ -n "$_reaper_sleep_pid" ]] && kill "$_reaper_sleep_pid" 2>/dev/null || true; exit 0' SIGTERM SIGINT
+
     # Monitor child processes
     while true; do
         # Get list of all child processes
@@ -157,7 +160,7 @@ cmd_reaper() {
             done <<< "$pids"
         fi
 
-        sleep 2
+        sleep 2 & _reaper_sleep_pid=$!; wait "$_reaper_sleep_pid" 2>/dev/null || true; _reaper_sleep_pid=""
     done
 }
 

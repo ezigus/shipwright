@@ -120,6 +120,9 @@ format_event_line() {
 cmd_watch() {
     local poll_interval=1
     local last_size=0
+    local _watch_sleep_pid=""
+
+    trap '[[ -n "$_watch_sleep_pid" ]] && kill "$_watch_sleep_pid" 2>/dev/null || true; exit 0' SIGTERM SIGINT
 
     info "Watching agent activity (Ctrl+C to stop)..."
     echo ""
@@ -214,7 +217,7 @@ cmd_watch() {
             last_size=$current_size
         fi
 
-        sleep "$poll_interval"
+        sleep "$poll_interval" & _watch_sleep_pid=$!; wait "$_watch_sleep_pid" 2>/dev/null || true; _watch_sleep_pid=""
     done
 }
 

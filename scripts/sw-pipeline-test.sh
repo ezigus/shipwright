@@ -2445,27 +2445,23 @@ STATE_EOF
         return
     fi
 
-    # True drift: NO recognized test headers but literal '### test ' present.
-    # Construct by giving the parser a log section where every test header is
-    # mangled but a stray '### test (raw)' line still exists in the body.
+    # True drift: log section present, no '###'-level test header, but a '##'-level
+    # test header exists — the parser misses it (uses '^###[[:space:]]') while the
+    # drift detector catches it (uses '^(##|####)[[:space:]]+test[[:space:]]').
     cat > "$state_file" <<'STATE_EOF'
 ## Log
 
-# stale exported snippet from a future format:
-### test (10:00:00)
-... unrecognized body
+## test (10:00:00)
+failed (1m)
 STATE_EOF
-    # Parser will recognize the '### test' header → no warning. So instead
-    # inject a body where parser sees the header but never reaches outcome
-    # parsing because of broken body lines — still recognized, count=0.
     : > "$stderr_log"
     bash -c "source \"$helper\"; count_consecutive_test_failures \"$state_file\"" 2>"$stderr_log" >/dev/null
-    if grep -q "format may have drifted" "$stderr_log"; then
-        assert_fail "format-drift warning misfired when header was actually recognized"
+    if ! grep -q "format may have drifted" "$stderr_log"; then
+        assert_fail "format-drift warning did NOT fire when heading level changed from ### to ##"
         return
     fi
 
-    assert_pass "format-drift warning fires only on true drift, not on legitimate empty/parsed states"
+    assert_pass "format-drift warning fires on true drift (heading level change) and stays silent on clean states"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────

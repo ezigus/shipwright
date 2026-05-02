@@ -814,9 +814,9 @@ REVIEW_BUILD_RETRIES=$(_config_get_int "pipeline.review_build_retries" 2 2>/dev/
 STASHED_CHANGES=false
 SELF_HEAL_COUNT=0
 
-# Cycling halt: cumulative consecutive test-failure cap across pipeline invocations.
-# Reads `pipeline-state.md` log to detect when external automation keeps re-entering
-# the build stage after exhausted self-healing. Set to 0 to disable (escape hatch).
+# Cycling halt: cap on consecutive test-stage failures across pipeline invocations.
+# Despite the name (kept for backward compatibility), this counts test-stage failures,
+# not build iterations — set SW_PIPELINE_MAX_BUILD_RETRIES=0 to disable (escape hatch).
 SW_PIPELINE_MAX_BUILD_RETRIES=${SW_PIPELINE_MAX_BUILD_RETRIES:-3}
 PIPELINE_STUCK_CYCLING=false
 
@@ -827,9 +827,11 @@ COST_MODEL_RATES='{"opus":{"input":15,"output":75},"sonnet":{"input":3,"output":
 
 # ─── Heartbeat ────────────────────────────────────────────────────────────────
 HEARTBEAT_PID=""
+HEARTBEAT_JOB_ID=""
 
 start_heartbeat() {
-    local job_id="${REPO_HASH:+${REPO_HASH}-}${PIPELINE_NAME:-pipeline-$$}"
+    HEARTBEAT_JOB_ID="${REPO_HASH:+${REPO_HASH}-}${PIPELINE_NAME:-pipeline-$$}"
+    local job_id="$HEARTBEAT_JOB_ID"
     (
         _hb_sleep_pid=""
         # Kill the active sleep child on SIGTERM so it doesn't orphan to init.
@@ -854,8 +856,9 @@ stop_heartbeat() {
     if [[ -n "${HEARTBEAT_PID:-}" ]]; then
         kill "$HEARTBEAT_PID" 2>/dev/null || true
         wait "$HEARTBEAT_PID" 2>/dev/null || true
-        "$SCRIPT_DIR/sw-heartbeat.sh" clear "${PIPELINE_NAME:-pipeline-$$}" 2>/dev/null || true
+        "$SCRIPT_DIR/sw-heartbeat.sh" clear "${HEARTBEAT_JOB_ID:-${PIPELINE_NAME:-pipeline-$$}}" 2>/dev/null || true
         HEARTBEAT_PID=""
+        HEARTBEAT_JOB_ID=""
     fi
 }
 
@@ -1484,8 +1487,8 @@ count_consecutive_test_failures() {
     # warn when a literal `### test` header is visible in the file but the
     # parser failed to recognize it — a real format-drift signal.
     if [[ "$saw_log_section" -eq 1 && "$saw_any_test_header" -eq 0 ]]; then
-        if grep -qE '^###[[:space:]]+test[[:space:]]' "$state_file" 2>/dev/null; then
-            echo "WARN: count_consecutive_test_failures: state file '$state_file' contains '### test' headers that the parser failed to recognize — log format may have drifted; cycling halt may be disabled" >&2
+        if grep -qE '^(##|####)[[:space:]]+test[[:space:]]' "$state_file" 2>/dev/null; then
+            echo "WARN: count_consecutive_test_failures: state file '$state_file' contains 'test' stage headers at an unexpected heading level — log format may have drifted; cycling halt may be disabled" >&2
             emit_event "pipeline.cycling_halt_disabled" \
                 "reason=log_format_drift" \
                 "state_file=${state_file}" || true

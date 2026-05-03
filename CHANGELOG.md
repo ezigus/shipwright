@@ -9,6 +9,16 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Ruflo MCP Bridge — Validated 33× Subprocess Reduction (#504)
+
+Closes the Ruflo MCP 1.5 series with a benchmark harness that proves the unix-socket bridge (#500/#502/#503) delivers the promised performance gains and resolves orphan-process leakage from #441.
+
+- **Benchmark harness** (`scripts/benchmark-ruflo-backends.sh`): drives identical workloads through `SW_RUFLO_BACKEND={cli,mcp}` with selectable bench tool (`memory_search` for production path, `ping` for transport-only validation), 20 samples per backend with cold-start discard, configurable percentile caps, and structured `events.jsonl` telemetry
+- **Multi-cycle orphan sentinel** (`--orphan-runs N`): runs N consecutive bridge start/bench/stop cycles and asserts zero new ruflo-related node procs survive — the #441 leak detector
+- **Ratio-based acceptance**: headline check is `cli_pids/mcp_pids ≥ BENCH_REDUCTION_RATIO` (default 10×) so the gate works on shared CI hosts where unrelated ruflo procs would otherwise inflate absolute PID counts
+- **Validated baseline**: 66 → 2 unique transient node PIDs (**33× reduction**), latency p95 513 ms → 9 ms (**~57×**), 0 errors across 40 calls, 0 orphans across 3 consecutive teardown cycles. Numbers and raw artifacts documented in `docs/ruflo-mcp-transport.md` § "Validated baseline (2026-05-03)"
+- **`npm run bench:ruflo`** invokes the harness in assert mode for CI gating
+
 ### Pipeline Admission Gate (Memory Budget Guard)
 
 Concurrent pipelines on the same host could OOM the machine because nothing tracked active pipeline count or free memory before starting another run. Pipeline starts and resumes now go through a per-host admission gate.

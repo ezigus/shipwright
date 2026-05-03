@@ -315,7 +315,7 @@ _sanitize_root_cause() {
     sanitized=$(echo "$sanitized" | sed -E "s/exit(ed)? (with )?(code )?([0-9]+)/__SW_EC_\4__/g")
 
     # Replace SIG* tokens (only the canonical names, not arbitrary words)
-    sanitized=$(echo "$sanitized" | sed -E "s/\b(SIGTERM|SIGKILL|SIGINT)\b/__SW_SIG_\1__/g")
+    sanitized=$(echo "$sanitized" | sed -E "s/(SIGTERM|SIGKILL|SIGINT)/__SW_SIG_\1__/g")
 
     # Now decide: any placeholder whose code/signal disagrees with $ec is replaced.
     # Build allowed placeholders for the captured exit code.

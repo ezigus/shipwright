@@ -18,6 +18,20 @@ VERSION="3.6.1"
 [[ -n "${_RUFLO_ADAPTER_LOADED:-}" ]] && return 0
 _RUFLO_ADAPTER_LOADED=1
 
+# ─── Optional MCP bridge wrapper ─────────────────────────────────────────────
+# Sourced for SW_RUFLO_BACKEND=mcp routing in ruflo_store() (and future
+# ruflo_recall in #503). The wrapper has its own _RUFLO_MCP_CALL_LOADED guard
+# and ${VAR:-default} semantics, so re-sourcing is a no-op. File-existence
+# gate keeps the adapter usable in installs where the wrapper hasn't been
+# packaged; ruflo_store() additionally checks `declare -f ruflo_mcp_call`
+# before routing through it.
+_ruflo_adapter_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+if [[ -f "$_ruflo_adapter_dir/ruflo-mcp-call.sh" ]]; then
+    # shellcheck source=scripts/lib/ruflo-mcp-call.sh
+    source "$_ruflo_adapter_dir/ruflo-mcp-call.sh"
+fi
+unset _ruflo_adapter_dir
+
 # ─── State ───────────────────────────────────────────────────────────────────
 # Use ${VAR:-default} to preserve values inherited from a parent process (e.g.
 # sw-pipeline.sh) when ruflo-adapter.sh is sourced in a subprocess like sw-loop.sh.
@@ -508,16 +522,48 @@ ruflo_with_timeout() {
     return 0
 }
 
-# ─── ruflo_store — store a value in ruflo memory via CLI ─────────────────────
-# Usage: ruflo_store <key> <value> [namespace] [tags]
-# No-op when ruflo is unavailable. Always returns 0 (fail-open).
-# On timeout, circuit-breaker disables ruflo for the remainder of the run.
-ruflo_store() {
-    ruflo_available || return 0
+# ─── _ruflo_store_cli — CLI-backed store implementation ──────────────────────
+# Internal helper. Identical body to the legacy ruflo_store() — extracted so
+# the dispatcher can call it both as the default path and as the fail-open
+# fallback when SW_RUFLO_BACKEND=mcp but the bridge errors. Same contract:
+# fail-open, returns 0, bounded by the circuit-breaker timeout.
+_ruflo_store_cli() {
     local key="$1" value="$2" namespace="${3:-default}" tags="${4:-}"
     ruflo_with_timeout "${RUFLO_CIRCUIT_BREAKER_TIMEOUT:-10}" _ruflo_run_quiet memory store \
         --key "$key" --value "$value" --namespace "$namespace" \
         ${tags:+--tags "$tags"} || true
+}
+
+# ─── ruflo_store — dispatcher: route to MCP bridge or CLI ────────────────────
+# Usage: ruflo_store <key> <value> [namespace] [tags]
+# No-op when ruflo is unavailable. Always returns 0 (fail-open).
+#
+# Routing (SW_RUFLO_BACKEND, default "cli"):
+#   "mcp"  + bridge up + wrapper sourced → ruflo_mcp_call memory_store ...
+#                                          (no new ruflo subprocess)
+#   "mcp"  + bridge error                → CLI fallback (preserves all args)
+#   "mcp"  + bridge down                 → CLI fallback (no ping/spawn cost
+#                                          beyond the bounded `nc -w 1` probe)
+#   "cli"  / unset / anything else       → CLI path (legacy behavior)
+#
+# `tags` is intentionally NOT forwarded to the bridge: the v1.1 memory_store
+# wire schema is `{key,value,namespace?}` only (see docs/ruflo-mcp-transport.md
+# §5). The CLI fallback path still receives tags in full.
+ruflo_store() {
+    ruflo_available || return 0
+    local key="$1" value="$2" namespace="${3:-default}" tags="${4:-}"
+
+    if [[ "${SW_RUFLO_BACKEND:-cli}" == "mcp" ]] \
+       && declare -f ruflo_mcp_call >/dev/null 2>&1 \
+       && declare -f ruflo_bridge_available >/dev/null 2>&1 \
+       && ruflo_bridge_available; then
+        ruflo_mcp_call memory_store \
+            "key=$key" "value=$value" "namespace=$namespace" >/dev/null 2>&1 \
+            || _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
+    else
+        _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
+    fi
+    return 0
 }
 
 # ─── ruflo_recall — semantic search in ruflo memory via CLI ───────────────────

@@ -645,6 +645,224 @@ test_error_log_to_failures() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Capture persists exit_code field in failures.json
+# ──────────────────────────────────────────────────────────────────────────────
+test_capture_failure_persists_exit_code() {
+    (
+        cd "$TEST_TEMP_DIR/project"
+        # shellcheck disable=SC1090
+        source "$MEMORY_SCRIPT" > /dev/null 2>&1
+
+        ensure_memory_dir
+        local mem_dir
+        mem_dir="$(repo_memory_dir)"
+        local failures_file="$mem_dir/failures.json"
+        echo '{"failures":[]}' > "$failures_file"
+
+        memory_capture_failure "test" "Error: timed out after 3600s" "124" >/dev/null 2>&1
+
+        local stored_ec
+        stored_ec=$(jq -r '.failures[-1].exit_code // "missing"' "$failures_file" 2>/dev/null)
+        [[ "$stored_ec" == "124" ]] || { echo "Expected exit_code=124, got $stored_ec"; return 1; }
+    )
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Back-compat: capture without exit_code still works (defaults to 0)
+# ──────────────────────────────────────────────────────────────────────────────
+test_capture_failure_backcompat_no_exit_code() {
+    (
+        cd "$TEST_TEMP_DIR/project"
+        # shellcheck disable=SC1090
+        source "$MEMORY_SCRIPT" > /dev/null 2>&1
+
+        ensure_memory_dir
+        local mem_dir
+        mem_dir="$(repo_memory_dir)"
+        local failures_file="$mem_dir/failures.json"
+        echo '{"failures":[]}' > "$failures_file"
+
+        # 2-arg call (no third arg) must succeed and write a record
+        memory_capture_failure "test" "Error: foo" >/dev/null 2>&1
+
+        local count stored_ec
+        count=$(jq '.failures | length' "$failures_file" 2>/dev/null || echo 0)
+        stored_ec=$(jq -r '.failures[-1].exit_code // 0' "$failures_file" 2>/dev/null)
+        [[ "$count" == "1" ]] || { echo "Expected 1 failure, got $count"; return 1; }
+        [[ "$stored_ec" == "0" ]] || { echo "Expected exit_code=0 default, got $stored_ec"; return 1; }
+    )
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _exit_code_to_category mapping is correct for the unambiguous set
+# ──────────────────────────────────────────────────────────────────────────────
+test_exit_code_to_category_map() {
+    (
+        cd "$TEST_TEMP_DIR/project"
+        # shellcheck disable=SC1090
+        source "$MEMORY_SCRIPT" > /dev/null 2>&1
+
+        local cat
+        cat=$(_exit_code_to_category 124); [[ "$cat" == "timeout" ]]    || { echo "124 -> $cat (want timeout)"; return 1; }
+        cat=$(_exit_code_to_category 137); [[ "$cat" == "timeout" ]]    || { echo "137 -> $cat (want timeout)"; return 1; }
+        cat=$(_exit_code_to_category 143); [[ "$cat" == "timeout" ]]    || { echo "143 -> $cat (want timeout)"; return 1; }
+        cat=$(_exit_code_to_category 127); [[ "$cat" == "dependency" ]] || { echo "127 -> $cat (want dependency)"; return 1; }
+        cat=$(_exit_code_to_category 126); [[ "$cat" == "config" ]]     || { echo "126 -> $cat (want config)"; return 1; }
+        cat=$(_exit_code_to_category 1);   [[ "$cat" == "test_failure" ]] || { echo "1 -> $cat (want test_failure)"; return 1; }
+        cat=$(_exit_code_to_category 0);   [[ "$cat" == "unknown" ]]    || { echo "0 -> $cat (want unknown)"; return 1; }
+        cat=$(_exit_code_to_category 99);  [[ "$cat" == "unknown" ]]    || { echo "99 -> $cat (want unknown)"; return 1; }
+    )
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _sanitize_root_cause rewrites contradictory exit codes / signal names
+# ──────────────────────────────────────────────────────────────────────────────
+test_sanitize_root_cause_rewrites_contradictions() {
+    (
+        cd "$TEST_TEMP_DIR/project"
+        # shellcheck disable=SC1090
+        source "$MEMORY_SCRIPT" > /dev/null 2>&1
+
+        # Real exit was 124 (timeout); LLM hallucinated 143/SIGTERM.
+        local out
+        out=$(_sanitize_root_cause "Process exited with code 143 (SIGTERM) after 60s" 124)
+
+        # Hallucinated literals must not survive verbatim
+        echo "$out" | grep -q "exited with code 143" && { echo "Did not rewrite exit code: $out"; return 1; }
+        echo "$out" | grep -q "SIGTERM" && {
+            # Allow only when annotated as "[was: SIGTERM]"
+            echo "$out" | grep -q "was: SIGTERM" || { echo "SIGTERM left unannotated: $out"; return 1; }
+        }
+        echo "$out" | grep -q "exit 124" || echo "$out" | grep -q "timeout" || {
+            echo "Canonical exit 124 missing: $out"; return 1
+        }
+
+        # Matching exit code should pass through cleanly
+        local out2
+        out2=$(_sanitize_root_cause "Process exited with code 124 after timeout" 124)
+        echo "$out2" | grep -q "exit 124" || { echo "Matching code dropped: $out2"; return 1; }
+
+        # exit_code=0 (no ground truth) leaves text untouched
+        local out3
+        out3=$(_sanitize_root_cause "Process exited with code 143 (SIGTERM)" 0)
+        [[ "$out3" == "Process exited with code 143 (SIGTERM)" ]] || { echo "Modified text without ground truth: $out3"; return 1; }
+    )
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# memory_analyze_failure overrides hallucinated category when ground-truth ec=124
+# ──────────────────────────────────────────────────────────────────────────────
+test_analyze_failure_grounded_exit_code() {
+    (
+        cd "$TEST_TEMP_DIR/project"
+
+        # Stub `claude` in a tmp dir on PATH that returns a payload claiming
+        # the process was killed by SIGTERM (exit 143) with category=flaky.
+        local stub_dir="$TEST_TEMP_DIR/stub-bin"
+        mkdir -p "$stub_dir"
+        cat > "$stub_dir/claude" <<'STUB'
+#!/usr/bin/env bash
+echo '{"root_cause":"Test process exited with code 143 (SIGTERM) after 60s","fix":"Increase timeout or stabilize flaky test","category":"flaky"}'
+STUB
+        chmod +x "$stub_dir/claude"
+        export PATH="$stub_dir:$PATH"
+
+        # shellcheck disable=SC1090
+        source "$MEMORY_SCRIPT" > /dev/null 2>&1
+
+        ensure_memory_dir
+        local mem_dir
+        mem_dir="$(repo_memory_dir)"
+        local failures_file="$mem_dir/failures.json"
+
+        # Seed: capture a failure first so analyze has a row to update
+        echo '{"failures":[]}' > "$failures_file"
+        memory_capture_failure "test" "Error: command timed out after 3600s" "124" >/dev/null 2>&1
+
+        # Provide a log file with a deceptive SIGTERM line
+        local log="$TEST_TEMP_DIR/fake-test.log"
+        printf 'Running tests...\nReceived SIGTERM, terminating worker\nProcess exited with code 143\n' > "$log"
+
+        memory_analyze_failure "$log" "test" "124" >/dev/null 2>&1
+
+        # category must be "timeout" (mechanical override), not "flaky"
+        local cat ec rc
+        cat=$(jq -r '.failures[-1].category // "missing"' "$failures_file")
+        ec=$(jq -r '.failures[-1].exit_code // 0' "$failures_file")
+        rc=$(jq -r '.failures[-1].root_cause // ""' "$failures_file")
+
+        [[ "$cat" == "timeout" ]] || { echo "Expected category=timeout, got $cat"; return 1; }
+        [[ "$ec" == "124" ]] || { echo "Expected exit_code=124, got $ec"; return 1; }
+        # root_cause must not literally contain the hallucinated "exited with code 143"
+        echo "$rc" | grep -q "exited with code 143" && { echo "Hallucinated 143 not sanitized: $rc"; return 1; }
+        return 0
+    )
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# past_examples filtered by exit_code — mismatched-ec entries excluded
+# ──────────────────────────────────────────────────────────────────────────────
+test_past_examples_filtered_by_exit_code() {
+    (
+        cd "$TEST_TEMP_DIR/project"
+
+        # Stub claude to echo the captured prompt back as JSON so the test can
+        # introspect what would have been sent.
+        local stub_dir="$TEST_TEMP_DIR/stub-bin-pe"
+        mkdir -p "$stub_dir"
+        cat > "$stub_dir/claude" <<'STUB'
+#!/usr/bin/env bash
+# Read the prompt (from -p arg) and write it to a side-channel for assertions
+prompt=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -p) prompt="$2"; shift 2 ;;
+    *)  shift ;;
+  esac
+done
+printf '%s' "$prompt" > "${SW_TEST_CAPTURED_PROMPT:-/dev/null}"
+echo '{"root_cause":"x","fix":"y","category":"timeout"}'
+STUB
+        chmod +x "$stub_dir/claude"
+        export PATH="$stub_dir:$PATH"
+        export SW_TEST_CAPTURED_PROMPT="$TEST_TEMP_DIR/captured-prompt.txt"
+
+        # shellcheck disable=SC1090
+        source "$MEMORY_SCRIPT" > /dev/null 2>&1
+
+        ensure_memory_dir
+        local mem_dir
+        mem_dir="$(repo_memory_dir)"
+        local failures_file="$mem_dir/failures.json"
+
+        # Seed two prior failures: one with exit_code=124 (matches), one with exit_code=1 (mismatches).
+        cat > "$failures_file" <<'JSON'
+{"failures":[
+  {"stage":"test","pattern":"FOO_PATTERN_TIMEOUT","root_cause":"R1","fix":"F1","category":"timeout","exit_code":124,"seen_count":2,"fix_effectiveness_rate":80},
+  {"stage":"test","pattern":"BAR_PATTERN_ASSERTION","root_cause":"R2","fix":"F2","category":"test_failure","exit_code":1,"seen_count":2,"fix_effectiveness_rate":90}
+]}
+JSON
+
+        # Capture a fresh failure with exit_code=124 (becomes the row analyze will update)
+        memory_capture_failure "test" "Error: timed out" "124" >/dev/null 2>&1
+
+        # Provide a log; analyze with ec=124
+        local log="$TEST_TEMP_DIR/pe.log"
+        echo "timeout reached" > "$log"
+        memory_analyze_failure "$log" "test" "124" >/dev/null 2>&1
+
+        local prompt
+        prompt=$(cat "$SW_TEST_CAPTURED_PROMPT" 2>/dev/null || echo "")
+
+        # Must include the matching example
+        echo "$prompt" | grep -q "FOO_PATTERN_TIMEOUT" || { echo "Expected matching example missing"; return 1; }
+        # Must exclude the mismatched-ec example
+        echo "$prompt" | grep -q "BAR_PATTERN_ASSERTION" && { echo "Mismatched-ec example leaked into prompt"; return 1; }
+        return 0
+    )
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 19. Fix outcome tracking — memory_record_fix_outcome
 # ──────────────────────────────────────────────────────────────────────────────
 test_fix_outcome_tracking() {
@@ -829,6 +1047,12 @@ main() {
         "test_memory_get_actionable_failures_empty:Actionable failures with no file returns []"
         "test_memory_get_dora_baseline:DORA baseline calculation from events"
         "test_error_log_to_failures:Error log entries captured into failures.json"
+        "test_capture_failure_persists_exit_code:Capture persists exit_code in failures.json"
+        "test_capture_failure_backcompat_no_exit_code:Capture without exit_code defaults to 0"
+        "test_exit_code_to_category_map:Exit-code → category mapping is correct"
+        "test_sanitize_root_cause_rewrites_contradictions:Root-cause sanitizer rewrites hallucinated codes/signals"
+        "test_analyze_failure_grounded_exit_code:Analyzer overrides hallucinated category with ground truth"
+        "test_past_examples_filtered_by_exit_code:Past examples filtered by exit_code"
         "test_fix_outcome_tracking:Fix outcome tracking increments counters"
         "test_closed_loop_inject_with_effectiveness:Closed-loop inject returns formatted fix"
         "test_global_memory_aggregation:Global aggregation promotes frequent patterns"

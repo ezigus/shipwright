@@ -268,6 +268,97 @@ ensure_memory_dir() {
     [[ -f "$GLOBAL_MEMORY" ]] || echo '{"common_patterns":[],"cross_repo_learnings":[]}' > "$GLOBAL_MEMORY"
 }
 
+# ─── Exit-Code → Category Mapping ─────────────────────────────────────────
+# Single source of truth for mapping a captured process exit code to an
+# error category. Used by both memory_capture_failure and
+# memory_analyze_failure so that the LLM cannot hallucinate a contradictory
+# category. Returns "unknown" when ambiguous (e.g. 0 = success, 1/2 are
+# generic test/runtime failures handled by Claude).
+_exit_code_to_category() {
+    local ec="${1:-0}"
+    case "$ec" in
+        124|137|143) echo "timeout" ;;          # GNU timeout / SIGKILL / SIGTERM after timeout
+        127)         echo "dependency" ;;       # command not found
+        126)         echo "config" ;;           # not executable / permission
+        1|2)         echo "test_failure" ;;     # generic — keep as default
+        *)           echo "unknown" ;;
+    esac
+}
+
+# _sanitize_root_cause <root_cause_text> <captured_exit_code>
+# Rewrites contradictory exit-code / signal-name claims in a Claude-generated
+# root_cause string. Only touches summary phrasing ("exit code N",
+# "exited with N", "SIGTERM/SIGKILL/SIGINT"); leaves verbatim log quotes alone.
+# Why: the analyst can hallucinate (e.g. real exit 124 reported as "143
+# (SIGTERM)"); when the harness has the real exit code we anchor narrative
+# text to it instead of trusting the model.
+_sanitize_root_cause() {
+    local rc="$1"
+    local ec="${2:-0}"
+    [[ -z "$rc" ]] && { echo ""; return 0; }
+    [[ -z "$ec" || "$ec" == "0" ]] && { echo "$rc"; return 0; }
+
+    # Determine canonical signal phrase for the captured exit code so we can
+    # leave matching mentions untouched (only replace contradictions).
+    local canonical=""
+    case "$ec" in
+        124) canonical="timeout (exit 124)" ;;
+        137) canonical="SIGKILL (exit 137)" ;;
+        143) canonical="SIGTERM (exit 143)" ;;
+        *)   canonical="exit ${ec}" ;;
+    esac
+
+    # Replace summary phrases that name a *different* exit code.
+    # Pattern matches: "exit code N", "exit(ed) with code N", "exit N", "(exit N)"
+    # We use a perl-free awk/sed approach for portability.
+    local sanitized="$rc"
+    sanitized=$(echo "$sanitized" | sed -E "s/exit(ed)? (with )?(code )?([0-9]+)/__SW_EC_\4__/g")
+
+    # Replace SIG* tokens (only the canonical names, not arbitrary words)
+    sanitized=$(echo "$sanitized" | sed -E "s/\b(SIGTERM|SIGKILL|SIGINT)\b/__SW_SIG_\1__/g")
+
+    # Now decide: any placeholder whose code/signal disagrees with $ec is replaced.
+    # Build allowed placeholders for the captured exit code.
+    local allow_ec="__SW_EC_${ec}__"
+    local allow_sig=""
+    case "$ec" in
+        137) allow_sig="__SW_SIG_SIGKILL__" ;;
+        143) allow_sig="__SW_SIG_SIGTERM__" ;;
+        2)   allow_sig="__SW_SIG_SIGINT__" ;;
+    esac
+
+    # Walk through every placeholder; if it's not allowed, substitute canonical text.
+    # Using a portable bash loop instead of perl.
+    local out="$sanitized"
+    local marker
+    while [[ "$out" == *"__SW_EC_"* ]]; do
+        marker=$(echo "$out" | grep -oE '__SW_EC_[0-9]+__' | head -1)
+        [[ -z "$marker" ]] && break
+        if [[ "$marker" == "$allow_ec" ]]; then
+            out="${out/$marker/exit ${ec}}"
+        else
+            local hallucinated="${marker#__SW_EC_}"
+            hallucinated="${hallucinated%__}"
+            out="${out/$marker/${canonical} [was: exit ${hallucinated}]}"
+        fi
+    done
+    while [[ "$out" == *"__SW_SIG_"* ]]; do
+        marker=$(echo "$out" | grep -oE '__SW_SIG_(SIGTERM|SIGKILL|SIGINT)__' | head -1)
+        [[ -z "$marker" ]] && break
+        if [[ -n "$allow_sig" && "$marker" == "$allow_sig" ]]; then
+            local sig="${marker#__SW_SIG_}"
+            sig="${sig%__}"
+            out="${out/$marker/$sig}"
+        else
+            local sig="${marker#__SW_SIG_}"
+            sig="${sig%__}"
+            out="${out/$marker/${canonical} [was: ${sig}]}"
+        fi
+    done
+
+    echo "$out"
+}
+
 # ─── Memory Capture Functions ──────────────────────────────────────────────
 
 # memory_capture_pipeline <state_file> <artifacts_dir>
@@ -358,11 +449,19 @@ memory_capture_pipeline() {
     success "Captured pipeline learnings (status: ${pipeline_status})"
 }
 
-# memory_capture_failure <stage> <error_output>
-# Captures and deduplicates failure patterns.
+# memory_capture_failure <stage> <error_output> [exit_code]
+# Captures and deduplicates failure patterns. The optional exit_code is the
+# real captured process exit code from the harness — it is persisted as
+# ground truth so future analysis cannot hallucinate a different value.
 memory_capture_failure() {
     local stage="${1:-unknown}"
     local error_output="${2:-}"
+    local exit_code="${3:-0}"
+
+    # Validate exit_code is numeric; clamp to 0 on garbage input
+    if ! [[ "$exit_code" =~ ^[0-9]+$ ]]; then
+        exit_code=0
+    fi
 
     ensure_memory_dir
     local mem_dir
@@ -402,21 +501,27 @@ memory_capture_failure() {
         trap "rm -f '$tmp_file'" EXIT
 
         if [[ "$existing_idx" != "-1" && "$existing_idx" != "null" ]]; then
-            # Update existing entry
+            # Update existing entry — only overwrite exit_code when the new
+            # value is non-zero so we preserve the earliest meaningful capture.
             jq --argjson idx "$existing_idx" \
+               --argjson ec "$exit_code" \
                --arg ts "$(now_iso)" \
-               '.failures[$idx].seen_count += 1 | .failures[$idx].last_seen = $ts' \
+               '.failures[$idx].seen_count += 1
+                | .failures[$idx].last_seen = $ts
+                | (if $ec != 0 then .failures[$idx].exit_code = $ec else . end)' \
                "$failures_file" > "$tmp_file" && mv "$tmp_file" "$failures_file" || rm -f "$tmp_file"
         else
             # Add new failure entry
             jq --arg stage "$stage" \
                --arg pattern "$pattern" \
+               --argjson ec "$exit_code" \
                --arg ts "$(now_iso)" \
                '.failures += [{
                    stage: $stage,
                    pattern: $pattern,
                    root_cause: "",
                    fix: "",
+                   exit_code: $ec,
                    seen_count: 1,
                    last_seen: $ts
                }] | .failures = (.failures | .[-100:])' \
@@ -433,7 +538,7 @@ memory_capture_failure() {
 
     memory_store_for_embedding "failure" "$pattern" "$(repo_hash)" 2>/dev/null || true
 
-    emit_event "memory.failure" "stage=${stage}" "pattern=${pattern:0:80}"
+    emit_event "memory.failure" "stage=${stage}" "pattern=${pattern:0:80}" "exit_code=${exit_code}"
 }
 
 # memory_record_fix_outcome <failure_hash_or_pattern> <fix_applied:bool> <fix_resolved:bool>
@@ -675,11 +780,20 @@ memory_finalize_pipeline() {
     _memory_aggregate_global 2>/dev/null || true
 }
 
-# memory_analyze_failure <log_file> <stage>
+# memory_analyze_failure <log_file> <stage> [exit_code]
 # Uses Claude to analyze a pipeline failure and fill in root_cause/fix/category.
+# When exit_code is provided (non-zero), the harness owns category and a
+# ground-truth anchor is prepended to the prompt so the LLM cannot
+# hallucinate a contradictory exit code or signal name.
 memory_analyze_failure() {
     local log_file="${1:-}"
     local stage="${2:-unknown}"
+    local exit_code="${3:-0}"
+
+    # Validate exit_code is numeric
+    if ! [[ "$exit_code" =~ ^[0-9]+$ ]]; then
+        exit_code=0
+    fi
 
     if [[ -z "$log_file" ]]; then
         warn "No log file specified for failure analysis"
@@ -722,11 +836,21 @@ memory_analyze_failure() {
 
     info "Analyzing failure in ${CYAN}${stage}${RESET} stage..."
 
-    # Gather past successful analyses for the same stage/category as examples
+    # Derive the harness-owned category from exit code (used both as an
+    # authoritative answer and to filter past examples to compatible cases).
+    local derived_cat
+    derived_cat=$(_exit_code_to_category "$exit_code")
+
+    # Gather past successful analyses for the same stage as examples.
+    # Filter out examples whose stored exit_code contradicts the current
+    # call so prior hallucinations cannot poison the new prompt; treat
+    # exit_code==0 or missing as a wildcard so legacy entries are still usable.
     local past_examples=""
     if [[ -f "$failures_file" ]]; then
-        past_examples=$(jq -r --arg stg "$stage" \
-            '[.failures[] | select(.stage == $stg and .root_cause != "" and .fix != "")] |
+        past_examples=$(jq -r --arg stg "$stage" --argjson ec "$exit_code" \
+            '[.failures[]
+              | select(.stage == $stg and .root_cause != "" and .fix != "")
+              | select(($ec == 0) or ((.exit_code // 0) == 0) or ((.exit_code // 0) == $ec))] |
              sort_by(-.fix_effectiveness_rate // 0) | .[:2][] |
              "- Pattern: \(.pattern[:80])\n  Root cause: \(.root_cause)\n  Fix: \(.fix)"' \
             "$failures_file" 2>/dev/null || true)
@@ -738,9 +862,18 @@ memory_analyze_failure() {
         valid_cats=$(echo "$SW_ERROR_CATEGORIES" | tr ' ' ', ')
     fi
 
-    # Build the analysis prompt
-    local prompt
-    prompt="Analyze this pipeline failure. The stage was: ${stage}.
+    # Build the analysis prompt — when we have a real exit code, prepend
+    # a ground-truth block the model is told not to override.
+    local prompt=""
+    if [[ "$exit_code" != "0" ]]; then
+        prompt="GROUND TRUTH (authoritative — do not infer this from logs):
+  exit_code = ${exit_code}
+  category  = ${derived_cat}
+
+"
+    fi
+
+    prompt="${prompt}Analyze this pipeline failure. The stage was: ${stage}.
 The error pattern is: ${last_pattern}
 
 Log output (last 200 lines):
@@ -759,6 +892,12 @@ Return ONLY a JSON object with exactly these fields:
 {\"root_cause\": \"one-line root cause\", \"fix\": \"one-line fix suggestion\", \"category\": \"one of: ${valid_cats}\"}
 
 Return JSON only, no markdown fences, no explanation."
+
+    if [[ -n "${SW_DEBUG:-}" ]]; then
+        echo "---SW_DEBUG memory_analyze_failure prompt---" >&2
+        echo "$prompt" >&2
+        echo "---SW_DEBUG end---" >&2
+    fi
 
     # Call Claude for analysis
     local analysis
@@ -793,7 +932,21 @@ Return JSON only, no markdown fences, no explanation."
         esac
     fi
 
-    # Update the most recent failure entry with root_cause, fix, category
+    # Mechanical override: when the captured exit code is in the
+    # unambiguous set (timeout/dependency/config) the harness wins, no
+    # matter what the LLM produced.
+    case "$exit_code" in
+        124|137|143|126|127)
+            category="$derived_cat"
+            ;;
+    esac
+
+    # Sanitize hallucinated exit code / signal references in the narrative.
+    if [[ "$exit_code" != "0" ]]; then
+        root_cause=$(_sanitize_root_cause "$root_cause" "$exit_code")
+    fi
+
+    # Update the most recent failure entry with root_cause, fix, category, exit_code
     local tmp_file
     tmp_file=$(mktemp)
     # shellcheck disable=SC2064
@@ -801,7 +954,11 @@ Return JSON only, no markdown fences, no explanation."
     jq --arg rc "$root_cause" \
        --arg fix "$fix" \
        --arg cat "$category" \
-       '.failures[-1].root_cause = $rc | .failures[-1].fix = $fix | .failures[-1].category = $cat' \
+       --argjson ec "$exit_code" \
+       '.failures[-1].root_cause = $rc
+        | .failures[-1].fix = $fix
+        | .failures[-1].category = $cat
+        | (if $ec != 0 then .failures[-1].exit_code = $ec else . end)' \
        "$failures_file" > "$tmp_file" && mv "$tmp_file" "$failures_file"
 
     emit_event "memory.analyze" "stage=${stage}" "category=${category}"

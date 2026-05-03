@@ -792,6 +792,7 @@ START_EPOCH=""
 STATUS="running"
 TEST_PASSED=""
 TEST_OUTPUT=""
+TEST_EXIT_CODE=0
 LOG_ENTRIES=""
 
 
@@ -1046,8 +1047,12 @@ run_test_gate() {
     if [[ -z "$TEST_CMD" ]] && [[ ${#ADDITIONAL_TEST_CMDS[@]} -eq 0 ]]; then
         TEST_PASSED=""
         TEST_OUTPUT=""
+        TEST_EXIT_CODE=0
         return
     fi
+    # Reset every invocation so a passing iteration cannot inherit a stale
+    # non-zero code from the previous run.
+    TEST_EXIT_CODE=0
 
     # Determine which test command to use this iteration
     local active_test_cmd="$TEST_CMD"
@@ -1174,12 +1179,22 @@ run_test_gate() {
         echo "$test_results" > "${LOG_DIR}/test-evidence-iter-${ITERATION}.json"
     fi
 
+    # Promote the first non-zero exit code from test_results so downstream
+    # memory hooks (capture_failure / analyze_failure) get ground truth
+    # instead of inferring it from log text.
+    if command -v jq >/dev/null 2>&1; then
+        TEST_EXIT_CODE=$(echo "$test_results" | jq -r 'map(.exit_code) | map(select(. != 0)) | .[0] // 0' 2>/dev/null || echo 0)
+        # Fall back to 0 on any garbage
+        [[ "$TEST_EXIT_CODE" =~ ^[0-9]+$ ]] || TEST_EXIT_CODE=0
+    fi
+
     # Audit: emit test gate event
     if type audit_emit >/dev/null 2>&1; then
         local cmd_count=0
         command -v jq >/dev/null 2>&1 && cmd_count=$(echo "$test_results" | jq 'length' 2>/dev/null || echo 0)
         audit_emit "loop.test_gate" "iteration=$ITERATION" "commands=$cmd_count" \
-            "all_passed=$all_passed" "evidence_path=test-evidence-iter-${ITERATION}.json" || true
+            "all_passed=$all_passed" "exit_code=$TEST_EXIT_CODE" \
+            "evidence_path=test-evidence-iter-${ITERATION}.json" || true
     fi
 
     TEST_PASSED=$all_passed
@@ -2633,9 +2648,11 @@ run_single_agent_loop() {
             # Source memory module for diagnosis and fix lookup
             [[ -f "$SCRIPT_DIR/sw-memory.sh" ]] && source "$SCRIPT_DIR/sw-memory.sh" 2>/dev/null || true
 
-            # Capture failure for memory (enables memory_analyze_failure and future fix lookup)
+            # Capture failure for memory (enables memory_analyze_failure and future fix lookup).
+            # Pass the captured exit code as ground truth so future analysis cannot
+            # hallucinate a different one from log text.
             if type memory_capture_failure &>/dev/null && [[ -n "${TEST_OUTPUT:-}" ]]; then
-                memory_capture_failure "test" "$TEST_OUTPUT" 2>/dev/null || true
+                memory_capture_failure "test" "$TEST_OUTPUT" "${TEST_EXIT_CODE:-0}" 2>/dev/null || true
             fi
 
             # Pattern-based diagnosis (no Claude needed) — inject into goal for smarter retry
@@ -2676,11 +2693,13 @@ ${GOAL}"
                 LOOP_CLOSED_LOOP_FIX=""
             fi
 
-            # Analyze failure via Claude (background, non-blocking) for richer root_cause/fix in memory
+            # Analyze failure via Claude (background, non-blocking) for richer root_cause/fix in memory.
+            # TEST_EXIT_CODE is threaded through as ground truth — the analyst will anchor
+            # category and sanitize hallucinated exit codes / signal names against it.
             if type memory_analyze_failure &>/dev/null && [[ "${INTELLIGENCE_ENABLED:-auto}" != "false" ]]; then
                 local _test_log="${TEST_LOG_FILE:-$LOG_DIR/tests-iter-$(( ITERATION - 1 )).log}"
                 if [[ -f "$_test_log" ]]; then
-                    memory_analyze_failure "$_test_log" "test" 2>/dev/null &
+                    memory_analyze_failure "$_test_log" "test" "${TEST_EXIT_CODE:-0}" 2>/dev/null &
                     _MEM_ANALYZE_PID=$!
                 fi
             fi

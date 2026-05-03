@@ -515,6 +515,198 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Test 20A: ruflo_store dispatcher — default (SW_RUFLO_BACKEND unset) → CLI path
+# Acceptance: pre-change call sites observe identical behavior when SW_RUFLO_BACKEND
+# is unset. We assert the CLI mock receives the canonical `memory store --key …`
+# argv and that NO bridge stub is invoked (we install neither nc nor a stub
+# ruflo_mcp_call — the dispatcher must take the else branch).
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_store — default backend goes through CLI"
+
+unset SW_RUFLO_BACKEND
+RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-calls-default.log"
+: > "$RUFLO_CALLS_LOG"
+mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; exit 0"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+RUFLO_FAILURE_COUNT=0
+
+exit_code=0
+ruflo_store "k" "v" "ns" || exit_code=$?
+
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_store returns 0 on default-backend CLI path"
+else
+    assert_fail "ruflo_store returns 0 on default-backend CLI path" "exit_code=$exit_code"
+fi
+
+if grep -q "memory store --key k --value v --namespace ns" "$RUFLO_CALLS_LOG" 2>/dev/null; then
+    assert_pass "default backend invokes ruflo CLI with memory store args"
+else
+    assert_fail "default backend invokes ruflo CLI with memory store args" \
+        "log contents: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 20B: ruflo_store dispatcher — SW_RUFLO_BACKEND=mcp + bridge available
+# routes through ruflo_mcp_call; CLI binary must NOT be invoked.
+# Stubs are installed AFTER sourcing so the adapter's real ruflo_mcp_call /
+# ruflo_bridge_available are overridden in this shell only.
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_store — SW_RUFLO_BACKEND=mcp routes through bridge"
+
+RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-calls-mcp.log"
+MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-calls.log"
+: > "$RUFLO_CALLS_LOG"
+: > "$MCP_CALLS_LOG"
+mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; exit 0"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+RUFLO_FAILURE_COUNT=0
+
+# Override bridge primitives — declare -f sees these as functions.
+ruflo_bridge_available() { return 0; }
+ruflo_mcp_call() { printf '%s\n' "$*" >> "$MCP_CALLS_LOG"; return 0; }
+
+export SW_RUFLO_BACKEND=mcp
+
+exit_code=0
+ruflo_store "mcp-k" "mcp-v" "mcp-ns" || exit_code=$?
+
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_store returns 0 on MCP-bridge happy path"
+else
+    assert_fail "ruflo_store returns 0 on MCP-bridge happy path" "exit_code=$exit_code"
+fi
+
+if grep -qF "memory_store key=mcp-k value=mcp-v namespace=mcp-ns" "$MCP_CALLS_LOG" 2>/dev/null; then
+    assert_pass "MCP routing invokes ruflo_mcp_call with memory_store key=value pairs"
+else
+    assert_fail "MCP routing invokes ruflo_mcp_call with memory_store key=value pairs" \
+        "mcp-calls.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
+fi
+
+if [[ ! -s "$RUFLO_CALLS_LOG" ]]; then
+    assert_pass "MCP routing does NOT spawn a ruflo CLI subprocess"
+else
+    assert_fail "MCP routing does NOT spawn a ruflo CLI subprocess" \
+        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
+fi
+
+# Cleanup overrides so subsequent tests see the adapter's real implementations.
+unset -f ruflo_bridge_available ruflo_mcp_call
+unset SW_RUFLO_BACKEND
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 20C: ruflo_store dispatcher — bridge returns error → CLI fallback runs
+# AND tags are forwarded on the fallback path (proves the dropped-tags semantic
+# applies only to the bridge call, not the fail-open fallback).
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_store — MCP error falls open to CLI with tags preserved"
+
+RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-calls-fallback.log"
+MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-calls-fallback.log"
+: > "$RUFLO_CALLS_LOG"
+: > "$MCP_CALLS_LOG"
+mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; exit 0"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+RUFLO_FAILURE_COUNT=0
+
+ruflo_bridge_available() { return 0; }
+# Bridge "responded" but reported failure (success:false) → exit 1.
+ruflo_mcp_call() { printf '%s\n' "$*" >> "$MCP_CALLS_LOG"; return 1; }
+
+export SW_RUFLO_BACKEND=mcp
+
+exit_code=0
+ruflo_store "fb-k" "fb-v" "fb-ns" "tag1,tag2" || exit_code=$?
+
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_store remains fail-open (returns 0) when bridge errors"
+else
+    assert_fail "ruflo_store remains fail-open (returns 0) when bridge errors" "exit_code=$exit_code"
+fi
+
+if grep -qF "memory_store key=fb-k value=fb-v namespace=fb-ns" "$MCP_CALLS_LOG" 2>/dev/null; then
+    assert_pass "bridge was attempted before falling back"
+else
+    assert_fail "bridge was attempted before falling back" \
+        "mcp-calls.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
+fi
+
+if grep -qF "memory store --key fb-k --value fb-v --namespace fb-ns --tags tag1,tag2" \
+        "$RUFLO_CALLS_LOG" 2>/dev/null; then
+    assert_pass "CLI fallback receives full args including tags after bridge error"
+else
+    assert_fail "CLI fallback receives full args including tags after bridge error" \
+        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
+fi
+
+unset -f ruflo_bridge_available ruflo_mcp_call
+unset SW_RUFLO_BACKEND
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 20D: ruflo_store dispatcher — SW_RUFLO_BACKEND=mcp + bridge unavailable
+# falls through to CLI WITHOUT invoking ruflo_mcp_call (proves no nc/Node spawn
+# beyond the bounded `nc -w 1` probe inside ruflo_bridge_available).
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_store — MCP gated-on but bridge down falls through to CLI"
+
+RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-calls-bridge-down.log"
+MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-calls-bridge-down.log"
+: > "$RUFLO_CALLS_LOG"
+: > "$MCP_CALLS_LOG"
+mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; exit 0"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+RUFLO_FAILURE_COUNT=0
+
+ruflo_bridge_available() { return 1; }
+# If this gets called the dispatcher's gate is broken — record so we can fail loudly.
+ruflo_mcp_call() { printf '%s\n' "WRONGLY_CALLED $*" >> "$MCP_CALLS_LOG"; return 0; }
+
+export SW_RUFLO_BACKEND=mcp
+
+exit_code=0
+ruflo_store "nu-k" "nu-v" "nu-ns" || exit_code=$?
+
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_store returns 0 when bridge is down"
+else
+    assert_fail "ruflo_store returns 0 when bridge is down" "exit_code=$exit_code"
+fi
+
+if grep -qF "memory store --key nu-k --value nu-v --namespace nu-ns" "$RUFLO_CALLS_LOG" 2>/dev/null; then
+    assert_pass "bridge-down path falls through to CLI"
+else
+    assert_fail "bridge-down path falls through to CLI" \
+        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
+fi
+
+if [[ ! -s "$MCP_CALLS_LOG" ]]; then
+    assert_pass "ruflo_mcp_call not invoked when bridge_available returned false"
+else
+    assert_fail "ruflo_mcp_call not invoked when bridge_available returned false" \
+        "mcp-calls.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
+fi
+
+unset -f ruflo_bridge_available ruflo_mcp_call
+unset SW_RUFLO_BACKEND
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Test 21: ruflo_execute_build_single — returns 1 when RUFLO_AVAILABLE=false
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_execute_build_single — no-op (returns 1) when unavailable"
@@ -4238,6 +4430,72 @@ if grep -q "SEED stage=build" "$_seed_build_log" 2>/dev/null; then
 else
     assert_fail "ruflo_execute_build_hive invokes _ruflo_seed_specialist_history with stage=build" \
         "log: $(cat "$_seed_build_log" 2>/dev/null)"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# _ruflo_sanitize_query_token — strips ALL ASCII control chars
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "_ruflo_sanitize_query_token — control chars become spaces"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+
+# \n, \r, \t replaced with space (consistent — old code differed for \r)
+_san_in=$'feature\nbug\rfix\tlabel'
+_san_out=$(_ruflo_sanitize_query_token "$_san_in")
+if [[ "$_san_out" == "feature bug fix label" ]]; then
+    assert_pass "sanitize: \\n/\\r/\\t consistently become single spaces"
+else
+    assert_fail "sanitize: \\n/\\r/\\t consistently become single spaces" "got: '$_san_out'"
+fi
+
+# ESC and BEL (the previous "only \n/\r/\t" code missed these)
+_san_in=$'a\x1bb\x07c'
+_san_out=$(_ruflo_sanitize_query_token "$_san_in")
+if [[ "$_san_out" == "a b c" ]]; then
+    assert_pass "sanitize: ESC and BEL stripped (defence-in-depth)"
+else
+    assert_fail "sanitize: ESC and BEL stripped" "got: '$_san_out'"
+fi
+
+# Whitespace squeeze + trim → cache-friendly canonical shape
+_san_out=$(_ruflo_sanitize_query_token "   foo    bar   baz   ")
+if [[ "$_san_out" == "foo bar baz" ]]; then
+    assert_pass "sanitize: collapses runs of whitespace and trims edges"
+else
+    assert_fail "sanitize: whitespace collapse" "got: '$_san_out'"
+fi
+
+# Empty input → empty output (caller decides default)
+_san_out=$(_ruflo_sanitize_query_token "")
+if [[ -z "$_san_out" ]]; then
+    assert_pass "sanitize: empty input returns empty"
+else
+    assert_fail "sanitize: empty input returns empty" "got: '$_san_out'"
+fi
+
+# Bounded length via env knob
+_san_out=$(RUFLO_QUERY_TOKEN_MAX_BYTES=10 _ruflo_sanitize_query_token "abcdefghijklmnopqrstuvwxyz")
+if [[ "$_san_out" == "abcdefghij" ]]; then
+    assert_pass "sanitize: RUFLO_QUERY_TOKEN_MAX_BYTES bounds output"
+else
+    assert_fail "sanitize: RUFLO_QUERY_TOKEN_MAX_BYTES bounds output" "got: '$_san_out' (len=${#_san_out})"
+fi
+
+# Invalid bound falls back to default 256 (not crash, not 0-byte truncation)
+_san_out=$(RUFLO_QUERY_TOKEN_MAX_BYTES="not-a-number" _ruflo_sanitize_query_token "hello world")
+if [[ "$_san_out" == "hello world" ]]; then
+    assert_pass "sanitize: non-numeric RUFLO_QUERY_TOKEN_MAX_BYTES falls back to default"
+else
+    assert_fail "sanitize: non-numeric bound falls back" "got: '$_san_out'"
+fi
+
+# Realistic GitHub label payload with embedded \n
+_san_out=$(_ruflo_sanitize_query_token $'priority/critical\nbug,security')
+if [[ "$_san_out" == "priority/critical bug,security" ]]; then
+    assert_pass "sanitize: real-world GH labels with embedded newline"
+else
+    assert_fail "sanitize: real-world GH labels" "got: '$_san_out'"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

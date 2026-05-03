@@ -246,7 +246,7 @@ echo -e "${BOLD}  Human-Readable Output${RESET}"
 
 human_output=$(bash "$SCRIPT_DIR/sw-status.sh" 2>&1) || true
 for section in "TMUX WINDOWS" "TEAM CONFIGS" "TASK LISTS" "DAEMON PIPELINES"; do
-    if echo "$human_output" | grep -q "$section"; then
+    if grep -q "$section" <<< "$human_output"; then
         assert_pass "Human output has '$section' header"
     else
         assert_fail "Human output has '$section' header"

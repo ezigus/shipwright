@@ -113,6 +113,9 @@ test_set_budget() {
 }
 
 test_create_issue() {
+    # Ensure the test label exists before using it
+    gh label create "$TEST_LABEL" --color "#0075ca" --description "E2E integration test" 2>/dev/null || true
+
     local issue_url
     issue_url=$(gh issue create \
         --title "$TEST_ISSUE_TITLE" \

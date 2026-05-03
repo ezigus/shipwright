@@ -1632,7 +1632,12 @@ DOD_PROMPT
     dod_model="$(select_audit_model)"
     local dod_flags=()
     dod_flags+=("--model" "$dod_model")
-    dod_flags+=("--disallowed-tools" "EnterPlanMode,ExitPlanMode")
+    dod_flags+=("--output-format" "json")
+    # EnterPlanMode/ExitPlanMode are NOT disallowed here: the DoD evaluator is a
+    # one-shot -p call and if the model tries to "plan" a complex diff analysis it
+    # hits the disallowed-tool restriction and exits 126 with empty output (seen in
+    # CI from iteration 2 onwards when the cumulative diff grows). Plain text +
+    # --output-format json keeps the response focused without restricting tool use.
     if $SKIP_PERMISSIONS; then
         dod_flags+=("--dangerously-skip-permissions")
     fi
@@ -1654,11 +1659,22 @@ DOD_PROMPT
         return 1
     fi
 
-    # Strip markdown fences and delimiter lines before jq parsing.
-    # Markdown fences (```json / ```) break jq; delimiter lines (<<<DOD:*>>>) are
-    # appended after the JSON object and also cause jq to fail.
+    # With --output-format json, Claude wraps the response as
+    # [{"type":"result","subtype":"success","result":"<model text>"}]
+    # Extract the .result text first, then parse it as the DoD JSON verdict.
     local dod_clean="${dod_log%.log}-clean.json"
-    sed -E '/^```(json)?[[:space:]]*$|^<<<DOD:(PASS|FAIL)>>>[[:space:]]*$/d' "$dod_log" > "$dod_clean" 2>/dev/null || cp "$dod_log" "$dod_clean"
+    local _dod_raw_text
+    _dod_raw_text="$(jq -r '.[0].result // .[0].text // empty' "$dod_log" 2>/dev/null || true)"
+    if [[ -n "$_dod_raw_text" ]]; then
+        # Strip markdown fences and delimiter lines before verdict parse
+        printf '%s\n' "$_dod_raw_text" \
+            | sed -E '/^```(json)?[[:space:]]*$|^<<<DOD:(PASS|FAIL)>>>[[:space:]]*$/d' \
+            > "$dod_clean" 2>/dev/null \
+            || printf '%s\n' "$_dod_raw_text" > "$dod_clean"
+    else
+        # Fallback: treat the whole file as plain text (non-json-wrapped response)
+        sed -E '/^```(json)?[[:space:]]*$|^<<<DOD:(PASS|FAIL)>>>[[:space:]]*$/d' "$dod_log" > "$dod_clean" 2>/dev/null || cp "$dod_log" "$dod_clean"
+    fi
 
     # Parse structured JSON output: verdict field must be "pass"
     local dod_verdict

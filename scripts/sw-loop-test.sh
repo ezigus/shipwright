@@ -2643,6 +2643,48 @@ else
         "expected >=3, got $_swl_kept_count: $_swl_kept"
 fi
 
+# write_error_summary's stricter pipeline must strip descriptive section headers
+# (e.g. "Test 4: missing fingerprint file fails open") so they don't get counted
+# as errors. The same pipeline must keep marker-prefixed failure lines.
+# Why: section headers describing positive properties like "fails open" trigger
+# spurious "structured error" reports that re-fire iterations after success.
+_swl_section_strip='^[[:space:]]*Test [0-9]+:[[:space:]]'
+
+_swl_header_input=$(cat <<'SAMPLE'
+  Test 4: missing fingerprint file fails open (both calls fire)
+  ✗ Test 7: actually broken assertion
+FAIL src/foo.test.js
+  Test 5: observability calls fire every iteration
+SAMPLE
+)
+_swl_summary_kept=$(printf '%s\n' "$_swl_header_input" \
+    | _strip_passing_test_lines \
+    | grep -vE "$_swl_section_strip" \
+    | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' \
+    || true)
+_swl_summary_kept_count=$(printf '%s' "$_swl_summary_kept" | grep -c . 2>/dev/null || true)
+_swl_summary_kept_count=${_swl_summary_kept_count:-0}
+
+if [[ "$_swl_summary_kept_count" -eq 2 ]]; then
+    assert_pass "write_error_summary: section headers stripped, marker-prefixed failures kept (got 2)"
+else
+    assert_fail "write_error_summary: section headers stripped, marker-prefixed failures kept" \
+        "expected 2 (✗ + FAIL), got $_swl_summary_kept_count: $_swl_summary_kept"
+fi
+
+# Confirm the bare "fails open" header alone yields zero structured errors.
+_swl_only_header=$(printf '%s\n' "  Test 4: missing fingerprint file fails open (both calls fire)" \
+    | _strip_passing_test_lines \
+    | grep -vE "$_swl_section_strip" \
+    | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' \
+    || true)
+if [[ -z "$_swl_only_header" ]]; then
+    assert_pass "write_error_summary: bare 'fails open' header alone produces zero false-positive errors"
+else
+    assert_fail "write_error_summary: bare 'fails open' header alone produces zero false-positive errors" \
+        "header survived the strict filter: $_swl_only_header"
+fi
+
 # ─── #448 review fix: --context-file path traversal hardening ────────────────
 echo ""
 echo -e "${DIM}  context-file symlink/realpath validation (#448 review)${RESET}"

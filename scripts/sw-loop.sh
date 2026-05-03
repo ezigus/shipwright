@@ -1221,6 +1221,14 @@ _strip_passing_test_lines() {
 write_error_summary() {
     local error_json="$LOG_DIR/error-summary.json"
 
+    # Strip descriptive test section headers ("  Test 4: ... fails open ...") so
+    # the error grep doesn't flag them as failures. Real failure lines are prefixed
+    # with a marker (✗, FAIL, ERROR), so they don't match this pattern.
+    # Why: section headers are intentionally kept by _strip_passing_test_lines so
+    # they provide context in the iteration prompt (#447), but for the structured
+    # error count they're noise that triggers spurious circuit-breaker iterations.
+    local _strip_section_headers='^[[:space:]]*Test [0-9]+:[[:space:]]'
+
     # Write on test failure OR build failure (non-zero exit from Claude iteration)
     local build_log="$LOG_DIR/iteration-${ITERATION}.log"
     if [[ "${TEST_PASSED:-}" != "false" ]]; then
@@ -1231,6 +1239,7 @@ write_error_summary() {
             build_err_count=$(tail -30 "$build_log" 2>/dev/null \
                 | strip_ansi \
                 | _strip_passing_test_lines \
+                | grep -vE "$_strip_section_headers" \
                 | grep -ciE '(error|fail|exception|panic|FATAL)' || true)
             [[ "${build_err_count:-0}" -gt 0 ]] && build_had_errors=true
         fi
@@ -1254,6 +1263,7 @@ write_error_summary() {
     error_lines_raw=$(tail -30 "$source_log" 2>/dev/null \
         | strip_ansi \
         | _strip_passing_test_lines \
+        | grep -vE "$_strip_section_headers" \
         | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' \
         | head -10 || true)
 

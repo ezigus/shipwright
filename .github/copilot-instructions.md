@@ -858,7 +858,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-resume-test.sh` | 267 | TDD tests for WIP branch resume logic |
 | `scripts/sw-retro-test.sh` | 171 | Sprint retrospective engine tests |
 | `scripts/sw-review-rerun-test.sh` | 307 | SHA-deduped rerun comment writer |
-| `scripts/sw-ruflo-adapter-test.sh` | 4244 |  |
+| `scripts/sw-ruflo-adapter-test.sh` | 4502 |  |
+| `scripts/sw-ruflo-bridge-test.sh` | 293 | Mock-driven tests for the ruflo unix socket |
 | `scripts/sw-ruflo-timeout-test.sh` | 282 | regression tests for ruflo_with_timeout FD hang (#426) |
 | `scripts/sw-scale-test.sh` | 151 | Dynamic agent team scaling |
 | `scripts/sw-security-audit-test.sh` | 163 | Security auditing tests |

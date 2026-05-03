@@ -707,6 +707,257 @@ unset -f ruflo_bridge_available ruflo_mcp_call
 unset SW_RUFLO_BACKEND
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Test 20E: ruflo_recall dispatcher — default (SW_RUFLO_BACKEND unset) → CLI path
+# Asserts pre-change call sites observe identical behavior when SW_RUFLO_BACKEND
+# is unset — the canonical `memory search --query …` argv is sent to the CLI
+# and NO bridge stub is invoked (we install neither nc nor a stub ruflo_mcp_call
+# so the dispatcher must take the else branch).
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_recall — default backend goes through CLI"
+
+unset SW_RUFLO_BACKEND
+RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-recall-default.log"
+: > "$RUFLO_CALLS_LOG"
+mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; printf 'cli-recall-output\n'; exit 0"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+RUFLO_FAILURE_COUNT=0
+
+result=$(ruflo_recall "qx" "nsx" 2>/dev/null || true)
+
+if grep -q "memory search --query qx --namespace nsx --limit 3" "$RUFLO_CALLS_LOG" 2>/dev/null; then
+    assert_pass "default backend invokes ruflo CLI with memory search args"
+else
+    assert_fail "default backend invokes ruflo CLI with memory search args" \
+        "log contents: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
+fi
+
+if [[ "$result" == *"cli-recall-output"* ]]; then
+    assert_pass "default backend returns CLI stdout verbatim to caller"
+else
+    assert_fail "default backend returns CLI stdout verbatim to caller" "got: $result"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 20F: ruflo_recall dispatcher — SW_RUFLO_BACKEND=mcp + bridge available
+# routes through ruflo_mcp_call; CLI binary must NOT be invoked. Stubs return
+# the bridge's wrapped envelope {"success":true,"result":{...}} and the
+# dispatcher must extract `.result` for the caller.
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_recall — SW_RUFLO_BACKEND=mcp routes through bridge"
+
+RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-recall-mcp.log"
+MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-recall.log"
+: > "$RUFLO_CALLS_LOG"
+: > "$MCP_CALLS_LOG"
+mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; exit 0"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+RUFLO_FAILURE_COUNT=0
+
+# Override bridge primitives — return the wrapped envelope shape.
+ruflo_bridge_available() { return 0; }
+ruflo_mcp_call() {
+    printf '%s\n' "$*" >> "$MCP_CALLS_LOG"
+    printf '{"success":true,"result":{"results":[{"key":"k1","value":"v1"}]}}\n'
+    return 0
+}
+
+export SW_RUFLO_BACKEND=mcp
+
+result=$(ruflo_recall "feature failure pattern" "learning-abc" 2>/dev/null || true)
+
+if grep -qF "memory_search query=feature failure pattern namespace=learning-abc limit=3" "$MCP_CALLS_LOG" 2>/dev/null; then
+    assert_pass "MCP routing invokes ruflo_mcp_call with memory_search key=value pairs"
+else
+    assert_fail "MCP routing invokes ruflo_mcp_call with memory_search key=value pairs" \
+        "mcp-recall.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
+fi
+
+if [[ ! -s "$RUFLO_CALLS_LOG" ]]; then
+    assert_pass "MCP routing does NOT spawn a ruflo CLI subprocess for recall"
+else
+    assert_fail "MCP routing does NOT spawn a ruflo CLI subprocess for recall" \
+        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
+fi
+
+# Caller gets `.result` of the envelope, not the wrapping success/result keys.
+if [[ "$result" == *'"results"'* ]] && [[ "$result" == *'"k1"'* ]] \
+   && [[ "$result" != *'"success"'* ]]; then
+    assert_pass "MCP routing extracts .result and returns its compact JSON to the caller"
+else
+    assert_fail "MCP routing extracts .result and returns its compact JSON to the caller" \
+        "got: $result"
+fi
+
+unset -f ruflo_bridge_available ruflo_mcp_call
+unset SW_RUFLO_BACKEND
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 20G: ruflo_recall dispatcher — bridge returns error → CLI fallback runs.
+# Proves fail-open: a failing bridge response still produces output via the CLI.
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_recall — MCP error falls open to CLI"
+
+RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-recall-fallback.log"
+MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-recall-fallback.log"
+: > "$RUFLO_CALLS_LOG"
+: > "$MCP_CALLS_LOG"
+mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; printf 'cli-fallback-text\n'; exit 0"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+RUFLO_FAILURE_COUNT=0
+
+ruflo_bridge_available() { return 0; }
+# Bridge "responded" but reported failure (success:false) → exit 1.
+ruflo_mcp_call() { printf '%s\n' "$*" >> "$MCP_CALLS_LOG"; return 1; }
+
+export SW_RUFLO_BACKEND=mcp
+
+result=$(ruflo_recall "fb-q" "fb-ns" 2>/dev/null || true)
+
+if grep -qF "memory_search query=fb-q namespace=fb-ns limit=3" "$MCP_CALLS_LOG" 2>/dev/null; then
+    assert_pass "bridge was attempted before falling back"
+else
+    assert_fail "bridge was attempted before falling back" \
+        "mcp-recall.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
+fi
+
+if grep -qF "memory search --query fb-q --namespace fb-ns --limit 3" \
+        "$RUFLO_CALLS_LOG" 2>/dev/null; then
+    assert_pass "CLI fallback receives full args after bridge error"
+else
+    assert_fail "CLI fallback receives full args after bridge error" \
+        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
+fi
+
+if [[ "$result" == *"cli-fallback-text"* ]]; then
+    assert_pass "CLI fallback output reaches the caller after bridge error"
+else
+    assert_fail "CLI fallback output reaches the caller after bridge error" "got: $result"
+fi
+
+unset -f ruflo_bridge_available ruflo_mcp_call
+unset SW_RUFLO_BACKEND
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 20H: ruflo_recall dispatcher — SW_RUFLO_BACKEND=mcp + bridge unavailable
+# falls through to CLI WITHOUT invoking ruflo_mcp_call (proves the gating check
+# blocks the call when ruflo_bridge_available returns false).
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_recall — MCP gated-on but bridge down falls through to CLI"
+
+RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-recall-bridge-down.log"
+MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-recall-bridge-down.log"
+: > "$RUFLO_CALLS_LOG"
+: > "$MCP_CALLS_LOG"
+mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; printf 'cli-bridge-down-text\n'; exit 0"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+RUFLO_FAILURE_COUNT=0
+
+ruflo_bridge_available() { return 1; }
+# If this gets called the dispatcher's gate is broken — record so we can fail loudly.
+ruflo_mcp_call() { printf '%s\n' "WRONGLY_CALLED $*" >> "$MCP_CALLS_LOG"; return 0; }
+
+export SW_RUFLO_BACKEND=mcp
+
+result=$(ruflo_recall "nu-q" "nu-ns" 2>/dev/null || true)
+
+if grep -qF "memory search --query nu-q --namespace nu-ns --limit 3" "$RUFLO_CALLS_LOG" 2>/dev/null; then
+    assert_pass "bridge-down recall path falls through to CLI"
+else
+    assert_fail "bridge-down recall path falls through to CLI" \
+        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
+fi
+
+if [[ ! -s "$MCP_CALLS_LOG" ]]; then
+    assert_pass "ruflo_mcp_call not invoked when bridge_available returned false (recall)"
+else
+    assert_fail "ruflo_mcp_call not invoked when bridge_available returned false (recall)" \
+        "mcp-recall.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
+fi
+
+if [[ "$result" == *"cli-bridge-down-text"* ]]; then
+    assert_pass "CLI output reaches the caller when bridge is down"
+else
+    assert_fail "CLI output reaches the caller when bridge is down" "got: $result"
+fi
+
+unset -f ruflo_bridge_available ruflo_mcp_call
+unset SW_RUFLO_BACKEND
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 20I: ruflo_recall_similar_outcomes inherits MCP routing via ruflo_recall.
+# Confirms the dispatcher lives in one place — no second wiring needed for the
+# similar-outcomes wrapper, just a transparent delegation.
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_recall_similar_outcomes — inherits MCP routing via ruflo_recall"
+
+RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-similar-mcp.log"
+MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-similar.log"
+: > "$RUFLO_CALLS_LOG"
+: > "$MCP_CALLS_LOG"
+mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; exit 0"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_USE_NPX=false
+RUFLO_FAILURE_COUNT=0
+
+ruflo_bridge_available() { return 0; }
+ruflo_mcp_call() {
+    printf '%s\n' "$*" >> "$MCP_CALLS_LOG"
+    printf '{"success":true,"result":{"results":[{"task_type":"feature"}]}}\n'
+    return 0
+}
+# Pin repo hash so namespace is deterministic (else the function returns "" early).
+_ruflo_resolve_repo_hash() { printf 'similartest1'; return 0; }
+
+export SW_RUFLO_BACKEND=mcp
+
+result=$(ruflo_recall_similar_outcomes "feature" "tdd,backend" 2>/dev/null || true)
+
+if grep -qF "memory_search query=skill selection for feature tdd,backend namespace=learning-similartest1 limit=3" \
+        "$MCP_CALLS_LOG" 2>/dev/null; then
+    assert_pass "ruflo_recall_similar_outcomes routes through MCP via ruflo_recall"
+else
+    assert_fail "ruflo_recall_similar_outcomes routes through MCP via ruflo_recall" \
+        "mcp-similar.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
+fi
+
+if [[ ! -s "$RUFLO_CALLS_LOG" ]]; then
+    assert_pass "ruflo_recall_similar_outcomes does NOT spawn a ruflo CLI subprocess on MCP path"
+else
+    assert_fail "ruflo_recall_similar_outcomes does NOT spawn a ruflo CLI subprocess on MCP path" \
+        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
+fi
+
+if [[ "$result" == *'"task_type"'* ]] && [[ "$result" == *'"feature"'* ]] \
+   && [[ "$result" != *'"success"'* ]]; then
+    assert_pass "ruflo_recall_similar_outcomes returns the bridge's .result payload"
+else
+    assert_fail "ruflo_recall_similar_outcomes returns the bridge's .result payload" \
+        "got: $result"
+fi
+
+unset -f ruflo_bridge_available ruflo_mcp_call _ruflo_resolve_repo_hash
+unset SW_RUFLO_BACKEND
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Test 21: ruflo_execute_build_single — returns 1 when RUFLO_AVAILABLE=false
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_execute_build_single — no-op (returns 1) when unavailable"

@@ -470,18 +470,23 @@ ruflo_with_timeout() {
         # warn()/emit_event diagnostics on failure via the circuit-breaker path. (#484)
         ( "$@" ) >"$_rft_tmp" 2>/dev/null &
         local bg_pid=$!
-        # Poll with adaptive backoff: 0.1s for the first 10 ticks (1 s fast
-        # window) to handle short-lived operations cheaply, then 1s intervals
-        # for the remainder. Avoids the 10x scheduler overhead of flat 0.1s
-        # polling while still responding quickly to fast MCP/mock calls. (#441)
+        # Poll with adaptive backoff using read -t (bash built-in) instead of
+        # external sleep. Each `sleep N` call forks a child process; with 15+
+        # ruflo calls per iteration × many iterations, hundreds of sleep children
+        # accumulated and were left orphaned on pipeline cancellation. `read -t`
+        # is a pure bash built-in — no child process, no orphan. (#441)
+        #
+        # We read from /dev/zero (infinite NUL-byte stream, never EOF) rather
+        # than /dev/null (immediate EOF) so that read -t actually waits for the
+        # specified duration instead of returning instantly.
         local waited_ds=0
         local timeout_ds=$(( timeout_s * 10 ))
         while kill -0 "$bg_pid" 2>/dev/null && [[ "$waited_ds" -lt "$timeout_ds" ]]; do
             if [[ "$waited_ds" -lt 10 ]]; then
-                sleep 0.1
+                { read -r -t 0.1 _ </dev/zero; } 2>/dev/null || true
                 waited_ds=$(( waited_ds + 1 ))
             else
-                sleep 1
+                { read -r -t 1 _ </dev/zero; } 2>/dev/null || true
                 waited_ds=$(( waited_ds + 10 ))
             fi
         done
@@ -491,7 +496,7 @@ ruflo_with_timeout() {
             # direct child. SIGTERM first; SIGKILL after 1 s grace period
             # for processes that need time to flush/clean up. (#441)
             _kill_process_tree TERM "$bg_pid"
-            sleep 1
+            { read -r -t 1 _ </dev/zero; } 2>/dev/null || true
             _kill_process_tree KILL "$bg_pid"
             wait "$bg_pid" 2>/dev/null || true
             rm -f "$_rft_tmp"

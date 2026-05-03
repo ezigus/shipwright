@@ -569,7 +569,7 @@ ruflo_store() {
             # We still discard stdout — the response JSON is internal.
             local _mcp_err
             _mcp_err=$(ruflo_mcp_call memory_store \
-                "key=$key" "value=$value" "namespace=$namespace" 2>&1 >/dev/null) \
+                "key=$key" "value=$value" "namespace=$namespace" 2>&1 1>/dev/null) \
                 && { return 0; } \
                 || true
             warn "ruflo MCP memory_store failed — falling back to CLI: ${_mcp_err:-<no stderr>}"

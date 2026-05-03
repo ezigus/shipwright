@@ -505,6 +505,12 @@ Pipeline command discovery notes:
 - Shipwright scans repository markers recursively (default depth: `6`) via `pipeline.command_discovery.search_max_depth`.
 - If `scripts/run-xcode-tests.sh` is unavailable, iOS/SwiftPM test commands fall back to `xcodebuild test` and `swift test`.
 
+### Feature Flags
+
+| Flag | Purpose |
+|------|---------|
+| `RUFLO_SELF_HEAL_HIVE=true` | Enable intelligent root-cause triage on test failure with specialist hypothesis spawning and synthesis |
+
 ## Prerequisites
 
 | Requirement     | Version | Install                                |

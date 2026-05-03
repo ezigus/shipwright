@@ -1978,8 +1978,12 @@ Each hypothesis block must contain exactly these four labeled lines (plain text)
     # Better to inject *something* (the user sees three hypotheses in the next
     # prompt) than nothing — and the synthesis_fallback event surfaces the
     # flakiness for diagnosis.
+    # Why: emit the byte-bounded $_union_head, not the raw $_union, so a verbose
+    # namespace listing (many keys × large values) cannot inflate the next
+    # iteration's GOAL beyond the 8000-byte cap.
     if [[ -n "$_union" ]]; then
-        printf '%s\n' "$_union"
+        local _fallback="${_union_head:-$_union}"
+        printf '%s\n' "$_fallback"
         emit_event "ruflo.self_heal_hive_synthesis_fallback" \
             "synth_exit=$_synth_exit" "namespace=$heal_ns"
         emit_event "ruflo.self_heal_hive_complete" \

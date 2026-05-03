@@ -4800,6 +4800,72 @@ else
 fi
 unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID RUFLO_USE_NPX
 
+# Test: synthesis fallback emits bounded output (≤ 8000 bytes head). When
+# synthesis fails AND the namespace listing is verbose (large keys / many
+# values), the unbounded $_union must NOT leak into the next iteration's
+# GOAL. The fallback path emits $_union_head (head -c 8000) instead.
+print_test_section "ruflo_execute_self_heal_hive — synthesis fallback bounded ≤ 8000 bytes"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+subcmd="${1:-}"
+sub2="${2:-}"
+# 'memory list' returns a 20000-byte payload (much larger than 8000-byte cap)
+if [[ "$subcmd" == "hive-mind" && "$sub2" == "memory" ]]; then
+    _is_list=false
+    _is_get=false
+    _is_selected=false
+    for arg in "$@"; do
+        [[ "$arg" == "list" ]] && _is_list=true
+        [[ "$arg" == "get" ]] && _is_get=true
+        [[ "$arg" == "self-heal-selected" ]] && _is_selected=true
+    done
+    if [[ "$_is_list" == "true" ]]; then
+        # Emit ~20000 bytes of namespace dump (verbose union)
+        for i in $(seq 1 200); do
+            printf 'hypothesis-%03d: padding-padding-padding-padding-padding-padding-padding-padding-padding\n' "$i"
+        done
+        exit 0
+    fi
+    # Synthesis 'get' returns empty → forces fallback path
+    if [[ "$_is_get" == "true" && "$_is_selected" == "true" ]]; then
+        printf ''
+        exit 0
+    fi
+    exit 0
+fi
+# Synthesis orchestrate returns 0 (so we reach the 'get' path), but get returns
+# empty → triggers the fallback branch that emits $_union_head.
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-fallback-bound"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="self-heal-fallback-pipeline"
+_heal_out_file="$_test_tmp/heal-out.txt"
+ruflo_execute_self_heal_hive "test failed" "src/foo.js" \
+    > "$_heal_out_file" 2>/dev/null || true
+_out_bytes=$(wc -c < "$_heal_out_file" 2>/dev/null | tr -d ' ')
+_out_bytes="${_out_bytes:-0}"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+# Mock emitted ~20000 bytes; bounded fallback must cap output well under that.
+# Cap is 8000 bytes from head -c, +1 trailing newline. Allow 8200 bytes slack.
+if (( _out_bytes > 0 && _out_bytes <= 8200 )); then
+    assert_pass "ruflo_execute_self_heal_hive fallback output bounded to ≤ 8200 bytes"
+else
+    assert_fail "ruflo_execute_self_heal_hive fallback output bounded to ≤ 8200 bytes" \
+        "out_bytes=$_out_bytes (expected 1..8200)"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
 # Test: sw-loop integration — sentinel tokens (<<<, >>>) are stripped from
 # hive-selected hypothesis before injection into GOAL. Mirrors the exact logic
 # at scripts/sw-loop.sh:2667-2668. A malformed hypothesis with embedded

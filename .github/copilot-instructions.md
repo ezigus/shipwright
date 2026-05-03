@@ -649,8 +649,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 703 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 643 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 353 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 3136 | Continuous agent loop harness for Claude Code |
-| `scripts/sw-memory.sh` | 2115 | Persistent Learning & Context System |
+| `scripts/sw-loop.sh` | 3155 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-memory.sh` | 2272 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 473 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 606 | Intelligent Model Routing & Cost Optimization |
 | `scripts/sw-otel.sh` | 625 | OpenTelemetry Observability |
@@ -776,7 +776,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-doctor-test.sh` | 299 | Validate setup diagnostics |
 | `scripts/sw-dora-test.sh` | 241 | Validate DORA metrics dashboard, DX metrics, |
 | `scripts/sw-durable-test.sh` | 221 | Validate durable workflow engine |
-| `scripts/sw-e2e-integration-test.sh` | 352 | Real Claude + Real GitHub |
+| `scripts/sw-e2e-integration-test.sh` | 355 | Real Claude + Real GitHub |
 | `scripts/sw-e2e-orchestrator-test.sh` | 157 | Test suite registry & execution |
 | `scripts/sw-e2e-smoke-test.sh` | 1071 | Pipeline orchestration without API keys |
 | `scripts/sw-e2e-system-test.sh` | 569 | Proves full daemon→pipeline→loop→PR flow |
@@ -827,7 +827,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-logs-test.sh` | 281 | Validate agent pane log viewing, searching, |
 | `scripts/sw-loop-test.sh` | 2787 | Validate continuous agent loop harness |
 | `scripts/sw-memory-discovery-e2e-test.sh` | 412 | Memory & Discovery E2E Test |
-| `scripts/sw-memory-test.sh` | 871 | Unit tests for memory system & cost tracking |
+| `scripts/sw-memory-test.sh` | 1095 | Unit tests for memory system & cost tracking |
 | `scripts/sw-mission-control-test.sh` | 153 | Validate mission control dashboard |
 | `scripts/sw-model-router-test.sh` | 188 | Intelligent model routing & optimization |
 | `scripts/sw-otel-test.sh` | 146 | OpenTelemetry observability |

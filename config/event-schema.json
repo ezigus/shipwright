@@ -290,6 +290,18 @@
       "required": ["count", "repo"],
       "optional": []
     },
+    "ruflo.mcp_store_fallback": {
+      "required": ["namespace", "reason"],
+      "optional": []
+    },
+    "ruflo.mcp_recall_fallback": {
+      "required": ["namespace", "reason"],
+      "optional": []
+    },
+    "ruflo.benchmark_run": {
+      "required": ["backend"],
+      "optional": ["p95_ms", "errors", "transient_pids"]
+    },
     "ruflo.build_agent_start": {
       "required": ["max_turns"],
       "optional": []

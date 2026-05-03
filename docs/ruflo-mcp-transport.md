@@ -33,6 +33,7 @@ bash client via `nc -U`.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
+| `SW_RUFLO_BACKEND` | `cli` | Caller-side router: `mcp` opts into the bridge for `ruflo_store`/`ruflo_recall`; any other value (or unset) selects the legacy CLI path. Falls back to CLI automatically if the bridge is unavailable. |
 | `RUFLO_BRIDGE_SOCK` | `$HOME/.shipwright/ruflo-bridge.sock` | Unix socket path the bridge listens on |
 | `RUFLO_BRIDGE_TIMEOUT` | `5` | Per-call `nc -w` timeout in seconds (transport-level) |
 | `RUFLO_BRIDGE_SCRIPT` | `<sibling>/ruflo-bridge.mjs` | Path to the bridge server script |
@@ -185,6 +186,46 @@ Expected response shape for `memory_store`:
 
 Deprecations are announced here and emit a stderr warning from the bridge
 for one minor cycle before removal.
+
+## 10. Validation harness (#504)
+
+`scripts/benchmark-ruflo-backends.sh` drives both backends through identical
+workloads (20 `memory_search` calls each, with sample #1 discarded for cold
+start) and records latency percentiles, unique transient `node` PIDs, and
+post-run orphan PIDs.
+
+```bash
+# Run both backends, assert MCP thresholds (exit 2 on miss):
+npm run bench:ruflo
+
+# Collect data only (no assertions — useful when ruflo CLI is unavailable):
+npm run bench:ruflo:collect
+
+# Single backend, custom sample count:
+scripts/benchmark-ruflo-backends.sh --mcp --samples 30
+```
+
+Artifacts land in `.claude/pipeline-artifacts/benchmarks/`:
+
+- `benchmark-cli-<ts>.json` — `{samples_ms, percentiles_ms, errors, unique_transient_node_pids, orphan_node_pids_post_run, env}`
+- `benchmark-mcp-<ts>.json` — same shape, scoped to a benchmark-private socket so a running pipeline's bridge is not disturbed
+- `summary-<ts>.md` — human-readable comparison table
+
+**Default acceptance thresholds** (overridable via env):
+
+| Metric | Default cap | Override |
+|---|---|---|
+| MCP latency p95 | ≤ 5 ms | `BENCH_P95_MAX` |
+| MCP latency p99 (soft warn) | ≤ 15 ms | `BENCH_P99_MAX` |
+| MCP unique transient node PIDs | ≤ 1 | `BENCH_MCP_MAX_PIDS` |
+| MCP orphan PIDs after stop | 0 | (hard-coded) |
+| CLI baseline unique PIDs | ≥ 10 | `BENCH_CLI_MIN_PIDS` |
+| Sample count | 20 | `BENCH_SAMPLES` / `--samples` |
+
+The harness exits non-zero (2) when MCP misses any hard cap, so CI can gate
+PRs on it. CLI baseline is informational only — a weak baseline triggers a
+warning but never fails the run, so the script remains useful in environments
+without the legacy CLI binary.
 
 ## Out of scope
 

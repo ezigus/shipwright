@@ -48,7 +48,9 @@
     "harness:evidence:capture:cli": "bash scripts/sw-evidence.sh capture cli",
     "harness:ui:capture-browser-evidence": "bash scripts/sw-evidence.sh capture browser",
     "harness:ui:verify-browser-evidence": "bash scripts/sw-evidence.sh verify",
-    "harness:ui:pre-pr": "bash scripts/sw-evidence.sh pre-pr browser"
+    "harness:ui:pre-pr": "bash scripts/sw-evidence.sh pre-pr browser",
+    "bench:ruflo": "bash scripts/benchmark-ruflo-backends.sh",
+    "bench:ruflo:collect": "bash scripts/benchmark-ruflo-backends.sh --no-assert"
   },
   "keywords": [
     "claude",

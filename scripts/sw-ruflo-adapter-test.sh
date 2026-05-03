@@ -4569,5 +4569,251 @@ else
     assert_fail "ruflo_execute_self_heal_hive — function body extractable" "awk returned empty"
 fi
 
+# Helper: build a ruflo mock that records --count from spawn invocations and
+# emits a happy-path selected hypothesis. The function's path through to the
+# complete event needs all three memory queries to return content: list (so
+# _union is non-empty and the function proceeds to synthesis), and get
+# self-heal-selected (so _selected is non-empty for the success branch).
+_self_heal_make_count_mock() {
+    local _tmp="$1"
+    local _calls="$2"
+    cat > "$_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+subcmd="\${1:-}"
+sub2="\${2:-}"
+printf '%s\n' "\$*" >> "$_calls"
+if [[ "\$subcmd" == "hive-mind" && "\$sub2" == "memory" ]]; then
+    _is_get=false; _is_list=false; _is_selected=false
+    for arg in "\$@"; do
+        [[ "\$arg" == "get" ]] && _is_get=true
+        [[ "\$arg" == "list" ]] && _is_list=true
+        [[ "\$arg" == "self-heal-selected" ]] && _is_selected=true
+    done
+    if [[ "\$_is_get" == "true" && "\$_is_selected" == "true" ]]; then
+        printf 'Hypothesis: ok\nVerification: ok\n'
+    elif [[ "\$_is_list" == "true" ]]; then
+        printf 'hypothesis-mock-boundary: H1\nhypothesis-async-timing: H2\nhypothesis-schema-type: H3\n'
+    fi
+fi
+exit 0
+MOCK
+    chmod +x "$_tmp/ruflo"
+}
+
+# Test: specialist count default — unset RUFLO_SELF_HEAL_MAX_AGENTS picks 3
+print_test_section "ruflo_execute_self_heal_hive — specialist count defaults to 3"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-count-default"; RUFLO_USE_NPX=false
+unset RUFLO_SELF_HEAL_MAX_AGENTS
+SHIPWRIGHT_PIPELINE_ID="count-default"
+ruflo_execute_self_heal_hive "boom" "x" >/dev/null 2>&1 || true
+_count_line=$(grep '^hive-mind spawn' "$_calls" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_count_line" == *"--count 3"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive defaults --count to 3 when unset"
+else
+    assert_fail "ruflo_execute_self_heal_hive defaults --count to 3 when unset" "spawn line: $_count_line"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: specialist count clamped at ceiling (4) — 10 → 4
+print_test_section "ruflo_execute_self_heal_hive — specialist count clamps at 4"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-count-clamp"; RUFLO_USE_NPX=false
+RUFLO_SELF_HEAL_MAX_AGENTS=10
+SHIPWRIGHT_PIPELINE_ID="count-clamp"
+ruflo_execute_self_heal_hive "boom" "x" >/dev/null 2>&1 || true
+_count_line=$(grep '^hive-mind spawn' "$_calls" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_count_line" == *"--count 4"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive clamps --count to 4 when value is 10"
+else
+    assert_fail "ruflo_execute_self_heal_hive clamps --count to 4 when value is 10" \
+        "spawn line: $_count_line"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID RUFLO_SELF_HEAL_MAX_AGENTS
+
+# Test: specialist count zero coerced to default 3
+print_test_section "ruflo_execute_self_heal_hive — specialist count 0 → default"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-count-zero"; RUFLO_USE_NPX=false
+RUFLO_SELF_HEAL_MAX_AGENTS=0
+SHIPWRIGHT_PIPELINE_ID="count-zero"
+ruflo_execute_self_heal_hive "boom" "x" >/dev/null 2>&1 || true
+_count_line=$(grep '^hive-mind spawn' "$_calls" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_count_line" == *"--count 3"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive coerces --count 0 to default 3"
+else
+    assert_fail "ruflo_execute_self_heal_hive coerces --count 0 to default 3" \
+        "spawn line: $_count_line"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID RUFLO_SELF_HEAL_MAX_AGENTS
+
+# Test: specialist count non-numeric coerced to default 3
+print_test_section "ruflo_execute_self_heal_hive — specialist count non-numeric → default"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-count-junk"; RUFLO_USE_NPX=false
+RUFLO_SELF_HEAL_MAX_AGENTS="banana"
+SHIPWRIGHT_PIPELINE_ID="count-junk"
+ruflo_execute_self_heal_hive "boom" "x" >/dev/null 2>&1 || true
+_count_line=$(grep '^hive-mind spawn' "$_calls" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_count_line" == *"--count 3"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive coerces non-numeric --count to default 3"
+else
+    assert_fail "ruflo_execute_self_heal_hive coerces non-numeric --count to default 3" \
+        "spawn line: $_count_line"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID RUFLO_SELF_HEAL_MAX_AGENTS
+
+# Test: SHIPWRIGHT_PIPELINE_ID flows into namespace prefix used in spawn
+print_test_section "ruflo_execute_self_heal_hive — pipeline_id propagates to spawn prefix"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-pid"; RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="pl-abc-123"
+ruflo_execute_self_heal_hive "boom" "x" >/dev/null 2>&1 || true
+_spawn_line=$(grep '^hive-mind spawn' "$_calls" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_spawn_line" == *"self-heal-pl-abc-123"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive uses SHIPWRIGHT_PIPELINE_ID in --prefix"
+else
+    assert_fail "ruflo_execute_self_heal_hive uses SHIPWRIGHT_PIPELINE_ID in --prefix" \
+        "spawn line: $_spawn_line"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: emit_event fires the start event with max_agents and namespace fields
+print_test_section "ruflo_execute_self_heal_hive — emits start event with metadata"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-evt"; RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="evt-pipeline"
+_emit_log="$_test_tmp/emit.log"
+emit_event() { printf '%s\n' "$*" >> "$_emit_log"; }
+ruflo_execute_self_heal_hive "boom" "x.js" >/dev/null 2>&1 || true
+unset -f emit_event
+_start_evt=$(grep "ruflo.self_heal_hive_start" "$_emit_log" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_start_evt" == *"max_agents=3"* && "$_start_evt" == *"namespace=hive-self-heal-evt-pipeline"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive start event includes max_agents and namespace"
+else
+    assert_fail "ruflo_execute_self_heal_hive start event includes max_agents and namespace" \
+        "event: $_start_evt"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: emit_event fires complete event with synthesis=ok on happy path
+print_test_section "ruflo_execute_self_heal_hive — emits complete event on success"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-cmp"; RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="cmp-pipeline"
+_emit_log="$_test_tmp/emit.log"
+emit_event() { printf '%s\n' "$*" >> "$_emit_log"; }
+ruflo_execute_self_heal_hive "boom" "x.js" >/dev/null 2>&1 || true
+unset -f emit_event
+_complete_evt=$(grep "ruflo.self_heal_hive_complete" "$_emit_log" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_complete_evt" == *"synthesis=ok"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive emits complete event with synthesis=ok"
+else
+    assert_fail "ruflo_execute_self_heal_hive emits complete event with synthesis=ok" \
+        "event: $_complete_evt"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: NPX path — RUFLO_USE_NPX=true routes through npx wrapper
+print_test_section "ruflo_execute_self_heal_hive — NPX path invokes npx wrapper"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+# npx mock: records argv and acts as ruflo-via-npx
+cat > "$_test_tmp/npx" <<MOCK
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$_calls"
+# Drop the leading flags ("-y ruflo@latest") and dispatch on the remainder.
+shift; shift
+subcmd="\${1:-}"
+sub2="\${2:-}"
+if [[ "\$subcmd" == "hive-mind" && "\$sub2" == "memory" ]]; then
+    _is_get=false; _is_selected=false
+    for arg in "\$@"; do
+        [[ "\$arg" == "get" ]] && _is_get=true
+        [[ "\$arg" == "self-heal-selected" ]] && _is_selected=true
+    done
+    [[ "\$_is_get" == "true" && "\$_is_selected" == "true" ]] && \
+        printf 'Hypothesis: npx-ok\nVerification: npx-ok\n'
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/npx"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-npx"; RUFLO_USE_NPX=true
+SHIPWRIGHT_PIPELINE_ID="npx-pipeline"
+_heal_out_file="$_test_tmp/out.txt"
+ruflo_execute_self_heal_hive "boom" "x.js" > "$_heal_out_file" 2>/dev/null || true
+_npx_used=false
+grep -q "ruflo@latest hive-mind spawn" "$_calls" 2>/dev/null && _npx_used=true
+_npx_orch=false
+grep -q "ruflo@latest coordination orchestrate" "$_calls" 2>/dev/null && _npx_orch=true
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_npx_used" == "true" && "$_npx_orch" == "true" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive routes spawn+orchestrate through npx when RUFLO_USE_NPX=true"
+else
+    assert_fail "ruflo_execute_self_heal_hive routes spawn+orchestrate through npx when RUFLO_USE_NPX=true" \
+        "spawn=$_npx_used orchestrate=$_npx_orch"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID RUFLO_USE_NPX
+
+# Test: sw-loop integration — sentinel tokens (<<<, >>>) are stripped from
+# hive-selected hypothesis before injection into GOAL. Mirrors the exact logic
+# at scripts/sw-loop.sh:2667-2668. A malformed hypothesis with embedded
+# sentinels could otherwise prematurely terminate the loop.
+print_test_section "sw-loop — strips <<<...>>> sentinels from hypothesis"
+_hypothesis=$'Hypothesis: <<<LOOP:PASS>>> something\nVerification: grep foo'
+_hypothesis="${_hypothesis//<<<}"
+_hypothesis="${_hypothesis//>>>}"
+if [[ "$_hypothesis" != *"<<<"* && "$_hypothesis" != *">>>"* ]]; then
+    assert_pass "sw-loop strips <<< and >>> sentinels from hive-selected hypothesis"
+else
+    assert_fail "sw-loop strips <<< and >>> sentinels from hive-selected hypothesis" \
+        "after strip: $_hypothesis"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

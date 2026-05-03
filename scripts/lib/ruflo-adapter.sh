@@ -587,8 +587,10 @@ ruflo_store() {
 }
 
 # ─── _ruflo_recall_cli — CLI-backed recall implementation ───────────────────
-# Internal helper extracted so the dispatcher can call it as the default path
-# and as the fail-open fallback when SW_RUFLO_BACKEND=mcp but the bridge errors.
+# Internal helper. Identical body to the legacy ruflo_recall() — extracted so
+# the dispatcher can call it both as the default path and as the fail-open
+# fallback when SW_RUFLO_BACKEND=mcp but the bridge errors. Same contract:
+# fail-open, returns 0, prints "" on timeout, bounded by the recall timeout.
 _ruflo_recall_cli() {
     local query="$1" namespace="${2:-default}"
     ruflo_with_timeout "${RUFLO_RECALL_TIMEOUT:-30}" _ruflo_run_quiet memory search \
@@ -612,8 +614,11 @@ _ruflo_recall_cli() {
 #
 # MCP response unwrapping: the bridge wraps ruflo's reply as
 # `{"success":true,"result":{...}}`. We extract `.result` via jq and emit it as
-# compact JSON — Shipwright's recall consumers treat the output as opaque text,
-# so JSON vs plain-text rendering is interchangeable for them.
+# compact JSON — Shipwright's recall consumers (prompt context blocks, the
+# learning bridge, _ruflo_seed_specialist_history) treat the output as opaque
+# text, so JSON vs plain-text rendering is interchangeable for them.
+# `ruflo_recall_similar_outcomes` inherits this routing transparently because
+# it delegates here.
 ruflo_recall() {
     ruflo_available || { echo ""; return 0; }
     local query="$1" namespace="${2:-default}"
@@ -624,25 +629,30 @@ ruflo_recall() {
            && ruflo_bridge_available; then
             # Capture stderr in a temp file so partially-broken bridge state
             # surfaces via warn() rather than silently degrading to CLI.
-            # If mktemp fails, skip MCP entirely and fall back to CLI — never
-            # attempt the bridge call with stderr suppressed.
+            # Stdout is the response JSON which we need for .result extraction.
             local _err_file _mcp_resp _mcp_exit=0 _err_text=""
             _err_file=$(mktemp "${TMPDIR:-/tmp}/ruflo_recall.XXXXXX" 2>/dev/null) \
                 || _err_file=""
-            if [[ -z "$_err_file" ]]; then
-                _ruflo_recall_cli "$query" "$namespace"
-                return 0
+            if [[ -n "$_err_file" ]]; then
+                _mcp_resp=$(ruflo_mcp_call memory_search \
+                    "query=$query" "namespace=$namespace" "limit=3" \
+                    2>"$_err_file") || _mcp_exit=$?
+                _err_text=$(cat "$_err_file" 2>/dev/null || true)
+                rm -f "$_err_file" 2>/dev/null || true
+            else
+                _mcp_resp=$(ruflo_mcp_call memory_search \
+                    "query=$query" "namespace=$namespace" "limit=3" \
+                    2>/dev/null) || _mcp_exit=$?
             fi
-            _mcp_resp=$(ruflo_mcp_call memory_search \
-                "query=$query" "namespace=$namespace" "limit=3" \
-                2>"$_err_file") || _mcp_exit=$?
-            _err_text=$(cat "$_err_file" 2>/dev/null || true)
-            rm -f "$_err_file" 2>/dev/null || true
             if [[ $_mcp_exit -eq 0 ]]; then
+                # `// empty` filters null so we print "" rather than the literal
+                # "null" string when the bridge omits a result field.
                 if command -v jq >/dev/null 2>&1; then
                     printf '%s' "$_mcp_resp" \
                         | jq -c '.result // empty' 2>/dev/null || true
                 else
+                    # jq absent (rare — also required by the wrapper itself)
+                    # — emit the raw response so callers still see something.
                     printf '%s' "$_mcp_resp"
                 fi
                 return 0
@@ -1999,6 +2009,10 @@ ruflo_learn_from_shipwright() {
 # Supplements Shipwright's file-based skill selection with semantic vector search.
 # Returns matching outcomes to stdout. Returns empty string when unavailable or
 # when repo hash cannot be determined (to prevent cross-repo namespace pollution).
+#
+# Backend routing: delegates to ruflo_recall, which dispatches between the MCP
+# bridge (SW_RUFLO_BACKEND=mcp) and the CLI fallback. No backend-aware logic
+# here — keeps the dispatcher in one place so future transports apply uniformly.
 ruflo_recall_similar_outcomes() {
     ruflo_available || { echo ""; return 0; }
     local task_type="$1" issue_labels="${2:-}"

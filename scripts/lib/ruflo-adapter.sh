@@ -28,7 +28,14 @@ _RUFLO_ADAPTER_LOADED=1
 _ruflo_adapter_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 if [[ -f "$_ruflo_adapter_dir/ruflo-mcp-call.sh" ]]; then
     # shellcheck source=scripts/lib/ruflo-mcp-call.sh
-    source "$_ruflo_adapter_dir/ruflo-mcp-call.sh"
+    source "$_ruflo_adapter_dir/ruflo-mcp-call.sh" || true
+    # Validate that sourcing produced the expected public functions.
+    # Guards against truncated/corrupt files and version mismatches that
+    # would cause ruflo_store to silently skip the MCP path on every call.
+    if ! declare -f ruflo_mcp_call >/dev/null 2>&1 \
+       || ! declare -f ruflo_bridge_available >/dev/null 2>&1; then
+        printf 'ruflo-adapter: ruflo-mcp-call.sh sourced but missing expected functions — MCP path disabled\n' >&2
+    fi
 fi
 unset _ruflo_adapter_dir
 
@@ -542,7 +549,7 @@ _ruflo_store_cli() {
 #   "mcp"  + bridge up + wrapper sourced → ruflo_mcp_call memory_store ...
 #                                          (no new ruflo subprocess)
 #   "mcp"  + bridge error                → CLI fallback (preserves all args)
-#   "mcp"  + bridge down                 → CLI fallback (no ping/spawn cost
+#   "mcp"  + bridge down                 → CLI fallback + warn (no ping/spawn cost
 #                                          beyond the bounded `nc -w 1` probe)
 #   "cli"  / unset / anything else       → CLI path (legacy behavior)
 #
@@ -553,16 +560,18 @@ ruflo_store() {
     ruflo_available || return 0
     local key="$1" value="$2" namespace="${3:-default}" tags="${4:-}"
 
-    if [[ "${SW_RUFLO_BACKEND:-cli}" == "mcp" ]] \
-       && declare -f ruflo_mcp_call >/dev/null 2>&1 \
-       && declare -f ruflo_bridge_available >/dev/null 2>&1 \
-       && ruflo_bridge_available; then
-        ruflo_mcp_call memory_store \
-            "key=$key" "value=$value" "namespace=$namespace" >/dev/null 2>&1 \
-            || _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
-    else
-        _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
+    if [[ "${SW_RUFLO_BACKEND:-cli}" == "mcp" ]]; then
+        if declare -f ruflo_mcp_call >/dev/null 2>&1 \
+           && declare -f ruflo_bridge_available >/dev/null 2>&1 \
+           && ruflo_bridge_available; then
+            ruflo_mcp_call memory_store \
+                "key=$key" "value=$value" "namespace=$namespace" >/dev/null 2>&1 \
+                || _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
+            return 0
+        fi
+        warn "SW_RUFLO_BACKEND=mcp requested but bridge unavailable — using CLI fallback"
     fi
+    _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
     return 0
 }
 
@@ -675,8 +684,18 @@ _ruflo_seed_specialist_history() {
 
     # TASK_TYPE / ISSUE_LABELS are populated by the intake stage; default
     # gracefully when invoked outside a full pipeline (e.g. ad-hoc build).
+    # Strip newlines and control characters before building the query string —
+    # these values come from GitHub issue metadata and are passed as a quoted
+    # CLI argument (--query "$_query"), but stripping control chars here keeps
+    # the query single-line and prevents any multi-arg splitting surprises.
     local _task_type="${TASK_TYPE:-feature}"
+    _task_type="${_task_type//$'\n'/ }"
+    _task_type="${_task_type//$'\r'/}"
+    _task_type="${_task_type//$'\t'/ }"
     local _labels="${ISSUE_LABELS:-}"
+    _labels="${_labels//$'\n'/ }"
+    _labels="${_labels//$'\r'/}"
+    _labels="${_labels//$'\t'/ }"
     local _query="${stage_name} stage outcomes for ${_task_type} ${_labels}"
 
     local _history

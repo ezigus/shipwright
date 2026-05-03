@@ -564,12 +564,23 @@ ruflo_store() {
         if declare -f ruflo_mcp_call >/dev/null 2>&1 \
            && declare -f ruflo_bridge_available >/dev/null 2>&1 \
            && ruflo_bridge_available; then
-            ruflo_mcp_call memory_store \
-                "key=$key" "value=$value" "namespace=$namespace" >/dev/null 2>&1 \
-                || _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
+            # Capture stderr (not /dev/null'd) so a partially-broken bridge
+            # doesn't silently degrade to CLI without operator visibility.
+            # We still discard stdout — the response JSON is internal.
+            local _mcp_err
+            _mcp_err=$(ruflo_mcp_call memory_store \
+                "key=$key" "value=$value" "namespace=$namespace" 2>&1 >/dev/null) \
+                && { return 0; } \
+                || true
+            warn "ruflo MCP memory_store failed — falling back to CLI: ${_mcp_err:-<no stderr>}"
+            emit_event "ruflo.mcp_store_fallback" \
+                "namespace=$namespace" "reason=${_mcp_err:-bridge_error}"
+            _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
             return 0
         fi
         warn "SW_RUFLO_BACKEND=mcp requested but bridge unavailable — using CLI fallback"
+        emit_event "ruflo.mcp_store_fallback" \
+            "namespace=$namespace" "reason=bridge_unavailable"
     fi
     _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
     return 0
@@ -655,6 +666,47 @@ _ruflo_resolve_repo_hash() {
     printf '%s' "$_hash"
 }
 
+# ─── _ruflo_sanitize_query_token — strip control chars, bound length ─────────
+# Sanitizes externally-influenced values (TASK_TYPE, ISSUE_LABELS, etc.) before
+# they are concatenated into a recall query string passed to the ruflo CLI.
+# Removes ALL ASCII control characters (0x00-0x1F and 0x7F DEL) and collapses
+# consecutive whitespace into single spaces, then bounds the result to
+# RUFLO_QUERY_TOKEN_MAX_BYTES (default 256).
+#
+# Why strip everything (not just \n/\r/\t):
+#   - Terminal escape sequences (ESC, BEL) cause display corruption when logged
+#   - Embedded NUL/control chars create cache misses for semantically-equal
+#     queries with different byte representations
+#   - Defence-in-depth even though `--query "$q"` quotes the CLI argument
+#
+# Bash 3.2 compatible — uses `tr` (POSIX) for the cntrl-class deletion since
+# pure-bash control-class detection requires bash 4+ extended pattern matching.
+# Empty input → empty output (caller decides default).
+_ruflo_sanitize_query_token() {
+    local _raw="${1:-}"
+    [[ -n "$_raw" ]] || { printf ''; return 0; }
+    local _max="${RUFLO_QUERY_TOKEN_MAX_BYTES:-256}"
+    if ! [[ "$_max" =~ ^[0-9]+$ ]] || (( _max < 1 )); then
+        _max=256
+    fi
+    # 1) Replace ASCII control chars (incl. NUL, ESC, BEL, DEL) with a space
+    #    — keeps adjacent tokens separated for search relevance instead of
+    #    merging "feature\nbug" into "featurebug".
+    # 2) Squeeze runs of whitespace into a single space (consistent shape,
+    #    cache-friendly: identical bytes for semantically-equal queries).
+    # 3) Trim leading/trailing whitespace via parameter expansion.
+    # 4) Bound by byte count to keep argv small.
+    local _clean
+    _clean=$(printf '%s' "$_raw" \
+        | tr '[:cntrl:]' ' ' \
+        | tr -s '[:space:]' ' ' \
+        | head -c "$_max" 2>/dev/null) || _clean=""
+    # Trim — bash 3.2 safe, no extglob required.
+    _clean="${_clean# }"
+    _clean="${_clean% }"
+    printf '%s' "$_clean"
+}
+
 # ─── _ruflo_seed_specialist_history — seed hive specialists with prior learnings ─
 # Recalls historical outcomes from learning-${repo_hash} (cross-pipeline
 # memory) and stores a bounded slice into the per-stage hive namespace so
@@ -684,18 +736,16 @@ _ruflo_seed_specialist_history() {
 
     # TASK_TYPE / ISSUE_LABELS are populated by the intake stage; default
     # gracefully when invoked outside a full pipeline (e.g. ad-hoc build).
-    # Strip newlines and control characters before building the query string —
-    # these values come from GitHub issue metadata and are passed as a quoted
-    # CLI argument (--query "$_query"), but stripping control chars here keeps
-    # the query single-line and prevents any multi-arg splitting surprises.
-    local _task_type="${TASK_TYPE:-feature}"
-    _task_type="${_task_type//$'\n'/ }"
-    _task_type="${_task_type//$'\r'/}"
-    _task_type="${_task_type//$'\t'/ }"
-    local _labels="${ISSUE_LABELS:-}"
-    _labels="${_labels//$'\n'/ }"
-    _labels="${_labels//$'\r'/}"
-    _labels="${_labels//$'\t'/ }"
+    # Sanitize via _ruflo_sanitize_query_token — strips ALL ASCII control
+    # characters (0x00-0x1F, 0x7F) and bounds the byte length. These values
+    # come from GitHub issue metadata; the comprehensive strip prevents
+    # terminal escapes when logged, downstream parsing surprises, and cache
+    # misses from semantically-equal queries with differing byte representations.
+    local _task_type
+    _task_type=$(_ruflo_sanitize_query_token "${TASK_TYPE:-feature}")
+    [[ -n "$_task_type" ]] || _task_type="feature"
+    local _labels
+    _labels=$(_ruflo_sanitize_query_token "${ISSUE_LABELS:-}")
     local _query="${stage_name} stage outcomes for ${_task_type} ${_labels}"
 
     local _history

@@ -4433,4 +4433,70 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# _ruflo_sanitize_query_token — strips ALL ASCII control chars
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "_ruflo_sanitize_query_token — control chars become spaces"
+
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+
+# \n, \r, \t replaced with space (consistent — old code differed for \r)
+_san_in=$'feature\nbug\rfix\tlabel'
+_san_out=$(_ruflo_sanitize_query_token "$_san_in")
+if [[ "$_san_out" == "feature bug fix label" ]]; then
+    assert_pass "sanitize: \\n/\\r/\\t consistently become single spaces"
+else
+    assert_fail "sanitize: \\n/\\r/\\t consistently become single spaces" "got: '$_san_out'"
+fi
+
+# ESC and BEL (the previous "only \n/\r/\t" code missed these)
+_san_in=$'a\x1bb\x07c'
+_san_out=$(_ruflo_sanitize_query_token "$_san_in")
+if [[ "$_san_out" == "a b c" ]]; then
+    assert_pass "sanitize: ESC and BEL stripped (defence-in-depth)"
+else
+    assert_fail "sanitize: ESC and BEL stripped" "got: '$_san_out'"
+fi
+
+# Whitespace squeeze + trim → cache-friendly canonical shape
+_san_out=$(_ruflo_sanitize_query_token "   foo    bar   baz   ")
+if [[ "$_san_out" == "foo bar baz" ]]; then
+    assert_pass "sanitize: collapses runs of whitespace and trims edges"
+else
+    assert_fail "sanitize: whitespace collapse" "got: '$_san_out'"
+fi
+
+# Empty input → empty output (caller decides default)
+_san_out=$(_ruflo_sanitize_query_token "")
+if [[ -z "$_san_out" ]]; then
+    assert_pass "sanitize: empty input returns empty"
+else
+    assert_fail "sanitize: empty input returns empty" "got: '$_san_out'"
+fi
+
+# Bounded length via env knob
+_san_out=$(RUFLO_QUERY_TOKEN_MAX_BYTES=10 _ruflo_sanitize_query_token "abcdefghijklmnopqrstuvwxyz")
+if [[ "$_san_out" == "abcdefghij" ]]; then
+    assert_pass "sanitize: RUFLO_QUERY_TOKEN_MAX_BYTES bounds output"
+else
+    assert_fail "sanitize: RUFLO_QUERY_TOKEN_MAX_BYTES bounds output" "got: '$_san_out' (len=${#_san_out})"
+fi
+
+# Invalid bound falls back to default 256 (not crash, not 0-byte truncation)
+_san_out=$(RUFLO_QUERY_TOKEN_MAX_BYTES="not-a-number" _ruflo_sanitize_query_token "hello world")
+if [[ "$_san_out" == "hello world" ]]; then
+    assert_pass "sanitize: non-numeric RUFLO_QUERY_TOKEN_MAX_BYTES falls back to default"
+else
+    assert_fail "sanitize: non-numeric bound falls back" "got: '$_san_out'"
+fi
+
+# Realistic GitHub label payload with embedded \n
+_san_out=$(_ruflo_sanitize_query_token $'priority/critical\nbug,security')
+if [[ "$_san_out" == "priority/critical bug,security" ]]; then
+    assert_pass "sanitize: real-world GH labels with embedded newline"
+else
+    assert_fail "sanitize: real-world GH labels" "got: '$_san_out'"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

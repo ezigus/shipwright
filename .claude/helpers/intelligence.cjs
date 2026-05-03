@@ -108,6 +108,47 @@ function deduplicateById(entries) {
   return Array.from(seen.values());
 }
 
+// ADR-095 G6 — content-hash dedup. The April audit measured 5,706 entries
+// in the auto-memory store with only ~20 unique by content; 5,686 dupes
+// were the same MEMORY.md sections imported from sibling project dirs
+// with different IDs. deduplicateById can't catch these (the IDs really
+// are different); we need a content fingerprint.
+//
+// Fast non-cryptographic fingerprint — collisions on 64-bit FNV-1a are
+// vanishingly rare for human prose at the scale of an auto-memory store.
+// Whitespace-normalized so trivially-different formatting doesn't bypass dedup.
+function fingerprintContent(text) {
+  if (typeof text !== 'string' || text.length === 0) return '0';
+  const norm = text.replace(/\s+/g, ' ').trim().toLowerCase();
+  // FNV-1a 64-bit (split into 32-bit halves to stay within Number safe int)
+  let h1 = 0x811c9dc5, h2 = 0xcbf29ce4;
+  for (let i = 0; i < norm.length; i++) {
+    const c = norm.charCodeAt(i);
+    h1 ^= c; h1 = Math.imul(h1, 0x01000193) >>> 0;
+    h2 ^= c; h2 = Math.imul(h2, 0x100000001b3 & 0xffffffff) >>> 0;
+  }
+  return `${h1.toString(16)}_${h2.toString(16)}_${norm.length}`;
+}
+
+function deduplicateByContent(entries) {
+  if (!entries || !Array.isArray(entries)) return entries;
+  const seen = new Map();
+  for (const entry of entries) {
+    const content = entry.content || entry.summary || entry.value || '';
+    const fp = fingerprintContent(typeof content === 'string' ? content : JSON.stringify(content));
+    if (!seen.has(fp)) {
+      seen.set(fp, entry);
+    } else {
+      // Keep the entry with the higher accessCount or earlier createdAt
+      const existing = seen.get(fp);
+      const existingAccess = existing.accessCount || 0;
+      const candidateAccess = entry.accessCount || 0;
+      if (candidateAccess > existingAccess) seen.set(fp, entry);
+    }
+  }
+  return Array.from(seen.values());
+}
+
 // ── Session state helpers ────────────────────────────────────────────────────
 
 function sessionGet(key) {
@@ -217,14 +258,24 @@ function buildEdges(entries) {
     }
   }
 
-  // Similarity edges within categories (Jaccard > 0.3)
+  // Similarity edges within categories (Jaccard > 0.3).
+  // ADR-095 G6 perf: hoist the trigram computation outside the inner
+  // loop. Previously we re-tokenized + re-trigrammed group[j] for every
+  // i — O(n²) extra work for nothing. Now compute once per entry.
   for (const cat of Object.keys(byCategory)) {
     const group = byCategory[cat];
+    if (group.length < 2) continue;
+
+    // Cache trigram sets for every entry in the group.
+    const triCache = new Array(group.length);
     for (let i = 0; i < group.length; i++) {
-      const triA = trigrams(tokenize(group[i].content || group[i].summary || ''));
+      triCache[i] = trigrams(tokenize(group[i].content || group[i].summary || ''));
+    }
+
+    for (let i = 0; i < group.length; i++) {
+      const triA = triCache[i];
       for (let j = i + 1; j < group.length; j++) {
-        const triB = trigrams(tokenize(group[j].content || group[j].summary || ''));
-        const sim = jaccardSimilarity(triA, triB);
+        const sim = jaccardSimilarity(triA, triCache[j]);
         if (sim > 0.3) {
           edges.push({
             sourceId: group[i].id,
@@ -340,9 +391,21 @@ function init() {
   }
 
   // Deduplicate store entries by ID (fixes #1518 — 194MB → ~79KB)
-  const deduped = deduplicateById(store);
+  let deduped = deduplicateById(store);
+  // ADR-095 G6: also dedupe by content fingerprint. The April audit
+  // measured 5,706 entries with only ~20 unique by content because the
+  // same MEMORY.md sections get imported from sibling project dirs with
+  // different IDs. deduplicateById can't catch that; deduplicateByContent
+  // can. Cuts the graph from O(n²) over near-identical duplicates down
+  // to O(unique²), which is the difference between a 100MB graph-state
+  // and a kilobytes-scale one for typical workloads.
+  const beforeContentDedup = deduped.length;
+  deduped = deduplicateByContent(deduped);
   if (deduped.length < store.length) {
-    process.stderr.write(`[INTELLIGENCE] Deduped store: ${store.length} -> ${deduped.length} entries\n`);
+    process.stderr.write(
+      `[INTELLIGENCE] Deduped store: ${store.length} -> ${deduped.length} entries ` +
+      `(by-id: ${store.length - beforeContentDedup} dropped, by-content: ${beforeContentDedup - deduped.length} dropped)\n`
+    );
     writeJSON(STORE_PATH, deduped);
   }
 

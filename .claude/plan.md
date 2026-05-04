@@ -22,20 +22,20 @@ This plan summarises the current state, captures the *delta* still owed by the b
 
 **Gap analysis** — what's still missing for a clean PR:
 
-1. README / CHANGELOG / CLAUDE.md don't mention the `RUFLO_SELF_HEAL_HIVE` env flag (grep confirms 0 hits).
-2. Working copy has unstaged change in `.claude/helpers/intelligence.cjs` unrelated to this goal — must be excluded from the feature commit.
-3. Stale `.claude/plan.md` (compound-quality fix from a prior pipeline) — superseded by this file.
+1. README (`README.md:512`) and CHANGELOG (`CHANGELOG.md:23`) already mention `RUFLO_SELF_HEAL_HIVE` (landed in commit `a10657a`). CLAUDE.md still does NOT mention the flag — only remaining doc gap.
+2. Working copy has unstaged changes in `.claude/helpers/github-safe.js` and `.claude/helpers/statusline.js` unrelated to this goal — must be excluded from the feature commit.
+3. This `.claude/plan.md` is the canonical plan artifact for the build stage.
 
 ---
 
 ## Files to Modify
 
-| File | Change |
-|------|--------|
-| `README.md` | Add `RUFLO_SELF_HEAL_HIVE=true` to environment-flag/feature-toggle section |
-| `CHANGELOG.md` | Add `### Added` entry under `[Unreleased]`: self-heal hypothesis hive (mock/async/schema specialists, queen synthesis, fail-open gating) |
-| `CLAUDE.md` | Add one-line entry in env-vars / feature-flags section pointing to ADR |
-| `.claude/plan.md` | Replaced by this document |
+| File | Change | Status |
+|------|--------|--------|
+| `README.md` | `RUFLO_SELF_HEAL_HIVE=true` env-flag entry | Done (`README.md:512`) |
+| `CHANGELOG.md` | `### Added` entry under `[Unreleased]` | Done (`CHANGELOG.md:23`) |
+| `CLAUDE.md` | One-line entry in env-vars / feature-flags section | Pending |
+| `.claude/plan.md` | This artifact | In flight |
 
 **Files NOT to modify** (already correct):
 
@@ -65,12 +65,12 @@ Per repo guidance for `SHIPWRIGHT_SOURCE=loop`, do NOT run the full test matrix 
 - [x] Task 1: Verify `ruflo_execute_self_heal_hive()` exists and integrates with `sw-loop.sh`
 - [x] Task 2: Confirm 25+ tests cover gates, bounding, format, ranking, events
 - [x] Task 3: Confirm synthesis-fallback bytes are bounded (commit `491c63e`)
-- [ ] Task 4: Add `RUFLO_SELF_HEAL_HIVE` to README env-flag section
-- [ ] Task 5: Add CHANGELOG entry under `[Unreleased] / Added`
+- [x] Task 4: Add `RUFLO_SELF_HEAL_HIVE` to README env-flag section (`README.md:512`)
+- [x] Task 5: Add CHANGELOG entry under `[Unreleased] / Added` (`CHANGELOG.md:23`)
 - [ ] Task 6: Add one-line pointer in CLAUDE.md env-vars section
-- [ ] Task 7: Replace stale `.claude/plan.md` with this plan
+- [ ] Task 7: Confirm `.claude/plan.md` reflects current state (this update)
 - [ ] Task 8: Verify `./scripts/sw-ruflo-adapter-test.sh` still passes after doc edits
-- [ ] Task 9: Confirm `.claude/helpers/intelligence.cjs` is **not** included in the feature commit
+- [ ] Task 9: Confirm `.claude/helpers/github-safe.js` and `.claude/helpers/statusline.js` are **not** included in the feature commit
 - [ ] Task 10: Stage docs + plan; produce single commit matching the goal title
 - [ ] Task 11: Confirm pipeline review stage sees no new findings against current ADR
 - [ ] Task 12: PR description references `.claude/PLAN-03-1-self-heal-hive.md` ADR
@@ -101,12 +101,12 @@ No new test files needed; the existing 92 self-heal references already exceed th
 - [x] Synthesis fallback emits byte-bounded union, never raw namespace
 - [x] Sentinel stripping (`<<<` and `>>>`) before goal injection
 - [x] 25+ tests covering gates, bounding, ranking, events, fallback (currently 92 references)
-- [ ] README documents `RUFLO_SELF_HEAL_HIVE=true`
-- [ ] CHANGELOG includes feature in `[Unreleased] / Added`
+- [x] README documents `RUFLO_SELF_HEAL_HIVE=true` (`README.md:512`)
+- [x] CHANGELOG includes feature in `[Unreleased] / Added` (`CHANGELOG.md:23`)
 - [ ] CLAUDE.md mentions env flag in feature-toggle area
-- [ ] `.claude/plan.md` reflects current state (this artifact)
-- [ ] Single feature commit excludes unrelated working-tree changes
-- [ ] PR description links the ADR
+- [ ] `.claude/plan.md` reflects current state (this artifact, updated this iteration)
+- [ ] Single feature commit excludes unrelated working-tree changes (`.claude/helpers/github-safe.js`, `.claude/helpers/statusline.js`)
+- [ ] PR description links the ADR (`.claude/ADR-03-1-self-heal-hive.md`)
 
 ---
 
@@ -114,7 +114,7 @@ No new test files needed; the existing 92 self-heal references already exceed th
 
 | # | Risk | What Could Break | Mitigation |
 |---|------|------------------|------------|
-| 1 | Unrelated `intelligence.cjs` change leaks into commit | Reviewer flags scope creep; PR bounces | Stage explicitly by file path; never use `git add -A` |
+| 1 | Unrelated `github-safe.js` / `statusline.js` changes leak into commit | Reviewer flags scope creep; PR bounces | Stage explicitly by file path; never use `git add -A` |
 | 2 | Doc edits accidentally touch a file the test harness sources | Test suite breaks unexpectedly | Edit only `README.md`, `CHANGELOG.md`, `CLAUDE.md`, `.claude/plan.md`; rerun tests after edits |
 | 3 | CHANGELOG entry duplicates an existing one | Merge conflict on release | Grep for `RUFLO_SELF_HEAL_HIVE` first; place in correct `[Unreleased]` section |
 | 4 | README env-flag section may not exist | Edit fails silently or lands in wrong place | Use `Grep` to locate the env-flag table or feature-toggle list before editing; if absent, append to the end of the relevant section, not as a new top-level header |
@@ -149,4 +149,4 @@ Concatenating the 874-line ADR into `plan.md` duplicates content. **Trade-off**:
 - Weighted ranking formula replacement
 - MCP blob storage for unbounded inputs
 - Cross-repo specialist hypothesis sharing
-- Refactor of the unrelated `.claude/helpers/intelligence.cjs` working-tree change
+- Refactor of the unrelated `.claude/helpers/github-safe.js` / `.claude/helpers/statusline.js` working-tree changes

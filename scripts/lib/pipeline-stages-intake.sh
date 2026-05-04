@@ -571,6 +571,14 @@ Claude exhausted its turn budget (\`--max-turns 25\`) while exploring the codeba
     fi
     info "Plan saved: ${DIM}$plan_file${RESET} (${line_count} lines)"
 
+    # Persist plan to issue-scoped snapshot so it survives across CI runs.
+    # The snapshot dir is gitignore-exempt and committed to the WIP branch.
+    if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+        local _snap_dir="${ARTIFACTS_DIR}/issue-${ISSUE_NUMBER}"
+        mkdir -p "$_snap_dir"
+        cp "$plan_file" "$_snap_dir/plan.md"
+    fi
+
     # Extract task checklist for GitHub issue and task tracking
     local checklist
     checklist=$(sed -n '/### Task Checklist/,/^###/p' "$plan_file" 2>/dev/null | \
@@ -1089,6 +1097,16 @@ $(printf '%s\n' "${INTELLIGENCE_INTAKE_CTX}")"
         return 1
     fi
     info "Design saved: ${DIM}$design_file${RESET} (${line_count} lines)"
+
+    # Persist design (and plan, if present) to issue-scoped snapshot.
+    if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+        local _snap_dir="${ARTIFACTS_DIR}/issue-${ISSUE_NUMBER}"
+        mkdir -p "$_snap_dir"
+        cp "$design_file" "$_snap_dir/design.md"
+        [[ -s "${ARTIFACTS_DIR}/plan.md" ]] && cp "${ARTIFACTS_DIR}/plan.md" "$_snap_dir/plan.md"
+        [[ -s "${ARTIFACTS_DIR}/context-bundle.md" ]] && cp "${ARTIFACTS_DIR}/context-bundle.md" "$_snap_dir/context-bundle.md"
+        [[ -s "${ARTIFACTS_DIR}/dod.md" ]] && cp "${ARTIFACTS_DIR}/dod.md" "$_snap_dir/dod.md"
+    fi
 
     # Extract file lists for build stage awareness
     local files_to_create files_to_modify

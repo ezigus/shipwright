@@ -501,9 +501,17 @@ jobs:
         run: |
           echo "--- Recovered Artifacts ---"
           RECOVERED=0
+          SNAP_DIR=".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}"
+          mkdir -p ".claude/pipeline-artifacts"
           for f in plan.md dod.md context-bundle.md design.md; do
             FPATH=".claude/pipeline-artifacts/${f}"
-            if [[ -f "$FPATH" && -s "$FPATH" ]]; then
+            SNAP=".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}/${f}"
+            # Restore from issue-scoped snapshot if flat file is missing/empty
+            if [[ ! -s "$FPATH" && -s "$SNAP" ]]; then
+              cp "$SNAP" "$FPATH"
+              echo "  ↩ ${f}: restored from issue-${ISSUE_NUMBER} snapshot"
+              RECOVERED=$((RECOVERED + 1))
+            elif [[ -f "$FPATH" && -s "$FPATH" ]]; then
               LINES=$(wc -l < "$FPATH")
               echo "  ✓ ${f}: ${LINES} lines"
               RECOVERED=$((RECOVERED + 1))
@@ -835,11 +843,17 @@ jobs:
         run: |
           BRANCH="shipwright/issue-${ISSUE_NUMBER}"
           if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-            # Defense-in-depth: ensure runtime artifacts never get committed to WIP
+            # Defense-in-depth: ensure runtime artifacts never get committed to WIP.
+            # Exclude issue-scoped subdirs (pipeline-artifacts/issue-N/) — those
+            # are intentionally committed so plan/design survive across CI runs.
             git rm --cached -r --ignore-unmatch \
-              .claude/pipeline-artifacts .claude/loop-logs \
+              .claude/loop-logs \
               .claude/daemon-config.json .claude/helpers \
               .claude-flow 2>/dev/null || true
+            # Remove pipeline-artifacts/* but preserve issue-N/ subdirectories
+            git ls-files --cached '.claude/pipeline-artifacts/' \
+              | grep -v '^\.claude/pipeline-artifacts/issue-' \
+              | xargs -r git rm --cached --ignore-unmatch 2>/dev/null || true
             git add -A 2>/dev/null || true
             git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
           fi

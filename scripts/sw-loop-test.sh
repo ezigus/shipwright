@@ -2643,6 +2643,53 @@ else
         "expected >=3, got $_swl_kept_count: $_swl_kept"
 fi
 
+# ─── #504 follow-up: section-header false positives on green builds ──────────
+# Regression: section headers like "Test 4: missing fingerprint file fails open"
+# survive _strip_passing_test_lines by design (#447), but on green builds they
+# leaked into write_error_summary and tripped the loop's circuit breaker even
+# though every assertion in the section was ✓. _has_real_failure_markers
+# distinguishes real failure markers (✗, FAIL keyword, stack traces) from
+# descriptive "fail" words in test names.
+echo ""
+echo -e "${DIM}  #504 regression — _has_real_failure_markers distinguishes header text from real failures${RESET}"
+
+_swl_marker_def=$(awk '/^_has_real_failure_markers\(\) \{/,/^\}/' "$SCRIPT_DIR/sw-loop.sh")
+if [[ -n "$_swl_marker_def" ]]; then
+    assert_pass "#504: _has_real_failure_markers defined in sw-loop.sh"
+    eval "$_swl_marker_def"
+else
+    assert_fail "#504: _has_real_failure_markers defined in sw-loop.sh" \
+        "function not found in sw-loop.sh"
+fi
+
+# Section headers with "fail" in description must NOT be flagged as real failures.
+_swl_header_only=$(printf '%s\n' "  Test 4: missing fingerprint file fails open (both calls fire)")
+if printf '%s\n' "$_swl_header_only" | _has_real_failure_markers; then
+    assert_fail "#504: descriptive section headers are not flagged as real failures" \
+        "header was incorrectly classified as a failure"
+else
+    assert_pass "#504: descriptive section headers are not flagged as real failures"
+fi
+
+# Real failure lines (✗, FAIL, TypeError, stack traces) MUST be flagged.
+_swl_real_marker_lines=$(cat <<'SAMPLE'
+  ✗ Test 7: actually broken assertion
+FAIL src/foo.test.js
+TypeError: cannot read property 'x' of undefined
+  at module.exports (/foo/bar.js:10:5)
+expected "x" got "y"
+SAMPLE
+)
+while IFS= read -r _swl_marker_line; do
+    [[ -z "$_swl_marker_line" ]] && continue
+    if printf '%s\n' "$_swl_marker_line" | _has_real_failure_markers; then
+        assert_pass "#504: real failure marker detected: '${_swl_marker_line:0:50}'"
+    else
+        assert_fail "#504: real failure marker detected" \
+            "missed: '$_swl_marker_line'"
+    fi
+done <<< "$_swl_real_marker_lines"
+
 # ─── #448 review fix: --context-file path traversal hardening ────────────────
 echo ""
 echo -e "${DIM}  context-file symlink/realpath validation (#448 review)${RESET}"

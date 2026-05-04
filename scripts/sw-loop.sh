@@ -1218,6 +1218,16 @@ _strip_passing_test_lines() {
     grep -vE '✓|^[[:space:]]*(PASS([[:space:]]|$)|ok([[:space:]]|$))|[0-9]+/[0-9]+ pass([[:space:]]|$)|All .* passed' || true
 }
 
+# Returns 0 (success) if stdin contains a definitive failure marker.
+# Used to distinguish real errors from descriptive section headers like
+# "Test 4: missing fingerprint file fails open" that survive the pass-line
+# strip per #447 design but contain "fail" only as part of a description.
+# Why: without this distinction, write_error_summary surfaces section-header
+# false positives to the loop's circuit breaker on otherwise green builds.
+_has_real_failure_markers() {
+    grep -qE '✗|✘|^[[:space:]]*FAIL([[:space:]]|$)|^[[:space:]]*FAILED([[:space:]]|$)|Error:|TypeError:|ReferenceError:|SyntaxError:|^[[:space:]]*at [a-zA-Z_$]|expected.*got|assertion failed'
+}
+
 write_error_summary() {
     local error_json="$LOG_DIR/error-summary.json"
 
@@ -1227,12 +1237,19 @@ write_error_summary() {
         # Check for build-level failures (Claude iteration exited non-zero or produced errors)
         local build_had_errors=false
         if [[ -f "$build_log" ]]; then
-            local build_err_count
-            build_err_count=$(tail -30 "$build_log" 2>/dev/null \
+            local build_err_lines
+            build_err_lines=$(tail -30 "$build_log" 2>/dev/null \
                 | strip_ansi \
                 | _strip_passing_test_lines \
-                | grep -ciE '(error|fail|exception|panic|FATAL)' || true)
-            [[ "${build_err_count:-0}" -gt 0 ]] && build_had_errors=true
+                | grep -iE '(error|fail|exception|panic|FATAL)' || true)
+            # Only treat as build error if at least one line has a real failure
+            # marker — words like "fail" inside section-header descriptions
+            # ("Test 4: ... fails open") are preserved by design but aren't
+            # actual failures.
+            if [[ -n "$build_err_lines" ]] \
+                && printf '%s\n' "$build_err_lines" | _has_real_failure_markers; then
+                build_had_errors=true
+            fi
         fi
         if [[ "$build_had_errors" != "true" ]]; then
             # Clear previous error summary on success
@@ -1256,6 +1273,21 @@ write_error_summary() {
         | _strip_passing_test_lines \
         | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' \
         | head -10 || true)
+
+    # Suppress false positives: if matched lines contain no definitive failure
+    # marker (✗, FAIL keyword, error stack trace) AND the source log reports
+    # a clean pass, the matches are descriptive section headers (e.g.,
+    # "Test 4: missing fingerprint file fails open") preserved by #447 design,
+    # not actual errors. Surfacing these trips the holistic circuit breaker on
+    # green builds.
+    if [[ -n "$error_lines_raw" ]] \
+        && ! printf '%s\n' "$error_lines_raw" | _has_real_failure_markers; then
+        if tail -50 "$source_log" 2>/dev/null \
+            | strip_ansi \
+            | grep -qE '(All [0-9]+ tests? passed|^[0-9]+/[0-9]+ pass([[:space:]]|$))'; then
+            error_lines_raw=""
+        fi
+    fi
 
     local error_count=0
     if [[ -n "$error_lines_raw" ]]; then

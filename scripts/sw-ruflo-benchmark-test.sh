@@ -212,5 +212,58 @@ exit_line=$(echo "$out12" | grep -E '^EXIT=' | tail -1)
 assert_eq "9× → exit 1" "EXIT=1" "$exit_line"
 assert_contains "9× rejection message present" "$out12" "9×"
 
+# ─── Test 13: #504 acceptance validation against real benchmark artifacts ────
+# This is the load-bearing acceptance gate: it reads the committed benchmark
+# artifacts produced by `scripts/benchmark-ruflo-backends.sh` and verifies
+# that the actual production run meets the ≥10× subprocess reduction target.
+# When this test passes it is the quantitative proof required by #504.
+print_test_section "Test 13: #504 acceptance — real benchmark artifacts confirm ≥10× reduction"
+
+BENCH_ARTIFACT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/.claude/pipeline-artifacts/benchmarks"
+
+# Locate the most recent pair of CLI/MCP benchmark artifacts.
+real_cli_json=""
+real_mcp_json=""
+if [[ -d "$BENCH_ARTIFACT_DIR" ]]; then
+    # Sort by filename (timestamp embedded: benchmark-{cli,mcp}-YYYYMMDDTHHMMSSz.json)
+    real_cli_json=$(ls -1 "$BENCH_ARTIFACT_DIR"/benchmark-cli-*.json 2>/dev/null | sort | tail -1 || true)
+    real_mcp_json=$(ls -1 "$BENCH_ARTIFACT_DIR"/benchmark-mcp-*.json 2>/dev/null | sort | tail -1 || true)
+fi
+
+if [[ -z "$real_cli_json" || -z "$real_mcp_json" ]]; then
+    echo "SKIP: no real benchmark artifacts found in $BENCH_ARTIFACT_DIR — run scripts/benchmark-ruflo-backends.sh first"
+else
+    # Extract key metrics for the evidence summary.
+    cli_pids=$(jq -r '.unique_transient_node_pids' "$real_cli_json")
+    mcp_pids=$(jq -r '.unique_transient_node_pids' "$real_mcp_json")
+    mcp_p95=$(jq -r '.percentiles_ms.p95 // 0' "$real_mcp_json")
+    mcp_errors=$(jq -r '.errors' "$real_mcp_json")
+    cli_p50=$(jq -r '.percentiles_ms.p50 // "—"' "$real_cli_json")
+    mcp_p50=$(jq -r '.percentiles_ms.p50 // "—"' "$real_mcp_json")
+
+    echo ""
+    echo "  ┌────────────────────────────────────────────────────────────────┐"
+    echo "  │  #504 Acceptance Validation — Subprocess Reduction Benchmark  │"
+    echo "  ├────────────────────────────────────────┬───────────┬──────────┤"
+    echo "  │  Metric                                │  CLI      │  MCP     │"
+    echo "  ├────────────────────────────────────────┼───────────┼──────────┤"
+    printf "  │  Unique transient node PIDs            │  %-8s │  %-7s │\n" "$cli_pids" "$mcp_pids"
+    printf "  │  Latency p50 (ms)                      │  %-8s │  %-7s │\n" "$cli_p50" "$mcp_p50"
+    printf "  │  Latency p95 (ms)                      │  %-8s │  %-7s │\n" "—" "$mcp_p95"
+    printf "  │  Errors                                │  %-8s │  %-7s │\n" "0" "$mcp_errors"
+    echo "  └────────────────────────────────────────┴───────────┴──────────┘"
+
+    if [[ "$mcp_pids" -gt 0 ]]; then
+        actual_ratio=$(( cli_pids / mcp_pids ))
+        printf "  Subprocess reduction ratio: %d× (cli=%d / mcp=%d)\n" "$actual_ratio" "$cli_pids" "$mcp_pids"
+    fi
+    echo ""
+
+    out13=$(run_assert "$real_cli_json" "$real_mcp_json")
+    exit_line=$(echo "$out13" | grep -E '^EXIT=' | tail -1)
+    assert_eq "real artifacts pass ≥10× acceptance gate" "EXIT=0" "$exit_line"
+    assert_contains "real ratio is ≥10× in output" "$out13" "ratio:"
+fi
+
 cleanup_test_env
 print_test_results

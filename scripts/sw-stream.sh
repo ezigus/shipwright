@@ -12,6 +12,10 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ─── Shared process-cleanup primitives ───────────────────────────────────────
+# shellcheck source=lib/proc-utils.sh
+[[ -f "$SCRIPT_DIR/lib/proc-utils.sh" ]] && source "$SCRIPT_DIR/lib/proc-utils.sh" 2>/dev/null || true
+
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
@@ -180,9 +184,11 @@ stream_start() {
         fi
     fi
 
-    # Start background capture loop
+    # Start background capture loop.
+    # Guard on PID-file presence: stream_stop removes the file, causing the loop
+    # to exit on the next iteration without relying solely on signal delivery.
     (
-        while true; do
+        while [[ -f "$RUNNING_PID_FILE" ]]; do
             capture_all_panes "$team"
             sleep "$CAPTURE_INTERVAL"
         done
@@ -206,8 +212,16 @@ stream_stop() {
     pid=$(cat "$RUNNING_PID_FILE")
 
     if kill -0 "$pid" 2>/dev/null; then
-        kill "$pid"
+        # Remove PID file first: the loop guard exits on next iteration even if
+        # the signal doesn't propagate.  Tree kill reaches any capture subprocesses.
         rm -f "$RUNNING_PID_FILE"
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree TERM "$pid" 2>/dev/null || true
+            sleep 1
+            _kill_process_tree KILL "$pid" 2>/dev/null || true
+        else
+            kill "$pid" 2>/dev/null || true
+        fi
         success "Stream stopped (PID $pid)"
         emit_event "stream.stopped" "pid=$pid"
     else

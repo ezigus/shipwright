@@ -41,6 +41,10 @@ format_duration() {
     fi
 }
 
+# ─── Shared process-cleanup primitives ───────────────────────────────────────
+# shellcheck source=lib/proc-utils.sh
+[[ -f "$SCRIPT_DIR/lib/proc-utils.sh" ]] && source "$SCRIPT_DIR/lib/proc-utils.sh" 2>/dev/null || true
+
 # ─── Structured Event Log ──────────────────────────────────────────────────
 # shellcheck disable=SC2034
 EVENTS_FILE="${HOME}/.shipwright/events.jsonl"
@@ -239,7 +243,10 @@ trigger_pipeline_for_incident() {
     fi
     info "Auto-triggering pipeline for P0/P1 hotfix issue #${issue_num} (incident: $incident_id)"
     (cd "$REPO_DIR" && export REPO_DIR SCRIPT_DIR && bash "$SCRIPT_DIR/sw-pipeline.sh" start --issue "$issue_num" --template hotfix 2>/dev/null) &
-    emit_event "incident.pipeline_triggered" "incident_id=$incident_id" "issue=$issue_num"
+    local _pipeline_pid=$!
+    # Track nested pipeline PID so the monitor's EXIT trap can reap it.
+    echo "$_pipeline_pid" >> "${INCIDENTS_DIR}/.pipeline.pids"
+    emit_event "incident.pipeline_triggered" "incident_id=$incident_id" "issue=$issue_num" "pid=$_pipeline_pid"
 }
 
 # Execute rollback when auto_rollback_enabled (wire to sw-feedback / sw-github-deploy)
@@ -270,12 +277,33 @@ cmd_watch() {
 
     info "Starting incident monitoring (interval: ${interval}s)"
 
+    # Capture parent PID before forking so the monitor subshell can self-terminate
+    # when this process (the cmd_watch caller) dies — covers SIGKILL and mid-cleanup.
+    local _watch_parent_pid=$$
+
     # Background process
     (
         echo $$ > "$MONITOR_PID_FILE"
-        trap 'rm -f "'"$MONITOR_PID_FILE"'"' EXIT
+        # EXIT trap: clean up PID file and reap any nested pipelines we tracked.
+        trap '
+            rm -f "'"$MONITOR_PID_FILE"'" 2>/dev/null || true
+            if [[ -f "'"$INCIDENTS_DIR"'/.pipeline.pids" ]]; then
+                local _pp
+                while IFS= read -r _pp; do
+                    [[ -z "$_pp" || ! "$_pp" =~ ^[0-9]+$ ]] && continue
+                    if declare -f _kill_process_tree >/dev/null 2>&1; then
+                        _kill_process_tree TERM "$_pp" 2>/dev/null || true
+                        _kill_process_tree KILL "$_pp" 2>/dev/null || true
+                    else
+                        kill "$_pp" 2>/dev/null || true
+                    fi
+                done < "'"$INCIDENTS_DIR"'/.pipeline.pids"
+                rm -f "'"$INCIDENTS_DIR"'/.pipeline.pids" 2>/dev/null || true
+            fi
+        ' EXIT
 
-        while true; do
+        # Poll parent existence: exits naturally when parent dies (SIGKILL/partial cleanup)
+        while _parent_alive "$_watch_parent_pid" 2>/dev/null; do
             sleep "$interval"
 
             # Check for recent failures

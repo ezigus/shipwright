@@ -26,6 +26,14 @@ _RUFLO_ADAPTER_LOADED=1
 # packaged; ruflo_store() additionally checks `declare -f ruflo_mcp_call`
 # before routing through it.
 _ruflo_adapter_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
+# ─── Shared process-cleanup primitives ───────────────────────────────────────
+# Load proc-utils.sh which provides _kill_process_tree, _kill_process_group_safe,
+# _get_pgid, and _parent_alive. Keep this before any code that uses them.
+if [[ -f "$_ruflo_adapter_dir/proc-utils.sh" ]]; then
+    # shellcheck source=scripts/lib/proc-utils.sh
+    source "$_ruflo_adapter_dir/proc-utils.sh" 2>/dev/null || true
+fi
 if [[ -f "$_ruflo_adapter_dir/ruflo-mcp-call.sh" ]]; then
     # shellcheck source=scripts/lib/ruflo-mcp-call.sh
     source "$_ruflo_adapter_dir/ruflo-mcp-call.sh" || true
@@ -387,43 +395,18 @@ ruflo_health_check() {
     return 0
 }
 
-# ─── _kill_process_tree — send a signal to a PID and all its descendants ──────
-# Collects the full descendant list via BFS *before* killing anything, so that
-# re-parenting (child → init) cannot cause grandchildren to escape the sweep.
-# Bash 3.2 compatible — no associative arrays, no extended syntax.
-_kill_process_tree() {
-    local sig="$1"
-    local root="$2"
-    local all_pids frontier new_frontier p c children
-
-    if ! command -v pgrep >/dev/null 2>&1; then
-        # No pgrep — best-effort single-level kill only.
+# ─── _kill_process_tree — now in scripts/lib/proc-utils.sh ───────────────────
+# The implementation moved to proc-utils.sh (sourced above) so all callers share
+# one canonical copy. This comment replaces the old inline body; the function
+# symbol is already exported by the proc-utils.sh source above.
+# Back-compat: if proc-utils.sh was not found, provide a minimal fallback so
+# callers that rely on _kill_process_tree do not fail.
+if ! declare -f _kill_process_tree >/dev/null 2>&1; then
+    _kill_process_tree() {
+        local sig="$1" root="$2"
         kill "-$sig" "$root" 2>/dev/null || true
-        return
-    fi
-
-    # BFS: collect every descendant before touching any of them.
-    all_pids=""
-    frontier="$root"
-    while [[ -n "$frontier" ]]; do
-        new_frontier=""
-        for p in $frontier; do
-            children=$(pgrep -P "$p" 2>/dev/null || true)
-            for c in $children; do
-                all_pids="${all_pids}${all_pids:+ }$c"
-                new_frontier="${new_frontier}${new_frontier:+ }$c"
-            done
-        done
-        frontier="$new_frontier"
-    done
-
-    # Kill all descendants (collected before any were killed).
-    for p in $all_pids; do
-        kill "-$sig" "$p" 2>/dev/null || true
-    done
-    # Kill root last.
-    kill "-$sig" "$root" 2>/dev/null || true
-}
+    }
+fi
 
 # ─── ruflo_with_timeout — run a ruflo command with recoverable circuit-breaker ─
 # All commands run in a background subshell with stdout to a temp file and BFS

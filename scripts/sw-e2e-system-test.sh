@@ -148,6 +148,12 @@ elif echo "$prompt" | grep -qiE "implementation plan|task checklist|create a.*pl
 1. Create src/helper.sh with helper_add and helper_greet
 2. Add tests in src/helper-test.sh
 3. Verify"
+elif echo "$prompt" | grep -qiE "holistic|project assessment|goal.*fully achieved"; then
+    echo "The implementation fully satisfies all requirements.
+<<<HOLISTIC:PASS>>>"
+elif echo "$prompt" | grep -qiE "definition of done|DOD|acceptance criteria"; then
+    echo "All acceptance criteria met.
+<<<DOD:PASS>>>"
 elif echo "$prompt" | grep -qiE "review|reviewer|diff"; then
     echo "# Code Review
 

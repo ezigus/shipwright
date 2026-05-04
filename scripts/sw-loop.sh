@@ -2168,8 +2168,27 @@ cleanup() {
         cleanup_multi_agent
     fi
 
-    # Reap any remaining direct child processes
-    pkill -P $$ 2>/dev/null || true
+    # Reap child process trees (Claude Node workers, tool subprocesses that escape
+    # a shallow pkill -P $$). Targeting children only — sending SIGTERM to $$
+    # itself would re-trigger the SIGTERM trap and set EXIT_CODE=130 on clean exits.
+    local _lc_child
+    while IFS= read -r _lc_child; do
+        [[ -n "$_lc_child" ]] || continue
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree TERM "$_lc_child" 2>/dev/null || true
+        else
+            kill "$_lc_child" 2>/dev/null || true
+        fi
+    done < <(pgrep -P $$ 2>/dev/null || true)
+    sleep 1
+    while IFS= read -r _lc_child; do
+        [[ -n "$_lc_child" ]] || continue
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree KILL "$_lc_child" 2>/dev/null || true
+        else
+            kill -9 "$_lc_child" 2>/dev/null || true
+        fi
+    done < <(pgrep -P $$ 2>/dev/null || true)
     wait 2>/dev/null || true
 
     # Clear heartbeat (always — whether signal-driven or not)
@@ -2540,23 +2559,50 @@ cleanup_multi_agent() {
         tmux send-keys -t "$pane_id" C-c 2>/dev/null || true
     done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_id}' 2>/dev/null || true)
 
-    # SIGTERM process trees (children first, then shell)
+    # SIGTERM process trees (BFS kill reaches Claude/ruflo grandchildren)
     local wpid
     for wpid in "${pane_pids[@]}"; do
         [[ -z "$wpid" ]] && continue
-        pkill -P "$wpid" 2>/dev/null || true
-        kill "$wpid" 2>/dev/null || true
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree TERM "$wpid" 2>/dev/null || true
+        else
+            pkill -P "$wpid" 2>/dev/null || true
+            kill "$wpid" 2>/dev/null || true
+        fi
     done
 
     sleep 3
 
-    # SIGKILL any survivors
-    for wpid in "${pane_pids[@]}"; do
+    # Second pass: catch panes spawned while the first pass was running (snapshot race).
+    local pane_pids2=()
+    local ppid2
+    while IFS= read -r ppid2; do
+        [[ -n "$ppid2" ]] && pane_pids2+=("$ppid2")
+    done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_pid}' 2>/dev/null || true)
+    for wpid in "${pane_pids2[@]}"; do
+        [[ -z "$wpid" ]] && continue
+        kill -0 "$wpid" 2>/dev/null || continue
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree TERM "$wpid" 2>/dev/null || true
+        else
+            pkill -P "$wpid" 2>/dev/null || true
+            kill "$wpid" 2>/dev/null || true
+        fi
+    done
+
+    sleep 1
+
+    # SIGKILL any survivors from both passes
+    for wpid in "${pane_pids[@]}" "${pane_pids2[@]:-}"; do
         [[ -z "$wpid" ]] && continue
         kill -0 "$wpid" 2>/dev/null || continue
         warn "Force-killing multi-agent worker PID $wpid"
-        pkill -9 -P "$wpid" 2>/dev/null || true
-        kill -9 "$wpid" 2>/dev/null || true
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree KILL "$wpid" 2>/dev/null || true
+        else
+            pkill -9 -P "$wpid" 2>/dev/null || true
+            kill -9 "$wpid" 2>/dev/null || true
+        fi
     done
 
     tmux kill-window -t "$MULTI_WINDOW_NAME" 2>/dev/null || true

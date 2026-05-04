@@ -481,12 +481,24 @@ ruflo_with_timeout() {
         # specified duration instead of returning instantly.
         local waited_ds=0
         local timeout_ds=$(( timeout_s * 10 ))
+        # bash 3.2 (macOS /bin/bash) rejects fractional read -t; fall back to
+        # foreground sleep on bash < 4. Foreground sleep exits within 0.1s
+        # naturally even if the parent is SIGKILLed, so no orphan risk there.
+        local _bash_major="${BASH_VERSINFO[0]:-3}"
         while kill -0 "$bg_pid" 2>/dev/null && [[ "$waited_ds" -lt "$timeout_ds" ]]; do
             if [[ "$waited_ds" -lt 10 ]]; then
-                { read -r -t 0.1 _ </dev/zero; } 2>/dev/null || true
+                if [[ "$_bash_major" -ge 4 ]]; then
+                    { read -r -t 0.1 _ </dev/zero; } 2>/dev/null || true
+                else
+                    sleep 0.1
+                fi
                 waited_ds=$(( waited_ds + 1 ))
             else
-                { read -r -t 1 _ </dev/zero; } 2>/dev/null || true
+                if [[ "$_bash_major" -ge 4 ]]; then
+                    { read -r -t 1 _ </dev/zero; } 2>/dev/null || true
+                else
+                    sleep 1
+                fi
                 waited_ds=$(( waited_ds + 10 ))
             fi
         done
@@ -496,7 +508,11 @@ ruflo_with_timeout() {
             # direct child. SIGTERM first; SIGKILL after 1 s grace period
             # for processes that need time to flush/clean up. (#441)
             _kill_process_tree TERM "$bg_pid"
-            { read -r -t 1 _ </dev/zero; } 2>/dev/null || true
+            if [[ "$_bash_major" -ge 4 ]]; then
+                { read -r -t 1 _ </dev/zero; } 2>/dev/null || true
+            else
+                sleep 1
+            fi
             _kill_process_tree KILL "$bg_pid"
             wait "$bg_pid" 2>/dev/null || true
             rm -f "$_rft_tmp"

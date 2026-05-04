@@ -2477,6 +2477,63 @@ else
 fi
 rm -f "$_sw504_tracking"
 
+# Test 4c: done-and-idle escape hatch — TEST_PASSED + clean tree + similar logs MUST NOT
+# trigger stuckness. Regression for #504 iteration 7 false positive: Signals 1 (text
+# overlap on near-identical idle logs) + 6 (no diff) summed to 2 signals and tripped
+# the prompt builder's stuckness branch even though the work was committed and tests
+# were green.
+_sw504_idle_dir=$(mktemp -d "${TMPDIR:-/tmp}/sw-stuckness-504-idle.XXXXXX")
+_sw504_idle_tracking="$_sw504_idle_dir/tracking.txt"
+printf 'd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\n' > "$_sw504_idle_tracking"
+# Two near-identical iteration logs to force Signal 1 (text overlap >= 90%).
+_sw504_idle_log='LOOP_COMPLETE
+all tests pass
+goal achieved
+no remaining work'
+printf '%s\n' "$_sw504_idle_log" > "$_sw504_idle_dir/iteration-5.log"
+printf '%s\n' "$_sw504_idle_log" > "$_sw504_idle_dir/iteration-6.log"
+if (
+    export PROJECT_ROOT="/tmp" ITERATION=7 MAX_ITERATIONS=20 \
+           TEST_PASSED=true STUCKNESS_COUNT=0 STUCKNESS_DIAGNOSIS="" STUCKNESS_HINT="" \
+           LOG_DIR="$_sw504_idle_dir" \
+           STUCKNESS_TRACKING_FILE="$_sw504_idle_tracking"
+    source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
+    source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
+    detect_stuckness 2>/dev/null
+    [[ -z "$STUCKNESS_HINT" ]]
+) 2>/dev/null; then
+    assert_pass "detect_stuckness: done-and-idle escape hatch suppresses stuckness when TEST_PASSED + clean tree + no active failure (#504)"
+else
+    assert_fail "detect_stuckness: done-and-idle escape hatch suppresses stuckness when TEST_PASSED + clean tree + no active failure (#504)" \
+        "expected STUCKNESS_HINT to be empty for done-and-idle iteration"
+fi
+rm -rf "$_sw504_idle_dir"
+
+# Test 4d: cycling protection still trips when an active failure signal IS present.
+# Same idle setup as 4c, but with a non-empty repeating diff hash to force Signal 2/2b.
+# Verifies the escape hatch only suppresses when active_failure_signals == 0.
+_sw504_cycle_dir=$(mktemp -d "${TMPDIR:-/tmp}/sw-stuckness-504-cycle.XXXXXX")
+_sw504_cycle_tracking="$_sw504_cycle_dir/tracking.txt"
+printf 'cafebabe|none|0\ncafebabe|none|0\ncafebabe|none|0\ncafebabe|none|0\ncafebabe|none|0\n' > "$_sw504_cycle_tracking"
+printf '%s\n' "$_sw504_idle_log" > "$_sw504_cycle_dir/iteration-5.log"
+printf '%s\n' "$_sw504_idle_log" > "$_sw504_cycle_dir/iteration-6.log"
+if (
+    export PROJECT_ROOT="/tmp" ITERATION=7 MAX_ITERATIONS=20 \
+           TEST_PASSED=true STUCKNESS_COUNT=0 STUCKNESS_DIAGNOSIS="" STUCKNESS_HINT="" \
+           LOG_DIR="$_sw504_cycle_dir" \
+           STUCKNESS_TRACKING_FILE="$_sw504_cycle_tracking"
+    source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
+    source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
+    detect_stuckness 2>/dev/null
+    [[ "$STUCKNESS_HINT" == *"cycling"* ]]
+) 2>/dev/null; then
+    assert_pass "detect_stuckness: done-and-idle escape hatch does NOT mask real cycling on non-empty diff (#504)"
+else
+    assert_fail "detect_stuckness: done-and-idle escape hatch does NOT mask real cycling on non-empty diff (#504)" \
+        "expected STUCKNESS_HINT to contain 'cycling' when active failure signal fires"
+fi
+rm -rf "$_sw504_cycle_dir"
+
 # Test 5: DOD_DIFF_MAX_LINES default is 5000
 if grep -E "DOD_DIFF_MAX_LINES=\\\$\(_config_get_int[^)]*5000" "$SCRIPT_DIR/sw-loop.sh" | grep -q '5000'; then
     assert_pass "DOD_DIFF_MAX_LINES default is 5000 (#331)"

@@ -842,6 +842,15 @@ jobs:
         if: (failure() || cancelled()) && steps.claim_check.outputs.skip != 'true'
         run: |
           BRANCH="shipwright/issue-${ISSUE_NUMBER}"
+          # Force-add issue-scoped artifact snapshots BEFORE git add -A.
+          # .gitignore excludes .claude/pipeline-artifacts/ as a directory, which
+          # prevents the !issue-*/ negation from working (git won't descend into
+          # an ignored parent). Force-add bypasses .gitignore so plan.md/design.md
+          # snapshots written by the plan/design stages survive across runs.
+          SNAP_DIR=".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}"
+          if [[ -d "$SNAP_DIR" ]]; then
+            git add -f "$SNAP_DIR/" 2>/dev/null || true
+          fi
           if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
             # Defense-in-depth: ensure runtime artifacts never get committed to WIP.
             # Exclude issue-scoped subdirs (pipeline-artifacts/issue-N/) — those

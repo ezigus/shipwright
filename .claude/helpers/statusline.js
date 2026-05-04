@@ -8,7 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync, execFileSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 // Configuration
 const CONFIG = {
@@ -177,8 +177,8 @@ function getSwarmStatus() {
   let coordinationActive = false;
 
   try {
-    const ps = execSync('ps aux 2>/dev/null | grep -c agentic-flow || echo "0"', { encoding: 'utf-8' });
-    activeAgents = Math.max(0, parseInt(ps.trim()) - 1);
+    const psOutput = execFileSync('ps', ['aux'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+    activeAgents = psOutput.split('\n').filter(line => line.includes('agentic-flow')).length;
     coordinationActive = activeAgents > 0;
   } catch (e) {
     // Ignore errors
@@ -197,10 +197,15 @@ function getSystemMetrics() {
   let subAgents = 0;
 
   try {
-    const mem = execSync('ps aux | grep -E "(node|agentic|claude)" | grep -v grep | awk \'{sum += \$6} END {print int(sum/1024)}\'', { encoding: 'utf-8' });
-    memoryMB = parseInt(mem.trim()) || 0;
+    const psOutput = execFileSync('ps', ['aux'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const totalKB = psOutput.split('\n')
+      .filter(line => /node|agentic|claude/.test(line))
+      .reduce((sum, line) => {
+        const parts = line.trim().split(/\s+/);
+        return sum + (parseInt(parts[5]) || 0);
+      }, 0);
+    memoryMB = Math.floor(totalKB / 1024);
   } catch (e) {
-    // Fallback
     memoryMB = Math.floor(process.memoryUsage().heapUsed / 1024 / 1024);
   }
 
@@ -215,8 +220,8 @@ function getSystemMetrics() {
 
   // Count active sub-agents from process list
   try {
-    const agents = execSync('ps aux 2>/dev/null | grep -c "claude-flow.*agent" || echo "0"', { encoding: 'utf-8' });
-    subAgents = Math.max(0, parseInt(agents.trim()) - 1);
+    const psOutput = execFileSync('ps', ['aux'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+    subAgents = psOutput.split('\n').filter(line => /claude-flow.*agent/.test(line)).length;
   } catch (e) {
     // Ignore
   }

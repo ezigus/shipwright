@@ -8,7 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 
 // Configuration
 const CONFIG = {
@@ -49,12 +49,17 @@ function getUserInfo() {
   let gitBranch = '';
   let modelName = 'Opus 4.6 (1M context)';
 
+  // audit_1776853149979: previously used execSync with a shell string for git
+  // commands. Switched to execFileSync('git', argv) so there is no shell
+  // interpretation — eliminates the *class* of injection regardless of whether
+  // user input ever reaches these args (defense in depth). Errors are caught
+  // and the defaults above remain.
   try {
-    name = execSync('git config user.name 2>/dev/null || echo "user"', { encoding: 'utf-8' }).trim();
-    gitBranch = execSync('git branch --show-current 2>/dev/null || echo ""', { encoding: 'utf-8' }).trim();
-  } catch (e) {
-    // Ignore errors
-  }
+    name = execFileSync('git', ['config', 'user.name'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || 'user';
+  } catch { /* not in a repo / no name set — keep default */ }
+  try {
+    gitBranch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch { /* not in a repo — keep empty */ }
 
   return { name, gitBranch, modelName };
 }

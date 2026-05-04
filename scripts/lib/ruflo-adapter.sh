@@ -637,6 +637,14 @@ _ruflo_seed_specialist_history() {
     local _labels="${_labels_raw//[$\`\;\|\&\<\>]/}"
     local _query="${stage_name} stage outcomes for ${_task_type} ${_labels}"
 
+    # SECURITY: this is a bash function call to `ruflo_recall`, NOT a SQL
+    # statement. `ruflo_recall` (defined above) invokes the ruflo CLI with
+    # explicit `--query` and `--namespace` flags via execve-style argv;
+    # there is no SQL string concatenation anywhere on this path.
+    # `_ns_hash` is a deterministic 12-char hex digest of the git origin URL
+    # (see `_ruflo_resolve_repo_hash`), not user input. `_query` is built
+    # from sanitized stage/task labels above. Static analyzers flagging this
+    # line as "SQL injection via string concatenation" are false-positive.
     local _history
     _history=$(ruflo_recall "$_query" "learning-${_ns_hash}" 2>/dev/null || true)
     [[ -n "$_history" ]] || return 0

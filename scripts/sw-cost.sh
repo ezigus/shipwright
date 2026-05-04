@@ -58,6 +58,12 @@ if [[ -f "$_COST_SCRIPT_DIR/sw-db.sh" ]]; then
     source "$_COST_SCRIPT_DIR/sw-db.sh" 2>/dev/null || true
 fi
 
+# Source baselines + table renderer for `cost breakdown --render` (#504 deliverable 2)
+# shellcheck source=lib/cost/baselines.sh
+[[ -f "$_COST_SCRIPT_DIR/lib/cost/baselines.sh"     ]] && source "$_COST_SCRIPT_DIR/lib/cost/baselines.sh"
+# shellcheck source=lib/cost/table-render.sh
+[[ -f "$_COST_SCRIPT_DIR/lib/cost/table-render.sh"  ]] && source "$_COST_SCRIPT_DIR/lib/cost/table-render.sh"
+
 ensure_cost_dir() {
     mkdir -p "$COST_DIR"
     [[ -f "$COST_FILE" ]] || echo '{"entries":[],"summary":{}}' > "$COST_FILE"
@@ -1073,6 +1079,116 @@ budget_show() {
     echo ""
 }
 
+# ─── Breakdown CLI (#504 deliverable 2) ────────────────────────────────────
+
+# cost_breakdown_command — wraps cost_generate_breakdown with optional rendering.
+#
+# Usage:
+#   sw cost breakdown <artifacts_dir> [pipeline_id] [issue]
+#                      [--render | --render-plain] [--no-update-baseline]
+#
+# Default behavior (no flags) is unchanged: writes cost-breakdown.json only.
+# --render             Print formatted ASCII table with HIGH/LOW flags (terminal colors).
+# --render-plain       Same table but no ANSI (suitable for `gh issue comment --body`).
+# --no-update-baseline Skip the rolling-average update (default: update after render).
+# --print-only         Skip the JSON regeneration; render existing file only.
+cost_breakdown_command() {
+    local artifacts_dir=""
+    local pipeline_id="unknown"
+    local issue=""
+    local do_render=0
+    local plain=0
+    local print_only=0
+    local update_baseline=1
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --render)              do_render=1; shift ;;
+            --render-plain)        do_render=1; plain=1; shift ;;
+            --print-only)          print_only=1; shift ;;
+            --no-update-baseline)  update_baseline=0; shift ;;
+            --update-baseline)     update_baseline=1; shift ;;
+            --help|-h)
+                cat <<'BDHELP'
+Usage: shipwright cost breakdown <artifacts_dir> [pipeline_id] [issue] [flags]
+
+Generates cost-breakdown.json from per-stage and per-iteration sidecar
+JSONL artifacts written by the pipeline. Optional flags surface the data
+as a human-readable table with HIGH/LOW comparison against historical runs.
+
+Flags:
+  --render               Print colored ASCII table (terminal use)
+  --render-plain         Print plain ASCII table (GitHub comment friendly)
+  --print-only           Skip JSON regeneration; render existing file only
+  --update-baseline      Update rolling baseline after render (default with --render)
+  --no-update-baseline   Suppress baseline update
+
+Baseline files live at:
+  ~/.shipwright/baselines/stage-costs.json        (all-issues rolling avg)
+  ~/.shipwright/baselines/issue-<N>-costs.json    (per-issue rolling avg, when issue given)
+BDHELP
+                return 0 ;;
+            -*) shift ;;
+            *)
+                if [[ -z "$artifacts_dir" ]]; then artifacts_dir="$1"
+                elif [[ "$pipeline_id" == "unknown" ]]; then pipeline_id="$1"
+                elif [[ -z "$issue" ]]; then issue="$1"
+                fi
+                shift ;;
+        esac
+    done
+
+    [[ -z "$artifacts_dir" ]] && { error "breakdown: missing <artifacts_dir>"; return 1; }
+
+    local breakdown_file="${artifacts_dir}/cost-breakdown.json"
+
+    if [[ "$print_only" -ne 1 ]]; then
+        cost_generate_breakdown "$artifacts_dir" "$pipeline_id" "$issue" || return 1
+    fi
+
+    if [[ "$do_render" -ne 1 ]]; then
+        return 0
+    fi
+
+    if [[ ! -f "$breakdown_file" ]]; then
+        warn "breakdown: ${breakdown_file} missing — nothing to render"
+        return 1
+    fi
+
+    local issue_arg=()
+    [[ -n "$issue" ]] && issue_arg=(--issue "$issue")
+
+    if [[ "$plain" == "1" ]]; then
+        render_cost_table_plain "$breakdown_file" "${issue_arg[@]}" --baseline-context
+    else
+        render_cost_table       "$breakdown_file" "${issue_arg[@]}" --baseline-context
+    fi
+
+    if [[ "$update_baseline" == "1" ]]; then
+        # Update baseline AFTER rendering so the table reflects the
+        # comparison against PRIOR runs, not the current run included.
+        local n_updated
+        n_updated=$(baseline_update_from_breakdown "$breakdown_file" "$issue" 2>/dev/null || echo "0")
+        info "baseline: updated ${n_updated:-0} stage(s)"
+    fi
+}
+
+# cost_baseline_update <breakdown_file> [issue]
+# Internal hook for pipeline completion. Quiet on success.
+cost_baseline_update() {
+    local breakdown="${1:-}"
+    local issue="${2:-}"
+    [[ -z "$breakdown" ]] && { error "baseline-update: missing <breakdown_file>"; return 1; }
+    [[ -f "$breakdown" ]] || { warn "baseline-update: ${breakdown} not found"; return 1; }
+    if ! type baseline_update_from_breakdown >/dev/null 2>&1; then
+        warn "baseline-update: baselines.sh not loaded"; return 1
+    fi
+    local n
+    n=$(baseline_update_from_breakdown "$breakdown" "$issue")
+    success "baseline: updated ${n:-0} stage(s) (issue=${issue:-all})"
+    emit_event "cost.baseline_updated" "stages=${n:-0}" "issue=${issue:-}"
+}
+
 # ─── Help ──────────────────────────────────────────────────────────────────
 
 show_help() {
@@ -1089,6 +1205,8 @@ show_help() {
     echo -e "  ${CYAN}show${RESET} --by-issue               Breakdown by issue"
     echo -e "  ${CYAN}show${RESET} --by-iteration           Per-iteration breakdown (most-recent pipeline artifact)"
     echo -e "  ${CYAN}breakdown${RESET} <artifacts_dir> [pipeline_id] [issue]  Generate cost-breakdown.json artifact"
+    echo -e "  ${CYAN}breakdown${RESET} ... --render                        Render formatted table with HIGH/LOW flags"
+    echo -e "  ${CYAN}breakdown${RESET} ... --render-plain                  Plain ASCII table (GitHub comment friendly)"
     echo -e "  ${CYAN}budget set${RESET} <amount>            Set daily budget (USD)"
     echo -e "  ${CYAN}budget show${RESET}                    Show current budget/usage"
     echo ""
@@ -1160,7 +1278,13 @@ case "$SUBCOMMAND" in
         cost_update_pricing "$@"
         ;;
     breakdown)
-        cost_generate_breakdown "$@"
+        cost_breakdown_command "$@"
+        ;;
+    breakdown-update-baseline)
+        # Internal: invoked by sw-pipeline.sh at pipeline completion to roll
+        # the per-stage cost data from this run into the rolling baseline.
+        # Args: <breakdown_file> [issue_number]
+        cost_baseline_update "$@"
         ;;
     help|--help|-h)
         show_help

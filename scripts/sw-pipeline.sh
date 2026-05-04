@@ -1021,15 +1021,15 @@ cleanup_on_exit() {
     # triggered the group kill — leaving Claude workers and tool subprocesses alive.
     # Skip on exit_code==0 to preserve intentionally detached post-run jobs.
     if [[ "$exit_code" -ne 0 ]]; then
-        local _our_pgid
+        local _our_pgid _grace
+        _grace="${PIPELINE_KILL_GRACE:-25}"
+        [[ "$_grace" =~ ^[0-9]+$ ]] || _grace=25
         _our_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ') || true
         if [[ "${_our_pgid:-}" == "$$" ]]; then
             if declare -f _kill_process_group_safe >/dev/null 2>&1; then
-                _kill_process_group_safe "$$" "${PIPELINE_KILL_GRACE:-25}" 2>/dev/null || true
+                _kill_process_group_safe "$$" "$_grace" 2>/dev/null || true
             else
                 kill -- -$$ 2>/dev/null || true
-                local _grace="${PIPELINE_KILL_GRACE:-25}"
-                [[ "$_grace" =~ ^[0-9]+$ ]] || _grace=25
                 sleep "$_grace"
                 kill -9 -- -$$ 2>/dev/null || true
             fi

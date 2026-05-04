@@ -2168,20 +2168,27 @@ cleanup() {
         cleanup_multi_agent
     fi
 
-    # Reap entire process tree rooted at this shell (includes Claude Node workers
-    # and tool subprocesses that would escape a shallow pkill -P $$).
-    if declare -f _kill_process_tree >/dev/null 2>&1; then
-        _kill_process_tree TERM $$ 2>/dev/null || true
-        sleep 1
-        # KILL pass targets surviving children only — SIGKILL on $$ itself is
-        # untrappable and would abort the remaining cleanup path.
-        local _lc_child
-        while IFS= read -r _lc_child; do
-            [[ -n "$_lc_child" ]] && _kill_process_tree KILL "$_lc_child" 2>/dev/null || true
-        done < <(pgrep -P $$ 2>/dev/null || true)
-    else
-        pkill -P $$ 2>/dev/null || true
-    fi
+    # Reap child process trees (Claude Node workers, tool subprocesses that escape
+    # a shallow pkill -P $$). Targeting children only — sending SIGTERM to $$
+    # itself would re-trigger the SIGTERM trap and set EXIT_CODE=130 on clean exits.
+    local _lc_child
+    while IFS= read -r _lc_child; do
+        [[ -n "$_lc_child" ]] || continue
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree TERM "$_lc_child" 2>/dev/null || true
+        else
+            kill "$_lc_child" 2>/dev/null || true
+        fi
+    done < <(pgrep -P $$ 2>/dev/null || true)
+    sleep 1
+    while IFS= read -r _lc_child; do
+        [[ -n "$_lc_child" ]] || continue
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree KILL "$_lc_child" 2>/dev/null || true
+        else
+            kill -9 "$_lc_child" 2>/dev/null || true
+        fi
+    done < <(pgrep -P $$ 2>/dev/null || true)
     wait 2>/dev/null || true
 
     # Clear heartbeat (always — whether signal-driven or not)

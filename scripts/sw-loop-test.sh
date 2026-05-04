@@ -1854,9 +1854,11 @@ fi
 
 # Test: In agent sub-loop, _commits_before appears before the agent-specific claude -p invocation
 # (line-ordering regression: guards against moving _commits_before back after the call)
-# Restrict search to lines 1800+ to target the agent sub-loop only (avoids earlier claude -p calls)
+# Restrict search to lines 1800+ to target the agent sub-loop only (avoids earlier claude -p calls).
+# The agent invocation uses stdin piping (printf '%s' "$PROMPT" | claude -p ...) per the
+# ARG_MAX fix; either the pre-fix pattern or the piped pattern should anchor the line.
 _acb_line=$(grep -n '_commits_before=\$(git rev-list' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | head -1 | cut -d: -f1 || true)
-_cp_line=$(awk 'NR>=1800 && /claude -p "\$PROMPT"/{print NR; exit}' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
+_cp_line=$(awk 'NR>=1800 && /printf .* "\$PROMPT" \| claude -p|claude -p "\$PROMPT"/{print NR; exit}' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
 if [[ -n "$_acb_line" && -n "$_cp_line" && "$_acb_line" -lt "$_cp_line" ]]; then
     assert_pass "sw-loop.sh: agent _commits_before captured before claude -p (line ${_acb_line} < ${_cp_line})"
 else
@@ -2768,6 +2770,50 @@ while IFS= read -r _swl_marker_line; do
             "missed: '$_swl_marker_line'"
     fi
 done <<< "$_swl_real_marker_lines"
+
+# ─── #504 follow-up: claude -p prompt piped via stdin (exec ARG_MAX bypass) ──
+# Regression: the deployed sw-loop.sh failed iter 8 DoD with "Argument list
+# too long" because cumulative-diff prompts exceeded the OS exec ARG_MAX
+# when passed as a positional CLI argument. Fix: pipe the prompt via stdin
+# (printf '%s' "$prompt" | claude -p ...) at every claude invocation site.
+echo ""
+echo -e "${DIM}  #504 regression — claude -p prompts piped via stdin (avoids ARG_MAX)${RESET}"
+
+# Forbidden: positional prompt as CLI argument. Any line of the form
+# `claude -p "$<var>" ...` (with a leading space, not in a comment) is the
+# pre-fix pattern that trips ARG_MAX on long prompts.
+_swl_bad_invocations=$(grep -nE '^[[:space:]]+claude[[:space:]]+-p[[:space:]]+"\$' \
+    "$SCRIPT_DIR/sw-loop.sh" || true)
+if [[ -z "$_swl_bad_invocations" ]]; then
+    assert_pass "#504: no claude -p invocations pass the prompt as a positional CLI arg"
+else
+    assert_fail "#504: no claude -p invocations pass the prompt as a positional CLI arg" \
+        "found pre-fix pattern at: $_swl_bad_invocations"
+fi
+
+# Required: every claude -p invocation must be piped from a printf '%s' "$prompt".
+# We require exactly 4 such invocations (audit, DoD, holistic, main agent).
+_swl_piped_count=$(grep -cE "^[[:space:]]*printf[[:space:]]+'%s'[[:space:]]+\"\\\$[a-zA-Z_]+\"[[:space:]]*\\|[[:space:]]*claude[[:space:]]+-p" \
+    "$SCRIPT_DIR/sw-loop.sh" || true)
+_swl_piped_count="${_swl_piped_count:-0}"
+if [[ "$_swl_piped_count" -eq 4 ]]; then
+    assert_pass "#504: all 4 claude -p invocations use 'printf | claude -p' stdin piping"
+else
+    assert_fail "#504: all 4 claude -p invocations use 'printf | claude -p' stdin piping" \
+        "expected 4 piped invocations, found $_swl_piped_count"
+fi
+
+# Smoke test: an oversize prompt (>256KB) passed via stdin must reach the
+# downstream command without truncation. This validates the technique itself
+# rather than the loop wiring — using `cat` as a stand-in for `claude -p`.
+_swl_big_prompt=$(printf 'x%.0s' $(seq 1 262144))  # 256KB of 'x'
+_swl_received=$(printf '%s' "$_swl_big_prompt" | cat | wc -c | tr -d ' ')
+if [[ "$_swl_received" -eq 262144 ]]; then
+    assert_pass "#504: 256KB prompt round-trips through printf|stdin without truncation"
+else
+    assert_fail "#504: 256KB prompt round-trips through printf|stdin without truncation" \
+        "expected 262144 bytes, got $_swl_received"
+fi
 
 # ─── #448 review fix: --context-file path traversal hardening ────────────────
 echo ""

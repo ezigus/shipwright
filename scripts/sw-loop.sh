@@ -1416,7 +1416,12 @@ AUDIT_PROMPT
 
     local exit_code=0
     local audit_err_log="${audit_log%.log}-stderr.log"
-    claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>"$audit_err_log" &
+    # Pipe prompt via stdin (not as a CLI argument) so it is not subject to the
+    # OS exec ARG_MAX limit. With cumulative diffs growing each iteration the
+    # audit prompt regularly exceeds 128KB which trips
+    # "Argument list too long" on Linux. claude -p reads stdin when no
+    # positional prompt is given.
+    printf '%s' "$audit_prompt" | claude -p "${audit_flags[@]}" > "$audit_log" 2>"$audit_err_log" &
     CHILD_PID=$!
     wait "$CHILD_PID" 2>/dev/null || exit_code=$?
     CHILD_PID=""
@@ -1676,7 +1681,11 @@ DOD_PROMPT
 
     local dod_err_log="${dod_log%.log}-stderr.log"
     local dod_exit_code=0
-    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>"$dod_err_log" &
+    # Pipe prompt via stdin to bypass exec ARG_MAX. The DoD prompt embeds the
+    # full branch diff plus runtime facts and routinely grows past 128KB on
+    # long-running pipelines; passing it as a CLI argument was failing with
+    # "Argument list too long" on the deployed shipwright-cli (#504 iter 8).
+    printf '%s' "$dod_prompt" | claude -p "${dod_flags[@]}" > "$dod_log" 2>"$dod_err_log" &
     CHILD_PID=$!
     wait "$CHILD_PID" 2>/dev/null || dod_exit_code=$?
     CHILD_PID=""
@@ -1903,7 +1912,8 @@ HOLISTIC_PROMPT
 
     local holistic_stderr_log="${holistic_log%.log}-stderr.log"
     local holistic_exit_code=0
-    claude -p "$holistic_prompt" "${hol_flags[@]}" > "$holistic_log" 2>"$holistic_stderr_log" &
+    # Pipe prompt via stdin to bypass exec ARG_MAX (see audit/DoD invocations).
+    printf '%s' "$holistic_prompt" | claude -p "${hol_flags[@]}" > "$holistic_log" 2>"$holistic_stderr_log" &
     CHILD_PID=$!
     wait "$CHILD_PID" 2>/dev/null || holistic_exit_code=$?
     CHILD_PID=""
@@ -2395,8 +2405,12 @@ PROMPT
     local JSON_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.json"
     local ERR_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.stderr"
     LOG_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.log"
+    # Pipe prompt via stdin (not as CLI arg) to bypass exec ARG_MAX. The
+    # iteration prompt accumulates plan/design/historical context and routinely
+    # exceeds 128KB. claude -p reads from stdin when no positional prompt is
+    # given. See audit/DoD/holistic invocations for the same fix.
     # shellcheck disable=SC2086
-    claude -p "$PROMPT" $CLAUDE_FLAGS > "$JSON_FILE" 2>"$ERR_FILE" || true
+    printf '%s' "$PROMPT" | claude -p $CLAUDE_FLAGS > "$JSON_FILE" 2>"$ERR_FILE" || true
 
     # Extract text result from JSON into .log for backwards compat
     _extract_text_from_json "$JSON_FILE" "$LOG_FILE" "$ERR_FILE"

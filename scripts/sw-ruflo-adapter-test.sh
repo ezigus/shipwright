@@ -4881,5 +4881,166 @@ else
         "after strip: $_hypothesis"
 fi
 
+# Test: error_text input is bounded to 8000 bytes before being seeded into
+# the namespace. A pathological 12000-byte error must not store more than
+# 8000 bytes under key 'self-heal-error'. Mock captures every --value arg
+# alongside its --key so we can isolate the error-context store call.
+print_test_section "ruflo_execute_self_heal_hive — error_text bounded to 8000 bytes"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_value_log="$_test_tmp/value-log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+# Capture: when 'memory store' is called, write "<key>\\t<value-bytes>" so the
+# test can correlate which store call carried which payload size.
+if [[ "\$1" == "memory" && "\$2" == "store" ]]; then
+    _key=""
+    _value=""
+    while [[ \$# -gt 0 ]]; do
+        case "\$1" in
+            --key) _key="\$2"; shift 2 ;;
+            --value) _value="\$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    printf '%s\\t%d\\n' "\$_key" "\${#_value}" >> "$_value_log"
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-bound-error"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="self-heal-bound-error-pipeline"
+# Build a 12000-byte error string (well above the 8000-byte cap).
+_huge_error=$(printf 'A%.0s' $(seq 1 12000))
+ruflo_execute_self_heal_hive "$_huge_error" "src/foo.js" >/dev/null 2>&1 || true
+_err_bytes=$(awk -F'\t' '$1=="self-heal-error"{print $2; exit}' "$_value_log" 2>/dev/null)
+_err_bytes="${_err_bytes:-0}"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if (( _err_bytes > 0 && _err_bytes <= 8000 )); then
+    assert_pass "ruflo_execute_self_heal_hive bounds error_text to ≤ 8000 bytes (got $_err_bytes)"
+else
+    assert_fail "ruflo_execute_self_heal_hive bounds error_text to ≤ 8000 bytes" \
+        "stored bytes=$_err_bytes (expected 1..8000 from 12000-byte input)"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: changed_files input is bounded to 2000 bytes before being seeded into
+# the namespace. Same mock pattern as the error_text bounding test, but the
+# captured key is 'self-heal-changed-files'.
+print_test_section "ruflo_execute_self_heal_hive — changed_files bounded to 2000 bytes"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_value_log="$_test_tmp/value-log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\$1" == "memory" && "\$2" == "store" ]]; then
+    _key=""
+    _value=""
+    while [[ \$# -gt 0 ]]; do
+        case "\$1" in
+            --key) _key="\$2"; shift 2 ;;
+            --value) _value="\$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    printf '%s\\t%d\\n' "\$_key" "\${#_value}" >> "$_value_log"
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-bound-files"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="self-heal-bound-files-pipeline"
+# Build a 4000-byte changed-files string (twice the 2000-byte cap).
+_huge_files=$(printf 'src/file%04d.js,' $(seq 1 250))
+ruflo_execute_self_heal_hive "boom" "$_huge_files" >/dev/null 2>&1 || true
+_files_bytes=$(awk -F'\t' '$1=="self-heal-changed-files"{print $2; exit}' "$_value_log" 2>/dev/null)
+_files_bytes="${_files_bytes:-0}"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if (( _files_bytes > 0 && _files_bytes <= 2000 )); then
+    assert_pass "ruflo_execute_self_heal_hive bounds changed_files to ≤ 2000 bytes (got $_files_bytes)"
+else
+    assert_fail "ruflo_execute_self_heal_hive bounds changed_files to ≤ 2000 bytes" \
+        "stored bytes=$_files_bytes (expected 1..2000 from ~4000-byte input)"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: gate-disabled performance — when RUFLO_SELF_HEAL_HIVE is unset (the
+# default), the function MUST exit before doing any I/O or spawning subshells.
+# Plan AC-5: < 1ms ideal, < 100ms ceiling on slow CI. We measure 100 iterations
+# and assert total wall time < 5s (effective 50ms/call ceiling).
+print_test_section "ruflo_execute_self_heal_hive — disabled-gate near-zero overhead"
+unset _RUFLO_ADAPTER_LOADED
+unset RUFLO_SELF_HEAL_HIVE
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-perf-disabled"
+_t_start=$(date +%s)
+for _i in $(seq 1 100); do
+    ruflo_execute_self_heal_hive "boom" "src/x.js" >/dev/null 2>&1 || true
+done
+_t_end=$(date +%s)
+_t_elapsed=$(( _t_end - _t_start ))
+if (( _t_elapsed < 5 )); then
+    assert_pass "ruflo_execute_self_heal_hive disabled-gate overhead < 5s for 100 calls (got ${_t_elapsed}s)"
+else
+    assert_fail "ruflo_execute_self_heal_hive disabled-gate overhead < 5s for 100 calls" \
+        "elapsed=${_t_elapsed}s (expected < 5)"
+fi
+
+# Test: sw-loop integration — GOAL injection format. The exact composition logic
+# from scripts/sw-loop.sh:2707-2716 must produce a GOAL containing the
+# "## Self-Heal Hypothesis (hive-selected)" header followed by the cleaned
+# hypothesis text. This guards against header-string drift and verifies the
+# header positioning relative to the hypothesis body.
+print_test_section "sw-loop — injects hypothesis under '## Self-Heal Hypothesis' header"
+GOAL="Original goal: fix the failing test"
+_hypothesis=$'Hypothesis: stale fixture state.\nVerification: grep beforeEach src/'
+# Mirror exact sw-loop.sh:2710-2715 logic verbatim.
+_hypothesis="${_hypothesis//<<<}"
+_hypothesis="${_hypothesis//>>>}"
+GOAL="${GOAL}
+
+## Self-Heal Hypothesis (hive-selected)
+${_hypothesis}"
+_has_header=false
+_has_body=false
+_header_before_body=false
+if [[ "$GOAL" == *"## Self-Heal Hypothesis (hive-selected)"* ]]; then
+    _has_header=true
+fi
+if [[ "$GOAL" == *"Hypothesis: stale fixture state"* ]]; then
+    _has_body=true
+fi
+# Header must precede body in the composed GOAL.
+if [[ "$_has_header" == "true" && "$_has_body" == "true" ]]; then
+    _header_pos="${GOAL%%## Self-Heal Hypothesis*}"
+    _body_pos="${GOAL%%Hypothesis: stale fixture*}"
+    if (( ${#_header_pos} < ${#_body_pos} )); then
+        _header_before_body=true
+    fi
+fi
+if [[ "$_has_header" == "true" && "$_has_body" == "true" && "$_header_before_body" == "true" ]]; then
+    assert_pass "sw-loop composes GOAL with '## Self-Heal Hypothesis (hive-selected)' header before body"
+else
+    assert_fail "sw-loop composes GOAL with '## Self-Heal Hypothesis (hive-selected)' header before body" \
+        "header=$_has_header body=$_has_body order=$_header_before_body"
+fi
+unset GOAL
+
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

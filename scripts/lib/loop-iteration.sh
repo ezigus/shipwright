@@ -144,27 +144,42 @@ manage_context_window() {
 }
 
 compose_prompt() {
+    # Iteration-aware context: full orientation on iter 1, session restart, or resume.
+    # On iter 2+, static sections (pipeline context, memory base, discovery, dora,
+    # intelligence hotspots) are skipped — the agent's work product (git, tests, tasks)
+    # already reflects that context.
+    local _needs_full_context=false
+    if [[ "${ITERATION:-1}" -eq 1 \
+       || "${SESSION_RESTART:-false}" == "true" \
+       || -n "${RESUMED_FROM_ITERATION:-}" ]]; then
+        _needs_full_context=true
+    fi
+
     local recent_log
-    # Get last 3 iteration summaries from log entries
-    recent_log="$(echo "$LOG_ENTRIES" | tail -15)"
-    if [[ -z "$recent_log" ]]; then
+    if [[ -n "$LOG_ENTRIES" ]]; then
+        recent_log="(Previous iterations — REFERENCE ONLY. This work is done. Do not re-execute.)
+$(echo "$LOG_ENTRIES" | tail -15)"
+    else
         recent_log="(first iteration — no previous progress)"
+    fi
+
+    # Deterministic record of work completed this pipeline — replaces heuristic tail scraping.
+    # Only on iter 2+ (iter 1 has no commits yet).
+    local recent_commits_section=""
+    if [[ -n "${LOOP_START_COMMIT:-}" ]] && [[ "${ITERATION:-1}" -gt 1 ]]; then
+        local _commits
+        _commits="$(git -C "$PROJECT_ROOT" log --format='%h %s' "${LOOP_START_COMMIT}..HEAD" \
+            2>/dev/null | head -10 || true)"
+        if [[ -n "$_commits" ]]; then
+            recent_commits_section="## Commits This Pipeline (ground truth — work that is done)
+${_commits}
+
+"
+        fi
     fi
 
     local git_log
     git_log="$(git_recent_log)"
-
-    local test_section
-    if [[ -z "$TEST_CMD" ]]; then
-        test_section="No test command configured."
-    elif [[ -z "$TEST_PASSED" ]]; then
-        test_section="No test results yet (first iteration). Test command: $TEST_CMD"
-    elif $TEST_PASSED; then
-        test_section="$TEST_OUTPUT"
-    else
-        test_section="TESTS FAILED — fix these before proceeding:
-$TEST_OUTPUT"
-    fi
 
     # Structured error context (machine-readable)
     local error_summary_section=""
@@ -179,6 +194,24 @@ ${err_lines}
 
 Fix these specific errors. Each line above is one distinct error from the test output."
         fi
+    fi
+
+    local test_section
+    if [[ -z "$TEST_CMD" ]]; then
+        test_section="No test command configured."
+    elif [[ -z "$TEST_PASSED" ]]; then
+        test_section="No test results yet (first iteration). Test command: $TEST_CMD"
+    elif $TEST_PASSED; then
+        test_section="$TEST_OUTPUT"
+    elif ! $_needs_full_context && [[ -n "$error_summary_section" ]]; then
+        # Iter 2+: structured errors available — demote full output, primary signal is the summary below
+        test_section="TESTS FAILED — see Structured Error Summary below for specific errors.
+
+Last 30 lines of test output:
+$(echo "$TEST_OUTPUT" | tail -30)"
+    else
+        test_section="TESTS FAILED — fix these before proceeding:
+$TEST_OUTPUT"
     fi
 
     # Build audit sections (captured before heredoc to avoid nested heredoc issues)
@@ -209,43 +242,17 @@ Declaring LOOP_COMPLETE or exiting without committing code changes will not sati
 the holistic gate and will count toward the circuit-breaker failure limit."
     fi
 
-    # Memory context injection (failure patterns + past learnings)
+    # Memory context injection — base memory only on iter 1 / restart / resume
     local memory_section=""
-    if type memory_inject_context >/dev/null 2>&1; then
-        memory_section="$(memory_inject_context "build" 2>/dev/null || true)"
-    elif [[ -f "$SCRIPT_DIR/sw-memory.sh" ]]; then
-        memory_section="$("$SCRIPT_DIR/sw-memory.sh" inject build 2>/dev/null || true)"
-    fi
-
-    # Cross-pipeline discovery injection (learnings from other pipeline runs)
-    local discovery_section=""
-    if type inject_discoveries >/dev/null 2>&1; then
-        local disc_output
-        disc_output="$(inject_discoveries "${GOAL:-}" 2>/dev/null | head -10 || true)"
-        if [[ -n "$disc_output" ]]; then
-            discovery_section="$disc_output"
+    if $_needs_full_context; then
+        if type memory_inject_context >/dev/null 2>&1; then
+            memory_section="$(memory_inject_context "build" 2>/dev/null || true)"
+        elif [[ -f "$SCRIPT_DIR/sw-memory.sh" ]]; then
+            memory_section="$("$SCRIPT_DIR/sw-memory.sh" inject build 2>/dev/null || true)"
         fi
     fi
 
-    # DORA baselines for context
-    local dora_section=""
-    if type memory_get_dora_baseline >/dev/null 2>&1; then
-        local dora_json
-        dora_json="$(memory_get_dora_baseline 7 2>/dev/null || echo "{}")"
-        local dora_total
-        dora_total=$(echo "$dora_json" | jq -r '.total // 0' 2>/dev/null || echo "0")
-        if [[ "$dora_total" -gt 0 ]]; then
-            local dora_df dora_cfr
-            dora_df=$(echo "$dora_json" | jq -r '.deploy_freq // 0' 2>/dev/null || echo "0")
-            dora_cfr=$(echo "$dora_json" | jq -r '.cfr // 0' 2>/dev/null || echo "0")
-            dora_section="## Performance Baselines (Last 7 Days)
-- Deploy frequency: ${dora_df}/week
-- Change failure rate: ${dora_cfr}%
-- Total pipeline runs: ${dora_total}"
-        fi
-    fi
-
-    # Append mid-loop memory refresh if available
+    # Append mid-loop memory refresh if available — always inject (per-iteration learning)
     local memory_refresh_file="$LOG_DIR/memory-refresh-$(( ITERATION - 1 )).txt"
     if [[ -f "$memory_refresh_file" ]]; then
         memory_section="${memory_section}
@@ -254,9 +261,41 @@ the holistic gate and will count toward the circuit-breaker failure limit."
 $(cat "$memory_refresh_file")"
     fi
 
-    # GitHub intelligence context (gated by availability)
+    # Cross-pipeline discovery injection (learnings from other pipeline runs)
+    local discovery_section=""
+    if $_needs_full_context; then
+        if type inject_discoveries >/dev/null 2>&1; then
+            local disc_output
+            disc_output="$(inject_discoveries "${GOAL:-}" 2>/dev/null | head -10 || true)"
+            if [[ -n "$disc_output" ]]; then
+                discovery_section="$disc_output"
+            fi
+        fi
+    fi
+
+    # DORA baselines for context
+    local dora_section=""
+    if $_needs_full_context; then
+        if type memory_get_dora_baseline >/dev/null 2>&1; then
+            local dora_json
+            dora_json="$(memory_get_dora_baseline 7 2>/dev/null || echo "{}")"
+            local dora_total
+            dora_total=$(echo "$dora_json" | jq -r '.total // 0' 2>/dev/null || echo "0")
+            if [[ "$dora_total" -gt 0 ]]; then
+                local dora_df dora_cfr
+                dora_df=$(echo "$dora_json" | jq -r '.deploy_freq // 0' 2>/dev/null || echo "0")
+                dora_cfr=$(echo "$dora_json" | jq -r '.cfr // 0' 2>/dev/null || echo "0")
+                dora_section="## Performance Baselines (Last 7 Days)
+- Deploy frequency: ${dora_df}/week
+- Change failure rate: ${dora_cfr}%
+- Total pipeline runs: ${dora_total}"
+            fi
+        fi
+    fi
+
+    # GitHub intelligence context — static parts only on iter 1 / restart / resume
     local intelligence_section=""
-    if [[ "${NO_GITHUB:-}" != "true" ]]; then
+    if $_needs_full_context && [[ "${NO_GITHUB:-}" != "true" ]]; then
         # File hotspots — top 5 most-changed files
         if type gh_file_change_frequency >/dev/null 2>&1; then
             local hotspots
@@ -291,33 +330,35 @@ ${alerts}"
         fi
     fi
 
-    # Architecture rules (from intelligence layer)
-    local repo_hash
-    repo_hash=$(echo -n "$(pwd)" | shasum -a 256 2>/dev/null | cut -c1-12 || echo "unknown")
-    local arch_file="${HOME}/.shipwright/memory/${repo_hash}/architecture.json"
-    if [[ -f "$arch_file" ]]; then
-        local arch_rules
-        arch_rules=$(jq -r '.rules[]? // empty' "$arch_file" 2>/dev/null | head -10 || true)
-        if [[ -n "$arch_rules" ]]; then
-            intelligence_section="${intelligence_section}
+    if $_needs_full_context; then
+        # Architecture rules (from intelligence layer)
+        local repo_hash
+        repo_hash=$(echo -n "$(pwd)" | shasum -a 256 2>/dev/null | cut -c1-12 || echo "unknown")
+        local arch_file="${HOME}/.shipwright/memory/${repo_hash}/architecture.json"
+        if [[ -f "$arch_file" ]]; then
+            local arch_rules
+            arch_rules=$(jq -r '.rules[]? // empty' "$arch_file" 2>/dev/null | head -10 || true)
+            if [[ -n "$arch_rules" ]]; then
+                intelligence_section="${intelligence_section}
 ## Architecture Rules
 ${arch_rules}"
+            fi
         fi
-    fi
 
-    # Coverage baseline
-    local coverage_file="${HOME}/.shipwright/baselines/${repo_hash}/coverage.json"
-    if [[ -f "$coverage_file" ]]; then
-        local coverage_pct
-        coverage_pct=$(jq -r '.coverage_percent // empty' "$coverage_file" 2>/dev/null || true)
-        if [[ -n "$coverage_pct" ]]; then
-            intelligence_section="${intelligence_section}
+        # Coverage baseline
+        local coverage_file="${HOME}/.shipwright/baselines/${repo_hash}/coverage.json"
+        if [[ -f "$coverage_file" ]]; then
+            local coverage_pct
+            coverage_pct=$(jq -r '.coverage_percent // empty' "$coverage_file" 2>/dev/null || true)
+            if [[ -n "$coverage_pct" ]]; then
+                intelligence_section="${intelligence_section}
 ## Coverage Baseline
 Current coverage: ${coverage_pct}% — do not decrease this."
+            fi
         fi
     fi
 
-    # Error classification from last failure
+    # Error classification from last failure — always inject (per-iteration signal)
     local error_log=".claude/pipeline-artifacts/error-log.jsonl"
     if [[ -f "$error_log" ]]; then
         local last_error
@@ -401,18 +442,20 @@ ${_ig_parts}"
 
     # Pipeline context section (Layer A: sidecar delivery of synthesized context)
     local pipeline_context_section=""
-    if [[ -n "${LOOP_CONTEXT_FILE:-}" && -f "${LOOP_CONTEXT_FILE:-}" ]]; then
-        local _ctx=""
-        if [[ -r "${LOOP_CONTEXT_FILE}" ]]; then
-            _ctx="$(cat "$LOOP_CONTEXT_FILE" 2>/dev/null || true)"
-        else
-            warn "context-file '${LOOP_CONTEXT_FILE}' exists but is not readable — proceeding without pipeline context"
-        fi
-        if [[ -n "$_ctx" ]]; then
-            pipeline_context_section="## Pipeline Context
+    if $_needs_full_context; then
+        if [[ -n "${LOOP_CONTEXT_FILE:-}" && -f "${LOOP_CONTEXT_FILE:-}" ]]; then
+            local _ctx=""
+            if [[ -r "${LOOP_CONTEXT_FILE}" ]]; then
+                _ctx="$(cat "$LOOP_CONTEXT_FILE" 2>/dev/null || true)"
+            else
+                warn "context-file '${LOOP_CONTEXT_FILE}' exists but is not readable — proceeding without pipeline context"
+            fi
+            if [[ -n "$_ctx" ]]; then
+                pipeline_context_section="## Pipeline Context
 ${_ctx}
 
 "
+            fi
         fi
     fi
 
@@ -469,7 +512,18 @@ ${cum_stat}
     local task_section=""
     task_section="$(compose_task_section 2>/dev/null || true)"
 
-    cat <<PROMPT
+    local reference_trailer=""
+    if ! $_needs_full_context; then
+        local _adir="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
+        reference_trailer="
+## Reference (read on demand if needed)
+- Plan: \`${_adir}/plan.md\`
+- Design: \`${_adir}/design.md\`
+- Full build context: \`${_adir}/build-context.md\`"
+    fi
+
+    local prompt
+    prompt="$(cat <<PROMPT
 You are an autonomous coding agent on iteration ${ITERATION}/${MAX_ITERATIONS} of a continuous loop.
 ${resume_section}
 ## Your Goal
@@ -485,7 +539,7 @@ ${recent_log}
 ## Recent Git Activity
 ${git_log}
 
-## Test Results (Previous Iteration)
+${recent_commits_section}## Test Results (Previous Iteration)
 ${test_section}
 
 ${error_summary_section:+$error_summary_section
@@ -541,7 +595,19 @@ ${alt_strategy_section:+$alt_strategy_section
 - If tests fail, fix them before ending
 - If stuck on the same issue for 2+ iterations, try a different approach
 - Do NOT output LOOP_COMPLETE unless the goal is genuinely achieved
+${reference_trailer}
 PROMPT
+)"
+
+    emit_event "context.iteration_prompt" \
+        "iteration=${ITERATION:-1}" \
+        "chars=${#prompt}" \
+        "full_context=${_needs_full_context}" \
+        "skipped_pipeline=$( [[ -z "$pipeline_context_section" ]] && echo true || echo false )" \
+        "skipped_intelligence_static=$( [[ "$_needs_full_context" == false ]] && echo true || echo false )" \
+        2>/dev/null || true
+
+    printf '%s\n' "$prompt"
 }
 
 # ─── Alternative Strategy Exploration ─────────────────────────────────────────

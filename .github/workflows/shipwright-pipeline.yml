@@ -491,6 +491,12 @@ jobs:
               if git checkout -B "$BRANCH" "origin/$BRANCH" 2>/dev/null; then
                 echo "GIT_BRANCH=${BRANCH}" >> "$GITHUB_ENV"
                 echo "Checked out ${BRANCH} — continuing from prior work"
+                # Restore scripts/ and .github/ from main so the runner always
+                # executes the latest pipeline infrastructure, not the WIP branch's
+                # potentially stale copy. WIP branches can be weeks behind main on
+                # sw-pipeline.sh / workflow YAML improvements (e.g. artifact fixes).
+                git checkout origin/main -- scripts/ .github/ 2>/dev/null || true
+                echo "Restored scripts/ and .github/ from main"
               else
                 echo "::warning::Could not checkout ${BRANCH} — starting fresh on main (investigate checkout failure)"
               fi

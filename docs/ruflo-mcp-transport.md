@@ -263,6 +263,28 @@ the bench-scoped bridge contributes the remaining 1 PID. The multi-cycle
 orphan-runs sentinel diffs against baseline so it isn't sensitive to such
 host noise.
 
+### Acceptance-gate unit tests (`scripts/sw-ruflo-benchmark-test.sh`)
+
+The harness logic itself is covered by 24 hermetic assertions that run as
+part of `npm test` — no real bridge is spawned. The suite drives the
+pure functions (`compute_percentiles`, `assert_thresholds`) against
+synthetic JSON to prove the gate behaves correctly at the #504 boundary:
+
+| Case | Inputs (cli pids / mcp pids / mcp errors / mcp p95) | Expected |
+|---|---|---|
+| Documented headline | 66 / 2 / 0 / 9 ms | exit 0, "33× target met" |
+| Boundary pass | 20 / 2 / 0 / 9 ms | exit 0, "10× target met" |
+| Boundary fail | 18 / 2 / 0 / 9 ms | exit 1, "9× below required 10×" |
+| Below gate | 30 / 5 / 0 / 9 ms | exit 1, "6× below required 10×" |
+| Errors block pass | 66 / 2 / **1** / 9 ms | exit 1, regardless of ratio |
+| p95 over cap | 66 / 2 / 0 / **25 ms** | exit 1, regardless of ratio |
+| Weak CLI baseline | 3 / 2 / 0 / 9 ms | exit 0, ratio gate skipped + warned |
+| Gate disabled | 30 / 5 / 0 / 9 ms (`BENCH_REDUCTION_RATIO=0`) | exit 0 |
+
+Plus `compute_percentiles` correctness on known fixtures (count,
+p50/p95/p99, cold-start discard) and the harness exit-code contract
+(main() must `exit 2` when `assert_thresholds` returns non-zero).
+
 ## Out of scope
 
 - HTTP transport (`-t http`) — upstream no-op, ruled out in #449.

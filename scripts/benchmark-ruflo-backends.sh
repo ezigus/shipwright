@@ -741,4 +741,8 @@ main() {
     fi
 }
 
-main "$@"
+# When sourced (e.g. by sw-ruflo-benchmark-test.sh) we want the function
+# definitions but NOT to drive a real benchmark run. Bash 3.2 safe.
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
+    main "$@"
+fi

@@ -165,12 +165,17 @@ $(echo "$LOG_ENTRIES" | tail -15)"
 
     # Deterministic record of work completed this pipeline — replaces heuristic tail scraping.
     # Only on iter 2+ (iter 1 has no commits yet).
+    # Guard: on resume, LOOP_START_COMMIT may fall back to the repo root commit (loop-restart.sh:196-198)
+    # when the original start SHA was not persisted in state. Cap at MAX_ITERATIONS commits so a stale
+    # root-commit start does not dump all branch history as "already done" work.
     local recent_commits_section=""
     if [[ -n "${LOOP_START_COMMIT:-}" ]] && [[ "${ITERATION:-1}" -gt 1 ]]; then
         local _commits
         _commits="$(git -C "$PROJECT_ROOT" log --format='%h %s' "${LOOP_START_COMMIT}..HEAD" \
             2>/dev/null | head -10 || true)"
-        if [[ -n "$_commits" ]]; then
+        local _commit_count
+        _commit_count=$(echo "$_commits" | grep -c . 2>/dev/null || echo 0)
+        if [[ -n "$_commits" ]] && [[ "${_commit_count:-0}" -le "${MAX_ITERATIONS:-10}" ]]; then
             recent_commits_section="## Commits This Pipeline (ground truth — work that is done)
 ${_commits}
 
@@ -522,8 +527,11 @@ ${cum_stat}
 - Full build context: \`${_adir}/build-context.md\`"
     fi
 
-    local prompt
-    prompt="$(cat <<PROMPT
+    # Bash 3.2 compat: heredoc inside $() is rejected by bash 3.2.
+    # Write to a temp file, measure with wc -c, cat and remove.
+    local _ptmp
+    _ptmp=$(mktemp "${TMPDIR:-/tmp}/sw-prompt.XXXXXX")
+    cat > "$_ptmp" <<PROMPT
 You are an autonomous coding agent on iteration ${ITERATION}/${MAX_ITERATIONS} of a continuous loop.
 ${resume_section}
 ## Your Goal
@@ -597,17 +605,20 @@ ${alt_strategy_section:+$alt_strategy_section
 - Do NOT output LOOP_COMPLETE unless the goal is genuinely achieved
 ${reference_trailer}
 PROMPT
-)"
+
+    local _prompt_chars
+    _prompt_chars=$(wc -c < "$_ptmp" | tr -d ' ' 2>/dev/null || echo 0)
 
     emit_event "context.iteration_prompt" \
         "iteration=${ITERATION:-1}" \
-        "chars=${#prompt}" \
+        "chars=${_prompt_chars}" \
         "full_context=${_needs_full_context}" \
         "skipped_pipeline=$( [[ -z "$pipeline_context_section" ]] && echo true || echo false )" \
         "skipped_intelligence_static=$( [[ "$_needs_full_context" == false ]] && echo true || echo false )" \
         2>/dev/null || true
 
-    printf '%s\n' "$prompt"
+    cat "$_ptmp"
+    rm -f "$_ptmp"
 }
 
 # ─── Alternative Strategy Exploration ─────────────────────────────────────────

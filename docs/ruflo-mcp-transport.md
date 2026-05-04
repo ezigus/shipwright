@@ -237,25 +237,36 @@ single-run absolute PID cap is a soft warning only — shared CI runners
 may have unrelated ruflo processes whose PIDs incidentally overlap our
 sample window; the ratio (cli_pids / mcp_pids) is the load-bearing check.
 
-### Validated baseline (2026-05-03)
+### Validated baseline (2026-05-04)
 
 Captured against `--tool ping` (transport-only) on a 4-core Linux CI host
-under load 0.4. The numbers are reproducible by re-running the harness;
-artifacts at `.claude/pipeline-artifacts/benchmarks/{benchmark-{cli,mcp},orphan-runs}-20260503T231332Z.json`.
+(node v20.20.2, loadavg 0.68). The numbers are reproducible by re-running
+`npm run bench:ruflo -- --tool ping --orphan-runs 3`. Artifacts on disk
+at `.claude/pipeline-artifacts/benchmarks/{benchmark-{cli,mcp},orphan-runs}-20260504T105900Z.json`.
 
 | Metric | CLI backend | MCP (socket bridge) | Reduction |
 |---|---:|---:|---:|
-| Unique transient node PIDs (20 calls) | 66 | 2 | **33×** |
-| Latency p50 | 495 ms | 7 ms | **70×** |
-| Latency p95 | 513 ms | 9 ms | **57×** |
-| Latency p99 | 513 ms | 9 ms | **57×** |
+| Unique transient node PIDs (20 calls) | 63 | 2 | **31×** |
+| Latency p50 | 503 ms | 7 ms | **71×** |
+| Latency p95 | 519 ms | 9 ms | **57×** |
+| Latency p99 | 519 ms | 9 ms | **57×** |
+| Latency mean | 502.4 ms | 7.5 ms | **67×** |
 | Errors / 20 | 0 | 0 | — |
-| Orphan procs after 3-cycle teardown (#441 sentinel) | n/a | 0 | clean |
+| Orphan procs after 3-cycle teardown (#441 sentinel) | n/a | 0 (deltas: [0,0,0]) | clean |
 
-The 33× subprocess reduction comfortably exceeds the #504 acceptance bar
-of 10×. Latency improvements (~64× p95) are driven by amortizing the
+The 31× subprocess reduction comfortably exceeds the #504 acceptance bar
+of ≥10×. Latency improvements (~57× p95) are driven by amortizing the
 single 200–500ms node startup across all calls in a pipeline run, plus
 sub-millisecond unix-socket round-trip.
+
+Reproduce locally:
+
+```bash
+npm run bench:ruflo -- --tool ping --orphan-runs 3
+# Exits 0 when the gate passes; exits 2 if the ratio, latency, or orphan
+# sentinel misses. Writes JSON artifacts + a markdown summary under
+# .claude/pipeline-artifacts/benchmarks/.
+```
 
 The MCP `unique_transient_node_pids=2` value above includes one unrelated
 long-running `ruflo mcp start` daemon that pre-existed on the runner;

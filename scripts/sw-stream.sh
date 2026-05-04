@@ -187,6 +187,8 @@ stream_start() {
     # Start background capture loop.
     # Guard on PID-file presence: stream_stop removes the file, causing the loop
     # to exit on the next iteration without relying solely on signal delivery.
+    # Touch before fork so the guard sees the file on the very first iteration.
+    touch "$RUNNING_PID_FILE"
     (
         while [[ -f "$RUNNING_PID_FILE" ]]; do
             capture_all_panes "$team"

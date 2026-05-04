@@ -2173,7 +2173,12 @@ cleanup() {
     if declare -f _kill_process_tree >/dev/null 2>&1; then
         _kill_process_tree TERM $$ 2>/dev/null || true
         sleep 1
-        _kill_process_tree KILL $$ 2>/dev/null || true
+        # KILL pass targets surviving children only — SIGKILL on $$ itself is
+        # untrappable and would abort the remaining cleanup path.
+        local _lc_child
+        while IFS= read -r _lc_child; do
+            [[ -n "$_lc_child" ]] && _kill_process_tree KILL "$_lc_child" 2>/dev/null || true
+        done < <(pgrep -P $$ 2>/dev/null || true)
     else
         pkill -P $$ 2>/dev/null || true
     fi

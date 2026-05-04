@@ -285,17 +285,20 @@ cmd_watch() {
     (
         echo $$ > "$MONITOR_PID_FILE"
         # EXIT trap: clean up PID file and reap any nested pipelines we tracked.
+        # NOTE: 'local' is invalid inside a trap (not a function body) and raises
+        # "local: can only be used in a function" under set -e, aborting cleanup.
+        # Use plain variable assignment instead.
         trap '
             rm -f "'"$MONITOR_PID_FILE"'" 2>/dev/null || true
             if [[ -f "'"$INCIDENTS_DIR"'/.pipeline.pids" ]]; then
-                local _pp
-                while IFS= read -r _pp; do
-                    [[ -z "$_pp" || ! "$_pp" =~ ^[0-9]+$ ]] && continue
+                _trap_pp=""
+                while IFS= read -r _trap_pp; do
+                    [[ -z "$_trap_pp" || ! "$_trap_pp" =~ ^[0-9]+$ ]] && continue
                     if declare -f _kill_process_tree >/dev/null 2>&1; then
-                        _kill_process_tree TERM "$_pp" 2>/dev/null || true
-                        _kill_process_tree KILL "$_pp" 2>/dev/null || true
+                        _kill_process_tree TERM "$_trap_pp" 2>/dev/null || true
+                        _kill_process_tree KILL "$_trap_pp" 2>/dev/null || true
                     else
-                        kill "$_pp" 2>/dev/null || true
+                        kill "$_trap_pp" 2>/dev/null || true
                     fi
                 done < "'"$INCIDENTS_DIR"'/.pipeline.pids"
                 rm -f "'"$INCIDENTS_DIR"'/.pipeline.pids" 2>/dev/null || true

@@ -437,14 +437,40 @@ daemon_reap_completed() {
         # Process is dead — sweep any orphaned descendants in the setsid group.
         # This catches the hard-kill case (SIGKILL, OOM, runner timeout) where
         # the pipeline's own EXIT trap never ran and left Claude workers alive.
-        # Idempotent: calling on a dead/unknown PGID is a no-op.
+        #
+        # Safety: only sweep if we can positively confirm the PGID still belongs
+        # to a pipeline process. PGIDs are recycled by the OS, so a stale state
+        # entry must not kill an unrelated process group that inherited the same ID.
+        # We require: (a) PGID was recorded at spawn (== pipeline PID at that time),
+        # (b) no live process currently holds that PID (original pipeline is gone),
+        # (c) any processes still in the group match a pipeline command signature.
+        # If we cannot confirm (c), skip the group kill to avoid collateral damage.
         local _dead_pgid
         _dead_pgid=$(echo "$job" | jq -r '.pgid // ""' 2>/dev/null || true)
         if [[ -n "$_dead_pgid" && "$_dead_pgid" != "null" && "$_dead_pgid" -gt 1 ]]; then
-            if declare -f _kill_process_group_safe >/dev/null 2>&1; then
-                _kill_process_group_safe "$_dead_pgid" 5 2>/dev/null || true
-            else
-                kill -- -"$_dead_pgid" 2>/dev/null || true
+            # Confirm original PID is gone (not reused) before touching the group.
+            if ! kill -0 "$pid" 2>/dev/null; then
+                # Check that any remaining members of the group look like pipeline
+                # descendants (sw-pipeline, sw-loop, claude, node). If the group
+                # has been recycled with unrelated processes, skip the sweep.
+                local _group_cmds
+                _group_cmds=$(ps -g "$_dead_pgid" -o command= 2>/dev/null || true)
+                local _safe_to_sweep=false
+                if [[ -z "$_group_cmds" ]]; then
+                    # Group is already empty — sweep is a no-op but safe.
+                    _safe_to_sweep=true
+                elif echo "$_group_cmds" | grep -qE 'sw-pipeline|sw-loop|claude|shipwright' 2>/dev/null; then
+                    _safe_to_sweep=true
+                fi
+                if [[ "$_safe_to_sweep" == "true" ]]; then
+                    if declare -f _kill_process_group_safe >/dev/null 2>&1; then
+                        _kill_process_group_safe "$_dead_pgid" 5 2>/dev/null || true
+                    else
+                        kill -- -"$_dead_pgid" 2>/dev/null || true
+                    fi
+                else
+                    daemon_log WARN "Skipping PGID sweep for job #${issue_num}: PGID $_dead_pgid appears to have been recycled"
+                fi
             fi
         fi
 

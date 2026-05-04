@@ -247,6 +247,15 @@ detect_stuckness() {
     tracking_lines=$(wc -l < "$tracking_file" 2>/dev/null || true)
     tracking_lines="${tracking_lines:-0}"
 
+    # MD5 of empty input — recorded by record_iteration_state when `git diff HEAD`
+    # returns nothing (i.e. the working tree is clean). A run of these hashes means
+    # "all work is committed and the tree is idle", which is the OPPOSITE of cycling
+    # (which is "same uncommitted diff repeating"). Signal 2 / 2b must skip this case
+    # so that completed work doesn't get flagged as stuck. Idle-while-passing is
+    # already covered by Signal 6 ("no code changes in last iteration") combined
+    # with the loop's TEST_PASSED gate.
+    local _empty_diff_hash="d41d8cd98f00b204e9800998ecf8427e"
+
     # Signal 1: Text overlap (existing logic) — compare last 2 iteration logs
     if [[ "$iteration" -ge 3 ]]; then
         local log1="$LOG_DIR/iteration-$(( iteration - 1 )).log"
@@ -275,24 +284,28 @@ detect_stuckness() {
         fi
     fi
 
-    # Signal 2: Git diff hash — last 5 iterations produced zero or identical diffs
+    # Signal 2: Git diff hash — last 5 iterations produced identical NON-EMPTY diffs.
+    # Empty-diff hashes (clean tree) are intentionally excluded: they mean work is
+    # committed, not that the agent is repeating the same uncommitted change.
     local _signal2_fired=false
     if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 5 ]]; then
         local last_five
         last_five=$(tail -5 "$tracking_file" 2>/dev/null | cut -d'|' -f1 || true)
         local unique_hashes
         unique_hashes=$(echo "$last_five" | sort -u | grep -v '^$' | wc -l | tr -d ' ')
-        if [[ "$unique_hashes" -le 1 ]] && [[ -n "$last_five" ]]; then
+        local sole_hash
+        sole_hash=$(echo "$last_five" | sort -u | grep -v '^$' | head -1)
+        if [[ "$unique_hashes" -le 1 ]] && [[ -n "$last_five" ]] && [[ "$sole_hash" != "$_empty_diff_hash" ]]; then
             stuckness_signals=$((stuckness_signals + 1))
-            stuckness_reasons+=("identical or zero git diffs in last 5 iterations")
+            stuckness_reasons+=("identical git diffs in last 5 iterations")
             _signal2_fired=true
         fi
     fi
 
-    # Signal 2b: Explicit cycling detector — 4+ consecutive identical diffs.
+    # Signal 2b: Explicit cycling detector — 4+ consecutive identical NON-EMPTY diffs.
     # Runs independently of Signal 2 to maintain monotonic detection: if 4+ identical diffs
     # are detected, it fires and keeps firing as sequences grow longer (5+, 6+, etc).
-    # This prevents non-monotonic behavior where stronger cycling evidence could reduce detection.
+    # Skips empty-diff runs (clean tree = committed work, not cycling).
     if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 4 ]]; then
         local last_four
         last_four=$(tail -4 "$tracking_file" 2>/dev/null | cut -d'|' -f1 || true)
@@ -300,7 +313,9 @@ detect_stuckness() {
         unique_four=$(echo "$last_four" | sort -u | grep -v '^$' | wc -l | tr -d ' ')
         local count_four
         count_four=$(echo "$last_four" | grep -v '^$' | wc -l | tr -d ' ')
-        if [[ "$unique_four" -le 1 ]] && [[ "${count_four:-0}" -ge 4 ]]; then
+        local sole_four
+        sole_four=$(echo "$last_four" | sort -u | grep -v '^$' | head -1)
+        if [[ "$unique_four" -le 1 ]] && [[ "${count_four:-0}" -ge 4 ]] && [[ "$sole_four" != "$_empty_diff_hash" ]]; then
             stuckness_signals=$((stuckness_signals + 2))
             stuckness_reasons+=("cycling: ${count_four} consecutive identical diffs (cycling detector)")
         fi

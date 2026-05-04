@@ -2455,6 +2455,28 @@ else
 fi
 rm -f "$_sw331_tracking4"
 
+# Test 4b: cycling detector skips empty-diff runs (clean tree = work committed, NOT cycling)
+# Regression for #504 false-positive: completed pipelines were flagged as cycling because
+# repeated `git diff HEAD` returns empty, yielding identical MD5 of empty input.
+_sw504_tracking=$(mktemp "${TMPDIR:-/tmp}/sw-stuckness-504-empty.XXXXXX")
+printf 'd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\n' > "$_sw504_tracking"
+if (
+    export PROJECT_ROOT="/tmp" ITERATION=6 MAX_ITERATIONS=20 \
+           TEST_PASSED=true STUCKNESS_COUNT=0 STUCKNESS_DIAGNOSIS="" STUCKNESS_HINT="" \
+           LOG_DIR="$(dirname "$_sw504_tracking")" \
+           STUCKNESS_TRACKING_FILE="$_sw504_tracking"
+    source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
+    source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
+    detect_stuckness 2>/dev/null
+    [[ "$STUCKNESS_HINT" != *"cycling"* ]] && [[ "$STUCKNESS_HINT" != *"identical git diffs in last 5 iterations"* ]]
+) 2>/dev/null; then
+    assert_pass "detect_stuckness: cycling detector skips empty-diff runs (#504)"
+else
+    assert_fail "detect_stuckness: cycling detector skips empty-diff runs (#504)" \
+        "expected STUCKNESS_HINT to NOT contain 'cycling' or 'identical git diffs' for clean-tree iterations"
+fi
+rm -f "$_sw504_tracking"
+
 # Test 5: DOD_DIFF_MAX_LINES default is 5000
 if grep -E "DOD_DIFF_MAX_LINES=\\\$\(_config_get_int[^)]*5000" "$SCRIPT_DIR/sw-loop.sh" | grep -q '5000'; then
     assert_pass "DOD_DIFF_MAX_LINES default is 5000 (#331)"

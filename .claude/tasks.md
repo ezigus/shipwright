@@ -1,30 +1,34 @@
-# Tasks — bug(memory): failure analyst generates exit code freeform — not grounded against actual captured exit_code
+# Tasks — feat(ruflo): [03.1] self-heal hypothesis hive — root-cause triage on test failure
 
-## Status: Complete
-Pipeline: autonomous | Branch: fix/bug-memory-failure-analyst-generates-exi-462
+## Status: PLAN COMPLETE → Ready for Build
+Pipeline: autonomous | Branch: feat/feat-ruflo-03-1-self-heal-hypothesis-hiv-422
 
-## Checklist
-- [x] Task 1: Add `_exit_code_to_category()` helper in `sw-memory.sh`
-- [x] Task 2: Add optional `exit_code` arg to `memory_capture_failure` and persist in failures.json schema
-- [x] Task 3: Add optional `exit_code` arg to `memory_analyze_failure`; prepend ground-truth anchor to prompt
-- [x] Task 4: Mechanically set `category` from exit code when in unambiguous set; ignore Claude's category in that case
-- [x] Task 5: Add `_sanitize_root_cause()` to scrub hallucinated exit codes / signal names
-- [x] Task 6: Filter `past_examples` to entries with matching or zero/missing `exit_code`
-- [x] Task 7: Expose `TEST_EXIT_CODE` from `run_test_gate` in `sw-loop.sh` (declared alongside `TEST_PASSED`)
-- [x] Task 8: Pass `TEST_EXIT_CODE` into both `memory_capture_failure` and `memory_analyze_failure` call sites in `sw-loop.sh`
-- [x] Task 9a: Test — analyzer overrides hallucinated category with ground truth + sanitizes 143/SIGTERM
-- [x] Task 9b: Test — capture persists `exit_code` field in failures.json
-- [x] Task 9c: Test — back-compat: capture without exit_code defaults to 0
-- [x] Task 9d: Test — past-examples filtered by exit_code (mismatched-ec entries excluded from prompt)
-- [x] Task 10: `./scripts/sw-memory-test.sh` 28/28, `./scripts/sw-loop-test.sh` 256/256, `./scripts/sw-pipeline-test.sh` 84/84 all pass
-- [x] Task 11: Manual smoke confirmed `GROUND TRUTH` block present in prompt with `SW_DEBUG=1`
-- [x] Task 12: Bash 3.2 compat — no `declare -A`, `${var,,}`, `${var^^}`, `readarray`; portable `case` for ec→category map
-- [x] `memory_analyze_failure` accepts `exit_code` and prepends a ground-truth block to the prompt
-- [x] `failures.json` schema includes `exit_code` (additive, back-compat)
-- [x] When the harness captures `exit_code=124`, the stored `category` is `timeout` regardless of Claude's output
-- [x] When Claude returns `root_cause` containing a contradicting summary exit code or signal name, `root_cause` is sanitized
-- [x] Both `sw-loop.sh` call sites pass the captured exit code
+## IMPLEMENTATION COMPLETE ✅
+- [x] 1.1: Define `ruflo_execute_self_heal_hive()` function (lines 1811-2004 in ruflo-adapter.sh)
+- [x] 1.2: Four environmental gates (env flag, ruflo avail, hive avail, hive_id)
+- [x] 1.3: Input bounding (8000/2000 bytes with head -c)
+- [x] 1.4: Namespace seeding (error context + changed files + history)
+- [x] 1.5: Spawn phase (12s timeout, 3 specialists, non-fatal)
+- [x] 1.6: Triage orchestrate (20s, unified goal for 3 specialists)
+- [x] 1.7: Read phase (5s, list namespace, union hypotheses)
+- [x] 1.8: Synthesis phase (8s, queen selects argmin cost)
+- [x] 1.9: Fallback path (emit union if synthesis fails)
+- [x] 1.10: Output formatting (sanitize sentinels, emit events)
+- [x] 2.1: Call in sw-loop.sh line ~2703 (after diagnose_failure, before memory)
+- [x] 2.2: Conditional gate (RUFLO_SELF_HEAL_HIVE=true check)
+- [x] 2.3: Inject hypothesis into GOAL with clear section header
+- [x] 2.4: Sanitize loop-control sentinels (<<<, >>>)
+- [x] 3.1: Static analyzer comments on `_ruflo_seed_specialist_history`
+- [x] 3.2: Input bounding verification (head -c is multibyte-safe)
+- [x] 3.3: Refactor statusline helpers (remove execSync entirely)
 
-## Notes
-- Generated from pipeline plan at 2026-05-03T02:26:01Z
-- Implementation complete; all acceptance criteria satisfied
+## TESTING REMAINING ⏳
+- [x] 4.1: Unit tests (env gate, ruflo unavailable, input bounds, sentinels, error paths) — 19 sections in sw-ruflo-adapter-test.sh
+- [x] 4.2: Integration tests (mock ruflo full flow, GOAL injection format with header)
+- [x] 4.3: Performance tests (disabled-gate < 5s for 100 calls; enabled budget covered by triage/synth timeouts)
+- [ ] 4.4: npm test suite validation (full suite has ~120 scripts; ruflo-adapter 255/255 ✅)
+
+## Plan Details
+- **Plan Document**: `.claude/implementation-plan.md` (details AC-1 through AC-6)
+- **Commits**: b3c34fd (feature), 1fdd8a0 (loop integration), 136433d (security fixes)
+- **Next Stage**: Build → Complete unit/integration/performance tests → Test suite validation

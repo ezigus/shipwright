@@ -8,7 +8,12 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+// SECURITY (audit_1776853149979): execSync was previously imported here and
+// used with shell-interpolated strings. Replaced with execFileSync only —
+// every invocation now passes argv arrays through execve directly, so there
+// is no shell to interpret metacharacters. Keep this comment to explain why
+// `execSync` is intentionally absent.
+const { execFileSync } = require('child_process');
 
 // Configuration
 const CONFIG = {
@@ -49,12 +54,17 @@ function getUserInfo() {
   let gitBranch = '';
   let modelName = 'Opus 4.6 (1M context)';
 
+  // audit_1776853149979: previously used execSync with a shell string for git
+  // commands. Switched to execFileSync('git', argv) so there is no shell
+  // interpretation — eliminates the *class* of injection regardless of whether
+  // user input ever reaches these args (defense in depth). Errors are caught
+  // and the defaults above remain.
   try {
-    name = execSync('git config user.name 2>/dev/null || echo "user"', { encoding: 'utf-8' }).trim();
-    gitBranch = execSync('git branch --show-current 2>/dev/null || echo ""', { encoding: 'utf-8' }).trim();
-  } catch (e) {
-    // Ignore errors
-  }
+    name = execFileSync('git', ['config', 'user.name'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || 'user';
+  } catch { /* not in a repo / no name set — keep default */ }
+  try {
+    gitBranch = execFileSync('git', ['branch', '--show-current'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch { /* not in a repo — keep empty */ }
 
   return { name, gitBranch, modelName };
 }
@@ -166,55 +176,80 @@ function getSecurityStatus() {
   };
 }
 
+// Count `ps aux` rows whose command field matches the given substring.
+// Uses execFileSync('ps', ['aux']) — argv goes through execve, no shell.
+// Returns 0 on any error (fail-quiet, statusline must never throw).
+function countProcessesMatching(needle) {
+  try {
+    const out = execFileSync('ps', ['aux'], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let n = 0;
+    for (const line of out.split('\n')) {
+      if (line.includes(needle)) n++;
+    }
+    return n;
+  } catch {
+    return 0;
+  }
+}
+
 // Get swarm status
 function getSwarmStatus() {
-  let activeAgents = 0;
-  let coordinationActive = false;
-
-  try {
-    const ps = execSync('ps aux 2>/dev/null | grep -c agentic-flow || echo "0"', { encoding: 'utf-8' });
-    activeAgents = Math.max(0, parseInt(ps.trim()) - 1);
-    coordinationActive = activeAgents > 0;
-  } catch (e) {
-    // Ignore errors
-  }
-
+  const activeAgents = countProcessesMatching('agentic-flow');
   return {
     activeAgents,
     maxAgents: CONFIG.maxAgents,
-    coordinationActive,
+    coordinationActive: activeAgents > 0,
   };
+}
+
+// Sum the RSS column (column 6 of `ps aux`) for rows whose command matches
+// any of the given substrings. Returns megabytes; 0 on parse failure.
+function sumRssForCommands(needles) {
+  try {
+    const out = execFileSync('ps', ['aux'], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let totalKB = 0;
+    for (const line of out.split('\n')) {
+      if (!needles.some((n) => line.includes(n))) continue;
+      // ps aux columns: USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND
+      const cols = line.trim().split(/\s+/);
+      const rss = parseInt(cols[5], 10);
+      if (Number.isFinite(rss)) totalKB += rss;
+    }
+    return Math.floor(totalKB / 1024);
+  } catch {
+    return 0;
+  }
 }
 
 // Get system metrics (dynamic based on actual state)
 function getSystemMetrics() {
-  let memoryMB = 0;
-  let subAgents = 0;
-
-  try {
-    const mem = execSync('ps aux | grep -E "(node|agentic|claude)" | grep -v grep | awk \'{sum += \$6} END {print int(sum/1024)}\'', { encoding: 'utf-8' });
-    memoryMB = parseInt(mem.trim()) || 0;
-  } catch (e) {
-    // Fallback
+  let memoryMB = sumRssForCommands(['node', 'agentic', 'claude']);
+  if (memoryMB === 0) {
     memoryMB = Math.floor(process.memoryUsage().heapUsed / 1024 / 1024);
   }
 
-  // Get learning stats for intelligence %
   const learning = getLearningStats();
-
-  // Intelligence % based on learned patterns (0 patterns = 0%, 1000+ = 100%)
   const intelligencePct = Math.min(100, Math.floor((learning.patterns / 10) * 1));
-
-  // Context % based on session history (0 sessions = 0%, grows with usage)
   const contextPct = Math.min(100, Math.floor(learning.sessions * 5));
 
-  // Count active sub-agents from process list
+  // Count active sub-agents from process list (rows mentioning both
+  // 'claude-flow' and 'agent' in the command).
+  let subAgents = 0;
   try {
-    const agents = execSync('ps aux 2>/dev/null | grep -c "claude-flow.*agent" || echo "0"', { encoding: 'utf-8' });
-    subAgents = Math.max(0, parseInt(agents.trim()) - 1);
-  } catch (e) {
-    // Ignore
-  }
+    const out = execFileSync('ps', ['aux'], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    for (const line of out.split('\n')) {
+      if (line.includes('claude-flow') && line.includes('agent')) subAgents++;
+    }
+  } catch { /* keep 0 */ }
 
   return {
     memoryMB,

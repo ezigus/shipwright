@@ -1221,6 +1221,14 @@ _strip_passing_test_lines() {
 write_error_summary() {
     local error_json="$LOG_DIR/error-summary.json"
 
+    # Strip descriptive test section headers ("  Test 4: ... fails open ...") so
+    # the error grep doesn't flag them as failures. Real failure lines are prefixed
+    # with a marker (✗, FAIL, ERROR), so they don't match this pattern.
+    # Why: section headers are intentionally kept by _strip_passing_test_lines so
+    # they provide context in the iteration prompt (#447), but for the structured
+    # error count they're noise that triggers spurious circuit-breaker iterations.
+    local _strip_section_headers='^[[:space:]]*Test [0-9]+:[[:space:]]'
+
     # Write on test failure OR build failure (non-zero exit from Claude iteration)
     local build_log="$LOG_DIR/iteration-${ITERATION}.log"
     if [[ "${TEST_PASSED:-}" != "false" ]]; then
@@ -1231,6 +1239,7 @@ write_error_summary() {
             build_err_count=$(tail -30 "$build_log" 2>/dev/null \
                 | strip_ansi \
                 | _strip_passing_test_lines \
+                | grep -vE "$_strip_section_headers" \
                 | grep -ciE '(error|fail|exception|panic|FATAL)' || true)
             [[ "${build_err_count:-0}" -gt 0 ]] && build_had_errors=true
         fi
@@ -1254,6 +1263,7 @@ write_error_summary() {
     error_lines_raw=$(tail -30 "$source_log" 2>/dev/null \
         | strip_ansi \
         | _strip_passing_test_lines \
+        | grep -vE "$_strip_section_headers" \
         | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' \
         | head -10 || true)
 
@@ -2719,6 +2729,25 @@ ${_diagnosis}"
                 info "Failure diagnosis injected (classification from error pattern)"
             else
                 LOOP_FAILURE_DIAGNOSIS=""
+            fi
+
+            # Self-heal hypothesis hive — root-cause triage on test failure (gated by RUFLO_SELF_HEAL_HIVE=true).
+            # Function is fail-open: returns 0 always, prints empty stdout when skipped/failed.
+            local _hypothesis=""
+            if [[ "${RUFLO_SELF_HEAL_HIVE:-false}" == "true" ]] \
+               && type ruflo_execute_self_heal_hive >/dev/null 2>&1; then
+                _hypothesis=$(ruflo_execute_self_heal_hive "${TEST_OUTPUT:-}" "$_changed_files" 2>/dev/null || true)
+            fi
+            if [[ -n "$_hypothesis" ]]; then
+                # Strip loop-control sentinels so a malformed hypothesis cannot
+                # prematurely terminate the loop or corrupt the goal format.
+                _hypothesis="${_hypothesis//<<<}"
+                _hypothesis="${_hypothesis//>>>}"
+                GOAL="${GOAL}
+
+## Self-Heal Hypothesis (hive-selected)
+${_hypothesis}"
+                info "Self-heal hypothesis injected (cheapest verification path)"
             fi
 
             # Memory-based fix suggestion (from past successful fixes)

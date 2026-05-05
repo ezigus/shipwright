@@ -898,7 +898,7 @@ ci_push_partial_work() {
     # Force-add issue-scoped artifact snapshots — .gitignore ignores the parent
     # pipeline-artifacts/ directory as a unit, which silently defeats the !issue-*/
     # negation rule. git add -f bypasses .gitignore for these specific paths.
-    local _snap_dir="${ARTIFACTS_DIR:-$STATE_DIR/pipeline-artifacts}/issue-${ISSUE_NUMBER}"
+    local _snap_dir="${ARTIFACTS_DIR:-${STATE_DIR:-}/pipeline-artifacts}/issue-${ISSUE_NUMBER}"
     [[ -d "$_snap_dir" ]] && git add -f "$_snap_dir/" 2>/dev/null || true
 
     # Only push if we have uncommitted changes (excluding daemon-config.json runtime writes)

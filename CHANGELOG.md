@@ -9,6 +9,19 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Ruflo Self-Heal Hypothesis Hive
+
+Intelligent root-cause triage on test failure with specialist hypothesis spawning and adaptive synthesis.
+
+- **Six-phase hypothesis pipeline** — seed namespace → spawn specialist hypotheses (mock, async, schema) → triage with error context → read prior fixes → synthesize union → finalize
+- **Queen hypothesis synthesis** — aggregates specialist hypotheses into a ranked, cost-conscious union with fallback to byte-bounded synthesis
+- **Fail-open gates** — environment flag, ruflo binary availability, hive initialization, hive ID presence guard safe execution
+- **Cost/confidence ranking** — prioritizes hypotheses by argmin(cost), argmax(confidence) as tiebreak; avoids expensive missteps
+- **Byte-bounded synthesis fallback** — union never exceeds 8000 bytes to prevent uncontrolled context pollution
+- **Integration with loop** — wraps `ruflo_execute_self_heal_hive` in `sw-loop.sh` with sentinel stripping for goal injection
+- **Test coverage** — 25+ tests covering gates, input bounding, ranking, event emission, and fallback behavior
+- **Feature flag** — Enable with `RUFLO_SELF_HEAL_HIVE=true` (default: unset, loop cost unchanged)
+
 ### Pipeline Admission Gate (Memory Budget Guard)
 
 Concurrent pipelines on the same host could OOM the machine because nothing tracked active pipeline count or free memory before starting another run. Pipeline starts and resumes now go through a per-host admission gate.

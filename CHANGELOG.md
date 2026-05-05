@@ -18,15 +18,16 @@ Wires the cost-table foundation (rolling baselines + ASCII renderer) into the pi
 - **Defensive helper sourcing**: `pipeline-stages-delivery.sh` defensively sources `lib/cost/{table-render,baselines}.sh` so the hook still works when the file is loaded standalone (e.g. by `lib/daemon-triage.sh`) outside the normal `sw-pipeline.sh` source chain.
 - **Test coverage**: 3 new tests in `sw-pipeline-test.sh` — wiring assertion for `cleanup_on_exit`, wiring assertion for the PR-stage comment, and a hermetic functional test that stages a 2-stage `cost-breakdown.json`, runs `render_cost_table_plain` + `cost_baseline_update`, and asserts both baseline files (all-issues + per-issue) are written with correct n counts. All 88 pipeline tests pass; 68 cost tests still green.
 
-### Ruflo MCP Bridge — Validated 33× Subprocess Reduction (#504)
+### Ruflo MCP Bridge — Validated 31× Subprocess Reduction (#504)
 
 Closes the Ruflo MCP 1.5 series with a benchmark harness that proves the unix-socket bridge (#500/#502/#503) delivers the promised performance gains and resolves orphan-process leakage from #441.
 
 - **Benchmark harness** (`scripts/benchmark-ruflo-backends.sh`): drives identical workloads through `SW_RUFLO_BACKEND={cli,mcp}` with selectable bench tool (`memory_search` for production path, `ping` for transport-only validation), 20 samples per backend with cold-start discard, configurable percentile caps, and structured `events.jsonl` telemetry
 - **Multi-cycle orphan sentinel** (`--orphan-runs N`): runs N consecutive bridge start/bench/stop cycles and asserts zero new ruflo-related node procs survive — the #441 leak detector
 - **Ratio-based acceptance**: headline check is `cli_pids/mcp_pids ≥ BENCH_REDUCTION_RATIO` (default 10×) so the gate works on shared CI hosts where unrelated ruflo procs would otherwise inflate absolute PID counts
-- **Validated baseline**: 66 → 2 unique transient node PIDs (**33× reduction**), latency p95 513 ms → 9 ms (**~57×**), 0 errors across 40 calls, 0 orphans across 3 consecutive teardown cycles. Numbers and raw artifacts documented in `docs/ruflo-mcp-transport.md` § "Validated baseline (2026-05-03)"
+- **Validated baseline**: 63 → 2 unique transient node PIDs (**31× reduction**, comfortably above the ≥10× #504 acceptance bar), latency p95 519 ms → 9 ms (**~57×**), 0 errors across 40 calls, 0 orphans across 3 consecutive teardown cycles. Reproducible numbers and raw artifacts documented in `docs/ruflo-mcp-transport.md` § "Validated baseline (2026-05-04)"
 - **`npm run bench:ruflo`** invokes the harness in assert mode for CI gating
+- **Acceptance-gate unit tests** (`scripts/sw-ruflo-benchmark-test.sh`, 24 hermetic assertions): drive `compute_percentiles` and `assert_thresholds` against synthetic JSON to prove the gate behaves correctly at the #504 boundary (passes at ≥10×, fails below, blocks on errors or p95 over cap, skips ratio check on weak CLI baseline)
 
 ### Pipeline Admission Gate (Memory Budget Guard)
 

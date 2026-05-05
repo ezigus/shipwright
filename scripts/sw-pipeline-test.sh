@@ -2847,6 +2847,143 @@ test_stuck_cycling_fires_through_review_self_heal_path() {
     fi
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# #504 D2 — cleanup_on_exit wires cost_baseline_update + render after breakdown
+# ──────────────────────────────────────────────────────────────────────────────
+test_cleanup_wires_cost_baseline_and_render() {
+    # Static wiring assertion — guards against future refactors silently dropping
+    # the integration. Pairs with the functional test below.
+    local cleanup_block
+    cleanup_block=$(awk '/^cleanup_on_exit\(\)/,/^_signal_cleanup\(\)/' \
+        "$TEST_TEMP_DIR/scripts/sw-pipeline.sh")
+    if printf '%s\n' "$cleanup_block" | grep -q 'cost_generate_breakdown' && \
+       printf '%s\n' "$cleanup_block" | grep -q 'render_cost_table_plain' && \
+       printf '%s\n' "$cleanup_block" | grep -q 'cost_baseline_update'; then
+        assert_pass "Cost: cleanup_on_exit wires breakdown→render→baseline_update (#504 D2)" >/dev/null 2>&1 || true
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} cleanup_on_exit missing cost render or baseline-update wiring"
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# #504 D2 — pipeline-stages-delivery.sh posts cost table as PR-stage comment
+# ──────────────────────────────────────────────────────────────────────────────
+test_pr_stage_posts_cost_table_comment() {
+    local delivery="$TEST_TEMP_DIR/scripts/lib/pipeline-stages-delivery.sh"
+    if [[ ! -f "$delivery" ]]; then
+        echo -e "    ${RED}✗${RESET} delivery lib missing at $delivery"
+        return 1
+    fi
+    # Must source cost helpers defensively AND post a comment containing the table.
+    if grep -q 'render_cost_table_plain' "$delivery" && \
+       grep -q 'Pipeline cost breakdown' "$delivery" && \
+       grep -q 'gh_comment_issue.*cost_table\|gh_comment_issue.*_cost_table\|cost_table' "$delivery"; then
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} pipeline-stages-delivery.sh missing cost-table PR comment hook"
+    grep -n 'render_cost_table_plain\|Pipeline cost breakdown' "$delivery" || true
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# #504 D2 — hermetic: render_cost_table_plain + cost_baseline_update from a
+# staged cost-breakdown.json produce a non-empty table and update baseline file.
+# Validates the helpers wired into cleanup_on_exit are functional, not just
+# textually present.
+# ──────────────────────────────────────────────────────────────────────────────
+test_cost_helpers_functional_against_staged_breakdown() {
+    local hermetic_dir="$TEST_TEMP_DIR/cost-hermetic-$$"
+    rm -rf "$hermetic_dir"
+    mkdir -p "$hermetic_dir/artifacts" "$hermetic_dir/baselines"
+
+    # Stage a 2-stage breakdown.json mirroring real pipeline output shape.
+    cat > "$hermetic_dir/artifacts/cost-breakdown.json" <<'BD'
+{
+  "schema_version": 1,
+  "pipeline_id": "p-504-test",
+  "issue": "504",
+  "generated_at": "2026-05-05T00:00:00Z",
+  "by_stage": [
+    {"stage": "intake", "input_tokens": 12450, "output_tokens": 1230,
+     "cost_usd": 0.0042, "model_mix": "sonnet", "iterations": 1},
+    {"stage": "build",  "input_tokens": 312000, "output_tokens": 28400,
+     "cost_usd": 0.92, "model_mix": "opus",   "iterations": 3}
+  ],
+  "totals": {"input_tokens": 324450, "output_tokens": 29630, "cost_usd": 0.9242}
+}
+BD
+
+    # Run helpers in an isolated subshell so we don't pollute parent env.
+    local rendered baseline_n_intake baseline_n_build rc=0
+    # Source the real sw-cost.sh from the repo (test scaffold copies sw-pipeline.sh
+    # and lib/ but NOT sw-cost.sh — the helpers we wired into cleanup live there).
+    local cost_script="$SCRIPT_DIR/sw-cost.sh"
+    if [[ ! -f "$cost_script" ]]; then
+        echo -e "    ${RED}✗${RESET} sw-cost.sh not found at $cost_script"
+        return 1
+    fi
+    rendered=$(
+        export SW_BASELINE_DIR="$hermetic_dir/baselines"
+        # shellcheck disable=SC1091
+        source "$cost_script" 2>/dev/null || true
+        if ! type render_cost_table_plain >/dev/null 2>&1; then
+            echo "FATAL: render_cost_table_plain not loaded after sourcing sw-cost.sh" >&2
+            exit 9
+        fi
+        if ! type cost_baseline_update >/dev/null 2>&1; then
+            echo "FATAL: cost_baseline_update not loaded after sourcing sw-cost.sh" >&2
+            exit 9
+        fi
+        # Render first, then update baseline (matches cleanup_on_exit ordering).
+        render_cost_table_plain "$hermetic_dir/artifacts/cost-breakdown.json" \
+            --issue 504 --baseline-context 2>&1
+        cost_baseline_update "$hermetic_dir/artifacts/cost-breakdown.json" 504 >/dev/null 2>&1 || true
+    ) || rc=$?
+
+    if [[ "$rc" -ne 0 ]]; then
+        echo -e "    ${RED}✗${RESET} hermetic helper run failed (rc=$rc)"
+        echo "$rendered" | tail -10 | sed 's/^/      /'
+        return 1
+    fi
+
+    # Assert table headers + stage rows present in render output.
+    if ! printf '%s\n' "$rendered" | grep -qE 'Stage|stage'; then
+        echo -e "    ${RED}✗${RESET} rendered table missing 'Stage' header"
+        echo "$rendered" | head -8 | sed 's/^/      /'
+        return 1
+    fi
+    if ! printf '%s\n' "$rendered" | grep -q 'intake' || \
+       ! printf '%s\n' "$rendered" | grep -q 'build'; then
+        echo -e "    ${RED}✗${RESET} rendered table missing stage rows (intake/build)"
+        return 1
+    fi
+
+    # Assert baseline files written for both all-issues and per-issue.
+    if [[ ! -f "$hermetic_dir/baselines/stage-costs.json" ]]; then
+        echo -e "    ${RED}✗${RESET} baseline stage-costs.json not created"
+        ls -la "$hermetic_dir/baselines" 2>&1 | sed 's/^/      /'
+        return 1
+    fi
+    if [[ ! -f "$hermetic_dir/baselines/issue-504-costs.json" ]]; then
+        echo -e "    ${RED}✗${RESET} per-issue baseline issue-504-costs.json not created"
+        return 1
+    fi
+
+    # Assert baseline picked up both stages with n>=1.
+    baseline_n_intake=$(jq '.stages.intake.n // 0' \
+        "$hermetic_dir/baselines/stage-costs.json" 2>/dev/null || echo 0)
+    baseline_n_build=$(jq '.stages.build.n // 0' \
+        "$hermetic_dir/baselines/stage-costs.json" 2>/dev/null || echo 0)
+    if [[ "$baseline_n_intake" -lt 1 || "$baseline_n_build" -lt 1 ]]; then
+        echo -e "    ${RED}✗${RESET} baseline counts wrong (intake=$baseline_n_intake build=$baseline_n_build)"
+        return 1
+    fi
+
+    rm -rf "$hermetic_dir"
+    return 0
+}
+
 # Helper for the disabled test (assert state file does NOT contain pattern)
 assert_state_not_contains() {
     local pattern="$1" label="${2:-state exclusion}"
@@ -2968,6 +3105,9 @@ main() {
         "test_stuck_cycling_resume_allowed_with_override:Cycling: resume proceeds with SW_PIPELINE_MAX_BUILD_RETRIES=0 override"
         "test_stuck_cycling_start_refused:Cycling: fresh start refuses to overwrite stuck_cycling state"
         "test_stuck_cycling_fires_through_review_self_heal_path:Cycling: stuck_cycling fires through review self-heal path (issue #448 DoD)"
+        "test_cleanup_wires_cost_baseline_and_render:Cost: cleanup_on_exit wires render + baseline_update (#504 D2)"
+        "test_pr_stage_posts_cost_table_comment:Cost: PR stage posts cost-table comment (#504 D2)"
+        "test_cost_helpers_functional_against_staged_breakdown:Cost: hermetic render + baseline_update against staged breakdown (#504 D2)"
     )
 
     for entry in "${tests[@]}"; do

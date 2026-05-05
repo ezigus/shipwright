@@ -979,6 +979,21 @@ cleanup_on_exit() {
     if type cost_generate_breakdown >/dev/null 2>&1 && [[ -n "${ARTIFACTS_DIR:-}" ]] && [[ -d "$ARTIFACTS_DIR" ]]; then
         local _bd_pid="${SHIPWRIGHT_PIPELINE_ID:-pipeline-$$-${ISSUE_NUMBER:-0}}"
         cost_generate_breakdown "$ARTIFACTS_DIR" "$_bd_pid" "${ISSUE_NUMBER:-}" >/dev/null 2>&1 || true
+
+        # #504 D2: roll into baselines + render the per-stage cost table on success.
+        # Order mirrors cost_breakdown_command (sw-cost.sh:1162-1172): RENDER FIRST so the
+        # table reflects the comparison vs PRIOR runs, then UPDATE the baseline last.
+        local _bd_file="${ARTIFACTS_DIR}/cost-breakdown.json"
+        if [[ -f "$_bd_file" ]]; then
+            if [[ "$exit_code" -eq 0 ]] && type render_cost_table_plain >/dev/null 2>&1; then
+                local _issue_arg=()
+                [[ -n "${ISSUE_NUMBER:-}" ]] && _issue_arg=(--issue "$ISSUE_NUMBER")
+                render_cost_table_plain "$_bd_file" "${_issue_arg[@]}" --baseline-context 2>/dev/null || true
+            fi
+            if type cost_baseline_update >/dev/null 2>&1; then
+                cost_baseline_update "$_bd_file" "${ISSUE_NUMBER:-}" >/dev/null 2>&1 || true
+            fi
+        fi
     fi
 
     # Cleanup ruflo MCP server

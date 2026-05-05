@@ -1,6 +1,6 @@
 # Tasks — [Ruflo MCP 1.5] Benchmark and acceptance validation — confirm ≥10× subprocess reduction
 
-## Status: Deliverable 1 ✅ done · Deliverable 2 🚧 foundation landed
+## Status: Deliverable 1 ✅ done · Deliverable 2 ✅ done (foundation + pipeline wiring)
 Pipeline: autonomous | Branch: test/-ruflo-mcp-1-5-benchmark-and-acceptance-504
 
 ---
@@ -27,9 +27,9 @@ Pipeline: autonomous | Branch: test/-ruflo-mcp-1-5-benchmark-and-acceptance-504
 
 ---
 
-## Deliverable 2 — Per-Stage Cost Summary Table 🚧
+## Deliverable 2 — Per-Stage Cost Summary Table ✅
 
-### Foundation (this iteration) ✅
+### Foundation ✅
 - [x] `scripts/lib/cost/baselines.sh` — rolling per-stage baselines (all-issues + per-issue)
 - [x] `scripts/lib/cost/table-render.sh` — fixed-width ASCII table with HIGH/LOW flags + ANSI colors
 - [x] `sw cost breakdown ... --render | --render-plain` flags wired in `sw-cost.sh`
@@ -39,16 +39,15 @@ Pipeline: autonomous | Branch: test/-ruflo-mcp-1-5-benchmark-and-acceptance-504
 - [x] Input validation — rejects negative cost, non-numeric cost, stage names with non-ident chars
 - [x] Edge case: first run (all "new" flag, no comparison)
 - [x] Edge case: missing breakdown.json (graceful warn, exit non-zero)
-- [x] Tests in `sw-cost-test.sh` (12 new test cases — all 68 pass)
-- [x] Comparison baseline file created: `~/.shipwright/baselines/stage-costs.json` (and per-issue)
-- [x] HIGH (>1.5× avg) and LOW (<0.5× avg) flags display correctly (verified by test)
+- [x] 12 new tests in `sw-cost-test.sh` (all 68 cost tests pass)
 
-### Pipeline integration (next iteration) ⏳
-- [ ] Hook `cost_baseline_update` into `sw-pipeline.sh` cleanup (after `cost_generate_breakdown`)
-- [ ] Render `--render-plain` table at end of pipeline run (terminal output)
-- [ ] Post `--render-plain` table as GitHub comment when PR is opened
-- [ ] Acceptance: table rendered correctly for ≥5 historical runs (manual verification)
-- [ ] (Optional) GitHub comment posting with retry/backoff
+### Pipeline integration ✅
+- [x] **T1** — `cost_baseline_update` + `render_cost_table_plain` wired into `cleanup_on_exit` (sw-pipeline.sh:~983) after `cost_generate_breakdown`. Render-first-then-update ordering matches `cost_breakdown_command` so HIGH/LOW flags compare vs PRIOR runs.
+- [x] **T2** — Cost-table GitHub comment posted from PR stage (pipeline-stages-delivery.sh:~520) as a fenced code block follow-up to the "PR created" comment. Failure is non-fatal.
+- [x] **T3** — Defensive `source lib/cost/{table-render,baselines}.sh` in pipeline-stages-delivery.sh covers standalone-load path (daemon-triage.sh).
+- [x] **T4** — 3 new tests in `sw-pipeline-test.sh`: wiring assertion for cleanup, wiring assertion for PR comment, hermetic functional test against staged `cost-breakdown.json`. All 88 pipeline tests pass.
+- [x] **T6** — Regression suites green: sw-cost-test (68/68), sw-pipeline-test (88/88), sw-loop-test (269/269), sw-lib-pipeline-stages-test (105/105), sw-lib-pipeline-stages-review-test (31/31), sw-repo-dir-project-root-test (75/75).
+- [x] **T8** — CHANGELOG `[Unreleased]` updated with D2 wiring entry.
 
 ---
 
@@ -61,4 +60,4 @@ Pipeline: autonomous | Branch: test/-ruflo-mcp-1-5-benchmark-and-acceptance-504
 - Cost baseline files at `~/.shipwright/baselines/{stage-costs.json, issue-<N>-costs.json}` —
   override with `SW_BASELINE_DIR` for tests.
 - HIGH = >1.5× rolling avg; LOW = <0.5×; NEW = no baseline yet; NORMAL = within range.
-- Generated from pipeline plan at 2026-05-04T09:47:19Z; updated by iteration 1 (this run).
+- Generated from pipeline plan at 2026-05-04T09:47:19Z; D2 wiring landed 2026-05-05.

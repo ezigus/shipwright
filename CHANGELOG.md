@@ -9,6 +9,15 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Per-Stage Cost Summary — Pipeline Wiring (#504 D2)
+
+Wires the cost-table foundation (rolling baselines + ASCII renderer) into the pipeline runtime so reviewers and operators see per-stage spend with HIGH/LOW vs-baseline flags at every pipeline completion.
+
+- **`cleanup_on_exit` hook** (`scripts/sw-pipeline.sh:~983`): after `cost_generate_breakdown`, the renderer prints the plain ASCII cost table to stdout on success and `cost_baseline_update` rolls the run into the rolling baseline. Order matches `cost_breakdown_command` (render first, then update) so HIGH/LOW flags compare against PRIOR runs and never include the current run.
+- **PR stage GitHub comment** (`scripts/lib/pipeline-stages-delivery.sh:~520`): after the "🎉 PR created" comment, the cost table is posted as a follow-up comment fenced in a code block so the ASCII table aligns in the GitHub UI. Failure is non-fatal — pipeline continues even if the comment post fails.
+- **Defensive helper sourcing**: `pipeline-stages-delivery.sh` defensively sources `lib/cost/{table-render,baselines}.sh` so the hook still works when the file is loaded standalone (e.g. by `lib/daemon-triage.sh`) outside the normal `sw-pipeline.sh` source chain.
+- **Test coverage**: 3 new tests in `sw-pipeline-test.sh` — wiring assertion for `cleanup_on_exit`, wiring assertion for the PR-stage comment, and a hermetic functional test that stages a 2-stage `cost-breakdown.json`, runs `render_cost_table_plain` + `cost_baseline_update`, and asserts both baseline files (all-issues + per-issue) are written with correct n counts. All 88 pipeline tests pass; 68 cost tests still green.
+
 ### Ruflo MCP Bridge — Validated 33× Subprocess Reduction (#504)
 
 Closes the Ruflo MCP 1.5 series with a benchmark harness that proves the unix-socket bridge (#500/#502/#503) delivers the promised performance gains and resolves orphan-process leakage from #441.

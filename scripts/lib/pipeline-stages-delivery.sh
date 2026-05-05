@@ -515,6 +515,29 @@ EOF
 
 Pipeline duration so far: ${total_dur:-unknown}"
 
+        # #504 D2: post per-stage cost table as a follow-up comment so reviewers
+        # see token spend at a glance. Defensive source guard — pipeline-stages-delivery.sh
+        # is normally loaded inside sw-pipeline.sh (which already sources sw-cost.sh +
+        # lib/cost helpers), but daemon-triage.sh sources it standalone too.
+        if ! type render_cost_table_plain >/dev/null 2>&1; then
+            [[ -f "$SCRIPT_DIR/lib/cost/table-render.sh" ]] && \
+                source "$SCRIPT_DIR/lib/cost/table-render.sh"
+            [[ -f "$SCRIPT_DIR/lib/cost/baselines.sh" ]] && \
+                source "$SCRIPT_DIR/lib/cost/baselines.sh"
+        fi
+        local _cost_bd_file="${ARTIFACTS_DIR}/cost-breakdown.json"
+        if [[ -f "$_cost_bd_file" ]] && type render_cost_table_plain >/dev/null 2>&1; then
+            local _cost_table _cost_issue_arg=()
+            [[ -n "${ISSUE_NUMBER:-}" ]] && _cost_issue_arg=(--issue "$ISSUE_NUMBER")
+            _cost_table=$(render_cost_table_plain "$_cost_bd_file" "${_cost_issue_arg[@]}" --baseline-context 2>/dev/null || true)
+            if [[ -n "$_cost_table" ]]; then
+                gh_comment_issue "$ISSUE_NUMBER" "## Pipeline cost breakdown
+\`\`\`
+${_cost_table}
+\`\`\`" 2>/dev/null || warn "cost table comment post failed (non-fatal)"
+            fi
+        fi
+
         # Notify tracker of review/PR creation
         "$SCRIPT_DIR/sw-tracker.sh" notify "review" "$ISSUE_NUMBER" "$pr_url" 2>/dev/null || true
     fi

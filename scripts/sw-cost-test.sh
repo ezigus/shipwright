@@ -889,6 +889,64 @@ fi
     fi
 )
 
+# ── Test: HIGH/LOW classification across ≥5 historical runs (#504 T5) ──────
+# Acceptance criterion T5 requires HIGH/LOW flags to be correct after at least
+# five historical breakdowns have rolled into the baseline. This exercises the
+# rolling-avg/classification path beyond the n=3 bootstrap window.
+_bl_dir_t5="$TEST_TEMP_DIR/baselines-t5"
+# 5 runs at 0.10, 0.20, 0.30, 0.40, 0.50 → rolling avg = 0.30 exactly
+_t5_idx=1
+for _cost in "0.100" "0.200" "0.300" "0.400" "0.500"; do
+    _r="$TEST_TEMP_DIR/t5-${_t5_idx}"; mkdir -p "$_r"
+    printf '{"stage":"build","input_tokens":1000,"output_tokens":100,"cost_usd":%s,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+        "$_cost" "$_now2" > "$_r/stage-costs.jsonl"
+    _sw_cost_isolated "$_bl_dir_t5" breakdown "$_r" "t5-${_t5_idx}" "" --render >/dev/null 2>&1 || true
+    _t5_idx=$((_t5_idx + 1))
+done
+_t5_n=$(jq '.stages.build.n' "$_bl_dir_t5/stage-costs.json" 2>/dev/null || echo "")
+_t5_avg=$(jq '.stages.build.avg_usd' "$_bl_dir_t5/stage-costs.json" 2>/dev/null || echo "")
+if [[ "$_t5_n" == "5" ]] && awk -v a="$_t5_avg" 'BEGIN {exit !(a >= 0.29 && a <= 0.31)}'; then
+    assert_pass "T5: rolling avg across 5 runs (0.10..0.50) ≈ 0.30 (n=5)"
+else
+    assert_fail "T5: rolling avg across 5 runs ≈ 0.30" "n=${_t5_n} avg=${_t5_avg}"
+fi
+
+# 6th run at 0.60 → 2× of 0.30 avg → HIGH (>1.5×)
+_r_t5_hi="$TEST_TEMP_DIR/t5-hi"; mkdir -p "$_r_t5_hi"
+printf '{"stage":"build","input_tokens":1000,"output_tokens":100,"cost_usd":0.600,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+    "$_now2" > "$_r_t5_hi/stage-costs.jsonl"
+_render_t5_hi=$(_sw_cost_isolated "$_bl_dir_t5" breakdown "$_r_t5_hi" "t5-hi" "" --render --no-update-baseline 2>&1) || true
+if echo "$_render_t5_hi" | grep -E '│ build ' | grep -qE 'HIGH|↑'; then
+    assert_pass "T5: 6th run at 2× rolling avg correctly flagged HIGH (n=5 baseline)"
+else
+    assert_fail "T5: 6th run at 2× rolling avg flagged HIGH" \
+        "row: $(echo "$_render_t5_hi" | grep -E '│ build ')"
+fi
+
+# 6th run at 0.10 → 0.33× of 0.30 avg → LOW (<0.5×)
+_r_t5_lo="$TEST_TEMP_DIR/t5-lo"; mkdir -p "$_r_t5_lo"
+printf '{"stage":"build","input_tokens":1000,"output_tokens":100,"cost_usd":0.100,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+    "$_now2" > "$_r_t5_lo/stage-costs.jsonl"
+_render_t5_lo=$(_sw_cost_isolated "$_bl_dir_t5" breakdown "$_r_t5_lo" "t5-lo" "" --render --no-update-baseline 2>&1) || true
+if echo "$_render_t5_lo" | grep -E '│ build ' | grep -qE 'low|↓'; then
+    assert_pass "T5: 6th run at 0.33× rolling avg correctly flagged LOW (n=5 baseline)"
+else
+    assert_fail "T5: 6th run at 0.33× rolling avg flagged LOW" \
+        "row: $(echo "$_render_t5_lo" | grep -E '│ build ')"
+fi
+
+# 6th run at 0.30 → exactly avg → NORMAL (no flag)
+_r_t5_nm="$TEST_TEMP_DIR/t5-nm"; mkdir -p "$_r_t5_nm"
+printf '{"stage":"build","input_tokens":1000,"output_tokens":100,"cost_usd":0.300,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+    "$_now2" > "$_r_t5_nm/stage-costs.jsonl"
+_render_t5_nm=$(_sw_cost_isolated "$_bl_dir_t5" breakdown "$_r_t5_nm" "t5-nm" "" --render --no-update-baseline 2>&1) || true
+_t5_nm_row=$(echo "$_render_t5_nm" | grep -E '│ build ' || true)
+if [[ -n "$_t5_nm_row" ]] && ! echo "$_t5_nm_row" | grep -qE 'HIGH|↑|low|↓'; then
+    assert_pass "T5: 6th run at exactly rolling avg classified NORMAL (no false flag)"
+else
+    assert_fail "T5: NORMAL classification at exactly avg" "row: $_t5_nm_row"
+fi
+
 # ── Test: per-issue baseline isolation ──────────────────────────────────────
 _bl_dir6="$TEST_TEMP_DIR/baselines-6"
 _r_iss="$TEST_TEMP_DIR/iss-test"; mkdir -p "$_r_iss"

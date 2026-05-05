@@ -2277,6 +2277,47 @@ else
 fi
 rm -f "$dgs_test_log"
 
+# ─── DoD checkbox normalization ───────────────────────────────────────────────
+
+# Test: _normalize_dod_checkboxes function exists in sw-loop.sh
+if grep -q '^_normalize_dod_checkboxes()' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "_normalize_dod_checkboxes function defined in sw-loop.sh"
+else
+    assert_fail "_normalize_dod_checkboxes function defined in sw-loop.sh"
+fi
+
+# Test: _normalize_dod_checkboxes correctly converts all indicator styles to [x]
+_norm_body="$(sed -n '/^_normalize_dod_checkboxes()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")"
+_norm_fixture="$(printf '%s\n' \
+    '- [✓] item one' \
+    '- [X] item two' \
+    '- [/] item three' \
+    '- [ ] item four ✓ (confirmed)' \
+    '- [ ] item five')"
+_norm_result="$(eval "$_norm_body"; _normalize_dod_checkboxes <<< "$_norm_fixture" 2>/dev/null)"
+_norm_pass=true
+for _expected in \
+    '- [x] item one' \
+    '- [x] item two' \
+    '- [x] item three' \
+    '- [x] item four ✓ (confirmed)'; do
+    if ! grep -qFe "$_expected" <<< "$_norm_result"; then
+        _norm_pass=false
+        break
+    fi
+done
+# Genuinely unchecked item must remain unchanged
+if ! grep -qFe '- [ ] item five' <<< "$_norm_result"; then
+    _norm_pass=false
+fi
+if [[ "$_norm_pass" == "true" ]]; then
+    assert_pass "_normalize_dod_checkboxes: [✓] [X] [/] trailing-✓ all → [x]; bare [ ] unchanged"
+else
+    assert_fail "_normalize_dod_checkboxes: [✓] [X] [/] trailing-✓ all → [x]; bare [ ] unchanged" \
+        "$(printf 'output:\n%s' "$_norm_result")"
+fi
+unset _norm_body _norm_fixture _norm_result _norm_pass _expected
+
 # ─── Circuit breaker: DoD-only failures (#237) ────────────────────────────────
 
 # Test: bypass emits 'skipping circuit breaker strike' message

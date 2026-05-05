@@ -274,12 +274,36 @@ the bench-scoped bridge contributes the remaining 1 PID. The multi-cycle
 orphan-runs sentinel diffs against baseline so it isn't sensitive to such
 host noise.
 
+#### Re-validation 2026-05-05
+
+A fresh run on the same host (artifacts in
+`.claude/pipeline-artifacts/benchmarks/benchmark-{cli,mcp}-20260505T174025Z.json`)
+reproduces the gate independently:
+
+| Metric | CLI backend | MCP (socket bridge) | Reduction |
+|---|---:|---:|---:|
+| Unique transient node PIDs (20 calls) | 62 | 2 | **31×** |
+| Latency p50 | 563 ms | 7 ms | **80×** |
+| Latency p95 | 602 ms | 8 ms | **75×** |
+| Latency p99 | 602 ms | 8 ms | **75×** |
+| Latency mean | 565.16 ms | 7.11 ms | **79×** |
+| Errors / 20 | 0 | 0 | — |
+
+`benchmark-ruflo-backends.sh` exits 0 with `Subprocess reduction ratio:
+31× (cli=62 / mcp=2) — meets #504 ≥10× target`. The independent re-run
+confirms the **#504 ≥10× acceptance criterion is met with >3× headroom**
+and is reproducible on demand.
+
 ### Acceptance-gate unit tests (`scripts/sw-ruflo-benchmark-test.sh`)
 
-The harness logic itself is covered by 24 hermetic assertions that run as
-part of `npm test` — no real bridge is spawned. The suite drives the
-pure functions (`compute_percentiles`, `assert_thresholds`) against
-synthetic JSON to prove the gate behaves correctly at the #504 boundary:
+The harness logic itself is covered by 26 assertions (24 hermetic + 2
+against the most recent on-disk benchmark artifact when present) that
+run as part of `npm test` — no real bridge is spawned for the hermetic
+checks. The suite drives the pure functions (`compute_percentiles`,
+`assert_thresholds`) against synthetic JSON to prove the gate behaves
+correctly at the #504 boundary, then re-asserts the same gate against
+the live JSON produced by `npm run bench:ruflo` so a fresh benchmark
+doubles as a binding acceptance check:
 
 | Case | Inputs (cli pids / mcp pids / mcp errors / mcp p95) | Expected |
 |---|---|---|

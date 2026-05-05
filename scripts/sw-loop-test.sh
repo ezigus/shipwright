@@ -2293,7 +2293,8 @@ _norm_fixture="$(printf '%s\n' \
     '- [X] item two' \
     '- [/] item three' \
     '- [ ] item four ✓ (confirmed)' \
-    '- [ ] item five')"
+    '- [ ] item five' \
+    '- [ ] Parser must handle ✓ markers in output')"
 _norm_result="$(eval "$_norm_body"; _normalize_dod_checkboxes <<< "$_norm_fixture" 2>/dev/null)"
 _norm_pass=true
 for _expected in \
@@ -2306,17 +2307,22 @@ for _expected in \
         break
     fi
 done
-# Genuinely unchecked item must remain unchanged
-if ! grep -qFe '- [ ] item five' <<< "$_norm_result"; then
-    _norm_pass=false
-fi
+# Genuinely unchecked items must remain unchanged
+for _unchanged in \
+    '- [ ] item five' \
+    '- [ ] Parser must handle ✓ markers in output'; do
+    if ! grep -qFe "$_unchanged" <<< "$_norm_result"; then
+        _norm_pass=false
+        break
+    fi
+done
 if [[ "$_norm_pass" == "true" ]]; then
-    assert_pass "_normalize_dod_checkboxes: [✓] [X] [/] trailing-✓ all → [x]; bare [ ] unchanged"
+    assert_pass "_normalize_dod_checkboxes: [✓] [X] [/] trailing-✓ all → [x]; bare [ ] and mid-text ✓ unchanged"
 else
-    assert_fail "_normalize_dod_checkboxes: [✓] [X] [/] trailing-✓ all → [x]; bare [ ] unchanged" \
+    assert_fail "_normalize_dod_checkboxes: [✓] [X] [/] trailing-✓ all → [x]; bare [ ] and mid-text ✓ unchanged" \
         "$(printf 'output:\n%s' "$_norm_result")"
 fi
-unset _norm_body _norm_fixture _norm_result _norm_pass _expected
+unset _norm_body _norm_fixture _norm_result _norm_pass _expected _unchanged
 
 # ─── Circuit breaker: DoD-only failures (#237) ────────────────────────────────
 

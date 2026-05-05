@@ -3,6 +3,13 @@
 [[ -n "${_DAEMON_DISPATCH_LOADED:-}" ]] && return 0
 _DAEMON_DISPATCH_LOADED=1
 
+# Load shared process-cleanup primitives (_kill_process_tree, _kill_process_group_safe,
+# _get_pgid, _parent_alive). Fail-open: daemon continues if proc-utils.sh is absent.
+_daemon_dispatch_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+[[ -f "$_daemon_dispatch_lib_dir/proc-utils.sh" ]] \
+    && source "$_daemon_dispatch_lib_dir/proc-utils.sh" 2>/dev/null || true
+unset _daemon_dispatch_lib_dir
+
 # Defaults for variables normally set by sw-daemon.sh (safe under set -u).
 DAEMON_DIR="${DAEMON_DIR:-${HOME}/.shipwright}"
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -321,6 +328,16 @@ daemon_track_job() {
         db_save_job "$job_id" "$issue_num" "$title" "$pid" "$worktree" "" "${PIPELINE_TEMPLATE:-autonomous}" "$goal" 2>/dev/null || true
     fi
 
+    # Capture PGID now (pipeline was spawned via setsid, so its PGID == its PID).
+    # Persisting it lets daemon_reap_completed sweep the group even when the
+    # pipeline dies without running its own EXIT trap (SIGKILL, OOM, hard timeout).
+    local pgid=""
+    if declare -f _get_pgid >/dev/null 2>&1; then
+        pgid=$(_get_pgid "$pid" 2>/dev/null || echo "")
+    else
+        pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || echo "")
+    fi
+
     # Always write to JSON state file (primary for now)
     locked_state_update \
         --argjson num "$issue_num" \
@@ -330,9 +347,11 @@ daemon_track_job() {
         --arg started "$(now_iso)" \
         --arg repo "$repo" \
         --arg goal "$goal" \
+        --arg pgid "$pgid" \
         '.active_jobs += [{
             issue: $num,
             pid: $pid,
+            pgid: $pgid,
             worktree: $wt,
             title: $title,
             started_at: $started,
@@ -415,7 +434,47 @@ daemon_reap_completed() {
             fi
         fi
 
-        # Process is dead — determine exit code
+        # Process is dead — sweep any orphaned descendants in the setsid group.
+        # This catches the hard-kill case (SIGKILL, OOM, runner timeout) where
+        # the pipeline's own EXIT trap never ran and left Claude workers alive.
+        #
+        # Safety: only sweep if we can positively confirm the PGID still belongs
+        # to a pipeline process. PGIDs are recycled by the OS, so a stale state
+        # entry must not kill an unrelated process group that inherited the same ID.
+        # We require: (a) PGID was recorded at spawn (== pipeline PID at that time),
+        # (b) no live process currently holds that PID (original pipeline is gone),
+        # (c) any processes still in the group match a pipeline command signature.
+        # If we cannot confirm (c), skip the group kill to avoid collateral damage.
+        local _dead_pgid
+        _dead_pgid=$(echo "$job" | jq -r '.pgid // ""' 2>/dev/null || true)
+        if [[ -n "$_dead_pgid" && "$_dead_pgid" != "null" && "$_dead_pgid" -gt 1 ]]; then
+            # Confirm original PID is gone (not reused) before touching the group.
+            if ! kill -0 "$pid" 2>/dev/null; then
+                # Check that any remaining members of the group look like pipeline
+                # descendants (sw-pipeline, sw-loop, claude, node). If the group
+                # has been recycled with unrelated processes, skip the sweep.
+                local _group_cmds
+                _group_cmds=$(ps -g "$_dead_pgid" -o command= 2>/dev/null || true)
+                local _safe_to_sweep=false
+                if [[ -z "$_group_cmds" ]]; then
+                    # Group is already empty — sweep is a no-op but safe.
+                    _safe_to_sweep=true
+                elif echo "$_group_cmds" | grep -qE 'sw-pipeline|sw-loop|claude|shipwright' 2>/dev/null; then
+                    _safe_to_sweep=true
+                fi
+                if [[ "$_safe_to_sweep" == "true" ]]; then
+                    if declare -f _kill_process_group_safe >/dev/null 2>&1; then
+                        _kill_process_group_safe "$_dead_pgid" 5 2>/dev/null || true
+                    else
+                        kill -- -"$_dead_pgid" 2>/dev/null || true
+                    fi
+                else
+                    daemon_log WARN "Skipping PGID sweep for job #${issue_num}: PGID $_dead_pgid appears to have been recycled"
+                fi
+            fi
+        fi
+
+        # Determine exit code
         # Note: wait returns 127 if process was already reaped (e.g., by init)
         # In that case, check pipeline log for success/failure indicators
         local exit_code=0

@@ -2021,13 +2021,14 @@ test_shutdown_timeout_used_in_cleanup() {
     local daemon_src="$SCRIPT_DIR/sw-daemon.sh"
     local pipeline_src="$SCRIPT_DIR/sw-pipeline.sh"
     # cleanup_on_exit in sw-daemon.sh must reference DAEMON_SHUTDOWN_TIMEOUT (not hardcoded sleep 5)
-    if ! awk '/^cleanup_on_exit\(\)/{in_fn=1} in_fn && /^\}$/{in_fn=0} in_fn' "$daemon_src" \
+    # Use grep -A to extract function body (more portable than awk /\(\)/ across awk implementations)
+    if ! grep -A 60 '^cleanup_on_exit()' "$daemon_src" \
         | grep -q 'DAEMON_SHUTDOWN_TIMEOUT'; then
         echo "cleanup_on_exit in sw-daemon.sh does not reference DAEMON_SHUTDOWN_TIMEOUT"
         return 1
     fi
     # cleanup_on_exit in sw-pipeline.sh must reference PIPELINE_KILL_GRACE (not hardcoded sleep 2)
-    if ! awk '/^cleanup_on_exit\(\)/{in_fn=1} in_fn && /^\}$/{in_fn=0} in_fn' "$pipeline_src" \
+    if ! grep -A 60 '^cleanup_on_exit()' "$pipeline_src" \
         | grep -q 'PIPELINE_KILL_GRACE'; then
         echo "cleanup_on_exit in sw-pipeline.sh does not reference PIPELINE_KILL_GRACE"
         return 1

@@ -18,6 +18,36 @@ VERSION="3.6.1"
 [[ -n "${_RUFLO_ADAPTER_LOADED:-}" ]] && return 0
 _RUFLO_ADAPTER_LOADED=1
 
+# ─── Optional MCP bridge wrapper ─────────────────────────────────────────────
+# Sourced for SW_RUFLO_BACKEND=mcp routing in ruflo_store() (and future
+# ruflo_recall in #503). The wrapper has its own _RUFLO_MCP_CALL_LOADED guard
+# and ${VAR:-default} semantics, so re-sourcing is a no-op. File-existence
+# gate keeps the adapter usable in installs where the wrapper hasn't been
+# packaged; ruflo_store() additionally checks `declare -f ruflo_mcp_call`
+# before routing through it.
+_ruflo_adapter_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
+# ─── Shared process-cleanup primitives ───────────────────────────────────────
+# Load proc-utils.sh which provides _kill_process_tree, _kill_process_group_safe,
+# _get_pgid, and _parent_alive. Keep this before any code that uses them.
+if [[ -f "$_ruflo_adapter_dir/proc-utils.sh" ]]; then
+    # shellcheck source=scripts/lib/proc-utils.sh
+    source "$_ruflo_adapter_dir/proc-utils.sh" 2>/dev/null || true
+fi
+if [[ -f "$_ruflo_adapter_dir/ruflo-mcp-call.sh" ]]; then
+    # shellcheck source=scripts/lib/ruflo-mcp-call.sh
+    source "$_ruflo_adapter_dir/ruflo-mcp-call.sh" || true
+    # Validate that sourcing produced the expected public functions.
+    # Guards against truncated/corrupt files and version mismatches that
+    # would cause ruflo_store to silently skip the MCP path on every call.
+    if ! declare -f ruflo_mcp_call >/dev/null 2>&1 \
+       || ! declare -f ruflo_bridge_available >/dev/null 2>&1; then
+        printf 'ruflo-adapter: ruflo-mcp-call.sh sourced but missing expected functions — MCP path disabled\n' >&2
+    fi
+fi
+unset _ruflo_adapter_dir
+
+
 # ─── State ───────────────────────────────────────────────────────────────────
 # Use ${VAR:-default} to preserve values inherited from a parent process (e.g.
 # sw-pipeline.sh) when ruflo-adapter.sh is sourced in a subprocess like sw-loop.sh.
@@ -366,43 +396,18 @@ ruflo_health_check() {
     return 0
 }
 
-# ─── _kill_process_tree — send a signal to a PID and all its descendants ──────
-# Collects the full descendant list via BFS *before* killing anything, so that
-# re-parenting (child → init) cannot cause grandchildren to escape the sweep.
-# Bash 3.2 compatible — no associative arrays, no extended syntax.
-_kill_process_tree() {
-    local sig="$1"
-    local root="$2"
-    local all_pids frontier new_frontier p c children
-
-    if ! command -v pgrep >/dev/null 2>&1; then
-        # No pgrep — best-effort single-level kill only.
+# ─── _kill_process_tree — now in scripts/lib/proc-utils.sh ───────────────────
+# The implementation moved to proc-utils.sh (sourced above) so all callers share
+# one canonical copy. This comment replaces the old inline body; the function
+# symbol is already exported by the proc-utils.sh source above.
+# Back-compat: if proc-utils.sh was not found, provide a minimal fallback so
+# callers that rely on _kill_process_tree do not fail.
+if ! declare -f _kill_process_tree >/dev/null 2>&1; then
+    _kill_process_tree() {
+        local sig="$1" root="$2"
         kill "-$sig" "$root" 2>/dev/null || true
-        return
-    fi
-
-    # BFS: collect every descendant before touching any of them.
-    all_pids=""
-    frontier="$root"
-    while [[ -n "$frontier" ]]; do
-        new_frontier=""
-        for p in $frontier; do
-            children=$(pgrep -P "$p" 2>/dev/null || true)
-            for c in $children; do
-                all_pids="${all_pids}${all_pids:+ }$c"
-                new_frontier="${new_frontier}${new_frontier:+ }$c"
-            done
-        done
-        frontier="$new_frontier"
-    done
-
-    # Kill all descendants (collected before any were killed).
-    for p in $all_pids; do
-        kill "-$sig" "$p" 2>/dev/null || true
-    done
-    # Kill root last.
-    kill "-$sig" "$root" 2>/dev/null || true
-}
+    }
+fi
 
 # ─── ruflo_with_timeout — run a ruflo command with recoverable circuit-breaker ─
 # All commands run in a background subshell with stdout to a temp file and BFS
@@ -449,18 +454,35 @@ ruflo_with_timeout() {
         # warn()/emit_event diagnostics on failure via the circuit-breaker path. (#484)
         ( "$@" ) >"$_rft_tmp" 2>/dev/null &
         local bg_pid=$!
-        # Poll with adaptive backoff: 0.1s for the first 10 ticks (1 s fast
-        # window) to handle short-lived operations cheaply, then 1s intervals
-        # for the remainder. Avoids the 10x scheduler overhead of flat 0.1s
-        # polling while still responding quickly to fast MCP/mock calls. (#441)
+        # Poll with adaptive backoff using read -t (bash built-in) instead of
+        # external sleep. Each `sleep N` call forks a child process; with 15+
+        # ruflo calls per iteration × many iterations, hundreds of sleep children
+        # accumulated and were left orphaned on pipeline cancellation. `read -t`
+        # is a pure bash built-in — no child process, no orphan. (#441)
+        #
+        # We read from /dev/zero (infinite NUL-byte stream, never EOF) rather
+        # than /dev/null (immediate EOF) so that read -t actually waits for the
+        # specified duration instead of returning instantly.
         local waited_ds=0
         local timeout_ds=$(( timeout_s * 10 ))
+        # bash 3.2 (macOS /bin/bash) rejects fractional read -t; fall back to
+        # foreground sleep on bash < 4. Foreground sleep exits within 0.1s
+        # naturally even if the parent is SIGKILLed, so no orphan risk there.
+        local _bash_major="${BASH_VERSINFO[0]:-3}"
         while kill -0 "$bg_pid" 2>/dev/null && [[ "$waited_ds" -lt "$timeout_ds" ]]; do
             if [[ "$waited_ds" -lt 10 ]]; then
-                sleep 0.1
+                if [[ "$_bash_major" -ge 4 ]]; then
+                    { read -r -t 0.1 _ </dev/zero; } 2>/dev/null || true
+                else
+                    sleep 0.1
+                fi
                 waited_ds=$(( waited_ds + 1 ))
             else
-                sleep 1
+                if [[ "$_bash_major" -ge 4 ]]; then
+                    { read -r -t 1 _ </dev/zero; } 2>/dev/null || true
+                else
+                    sleep 1
+                fi
                 waited_ds=$(( waited_ds + 10 ))
             fi
         done
@@ -470,7 +492,11 @@ ruflo_with_timeout() {
             # direct child. SIGTERM first; SIGKILL after 1 s grace period
             # for processes that need time to flush/clean up. (#441)
             _kill_process_tree TERM "$bg_pid"
-            sleep 1
+            if [[ "$_bash_major" -ge 4 ]]; then
+                { read -r -t 1 _ </dev/zero; } 2>/dev/null || true
+            else
+                sleep 1
+            fi
             _kill_process_tree KILL "$bg_pid"
             wait "$bg_pid" 2>/dev/null || true
             rm -f "$_rft_tmp"

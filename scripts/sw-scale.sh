@@ -294,6 +294,22 @@ cmd_down() {
         fi
     done <<< "$sessions"
 
+    # Sweep role-specific sessions that weren't in the generic snapshot above
+    # (handles sessions spawned by cmd_up). Respects count: only kill enough
+    # additional sessions to reach the originally requested count total.
+    local _remaining=$(( count - stopped ))
+    if [[ -n "$role" && "$_remaining" -gt 0 ]]; then
+        local _sess
+        while IFS= read -r _sess; do
+            [[ "$_remaining" -le 0 ]] && break
+            [[ "$_sess" == shipwright-sw-agent-"${role}"-* ]] || continue
+            if tmux kill-session -t "$_sess" 2>/dev/null; then
+                stopped=$(( stopped + 1 ))
+                _remaining=$(( _remaining - 1 ))
+            fi
+        done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+    fi
+
     emit_scale_event "down" "unknown" "manual" "count=$stopped"
     update_scale_state
     echo "Stopped $stopped agent(s)"

@@ -10,6 +10,10 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 VERSION="3.6.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ─── Shared process-cleanup primitives ───────────────────────────────────────
+# shellcheck source=lib/proc-utils.sh
+[[ -f "$SCRIPT_DIR/lib/proc-utils.sh" ]] && source "$SCRIPT_DIR/lib/proc-utils.sh" 2>/dev/null || true
+
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
@@ -286,10 +290,10 @@ webhook_server_bash() {
     local server_pid=$!
     echo "$server_pid" > "$WEBHOOK_PID_FILE"
 
-    # Accept connections (simple approach with exec)
-    while true; do
-        # This is a simplified approach - for production, use a proper HTTP server
-        # For now, we'll just log that the server is running
+    # Accept connections (simple approach with exec).
+    # Guard on PID-file presence: cmd_stop removes the file, so the loop exits
+    # on the next iteration without relying solely on signal delivery.
+    while [[ -f "$WEBHOOK_PID_FILE" ]]; do
         sleep 1
     done &
 
@@ -485,16 +489,22 @@ cmd_stop() {
     fi
 
     info "Stopping webhook server (PID: ${pid})..."
-    kill "$pid" 2>/dev/null || true
-    sleep 1
+    # Remove PID file first: loop guards exit on next iteration regardless of signal.
+    rm -f "$WEBHOOK_PID_FILE"
+    if declare -f _kill_process_tree >/dev/null 2>&1; then
+        _kill_process_tree TERM "$pid" 2>/dev/null || true
+        sleep 1
+        _kill_process_tree KILL "$pid" 2>/dev/null || true
+    else
+        kill "$pid" 2>/dev/null || true
+        sleep 1
+        kill -9 "$pid" 2>/dev/null || true
+    fi
 
     if ! kill -0 "$pid" 2>/dev/null; then
         success "Webhook server stopped"
-        rm -f "$WEBHOOK_PID_FILE"
     else
-        error "Failed to stop webhook server — force killing..."
-        kill -9 "$pid" 2>/dev/null || true
-        rm -f "$WEBHOOK_PID_FILE"
+        error "Failed to stop webhook server — force killed"
     fi
 }
 

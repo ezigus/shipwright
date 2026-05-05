@@ -1514,6 +1514,36 @@ ${_todo_locations}"
     fi
 }
 
+_normalize_dod_checkboxes() {
+    local _line _bracket
+    while IFS= read -r _line || [[ -n "$_line" ]]; do
+        case "$_line" in
+            "- [x]"*) ;;
+            "- [ ]"*)
+                # Only promote when a check symbol is a trailing completion annotation:
+                # either at the very end of the line, or followed by a parenthetical note.
+                # Avoids false-positives when the description merely references a symbol
+                # (e.g. "- [ ] Parser must handle ✓ markers in output" stays unchecked).
+                case "$_line" in
+                    *✓|*✔|*✅|*☑|\
+                    *'✓ ('*')'|*'✔ ('*')'|*'✅ ('*')'|*'☑ ('*')')
+                        _line="- [x]${_line#"- [ ]"}" ;;
+                esac
+                ;;
+            "- ["*"]"*)
+                # Normalize only when bracket content contains a non-whitespace character.
+                # Prevents "- [  ] item" (multiple spaces) from being promoted.
+                _bracket="${_line#"- ["}"
+                _bracket="${_bracket%%]*}"
+                if [[ "$_bracket" =~ [^[:space:]] ]]; then
+                    _line="- [x]${_line#- \[*\]}"
+                fi
+                ;;
+        esac
+        printf '%s\n' "$_line"
+    done
+}
+
 check_definition_of_done() {
     if [[ ! -f "$DOD_FILE" ]]; then
         warn "Definition of done file not found: $DOD_FILE"
@@ -1522,6 +1552,7 @@ check_definition_of_done() {
 
     local dod_content
     dod_content="$(cat "$DOD_FILE")"
+    dod_content="$(_normalize_dod_checkboxes <<< "$dod_content")"
 
     # Use cumulative diff from loop start (not just HEAD~1) so the evaluator
     # can see ALL work done across every iteration, not just the latest commit.
@@ -1617,6 +1648,9 @@ ${branch_diff_content}
 For each item in the Definition of Done, determine if the project satisfies it.
 Use the Full Branch diff above as the authoritative view of all work done on this branch.
 The runtime facts above are verified by the harness — trust them as ground truth.
+
+IMPORTANT: A checkbox item is satisfied if its brackets contain any non-space marker: [x], [X], [✓], [✔], [✅], [☑], [*], [+], [~], or similar. Treat any such item as satisfied=true.
+An unchecked [ ] item may also be satisfied if a check symbol (✓ ✔ ✅ ☑) appears appended at the END of the item text as an explicit completion annotation (e.g. "- [ ] item ✓ (confirmed)"). Do NOT treat an item as satisfied merely because its description text references or discusses a check symbol.
 
 IMPORTANT: Respond with a JSON object followed by a verdict line. No prose, no markdown fences, no code blocks. Format:
 {"verdict":"pass","items":[{"item":"...","satisfied":true,"reason":"..."}],"summary":"..."}

@@ -1948,7 +1948,9 @@ ruflo_execute_self_heal_hive() {
     local error_text="${1:-}"
     local changed_files="${2:-}"
     local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
-    local heal_ns="hive-self-heal-${pipeline_id}"
+    # Include iteration so each failing retry gets its own namespace — prevents
+    # stale hypothesis entries from a prior failure polluting the next retry goal.
+    local heal_ns="hive-self-heal-${pipeline_id}-iter${ITERATION:-0}"
     local hive_id="${RUFLO_HIVE_ID:-}"
 
     # ── Gate 4: hive_id must be non-empty — ruflo calls with --hive-id "" fail silently ──
@@ -2042,15 +2044,30 @@ Each hypothesis block must contain exactly these four labeled lines (plain text)
         return 0
     fi
 
-    # ── Read specialist outputs from namespace (5s budget) ──
-    local _union=""
+    # ── Read specialist hypothesis keys (2s each, hypothesis-only) ──
+    # Read the three named keys directly rather than listing the entire namespace.
+    # Listing the namespace would include self-heal-error, self-heal-changed-files,
+    # and history context — injecting raw error blobs into the fallback GOAL.
+    local _hypo_mb="" _hypo_at="" _hypo_st=""
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
-        _union=$(ruflo_with_timeout 5 npx -y ruflo@latest hive-mind memory \
-            --action list --namespace "$heal_ns" 2>/dev/null) || true
+        _hypo_mb=$(ruflo_with_timeout 2 npx -y ruflo@latest hive-mind memory \
+            --action get --key "hypothesis-mock-boundary" --namespace "$heal_ns" 2>/dev/null) || true
+        _hypo_at=$(ruflo_with_timeout 2 npx -y ruflo@latest hive-mind memory \
+            --action get --key "hypothesis-async-timing" --namespace "$heal_ns" 2>/dev/null) || true
+        _hypo_st=$(ruflo_with_timeout 2 npx -y ruflo@latest hive-mind memory \
+            --action get --key "hypothesis-schema-type" --namespace "$heal_ns" 2>/dev/null) || true
     else
-        _union=$(ruflo_with_timeout 5 ruflo hive-mind memory \
-            --action list --namespace "$heal_ns" 2>/dev/null) || true
+        _hypo_mb=$(ruflo_with_timeout 2 ruflo hive-mind memory \
+            --action get --key "hypothesis-mock-boundary" --namespace "$heal_ns" 2>/dev/null) || true
+        _hypo_at=$(ruflo_with_timeout 2 ruflo hive-mind memory \
+            --action get --key "hypothesis-async-timing" --namespace "$heal_ns" 2>/dev/null) || true
+        _hypo_st=$(ruflo_with_timeout 2 ruflo hive-mind memory \
+            --action get --key "hypothesis-schema-type" --namespace "$heal_ns" 2>/dev/null) || true
     fi
+    local _union=""
+    [[ -n "$_hypo_mb" ]] && _union="$_hypo_mb"
+    [[ -n "$_hypo_at" ]] && _union="${_union:+${_union}$'\n\n'}${_hypo_at}"
+    [[ -n "$_hypo_st" ]] && _union="${_union:+${_union}$'\n\n'}${_hypo_st}"
 
     if [[ -z "$_union" ]]; then
         emit_event "ruflo.self_heal_hive_failed" "reason=no_specialist_output"

@@ -4506,19 +4506,24 @@ if [[ "\$subcmd" == "coordination" && "\$sub2" == "orchestrate" ]]; then
     done
     exit 0
 fi
-# Memory list returns three hypothesis blocks; memory get returns empty
-# (because synthesis never wrote self-heal-selected).
+# Individual key gets return hypothesis blocks; self-heal-selected returns empty
+# (because synthesis never wrote it — synthesis exits 9 above).
 if [[ "\$subcmd" == "hive-mind" && "\$sub2" == "memory" ]]; then
-    _is_list=false
-    _is_get=false
+    _is_get=false; _key=""
     for arg in "\$@"; do
-        [[ "\$arg" == "list" ]] && _is_list=true
         [[ "\$arg" == "get" ]] && _is_get=true
+        [[ "\$arg" == "hypothesis-mock-boundary" ]] && _key="mb"
+        [[ "\$arg" == "hypothesis-async-timing" ]] && _key="at"
+        [[ "\$arg" == "hypothesis-schema-type" ]] && _key="st"
     done
-    if [[ "\$_is_list" == "true" ]]; then
-        printf 'hypothesis-mock-boundary: H1\\nhypothesis-async-timing: H2\\nhypothesis-schema-type: H3\\n'
+    if [[ "\$_is_get" == "true" && "\$_key" == "mb" ]]; then
+        printf 'hypothesis-mock-boundary: H1\n'
+    elif [[ "\$_is_get" == "true" && "\$_key" == "at" ]]; then
+        printf 'hypothesis-async-timing: H2\n'
+    elif [[ "\$_is_get" == "true" && "\$_key" == "st" ]]; then
+        printf 'hypothesis-schema-type: H3\n'
     fi
-    # get returns empty by default — exits 0 with no stdout
+    # self-heal-selected get returns empty — synthesis failed before writing it
     exit 0
 fi
 exit 0
@@ -4583,16 +4588,22 @@ subcmd="\${1:-}"
 sub2="\${2:-}"
 printf '%s\n' "\$*" >> "$_calls"
 if [[ "\$subcmd" == "hive-mind" && "\$sub2" == "memory" ]]; then
-    _is_get=false; _is_list=false; _is_selected=false
+    _is_get=false; _is_selected=false; _key=""
     for arg in "\$@"; do
         [[ "\$arg" == "get" ]] && _is_get=true
-        [[ "\$arg" == "list" ]] && _is_list=true
         [[ "\$arg" == "self-heal-selected" ]] && _is_selected=true
+        [[ "\$arg" == "hypothesis-mock-boundary" ]] && _key="mb"
+        [[ "\$arg" == "hypothesis-async-timing" ]] && _key="at"
+        [[ "\$arg" == "hypothesis-schema-type" ]] && _key="st"
     done
     if [[ "\$_is_get" == "true" && "\$_is_selected" == "true" ]]; then
         printf 'Hypothesis: ok\nVerification: ok\n'
-    elif [[ "\$_is_list" == "true" ]]; then
-        printf 'hypothesis-mock-boundary: H1\nhypothesis-async-timing: H2\nhypothesis-schema-type: H3\n'
+    elif [[ "\$_is_get" == "true" && "\$_key" == "mb" ]]; then
+        printf 'hypothesis-mock-boundary: H1\n'
+    elif [[ "\$_is_get" == "true" && "\$_key" == "at" ]]; then
+        printf 'hypothesis-async-timing: H2\n'
+    elif [[ "\$_is_get" == "true" && "\$_key" == "st" ]]; then
+        printf 'hypothesis-schema-type: H3\n'
     fi
 fi
 exit 0
@@ -4812,32 +4823,32 @@ cat > "$_test_tmp/ruflo" <<'MOCK'
 #!/usr/bin/env bash
 subcmd="${1:-}"
 sub2="${2:-}"
-# 'memory list' returns a 20000-byte payload (much larger than 8000-byte cap)
+# Individual hypothesis key gets each return ~7000 bytes (union >> 8000-byte cap)
 if [[ "$subcmd" == "hive-mind" && "$sub2" == "memory" ]]; then
-    _is_list=false
-    _is_get=false
-    _is_selected=false
+    _is_get=false; _is_selected=false; _key=""
     for arg in "$@"; do
-        [[ "$arg" == "list" ]] && _is_list=true
         [[ "$arg" == "get" ]] && _is_get=true
         [[ "$arg" == "self-heal-selected" ]] && _is_selected=true
+        [[ "$arg" == "hypothesis-mock-boundary" ]] && _key="mb"
+        [[ "$arg" == "hypothesis-async-timing" ]] && _key="at"
+        [[ "$arg" == "hypothesis-schema-type" ]] && _key="st"
     done
-    if [[ "$_is_list" == "true" ]]; then
-        # Emit ~20000 bytes of namespace dump (verbose union)
-        for i in $(seq 1 200); do
-            printf 'hypothesis-%03d: padding-padding-padding-padding-padding-padding-padding-padding-padding\n' "$i"
-        done
+    if [[ "$_is_get" == "true" && "$_is_selected" == "true" ]]; then
+        # Synthesis never wrote self-heal-selected → return empty to force fallback
+        printf ''
         exit 0
     fi
-    # Synthesis 'get' returns empty → forces fallback path
-    if [[ "$_is_get" == "true" && "$_is_selected" == "true" ]]; then
-        printf ''
+    if [[ "$_is_get" == "true" && ( "$_key" == "mb" || "$_key" == "at" || "$_key" == "st" ) ]]; then
+        # Return ~7000 bytes per key so union >> 8000-byte cap
+        for i in $(seq 1 70); do
+            printf 'padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-paddd\n'
+        done
         exit 0
     fi
     exit 0
 fi
-# Synthesis orchestrate returns 0 (so we reach the 'get' path), but get returns
-# empty → triggers the fallback branch that emits $_union_head.
+# Synthesis orchestrate returns 0 (so we reach the 'get self-heal-selected' path),
+# but get returns empty → triggers the fallback branch that emits $_union_head.
 exit 0
 MOCK
 chmod +x "$_test_tmp/ruflo"

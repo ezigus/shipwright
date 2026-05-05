@@ -534,28 +534,123 @@ ruflo_with_timeout() {
     return 0
 }
 
-# ─── ruflo_store — store a value in ruflo memory via CLI ─────────────────────
-# Usage: ruflo_store <key> <value> [namespace] [tags]
-# No-op when ruflo is unavailable. Always returns 0 (fail-open).
-# On timeout, circuit-breaker disables ruflo for the remainder of the run.
-ruflo_store() {
-    ruflo_available || return 0
+# ─── _ruflo_store_cli — CLI-backed store implementation ──────────────────────
+# Internal helper. Identical body to the legacy ruflo_store() — extracted so
+# the dispatcher can call it both as the default path and as the fail-open
+# fallback when SW_RUFLO_BACKEND=mcp but the bridge errors. Same contract:
+# fail-open, returns 0, bounded by the circuit-breaker timeout.
+_ruflo_store_cli() {
     local key="$1" value="$2" namespace="${3:-default}" tags="${4:-}"
     ruflo_with_timeout "${RUFLO_CIRCUIT_BREAKER_TIMEOUT:-10}" _ruflo_run_quiet memory store \
         --key "$key" --value "$value" --namespace "$namespace" \
         ${tags:+--tags "$tags"} || true
 }
 
-# ─── ruflo_recall — semantic search in ruflo memory via CLI ───────────────────
-# Usage: ruflo_recall <query> [namespace]
-# Prints matching results to stdout. Returns empty string when ruflo unavailable.
+# ─── ruflo_store — dispatcher: route to MCP bridge or CLI ────────────────────
+# Usage: ruflo_store <key> <value> [namespace] [tags]
 # No-op when ruflo is unavailable. Always returns 0 (fail-open).
-# On timeout, circuit-breaker disables ruflo for the remainder of the run.
-ruflo_recall() {
-    ruflo_available || { echo ""; return 0; }
+#
+# Routing (SW_RUFLO_BACKEND, default "cli"):
+#   "mcp"  + bridge up + wrapper sourced → ruflo_mcp_call memory_store ...
+#                                          (no new ruflo subprocess)
+#   "mcp"  + bridge error                → CLI fallback (preserves all args)
+#   "mcp"  + bridge down                 → CLI fallback + warn (no ping/spawn cost
+#                                          beyond the bounded `nc -w 1` probe)
+#   "cli"  / unset / anything else       → CLI path (legacy behavior)
+#
+# `tags` is intentionally NOT forwarded to the bridge: the v1.1 memory_store
+# wire schema is `{key,value,namespace?}` only (see docs/ruflo-mcp-transport.md
+# §5). The CLI fallback path still receives tags in full.
+ruflo_store() {
+    ruflo_available || return 0
+    local key="$1" value="$2" namespace="${3:-default}" tags="${4:-}"
+
+    if [[ "${SW_RUFLO_BACKEND:-cli}" == "mcp" ]]; then
+        if declare -f ruflo_mcp_call >/dev/null 2>&1 \
+           && declare -f ruflo_bridge_available >/dev/null 2>&1 \
+           && ruflo_bridge_available; then
+            local _mcp_err
+            _mcp_err=$(ruflo_mcp_call memory_store \
+                "key=$key" "value=$value" "namespace=$namespace" 2>&1 1>/dev/null) \
+                && { return 0; } \
+                || true
+            warn "ruflo MCP memory_store failed — falling back to CLI: ${_mcp_err:-<no stderr>}"
+            emit_event "ruflo.mcp_store_fallback" \
+                "namespace=$namespace" "reason=${_mcp_err:-bridge_error}"
+            _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
+            return 0
+        fi
+        warn "SW_RUFLO_BACKEND=mcp requested but bridge unavailable — using CLI fallback"
+        emit_event "ruflo.mcp_store_fallback" \
+            "namespace=$namespace" "reason=bridge_unavailable"
+    fi
+    _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
+    return 0
+}
+
+# ─── _ruflo_recall_cli — CLI-backed recall implementation ───────────────────
+# Internal helper. Identical body to the legacy ruflo_recall() — extracted so
+# the dispatcher can call it both as the default path and as the fail-open
+# fallback when SW_RUFLO_BACKEND=mcp but the bridge errors.
+_ruflo_recall_cli() {
     local query="$1" namespace="${2:-default}"
     ruflo_with_timeout "${RUFLO_RECALL_TIMEOUT:-30}" _ruflo_run_quiet memory search \
         --query "$query" --namespace "$namespace" --limit 3 || echo ""
+}
+
+# ─── ruflo_recall — dispatcher: route to MCP bridge or CLI ───────────────────
+# Usage: ruflo_recall <query> [namespace]
+# Prints matching results to stdout. Returns empty string when ruflo unavailable.
+# Always returns 0 (fail-open).
+#
+# Routing (SW_RUFLO_BACKEND, default "cli"):
+#   "mcp"  + bridge up + wrapper sourced → ruflo_mcp_call memory_search ...
+#   "mcp"  + bridge error                → CLI fallback (preserves search args)
+#   "mcp"  + bridge down                 → CLI fallback + warn
+#   "cli"  / unset / anything else       → CLI path (legacy behavior)
+ruflo_recall() {
+    ruflo_available || { echo ""; return 0; }
+    local query="$1" namespace="${2:-default}"
+
+    if [[ "${SW_RUFLO_BACKEND:-cli}" == "mcp" ]]; then
+        if declare -f ruflo_mcp_call >/dev/null 2>&1 \
+           && declare -f ruflo_bridge_available >/dev/null 2>&1 \
+           && ruflo_bridge_available; then
+            local _err_file _mcp_resp _mcp_exit=0 _err_text=""
+            _err_file=$(mktemp "${TMPDIR:-/tmp}/ruflo_recall.XXXXXX" 2>/dev/null) \
+                || _err_file=""
+            if [[ -n "$_err_file" ]]; then
+                _mcp_resp=$(ruflo_mcp_call memory_search \
+                    "query=$query" "namespace=$namespace" "limit=3" \
+                    2>"$_err_file") || _mcp_exit=$?
+                _err_text=$(cat "$_err_file" 2>/dev/null || true)
+                rm -f "$_err_file" 2>/dev/null || true
+            else
+                _mcp_resp=$(ruflo_mcp_call memory_search \
+                    "query=$query" "namespace=$namespace" "limit=3" \
+                    2>/dev/null) || _mcp_exit=$?
+            fi
+            if [[ $_mcp_exit -eq 0 ]]; then
+                if command -v jq >/dev/null 2>&1; then
+                    printf '%s' "$_mcp_resp" \
+                        | jq -c '.result // empty' 2>/dev/null || true
+                else
+                    printf '%s' "$_mcp_resp"
+                fi
+                return 0
+            fi
+            warn "ruflo MCP memory_search failed — falling back to CLI: ${_err_text:-<no stderr>}"
+            emit_event "ruflo.mcp_recall_fallback" \
+                "namespace=$namespace" "reason=${_err_text:-bridge_error}"
+            _ruflo_recall_cli "$query" "$namespace"
+            return 0
+        fi
+        warn "SW_RUFLO_BACKEND=mcp requested but bridge unavailable — using CLI fallback"
+        emit_event "ruflo.mcp_recall_fallback" \
+            "namespace=$namespace" "reason=bridge_unavailable"
+    fi
+    _ruflo_recall_cli "$query" "$namespace"
+    return 0
 }
 
 # ─── _ruflo_repo_hash_candidates — emit candidate hashes for memory dir lookup ─

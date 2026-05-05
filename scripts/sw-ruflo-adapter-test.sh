@@ -5042,5 +5042,34 @@ else
 fi
 unset GOAL
 
+# Test: AC-4 phase timeout budget — static verification that the
+# ruflo_with_timeout calls inside ruflo_execute_self_heal_hive sum to ≤55s.
+# Rationale: the function runs up to 5 timed phases; their total must leave
+# headroom under the 60s acceptance ceiling.  We extract the timeout constants
+# directly from the source so this test does not require ruflo to be installed.
+print_test_section "ruflo_execute_self_heal_hive — AC-4 phase timeout budget ≤55s (static)"
+_adapter_src="$SCRIPT_DIR/lib/ruflo-adapter.sh"
+_func_line=$(grep -n "^ruflo_execute_self_heal_hive()" "$_adapter_src" | head -1 | cut -d: -f1)
+if [[ -z "$_func_line" ]]; then
+    assert_fail "AC-4: ruflo_execute_self_heal_hive not found in ruflo-adapter.sh" ""
+else
+    _timeout_sum=0
+    # Each phase has two ruflo_with_timeout calls: one for the npx path and one
+    # for the direct-binary path.  Only one branch executes at runtime.  We
+    # count only the npx-path lines (first branch per phase) to get the actual
+    # runtime budget: spawn(12) + triage(20) + read(5) + synth(8) + read(5) = 50.
+    while IFS= read -r _n; do
+        _timeout_sum=$(( _timeout_sum + _n ))
+    done < <(awk "NR==$_func_line,/^\}/" "$_adapter_src" \
+        | grep 'npx' | grep -oE 'ruflo_with_timeout [0-9]+' | grep -oE '[0-9]+$')
+    if [[ "$_timeout_sum" -gt 0 && "$_timeout_sum" -le 55 ]]; then
+        assert_pass "AC-4: phase timeout constants sum to ${_timeout_sum}s (within ≤55s budget)"
+    else
+        assert_fail "AC-4: phase timeout constants sum" \
+            "expected >0 and ≤55, got ${_timeout_sum}"
+    fi
+fi
+unset _adapter_src _func_line _timeout_sum _n
+
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

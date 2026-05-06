@@ -2222,13 +2222,14 @@ test_partial_work_push_condition() {
     }
 
     local step_block if_line
+    # Match both the legacy step name and the current "Snapshot resume-essentials" step.
     step_block=$(
         awk '
             /^[[:space:]]*-[[:space:]]+name:/ {
                 if (in_target) {
                     exit
                 }
-                if ($0 ~ /Push partial work on/) {
+                if ($0 ~ /Push partial work on/ || $0 ~ /Snapshot resume-essentials/) {
                     in_target=1
                 }
             }
@@ -2255,8 +2256,10 @@ test_partial_work_push_condition() {
         return
     fi
 
-    if ! printf '%s\n' "$if_line" | grep -q "failure() || cancelled()"; then
-        assert_fail "partial-work push condition: step must use (failure() || cancelled()), got: $if_line"
+    # Accept always() (superset: runs on success, failure, and cancelled) or the
+    # legacy (failure() || cancelled()) form.
+    if ! printf '%s\n' "$if_line" | grep -qE "always\(\)|failure\(\)[[:space:]]*\|\|[[:space:]]*cancelled\(\)"; then
+        assert_fail "partial-work push condition: step must use always() or (failure() || cancelled()), got: $if_line"
         return
     fi
 

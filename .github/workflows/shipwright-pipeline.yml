@@ -407,9 +407,32 @@ jobs:
         run: |
           npm install -g @anthropic-ai/claude-code
 
-      - name: Install Shipwright
+      - name: Install Shipwright (pinned to main snapshot)
         run: |
-          npm link
+          git fetch --no-tags --depth=1 origin main || git fetch --no-tags origin main
+
+          # Materialize origin/main into a separate worktree so the global
+          # `shipwright` CLI is immune to later workspace checkouts (e.g. to a
+          # broken WIP branch). npm link from the workspace would let WIP code
+          # drive the pipeline that is trying to fix it.
+          SW_CLI_DIR="$RUNNER_TEMP/shipwright-cli-main"
+          rm -rf "$SW_CLI_DIR"
+          git worktree add --detach "$SW_CLI_DIR" origin/main
+
+          (cd "$SW_CLI_DIR" && npm link)
+
+          # sw-context.sh:17-19 honors SHIPWRIGHT_REPO_DIR — artifact reads and
+          # writes land in the workspace (the WIP-checked-out tree), not in the
+          # immutable CLI snapshot.
+          echo "SHIPWRIGHT_REPO_DIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          echo "SHIPWRIGHT_CLI_DIR=$SW_CLI_DIR"        >> "$GITHUB_ENV"
+
+          GLOBAL_PKG="$(npm root -g)/shipwright-cli"
+          REAL_TARGET="$(readlink -f "$GLOBAL_PKG" 2>/dev/null || echo "")"
+          case "$REAL_TARGET" in
+            "$SW_CLI_DIR"*) echo "✓ shipwright CLI pinned to $REAL_TARGET" ;;
+            *)              echo "::error::CLI is $REAL_TARGET (expected under $SW_CLI_DIR)"; exit 1 ;;
+          esac
 
       - name: Restore ruflo memory cache
         uses: actions/cache/restore@v4
@@ -473,29 +496,50 @@ jobs:
             echo "AUTH_SKIP=true" >> "$GITHUB_ENV"
           fi
 
-      - name: Check for partial work branch
+      - name: Prepare workspace branch (resume WIP or branch from main)
         run: |
           BRANCH="shipwright/issue-${ISSUE_NUMBER}"
-          if git ls-remote --heads --exit-code origin "$BRANCH" >/dev/null 2>&1; then
-            echo "Found partial work branch: $BRANCH"
-            git fetch origin "$BRANCH" 2>/dev/null || true
+          USE_WIP=false
 
+          if git ls-remote --heads --exit-code origin "$BRANCH" >/dev/null 2>&1; then
+            git fetch --no-tags origin "$BRANCH" 2>/dev/null || true
             BRANCH_CONTENT=$(git log -5 --format='%s' "origin/$BRANCH" 2>/dev/null || echo "")
             if echo "$BRANCH_CONTENT" | grep -qiE 'Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error'; then
-              POLLUTED_SUBJECT=$(git log -5 --format='%s' "origin/$BRANCH" 2>/dev/null \
+              POLLUTED_SUBJECT=$(echo "$BRANCH_CONTENT" \
                 | grep -iE 'Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error' | head -1 || echo "unknown")
               echo "::warning::Partial work branch appears polluted with API errors — deleting. Trigger commit subject: ${POLLUTED_SUBJECT}"
               git push origin --delete "$BRANCH" 2>/dev/null || true
             else
-              # -B force-resets local ref to remote tip — correct when consuming WIP branch.
-              if git checkout -B "$BRANCH" "origin/$BRANCH" 2>/dev/null; then
-                echo "GIT_BRANCH=${BRANCH}" >> "$GITHUB_ENV"
-                echo "Checked out ${BRANCH} — continuing from prior work"
-              else
-                echo "::warning::Could not checkout ${BRANCH} — starting fresh on main (investigate checkout failure)"
-              fi
+              USE_WIP=true
             fi
           fi
+
+          if [[ "$USE_WIP" == "true" ]]; then
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+            echo "Resumed ${BRANCH} — continuing from prior work"
+          else
+            # Unified path: create the WIP branch from origin/main so downstream
+            # stages always see a consistent workspace state regardless of whether
+            # prior work existed. Push immediately so a pre-stage crash still
+            # leaves a resumable branch on origin.
+            git checkout -B "$BRANCH" origin/main
+            git push -u origin "$BRANCH" 2>/dev/null || \
+              echo "::warning::Could not pre-push ${BRANCH} — first persist_artifacts will create it"
+            echo "Created fresh ${BRANCH} from origin/main"
+          fi
+
+          echo "GIT_BRANCH=${BRANCH}"        >> "$GITHUB_ENV"
+          echo "WORKSPACE_BRANCH=${BRANCH}"  >> "$GITHUB_ENV"
+
+      - name: Verify CLI still pinned to main snapshot
+        run: |
+          GLOBAL_PKG="$(npm root -g)/shipwright-cli"
+          REAL_TARGET="$(readlink -f "$GLOBAL_PKG" 2>/dev/null || echo "")"
+          if [[ "$REAL_TARGET" != "$SHIPWRIGHT_CLI_DIR"* ]]; then
+            echo "::error::shipwright CLI drifted to $REAL_TARGET (expected under $SHIPWRIGHT_CLI_DIR)"
+            exit 1
+          fi
+          echo "✓ CLI pinned to main; workspace on $(git rev-parse --abbrev-ref HEAD)"
 
       - name: Verify merged artifacts
         run: |
@@ -838,50 +882,41 @@ jobs:
           )"
           fi
 
-      - name: Push partial work on exit
-        if: (failure() || cancelled()) && steps.claim_check.outputs.skip != 'true'
+      - name: Snapshot resume-essentials to WIP branch (always)
+        if: always() && steps.claim_check.outputs.skip != 'true'
         run: |
-          BRANCH="shipwright/issue-${ISSUE_NUMBER}"
-          # Force-add issue-scoped artifact snapshots BEFORE git add -A.
-          # .gitignore excludes .claude/pipeline-artifacts/ as a directory, which
-          # prevents the !issue-*/ negation from working (git won't descend into
-          # an ignored parent). Force-add bypasses .gitignore so plan.md/design.md
-          # snapshots written by the plan/design stages survive across runs.
-          SNAP_DIR=".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}"
-          if [[ -d "$SNAP_DIR" ]]; then
-            git add -f "$SNAP_DIR/" 2>/dev/null || true
-          fi
-          if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-            # Defense-in-depth: ensure runtime artifacts never get committed to WIP.
-            # Exclude issue-scoped subdirs (pipeline-artifacts/issue-N/) — those
-            # are intentionally committed so plan/design survive across CI runs.
-            git rm --cached -r --ignore-unmatch \
-              .claude/loop-logs \
-              .claude/daemon-config.json .claude/helpers \
-              .claude-flow 2>/dev/null || true
-            # Remove pipeline-artifacts/* but preserve issue-N/ subdirectories
-            git ls-files --cached '.claude/pipeline-artifacts/' \
-              | grep -v '^\.claude/pipeline-artifacts/issue-' \
-              | xargs -r git rm --cached --ignore-unmatch 2>/dev/null || true
-            git add -A 2>/dev/null || true
-            git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
-          fi
-          # Refresh tracking ref from server — local ref may be stale after an
-          # interrupted push (git optimistically updates it before the pack arrives).
-          git fetch origin "$BRANCH" 2>/dev/null || true
-          REMOTE_EXISTS=$(git ls-remote --heads origin "$BRANCH" 2>/dev/null | head -1)
-          AHEAD=$(git rev-list --count "origin/${BRANCH}..HEAD" 2>/dev/null || echo "0")
-          # Only skip when the WIP branch already exists AND HEAD is not ahead of it.
-          # When the branch is absent, always push to create the WIP reference so
-          # shipwright pipeline resume can find partial work.
-          if [ -n "$REMOTE_EXISTS" ] && [ "$AHEAD" = "0" ]; then
-            echo "WIP branch already up to date — skipping push."
+          BRANCH="${WORKSPACE_BRANCH:-shipwright/issue-${ISSUE_NUMBER}}"
+          OUTCOME="${{ job.status }}"
+
+          # Force-add only the files needed to resume a future pipeline run.
+          # Bulky logs (.claude/loop-logs, checkpoints, error-log.jsonl,
+          # intelligence-cache.json) are intentionally excluded — they are
+          # regenerable and would grow the repo unboundedly across issues.
+          git add -f .claude/pipeline-artifacts/plan.md                2>/dev/null || true
+          git add -f .claude/pipeline-artifacts/dod.md                 2>/dev/null || true
+          git add -f .claude/pipeline-artifacts/design.md              2>/dev/null || true
+          git add -f .claude/pipeline-artifacts/context-bundle.md      2>/dev/null || true
+          git add -f .claude/pipeline-artifacts/composed-pipeline.json 2>/dev/null || true
+          git add -f ".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}/" 2>/dev/null || true
+          git add -f .claude/pipeline-state.md                         2>/dev/null || true
+
+          git restore --staged .claude/daemon-config.json 2>/dev/null || true
+
+          if git diff --cached --quiet 2>/dev/null; then
+            echo "No resume-essentials changed — skipping snapshot push"
             exit 0
           fi
-          if timeout 120 git push origin "HEAD:refs/heads/$BRANCH" --force; then
-            echo "Partial work pushed to branch: $BRANCH"
+
+          git -c user.email=shipwright-bot@users.noreply.github.com \
+              -c user.name='shipwright-bot' \
+              commit -m "chore: resume snapshot for #${ISSUE_NUMBER} (run ${{ github.run_id }}, status=${OUTCOME}) [skip ci]" \
+              --no-verify 2>/dev/null || true
+
+          if timeout 120 git push origin "HEAD:refs/heads/${BRANCH}" --force-with-lease 2>/dev/null \
+              || timeout 120 git push origin "HEAD:refs/heads/${BRANCH}" --force; then
+            echo "✓ Resume snapshot pushed to ${BRANCH} (status=${OUTCOME})"
           else
-            echo "WARN: partial-work push timed out or failed (non-fatal)"
+            echo "WARN: resume snapshot push timed out or failed (non-fatal)"
           fi
 
       - name: Diagnose exit signals (issue #463)

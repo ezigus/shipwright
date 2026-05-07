@@ -340,11 +340,11 @@ persist_artifacts() {
     case "$commit_status" in
         committed)
             emit_event "artifacts.persisted" \
-                "issue=${ISSUE_NUMBER}" "stage=$stage" "file_count=${#to_add[@]}"
+                "issue=${ISSUE_NUMBER}" "stage=$stage" "file_count=${#to_add[@]}" 2>/dev/null || true
             ;;
         commit_failed)
             warn "persist_artifacts($stage): local commit failed — non-fatal, continuing"
-            emit_event "artifacts.persist_failed" "issue=${ISSUE_NUMBER}" "stage=$stage"
+            emit_event "artifacts.persist_failed" "issue=${ISSUE_NUMBER}" "stage=$stage" 2>/dev/null || true
             ;;
         noop)
             : # nothing to commit — silent

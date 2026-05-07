@@ -1155,13 +1155,18 @@ BDHELP
         return 1
     fi
 
-    local issue_arg=()
-    [[ -n "$issue" ]] && issue_arg=(--issue "$issue")
-
     if [[ "$plain" == "1" ]]; then
-        render_cost_table_plain "$breakdown_file" "${issue_arg[@]}" --baseline-context
+        if [[ -n "${issue:-}" ]]; then
+            render_cost_table_plain "$breakdown_file" --issue "$issue" --baseline-context
+        else
+            render_cost_table_plain "$breakdown_file" --baseline-context
+        fi
     else
-        render_cost_table       "$breakdown_file" "${issue_arg[@]}" --baseline-context
+        if [[ -n "${issue:-}" ]]; then
+            render_cost_table       "$breakdown_file" --issue "$issue" --baseline-context
+        else
+            render_cost_table       "$breakdown_file" --baseline-context
+        fi
     fi
 
     if [[ "$update_baseline" == "1" ]]; then

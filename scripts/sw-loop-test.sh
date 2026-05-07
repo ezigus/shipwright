@@ -3154,6 +3154,55 @@ else
     assert_pass "SW_LOG_PROMPTS github+rolling: does NOT create new comment"
 fi
 
+# Test 5: github mode with gh helpers absent — must not abort (graceful no-op)
+_lp_no_gh_out="$(
+    (
+        # Define only the minimum stubs — deliberately omit gh_comment_issue and gh_update_progress
+        info()             { echo "INFO: $*"; }
+        sanitize_secrets() { echo "$1"; }
+        ITERATION=1
+        LOG_DIR="${TMPDIR:-/tmp}"
+        SW_LOG_PROMPTS="github"
+        ISSUE_NUMBER="42"
+        PROGRESS_COMMENT_ID=""
+        final_prompt="task: add feature"
+        prompt_chars=${#final_prompt}
+        prompt_path="$LOG_DIR/iteration-1.prompt.txt"
+        info "Prompt saved → $prompt_path (${prompt_chars} chars)"
+        case "${SW_LOG_PROMPTS:-off}" in stdout|both) echo "BOX" ;; esac
+        case "${SW_LOG_PROMPTS:-off}" in
+            github|both)
+                if [[ -n "${ISSUE_NUMBER:-}" ]] && type sanitize_secrets >/dev/null 2>&1; then
+                    local redacted truncated body
+                    redacted="$(sanitize_secrets "$final_prompt")"
+                    if [[ ${#redacted} -gt 50000 ]]; then
+                        truncated="${redacted:0:50000} …[TRUNCATED]"
+                    else
+                        truncated="$redacted"
+                    fi
+                    body="prompt: ${truncated}"
+                    if [[ -n "${PROGRESS_COMMENT_ID:-}" ]] && type gh_update_progress >/dev/null 2>&1; then
+                        gh_update_progress "$body"
+                    elif type gh_comment_issue >/dev/null 2>&1; then
+                        gh_comment_issue "$ISSUE_NUMBER" "$body"
+                    fi
+                fi ;;
+        esac
+        echo "COMPLETED"
+    ) 2>&1
+)"
+if echo "$_lp_no_gh_out" | grep -qF "COMPLETED"; then
+    assert_pass "SW_LOG_PROMPTS github no-helpers: block completes without abort"
+else
+    assert_fail "SW_LOG_PROMPTS github no-helpers: block completes without abort" \
+        "Block did not reach COMPLETED — may have aborted"
+fi
+if echo "$_lp_no_gh_out" | grep -qiE "command not found|gh_comment_issue"; then
+    assert_fail "SW_LOG_PROMPTS github no-helpers: no command-not-found error"
+else
+    assert_pass "SW_LOG_PROMPTS github no-helpers: no command-not-found error"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

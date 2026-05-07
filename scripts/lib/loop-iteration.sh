@@ -747,7 +747,7 @@ ${truncated}
 </details>"
                 if [[ -n "${PROGRESS_COMMENT_ID:-}" ]] && type gh_update_progress >/dev/null 2>&1; then
                     gh_update_progress "$body"
-                else
+                elif type gh_comment_issue >/dev/null 2>&1; then
                     gh_comment_issue "$ISSUE_NUMBER" "$body"
                 fi
             fi

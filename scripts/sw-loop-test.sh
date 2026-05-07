@@ -1854,9 +1854,11 @@ fi
 
 # Test: In agent sub-loop, _commits_before appears before the agent-specific claude -p invocation
 # (line-ordering regression: guards against moving _commits_before back after the call)
-# Restrict search to lines 1800+ to target the agent sub-loop only (avoids earlier claude -p calls)
+# Restrict search to lines 1800+ to target the agent sub-loop only (avoids earlier claude -p calls).
+# The agent invocation uses stdin piping (printf '%s' "$PROMPT" | claude -p ...) per the
+# ARG_MAX fix; either the pre-fix pattern or the piped pattern should anchor the line.
 _acb_line=$(grep -n '_commits_before=\$(git rev-list' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | head -1 | cut -d: -f1 || true)
-_cp_line=$(awk 'NR>=1800 && /claude -p "\$PROMPT"/{print NR; exit}' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
+_cp_line=$(awk 'NR>=1800 && /printf .* "\$PROMPT" \| claude -p|claude -p "\$PROMPT"/{print NR; exit}' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
 if [[ -n "$_acb_line" && -n "$_cp_line" && "$_acb_line" -lt "$_cp_line" ]]; then
     assert_pass "sw-loop.sh: agent _commits_before captured before claude -p (line ${_acb_line} < ${_cp_line})"
 else
@@ -2502,6 +2504,85 @@ else
 fi
 rm -f "$_sw331_tracking4"
 
+# Test 4b: cycling detector skips empty-diff runs (clean tree = work committed, NOT cycling)
+# Regression for #504 false-positive: completed pipelines were flagged as cycling because
+# repeated `git diff HEAD` returns empty, yielding identical MD5 of empty input.
+_sw504_tracking=$(mktemp "${TMPDIR:-/tmp}/sw-stuckness-504-empty.XXXXXX")
+printf 'd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\n' > "$_sw504_tracking"
+if (
+    export PROJECT_ROOT="/tmp" ITERATION=6 MAX_ITERATIONS=20 \
+           TEST_PASSED=true STUCKNESS_COUNT=0 STUCKNESS_DIAGNOSIS="" STUCKNESS_HINT="" \
+           LOG_DIR="$(dirname "$_sw504_tracking")" \
+           STUCKNESS_TRACKING_FILE="$_sw504_tracking"
+    source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
+    source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
+    detect_stuckness 2>/dev/null
+    [[ "$STUCKNESS_HINT" != *"cycling"* ]] && [[ "$STUCKNESS_HINT" != *"identical git diffs in last 5 iterations"* ]]
+) 2>/dev/null; then
+    assert_pass "detect_stuckness: cycling detector skips empty-diff runs (#504)"
+else
+    assert_fail "detect_stuckness: cycling detector skips empty-diff runs (#504)" \
+        "expected STUCKNESS_HINT to NOT contain 'cycling' or 'identical git diffs' for clean-tree iterations"
+fi
+rm -f "$_sw504_tracking"
+
+# Test 4c: done-and-idle escape hatch — TEST_PASSED + clean tree + similar logs MUST NOT
+# trigger stuckness. Regression for #504 iteration 7 false positive: Signals 1 (text
+# overlap on near-identical idle logs) + 6 (no diff) summed to 2 signals and tripped
+# the prompt builder's stuckness branch even though the work was committed and tests
+# were green.
+_sw504_idle_dir=$(mktemp -d "${TMPDIR:-/tmp}/sw-stuckness-504-idle.XXXXXX")
+_sw504_idle_tracking="$_sw504_idle_dir/tracking.txt"
+printf 'd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\nd41d8cd98f00b204e9800998ecf8427e|none|0\n' > "$_sw504_idle_tracking"
+# Two near-identical iteration logs to force Signal 1 (text overlap >= 90%).
+_sw504_idle_log='LOOP_COMPLETE
+all tests pass
+goal achieved
+no remaining work'
+printf '%s\n' "$_sw504_idle_log" > "$_sw504_idle_dir/iteration-5.log"
+printf '%s\n' "$_sw504_idle_log" > "$_sw504_idle_dir/iteration-6.log"
+if (
+    export PROJECT_ROOT="/tmp" ITERATION=7 MAX_ITERATIONS=20 \
+           TEST_PASSED=true STUCKNESS_COUNT=0 STUCKNESS_DIAGNOSIS="" STUCKNESS_HINT="" \
+           LOG_DIR="$_sw504_idle_dir" \
+           STUCKNESS_TRACKING_FILE="$_sw504_idle_tracking"
+    source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
+    source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
+    detect_stuckness 2>/dev/null
+    [[ -z "$STUCKNESS_HINT" ]]
+) 2>/dev/null; then
+    assert_pass "detect_stuckness: done-and-idle escape hatch suppresses stuckness when TEST_PASSED + clean tree + no active failure (#504)"
+else
+    assert_fail "detect_stuckness: done-and-idle escape hatch suppresses stuckness when TEST_PASSED + clean tree + no active failure (#504)" \
+        "expected STUCKNESS_HINT to be empty for done-and-idle iteration"
+fi
+rm -rf "$_sw504_idle_dir"
+
+# Test 4d: cycling protection still trips when an active failure signal IS present.
+# Same idle setup as 4c, but with a non-empty repeating diff hash to force Signal 2/2b.
+# Verifies the escape hatch only suppresses when active_failure_signals == 0.
+_sw504_cycle_dir=$(mktemp -d "${TMPDIR:-/tmp}/sw-stuckness-504-cycle.XXXXXX")
+_sw504_cycle_tracking="$_sw504_cycle_dir/tracking.txt"
+printf 'cafebabe|none|0\ncafebabe|none|0\ncafebabe|none|0\ncafebabe|none|0\ncafebabe|none|0\n' > "$_sw504_cycle_tracking"
+printf '%s\n' "$_sw504_idle_log" > "$_sw504_cycle_dir/iteration-5.log"
+printf '%s\n' "$_sw504_idle_log" > "$_sw504_cycle_dir/iteration-6.log"
+if (
+    export PROJECT_ROOT="/tmp" ITERATION=7 MAX_ITERATIONS=20 \
+           TEST_PASSED=true STUCKNESS_COUNT=0 STUCKNESS_DIAGNOSIS="" STUCKNESS_HINT="" \
+           LOG_DIR="$_sw504_cycle_dir" \
+           STUCKNESS_TRACKING_FILE="$_sw504_cycle_tracking"
+    source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null
+    source "$SCRIPT_DIR/lib/loop-convergence.sh" 2>/dev/null
+    detect_stuckness 2>/dev/null
+    [[ "$STUCKNESS_HINT" == *"cycling"* ]]
+) 2>/dev/null; then
+    assert_pass "detect_stuckness: done-and-idle escape hatch does NOT mask real cycling on non-empty diff (#504)"
+else
+    assert_fail "detect_stuckness: done-and-idle escape hatch does NOT mask real cycling on non-empty diff (#504)" \
+        "expected STUCKNESS_HINT to contain 'cycling' when active failure signal fires"
+fi
+rm -rf "$_sw504_cycle_dir"
+
 # Test 5: DOD_DIFF_MAX_LINES default is 5000
 if grep -E "DOD_DIFF_MAX_LINES=\\\$\(_config_get_int[^)]*5000" "$SCRIPT_DIR/sw-loop.sh" | grep -q '5000'; then
     assert_pass "DOD_DIFF_MAX_LINES default is 5000 (#331)"
@@ -2690,11 +2771,101 @@ else
         "expected >=3, got $_swl_kept_count: $_swl_kept"
 fi
 
+# ─── #504 follow-up: section-header false positives on green builds ──────────
+# Regression: section headers like "Test 4: missing fingerprint file fails open"
+# survive _strip_passing_test_lines by design (#447), but on green builds they
+# leaked into write_error_summary and tripped the loop's circuit breaker even
+# though every assertion in the section was ✓. _has_real_failure_markers
+# distinguishes real failure markers (✗, FAIL keyword, stack traces) from
+# descriptive "fail" words in test names.
+echo ""
+echo -e "${DIM}  #504 regression — _has_real_failure_markers distinguishes header text from real failures${RESET}"
+
+_swl_marker_def=$(awk '/^_has_real_failure_markers\(\) \{/,/^\}/' "$SCRIPT_DIR/sw-loop.sh")
+if [[ -n "$_swl_marker_def" ]]; then
+    assert_pass "#504: _has_real_failure_markers defined in sw-loop.sh"
+    eval "$_swl_marker_def"
+else
+    assert_fail "#504: _has_real_failure_markers defined in sw-loop.sh" \
+        "function not found in sw-loop.sh"
+fi
+
+# Section headers with "fail" in description must NOT be flagged as real failures.
+_swl_header_only=$(printf '%s\n' "  Test 4: missing fingerprint file fails open (both calls fire)")
+if printf '%s\n' "$_swl_header_only" | _has_real_failure_markers; then
+    assert_fail "#504: descriptive section headers are not flagged as real failures" \
+        "header was incorrectly classified as a failure"
+else
+    assert_pass "#504: descriptive section headers are not flagged as real failures"
+fi
+
+# Real failure lines (✗, FAIL, TypeError, stack traces) MUST be flagged.
+_swl_real_marker_lines=$(cat <<'SAMPLE'
+  ✗ Test 7: actually broken assertion
+FAIL src/foo.test.js
+TypeError: cannot read property 'x' of undefined
+  at module.exports (/foo/bar.js:10:5)
+expected "x" got "y"
+SAMPLE
+)
+while IFS= read -r _swl_marker_line; do
+    [[ -z "$_swl_marker_line" ]] && continue
+    if printf '%s\n' "$_swl_marker_line" | _has_real_failure_markers; then
+        assert_pass "#504: real failure marker detected: '${_swl_marker_line:0:50}'"
+    else
+        assert_fail "#504: real failure marker detected" \
+            "missed: '$_swl_marker_line'"
+    fi
+done <<< "$_swl_real_marker_lines"
+
+# ─── #504 follow-up: claude -p prompt piped via stdin (exec ARG_MAX bypass) ──
+# Regression: the deployed sw-loop.sh failed iter 8 DoD with "Argument list
+# too long" because cumulative-diff prompts exceeded the OS exec ARG_MAX
+# when passed as a positional CLI argument. Fix: pipe the prompt via stdin
+# (printf '%s' "$prompt" | claude -p ...) at every claude invocation site.
+echo ""
+echo -e "${DIM}  #504 regression — claude -p prompts piped via stdin (avoids ARG_MAX)${RESET}"
+
+# Forbidden: positional prompt as CLI argument. Any line of the form
+# `claude -p "$<var>" ...` (with a leading space, not in a comment) is the
+# pre-fix pattern that trips ARG_MAX on long prompts.
+_swl_bad_invocations=$(grep -nE '^[[:space:]]+claude[[:space:]]+-p[[:space:]]+"\$' \
+    "$SCRIPT_DIR/sw-loop.sh" || true)
+if [[ -z "$_swl_bad_invocations" ]]; then
+    assert_pass "#504: no claude -p invocations pass the prompt as a positional CLI arg"
+else
+    assert_fail "#504: no claude -p invocations pass the prompt as a positional CLI arg" \
+        "found pre-fix pattern at: $_swl_bad_invocations"
+fi
+
+# Required: every claude -p invocation must be piped from a printf '%s' "$prompt".
+# We require exactly 4 such invocations (audit, DoD, holistic, main agent).
+_swl_piped_count=$(grep -cE "^[[:space:]]*printf[[:space:]]+'%s'[[:space:]]+\"\\\$[a-zA-Z_]+\"[[:space:]]*\\|[[:space:]]*claude[[:space:]]+-p" \
+    "$SCRIPT_DIR/sw-loop.sh" || true)
+_swl_piped_count="${_swl_piped_count:-0}"
+if [[ "$_swl_piped_count" -eq 4 ]]; then
+    assert_pass "#504: all 4 claude -p invocations use 'printf | claude -p' stdin piping"
+else
+    assert_fail "#504: all 4 claude -p invocations use 'printf | claude -p' stdin piping" \
+        "expected 4 piped invocations, found $_swl_piped_count"
+fi
+
+# Smoke test: an oversize prompt (>256KB) passed via stdin must reach the
+# downstream command without truncation. This validates the technique itself
+# rather than the loop wiring — using `cat` as a stand-in for `claude -p`.
+_swl_big_prompt=$(printf 'x%.0s' $(seq 1 262144))  # 256KB of 'x'
+_swl_received=$(printf '%s' "$_swl_big_prompt" | cat | wc -c | tr -d ' ')
+if [[ "$_swl_received" -eq 262144 ]]; then
+    assert_pass "#504: 256KB prompt round-trips through printf|stdin without truncation"
+else
+    assert_fail "#504: 256KB prompt round-trips through printf|stdin without truncation" \
+        "expected 262144 bytes, got $_swl_received"
+fi
+
+# ─── write_error_summary stricter pipeline (section-header strip) ─────────────
 # write_error_summary's stricter pipeline must strip descriptive section headers
 # (e.g. "Test 4: missing fingerprint file fails open") so they don't get counted
 # as errors. The same pipeline must keep marker-prefixed failure lines.
-# Why: section headers describing positive properties like "fails open" trigger
-# spurious "structured error" reports that re-fire iterations after success.
 _swl_section_strip='^[[:space:]]*Test [0-9]+:[[:space:]]'
 
 _swl_header_input=$(cat <<'SAMPLE'

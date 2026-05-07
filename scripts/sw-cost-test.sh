@@ -710,6 +710,256 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# TESTS: per-stage cost summary table + rolling baselines (#504 deliverable 2)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo -e "${BOLD}Per-Stage Cost Summary Table & Rolling Baselines (#504)${RESET}"
+
+# Helper — run sw-cost.sh in test sandbox with isolated baseline dir.
+_sw_cost_isolated() {
+    local _baseline_dir="${1:?need baseline dir}"; shift
+    env HOME="$TEST_TEMP_DIR/home" \
+        PATH="$TEST_TEMP_DIR/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+        SW_BASELINE_DIR="$_baseline_dir" \
+        bash "$SCRIPT_DIR/sw-cost.sh" "$@"
+}
+
+# ── Test: render with no breakdown file is graceful ─────────────────────────
+_bl_dir1="$TEST_TEMP_DIR/baselines-1"
+_art1="$TEST_TEMP_DIR/render-empty"
+mkdir -p "$_art1"
+_render_empty=$(_sw_cost_isolated "$_bl_dir1" breakdown "$_art1" "p-empty" "" --render --print-only 2>&1) || true
+if echo "$_render_empty" | grep -qi "no cost-breakdown.json\|missing"; then
+    assert_pass "render: missing breakdown file is graceful (warns, exits non-zero)"
+else
+    assert_fail "render: missing breakdown file is graceful" "output: $(echo "$_render_empty" | tail -3)"
+fi
+
+# ── Test: full render flow with synthetic single-stage data, first run = NEW ──
+_bl_dir2="$TEST_TEMP_DIR/baselines-2"
+_art2="$TEST_TEMP_DIR/render-first"
+mkdir -p "$_art2"
+_now2=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+printf '%s\n' \
+    "{\"stage\":\"intake\",\"input_tokens\":12450,\"output_tokens\":1230,\"cost_usd\":0.0042,\"model\":\"sonnet\",\"ts\":\"${_now2}\",\"ts_epoch\":1746320400,\"issue\":\"504\"}" \
+    "{\"stage\":\"build\",\"input_tokens\":312000,\"output_tokens\":28400,\"cost_usd\":0.92,\"model\":\"opus\",\"ts\":\"${_now2}\",\"ts_epoch\":1746320460,\"issue\":\"504\"}" \
+    > "$_art2/stage-costs.jsonl"
+
+_render_first=$(_sw_cost_isolated "$_bl_dir2" breakdown "$_art2" "p1" "504" --render 2>&1) || true
+
+if echo "$_render_first" | grep -q '┌'; then
+    assert_pass "render: prints box-drawing table border"
+else
+    assert_fail "render: prints box-drawing table border" "output: $(echo "$_render_first" | head -8)"
+fi
+if echo "$_render_first" | grep -q "intake" && echo "$_render_first" | grep -q "build"; then
+    assert_pass "render: includes both stage rows"
+else
+    assert_fail "render: includes both stage rows" "output: $(echo "$_render_first" | head -10)"
+fi
+if echo "$_render_first" | grep -q "TOTAL"; then
+    assert_pass "render: includes TOTAL row"
+else
+    assert_fail "render: includes TOTAL row"
+fi
+if echo "$_render_first" | grep -q "new"; then
+    assert_pass "render: first run flags stages as 'new' (no baseline yet)"
+else
+    assert_fail "render: first run flags stages as 'new'" "output: $(echo "$_render_first" | head -10)"
+fi
+# Baseline file created
+if [[ -f "$_bl_dir2/stage-costs.json" && -f "$_bl_dir2/issue-504-costs.json" ]]; then
+    assert_pass "render: creates both all-issues and per-issue baseline files"
+else
+    assert_fail "render: creates both baseline files" "ls: $(ls -la "$_bl_dir2" 2>&1)"
+fi
+
+# ── Test: baseline n=1 after first run, avg matches input cost ──────────────
+_n1=$(jq '.stages.build.n' "$_bl_dir2/stage-costs.json" 2>/dev/null || echo "")
+_avg1=$(jq '.stages.build.avg_usd' "$_bl_dir2/stage-costs.json" 2>/dev/null || echo "")
+if [[ "$_n1" == "1" && "$_avg1" == "0.92" ]]; then
+    assert_pass "baseline: n=1 and avg_usd=0.92 after first run"
+else
+    assert_fail "baseline: n=1 and avg_usd=0.92" "n=${_n1} avg=${_avg1}"
+fi
+
+# ── Test: rolling avg across 3 runs ─────────────────────────────────────────
+_bl_dir3="$TEST_TEMP_DIR/baselines-3"
+for _i in 1 2 3; do
+    _r="$TEST_TEMP_DIR/roll-${_i}"; mkdir -p "$_r"
+    # Costs 0.10, 0.20, 0.30 → avg should be 0.20
+    printf '{"stage":"plan","input_tokens":1000,"output_tokens":100,"cost_usd":0.%d00,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+        "$_i" "$_now2" > "$_r/stage-costs.jsonl"
+    _sw_cost_isolated "$_bl_dir3" breakdown "$_r" "p${_i}" "" --render >/dev/null 2>&1 || true
+done
+_n3=$(jq '.stages.plan.n' "$_bl_dir3/stage-costs.json" 2>/dev/null || echo "")
+_avg3=$(jq '.stages.plan.avg_usd' "$_bl_dir3/stage-costs.json" 2>/dev/null || echo "")
+if [[ "$_n3" == "3" ]] && awk -v a="$_avg3" 'BEGIN {exit !(a >= 0.19 && a <= 0.21)}'; then
+    assert_pass "baseline: rolling avg across 3 runs (0.10, 0.20, 0.30) ≈ 0.20"
+else
+    assert_fail "baseline: rolling avg across 3 runs ≈ 0.20" "n=${_n3} avg=${_avg3}"
+fi
+
+# ── Test: HIGH/LOW classification after baseline established (n>=3) ─────────
+# Reuse baselines-3 above. Plan baseline avg=0.20 (n=3). Now feed 4th run:
+#   - plan at 0.50 → 2.5× → HIGH
+#   - plan at 0.05 → 0.25× → LOW
+_r_hi="$TEST_TEMP_DIR/roll-high"; mkdir -p "$_r_hi"
+printf '{"stage":"plan","input_tokens":1000,"output_tokens":100,"cost_usd":0.500,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+    "$_now2" > "$_r_hi/stage-costs.jsonl"
+_render_high=$(_sw_cost_isolated "$_bl_dir3" breakdown "$_r_hi" "p-hi" "" --render --no-update-baseline 2>&1) || true
+# Match only the plan data row (avoid legend footer false-positive)
+if echo "$_render_high" | grep -E '│ plan ' | grep -qE 'HIGH|↑'; then
+    assert_pass "classify: cost 2.5× of avg flagged HIGH"
+else
+    assert_fail "classify: cost 2.5× of avg flagged HIGH" \
+        "row: $(echo "$_render_high" | grep -E '│ plan ')"
+fi
+
+_r_lo="$TEST_TEMP_DIR/roll-low"; mkdir -p "$_r_lo"
+printf '{"stage":"plan","input_tokens":1000,"output_tokens":100,"cost_usd":0.050,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+    "$_now2" > "$_r_lo/stage-costs.jsonl"
+_render_low=$(_sw_cost_isolated "$_bl_dir3" breakdown "$_r_lo" "p-lo" "" --render --no-update-baseline 2>&1) || true
+# Match only the plan data row (avoid legend footer false-positive)
+if echo "$_render_low" | grep -E '│ plan ' | grep -qE 'low|↓'; then
+    assert_pass "classify: cost 0.25× of avg flagged LOW"
+else
+    assert_fail "classify: cost 0.25× of avg flagged LOW" \
+        "row: $(echo "$_render_low" | grep -E '│ plan ')"
+fi
+
+# ── Test: bootstrap guard — n<3 returns NORMAL (no false alarms) ───────────
+_bl_dir4="$TEST_TEMP_DIR/baselines-4"
+_r_first="$TEST_TEMP_DIR/boot-1"; mkdir -p "$_r_first"
+printf '{"stage":"plan","input_tokens":1000,"output_tokens":100,"cost_usd":0.10,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+    "$_now2" > "$_r_first/stage-costs.jsonl"
+_sw_cost_isolated "$_bl_dir4" breakdown "$_r_first" "p1" "" --render >/dev/null 2>&1 || true
+_r_2nd="$TEST_TEMP_DIR/boot-2"; mkdir -p "$_r_2nd"
+printf '{"stage":"plan","input_tokens":1000,"output_tokens":100,"cost_usd":5.00,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+    "$_now2" > "$_r_2nd/stage-costs.jsonl"
+_render_boot=$(_sw_cost_isolated "$_bl_dir4" breakdown "$_r_2nd" "p2" "" --render --no-update-baseline 2>&1) || true
+# After 1 prior run (n=1 → bootstrap window <3), should not be HIGH.
+# Match the data row only (grep by stage name "plan") to avoid the legend
+# footer ("HIGH = >1.5× stage avg") triggering a false positive.
+_boot_plan_row=$(echo "$_render_boot" | grep -E '│ plan ' || true)
+if [[ -n "$_boot_plan_row" ]] && echo "$_boot_plan_row" | grep -qE 'HIGH|↑'; then
+    assert_fail "bootstrap: n<3 should NOT flag HIGH (avoids alarm fatigue)" \
+        "row: $_boot_plan_row"
+elif [[ -z "$_boot_plan_row" ]]; then
+    assert_fail "bootstrap: plan data row missing from render output" \
+        "output: $(echo "$_render_boot" | head -10)"
+else
+    assert_pass "bootstrap: n<3 returns NORMAL even with 50× cost"
+fi
+
+# ── Test: --render-plain produces no ANSI escape codes ─────────────────────
+_bl_dir5="$TEST_TEMP_DIR/baselines-5"
+_r_pl="$TEST_TEMP_DIR/plain"; mkdir -p "$_r_pl"
+printf '{"stage":"build","input_tokens":1000,"output_tokens":100,"cost_usd":0.10,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+    "$_now2" > "$_r_pl/stage-costs.jsonl"
+_render_plain=$(_sw_cost_isolated "$_bl_dir5" breakdown "$_r_pl" "p" "" --render-plain 2>&1) || true
+# ANSI ESC is hex 1b; check it's absent in the rendered table portion
+if echo "$_render_plain" | grep -q $'\x1b\['; then
+    assert_fail "render-plain: contains ANSI escape codes" "output: $(echo "$_render_plain" | head -5 | od -c | head -3)"
+else
+    assert_pass "render-plain: no ANSI escape codes (GitHub-comment safe)"
+fi
+
+# ── Test: baseline rejects negative cost / invalid input ────────────────────
+# Source baselines.sh directly to test the validation function.
+(
+    export SW_BASELINE_DIR="$TEST_TEMP_DIR/baselines-validation"
+    # shellcheck disable=SC1091
+    source "$SCRIPT_DIR/lib/cost/baselines.sh"
+    if baseline_update_stage "build" "-1.50" "100" "10" "" 2>/dev/null; then
+        assert_fail "baseline: rejects negative cost"
+    else
+        assert_pass "baseline: rejects negative cost (validation works)"
+    fi
+    if baseline_update_stage "build" "abc" "100" "10" "" 2>/dev/null; then
+        assert_fail "baseline: rejects non-numeric cost"
+    else
+        assert_pass "baseline: rejects non-numeric cost"
+    fi
+    if baseline_update_stage "../../etc/passwd" "0.10" "100" "10" "" 2>/dev/null; then
+        assert_fail "baseline: rejects stage name with path traversal"
+    else
+        assert_pass "baseline: rejects stage name with path traversal chars"
+    fi
+)
+
+# ── Test: HIGH/LOW classification across ≥5 historical runs (#504 T5) ──────
+# Acceptance criterion T5 requires HIGH/LOW flags to be correct after at least
+# five historical breakdowns have rolled into the baseline. This exercises the
+# rolling-avg/classification path beyond the n=3 bootstrap window.
+_bl_dir_t5="$TEST_TEMP_DIR/baselines-t5"
+# 5 runs at 0.10, 0.20, 0.30, 0.40, 0.50 → rolling avg = 0.30 exactly
+_t5_idx=1
+for _cost in "0.100" "0.200" "0.300" "0.400" "0.500"; do
+    _r="$TEST_TEMP_DIR/t5-${_t5_idx}"; mkdir -p "$_r"
+    printf '{"stage":"build","input_tokens":1000,"output_tokens":100,"cost_usd":%s,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+        "$_cost" "$_now2" > "$_r/stage-costs.jsonl"
+    _sw_cost_isolated "$_bl_dir_t5" breakdown "$_r" "t5-${_t5_idx}" "" --render >/dev/null 2>&1 || true
+    _t5_idx=$((_t5_idx + 1))
+done
+_t5_n=$(jq '.stages.build.n' "$_bl_dir_t5/stage-costs.json" 2>/dev/null || echo "")
+_t5_avg=$(jq '.stages.build.avg_usd' "$_bl_dir_t5/stage-costs.json" 2>/dev/null || echo "")
+if [[ "$_t5_n" == "5" ]] && awk -v a="$_t5_avg" 'BEGIN {exit !(a >= 0.29 && a <= 0.31)}'; then
+    assert_pass "T5: rolling avg across 5 runs (0.10..0.50) ≈ 0.30 (n=5)"
+else
+    assert_fail "T5: rolling avg across 5 runs ≈ 0.30" "n=${_t5_n} avg=${_t5_avg}"
+fi
+
+# 6th run at 0.60 → 2× of 0.30 avg → HIGH (>1.5×)
+_r_t5_hi="$TEST_TEMP_DIR/t5-hi"; mkdir -p "$_r_t5_hi"
+printf '{"stage":"build","input_tokens":1000,"output_tokens":100,"cost_usd":0.600,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+    "$_now2" > "$_r_t5_hi/stage-costs.jsonl"
+_render_t5_hi=$(_sw_cost_isolated "$_bl_dir_t5" breakdown "$_r_t5_hi" "t5-hi" "" --render --no-update-baseline 2>&1) || true
+if echo "$_render_t5_hi" | grep -E '│ build ' | grep -qE 'HIGH|↑'; then
+    assert_pass "T5: 6th run at 2× rolling avg correctly flagged HIGH (n=5 baseline)"
+else
+    assert_fail "T5: 6th run at 2× rolling avg flagged HIGH" \
+        "row: $(echo "$_render_t5_hi" | grep -E '│ build ')"
+fi
+
+# 6th run at 0.10 → 0.33× of 0.30 avg → LOW (<0.5×)
+_r_t5_lo="$TEST_TEMP_DIR/t5-lo"; mkdir -p "$_r_t5_lo"
+printf '{"stage":"build","input_tokens":1000,"output_tokens":100,"cost_usd":0.100,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+    "$_now2" > "$_r_t5_lo/stage-costs.jsonl"
+_render_t5_lo=$(_sw_cost_isolated "$_bl_dir_t5" breakdown "$_r_t5_lo" "t5-lo" "" --render --no-update-baseline 2>&1) || true
+if echo "$_render_t5_lo" | grep -E '│ build ' | grep -qE 'low|↓'; then
+    assert_pass "T5: 6th run at 0.33× rolling avg correctly flagged LOW (n=5 baseline)"
+else
+    assert_fail "T5: 6th run at 0.33× rolling avg flagged LOW" \
+        "row: $(echo "$_render_t5_lo" | grep -E '│ build ')"
+fi
+
+# 6th run at 0.30 → exactly avg → NORMAL (no flag)
+_r_t5_nm="$TEST_TEMP_DIR/t5-nm"; mkdir -p "$_r_t5_nm"
+printf '{"stage":"build","input_tokens":1000,"output_tokens":100,"cost_usd":0.300,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":""}\n' \
+    "$_now2" > "$_r_t5_nm/stage-costs.jsonl"
+_render_t5_nm=$(_sw_cost_isolated "$_bl_dir_t5" breakdown "$_r_t5_nm" "t5-nm" "" --render --no-update-baseline 2>&1) || true
+_t5_nm_row=$(echo "$_render_t5_nm" | grep -E '│ build ' || true)
+if [[ -n "$_t5_nm_row" ]] && ! echo "$_t5_nm_row" | grep -qE 'HIGH|↑|low|↓'; then
+    assert_pass "T5: 6th run at exactly rolling avg classified NORMAL (no false flag)"
+else
+    assert_fail "T5: NORMAL classification at exactly avg" "row: $_t5_nm_row"
+fi
+
+# ── Test: per-issue baseline isolation ──────────────────────────────────────
+_bl_dir6="$TEST_TEMP_DIR/baselines-6"
+_r_iss="$TEST_TEMP_DIR/iss-test"; mkdir -p "$_r_iss"
+printf '{"stage":"build","input_tokens":1000,"output_tokens":100,"cost_usd":0.50,"model":"sonnet","ts":"%s","ts_epoch":1,"issue":"42"}\n' \
+    "$_now2" > "$_r_iss/stage-costs.jsonl"
+_sw_cost_isolated "$_bl_dir6" breakdown "$_r_iss" "p" "42" --render >/dev/null 2>&1 || true
+if [[ -f "$_bl_dir6/issue-42-costs.json" && -f "$_bl_dir6/stage-costs.json" ]]; then
+    assert_pass "baseline: per-issue file (issue-42-costs.json) created alongside all-issues"
+else
+    assert_fail "baseline: per-issue file created" "ls: $(ls "$_bl_dir6" 2>&1)"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

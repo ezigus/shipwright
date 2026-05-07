@@ -1218,6 +1218,16 @@ _strip_passing_test_lines() {
     grep -vE '✓|^[[:space:]]*(PASS([[:space:]]|$)|ok([[:space:]]|$))|[0-9]+/[0-9]+ pass([[:space:]]|$)|All .* passed' || true
 }
 
+# Returns 0 (success) if stdin contains a definitive failure marker.
+# Used to distinguish real errors from descriptive section headers like
+# "Test 4: missing fingerprint file fails open" that survive the pass-line
+# strip per #447 design but contain "fail" only as part of a description.
+# Why: without this distinction, write_error_summary surfaces section-header
+# false positives to the loop's circuit breaker on otherwise green builds.
+_has_real_failure_markers() {
+    grep -qE '✗|✘|^[[:space:]]*FAIL([[:space:]]|$)|^[[:space:]]*FAILED([[:space:]]|$)|Error:|TypeError:|ReferenceError:|SyntaxError:|^[[:space:]]*at [a-zA-Z_$]|expected.*got|assertion failed'
+}
+
 write_error_summary() {
     local error_json="$LOG_DIR/error-summary.json"
 
@@ -1235,13 +1245,19 @@ write_error_summary() {
         # Check for build-level failures (Claude iteration exited non-zero or produced errors)
         local build_had_errors=false
         if [[ -f "$build_log" ]]; then
-            local build_err_count
-            build_err_count=$(tail -30 "$build_log" 2>/dev/null \
+            local build_err_lines
+            build_err_lines=$(tail -30 "$build_log" 2>/dev/null \
                 | strip_ansi \
                 | _strip_passing_test_lines \
-                | grep -vE "$_strip_section_headers" \
-                | grep -ciE '(error|fail|exception|panic|FATAL)' || true)
-            [[ "${build_err_count:-0}" -gt 0 ]] && build_had_errors=true
+                | grep -iE '(error|fail|exception|panic|FATAL)' || true)
+            # Only treat as build error if at least one line has a real failure
+            # marker — words like "fail" inside section-header descriptions
+            # ("Test 4: ... fails open") are preserved by design but aren't
+            # actual failures.
+            if [[ -n "$build_err_lines" ]] \
+                && printf '%s\n' "$build_err_lines" | _has_real_failure_markers; then
+                build_had_errors=true
+            fi
         fi
         if [[ "$build_had_errors" != "true" ]]; then
             # Clear previous error summary on success
@@ -1266,6 +1282,21 @@ write_error_summary() {
         | grep -vE "$_strip_section_headers" \
         | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' \
         | head -10 || true)
+
+    # Suppress false positives: if matched lines contain no definitive failure
+    # marker (✗, FAIL keyword, error stack trace) AND the source log reports
+    # a clean pass, the matches are descriptive section headers (e.g.,
+    # "Test 4: missing fingerprint file fails open") preserved by #447 design,
+    # not actual errors. Surfacing these trips the holistic circuit breaker on
+    # green builds.
+    if [[ -n "$error_lines_raw" ]] \
+        && ! printf '%s\n' "$error_lines_raw" | _has_real_failure_markers; then
+        if tail -50 "$source_log" 2>/dev/null \
+            | strip_ansi \
+            | grep -qE '(All [0-9]+ tests? passed|^[0-9]+/[0-9]+ pass([[:space:]]|$))'; then
+            error_lines_raw=""
+        fi
+    fi
 
     local error_count=0
     if [[ -n "$error_lines_raw" ]]; then
@@ -1394,7 +1425,12 @@ AUDIT_PROMPT
 
     local exit_code=0
     local audit_err_log="${audit_log%.log}-stderr.log"
-    claude -p "$audit_prompt" "${audit_flags[@]}" > "$audit_log" 2>"$audit_err_log" &
+    # Pipe prompt via stdin (not as a CLI argument) so it is not subject to the
+    # OS exec ARG_MAX limit. With cumulative diffs growing each iteration the
+    # audit prompt regularly exceeds 128KB which trips
+    # "Argument list too long" on Linux. claude -p reads stdin when no
+    # positional prompt is given.
+    printf '%s' "$audit_prompt" | claude -p "${audit_flags[@]}" > "$audit_log" 2>"$audit_err_log" &
     CHILD_PID=$!
     wait "$CHILD_PID" 2>/dev/null || exit_code=$?
     CHILD_PID=""
@@ -1689,7 +1725,11 @@ DOD_PROMPT
 
     local dod_err_log="${dod_log%.log}-stderr.log"
     local dod_exit_code=0
-    claude -p "$dod_prompt" "${dod_flags[@]}" > "$dod_log" 2>"$dod_err_log" &
+    # Pipe prompt via stdin to bypass exec ARG_MAX. The DoD prompt embeds the
+    # full branch diff plus runtime facts and routinely grows past 128KB on
+    # long-running pipelines; passing it as a CLI argument was failing with
+    # "Argument list too long" on the deployed shipwright-cli (#504 iter 8).
+    printf '%s' "$dod_prompt" | claude -p "${dod_flags[@]}" > "$dod_log" 2>"$dod_err_log" &
     CHILD_PID=$!
     wait "$CHILD_PID" 2>/dev/null || dod_exit_code=$?
     CHILD_PID=""
@@ -1903,7 +1943,8 @@ HOLISTIC_PROMPT
 
     local holistic_stderr_log="${holistic_log%.log}-stderr.log"
     local holistic_exit_code=0
-    claude -p "$holistic_prompt" "${hol_flags[@]}" > "$holistic_log" 2>"$holistic_stderr_log" &
+    # Pipe prompt via stdin to bypass exec ARG_MAX (see audit/DoD invocations).
+    printf '%s' "$holistic_prompt" | claude -p "${hol_flags[@]}" > "$holistic_log" 2>"$holistic_stderr_log" &
     CHILD_PID=$!
     wait "$CHILD_PID" 2>/dev/null || holistic_exit_code=$?
     CHILD_PID=""
@@ -2414,8 +2455,12 @@ PROMPT
     local JSON_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.json"
     local ERR_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.stderr"
     LOG_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.log"
+    # Pipe prompt via stdin (not as CLI arg) to bypass exec ARG_MAX. The
+    # iteration prompt accumulates plan/design/historical context and routinely
+    # exceeds 128KB. claude -p reads from stdin when no positional prompt is
+    # given. See audit/DoD/holistic invocations for the same fix.
     # shellcheck disable=SC2086
-    claude -p "$PROMPT" $CLAUDE_FLAGS > "$JSON_FILE" 2>"$ERR_FILE" || true
+    printf '%s' "$PROMPT" | claude -p $CLAUDE_FLAGS > "$JSON_FILE" 2>"$ERR_FILE" || true
 
     # Extract text result from JSON into .log for backwards compat
     _extract_text_from_json "$JSON_FILE" "$LOG_FILE" "$ERR_FILE"

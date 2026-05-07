@@ -241,11 +241,26 @@ detect_stuckness() {
     STUCKNESS_HINT=""
     local iteration="${ITERATION:-0}"
     local stuckness_signals=0
+    # Subset of signals that indicate something is *actively wrong* (cycling on a real
+    # diff, repeating errors, non-zero exit pattern, budget exhaustion without passing
+    # tests). Signals 1 and 6 are *idle-style*: they also fire on done-and-idle runs
+    # where the work is committed and the tree is clean. The dampening block at the
+    # bottom uses this counter to distinguish "stuck" from "done-and-idle".
+    local active_failure_signals=0
     local stuckness_reasons=()
     local tracking_file="${STUCKNESS_TRACKING_FILE:-$LOG_DIR/stuckness-tracking.txt}"
     local tracking_lines
     tracking_lines=$(wc -l < "$tracking_file" 2>/dev/null || true)
     tracking_lines="${tracking_lines:-0}"
+
+    # MD5 of empty input — recorded by record_iteration_state when `git diff HEAD`
+    # returns nothing (i.e. the working tree is clean). A run of these hashes means
+    # "all work is committed and the tree is idle", which is the OPPOSITE of cycling
+    # (which is "same uncommitted diff repeating"). Signal 2 / 2b must skip this case
+    # so that completed work doesn't get flagged as stuck. Idle-while-passing is
+    # already covered by Signal 6 ("no code changes in last iteration") combined
+    # with the loop's TEST_PASSED gate.
+    local _empty_diff_hash="d41d8cd98f00b204e9800998ecf8427e"
 
     # Signal 1: Text overlap (existing logic) — compare last 2 iteration logs
     if [[ "$iteration" -ge 3 ]]; then
@@ -275,24 +290,29 @@ detect_stuckness() {
         fi
     fi
 
-    # Signal 2: Git diff hash — last 5 iterations produced zero or identical diffs
+    # Signal 2: Git diff hash — last 5 iterations produced identical NON-EMPTY diffs.
+    # Empty-diff hashes (clean tree) are intentionally excluded: they mean work is
+    # committed, not that the agent is repeating the same uncommitted change.
     local _signal2_fired=false
     if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 5 ]]; then
         local last_five
         last_five=$(tail -5 "$tracking_file" 2>/dev/null | cut -d'|' -f1 || true)
         local unique_hashes
         unique_hashes=$(echo "$last_five" | sort -u | grep -v '^$' | wc -l | tr -d ' ')
-        if [[ "$unique_hashes" -le 1 ]] && [[ -n "$last_five" ]]; then
+        local sole_hash
+        sole_hash=$(echo "$last_five" | sort -u | grep -v '^$' | head -1)
+        if [[ "$unique_hashes" -le 1 ]] && [[ -n "$last_five" ]] && [[ "$sole_hash" != "$_empty_diff_hash" ]]; then
             stuckness_signals=$((stuckness_signals + 1))
-            stuckness_reasons+=("identical or zero git diffs in last 5 iterations")
+            active_failure_signals=$((active_failure_signals + 1))
+            stuckness_reasons+=("identical git diffs in last 5 iterations")
             _signal2_fired=true
         fi
     fi
 
-    # Signal 2b: Explicit cycling detector — 4+ consecutive identical diffs.
+    # Signal 2b: Explicit cycling detector — 4+ consecutive identical NON-EMPTY diffs.
     # Runs independently of Signal 2 to maintain monotonic detection: if 4+ identical diffs
     # are detected, it fires and keeps firing as sequences grow longer (5+, 6+, etc).
-    # This prevents non-monotonic behavior where stronger cycling evidence could reduce detection.
+    # Skips empty-diff runs (clean tree = committed work, not cycling).
     if [[ -f "$tracking_file" ]] && [[ "$tracking_lines" -ge 4 ]]; then
         local last_four
         last_four=$(tail -4 "$tracking_file" 2>/dev/null | cut -d'|' -f1 || true)
@@ -300,8 +320,11 @@ detect_stuckness() {
         unique_four=$(echo "$last_four" | sort -u | grep -v '^$' | wc -l | tr -d ' ')
         local count_four
         count_four=$(echo "$last_four" | grep -v '^$' | wc -l | tr -d ' ')
-        if [[ "$unique_four" -le 1 ]] && [[ "${count_four:-0}" -ge 4 ]]; then
+        local sole_four
+        sole_four=$(echo "$last_four" | sort -u | grep -v '^$' | head -1)
+        if [[ "$unique_four" -le 1 ]] && [[ "${count_four:-0}" -ge 4 ]] && [[ "$sole_four" != "$_empty_diff_hash" ]]; then
             stuckness_signals=$((stuckness_signals + 2))
+            active_failure_signals=$((active_failure_signals + 2))
             stuckness_reasons+=("cycling: ${count_four} consecutive identical diffs (cycling detector)")
         fi
     fi
@@ -314,6 +337,7 @@ detect_stuckness() {
         unique_error_hashes=$(echo "$last_three_errors" | sort -u | grep -v '^none$' | grep -v '^$' | wc -l | tr -d ' ')
         if [[ "$unique_error_hashes" -eq 1 ]] && [[ -n "$(echo "$last_three_errors" | grep -v '^none$')" ]]; then
             stuckness_signals=$((stuckness_signals + 1))
+            active_failure_signals=$((active_failure_signals + 1))
             stuckness_reasons+=("same error in last 3 iterations")
         fi
     fi
@@ -328,6 +352,7 @@ detect_stuckness() {
         repeat_count=$(echo "$last_errors" | awk '{print $1}' 2>/dev/null || echo "0")
         if [[ "${repeat_count:-0}" -ge 3 ]]; then
             stuckness_signals=$((stuckness_signals + 1))
+            active_failure_signals=$((active_failure_signals + 1))
             stuckness_reasons+=("same error repeated ${repeat_count} times")
         fi
     fi
@@ -345,6 +370,7 @@ detect_stuckness() {
             done <<< "$last_three_exits"
             if [[ "$all_same" == true ]]; then
                 stuckness_signals=$((stuckness_signals + 1))
+                active_failure_signals=$((active_failure_signals + 1))
                 stuckness_reasons+=("same non-zero exit code (${first_exit}) in last 3 iterations")
             fi
         fi
@@ -367,11 +393,27 @@ detect_stuckness() {
     fi
     if [[ "$progress_pct" -gt 70 ]] && [[ "${TEST_PASSED:-false}" != "true" ]]; then
         stuckness_signals=$((stuckness_signals + 1))
+        active_failure_signals=$((active_failure_signals + 1))
         stuckness_reasons+=("used ${progress_pct}% of iteration budget without passing tests")
     fi
 
+    # Done-and-idle escape hatch: when tests pass and no *active failure* signal fired
+    # (cycling, error repetition, exit pattern, budget exhaustion), the only way to reach
+    # 2+ signals is via Signals 1 + 6 — high text overlap on similar logs and a clean
+    # tree. That is exactly what completed work looks like in the autonomous loop, not
+    # stuckness. Reset signals to 0 in this case so the loop can declare LOOP_COMPLETE
+    # without tripping the false-positive stuckness branch in the prompt builder.
+    # Cycling protection (#324, #331) is preserved because Signals 2/2b/3/4/5/7 each
+    # increment active_failure_signals — if any fires, this guard does not apply.
+    if [[ "${TEST_PASSED:-}" == "true" ]] && [[ "$active_failure_signals" -eq 0 ]] && [[ "$stuckness_signals" -ge 2 ]]; then
+        stuckness_signals=0
+        stuckness_reasons=()
+    fi
+
     # Gate-aware dampening: only when code actually changed this iteration (diff_lines > 5).
-    # Zero-diff iterations must never be dampened — that is the #324 cycling scenario.
+    # Zero-diff iterations are handled by the done-and-idle escape hatch above when an
+    # active failure signal is absent; when an active failure signal IS present, dampening
+    # is intentionally withheld so #324 cycling protection still trips.
     if [[ "${TEST_PASSED:-}" == "true" ]] && [[ "$stuckness_signals" -ge 2 ]]; then
         if [[ "${diff_lines:-0}" -gt 5 ]]; then
             if [[ "${AUDIT_RESULT:-}" == "pass" ]] || $QUALITY_GATE_PASSED 2>/dev/null; then

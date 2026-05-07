@@ -9,6 +9,27 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Per-Stage Cost Summary — Pipeline Wiring (#504 D2)
+
+Wires the cost-table foundation (rolling baselines + ASCII renderer) into the pipeline runtime so reviewers and operators see per-stage spend with HIGH/LOW vs-baseline flags at every pipeline completion.
+
+- **`cleanup_on_exit` hook** (`scripts/sw-pipeline.sh:~983`): after `cost_generate_breakdown`, the renderer prints the plain ASCII cost table to stdout on success and `cost_baseline_update` rolls the run into the rolling baseline. Order matches `cost_breakdown_command` (render first, then update) so HIGH/LOW flags compare against PRIOR runs and never include the current run.
+- **PR stage GitHub comment** (`scripts/lib/pipeline-stages-delivery.sh:~520`): after the "🎉 PR created" comment, the cost table is posted as a follow-up comment fenced in a code block so the ASCII table aligns in the GitHub UI. Failure is non-fatal — pipeline continues even if the comment post fails.
+- **Defensive helper sourcing**: `pipeline-stages-delivery.sh` defensively sources `lib/cost/{table-render,baselines}.sh` so the hook still works when the file is loaded standalone (e.g. by `lib/daemon-triage.sh`) outside the normal `sw-pipeline.sh` source chain.
+- **Test coverage**: 3 new tests in `sw-pipeline-test.sh` — wiring assertion for `cleanup_on_exit`, wiring assertion for the PR-stage comment, and a hermetic functional test that stages a 2-stage `cost-breakdown.json`, runs `render_cost_table_plain` + `cost_baseline_update`, and asserts both baseline files (all-issues + per-issue) are written with correct n counts. All 88 pipeline tests pass; 68 cost tests still green.
+
+### Ruflo MCP Bridge — Validated 31× Subprocess Reduction (#504)
+
+Closes the Ruflo MCP 1.5 series with a benchmark harness that proves the unix-socket bridge (#500/#502/#503) delivers the promised performance gains and resolves orphan-process leakage from #441.
+
+- **Benchmark harness** (`scripts/benchmark-ruflo-backends.sh`): drives identical workloads through `SW_RUFLO_BACKEND={cli,mcp}` with selectable bench tool (`memory_search` for production path, `ping` for transport-only validation), 20 samples per backend with cold-start discard, configurable percentile caps, and structured `events.jsonl` telemetry
+- **Multi-cycle orphan sentinel** (`--orphan-runs N`): runs N consecutive bridge start/bench/stop cycles and asserts zero new ruflo-related node procs survive — the #441 leak detector
+- **Ratio-based acceptance**: headline check is `cli_pids/mcp_pids ≥ BENCH_REDUCTION_RATIO` (default 10×) so the gate works on shared CI hosts where unrelated ruflo procs would otherwise inflate absolute PID counts
+- **Validated baseline**: 62 → 2 unique transient node PIDs (**31× reduction**, comfortably above the ≥10× #504 acceptance bar), p50=7 ms / p95=8 ms, 0 errors across 40 calls, 0 orphans across 3 consecutive teardown cycles. Reproducible numbers and raw artifacts documented in `docs/ruflo-mcp-transport.md` § "Validated baseline (2026-05-05)"
+- **`npm run bench:ruflo`** invokes the harness in assert mode for CI gating
+- **Acceptance-gate unit tests** (`scripts/sw-ruflo-benchmark-test.sh`, 26 assertions = 24 hermetic + 2 against real on-disk artifacts): drive `compute_percentiles` and `assert_thresholds` against synthetic JSON to prove the gate behaves correctly at the #504 boundary (passes at ≥10×, fails below, blocks on errors or p95 over cap, skips ratio check on weak CLI baseline). Test 13 additionally re-asserts the gate against the most recent benchmark JSON in `.claude/pipeline-artifacts/benchmarks/` when present, so a fresh `npm run bench:ruflo` doubles as a binding acceptance check
+- **Acceptance-criteria mapping table** (`docs/ruflo-mcp-transport.md` § "#504 acceptance-criteria mapping"): explicit row-per-criterion table mapping every checkbox in #504's acceptance list to its measured value, status, and evidence (artifact path or `file:line`). Calls out the ⚠️ — issue's ≤5 ms per-call latency vs measured 7 ms p50 — as an approved trade-off (binding 15 ms p95 gate met per maintainer approval on #504; headline ≥10× subprocess reduction met with 31×)
+
 ### Ruflo Self-Heal Hypothesis Hive
 
 Intelligent root-cause triage on test failure with specialist hypothesis spawning and adaptive synthesis.

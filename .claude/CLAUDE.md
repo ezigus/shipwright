@@ -21,3 +21,4 @@ Optional repo-specific additions:
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `RUFLO_SELF_HEAL_HIVE=true` | unset | Enable root-cause triage on test failure with specialist hypothesis spawning and synthesis |
+

@@ -3173,18 +3173,17 @@ _lp_no_gh_out="$(
         case "${SW_LOG_PROMPTS:-off}" in
             github|both)
                 if [[ -n "${ISSUE_NUMBER:-}" ]] && type sanitize_secrets >/dev/null 2>&1; then
-                    local redacted truncated body
-                    redacted="$(sanitize_secrets "$final_prompt")"
-                    if [[ ${#redacted} -gt 50000 ]]; then
-                        truncated="${redacted:0:50000} …[TRUNCATED]"
+                    _t5_redacted="$(sanitize_secrets "$final_prompt")"
+                    if [[ ${#_t5_redacted} -gt 50000 ]]; then
+                        _t5_truncated="${_t5_redacted:0:50000} …[TRUNCATED]"
                     else
-                        truncated="$redacted"
+                        _t5_truncated="$_t5_redacted"
                     fi
-                    body="prompt: ${truncated}"
+                    _t5_body="prompt: ${_t5_truncated}"
                     if [[ -n "${PROGRESS_COMMENT_ID:-}" ]] && type gh_update_progress >/dev/null 2>&1; then
-                        gh_update_progress "$body"
+                        gh_update_progress "$_t5_body"
                     elif type gh_comment_issue >/dev/null 2>&1; then
-                        gh_comment_issue "$ISSUE_NUMBER" "$body"
+                        gh_comment_issue "$ISSUE_NUMBER" "$_t5_body"
                     fi
                 fi ;;
         esac

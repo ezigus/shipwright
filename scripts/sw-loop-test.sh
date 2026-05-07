@@ -3039,6 +3039,170 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SW_LOG_PROMPTS — prompt transparency tests
+# ═══════════════════════════════════════════════════════════════════════════════
+echo ""
+echo -e "${DIM}  SW_LOG_PROMPTS: prompt transparency${RESET}"
+
+# Shared stubs used by all four subtests (sourced inside each subshell).
+_lp_stubs() {
+    info()              { echo "INFO: $*"; }
+    warn()              { echo "WARN: $*"; }
+    sanitize_secrets()  {
+        local t="$1"
+        t="$(echo "$t" | sed 's/sk-[a-zA-Z0-9_-]*/sk-***REDACTED***/g')"
+        t="$(echo "$t" | sed 's/Bearer [a-zA-Z0-9_.-]*/Bearer ***REDACTED***/g')"
+        t="$(echo "$t" | sed 's/ANTHROPIC_API_KEY=[^ ]*/ANTHROPIC_API_KEY=***REDACTED***/g')"
+        echo "$t"
+    }
+    gh_comment_issue()  { echo "GH_COMMENT_ISSUE called: issue=$1"; echo "$2"; }
+    gh_update_progress(){ echo "GH_UPDATE_PROGRESS called"; }
+    ITERATION=3
+    LOG_DIR="${TMPDIR:-/tmp}"
+}
+
+# Inline the SW_LOG_PROMPTS block that was added to loop-iteration.sh so tests
+# exercise the exact logic without requiring a full loop run.
+_lp_run_block() {
+    local sw_flag="$1" final_prompt="$2" issue_num="${3:-}" progress_id="${4:-}"
+    (
+        _lp_stubs
+        local prompt_chars=${#final_prompt}
+        local prompt_path="$LOG_DIR/iteration-${ITERATION}.prompt.txt"
+        ISSUE_NUMBER="$issue_num"
+        PROGRESS_COMMENT_ID="$progress_id"
+        SW_LOG_PROMPTS="$sw_flag"
+        info "Prompt saved → $prompt_path (${prompt_chars} chars)"
+        case "${SW_LOG_PROMPTS:-off}" in
+            stdout|both)
+                echo ""
+                echo "━━━━━━━━━━━ AGENT PROMPT — Iteration ${ITERATION} ━━━━━━━━━━━"
+                printf '%s\n' "$final_prompt"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo ""
+                ;;
+        esac
+        case "${SW_LOG_PROMPTS:-off}" in
+            github|both)
+                if [[ -n "${ISSUE_NUMBER:-}" ]] && type sanitize_secrets >/dev/null 2>&1; then
+                    local redacted truncated body
+                    redacted="$(sanitize_secrets "$final_prompt")"
+                    if [[ ${#redacted} -gt 50000 ]]; then
+                        truncated="${redacted:0:50000} …[TRUNCATED — full prompt at $prompt_path on builder]"
+                    else
+                        truncated="$redacted"
+                    fi
+                    body="### Agent Prompt — Iteration ${ITERATION}
+
+<details><summary>Prompt (${prompt_chars} chars, redacted)</summary>
+
+\`\`\`
+${truncated}
+\`\`\`
+
+</details>"
+                    if [[ -n "${PROGRESS_COMMENT_ID:-}" ]] && type gh_update_progress >/dev/null 2>&1; then
+                        gh_update_progress "$body"
+                    else
+                        gh_comment_issue "$ISSUE_NUMBER" "$body"
+                    fi
+                fi ;;
+        esac
+    ) 2>&1
+}
+
+# Test 1: default (off) — path info line only, no box, no GitHub comment
+_lp_out="$(_lp_run_block "off" "hello world" "42" "")"
+assert_contains     "SW_LOG_PROMPTS off: info path line printed"  "$_lp_out" "Prompt saved →"
+if echo "$_lp_out" | grep -qF "AGENT PROMPT — Iteration"; then
+    assert_fail "SW_LOG_PROMPTS off: no boxed header printed"
+else
+    assert_pass "SW_LOG_PROMPTS off: no boxed header printed"
+fi
+if echo "$_lp_out" | grep -qF "GH_COMMENT_ISSUE called"; then
+    assert_fail "SW_LOG_PROMPTS off: no GitHub comment posted"
+else
+    assert_pass "SW_LOG_PROMPTS off: no GitHub comment posted"
+fi
+
+# Test 2: stdout — boxed header + content, no GitHub comment
+_lp_out="$(_lp_run_block "stdout" "hello world" "42" "")"
+assert_contains "SW_LOG_PROMPTS stdout: boxed header printed" "$_lp_out" "AGENT PROMPT — Iteration"
+assert_contains "SW_LOG_PROMPTS stdout: prompt content visible" "$_lp_out" "hello world"
+if echo "$_lp_out" | grep -qF "GH_COMMENT_ISSUE called"; then
+    assert_fail "SW_LOG_PROMPTS stdout: no GitHub comment posted"
+else
+    assert_pass "SW_LOG_PROMPTS stdout: no GitHub comment posted"
+fi
+
+# Test 3: github — secrets redacted, gh_comment_issue called (no rolling ID)
+_lp_out="$(_lp_run_block "github" "use ANTHROPIC_API_KEY=sk-secret123 to auth" "42" "")"
+assert_contains "SW_LOG_PROMPTS github: gh_comment_issue called" "$_lp_out" "GH_COMMENT_ISSUE called"
+if echo "$_lp_out" | grep -qF "sk-secret123"; then
+    assert_fail "SW_LOG_PROMPTS github: raw secret absent from comment"
+else
+    assert_pass "SW_LOG_PROMPTS github: raw secret absent from comment"
+fi
+assert_contains "SW_LOG_PROMPTS github: REDACTED marker present" "$_lp_out" "***REDACTED***"
+
+# Test 4: github + PROGRESS_COMMENT_ID — uses rolling update, not new comment
+_lp_out="$(_lp_run_block "github" "task: refactor auth" "42" "99999")"
+assert_contains "SW_LOG_PROMPTS github+rolling: uses gh_update_progress" "$_lp_out" "GH_UPDATE_PROGRESS called"
+if echo "$_lp_out" | grep -qF "GH_COMMENT_ISSUE called"; then
+    assert_fail "SW_LOG_PROMPTS github+rolling: does NOT create new comment"
+else
+    assert_pass "SW_LOG_PROMPTS github+rolling: does NOT create new comment"
+fi
+
+# Test 5: github mode with gh helpers absent — must not abort (graceful no-op)
+_lp_no_gh_out="$(
+    (
+        # Define only the minimum stubs — deliberately omit gh_comment_issue and gh_update_progress
+        info()             { echo "INFO: $*"; }
+        sanitize_secrets() { echo "$1"; }
+        ITERATION=1
+        LOG_DIR="${TMPDIR:-/tmp}"
+        SW_LOG_PROMPTS="github"
+        ISSUE_NUMBER="42"
+        PROGRESS_COMMENT_ID=""
+        final_prompt="task: add feature"
+        prompt_chars=${#final_prompt}
+        prompt_path="$LOG_DIR/iteration-1.prompt.txt"
+        info "Prompt saved → $prompt_path (${prompt_chars} chars)"
+        case "${SW_LOG_PROMPTS:-off}" in stdout|both) echo "BOX" ;; esac
+        case "${SW_LOG_PROMPTS:-off}" in
+            github|both)
+                if [[ -n "${ISSUE_NUMBER:-}" ]] && type sanitize_secrets >/dev/null 2>&1; then
+                    _t5_redacted="$(sanitize_secrets "$final_prompt")"
+                    if [[ ${#_t5_redacted} -gt 50000 ]]; then
+                        _t5_truncated="${_t5_redacted:0:50000} …[TRUNCATED]"
+                    else
+                        _t5_truncated="$_t5_redacted"
+                    fi
+                    _t5_body="prompt: ${_t5_truncated}"
+                    if [[ -n "${PROGRESS_COMMENT_ID:-}" ]] && type gh_update_progress >/dev/null 2>&1; then
+                        gh_update_progress "$_t5_body"
+                    elif type gh_comment_issue >/dev/null 2>&1; then
+                        gh_comment_issue "$ISSUE_NUMBER" "$_t5_body"
+                    fi
+                fi ;;
+        esac
+        echo "COMPLETED"
+    ) 2>&1
+)"
+if echo "$_lp_no_gh_out" | grep -qF "COMPLETED"; then
+    assert_pass "SW_LOG_PROMPTS github no-helpers: block completes without abort"
+else
+    assert_fail "SW_LOG_PROMPTS github no-helpers: block completes without abort" \
+        "Block did not reach COMPLETED — may have aborted"
+fi
+if echo "$_lp_no_gh_out" | grep -qiE "command not found|gh_comment_issue"; then
+    assert_fail "SW_LOG_PROMPTS github no-helpers: no command-not-found error"
+else
+    assert_pass "SW_LOG_PROMPTS github no-helpers: no command-not-found error"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

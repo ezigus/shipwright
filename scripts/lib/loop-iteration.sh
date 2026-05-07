@@ -712,6 +712,48 @@ run_claude_iteration() {
             "raw_chars=$raw_prompt_chars" "path=iteration-${ITERATION}.prompt.txt" || true
     fi
 
+    # Surface the prompt path; optionally mirror to stdout or GitHub (SW_LOG_PROMPTS).
+    local prompt_path="$LOG_DIR/iteration-${ITERATION}.prompt.txt"
+    info "Prompt saved → $prompt_path (${prompt_chars} chars)"
+
+    case "${SW_LOG_PROMPTS:-off}" in
+        stdout|both)
+            echo ""
+            echo "━━━━━━━━━━━ AGENT PROMPT — Iteration ${ITERATION} ━━━━━━━━━━━"
+            printf '%s\n' "$final_prompt"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            ;;
+    esac
+
+    case "${SW_LOG_PROMPTS:-off}" in
+        github|both)
+            if [[ -n "${ISSUE_NUMBER:-}" ]] && type sanitize_secrets >/dev/null 2>&1; then
+                local redacted truncated body
+                redacted="$(sanitize_secrets "$final_prompt")"
+                if [[ ${#redacted} -gt 50000 ]]; then
+                    truncated="${redacted:0:50000} …[TRUNCATED — full prompt at $prompt_path on builder]"
+                else
+                    truncated="$redacted"
+                fi
+                body="### Agent Prompt — Iteration ${ITERATION}
+
+<details><summary>Prompt (${prompt_chars} chars, redacted)</summary>
+
+\`\`\`
+${truncated}
+\`\`\`
+
+</details>"
+                if [[ -n "${PROGRESS_COMMENT_ID:-}" ]] && type gh_update_progress >/dev/null 2>&1; then
+                    gh_update_progress "$body"
+                elif type gh_comment_issue >/dev/null 2>&1; then
+                    gh_comment_issue "$ISSUE_NUMBER" "$body"
+                fi
+            fi
+            ;;
+    esac
+
     # Emit context efficiency metrics
     if type emit_event >/dev/null 2>&1; then
         local trim_ratio=0

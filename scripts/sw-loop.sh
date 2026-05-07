@@ -59,6 +59,8 @@ fi
 # Audit trail for compliance-grade pipeline traceability
 # shellcheck source=lib/audit-trail.sh
 [[ -f "$SCRIPT_DIR/lib/audit-trail.sh" ]] && source "$SCRIPT_DIR/lib/audit-trail.sh" 2>/dev/null || true
+# GitHub helpers (gh_comment_issue, gh_update_progress) for SW_LOG_PROMPTS=github|both
+[[ -f "$SCRIPT_DIR/lib/pipeline-github.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-github.sh" 2>/dev/null || true
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }

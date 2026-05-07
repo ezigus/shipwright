@@ -574,6 +574,9 @@ ${_build_recall_ctx}"
     export PIPELINE_JOB_ID="${PIPELINE_NAME:-pipeline-$$}"
     # Per-iteration cost sidecar (issue #87) — read by sw-loop.sh's record_iteration_cost.
     export ITER_COST_JSONL="${ARTIFACTS_DIR}/loop-iteration-costs.jsonl"
+    # Export so SW_LOG_PROMPTS=github|both can post/update GitHub comments from the loop subprocess.
+    export ISSUE_NUMBER="${ISSUE_NUMBER:-}"
+    export PROGRESS_COMMENT_ID="${PROGRESS_COMMENT_ID:-}"
     sw loop "${loop_args[@]}" < /dev/null 2>"$_token_log" || {
         local _loop_exit=$?
         parse_claude_tokens "$_token_log"

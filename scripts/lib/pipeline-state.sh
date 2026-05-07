@@ -291,8 +291,10 @@ mark_stage_complete() {
 }
 
 persist_artifacts() {
-    # Commit and push pipeline artifacts to the feature branch mid-pipeline.
+    # Commit pipeline artifacts to the feature branch mid-pipeline.
     # Only runs in CI — local runs skip. Non-fatal: logs failure but never crashes.
+    # NOTE: intentionally does NOT push — GHA post-step and ci_push_partial_work
+    # safety nets handle remote push so this stays outside the pipeline loop.
     [[ "${CI_MODE:-false}" != "true" ]] && return 0
     [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
     [[ -z "${ARTIFACTS_DIR:-}" ]] && return 0
@@ -317,19 +319,37 @@ persist_artifacts() {
 
     info "Persisting ${#to_add[@]} artifact(s) after stage ${stage}..."
 
-    (
+    local commit_status="noop"
+
+    # Use compound command (not subshell) so commit_status is visible in parent scope.
+    # Intentionally no git push here — GHA always-step and ci_push_partial_work
+    # safety nets (watchdog at T-5min, cleanup_on_exit on failure) handle remote push.
+    {
         git add "${to_add[@]}" 2>/dev/null || true
         git restore --staged .claude/daemon-config.json 2>/dev/null || true
         if ! git diff --cached --quiet 2>/dev/null; then
-            git commit -m "chore: persist ${stage} artifacts for #${ISSUE_NUMBER} [skip ci]" --no-verify 2>/dev/null || true
-            local branch="shipwright/issue-${ISSUE_NUMBER}"
-            git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null || true
-            emit_event "artifacts.persisted" "issue=${ISSUE_NUMBER}" "stage=$stage" "file_count=${#to_add[@]}"
+            if git commit -m "chore: persist ${stage} artifacts for #${ISSUE_NUMBER} [skip ci]" \
+                    --no-verify 2>/dev/null; then
+                commit_status="committed"
+            else
+                commit_status="commit_failed"
+            fi
         fi
-    ) 2>/dev/null || {
-        warn "persist_artifacts($stage): push failed — non-fatal, continuing"
-        emit_event "artifacts.persist_failed" "issue=${ISSUE_NUMBER}" "stage=$stage"
-    }
+    } || true
+
+    case "$commit_status" in
+        committed)
+            emit_event "artifacts.persisted" \
+                "issue=${ISSUE_NUMBER}" "stage=$stage" "file_count=${#to_add[@]}"
+            ;;
+        commit_failed)
+            warn "persist_artifacts($stage): local commit failed — non-fatal, continuing"
+            emit_event "artifacts.persist_failed" "issue=${ISSUE_NUMBER}" "stage=$stage"
+            ;;
+        noop)
+            : # nothing to commit — silent
+            ;;
+    esac
 
     return 0
 }

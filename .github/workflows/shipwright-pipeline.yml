@@ -547,7 +547,7 @@ jobs:
           RECOVERED=0
           SNAP_DIR=".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}"
           mkdir -p ".claude/pipeline-artifacts"
-          for f in plan.md dod.md context-bundle.md design.md; do
+          for f in plan.md dod.md context-bundle.md design.md composed-pipeline.json; do
             FPATH=".claude/pipeline-artifacts/${f}"
             SNAP=".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}/${f}"
             # Restore from issue-scoped snapshot if flat file is missing/empty

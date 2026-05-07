@@ -2222,13 +2222,14 @@ test_partial_work_push_condition() {
     }
 
     local step_block if_line
+    # Match both the legacy step name and the current "Snapshot resume-essentials" step.
     step_block=$(
         awk '
             /^[[:space:]]*-[[:space:]]+name:/ {
                 if (in_target) {
                     exit
                 }
-                if ($0 ~ /Push partial work on/) {
+                if ($0 ~ /Push partial work on/ || $0 ~ /Snapshot resume-essentials/) {
                     in_target=1
                 }
             }
@@ -2255,8 +2256,10 @@ test_partial_work_push_condition() {
         return
     fi
 
-    if ! printf '%s\n' "$if_line" | grep -q "failure() || cancelled()"; then
-        assert_fail "partial-work push condition: step must use (failure() || cancelled()), got: $if_line"
+    # Accept always() (superset: runs on success, failure, and cancelled) or the
+    # legacy (failure() || cancelled()) form.
+    if ! printf '%s\n' "$if_line" | grep -qE "always\(\)|failure\(\)[[:space:]]*\|\|[[:space:]]*cancelled\(\)"; then
+        assert_fail "partial-work push condition: step must use always() or (failure() || cancelled()), got: $if_line"
         return
     fi
 
@@ -2998,6 +3001,444 @@ assert_state_not_contains() {
     return 0
 }
 
+# ══════════════════════════════════════════════════════════════════════════════
+# compose_prompt iteration-awareness tests (TDD — written before implementation)
+#
+# These tests validate the planned iteration-aware prompt composition changes in
+# scripts/lib/loop-iteration.sh :: compose_prompt(). Each test creates a self-
+# contained subshell with all required stubs, sources the real loop-iteration.sh,
+# and inspects compose_prompt output.
+#
+# Stub scaffold shared by all 10 tests (written inline per test for isolation).
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Helper: write the common stub preamble into a given file.
+# Usage: _write_compose_prompt_stubs <file> [emit_event_override]
+_write_compose_prompt_stubs() {
+    local stub_file="$1"
+    local emit_override="${2:-}"
+    [[ -z "$emit_override" ]] && emit_override='emit_event() { true; }'
+    cat > "$stub_file" <<STUBEOF
+#!/usr/bin/env bash
+set -uo pipefail
+
+# --- dependency stubs for compose_prompt ---
+git_recent_log()                     { echo "recent git log"; }
+compose_audit_section()              { echo ""; }
+compose_audit_feedback_section()     { echo ""; }
+compose_holistic_feedback_section()  { echo ""; }
+compose_quality_gate_detail_section() { echo ""; }
+compose_rejection_notice_section()   { echo ""; }
+detect_stuckness()                   { return 1; }
+compose_task_section()               { echo ""; }
+explore_alternative_strategy()       { echo ""; }
+memory_inject_context()              { echo ""; }
+inject_discoveries()                 { echo ""; }
+memory_get_dora_baseline()           { echo "{}"; }
+info()    { true; }
+warn()    { true; }
+error()   { true; }
+success() { true; }
+${emit_override}
+
+# --- environment expected by compose_prompt ---
+ITERATION="\${ITERATION:-1}"
+MAX_ITERATIONS="\${MAX_ITERATIONS:-10}"
+LOG_DIR="\${LOG_DIR:-/tmp/test-loop-stub-$$}"
+PROJECT_ROOT="\${PROJECT_ROOT:-/tmp}"
+SCRIPT_DIR="\${SCRIPT_DIR:-/tmp}"
+ARTIFACTS_DIR="\${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
+LOG_ENTRIES="\${LOG_ENTRIES:-}"
+TEST_CMD="\${TEST_CMD:-}"
+TEST_PASSED="\${TEST_PASSED:-}"
+TEST_OUTPUT="\${TEST_OUTPUT:-}"
+ORIGINAL_GOAL="\${ORIGINAL_GOAL:-test goal}"
+GOAL="\${GOAL:-test goal}"
+LOOP_START_COMMIT="\${LOOP_START_COMMIT:-}"
+SESSION_RESTART="\${SESSION_RESTART:-false}"
+RESUMED_FROM_ITERATION="\${RESUMED_FROM_ITERATION:-}"
+PREV_NEW_COMMITS="\${PREV_NEW_COMMITS:-0}"
+QUALITY_GATE_PASSED="\${QUALITY_GATE_PASSED:-true}"
+AUDIT_ENABLED="\${AUDIT_ENABLED:-false}"
+AUDIT_RESULT="\${AUDIT_RESULT:-}"
+HOLISTIC_RESULT="\${HOLISTIC_RESULT:-}"
+COMPLETION_REJECTED="\${COMPLETION_REJECTED:-false}"
+GATES_PASSED_NO_SIGNAL="\${GATES_PASSED_NO_SIGNAL:-false}"
+NO_GITHUB="\${NO_GITHUB:-true}"
+LOOP_CONTEXT_FILE="\${LOOP_CONTEXT_FILE:-}"
+STUBEOF
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 57. compose_prompt iter 1 includes pipeline_context_section
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_iter1_includes_pipeline_context() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-iter1-ctx.XXXXXX")
+    local ctx_file="$tmp_dir/ctx.txt"
+    echo "SENTINEL_CONTEXT_CONTENT" > "$ctx_file"
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file"
+
+    local output
+    output=$(
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=1
+        export LOOP_CONTEXT_FILE="$ctx_file"
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt
+    ) 2>/dev/null || output=""
+
+    rm -rf "$tmp_dir"
+
+    if echo "$output" | grep -qF "SENTINEL_CONTEXT_CONTENT"; then
+        return 0
+    else
+        echo "Expected 'SENTINEL_CONTEXT_CONTENT' in compose_prompt output on iteration 1"
+        return 1
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 58. compose_prompt iter 2 omits pipeline_context_section
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_iter2_omits_pipeline_context() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-iter2-noctx.XXXXXX")
+    local ctx_file="$tmp_dir/ctx.txt"
+    echo "SENTINEL_CONTEXT_CONTENT" > "$ctx_file"
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file"
+
+    local output
+    output=$(
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=2
+        export LOOP_CONTEXT_FILE="$ctx_file"
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt
+    ) 2>/dev/null || output=""
+
+    rm -rf "$tmp_dir"
+
+    if echo "$output" | grep -qF "SENTINEL_CONTEXT_CONTENT"; then
+        echo "compose_prompt on iteration 2 should NOT include pipeline_context_section"
+        return 1
+    else
+        return 0
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 59. compose_prompt iter 2 prepends REFERENCE ONLY label to history
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_iter2_reference_only_label() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-iter2-refonly.XXXXXX")
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file"
+
+    local output
+    output=$(
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=2
+        export LOG_ENTRIES="Iteration 1 summary"
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt
+    ) 2>/dev/null || output=""
+
+    rm -rf "$tmp_dir"
+
+    if echo "$output" | grep -qF "REFERENCE ONLY"; then
+        return 0
+    else
+        echo "Expected 'REFERENCE ONLY' label in compose_prompt output on iteration 2"
+        return 1
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 60. compose_prompt iter 2 demotes full test output when error summary present
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_iter2_test_section_demoted() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-iter2-demote.XXXXXX")
+    mkdir -p "$tmp_dir/log"
+
+    # Build 80-line test output; line 1 should NOT appear when demoted
+    local long_output
+    long_output="$(seq 1 80 | while read -r n; do printf 'line %d\n' "$n"; done)"
+
+    # Write an error-summary.json so error_summary_section is non-empty
+    cat > "$tmp_dir/log/error-summary.json" <<'JSON'
+{"error_count":1,"error_lines":["structured errors here"]}
+JSON
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file"
+
+    local output
+    output=$(
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=2
+        export TEST_PASSED=false
+        export TEST_OUTPUT="$long_output"
+        export LOG_DIR="$tmp_dir/log"
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt
+    ) 2>/dev/null || output=""
+
+    rm -rf "$tmp_dir"
+
+    # Must NOT contain the very first line of the 80-line output
+    if echo "$output" | grep -qF "line 1"; then
+        echo "Full test output should be demoted on iteration 2 when error summary is present (line 1 found)"
+        return 1
+    fi
+    # Must contain either a "Last 30 lines" indicator or a "Structured Error Summary" cross-reference
+    if echo "$output" | grep -qE "Last 30 lines|Structured Error Summary"; then
+        return 0
+    else
+        echo "Expected 'Last 30 lines' or 'Structured Error Summary' cross-reference in demoted test section"
+        return 1
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 61. compose_prompt SESSION_RESTART=true forces full context even at iter 5
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_session_restart_full_context() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-restart-ctx.XXXXXX")
+    local ctx_file="$tmp_dir/ctx.txt"
+    echo "SENTINEL_CONTEXT_CONTENT" > "$ctx_file"
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file"
+
+    local output
+    output=$(
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=5
+        export SESSION_RESTART=true
+        export LOOP_CONTEXT_FILE="$ctx_file"
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt
+    ) 2>/dev/null || output=""
+
+    rm -rf "$tmp_dir"
+
+    if echo "$output" | grep -qF "SENTINEL_CONTEXT_CONTENT"; then
+        return 0
+    else
+        echo "Expected 'SENTINEL_CONTEXT_CONTENT' in compose_prompt output when SESSION_RESTART=true (iter 5)"
+        return 1
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 62. compose_prompt RESUMED_FROM_ITERATION forces full context
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_resumed_full_context() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-resumed-ctx.XXXXXX")
+    local ctx_file="$tmp_dir/ctx.txt"
+    echo "SENTINEL_CONTEXT_CONTENT" > "$ctx_file"
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file"
+
+    local output
+    output=$(
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=3
+        export RESUMED_FROM_ITERATION=2
+        export LOOP_CONTEXT_FILE="$ctx_file"
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt
+    ) 2>/dev/null || output=""
+
+    rm -rf "$tmp_dir"
+
+    if echo "$output" | grep -qF "SENTINEL_CONTEXT_CONTENT"; then
+        return 0
+    else
+        echo "Expected 'SENTINEL_CONTEXT_CONTENT' in compose_prompt when RESUMED_FROM_ITERATION is set"
+        return 1
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 63. compose_prompt iter 2 includes recent commits since LOOP_START_COMMIT
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_iter2_recent_commits_section() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-iter2-commits.XXXXXX")
+
+    # Create a minimal git repo with a commit so git log works
+    local git_dir="$tmp_dir/repo"
+    mkdir -p "$git_dir"
+    git -C "$git_dir" init --quiet
+    git -C "$git_dir" config user.email "test@test.com"
+    git -C "$git_dir" config user.name "Test"
+    echo "init" > "$git_dir/init.txt"
+    git -C "$git_dir" add init.txt
+    git -C "$git_dir" commit -m "init" --quiet
+    local start_commit
+    start_commit=$(git -C "$git_dir" rev-parse HEAD)
+    echo "work" > "$git_dir/work.txt"
+    git -C "$git_dir" add work.txt
+    git -C "$git_dir" commit -m "feat: work done" --quiet
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file"
+
+    local output
+    output=$(
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=2
+        export LOOP_START_COMMIT="$start_commit"
+        export PROJECT_ROOT="$git_dir"
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt
+    ) 2>/dev/null || output=""
+
+    rm -rf "$tmp_dir"
+
+    if echo "$output" | grep -qF "Commits This Pipeline"; then
+        return 0
+    else
+        echo "Expected 'Commits This Pipeline' section in compose_prompt on iteration 2 with LOOP_START_COMMIT set"
+        return 1
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 64. compose_prompt iter 2 appends Reference trailer after Rules
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_iter2_reference_trailer() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-iter2-ref.XXXXXX")
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file"
+
+    local output
+    output=$(
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=2
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt
+    ) 2>/dev/null || output=""
+
+    rm -rf "$tmp_dir"
+
+    if echo "$output" | grep -qF "pipeline-artifacts"; then
+        return 0
+    else
+        echo "Expected 'pipeline-artifacts' reference trailer in compose_prompt on iteration 2"
+        return 1
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 65. compose_prompt iter 1 does NOT include Reference trailer
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_iter1_no_reference_trailer() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-iter1-noref.XXXXXX")
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file"
+
+    local output
+    output=$(
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=1
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt
+    ) 2>/dev/null || output=""
+
+    rm -rf "$tmp_dir"
+
+    if echo "$output" | grep -qF "Reference (read on demand"; then
+        echo "compose_prompt on iteration 1 should NOT include the Reference trailer"
+        return 1
+    else
+        return 0
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 66. compose_prompt emits context.iteration_prompt event
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_emits_context_event() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-event.XXXXXX")
+    local event_file="$tmp_dir/events.txt"
+
+    # Override emit_event stub to write to event_file
+    local emit_override
+    emit_override='emit_event() { echo "$1" >> '"$event_file"'; }'
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file" "$emit_override"
+
+    (
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=2
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt > /dev/null
+    ) 2>/dev/null || true
+
+    local found=false
+    if [[ -f "$event_file" ]] && grep -qF "context.iteration_prompt" "$event_file"; then
+        found=true
+    fi
+
+    rm -rf "$tmp_dir"
+
+    if [[ "$found" == "true" ]]; then
+        return 0
+    else
+        echo "Expected emit_event to be called with 'context.iteration_prompt' during compose_prompt"
+        return 1
+    fi
+}
+
 main() {
     local filter="${1:-}"
 
@@ -3108,6 +3549,16 @@ main() {
         "test_cleanup_wires_cost_baseline_and_render:Cost: cleanup_on_exit wires render + baseline_update (#504 D2)"
         "test_pr_stage_posts_cost_table_comment:Cost: PR stage posts cost-table comment (#504 D2)"
         "test_cost_helpers_functional_against_staged_breakdown:Cost: hermetic render + baseline_update against staged breakdown (#504 D2)"
+        "test_compose_prompt_iter1_includes_pipeline_context:Loop: compose_prompt iter 1 includes pipeline_context_section"
+        "test_compose_prompt_iter2_omits_pipeline_context:Loop: compose_prompt iter 2 omits pipeline_context_section"
+        "test_compose_prompt_iter2_reference_only_label:Loop: compose_prompt iter 2 prepends REFERENCE ONLY label to history"
+        "test_compose_prompt_iter2_test_section_demoted:Loop: compose_prompt iter 2 demotes full test output when error summary present"
+        "test_compose_prompt_session_restart_full_context:Loop: compose_prompt SESSION_RESTART=true forces full context at iter 5"
+        "test_compose_prompt_resumed_full_context:Loop: compose_prompt RESUMED_FROM_ITERATION forces full context"
+        "test_compose_prompt_iter2_recent_commits_section:Loop: compose_prompt iter 2 includes Commits This Pipeline section"
+        "test_compose_prompt_iter2_reference_trailer:Loop: compose_prompt iter 2 appends pipeline-artifacts reference trailer"
+        "test_compose_prompt_iter1_no_reference_trailer:Loop: compose_prompt iter 1 does NOT include Reference trailer"
+        "test_compose_prompt_emits_context_event:Loop: compose_prompt emits context.iteration_prompt event"
     )
 
     for entry in "${tests[@]}"; do

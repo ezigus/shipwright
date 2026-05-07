@@ -9,6 +9,10 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 VERSION="3.6.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ─── Shared process-cleanup primitives ───────────────────────────────────────
+# shellcheck source=lib/proc-utils.sh
+[[ -f "$SCRIPT_DIR/lib/proc-utils.sh" ]] && source "$SCRIPT_DIR/lib/proc-utils.sh" 2>/dev/null || true
+
 # ─── Cross-platform compatibility ──────────────────────────────────────────
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
@@ -298,7 +302,12 @@ dashboard_stop() {
 
     info "Stopping dashboard (PID: ${pid})..."
 
-    kill "$pid" 2>/dev/null || true
+    # Tree kill reaches bun → Node grandchildren spawned by the server.
+    if declare -f _kill_process_tree >/dev/null 2>&1; then
+        _kill_process_tree TERM "$pid" 2>/dev/null || true
+    else
+        kill "$pid" 2>/dev/null || true
+    fi
 
     # Wait for graceful shutdown (up to 5s)
     local wait_secs=0
@@ -309,7 +318,11 @@ dashboard_stop() {
 
     if kill -0 "$pid" 2>/dev/null; then
         warn "Dashboard didn't stop gracefully — sending SIGKILL"
-        kill -9 "$pid" 2>/dev/null || true
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree KILL "$pid" 2>/dev/null || true
+        else
+            kill -9 "$pid" 2>/dev/null || true
+        fi
     fi
 
     rm -f "$PID_FILE"

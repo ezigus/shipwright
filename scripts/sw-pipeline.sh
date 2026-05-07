@@ -832,11 +832,18 @@ HEARTBEAT_JOB_ID=""
 start_heartbeat() {
     HEARTBEAT_JOB_ID="${REPO_HASH:+${REPO_HASH}-}${PIPELINE_NAME:-pipeline-$$}"
     local job_id="$HEARTBEAT_JOB_ID"
+    # Capture parent PID before forking so the subshell can poll it.
+    # Covers Class 2 (partial-cleanup) and Class 3 (hard-kill) orphan scenarios
+    # where the parent exits without reaching stop_heartbeat().
+    local _hb_parent_pid=$$
     (
         _hb_sleep_pid=""
-        # Kill the active sleep child on SIGTERM so it doesn't orphan to init.
-        trap '[[ -n "$_hb_sleep_pid" ]] && kill "$_hb_sleep_pid" 2>/dev/null || true; exit 0' TERM
-        while true; do
+        # TERM trap: fast shutdown on Class 1 (clean exit via stop_heartbeat).
+        # Kept alongside the _parent_alive polling below so both paths work.
+        trap '[[ -n "$_hb_sleep_pid" ]] && kill "$_hb_sleep_pid" 2>/dev/null || true; exit 0' TERM EXIT
+        # Poll parent existence each iteration — exits naturally on parent death
+        # regardless of signal delivery (handles SIGKILL and mid-cleanup exits).
+        while _parent_alive "$_hb_parent_pid" 2>/dev/null; do
             "$SCRIPT_DIR/sw-heartbeat.sh" write "$job_id" \
                 --pid $$ \
                 --issue "${ISSUE_NUMBER:-0}" \
@@ -854,7 +861,12 @@ start_heartbeat() {
 
 stop_heartbeat() {
     if [[ -n "${HEARTBEAT_PID:-}" ]]; then
-        kill "$HEARTBEAT_PID" 2>/dev/null || true
+        # Use BFS tree kill so any tools spawned by sw-heartbeat.sh are also reaped.
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree TERM "$HEARTBEAT_PID" 2>/dev/null || true
+        else
+            kill "$HEARTBEAT_PID" 2>/dev/null || true
+        fi
         wait "$HEARTBEAT_PID" 2>/dev/null || true
         "$SCRIPT_DIR/sw-heartbeat.sh" clear "${HEARTBEAT_JOB_ID:-${PIPELINE_NAME:-pipeline-$$}}" 2>/dev/null || true
         HEARTBEAT_PID=""
@@ -882,6 +894,12 @@ ci_push_partial_work() {
         cp "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" "$_events_snap" 2>/dev/null || true
         git add "$_events_snap" 2>/dev/null || true
     fi
+
+    # Force-add issue-scoped artifact snapshots — .gitignore ignores the parent
+    # pipeline-artifacts/ directory as a unit, which silently defeats the !issue-*/
+    # negation rule. git add -f bypasses .gitignore for these specific paths.
+    local _snap_dir="${ARTIFACTS_DIR:-${STATE_DIR:-}/pipeline-artifacts}/issue-${ISSUE_NUMBER}"
+    [[ -d "$_snap_dir" ]] && git add -f "$_snap_dir/" 2>/dev/null || true
 
     # Only push if we have uncommitted changes (excluding daemon-config.json runtime writes)
     if ! git diff --quiet -- ':!.claude/daemon-config.json' 2>/dev/null || \
@@ -931,6 +949,8 @@ _PIPELINE_SIGNALED=false
 
 cleanup_on_exit() {
     local exit_code=$?
+    local _grace="${PIPELINE_KILL_GRACE:-25}"
+    [[ "$_grace" =~ ^[0-9]+$ ]] || _grace=25
     [[ "${_cleanup_done:-}" == "true" ]] && return 0
     _cleanup_done=true
 
@@ -1018,18 +1038,22 @@ cleanup_on_exit() {
     # pipeline_start was refused before write_active_pipeline_lock ran.
     release_active_pipeline_lock 2>/dev/null || true
 
-    # Kill the entire process group only on signal-driven exits and only when we
-    # are the group leader (i.e., launched via setsid). Skipping on clean exits
-    # preserves intentionally detached post-run background jobs.
-    if [[ "$_PIPELINE_SIGNALED" == "true" ]]; then
+    # Kill the entire process group when we are the setsid group leader AND the
+    # exit is non-zero. Previously gated on _PIPELINE_SIGNALED==true, which meant
+    # error-path exits (set -e failure, audit failure, OOM, watchdog kill -9) never
+    # triggered the group kill — leaving Claude workers and tool subprocesses alive.
+    # Skip on exit_code==0 to preserve intentionally detached post-run jobs.
+    if [[ "$exit_code" -ne 0 ]]; then
         local _our_pgid
         _our_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ') || true
         if [[ "${_our_pgid:-}" == "$$" ]]; then
-            kill -- -$$ 2>/dev/null || true
-            local _grace="${PIPELINE_KILL_GRACE:-25}"
-            [[ "$_grace" =~ ^[0-9]+$ ]] || _grace=25
-            sleep "$_grace"
-            kill -9 -- -$$ 2>/dev/null || true
+            if declare -f _kill_process_group_safe >/dev/null 2>&1; then
+                _kill_process_group_safe "$$" "$_grace" 2>/dev/null || true
+            else
+                kill -- -$$ 2>/dev/null || true
+                sleep "$_grace"
+                kill -9 -- -$$ 2>/dev/null || true
+            fi
         fi
     fi
 

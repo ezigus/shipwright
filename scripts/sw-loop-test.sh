@@ -2279,6 +2279,53 @@ else
 fi
 rm -f "$dgs_test_log"
 
+# ─── DoD checkbox normalization ───────────────────────────────────────────────
+
+# Test: _normalize_dod_checkboxes function exists in sw-loop.sh
+if grep -q '^_normalize_dod_checkboxes()' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "_normalize_dod_checkboxes function defined in sw-loop.sh"
+else
+    assert_fail "_normalize_dod_checkboxes function defined in sw-loop.sh"
+fi
+
+# Test: _normalize_dod_checkboxes correctly converts all indicator styles to [x]
+_norm_body="$(sed -n '/^_normalize_dod_checkboxes()/,/^}/p' "$SCRIPT_DIR/sw-loop.sh")"
+_norm_fixture="$(printf '%s\n' \
+    '- [✓] item one' \
+    '- [X] item two' \
+    '- [/] item three' \
+    '- [ ] item four ✓ (confirmed)' \
+    '- [ ] item five' \
+    '- [ ] Parser must handle ✓ markers in output')"
+_norm_result="$(eval "$_norm_body"; _normalize_dod_checkboxes <<< "$_norm_fixture" 2>/dev/null)"
+_norm_pass=true
+for _expected in \
+    '- [x] item one' \
+    '- [x] item two' \
+    '- [x] item three' \
+    '- [x] item four ✓ (confirmed)'; do
+    if ! grep -qFe "$_expected" <<< "$_norm_result"; then
+        _norm_pass=false
+        break
+    fi
+done
+# Genuinely unchecked items must remain unchanged
+for _unchanged in \
+    '- [ ] item five' \
+    '- [ ] Parser must handle ✓ markers in output'; do
+    if ! grep -qFe "$_unchanged" <<< "$_norm_result"; then
+        _norm_pass=false
+        break
+    fi
+done
+if [[ "$_norm_pass" == "true" ]]; then
+    assert_pass "_normalize_dod_checkboxes: [✓] [X] [/] trailing-✓ all → [x]; bare [ ] and mid-text ✓ unchanged"
+else
+    assert_fail "_normalize_dod_checkboxes: [✓] [X] [/] trailing-✓ all → [x]; bare [ ] and mid-text ✓ unchanged" \
+        "$(printf 'output:\n%s' "$_norm_result")"
+fi
+unset _norm_body _norm_fixture _norm_result _norm_pass _expected _unchanged
+
 # ─── Circuit breaker: DoD-only failures (#237) ────────────────────────────────
 
 # Test: bypass emits 'skipping circuit breaker strike' message
@@ -2813,6 +2860,47 @@ if [[ "$_swl_received" -eq 262144 ]]; then
 else
     assert_fail "#504: 256KB prompt round-trips through printf|stdin without truncation" \
         "expected 262144 bytes, got $_swl_received"
+fi
+
+# ─── write_error_summary stricter pipeline (section-header strip) ─────────────
+# write_error_summary's stricter pipeline must strip descriptive section headers
+# (e.g. "Test 4: missing fingerprint file fails open") so they don't get counted
+# as errors. The same pipeline must keep marker-prefixed failure lines.
+_swl_section_strip='^[[:space:]]*Test [0-9]+:[[:space:]]'
+
+_swl_header_input=$(cat <<'SAMPLE'
+  Test 4: missing fingerprint file fails open (both calls fire)
+  ✗ Test 7: actually broken assertion
+FAIL src/foo.test.js
+  Test 5: observability calls fire every iteration
+SAMPLE
+)
+_swl_summary_kept=$(printf '%s\n' "$_swl_header_input" \
+    | _strip_passing_test_lines \
+    | grep -vE "$_swl_section_strip" \
+    | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' \
+    || true)
+_swl_summary_kept_count=$(printf '%s' "$_swl_summary_kept" | grep -c . 2>/dev/null || true)
+_swl_summary_kept_count=${_swl_summary_kept_count:-0}
+
+if [[ "$_swl_summary_kept_count" -eq 2 ]]; then
+    assert_pass "write_error_summary: section headers stripped, marker-prefixed failures kept (got 2)"
+else
+    assert_fail "write_error_summary: section headers stripped, marker-prefixed failures kept" \
+        "expected 2 (✗ + FAIL), got $_swl_summary_kept_count: $_swl_summary_kept"
+fi
+
+# Confirm the bare "fails open" header alone yields zero structured errors.
+_swl_only_header=$(printf '%s\n' "  Test 4: missing fingerprint file fails open (both calls fire)" \
+    | _strip_passing_test_lines \
+    | grep -vE "$_swl_section_strip" \
+    | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' \
+    || true)
+if [[ -z "$_swl_only_header" ]]; then
+    assert_pass "write_error_summary: bare 'fails open' header alone produces zero false-positive errors"
+else
+    assert_fail "write_error_summary: bare 'fails open' header alone produces zero false-positive errors" \
+        "header survived the strict filter: $_swl_only_header"
 fi
 
 # ─── #448 review fix: --context-file path traversal hardening ────────────────

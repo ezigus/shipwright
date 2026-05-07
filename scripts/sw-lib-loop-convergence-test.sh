@@ -145,7 +145,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 # Test 4 — fingerprint file deleted (simulates session restart wiping LOG_DIR)
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "Test 4: missing fingerprint file fails open (both calls fire)"
+print_test_section "Test 4: missing fingerprint triggers fresh detection (both calls fire)"
 
 # Wipe both the on-disk fingerprint AND the in-process recall cache, since a
 # real restart loses both.

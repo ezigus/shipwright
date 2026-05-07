@@ -1231,6 +1231,14 @@ _has_real_failure_markers() {
 write_error_summary() {
     local error_json="$LOG_DIR/error-summary.json"
 
+    # Strip descriptive test section headers ("  Test 4: ... fails open ...") so
+    # the error grep doesn't flag them as failures. Real failure lines are prefixed
+    # with a marker (✗, FAIL, ERROR), so they don't match this pattern.
+    # Why: section headers are intentionally kept by _strip_passing_test_lines so
+    # they provide context in the iteration prompt (#447), but for the structured
+    # error count they're noise that triggers spurious circuit-breaker iterations.
+    local _strip_section_headers='^[[:space:]]*Test [0-9]+:[[:space:]]'
+
     # Write on test failure OR build failure (non-zero exit from Claude iteration)
     local build_log="$LOG_DIR/iteration-${ITERATION}.log"
     if [[ "${TEST_PASSED:-}" != "false" ]]; then
@@ -1271,6 +1279,7 @@ write_error_summary() {
     error_lines_raw=$(tail -30 "$source_log" 2>/dev/null \
         | strip_ansi \
         | _strip_passing_test_lines \
+        | grep -vE "$_strip_section_headers" \
         | grep -iE '(error|fail|assert|exception|panic|FAIL|TypeError|ReferenceError|SyntaxError)' \
         | head -10 || true)
 
@@ -1541,6 +1550,36 @@ ${_todo_locations}"
     fi
 }
 
+_normalize_dod_checkboxes() {
+    local _line _bracket
+    while IFS= read -r _line || [[ -n "$_line" ]]; do
+        case "$_line" in
+            "- [x]"*) ;;
+            "- [ ]"*)
+                # Only promote when a check symbol is a trailing completion annotation:
+                # either at the very end of the line, or followed by a parenthetical note.
+                # Avoids false-positives when the description merely references a symbol
+                # (e.g. "- [ ] Parser must handle ✓ markers in output" stays unchecked).
+                case "$_line" in
+                    *✓|*✔|*✅|*☑|\
+                    *'✓ ('*')'|*'✔ ('*')'|*'✅ ('*')'|*'☑ ('*')')
+                        _line="- [x]${_line#"- [ ]"}" ;;
+                esac
+                ;;
+            "- ["*"]"*)
+                # Normalize only when bracket content contains a non-whitespace character.
+                # Prevents "- [  ] item" (multiple spaces) from being promoted.
+                _bracket="${_line#"- ["}"
+                _bracket="${_bracket%%]*}"
+                if [[ "$_bracket" =~ [^[:space:]] ]]; then
+                    _line="- [x]${_line#- \[*\]}"
+                fi
+                ;;
+        esac
+        printf '%s\n' "$_line"
+    done
+}
+
 check_definition_of_done() {
     if [[ ! -f "$DOD_FILE" ]]; then
         warn "Definition of done file not found: $DOD_FILE"
@@ -1549,6 +1588,7 @@ check_definition_of_done() {
 
     local dod_content
     dod_content="$(cat "$DOD_FILE")"
+    dod_content="$(_normalize_dod_checkboxes <<< "$dod_content")"
 
     # Use cumulative diff from loop start (not just HEAD~1) so the evaluator
     # can see ALL work done across every iteration, not just the latest commit.
@@ -1645,6 +1685,9 @@ For each item in the Definition of Done, determine if the project satisfies it.
 Use the Full Branch diff above as the authoritative view of all work done on this branch.
 The runtime facts above are verified by the harness — trust them as ground truth.
 
+IMPORTANT: A checkbox item is satisfied if its brackets contain any non-space marker: [x], [X], [✓], [✔], [✅], [☑], [*], [+], [~], or similar. Treat any such item as satisfied=true.
+An unchecked [ ] item may also be satisfied if a check symbol (✓ ✔ ✅ ☑) appears appended at the END of the item text as an explicit completion annotation (e.g. "- [ ] item ✓ (confirmed)"). Do NOT treat an item as satisfied merely because its description text references or discusses a check symbol.
+
 IMPORTANT: Respond with a JSON object followed by a verdict line. No prose, no markdown fences, no code blocks. Format:
 {"verdict":"pass","items":[{"item":"...","satisfied":true,"reason":"..."}],"summary":"..."}
 - Set "verdict" to "pass" if ALL items are satisfied. Set it to "fail" if ANY item is not satisfied.
@@ -1669,12 +1712,13 @@ DOD_PROMPT
     dod_model="$(select_audit_model)"
     local dod_flags=()
     dod_flags+=("--model" "$dod_model")
-    dod_flags+=("--output-format" "json")
     # EnterPlanMode/ExitPlanMode are NOT disallowed here: the DoD evaluator is a
-    # one-shot -p call and if the model tries to "plan" a complex diff analysis it
-    # hits the disallowed-tool restriction and exits 126 with empty output (seen in
-    # CI from iteration 2 onwards when the cumulative diff grows). Plain text +
-    # --output-format json keeps the response focused without restricting tool use.
+    # one-shot -p call. When the cumulative diff grows large (iter 2+), the model
+    # tries to "plan" its analysis → hits the disallowed-tool restriction → exits 126
+    # with empty output. No disallowed-tools restriction means the model can plan
+    # freely; --dangerously-skip-permissions ensures it never blocks on a permission
+    # prompt in CI. Note: --output-format json is intentionally absent — it causes
+    # its own exit-126 in CI when combined with -p.
     if $SKIP_PERMISSIONS; then
         dod_flags+=("--dangerously-skip-permissions")
     fi
@@ -1700,22 +1744,9 @@ DOD_PROMPT
         return 1
     fi
 
-    # With --output-format json, Claude wraps the response as
-    # [{"type":"result","subtype":"success","result":"<model text>"}]
-    # Extract the .result text first, then parse it as the DoD JSON verdict.
+    # Strip markdown fences and delimiter lines before jq parsing.
     local dod_clean="${dod_log%.log}-clean.json"
-    local _dod_raw_text
-    _dod_raw_text="$(jq -r '.[0].result // .[0].text // empty' "$dod_log" 2>/dev/null || true)"
-    if [[ -n "$_dod_raw_text" ]]; then
-        # Strip markdown fences and delimiter lines before verdict parse
-        printf '%s\n' "$_dod_raw_text" \
-            | sed -E '/^```(json)?[[:space:]]*$|^<<<DOD:(PASS|FAIL)>>>[[:space:]]*$/d' \
-            > "$dod_clean" 2>/dev/null \
-            || printf '%s\n' "$_dod_raw_text" > "$dod_clean"
-    else
-        # Fallback: treat the whole file as plain text (non-json-wrapped response)
-        sed -E '/^```(json)?[[:space:]]*$|^<<<DOD:(PASS|FAIL)>>>[[:space:]]*$/d' "$dod_log" > "$dod_clean" 2>/dev/null || cp "$dod_log" "$dod_clean"
-    fi
+    sed -E '/^```(json)?[[:space:]]*$|^<<<DOD:(PASS|FAIL)>>>[[:space:]]*$/d' "$dod_log" > "$dod_clean" 2>/dev/null || cp "$dod_log" "$dod_clean"
 
     # Parse structured JSON output: verdict field must be "pass"
     local dod_verdict
@@ -2222,8 +2253,27 @@ cleanup() {
         cleanup_multi_agent
     fi
 
-    # Reap any remaining direct child processes
-    pkill -P $$ 2>/dev/null || true
+    # Reap child process trees (Claude Node workers, tool subprocesses that escape
+    # a shallow pkill -P $$). Targeting children only — sending SIGTERM to $$
+    # itself would re-trigger the SIGTERM trap and set EXIT_CODE=130 on clean exits.
+    local _lc_child
+    while IFS= read -r _lc_child; do
+        [[ -n "$_lc_child" ]] || continue
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree TERM "$_lc_child" 2>/dev/null || true
+        else
+            kill "$_lc_child" 2>/dev/null || true
+        fi
+    done < <(pgrep -P $$ 2>/dev/null || true)
+    sleep 1
+    while IFS= read -r _lc_child; do
+        [[ -n "$_lc_child" ]] || continue
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree KILL "$_lc_child" 2>/dev/null || true
+        else
+            kill -9 "$_lc_child" 2>/dev/null || true
+        fi
+    done < <(pgrep -P $$ 2>/dev/null || true)
     wait 2>/dev/null || true
 
     # Clear heartbeat (always — whether signal-driven or not)
@@ -2598,23 +2648,50 @@ cleanup_multi_agent() {
         tmux send-keys -t "$pane_id" C-c 2>/dev/null || true
     done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_id}' 2>/dev/null || true)
 
-    # SIGTERM process trees (children first, then shell)
+    # SIGTERM process trees (BFS kill reaches Claude/ruflo grandchildren)
     local wpid
     for wpid in "${pane_pids[@]}"; do
         [[ -z "$wpid" ]] && continue
-        pkill -P "$wpid" 2>/dev/null || true
-        kill "$wpid" 2>/dev/null || true
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree TERM "$wpid" 2>/dev/null || true
+        else
+            pkill -P "$wpid" 2>/dev/null || true
+            kill "$wpid" 2>/dev/null || true
+        fi
     done
 
     sleep 3
 
-    # SIGKILL any survivors
-    for wpid in "${pane_pids[@]}"; do
+    # Second pass: catch panes spawned while the first pass was running (snapshot race).
+    local pane_pids2=()
+    local ppid2
+    while IFS= read -r ppid2; do
+        [[ -n "$ppid2" ]] && pane_pids2+=("$ppid2")
+    done < <(tmux list-panes -t "$MULTI_WINDOW_NAME" -F '#{pane_pid}' 2>/dev/null || true)
+    for wpid in "${pane_pids2[@]}"; do
+        [[ -z "$wpid" ]] && continue
+        kill -0 "$wpid" 2>/dev/null || continue
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree TERM "$wpid" 2>/dev/null || true
+        else
+            pkill -P "$wpid" 2>/dev/null || true
+            kill "$wpid" 2>/dev/null || true
+        fi
+    done
+
+    sleep 1
+
+    # SIGKILL any survivors from both passes
+    for wpid in "${pane_pids[@]}" "${pane_pids2[@]:-}"; do
         [[ -z "$wpid" ]] && continue
         kill -0 "$wpid" 2>/dev/null || continue
         warn "Force-killing multi-agent worker PID $wpid"
-        pkill -9 -P "$wpid" 2>/dev/null || true
-        kill -9 "$wpid" 2>/dev/null || true
+        if declare -f _kill_process_tree >/dev/null 2>&1; then
+            _kill_process_tree KILL "$wpid" 2>/dev/null || true
+        else
+            pkill -9 -P "$wpid" 2>/dev/null || true
+            kill -9 "$wpid" 2>/dev/null || true
+        fi
     done
 
     tmux kill-window -t "$MULTI_WINDOW_NAME" 2>/dev/null || true
@@ -2731,6 +2808,25 @@ ${_diagnosis}"
                 info "Failure diagnosis injected (classification from error pattern)"
             else
                 LOOP_FAILURE_DIAGNOSIS=""
+            fi
+
+            # Self-heal hypothesis hive — root-cause triage on test failure (gated by RUFLO_SELF_HEAL_HIVE=true).
+            # Function is fail-open: returns 0 always, prints empty stdout when skipped/failed.
+            local _hypothesis=""
+            if [[ "${RUFLO_SELF_HEAL_HIVE:-false}" == "true" ]] \
+               && type ruflo_execute_self_heal_hive >/dev/null 2>&1; then
+                _hypothesis=$(ruflo_execute_self_heal_hive "${TEST_OUTPUT:-}" "$_changed_files" 2>/dev/null || true)
+            fi
+            if [[ -n "$_hypothesis" ]]; then
+                # Strip loop-control sentinels so a malformed hypothesis cannot
+                # prematurely terminate the loop or corrupt the goal format.
+                _hypothesis="${_hypothesis//<<<}"
+                _hypothesis="${_hypothesis//>>>}"
+                GOAL="${GOAL}
+
+## Self-Heal Hypothesis (hive-selected)
+${_hypothesis}"
+                info "Self-heal hypothesis injected (cheapest verification path)"
             fi
 
             # Memory-based fix suggestion (from past successful fixes)

@@ -579,6 +579,172 @@ persist_artifacts "plan" "plan.md" 2>/dev/null
 assert_pass "persist_artifacts is no-op outside CI"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# persist_artifacts — CI_MODE=true behavior
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "persist_artifacts — CI_MODE=true behavior"
+
+# ── Test A: committed path — git push must NOT be called, event IS emitted ─────
+# Strategy: stub git entirely in PATH (add/restore/diff/commit all succeed),
+# stub emit_event in current shell to capture calls directly.
+# This tests that the compound-command fix makes emit_event fire in parent scope.
+{
+    _pa_tmp=$(mktemp -d "${TMPDIR:-/tmp}/pa-test-A.XXXXXX")
+    _pa_git_log="$_pa_tmp/git-calls.log"
+    _pa_event_log="$_pa_tmp/events.log"
+    _pa_art_dir="$_pa_tmp/artifacts"
+    mkdir -p "$_pa_art_dir"
+    echo "# Plan content" > "$_pa_art_dir/plan.md"
+
+    # Stub git: add/restore succeed, diff exits 1 (=staged changes exist), commit succeeds, push logs call
+    _pa_git_bin="$_pa_tmp/bin"
+    mkdir -p "$_pa_git_bin"
+    cat > "$_pa_git_bin/git" <<GITEOF
+#!/usr/bin/env bash
+case "\${1:-}" in
+    add)     exit 0 ;;
+    restore) exit 0 ;;
+    diff)    exit 1 ;;    # non-zero = staged changes exist (triggers commit path)
+    commit)  exit 0 ;;    # commit succeeds
+    push)    echo "push_called" >> "$_pa_git_log"; exit 0 ;;
+    *)       exit 0 ;;
+esac
+GITEOF
+    chmod +x "$_pa_git_bin/git"
+
+    # Stub emit_event in current shell to capture events
+    _pa_orig_emit="$(declare -f emit_event)"
+    emit_event() {
+        echo "event:$1" >> "$_pa_event_log"
+    }
+
+    _pa_orig_path="$PATH"
+    export PATH="$_pa_git_bin:$PATH"
+
+    CI_MODE=true
+    ISSUE_NUMBER="42"
+    ARTIFACTS_DIR="$_pa_art_dir"
+
+    persist_artifacts "plan" "plan.md" 2>/dev/null
+
+    # Assert: git push was NOT called
+    if [[ ! -f "$_pa_git_log" ]] || ! grep -q "push_called" "$_pa_git_log" 2>/dev/null; then
+        assert_pass "persist_artifacts(CI) does not call git push"
+    else
+        assert_fail "persist_artifacts(CI) does not call git push" "git push was called unexpectedly"
+    fi
+
+    # Assert: artifacts.persisted event WAS emitted in parent shell scope
+    if [[ -f "$_pa_event_log" ]] && grep -q "event:artifacts.persisted" "$_pa_event_log" 2>/dev/null; then
+        assert_pass "persist_artifacts(CI) emits artifacts.persisted event"
+    else
+        assert_fail "persist_artifacts(CI) emits artifacts.persisted event" "event not found in: $(cat "$_pa_event_log" 2>/dev/null || echo '(empty)')"
+    fi
+
+    # Restore
+    export PATH="$_pa_orig_path"
+    eval "$_pa_orig_emit" 2>/dev/null || emit_event() { :; }
+    CI_MODE=false
+    ARTIFACTS_DIR="$TEST_TEMP_DIR/artifacts"
+    rm -rf "$_pa_tmp"
+}
+
+# ── Test B: no-op path — nothing to commit, returns 0, no event ───────────────
+{
+    _pb_tmp=$(mktemp -d "${TMPDIR:-/tmp}/pa-test-B.XXXXXX")
+    _pb_event_log="$_pb_tmp/events.log"
+    _pb_art_dir="$_pb_tmp/artifacts"
+    mkdir -p "$_pb_art_dir"
+
+    # Empty plan.md so persist_artifacts short-circuits (no -s files)
+    touch "$_pb_art_dir/plan.md"
+
+    _pb_orig_emit="$(declare -f emit_event)"
+    emit_event() {
+        echo "event:$1" >> "$_pb_event_log"
+    }
+
+    CI_MODE=true
+    ISSUE_NUMBER="42"
+    ARTIFACTS_DIR="$_pb_art_dir"
+    _rc=0
+    persist_artifacts "plan" "plan.md" 2>/dev/null || _rc=$?
+
+    assert_eq "persist_artifacts no-op (empty file) returns 0" "0" "$_rc"
+
+    if [[ ! -f "$_pb_event_log" ]] || [[ ! -s "$_pb_event_log" ]]; then
+        assert_pass "persist_artifacts no-op emits no event"
+    else
+        assert_fail "persist_artifacts no-op emits no event" "unexpected event: $(cat "$_pb_event_log")"
+    fi
+
+    eval "$_pb_orig_emit" 2>/dev/null || emit_event() { :; }
+    CI_MODE=false
+    ARTIFACTS_DIR="$TEST_TEMP_DIR/artifacts"
+    rm -rf "$_pb_tmp"
+}
+
+# ── Test C: commit-fail path — returns 0, emits artifacts.persist_failed ──────
+{
+    _pc_tmp=$(mktemp -d "${TMPDIR:-/tmp}/pa-test-C.XXXXXX")
+    _pc_event_log="$_pc_tmp/events.log"
+    _pc_art_dir="$_pc_tmp/artifacts"
+    mkdir -p "$_pc_art_dir"
+    echo "# Plan" > "$_pc_art_dir/plan.md"
+
+    # Stub git: add succeeds, diff --cached returns non-zero (changes staged), commit fails
+    _pc_git_bin="$_pc_tmp/bin"
+    mkdir -p "$_pc_git_bin"
+    cat > "$_pc_git_bin/git" <<'GITEOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+    add)     exit 0 ;;
+    restore) exit 0 ;;
+    diff)    exit 1 ;;   # non-zero means there ARE staged changes
+    commit)  exit 1 ;;   # commit fails
+    push)    exit 0 ;;
+    *)       exit 0 ;;
+esac
+GITEOF
+    chmod +x "$_pc_git_bin/git"
+
+    _pc_orig_emit="$(declare -f emit_event)"
+    emit_event() {
+        echo "event:$1" >> "$_pc_event_log"
+    }
+
+    _pc_orig_path="$PATH"
+    export PATH="$_pc_git_bin:$PATH"
+
+    CI_MODE=true
+    ISSUE_NUMBER="42"
+    ARTIFACTS_DIR="$_pc_art_dir"
+    _rc=0
+    persist_artifacts "plan" "plan.md" 2>/dev/null || _rc=$?
+
+    assert_eq "persist_artifacts commit-fail returns 0 (non-fatal)" "0" "$_rc"
+
+    if [[ -f "$_pc_event_log" ]] && grep -q "event:artifacts.persist_failed" "$_pc_event_log" 2>/dev/null; then
+        assert_pass "persist_artifacts commit-fail emits artifacts.persist_failed"
+    else
+        assert_fail "persist_artifacts commit-fail emits artifacts.persist_failed" "events: $(cat "$_pc_event_log" 2>/dev/null || echo '(empty)')"
+    fi
+
+    export PATH="$_pc_orig_path"
+    eval "$_pc_orig_emit" 2>/dev/null || emit_event() { :; }
+    CI_MODE=false
+    ARTIFACTS_DIR="$TEST_TEMP_DIR/artifacts"
+    rm -rf "$_pc_tmp"
+}
+
+# ── Test D: CI guard — CI_MODE=false returns 0 immediately (regression) ───────
+CI_MODE=false
+ISSUE_NUMBER="42"
+echo "content" > "$ARTIFACTS_DIR/plan.md"
+_rc=0
+persist_artifacts "plan" "plan.md" 2>/dev/null || _rc=$?
+assert_eq "persist_artifacts CI guard: CI_MODE=false returns 0" "0" "$_rc"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # write_state — ORIGINAL_GOAL protection (issues #362, Codex P1, Codex P2)
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "write_state ORIGINAL_GOAL protection (issue #362 + Codex P1/P2)"

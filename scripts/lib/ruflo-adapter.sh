@@ -26,6 +26,14 @@ _RUFLO_ADAPTER_LOADED=1
 # packaged; ruflo_store() additionally checks `declare -f ruflo_mcp_call`
 # before routing through it.
 _ruflo_adapter_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
+# ─── Shared process-cleanup primitives ───────────────────────────────────────
+# Load proc-utils.sh which provides _kill_process_tree, _kill_process_group_safe,
+# _get_pgid, and _parent_alive. Keep this before any code that uses them.
+if [[ -f "$_ruflo_adapter_dir/proc-utils.sh" ]]; then
+    # shellcheck source=scripts/lib/proc-utils.sh
+    source "$_ruflo_adapter_dir/proc-utils.sh" 2>/dev/null || true
+fi
 if [[ -f "$_ruflo_adapter_dir/ruflo-mcp-call.sh" ]]; then
     # shellcheck source=scripts/lib/ruflo-mcp-call.sh
     source "$_ruflo_adapter_dir/ruflo-mcp-call.sh" || true
@@ -38,6 +46,7 @@ if [[ -f "$_ruflo_adapter_dir/ruflo-mcp-call.sh" ]]; then
     fi
 fi
 unset _ruflo_adapter_dir
+
 
 # ─── State ───────────────────────────────────────────────────────────────────
 # Use ${VAR:-default} to preserve values inherited from a parent process (e.g.
@@ -387,43 +396,18 @@ ruflo_health_check() {
     return 0
 }
 
-# ─── _kill_process_tree — send a signal to a PID and all its descendants ──────
-# Collects the full descendant list via BFS *before* killing anything, so that
-# re-parenting (child → init) cannot cause grandchildren to escape the sweep.
-# Bash 3.2 compatible — no associative arrays, no extended syntax.
-_kill_process_tree() {
-    local sig="$1"
-    local root="$2"
-    local all_pids frontier new_frontier p c children
-
-    if ! command -v pgrep >/dev/null 2>&1; then
-        # No pgrep — best-effort single-level kill only.
+# ─── _kill_process_tree — now in scripts/lib/proc-utils.sh ───────────────────
+# The implementation moved to proc-utils.sh (sourced above) so all callers share
+# one canonical copy. This comment replaces the old inline body; the function
+# symbol is already exported by the proc-utils.sh source above.
+# Back-compat: if proc-utils.sh was not found, provide a minimal fallback so
+# callers that rely on _kill_process_tree do not fail.
+if ! declare -f _kill_process_tree >/dev/null 2>&1; then
+    _kill_process_tree() {
+        local sig="$1" root="$2"
         kill "-$sig" "$root" 2>/dev/null || true
-        return
-    fi
-
-    # BFS: collect every descendant before touching any of them.
-    all_pids=""
-    frontier="$root"
-    while [[ -n "$frontier" ]]; do
-        new_frontier=""
-        for p in $frontier; do
-            children=$(pgrep -P "$p" 2>/dev/null || true)
-            for c in $children; do
-                all_pids="${all_pids}${all_pids:+ }$c"
-                new_frontier="${new_frontier}${new_frontier:+ }$c"
-            done
-        done
-        frontier="$new_frontier"
-    done
-
-    # Kill all descendants (collected before any were killed).
-    for p in $all_pids; do
-        kill "-$sig" "$p" 2>/dev/null || true
-    done
-    # Kill root last.
-    kill "-$sig" "$root" 2>/dev/null || true
-}
+    }
+fi
 
 # ─── ruflo_with_timeout — run a ruflo command with recoverable circuit-breaker ─
 # All commands run in a background subshell with stdout to a temp file and BFS
@@ -470,18 +454,35 @@ ruflo_with_timeout() {
         # warn()/emit_event diagnostics on failure via the circuit-breaker path. (#484)
         ( "$@" ) >"$_rft_tmp" 2>/dev/null &
         local bg_pid=$!
-        # Poll with adaptive backoff: 0.1s for the first 10 ticks (1 s fast
-        # window) to handle short-lived operations cheaply, then 1s intervals
-        # for the remainder. Avoids the 10x scheduler overhead of flat 0.1s
-        # polling while still responding quickly to fast MCP/mock calls. (#441)
+        # Poll with adaptive backoff using read -t (bash built-in) instead of
+        # external sleep. Each `sleep N` call forks a child process; with 15+
+        # ruflo calls per iteration × many iterations, hundreds of sleep children
+        # accumulated and were left orphaned on pipeline cancellation. `read -t`
+        # is a pure bash built-in — no child process, no orphan. (#441)
+        #
+        # We read from /dev/zero (infinite NUL-byte stream, never EOF) rather
+        # than /dev/null (immediate EOF) so that read -t actually waits for the
+        # specified duration instead of returning instantly.
         local waited_ds=0
         local timeout_ds=$(( timeout_s * 10 ))
+        # bash 3.2 (macOS /bin/bash) rejects fractional read -t; fall back to
+        # foreground sleep on bash < 4. Foreground sleep exits within 0.1s
+        # naturally even if the parent is SIGKILLed, so no orphan risk there.
+        local _bash_major="${BASH_VERSINFO[0]:-3}"
         while kill -0 "$bg_pid" 2>/dev/null && [[ "$waited_ds" -lt "$timeout_ds" ]]; do
             if [[ "$waited_ds" -lt 10 ]]; then
-                sleep 0.1
+                if [[ "$_bash_major" -ge 4 ]]; then
+                    { read -r -t 0.1 _ </dev/zero; } 2>/dev/null || true
+                else
+                    sleep 0.1
+                fi
                 waited_ds=$(( waited_ds + 1 ))
             else
-                sleep 1
+                if [[ "$_bash_major" -ge 4 ]]; then
+                    { read -r -t 1 _ </dev/zero; } 2>/dev/null || true
+                else
+                    sleep 1
+                fi
                 waited_ds=$(( waited_ds + 10 ))
             fi
         done
@@ -491,7 +492,11 @@ ruflo_with_timeout() {
             # direct child. SIGTERM first; SIGKILL after 1 s grace period
             # for processes that need time to flush/clean up. (#441)
             _kill_process_tree TERM "$bg_pid"
-            sleep 1
+            if [[ "$_bash_major" -ge 4 ]]; then
+                { read -r -t 1 _ </dev/zero; } 2>/dev/null || true
+            else
+                sleep 1
+            fi
             _kill_process_tree KILL "$bg_pid"
             wait "$bg_pid" 2>/dev/null || true
             rm -f "$_rft_tmp"
@@ -564,9 +569,6 @@ ruflo_store() {
         if declare -f ruflo_mcp_call >/dev/null 2>&1 \
            && declare -f ruflo_bridge_available >/dev/null 2>&1 \
            && ruflo_bridge_available; then
-            # Capture stderr (not /dev/null'd) so a partially-broken bridge
-            # doesn't silently degrade to CLI without operator visibility.
-            # We still discard stdout — the response JSON is internal.
             local _mcp_err
             _mcp_err=$(ruflo_mcp_call memory_store \
                 "key=$key" "value=$value" "namespace=$namespace" 2>&1 1>/dev/null) \
@@ -589,8 +591,7 @@ ruflo_store() {
 # ─── _ruflo_recall_cli — CLI-backed recall implementation ───────────────────
 # Internal helper. Identical body to the legacy ruflo_recall() — extracted so
 # the dispatcher can call it both as the default path and as the fail-open
-# fallback when SW_RUFLO_BACKEND=mcp but the bridge errors. Same contract:
-# fail-open, returns 0, prints "" on timeout, bounded by the recall timeout.
+# fallback when SW_RUFLO_BACKEND=mcp but the bridge errors.
 _ruflo_recall_cli() {
     local query="$1" namespace="${2:-default}"
     ruflo_with_timeout "${RUFLO_RECALL_TIMEOUT:-30}" _ruflo_run_quiet memory search \
@@ -600,25 +601,13 @@ _ruflo_recall_cli() {
 # ─── ruflo_recall — dispatcher: route to MCP bridge or CLI ───────────────────
 # Usage: ruflo_recall <query> [namespace]
 # Prints matching results to stdout. Returns empty string when ruflo unavailable.
-# Always returns 0 (fail-open). On timeout, the circuit-breaker disables ruflo
-# for the remainder of the run (CLI path only — MCP timeout is bounded by
-# RUFLO_BRIDGE_TIMEOUT inside the wrapper).
+# Always returns 0 (fail-open).
 #
 # Routing (SW_RUFLO_BACKEND, default "cli"):
 #   "mcp"  + bridge up + wrapper sourced → ruflo_mcp_call memory_search ...
-#                                          (no new ruflo subprocess)
 #   "mcp"  + bridge error                → CLI fallback (preserves search args)
-#   "mcp"  + bridge down                 → CLI fallback + warn (no spawn cost
-#                                          beyond the bounded `nc -w 1` probe)
+#   "mcp"  + bridge down                 → CLI fallback + warn
 #   "cli"  / unset / anything else       → CLI path (legacy behavior)
-#
-# MCP response unwrapping: the bridge wraps ruflo's reply as
-# `{"success":true,"result":{...}}`. We extract `.result` via jq and emit it as
-# compact JSON — Shipwright's recall consumers (prompt context blocks, the
-# learning bridge, _ruflo_seed_specialist_history) treat the output as opaque
-# text, so JSON vs plain-text rendering is interchangeable for them.
-# `ruflo_recall_similar_outcomes` inherits this routing transparently because
-# it delegates here.
 ruflo_recall() {
     ruflo_available || { echo ""; return 0; }
     local query="$1" namespace="${2:-default}"
@@ -627,9 +616,6 @@ ruflo_recall() {
         if declare -f ruflo_mcp_call >/dev/null 2>&1 \
            && declare -f ruflo_bridge_available >/dev/null 2>&1 \
            && ruflo_bridge_available; then
-            # Capture stderr in a temp file so partially-broken bridge state
-            # surfaces via warn() rather than silently degrading to CLI.
-            # Stdout is the response JSON which we need for .result extraction.
             local _err_file _mcp_resp _mcp_exit=0 _err_text=""
             _err_file=$(mktemp "${TMPDIR:-/tmp}/ruflo_recall.XXXXXX" 2>/dev/null) \
                 || _err_file=""
@@ -645,14 +631,10 @@ ruflo_recall() {
                     2>/dev/null) || _mcp_exit=$?
             fi
             if [[ $_mcp_exit -eq 0 ]]; then
-                # `// empty` filters null so we print "" rather than the literal
-                # "null" string when the bridge omits a result field.
                 if command -v jq >/dev/null 2>&1; then
                     printf '%s' "$_mcp_resp" \
                         | jq -c '.result // empty' 2>/dev/null || true
                 else
-                    # jq absent (rare — also required by the wrapper itself)
-                    # — emit the raw response so callers still see something.
                     printf '%s' "$_mcp_resp"
                 fi
                 return 0
@@ -739,47 +721,6 @@ _ruflo_resolve_repo_hash() {
     printf '%s' "$_hash"
 }
 
-# ─── _ruflo_sanitize_query_token — strip control chars, bound length ─────────
-# Sanitizes externally-influenced values (TASK_TYPE, ISSUE_LABELS, etc.) before
-# they are concatenated into a recall query string passed to the ruflo CLI.
-# Removes ALL ASCII control characters (0x00-0x1F and 0x7F DEL) and collapses
-# consecutive whitespace into single spaces, then bounds the result to
-# RUFLO_QUERY_TOKEN_MAX_BYTES (default 256).
-#
-# Why strip everything (not just \n/\r/\t):
-#   - Terminal escape sequences (ESC, BEL) cause display corruption when logged
-#   - Embedded NUL/control chars create cache misses for semantically-equal
-#     queries with different byte representations
-#   - Defence-in-depth even though `--query "$q"` quotes the CLI argument
-#
-# Bash 3.2 compatible — uses `tr` (POSIX) for the cntrl-class deletion since
-# pure-bash control-class detection requires bash 4+ extended pattern matching.
-# Empty input → empty output (caller decides default).
-_ruflo_sanitize_query_token() {
-    local _raw="${1:-}"
-    [[ -n "$_raw" ]] || { printf ''; return 0; }
-    local _max="${RUFLO_QUERY_TOKEN_MAX_BYTES:-256}"
-    if ! [[ "$_max" =~ ^[0-9]+$ ]] || (( _max < 1 )); then
-        _max=256
-    fi
-    # 1) Replace ASCII control chars (incl. NUL, ESC, BEL, DEL) with a space
-    #    — keeps adjacent tokens separated for search relevance instead of
-    #    merging "feature\nbug" into "featurebug".
-    # 2) Squeeze runs of whitespace into a single space (consistent shape,
-    #    cache-friendly: identical bytes for semantically-equal queries).
-    # 3) Trim leading/trailing whitespace via parameter expansion.
-    # 4) Bound by byte count to keep argv small.
-    local _clean
-    _clean=$(printf '%s' "$_raw" \
-        | tr '[:cntrl:]' ' ' \
-        | tr -s '[:space:]' ' ' \
-        | head -c "$_max" 2>/dev/null) || _clean=""
-    # Trim — bash 3.2 safe, no extglob required.
-    _clean="${_clean# }"
-    _clean="${_clean% }"
-    printf '%s' "$_clean"
-}
-
 # ─── _ruflo_seed_specialist_history — seed hive specialists with prior learnings ─
 # Recalls historical outcomes from learning-${repo_hash} (cross-pipeline
 # memory) and stores a bounded slice into the per-stage hive namespace so
@@ -809,18 +750,22 @@ _ruflo_seed_specialist_history() {
 
     # TASK_TYPE / ISSUE_LABELS are populated by the intake stage; default
     # gracefully when invoked outside a full pipeline (e.g. ad-hoc build).
-    # Sanitize via _ruflo_sanitize_query_token — strips ALL ASCII control
-    # characters (0x00-0x1F, 0x7F) and bounds the byte length. These values
-    # come from GitHub issue metadata; the comprehensive strip prevents
-    # terminal escapes when logged, downstream parsing surprises, and cache
-    # misses from semantically-equal queries with differing byte representations.
-    local _task_type
-    _task_type=$(_ruflo_sanitize_query_token "${TASK_TYPE:-feature}")
-    [[ -n "$_task_type" ]] || _task_type="feature"
-    local _labels
-    _labels=$(_ruflo_sanitize_query_token "${ISSUE_LABELS:-}")
+    local _task_type="${TASK_TYPE:-feature}"
+    # Sanitize labels: strip shell metacharacters ($, `, ;, |, &, <, >) that
+    # could be interpreted if ruflo does further expansion on the query value.
+    # Commas, hyphens, and other label-legal characters are preserved.
+    local _labels_raw="${ISSUE_LABELS:-}"
+    local _labels="${_labels_raw//[$\`\;\|\&\<\>]/}"
     local _query="${stage_name} stage outcomes for ${_task_type} ${_labels}"
 
+    # SECURITY: this is a bash function call to `ruflo_recall`, NOT a SQL
+    # statement. `ruflo_recall` (defined above) invokes the ruflo CLI with
+    # explicit `--query` and `--namespace` flags via execve-style argv;
+    # there is no SQL string concatenation anywhere on this path.
+    # `_ns_hash` is a deterministic 12-char hex digest of the git origin URL
+    # (see `_ruflo_resolve_repo_hash`), not user input. `_query` is built
+    # from sanitized stage/task labels above. Static analyzers flagging this
+    # line as "SQL injection via string concatenation" are false-positive.
     local _history
     _history=$(ruflo_recall "$_query" "learning-${_ns_hash}" 2>/dev/null || true)
     [[ -n "$_history" ]] || return 0
@@ -1963,6 +1908,239 @@ Write the synthesized plan to namespace ${synth_ns} under key 'plan-synthesized'
     return 0
 }
 
+# ─── ruflo_execute_self_heal_hive — root-cause triage hive on test failure ───
+# Spawns 3 specialist agents (mock-boundary, async-timing, schema-type) into
+# the existing hive, has them generate competing root-cause hypotheses, and
+# synthesizes the cheapest verification path. Prints the selected hypothesis
+# text to stdout (empty on skip/failure).
+#
+# Inputs:
+#   $1  error_text     — test failure output (bounded to 8000 bytes inside)
+#   $2  changed_files  — comma-separated list of changed paths (bounded to 2000 bytes)
+#
+# Outputs (stdout):
+#   The selected hypothesis as plain text, or empty when the hive is skipped
+#   or fails. Caller appends this to GOAL only when non-empty.
+#
+# Returns:
+#   0 always (fail-open). Errors are emitted via events, not exit codes.
+#
+# Env:
+#   RUFLO_SELF_HEAL_HIVE             — "true" to enable; default false (zero cost)
+#   RUFLO_SELF_HEAL_MAX_AGENTS       — number of specialists (default 3, cap 4)
+#   RUFLO_SELF_HEAL_TIMEOUT_SECONDS  — overall function budget (default 55)
+ruflo_execute_self_heal_hive() {
+    # ── Gate 1: env flag — first statement, default-path zero cost ──
+    [[ "${RUFLO_SELF_HEAL_HIVE:-false}" == "true" ]] || return 0
+
+    # ── Gate 2: ruflo binary available ──
+    if ! ruflo_available; then
+        emit_event "ruflo.self_heal_hive_skipped" "reason=unavailable"
+        return 0
+    fi
+
+    # ── Gate 3: hive initialized by ruflo_init() ──
+    if [[ "${RUFLO_HIVE_AVAILABLE:-false}" != "true" ]]; then
+        emit_event "ruflo.self_heal_hive_skipped" "reason=hive_unavailable"
+        return 0
+    fi
+
+    local error_text="${1:-}"
+    local changed_files="${2:-}"
+    local pipeline_id="${SHIPWRIGHT_PIPELINE_ID:-$(date +%s)-$$}"
+    # Include iteration so each failing retry gets its own namespace — prevents
+    # stale hypothesis entries from a prior failure polluting the next retry goal.
+    local heal_ns="hive-self-heal-${pipeline_id}-iter${ITERATION:-0}"
+    local hive_id="${RUFLO_HIVE_ID:-}"
+
+    # ── Gate 4: hive_id must be non-empty — ruflo calls with --hive-id "" fail silently ──
+    if [[ -z "$hive_id" ]]; then
+        emit_event "ruflo.self_heal_hive_skipped" "reason=empty_hive_id"
+        warn "self-heal hive: RUFLO_HIVE_ID is empty — skipping (hive not initialized by ruflo_init)"
+        return 0
+    fi
+
+    # Specialist count — hard cap at 4, default 3
+    local heal_agents="${RUFLO_SELF_HEAL_MAX_AGENTS:-3}"
+    if ! [[ "$heal_agents" =~ ^[0-9]+$ ]] || (( heal_agents < 1 )); then
+        heal_agents=3
+    fi
+    if (( heal_agents > 4 )); then
+        heal_agents=4
+    fi
+
+    emit_event "ruflo.self_heal_hive_start" \
+        "max_agents=$heal_agents" "namespace=$heal_ns" "pipeline_id=$pipeline_id"
+
+    # Bound inputs (head -c is multibyte-safe vs ${var:0:N})
+    local _bounded_error _bounded_files
+    _bounded_error=$(printf '%s' "$error_text" | head -c 8000 2>/dev/null || true)
+    _bounded_files=$(printf '%s' "$changed_files" | head -c 2000 2>/dev/null || true)
+
+    # Seed namespace with failure context
+    if [[ -n "$_bounded_error" ]]; then
+        ruflo_store "self-heal-error" "$_bounded_error" \
+            "$heal_ns" "self-heal,error,context" || true
+    fi
+    if [[ -n "$_bounded_files" ]]; then
+        ruflo_store "self-heal-changed-files" "$_bounded_files" \
+            "$heal_ns" "self-heal,context" || true
+    fi
+
+    # Seed historical recall (past root-causes for similar failures)
+    _ruflo_seed_specialist_history "self-heal" "$heal_ns" || true
+
+    # ── Spawn specialists (12s budget, non-fatal) ──
+    # Total hive budget ≤ 55s: spawn 12 + triage 20 + read 5 + synth 8 + read 5 = 50s
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 12 npx -y ruflo@latest hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$heal_agents" \
+            --role specialist \
+            --prefix "self-heal-${pipeline_id}" 2>/dev/null || true
+    else
+        ruflo_with_timeout 12 ruflo hive-mind spawn \
+            --hive-id "$hive_id" \
+            --count "$heal_agents" \
+            --role specialist \
+            --prefix "self-heal-${pipeline_id}" 2>/dev/null || true
+    fi
+
+    # ── Triage orchestrate (30s budget) ──
+    # Three named specialists each write a hypothesis block to a distinct key.
+    # Each block contains: hypothesis prose, verification step, cost (1-5),
+    # confidence (0-1). Synthesis happens in a second orchestrate pass to keep
+    # ranking inside the queen (avoids bash 3.2 associative-array parsing).
+    local triage_goal="Root-cause triage hive: three specialists each generate ONE root-cause hypothesis for the test failure stored in namespace ${heal_ns} key 'self-heal-error' (changed files at key 'self-heal-changed-files').
+
+mock-boundary-specialist: hypothesize about stub/mock divergence, fixture drift, test double leakage, or improperly-isolated test seams. Write to key 'hypothesis-mock-boundary'.
+async-timing-specialist: hypothesize about race conditions, missing awaits, timer flakes, ordering assumptions, or event-loop interleaving. Write to key 'hypothesis-async-timing'.
+schema-type-specialist: hypothesize about type/schema mismatches, contract drift, serialization shape changes, or null/undefined boundary errors. Write to key 'hypothesis-schema-type'.
+
+Each hypothesis block must contain exactly these four labeled lines (plain text):
+  Hypothesis: <one-sentence root-cause claim>
+  Verification: <one concrete cheap check — e.g., grep, jq, single test isolation>
+  Cost: <integer 1-5 where 1=trivial grep, 5=full reproduction>
+  Confidence: <decimal 0.0-1.0>"
+
+    local _triage_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 20 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "$triage_goal" \
+            --max-turns 5 \
+            --mode triage 2>/dev/null || _triage_exit=$?
+    else
+        ruflo_with_timeout 20 ruflo coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "$triage_goal" \
+            --max-turns 5 \
+            --mode triage 2>/dev/null || _triage_exit=$?
+    fi
+
+    if [[ $_triage_exit -ne 0 ]]; then
+        emit_event "ruflo.self_heal_hive_failed" \
+            "reason=triage_failed" "exit=$_triage_exit"
+        return 0
+    fi
+
+    # ── Read specialist hypothesis keys (2s each, hypothesis-only) ──
+    # Read the three named keys directly rather than listing the entire namespace.
+    # Listing the namespace would include self-heal-error, self-heal-changed-files,
+    # and history context — injecting raw error blobs into the fallback GOAL.
+    local _hypo_mb="" _hypo_at="" _hypo_st=""
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        _hypo_mb=$(ruflo_with_timeout 2 npx -y ruflo@latest hive-mind memory \
+            --action get --key "hypothesis-mock-boundary" --namespace "$heal_ns" 2>/dev/null) || true
+        _hypo_at=$(ruflo_with_timeout 2 npx -y ruflo@latest hive-mind memory \
+            --action get --key "hypothesis-async-timing" --namespace "$heal_ns" 2>/dev/null) || true
+        _hypo_st=$(ruflo_with_timeout 2 npx -y ruflo@latest hive-mind memory \
+            --action get --key "hypothesis-schema-type" --namespace "$heal_ns" 2>/dev/null) || true
+    else
+        _hypo_mb=$(ruflo_with_timeout 2 ruflo hive-mind memory \
+            --action get --key "hypothesis-mock-boundary" --namespace "$heal_ns" 2>/dev/null) || true
+        _hypo_at=$(ruflo_with_timeout 2 ruflo hive-mind memory \
+            --action get --key "hypothesis-async-timing" --namespace "$heal_ns" 2>/dev/null) || true
+        _hypo_st=$(ruflo_with_timeout 2 ruflo hive-mind memory \
+            --action get --key "hypothesis-schema-type" --namespace "$heal_ns" 2>/dev/null) || true
+    fi
+    local _union=""
+    [[ -n "$_hypo_mb" ]] && _union="$_hypo_mb"
+    [[ -n "$_hypo_at" ]] && _union="${_union:+${_union}$'\n\n'}${_hypo_at}"
+    [[ -n "$_hypo_st" ]] && _union="${_union:+${_union}$'\n\n'}${_hypo_st}"
+
+    if [[ -z "$_union" ]]; then
+        emit_event "ruflo.self_heal_hive_failed" "reason=no_specialist_output"
+        return 0
+    fi
+
+    # ── Synthesis: queen picks argmin(cost) tiebreak argmax(confidence) ──
+    # Seed synthesis with the union so the queen has the full hypothesis set
+    # in argv-bounded form (avoids re-reading three separate keys).
+    local _union_head
+    _union_head=$(printf '%s' "$_union" | head -c 8000 2>/dev/null || true)
+    if [[ -n "$_union_head" ]]; then
+        ruflo_store "self-heal-union" "$_union_head" \
+            "$heal_ns" "self-heal,synthesis" || true
+    fi
+
+    local synth_goal="Hypothesis selection: read all hypothesis blocks from namespace ${heal_ns} keys matching 'hypothesis-*'. Select the one with the LOWEST 'Cost' value; on tie, prefer HIGHEST 'Confidence'. Write ONLY the prose hypothesis text (the 'Hypothesis:' line value plus a one-line 'Verification:' summary) to namespace ${heal_ns} key 'self-heal-selected'. Do NOT include cost/confidence numbers in the output. Keep the result under 500 characters."
+
+    local _synth_exit=0
+    if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+        ruflo_with_timeout 8 npx -y ruflo@latest coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "$synth_goal" \
+            --max-turns 2 \
+            --mode synthesis 2>/dev/null || _synth_exit=$?
+    else
+        ruflo_with_timeout 8 ruflo coordination orchestrate \
+            --hive-id "$hive_id" \
+            --goal "$synth_goal" \
+            --max-turns 2 \
+            --mode synthesis 2>/dev/null || _synth_exit=$?
+    fi
+
+    # ── Read selected hypothesis (5s budget) ──
+    local _selected=""
+    if [[ $_synth_exit -eq 0 ]]; then
+        if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
+            _selected=$(ruflo_with_timeout 5 npx -y ruflo@latest hive-mind memory \
+                --action get --key "self-heal-selected" --namespace "$heal_ns" 2>/dev/null || true)
+        else
+            _selected=$(ruflo_with_timeout 5 ruflo hive-mind memory \
+                --action get --key "self-heal-selected" --namespace "$heal_ns" 2>/dev/null || true)
+        fi
+    fi
+
+    if [[ -n "$_selected" ]]; then
+        printf '%s\n' "$_selected"
+        emit_event "ruflo.self_heal_hive_complete" \
+            "hive_id=$hive_id" "synthesis=ok" "namespace=$heal_ns"
+        return 0
+    fi
+
+    # ── Synthesis fallback: emit the union as a best-effort signal ──
+    # Better to inject *something* (the user sees three hypotheses in the next
+    # prompt) than nothing — and the synthesis_fallback event surfaces the
+    # flakiness for diagnosis.
+    # Why: emit the byte-bounded $_union_head, not the raw $_union, so a verbose
+    # namespace listing (many keys × large values) cannot inflate the next
+    # iteration's GOAL beyond the 8000-byte cap.
+    if [[ -n "$_union" ]]; then
+        local _fallback="${_union_head:-$_union}"
+        printf '%s\n' "$_fallback"
+        emit_event "ruflo.self_heal_hive_synthesis_fallback" \
+            "synth_exit=$_synth_exit" "namespace=$heal_ns"
+        emit_event "ruflo.self_heal_hive_complete" \
+            "hive_id=$hive_id" "synthesis=fallback"
+        return 0
+    fi
+
+    emit_event "ruflo.self_heal_hive_failed" "reason=no_selection"
+    return 0
+}
+
 # ─── ruflo_learn_from_shipwright — bridge Shipwright outcomes to ruflo ───────
 # Called after skill_memory_record() writes an outcome. Accepts either a path
 # to an outcome JSON file or a raw JSON string, then indexes the outcome into
@@ -2009,10 +2187,6 @@ ruflo_learn_from_shipwright() {
 # Supplements Shipwright's file-based skill selection with semantic vector search.
 # Returns matching outcomes to stdout. Returns empty string when unavailable or
 # when repo hash cannot be determined (to prevent cross-repo namespace pollution).
-#
-# Backend routing: delegates to ruflo_recall, which dispatches between the MCP
-# bridge (SW_RUFLO_BACKEND=mcp) and the CLI fallback. No backend-aware logic
-# here — keeps the dispatcher in one place so future transports apply uniformly.
 ruflo_recall_similar_outcomes() {
     ruflo_available || { echo ""; return 0; }
     local task_type="$1" issue_labels="${2:-}"

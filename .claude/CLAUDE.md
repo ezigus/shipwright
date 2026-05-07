@@ -15,3 +15,9 @@ Load local generated instructions:
 
 Optional repo-specific additions:
 @../.ai-standards/local/claude-additions.md
+
+## Feature Flags
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `RUFLO_SELF_HEAL_HIVE=true` | unset | Enable root-cause triage on test failure with specialist hypothesis spawning and synthesis |

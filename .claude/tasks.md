@@ -1,7 +1,7 @@
 # Tasks — [Ruflo MCP 1.5] Benchmark and acceptance validation — confirm ≥10× subprocess reduction
 
 ## Status: Deliverable 1 ✅ done · Deliverable 2 ✅ done (foundation + pipeline wiring)
-Pipeline: autonomous | Branch: test/-ruflo-mcp-1-5-benchmark-and-acceptance-504
+Pipeline: autonomous | Branch: feature/504-acceptance-validation
 
 ---
 
@@ -13,17 +13,17 @@ Pipeline: autonomous | Branch: test/-ruflo-mcp-1-5-benchmark-and-acceptance-504
 - [x] 200ms cadence process sampling during workload (sampler in `run_backend`)
 - [x] Acceptance ratio gate `BENCH_REDUCTION_RATIO ≥ 10`
 - [x] `--orphan-runs N` multi-cycle sentinel for #441 leak check
-- [x] Validated baseline documented in `docs/ruflo-mcp-transport.md` § "Validated baseline (2026-05-03)"
+- [x] Validated baseline documented in `docs/ruflo-mcp-transport.md` § "Validated baseline (2026-05-05)"
 - [x] CHANGELOG entry under `[Unreleased]`
 - [x] Process leak detection: `ps` sampling + orphan-runs sentinel = 0 orphans across 3 cycles
 - [x] Benchmark results persisted to `.claude/pipeline-artifacts/benchmarks/{benchmark-{cli,mcp},orphan-runs,summary}-<ts>.{json,md}`
 
-### Validated Results (2026-05-03)
-- CLI: 66 unique transient node PIDs, p95=513 ms, 0 errors
-- MCP: 2 unique transient node PIDs (one pre-existing host daemon), p95=9 ms, 0 errors
-- Reduction ratio: **33×** (#504 acceptance bar is ≥10× — comfortable pass)
+### Validated Results (2026-05-05)
+- CLI: 62 unique transient node PIDs, p95=8 ms, 0 errors
+- MCP: 2 unique transient node PIDs (one pre-existing host daemon), p95=8 ms, 0 errors
+- Reduction ratio: **31×** (#504 acceptance bar is ≥10× — comfortable pass)
 - #441 sentinel: 0 orphans across 3 consecutive bridge start/bench/stop cycles
-- Raw artifacts: `.claude/pipeline-artifacts/benchmarks/{benchmark-{cli,mcp},orphan-runs}-20260503T231332Z.json`
+- Raw artifacts: `.claude/pipeline-artifacts/benchmarks/{benchmark-{cli,mcp},orphan-runs}-20260505T174025Z.json`
 
 ---
 

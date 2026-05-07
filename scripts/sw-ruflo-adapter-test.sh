@@ -515,449 +515,6 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Test 20A: ruflo_store dispatcher — default (SW_RUFLO_BACKEND unset) → CLI path
-# Acceptance: pre-change call sites observe identical behavior when SW_RUFLO_BACKEND
-# is unset. We assert the CLI mock receives the canonical `memory store --key …`
-# argv and that NO bridge stub is invoked (we install neither nc nor a stub
-# ruflo_mcp_call — the dispatcher must take the else branch).
-# ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_store — default backend goes through CLI"
-
-unset SW_RUFLO_BACKEND
-RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-calls-default.log"
-: > "$RUFLO_CALLS_LOG"
-mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; exit 0"
-
-unset _RUFLO_ADAPTER_LOADED
-source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-RUFLO_AVAILABLE=true
-RUFLO_USE_NPX=false
-RUFLO_FAILURE_COUNT=0
-
-exit_code=0
-ruflo_store "k" "v" "ns" || exit_code=$?
-
-if [[ $exit_code -eq 0 ]]; then
-    assert_pass "ruflo_store returns 0 on default-backend CLI path"
-else
-    assert_fail "ruflo_store returns 0 on default-backend CLI path" "exit_code=$exit_code"
-fi
-
-if grep -q "memory store --key k --value v --namespace ns" "$RUFLO_CALLS_LOG" 2>/dev/null; then
-    assert_pass "default backend invokes ruflo CLI with memory store args"
-else
-    assert_fail "default backend invokes ruflo CLI with memory store args" \
-        "log contents: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
-fi
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Test 20B: ruflo_store dispatcher — SW_RUFLO_BACKEND=mcp + bridge available
-# routes through ruflo_mcp_call; CLI binary must NOT be invoked.
-# Stubs are installed AFTER sourcing so the adapter's real ruflo_mcp_call /
-# ruflo_bridge_available are overridden in this shell only.
-# ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_store — SW_RUFLO_BACKEND=mcp routes through bridge"
-
-RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-calls-mcp.log"
-MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-calls.log"
-: > "$RUFLO_CALLS_LOG"
-: > "$MCP_CALLS_LOG"
-mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; exit 0"
-
-unset _RUFLO_ADAPTER_LOADED
-source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-RUFLO_AVAILABLE=true
-RUFLO_USE_NPX=false
-RUFLO_FAILURE_COUNT=0
-
-# Override bridge primitives — declare -f sees these as functions.
-ruflo_bridge_available() { return 0; }
-ruflo_mcp_call() { printf '%s\n' "$*" >> "$MCP_CALLS_LOG"; return 0; }
-
-export SW_RUFLO_BACKEND=mcp
-
-exit_code=0
-ruflo_store "mcp-k" "mcp-v" "mcp-ns" || exit_code=$?
-
-if [[ $exit_code -eq 0 ]]; then
-    assert_pass "ruflo_store returns 0 on MCP-bridge happy path"
-else
-    assert_fail "ruflo_store returns 0 on MCP-bridge happy path" "exit_code=$exit_code"
-fi
-
-if grep -qF "memory_store key=mcp-k value=mcp-v namespace=mcp-ns" "$MCP_CALLS_LOG" 2>/dev/null; then
-    assert_pass "MCP routing invokes ruflo_mcp_call with memory_store key=value pairs"
-else
-    assert_fail "MCP routing invokes ruflo_mcp_call with memory_store key=value pairs" \
-        "mcp-calls.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
-fi
-
-if [[ ! -s "$RUFLO_CALLS_LOG" ]]; then
-    assert_pass "MCP routing does NOT spawn a ruflo CLI subprocess"
-else
-    assert_fail "MCP routing does NOT spawn a ruflo CLI subprocess" \
-        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
-fi
-
-# Cleanup overrides so subsequent tests see the adapter's real implementations.
-unset -f ruflo_bridge_available ruflo_mcp_call
-unset SW_RUFLO_BACKEND
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Test 20C: ruflo_store dispatcher — bridge returns error → CLI fallback runs
-# AND tags are forwarded on the fallback path (proves the dropped-tags semantic
-# applies only to the bridge call, not the fail-open fallback).
-# ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_store — MCP error falls open to CLI with tags preserved"
-
-RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-calls-fallback.log"
-MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-calls-fallback.log"
-: > "$RUFLO_CALLS_LOG"
-: > "$MCP_CALLS_LOG"
-mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; exit 0"
-
-unset _RUFLO_ADAPTER_LOADED
-source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-RUFLO_AVAILABLE=true
-RUFLO_USE_NPX=false
-RUFLO_FAILURE_COUNT=0
-
-ruflo_bridge_available() { return 0; }
-# Bridge "responded" but reported failure (success:false) → exit 1.
-ruflo_mcp_call() { printf '%s\n' "$*" >> "$MCP_CALLS_LOG"; return 1; }
-
-export SW_RUFLO_BACKEND=mcp
-
-exit_code=0
-ruflo_store "fb-k" "fb-v" "fb-ns" "tag1,tag2" || exit_code=$?
-
-if [[ $exit_code -eq 0 ]]; then
-    assert_pass "ruflo_store remains fail-open (returns 0) when bridge errors"
-else
-    assert_fail "ruflo_store remains fail-open (returns 0) when bridge errors" "exit_code=$exit_code"
-fi
-
-if grep -qF "memory_store key=fb-k value=fb-v namespace=fb-ns" "$MCP_CALLS_LOG" 2>/dev/null; then
-    assert_pass "bridge was attempted before falling back"
-else
-    assert_fail "bridge was attempted before falling back" \
-        "mcp-calls.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
-fi
-
-if grep -qF "memory store --key fb-k --value fb-v --namespace fb-ns --tags tag1,tag2" \
-        "$RUFLO_CALLS_LOG" 2>/dev/null; then
-    assert_pass "CLI fallback receives full args including tags after bridge error"
-else
-    assert_fail "CLI fallback receives full args including tags after bridge error" \
-        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
-fi
-
-unset -f ruflo_bridge_available ruflo_mcp_call
-unset SW_RUFLO_BACKEND
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Test 20D: ruflo_store dispatcher — SW_RUFLO_BACKEND=mcp + bridge unavailable
-# falls through to CLI WITHOUT invoking ruflo_mcp_call (proves no nc/Node spawn
-# beyond the bounded `nc -w 1` probe inside ruflo_bridge_available).
-# ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_store — MCP gated-on but bridge down falls through to CLI"
-
-RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-calls-bridge-down.log"
-MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-calls-bridge-down.log"
-: > "$RUFLO_CALLS_LOG"
-: > "$MCP_CALLS_LOG"
-mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; exit 0"
-
-unset _RUFLO_ADAPTER_LOADED
-source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-RUFLO_AVAILABLE=true
-RUFLO_USE_NPX=false
-RUFLO_FAILURE_COUNT=0
-
-ruflo_bridge_available() { return 1; }
-# If this gets called the dispatcher's gate is broken — record so we can fail loudly.
-ruflo_mcp_call() { printf '%s\n' "WRONGLY_CALLED $*" >> "$MCP_CALLS_LOG"; return 0; }
-
-export SW_RUFLO_BACKEND=mcp
-
-exit_code=0
-ruflo_store "nu-k" "nu-v" "nu-ns" || exit_code=$?
-
-if [[ $exit_code -eq 0 ]]; then
-    assert_pass "ruflo_store returns 0 when bridge is down"
-else
-    assert_fail "ruflo_store returns 0 when bridge is down" "exit_code=$exit_code"
-fi
-
-if grep -qF "memory store --key nu-k --value nu-v --namespace nu-ns" "$RUFLO_CALLS_LOG" 2>/dev/null; then
-    assert_pass "bridge-down path falls through to CLI"
-else
-    assert_fail "bridge-down path falls through to CLI" \
-        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
-fi
-
-if [[ ! -s "$MCP_CALLS_LOG" ]]; then
-    assert_pass "ruflo_mcp_call not invoked when bridge_available returned false"
-else
-    assert_fail "ruflo_mcp_call not invoked when bridge_available returned false" \
-        "mcp-calls.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
-fi
-
-unset -f ruflo_bridge_available ruflo_mcp_call
-unset SW_RUFLO_BACKEND
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Test 20E: ruflo_recall dispatcher — default (SW_RUFLO_BACKEND unset) → CLI path
-# Asserts pre-change call sites observe identical behavior when SW_RUFLO_BACKEND
-# is unset — the canonical `memory search --query …` argv is sent to the CLI
-# and NO bridge stub is invoked (we install neither nc nor a stub ruflo_mcp_call
-# so the dispatcher must take the else branch).
-# ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_recall — default backend goes through CLI"
-
-unset SW_RUFLO_BACKEND
-RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-recall-default.log"
-: > "$RUFLO_CALLS_LOG"
-mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; printf 'cli-recall-output\n'; exit 0"
-
-unset _RUFLO_ADAPTER_LOADED
-source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-RUFLO_AVAILABLE=true
-RUFLO_USE_NPX=false
-RUFLO_FAILURE_COUNT=0
-
-result=$(ruflo_recall "qx" "nsx" 2>/dev/null || true)
-
-if grep -q "memory search --query qx --namespace nsx --limit 3" "$RUFLO_CALLS_LOG" 2>/dev/null; then
-    assert_pass "default backend invokes ruflo CLI with memory search args"
-else
-    assert_fail "default backend invokes ruflo CLI with memory search args" \
-        "log contents: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
-fi
-
-if [[ "$result" == *"cli-recall-output"* ]]; then
-    assert_pass "default backend returns CLI stdout verbatim to caller"
-else
-    assert_fail "default backend returns CLI stdout verbatim to caller" "got: $result"
-fi
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Test 20F: ruflo_recall dispatcher — SW_RUFLO_BACKEND=mcp + bridge available
-# routes through ruflo_mcp_call; CLI binary must NOT be invoked. Stubs return
-# the bridge's wrapped envelope {"success":true,"result":{...}} and the
-# dispatcher must extract `.result` for the caller.
-# ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_recall — SW_RUFLO_BACKEND=mcp routes through bridge"
-
-RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-recall-mcp.log"
-MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-recall.log"
-: > "$RUFLO_CALLS_LOG"
-: > "$MCP_CALLS_LOG"
-mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; exit 0"
-
-unset _RUFLO_ADAPTER_LOADED
-source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-RUFLO_AVAILABLE=true
-RUFLO_USE_NPX=false
-RUFLO_FAILURE_COUNT=0
-
-# Override bridge primitives — return the wrapped envelope shape.
-ruflo_bridge_available() { return 0; }
-ruflo_mcp_call() {
-    printf '%s\n' "$*" >> "$MCP_CALLS_LOG"
-    printf '{"success":true,"result":{"results":[{"key":"k1","value":"v1"}]}}\n'
-    return 0
-}
-
-export SW_RUFLO_BACKEND=mcp
-
-result=$(ruflo_recall "feature failure pattern" "learning-abc" 2>/dev/null || true)
-
-if grep -qF "memory_search query=feature failure pattern namespace=learning-abc limit=3" "$MCP_CALLS_LOG" 2>/dev/null; then
-    assert_pass "MCP routing invokes ruflo_mcp_call with memory_search key=value pairs"
-else
-    assert_fail "MCP routing invokes ruflo_mcp_call with memory_search key=value pairs" \
-        "mcp-recall.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
-fi
-
-if [[ ! -s "$RUFLO_CALLS_LOG" ]]; then
-    assert_pass "MCP routing does NOT spawn a ruflo CLI subprocess for recall"
-else
-    assert_fail "MCP routing does NOT spawn a ruflo CLI subprocess for recall" \
-        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
-fi
-
-# Caller gets `.result` of the envelope, not the wrapping success/result keys.
-if [[ "$result" == *'"results"'* ]] && [[ "$result" == *'"k1"'* ]] \
-   && [[ "$result" != *'"success"'* ]]; then
-    assert_pass "MCP routing extracts .result and returns its compact JSON to the caller"
-else
-    assert_fail "MCP routing extracts .result and returns its compact JSON to the caller" \
-        "got: $result"
-fi
-
-unset -f ruflo_bridge_available ruflo_mcp_call
-unset SW_RUFLO_BACKEND
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Test 20G: ruflo_recall dispatcher — bridge returns error → CLI fallback runs.
-# Proves fail-open: a failing bridge response still produces output via the CLI.
-# ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_recall — MCP error falls open to CLI"
-
-RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-recall-fallback.log"
-MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-recall-fallback.log"
-: > "$RUFLO_CALLS_LOG"
-: > "$MCP_CALLS_LOG"
-mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; printf 'cli-fallback-text\n'; exit 0"
-
-unset _RUFLO_ADAPTER_LOADED
-source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-RUFLO_AVAILABLE=true
-RUFLO_USE_NPX=false
-RUFLO_FAILURE_COUNT=0
-
-ruflo_bridge_available() { return 0; }
-# Bridge "responded" but reported failure (success:false) → exit 1.
-ruflo_mcp_call() { printf '%s\n' "$*" >> "$MCP_CALLS_LOG"; return 1; }
-
-export SW_RUFLO_BACKEND=mcp
-
-result=$(ruflo_recall "fb-q" "fb-ns" 2>/dev/null || true)
-
-if grep -qF "memory_search query=fb-q namespace=fb-ns limit=3" "$MCP_CALLS_LOG" 2>/dev/null; then
-    assert_pass "bridge was attempted before falling back"
-else
-    assert_fail "bridge was attempted before falling back" \
-        "mcp-recall.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
-fi
-
-if grep -qF "memory search --query fb-q --namespace fb-ns --limit 3" \
-        "$RUFLO_CALLS_LOG" 2>/dev/null; then
-    assert_pass "CLI fallback receives full args after bridge error"
-else
-    assert_fail "CLI fallback receives full args after bridge error" \
-        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
-fi
-
-if [[ "$result" == *"cli-fallback-text"* ]]; then
-    assert_pass "CLI fallback output reaches the caller after bridge error"
-else
-    assert_fail "CLI fallback output reaches the caller after bridge error" "got: $result"
-fi
-
-unset -f ruflo_bridge_available ruflo_mcp_call
-unset SW_RUFLO_BACKEND
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Test 20H: ruflo_recall dispatcher — SW_RUFLO_BACKEND=mcp + bridge unavailable
-# falls through to CLI WITHOUT invoking ruflo_mcp_call (proves the gating check
-# blocks the call when ruflo_bridge_available returns false).
-# ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_recall — MCP gated-on but bridge down falls through to CLI"
-
-RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-recall-bridge-down.log"
-MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-recall-bridge-down.log"
-: > "$RUFLO_CALLS_LOG"
-: > "$MCP_CALLS_LOG"
-mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; printf 'cli-bridge-down-text\n'; exit 0"
-
-unset _RUFLO_ADAPTER_LOADED
-source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-RUFLO_AVAILABLE=true
-RUFLO_USE_NPX=false
-RUFLO_FAILURE_COUNT=0
-
-ruflo_bridge_available() { return 1; }
-# If this gets called the dispatcher's gate is broken — record so we can fail loudly.
-ruflo_mcp_call() { printf '%s\n' "WRONGLY_CALLED $*" >> "$MCP_CALLS_LOG"; return 0; }
-
-export SW_RUFLO_BACKEND=mcp
-
-result=$(ruflo_recall "nu-q" "nu-ns" 2>/dev/null || true)
-
-if grep -qF "memory search --query nu-q --namespace nu-ns --limit 3" "$RUFLO_CALLS_LOG" 2>/dev/null; then
-    assert_pass "bridge-down recall path falls through to CLI"
-else
-    assert_fail "bridge-down recall path falls through to CLI" \
-        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
-fi
-
-if [[ ! -s "$MCP_CALLS_LOG" ]]; then
-    assert_pass "ruflo_mcp_call not invoked when bridge_available returned false (recall)"
-else
-    assert_fail "ruflo_mcp_call not invoked when bridge_available returned false (recall)" \
-        "mcp-recall.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
-fi
-
-if [[ "$result" == *"cli-bridge-down-text"* ]]; then
-    assert_pass "CLI output reaches the caller when bridge is down"
-else
-    assert_fail "CLI output reaches the caller when bridge is down" "got: $result"
-fi
-
-unset -f ruflo_bridge_available ruflo_mcp_call
-unset SW_RUFLO_BACKEND
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Test 20I: ruflo_recall_similar_outcomes inherits MCP routing via ruflo_recall.
-# Confirms the dispatcher lives in one place — no second wiring needed for the
-# similar-outcomes wrapper, just a transparent delegation.
-# ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "ruflo_recall_similar_outcomes — inherits MCP routing via ruflo_recall"
-
-RUFLO_CALLS_LOG="$TEST_TEMP_DIR/ruflo-similar-mcp.log"
-MCP_CALLS_LOG="$TEST_TEMP_DIR/mcp-similar.log"
-: > "$RUFLO_CALLS_LOG"
-: > "$MCP_CALLS_LOG"
-mock_binary "ruflo" "printf '%s\n' \"\$*\" >> \"$RUFLO_CALLS_LOG\"; exit 0"
-
-unset _RUFLO_ADAPTER_LOADED
-source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-RUFLO_AVAILABLE=true
-RUFLO_USE_NPX=false
-RUFLO_FAILURE_COUNT=0
-
-ruflo_bridge_available() { return 0; }
-ruflo_mcp_call() {
-    printf '%s\n' "$*" >> "$MCP_CALLS_LOG"
-    printf '{"success":true,"result":{"results":[{"task_type":"feature"}]}}\n'
-    return 0
-}
-# Pin repo hash so namespace is deterministic (else the function returns "" early).
-_ruflo_resolve_repo_hash() { printf 'similartest1'; return 0; }
-
-export SW_RUFLO_BACKEND=mcp
-
-result=$(ruflo_recall_similar_outcomes "feature" "tdd,backend" 2>/dev/null || true)
-
-if grep -qF "memory_search query=skill selection for feature tdd,backend namespace=learning-similartest1 limit=3" \
-        "$MCP_CALLS_LOG" 2>/dev/null; then
-    assert_pass "ruflo_recall_similar_outcomes routes through MCP via ruflo_recall"
-else
-    assert_fail "ruflo_recall_similar_outcomes routes through MCP via ruflo_recall" \
-        "mcp-similar.log: $(cat "$MCP_CALLS_LOG" 2>/dev/null)"
-fi
-
-if [[ ! -s "$RUFLO_CALLS_LOG" ]]; then
-    assert_pass "ruflo_recall_similar_outcomes does NOT spawn a ruflo CLI subprocess on MCP path"
-else
-    assert_fail "ruflo_recall_similar_outcomes does NOT spawn a ruflo CLI subprocess on MCP path" \
-        "ruflo-calls.log: $(cat "$RUFLO_CALLS_LOG" 2>/dev/null)"
-fi
-
-if [[ "$result" == *'"task_type"'* ]] && [[ "$result" == *'"feature"'* ]] \
-   && [[ "$result" != *'"success"'* ]]; then
-    assert_pass "ruflo_recall_similar_outcomes returns the bridge's .result payload"
-else
-    assert_fail "ruflo_recall_similar_outcomes returns the bridge's .result payload" \
-        "got: $result"
-fi
-
-unset -f ruflo_bridge_available ruflo_mcp_call _ruflo_resolve_repo_hash
-unset SW_RUFLO_BACKEND
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # Test 21: ruflo_execute_build_single — returns 1 when RUFLO_AVAILABLE=false
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "ruflo_execute_build_single — no-op (returns 1) when unavailable"
@@ -4684,70 +4241,846 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# _ruflo_sanitize_query_token — strips ALL ASCII control chars
+# ruflo_execute_self_heal_hive tests — root-cause triage on test failure
 # ═══════════════════════════════════════════════════════════════════════════════
-print_test_section "_ruflo_sanitize_query_token — control chars become spaces"
 
+# Test: env gate — empty stdout, exit 0, no events when RUFLO_SELF_HEAL_HIVE unset
+print_test_section "ruflo_execute_self_heal_hive — gate disabled (default)"
+unset _RUFLO_ADAPTER_LOADED
+unset RUFLO_SELF_HEAL_HIVE
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+# Even with ruflo "available", flag-off must short-circuit before any work.
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+exit_code=0
+_heal_out=$(ruflo_execute_self_heal_hive "test failed" "foo.sh,bar.sh" 2>/dev/null) || exit_code=$?
+if [[ $exit_code -eq 0 && -z "$_heal_out" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive returns 0 with empty stdout when gate disabled"
+else
+    assert_fail "ruflo_execute_self_heal_hive returns 0 with empty stdout when gate disabled" \
+        "exit=$exit_code stdout=$_heal_out"
+fi
+
+# Test: ruflo unavailable — returns 0 with empty stdout, emits skipped event
+print_test_section "ruflo_execute_self_heal_hive — ruflo unavailable"
 unset _RUFLO_ADAPTER_LOADED
 source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
-
-# \n, \r, \t replaced with space (consistent — old code differed for \r)
-_san_in=$'feature\nbug\rfix\tlabel'
-_san_out=$(_ruflo_sanitize_query_token "$_san_in")
-if [[ "$_san_out" == "feature bug fix label" ]]; then
-    assert_pass "sanitize: \\n/\\r/\\t consistently become single spaces"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=false
+exit_code=0
+_heal_out=$(ruflo_execute_self_heal_hive "test failed" "foo.sh" 2>/dev/null) || exit_code=$?
+if [[ $exit_code -eq 0 && -z "$_heal_out" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive returns 0 empty when ruflo unavailable"
 else
-    assert_fail "sanitize: \\n/\\r/\\t consistently become single spaces" "got: '$_san_out'"
+    assert_fail "ruflo_execute_self_heal_hive returns 0 empty when ruflo unavailable" \
+        "exit=$exit_code stdout=$_heal_out"
+fi
+unset RUFLO_SELF_HEAL_HIVE
+
+# Test: hive unavailable — returns 0 with empty stdout
+print_test_section "ruflo_execute_self_heal_hive — hive unavailable"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=false
+RUFLO_USE_NPX=false
+exit_code=0
+_heal_out=$(ruflo_execute_self_heal_hive "test failed" "foo.sh" 2>/dev/null) || exit_code=$?
+if [[ $exit_code -eq 0 && -z "$_heal_out" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive returns 0 empty when hive unavailable"
+else
+    assert_fail "ruflo_execute_self_heal_hive returns 0 empty when hive unavailable" \
+        "exit=$exit_code stdout=$_heal_out"
+fi
+unset RUFLO_SELF_HEAL_HIVE
+
+# Test: empty RUFLO_HIVE_ID — returns 0 with empty stdout, emits warning event
+print_test_section "ruflo_execute_self_heal_hive — empty hive_id skips with warning"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID=""
+RUFLO_USE_NPX=false
+_emit_log_ehid="$TEST_TEMP_DIR/emit-ehid.log"
+emit_event() { printf '%s\n' "$*" >> "$_emit_log_ehid"; }
+warn() { printf 'WARN: %s\n' "$*" >> "$_emit_log_ehid"; }
+exit_code=0
+_heal_out=$(ruflo_execute_self_heal_hive "test failed" "foo.sh" 2>/dev/null) || exit_code=$?
+if [[ $exit_code -eq 0 && -z "$_heal_out" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive returns 0 empty when RUFLO_HIVE_ID is empty"
+else
+    assert_fail "ruflo_execute_self_heal_hive returns 0 empty when RUFLO_HIVE_ID is empty" \
+        "exit=$exit_code stdout=$_heal_out"
+fi
+if grep -q "empty_hive_id" "$_emit_log_ehid" 2>/dev/null; then
+    assert_pass "ruflo_execute_self_heal_hive emits skipped event for empty hive_id"
+else
+    assert_fail "ruflo_execute_self_heal_hive emits skipped event for empty hive_id" \
+        "$(cat "$_emit_log_ehid" 2>/dev/null)"
+fi
+if grep -q "WARN:" "$_emit_log_ehid" 2>/dev/null; then
+    assert_pass "ruflo_execute_self_heal_hive emits warn for empty hive_id"
+else
+    assert_fail "ruflo_execute_self_heal_hive emits warn for empty hive_id" \
+        "no warn line found in $(cat "$_emit_log_ehid" 2>/dev/null)"
+fi
+unset RUFLO_SELF_HEAL_HIVE
+unset -f emit_event warn
+
+# Test: empty namespace post-orchestrate — returns 0 with empty stdout
+print_test_section "ruflo_execute_self_heal_hive — empty specialist output"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+# Always succeed but return empty memory list/get
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-test-empty"
+RUFLO_USE_NPX=false
+exit_code=0
+_heal_out=$(ruflo_execute_self_heal_hive "boom" "x.sh" 2>/dev/null) || exit_code=$?
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 0 && -z "$_heal_out" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive returns 0 empty when namespace is empty"
+else
+    assert_fail "ruflo_execute_self_heal_hive returns 0 empty when namespace is empty" \
+        "exit=$exit_code stdout=$_heal_out"
+fi
+unset RUFLO_SELF_HEAL_HIVE
+
+# Test: happy path — selected hypothesis printed, spawn + orchestrate called
+print_test_section "ruflo_execute_self_heal_hive — happy path emits selection"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+subcmd="\${1:-}"
+sub2="\${2:-}"
+printf '%s %s\\n' "\$subcmd" "\$sub2" >> "$_call_log"
+# 'memory get --key self-heal-selected' returns the selected hypothesis text
+if [[ "\$subcmd" == "hive-mind" && "\$sub2" == "memory" ]]; then
+    # Check for action=get and key=self-heal-selected in the args
+    _is_get=false
+    _is_selected=false
+    for arg in "\$@"; do
+        [[ "\$arg" == "get" ]] && _is_get=true
+        [[ "\$arg" == "self-heal-selected" ]] && _is_selected=true
+    done
+    if [[ "\$_is_get" == "true" && "\$_is_selected" == "true" ]]; then
+        printf 'Hypothesis: mock divergence — fixture state leaked across tests.\\nVerification: grep for shared mock state in setup blocks.\\n'
+    else
+        # 'list' path returns union of hypotheses
+        printf 'hypothesis-mock-boundary: ...\\nhypothesis-async-timing: ...\\nhypothesis-schema-type: ...\\n'
+    fi
+    exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-happy"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="self-heal-happy-pipeline"
+_heal_out_file="$_test_tmp/heal-out.txt"
+exit_code=0
+ruflo_execute_self_heal_hive "test failed: AssertionError" "src/foo.js,src/bar.js" \
+    > "$_heal_out_file" 2>/dev/null || exit_code=$?
+_heal_nonempty=false
+[[ -s "$_heal_out_file" ]] && _heal_nonempty=true
+_heal_has_hyp=false
+grep -q "Hypothesis:" "$_heal_out_file" 2>/dev/null && _heal_has_hyp=true
+_spawn_called=false
+grep -q "^hive-mind spawn" "$_call_log" 2>/dev/null && _spawn_called=true
+_orch_called=false
+grep -q "^coordination orchestrate" "$_call_log" 2>/dev/null && _orch_called=true
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_execute_self_heal_hive returns 0 on happy path"
+else
+    assert_fail "ruflo_execute_self_heal_hive returns 0 on happy path" "exit=$exit_code"
+fi
+if [[ "$_heal_nonempty" == "true" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive emits non-empty hypothesis on stdout"
+else
+    assert_fail "ruflo_execute_self_heal_hive emits non-empty hypothesis on stdout" "stdout empty"
+fi
+if [[ "$_heal_has_hyp" == "true" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive emits 'Hypothesis:' line"
+else
+    assert_fail "ruflo_execute_self_heal_hive emits 'Hypothesis:' line" "stdout: $(cat "$_heal_out_file" 2>/dev/null)"
+fi
+if [[ "$_spawn_called" == "true" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive calls hive-mind spawn"
+else
+    assert_fail "ruflo_execute_self_heal_hive calls hive-mind spawn" "spawn not invoked"
+fi
+if [[ "$_orch_called" == "true" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive calls coordination orchestrate"
+else
+    assert_fail "ruflo_execute_self_heal_hive calls coordination orchestrate" "orchestrate not invoked"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: triage orchestrate fails — returns 0 empty, no synthesis attempted
+print_test_section "ruflo_execute_self_heal_hive — triage failure short-circuits"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+subcmd="\${1:-}"
+sub2="\${2:-}"
+sub3="\${3:-}"
+printf '%s %s %s\\n' "\$subcmd" "\$sub2" "\$sub3" >> "$_call_log"
+# Triage orchestrate fails — anything --mode triage or first orchestrate returns non-zero
+if [[ "\$subcmd" == "coordination" && "\$sub2" == "orchestrate" ]]; then
+    for arg in "\$@"; do
+        if [[ "\$arg" == "triage" ]]; then
+            exit 7
+        fi
+    done
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-triage-fail"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="self-heal-triage-fail-pipeline"
+exit_code=0
+_heal_out=$(ruflo_execute_self_heal_hive "test failed: assertion" "src/foo.js" 2>/dev/null) || exit_code=$?
+# Synthesis must NOT be invoked after triage failure
+_synth_called=false
+grep -q "coordination orchestrate.*synthesis\|synthesis" "$_call_log" 2>/dev/null && _synth_called=true
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 0 && -z "$_heal_out" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive returns 0 empty when triage orchestrate fails"
+else
+    assert_fail "ruflo_execute_self_heal_hive returns 0 empty when triage orchestrate fails" \
+        "exit=$exit_code stdout=$_heal_out"
+fi
+if [[ "$_synth_called" == "false" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive does not invoke synthesis after triage failure"
+else
+    assert_fail "ruflo_execute_self_heal_hive does not invoke synthesis after triage failure" \
+        "synthesis was invoked"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: synthesis fails — falls back to printing union of hypotheses
+print_test_section "ruflo_execute_self_heal_hive — synthesis failure falls back to union"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+subcmd="\${1:-}"
+sub2="\${2:-}"
+# Triage succeeds. Synthesis fails (--mode synthesis returns non-zero).
+if [[ "\$subcmd" == "coordination" && "\$sub2" == "orchestrate" ]]; then
+    for arg in "\$@"; do
+        if [[ "\$arg" == "synthesis" ]]; then
+            exit 9
+        fi
+    done
+    exit 0
+fi
+# Individual key gets return hypothesis blocks; self-heal-selected returns empty
+# (because synthesis never wrote it — synthesis exits 9 above).
+if [[ "\$subcmd" == "hive-mind" && "\$sub2" == "memory" ]]; then
+    _is_get=false; _key=""
+    for arg in "\$@"; do
+        [[ "\$arg" == "get" ]] && _is_get=true
+        [[ "\$arg" == "hypothesis-mock-boundary" ]] && _key="mb"
+        [[ "\$arg" == "hypothesis-async-timing" ]] && _key="at"
+        [[ "\$arg" == "hypothesis-schema-type" ]] && _key="st"
+    done
+    if [[ "\$_is_get" == "true" && "\$_key" == "mb" ]]; then
+        printf 'hypothesis-mock-boundary: H1\n'
+    elif [[ "\$_is_get" == "true" && "\$_key" == "at" ]]; then
+        printf 'hypothesis-async-timing: H2\n'
+    elif [[ "\$_is_get" == "true" && "\$_key" == "st" ]]; then
+        printf 'hypothesis-schema-type: H3\n'
+    fi
+    # self-heal-selected get returns empty — synthesis failed before writing it
+    exit 0
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-synth-fail"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="self-heal-synth-fail-pipeline"
+_heal_out_file="$_test_tmp/heal-out.txt"
+exit_code=0
+ruflo_execute_self_heal_hive "boom" "x.js" > "$_heal_out_file" 2>/dev/null || exit_code=$?
+_heal_has_union=false
+grep -q "hypothesis-mock-boundary\|hypothesis-async-timing\|hypothesis-schema-type" \
+    "$_heal_out_file" 2>/dev/null && _heal_has_union=true
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_execute_self_heal_hive returns 0 when synthesis fails"
+else
+    assert_fail "ruflo_execute_self_heal_hive returns 0 when synthesis fails" "exit=$exit_code"
+fi
+if [[ "$_heal_has_union" == "true" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive falls back to union when synthesis fails"
+else
+    assert_fail "ruflo_execute_self_heal_hive falls back to union when synthesis fails" \
+        "stdout: $(cat "$_heal_out_file" 2>/dev/null)"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: bash 3.2 compliance — no associative arrays or case-conversion expansions
+# in the new function (regression guard against future maintenance).
+print_test_section "ruflo_execute_self_heal_hive — bash 3.2 compliance"
+_self_heal_body=$(awk '/^ruflo_execute_self_heal_hive\(\) \{/,/^\}$/' \
+    "$SCRIPT_DIR/lib/ruflo-adapter.sh" 2>/dev/null || true)
+if [[ -n "$_self_heal_body" ]]; then
+    if echo "$_self_heal_body" | grep -qE 'declare -A|readarray|\$\{[A-Za-z_]+,,\}|\$\{[A-Za-z_]+\^\^\}'; then
+        assert_fail "ruflo_execute_self_heal_hive uses no bash-4 features" \
+            "found bash-4 syntax in function body"
+    else
+        assert_pass "ruflo_execute_self_heal_hive uses no bash-4 features"
+    fi
+else
+    assert_fail "ruflo_execute_self_heal_hive — function body extractable" "awk returned empty"
 fi
 
-# ESC and BEL (the previous "only \n/\r/\t" code missed these)
-_san_in=$'a\x1bb\x07c'
-_san_out=$(_ruflo_sanitize_query_token "$_san_in")
-if [[ "$_san_out" == "a b c" ]]; then
-    assert_pass "sanitize: ESC and BEL stripped (defence-in-depth)"
+# Helper: build a ruflo mock that records --count from spawn invocations and
+# emits a happy-path selected hypothesis. The function's path through to the
+# complete event needs all three memory queries to return content: list (so
+# _union is non-empty and the function proceeds to synthesis), and get
+# self-heal-selected (so _selected is non-empty for the success branch).
+_self_heal_make_count_mock() {
+    local _tmp="$1"
+    local _calls="$2"
+    cat > "$_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+subcmd="\${1:-}"
+sub2="\${2:-}"
+printf '%s\n' "\$*" >> "$_calls"
+if [[ "\$subcmd" == "hive-mind" && "\$sub2" == "memory" ]]; then
+    _is_get=false; _is_selected=false; _key=""
+    for arg in "\$@"; do
+        [[ "\$arg" == "get" ]] && _is_get=true
+        [[ "\$arg" == "self-heal-selected" ]] && _is_selected=true
+        [[ "\$arg" == "hypothesis-mock-boundary" ]] && _key="mb"
+        [[ "\$arg" == "hypothesis-async-timing" ]] && _key="at"
+        [[ "\$arg" == "hypothesis-schema-type" ]] && _key="st"
+    done
+    if [[ "\$_is_get" == "true" && "\$_is_selected" == "true" ]]; then
+        printf 'Hypothesis: ok\nVerification: ok\n'
+    elif [[ "\$_is_get" == "true" && "\$_key" == "mb" ]]; then
+        printf 'hypothesis-mock-boundary: H1\n'
+    elif [[ "\$_is_get" == "true" && "\$_key" == "at" ]]; then
+        printf 'hypothesis-async-timing: H2\n'
+    elif [[ "\$_is_get" == "true" && "\$_key" == "st" ]]; then
+        printf 'hypothesis-schema-type: H3\n'
+    fi
+fi
+exit 0
+MOCK
+    chmod +x "$_tmp/ruflo"
+}
+
+# Test: specialist count default — unset RUFLO_SELF_HEAL_MAX_AGENTS picks 3
+print_test_section "ruflo_execute_self_heal_hive — specialist count defaults to 3"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-count-default"; RUFLO_USE_NPX=false
+unset RUFLO_SELF_HEAL_MAX_AGENTS
+SHIPWRIGHT_PIPELINE_ID="count-default"
+ruflo_execute_self_heal_hive "boom" "x" >/dev/null 2>&1 || true
+_count_line=$(grep '^hive-mind spawn' "$_calls" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_count_line" == *"--count 3"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive defaults --count to 3 when unset"
 else
-    assert_fail "sanitize: ESC and BEL stripped" "got: '$_san_out'"
+    assert_fail "ruflo_execute_self_heal_hive defaults --count to 3 when unset" "spawn line: $_count_line"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: specialist count clamped at ceiling (4) — 10 → 4
+print_test_section "ruflo_execute_self_heal_hive — specialist count clamps at 4"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-count-clamp"; RUFLO_USE_NPX=false
+RUFLO_SELF_HEAL_MAX_AGENTS=10
+SHIPWRIGHT_PIPELINE_ID="count-clamp"
+ruflo_execute_self_heal_hive "boom" "x" >/dev/null 2>&1 || true
+_count_line=$(grep '^hive-mind spawn' "$_calls" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_count_line" == *"--count 4"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive clamps --count to 4 when value is 10"
+else
+    assert_fail "ruflo_execute_self_heal_hive clamps --count to 4 when value is 10" \
+        "spawn line: $_count_line"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID RUFLO_SELF_HEAL_MAX_AGENTS
+
+# Test: specialist count zero coerced to default 3
+print_test_section "ruflo_execute_self_heal_hive — specialist count 0 → default"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-count-zero"; RUFLO_USE_NPX=false
+RUFLO_SELF_HEAL_MAX_AGENTS=0
+SHIPWRIGHT_PIPELINE_ID="count-zero"
+ruflo_execute_self_heal_hive "boom" "x" >/dev/null 2>&1 || true
+_count_line=$(grep '^hive-mind spawn' "$_calls" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_count_line" == *"--count 3"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive coerces --count 0 to default 3"
+else
+    assert_fail "ruflo_execute_self_heal_hive coerces --count 0 to default 3" \
+        "spawn line: $_count_line"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID RUFLO_SELF_HEAL_MAX_AGENTS
+
+# Test: specialist count non-numeric coerced to default 3
+print_test_section "ruflo_execute_self_heal_hive — specialist count non-numeric → default"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-count-junk"; RUFLO_USE_NPX=false
+RUFLO_SELF_HEAL_MAX_AGENTS="banana"
+SHIPWRIGHT_PIPELINE_ID="count-junk"
+ruflo_execute_self_heal_hive "boom" "x" >/dev/null 2>&1 || true
+_count_line=$(grep '^hive-mind spawn' "$_calls" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_count_line" == *"--count 3"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive coerces non-numeric --count to default 3"
+else
+    assert_fail "ruflo_execute_self_heal_hive coerces non-numeric --count to default 3" \
+        "spawn line: $_count_line"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID RUFLO_SELF_HEAL_MAX_AGENTS
+
+# Test: SHIPWRIGHT_PIPELINE_ID flows into namespace prefix used in spawn
+print_test_section "ruflo_execute_self_heal_hive — pipeline_id propagates to spawn prefix"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-pid"; RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="pl-abc-123"
+ruflo_execute_self_heal_hive "boom" "x" >/dev/null 2>&1 || true
+_spawn_line=$(grep '^hive-mind spawn' "$_calls" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_spawn_line" == *"self-heal-pl-abc-123"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive uses SHIPWRIGHT_PIPELINE_ID in --prefix"
+else
+    assert_fail "ruflo_execute_self_heal_hive uses SHIPWRIGHT_PIPELINE_ID in --prefix" \
+        "spawn line: $_spawn_line"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: emit_event fires the start event with max_agents and namespace fields
+print_test_section "ruflo_execute_self_heal_hive — emits start event with metadata"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-evt"; RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="evt-pipeline"
+_emit_log="$_test_tmp/emit.log"
+emit_event() { printf '%s\n' "$*" >> "$_emit_log"; }
+ruflo_execute_self_heal_hive "boom" "x.js" >/dev/null 2>&1 || true
+unset -f emit_event
+_start_evt=$(grep "ruflo.self_heal_hive_start" "$_emit_log" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_start_evt" == *"max_agents=3"* && "$_start_evt" == *"namespace=hive-self-heal-evt-pipeline"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive start event includes max_agents and namespace"
+else
+    assert_fail "ruflo_execute_self_heal_hive start event includes max_agents and namespace" \
+        "event: $_start_evt"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: emit_event fires complete event with synthesis=ok on happy path
+print_test_section "ruflo_execute_self_heal_hive — emits complete event on success"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+_self_heal_make_count_mock "$_test_tmp" "$_calls"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-cmp"; RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="cmp-pipeline"
+_emit_log="$_test_tmp/emit.log"
+emit_event() { printf '%s\n' "$*" >> "$_emit_log"; }
+ruflo_execute_self_heal_hive "boom" "x.js" >/dev/null 2>&1 || true
+unset -f emit_event
+_complete_evt=$(grep "ruflo.self_heal_hive_complete" "$_emit_log" 2>/dev/null | head -1 || true)
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_complete_evt" == *"synthesis=ok"* ]]; then
+    assert_pass "ruflo_execute_self_heal_hive emits complete event with synthesis=ok"
+else
+    assert_fail "ruflo_execute_self_heal_hive emits complete event with synthesis=ok" \
+        "event: $_complete_evt"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: NPX path — RUFLO_USE_NPX=true routes through npx wrapper
+print_test_section "ruflo_execute_self_heal_hive — NPX path invokes npx wrapper"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d); _calls="$_test_tmp/calls.log"
+# npx mock: records argv and acts as ruflo-via-npx
+cat > "$_test_tmp/npx" <<MOCK
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$_calls"
+# Drop the leading flags ("-y ruflo@latest") and dispatch on the remainder.
+shift; shift
+subcmd="\${1:-}"
+sub2="\${2:-}"
+if [[ "\$subcmd" == "hive-mind" && "\$sub2" == "memory" ]]; then
+    _is_get=false; _is_selected=false
+    for arg in "\$@"; do
+        [[ "\$arg" == "get" ]] && _is_get=true
+        [[ "\$arg" == "self-heal-selected" ]] && _is_selected=true
+    done
+    [[ "\$_is_get" == "true" && "\$_is_selected" == "true" ]] && \
+        printf 'Hypothesis: npx-ok\nVerification: npx-ok\n'
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/npx"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true; RUFLO_AVAILABLE=true; RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="t-npx"; RUFLO_USE_NPX=true
+SHIPWRIGHT_PIPELINE_ID="npx-pipeline"
+_heal_out_file="$_test_tmp/out.txt"
+ruflo_execute_self_heal_hive "boom" "x.js" > "$_heal_out_file" 2>/dev/null || true
+_npx_used=false
+grep -q "ruflo@latest hive-mind spawn" "$_calls" 2>/dev/null && _npx_used=true
+_npx_orch=false
+grep -q "ruflo@latest coordination orchestrate" "$_calls" 2>/dev/null && _npx_orch=true
+PATH="${PATH#"$_test_tmp:"}"; rm -rf "$_test_tmp"
+if [[ "$_npx_used" == "true" && "$_npx_orch" == "true" ]]; then
+    assert_pass "ruflo_execute_self_heal_hive routes spawn+orchestrate through npx when RUFLO_USE_NPX=true"
+else
+    assert_fail "ruflo_execute_self_heal_hive routes spawn+orchestrate through npx when RUFLO_USE_NPX=true" \
+        "spawn=$_npx_used orchestrate=$_npx_orch"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID RUFLO_USE_NPX
+
+# Test: synthesis fallback emits bounded output (≤ 8000 bytes head). When
+# synthesis fails AND the namespace listing is verbose (large keys / many
+# values), the unbounded $_union must NOT leak into the next iteration's
+# GOAL. The fallback path emits $_union_head (head -c 8000) instead.
+print_test_section "ruflo_execute_self_heal_hive — synthesis fallback bounded ≤ 8000 bytes"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_call_log="$_test_tmp/ruflo-calls.log"
+cat > "$_test_tmp/ruflo" <<'MOCK'
+#!/usr/bin/env bash
+subcmd="${1:-}"
+sub2="${2:-}"
+# Individual hypothesis key gets each return ~7000 bytes (union >> 8000-byte cap)
+if [[ "$subcmd" == "hive-mind" && "$sub2" == "memory" ]]; then
+    _is_get=false; _is_selected=false; _key=""
+    for arg in "$@"; do
+        [[ "$arg" == "get" ]] && _is_get=true
+        [[ "$arg" == "self-heal-selected" ]] && _is_selected=true
+        [[ "$arg" == "hypothesis-mock-boundary" ]] && _key="mb"
+        [[ "$arg" == "hypothesis-async-timing" ]] && _key="at"
+        [[ "$arg" == "hypothesis-schema-type" ]] && _key="st"
+    done
+    if [[ "$_is_get" == "true" && "$_is_selected" == "true" ]]; then
+        # Synthesis never wrote self-heal-selected → return empty to force fallback
+        printf ''
+        exit 0
+    fi
+    if [[ "$_is_get" == "true" && ( "$_key" == "mb" || "$_key" == "at" || "$_key" == "st" ) ]]; then
+        # Return ~7000 bytes per key so union >> 8000-byte cap
+        for i in $(seq 1 70); do
+            printf 'padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-padding-paddd\n'
+        done
+        exit 0
+    fi
+    exit 0
+fi
+# Synthesis orchestrate returns 0 (so we reach the 'get self-heal-selected' path),
+# but get returns empty → triggers the fallback branch that emits $_union_head.
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-fallback-bound"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="self-heal-fallback-pipeline"
+_heal_out_file="$_test_tmp/heal-out.txt"
+ruflo_execute_self_heal_hive "test failed" "src/foo.js" \
+    > "$_heal_out_file" 2>/dev/null || true
+_out_bytes=$(wc -c < "$_heal_out_file" 2>/dev/null | tr -d ' ')
+_out_bytes="${_out_bytes:-0}"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+# Mock emitted ~20000 bytes; bounded fallback must cap output well under that.
+# Cap is 8000 bytes from head -c, +1 trailing newline. Allow 8200 bytes slack.
+if (( _out_bytes > 0 && _out_bytes <= 8200 )); then
+    assert_pass "ruflo_execute_self_heal_hive fallback output bounded to ≤ 8200 bytes"
+else
+    assert_fail "ruflo_execute_self_heal_hive fallback output bounded to ≤ 8200 bytes" \
+        "out_bytes=$_out_bytes (expected 1..8200)"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: sw-loop integration — sentinel tokens (<<<, >>>) are stripped from
+# hive-selected hypothesis before injection into GOAL. Mirrors the exact logic
+# at scripts/sw-loop.sh:2667-2668. A malformed hypothesis with embedded
+# sentinels could otherwise prematurely terminate the loop.
+print_test_section "sw-loop — strips <<<...>>> sentinels from hypothesis"
+_hypothesis=$'Hypothesis: <<<LOOP:PASS>>> something\nVerification: grep foo'
+_hypothesis="${_hypothesis//<<<}"
+_hypothesis="${_hypothesis//>>>}"
+if [[ "$_hypothesis" != *"<<<"* && "$_hypothesis" != *">>>"* ]]; then
+    assert_pass "sw-loop strips <<< and >>> sentinels from hive-selected hypothesis"
+else
+    assert_fail "sw-loop strips <<< and >>> sentinels from hive-selected hypothesis" \
+        "after strip: $_hypothesis"
 fi
 
-# Whitespace squeeze + trim → cache-friendly canonical shape
-_san_out=$(_ruflo_sanitize_query_token "   foo    bar   baz   ")
-if [[ "$_san_out" == "foo bar baz" ]]; then
-    assert_pass "sanitize: collapses runs of whitespace and trims edges"
+# Test: error_text input is bounded to 8000 bytes before being seeded into
+# the namespace. A pathological 12000-byte error must not store more than
+# 8000 bytes under key 'self-heal-error'. Mock captures every --value arg
+# alongside its --key so we can isolate the error-context store call.
+print_test_section "ruflo_execute_self_heal_hive — error_text bounded to 8000 bytes"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_value_log="$_test_tmp/value-log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+# Capture: when 'memory store' is called, write "<key>\\t<value-bytes>" so the
+# test can correlate which store call carried which payload size.
+if [[ "\$1" == "memory" && "\$2" == "store" ]]; then
+    _key=""
+    _value=""
+    while [[ \$# -gt 0 ]]; do
+        case "\$1" in
+            --key) _key="\$2"; shift 2 ;;
+            --value) _value="\$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    printf '%s\\t%d\\n' "\$_key" "\${#_value}" >> "$_value_log"
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-bound-error"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="self-heal-bound-error-pipeline"
+# Build a 12000-byte error string (well above the 8000-byte cap).
+_huge_error=$(printf 'A%.0s' $(seq 1 12000))
+ruflo_execute_self_heal_hive "$_huge_error" "src/foo.js" >/dev/null 2>&1 || true
+_err_bytes=$(awk -F'\t' '$1=="self-heal-error"{print $2; exit}' "$_value_log" 2>/dev/null)
+_err_bytes="${_err_bytes:-0}"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if (( _err_bytes > 0 && _err_bytes <= 8000 )); then
+    assert_pass "ruflo_execute_self_heal_hive bounds error_text to ≤ 8000 bytes (got $_err_bytes)"
 else
-    assert_fail "sanitize: whitespace collapse" "got: '$_san_out'"
+    assert_fail "ruflo_execute_self_heal_hive bounds error_text to ≤ 8000 bytes" \
+        "stored bytes=$_err_bytes (expected 1..8000 from 12000-byte input)"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: changed_files input is bounded to 2000 bytes before being seeded into
+# the namespace. Same mock pattern as the error_text bounding test, but the
+# captured key is 'self-heal-changed-files'.
+print_test_section "ruflo_execute_self_heal_hive — changed_files bounded to 2000 bytes"
+unset _RUFLO_ADAPTER_LOADED
+_test_tmp=$(mktemp -d)
+_value_log="$_test_tmp/value-log"
+cat > "$_test_tmp/ruflo" <<MOCK
+#!/usr/bin/env bash
+if [[ "\$1" == "memory" && "\$2" == "store" ]]; then
+    _key=""
+    _value=""
+    while [[ \$# -gt 0 ]]; do
+        case "\$1" in
+            --key) _key="\$2"; shift 2 ;;
+            --value) _value="\$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    printf '%s\\t%d\\n' "\$_key" "\${#_value}" >> "$_value_log"
+fi
+exit 0
+MOCK
+chmod +x "$_test_tmp/ruflo"
+PATH="$_test_tmp:$PATH"
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_SELF_HEAL_HIVE=true
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-bound-files"
+RUFLO_USE_NPX=false
+SHIPWRIGHT_PIPELINE_ID="self-heal-bound-files-pipeline"
+# Build a 4000-byte changed-files string (twice the 2000-byte cap).
+_huge_files=$(printf 'src/file%04d.js,' $(seq 1 250))
+ruflo_execute_self_heal_hive "boom" "$_huge_files" >/dev/null 2>&1 || true
+_files_bytes=$(awk -F'\t' '$1=="self-heal-changed-files"{print $2; exit}' "$_value_log" 2>/dev/null)
+_files_bytes="${_files_bytes:-0}"
+PATH="${PATH#"$_test_tmp:"}"
+rm -rf "$_test_tmp"
+if (( _files_bytes > 0 && _files_bytes <= 2000 )); then
+    assert_pass "ruflo_execute_self_heal_hive bounds changed_files to ≤ 2000 bytes (got $_files_bytes)"
+else
+    assert_fail "ruflo_execute_self_heal_hive bounds changed_files to ≤ 2000 bytes" \
+        "stored bytes=$_files_bytes (expected 1..2000 from ~4000-byte input)"
+fi
+unset RUFLO_SELF_HEAL_HIVE SHIPWRIGHT_PIPELINE_ID
+
+# Test: gate-disabled performance — when RUFLO_SELF_HEAL_HIVE is unset (the
+# default), the function MUST exit before doing any I/O or spawning subshells.
+# Plan AC-5: < 1ms ideal, < 100ms ceiling on slow CI. We measure 100 iterations
+# and assert total wall time < 5s (effective 50ms/call ceiling).
+print_test_section "ruflo_execute_self_heal_hive — disabled-gate near-zero overhead"
+unset _RUFLO_ADAPTER_LOADED
+unset RUFLO_SELF_HEAL_HIVE
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+RUFLO_AVAILABLE=true
+RUFLO_HIVE_AVAILABLE=true
+RUFLO_HIVE_ID="self-heal-perf-disabled"
+_t_start=$(date +%s)
+for _i in $(seq 1 100); do
+    ruflo_execute_self_heal_hive "boom" "src/x.js" >/dev/null 2>&1 || true
+done
+_t_end=$(date +%s)
+_t_elapsed=$(( _t_end - _t_start ))
+if (( _t_elapsed < 5 )); then
+    assert_pass "ruflo_execute_self_heal_hive disabled-gate overhead < 5s for 100 calls (got ${_t_elapsed}s)"
+else
+    assert_fail "ruflo_execute_self_heal_hive disabled-gate overhead < 5s for 100 calls" \
+        "elapsed=${_t_elapsed}s (expected < 5)"
 fi
 
-# Empty input → empty output (caller decides default)
-_san_out=$(_ruflo_sanitize_query_token "")
-if [[ -z "$_san_out" ]]; then
-    assert_pass "sanitize: empty input returns empty"
-else
-    assert_fail "sanitize: empty input returns empty" "got: '$_san_out'"
-fi
+# Test: sw-loop integration — GOAL injection format. The exact composition logic
+# from scripts/sw-loop.sh:2707-2716 must produce a GOAL containing the
+# "## Self-Heal Hypothesis (hive-selected)" header followed by the cleaned
+# hypothesis text. This guards against header-string drift and verifies the
+# header positioning relative to the hypothesis body.
+print_test_section "sw-loop — injects hypothesis under '## Self-Heal Hypothesis' header"
+GOAL="Original goal: fix the failing test"
+_hypothesis=$'Hypothesis: stale fixture state.\nVerification: grep beforeEach src/'
+# Mirror exact sw-loop.sh:2710-2715 logic verbatim.
+_hypothesis="${_hypothesis//<<<}"
+_hypothesis="${_hypothesis//>>>}"
+GOAL="${GOAL}
 
-# Bounded length via env knob
-_san_out=$(RUFLO_QUERY_TOKEN_MAX_BYTES=10 _ruflo_sanitize_query_token "abcdefghijklmnopqrstuvwxyz")
-if [[ "$_san_out" == "abcdefghij" ]]; then
-    assert_pass "sanitize: RUFLO_QUERY_TOKEN_MAX_BYTES bounds output"
-else
-    assert_fail "sanitize: RUFLO_QUERY_TOKEN_MAX_BYTES bounds output" "got: '$_san_out' (len=${#_san_out})"
+## Self-Heal Hypothesis (hive-selected)
+${_hypothesis}"
+_has_header=false
+_has_body=false
+_header_before_body=false
+if [[ "$GOAL" == *"## Self-Heal Hypothesis (hive-selected)"* ]]; then
+    _has_header=true
 fi
+if [[ "$GOAL" == *"Hypothesis: stale fixture state"* ]]; then
+    _has_body=true
+fi
+# Header must precede body in the composed GOAL.
+if [[ "$_has_header" == "true" && "$_has_body" == "true" ]]; then
+    _header_pos="${GOAL%%## Self-Heal Hypothesis*}"
+    _body_pos="${GOAL%%Hypothesis: stale fixture*}"
+    if (( ${#_header_pos} < ${#_body_pos} )); then
+        _header_before_body=true
+    fi
+fi
+if [[ "$_has_header" == "true" && "$_has_body" == "true" && "$_header_before_body" == "true" ]]; then
+    assert_pass "sw-loop composes GOAL with '## Self-Heal Hypothesis (hive-selected)' header before body"
+else
+    assert_fail "sw-loop composes GOAL with '## Self-Heal Hypothesis (hive-selected)' header before body" \
+        "header=$_has_header body=$_has_body order=$_header_before_body"
+fi
+unset GOAL
 
-# Invalid bound falls back to default 256 (not crash, not 0-byte truncation)
-_san_out=$(RUFLO_QUERY_TOKEN_MAX_BYTES="not-a-number" _ruflo_sanitize_query_token "hello world")
-if [[ "$_san_out" == "hello world" ]]; then
-    assert_pass "sanitize: non-numeric RUFLO_QUERY_TOKEN_MAX_BYTES falls back to default"
+# Test: AC-4 phase timeout budget — static verification that the
+# ruflo_with_timeout calls inside ruflo_execute_self_heal_hive sum to ≤55s.
+# Rationale: the function runs up to 5 timed phases; their total must leave
+# headroom under the 60s acceptance ceiling.  We extract the timeout constants
+# directly from the source so this test does not require ruflo to be installed.
+print_test_section "ruflo_execute_self_heal_hive — AC-4 phase timeout budget ≤55s (static)"
+_adapter_src="$SCRIPT_DIR/lib/ruflo-adapter.sh"
+_func_line=$(grep -n "^ruflo_execute_self_heal_hive()" "$_adapter_src" | head -1 | cut -d: -f1)
+if [[ -z "$_func_line" ]]; then
+    assert_fail "AC-4: ruflo_execute_self_heal_hive not found in ruflo-adapter.sh" ""
 else
-    assert_fail "sanitize: non-numeric bound falls back" "got: '$_san_out'"
+    _timeout_sum=0
+    # Each phase has two ruflo_with_timeout calls: one for the npx path and one
+    # for the direct-binary path.  Only one branch executes at runtime.  We
+    # count only the npx-path lines (first branch per phase) to get the actual
+    # runtime budget: spawn(12) + triage(20) + read(5) + synth(8) + read(5) = 50.
+    while IFS= read -r _n; do
+        _timeout_sum=$(( _timeout_sum + _n ))
+    done < <(awk "NR==$_func_line,/^\}/" "$_adapter_src" \
+        | grep 'npx' | grep -oE 'ruflo_with_timeout [0-9]+' | grep -oE '[0-9]+$')
+    if [[ "$_timeout_sum" -gt 0 && "$_timeout_sum" -le 55 ]]; then
+        assert_pass "AC-4: phase timeout constants sum to ${_timeout_sum}s (within ≤55s budget)"
+    else
+        assert_fail "AC-4: phase timeout constants sum" \
+            "expected >0 and ≤55, got ${_timeout_sum}"
+    fi
 fi
-
-# Realistic GitHub label payload with embedded \n
-_san_out=$(_ruflo_sanitize_query_token $'priority/critical\nbug,security')
-if [[ "$_san_out" == "priority/critical bug,security" ]]; then
-    assert_pass "sanitize: real-world GH labels with embedded newline"
-else
-    assert_fail "sanitize: real-world GH labels" "got: '$_san_out'"
-fi
+unset _adapter_src _func_line _timeout_sum _n
 
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

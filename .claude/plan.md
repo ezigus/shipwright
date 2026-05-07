@@ -1,258 +1,152 @@
-# Implementation Plan: Fix Infinite Quality Loop from Stale Findings
+# Implementation Plan: [03.1] Self-Heal Hypothesis Hive — Root-Cause Triage on Test Failure
 
-## Problem Analysis
+**Status**: Implementation complete (7 commits on `ci/issue-422`); plan stage delta-only.
+**Goal**: `feat(ruflo): [03.1] self-heal hypothesis hive — root-cause triage on test failure`
+**Source ADR**: `.claude/PLAN-03-1-self-heal-hive.md` (874 lines, full architecture)
 
-### Root Cause
+This plan summarises the current state, captures the *delta* still owed by the build/test/PR stages, and meets the pipeline's required output contract. Detailed architecture, data flow, and rationale live in the ADR; this artifact stays narrow.
 
-The compound audit cascade accumulates findings across multiple cycles in `_cascade_all_findings`. When code modifications occur during the build loop, these findings become **stale** (line numbers shift, code structure changes). However, agents still receive these stale findings with instructions to "avoid repeating" them. The structural deduplication logic (file + category + line within 5) fails to match because line numbers have shifted, causing agents to report the same logical issue as "new" findings with different line numbers. This creates an infinite loop:
+---
 
-1. Cycle N finds issue X at file.js:42
-2. Code is modified in build loop → line numbers change
-3. Re-enter compound quality
-4. Agents get stale finding (file.js:42, issue X) in "Previously Found Issues"
-5. Agent can't structurally match the old finding (code has shifted to line 50)
-6. Agent flags the same issue at file.js:50 as a new critical finding
-7. Cascade doesn't converge (always finding "new" issues that are just location-shifted old ones)
-8. Loop repeats
+## Current Implementation State
 
-### Why Current Fixes Don't Prevent This
+| Component | Location | Status |
+|-----------|----------|--------|
+| `ruflo_execute_self_heal_hive()` orchestrator | `scripts/lib/ruflo-adapter.sh:1782–1996` | Done |
+| Four fail-open gates (env / ruflo / hive / hive_id) | `scripts/lib/ruflo-adapter.sh:1805–1828` | Done |
+| Six-phase pipeline (seed → spawn → triage → read → synth → read) | same file, lines 1830–1996 | Done |
+| Loop integration + sentinel stripping | `scripts/sw-loop.sh:2700–2705` | Done |
+| Synthesis fallback (union, byte-bounded to 8000) | `scripts/lib/ruflo-adapter.sh:1977–1992` | Done (commit `491c63e`) |
+| Test suite (≥25 tests, 92 self-heal references) | `scripts/sw-ruflo-adapter-test.sh:4244+` | Done (commit `9988be2`) |
+| Loop test header sanitization | `scripts/sw-loop.sh` | Done (commits `7582f74`, `352cd27`) |
 
-- PR #142 fixed **convergence detection** (we now properly stop when findings repeat)
-- But it didn't fix **finding staleness** (findings from before code edits are still passed to agents)
-- The structural dedup only works if line numbers haven't changed much, which fails for modified code
+**Gap analysis** — what's still missing for a clean PR:
 
-## Requirements & Success Criteria
+1. README (`README.md:512`) and CHANGELOG (`CHANGELOG.md:23`) already mention `RUFLO_SELF_HEAL_HIVE` (landed in commit `a10657a`). CLAUDE.md still does NOT mention the flag — only remaining doc gap.
+2. Working copy has unstaged changes in `.claude/helpers/github-safe.js` and `.claude/helpers/statusline.js` unrelated to this goal — must be excluded from the feature commit.
+3. This `.claude/plan.md` is the canonical plan artifact for the build stage.
 
-### Acceptance Criteria (Definition of Done)
-
-1. **Findings don't accumulate across builds:** When re-entering compound_quality after a build loop, findings are isolated to that specific pass
-2. **Structural matching works:** Dedup logic correctly identifies true duplicates even when code has been modified
-3. **No false infinite loops:** Cascade converges within max_cycles, even when code is heavily modified
-4. **Backwards compatible:** Existing dedup logic and convergence checks still work
-5. **Testable:** Verify with a test case where agents make changes and cascade runs multiple times
-
-## Design Alternatives Considered
-
-### Alternative A: "Fresh cascade per rebuild" (CHOSEN)
-
-**Approach:** Clear `_cascade_all_findings` when entering compound_quality from a successful build
-
-- **Pros:**
-  - Simple, low risk: no stale findings can ever accumulate
-  - Ensures each cascade cycle sees fresh code state
-  - Prevents the structural matching problem entirely
-- **Cons:**
-  - Loses deduplication across build iterations (might re-report issues if agent partially fixes)
-  - Slightly higher API cost (agents might rediscover same issues)
-
-### Alternative B: "Verify findings before reuse"
-
-**Approach:** Before passing findings to agents, verify they still match current code
-
-- **Pros:**
-  - Keeps institutional knowledge (valid findings persist across builds)
-  - Only removes truly stale findings
-- **Cons:**
-  - Complex: requires smart code matching or git blame analysis
-  - Slow: every finding verification is expensive
-
-### Alternative C: "Cycle-scoped findings"
-
-**Approach:** Only pass findings from the most recent cycle to next cycle, not all accumulated findings
-
-- **Pros:**
-  - Simpler than B, more sophisticated than A
-  - Keeps some dedup benefit (same-cycle duplicates caught)
-- **Cons:**
-  - Still vulnerable to findings staleness over multiple cycles
-  - Harder to reason about when exactly findings get cleared
-
-### Alternative D: "Timestamp & age out findings"
-
-**Approach:** Add timestamp metadata, age out findings older than N minutes or older than the last git commit
-
-- **Pros:**
-  - Very precise, catches the exact moment findings become stale
-- **Cons:**
-  - Requires tracking git state, timestamps, and complex metadata
-  - Significant implementation complexity
-
-## Chosen Approach: Alternative A + Verification Phase
-
-**Why:**
-
-- **Simplicity wins:** The pipeline is already complex; minimal changes reduce regression risk
-- **Correctness first:** Better to re-run audits cleanly than pass stale data and hope dedup works
-- **Cost trade-off acceptable:** Extra audit API calls are small compared to avoiding infinite loops
-
-**Key Insight:** The cascade is cheap relative to the build loop. Clearing findings is safe because the build loop has already tested the code. We're just being extra cautious in quality gates.
-
-## Implementation Steps
-
-### Phase 1: Add Finding Freshness Tracking (Tasks 1-2)
-
-1. **Add metadata to stage_compound_quality:** Track whether findings are from a fresh cascade or carry-forward from rebuild
-2. **Add git commit snapshot:** Capture `git rev-parse HEAD` when compound_quality starts, use to invalidate old findings
-
-### Phase 2: Clear Stale Findings (Tasks 3-5)
-
-3. **Detect rebuild context:** Check if we're re-entering compound_quality after a build loop (new git commits since last cascade start)
-4. **Clear accumulations on rebuild:** Reset `_cascade_all_findings="[]"` if re-entering after code changes
-5. **Log clearing decision:** Emit audit event when findings are cleared so we can trace why cascade restarted
-
-### Phase 3: Improve Structural Dedup (Tasks 6-8)
-
-6. **Enhance structural matching:** Instead of just line±5, also check if finding file was modified since finding was created
-7. **Add verification check before agent prompt:** Validate that at least one "Previously Found Issues" actually appears in current diff
-8. **Warn about orphaned findings:** Log when findings can't be matched to current code
-
-### Phase 4: Testing & Validation (Tasks 9-12)
-
-9. **Unit test:** Test the new clearing logic in isolation
-10. **Integration test:** Verify cascade converges with modified code
-11. **Regression test:** Ensure normal (non-modified) cascade still works and dedup still catches duplicates
-12. **Manual verification:** Run a pipeline where build loop modifies code multiple times, verify no infinite loop
-
-## Task Decomposition (with dependencies)
-
-- [ ] **Task 1: Add git commit snapshot tracking** (no dependencies)
-  - Stores: `git rev-parse HEAD` when cascade starts in `_cascade_start_commit`
-  - Location: pipeline-intelligence.sh, stage_compound_quality(), line ~1324
-  - ~5 lines added
-
-- [ ] **Task 2: Add freshness metadata to findings JSON** (depends on Task 1)
-  - Adds: `created_at_commit` field to each finding
-  - Location: compound-audit.sh, compound_audit_build_prompt(), line ~93
-  - ~3 lines added
-
-- [ ] **Task 3: Detect rebuild context** (depends on Task 1, blocks Task 4)
-  - Check: `[[ $(git rev-parse HEAD) != "$_cascade_start_commit" ]]`
-  - Location: pipeline-intelligence.sh, inside while loop before cascade block
-  - ~8 lines added
-
-- [ ] **Task 4: Clear stale findings on rebuild** (depends on Task 3)
-  - Action: Reset `_cascade_all_findings="[]"` if rebuild detected
-  - Location: pipeline-intelligence.sh, while loop, line ~1355
-  - ~5 lines added
-
-- [ ] **Task 5: Add audit events for clearing** (depends on Task 4)
-  - Events: `compound.findings_cleared`, `compound.rebuild_detected`
-  - Location: pipeline-intelligence.sh, alongside clearing code
-  - ~6 lines added
-
-- [ ] **Task 6: Enhance structural dedup logic** (depends on Task 2)
-  - Update: compound_audit_dedup_structural() to check file modification
-  - Use: git diff --name-only to see what files changed
-  - Location: compound-audit.sh, compound_audit_dedup_structural(), line ~145
-  - ~25 lines added
-
-- [ ] **Task 7: Add pre-prompt verification** (depends on Task 6)
-  - Check: Does proposed finding file appear in current diff?
-  - Location: compound-audit.sh, compound_audit_build_prompt()
-  - ~15 lines added
-
-- [ ] **Task 8: Add orphaned finding warnings** (depends on Tasks 2, 6)
-  - Log: "Finding for file.js line 42 not found in current code state"
-  - Location: compound-audit.sh, compound_audit_dedup_structural()
-  - ~8 lines added
-
-- [ ] **Task 9: Unit test - clearing logic** (depends on Tasks 1-5)
-  - Test: \_cascade_all_findings correctly resets on rebuild
-  - File: scripts/sw-lib-pipeline-intelligence-test.sh (new test cases)
-  - ~40 lines added
-
-- [ ] **Task 10: Unit test - structural dedup enhancement** (depends on Tasks 2, 6, 8)
-  - Test: Modified files correctly invalidate old findings
-  - File: scripts/sw-lib-compound-audit-test.sh (new test cases)
-  - ~45 lines added
-
-- [ ] **Task 11: Integration test - multi-cycle with code changes** (depends on Tasks 1-5, 9)
-  - Test: Run cascade → modify code → run cascade again → verify convergence
-  - File: scripts/sw-lib-pipeline-intelligence-test.sh (new test)
-  - ~50 lines added
-
-- [ ] **Task 12: Regression test - normal cascade (no code changes)** (depends on Task 10)
-  - Test: Verify dedup still works when code hasn't changed
-  - File: scripts/sw-lib-compound-audit-test.sh
-  - ~30 lines added
+---
 
 ## Files to Modify
 
-1. **scripts/lib/pipeline-intelligence.sh** (~2000 LOC)
-   - Add `_cascade_start_commit` tracking at stage start
-   - Add rebuild detection logic in while loop
-   - Add clearing logic + audit events
-   - **Impact:** ~40-60 lines added, minimal risk (isolated to cascade block)
+| File | Change | Status |
+|------|--------|--------|
+| `README.md` | `RUFLO_SELF_HEAL_HIVE=true` env-flag entry | Done (`README.md:512`) |
+| `CHANGELOG.md` | `### Added` entry under `[Unreleased]` | Done (`CHANGELOG.md:23`) |
+| `CLAUDE.md` | One-line entry in env-vars / feature-flags section | Pending |
+| `.claude/plan.md` | This artifact | In flight |
 
-2. **scripts/lib/compound-audit.sh** (~350 LOC)
-   - Add finding metadata (created_at_commit)
-   - Enhance structural dedup to check file modifications
-   - Add pre-prompt verification
-   - **Impact:** ~50-80 lines added, low risk (separate functions)
+**Files NOT to modify** (already correct):
 
-3. **scripts/sw-lib-compound-audit-test.sh** (~500 LOC)
-   - Add test cases for enhanced dedup
-   - Test orphaned finding detection
-   - **Impact:** ~60-80 lines added, new tests only
+- `scripts/lib/ruflo-adapter.sh` — full implementation present
+- `scripts/sw-loop.sh` — integration present, sentinel stripping in place
+- `scripts/sw-ruflo-adapter-test.sh` — 25+ tests already present
+- `.claude/PLAN-03-1-self-heal-hive.md` — keep as canonical ADR
 
-4. **scripts/sw-lib-pipeline-intelligence-test.sh** (new or existing)
-   - Add test for clearing logic
-   - Add test for rebuild detection
-   - **Impact:** ~80-120 lines added, new tests only
+---
 
-## Risk Analysis
+## Implementation Steps
 
-| Risk                              | Impact                                   | Probability | Mitigation                                                |
-| --------------------------------- | ---------------------------------------- | ----------- | --------------------------------------------------------- |
-| Findings cleared too aggressively | Lose valid findings, repeat audits       | Low         | Emit audit events for every clear; easy to audit logs     |
-| Rebuild detection false positives | Clear when shouldn't; miss issues        | Very low    | git rev-parse HEAD is reliable; unit tests                |
-| Enhanced dedup logic bugs         | Keep stale findings OR remove valid ones | Medium      | Unit tests verify both cases; verify against current diff |
-| Performance impact                | Cascade takes longer                     | Low         | Cache git diff results; reuse existing \_cascade_diff     |
-| Breaking existing behavior        | Convergence breaks, dedup stops working  | Low         | Regression test ensures normal cascade works              |
+1. **Verify clean state** — `git diff --stat` shows only `.claude/helpers/intelligence.cjs` modified (out of scope). Decision: do NOT stage that file in the feature commit; leave for a follow-up or separate cleanup PR.
+2. **Locate doc anchors** — grep `README.md` and `CHANGELOG.md` for env-var / unreleased sections so edits land in the right place.
+3. **Add docs entries** (README, CHANGELOG, CLAUDE.md) — three minimal edits, ≤5 lines each, no new files.
+4. **Replace `.claude/plan.md`** with this plan (already in flight via this stage).
+5. **Re-run targeted test** to confirm doc edits didn't accidentally touch a sourced file: `./scripts/sw-ruflo-adapter-test.sh` (full sweep happens in the test stage).
+6. **Stage and commit** only the four files listed above; commit message follows the goal verbatim.
+7. **Pipeline proceeds** to design → build → test → review → PR stages; build stage is effectively a no-op for this goal because code is already present.
+
+Per repo guidance for `SHIPWRIGHT_SOURCE=loop`, do NOT run the full test matrix manually — the harness owns test execution and will inject results into the next iteration.
+
+---
+
+## Task Checklist
+
+- [x] Task 1: Verify `ruflo_execute_self_heal_hive()` exists and integrates with `sw-loop.sh`
+- [x] Task 2: Confirm 25+ tests cover gates, bounding, format, ranking, events
+- [x] Task 3: Confirm synthesis-fallback bytes are bounded (commit `491c63e`)
+- [x] Task 4: Add `RUFLO_SELF_HEAL_HIVE` to README env-flag section (`README.md:512`)
+- [x] Task 5: Add CHANGELOG entry under `[Unreleased] / Added` (`CHANGELOG.md:23`)
+- [ ] Task 6: Add one-line pointer in CLAUDE.md env-vars section
+- [ ] Task 7: Confirm `.claude/plan.md` reflects current state (this update)
+- [ ] Task 8: Verify `./scripts/sw-ruflo-adapter-test.sh` still passes after doc edits
+- [ ] Task 9: Confirm `.claude/helpers/github-safe.js` and `.claude/helpers/statusline.js` are **not** included in the feature commit
+- [ ] Task 10: Stage docs + plan; produce single commit matching the goal title
+- [ ] Task 11: Confirm pipeline review stage sees no new findings against current ADR
+- [ ] Task 12: PR description references `.claude/PLAN-03-1-self-heal-hive.md` ADR
+
+**Dependency graph**: Tasks 4–7 are independent and can be batched. Task 8 depends on 4–7. Task 10 depends on 8 + 9. Tasks 11–12 are pipeline-driven and gated by 10.
+
+---
 
 ## Testing Approach
 
-### Unit Tests
+1. **Existing unit suite** (no changes required): `./scripts/sw-ruflo-adapter-test.sh` covers gate logic, input bounding, namespace seeding, hypothesis format, cost/confidence ranking, event emission, and synthesis-fallback fallback.
+2. **Loop integration tests** (no changes required): `./scripts/sw-loop-test.sh` covers loop-control sentinel stripping and goal injection.
+3. **Smoke check after docs edits**: rerun `./scripts/sw-ruflo-adapter-test.sh` to ensure no accidental regressions from documentation files being sourced/parsed by tests.
+4. **Default-path zero-cost verification**: with `RUFLO_SELF_HEAL_HIVE` unset, loop iteration time must be unchanged — guarded by gate test at line ~4248 of `sw-ruflo-adapter-test.sh`.
 
-- **Test 1:** Rebuild detection correctly identifies when HEAD changed
-- **Test 2:** Clearing logic resets \_cascade_all_findings only when needed
-- **Test 3:** Structural dedup with file modification detection works
-- **Test 4:** Findings with no matching files are flagged as orphaned
+No new test files needed; the existing 92 self-heal references already exceed the 25-test target in the ADR's DoD.
 
-### Integration Tests
+---
 
-- **Test 5:** Full cascade with code modification → converges
-- **Test 6:** Multiple rebuilds → findings stay fresh
-- **Test 7:** Normal cascade (no code changes) → dedup still catches duplicates
+## Definition of Done
 
-### Test Scenarios
+- [x] `ruflo_execute_self_heal_hive()` implemented in `scripts/lib/ruflo-adapter.sh`
+- [x] Loop integration in `scripts/sw-loop.sh` (gated, sentinel-stripped)
+- [x] Four fail-open gates: env flag, ruflo binary, hive available, hive id non-empty
+- [x] Input bounding: 8 KB error_text, 2 KB changed_files (multibyte-safe `head -c`)
+- [x] Phase timeouts: 12 s spawn / 20 s triage / 5 s read / 8 s synth / 5 s read (≤55 s budget)
+- [x] Cost / confidence ranking: argmin(cost) → argmax(confidence) tiebreak
+- [x] Synthesis fallback emits byte-bounded union, never raw namespace
+- [x] Sentinel stripping (`<<<` and `>>>`) before goal injection
+- [x] 25+ tests covering gates, bounding, ranking, events, fallback (currently 92 references)
+- [x] README documents `RUFLO_SELF_HEAL_HIVE=true` (`README.md:512`)
+- [x] CHANGELOG includes feature in `[Unreleased] / Added` (`CHANGELOG.md:23`)
+- [ ] CLAUDE.md mentions env flag in feature-toggle area
+- [ ] `.claude/plan.md` reflects current state (this artifact, updated this iteration)
+- [ ] Single feature commit excludes unrelated working-tree changes (`.claude/helpers/github-safe.js`, `.claude/helpers/statusline.js`)
+- [ ] PR description links the ADR (`.claude/ADR-03-1-self-heal-hive.md`)
 
-1. **Scenario A:** Single cycle, no code changes (baseline)
-   - Expected: Normal behavior, agents find issues
+---
 
-2. **Scenario B:** Build loop modifies code, re-enter compound_quality
-   - Expected: Findings are cleared, cascade starts fresh
+## Risk Analysis
 
-3. **Scenario C:** Multiple build loops with incremental fixes
-   - Expected: Findings stay fresh each time, cascade converges
+| # | Risk | What Could Break | Mitigation |
+|---|------|------------------|------------|
+| 1 | Unrelated `github-safe.js` / `statusline.js` changes leak into commit | Reviewer flags scope creep; PR bounces | Stage explicitly by file path; never use `git add -A` |
+| 2 | Doc edits accidentally touch a file the test harness sources | Test suite breaks unexpectedly | Edit only `README.md`, `CHANGELOG.md`, `CLAUDE.md`, `.claude/plan.md`; rerun tests after edits |
+| 3 | CHANGELOG entry duplicates an existing one | Merge conflict on release | Grep for `RUFLO_SELF_HEAL_HIVE` first; place in correct `[Unreleased]` section |
+| 4 | README env-flag section may not exist | Edit fails silently or lands in wrong place | Use `Grep` to locate the env-flag table or feature-toggle list before editing; if absent, append to the end of the relevant section, not as a new top-level header |
+| 5 | Loop runtime regression if tests rely on default-disabled behavior | CI breaks for downstream consumers | Gate test at `sw-ruflo-adapter-test.sh:4248` already enforces zero-cost default path; no code edits in this stage |
+| 6 | ADR drift vs current implementation | Future contributors misled by stale design | This plan stays minimal and points at the ADR; only gap items are listed here, no architecture restated |
 
-4. **Scenario D:** Code changes but same issue exists
-   - Expected: Fresh findings catch the issue again (not treated as duplicate)
+---
 
-## Definition of Done Checklist
+## Alternatives Considered
 
-- [ ] Task 1: Git commit snapshot added and tracked
-- [ ] Task 2: Findings include created_at_commit metadata
-- [ ] Task 3: Rebuild detection logic working correctly
-- [ ] Task 4: Stale findings cleared on rebuild
-- [ ] Task 5: Audit events emitted for all clearing decisions
-- [ ] Task 6: Structural dedup enhanced with file modification check
-- [ ] Task 7: Pre-prompt verification filters orphaned findings
-- [ ] Task 8: Orphaned findings are logged with warnings
-- [ ] Task 9: Unit tests for clearing logic pass
-- [ ] Task 10: Unit tests for enhanced dedup pass
-- [ ] Task 11: Integration test with multi-cycle code changes passes
-- [ ] Task 12: Regression test for normal cascade passes
-- [ ] All existing tests still pass
-- [ ] Code reviewed and approved
-- [ ] No regressions in existing pipelines
+### Alternative A — Re-derive the full plan from scratch (rejected)
+
+Re-running the full ADR generation would produce a parallel document that drifts from the canonical `.claude/PLAN-03-1-self-heal-hive.md`. **Trade-off**: high token cost, higher maintenance burden, two sources of truth. **Blast radius**: the build stage might pick the wrong source.
+
+### Alternative B — Skip the plan stage entirely because implementation is done (rejected)
+
+The pipeline state machine requires a `plan` stage artifact for the build stage's prompt composer. Skipping leaves a stale plan in `.claude/plan.md` (compound-quality fix from a prior run) which would mislead the build agent. **Trade-off**: zero work but produces wrong context downstream.
+
+### Alternative C — Delta plan that points at the ADR (chosen)
+
+Replace `.claude/plan.md` with a focused delta plan. Documents what's done, what's left (docs gap), and contractual sections (Required Output, Risks, DoD, Alternatives). **Trade-off**: requires the build agent to read both this file and the ADR, but the ADR is already linked from the goal context. **Blast radius**: single file replacement; reversible via git revert.
+
+### Alternative D — Inline-merge the ADR into `plan.md` (rejected)
+
+Concatenating the 874-line ADR into `plan.md` duplicates content. **Trade-off**: build agent gets full context in one read but blows past the 200-line context-efficiency target and creates two near-identical documents to keep in sync.
+
+---
+
+## Out of Scope
+
+- Adaptive specialist count (`RUFLO_SELF_HEAL_MAX_AGENTS` tuning) — listed under "Future Enhancements" in the ADR
+- Weighted ranking formula replacement
+- MCP blob storage for unbounded inputs
+- Cross-repo specialist hypothesis sharing
+- Refactor of the unrelated `.claude/helpers/github-safe.js` / `.claude/helpers/statusline.js` working-tree changes

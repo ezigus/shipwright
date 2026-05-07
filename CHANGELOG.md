@@ -25,11 +25,23 @@ Closes the Ruflo MCP 1.5 series with a benchmark harness that proves the unix-so
 - **Benchmark harness** (`scripts/benchmark-ruflo-backends.sh`): drives identical workloads through `SW_RUFLO_BACKEND={cli,mcp}` with selectable bench tool (`memory_search` for production path, `ping` for transport-only validation), 20 samples per backend with cold-start discard, configurable percentile caps, and structured `events.jsonl` telemetry
 - **Multi-cycle orphan sentinel** (`--orphan-runs N`): runs N consecutive bridge start/bench/stop cycles and asserts zero new ruflo-related node procs survive — the #441 leak detector
 - **Ratio-based acceptance**: headline check is `cli_pids/mcp_pids ≥ BENCH_REDUCTION_RATIO` (default 10×) so the gate works on shared CI hosts where unrelated ruflo procs would otherwise inflate absolute PID counts
-- **Validated baseline**: 63 → 2 unique transient node PIDs (**31× reduction**, comfortably above the ≥10× #504 acceptance bar), latency p95 519 ms → 9 ms (**~57×**), 0 errors across 40 calls, 0 orphans across 3 consecutive teardown cycles. Reproducible numbers and raw artifacts documented in `docs/ruflo-mcp-transport.md` § "Validated baseline (2026-05-04)"
+- **Validated baseline**: 62 → 2 unique transient node PIDs (**31× reduction**, comfortably above the ≥10× #504 acceptance bar), p50=7 ms / p95=8 ms, 0 errors across 40 calls, 0 orphans across 3 consecutive teardown cycles. Reproducible numbers and raw artifacts documented in `docs/ruflo-mcp-transport.md` § "Validated baseline (2026-05-05)"
 - **`npm run bench:ruflo`** invokes the harness in assert mode for CI gating
 - **Acceptance-gate unit tests** (`scripts/sw-ruflo-benchmark-test.sh`, 26 assertions = 24 hermetic + 2 against real on-disk artifacts): drive `compute_percentiles` and `assert_thresholds` against synthetic JSON to prove the gate behaves correctly at the #504 boundary (passes at ≥10×, fails below, blocks on errors or p95 over cap, skips ratio check on weak CLI baseline). Test 13 additionally re-asserts the gate against the most recent benchmark JSON in `.claude/pipeline-artifacts/benchmarks/` when present, so a fresh `npm run bench:ruflo` doubles as a binding acceptance check
-- **Re-validated 2026-05-05**: fresh `npm run bench:ruflo -- --tool ping --samples 20` on the same CI host re-confirmed **31× reduction** (cli=62 / mcp=2), p50=7 ms / p95=8 ms / p99=8 ms, 0 errors across 40 calls. Subprocess-reduction acceptance gate (`BENCH_REDUCTION_RATIO=10`) exits 0; the #504 ≥10× criterion is met with >3× headroom
-- **Acceptance-criteria mapping table** (`docs/ruflo-mcp-transport.md` § "#504 acceptance-criteria mapping"): explicit row-per-criterion table mapping every checkbox in #504's acceptance list to its measured value, status, and evidence (artifact path or `file:line`). Calls out the one ⚠️ — issue's ≤5 ms per-call latency vs measured 7 ms p50 — as a documented trade-off (binding 15 ms p95 gate met; headline ≥10× subprocess reduction met with 31×) so reviewers can audit each criterion at a glance
+- **Acceptance-criteria mapping table** (`docs/ruflo-mcp-transport.md` § "#504 acceptance-criteria mapping"): explicit row-per-criterion table mapping every checkbox in #504's acceptance list to its measured value, status, and evidence (artifact path or `file:line`). Calls out the ⚠️ — issue's ≤5 ms per-call latency vs measured 7 ms p50 — as an approved trade-off (binding 15 ms p95 gate met per maintainer approval on #504; headline ≥10× subprocess reduction met with 31×)
+
+### Ruflo Self-Heal Hypothesis Hive
+
+Intelligent root-cause triage on test failure with specialist hypothesis spawning and adaptive synthesis.
+
+- **Six-phase hypothesis pipeline** — seed namespace → spawn specialist hypotheses (mock, async, schema) → triage with error context → read prior fixes → synthesize union → finalize
+- **Queen hypothesis synthesis** — aggregates specialist hypotheses into a ranked, cost-conscious union with fallback to byte-bounded synthesis
+- **Fail-open gates** — environment flag, ruflo binary availability, hive initialization, hive ID presence guard safe execution
+- **Cost/confidence ranking** — prioritizes hypotheses by argmin(cost), argmax(confidence) as tiebreak; avoids expensive missteps
+- **Byte-bounded synthesis fallback** — union never exceeds 8000 bytes to prevent uncontrolled context pollution
+- **Integration with loop** — wraps `ruflo_execute_self_heal_hive` in `sw-loop.sh` with sentinel stripping for goal injection
+- **Test coverage** — 25+ tests covering gates, input bounding, ranking, event emission, and fallback behavior
+- **Feature flag** — Enable with `RUFLO_SELF_HEAL_HIVE=true` (default: unset, loop cost unchanged)
 
 ### Pipeline Admission Gate (Memory Budget Guard)
 

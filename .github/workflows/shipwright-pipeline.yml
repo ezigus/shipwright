@@ -50,6 +50,7 @@ permissions:
   issues: write
   pull-requests: write
   checks: write
+  workflows: write
 
 jobs:
   # ────────────────────────────────────────────────────────────────────────────
@@ -887,6 +888,20 @@ jobs:
         run: |
           BRANCH="${WORKSPACE_BRANCH:-shipwright/issue-${ISSUE_NUMBER}}"
           OUTCOME="${{ job.status }}"
+
+          # If the run was cancelled before "Prepare workspace branch" completed,
+          # HEAD may still be on the GHA checkout branch. Force HEAD onto the WIP
+          # branch so the snapshot commit (and force-push) don't introduce
+          # unrelated workflow-file history into shipwright/issue-N.
+          if [[ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$BRANCH" ]]; then
+            if git ls-remote --heads --exit-code origin "$BRANCH" >/dev/null 2>&1; then
+              git fetch --no-tags origin "$BRANCH" 2>/dev/null || true
+              git checkout -B "$BRANCH" "origin/$BRANCH" 2>/dev/null || true
+            else
+              git checkout -B "$BRANCH" origin/main 2>/dev/null || \
+                git checkout -B "$BRANCH" 2>/dev/null || true
+            fi
+          fi
 
           # Force-add only the files needed to resume a future pipeline run.
           # Bulky logs (.claude/loop-logs, checkpoints, error-log.jsonl,

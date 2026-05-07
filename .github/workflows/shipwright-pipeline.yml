@@ -939,17 +939,6 @@ jobs:
           echo "job.status: ${{ job.status }}"
           echo "Branch on origin: $(git ls-remote --heads origin "shipwright/issue-${ISSUE_NUMBER}" 2>/dev/null || echo none)"
 
-      - name: Upload pipeline artifacts
-        if: always() && steps.claim_check.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: pipeline-artifacts-${{ env.ISSUE_NUMBER }}
-          path: |
-            .claude/pipeline-state.md
-            .claude/pipeline-artifacts/
-          retention-days: 30
-          if-no-files-found: ignore
-
       - name: Persist state to shipwright-data branch
         if: always() && steps.claim_check.outputs.skip != 'true'
         run: |

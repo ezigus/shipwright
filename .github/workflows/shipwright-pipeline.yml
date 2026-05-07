@@ -50,7 +50,6 @@ permissions:
   issues: write
   pull-requests: write
   checks: write
-  workflows: write
 
 jobs:
   # ────────────────────────────────────────────────────────────────────────────

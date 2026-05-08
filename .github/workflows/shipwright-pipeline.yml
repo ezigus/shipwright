@@ -355,6 +355,7 @@ jobs:
       COMPLETED_STAGES: ${{ github.event.inputs.completed_stages || '' }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUBTOKEN: ${{ secrets.GITHUBTOKEN }}
       NO_COLOR: "1"
       SHIPWRIGHT_JOB_TIMEOUT_MINUTES: "300"   # MUST match timeout-minutes: 300 above
 
@@ -907,8 +908,6 @@ jobs:
           # intelligence-cache.json) are intentionally excluded — they are
           # regenerable and would grow the repo unboundedly across issues.
           git add -f .claude/pipeline-artifacts/plan.md                2>/dev/null || true
-          git add -f .claude/pipeline-artifacts/dod.md                 2>/dev/null || true
-          git add -f .claude/pipeline-artifacts/design.md              2>/dev/null || true
           git add -f .claude/pipeline-artifacts/context-bundle.md      2>/dev/null || true
           git add -f .claude/pipeline-artifacts/composed-pipeline.json 2>/dev/null || true
           git add -f ".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}/" 2>/dev/null || true
@@ -926,12 +925,27 @@ jobs:
               commit -m "chore: resume snapshot for #${ISSUE_NUMBER} (run ${{ github.run_id }}, status=${OUTCOME}) [skip ci]" \
               --no-verify 2>/dev/null || true
 
+          # Use GITHUBTOKEN (PAT with workflow scope) when available so pushes
+          # that include workflow file changes are not rejected by the default
+          # GITHUB_TOKEN, which cannot be granted workflows permission.
+          # actions/checkout persists an Authorization extraheader that takes
+          # precedence over URL-embedded credentials, so we must clear it first.
+          if [[ -n "${GITHUBTOKEN:-}" ]]; then
+            git config --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+            git remote set-url origin "https://x-access-token:${GITHUBTOKEN}@github.com/${{ github.repository }}.git"
+          else
+            echo "INFO: GITHUBTOKEN secret is not set — push will fail if this branch modifies workflow files (add the secret to fix this)"
+          fi
+
           if timeout 120 git push origin "HEAD:refs/heads/${BRANCH}" --force-with-lease 2>/dev/null \
               || timeout 120 git push origin "HEAD:refs/heads/${BRANCH}" --force; then
             echo "✓ Resume snapshot pushed to ${BRANCH} (status=${OUTCOME})"
           else
             echo "WARN: resume snapshot push timed out or failed (non-fatal)"
           fi
+
+          # Scrub PAT from remote URL immediately after push
+          git remote set-url origin "https://github.com/${{ github.repository }}.git" 2>/dev/null || true
 
       - name: Diagnose exit signals (issue #463)
         if: always() && steps.claim_check.outputs.skip != 'true'

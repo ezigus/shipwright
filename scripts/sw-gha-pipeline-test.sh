@@ -121,5 +121,44 @@ else
         "(cache line=$NPM_CACHE_LINE, install line=$INSTALL_CLAUDE_LINE)"
 fi
 
+# ─── Phase 2: early-exit ordering — auth probe and claim lock before expensive install ─
+
+# Install Claude Code before Pre-flight auth check (auth probe needs claude CLI)
+INSTALL_CLAUDE_LINE2=$(grep -nE '^[[:space:]]*- name: Install Claude Code' "$WORKFLOW" | head -1 | cut -d: -f1 || echo 0)
+AUTH_PROBE_LINE=$(grep -nE '^[[:space:]]*- name: Pre-flight auth check' "$WORKFLOW" | head -1 | cut -d: -f1 || echo 0)
+
+if [[ "$INSTALL_CLAUDE_LINE2" -gt 0 && "$AUTH_PROBE_LINE" -gt 0 && "$INSTALL_CLAUDE_LINE2" -lt "$AUTH_PROBE_LINE" ]]; then
+    assert_pass "Install Claude Code appears before Pre-flight auth check"
+else
+    assert_fail "Install Claude Code appears before Pre-flight auth check" \
+        "(claude line=$INSTALL_CLAUDE_LINE2, auth line=$AUTH_PROBE_LINE)"
+fi
+
+# Pre-flight auth check before Install system dependencies
+INSTALL_DEPS_LINE=$(grep -nE '^[[:space:]]*- name: Install system dependencies' "$WORKFLOW" | head -1 | cut -d: -f1 || echo 0)
+
+if [[ "$AUTH_PROBE_LINE" -gt 0 && "$INSTALL_DEPS_LINE" -gt 0 && "$AUTH_PROBE_LINE" -lt "$INSTALL_DEPS_LINE" ]]; then
+    assert_pass "Pre-flight auth check appears before Install system dependencies"
+else
+    assert_fail "Pre-flight auth check appears before Install system dependencies" \
+        "(auth line=$AUTH_PROBE_LINE, deps line=$INSTALL_DEPS_LINE)"
+fi
+
+# Check claim lock before Install system dependencies
+CLAIM_LOCK_LINE=$(grep -nE '^[[:space:]]*- name: Check claim lock' "$WORKFLOW" | head -1 | cut -d: -f1 || echo 0)
+
+if [[ "$CLAIM_LOCK_LINE" -gt 0 && "$INSTALL_DEPS_LINE" -gt 0 && "$CLAIM_LOCK_LINE" -lt "$INSTALL_DEPS_LINE" ]]; then
+    assert_pass "Check claim lock appears before Install system dependencies"
+else
+    assert_fail "Check claim lock appears before Install system dependencies" \
+        "(claim line=$CLAIM_LOCK_LINE, deps line=$INSTALL_DEPS_LINE)"
+fi
+
+# Install system dependencies has skip guard condition
+assert_contains_regex \
+    "Install system dependencies has claim_check skip guard" \
+    "$(grep -A2 'Install system dependencies' "$WORKFLOW" || true)" \
+    "claim_check.*skip"
+
 echo ""
 print_test_results

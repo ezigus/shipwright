@@ -616,7 +616,7 @@ jobs:
           echo "Recovered ${RECOVERED} artifact file(s) from partial work branch"
 
       - name: Validate setup
-        if: steps.claim_check.outputs.skip != 'true'
+        if: steps.claim_check.outputs.skip != 'true' && env.AUTH_SKIP != 'true'
         run: |
           echo "--- Environment ---"
           echo "Issue: #$ISSUE_NUMBER"
@@ -641,7 +641,7 @@ jobs:
           shipwright doctor || true
 
       - name: Comment on issue — pipeline starting
-        if: steps.claim_check.outputs.skip != 'true'
+        if: steps.claim_check.outputs.skip != 'true' && env.AUTH_SKIP != 'true'
         run: |
           RESUME_NOTE=""
           if [[ -n "$COMPLETED_STAGES" ]]; then
@@ -668,7 +668,7 @@ jobs:
           )"
 
       - name: Notify dashboard — pipeline starting
-        if: steps.claim_check.outputs.skip != 'true'
+        if: steps.claim_check.outputs.skip != 'true' && env.AUTH_SKIP != 'true'
         env:
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
         run: |

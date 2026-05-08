@@ -106,14 +106,17 @@ _source_pipeline_fn() {
     # Extract the function from its start line to the first line that is just '}'
     # (the function closing brace). The function has no top-level closing } at col 0
     # except its own, so this is safe.
-    local _fn_text
+    local _fn_text _fn_tmp
     _fn_text=$(sed -n '/^pipeline_final_artifact_push()/,/^}$/p' "$REAL_PIPELINE_SCRIPT" 2>/dev/null) || true
+    _fn_tmp=$(mktemp "$_SW_TMPBASE/sw-fn-source.XXXXXX")
+    echo "$_fn_text" > "$_fn_tmp"
 
     # shellcheck disable=SC1090
     set +euo pipefail
     # shellcheck disable=SC1090
-    source <(echo "$_fn_text") 2>/dev/null || true
+    source "$_fn_tmp" 2>/dev/null || true
     set -euo pipefail
+    rm -f "$_fn_tmp"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

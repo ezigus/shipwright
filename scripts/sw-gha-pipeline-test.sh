@@ -15,13 +15,10 @@ print_test_header "GHA Pipeline Workflow: Phase 1 — Log Artifact + npm Cache"
 
 # ─── npm cache ─────────────────────────────────────────────────────────────
 
-# Confirm a cache step restoring ~/.npm exists
-NPM_CACHE_BLOCK=$(awk '/Restore npm cache/{found=1} found{print; if(/^\s*$/ && NR>1) exit}' "$WORKFLOW" 2>/dev/null || true)
-
-assert_contains \
+NPM_CACHE_COUNT=$(grep -c 'Restore npm cache' "$WORKFLOW" || true)
+assert_eq \
     "npm cache restore step present" \
-    "$(grep -c 'Restore npm cache' "$WORKFLOW" || echo 0)" \
-    "1"
+    "1" "$NPM_CACHE_COUNT"
 
 assert_contains_regex \
     "npm cache uses actions/cache@v4" \
@@ -50,10 +47,10 @@ assert_contains_regex \
 
 # ─── upload-artifact ────────────────────────────────────────────────────────
 
-assert_contains \
+UPLOAD_COUNT=$(grep -c 'upload-artifact' "$WORKFLOW" || true)
+assert_eq \
     "upload-artifact step present" \
-    "$(grep -c 'upload-artifact' "$WORKFLOW" || echo 0)" \
-    "1"
+    "1" "$UPLOAD_COUNT"
 
 assert_contains_regex \
     "upload-artifact uses v4" \
@@ -102,7 +99,6 @@ assert_contains_regex \
 
 # ─── ordering: upload before exit-code propagation ──────────────────────────
 
-# The upload step must appear before "Propagate pipeline exit code"
 UPLOAD_LINE=$(grep -n 'upload-artifact@v4' "$WORKFLOW" | head -1 | cut -d: -f1 || echo 0)
 EXITCODE_LINE=$(grep -n 'Propagate pipeline exit code' "$WORKFLOW" | head -1 | cut -d: -f1 || echo 0)
 
@@ -116,7 +112,7 @@ fi
 # ─── ordering: npm cache before Install Claude Code ─────────────────────────
 
 NPM_CACHE_LINE=$(grep -n 'Restore npm cache' "$WORKFLOW" | head -1 | cut -d: -f1 || echo 0)
-INSTALL_CLAUDE_LINE=$(grep -n '^\s*- name: Install Claude Code' "$WORKFLOW" | head -1 | cut -d: -f1 || echo 0)
+INSTALL_CLAUDE_LINE=$(grep -nE '^[[:space:]]*- name: Install Claude Code' "$WORKFLOW" | head -1 | cut -d: -f1 || echo 0)
 
 if [[ "$NPM_CACHE_LINE" -gt 0 && "$INSTALL_CLAUDE_LINE" -gt 0 && "$NPM_CACHE_LINE" -lt "$INSTALL_CLAUDE_LINE" ]]; then
     assert_pass "npm cache step appears before Install Claude Code"

@@ -3559,6 +3559,11 @@ main() {
         "test_compose_prompt_iter2_reference_trailer:Loop: compose_prompt iter 2 appends pipeline-artifacts reference trailer"
         "test_compose_prompt_iter1_no_reference_trailer:Loop: compose_prompt iter 1 does NOT include Reference trailer"
         "test_compose_prompt_emits_context_event:Loop: compose_prompt emits context.iteration_prompt event"
+        "test_watchdog_handler_removed:Phase4: _soft_timeout_handler function removed from sw-pipeline.sh"
+        "test_watchdog_usr1_trap_removed:Phase4: trap USR1 for soft-timeout removed from sw-pipeline.sh"
+        "test_watchdog_pid_var_removed:Phase4: _WATCHDOG_PID variable removed from sw-pipeline.sh"
+        "test_watchdog_armed_event_removed:Phase4: pipeline.watchdog_armed event removed from sw-pipeline.sh"
+        "test_watchdog_soft_timeout_event_removed:Phase4: pipeline.soft_timeout_push event removed from sw-pipeline.sh"
     )
 
     for entry in "${tests[@]}"; do
@@ -3592,6 +3597,48 @@ main() {
     echo -e "${GREEN}${BOLD}All $PASS tests passed!${RESET}"
     echo ""
     exit 0
+}
+
+# ─── Phase 4: Watchdog removal static checks ────────────────────────────────
+
+test_watchdog_handler_removed() {
+    if grep -q '_soft_timeout_handler' "$REAL_PIPELINE_SCRIPT"; then
+        echo "FAIL: _soft_timeout_handler still present in sw-pipeline.sh"
+        return 1
+    fi
+    return 0
+}
+
+test_watchdog_usr1_trap_removed() {
+    if grep -qE 'trap.*USR1|USR1.*trap' "$REAL_PIPELINE_SCRIPT"; then
+        echo "FAIL: trap USR1 still present in sw-pipeline.sh"
+        return 1
+    fi
+    return 0
+}
+
+test_watchdog_pid_var_removed() {
+    if grep -q '_WATCHDOG_PID' "$REAL_PIPELINE_SCRIPT"; then
+        echo "FAIL: _WATCHDOG_PID still referenced in sw-pipeline.sh"
+        return 1
+    fi
+    return 0
+}
+
+test_watchdog_armed_event_removed() {
+    if grep -q 'pipeline\.watchdog_armed' "$REAL_PIPELINE_SCRIPT"; then
+        echo "FAIL: pipeline.watchdog_armed event still emitted in sw-pipeline.sh"
+        return 1
+    fi
+    return 0
+}
+
+test_watchdog_soft_timeout_event_removed() {
+    if grep -q 'pipeline\.soft_timeout_push' "$REAL_PIPELINE_SCRIPT"; then
+        echo "FAIL: pipeline.soft_timeout_push event still emitted in sw-pipeline.sh"
+        return 1
+    fi
+    return 0
 }
 
 main "$@"

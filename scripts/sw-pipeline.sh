@@ -1023,13 +1023,6 @@ cleanup_on_exit() {
     [[ "${_cleanup_done:-}" == "true" ]] && return 0
     _cleanup_done=true
 
-    # Reap soft-timeout watchdog on every exit path — prevents PID recycling hazard.
-    if [[ -n "${_WATCHDOG_PID:-}" ]]; then
-        kill "$_WATCHDOG_PID" 2>/dev/null || true
-        wait "$_WATCHDOG_PID" 2>/dev/null || true
-        _WATCHDOG_PID=""
-    fi
-
     # Only mark as interrupted and post GitHub comment if actually signal-driven.
     # On clean completions the pipeline stages handle their own state/comments.
     if [[ "$_PIPELINE_SIGNALED" == "true" && "$PIPELINE_STATUS" == "running" && -n "$STATE_FILE" ]]; then
@@ -1053,22 +1046,17 @@ cleanup_on_exit() {
     fi
 
     # Push WIP on any non-zero CI exit — signal-driven OR stage-failure.
-    # Skip if watchdog already pushed at T-5min (idempotency); skip on success (exit 0).
     # Use 60s timeout — stage-failure path needs headroom for first-time remote branch creation.
     if [[ "${CI_MODE:-false}" == "true" \
           && -n "${ISSUE_NUMBER:-}" \
-          && "$exit_code" -ne 0 \
-          && "${_SOFT_TIMEOUT_FIRED:-false}" != "true" ]]; then
+          && "$exit_code" -ne 0 ]]; then
         ci_push_partial_work 60
     fi
 
     # Push final artifacts on all exits (success + failure, local + CI).
     # Captures post-PR stage outputs (deploy/validate/monitor) that ci_push_partial_work
-    # misses (it only runs on CI failure). Runs after cost_generate_breakdown would run
-    # to include cost artifacts — but the cost block below uses 'local' vars that may
-    # fail here, so we run the artifact push first and accept the cost artifact may be
-    # incomplete. The cost block below still persists cost data locally.
-    if [[ -n "${ISSUE_NUMBER:-}" && "${_SOFT_TIMEOUT_FIRED:-false}" != "true" ]]; then
+    # misses (it only runs on CI failure).
+    if [[ -n "${ISSUE_NUMBER:-}" ]]; then
         pipeline_final_artifact_push 60 || true
     fi
 
@@ -1144,23 +1132,8 @@ _signal_cleanup() {
     cleanup_on_exit
 }
 
-# Soft-timeout watchdog handler — push WIP branch and keep running.
-# Pipeline continues until SIGTERM at the hard deadline triggers normal cleanup.
-_SOFT_TIMEOUT_FIRED=false
-_soft_timeout_handler() {
-    [[ "${_SOFT_TIMEOUT_FIRED}" == "true" ]] && return 0
-    _SOFT_TIMEOUT_FIRED=true
-    echo "[WATCHDOG-TRAP] $(date -u +%FT%TZ) USR1 trap running in parent pid=$$" >&2
-    warn "Soft timeout — pushing WIP branch (pipeline continues until hard deadline)"
-    ci_push_partial_work 120
-    emit_event "pipeline.soft_timeout_push" \
-               "issue=${ISSUE_NUMBER:-}" \
-               "timeout_min=${SHIPWRIGHT_JOB_TIMEOUT_MINUTES:-180}" 2>/dev/null || true
-}
-
 trap cleanup_on_exit EXIT
 trap _signal_cleanup SIGINT SIGTERM
-trap _soft_timeout_handler USR1
 
 # ─── Pre-flight Validation ─────────────────────────────────────────────────
 
@@ -3329,40 +3302,6 @@ pipeline_start() {
     # Durable WAL: publish pipeline start event
     if type publish_event >/dev/null 2>&1; then
         publish_event "pipeline.started" "{\"issue\":\"${ISSUE_NUMBER:-0}\",\"pipeline\":\"${PIPELINE_NAME}\",\"goal\":\"${GOAL:0:200}\"}" 2>/dev/null || true
-    fi
-
-    # Soft-timeout watchdog — fires SIGUSR1 5 min before GHA hard timeout so we
-    # can push the WIP branch while the process is still healthy. The pipeline
-    # keeps running; SIGTERM/SIGKILL at the deadline is the fallback.
-    # Kill any stale watchdog before overwriting the PID (guard against re-entry).
-    if [[ -n "${_WATCHDOG_PID:-}" ]]; then
-        kill "${_WATCHDOG_PID}" 2>/dev/null || true
-    fi
-    _WATCHDOG_PID=""
-    if [[ "${CI_MODE:-false}" == "true" && -n "${ISSUE_NUMBER:-}" ]]; then
-        local _job_timeout_min="${SHIPWRIGHT_JOB_TIMEOUT_MINUTES:-180}"
-        if [[ "$_job_timeout_min" =~ ^[0-9]+$ ]] && (( _job_timeout_min > 5 )); then
-            local _watchdog_delay_sec=$(( (_job_timeout_min - 5) * 60 ))
-            (
-              trap 'kill %1 2>/dev/null; exit 0' TERM
-              sleep "$_watchdog_delay_sec" & wait $!
-              kill -0 $$ 2>/dev/null || exit 0
-              echo "[WATCHDOG-FIRE] $(date -u +%FT%TZ) pushing WIP from subshell (parent may be blocked) pid=$$" >&2
-              # Push directly — parent USR1 trap defers until foreground completes;
-              # subshell is unblocked and can push while the parent is stuck.
-              if ci_push_partial_work 120; then
-                echo "[WATCHDOG-PUSH-OK] $(date -u +%FT%TZ)" >&2
-              else
-                echo "[WATCHDOG-PUSH-FAIL] $(date -u +%FT%TZ) exit=$?" >&2
-              fi
-              kill -USR1 $$ 2>/dev/null
-            ) &
-            _WATCHDOG_PID=$!
-            emit_event "pipeline.watchdog_armed" \
-                       "issue=${ISSUE_NUMBER}" \
-                       "fires_in_sec=${_watchdog_delay_sec}" 2>/dev/null || true
-            echo "[WATCHDOG-ARM] $(date -u +%FT%TZ) delay=${_watchdog_delay_sec}s pid=$$" >&2
-        fi
     fi
 
     run_pipeline

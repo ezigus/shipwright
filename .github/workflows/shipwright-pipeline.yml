@@ -358,6 +358,7 @@ jobs:
       GITHUBTOKEN: ${{ secrets.GITHUBTOKEN }}
       NO_COLOR: "1"
       SHIPWRIGHT_JOB_TIMEOUT_MINUTES: "300"   # MUST match timeout-minutes: 300 above
+      SW_LOG_PROMPTS: "github"
 
     steps:
       - uses: actions/checkout@v4

@@ -892,7 +892,7 @@ ci_push_partial_work() {
         mkdir -p ".shipwright" 2>/dev/null || true
         local _events_snap=".shipwright/events-${ISSUE_NUMBER}-${GITHUB_RUN_ID:-local}.jsonl"
         cp "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" "$_events_snap" 2>/dev/null || true
-        git add "$_events_snap" 2>/dev/null || true
+        git add -f "$_events_snap" 2>/dev/null || true
     fi
 
     # Force-add issue-scoped artifact snapshots — .gitignore ignores the parent
@@ -930,6 +930,63 @@ ci_push_partial_work() {
     if [[ -n "${_wip_repo_slug:-}" ]]; then
         git remote set-url origin "https://github.com/${_wip_repo_slug}.git" 2>/dev/null || true
     fi
+}
+
+# Push final pipeline artifacts to the WIP branch on any exit (success or failure,
+# local or CI). Unlike ci_push_partial_work, this is NOT gated on CI_MODE — the
+# intent is that local runs also leave a complete audit trail on origin.
+pipeline_final_artifact_push() {
+    local push_timeout="${1:-60}"
+    [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
+    [[ "${NO_GITHUB:-false}" == "true" ]] && return 0
+    [[ "${DRY_RUN:-false}" == "true" ]] && return 0
+
+    local branch="shipwright/issue-${ISSUE_NUMBER}"
+    echo "[ARTIFACT-PUSH-START] $(date -u +%FT%TZ) issue=${ISSUE_NUMBER} timeout=${push_timeout}s" >&2
+
+    # Snapshot events.jsonl into the repo for post-mortem analysis.
+    if [[ -f "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" ]]; then
+        mkdir -p ".shipwright" 2>/dev/null || true
+        local _events_snap=".shipwright/events-${ISSUE_NUMBER}-${GITHUB_RUN_ID:-local}.jsonl"
+        cp "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" "$_events_snap" 2>/dev/null || true
+        git add -f "$_events_snap" 2>/dev/null || true
+    fi
+
+    # Force-add issue-scoped artifact snapshots (.gitignore bypassed intentionally).
+    local _snap_dir="${ARTIFACTS_DIR:-${STATE_DIR:-}/pipeline-artifacts}/issue-${ISSUE_NUMBER}"
+    [[ -d "$_snap_dir" ]] && git add -f "$_snap_dir/" 2>/dev/null || true
+
+    # Stage pipeline state files (gitignored — force-add intentionally for audit trail).
+    git add -f ".claude/pipeline-state.md" "progress.md" 2>/dev/null || true
+
+    # Only commit if there are unstaged/staged changes (excluding daemon-config.json noise).
+    if ! git diff --quiet -- ':!.claude/daemon-config.json' 2>/dev/null || \
+       ! git diff --cached --quiet -- ':!.claude/daemon-config.json' 2>/dev/null; then
+        safe_git_stage
+        git commit -m "chore: pipeline artifacts for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
+    fi
+
+    # Push with PAT (workflow scope) when available — required if any artifact
+    # includes a .github/workflows/ file; harmless when not.
+    local _af_repo_slug=""
+    if [[ -n "${GITHUBTOKEN:-}" ]]; then
+        _af_repo_slug=$(git remote get-url origin 2>/dev/null | sed 's|.*github\.com[:/]||;s|\.git$||')
+        git config --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+        git remote set-url origin "https://x-access-token:${GITHUBTOKEN}@github.com/${_af_repo_slug}.git" 2>/dev/null || true
+    fi
+    if _timeout "$push_timeout" git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null; then
+        echo "[ARTIFACT-PUSH-OK] $(date -u +%FT%TZ) branch=$branch" >&2
+    else
+        local _push_rc=$?
+        echo "[ARTIFACT-PUSH-FAIL] $(date -u +%FT%TZ) branch=$branch exit=${_push_rc}" >&2
+        type warn >/dev/null 2>&1 && warn "artifact push failed for $branch — remote may be out of sync"
+        type emit_event >/dev/null 2>&1 && emit_event "pipeline.artifact_push_failed" "branch=$branch exit=${_push_rc}"
+    fi
+    # Scrub PAT from remote URL after push.
+    if [[ -n "${_af_repo_slug:-}" ]]; then
+        git remote set-url origin "https://github.com/${_af_repo_slug}.git" 2>/dev/null || true
+    fi
+    return 0  # Never fail the pipeline — this is an audit step.
 }
 
 ci_post_stage_event() {
@@ -1003,6 +1060,16 @@ cleanup_on_exit() {
           && "$exit_code" -ne 0 \
           && "${_SOFT_TIMEOUT_FIRED:-false}" != "true" ]]; then
         ci_push_partial_work 60
+    fi
+
+    # Push final artifacts on all exits (success + failure, local + CI).
+    # Captures post-PR stage outputs (deploy/validate/monitor) that ci_push_partial_work
+    # misses (it only runs on CI failure). Runs after cost_generate_breakdown would run
+    # to include cost artifacts — but the cost block below uses 'local' vars that may
+    # fail here, so we run the artifact push first and accept the cost artifact may be
+    # incomplete. The cost block below still persists cost data locally.
+    if [[ -n "${ISSUE_NUMBER:-}" && "${_SOFT_TIMEOUT_FIRED:-false}" != "true" ]]; then
+        pipeline_final_artifact_push 60 || true
     fi
 
     # Generate cost-breakdown.json from sidecars on every exit path (issue #87 AC#4).

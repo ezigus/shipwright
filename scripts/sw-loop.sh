@@ -2484,11 +2484,20 @@ PROMPT
     # Auto-commit
     safe_git_stage
     if git commit -m "agent-${AGENT_NUM}: iteration ${ITERATION}" --no-verify 2>/dev/null; then
+        _loop_pat_slug=""
+        if [[ -n "${GITHUBTOKEN:-}" ]]; then
+            _loop_pat_slug=$(git remote get-url origin 2>/dev/null | sed 's|.*github\.com[:/]||;s|\.git$||')
+            git config --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+            git remote set-url origin "https://x-access-token:${GITHUBTOKEN}@github.com/${_loop_pat_slug}.git" 2>/dev/null || true
+        fi
         if ! git push origin "loop/agent-${AGENT_NUM}" 2>/dev/null; then
             echo -e "  ${YELLOW}⚠${RESET} git push failed for loop/agent-${AGENT_NUM} — remote may be out of sync"
             type emit_event >/dev/null 2>&1 && emit_event "loop.push_failed" "branch=loop/agent-${AGENT_NUM}"
         else
             echo -e "  ${GREEN}✓${RESET} Committed and pushed"
+        fi
+        if [[ -n "${_loop_pat_slug:-}" ]]; then
+            git remote set-url origin "https://github.com/${_loop_pat_slug}.git" 2>/dev/null || true
         fi
     fi
     _commits_after=$(git rev-list --count HEAD 2>/dev/null || echo 0)

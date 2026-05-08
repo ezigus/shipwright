@@ -928,7 +928,10 @@ jobs:
           # Use GITHUBTOKEN (PAT with workflow scope) when available so pushes
           # that include workflow file changes are not rejected by the default
           # GITHUB_TOKEN, which cannot be granted workflows permission.
+          # actions/checkout persists an Authorization extraheader that takes
+          # precedence over URL-embedded credentials, so we must clear it first.
           if [[ -n "${GITHUBTOKEN:-}" ]]; then
+            git config --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
             git remote set-url origin "https://x-access-token:${GITHUBTOKEN}@github.com/${{ github.repository }}.git"
           else
             echo "INFO: GITHUBTOKEN secret is not set — push will fail if this branch modifies workflow files (add the secret to fix this)"

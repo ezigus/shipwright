@@ -908,7 +908,15 @@ ci_push_partial_work() {
         git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
     fi
 
-    # Push branch (create if needed, force to overwrite previous WIP)
+    # Push branch (create if needed, force to overwrite previous WIP).
+    # Use GITHUBTOKEN (PAT with workflow scope) when available so branches
+    # that include workflow file changes are not rejected by GITHUB_TOKEN.
+    local _wip_repo_slug=""
+    if [[ -n "${GITHUBTOKEN:-}" ]]; then
+        _wip_repo_slug=$(git remote get-url origin 2>/dev/null | sed 's|.*github\.com[:/]||;s|\.git$||')
+        git config --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+        git remote set-url origin "https://x-access-token:${GITHUBTOKEN}@github.com/${_wip_repo_slug}.git" 2>/dev/null || true
+    fi
     if _timeout "$push_timeout" git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null; then
         echo "[WIP-PUSH-OK] $(date -u +%FT%TZ) branch=$branch" >&2
     else
@@ -917,6 +925,10 @@ ci_push_partial_work() {
         warn "git push failed for $branch — remote may be out of sync"
         emit_event "pipeline.push_failed" "branch=$branch exit=${_push_rc}"
         return "$_push_rc"
+    fi
+    # Scrub PAT from remote URL after push
+    if [[ -n "${_wip_repo_slug:-}" ]]; then
+        git remote set-url origin "https://github.com/${_wip_repo_slug}.git" 2>/dev/null || true
     fi
 }
 

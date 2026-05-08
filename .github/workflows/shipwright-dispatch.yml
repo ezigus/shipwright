@@ -35,7 +35,8 @@ jobs:
         run: |
           if [ -f config/policy.json ]; then
             echo "STUCK_THRESHOLD_HOURS=$(jq -r '.sweep.stuck_threshold_hours // 4' config/policy.json)" >> $GITHUB_ENV
-            echo "RETRY_TEMPLATE=$(jq -r '.sweep.retry_template // "full"' config/policy.json)" >> $GITHUB_ENV
+            _rt=$(jq -r '.sweep.retry_template // empty' config/policy.json 2>/dev/null || true)
+            echo "RETRY_TEMPLATE=${_rt:-full}" >> $GITHUB_ENV
             echo "RETRY_MAX_ITERATIONS=$(jq -r '.sweep.retry_max_iterations // 25' config/policy.json)" >> $GITHUB_ENV
             echo "STUCK_RETRY_MAX_ITERATIONS=$(jq -r '.sweep.stuck_retry_max_iterations // 30' config/policy.json)" >> $GITHUB_ENV
           fi
@@ -61,7 +62,7 @@ jobs:
           echo "Found shipwright-labeled issues: $ISSUES"
 
           # Timestamps for lookback windows
-          FOUR_HOURS_AGO=$(date -u -d "${STUCK_HOURS} hours ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-${STUCK_HOURS}H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2000-01-01T00:00:00Z")
+          STUCK_CUTOFF=$(date -u -d "${STUCK_HOURS} hours ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-${STUCK_HOURS}H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2000-01-01T00:00:00Z")
 
           DISPATCH=""
           STUCK=""
@@ -111,7 +112,7 @@ jobs:
               continue
             fi
 
-            # ── Fetch comments (single API call covers all comment-based checks) ──
+            # ── Fetch comments (two calls: bodies for grep checks, timestamped for stuck detection) ──
             COMMENTS=""
             if ! COMMENTS=$(gh issue view "$issue" --repo "$GITHUB_REPOSITORY" \
               --json comments --jq '.comments[].body' 2>/dev/null); then
@@ -145,7 +146,7 @@ jobs:
               LAST_RESULT_DATE=$(echo "$COMMENTS_WITH_DATES" | grep -E "Pipeline Completed|Pipeline Failed" | tail -1 | cut -d'|' -f1 || echo "")
 
               if [[ -z "$LAST_RESULT_DATE" || "$LAST_RESULT_DATE" < "$LAST_START_DATE" ]]; then
-                if [[ "$LAST_START_DATE" < "$FOUR_HOURS_AGO" ]]; then
+                if [[ "$LAST_START_DATE" < "$STUCK_CUTOFF" ]]; then
                   echo "Issue #$issue: STUCK — started $LAST_START_DATE with no result"
                   STUCK="${STUCK}${issue}\n"
                   continue

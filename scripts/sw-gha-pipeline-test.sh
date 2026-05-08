@@ -387,11 +387,11 @@ assert_contains_regex \
     "$(grep 'Handle stuck issues' "$DISPATCH_WORKFLOW" || true)" \
     "Handle stuck issues"
 
-# dispatch.yml outputs stuck issues from scan step
+# dispatch.yml writes stuck output key to GITHUB_OUTPUT
 assert_contains_regex \
-    "shipwright-dispatch.yml outputs stuck list from scan step" \
-    "$(grep 'stuck' "$DISPATCH_WORKFLOW" || true)" \
-    "stuck"
+    "shipwright-dispatch.yml writes stuck output to GITHUB_OUTPUT" \
+    "$(grep 'stuck<<EOF\|echo "stuck=' "$DISPATCH_WORKFLOW" || true)" \
+    'stuck<<EOF|stuck='
 
 # dispatch.yml loads retry template from policy
 assert_contains_regex \

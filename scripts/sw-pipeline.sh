@@ -939,6 +939,7 @@ pipeline_final_artifact_push() {
     local push_timeout="${1:-60}"
     [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
     [[ "${NO_GITHUB:-false}" == "true" ]] && return 0
+    [[ "${DRY_RUN:-false}" == "true" ]] && return 0
 
     local branch="shipwright/issue-${ISSUE_NUMBER}"
     echo "[ARTIFACT-PUSH-START] $(date -u +%FT%TZ) issue=${ISSUE_NUMBER} timeout=${push_timeout}s" >&2

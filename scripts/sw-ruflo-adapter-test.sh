@@ -1452,32 +1452,28 @@ else
     assert_fail "ruflo install step has continue-on-error: true" "not found"
 fi
 
-print_test_section "CI workflow — ruflo memory cache restore step present"
-if grep -q "Restore ruflo memory" "$_PIPELINE_YML" 2>/dev/null; then
-    assert_pass "shipwright-pipeline.yml contains ruflo memory cache restore step"
+print_test_section "CI workflow — orphan-branch restore is sole ruflo memory restore"
+if grep -q "ruflo_ci_memory_pull" "$_PIPELINE_YML" 2>/dev/null; then
+    assert_pass "shipwright-pipeline.yml uses ruflo_ci_memory_pull for memory restore"
 else
-    assert_fail "shipwright-pipeline.yml contains ruflo memory cache restore step" "not found"
+    assert_fail "shipwright-pipeline.yml uses ruflo_ci_memory_pull for memory restore" "not found"
+fi
+if grep -q "actions/cache/restore@v4" "$_PIPELINE_YML" 2>/dev/null; then
+    assert_fail "ruflo actions/cache/restore@v4 removed (orphan-branch is sole restore path)" "still present"
+else
+    assert_pass "ruflo actions/cache/restore@v4 removed (orphan-branch is sole restore path)"
 fi
 
-print_test_section "CI workflow — cache restore uses cache/restore@v4 (not cache@v4)"
-if grep -A3 "Restore ruflo memory" "$_PIPELINE_YML" 2>/dev/null | grep -q "cache/restore@v4"; then
-    assert_pass "restore step uses actions/cache/restore@v4 (no implicit post-job save)"
+print_test_section "CI workflow — orphan-branch save is sole ruflo memory save"
+if grep -q "ruflo_ci_memory_push" "$_PIPELINE_YML" 2>/dev/null; then
+    assert_pass "shipwright-pipeline.yml uses ruflo_ci_memory_push for memory save"
 else
-    assert_fail "restore step uses actions/cache/restore@v4 (no implicit post-job save)" "not found"
+    assert_fail "shipwright-pipeline.yml uses ruflo_ci_memory_push for memory save" "not found"
 fi
-
-print_test_section "CI workflow — ruflo memory cache save step present"
-if grep -q "Save ruflo memory" "$_PIPELINE_YML" 2>/dev/null; then
-    assert_pass "shipwright-pipeline.yml contains ruflo memory cache save step"
+if grep -q "actions/cache/save@v4" "$_PIPELINE_YML" 2>/dev/null; then
+    assert_fail "ruflo actions/cache/save@v4 removed (orphan-branch is sole save path)" "still present"
 else
-    assert_fail "shipwright-pipeline.yml contains ruflo memory cache save step" "not found"
-fi
-
-print_test_section "CI workflow — cache save step runs on always()"
-if grep -A3 "Save ruflo memory" "$_PIPELINE_YML" 2>/dev/null | grep -q "always()"; then
-    assert_pass "ruflo memory cache save step uses if: always()"
-else
-    assert_fail "ruflo memory cache save step uses if: always()" "not found"
+    assert_pass "ruflo actions/cache/save@v4 removed (orphan-branch is sole save path)"
 fi
 
 print_test_section "CI workflow — ruflo install appears before Run Shipwright pipeline"

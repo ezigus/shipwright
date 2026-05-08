@@ -788,7 +788,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-fleet-test.sh` | 822 | Unit tests for fleet orchestration |
 | `scripts/sw-fleet-viz-test.sh` | 278 | Validate fleet visualization dashboard, |
 | `scripts/sw-frontier-test.sh` | 574 | Validate adversarial review, developer |
-| `scripts/sw-gha-pipeline-test.sh` | 164 | Static validation of shipwright-pipeline.yml |
+| `scripts/sw-gha-pipeline-test.sh` | 193 | Static validation of shipwright-pipeline.yml |
 | `scripts/sw-github-app-test.sh` | 145 | Validate GitHub App management |
 | `scripts/sw-github-checks-test.sh` | 535 | Validate Checks API wrapper |
 | `scripts/sw-github-deploy-test.sh` | 523 | Validate Deployments API wrapper |
@@ -860,7 +860,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-resume-test.sh` | 267 | TDD tests for WIP branch resume logic |
 | `scripts/sw-retro-test.sh` | 171 | Sprint retrospective engine tests |
 | `scripts/sw-review-rerun-test.sh` | 307 | SHA-deduped rerun comment writer |
-| `scripts/sw-ruflo-adapter-test.sh` | 5086 |  |
+| `scripts/sw-ruflo-adapter-test.sh` | 5082 |  |
 | `scripts/sw-ruflo-benchmark-test.sh` | 269 | Validation tests for the #504 acceptance |
 | `scripts/sw-ruflo-bridge-test.sh` | 293 | Mock-driven tests for the ruflo unix socket |
 | `scripts/sw-ruflo-timeout-test.sh` | 282 | regression tests for ruflo_with_timeout FD hang (#426) |

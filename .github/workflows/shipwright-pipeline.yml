@@ -357,7 +357,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUBTOKEN: ${{ secrets.GITHUBTOKEN }}
       NO_COLOR: "1"
-      SHIPWRIGHT_JOB_TIMEOUT_MINUTES: "300"   # MUST match timeout-minutes: 300 above
+      SHIPWRIGHT_JOB_TIMEOUT_MINUTES: "300" # MUST match timeout-minutes: 300 above
       SW_LOG_PROMPTS: "github"
 
     steps:
@@ -404,6 +404,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y tmux jq
+
+      - name: Restore npm cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-tools-${{ hashFiles('.github/workflows/shipwright-pipeline.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-tools-
 
       - name: Install Claude Code
         run: |
@@ -1038,6 +1046,19 @@ jobs:
           source scripts/lib/ruflo-adapter.sh
           ruflo_detect || true
           ruflo_ci_memory_push
+        continue-on-error: true
+
+      - name: Upload pipeline logs and artifacts (always)
+        if: always() && steps.claim_check.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-logs-issue-${{ github.event.inputs.issue_number || github.event.issue.number }}-run-${{ github.run_id }}
+          path: |
+            /tmp/pipeline.log
+            .claude/pipeline-artifacts/
+            ~/.shipwright/events.jsonl
+          retention-days: 7
+          if-no-files-found: warn
         continue-on-error: true
 
       # Gatekeeper: ensure job fails if pipeline failed (triggers auto-retry)

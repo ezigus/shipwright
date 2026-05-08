@@ -161,4 +161,33 @@ assert_contains_regex \
     "claim_check.*skip"
 
 echo ""
+
+# ─── Phase 3: Consolidate ruflo persistence ─────────────────────────────────
+
+RUFLO_CACHE_RESTORE_COUNT=$(grep -c 'actions/cache/restore@v4' "$WORKFLOW" || true)
+assert_eq \
+    "ruflo actions/cache/restore@v4 step removed (orphan-branch path is sole restore)" \
+    "0" "$RUFLO_CACHE_RESTORE_COUNT"
+
+RUFLO_CACHE_SAVE_COUNT=$(grep -c 'actions/cache/save@v4' "$WORKFLOW" || true)
+assert_eq \
+    "ruflo actions/cache/save@v4 step removed (orphan-branch path is sole save)" \
+    "0" "$RUFLO_CACHE_SAVE_COUNT"
+
+ENSURE_DIR_COUNT=$(grep -c 'Ensure ruflo memory cache dir exists' "$WORKFLOW" || true)
+assert_eq \
+    "Ensure ruflo memory cache dir exists step removed" \
+    "0" "$ENSURE_DIR_COUNT"
+
+assert_contains_regex \
+    "ruflo orphan-branch restore (ruflo_ci_memory_pull) still present" \
+    "$(grep 'ruflo_ci_memory_pull' "$WORKFLOW" || true)" \
+    "ruflo_ci_memory_pull"
+
+assert_contains_regex \
+    "ruflo orphan-branch save (ruflo_ci_memory_push) still present" \
+    "$(grep 'ruflo_ci_memory_push' "$WORKFLOW" || true)" \
+    "ruflo_ci_memory_push"
+
+echo ""
 print_test_results

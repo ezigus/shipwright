@@ -136,7 +136,7 @@ test_loop_worker_uses_pat_pattern() {
 
 test_final_artifact_push_skips_when_no_issue() {
     local T
-    T=$(mktemp -d)
+    T=$(mktemp -d "${TMPDIR:-/tmp}/sw-artifact-test.XXXXXX")
 
     # Mock git that logs all calls
     local git_log="$T/git.log"
@@ -176,7 +176,7 @@ MOCKGIT
 
 test_final_artifact_push_pushes_to_wip_branch() {
     local T
-    T=$(mktemp -d)
+    T=$(mktemp -d "${TMPDIR:-/tmp}/sw-artifact-test.XXXXXX")
 
     # Set up bare remote
     local bare="$T/remote.git"
@@ -195,9 +195,9 @@ test_final_artifact_push_pushes_to_wip_branch() {
         git commit -q -m "init"
         git remote add origin "$bare"
         git push -q origin "HEAD:refs/heads/main"
-        # Create a file to commit as artifact
-        mkdir -p .claude
-        echo "status: complete" > .claude/pipeline-state.md
+        # Create an unignored artifact file (pipeline-artifacts/issue-N/ is not gitignored)
+        mkdir -p ".claude/pipeline-artifacts/issue-99"
+        echo "status: complete" > ".claude/pipeline-artifacts/issue-99/pipeline-state.md"
     )
 
     # Run in subshell
@@ -206,7 +206,7 @@ test_final_artifact_push_pushes_to_wip_branch() {
         set +euo pipefail
         cd "$repo"
         ISSUE_NUMBER="99"
-        ARTIFACTS_DIR="$T/artifacts"
+        ARTIFACTS_DIR="$repo/.claude/pipeline-artifacts"
         STATE_DIR="$T"
         GITHUB_RUN_ID=""
         GITHUBTOKEN=""
@@ -232,7 +232,7 @@ test_final_artifact_push_pushes_to_wip_branch() {
 
 test_final_artifact_push_returns_zero_on_push_failure() {
     local T
-    T=$(mktemp -d)
+    T=$(mktemp -d "${TMPDIR:-/tmp}/sw-artifact-test.XXXXXX")
 
     # Set up real git repo so git diff/add/commit work, but push fails
     local repo="$T/repo"

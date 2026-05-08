@@ -892,7 +892,7 @@ ci_push_partial_work() {
         mkdir -p ".shipwright" 2>/dev/null || true
         local _events_snap=".shipwright/events-${ISSUE_NUMBER}-${GITHUB_RUN_ID:-local}.jsonl"
         cp "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" "$_events_snap" 2>/dev/null || true
-        git add "$_events_snap" 2>/dev/null || true
+        git add -f "$_events_snap" 2>/dev/null || true
     fi
 
     # Force-add issue-scoped artifact snapshots — .gitignore ignores the parent
@@ -938,6 +938,7 @@ ci_push_partial_work() {
 pipeline_final_artifact_push() {
     local push_timeout="${1:-60}"
     [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
+    [[ "${NO_GITHUB:-false}" == "true" ]] && return 0
 
     local branch="shipwright/issue-${ISSUE_NUMBER}"
     echo "[ARTIFACT-PUSH-START] $(date -u +%FT%TZ) issue=${ISSUE_NUMBER} timeout=${push_timeout}s" >&2
@@ -947,15 +948,15 @@ pipeline_final_artifact_push() {
         mkdir -p ".shipwright" 2>/dev/null || true
         local _events_snap=".shipwright/events-${ISSUE_NUMBER}-${GITHUB_RUN_ID:-local}.jsonl"
         cp "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" "$_events_snap" 2>/dev/null || true
-        git add "$_events_snap" 2>/dev/null || true
+        git add -f "$_events_snap" 2>/dev/null || true
     fi
 
     # Force-add issue-scoped artifact snapshots (.gitignore bypassed intentionally).
     local _snap_dir="${ARTIFACTS_DIR:-${STATE_DIR:-}/pipeline-artifacts}/issue-${ISSUE_NUMBER}"
     [[ -d "$_snap_dir" ]] && git add -f "$_snap_dir/" 2>/dev/null || true
 
-    # Stage pipeline state files produced by post-PR stages (deploy/validate/monitor).
-    git add ".claude/pipeline-state.md" "progress.md" 2>/dev/null || true
+    # Stage pipeline state files (gitignored — force-add intentionally for audit trail).
+    git add -f ".claude/pipeline-state.md" "progress.md" 2>/dev/null || true
 
     # Only commit if there are unstaged/staged changes (excluding daemon-config.json noise).
     if ! git diff --quiet -- ':!.claude/daemon-config.json' 2>/dev/null || \

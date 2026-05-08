@@ -300,7 +300,7 @@ assert_contains_regex \
 
 assert_contains_regex \
     "pipeline-state.sh calls write_pipeline_status_json from mark_stage_complete" \
-    "$(grep -A100 'mark_stage_complete()' "$PIPELINE_STATE_SH" | grep 'write_pipeline_status_json' || true)" \
+    "$(awk '/^mark_stage_complete\(\)/,/^\}/' "$PIPELINE_STATE_SH" | grep 'write_pipeline_status_json' || true)" \
     "write_pipeline_status_json"
 
 assert_contains_regex \

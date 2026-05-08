@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  sw-gha-pipeline-test — Static validation of shipwright-pipeline.yml     ║
-# ║  Tests for Phase 1: log artifact upload + npm cache                      ║
+# ║  Tests for Phase 1-3: log artifact, npm cache, step ordering, persistence ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 WORKFLOW="$SCRIPT_DIR/../.github/workflows/shipwright-pipeline.yml"
 
-print_test_header "GHA Pipeline Workflow: Phase 1 — Log Artifact + npm Cache"
+print_test_header "GHA Pipeline Workflow: Phases 1-3 — Observability, Ordering, Persistence"
 
 # ─── npm cache ─────────────────────────────────────────────────────────────
 
@@ -159,6 +159,35 @@ assert_contains_regex \
     "Install system dependencies has claim_check skip guard" \
     "$(grep -A2 'Install system dependencies' "$WORKFLOW" || true)" \
     "claim_check.*skip"
+
+echo ""
+
+# ─── Phase 3: Consolidate ruflo persistence ─────────────────────────────────
+
+RUFLO_CACHE_KEY_COUNT=$(grep -c 'ruflo-memory-' "$WORKFLOW" || true)
+assert_eq \
+    "ruflo-memory- cache key removed (no actions/cache steps for ruflo)" \
+    "0" "$RUFLO_CACHE_KEY_COUNT"
+
+RUFLO_CACHE_PATH_COUNT=$(grep -c '\.claude-flow/data/' "$WORKFLOW" || true)
+assert_eq \
+    ".claude-flow/data/ cache path removed from workflow (ruflo manages dir itself)" \
+    "0" "$RUFLO_CACHE_PATH_COUNT"
+
+ENSURE_DIR_COUNT=$(grep -c 'Ensure ruflo memory cache dir exists' "$WORKFLOW" || true)
+assert_eq \
+    "Ensure ruflo memory cache dir exists step removed" \
+    "0" "$ENSURE_DIR_COUNT"
+
+assert_contains_regex \
+    "ruflo orphan-branch restore (ruflo_ci_memory_pull) still present" \
+    "$(grep 'ruflo_ci_memory_pull' "$WORKFLOW" || true)" \
+    "ruflo_ci_memory_pull"
+
+assert_contains_regex \
+    "ruflo orphan-branch save (ruflo_ci_memory_push) still present" \
+    "$(grep 'ruflo_ci_memory_push' "$WORKFLOW" || true)" \
+    "ruflo_ci_memory_push"
 
 echo ""
 print_test_results

@@ -21,8 +21,16 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Monitor in-progress pipeline runs
         run: |
+          # Load retry caps from policy.json — single source of truth
+          . scripts/lib/retry-policy.sh
+
           echo "--- Shipwright Watchdog: $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"
           NOW_EPOCH=$(date +%s)
 
@@ -140,8 +148,8 @@ jobs:
               continue
             fi
 
-            # 45 min - 2h silence: cancel and retry
-            if [[ "$SILENT_MINS" -lt 120 ]]; then
+            # 45 min - abandon_after_minutes silence: cancel and retry
+            if [[ "$SILENT_MINS" -lt "${RETRY_ABANDON_AFTER_MINUTES}" ]]; then
               echo "Status: STUCK (${SILENT_MINS}m silence) — cancelling and retrying"
               CANCELLED_COUNT=$((CANCELLED_COUNT + 1))
 
@@ -151,7 +159,8 @@ jobs:
               # Extract completed stages from comments
               COMPLETED_STAGES=$(echo "$COMMENTS_JSON" | jq -r '.body' 2>/dev/null | grep -oE 'SHIPWRIGHT-STAGE: [a-z_]+:complete' | sed 's/SHIPWRIGHT-STAGE: //' | sed 's/:complete//' | tr '\n' ',' | sed 's/,$//' || true)
 
-              # Post cancellation comment
+              # Post cancellation comment — SHIPWRIGHT-CANCEL-REASON: watchdog tells
+              # auto-retry not to increment RETRY_COUNT for this cancel.
               gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$(cat <<EOF
           :rotating_light: **Shipwright Watchdog — Pipeline Cancelled (Stuck)**
 
@@ -166,6 +175,7 @@ jobs:
           | Action | Dispatching retry with resume |
 
           <!-- SHIPWRIGHT-WATCHDOG-CANCEL: $RUN_ID -->
+          <!-- SHIPWRIGHT-CANCEL-REASON: watchdog -->
           EOF
           )" 2>/dev/null || true
 
@@ -198,7 +208,7 @@ jobs:
 
           Run [$RUN_ID](${{ github.server_url }}/${{ github.repository }}/actions/runs/$RUN_ID) was cancelled after **${ELAPSED_MINS} minutes** with no progress for **${SILENT_MINS} minutes**.
 
-          This exceeds the 2-hour silence threshold. The pipeline will **not** be automatically retried.
+          This exceeds the ${RETRY_ABANDON_AFTER_MINUTES}-minute silence threshold. The pipeline will **not** be automatically retried.
 
           | Field | Value |
           |-------|-------|

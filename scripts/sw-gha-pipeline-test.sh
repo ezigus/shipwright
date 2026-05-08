@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  sw-gha-pipeline-test — Static validation of shipwright-pipeline.yml     ║
-# ║  Tests for Phase 1-3: log artifact, npm cache, step ordering, persistence ║
+# ║  Tests for Phases 1-5: log artifact, npm cache, ordering, persistence,    ║
+# ║  and unified retry caps                                                    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
@@ -11,7 +12,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 WORKFLOW="$SCRIPT_DIR/../.github/workflows/shipwright-pipeline.yml"
 
-print_test_header "GHA Pipeline Workflow: Phases 1-3 — Observability, Ordering, Persistence"
+print_test_header "GHA Pipeline Workflow: Phases 1-5 — Observability, Ordering, Persistence, Retry Caps"
 
 # ─── npm cache ─────────────────────────────────────────────────────────────
 
@@ -188,6 +189,102 @@ assert_contains_regex \
     "ruflo orphan-branch save (ruflo_ci_memory_push) still present" \
     "$(grep 'ruflo_ci_memory_push' "$WORKFLOW" || true)" \
     "ruflo_ci_memory_push"
+
+echo ""
+
+# ─── Phase 5: Unified retry caps ────────────────────────────────────────────
+
+AUTO_RETRY_WORKFLOW="$SCRIPT_DIR/../.github/workflows/shipwright-auto-retry.yml"
+WATCHDOG_WORKFLOW="$SCRIPT_DIR/../.github/workflows/shipwright-watchdog.yml"
+RETRY_POLICY_SCRIPT="$SCRIPT_DIR/lib/retry-policy.sh"
+POLICY_JSON="$SCRIPT_DIR/../config/policy.json"
+
+# policy.json has retry section
+assert_contains_regex \
+    "config/policy.json has retry.max_pipeline_starts" \
+    "$(jq -r '.retry.max_pipeline_starts // empty' "$POLICY_JSON" 2>/dev/null || true)" \
+    "[0-9]+"
+
+assert_contains_regex \
+    "config/policy.json has retry.max_auto_retries" \
+    "$(jq -r '.retry.max_auto_retries // empty' "$POLICY_JSON" 2>/dev/null || true)" \
+    "[0-9]+"
+
+assert_contains_regex \
+    "config/policy.json has retry.abandon_after_minutes" \
+    "$(jq -r '.retry.abandon_after_minutes // empty' "$POLICY_JSON" 2>/dev/null || true)" \
+    "[0-9]+"
+
+# retry-policy.sh exists
+RETRY_POLICY_EXISTS=$([ -f "$RETRY_POLICY_SCRIPT" ] && echo "yes" || echo "no")
+assert_eq \
+    "scripts/lib/retry-policy.sh exists" \
+    "yes" "$RETRY_POLICY_EXISTS"
+
+# pipeline.yml sources retry-policy.sh and uses variable
+assert_contains_regex \
+    "shipwright-pipeline.yml sources retry-policy.sh in claim_check step" \
+    "$(grep 'retry-policy\.sh' "$WORKFLOW" || true)" \
+    "retry-policy\.sh"
+
+assert_contains_regex \
+    "shipwright-pipeline.yml uses RETRY_MAX_PIPELINE_STARTS variable (not hardcoded 6)" \
+    "$(grep 'RETRY_MAX_PIPELINE_STARTS' "$WORKFLOW" || true)" \
+    "RETRY_MAX_PIPELINE_STARTS"
+
+# auto-retry.yml has checkout + sources retry-policy.sh + uses variable
+AUTORETRY_CHECKOUT_COUNT=$(grep -c 'actions/checkout' "$AUTO_RETRY_WORKFLOW" || true)
+assert_eq \
+    "shipwright-auto-retry.yml has checkout step" \
+    "1" "$AUTORETRY_CHECKOUT_COUNT"
+
+assert_contains_regex \
+    "shipwright-auto-retry.yml sources retry-policy.sh" \
+    "$(grep 'retry-policy\.sh' "$AUTO_RETRY_WORKFLOW" || true)" \
+    "retry-policy\.sh"
+
+assert_contains_regex \
+    "shipwright-auto-retry.yml uses RETRY_MAX_AUTO_RETRIES variable (not hardcoded 3)" \
+    "$(grep 'RETRY_MAX_AUTO_RETRIES' "$AUTO_RETRY_WORKFLOW" || true)" \
+    "RETRY_MAX_AUTO_RETRIES"
+
+# watchdog.yml has checkout + sources retry-policy.sh + uses variable
+WATCHDOG_CHECKOUT_COUNT=$(grep -c 'actions/checkout' "$WATCHDOG_WORKFLOW" || true)
+assert_eq \
+    "shipwright-watchdog.yml has checkout step" \
+    "1" "$WATCHDOG_CHECKOUT_COUNT"
+
+assert_contains_regex \
+    "shipwright-watchdog.yml sources retry-policy.sh" \
+    "$(grep 'retry-policy\.sh' "$WATCHDOG_WORKFLOW" || true)" \
+    "retry-policy\.sh"
+
+assert_contains_regex \
+    "shipwright-watchdog.yml uses RETRY_ABANDON_AFTER_MINUTES variable (not hardcoded 120)" \
+    "$(grep 'RETRY_ABANDON_AFTER_MINUTES' "$WATCHDOG_WORKFLOW" || true)" \
+    "RETRY_ABANDON_AFTER_MINUTES"
+
+# watchdog posts SHIPWRIGHT-CANCEL-REASON: watchdog and SHIPWRIGHT-WATCHDOG-CANCEL markers
+assert_contains_regex \
+    "shipwright-watchdog.yml posts SHIPWRIGHT-CANCEL-REASON: watchdog marker" \
+    "$(grep 'SHIPWRIGHT-CANCEL-REASON' "$WATCHDOG_WORKFLOW" || true)" \
+    "SHIPWRIGHT-CANCEL-REASON:.*watchdog"
+
+assert_contains_regex \
+    "shipwright-watchdog.yml posts SHIPWRIGHT-WATCHDOG-CANCEL run-scoped marker" \
+    "$(grep 'SHIPWRIGHT-WATCHDOG-CANCEL' "$WATCHDOG_WORKFLOW" || true)" \
+    "SHIPWRIGHT-WATCHDOG-CANCEL"
+
+# auto-retry detects watchdog cancel scoped to the specific run_id (not CANCEL-REASON which is unscoped)
+assert_contains_regex \
+    "shipwright-auto-retry.yml detects watchdog cancel via run-scoped SHIPWRIGHT-WATCHDOG-CANCEL marker" \
+    "$(grep 'SHIPWRIGHT-WATCHDOG-CANCEL' "$AUTO_RETRY_WORKFLOW" || true)" \
+    "SHIPWRIGHT-WATCHDOG-CANCEL"
+
+assert_contains_regex \
+    "shipwright-auto-retry.yml skips retry count on watchdog cancel (watchdog_cancel)" \
+    "$(grep 'watchdog_cancel' "$AUTO_RETRY_WORKFLOW" || true)" \
+    "watchdog_cancel"
 
 echo ""
 print_test_results

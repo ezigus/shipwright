@@ -400,4 +400,39 @@ assert_contains_regex \
     "retry_template|RETRY_TEMPLATE"
 
 echo ""
+
+# ─── Phase 8: risk_level propagation ────────────────────────────────────────
+
+PIPELINE_STAGES_REVIEW="$SCRIPT_DIR/lib/pipeline-stages-review.sh"
+
+# shipwright-pipeline.yml passes risk_level as SHIPWRIGHT_RISK_LEVEL env var to pipeline job
+assert_contains_regex \
+    "shipwright-pipeline.yml sets SHIPWRIGHT_RISK_LEVEL in pipeline job env" \
+    "$(grep 'SHIPWRIGHT_RISK_LEVEL' "$WORKFLOW" || true)" \
+    "SHIPWRIGHT_RISK_LEVEL"
+
+assert_contains_regex \
+    "SHIPWRIGHT_RISK_LEVEL references triage outputs.risk_level" \
+    "$(grep 'SHIPWRIGHT_RISK_LEVEL' "$WORKFLOW" || true)" \
+    "triage.*risk_level|risk_level.*triage"
+
+# pipeline-stages-review.sh reads SHIPWRIGHT_RISK_LEVEL in stage_compound_quality
+assert_contains_regex \
+    "pipeline-stages-review.sh reads SHIPWRIGHT_RISK_LEVEL in stage_compound_quality" \
+    "$(grep 'SHIPWRIGHT_RISK_LEVEL' "$PIPELINE_STAGES_REVIEW" || true)" \
+    "SHIPWRIGHT_RISK_LEVEL"
+
+# pipeline-stages-review.sh enables adversarial on high/critical risk
+assert_contains_regex \
+    "pipeline-stages-review.sh forces do_adversarial=true on high/critical risk" \
+    "$(grep -A3 'SHIPWRIGHT_RISK_LEVEL' "$PIPELINE_STAGES_REVIEW" | grep 'do_adversarial' || true)" \
+    "do_adversarial"
+
+# pipeline-stages-review.sh enables negative on high/critical risk
+assert_contains_regex \
+    "pipeline-stages-review.sh forces do_negative=true on high/critical risk" \
+    "$(grep -A3 'SHIPWRIGHT_RISK_LEVEL' "$PIPELINE_STAGES_REVIEW" | grep 'do_negative' || true)" \
+    "do_negative"
+
+echo ""
 print_test_results

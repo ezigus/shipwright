@@ -359,6 +359,7 @@ jobs:
       NO_COLOR: "1"
       SHIPWRIGHT_JOB_TIMEOUT_MINUTES: "300" # MUST match timeout-minutes: 300 above
       SW_LOG_PROMPTS: "github"
+      SHIPWRIGHT_RISK_LEVEL: ${{ needs.triage.outputs.risk_level || 'unknown' }}
 
     steps:
       - uses: actions/checkout@v4

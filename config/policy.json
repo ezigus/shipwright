@@ -200,6 +200,11 @@
     "overlap_threshold_percent": 60,
     "strategy_lines": 200
   },
+  "retry": {
+    "max_pipeline_starts": 6,
+    "max_auto_retries": 3,
+    "abandon_after_minutes": 120
+  },
   "sweep": {
     "cron_minutes": 30,
     "stuck_threshold_hours": 4,

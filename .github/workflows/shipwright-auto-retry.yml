@@ -21,6 +21,11 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Extract issue number from failed run
         id: extract
         run: |
@@ -180,6 +185,9 @@ jobs:
         if: steps.extract.outputs.issue_number != ''
         id: strategy
         run: |
+          # Load retry caps from policy.json — single source of truth
+          . scripts/lib/retry-policy.sh
+
           ISSUE_NUMBER="${{ steps.extract.outputs.issue_number }}"
           ERROR_CATEGORY="${{ steps.categorize.outputs.error_category }}"
 
@@ -192,6 +200,20 @@ jobs:
 
           echo "Current retry count: $RETRY_COUNT"
 
+          # Detect watchdog cancels — the watchdog already dispatched a retry, so
+          # auto-retry must not dispatch a second one. RETRY_COUNT is not incremented
+          # because the run was stuck (not a genuine failure attempt).
+          CANCEL_REASON=$(echo "$COMMENTS" | grep -oE 'SHIPWRIGHT-CANCEL-REASON: [a-z_]+' | tail -1 | cut -d' ' -f2 || true)
+          if [[ "$CANCEL_REASON" == "watchdog" ]]; then
+            echo "Watchdog cancel detected — suppressing auto-retry dispatch (watchdog_cancel)"
+            {
+              echo "should_retry=false"
+              echo "skip_reason=watchdog_cancel"
+              echo "retry_count=$RETRY_COUNT"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           # Extract last failed stage from result comment
           LAST_STAGE=$(echo "$COMMENTS" | grep -oE 'SHIPWRIGHT-RESULT: [0-9]+:[a-z_]+' | tail -1 | cut -d: -f3 || echo "")
 
@@ -200,7 +222,6 @@ jobs:
           RAW_STAGES=$(echo "$COMMENTS" | grep -oE 'SHIPWRIGHT-STAGE: [a-z_]+:complete' | sed 's/SHIPWRIGHT-STAGE: //' | sed 's/:complete//' | sort -u || echo "")
 
           # Supplement comment-based detection with the branch's authoritative state file.
-          # This job has no actions/checkout, so git commands would fail — use gh api instead.
           # grep -E + sed avoids the GNU grep -P dependency (portable to all GHA runners).
           BRANCH="shipwright/issue-${ISSUE_NUMBER}"
           STATE_B64=$(gh api \
@@ -209,7 +230,7 @@ jobs:
           BRANCH_STAGES=""
           if [[ -n "$STATE_B64" ]]; then
             BRANCH_STAGES=$(printf '%s' "$STATE_B64" | base64 -d 2>/dev/null \
-              | grep -E '^\s+[a-z_]+: complete' \
+              | grep -E '^[[:space:]]+[a-z_]+: complete' \
               | sed 's/^[[:space:]]*//' \
               | sed 's/: complete$//' \
               | sort -u || true)
@@ -241,8 +262,8 @@ jobs:
             exit 0
           fi
 
-          if [[ "$RETRY_COUNT" -ge 3 ]]; then
-            echo "Max retries (3) reached for issue #$ISSUE_NUMBER — giving up"
+          if [[ "$RETRY_COUNT" -ge "${RETRY_MAX_AUTO_RETRIES}" ]]; then
+            echo "Max retries (${RETRY_MAX_AUTO_RETRIES}) reached for issue #$ISSUE_NUMBER — giving up"
             {
               echo "should_retry=false"
               echo "skip_reason=exhausted"

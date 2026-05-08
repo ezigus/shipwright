@@ -12,7 +12,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 WORKFLOW="$SCRIPT_DIR/../.github/workflows/shipwright-pipeline.yml"
 
-print_test_header "GHA Pipeline Workflow: Phases 1-6 — Observability, Ordering, Persistence, Retry Caps, JSON Status"
+print_test_header "GHA Pipeline Workflow: Phases 1-7 — Observability, Ordering, Persistence, Retry Caps, JSON Status, Unified Dispatch"
 
 # ─── npm cache ─────────────────────────────────────────────────────────────
 
@@ -319,8 +319,8 @@ assert_contains_regex \
     "pipeline-status\.json"
 
 assert_contains_regex \
-    "shipwright-sweep.yml reads pipeline-status.json for completed_stages" \
-    "$(grep 'pipeline-status\.json' "$SCRIPT_DIR/../.github/workflows/shipwright-sweep.yml" 2>/dev/null || echo "")" \
+    "shipwright-dispatch.yml reads pipeline-status.json for completed_stages (sweep absorbed)" \
+    "$(grep 'pipeline-status\.json' "$SCRIPT_DIR/../.github/workflows/shipwright-dispatch.yml" 2>/dev/null || echo "")" \
     "pipeline-status\.json"
 
 assert_contains_regex \
@@ -337,6 +337,67 @@ assert_contains_regex \
     "pipeline-resume.yml fixes Bash 3.2 \\\\s → [[:space:]] in grep" \
     "$(grep 'grep -E' "$RESUME_WORKFLOW" || true)" \
     "\[\[:space:\]\]"
+
+echo ""
+
+# ─── Phase 7: Unified dispatch (sweep merged into dispatch) ──────────────────
+
+DISPATCH_WORKFLOW="$SCRIPT_DIR/../.github/workflows/shipwright-dispatch.yml"
+SWEEP_WORKFLOW_PATH="$SCRIPT_DIR/../.github/workflows/shipwright-sweep.yml"
+
+# sweep.yml must not exist
+SWEEP_EXISTS=$([ -f "$SWEEP_WORKFLOW_PATH" ] && echo "yes" || echo "no")
+assert_eq \
+    "shipwright-sweep.yml deleted (merged into dispatch)" \
+    "no" "$SWEEP_EXISTS"
+
+# dispatch.yml loads policy for stuck threshold
+assert_contains_regex \
+    "shipwright-dispatch.yml loads stuck_threshold_hours from policy" \
+    "$(grep 'stuck_threshold_hours' "$DISPATCH_WORKFLOW" || true)" \
+    "stuck_threshold_hours"
+
+# dispatch.yml has stuck detection logic
+assert_contains_regex \
+    "shipwright-dispatch.yml has stuck detection (Pipeline Starting)" \
+    "$(grep 'Pipeline Starting' "$DISPATCH_WORKFLOW" || true)" \
+    "Pipeline Starting"
+
+# dispatch.yml has failure-without-retry check
+assert_contains_regex \
+    "shipwright-dispatch.yml has failure-without-retry check (Pipeline Failed)" \
+    "$(grep 'Pipeline Failed' "$DISPATCH_WORKFLOW" || true)" \
+    "Pipeline Failed"
+
+# dispatch.yml has SHIPWRIGHT-RETRY guard
+assert_contains_regex \
+    "shipwright-dispatch.yml guards retry with SHIPWRIGHT-RETRY marker" \
+    "$(grep 'SHIPWRIGHT-RETRY' "$DISPATCH_WORKFLOW" || true)" \
+    "SHIPWRIGHT-RETRY"
+
+# dispatch.yml has pipeline-status.json reading (inherited from sweep Phase 6)
+assert_contains_regex \
+    "shipwright-dispatch.yml reads pipeline-status.json for stage data" \
+    "$(grep 'pipeline-status\.json' "$DISPATCH_WORKFLOW" || true)" \
+    "pipeline-status\.json"
+
+# dispatch.yml handles stuck issues as a separate step
+assert_contains_regex \
+    "shipwright-dispatch.yml has Handle stuck issues step" \
+    "$(grep 'Handle stuck issues' "$DISPATCH_WORKFLOW" || true)" \
+    "Handle stuck issues"
+
+# dispatch.yml writes stuck output key to GITHUB_OUTPUT
+assert_contains_regex \
+    "shipwright-dispatch.yml writes stuck output to GITHUB_OUTPUT" \
+    "$(grep 'stuck<<EOF\|echo "stuck=' "$DISPATCH_WORKFLOW" || true)" \
+    'stuck<<EOF|stuck='
+
+# dispatch.yml loads retry template from policy
+assert_contains_regex \
+    "shipwright-dispatch.yml loads retry_template from policy" \
+    "$(grep -E 'retry_template|RETRY_TEMPLATE' "$DISPATCH_WORKFLOW" || true)" \
+    "retry_template|RETRY_TEMPLATE"
 
 echo ""
 print_test_results

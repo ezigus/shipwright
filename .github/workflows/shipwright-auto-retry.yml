@@ -200,12 +200,16 @@ jobs:
 
           echo "Current retry count: $RETRY_COUNT"
 
-          # Detect watchdog cancels — the watchdog already dispatched a retry, so
-          # auto-retry must not dispatch a second one. RETRY_COUNT is not incremented
-          # because the run was stuck (not a genuine failure attempt).
-          CANCEL_REASON=$(echo "$COMMENTS" | grep -oE 'SHIPWRIGHT-CANCEL-REASON: [a-z_]+' | tail -1 | cut -d' ' -f2 || true)
-          if [[ "$CANCEL_REASON" == "watchdog" ]]; then
-            echo "Watchdog cancel detected — suppressing auto-retry dispatch (watchdog_cancel)"
+          # Detect watchdog cancels scoped to THIS run — the watchdog already
+          # dispatched a retry, so auto-retry must not dispatch a second one.
+          # RETRY_COUNT is not incremented because the run was stuck (not a
+          # genuine failure attempt).  Check for SHIPWRIGHT-WATCHDOG-CANCEL:
+          # <run_id> so a stale marker from a previous cancel cannot suppress
+          # future retries on the same issue.
+          THIS_RUN_ID="${{ steps.extract.outputs.run_id }}"
+          WATCHDOG_CANCEL=$(echo "$COMMENTS" | grep -c "SHIPWRIGHT-WATCHDOG-CANCEL: ${THIS_RUN_ID}" || true)
+          if [[ "${WATCHDOG_CANCEL:-0}" -gt 0 ]]; then
+            echo "Watchdog cancel detected for run ${THIS_RUN_ID} — suppressing auto-retry dispatch (watchdog_cancel)"
             {
               echo "should_retry=false"
               echo "skip_reason=watchdog_cancel"

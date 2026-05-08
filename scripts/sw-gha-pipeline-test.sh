@@ -264,17 +264,22 @@ assert_contains_regex \
     "$(grep 'RETRY_ABANDON_AFTER_MINUTES' "$WATCHDOG_WORKFLOW" || true)" \
     "RETRY_ABANDON_AFTER_MINUTES"
 
-# watchdog posts SHIPWRIGHT-CANCEL-REASON: watchdog marker on cancel
+# watchdog posts SHIPWRIGHT-CANCEL-REASON: watchdog and SHIPWRIGHT-WATCHDOG-CANCEL markers
 assert_contains_regex \
     "shipwright-watchdog.yml posts SHIPWRIGHT-CANCEL-REASON: watchdog marker" \
     "$(grep 'SHIPWRIGHT-CANCEL-REASON' "$WATCHDOG_WORKFLOW" || true)" \
     "SHIPWRIGHT-CANCEL-REASON:.*watchdog"
 
-# auto-retry detects watchdog cancel reason and skips RETRY_COUNT increment
 assert_contains_regex \
-    "shipwright-auto-retry.yml detects SHIPWRIGHT-CANCEL-REASON: watchdog" \
-    "$(grep 'CANCEL-REASON' "$AUTO_RETRY_WORKFLOW" || true)" \
-    "CANCEL-REASON"
+    "shipwright-watchdog.yml posts SHIPWRIGHT-WATCHDOG-CANCEL run-scoped marker" \
+    "$(grep 'SHIPWRIGHT-WATCHDOG-CANCEL' "$WATCHDOG_WORKFLOW" || true)" \
+    "SHIPWRIGHT-WATCHDOG-CANCEL"
+
+# auto-retry detects watchdog cancel scoped to the specific run_id (not CANCEL-REASON which is unscoped)
+assert_contains_regex \
+    "shipwright-auto-retry.yml detects watchdog cancel via run-scoped SHIPWRIGHT-WATCHDOG-CANCEL marker" \
+    "$(grep 'SHIPWRIGHT-WATCHDOG-CANCEL' "$AUTO_RETRY_WORKFLOW" || true)" \
+    "SHIPWRIGHT-WATCHDOG-CANCEL"
 
 assert_contains_regex \
     "shipwright-auto-retry.yml skips retry count on watchdog cancel (watchdog_cancel)" \

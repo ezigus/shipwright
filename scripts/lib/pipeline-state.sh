@@ -195,6 +195,49 @@ update_status() {
     write_state
 }
 
+write_pipeline_status_json() {
+    local state_file=".claude/pipeline-status.json"
+    local tmp_file="${state_file}.tmp.$$"
+
+    # Build completed_stages JSON array from STAGE_STATUSES
+    local completed_arr="[]"
+    local stage line
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        stage="${line%%:*}"
+        local st="${line#*:}"
+        if [[ "$st" == "complete" && -n "$stage" ]]; then
+            local _new_arr
+            if _new_arr=$(printf '%s' "$completed_arr" | jq --arg s "$stage" '. + [$s]' 2>/dev/null); then
+                completed_arr="$_new_arr"
+            else
+                completed_arr="[]"
+            fi
+        fi
+    done <<EOF
+$STAGE_STATUSES
+EOF
+
+    # Get current stage (last started, not yet complete)
+    local current_stage=""
+    current_stage=$(echo "$STAGE_STATUSES" | grep ':in_progress$' | tail -1 | cut -d: -f1 || true)
+    [[ -z "$current_stage" ]] && current_stage=$(echo "$STAGE_STATUSES" | grep ':complete$' | tail -1 | cut -d: -f1 || true)
+
+    mkdir -p ".claude" 2>/dev/null || true
+    jq -n \
+        --arg run_id "${GITHUB_RUN_ID:-local}" \
+        --arg branch "shipwright/issue-${ISSUE_NUMBER:-0}" \
+        --arg stage "${current_stage:-}" \
+        --argjson iteration "${CURRENT_ITERATION:-0}" \
+        --argjson retry_count "${RETRY_COUNT:-0}" \
+        --arg last_heartbeat "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg exit_reason "" \
+        --arg error_category "" \
+        --argjson completed_stages "${completed_arr:-[]}" \
+        '{run_id:$run_id,branch:$branch,stage:$stage,iteration:$iteration,retry_count:$retry_count,last_heartbeat:$last_heartbeat,exit_reason:$exit_reason,error_category:$error_category,completed_stages:$completed_stages}' \
+        > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$state_file" 2>/dev/null || { rm -f "$tmp_file" 2>/dev/null; return 1; }
+}
+
 mark_stage_complete() {
     local stage_id="$1"
     record_stage_end "$stage_id"
@@ -288,6 +331,9 @@ mark_stage_complete() {
             '{stage: $stage, status: $status, issue: $issue, goal: $goal, template: $template, ts: "'"$(now_iso)"'"}')
         db_save_checkpoint "pipeline-${SHIPWRIGHT_PIPELINE_ID:-$$}" "$checkpoint_data" 2>/dev/null || true
     fi
+
+    # Write structured JSON status file for meta-workflows
+    write_pipeline_status_json || warn "Failed to write pipeline-status.json"
 }
 
 persist_artifacts() {

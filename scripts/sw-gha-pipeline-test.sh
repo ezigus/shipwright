@@ -12,7 +12,7 @@ source "$SCRIPT_DIR/lib/test-helpers.sh"
 
 WORKFLOW="$SCRIPT_DIR/../.github/workflows/shipwright-pipeline.yml"
 
-print_test_header "GHA Pipeline Workflow: Phases 1-5 — Observability, Ordering, Persistence, Retry Caps"
+print_test_header "GHA Pipeline Workflow: Phases 1-6 — Observability, Ordering, Persistence, Retry Caps, JSON Status"
 
 # ─── npm cache ─────────────────────────────────────────────────────────────
 
@@ -285,6 +285,58 @@ assert_contains_regex \
     "shipwright-auto-retry.yml skips retry count on watchdog cancel (watchdog_cancel)" \
     "$(grep 'watchdog_cancel' "$AUTO_RETRY_WORKFLOW" || true)" \
     "watchdog_cancel"
+
+echo ""
+
+# ─── Phase 6: pipeline-status.json ─────────────────────────────────────────
+
+PIPELINE_STATE_SH="$SCRIPT_DIR/lib/pipeline-state.sh"
+RESUME_WORKFLOW="$SCRIPT_DIR/../.github/workflows/pipeline-resume.yml"
+
+assert_contains_regex \
+    "pipeline-state.sh has write_pipeline_status_json function" \
+    "$(grep 'write_pipeline_status_json' "$PIPELINE_STATE_SH" || true)" \
+    "write_pipeline_status_json"
+
+assert_contains_regex \
+    "pipeline-state.sh calls write_pipeline_status_json from mark_stage_complete" \
+    "$(awk '/^mark_stage_complete\(\)/,/^\}/' "$PIPELINE_STATE_SH" | grep 'write_pipeline_status_json' || true)" \
+    "write_pipeline_status_json"
+
+assert_contains_regex \
+    "shipwright-watchdog.yml reads pipeline-status.json for last_heartbeat" \
+    "$(grep 'pipeline-status\.json' "$WATCHDOG_WORKFLOW" || true)" \
+    "pipeline-status\.json"
+
+assert_contains_regex \
+    "shipwright-auto-retry.yml reads pipeline-status.json for completed_stages" \
+    "$(grep 'pipeline-status\.json' "$AUTO_RETRY_WORKFLOW" || true)" \
+    "pipeline-status\.json"
+
+assert_contains_regex \
+    "pipeline-resume.yml reads pipeline-status.json as primary stage source" \
+    "$(grep 'pipeline-status\.json' "$RESUME_WORKFLOW" || true)" \
+    "pipeline-status\.json"
+
+assert_contains_regex \
+    "shipwright-sweep.yml reads pipeline-status.json for completed_stages" \
+    "$(grep 'pipeline-status\.json' "$SCRIPT_DIR/../.github/workflows/shipwright-sweep.yml" 2>/dev/null || echo "")" \
+    "pipeline-status\.json"
+
+assert_contains_regex \
+    "shipwright-watchdog.yml uses JSON_HEARTBEAT as primary signal" \
+    "$(grep 'JSON_HEARTBEAT' "$WATCHDOG_WORKFLOW" || true)" \
+    "JSON_HEARTBEAT"
+
+assert_contains_regex \
+    "shipwright-auto-retry.yml uses JSON_RETRY for retry_count" \
+    "$(grep 'JSON_RETRY' "$AUTO_RETRY_WORKFLOW" || true)" \
+    "JSON_RETRY"
+
+assert_contains_regex \
+    "pipeline-resume.yml fixes Bash 3.2 \\\\s → [[:space:]] in grep" \
+    "$(grep 'grep -E' "$RESUME_WORKFLOW" || true)" \
+    "\[\[:space:\]\]"
 
 echo ""
 print_test_results

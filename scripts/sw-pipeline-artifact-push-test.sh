@@ -9,6 +9,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REAL_LOOP_SCRIPT="$SCRIPT_DIR/sw-loop.sh"
 REAL_PIPELINE_SCRIPT="$SCRIPT_DIR/sw-pipeline.sh"
 
+# Normalize TMPDIR: macOS appends a trailing slash which causes double-slash in mktemp templates.
+_SW_TMPBASE="${TMPDIR%/}"
+_SW_TMPBASE="${_SW_TMPBASE:-/tmp}"
+
 # ─── Colors ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -81,7 +85,9 @@ assert_file_empty() {
 
 assert_remote_branch_exists() {
     local bare_repo="$1" branch="$2" label="${3:-branch on remote}"
-    if ! git ls-remote --heads "$bare_repo" "refs/heads/$branch" 2>/dev/null | grep -q .; then
+    # Use git -C to query the bare repo directly — avoids path-encoding issues with
+    # git ls-remote when the path contains double slashes (macOS TMPDIR trailing slash).
+    if ! git -C "$bare_repo" rev-parse --verify "refs/heads/$branch" >/dev/null 2>&1; then
         echo -e "\n    ${RED}✗${RESET} $label: branch '$branch' not found on remote $bare_repo" >&2
         return 1
     fi
@@ -136,7 +142,7 @@ test_loop_worker_uses_pat_pattern() {
 
 test_final_artifact_push_skips_when_no_issue() {
     local T
-    T=$(mktemp -d "${TMPDIR:-/tmp}/sw-artifact-test.XXXXXX")
+    T=$(mktemp -d "$_SW_TMPBASE/sw-artifact-test.XXXXXX")
 
     # Mock git that logs all calls
     local git_log="$T/git.log"
@@ -176,7 +182,7 @@ MOCKGIT
 
 test_final_artifact_push_pushes_to_wip_branch() {
     local T
-    T=$(mktemp -d "${TMPDIR:-/tmp}/sw-artifact-test.XXXXXX")
+    T=$(mktemp -d "$_SW_TMPBASE/sw-artifact-test.XXXXXX")
 
     # Set up bare remote
     local bare="$T/remote.git"
@@ -232,7 +238,7 @@ test_final_artifact_push_pushes_to_wip_branch() {
 
 test_final_artifact_push_returns_zero_on_push_failure() {
     local T
-    T=$(mktemp -d "${TMPDIR:-/tmp}/sw-artifact-test.XXXXXX")
+    T=$(mktemp -d "$_SW_TMPBASE/sw-artifact-test.XXXXXX")
 
     # Set up real git repo so git diff/add/commit work, but push fails
     local repo="$T/repo"

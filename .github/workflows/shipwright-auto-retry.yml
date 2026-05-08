@@ -209,8 +209,12 @@ jobs:
             STATUS_JSON=$(printf '%s' "$STATUS_B64" | base64 -d 2>/dev/null || true)
             JSON_STAGES=$(echo "$STATUS_JSON" | jq -r '.completed_stages[]?' 2>/dev/null | sort -u || true)
             JSON_RETRY=$(echo "$STATUS_JSON" | jq -r '.retry_count // empty' 2>/dev/null || true)
-            # JSON retry_count wins over comment-parsed count when available
-            [[ -n "$JSON_RETRY" ]] && RETRY_COUNT="$JSON_RETRY"
+            # Use JSON retry_count only when it exceeds the comment-parsed value —
+            # the JSON field defaults to 0 when RETRY_COUNT wasn't exported to the
+            # pipeline env, so a zero JSON value must not overwrite a comment-derived count.
+            if [[ -n "$JSON_RETRY" && "$JSON_RETRY" -gt "$RETRY_COUNT" ]]; then
+              RETRY_COUNT="$JSON_RETRY"
+            fi
           fi
 
           # Detect watchdog cancels scoped to THIS run — the watchdog already

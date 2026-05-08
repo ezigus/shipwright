@@ -135,8 +135,17 @@ stage_pr() {
         warn "Rebase/merge failed — pushing as-is"
     }
 
-    # Push branch — force required after rebase (history rewritten)
+    # Push branch — force required after rebase (history rewritten).
+    # Use GITHUBTOKEN (PAT with workflow scope) when set so branches that
+    # include workflow file changes are not rejected by GITHUB_TOKEN.
+    # Clear the checkout-persisted extraheader first so the PAT URL wins.
     info "Pushing branch: $GIT_BRANCH"
+    local _repo_slug=""
+    if [[ -n "${GITHUBTOKEN:-}" ]]; then
+        _repo_slug=$(git remote get-url origin 2>/dev/null | sed 's|.*github\.com[:/]||;s|\.git$||')
+        git config --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+        git remote set-url origin "https://x-access-token:${GITHUBTOKEN}@github.com/${_repo_slug}.git" 2>/dev/null || true
+    fi
     local push_err
     push_err=$(git push -u origin "$GIT_BRANCH" --force-with-lease 2>&1) || {
         warn "force-with-lease push failed; see git output below"
@@ -153,6 +162,10 @@ stage_pr() {
             }
         }
     }
+    # Scrub PAT from remote URL after push
+    if [[ -n "${GITHUBTOKEN:-}" && -n "${_repo_slug:-}" ]]; then
+        git remote set-url origin "https://github.com/${_repo_slug}.git" 2>/dev/null || true
+    fi
 
     # ── Developer Simulation (pre-PR review) ──
     local simulation_summary=""

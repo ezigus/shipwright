@@ -200,6 +200,19 @@ jobs:
 
           echo "Current retry count: $RETRY_COUNT"
 
+          # Primary: read completed_stages and retry_count from pipeline-status.json
+          BRANCH="shipwright/issue-${ISSUE_NUMBER}"
+          STATUS_B64=$(gh api \
+            "repos/$GITHUB_REPOSITORY/contents/.claude/pipeline-status.json?ref=$BRANCH" \
+            --jq '.content' 2>/dev/null || true)
+          if [[ -n "$STATUS_B64" ]]; then
+            STATUS_JSON=$(printf '%s' "$STATUS_B64" | base64 -d 2>/dev/null || true)
+            JSON_STAGES=$(echo "$STATUS_JSON" | jq -r '.completed_stages[]?' 2>/dev/null | sort -u || true)
+            JSON_RETRY=$(echo "$STATUS_JSON" | jq -r '.retry_count // empty' 2>/dev/null || true)
+            # JSON retry_count wins over comment-parsed count when available
+            [[ -n "$JSON_RETRY" ]] && RETRY_COUNT="$JSON_RETRY"
+          fi
+
           # Detect watchdog cancels scoped to THIS run — the watchdog already
           # dispatched a retry, so auto-retry must not dispatch a second one.
           # RETRY_COUNT is not incremented because the run was stuck (not a
@@ -227,7 +240,6 @@ jobs:
 
           # Supplement comment-based detection with the branch's authoritative state file.
           # grep -E + sed avoids the GNU grep -P dependency (portable to all GHA runners).
-          BRANCH="shipwright/issue-${ISSUE_NUMBER}"
           STATE_B64=$(gh api \
             "repos/$GITHUB_REPOSITORY/contents/.claude/pipeline-state.md?ref=$BRANCH" \
             --jq '.content' 2>/dev/null) || STATE_B64=""
@@ -239,8 +251,8 @@ jobs:
               | sed 's/: complete$//' \
               | sort -u || true)
           fi
-          # Merge both sources; keep newline-separated through the merge for correct sort -u deduplication
-          RAW_STAGES=$(printf '%s\n%s\n' "$RAW_STAGES" "$BRANCH_STAGES" | sort -u | grep -v '^$' || true)
+          # Merge all sources (JSON, comments, state file); keep newline-separated for correct sort -u deduplication
+          RAW_STAGES=$(printf '%s\n%s\n%s\n' "$RAW_STAGES" "$BRANCH_STAGES" "$JSON_STAGES" | sort -u | grep -v '^$' || true)
 
           COMPLETED_STAGES=""
           for stage in $RAW_STAGES; do

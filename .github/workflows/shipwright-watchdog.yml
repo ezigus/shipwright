@@ -79,6 +79,17 @@ jobs:
 
             echo "Associated issue: #$ISSUE_NUMBER"
 
+            # Primary: read last_heartbeat from pipeline-status.json on WIP branch
+            BRANCH="shipwright/issue-${ISSUE_NUMBER}"
+            STATUS_B64=$(gh api \
+              "repos/$GITHUB_REPOSITORY/contents/.claude/pipeline-status.json?ref=$BRANCH" \
+              --jq '.content' 2>/dev/null || true)
+            JSON_HEARTBEAT=""
+            if [[ -n "$STATUS_B64" ]]; then
+              JSON_HEARTBEAT=$(printf '%s' "$STATUS_B64" | base64 -d 2>/dev/null \
+                | jq -r '.last_heartbeat // empty' 2>/dev/null || true)
+            fi
+
             # Get issue comments with timestamps to find latest progress signal
             COMMENTS_JSON=$(gh issue view "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" \
               --json comments --jq '.comments[] | {createdAt, body}' 2>/dev/null || echo "")
@@ -95,8 +106,8 @@ jobs:
             # Check for the initial run ID marker: <!-- SHIPWRIGHT-RUN-ID: ... -->
             START_DATE=$(echo "$COMMENTS_JSON" | jq -r "select(.body | contains(\"SHIPWRIGHT-RUN-ID: $RUN_ID\")) | .createdAt" 2>/dev/null | tail -1 || true)
 
-            # Use the most recent signal
-            for date in "$HEARTBEAT_DATE" "$STAGE_DATE" "$START_DATE"; do
+            # Use the most recent signal (JSON heartbeat as primary)
+            for date in "$JSON_HEARTBEAT" "$HEARTBEAT_DATE" "$STAGE_DATE" "$START_DATE"; do
               if [[ -n "$date" && ("$date" > "$LAST_SIGNAL_DATE" || -z "$LAST_SIGNAL_DATE") ]]; then
                 LAST_SIGNAL_DATE="$date"
               fi

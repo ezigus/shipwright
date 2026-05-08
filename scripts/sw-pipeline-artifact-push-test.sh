@@ -9,9 +9,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REAL_LOOP_SCRIPT="$SCRIPT_DIR/sw-loop.sh"
 REAL_PIPELINE_SCRIPT="$SCRIPT_DIR/sw-pipeline.sh"
 
-# Normalize TMPDIR: macOS appends a trailing slash which causes double-slash in mktemp templates.
-_SW_TMPBASE="${TMPDIR%/}"
-_SW_TMPBASE="${_SW_TMPBASE:-/tmp}"
+# Normalize TMPDIR: macOS sets TMPDIR with a trailing slash; Linux may leave it unset.
+# Provide a /tmp default first (safe under set -u), then strip any trailing slash.
+_SW_TMPBASE="${TMPDIR:-/tmp}"
+_SW_TMPBASE="${_SW_TMPBASE%/}"
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -206,7 +207,8 @@ test_final_artifact_push_pushes_to_wip_branch() {
         echo "status: complete" > ".claude/pipeline-artifacts/issue-99/pipeline-state.md"
     )
 
-    # Run in subshell
+    # Run in subshell; capture stderr to a log file for diagnostics on failure
+    local push_err="$T/push.err"
     local rc=0
     rc=$(
         set +euo pipefail
@@ -221,13 +223,20 @@ test_final_artifact_push_pushes_to_wip_branch() {
         GIT_TERMINAL_PROMPT=0
         export GIT_TERMINAL_PROMPT
         _source_pipeline_fn
-        pipeline_final_artifact_push 15 >/dev/null 2>&1
+        pipeline_final_artifact_push 15 >"$push_err" 2>&1
         echo $?
     )
 
     local result=0
     assert_zero "$rc" "pipeline_final_artifact_push should return 0" &&
     assert_remote_branch_exists "$bare" "shipwright/issue-99" "WIP branch pushed to remote" || result=1
+    if [[ "$result" -ne 0 ]]; then
+        echo -e "\n    ${RED}[debug] push_err contents:${RESET}" >&2
+        cat "$push_err" >&2 2>/dev/null || true
+        echo -e "    [debug] bare=$bare" >&2
+        git -C "$repo" log --oneline 2>/dev/null | head -3 >&2 || true
+        git -C "$bare" branch -a 2>/dev/null >&2 || true
+    fi
     rm -rf "$T"
     return "$result"
 }

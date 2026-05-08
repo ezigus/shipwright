@@ -665,6 +665,14 @@ stage_compound_quality() {
     max_cycles=$(echo "$cfg" | jq -r '.max_cycles // 1')
     blocking=$(echo "$cfg" | jq -r '.compound_quality_blocking // false')
 
+    # High/critical risk issues get stricter compound quality — force adversarial + negative
+    local _risk="${SHIPWRIGHT_RISK_LEVEL:-unknown}"
+    if [[ "$_risk" == "high" || "$_risk" == "critical" ]]; then
+        do_adversarial="true"
+        do_negative="true"
+        info "Risk level is $_risk — enabling adversarial and negative testing"
+    fi
+
     local pass_count=0 fail_count=0 total=0
     local compound_log="$ARTIFACTS_DIR/compound-quality.log"
     : > "$compound_log"

@@ -248,8 +248,17 @@ jobs:
 
           if [[ -f "./scripts/sw-predictive.sh" ]]; then
             RISK_OUTPUT=$(bash ./scripts/sw-predictive.sh risk --issue "$ISSUE_NUMBER" --json 2>/dev/null || echo "{}")
-            RISK_LEVEL=$(echo "$RISK_OUTPUT" | jq -r '.risk_level // "unknown"' 2>/dev/null || echo "unknown")
-            RISK_SCORE=$(echo "$RISK_OUTPUT" | jq -r '.risk_score // "0"' 2>/dev/null || echo "0")
+            # sw-predictive.sh emits overall_risk (0-100 numeric) — map to categorical level
+            RISK_SCORE=$(echo "$RISK_OUTPUT" | jq -r '.overall_risk // .risk_score // 0' 2>/dev/null || echo "0")
+            if [[ "$RISK_SCORE" -ge 75 ]]; then
+              RISK_LEVEL="critical"
+            elif [[ "$RISK_SCORE" -ge 50 ]]; then
+              RISK_LEVEL="high"
+            elif [[ "$RISK_SCORE" -ge 25 ]]; then
+              RISK_LEVEL="medium"
+            else
+              RISK_LEVEL="low"
+            fi
 
             echo "Risk assessment: level=$RISK_LEVEL score=$RISK_SCORE"
           else
@@ -359,6 +368,7 @@ jobs:
       NO_COLOR: "1"
       SHIPWRIGHT_JOB_TIMEOUT_MINUTES: "300" # MUST match timeout-minutes: 300 above
       SW_LOG_PROMPTS: "github"
+      SHIPWRIGHT_RISK_LEVEL: ${{ needs.triage.outputs.risk_level || 'unknown' }}
 
     steps:
       - uses: actions/checkout@v4

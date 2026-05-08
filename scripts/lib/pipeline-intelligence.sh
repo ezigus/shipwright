@@ -1477,6 +1477,14 @@ stage_compound_quality() {
     strict_quality=$(jq -r --arg id "compound_quality" '(.stages[] | select(.id == $id) | .config.strict_quality) // false' "$PIPELINE_CONFIG" 2>/dev/null) || true
     [[ -z "$strict_quality" || "$strict_quality" == "null" ]] && strict_quality="false"
 
+    # High/critical risk issues get stricter compound quality — force adversarial + negative
+    local _risk="${SHIPWRIGHT_RISK_LEVEL:-unknown}"
+    if [[ "$_risk" == "high" || "$_risk" == "critical" ]]; then
+        adversarial_enabled="true"
+        negative_enabled="true"
+        info "Risk level is $_risk — enabling adversarial and negative testing"
+    fi
+
     # Intelligent audit selection
     local audit_plan='{"adversarial":"targeted","architecture":"targeted","simulation":"targeted","security":"targeted","dod":"targeted"}'
     if type pipeline_select_audits >/dev/null 2>&1; then

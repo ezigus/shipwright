@@ -400,4 +400,52 @@ assert_contains_regex \
     "retry_template|RETRY_TEMPLATE"
 
 echo ""
+
+# ─── Phase 8: risk_level propagation ────────────────────────────────────────
+
+PIPELINE_INTELLIGENCE="$SCRIPT_DIR/lib/pipeline-intelligence.sh"
+PIPELINE_STAGES_REVIEW="$SCRIPT_DIR/lib/pipeline-stages-review.sh"
+
+# shipwright-pipeline.yml passes risk_level as SHIPWRIGHT_RISK_LEVEL env var to pipeline job
+assert_contains_regex \
+    "shipwright-pipeline.yml sets SHIPWRIGHT_RISK_LEVEL in pipeline job env" \
+    "$(grep 'SHIPWRIGHT_RISK_LEVEL' "$WORKFLOW" || true)" \
+    "SHIPWRIGHT_RISK_LEVEL"
+
+assert_contains_regex \
+    "SHIPWRIGHT_RISK_LEVEL references triage outputs.risk_level" \
+    "$(grep 'SHIPWRIGHT_RISK_LEVEL' "$WORKFLOW" || true)" \
+    "triage.*risk_level|risk_level.*triage"
+
+# triage risk step maps overall_risk score to categorical risk_level (sw-predictive.sh emits overall_risk)
+assert_contains_regex \
+    "triage risk step maps overall_risk score to categorical RISK_LEVEL" \
+    "$(grep 'overall_risk\|RISK_SCORE.*-ge\|RISK_LEVEL.*critical' "$WORKFLOW" || true)" \
+    "overall_risk|RISK_LEVEL.*critical"
+
+# pipeline-intelligence.sh (primary runtime path) reads SHIPWRIGHT_RISK_LEVEL
+assert_contains_regex \
+    "pipeline-intelligence.sh (primary stage_compound_quality) reads SHIPWRIGHT_RISK_LEVEL" \
+    "$(grep 'SHIPWRIGHT_RISK_LEVEL' "$PIPELINE_INTELLIGENCE" || true)" \
+    "SHIPWRIGHT_RISK_LEVEL"
+
+# pipeline-intelligence.sh forces adversarial_enabled on high/critical risk
+assert_contains_regex \
+    "pipeline-intelligence.sh forces adversarial_enabled=true on high/critical risk" \
+    "$(grep -A3 'SHIPWRIGHT_RISK_LEVEL' "$PIPELINE_INTELLIGENCE" | grep 'adversarial' || true)" \
+    "adversarial"
+
+# pipeline-intelligence.sh forces negative_enabled on high/critical risk
+assert_contains_regex \
+    "pipeline-intelligence.sh forces negative_enabled=true on high/critical risk" \
+    "$(grep -A3 'SHIPWRIGHT_RISK_LEVEL' "$PIPELINE_INTELLIGENCE" | grep 'negative' || true)" \
+    "negative"
+
+# pipeline-stages-review.sh (fallback) also reads SHIPWRIGHT_RISK_LEVEL
+assert_contains_regex \
+    "pipeline-stages-review.sh (fallback stage_compound_quality) also reads SHIPWRIGHT_RISK_LEVEL" \
+    "$(grep 'SHIPWRIGHT_RISK_LEVEL' "$PIPELINE_STAGES_REVIEW" || true)" \
+    "SHIPWRIGHT_RISK_LEVEL"
+
+echo ""
 print_test_results

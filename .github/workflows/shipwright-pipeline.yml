@@ -567,14 +567,23 @@ jobs:
           fi
 
           if [[ "$USE_WIP" == "true" ]]; then
+            # Copy helper from main checkout before switching to WIP branch.
+            # WIP branches pre-dating this fix won't have the file; stash it
+            # in RUNNER_TEMP so it survives the git checkout below.
+            _RECONCILE_HELPER=""
+            if [[ -f "scripts/lib/ci-reconcile-state.sh" ]]; then
+              _RECONCILE_HELPER="$RUNNER_TEMP/ci-reconcile-state.sh"
+              cp scripts/lib/ci-reconcile-state.sh "$_RECONCILE_HELPER"
+            fi
+
             git checkout -B "$BRANCH" "origin/$BRANCH"
             echo "Resumed ${BRANCH} — continuing from prior work"
 
             # Reconcile stale 'running'/'paused' state from a killed prior CI job.
             # Helper handles both the atomic rewrite and the log-stage extraction.
             # "Verify merged artifacts" (next step) only touches plan.md/dod.md/etc — safe ordering.
-            if [[ -f ".claude/pipeline-state.md" ]] && [[ -f "scripts/lib/ci-reconcile-state.sh" ]]; then
-              source scripts/lib/ci-reconcile-state.sh
+            if [[ -f ".claude/pipeline-state.md" ]] && [[ -n "$_RECONCILE_HELPER" ]]; then
+              source "$_RECONCILE_HELPER"
               RECONCILED_STAGES="$(ci_reconcile_state .claude/pipeline-state.md)"
               if [[ -n "$RECONCILED_STAGES" ]]; then
                 echo "::notice::Reconciled stale CI pipeline state to 'interrupted'; completed stages from log: ${RECONCILED_STAGES}"

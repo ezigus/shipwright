@@ -940,6 +940,7 @@ jobs:
           git add -f .claude/pipeline-artifacts/composed-pipeline.json 2>/dev/null || true
           git add -f ".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}/" 2>/dev/null || true
           git add -f .claude/pipeline-state.md                         2>/dev/null || true
+          git add -f .claude/pipeline-status.json                      2>/dev/null || true
 
           git restore --staged .claude/daemon-config.json 2>/dev/null || true
 

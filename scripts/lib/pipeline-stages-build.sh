@@ -577,6 +577,9 @@ ${_build_recall_ctx}"
     # Export so SW_LOG_PROMPTS=github|both can post/update GitHub comments from the loop subprocess.
     export ISSUE_NUMBER="${ISSUE_NUMBER:-}"
     export PROGRESS_COMMENT_ID="${PROGRESS_COMMENT_ID:-}"
+    # Export pipeline-level start epoch so check_time_budget in the loop subprocess
+    # measures elapsed time from pipeline start (not from each loop re-entry).
+    export PIPELINE_RUN_EPOCH="${PIPELINE_RUN_EPOCH:-0}"
     sw loop "${loop_args[@]}" < /dev/null 2>"$_token_log" || {
         local _loop_exit=$?
         parse_claude_tokens "$_token_log"

@@ -811,16 +811,37 @@ show_help() {
 main() {
     local cmd="${1:-help}"
     shift 2>/dev/null || true
+
+    # Parse --issue <N> and --json flags before dispatching.
+    # The workflow calls: sw-predictive.sh risk --issue "$ISSUE_NUMBER" --json
+    # Without this parsing, predict_pipeline_risk receives "--issue" as issue_json.
+    local _issue_arg=""
+    local _extra_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --issue) _issue_arg="$2"; shift 2 ;;
+            --json)  shift ;;  # no-op: output is already JSON
+            *)       _extra_args+=("$1"); shift ;;
+        esac
+    done
+
+    if [[ -n "$_issue_arg" && "$cmd" == "risk" ]]; then
+        local _issue_json
+        _issue_json=$(gh issue view "$_issue_arg" --json title,body,labels,number 2>/dev/null || echo '{}')
+        predict_pipeline_risk "$_issue_json" "${_extra_args[@]+"${_extra_args[@]}"}"
+        return $?
+    fi
+
     case "$cmd" in
-        risk)        predict_pipeline_risk "$@" ;;
-        anomaly)     predict_detect_anomaly "$@" ;;
-        confirm-anomaly) predictive_confirm_anomaly "$@" ;;
-        patrol)      patrol_ai_analyze "$@" ;;
-        baseline)    predict_update_baseline "$@" ;;
+        risk)        predict_pipeline_risk "${_extra_args[@]+"${_extra_args[@]}"}" ;;
+        anomaly)     predict_detect_anomaly "${_extra_args[@]+"${_extra_args[@]}"}" ;;
+        confirm-anomaly) predictive_confirm_anomaly "${_extra_args[@]+"${_extra_args[@]}"}" ;;
+        patrol)      patrol_ai_analyze "${_extra_args[@]+"${_extra_args[@]}"}" ;;
+        baseline)    predict_update_baseline "${_extra_args[@]+"${_extra_args[@]}"}" ;;
         inject-prevention)
-            local stage="${1:-build}"
-            local issue_json="${2:-{}}"
-            local mem_ctx="${3:-}"
+            local stage="${_extra_args[0]:-build}"
+            local issue_json="${_extra_args[1]:-{}}"
+            local mem_ctx="${_extra_args[2]:-}"
             [[ -n "$mem_ctx" && -f "$mem_ctx" ]] && mem_ctx=$(cat "$mem_ctx" 2>/dev/null || true)
             predict_inject_prevention "$stage" "$issue_json" "$mem_ctx" || true
             ;;

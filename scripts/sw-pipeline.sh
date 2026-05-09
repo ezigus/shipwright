@@ -901,9 +901,10 @@ ci_push_partial_work() {
     local _snap_dir="${ARTIFACTS_DIR:-${STATE_DIR:-}/pipeline-artifacts}/issue-${ISSUE_NUMBER}"
     [[ -d "$_snap_dir" ]] && git add -f "$_snap_dir/" 2>/dev/null || true
 
-    # Only push if we have uncommitted changes (excluding daemon-config.json runtime writes)
-    if ! git diff --quiet -- ':!.claude/daemon-config.json' 2>/dev/null || \
-       ! git diff --cached --quiet -- ':!.claude/daemon-config.json' 2>/dev/null; then
+    # Only push if we have uncommitted changes (excluding bookkeeping files; runtime
+    # files like pipeline-state.md are legitimate partial-progress markers here)
+    if ! git diff --quiet -- $(_git_bookkeeping_pathspecs) 2>/dev/null || \
+       ! git diff --cached --quiet -- $(_git_bookkeeping_pathspecs) 2>/dev/null; then
         safe_git_stage
         git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
     fi
@@ -959,9 +960,11 @@ pipeline_final_artifact_push() {
     # Stage pipeline state files (gitignored — force-add intentionally for audit trail).
     git add -f ".claude/pipeline-state.md" "progress.md" 2>/dev/null || true
 
-    # Only commit if there are unstaged/staged changes (excluding daemon-config.json noise).
-    if ! git diff --quiet -- ':!.claude/daemon-config.json' 2>/dev/null || \
-       ! git diff --cached --quiet -- ':!.claude/daemon-config.json' 2>/dev/null; then
+    # Only commit if there are unstaged/staged changes (excluding bookkeeping files;
+    # runtime files like pipeline-state.md and progress.md are force-added above
+    # for the audit trail and must trigger this commit)
+    if ! git diff --quiet -- $(_git_bookkeeping_pathspecs) 2>/dev/null || \
+       ! git diff --cached --quiet -- $(_git_bookkeeping_pathspecs) 2>/dev/null; then
         safe_git_stage
         git commit -m "chore: pipeline artifacts for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
     fi

@@ -133,17 +133,20 @@ check_circuit_breaker() {
 
 check_time_budget() {
     # Guard: stop starting a new iteration if <20 min remains in the GHA job.
-    # Uses SHIPWRIGHT_JOB_TIMEOUT_MINUTES (set by the pipeline) and the LOOP_START_EPOCH
-    # recorded at loop initialization. Prevents the loop from beginning an iteration
-    # it cannot finish, leaving time for the watchdog push and cleanup.
+    # Uses SHIPWRIGHT_JOB_TIMEOUT_MINUTES (set by the pipeline) and the pipeline-level
+    # start epoch. PIPELINE_RUN_EPOCH (exported by pipeline-stages-build.sh before
+    # invoking sw loop) is used when available so that compound_quality→build re-entries
+    # don't reset the elapsed clock. Falls back to LOOP_START_EPOCH for standalone
+    # sw loop invocations that have no pipeline wrapper.
     local _job_timeout_min="${SHIPWRIGHT_JOB_TIMEOUT_MINUTES:-0}"
     # Require a valid positive integer — non-numeric values would cause arithmetic
     # errors under set -e; treat them as "no limit" (return 0 = continue loop).
-    [[ -z "${LOOP_START_EPOCH:-}" ]] && return 0
+    local _ref_epoch="${PIPELINE_RUN_EPOCH:-${LOOP_START_EPOCH:-}}"
+    [[ -z "$_ref_epoch" || "$_ref_epoch" == "0" ]] && return 0
     [[ ! "$_job_timeout_min" =~ ^[0-9]+$ || "$_job_timeout_min" -le 0 ]] && return 0
     local _now _elapsed_min _remaining_min
     _now=$(now_epoch 2>/dev/null) || return 0
-    _elapsed_min=$(( (_now - LOOP_START_EPOCH) / 60 ))
+    _elapsed_min=$(( (_now - _ref_epoch) / 60 ))
     _remaining_min=$(( _job_timeout_min - _elapsed_min ))
     if (( _remaining_min < 20 )); then
         warn "Less than 20 min remaining in GHA job (${_remaining_min}m) — stopping build loop to allow cleanup"

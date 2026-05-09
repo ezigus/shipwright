@@ -448,4 +448,45 @@ assert_contains_regex \
     "SHIPWRIGHT_RISK_LEVEL"
 
 echo ""
+
+# ─── Bug fixes: Phase 6 persistence, Phase 8 flag, Phase 1 epoch ────────────
+
+LOOP_CONVERGENCE_SH="$SCRIPT_DIR/lib/loop-convergence.sh"
+LOOP_RESTART_SH="$SCRIPT_DIR/lib/loop-restart.sh"
+PIPELINE_STAGES_BUILD_SH="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
+
+# Phase 6 fix: pipeline-status.json must be git-added in snapshot step
+assert_contains_regex \
+    "snapshot step force-adds .claude/pipeline-status.json to WIP branch" \
+    "$(grep 'pipeline-status.json' "$WORKFLOW" | grep 'git add' || true)" \
+    "git add.*pipeline-status\.json"
+
+# Phase 8 fix: sw-predictive.sh main() must handle --issue flag
+assert_contains_regex \
+    "sw-predictive.sh main() parses --issue flag" \
+    "$(grep -A5 '^main()' "$SCRIPT_DIR/sw-predictive.sh" | grep '\-\-issue' || grep '\-\-issue' "$SCRIPT_DIR/sw-predictive.sh" | head -3 || true)" \
+    "\-\-issue"
+
+assert_contains_regex \
+    "sw-predictive.sh fetches issue JSON via gh issue view for --issue flag" \
+    "$(grep 'gh issue view' "$SCRIPT_DIR/sw-predictive.sh" || true)" \
+    "gh issue view"
+
+# Phase 1 fix (Bug C): check_time_budget must use PIPELINE_RUN_EPOCH not LOOP_START_EPOCH
+assert_contains_regex \
+    "check_time_budget in loop-convergence.sh uses PIPELINE_RUN_EPOCH (not loop-level epoch)" \
+    "$(grep 'PIPELINE_RUN_EPOCH' "$LOOP_CONVERGENCE_SH" || true)" \
+    "PIPELINE_RUN_EPOCH"
+
+assert_contains_regex \
+    "loop-convergence.sh check_time_budget falls back to LOOP_START_EPOCH when PIPELINE_RUN_EPOCH absent" \
+    "$(grep 'LOOP_START_EPOCH\|PIPELINE_RUN_EPOCH' "$LOOP_CONVERGENCE_SH" || true)" \
+    "LOOP_START_EPOCH"
+
+assert_contains_regex \
+    "pipeline-stages-build.sh exports PIPELINE_RUN_EPOCH before invoking sw loop" \
+    "$(grep 'export PIPELINE_RUN_EPOCH' "$PIPELINE_STAGES_BUILD_SH" || true)" \
+    "export PIPELINE_RUN_EPOCH"
+
+echo ""
 print_test_results

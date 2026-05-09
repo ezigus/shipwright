@@ -623,6 +623,64 @@ INTEOF
 # RUN ALL TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 16. --issue flag: fetches issue via mock gh, returns valid JSON risk
+# ──────────────────────────────────────────────────────────────────────────────
+test_risk_issue_flag() {
+    reset_test
+
+    # Create a mock gh binary that returns a known issue JSON
+    cat > "$TEST_TEMP_DIR/bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+# Mock gh — returns minimal issue JSON for "issue view <N> --json ..."
+echo '{"title":"Refactor authentication","body":"breaking changes","labels":[],"number":460}'
+GHEOF
+    chmod +x "$TEST_TEMP_DIR/bin/gh"
+    local _orig_path="$PATH"
+    export PATH="$TEST_TEMP_DIR/bin:$PATH"
+
+    local output
+    output=$(bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" risk --issue 460 --json 2>/dev/null)
+
+    export PATH="$_orig_path"
+
+    if ! echo "$output" | jq -e '.' &>/dev/null; then
+        echo -e "    ${RED}✗${RESET} --issue flag: output is not valid JSON: $output"
+        return 1
+    fi
+
+    local risk
+    risk=$(echo "$output" | jq '.overall_risk // empty' 2>/dev/null)
+    if [[ -z "$risk" ]]; then
+        echo -e "    ${RED}✗${RESET} --issue flag: missing overall_risk field in output: $output"
+        return 1
+    fi
+
+    if [[ "$risk" -lt 0 || "$risk" -gt 100 ]]; then
+        echo -e "    ${RED}✗${RESET} --issue flag: risk $risk out of 0-100 range"
+        return 1
+    fi
+
+    return 0
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 17. --json flag is accepted as no-op (no error, still valid JSON output)
+# ──────────────────────────────────────────────────────────────────────────────
+test_risk_json_flag_noop() {
+    reset_test
+
+    local output
+    output=$(bash "$TEST_TEMP_DIR/scripts/sw-predictive.sh" risk '{"title":"Simple task"}' --json 2>/dev/null)
+
+    if ! echo "$output" | jq -e '.' &>/dev/null; then
+        echo -e "    ${RED}✗${RESET} --json flag: output is not valid JSON: $output"
+        return 1
+    fi
+
+    return 0
+}
+
 echo ""
 echo -e "${CYAN}${BOLD}╔═══════════════════════════════════════════════════════════╗${RESET}"
 echo -e "${CYAN}${BOLD}║  shipwright predictive test                              ║${RESET}"
@@ -669,6 +727,12 @@ echo ""
 # AI patrol tests
 echo -e "${PURPLE}${BOLD}AI Patrol${RESET}"
 run_test "AI patrol returns structured findings" test_patrol_with_ai
+echo ""
+
+# --issue flag tests
+echo -e "${PURPLE}${BOLD}--issue Flag (Phase 8 fix)${RESET}"
+run_test "--issue flag fetches issue and returns valid JSON risk" test_risk_issue_flag
+run_test "--json flag is accepted without error" test_risk_json_flag_noop
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════

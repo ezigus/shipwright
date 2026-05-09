@@ -908,17 +908,26 @@ jobs:
           BRANCH="${WORKSPACE_BRANCH:-shipwright/issue-${ISSUE_NUMBER}}"
           OUTCOME="${{ job.status }}"
 
-          # If the run was cancelled before "Prepare workspace branch" completed,
-          # HEAD may still be on the GHA checkout branch. Force HEAD onto the WIP
-          # branch so the snapshot commit (and force-push) don't introduce
-          # unrelated workflow-file history into shipwright/issue-N.
+          # If HEAD is not on the WIP branch, move it using plumbing instead of
+          # checkout — checkout silently fails when tracked files differ between
+          # the GHA checkout branch and the WIP branch, leaving HEAD on the wrong
+          # branch and polluting the WIP branch's history on force-push.
           if [[ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$BRANCH" ]]; then
-            if git ls-remote --heads --exit-code origin "$BRANCH" >/dev/null 2>&1; then
-              git fetch --no-tags origin "$BRANCH" 2>/dev/null || true
-              git checkout -B "$BRANCH" "origin/$BRANCH" 2>/dev/null || true
+            git fetch --no-tags origin "$BRANCH" 2>/dev/null || true
+            if git rev-parse --verify "refs/remotes/origin/$BRANCH" >/dev/null 2>&1; then
+              BASE_REF="refs/remotes/origin/$BRANCH"
             else
-              git checkout -B "$BRANCH" origin/main 2>/dev/null || \
-                git checkout -B "$BRANCH" 2>/dev/null || true
+              BASE_REF="refs/remotes/origin/main"
+            fi
+            git update-ref "refs/heads/$BRANCH" "$BASE_REF" \
+              || { echo "::error::Snapshot guard: update-ref failed for $BRANCH — aborting"; exit 1; }
+            git symbolic-ref HEAD "refs/heads/$BRANCH" \
+              || { echo "::error::Snapshot guard: symbolic-ref failed for $BRANCH — aborting"; exit 1; }
+            git reset --mixed HEAD 2>/dev/null \
+              || { echo "::error::Snapshot guard: reset --mixed failed for $BRANCH — aborting"; exit 1; }
+            if [[ "$(git rev-parse --abbrev-ref HEAD)" != "$BRANCH" ]]; then
+              echo "::error::Snapshot guard failed to move HEAD to $BRANCH — aborting to prevent history pollution"
+              exit 1
             fi
           fi
 
@@ -941,8 +950,8 @@ jobs:
 
           git -c user.email=shipwright-bot@users.noreply.github.com \
               -c user.name='shipwright-bot' \
-              commit -m "chore: resume snapshot for #${ISSUE_NUMBER} (run ${{ github.run_id }}, status=${OUTCOME}) [skip ci]" \
-              --no-verify 2>/dev/null || true
+              commit -m "chore: resume snapshot for #${ISSUE_NUMBER} (run ${{ github.run_id }}, pipeline=${OUTCOME}) [skip ci]" \
+              --no-verify 2>/dev/null || { echo "::warning::snapshot commit failed (non-fatal)"; exit 0; }
 
           # Use GITHUBTOKEN (PAT with workflow scope) when available so pushes
           # that include workflow file changes are not rejected by the default
@@ -958,7 +967,7 @@ jobs:
 
           if timeout 120 git push origin "HEAD:refs/heads/${BRANCH}" --force-with-lease 2>/dev/null \
               || timeout 120 git push origin "HEAD:refs/heads/${BRANCH}" --force; then
-            echo "✓ Resume snapshot pushed to ${BRANCH} (status=${OUTCOME})"
+            echo "✓ Resume snapshot pushed to ${BRANCH} (pipeline=${OUTCOME})"
           else
             echo "WARN: resume snapshot push timed out or failed (non-fatal)"
           fi

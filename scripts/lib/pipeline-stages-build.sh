@@ -579,7 +579,10 @@ ${_build_recall_ctx}"
     export PROGRESS_COMMENT_ID="${PROGRESS_COMMENT_ID:-}"
     # Export pipeline-level start epoch so check_time_budget in the loop subprocess
     # measures elapsed time from pipeline start (not from each loop re-entry).
-    export PIPELINE_RUN_EPOCH="${PIPELINE_RUN_EPOCH:-0}"
+    # Use empty-string default (not "0") so the loop can still fall back to
+    # LOOP_START_EPOCH when PIPELINE_RUN_EPOCH was never populated (e.g. resume
+    # paths with older pipeline state).
+    export PIPELINE_RUN_EPOCH="${PIPELINE_RUN_EPOCH:-}"
     sw loop "${loop_args[@]}" < /dev/null 2>"$_token_log" || {
         local _loop_exit=$?
         parse_claude_tokens "$_token_log"

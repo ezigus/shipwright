@@ -810,7 +810,7 @@ show_help() {
 
 main() {
     local cmd="${1:-help}"
-    shift 2>/dev/null || true
+    shift || true  # consume cmd; || true handles zero-arg invocation under set -e
 
     # Parse --issue <N> and --json flags before dispatching.
     # The workflow calls: sw-predictive.sh risk --issue "$ISSUE_NUMBER" --json
@@ -819,7 +819,9 @@ main() {
     local _extra_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --issue) _issue_arg="$2"; shift 2 ;;
+            --issue)
+                [[ -z "${2:-}" ]] && { error "--issue requires a value"; exit 1; }
+                _issue_arg="$2"; shift 2 ;;
             --json)  shift ;;  # no-op: output is already JSON
             *)       _extra_args+=("$1"); shift ;;
         esac

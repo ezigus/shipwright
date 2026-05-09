@@ -807,6 +807,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-jira-test.sh` | 284 | Validate Jira ↔ GitHub bidirectional sync |
 | `scripts/sw-launchd-test.sh` | 899 | Validate service management on |
 | `scripts/sw-lib-audit-trail-test.sh` | 311 |  |
+| `scripts/sw-lib-ci-reconcile-state-test.sh` | 160 | Unit tests |
 | `scripts/sw-lib-compat-test.sh` | 297 | Unit tests for cross-platform helpers |
 | `scripts/sw-lib-compound-audit-test.sh` | 795 |  |
 | `scripts/sw-lib-daemon-dispatch-test.sh` | 414 | Unit tests for spawn/reap/queue |

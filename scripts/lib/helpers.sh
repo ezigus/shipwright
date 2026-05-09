@@ -498,12 +498,25 @@ _git_diff_stat_excluded() {
 # Print space-separated `:!path` pathspecs for all bookkeeping + runtime files.
 # Usage: git diff --quiet -- $(_git_excluded_pathspecs)
 # Word-splitting on the unquoted result is intentional; paths contain no spaces.
+# Use for loop quality gates / dirty-tree checks where runtime files should not
+# count as deliverable changes.
 _git_excluded_pathspecs() {
     local _f
     for _f in "${_GIT_BOOKKEEPING_FILES[@]+"${_GIT_BOOKKEEPING_FILES[@]}"}"; do
         printf ':!%s ' "$_f"
     done
     for _f in "${_GIT_RUNTIME_EXCLUDES[@]+"${_GIT_RUNTIME_EXCLUDES[@]}"}"; do
+        printf ':!%s ' "$_f"
+    done
+}
+
+# Print space-separated `:!path` pathspecs for bookkeeping files only (NOT runtime).
+# Usage: git diff --quiet -- $(_git_bookkeeping_pathspecs)
+# Use for artifact-push commit guards where runtime files (pipeline-state.md,
+# progress.md) are intentionally force-added and must trigger the commit.
+_git_bookkeeping_pathspecs() {
+    local _f
+    for _f in "${_GIT_BOOKKEEPING_FILES[@]+"${_GIT_BOOKKEEPING_FILES[@]}"}"; do
         printf ':!%s ' "$_f"
     done
 }

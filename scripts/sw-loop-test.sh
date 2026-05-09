@@ -1689,26 +1689,40 @@ else
     assert_fail "_git_excluded_pathspecs() defined in helpers.sh"
 fi
 
-# Test: No hardcoded daemon-config.json in sw-loop.sh quality gate (should use _git_excluded_pathspecs)
-# This is a negative test — we should NOT find hardcoded ':!.claude/daemon-config.json' outside function defs
-if ! grep -n "':!.claude/daemon-config.json'" "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | grep -v '^[0-9]*:[[:space:]]*#' > /dev/null 2>&1; then
-    assert_pass "sw-loop.sh no hardcoded daemon-config.json (uses _git_excluded_pathspecs)"
+# Test: _git_bookkeeping_pathspecs function exists in helpers.sh (bookkeeping-only variant)
+if grep -q '^_git_bookkeeping_pathspecs()' "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null; then
+    assert_pass "_git_bookkeeping_pathspecs() defined in helpers.sh"
 else
-    assert_fail "sw-loop.sh hardcoded ':!.claude/daemon-config.json' should use _git_excluded_pathspecs"
+    assert_fail "_git_bookkeeping_pathspecs() defined in helpers.sh"
 fi
 
-# Test: sw-loop.sh quality gate uses _git_excluded_pathspecs
-if grep -q '_git_excluded_pathspecs' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null; then
-    assert_pass "sw-loop.sh uses _git_excluded_pathspecs"
+# Test: No hardcoded daemon-config.json pathspec in sw-loop.sh (quote-agnostic check)
+# Negative test — hardcoded :!.claude/daemon-config.json must not appear regardless of quoting
+if ! grep -n ':!\.claude/daemon-config\.json' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | grep -v '^[0-9]*:[[:space:]]*#' > /dev/null 2>&1; then
+    assert_pass "sw-loop.sh no hardcoded :!daemon-config.json pathspec"
 else
-    assert_fail "sw-loop.sh uses _git_excluded_pathspecs"
+    assert_fail "sw-loop.sh hardcoded :!daemon-config.json pathspec — should use _git_excluded_pathspecs"
 fi
 
-# Test: sw-pipeline.sh uses _git_excluded_pathspecs
-if grep -q '_git_excluded_pathspecs' "$SCRIPT_DIR/sw-pipeline.sh" 2>/dev/null; then
-    assert_pass "sw-pipeline.sh uses _git_excluded_pathspecs"
+# Test: No hardcoded daemon-config.json pathspec in sw-pipeline.sh (quote-agnostic check)
+if ! grep -n ':!\.claude/daemon-config\.json' "$SCRIPT_DIR/sw-pipeline.sh" 2>/dev/null | grep -v '^[0-9]*:[[:space:]]*#' > /dev/null 2>&1; then
+    assert_pass "sw-pipeline.sh no hardcoded :!daemon-config.json pathspec"
 else
-    assert_fail "sw-pipeline.sh uses _git_excluded_pathspecs"
+    assert_fail "sw-pipeline.sh hardcoded :!daemon-config.json pathspec — should use _git_bookkeeping_pathspecs or _git_excluded_pathspecs"
+fi
+
+# Test: sw-loop.sh quality gate uses _git_excluded_pathspecs or _git_bookkeeping_pathspecs
+if grep -q '_git_excluded_pathspecs\|_git_bookkeeping_pathspecs' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null; then
+    assert_pass "sw-loop.sh uses shared pathspec helper"
+else
+    assert_fail "sw-loop.sh uses shared pathspec helper"
+fi
+
+# Test: sw-pipeline.sh uses _git_excluded_pathspecs or _git_bookkeeping_pathspecs
+if grep -q '_git_excluded_pathspecs\|_git_bookkeeping_pathspecs' "$SCRIPT_DIR/sw-pipeline.sh" 2>/dev/null; then
+    assert_pass "sw-pipeline.sh uses shared pathspec helper"
+else
+    assert_fail "sw-pipeline.sh uses shared pathspec helper"
 fi
 
 # Test: check_progress() uses shared helper

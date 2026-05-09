@@ -869,6 +869,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-server-api-test.sh` | 714 | Dashboard Server API Test Suite |
 | `scripts/sw-session-test.sh` | 605 | E2E validation of session creation flow |
 | `scripts/sw-setup-test.sh` | 262 | Validate comprehensive onboarding wizard |
+| `scripts/sw-snapshot-guard-test.sh` | 296 | Validates HEAD guard logic for the snapshot step |
 | `scripts/sw-standup-test.sh` | 241 | Validate daily standup automation |
 | `scripts/sw-status-test.sh` | 294 | Validate status dashboard and --json output |
 | `scripts/sw-strategic-test.sh` | 216 | Validate strategic intelligence agent |

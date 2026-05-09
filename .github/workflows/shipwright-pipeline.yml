@@ -569,6 +569,24 @@ jobs:
           if [[ "$USE_WIP" == "true" ]]; then
             git checkout -B "$BRANCH" "origin/$BRANCH"
             echo "Resumed ${BRANCH} — continuing from prior work"
+
+            # Reconcile stale 'running'/'paused' state from a killed prior CI job.
+            # Helper handles both the atomic rewrite and the log-stage extraction.
+            # "Verify merged artifacts" (next step) only touches plan.md/dod.md/etc — safe ordering.
+            if [[ -f ".claude/pipeline-state.md" ]] && [[ -f "scripts/lib/ci-reconcile-state.sh" ]]; then
+              source scripts/lib/ci-reconcile-state.sh
+              RECONCILED_STAGES="$(ci_reconcile_state .claude/pipeline-state.md)"
+              if [[ -n "$RECONCILED_STAGES" ]]; then
+                echo "::notice::Reconciled stale CI pipeline state to 'interrupted'; completed stages from log: ${RECONCILED_STAGES}"
+                echo "PIPELINE_LOG_COMPLETED_STAGES=${RECONCILED_STAGES}" >> "$GITHUB_ENV"
+                echo "PIPELINE_WIP_RESUME=true" >> "$GITHUB_ENV"
+              elif grep -q '^status: interrupted$' .claude/pipeline-state.md 2>/dev/null && \
+                   ! git diff --quiet HEAD -- .claude/pipeline-state.md 2>/dev/null; then
+                # Helper rewrote the status but found no completed stages in the log.
+                echo "::warning::Stale state reconciled to 'interrupted', but no completed stages parsed from log — pipeline will resume from scratch"
+                echo "PIPELINE_WIP_RESUME=true" >> "$GITHUB_ENV"
+              fi
+            fi
           else
             # Unified path: create the WIP branch from origin/main so downstream
             # stages always see a consistent workspace state regardless of whether
@@ -701,9 +719,21 @@ jobs:
             PIPELINE_ARGS+=(--max-iterations "$MAX_ITERATIONS")
           fi
 
-          # Pass completed stages for resume
-          if [[ -n "$COMPLETED_STAGES" ]]; then
-            PIPELINE_ARGS+=(--completed-stages "$COMPLETED_STAGES")
+          # Compute effective completed-stages: operator input + log-derived stages, deduped.
+          # Single computation before append — no strip-and-re-append needed.
+          EFFECTIVE_COMPLETED_STAGES=""
+          if [[ -n "${COMPLETED_STAGES:-}" || -n "${PIPELINE_LOG_COMPLETED_STAGES:-}" ]]; then
+            EFFECTIVE_COMPLETED_STAGES="$(printf '%s\n%s\n' "${COMPLETED_STAGES:-}" "${PIPELINE_LOG_COMPLETED_STAGES:-}" \
+              | tr ',' '\n' | awk 'NF && !seen[$0]++' | paste -sd ',' -)"
+          fi
+          if [[ -n "$EFFECTIVE_COMPLETED_STAGES" ]]; then
+            PIPELINE_ARGS+=(--completed-stages "$EFFECTIVE_COMPLETED_STAGES")
+            echo "Effective completed-stages: $EFFECTIVE_COMPLETED_STAGES"
+          fi
+
+          # Auto-resume when WIP branch had a stale running/paused state.
+          if [[ "${PIPELINE_WIP_RESUME:-}" == "true" ]]; then
+            PIPELINE_ARGS+=(--resume)
           fi
 
           # Heartbeat: post progress marker every 10 minutes so watchdog knows we're alive.

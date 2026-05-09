@@ -573,7 +573,7 @@ jobs:
             # Reconcile stale 'running'/'paused' state from a killed prior CI job.
             # Helper handles both the atomic rewrite and the log-stage extraction.
             # "Verify merged artifacts" (next step) only touches plan.md/dod.md/etc — safe ordering.
-            if [[ -f ".claude/pipeline-state.md" ]]; then
+            if [[ -f ".claude/pipeline-state.md" ]] && [[ -f "scripts/lib/ci-reconcile-state.sh" ]]; then
               source scripts/lib/ci-reconcile-state.sh
               RECONCILED_STAGES="$(ci_reconcile_state .claude/pipeline-state.md)"
               if [[ -n "$RECONCILED_STAGES" ]]; then

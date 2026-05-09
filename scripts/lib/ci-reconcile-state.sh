@@ -43,7 +43,7 @@ ci_reconcile_state() {
 
     # Atomic rewrite: status: running|paused -> interrupted.
     local tmp
-    tmp="$(mktemp)"
+    tmp="$(mktemp "${state_file}.tmp.XXXXXX")"
     sed -E 's/^status:[[:space:]]*(running|paused)[[:space:]]*$/status: interrupted/' \
         "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 }

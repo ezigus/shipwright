@@ -128,7 +128,8 @@ result="$(ci_reconcile_state "$STATE")"
 
 assert_contains "build in result (completed after retry)" "$result" "build"
 # Should appear exactly once (deduped)
-count="$(echo "$result" | tr ',' '\n' | grep -c "^build$" || echo 0)"
+count="$(echo "$result" | tr ',' '\n' | grep -c "^build$" || true)"
+count="${count:-0}"
 assert_eq "build deduped to single occurrence" "1" "$count"
 
 # ─── Test 8: no ## Log section → empty stdout, status still rewritten ─────────

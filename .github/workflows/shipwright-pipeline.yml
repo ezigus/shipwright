@@ -951,7 +951,7 @@ jobs:
           git -c user.email=shipwright-bot@users.noreply.github.com \
               -c user.name='shipwright-bot' \
               commit -m "chore: resume snapshot for #${ISSUE_NUMBER} (run ${{ github.run_id }}, pipeline=${OUTCOME}) [skip ci]" \
-              --no-verify 2>/dev/null || { echo "::warning::snapshot commit failed (non-fatal)"; exit 0; }
+              --no-verify || { echo "::warning::snapshot commit failed (non-fatal)"; exit 0; }
 
           # Use GITHUBTOKEN (PAT with workflow scope) when available so pushes
           # that include workflow file changes are not rejected by the default

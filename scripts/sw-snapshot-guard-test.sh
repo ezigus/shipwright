@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-snapshot-guard.sh — Validates HEAD guard logic for the snapshot step
+# sw-snapshot-guard-test.sh — Validates HEAD guard logic for the snapshot step
 # Tests that git update-ref + symbolic-ref + reset --mixed guard operates correctly
 # in simulated GHA detached/wrong-branch environments.
 set -euo pipefail
@@ -24,7 +24,7 @@ assert_eq() {
 
 assert_contains() {
     local haystack="$1" needle="$2" msg="$3"
-    if echo "$haystack" | grep -q "$needle" 2>/dev/null; then
+    if printf '%s\n' "$haystack" | grep -Fq "$needle" 2>/dev/null; then
         pass "$msg"
     else
         fail "$msg (expected to contain '$needle', got: $haystack)"
@@ -33,7 +33,7 @@ assert_contains() {
 
 assert_not_contains() {
     local haystack="$1" needle="$2" msg="$3"
-    if echo "$haystack" | grep -q "$needle" 2>/dev/null; then
+    if printf '%s\n' "$haystack" | grep -Fq "$needle" 2>/dev/null; then
         fail "$msg (should NOT contain '$needle')"
     else
         pass "$msg"
@@ -50,13 +50,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-TMPROOT="$(mktemp -d /tmp/test-snapshot-guard.XXXXXX)"
+TMPROOT="$(mktemp -d "${TMPDIR:-/tmp}/sw-snapshot-guard-test.XXXXXX")"
 
 # ─── Guard function ───────────────────────────────────────────────────────────
 # Runs the guard logic under test inside a subshell cd'd to a repo dir.
 # Usage: run_guard <repo_dir> <BRANCH>
-# Stdout/stderr from the guard is captured and returned.
-# Exit code is preserved.
+# Output streams directly to the caller; exit code is preserved.
 run_guard() {
     local repo_dir="$1"
     local branch="$2"

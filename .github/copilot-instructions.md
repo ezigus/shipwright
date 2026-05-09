@@ -661,7 +661,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-pipeline.sh` | 3945 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 749 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 698 | Autonomous PR Management |
-| `scripts/sw-predictive.sh` | 834 | Predictive & Proactive Intelligence |
+| `scripts/sw-predictive.sh` | 857 | Predictive & Proactive Intelligence |
 | `scripts/sw-prep.sh` | 1656 | Repository Preparation for Agent Teams |
 | `scripts/sw-ps.sh` | 178 | Show running agent process status |
 | `scripts/sw-public-dashboard.sh` | 807 | Public real-time pipeline progress |
@@ -788,7 +788,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-fleet-test.sh` | 822 | Unit tests for fleet orchestration |
 | `scripts/sw-fleet-viz-test.sh` | 278 | Validate fleet visualization dashboard, |
 | `scripts/sw-frontier-test.sh` | 574 | Validate adversarial review, developer |
-| `scripts/sw-gha-pipeline-test.sh` | 451 | Static validation of shipwright-pipeline.yml |
+| `scripts/sw-gha-pipeline-test.sh` | 492 | Static validation of shipwright-pipeline.yml |
 | `scripts/sw-github-app-test.sh` | 145 | Validate GitHub App management |
 | `scripts/sw-github-checks-test.sh` | 535 | Validate Checks API wrapper |
 | `scripts/sw-github-deploy-test.sh` | 523 | Validate Deployments API wrapper |
@@ -843,7 +843,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-pm-test.sh` | 225 | Autonomous PM Agent test suite |
 | `scripts/sw-policy-e2e-test.sh` | 290 | Verify config/policy.json is honored |
 | `scripts/sw-pr-lifecycle-test.sh` | 317 | Validate autonomous PR management |
-| `scripts/sw-predictive-test.sh` | 691 | Unit tests for predictive intelligence |
+| `scripts/sw-predictive-test.sh` | 755 | Unit tests for predictive intelligence |
 | `scripts/sw-prep-test.sh` | 636 | Validate repo preparation |
 | `scripts/sw-ps-test.sh` | 296 | Validate agent process status display |
 | `scripts/sw-public-dashboard-test.sh` | 165 | Validate public dashboard generation |

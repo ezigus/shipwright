@@ -1,0 +1,14 @@
+{
+  "failures": [
+    {
+      "stage": "test",
+      "pattern": "✓ upload-artifact warns on missing files",
+      "root_cause": "shipwright-pipeline.yml has 2 upload-artifact steps but the test asserts exactly 1",
+      "fix": "consolidate the two upload-artifact steps into one, or update the test assertion to expect 2 if both are intentional",
+      "exit_code": 1,
+      "seen_count": 1,
+      "last_seen": "2026-05-10T21:49:23Z",
+      "category": "test_failure"
+    }
+  ]
+}

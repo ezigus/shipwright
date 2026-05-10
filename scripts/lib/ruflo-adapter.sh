@@ -857,7 +857,7 @@ _ruflo_sona_pattern_store() {
     local _bounded_res
     _bounded_res=$(printf '%s' "$_resolution" | head -c 2000 2>/dev/null || true)
     local _tags
-    _tags=$(jq -n --arg t "$_task_name" --arg o "$_outcome" \
+    _tags=$(jq -rn --arg t "$_task_name" --arg o "$_outcome" \
         '[$t, $o, "shipwright"] | join(",")' 2>/dev/null \
         || printf '%s,%s,shipwright' "$_task_name" "$_outcome")
     ruflo_mcp_call intelligence_pattern_store \
@@ -2314,17 +2314,24 @@ ruflo_learn_from_shipwright() {
     local _key="shipwright-outcome-$(date +%s)-$$"
     local _task_type="unknown"
     local _content=""
+    local _raw_status=""
 
     if [[ -f "$outcome_source" ]]; then
         # Input is a file path — read task_type (fall back to issue_type for
         # Shipwright records that use issue_type as the canonical field name)
         _task_type=$(jq -r '.task_type // .issue_type // "unknown"' \
             "$outcome_source" 2>/dev/null || echo "unknown")
+        # Extract status before jq -sR encodes content as a JSON string (which
+        # would escape quotes, breaking any subsequent grep on _content).
+        _raw_status=$(jq -r '.status // .outcome // empty' \
+            "$outcome_source" 2>/dev/null || true)
         _content=$(jq -sR . < "$outcome_source" 2>/dev/null || true)
     else
         # Input is a raw JSON string
         _task_type=$(printf '%s\n' "$outcome_source" | \
             jq -r '.task_type // .issue_type // "unknown"' 2>/dev/null || echo "unknown")
+        _raw_status=$(printf '%s\n' "$outcome_source" | \
+            jq -r '.status // .outcome // empty' 2>/dev/null || true)
         _content=$(printf '%s\n' "$outcome_source" | jq -c . 2>/dev/null || true)
     fi
 
@@ -2335,11 +2342,12 @@ ruflo_learn_from_shipwright() {
 
     # Feed ReasoningBank with success/failure signal — skip unknown statuses
     # to avoid polluting the index with uninterpretable rewards.
+    # Map both "failure" (current pipeline) and legacy "failed" to "failure".
     local _outcome_status=""
-    printf '%s' "$_content" | grep -q '"status":"success"' 2>/dev/null \
-        && _outcome_status="success"
-    printf '%s' "$_content" | grep -q '"status":"failed"' 2>/dev/null \
-        && _outcome_status="failure"
+    case "${_raw_status:-}" in
+        success)          _outcome_status="success" ;;
+        failure|failed)   _outcome_status="failure" ;;
+    esac
     if [[ -n "$_outcome_status" ]]; then
         _ruflo_sona_pattern_store "shipwright-outcome" "$_outcome_status" \
             "$(printf '%s' "$_content" | head -c 500)" || true

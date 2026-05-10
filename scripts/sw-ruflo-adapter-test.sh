@@ -5273,7 +5273,8 @@ unset SW_RUFLO_BACKEND
 _ruflo_maybe_promote_backend 2>/dev/null || true
 # Second call — SW_RUFLO_BACKEND is now set to mcp; should not re-emit
 _ruflo_maybe_promote_backend 2>/dev/null || true
-_sona12_count=$(grep -c "mcp_auto_promoted" "$_sona12_emits" 2>/dev/null || echo 0)
+_sona12_count=$(grep -c "mcp_auto_promoted" "$_sona12_emits" 2>/dev/null || true)
+_sona12_count="${_sona12_count:-0}"
 if [[ "$_sona12_count" -eq 1 ]]; then
     assert_pass "SONA-12: _ruflo_maybe_promote_backend idempotent — mcp_auto_promoted emitted exactly once"
 else

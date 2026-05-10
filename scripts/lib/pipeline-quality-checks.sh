@@ -1201,17 +1201,16 @@ run_test_coverage_check() {
         fi
     fi
 
-    info "Running test coverage check..."
-
-    # Run tests — tee to stdout so the daemon sees activity, capture for parsing
+    # Redirect test output fully to log — swallowed from GHA step stdout but
+    # preserved in ARTIFACTS_DIR for upload and post-mortem investigation.
+    # All status messages go to stderr so they remain visible in the GHA log
+    # even when the caller captures stdout via $(...).
     local coverage_log="$ARTIFACTS_DIR/coverage-run.log"
     local test_rc=0
-    _timeout "${PIPELINE_TEST_TIMEOUT:-300}" bash -c "$test_cmd" 2>&1 | tee "$coverage_log" || test_rc=$?
-    local test_output
-    test_output=$(cat "$coverage_log" 2>/dev/null) || true
+    _timeout "${PIPELINE_TEST_TIMEOUT:-300}" bash -c "$test_cmd" > "$coverage_log" 2>&1 || test_rc=$?
 
     if [[ "$test_rc" -ne 0 ]]; then
-        warn "Test command failed (exit code: $test_rc) — cannot extract coverage"
+        warn "Test command failed (exit code: $test_rc) — cannot extract coverage" >&2
         echo "0"
         return 0
     fi
@@ -1219,15 +1218,14 @@ run_test_coverage_check() {
     # Extract coverage percentage from various formats
     # Patterns: "XX% coverage", "Lines: XX%", "Stmts: XX%", "Coverage: XX%", "coverage XX%"
     local coverage_pct
-    coverage_pct=$(echo "$test_output" | grep -oE '[0-9]{1,3}%[[:space:]]*(coverage|lines|stmts|statements)' | grep -oE '^[0-9]{1,3}' | head -1 || true)
+    coverage_pct=$(grep -oE '[0-9]{1,3}%[[:space:]]*(coverage|lines|stmts|statements)' "$coverage_log" | grep -oE '^[0-9]{1,3}' | head -1 || true)
 
     if [[ -z "$coverage_pct" ]]; then
-        # Try alternate patterns without units
-        coverage_pct=$(echo "$test_output" | grep -oE 'coverage[:]?[[:space:]]*[0-9]{1,3}' | grep -oE '[0-9]{1,3}' | head -1 || true)
+        coverage_pct=$(grep -oE 'coverage[:]?[[:space:]]*[0-9]{1,3}' "$coverage_log" | grep -oE '[0-9]{1,3}' | head -1 || true)
     fi
 
     if [[ -z "$coverage_pct" ]]; then
-        warn "Could not extract coverage percentage from test output"
+        warn "Could not extract coverage percentage from test output" >&2
         echo "0"
         return 0
     fi
@@ -1237,7 +1235,7 @@ run_test_coverage_check() {
         coverage_pct=0
     fi
 
-    success "Test coverage: ${coverage_pct}%"
+    success "Test coverage: ${coverage_pct}%" >&2
     echo "$coverage_pct"
 }
 

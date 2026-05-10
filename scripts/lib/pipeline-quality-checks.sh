@@ -493,7 +493,7 @@ $tail_output" "haiku" "4" | grep -oE '^[0-9.]+$' | head -1 || true)
 }
 
 quality_check_api_compat() {
-    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
+    type _ensure_base_branch_ref >/dev/null 2>&1 && { _ensure_base_branch_ref || true; }
     info "API compatibility check..."
     local compat_log="$ARTIFACTS_DIR/api-compat.log"
 
@@ -712,7 +712,7 @@ $tail_cov_output" "haiku" "4" | grep -oE '^[0-9.]+$' | head -1 || true)
 # Feeds findings back into a self-healing rebuild loop for automatic fixes.
 
 run_adversarial_review() {
-    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
+    type _ensure_base_branch_ref >/dev/null 2>&1 && { _ensure_base_branch_ref || true; }
     local diff_content
     diff_content=$(git diff "origin/${BASE_BRANCH:-main}...HEAD" 2>/dev/null || true)
 
@@ -844,7 +844,7 @@ $diff_content"
 }
 
 run_negative_prompting() {
-    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
+    type _ensure_base_branch_ref >/dev/null 2>&1 && { _ensure_base_branch_ref || true; }
     local changed_files
     changed_files=$(git diff --name-only "origin/${BASE_BRANCH:-main}...HEAD" 2>/dev/null || true)
 
@@ -991,7 +991,7 @@ run_e2e_validation() {
 }
 
 run_dod_audit() {
-    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
+    type _ensure_base_branch_ref >/dev/null 2>&1 && { _ensure_base_branch_ref || true; }
     local dod_file="$PROJECT_ROOT/.claude/DEFINITION-OF-DONE.md"
 
     if [[ ! -f "$dod_file" ]]; then
@@ -1108,7 +1108,7 @@ PIPELINE_ADAPTIVE_COMPLEXITY=""
 # Returns: count of violations found
 # ──────────────────────────────────────────────────────────────────────────────
 run_bash_compat_check() {
-    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
+    type _ensure_base_branch_ref >/dev/null 2>&1 && { _ensure_base_branch_ref || true; }
     local violations=0
     local violation_details=""
 
@@ -1250,7 +1250,7 @@ run_test_coverage_check() {
 # Returns: count of violations found
 # ──────────────────────────────────────────────────────────────────────────────
 run_atomic_write_check() {
-    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
+    type _ensure_base_branch_ref >/dev/null 2>&1 && { _ensure_base_branch_ref || true; }
     local violations=0
     local violation_details=""
 
@@ -1299,7 +1299,7 @@ run_atomic_write_check() {
 # Returns: count of untested new functions
 # ──────────────────────────────────────────────────────────────────────────────
 run_new_function_test_check() {
-    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
+    type _ensure_base_branch_ref >/dev/null 2>&1 && { _ensure_base_branch_ref || true; }
     local untested_functions=0
     local details=""
 

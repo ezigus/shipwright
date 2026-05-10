@@ -1,0 +1,16 @@
+{
+  "repo": "ezigus/shipwright",
+  "captured_at": "2026-05-10T21:13:11Z",
+  "project": {
+    "type": "node",
+    "framework": "",
+    "test_runner": "vitest",
+    "package_manager": "npm",
+    "language": "javascript"
+  },
+  "conventions": {
+    "source_dir": "",
+    "test_pattern": "*.test.js",
+    "import_style": "commonjs"
+  }
+}

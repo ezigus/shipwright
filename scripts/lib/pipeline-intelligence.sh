@@ -1445,6 +1445,7 @@ stage_compound_quality() {
     _cleanup_cycle_files
 
     # Pre-check: verify meaningful changes exist before running expensive quality checks
+    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
     local _cq_real_changes
     _cq_real_changes=$(git diff --name-only "origin/${BASE_BRANCH:-main}...HEAD" \
         -- . ':!.claude/loop-state.md' ':!.claude/pipeline-state.md' \

@@ -1624,6 +1624,7 @@ $(git -C "$PROJECT_ROOT" diff "${_diff_range}" 2>/dev/null | head -"${DOD_DIFF_M
     # ALL work accumulated on this branch — which is what the DoD items actually cover.
     local branch_diff_content=""
     local _dod_merge_base=""
+    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
     _dod_merge_base="$(git -C "$PROJECT_ROOT" merge-base "origin/${BASE_BRANCH:-main}" HEAD 2>/dev/null \
         || git -C "$PROJECT_ROOT" merge-base "${BASE_BRANCH:-main}" HEAD 2>/dev/null || echo "")"
     if [[ -n "$_dod_merge_base" ]]; then
@@ -1872,6 +1873,7 @@ run_holistic_gate() {
     local base_branch
     base_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||')"
     [[ -z "$base_branch" ]] && base_branch="main"
+    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref "${base_branch}"
     merge_base="$(git -C "$PROJECT_ROOT" merge-base "origin/${base_branch}" HEAD 2>/dev/null \
         || git -C "$PROJECT_ROOT" merge-base "$base_branch" HEAD 2>/dev/null || echo "")"
     if [[ -n "$merge_base" ]]; then

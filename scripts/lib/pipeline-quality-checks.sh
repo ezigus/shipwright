@@ -493,6 +493,7 @@ $tail_output" "haiku" "4" | grep -oE '^[0-9.]+$' | head -1 || true)
 }
 
 quality_check_api_compat() {
+    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
     info "API compatibility check..."
     local compat_log="$ARTIFACTS_DIR/api-compat.log"
 
@@ -517,7 +518,7 @@ quality_check_api_compat() {
 
     # Check if spec was modified in this branch
     local spec_changed
-    spec_changed=$(git diff --name-only "${BASE_BRANCH}...HEAD" 2>/dev/null | grep -c "$(basename "$spec_file")" || true)
+    spec_changed=$(git diff --name-only "origin/${BASE_BRANCH:-main}...HEAD" 2>/dev/null | grep -c "$(basename "$spec_file")" || true)
     spec_changed="${spec_changed:-0}"
 
     if [[ "$spec_changed" -eq 0 ]]; then
@@ -570,7 +571,7 @@ quality_check_api_compat() {
     local semantic_diff=""
     if type intelligence_search_memory >/dev/null 2>&1 && _pipeline_quality_ai_ready; then
         local spec_git_diff
-        spec_git_diff=$(git diff "${BASE_BRANCH}...HEAD" -- "$spec_file" 2>/dev/null | head -200 || true)
+        spec_git_diff=$(git diff "origin/${BASE_BRANCH:-main}...HEAD" -- "$spec_file" 2>/dev/null | head -200 || true)
         if [[ -n "$spec_git_diff" ]]; then
             semantic_diff=$(_pipeline_quality_ai_text "Analyze this API spec diff for breaking changes. List: removed endpoints, changed parameters, altered response schemas, auth changes. Be concise.
 
@@ -711,8 +712,9 @@ $tail_cov_output" "haiku" "4" | grep -oE '^[0-9.]+$' | head -1 || true)
 # Feeds findings back into a self-healing rebuild loop for automatic fixes.
 
 run_adversarial_review() {
+    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
     local diff_content
-    diff_content=$(git diff "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+    diff_content=$(git diff "origin/${BASE_BRANCH:-main}...HEAD" 2>/dev/null || true)
 
     if [[ -z "$diff_content" ]]; then
         info "No diff to review"
@@ -842,8 +844,9 @@ $diff_content"
 }
 
 run_negative_prompting() {
+    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
     local changed_files
-    changed_files=$(git diff --name-only "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+    changed_files=$(git diff --name-only "origin/${BASE_BRANCH:-main}...HEAD" 2>/dev/null || true)
 
     if [[ -z "$changed_files" ]]; then
         info "No changed files to analyze"
@@ -860,7 +863,7 @@ run_negative_prompting() {
 $(head -200 "$file" 2>/dev/null || true)
 "
             local file_diff
-            file_diff=$(git diff "${BASE_BRANCH}...HEAD" -- "$file" 2>/dev/null || true)
+            file_diff=$(git diff "origin/${BASE_BRANCH:-main}...HEAD" -- "$file" 2>/dev/null || true)
             if [[ -n "$file_diff" ]]; then
                 diff_contents+="
 --- diff: $file ---
@@ -988,6 +991,7 @@ run_e2e_validation() {
 }
 
 run_dod_audit() {
+    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
     local dod_file="$PROJECT_ROOT/.claude/DEFINITION-OF-DONE.md"
 
     if [[ ! -f "$dod_file" ]]; then
@@ -1041,7 +1045,7 @@ run_dod_audit() {
                     ;;
                 *"console.log"*|*"print("*)
                     local debug_count
-                    debug_count=$(git diff "${BASE_BRANCH}...HEAD" 2>/dev/null | grep -c "^+.*console\.log\|^+.*print(" 2>/dev/null || true)
+                    debug_count=$(git diff "origin/${BASE_BRANCH:-main}...HEAD" 2>/dev/null | grep -c "^+.*console\.log\|^+.*print(" 2>/dev/null || true)
                     debug_count="${debug_count:-0}"
                     if [[ "$debug_count" -eq 0 ]]; then
                         item_passed=true
@@ -1104,6 +1108,7 @@ PIPELINE_ADAPTIVE_COMPLEXITY=""
 # Returns: count of violations found
 # ──────────────────────────────────────────────────────────────────────────────
 run_bash_compat_check() {
+    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
     local violations=0
     local violation_details=""
 
@@ -1245,6 +1250,7 @@ run_test_coverage_check() {
 # Returns: count of violations found
 # ──────────────────────────────────────────────────────────────────────────────
 run_atomic_write_check() {
+    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
     local violations=0
     local violation_details=""
 
@@ -1293,6 +1299,7 @@ run_atomic_write_check() {
 # Returns: count of untested new functions
 # ──────────────────────────────────────────────────────────────────────────────
 run_new_function_test_check() {
+    type _ensure_base_branch_ref >/dev/null 2>&1 && _ensure_base_branch_ref
     local untested_functions=0
     local details=""
 

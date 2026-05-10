@@ -212,7 +212,7 @@ Fix these specific errors. Each line above is one distinct error from the test o
             local _test_summary
             _test_summary="$(echo "$TEST_OUTPUT" | grep -E 'pass|All [0-9]+ tests passed' | tail -3 || true)"
             test_section="TESTS PASSED.
-${_test_summary:-(see iteration-${ITERATION}.log for full output)}"
+${_test_summary:-(see iteration-$((ITERATION - 1)).log for full output)}"
         else
             test_section="$TEST_OUTPUT"
         fi
@@ -516,9 +516,10 @@ ${_test_tail}
     local cumulative_section=""
     if [[ "${ITERATION:-1}" -gt 1 ]]; then
         local _base_branch _merge_base
-        _base_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||')"
+        # || true prevents errexit from firing when origin/HEAD is absent (no remote / offline repo).
         # git rev-parse --abbrev-ref outputs 'origin/HEAD' verbatim (→ 'HEAD' after sed) when the
-        # ref doesn't exist (no remote). Treat 'HEAD' as the failure sentinel.
+        # ref doesn't exist. Treat 'HEAD' as the failure sentinel alongside the empty-string case.
+        _base_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||' || true)"
         [[ -z "$_base_branch" || "$_base_branch" == "HEAD" ]] && _base_branch="main"
         _merge_base="$(git -C "$PROJECT_ROOT" merge-base "origin/${_base_branch}" HEAD 2>/dev/null \
             || git -C "$PROJECT_ROOT" merge-base "$_base_branch" HEAD 2>/dev/null \

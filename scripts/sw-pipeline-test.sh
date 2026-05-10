@@ -3464,9 +3464,10 @@ test_compose_prompt_iter2_instructions_before_test_results() {
 
     rm -rf "$tmp_dir"
 
+    # || true prevents set -e / pipefail from aborting the suite when grep exits 1 (no match)
     local instr_line test_line
-    instr_line=$(echo "$output" | grep -n "^## Instructions" | head -1 | cut -d: -f1)
-    test_line=$(echo "$output" | grep -n "^## Test Results" | head -1 | cut -d: -f1)
+    instr_line=$(echo "$output" | grep -n "^## Instructions" | head -1 | cut -d: -f1 || true)
+    test_line=$(echo "$output" | grep -n "^## Test Results" | head -1 | cut -d: -f1 || true)
 
     if [[ -z "$instr_line" || -z "$test_line" ]]; then
         echo "Could not find ## Instructions (line ${instr_line:-?}) or ## Test Results (line ${test_line:-?}) in iter-2 prompt"
@@ -3551,9 +3552,11 @@ test_compose_prompt_iter2_cumulative_uses_merge_base() {
         return 1
     fi
 
-    # Per-file stats present — must be more than one file line
+    # Per-file stats present — must be more than one file line.
+    # grep -c exits 1 on no matches but still prints "0"; || echo 0 would produce "0\n0".
+    # Use || true and default separately to guarantee a single integer.
     local file_line_count
-    file_line_count=$(echo "$output" | grep -A 20 "Cumulative Progress (full branch vs" | grep -c "\.txt" || echo 0)
+    file_line_count=$(echo "$output" | grep -A 20 "Cumulative Progress (full branch vs" | grep -c "\.txt" || true)
     if [[ "${file_line_count:-0}" -lt 2 ]]; then
         echo "Expected at least 2 file lines in cumulative progress, got ${file_line_count:-0}"
         return 1

@@ -5079,4 +5079,290 @@ fi
 unset _adapter_src _func_line _timeout_sum _n
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# SONA Self-Learning Integration — 15 TDD test cases
+# Tests wiring of intelligence_* MCP calls into the ruflo adapter.
+# Reload the adapter fresh before each section for full isolation.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── Section: _ruflo_sona_enabled ─────────────────────────────────────────────
+print_test_section "SONA-1: _ruflo_sona_enabled — returns 0 when bridge available"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+ruflo_bridge_available() { return 0; }
+ruflo_mcp_call() { echo '{}'; }
+unset SW_SONA_LEARNING
+if _ruflo_sona_enabled 2>/dev/null; then
+    assert_pass "SONA-1: _ruflo_sona_enabled returns 0 when bridge available and kill switch unset"
+else
+    assert_fail "SONA-1: _ruflo_sona_enabled returns 0 when bridge available and kill switch unset"
+fi
+unset -f ruflo_bridge_available ruflo_mcp_call
+
+print_test_section "SONA-2: _ruflo_sona_enabled — returns 1 when SW_SONA_LEARNING=off"
+ruflo_bridge_available() { return 0; }
+ruflo_mcp_call() { echo '{}'; }
+SW_SONA_LEARNING=off
+if _ruflo_sona_enabled 2>/dev/null; then
+    assert_fail "SONA-2: _ruflo_sona_enabled must return 1 when kill switch is off" "returned 0"
+else
+    assert_pass "SONA-2: _ruflo_sona_enabled returns 1 when SW_SONA_LEARNING=off"
+fi
+unset SW_SONA_LEARNING
+unset -f ruflo_bridge_available ruflo_mcp_call
+
+print_test_section "SONA-3: _ruflo_sona_enabled — returns 1 when bridge unavailable"
+ruflo_bridge_available() { return 1; }
+ruflo_mcp_call() { echo '{}'; }
+if _ruflo_sona_enabled 2>/dev/null; then
+    assert_fail "SONA-3: _ruflo_sona_enabled must return 1 when bridge unavailable" "returned 0"
+else
+    assert_pass "SONA-3: _ruflo_sona_enabled returns 1 when ruflo_bridge_available returns 1"
+fi
+unset -f ruflo_bridge_available ruflo_mcp_call
+
+# ─── Section: _ruflo_sona_trajectory_start / _end ─────────────────────────────
+print_test_section "SONA-4: _ruflo_sona_trajectory_start — echoes parsed trajectory ID"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+ruflo_bridge_available() { return 0; }
+ruflo_mcp_call() { echo '{"result":{"trajectoryId":"traj-test-456"}}'; }
+_traj_id=$(_ruflo_sona_trajectory_start "build" "worker" 2>/dev/null || true)
+if [[ "$_traj_id" == "traj-test-456" ]]; then
+    assert_pass "SONA-4: _ruflo_sona_trajectory_start echoes trajectoryId from MCP response"
+else
+    assert_fail "SONA-4: _ruflo_sona_trajectory_start echoes trajectoryId from MCP response" \
+        "got: '$_traj_id'"
+fi
+unset _traj_id
+unset -f ruflo_bridge_available ruflo_mcp_call
+
+print_test_section "SONA-5: _ruflo_sona_trajectory_end — exit 0 sends success=true reward=1.0"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+ruflo_bridge_available() { return 0; }
+_sona5_calls="$TEST_TEMP_DIR/sona5-calls.txt"
+rm -f "$_sona5_calls"
+ruflo_mcp_call() { echo "$*" >> "$_sona5_calls"; echo '{}'; }
+_ruflo_sona_trajectory_end "build" "traj-abc" 0 2>/dev/null || true
+_sona5_out=$(cat "$_sona5_calls" 2>/dev/null || true)
+if printf '%s' "$_sona5_out" | grep -q "success=true" \
+   && printf '%s' "$_sona5_out" | grep -q "reward=1.0"; then
+    assert_pass "SONA-5: exit 0 sends success=true reward=1.0 to intelligence_trajectory_end"
+else
+    assert_fail "SONA-5: exit 0 sends success=true reward=1.0" "got: '$_sona5_out'"
+fi
+unset _sona5_calls _sona5_out
+unset -f ruflo_bridge_available ruflo_mcp_call
+
+print_test_section "SONA-6: _ruflo_sona_trajectory_end — exit non-zero sends success=false reward=0.0"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+ruflo_bridge_available() { return 0; }
+_sona6_calls="$TEST_TEMP_DIR/sona6-calls.txt"
+rm -f "$_sona6_calls"
+ruflo_mcp_call() { echo "$*" >> "$_sona6_calls"; echo '{}'; }
+_ruflo_sona_trajectory_end "build" "traj-abc" 1 2>/dev/null || true
+_sona6_out=$(cat "$_sona6_calls" 2>/dev/null || true)
+if printf '%s' "$_sona6_out" | grep -q "success=false" \
+   && printf '%s' "$_sona6_out" | grep -q "reward=0.0"; then
+    assert_pass "SONA-6: exit non-zero sends success=false reward=0.0 to intelligence_trajectory_end"
+else
+    assert_fail "SONA-6: exit non-zero sends success=false reward=0.0" "got: '$_sona6_out'"
+fi
+unset _sona6_calls _sona6_out
+unset -f ruflo_bridge_available ruflo_mcp_call
+
+print_test_section "SONA-7: _ruflo_sona_trajectory_end — empty traj ID skips MCP call"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+ruflo_bridge_available() { return 0; }
+_sona7_calls="$TEST_TEMP_DIR/sona7-calls.txt"
+rm -f "$_sona7_calls"
+ruflo_mcp_call() { echo "$*" >> "$_sona7_calls"; echo '{}'; }
+_ruflo_sona_trajectory_end "build" "" 0 2>/dev/null || true
+if [[ ! -s "$_sona7_calls" ]]; then
+    assert_pass "SONA-7: empty trajectory ID causes _ruflo_sona_trajectory_end to skip MCP call"
+else
+    assert_fail "SONA-7: empty trajectory ID causes _ruflo_sona_trajectory_end to skip MCP call" \
+        "unexpected calls: $(cat "$_sona7_calls")"
+fi
+unset _sona7_calls
+unset -f ruflo_bridge_available ruflo_mcp_call
+
+# ─── Section: _ruflo_sona_pattern_store ───────────────────────────────────────
+print_test_section "SONA-8: _ruflo_sona_pattern_store — unknown outcome rejects MCP call"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+ruflo_bridge_available() { return 0; }
+_sona8_calls="$TEST_TEMP_DIR/sona8-calls.txt"
+rm -f "$_sona8_calls"
+ruflo_mcp_call() { echo "$*" >> "$_sona8_calls"; echo '{}'; }
+_ruflo_sona_pattern_store "build" "partial" "some text" 2>/dev/null || true
+if [[ ! -s "$_sona8_calls" ]]; then
+    assert_pass "SONA-8: unknown outcome 'partial' does not call ruflo_mcp_call (protects ReasoningBank)"
+else
+    assert_fail "SONA-8: unknown outcome 'partial' must not call ruflo_mcp_call" \
+        "unexpected calls: $(cat "$_sona8_calls")"
+fi
+unset _sona8_calls
+unset -f ruflo_bridge_available ruflo_mcp_call
+
+print_test_section "SONA-9: _ruflo_sona_pattern_store — bounds resolution_text to 2000 chars"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+ruflo_bridge_available() { return 0; }
+_sona9_calls="$TEST_TEMP_DIR/sona9-calls.txt"
+rm -f "$_sona9_calls"
+ruflo_mcp_call() { printf '%s\n' "$*" >> "$_sona9_calls"; echo '{}'; }
+# Generate a 50000-char string
+_big=$(printf 'x%.0s' $(seq 1 50000))
+_ruflo_sona_pattern_store "build" "success" "$_big" 2>/dev/null || true
+# Extract the resolution arg from the MCP call args (last arg or overall line)
+_sona9_line=$(cat "$_sona9_calls" 2>/dev/null || true)
+# The stored resolution should be ≤ 2000 chars. Check total line length as proxy
+# (even with other args, resolution dominates; if total > 2100 then not bounded).
+_sona9_len=${#_sona9_line}
+if [[ $_sona9_len -le 2200 ]]; then
+    assert_pass "SONA-9: resolution_text bounded — MCP args total length ${_sona9_len} ≤ 2200 chars"
+else
+    assert_fail "SONA-9: resolution_text bounded to 2000 chars" \
+        "MCP args length was ${_sona9_len}, expected ≤2200"
+fi
+unset _big _sona9_calls _sona9_line _sona9_len
+unset -f ruflo_bridge_available ruflo_mcp_call
+
+# ─── Section: _ruflo_maybe_promote_backend (MCP auto-promotion) ───────────────
+print_test_section "SONA-10: _ruflo_maybe_promote_backend — unset var + bridge → SW_RUFLO_BACKEND=mcp"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+ruflo_bridge_available() { return 0; }
+unset SW_RUFLO_BACKEND
+_ruflo_maybe_promote_backend 2>/dev/null || true
+if [[ "${SW_RUFLO_BACKEND:-}" == "mcp" ]]; then
+    assert_pass "SONA-10: SW_RUFLO_BACKEND auto-promoted to mcp when unset and bridge available"
+else
+    assert_fail "SONA-10: SW_RUFLO_BACKEND auto-promoted to mcp" "got: '${SW_RUFLO_BACKEND:-}'"
+fi
+unset SW_RUFLO_BACKEND
+unset -f ruflo_bridge_available
+
+print_test_section "SONA-11: _ruflo_maybe_promote_backend — explicit cli preserved"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+ruflo_bridge_available() { return 0; }
+export SW_RUFLO_BACKEND=cli
+_ruflo_maybe_promote_backend 2>/dev/null || true
+if [[ "${SW_RUFLO_BACKEND:-}" == "cli" ]]; then
+    assert_pass "SONA-11: explicit SW_RUFLO_BACKEND=cli not overridden even when bridge available"
+else
+    assert_fail "SONA-11: explicit SW_RUFLO_BACKEND=cli not overridden" \
+        "got: '${SW_RUFLO_BACKEND:-}'"
+fi
+unset SW_RUFLO_BACKEND
+unset -f ruflo_bridge_available
+
+print_test_section "SONA-12: _ruflo_maybe_promote_backend — idempotent, no double emit"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+ruflo_bridge_available() { return 0; }
+_sona12_emits="$TEST_TEMP_DIR/sona12-emits.txt"
+rm -f "$_sona12_emits"
+emit_event() { printf '%s\n' "$*" >> "$_sona12_emits"; }
+# First promotion — SW_RUFLO_BACKEND unset
+unset SW_RUFLO_BACKEND
+_ruflo_maybe_promote_backend 2>/dev/null || true
+# Second call — SW_RUFLO_BACKEND is now set to mcp; should not re-emit
+_ruflo_maybe_promote_backend 2>/dev/null || true
+_sona12_count=$(grep -c "mcp_auto_promoted" "$_sona12_emits" 2>/dev/null || echo 0)
+if [[ "$_sona12_count" -eq 1 ]]; then
+    assert_pass "SONA-12: _ruflo_maybe_promote_backend idempotent — mcp_auto_promoted emitted exactly once"
+else
+    assert_fail "SONA-12: _ruflo_maybe_promote_backend idempotent" \
+        "mcp_auto_promoted emitted ${_sona12_count} times, expected 1"
+fi
+unset SW_RUFLO_BACKEND _sona12_emits _sona12_count
+unset -f ruflo_bridge_available emit_event
+
+# ─── Section: ruflo_learn_from_shipwright outcome routing ─────────────────────
+print_test_section "SONA-13: ruflo_learn_from_shipwright — success status triggers pattern store"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+ruflo_available() { return 0; }
+_ruflo_resolve_repo_hash() { echo "testhash12"; }
+ruflo_store() { return 0; }
+_sona13_calls="$TEST_TEMP_DIR/sona13-calls.txt"
+rm -f "$_sona13_calls"
+_ruflo_sona_pattern_store() { printf '%s\n' "$*" >> "$_sona13_calls"; return 0; }
+ruflo_learn_from_shipwright '{"status":"success","task_type":"build"}' 2>/dev/null || true
+if grep -q "success" "$_sona13_calls" 2>/dev/null; then
+    assert_pass "SONA-13: 'status:success' input triggers _ruflo_sona_pattern_store with outcome=success"
+else
+    assert_fail "SONA-13: 'status:success' input triggers _ruflo_sona_pattern_store" \
+        "pattern_store not called or wrong args: $(cat "$_sona13_calls" 2>/dev/null)"
+fi
+unset _sona13_calls
+unset -f ruflo_available _ruflo_resolve_repo_hash ruflo_store _ruflo_sona_pattern_store
+
+print_test_section "SONA-14: ruflo_learn_from_shipwright — missing status triggers no pattern store"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+ruflo_available() { return 0; }
+_ruflo_resolve_repo_hash() { echo "testhash12"; }
+ruflo_store() { return 0; }
+_sona14_calls="$TEST_TEMP_DIR/sona14-calls.txt"
+rm -f "$_sona14_calls"
+_ruflo_sona_pattern_store() { printf '%s\n' "$*" >> "$_sona14_calls"; return 0; }
+ruflo_learn_from_shipwright '{"task_type":"build"}' 2>/dev/null || true
+if [[ ! -s "$_sona14_calls" ]]; then
+    assert_pass "SONA-14: missing status does not call _ruflo_sona_pattern_store (no ReasoningBank pollution)"
+else
+    assert_fail "SONA-14: missing status must not call _ruflo_sona_pattern_store" \
+        "unexpected calls: $(cat "$_sona14_calls")"
+fi
+unset _sona14_calls
+unset -f ruflo_available _ruflo_resolve_repo_hash ruflo_store _ruflo_sona_pattern_store
+
+# ─── Section: _ruflo_seed_specialist_history SONA merge ───────────────────────
+print_test_section "SONA-15: _ruflo_seed_specialist_history — independently bounds recall and pattern_search"
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+ruflo_available() { return 0; }
+ruflo_bridge_available() { return 0; }
+_ruflo_sona_enabled() { return 0; }
+_ruflo_resolve_repo_hash() { echo "testhash12"; }
+# ruflo_recall returns 5000-char string
+ruflo_recall() { printf 'R%.0s' $(seq 1 5000); }
+# ruflo_mcp_call (pattern_search) returns 5000-char string
+_sona15_mcp_calls="$TEST_TEMP_DIR/sona15-mcp.txt"
+rm -f "$_sona15_mcp_calls"
+ruflo_mcp_call() { printf 'P%.0s' $(seq 1 5000); }
+# ruflo_store captures what it receives
+_sona15_store="$TEST_TEMP_DIR/sona15-store.txt"
+rm -f "$_sona15_store"
+ruflo_store() { printf '%s' "${2:-}" > "$_sona15_store"; return 0; }
+RUFLO_HISTORY_MAX_BYTES=200
+export RUFLO_HISTORY_MAX_BYTES
+_ruflo_seed_specialist_history "build" "learn-testhash12" "test query" 2>/dev/null || true
+unset RUFLO_HISTORY_MAX_BYTES
+_sona15_stored=$(cat "$_sona15_store" 2>/dev/null || true)
+# Split on the '---' separator line. Use awk for reliable line-oriented split.
+_sona15_r_block=$(printf '%s' "$_sona15_stored" | \
+    awk '/^---$/{exit} {printf "%s", $0}')
+_sona15_p_block=$(printf '%s' "$_sona15_stored" | \
+    awk '/^---$/{found=1; next} found{printf "%s", $0}')
+_sona15_r_len=${#_sona15_r_block}
+_sona15_p_len=${#_sona15_p_block}
+if [[ $_sona15_r_len -le 200 && $_sona15_p_len -le 200 \
+      && $_sona15_r_len -gt 0 && $_sona15_p_len -gt 0 ]]; then
+    assert_pass "SONA-15: recall block (${_sona15_r_len}) and pattern block (${_sona15_p_len}) both ≤ 200 bytes"
+else
+    assert_fail "SONA-15: both blocks independently bounded to 200 bytes" \
+        "recall=${_sona15_r_len} pattern=${_sona15_p_len} stored='${_sona15_stored:0:100}...'"
+fi
+unset _sona15_mcp_calls _sona15_store _sona15_stored
+unset _sona15_r_block _sona15_p_block _sona15_r_len _sona15_p_len
+unset -f ruflo_available ruflo_bridge_available _ruflo_sona_enabled
+unset -f _ruflo_resolve_repo_hash ruflo_recall ruflo_mcp_call ruflo_store
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

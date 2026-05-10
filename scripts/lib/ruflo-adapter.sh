@@ -274,6 +274,10 @@ ruflo_init() {
 
     emit_event "ruflo.mcp_started" "mode=daemon"
 
+    # Auto-promote to in-process MCP only when user has not explicitly chosen.
+    # Explicit SW_RUFLO_BACKEND=cli (e.g. for debugging) is preserved.
+    _ruflo_maybe_promote_backend || true
+
     # Import memory from previous run (stub — implemented in Issue 2)
     ruflo_import_memory || true
 
@@ -780,11 +784,99 @@ _ruflo_seed_specialist_history() {
     _bounded=$(printf '%s' "$_history" | head -c "$_max_bytes" 2>/dev/null || true)
     [[ -n "$_bounded" ]] || return 0
 
+    # Merge SONA ReasoningBank patterns — each source independently bounded so
+    # neither silently chops the other (dual-emit: trajectory_end feeds routing;
+    # pattern_search feeds ReasoningBank — different SONA subsystems).
+    if _ruflo_sona_enabled 2>/dev/null; then
+        local _sona_patterns=""
+        _sona_patterns=$(ruflo_mcp_call intelligence_pattern_search \
+            "query=${_query}" "topK=3" 2>/dev/null \
+            | head -c "$_max_bytes" || true)
+        if [[ -n "$_sona_patterns" ]]; then
+            _bounded=$(printf '%s\n---\n%s\n' \
+                "$(printf '%s' "$_bounded" | head -c "$_max_bytes")" \
+                "$_sona_patterns")
+        fi
+    fi
+
     ruflo_store "${stage_name}-history-context" "$_bounded" \
         "$stage_ns" "${stage_name},history,context" || true
 
     emit_event "ruflo.specialist_history_seeded" \
         "stage=${stage_name}" "namespace=${stage_ns}" "bytes=${#_bounded}"
+    return 0
+}
+
+# ─── SONA self-learning helpers ───────────────────────────────────────────────
+# These four helpers + _ruflo_maybe_promote_backend wire Shipwright pipeline
+# events into SONA's EWC++ routing layer (intelligence_trajectory_*) and
+# ReasoningBank (intelligence_pattern_*). All are fail-open — they never
+# propagate errors to callers. SW_SONA_LEARNING=off disables all MCP traffic.
+
+_ruflo_sona_enabled() {
+    [[ "${SW_SONA_LEARNING:-on}" != "off" ]] || return 1
+    declare -f ruflo_mcp_call >/dev/null 2>&1 || return 1
+    declare -f ruflo_bridge_available >/dev/null 2>&1 || return 1
+    ruflo_bridge_available 2>/dev/null || return 1
+    return 0
+}
+
+_ruflo_sona_trajectory_start() {
+    local _task_name="${1:-unknown}" _agent_role="${2:-worker}"
+    _ruflo_sona_enabled || { echo ""; return 0; }
+    local _resp
+    _resp=$(ruflo_mcp_call intelligence_trajectory_start \
+        "task=${_task_name}" "agent=${_agent_role}" 2>/dev/null || true)
+    printf '%s' "$_resp" | jq -r '.result.trajectoryId // empty' 2>/dev/null || true
+    return 0
+}
+
+_ruflo_sona_trajectory_end() {
+    local _task_name="${1:-unknown}" _traj_id="${2:-}" _exit_code="${3:-0}"
+    [[ -n "$_traj_id" ]] || return 0
+    _ruflo_sona_enabled || return 0
+    local _success="false" _reward="0.0"
+    if [[ "$_exit_code" -eq 0 ]]; then _success="true"; _reward="1.0"; fi
+    ruflo_mcp_call intelligence_trajectory_end \
+        "trajectoryId=${_traj_id}" \
+        "task=${_task_name}" \
+        "success=${_success}" \
+        "reward=${_reward}" 2>/dev/null || true
+    return 0
+}
+
+_ruflo_sona_pattern_store() {
+    local _task_name="${1:-unknown}" _outcome="${2:-}" _resolution="${3:-}"
+    _ruflo_sona_enabled || return 0
+    local _reward=""
+    case "$_outcome" in
+        success) _reward="1.0" ;;
+        failure) _reward="0.0" ;;
+        *)       return 0 ;;
+    esac
+    local _bounded_res
+    _bounded_res=$(printf '%s' "$_resolution" | head -c 2000 2>/dev/null || true)
+    local _tags
+    _tags=$(jq -n --arg t "$_task_name" --arg o "$_outcome" \
+        '[$t, $o, "shipwright"] | join(",")' 2>/dev/null \
+        || printf '%s,%s,shipwright' "$_task_name" "$_outcome")
+    ruflo_mcp_call intelligence_pattern_store \
+        "task=${_task_name}" \
+        "outcome=${_outcome}" \
+        "reward=${_reward}" \
+        "resolution=${_bounded_res}" \
+        "tags=${_tags}" 2>/dev/null || true
+    return 0
+}
+
+_ruflo_maybe_promote_backend() {
+    [[ -z "${SW_RUFLO_BACKEND+x}" ]] || return 0
+    declare -f ruflo_bridge_available >/dev/null 2>&1 || return 0
+    ruflo_bridge_available 2>/dev/null || return 0
+    SW_RUFLO_BACKEND="mcp"
+    export SW_RUFLO_BACKEND
+    info "Ruflo MCP bridge available — using in-process backend"
+    emit_event "ruflo.mcp_auto_promoted" "backend=mcp"
     return 0
 }
 
@@ -1017,6 +1109,8 @@ ruflo_execute_build_hive() {
     # Spawn worker agents — spawn failures are fatal: any non-zero exit causes
     # the function to return 1 so the caller falls back to native execution.
     # Note: hive teardown is handled by ruflo_cleanup(), not per-stage shutdown.
+    local _sona_traj_id=""
+    _sona_traj_id=$(_ruflo_sona_trajectory_start "build" "worker" 2>/dev/null || true)
     local _spawn_exit=0
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
         ruflo_with_timeout 60 npx -y ruflo@latest hive-mind spawn \
@@ -1033,6 +1127,8 @@ ruflo_execute_build_hive() {
     if [[ $_spawn_exit -ne 0 ]]; then
         warn "Ruflo hive spawn failed (hive_id=$hive_id) — aborting hive build"
         emit_event "ruflo.hive_spawn_failed" "hive_id=$hive_id"
+        _ruflo_sona_trajectory_end "build" "$_sona_traj_id" 1 || true
+        _ruflo_sona_pattern_store  "build" "failure" "spawn failed hive_id=$hive_id" || true
         return 1
     fi
 
@@ -1061,11 +1157,17 @@ ruflo_execute_build_hive() {
     if [[ $_orch_exit -eq 0 ]]; then
         emit_event "ruflo.hive_build_complete" \
             "hive_id=$hive_id" "agents=$max_agents" "topology=$topology"
+        _ruflo_sona_trajectory_end "build" "$_sona_traj_id" 0 || true
+        _ruflo_sona_pattern_store  "build" "success" \
+            "$(printf '%s' "$goal" | head -c 500)" || true
         return 0
     fi
 
     emit_event "ruflo.hive_build_failed" \
         "hive_id=$hive_id" "exit_code=$_orch_exit"
+    _ruflo_sona_trajectory_end "build" "$_sona_traj_id" 1 || true
+    _ruflo_sona_pattern_store  "build" "failure" \
+        "$(printf '%s' "$goal" | head -c 500)" || true
     return 1
 }
 
@@ -1152,6 +1254,8 @@ ruflo_execute_review() {
         return 1
     fi
     local hive_id="$RUFLO_HIVE_ID"
+    local _sona_traj_id=""
+    _sona_traj_id=$(_ruflo_sona_trajectory_start "review" "reviewer" 2>/dev/null || true)
 
     # Spawn specialist reviewers — spawn failures are non-fatal (proceed with fewer agents)
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -1284,6 +1388,16 @@ ruflo_execute_review() {
         "review,outcome" || true
 
     emit_event "ruflo.review_complete" "hive_id=$hive_id"
+    local _review_summary
+    _review_summary=$(printf 'orch_exit=%d findings_bytes=%d' \
+        "$_orch_exit" "${#_findings}" | head -c 500)
+    if [[ $_orch_exit -eq 0 ]]; then
+        _ruflo_sona_trajectory_end "review" "$_sona_traj_id" 0 || true
+        _ruflo_sona_pattern_store  "review" "success" "$_review_summary" || true
+    else
+        _ruflo_sona_trajectory_end "review" "$_sona_traj_id" 1 || true
+        _ruflo_sona_pattern_store  "review" "failure" "$_review_summary" || true
+    fi
     return 0
 }
 
@@ -1338,6 +1452,8 @@ ruflo_execute_compound_quality() {
         return 1
     fi
     local hive_id="$RUFLO_HIVE_ID"
+    local _sona_traj_id=""
+    _sona_traj_id=$(_ruflo_sona_trajectory_start "quality" "quality-specialist" 2>/dev/null || true)
 
     # Spawn adversarial agents — non-fatal spawn failure
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -1468,6 +1584,15 @@ ruflo_execute_compound_quality() {
         "quality,outcome" || true
 
     emit_event "ruflo.cq_complete" "hive_id=$hive_id"
+    local _cq_preview
+    _cq_preview=$(head -c 500 "$artifact_file" 2>/dev/null || true)
+    if [[ $_orch_exit -eq 0 ]]; then
+        _ruflo_sona_trajectory_end "quality" "$_sona_traj_id" 0 || true
+        _ruflo_sona_pattern_store  "quality" "success" "$_cq_preview" || true
+    else
+        _ruflo_sona_trajectory_end "quality" "$_sona_traj_id" 1 || true
+        _ruflo_sona_pattern_store  "quality" "failure" "$_cq_preview" || true
+    fi
     return 0
 }
 
@@ -1521,6 +1646,8 @@ ruflo_execute_audit() {
         return 1
     fi
     local hive_id="$RUFLO_HIVE_ID"
+    local _sona_traj_id=""
+    _sona_traj_id=$(_ruflo_sona_trajectory_start "audit" "auditor" 2>/dev/null || true)
 
     # Spawn specialist security audit agents — non-fatal spawn failure
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -1593,6 +1720,9 @@ ruflo_execute_audit() {
     if [[ $_orch_exit -ne 0 ]]; then
         warn "ruflo: orchestration failed with exit $_orch_exit"
         emit_event "ruflo.audit_failed" "reason=orchestration_failed"
+        _ruflo_sona_trajectory_end "audit" "$_sona_traj_id" 1 || true
+        _ruflo_sona_pattern_store  "audit" "failure" \
+            "orch_exit=${_orch_exit}" || true
         return 1
     fi
 
@@ -1684,6 +1814,9 @@ ruflo_execute_audit() {
         "audit,outcome" || true
 
     emit_event "ruflo.audit_complete" "hive_id=$hive_id" "stage=audit"
+    _ruflo_sona_trajectory_end "audit" "$_sona_traj_id" 0 || true
+    _ruflo_sona_pattern_store  "audit" "success" \
+        "$(head -c 500 "$artifact_file" 2>/dev/null || true)" || true
     return 0
 }
 
@@ -1743,6 +1876,8 @@ ruflo_execute_plan_hive() {
         return 1
     fi
     local hive_id="$RUFLO_HIVE_ID"
+    local _sona_traj_id=""
+    _sona_traj_id=$(_ruflo_sona_trajectory_start "plan" "planner" 2>/dev/null || true)
 
     # Spawn specialist planner agents — non-fatal spawn failure
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -1813,6 +1948,9 @@ Each plan must follow this structure: '## Files to Modify', '## Implementation S
     if [[ $_orch_exit -ne 0 ]]; then
         warn "ruflo: plan orchestration failed with exit $_orch_exit"
         emit_event "ruflo.plan_hive_failed" "reason=orchestration_failed" "exit=$_orch_exit"
+        _ruflo_sona_trajectory_end "plan" "$_sona_traj_id" 1 || true
+        _ruflo_sona_pattern_store  "plan" "failure" \
+            "$(printf '%s' "$goal" | head -c 500)" || true
         return 1
     fi
 
@@ -1905,6 +2043,9 @@ Write the synthesized plan to namespace ${synth_ns} under key 'plan-synthesized'
         "pipeline-${pipeline_id}" \
         "plan,outcome" || true
 
+    _ruflo_sona_trajectory_end "plan" "$_sona_traj_id" 0 || true
+    _ruflo_sona_pattern_store  "plan" "success" \
+        "$(printf '%s' "$goal" | head -c 500)" || true
     return 0
 }
 
@@ -1990,6 +2131,9 @@ ruflo_execute_self_heal_hive() {
     # Seed historical recall (past root-causes for similar failures)
     _ruflo_seed_specialist_history "self-heal" "$heal_ns" || true
 
+    local _sona_traj_id=""
+    _sona_traj_id=$(_ruflo_sona_trajectory_start "self-heal" "triage" 2>/dev/null || true)
+
     # ── Spawn specialists (12s budget, non-fatal) ──
     # Total hive budget ≤ 55s: spawn 12 + triage 20 + read 5 + synth 8 + read 5 = 50s
     if [[ "${RUFLO_USE_NPX:-false}" == "true" ]]; then
@@ -2041,6 +2185,9 @@ Each hypothesis block must contain exactly these four labeled lines (plain text)
     if [[ $_triage_exit -ne 0 ]]; then
         emit_event "ruflo.self_heal_hive_failed" \
             "reason=triage_failed" "exit=$_triage_exit"
+        _ruflo_sona_trajectory_end "self-heal" "$_sona_traj_id" 1 || true
+        _ruflo_sona_pattern_store  "self-heal" "failure" \
+            "triage_exit=${_triage_exit}" || true
         return 0
     fi
 
@@ -2117,6 +2264,9 @@ Each hypothesis block must contain exactly these four labeled lines (plain text)
         printf '%s\n' "$_selected"
         emit_event "ruflo.self_heal_hive_complete" \
             "hive_id=$hive_id" "synthesis=ok" "namespace=$heal_ns"
+        _ruflo_sona_trajectory_end "self-heal" "$_sona_traj_id" 0 || true
+        _ruflo_sona_pattern_store  "self-heal" "success" \
+            "$(printf '%s' "$_selected" | head -c 500)" || true
         return 0
     fi
 
@@ -2134,10 +2284,15 @@ Each hypothesis block must contain exactly these four labeled lines (plain text)
             "synth_exit=$_synth_exit" "namespace=$heal_ns"
         emit_event "ruflo.self_heal_hive_complete" \
             "hive_id=$hive_id" "synthesis=fallback"
+        _ruflo_sona_trajectory_end "self-heal" "$_sona_traj_id" 0 || true
+        _ruflo_sona_pattern_store  "self-heal" "success" \
+            "$(printf '%s' "$_union_head" | head -c 500)" || true
         return 0
     fi
 
     emit_event "ruflo.self_heal_hive_failed" "reason=no_selection"
+    _ruflo_sona_trajectory_end "self-heal" "$_sona_traj_id" 1 || true
+    _ruflo_sona_pattern_store  "self-heal" "failure" "no_selection" || true
     return 0
 }
 
@@ -2177,6 +2332,19 @@ ruflo_learn_from_shipwright() {
     ruflo_store "$_key" "$_content" \
         "learning-$_ns_hash" \
         "skill-memory,outcome,$_task_type" || true
+
+    # Feed ReasoningBank with success/failure signal — skip unknown statuses
+    # to avoid polluting the index with uninterpretable rewards.
+    local _outcome_status=""
+    printf '%s' "$_content" | grep -q '"status":"success"' 2>/dev/null \
+        && _outcome_status="success"
+    printf '%s' "$_content" | grep -q '"status":"failed"' 2>/dev/null \
+        && _outcome_status="failure"
+    if [[ -n "$_outcome_status" ]]; then
+        _ruflo_sona_pattern_store "shipwright-outcome" "$_outcome_status" \
+            "$(printf '%s' "$_content" | head -c 500)" || true
+    fi
+
     emit_event "ruflo.learn_from_shipwright" \
         "task_type=$_task_type" \
         "repo=$_ns_hash"

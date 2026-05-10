@@ -133,20 +133,34 @@ check_circuit_breaker() {
 
 check_time_budget() {
     # Guard: stop starting a new iteration if <20 min remains in the GHA job.
-    # Uses SHIPWRIGHT_JOB_TIMEOUT_MINUTES (set by the pipeline) and the pipeline-level
-    # start epoch. PIPELINE_RUN_EPOCH (exported by pipeline-stages-build.sh before
-    # invoking sw loop) is used when available so that compound_quality→build re-entries
-    # don't reset the elapsed clock. Falls back to LOOP_START_EPOCH for standalone
-    # sw loop invocations that have no pipeline wrapper.
+    # Anchors on CI_JOB_START_EPOCH (set once per GHA job by the pipeline workflow,
+    # never persisted to disk). Falls back to LOOP_START_EPOCH for standalone
+    # `sw loop` invocations with no CI wrapper.
+    # PIPELINE_RUN_EPOCH is intentionally NOT read here: it survives across CI jobs
+    # via the WIP branch, making it an unsafe budget anchor. It remains the
+    # historical "pipeline first start" marker for display purposes only.
     local _job_timeout_min="${SHIPWRIGHT_JOB_TIMEOUT_MINUTES:-0}"
     # Require a valid positive integer — non-numeric values would cause arithmetic
     # errors under set -e; treat them as "no limit" (return 0 = continue loop).
-    local _ref_epoch="${PIPELINE_RUN_EPOCH:-${LOOP_START_EPOCH:-}}"
+    local _ref_epoch="${CI_JOB_START_EPOCH:-${LOOP_START_EPOCH:-}}"
     [[ -z "$_ref_epoch" || "$_ref_epoch" == "0" ]] && return 0
+    [[ ! "$_ref_epoch" =~ ^[0-9]+$ ]] && return 0
     [[ ! "$_job_timeout_min" =~ ^[0-9]+$ || "$_job_timeout_min" -le 0 ]] && return 0
     local _now _elapsed_min _remaining_min
     _now=$(now_epoch 2>/dev/null) || return 0
     _elapsed_min=$(( (_now - _ref_epoch) / 60 ))
+    # Stale-epoch defense: GHA hard-kills the job at SHIPWRIGHT_JOB_TIMEOUT_MINUTES,
+    # so _elapsed_min > _job_timeout_min is physically impossible during a healthy run.
+    # If we see it, the anchor is from a prior CI job — some entry point bypassed
+    # the workflow step that sets CI_JOB_START_EPOCH. Continue rather than insta-exit;
+    # emit telemetry to surface the regression.
+    if (( _elapsed_min > _job_timeout_min )); then
+        emit_event "loop.time_budget_stale_ref" \
+            "elapsed_min=${_elapsed_min}" \
+            "ref_epoch=${_ref_epoch}" \
+            "job_timeout_min=${_job_timeout_min}" 2>/dev/null || true
+        return 0
+    fi
     _remaining_min=$(( _job_timeout_min - _elapsed_min ))
     if (( _remaining_min < 20 )); then
         warn "Less than 20 min remaining in GHA job (${_remaining_min}m) — stopping build loop to allow cleanup"

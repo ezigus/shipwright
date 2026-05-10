@@ -472,21 +472,21 @@ assert_contains_regex \
     "$(grep 'gh issue view' "$SCRIPT_DIR/sw-predictive.sh" || true)" \
     "gh issue view"
 
-# Phase 1 fix (Bug C): check_time_budget must use PIPELINE_RUN_EPOCH not LOOP_START_EPOCH
+# check_time_budget must use CI_JOB_START_EPOCH (per-job ephemeral anchor, not persisted field)
 assert_contains_regex \
-    "check_time_budget in loop-convergence.sh uses PIPELINE_RUN_EPOCH (not loop-level epoch)" \
-    "$(grep 'PIPELINE_RUN_EPOCH' "$LOOP_CONVERGENCE_SH" || true)" \
-    "PIPELINE_RUN_EPOCH"
+    "check_time_budget in loop-convergence.sh uses CI_JOB_START_EPOCH (not persisted PIPELINE_RUN_EPOCH)" \
+    "$(grep 'CI_JOB_START_EPOCH' "$LOOP_CONVERGENCE_SH" || true)" \
+    "CI_JOB_START_EPOCH"
 
 assert_contains_regex \
-    "loop-convergence.sh check_time_budget falls back to LOOP_START_EPOCH when PIPELINE_RUN_EPOCH absent" \
-    "$(grep 'LOOP_START_EPOCH\|PIPELINE_RUN_EPOCH' "$LOOP_CONVERGENCE_SH" || true)" \
+    "loop-convergence.sh check_time_budget falls back to LOOP_START_EPOCH when CI_JOB_START_EPOCH absent" \
+    "$(grep 'LOOP_START_EPOCH\|CI_JOB_START_EPOCH' "$LOOP_CONVERGENCE_SH" || true)" \
     "LOOP_START_EPOCH"
 
 assert_contains_regex \
-    "pipeline-stages-build.sh exports PIPELINE_RUN_EPOCH before invoking sw loop" \
-    "$(grep 'export PIPELINE_RUN_EPOCH' "$PIPELINE_STAGES_BUILD_SH" || true)" \
-    "export PIPELINE_RUN_EPOCH"
+    "pipeline-stages-build.sh exports CI_JOB_START_EPOCH before invoking sw loop" \
+    "$(grep 'export CI_JOB_START_EPOCH' "$PIPELINE_STAGES_BUILD_SH" || true)" \
+    "export CI_JOB_START_EPOCH"
 
 echo ""
 print_test_results

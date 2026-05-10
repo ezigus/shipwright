@@ -144,6 +144,7 @@ check_time_budget() {
     # errors under set -e; treat them as "no limit" (return 0 = continue loop).
     local _ref_epoch="${CI_JOB_START_EPOCH:-${LOOP_START_EPOCH:-}}"
     [[ -z "$_ref_epoch" || "$_ref_epoch" == "0" ]] && return 0
+    [[ ! "$_ref_epoch" =~ ^[0-9]+$ ]] && return 0
     [[ ! "$_job_timeout_min" =~ ^[0-9]+$ || "$_job_timeout_min" -le 0 ]] && return 0
     local _now _elapsed_min _remaining_min
     _now=$(now_epoch 2>/dev/null) || return 0

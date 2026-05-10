@@ -651,7 +651,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 703 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 643 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 353 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 3326 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 3328 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 2272 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 473 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 606 | Intelligent Model Routing & Cost Optimization |
@@ -822,10 +822,11 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-loop-convergence-test.sh` | 297 | Stuckness throttle (issue #447) |
 | `scripts/sw-lib-loop-restart-test.sh` | 409 | Unit tests for loop state |
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
+| `scripts/sw-lib-pipeline-github-test.sh` | 246 | Unit tests for GitHub helpers |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 958 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 616 | Unit tests for quality |
 | `scripts/sw-lib-pipeline-stages-review-test.sh` | 589 | Unit tests for cross-stage drift detector |
-| `scripts/sw-lib-pipeline-stages-test.sh` | 1578 | Unit tests for stage functions |
+| `scripts/sw-lib-pipeline-stages-test.sh` | 1659 | Unit tests for stage functions |
 | `scripts/sw-lib-pipeline-state-test.sh` | 983 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 281 | Validate agent pane log viewing, searching, |

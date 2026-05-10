@@ -207,7 +207,15 @@ Fix these specific errors. Each line above is one distinct error from the test o
     elif [[ -z "$TEST_PASSED" ]]; then
         test_section="No test results yet (first iteration). Test command: $TEST_CMD"
     elif $TEST_PASSED; then
-        test_section="$TEST_OUTPUT"
+        if ! $_needs_full_context; then
+            # Iter 2+: tests pass — the relevant signal is gate feedback, not 60 lines of checkmarks.
+            local _test_summary
+            _test_summary="$(echo "$TEST_OUTPUT" | grep -E 'pass|All [0-9]+ tests passed' | tail -3 || true)"
+            test_section="TESTS PASSED.
+${_test_summary:-(see iteration-${ITERATION}.log for full output)}"
+        else
+            test_section="$TEST_OUTPUT"
+        fi
     elif ! $_needs_full_context && [[ -n "$error_summary_section" ]]; then
         # Iter 2+: structured errors available — demote full output, primary signal is the summary below
         test_section="TESTS FAILED — see Structured Error Summary below for specific errors.
@@ -501,15 +509,29 @@ ${_test_tail}
         RESUMED_TEST_OUTPUT=""
     fi
 
-    # Build cumulative progress summary showing all iterations' work
+    # Build cumulative progress summary showing all commits on the WIP branch.
+    # Use merge-base with the default branch (mirrors run_holistic_gate in sw-loop.sh:1873-1888)
+    # so the section spans ALL CI jobs on this branch, not just the current job's LOOP_START_COMMIT.
+    # Falls back to LOOP_START_COMMIT if merge-base is unavailable (local-only repo, no remote).
     local cumulative_section=""
-    if [[ -n "${LOOP_START_COMMIT:-}" ]] && [[ "$ITERATION" -gt 1 ]]; then
-        local cum_stat
-        cum_stat="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | tail -1 || true)"
-        if [[ -n "$cum_stat" ]]; then
-            cumulative_section="## Cumulative Progress (all iterations combined)
+    if [[ "${ITERATION:-1}" -gt 1 ]]; then
+        local _base_branch _merge_base
+        _base_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||')"
+        # git rev-parse --abbrev-ref outputs 'origin/HEAD' verbatim (→ 'HEAD' after sed) when the
+        # ref doesn't exist (no remote). Treat 'HEAD' as the failure sentinel.
+        [[ -z "$_base_branch" || "$_base_branch" == "HEAD" ]] && _base_branch="main"
+        _merge_base="$(git -C "$PROJECT_ROOT" merge-base "origin/${_base_branch}" HEAD 2>/dev/null \
+            || git -C "$PROJECT_ROOT" merge-base "$_base_branch" HEAD 2>/dev/null \
+            || echo "${LOOP_START_COMMIT:-}")"
+        if [[ -n "$_merge_base" ]]; then
+            local cum_stat
+            cum_stat="$(git -C "$PROJECT_ROOT" diff --stat "${_merge_base}..HEAD" 2>/dev/null | head -40 || true)"
+            if [[ -n "$cum_stat" ]]; then
+                cumulative_section="## Cumulative Progress (full branch vs ${_base_branch})
 ${cum_stat}
+
 "
+            fi
         fi
     fi
 
@@ -537,8 +559,24 @@ ${resume_section}
 ## Your Goal
 ${prompt_goal}
 
-${pipeline_context_section}${cumulative_section}
-${task_section:+## Task Progress
+## Instructions
+1. Read the codebase and understand the current state
+2. Identify the highest-priority remaining work toward the goal
+3. Implement ONE meaningful chunk of progress
+4. Run tests if a test command exists: ${TEST_CMD:-"(none)"}
+5. Commit your work with a descriptive message
+6. When the goal is FULLY achieved, output exactly: LOOP_COMPLETE
+
+${error_summary_section:+$error_summary_section
+}${holistic_feedback_section:+$holistic_feedback_section
+}${quality_gate_detail_section:+$quality_gate_detail_section
+}${rejection_notice_section:+$rejection_notice_section
+}${audit_feedback_section:+$audit_feedback_section
+}${zero_progress_notice:+$zero_progress_notice
+}${stuckness_section:+$stuckness_section
+}${alt_strategy_section:+$alt_strategy_section
+}${iteration_guidance_section:+$iteration_guidance_section
+}${pipeline_context_section}${cumulative_section}${task_section:+## Task Progress
 $task_section
 
 }## Current Progress
@@ -550,29 +588,14 @@ ${git_log}
 ${recent_commits_section}## Test Results (Previous Iteration)
 ${test_section}
 
-${error_summary_section:+$error_summary_section
-}
-${iteration_guidance_section:+$iteration_guidance_section
-}
 ${memory_section:+## Memory Context
 $memory_section
-}
-${discovery_section:+## Cross-Pipeline Learnings
+}${discovery_section:+## Cross-Pipeline Learnings
 $discovery_section
-}
-${dora_section:+$dora_section
-}
-${intelligence_section:+$intelligence_section
-}
-${restart_section:+$restart_section
-}
-## Instructions
-1. Read the codebase and understand the current state
-2. Identify the highest-priority remaining work toward the goal
-3. Implement ONE meaningful chunk of progress
-4. Run tests if a test command exists: ${TEST_CMD:-"(none)"}
-5. Commit your work with a descriptive message
-6. When the goal is FULLY achieved, output exactly: LOOP_COMPLETE
+}${dora_section:+$dora_section
+}${intelligence_section:+$intelligence_section
+}${restart_section:+$restart_section
+}${audit_section}
 
 ## Context Efficiency
 - Batch independent tool calls in parallel — avoid sequential round-trips
@@ -581,22 +604,6 @@ ${restart_section:+$restart_section
 - Filter tool results with grep/jq before reasoning over them
 - Keep working memory lean — summarize completed steps, don't preserve full outputs
 
-${audit_section}
-
-${audit_feedback_section}
-
-${holistic_feedback_section}
-
-${quality_gate_detail_section:+$quality_gate_detail_section
-}
-${rejection_notice_section}
-
-${zero_progress_notice}
-
-${stuckness_section}
-
-${alt_strategy_section:+$alt_strategy_section
-}
 ## Rules
 - Focus on ONE task per iteration — do it well
 - Always commit with descriptive messages

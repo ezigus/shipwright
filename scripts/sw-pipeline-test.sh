@@ -3439,6 +3439,132 @@ test_compose_prompt_emits_context_event() {
     fi
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 67. compose_prompt iter 2 — Instructions precedes Test Results
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_iter2_instructions_before_test_results() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-iter2-order.XXXXXX")
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file"
+
+    local output
+    output=$(
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=2
+        export TEST_PASSED=true
+        export TEST_OUTPUT="TESTS PASSED"
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt
+    ) 2>/dev/null || output=""
+
+    rm -rf "$tmp_dir"
+
+    # || true prevents set -e / pipefail from aborting the suite when grep exits 1 (no match)
+    local instr_line test_line
+    instr_line=$(echo "$output" | grep -n "^## Instructions" | head -1 | cut -d: -f1 || true)
+    test_line=$(echo "$output" | grep -n "^## Test Results" | head -1 | cut -d: -f1 || true)
+
+    if [[ -z "$instr_line" || -z "$test_line" ]]; then
+        echo "Could not find ## Instructions (line ${instr_line:-?}) or ## Test Results (line ${test_line:-?}) in iter-2 prompt"
+        return 1
+    fi
+
+    if [[ "$instr_line" -lt "$test_line" ]]; then
+        return 0
+    else
+        echo "## Instructions (line $instr_line) should appear before ## Test Results (line $test_line) in iter-2 prompt"
+        return 1
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 68. compose_prompt iter 2 cumulative progress uses merge-base (full branch)
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_iter2_cumulative_uses_merge_base() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-iter2-mergebase.XXXXXX")
+
+    # Two WIP commits on a branch from main.
+    # LOOP_START_COMMIT is set to the FIRST WIP commit (simulating a CI-job reset
+    # where only commit 2 is "in scope" for the current job). The cumulative section
+    # must show BOTH files because it uses merge-base, not LOOP_START_COMMIT.
+    local git_dir="$tmp_dir/repo"
+    mkdir -p "$git_dir"
+    git -C "$git_dir" init --quiet
+    git -C "$git_dir" config user.email "test@test.com"
+    git -C "$git_dir" config user.name "Test"
+    echo "init" > "$git_dir/init.txt"
+    git -C "$git_dir" add init.txt
+    git -C "$git_dir" commit -m "initial" --quiet
+    # Rename initial branch to 'main' so git merge-base "main" HEAD works on
+    # systems where init.defaultBranch is 'master' instead of 'main'.
+    git -C "$git_dir" branch -M main 2>/dev/null || true
+    # Branch off main so merge-base resolves to the initial commit (not HEAD)
+    git -C "$git_dir" checkout -b feature --quiet
+    # First WIP commit
+    echo "file1 content" > "$git_dir/file1.txt"
+    git -C "$git_dir" add file1.txt
+    git -C "$git_dir" commit -m "add file1" --quiet
+    local ci_job_start
+    ci_job_start=$(git -C "$git_dir" rev-parse HEAD)
+    # Sanity: if we can't determine the SHA, skip gracefully
+    [[ -z "$ci_job_start" ]] && { rm -rf "$tmp_dir"; echo "git rev-parse failed in test setup"; return 1; }
+    # Second WIP commit (what the current CI job added)
+    echo "file2 content" > "$git_dir/file2.txt"
+    git -C "$git_dir" add file2.txt
+    git -C "$git_dir" commit -m "add file2" --quiet
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file"
+
+    local output
+    output=$(
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=2
+        export LOOP_START_COMMIT="$ci_job_start"
+        export PROJECT_ROOT="$git_dir"
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt
+    ) 2>/dev/null || output=""
+
+    rm -rf "$tmp_dir"
+
+    if ! echo "$output" | grep -qF "Cumulative Progress (full branch vs"; then
+        echo "Expected 'Cumulative Progress (full branch vs ...)' heading in iter-2 prompt"
+        return 1
+    fi
+
+    if ! echo "$output" | grep -q "file1\.txt"; then
+        echo "Expected file1.txt in cumulative progress (merge-base must include commits before LOOP_START_COMMIT)"
+        return 1
+    fi
+
+    if ! echo "$output" | grep -q "file2\.txt"; then
+        echo "Expected file2.txt in cumulative progress"
+        return 1
+    fi
+
+    # Per-file stats present — must be more than one file line.
+    # grep -c exits 1 on no matches but still prints "0"; || echo 0 would produce "0\n0".
+    # Use || true and default separately to guarantee a single integer.
+    local file_line_count
+    file_line_count=$(echo "$output" | grep -A 20 "Cumulative Progress (full branch vs" | grep -c "\.txt" || true)
+    if [[ "${file_line_count:-0}" -lt 2 ]]; then
+        echo "Expected at least 2 file lines in cumulative progress, got ${file_line_count:-0}"
+        return 1
+    fi
+
+    return 0
+}
+
 main() {
     local filter="${1:-}"
 
@@ -3559,6 +3685,8 @@ main() {
         "test_compose_prompt_iter2_reference_trailer:Loop: compose_prompt iter 2 appends pipeline-artifacts reference trailer"
         "test_compose_prompt_iter1_no_reference_trailer:Loop: compose_prompt iter 1 does NOT include Reference trailer"
         "test_compose_prompt_emits_context_event:Loop: compose_prompt emits context.iteration_prompt event"
+        "test_compose_prompt_iter2_instructions_before_test_results:Loop: compose_prompt iter 2 — Instructions precedes Test Results"
+        "test_compose_prompt_iter2_cumulative_uses_merge_base:Loop: compose_prompt iter 2 cumulative progress uses merge-base (full branch vs main)"
         "test_watchdog_handler_removed:Phase4: _soft_timeout_handler function removed from sw-pipeline.sh"
         "test_watchdog_usr1_trap_removed:Phase4: trap USR1 for soft-timeout removed from sw-pipeline.sh"
         "test_watchdog_pid_var_removed:Phase4: _WATCHDOG_PID variable removed from sw-pipeline.sh"

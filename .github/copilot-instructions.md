@@ -817,7 +817,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-error-actionability-test.sh` | 149 |  |
 | `scripts/sw-lib-goal-mutation-test.sh` | 71 | issue #362 |
 | `scripts/sw-lib-helpers-test.sh` | 318 | Unit tests for shared helper functions |
-| `scripts/sw-lib-loop-convergence-test.sh` | 236 | Stuckness throttle (issue #447) |
+| `scripts/sw-lib-loop-convergence-test.sh` | 297 | Stuckness throttle (issue #447) |
 | `scripts/sw-lib-loop-restart-test.sh` | 409 | Unit tests for loop state |
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 958 | Unit tests for intelligence |

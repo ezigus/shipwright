@@ -393,6 +393,14 @@ jobs:
             > .git/hooks/commit-msg
           chmod +x .git/hooks/commit-msg
 
+      - name: Record CI job start epoch
+        run: |
+          # Per-CI-job budget anchor for check_time_budget() in loop-convergence.sh.
+          # Ephemeral — never written to .claude/pipeline-state.md. Replaces the
+          # PIPELINE_RUN_EPOCH export from commit 591c8e8, which inadvertently used
+          # a persisted field that survived across CI jobs via the WIP branch.
+          echo "CI_JOB_START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Restore persistent state
         run: |
           mkdir -p ~/.shipwright/memory

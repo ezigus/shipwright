@@ -1575,4 +1575,85 @@ fi'
 
 unset -f ruflo_available ruflo_recall_similar_outcomes ruflo_store
 
+# ─── Tests: Bug 1 — stage_build uses gh_post_progress (not gh_comment_issue) ──
+# Verify that PROGRESS_COMMENT_ID is set after stage_build starts
+# and that the banner/body say "Build Prompt" not "Agent Prompt".
+print_test_section "stage_build: gh_post_progress / Build Prompt label"
+
+# Reset PROGRESS_COMMENT_ID
+PROGRESS_COMMENT_ID=""
+export PROGRESS_COMMENT_ID
+
+# Override gh_post_progress to record call and set PROGRESS_COMMENT_ID
+_gh_post_progress_called=0
+_gh_post_progress_body=""
+gh_post_progress() {
+    _gh_post_progress_called=$((_gh_post_progress_called + 1))
+    _gh_post_progress_body="${2:-}"
+    PROGRESS_COMMENT_ID="mock-comment-99"
+    export PROGRESS_COMMENT_ID
+}
+export -f gh_post_progress
+
+# Track if old gh_comment_issue is called (it should NOT be called for the build-start banner)
+_gh_comment_issue_called=0
+gh_comment_issue() {
+    _gh_comment_issue_called=$((_gh_comment_issue_called + 1))
+}
+export -f gh_comment_issue
+
+export ISSUE_NUMBER="42"
+
+# Reset sw args log for clean run
+echo "" > "$_sw_args_log"
+
+# Restore pipeline config to sane state
+jq '.stages = [(.stages[] | if .id == "build" then .config = {max_iterations: 1} else . end)]' \
+    "$PIPELINE_CONFIG" > "$PIPELINE_CONFIG.tmp" && mv "$PIPELINE_CONFIG.tmp" "$PIPELINE_CONFIG"
+
+set +e
+stage_build 2>/dev/null
+_build_bug1_rc=$?
+set -e
+
+# Test: gh_post_progress must have been called (not zero)
+if [[ "$_gh_post_progress_called" -gt 0 ]]; then
+    assert_pass "stage_build calls gh_post_progress for build-start banner"
+else
+    assert_fail "stage_build calls gh_post_progress for build-start banner" "gh_post_progress was not called (PROGRESS_COMMENT_ID never set)"
+fi
+
+# Test: PROGRESS_COMMENT_ID must be set after stage_build posts start banner
+if [[ -n "${PROGRESS_COMMENT_ID:-}" ]]; then
+    assert_pass "stage_build sets PROGRESS_COMMENT_ID via gh_post_progress"
+else
+    assert_fail "stage_build sets PROGRESS_COMMENT_ID via gh_post_progress" "PROGRESS_COMMENT_ID is empty after stage_build"
+fi
+
+# Test: gh_comment_issue must NOT have been called for the build-start banner
+if [[ "$_gh_comment_issue_called" -eq 0 ]]; then
+    assert_pass "stage_build does not use gh_comment_issue for build-start banner"
+else
+    assert_fail "stage_build does not use gh_comment_issue for build-start banner" "gh_comment_issue was called ${_gh_comment_issue_called} time(s)"
+fi
+
+unset -f gh_post_progress gh_comment_issue 2>/dev/null || true
+PROGRESS_COMMENT_ID=""
+
+# ─── Tests: Bug 1 — loop-iteration uses "Build Prompt" label not "Agent Prompt" ─
+# Test that the body/banner strings contain "Build Prompt" instead of "Agent Prompt"
+# We check the source directly since we cannot easily run SW_LOG_PROMPTS=github
+# in a unit test without spawning the full loop subprocess.
+_li_source="$SCRIPT_DIR/lib/loop-iteration.sh"
+if [[ -f "$_li_source" ]]; then
+    if grep -q "Agent Prompt" "$_li_source" 2>/dev/null; then
+        assert_fail "loop-iteration.sh uses Build Prompt label (not Agent Prompt)" \
+            "Found 'Agent Prompt' in $_li_source — rename to 'Build Prompt'"
+    else
+        assert_pass "loop-iteration.sh uses Build Prompt label (not Agent Prompt)"
+    fi
+else
+    assert_pass "loop-iteration.sh source check skipped (file not found)"
+fi
+
 print_test_results

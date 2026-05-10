@@ -93,6 +93,29 @@ gh_update_progress() {
         -X PATCH -f body="$body" --timeout 30 2>/dev/null || true
 }
 
+# Ensure origin/<base> ref is available with enough history for merge-base.
+# Handles shallow clones (.git/shallow), missing fetch, network-less local runs.
+# Idempotent — fast path when ref already present and repo is not shallow.
+# NOTE: --unshallow is the correct primitive; --depth=1 makes things WORSE.
+_ensure_base_branch_ref() {
+    local base="${1:-${BASE_BRANCH:-main}}"
+    local git_dir
+    git_dir="$(git rev-parse --git-dir 2>/dev/null)" || return 1
+    if git rev-parse --verify --quiet "origin/${base}" >/dev/null 2>&1 \
+       && [[ ! -f "${git_dir}/shallow" ]]; then
+        return 0
+    fi
+    GIT_TERMINAL_PROMPT=0 git fetch origin "${base}" --unshallow --quiet 2>/dev/null \
+        || GIT_TERMINAL_PROMPT=0 git fetch origin "${base}" --quiet 2>/dev/null \
+        || true
+    if git rev-parse --verify --quiet "origin/${base}" >/dev/null 2>&1; then
+        type emit_event >/dev/null 2>&1 && emit_event "git.base_ref_ensured" "branch=${base}"
+        return 0
+    fi
+    type emit_event >/dev/null 2>&1 && emit_event "git.base_ref_unavailable" "branch=${base}"
+    return 1
+}
+
 # Add labels to an issue or PR
 # Usage: gh_add_labels <issue_number> <label1,label2,...>
 gh_add_labels() {

@@ -493,7 +493,7 @@ jobs:
       - name: Install Shipwright (pinned to main snapshot)
         if: steps.claim_check.outputs.skip != 'true' && env.AUTH_SKIP != 'true'
         run: |
-          git fetch --no-tags --depth=1 origin main || git fetch --no-tags origin main
+          git fetch --no-tags origin main
 
           # Materialize origin/main into a separate worktree so the global
           # `shipwright` CLI is immune to later workspace checkouts (e.g. to a

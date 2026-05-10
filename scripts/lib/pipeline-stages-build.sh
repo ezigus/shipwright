@@ -565,9 +565,15 @@ ${_build_recall_ctx}"
 
     info "Starting build loop: ${DIM}shipwright loop${RESET} (max ${max_iter} iterations, ${agents} agent(s))"
 
-    # Post build start to GitHub
+    # Post build start to GitHub — use gh_post_progress so PROGRESS_COMMENT_ID is captured
+    # for subsequent gh_update_progress calls; if a comment already exists from intake,
+    # update it instead of creating a new one.
     if [[ -n "$ISSUE_NUMBER" ]]; then
-        gh_comment_issue "$ISSUE_NUMBER" "🔨 **Build started** — \`shipwright loop\` with ${max_iter} max iterations, ${agents} agent(s), model: ${build_model}"
+        if [[ -n "${PROGRESS_COMMENT_ID:-}" ]]; then
+            gh_update_progress "🔨 **Build started** — \`shipwright loop\` with ${max_iter} max iterations, ${agents} agent(s), model: ${build_model}"
+        else
+            gh_post_progress "$ISSUE_NUMBER" "🔨 **Build started** — \`shipwright loop\` with ${max_iter} max iterations, ${agents} agent(s), model: ${build_model}"
+        fi
     fi
 
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-build.log"

@@ -1527,6 +1527,7 @@ stage_compound_quality() {
 
     # 2. Test coverage check
     local coverage_pct=0
+    info "Running test coverage check..."
     coverage_pct=$(run_test_coverage_check 2>/dev/null | tr -d '[:space:][:cntrl:]') || coverage_pct=0
     coverage_pct="${coverage_pct:-0}"
     # Sanitize: strip anything non-numeric (ANSI codes, whitespace, etc.)

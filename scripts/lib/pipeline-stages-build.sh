@@ -408,12 +408,11 @@ ${_build_recall_ctx}"
     # Post branch starting state as a standalone GitHub comment so it's always visible
     # on each stage_build() entry (including compound_quality re-entries). The context
     # file is consumed by the loop every iteration, but never surfaces on the issue.
+    # Reuse _branch_progress already computed above (line ~254) — no second git call.
     if [[ -n "${ISSUE_NUMBER:-}" ]] && type gh_comment_issue >/dev/null 2>&1; then
-        local _bsp
-        _bsp="$(_build_branch_progress 2>/dev/null || true)"
-        if [[ -n "$_bsp" ]] && [[ "$_bsp" != *"No changes committed"* ]]; then
+        if [[ -n "${_branch_progress:-}" ]] && [[ "$_branch_progress" != *"No changes committed"* ]]; then
             gh_comment_issue "$ISSUE_NUMBER" \
-                "$(printf '### Branch Starting State\n\n```\n%s\n```' "$_bsp")"
+                "$(printf '### Branch Starting State\n\n```\n%s\n```' "$_branch_progress")"
         fi
     fi
 

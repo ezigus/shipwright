@@ -60,20 +60,23 @@ print_test_section "build prompt GitHub posting"
 # The block runs from the `github|both)` line to the closing `;;` after `fi`.
 # We locate it by anchoring on the body= assignment and checking the subsequent if.
 if [[ -f "$_li_source" ]]; then
-    # Extract lines 769-777 (the if/elif block that chooses the posting function).
-    _block=$(awk 'NR>=769 && NR<=777' "$_li_source" 2>/dev/null || true)
+    # Extract the github|both case arm by pattern (not line numbers) so the test
+    # tracks behavior rather than file position and survives unrelated edits.
+    # The arm starts at `github|both)` and ends at the first `;;` on its own line.
+    _block=$(awk '/github\|both\)/{found=1} found{print} found && /^[[:space:]]*;;/{exit}' \
+        "$_li_source" 2>/dev/null || true)
     _gu_in_block=$(echo "$_block" | grep -c "gh_update_progress" 2>/dev/null || true)
     _gu_in_block="${_gu_in_block:-0}"
     if [[ "$_gu_in_block" -gt 0 ]]; then
         assert_fail \
             "SW_LOG_PROMPTS=github: gh_comment_issue called, gh_update_progress NOT called" \
-            "gh_update_progress still appears in the github|both posting block (lines 769-777). Fix must replace it with gh_comment_issue + gh_post_progress fallback. Count: $_gu_in_block"
+            "gh_update_progress still appears in the github|both posting block. Count: $_gu_in_block"
     else
         assert_pass \
             "SW_LOG_PROMPTS=github: gh_comment_issue called, gh_update_progress NOT called"
     fi
 
-    # Additionally verify that gh_comment_issue IS present in that block after the fix.
+    # Additionally verify that gh_comment_issue IS present in that block.
     _gc_in_block=$(echo "$_block" | grep -c "gh_comment_issue" 2>/dev/null || true)
     _gc_in_block="${_gc_in_block:-0}"
     if [[ "$_gc_in_block" -gt 0 ]]; then
@@ -82,7 +85,7 @@ if [[ -f "$_li_source" ]]; then
     else
         assert_fail \
             "SW_LOG_PROMPTS=github: gh_comment_issue present in posting block after fix" \
-            "gh_comment_issue not found in lines 769-777 of loop-iteration.sh — implementation not added yet (TDD red)"
+            "gh_comment_issue not found in github|both arm of loop-iteration.sh"
     fi
 else
     assert_pass "loop-iteration.sh source check skipped (file not found)"
@@ -93,8 +96,8 @@ fi
 # Find the stdout) case arm and assert neither gh_comment_issue nor
 # gh_update_progress appears inside it.
 if [[ -f "$_li_source" ]]; then
-    # Extract the stdout case arm: from `stdout)` to the next `;;` line.
-    _stdout_block=$(awk '/^\s+stdout\)/{found=1} found{print} found && /;;/{exit}' \
+    # Extract the stdout case arm using POSIX character class (not \s which is non-POSIX).
+    _stdout_block=$(awk '/^[[:space:]]+stdout\)/{found=1} found{print} found && /;;/{exit}' \
         "$_li_source" 2>/dev/null || true)
     if [[ -z "$_stdout_block" ]]; then
         # No explicit stdout arm — that is acceptable; assert pass.

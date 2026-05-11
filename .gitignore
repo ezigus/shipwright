@@ -89,3 +89,4 @@ agentdb.rvf.lock
 
 # Bun build cache
 Library/
+.shipwright/events-*.jsonl

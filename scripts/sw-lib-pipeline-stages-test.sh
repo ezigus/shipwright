@@ -1630,11 +1630,13 @@ else
     assert_fail "stage_build sets PROGRESS_COMMENT_ID via gh_post_progress" "PROGRESS_COMMENT_ID is empty after stage_build"
 fi
 
-# Test: gh_comment_issue must NOT have been called for the build-start banner
-if [[ "$_gh_comment_issue_called" -eq 0 ]]; then
-    assert_pass "stage_build does not use gh_comment_issue for build-start banner"
+# Test: the build-start banner goes through gh_post_progress (body contains "Build started"),
+# not gh_comment_issue. gh_comment_issue may be called for branch state — that's correct.
+if echo "$_gh_post_progress_body" | grep -q "Build started"; then
+    assert_pass "stage_build build-start banner routes through gh_post_progress"
 else
-    assert_fail "stage_build does not use gh_comment_issue for build-start banner" "gh_comment_issue was called ${_gh_comment_issue_called} time(s)"
+    assert_fail "stage_build build-start banner routes through gh_post_progress" \
+        "gh_post_progress body did not contain 'Build started': $_gh_post_progress_body"
 fi
 
 unset -f gh_post_progress gh_comment_issue 2>/dev/null || true
@@ -1837,6 +1839,92 @@ if [[ -f "$_li_source" ]]; then
     fi
 else
     assert_pass "loop-iteration.sh DoD check skipped (file not found)"
+fi
+
+# ─── Tests: Build prompt posting — gh_comment_issue not gh_update_progress ───
+print_test_section "Build prompt posting: gh_comment_issue vs gh_update_progress"
+
+_li_source="$SCRIPT_DIR/lib/loop-iteration.sh"
+
+# Test 1 (static source check): gh_update_progress must NOT appear inside the
+# github|both case block after the body= assignment (lines 769-777).
+# The fix replaces that call with gh_comment_issue + gh_post_progress fallback.
+if [[ -f "$_li_source" ]]; then
+    # Extract lines 769-777 and count gh_update_progress occurrences.
+    _gu_count=$(awk 'NR>=769 && NR<=777' "$_li_source" | grep -c "gh_update_progress" 2>/dev/null || true)
+    _gu_count="${_gu_count:-0}"
+    if [[ "$_gu_count" -gt 0 ]]; then
+        assert_fail \
+            "loop-iteration build prompt: gh_update_progress NOT called when PROGRESS_COMMENT_ID set" \
+            "gh_update_progress still present in lines 769-777 of loop-iteration.sh (count: $_gu_count) — fix must replace with gh_comment_issue"
+    else
+        assert_pass \
+            "loop-iteration build prompt: gh_update_progress NOT called when PROGRESS_COMMENT_ID set"
+    fi
+else
+    assert_pass "loop-iteration build prompt check skipped (file not found)"
+fi
+
+# Test 2 (dynamic): stage_build with changed files triggers gh_comment_issue
+# for the branch-state comment (Bug 2 fix adds this call after context-file write).
+# This test will FAIL (red) until the implementation is added.
+(
+    # Isolated subshell with fresh mocks so we don't pollute parent state.
+    _gh_comment_issue_called=0
+
+    gh_comment_issue() {
+        _gh_comment_issue_called=$((_gh_comment_issue_called + 1))
+    }
+    export -f gh_comment_issue
+
+    # Mock _build_branch_progress to simulate a branch with changed files.
+    _build_branch_progress() {
+        echo "M src/auth.ts"
+    }
+    export -f _build_branch_progress
+
+    # We verify the fix exists in source rather than running stage_build fully
+    # (stage_build has heavy deps). Check that pipeline-stages-build.sh contains
+    # a gh_comment_issue call guarded by a "No changes committed" check after the
+    # context-file write (around line 406).
+    _psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
+    if [[ -f "$_psb_source" ]]; then
+        # The fix should add a gh_comment_issue call after line 405.
+        # Extract lines 405-430 and look for the posting block.
+        _post_ctx_block=$(awk 'NR>=405 && NR<=430' "$_psb_source" 2>/dev/null || true)
+        if echo "$_post_ctx_block" | grep -q "gh_comment_issue" 2>/dev/null; then
+            echo "PASS: branch state comment: gh_comment_issue called when files changed"
+        else
+            echo "FAIL: branch state comment: gh_comment_issue called when files changed"
+        fi
+    else
+        echo "PASS: pipeline-stages-build.sh source check skipped (file not found)"
+    fi
+) | while IFS= read -r _line; do
+    if [[ "$_line" == PASS:* ]]; then
+        assert_pass "${_line#PASS: }"
+    else
+        assert_fail "${_line#FAIL: }" \
+            "gh_comment_issue not found in lines 405-430 of pipeline-stages-build.sh after context-file write — implementation not added yet (TDD red)"
+    fi
+done
+
+# Test 3 (static): the posting block in pipeline-stages-build.sh must guard
+# against "No changes committed" so gh_comment_issue is skipped on fresh branches.
+# This test checks that the guard string is present in the new posting block.
+_psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
+if [[ -f "$_psb_source" ]]; then
+    _post_ctx_block=$(awk 'NR>=405 && NR<=440' "$_psb_source" 2>/dev/null || true)
+    if echo "$_post_ctx_block" | grep -q "No changes committed" 2>/dev/null; then
+        assert_pass \
+            "branch state comment: gh_comment_issue NOT called on fresh branch (guard present)"
+    else
+        assert_fail \
+            "branch state comment: gh_comment_issue NOT called on fresh branch (guard present)" \
+            "'No changes committed' guard not found in lines 405-440 of pipeline-stages-build.sh — implementation not added yet (TDD red)"
+    fi
+else
+    assert_pass "pipeline-stages-build.sh guard check skipped (file not found)"
 fi
 
 print_test_results

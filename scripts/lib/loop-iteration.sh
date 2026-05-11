@@ -767,9 +767,9 @@ ${truncated}
 \`\`\`
 
 </details>"
-                if [[ -n "${PROGRESS_COMMENT_ID:-}" ]] && type gh_update_progress >/dev/null 2>&1; then
-                    gh_update_progress "$body"
-                elif type gh_post_progress >/dev/null 2>&1; then
+                if [[ -n "${ISSUE_NUMBER:-}" ]] && type gh_comment_issue >/dev/null 2>&1; then
+                    gh_comment_issue "$ISSUE_NUMBER" "$body"
+                elif type gh_post_progress >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
                     gh_post_progress "$ISSUE_NUMBER" "$body"
                 fi
             fi

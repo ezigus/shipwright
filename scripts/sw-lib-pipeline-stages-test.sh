@@ -1941,4 +1941,180 @@ else
     assert_pass "pipeline-stages-build.sh guard check skipped (file not found)"
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Fix 2: Issue-outcome stored even when commit_count == 0
+# Source: scripts/lib/pipeline-stages-build.sh
+# The store block (anchored: "Store build outcome in issue namespace" →
+# "log_stage.*build.*Build loop") must run unconditionally (no outer
+# commit_count guard) and branch on _build_status for the two cases.
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "build outcome store: runs unconditionally (no commit_count guard)"
+
+_psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
+
+# Test A (static): outer guard absent; _build_status, _build_key, and
+# "no-commits" all present inside the store block.
+if [[ -f "$_psb_source" ]]; then
+    _store_block=$(awk \
+        '/Store build outcome in issue namespace/{found=1} found{print} found && /log_stage[[:space:]].*build[[:space:]].*Build loop/{exit}' \
+        "$_psb_source" 2>/dev/null || true)
+
+    # The outer compound guard must be gone — the opening 'if' line must NOT combine
+    # type-check and commit_count on one line (old: if type X && [[ commit_count -gt 0 ]]).
+    if echo "$_store_block" | grep -q 'type ruflo_store_issue_outcome.*commit_count' 2>/dev/null; then
+        assert_fail \
+            "build outcome store: outer commit_count > 0 guard is absent (block runs unconditionally)" \
+            "Found combined type+commit_count guard — outer guard must be split (commit_count moved inside)"
+    else
+        assert_pass \
+            "build outcome store: outer commit_count > 0 guard is absent (block runs unconditionally)"
+    fi
+
+    # _build_status variable must be set inside the block.
+    if echo "$_store_block" | grep -q '_build_status' 2>/dev/null; then
+        assert_pass "build outcome store: _build_status variable is present in store block"
+    else
+        assert_fail "build outcome store: _build_status variable is present in store block" \
+            "_build_status not found in the store block"
+    fi
+
+    # _build_key variable must be set inside the block.
+    if echo "$_store_block" | grep -q '_build_key' 2>/dev/null; then
+        assert_pass "build outcome store: _build_key variable is present in store block"
+    else
+        assert_fail "build outcome store: _build_key variable is present in store block" \
+            "_build_key not found in the store block"
+    fi
+
+    # The literal string "no-commits" must appear to handle the zero-commit path.
+    if echo "$_store_block" | grep -q 'no-commits' 2>/dev/null; then
+        assert_pass "build outcome store: 'no-commits' status appears in store block"
+    else
+        assert_fail "build outcome store: 'no-commits' status appears in store block" \
+            "'no-commits' not found in the store block — zero-commit path not handled"
+    fi
+else
+    assert_pass "build outcome store static checks skipped (file not found)"
+    assert_pass "build outcome store: _build_status variable is present in store block (skipped)"
+    assert_pass "build outcome store: _build_key variable is present in store block (skipped)"
+    assert_pass "build outcome store: 'no-commits' status appears in store block (skipped)"
+fi
+
+# Test B (runtime eval): commit_count=0 — ruflo_store_issue_outcome must be
+# called once and the stored body must contain "no-commits".
+(
+    _store_call_count=0
+    _store_last_body=""
+    ruflo_store_issue_outcome() {
+        _store_call_count=$((_store_call_count + 1))
+        _store_last_body="${2:-}"
+    }
+    type() { return 0; }
+
+    commit_count=0
+    ISSUE_NUMBER=99
+    SHIPWRIGHT_PIPELINE_ID=test-pipe
+    GOAL="test goal"
+    TASK_TYPE="feature"
+    OUTER_STAGE=""
+    OUTER_STAGE_START_COMMIT=""
+
+    # Provide stubs for git and jq used inside the block.
+    git() { echo "HEAD~1"; }
+    jq() {
+        # Emit a minimal JSON body that includes the status word.
+        echo '{"stage":"build","status":"no-commits"}'
+    }
+    date() { echo "1700000000"; }
+
+    _psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
+    _block=$(awk \
+        '/Store build outcome in issue namespace/{found=1} found{print} found && /log_stage[[:space:]].*build[[:space:]].*Build loop/{exit}' \
+        "$_psb_source" 2>/dev/null || true)
+
+    if [[ -n "$_block" ]]; then
+        # Wrap in a function so 'local' declarations inside the eval block are valid bash.
+        _run_store_block() { eval "$_block"; }
+        _run_store_block 2>/dev/null || true
+    fi
+
+    if [[ "$_store_call_count" -eq 1 ]]; then
+        echo "PASS: build outcome store (commit_count=0): ruflo_store_issue_outcome called exactly once"
+    else
+        echo "FAIL: build outcome store (commit_count=0): ruflo_store_issue_outcome called exactly once|called $_store_call_count times"
+    fi
+
+    if echo "$_store_last_body" | grep -q 'no-commits' 2>/dev/null; then
+        echo "PASS: build outcome store (commit_count=0): stored body contains 'no-commits'"
+    else
+        echo "FAIL: build outcome store (commit_count=0): stored body contains 'no-commits'|body was: $_store_last_body"
+    fi
+) | while IFS='|' read -r _result _detail; do
+    if [[ "$_result" == PASS:* ]]; then
+        assert_pass "${_result#PASS: }"
+    else
+        assert_fail "${_result#FAIL: }" "${_detail:-}"
+    fi
+done
+
+# Test C (runtime eval): commit_count=1 — ruflo_store_issue_outcome must be
+# called once and the stored body must contain "success", NOT "no-commits".
+(
+    _store_call_count=0
+    _store_last_body=""
+    ruflo_store_issue_outcome() {
+        _store_call_count=$((_store_call_count + 1))
+        _store_last_body="${2:-}"
+    }
+    type() { return 0; }
+
+    commit_count=1
+    ISSUE_NUMBER=99
+    SHIPWRIGHT_PIPELINE_ID=test-pipe
+    GOAL="test goal"
+    TASK_TYPE="feature"
+    OUTER_STAGE=""
+    OUTER_STAGE_START_COMMIT=""
+
+    git() { echo "HEAD~1"; }
+    jq() {
+        echo '{"stage":"build","status":"success"}'
+    }
+    date() { echo "1700000001"; }
+
+    _psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
+    _block=$(awk \
+        '/Store build outcome in issue namespace/{found=1} found{print} found && /log_stage[[:space:]].*build[[:space:]].*Build loop/{exit}' \
+        "$_psb_source" 2>/dev/null || true)
+
+    if [[ -n "$_block" ]]; then
+        _run_store_block() { eval "$_block"; }
+        _run_store_block 2>/dev/null || true
+    fi
+
+    if [[ "$_store_call_count" -eq 1 ]]; then
+        echo "PASS: build outcome store (commit_count=1): ruflo_store_issue_outcome called exactly once"
+    else
+        echo "FAIL: build outcome store (commit_count=1): ruflo_store_issue_outcome called exactly once|called $_store_call_count times"
+    fi
+
+    if echo "$_store_last_body" | grep -q 'success' 2>/dev/null; then
+        echo "PASS: build outcome store (commit_count=1): stored body contains 'success'"
+    else
+        echo "FAIL: build outcome store (commit_count=1): stored body contains 'success'|body was: $_store_last_body"
+    fi
+
+    if echo "$_store_last_body" | grep -q 'no-commits' 2>/dev/null; then
+        echo "FAIL: build outcome store (commit_count=1): stored body does NOT contain 'no-commits'|body incorrectly contains 'no-commits'"
+    else
+        echo "PASS: build outcome store (commit_count=1): stored body does NOT contain 'no-commits'"
+    fi
+) | while IFS='|' read -r _result _detail; do
+    if [[ "$_result" == PASS:* ]]; then
+        assert_pass "${_result#PASS: }"
+    else
+        assert_fail "${_result#FAIL: }" "${_detail:-}"
+    fi
+done
+
 print_test_results

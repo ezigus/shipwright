@@ -622,7 +622,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-decompose.sh` | 529 | Intelligent Issue Decomposition |
 | `scripts/sw-deps.sh` | 533 | Automated Dependency Update Management |
 | `scripts/sw-developer-simulation.sh` | 249 | Multi-Persona Developer Simulation |
-| `scripts/sw-discovery.sh` | 615 | Cross-Pipeline Real-Time Learning |
+| `scripts/sw-discovery.sh` | 726 | Cross-Pipeline Real-Time Learning |
 | `scripts/sw-doc-fleet.sh` | 825 | Documentation Fleet Orchestrator |
 | `scripts/sw-docs-agent.sh` | 525 | Auto-sync README, wiki, API docs |
 | `scripts/sw-docs.sh` | 626 | Documentation Keeper |
@@ -658,7 +658,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 445 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 444 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1086 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 3949 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 3957 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 749 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 698 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 857 | Predictive & Proactive Intelligence |
@@ -769,7 +769,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-decompose-test.sh` | 142 | Intelligent Issue Decomposition tests |
 | `scripts/sw-deps-test.sh` | 165 | Automated Dependency Update Management tests |
 | `scripts/sw-developer-simulation-test.sh` | 262 | Validate multi-persona |
-| `scripts/sw-discovery-test.sh` | 173 | Cross-Pipeline Real-Time Learning tests |
+| `scripts/sw-discovery-test.sh` | 210 | Cross-Pipeline Real-Time Learning tests |
 | `scripts/sw-doc-fleet-test.sh` | 344 | Validate documentation fleet operations |
 | `scripts/sw-docs-agent-test.sh` | 182 | Validate documentation agent operations |
 | `scripts/sw-docs-test.sh` | 781 | Validate documentation keeper, AUTO sections, |
@@ -824,7 +824,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 1084 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 616 | Unit tests for quality |
 | `scripts/sw-lib-pipeline-stages-review-test.sh` | 589 | Unit tests for cross-stage drift detector |
-| `scripts/sw-lib-pipeline-stages-test.sh` | 1659 | Unit tests for stage functions |
+| `scripts/sw-lib-pipeline-stages-test.sh` | 1842 | Unit tests for stage functions |
 | `scripts/sw-lib-pipeline-state-test.sh` | 1163 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 281 | Validate agent pane log viewing, searching, |
@@ -861,7 +861,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-resume-test.sh` | 267 | TDD tests for WIP branch resume logic |
 | `scripts/sw-retro-test.sh` | 171 | Sprint retrospective engine tests |
 | `scripts/sw-review-rerun-test.sh` | 307 | SHA-deduped rerun comment writer |
-| `scripts/sw-ruflo-adapter-test.sh` | 5082 |  |
+| `scripts/sw-ruflo-adapter-test.sh` | 5165 |  |
 | `scripts/sw-ruflo-benchmark-test.sh` | 269 | Validation tests for the #504 acceptance |
 | `scripts/sw-ruflo-bridge-test.sh` | 293 | Mock-driven tests for the ruflo unix socket |
 | `scripts/sw-ruflo-timeout-test.sh` | 282 | regression tests for ruflo_with_timeout FD hang (#426) |

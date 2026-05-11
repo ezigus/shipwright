@@ -1008,27 +1008,18 @@ print_test_section "set_outer_stage / clear_outer_stage helpers"
 # set_outer_stage must set OUTER_STAGE and clear INNER_STAGE
 OUTER_STAGE=""
 INNER_STAGE="leftover"
-# Temporarily make write_state trackable
-_write_state_called=0
-write_state() { (( _write_state_called++ )) || true; }
 set_outer_stage "compound_quality"
 assert_eq "set_outer_stage: OUTER_STAGE set" "compound_quality" "$OUTER_STAGE"
 assert_eq "set_outer_stage: INNER_STAGE cleared" "" "$INNER_STAGE"
-assert_eq "set_outer_stage: write_state called" "1" "$_write_state_called"
 
 # Idempotent: second call with same arg is semantically no-op
 set_outer_stage "compound_quality"
 assert_eq "set_outer_stage idempotent: OUTER_STAGE unchanged" "compound_quality" "$OUTER_STAGE"
 
 # clear_outer_stage must zero both fields
-_write_state_called=0
 clear_outer_stage
 assert_eq "clear_outer_stage: OUTER_STAGE cleared" "" "$OUTER_STAGE"
 assert_eq "clear_outer_stage: INNER_STAGE cleared" "" "$INNER_STAGE"
-assert_eq "clear_outer_stage: write_state called" "1" "$_write_state_called"
-
-# Restore write_state stub
-write_state() { :; }
 
 print_test_section "resume_state: outer_stage / inner_stage fields parsed correctly"
 

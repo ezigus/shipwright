@@ -10293,3 +10293,11 @@
 {"ts":"2026-05-11T12:52:45Z","ts_epoch":1778503965,"type":"pipeline.lock_acquired","repo":"test-org/test-repo","pid":52036,"issue_or_goal":100}
 {"ts":"2026-05-11T12:52:45Z","ts_epoch":1778503965,"type":"reasoning.trace","repo":"test-org/test-repo","job_id":"baf0ecb2c9a4-pipeline-52036-100","complexity":"medium","risk":50,"template":"standard"}
 {"ts":"2026-05-11T12:52:45Z","ts_epoch":1778503965,"type":"pipeline.lock_released","repo":"test-org/test-repo","pid":52036}
+{"ts":"2026-05-11T12:53:10Z","ts_epoch":1778503990,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-11T12:53:12Z","ts_epoch":1778503992,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-11T12:53:14Z","ts_epoch":1778503994,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-11T12:53:17Z","ts_epoch":1778503997,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-11T12:53:19Z","ts_epoch":1778503999,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-11T12:53:21Z","ts_epoch":1778504001,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-11T12:53:40Z","ts_epoch":1778504020,"type":"cost.baseline_updated","repo":"ezigus/shipwright","stages":2,"issue":504}
+{"ts":"2026-05-11T12:54:37Z","ts_epoch":1778504077,"type":"optimize.memory_pruned","repo":"e3b0c44298fc","pruned":0,"strengthened":0,"promoted":0}

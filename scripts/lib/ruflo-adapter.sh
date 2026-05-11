@@ -580,6 +580,10 @@ ruflo_store() {
             _ruflo_store_cli "$key" "$value" "$namespace" "$tags"
             return 0
         fi
+        # MCP-only mode: skip silently instead of falling back to CLI
+        if [[ "${SHIPWRIGHT_RUFLO_MCP_ONLY:-0}" == "1" ]]; then
+            return 0
+        fi
         warn "SW_RUFLO_BACKEND=mcp requested but bridge unavailable — using CLI fallback"
         emit_event "ruflo.mcp_store_fallback" \
             "namespace=$namespace" "reason=bridge_unavailable"
@@ -643,6 +647,11 @@ ruflo_recall() {
             emit_event "ruflo.mcp_recall_fallback" \
                 "namespace=$namespace" "reason=${_err_text:-bridge_error}"
             _ruflo_recall_cli "$query" "$namespace"
+            return 0
+        fi
+        # MCP-only mode: skip silently instead of falling back to CLI
+        if [[ "${SHIPWRIGHT_RUFLO_MCP_ONLY:-0}" == "1" ]]; then
+            echo ""
             return 0
         fi
         warn "SW_RUFLO_BACKEND=mcp requested but bridge unavailable — using CLI fallback"

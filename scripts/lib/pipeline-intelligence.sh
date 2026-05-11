@@ -1319,6 +1319,8 @@ compound_rebuild_with_feedback() {
     fi
 
     set_outer_stage "compound_quality"
+    OUTER_STAGE_START_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+    write_state 2>/dev/null || true
     log_stage "compound_quality" "rebuild cycle ${cycle_num} starting"
     # Note: format deliberately avoids the 'complete (' pattern so it is not treated as a stage completion signal.
 
@@ -1336,6 +1338,7 @@ compound_rebuild_with_feedback() {
         fi
         GOAL="$original_goal"
         CURRENT_STAGE="$_saved_current_stage"
+        OUTER_STAGE_START_COMMIT=""
         clear_outer_stage
         log_stage "compound_quality" "rebuild cycle '"${cycle_num}"' finished"
         trap - RETURN

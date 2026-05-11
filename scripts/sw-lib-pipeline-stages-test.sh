@@ -1656,4 +1656,151 @@ else
     assert_pass "loop-iteration.sh source check skipped (file not found)"
 fi
 
+# ─── Tests: _build_branch_progress ───────────────────────────────────────────
+print_test_section "_build_branch_progress"
+
+# Source build stages lib if not already loaded
+_PIPELINE_STAGES_BUILD_LOADED=""
+source "$SCRIPT_DIR/lib/pipeline-stages-build.sh" 2>/dev/null || true
+
+# Test 1: no commits ahead of base → "No changes committed" message
+(
+    cd "$PROJECT_ROOT"
+    # Use a fresh branch with no commits ahead of main
+    git checkout -q -b test-branch-progress-empty 2>/dev/null || true
+    unset OUTER_STAGE OUTER_STAGE_START_COMMIT
+    out=$(_build_branch_progress 2>/dev/null || true)
+    if [[ "$out" == *"No changes committed"* ]]; then
+        echo "PASS: _build_branch_progress shows 'No changes committed' on first pass"
+    else
+        echo "FAIL: _build_branch_progress first-pass output: $out"
+    fi
+    git checkout -q main 2>/dev/null || true
+    git branch -D test-branch-progress-empty 2>/dev/null || true
+) | while IFS= read -r _line; do
+    if [[ "$_line" == PASS:* ]]; then
+        assert_pass "${_line#PASS: }"
+    else
+        assert_fail "${_line#FAIL: }" ""
+    fi
+done
+
+# Test 2: commits exist on branch → shows file list
+(
+    cd "$PROJECT_ROOT"
+    git checkout -q -b test-branch-progress-files 2>/dev/null || true
+    touch src/new-feature.js
+    git add src/new-feature.js 2>/dev/null || true
+    git commit -q -m "feat: add new feature" 2>/dev/null || true
+    unset OUTER_STAGE OUTER_STAGE_START_COMMIT
+    out=$(_build_branch_progress 2>/dev/null || true)
+    if [[ "$out" == *"Branch starting state"* || "$out" == *"new-feature.js"* ]]; then
+        echo "PASS: _build_branch_progress shows file list when commits exist"
+    else
+        echo "FAIL: _build_branch_progress commits output: $out"
+    fi
+    git checkout -q main 2>/dev/null || true
+    git branch -D test-branch-progress-files 2>/dev/null || true
+) | while IFS= read -r _line; do
+    if [[ "$_line" == PASS:* ]]; then
+        assert_pass "${_line#PASS: }"
+    else
+        assert_fail "${_line#FAIL: }" ""
+    fi
+done
+
+# ─── Tests: OUTER_STAGE_START_COMMIT round-trip via write_state/resume_state ──
+print_test_section "OUTER_STAGE_START_COMMIT state round-trip"
+
+# Restore write_state so it actually writes
+_original_state_file="$STATE_FILE"
+_roundtrip_state="$TEST_TEMP_DIR/roundtrip-state.md"
+
+# Set up a minimal state and write it
+export STATE_FILE="$_roundtrip_state"
+export OUTER_STAGE="compound_quality"
+export OUTER_STAGE_START_COMMIT="abc123def456"
+export PIPELINE_STATUS="running"
+export CURRENT_STAGE="build"
+export PIPELINE_NAME="test-pipeline"
+export GOAL="Round-trip test"
+export ORIGINAL_GOAL="Round-trip test"
+export STARTED_AT="2024-01-01T00:00:00Z"
+export STAGE_STATUSES=""
+export STAGE_TIMINGS=""
+export LOG_ENTRIES=""
+export PR_NUMBER=""
+export PROGRESS_COMMENT_ID=""
+export GIT_BRANCH="test-branch"
+export GITHUB_ISSUE="#42"
+export TEST_CMD=""
+export PIPELINE_RUN_EPOCH="0"
+
+# Temporarily restore real write_state from the sourced pipeline-state.sh
+unset -f write_state 2>/dev/null || true
+source "$SCRIPT_DIR/lib/pipeline-state.sh" 2>/dev/null || true
+
+set +e
+write_state 2>/dev/null
+_ws_rc=$?
+set -e
+
+if [[ $_ws_rc -eq 0 && -f "$_roundtrip_state" ]]; then
+    assert_pass "write_state succeeded with OUTER_STAGE_START_COMMIT"
+    # Verify the field was written
+    if grep -q "outer_stage_start_commit: abc123def456" "$_roundtrip_state" 2>/dev/null; then
+        assert_pass "OUTER_STAGE_START_COMMIT written to state file"
+    else
+        assert_fail "OUTER_STAGE_START_COMMIT written to state file" \
+            "$(grep 'outer_stage_start_commit' "$_roundtrip_state" 2>/dev/null || echo '<not found>')"
+    fi
+
+    # Now resume and verify round-trip
+    OUTER_STAGE_START_COMMIT=""
+    OUTER_STAGE=""
+    set +e
+    resume_state 2>/dev/null
+    _rs_rc=$?
+    set -e
+    if [[ "$OUTER_STAGE_START_COMMIT" == "abc123def456" ]]; then
+        assert_pass "OUTER_STAGE_START_COMMIT round-trips through resume_state"
+    else
+        assert_fail "OUTER_STAGE_START_COMMIT round-trips through resume_state" \
+            "got: '${OUTER_STAGE_START_COMMIT:-<empty>}'"
+    fi
+else
+    assert_fail "write_state succeeded with OUTER_STAGE_START_COMMIT" "rc=$_ws_rc"
+fi
+
+# Restore write_state stub and STATE_FILE
+export STATE_FILE="$_original_state_file"
+write_state() { :; }
+
+# ─── Tests: DoD section appears in loop prompt when DOD_FILE is set ──────────
+print_test_section "loop-iteration DoD injection"
+
+_li_source="$SCRIPT_DIR/lib/loop-iteration.sh"
+if [[ -f "$_li_source" ]]; then
+    if grep -q "DOD_FILE" "$_li_source" 2>/dev/null; then
+        assert_pass "loop-iteration.sh references DOD_FILE for DoD injection"
+    else
+        assert_fail "loop-iteration.sh references DOD_FILE for DoD injection" \
+            "DOD_FILE not found in $_li_source"
+    fi
+    if grep -q "Definition of Done" "$_li_source" 2>/dev/null; then
+        assert_pass "loop-iteration.sh contains 'Definition of Done' DoD header"
+    else
+        assert_fail "loop-iteration.sh contains 'Definition of Done' DoD header" \
+            "Header text not found in $_li_source"
+    fi
+    if grep -q "dod_section" "$_li_source" 2>/dev/null; then
+        assert_pass "loop-iteration.sh assembles dod_section variable"
+    else
+        assert_fail "loop-iteration.sh assembles dod_section variable" \
+            "dod_section variable not found in $_li_source"
+    fi
+else
+    assert_pass "loop-iteration.sh DoD check skipped (file not found)"
+fi
+
 print_test_results

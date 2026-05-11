@@ -32,6 +32,7 @@ PIPELINE_STATUS="${PIPELINE_STATUS:-pending}"
 # artifacts from prior runs.  0 = unset / unknown (freshness checks pass through).
 PIPELINE_RUN_EPOCH="${PIPELINE_RUN_EPOCH:-0}"
 OUTER_STAGE="${OUTER_STAGE:-}"   # set when inside a nested execution context (e.g. compound rebuild)
+OUTER_STAGE_START_COMMIT="${OUTER_STAGE_START_COMMIT:-}"  # HEAD at compound_quality entry (for diff-base accuracy)
 INNER_STAGE="${INNER_STAGE:-}"   # the nested stage being executed (build/test/review)
 
 save_artifact() {
@@ -726,6 +727,7 @@ write_state() {
         printf 'template: "%s"\n' "${TASK_TYPE:+$(template_for_type "$TASK_TYPE")}"
         printf 'current_stage: %s\n' "$CURRENT_STAGE"
         printf 'outer_stage: %s\n' "${OUTER_STAGE:-}"
+        printf 'outer_stage_start_commit: %s\n' "${OUTER_STAGE_START_COMMIT:-}"
         printf 'inner_stage: %s\n' "${INNER_STAGE:-}"
         printf 'current_stage_description: "%s"\n' "${cur_stage_desc}"
         printf 'stage_progress: "%s"\n' "${stage_progress}"
@@ -769,6 +771,7 @@ resume_state() {
     # don't inherit stale values from the environment, which would incorrectly trigger
     # the outer-stage resume handling in sw-pipeline.sh.
     OUTER_STAGE=""
+    OUTER_STAGE_START_COMMIT=""
     INNER_STAGE=""
 
     local in_frontmatter=false
@@ -798,6 +801,7 @@ resume_state() {
                 branch:*)              GIT_BRANCH="$(echo "${line#branch:}" | sed 's/^ *"//;s/" *$//')" ;;
                 current_stage:*)       CURRENT_STAGE="$(_trim "${line#current_stage:}")" ;;
                 outer_stage:*)         OUTER_STAGE="$(_trim "${line#outer_stage:}")" ;;
+                outer_stage_start_commit:*)  OUTER_STAGE_START_COMMIT="$(_trim "${line#outer_stage_start_commit:}")" ;;
                 inner_stage:*)         INNER_STAGE="$(_trim "${line#inner_stage:}")" ;;
                 current_stage_description:*) ;; # computed field — skip on resume
                 stage_progress:*)      ;; # computed field — skip on resume

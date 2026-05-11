@@ -1267,6 +1267,7 @@ _write_quality_feedback() {
 }
 
 compound_rebuild_with_feedback() {
+    local cycle_num="${1:-?}"
     local feedback_file="$ARTIFACTS_DIR/quality-feedback.md"
 
     # ── Intelligence: classify findings and determine routing ──
@@ -1317,16 +1318,28 @@ compound_rebuild_with_feedback() {
         return 1
     fi
 
-    # Reset build/test stages
-    set_stage_status "build" "pending"
-    set_stage_status "test" "pending"
-    set_stage_status "review" "pending"
+    set_outer_stage "compound_quality"
+    log_stage "compound_quality" "rebuild cycle ${cycle_num} starting"
+    # Note: format deliberately avoids the 'complete (' pattern so it is not treated as a stage completion signal.
 
     # Augment GOAL with quality feedback (route-specific instructions).
     # Save original_goal and install a RETURN trap so it is always restored even
     # if self_healing_build_test exits unexpectedly under set -e.
     local original_goal="$GOAL"
-    trap '{ GOAL="$original_goal"; trap - RETURN; }' RETURN
+    local _saved_current_stage="${CURRENT_STAGE:-}"
+    local _saved_pipeline_status="${PIPELINE_STATUS:-}"
+    trap '{
+        # Preserve PIPELINE_STUCK_CYCLING if the inner cycle set it (retry-cap hit);
+        # restoring status unconditionally would mask the stuck indicator.
+        if [[ "${PIPELINE_STUCK_CYCLING:-false}" != "true" ]]; then
+            PIPELINE_STATUS="$_saved_pipeline_status"
+        fi
+        GOAL="$original_goal"
+        CURRENT_STAGE="$_saved_current_stage"
+        clear_outer_stage
+        log_stage "compound_quality" "rebuild cycle '"${cycle_num}"' finished"
+        trap - RETURN
+    }' RETURN
     local feedback_content
     feedback_content=$(cat "$feedback_file")
 
@@ -2132,7 +2145,7 @@ All quality checks clean:
         if [[ "$cycle" -lt "$max_cycles" ]]; then
             warn "Quality checks failed — rebuilding with feedback (cycle $((cycle + 1))/${max_cycles})"
 
-            if ! compound_rebuild_with_feedback; then
+            if ! compound_rebuild_with_feedback "$((cycle + 1))"; then
                 error "Rebuild with feedback failed"
                 log_stage "compound_quality" "Rebuild failed on cycle ${cycle}"
                 return 1

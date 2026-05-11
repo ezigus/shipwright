@@ -31,6 +31,8 @@ PIPELINE_STATUS="${PIPELINE_STATUS:-pending}"
 # which is reset on resume to measure elapsed-from-resume time).  Used to detect stale
 # artifacts from prior runs.  0 = unset / unknown (freshness checks pass through).
 PIPELINE_RUN_EPOCH="${PIPELINE_RUN_EPOCH:-0}"
+OUTER_STAGE="${OUTER_STAGE:-}"   # set when inside a nested execution context (e.g. compound rebuild)
+INNER_STAGE="${INNER_STAGE:-}"   # the nested stage being executed (build/test/review)
 
 save_artifact() {
     local name="$1" content="$2"
@@ -43,8 +45,26 @@ get_stage_status() {
     echo "$STAGE_STATUSES" | grep "^${stage_id}:" | cut -d: -f2 | tail -1 || true
 }
 
+set_outer_stage() { OUTER_STAGE="$1"; INNER_STAGE=""; write_state; }
+clear_outer_stage() { OUTER_STAGE=""; INNER_STAGE=""; write_state; }
+
 set_stage_status() {
     local stage_id="$1" status="$2"
+    # When inside a nested execution context (OUTER_STAGE is set), suppress STAGE_STATUSES
+    # mutations for any stage other than the outer stage itself. Inner-cycle transitions
+    # (build/test/review inside compound_quality) are recorded in log entries and the DB
+    # but must not overwrite the outer stage's structured status table.
+    # Example: mark_stage_failed "build" inside compound_quality must NOT flip
+    # stages.build: complete → failed; that would be misleading in cancellation snapshots.
+    #
+    # Note: log_stage and DB record calls downstream of this gate (inside
+    # mark_stage_complete/mark_stage_failed) still fire. STAGE_STATUSES is the canonical
+    # structured record; LOG_ENTRIES (## Log) is a chronological audit trail that
+    # legitimately contains inner-cycle entries, and the SQLite pipeline_stages table
+    # is a separate sink with its own semantics.
+    if [[ -n "${OUTER_STAGE:-}" && "$stage_id" != "$OUTER_STAGE" ]]; then
+        return 0
+    fi
     STAGE_STATUSES=$(echo "$STAGE_STATUSES" | grep -v "^${stage_id}:" || true)
     STAGE_STATUSES="${STAGE_STATUSES}
 ${stage_id}:${status}"
@@ -190,7 +210,14 @@ build_stage_progress() {
 update_status() {
     local status="$1" stage="$2"
     PIPELINE_STATUS="$status"
-    CURRENT_STAGE="$stage"
+    if [[ -n "${OUTER_STAGE:-}" ]]; then
+        # Inside a nested execution context — redirect stage write to inner_stage
+        # so current_stage: remains truthful (= the outer stage, e.g. compound_quality).
+        INNER_STAGE="$stage"
+    else
+        CURRENT_STAGE="$stage"
+        INNER_STAGE=""
+    fi
     UPDATED_AT="$(now_iso)"
     write_state
 }
@@ -484,11 +511,16 @@ mark_stage_failed() {
         local body
         body=$(gh_build_progress_body)
         gh_update_progress "$body"
-        gh_comment_issue "$ISSUE_NUMBER" "❌ Pipeline failed at stage **${stage_id}** after ${timing}.
+        # Suppress the definitive failure comment when inside a nested execution context
+        # (e.g. compound_quality's inner build/test cycle). The outer stage is still running;
+        # a "❌ Pipeline failed at build" comment would be a false alarm.
+        if [[ -z "${OUTER_STAGE:-}" ]]; then
+            gh_comment_issue "$ISSUE_NUMBER" "❌ Pipeline failed at stage **${stage_id}** after ${timing}.
 
 \`\`\`
 $(tail -5 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null || echo 'No log available')
 \`\`\`"
+        fi
 
         # Notify tracker (Linear/Jira) of stage failure
         local error_context
@@ -693,6 +725,8 @@ write_state() {
         printf 'branch: "%s"\n' "${GIT_BRANCH:-}"
         printf 'template: "%s"\n' "${TASK_TYPE:+$(template_for_type "$TASK_TYPE")}"
         printf 'current_stage: %s\n' "$CURRENT_STAGE"
+        printf 'outer_stage: %s\n' "${OUTER_STAGE:-}"
+        printf 'inner_stage: %s\n' "${INNER_STAGE:-}"
         printf 'current_stage_description: "%s"\n' "${cur_stage_desc}"
         printf 'stage_progress: "%s"\n' "${stage_progress}"
         printf 'started_at: %s\n' "${STARTED_AT:-$(now_iso)}"
@@ -731,6 +765,12 @@ resume_state() {
 
     info "Resuming pipeline from $STATE_FILE"
 
+    # Explicitly clear outer/inner stage so old state files (which omit these fields)
+    # don't inherit stale values from the environment, which would incorrectly trigger
+    # the outer-stage resume handling in sw-pipeline.sh.
+    OUTER_STAGE=""
+    INNER_STAGE=""
+
     local in_frontmatter=false
     local _has_original_goal=false
     while IFS= read -r line; do
@@ -757,6 +797,8 @@ resume_state() {
                 issue:*)               GITHUB_ISSUE="$(echo "${line#issue:}" | sed 's/^ *"//;s/" *$//')" ;;
                 branch:*)              GIT_BRANCH="$(echo "${line#branch:}" | sed 's/^ *"//;s/" *$//')" ;;
                 current_stage:*)       CURRENT_STAGE="$(_trim "${line#current_stage:}")" ;;
+                outer_stage:*)         OUTER_STAGE="$(_trim "${line#outer_stage:}")" ;;
+                inner_stage:*)         INNER_STAGE="$(_trim "${line#inner_stage:}")" ;;
                 current_stage_description:*) ;; # computed field — skip on resume
                 stage_progress:*)      ;; # computed field — skip on resume
                 started_at:*)          STARTED_AT="$(_trim "${line#started_at:}")" ;;

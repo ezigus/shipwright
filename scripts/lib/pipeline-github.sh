@@ -77,8 +77,8 @@ gh_post_progress() {
     [[ "$GH_AVAILABLE" != "true" ]] && return 0
     local issue_num="$1" body="$2"
     local result
-    result=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/${issue_num}/comments" \
-        -f body="$body" --jq '.id' --timeout 30 2>/dev/null) || true
+    result=$(_timeout 30 gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/${issue_num}/comments" \
+        -f body="$body" --jq '.id' 2>/dev/null) || true
     if [[ -n "$result" && "$result" != "null" ]]; then
         PROGRESS_COMMENT_ID="$result"
     fi
@@ -89,8 +89,8 @@ gh_post_progress() {
 gh_update_progress() {
     [[ "$GH_AVAILABLE" != "true" || -z "$PROGRESS_COMMENT_ID" ]] && return 0
     local body="$1"
-    gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${PROGRESS_COMMENT_ID}" \
-        -X PATCH -f body="$body" --timeout 30 2>/dev/null || true
+    _timeout 30 gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${PROGRESS_COMMENT_ID}" \
+        -X PATCH -f body="$body" 2>/dev/null || true
 }
 
 # Ensure origin/<base> ref is available with enough history for merge-base.

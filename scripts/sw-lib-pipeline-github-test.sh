@@ -243,4 +243,84 @@ else
     assert_pass "workflow file check skipped (not found)"
 fi
 
+# ═══════════════════════════════════════════════════════════════════════════
+# gh_post_progress / gh_update_progress — --timeout regression (Q1 fix)
+# ═══════════════════════════════════════════════════════════════════════════
+print_test_section "gh_post_progress: --timeout flag absent from gh api call"
+
+# Build a gh stub that fails loudly if --timeout is passed, echoes 12345 otherwise.
+_gh_stub="$TEST_TEMP_DIR/bin/gh"
+cat > "$_gh_stub" << 'GH_STUB'
+#!/usr/bin/env bash
+for arg in "$@"; do
+    if [[ "$arg" == "--timeout" ]]; then
+        echo "unknown flag: --timeout" >&2
+        exit 1
+    fi
+done
+echo "12345"
+GH_STUB
+chmod +x "$_gh_stub"
+
+# Re-source pipeline-github.sh with GH_AVAILABLE=true and the stub gh on PATH.
+(
+    _PIPELINE_GITHUB_LOADED=""
+    export GH_AVAILABLE=true
+    export REPO_OWNER=ezigus
+    export REPO_NAME=shipwright
+    export PROGRESS_COMMENT_ID=""
+    export ISSUE_NUMBER=""
+    PATH="$TEST_TEMP_DIR/bin:$PATH"
+    source "$SCRIPT_DIR/lib/pipeline-github.sh"
+    gh_post_progress 123 "test body"
+    echo "COMMENT_ID=$PROGRESS_COMMENT_ID"
+) > "$TEST_TEMP_DIR/post_progress_result.txt" 2>/dev/null
+
+_post_result=$(cat "$TEST_TEMP_DIR/post_progress_result.txt")
+if echo "$_post_result" | grep -q "COMMENT_ID=12345"; then
+    assert_pass "gh_post_progress: PROGRESS_COMMENT_ID set to stub response (no --timeout)"
+else
+    assert_fail "gh_post_progress: PROGRESS_COMMENT_ID set to stub response (no --timeout)" \
+        "Got: $_post_result"
+fi
+
+print_test_section "gh_update_progress: --timeout flag absent from gh api call"
+
+(
+    _PIPELINE_GITHUB_LOADED=""
+    export GH_AVAILABLE=true
+    export REPO_OWNER=ezigus
+    export REPO_NAME=shipwright
+    export PROGRESS_COMMENT_ID=99999
+    PATH="$TEST_TEMP_DIR/bin:$PATH"
+    source "$SCRIPT_DIR/lib/pipeline-github.sh"
+    gh_update_progress "updated body"
+    echo "UPDATE_RC=$?"
+) > "$TEST_TEMP_DIR/update_progress_result.txt" 2>/dev/null
+
+_update_rc=$(cat "$TEST_TEMP_DIR/update_progress_result.txt" | grep "UPDATE_RC=" | cut -d= -f2 || echo "")
+if [[ "${_update_rc:-0}" == "0" ]]; then
+    assert_pass "gh_update_progress: completes without error (no --timeout passed)"
+else
+    assert_fail "gh_update_progress: completes without error (no --timeout passed)" \
+        "Exit code: $_update_rc"
+fi
+
+print_test_section "Survivor sweep: no --timeout flag in gh api calls"
+
+# Scan source files only (exclude test files which reference --timeout in comments/strings)
+_sweep_hits=$(grep -rn -- '--timeout' \
+    "$SCRIPT_DIR/lib/" \
+    "$SCRIPT_DIR"/sw-pipeline.sh \
+    "$SCRIPT_DIR"/sw-pipeline-impl.sh \
+    2>/dev/null \
+    | grep 'gh api' | grep -v ':[0-9]*:[[:space:]]*#' || true)
+if [[ -z "$_sweep_hits" ]]; then
+    assert_pass "No --timeout flags found in gh api invocations"
+else
+    assert_fail "No --timeout flags found in gh api invocations" \
+        "Found:
+$_sweep_hits"
+fi
+
 print_test_results

@@ -394,7 +394,7 @@ ${_skill_prompts}
 ${_build_recall_ctx}"
             info "Ruflo: injected historical build context (${#_build_recall_ctx} chars)"
         else
-            info "Ruflo: no similar outcomes found. Tip: pipeline outcomes populate shipwright-repo at PR creation and shipwright-{issue} during build/review (active after Ruflo two-namespace feature ships)."
+            info "Ruflo: no similar outcomes found yet for this repo. Outcomes accumulate across pipeline runs in the repo and issue namespaces."
         fi
     fi
 

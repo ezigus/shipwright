@@ -190,7 +190,7 @@ pattern_result=$(cat "$TEST_TEMP_DIR/pattern_output" 2>/dev/null || echo "")
 if echo "$pattern_result" | grep -qF "PATTERN_VAR=*.go,*.py"; then
     assert_pass "DISCOVERY_FILE_PATTERNS env var is preserved when set"
 else
-    assert_pass "DISCOVERY_FILE_PATTERNS env var test ran"
+    assert_fail "DISCOVERY_FILE_PATTERNS env var should be preserved but was overwritten"
 fi
 
 # ─── Test 18: default DISCOVERY_FILE_PATTERNS covers broad extensions ─────

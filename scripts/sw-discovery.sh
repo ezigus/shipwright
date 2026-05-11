@@ -129,6 +129,7 @@ broadcast_discovery() {
 # Push local discoveries to shipwright-discoveries orphan branch for cross-machine sharing.
 # Mirrors the ruflo-memory/shipwright-data orphan pattern. Fail-open.
 sw_discovery_ci_push() {
+    [[ "${NO_GITHUB:-}" == "true" ]] && return 0
     command -v git >/dev/null 2>&1 || return 0
     [[ -f "${DISCOVERIES_FILE}" ]] || return 0
     local push_dir attempt jitter pushed=false
@@ -142,7 +143,7 @@ sw_discovery_ci_push() {
         rm -rf "$push_dir" 2>/dev/null || true
         jitter=$(( RANDOM % 8 + 2 ))
         emit_event "discovery.ci_push_retry" "attempt=$attempt" "wait=${jitter}s" 2>/dev/null || true
-        sleep "$jitter"
+        read -t "$jitter" < /dev/null 2>/dev/null || true
     done
     if [[ "$pushed" == "true" ]]; then
         emit_event "discovery.ci_push_ok" "" 2>/dev/null || true
@@ -323,9 +324,14 @@ inject_discoveries() {
 
     ensure_discoveries_dir
 
-    # Pull cross-machine discoveries from orphan branch (30-min TTL cache)
-    local _orphan_cache="${HOME}/.shipwright/.discoveries-shared-cache.jsonl"
-    local _cache_age _now
+    # Pull cross-machine discoveries from orphan branch (30-min TTL cache, repo-scoped)
+    # Cache file includes a repo hash derived from origin URL to prevent cross-repo
+    # contamination when running pipelines in multiple repos within the TTL window.
+    local _repo_hash _orphan_cache _cache_age _now
+    _repo_hash="$(git remote get-url origin 2>/dev/null | md5sum 2>/dev/null | cut -c1-8 \
+        || git remote get-url origin 2>/dev/null | cksum 2>/dev/null | cut -d' ' -f1 \
+        || echo "default")"
+    _orphan_cache="${HOME}/.shipwright/.discoveries-shared-cache-${_repo_hash}.jsonl"
     _now=$(date +%s 2>/dev/null || echo 0)
     _cache_age=$(stat -f %m "$_orphan_cache" 2>/dev/null \
         || stat -c %Y "$_orphan_cache" 2>/dev/null \

@@ -405,6 +405,17 @@ ${_build_recall_ctx}"
     mv "$_ctx_tmp" "$_ctx_file" || { error "Failed to write build context to ${_ctx_file}"; return 1; }
     info "Build context written to ${_ctx_file} ($(wc -c < "$_ctx_file") bytes)"
 
+    # Post branch starting state as a standalone GitHub comment so it's always visible
+    # on each stage_build() entry (including compound_quality re-entries). The context
+    # file is consumed by the loop every iteration, but never surfaces on the issue.
+    # Reuse _branch_progress already computed above (line ~254) — no second git call.
+    if [[ -n "${ISSUE_NUMBER:-}" ]] && type gh_comment_issue >/dev/null 2>&1; then
+        if [[ -n "${_branch_progress:-}" ]] && [[ "$_branch_progress" != *"No changes committed"* ]]; then
+            gh_comment_issue "$ISSUE_NUMBER" \
+                "$(printf '### Branch Starting State\n\n```\n%s\n```' "$_branch_progress")"
+        fi
+    fi
+
     # Pass clean goal to loop (not enriched with context)
     loop_args+=("$clean_goal")
     loop_args+=(--context-file "$_ctx_file")

@@ -412,7 +412,7 @@ ${_build_recall_ctx}"
         if [[ -n "${_branch_progress:-}" ]] && [[ "$_branch_progress" != *"No changes committed"* ]]; then
             gh_comment_issue "$ISSUE_NUMBER" \
                 "$(printf '### Branch Starting State\n\n```\n%s\n```' "$_branch_progress")"
-            export _BRANCH_STATE_POSTED=1
+            _BRANCH_STATE_POSTED=1
         fi
     fi
 

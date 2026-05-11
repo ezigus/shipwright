@@ -2033,7 +2033,9 @@ fi
         "$_psb_source" 2>/dev/null || true)
 
     if [[ -n "$_block" ]]; then
-        eval "$_block" 2>/dev/null || true
+        # Wrap in a function so 'local' declarations inside the eval block are valid bash.
+        _run_store_block() { eval "$_block"; }
+        _run_store_block 2>/dev/null || true
     fi
 
     if [[ "$_store_call_count" -eq 1 ]]; then
@@ -2086,7 +2088,8 @@ done
         "$_psb_source" 2>/dev/null || true)
 
     if [[ -n "$_block" ]]; then
-        eval "$_block" 2>/dev/null || true
+        _run_store_block() { eval "$_block"; }
+        _run_store_block 2>/dev/null || true
     fi
 
     if [[ "$_store_call_count" -eq 1 ]]; then

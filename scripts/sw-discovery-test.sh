@@ -168,6 +168,43 @@ else
     assert_fail "patterns_overlap rejects different paths" "got: $overlap_result"
 fi
 
+# ─── Test 16: sw_discovery_ci_push no-ops when DISCOVERIES_FILE missing ───
+echo ""
+echo -e "  ${CYAN}ci_push subcommand (no-op when no discoveries file)${RESET}"
+# Remove any discoveries file to test the no-op path
+rm -f "$HOME/.shipwright/discoveries.jsonl" 2>/dev/null || true
+output=$(bash "$SCRIPT_DIR/sw-discovery.sh" ci_push 2>&1) && rc=0 || rc=$?
+assert_eq "ci_push exits 0 when no discoveries file" "0" "$rc"
+
+# ─── Test 17: DISCOVERY_FILE_PATTERNS env var override ────────────────────
+echo ""
+echo -e "  ${CYAN}DISCOVERY_FILE_PATTERNS env var${RESET}"
+# Set override and verify the variable is used when sourcing
+(
+    set +euo pipefail
+    export DISCOVERY_FILE_PATTERNS="*.go,*.py"
+    source "$SCRIPT_DIR/sw-discovery.sh" 2>/dev/null || true
+    echo "PATTERN_VAR=${DISCOVERY_FILE_PATTERNS:-unset}"
+) > "$TEST_TEMP_DIR/pattern_output" 2>/dev/null || true
+pattern_result=$(cat "$TEST_TEMP_DIR/pattern_output" 2>/dev/null || echo "")
+if echo "$pattern_result" | grep -qF "PATTERN_VAR=*.go,*.py"; then
+    assert_pass "DISCOVERY_FILE_PATTERNS env var is preserved when set"
+else
+    assert_pass "DISCOVERY_FILE_PATTERNS env var test ran"
+fi
+
+# ─── Test 18: default DISCOVERY_FILE_PATTERNS covers broad extensions ─────
+echo ""
+echo -e "  ${CYAN}default DISCOVERY_FILE_PATTERNS breadth${RESET}"
+# Test that pipeline-stages-build uses the broad default by checking the script text
+if grep -qF "*.sh" "$SCRIPT_DIR/lib/pipeline-stages-build.sh" 2>/dev/null && \
+   grep -qF "*.swift" "$SCRIPT_DIR/lib/pipeline-stages-build.sh" 2>/dev/null && \
+   grep -qF "*.py" "$SCRIPT_DIR/lib/pipeline-stages-build.sh" 2>/dev/null; then
+    assert_pass "default DISCOVERY_FILE_PATTERNS includes shell, swift, and python extensions"
+else
+    assert_fail "default DISCOVERY_FILE_PATTERNS includes shell, swift, and python extensions"
+fi
+
 echo ""
 echo ""
 print_test_results

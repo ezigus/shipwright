@@ -140,6 +140,9 @@ fi
 # ─── Ruflo Adapter (optional) ───────────────────────────────────────────────
 # shellcheck source=lib/ruflo-adapter.sh
 [[ -f "$SCRIPT_DIR/lib/ruflo-adapter.sh" ]] && source "$SCRIPT_DIR/lib/ruflo-adapter.sh" 2>/dev/null || true
+if [[ "${SHIPWRIGHT_RUFLO_MCP_ONLY:-0}" == "1" ]]; then
+    export SW_RUFLO_BACKEND=mcp
+fi
 
 # Parse coverage percentage from test output — multi-framework patterns
 # Usage: parse_coverage_from_output <log_file>
@@ -1084,6 +1087,11 @@ cleanup_on_exit() {
                 cost_baseline_update "$_bd_file" "${ISSUE_NUMBER:-}" >/dev/null 2>&1 || true
             fi
         fi
+    fi
+
+    # Push discoveries to shared orphan branch for cross-machine access
+    if declare -f sw_discovery_ci_push >/dev/null 2>&1; then
+        sw_discovery_ci_push || true
     fi
 
     # Cleanup ruflo MCP server

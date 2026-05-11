@@ -1329,7 +1329,11 @@ compound_rebuild_with_feedback() {
     local _saved_current_stage="${CURRENT_STAGE:-}"
     local _saved_pipeline_status="${PIPELINE_STATUS:-}"
     trap '{
-        PIPELINE_STATUS="$_saved_pipeline_status"
+        # Preserve PIPELINE_STUCK_CYCLING if the inner cycle set it (retry-cap hit);
+        # restoring status unconditionally would mask the stuck indicator.
+        if [[ "${PIPELINE_STUCK_CYCLING:-false}" != "true" ]]; then
+            PIPELINE_STATUS="$_saved_pipeline_status"
+        fi
         GOAL="$original_goal"
         CURRENT_STAGE="$_saved_current_stage"
         clear_outer_stage

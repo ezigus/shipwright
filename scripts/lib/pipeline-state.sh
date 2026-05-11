@@ -765,6 +765,12 @@ resume_state() {
 
     info "Resuming pipeline from $STATE_FILE"
 
+    # Explicitly clear outer/inner stage so old state files (which omit these fields)
+    # don't inherit stale values from the environment, which would incorrectly trigger
+    # the outer-stage resume handling in sw-pipeline.sh.
+    OUTER_STAGE=""
+    INNER_STAGE=""
+
     local in_frontmatter=false
     local _has_original_goal=false
     while IFS= read -r line; do

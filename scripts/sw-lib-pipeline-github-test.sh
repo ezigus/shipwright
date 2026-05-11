@@ -314,7 +314,7 @@ _sweep_hits=$(grep -rn -- '--timeout' \
     "$SCRIPT_DIR"/sw-pipeline.sh \
     "$SCRIPT_DIR"/sw-pipeline-impl.sh \
     2>/dev/null \
-    | grep 'gh api' | grep -v '^[^:]*:#' || true)
+    | grep 'gh api' | grep -v ':[0-9]*:[[:space:]]*#' || true)
 if [[ -z "$_sweep_hits" ]]; then
     assert_pass "No --timeout flags found in gh api invocations"
 else

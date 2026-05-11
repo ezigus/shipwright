@@ -124,6 +124,64 @@ broadcast_discovery() {
     success "Broadcast discovery: ${category} (${file_patterns})"
 }
 
+# ─── Cross-Machine Discovery Sharing ───────────────────────────────────────
+
+# Push local discoveries to shipwright-discoveries orphan branch for cross-machine sharing.
+# Mirrors the ruflo-memory/shipwright-data orphan pattern. Fail-open.
+sw_discovery_ci_push() {
+    [[ "${NO_GITHUB:-}" == "true" ]] && return 0
+    command -v git >/dev/null 2>&1 || return 0
+    [[ -f "${DISCOVERIES_FILE}" ]] || return 0
+    local push_dir attempt jitter pushed=false
+    for attempt in 1 2 3; do
+        push_dir=$(mktemp -d "${TMPDIR:-/tmp}/sw-discovery-push.XXXXXX" 2>/dev/null) || return 0
+        if _sw_discovery_do_push "$push_dir"; then
+            rm -rf "$push_dir" 2>/dev/null || true
+            pushed=true
+            break
+        fi
+        rm -rf "$push_dir" 2>/dev/null || true
+        jitter=$(( RANDOM % 8 + 2 ))
+        emit_event "discovery.ci_push_retry" "attempt=$attempt" "wait=${jitter}s" 2>/dev/null || true
+        read -t "$jitter" < /dev/null 2>/dev/null || true
+    done
+    if [[ "$pushed" == "true" ]]; then
+        emit_event "discovery.ci_push_ok" "" 2>/dev/null || true
+    else
+        emit_event "discovery.ci_push_warn" "reason=all_attempts_failed" 2>/dev/null || true
+    fi
+    return 0
+}
+
+_sw_discovery_do_push() {
+    local work_dir="$1"
+    local repo_url
+    repo_url=$(git remote get-url origin 2>/dev/null) || return 1
+    (
+        cd "$work_dir" || return 1
+        git init -q -b shipwright-discoveries 2>/dev/null || git init -q
+        git remote add origin "$repo_url" 2>/dev/null || true
+        # Pull remote state if branch exists, merge with local discoveries
+        local remote_jsonl=""
+        if git fetch origin shipwright-discoveries --depth=1 2>/dev/null; then
+            remote_jsonl="$(git show "origin/shipwright-discoveries:discoveries.jsonl" 2>/dev/null || true)"
+        fi
+        # Merge: dedup by ts_epoch+pipeline_id, sort by ts_epoch, cap at 2000 entries
+        {
+            [[ -n "$remote_jsonl" ]] && printf '%s\n' "$remote_jsonl"
+            cat "$DISCOVERIES_FILE" 2>/dev/null || true
+        } | jq -s 'unique_by("\(.ts_epoch)-\(.pipeline_id // "")") | sort_by(.ts_epoch)' 2>/dev/null \
+            | jq -c '.[]' 2>/dev/null \
+            | tail -2000 > discoveries.jsonl || true
+        git checkout --orphan shipwright-discoveries 2>/dev/null || true
+        git rm -rf --cached . 2>/dev/null || true
+        git add discoveries.jsonl
+        git -c user.name="shipwright" -c user.email="shipwright@local" \
+            commit -m "discovery: append from $(hostname 2>/dev/null || echo machine)" >/dev/null 2>&1 || return 0
+        git push -f origin shipwright-discoveries 2>/dev/null
+    )
+}
+
 # query: find relevant discoveries for given file patterns
 # Uses path overlap + semantic similarity (Jaccard on keywords, domain expansion)
 query_discoveries() {
@@ -266,10 +324,57 @@ inject_discoveries() {
 
     ensure_discoveries_dir
 
-    [[ ! -f "$DISCOVERIES_FILE" ]] && {
+    # Pull cross-machine discoveries from orphan branch (30-min TTL cache, repo-scoped)
+    # Cache file includes a repo hash derived from origin URL to prevent cross-repo
+    # contamination when running pipelines in multiple repos within the TTL window.
+    local _repo_hash _orphan_cache _cache_age _now
+    _repo_hash="$(git remote get-url origin 2>/dev/null | md5sum 2>/dev/null | cut -c1-8 \
+        || git remote get-url origin 2>/dev/null | cksum 2>/dev/null | cut -d' ' -f1 \
+        || echo "default")"
+    _orphan_cache="${HOME}/.shipwright/.discoveries-shared-cache-${_repo_hash}.jsonl"
+    _now=$(date +%s 2>/dev/null || echo 0)
+    _cache_age=$(stat -f %m "$_orphan_cache" 2>/dev/null \
+        || stat -c %Y "$_orphan_cache" 2>/dev/null \
+        || echo 0)
+    if [[ ! -f "$_orphan_cache" ]] || [[ $(( _now - _cache_age )) -gt 1800 ]]; then
+        mkdir -p "${HOME}/.shipwright" 2>/dev/null || true
+        if ! git show "origin/shipwright-discoveries:discoveries.jsonl" > "$_orphan_cache" 2>/dev/null; then
+            if git fetch origin shipwright-discoveries --depth=1 2>/dev/null; then
+                git show "origin/shipwright-discoveries:discoveries.jsonl" > "$_orphan_cache" 2>/dev/null || : > "$_orphan_cache"
+            else
+                : > "$_orphan_cache"
+            fi
+        fi
+    fi
+
+    # Build merged temp file from local + orphan cache (dedup by ts_epoch+pipeline_id)
+    local _merged_file=""
+    if [[ -f "$DISCOVERIES_FILE" ]] || [[ -s "$_orphan_cache" ]]; then
+        _merged_file=$(mktemp "${TMPDIR:-/tmp}/sw-disc-merged.XXXXXX" 2>/dev/null) || _merged_file=""
+        if [[ -n "$_merged_file" ]]; then
+            if command -v jq >/dev/null 2>&1; then
+                cat "$DISCOVERIES_FILE" "$_orphan_cache" 2>/dev/null \
+                    | jq -s 'unique_by("\(.ts_epoch)-\(.pipeline_id // "")") | .[]' 2>/dev/null \
+                    | jq -c '.' 2>/dev/null > "$_merged_file" || true
+            else
+                cat "$DISCOVERIES_FILE" "$_orphan_cache" 2>/dev/null > "$_merged_file" || true
+            fi
+        fi
+    fi
+
+    # Determine source file: merged (if available and non-empty), else local only, else nothing
+    local _source_file=""
+    if [[ -n "$_merged_file" ]] && [[ -s "$_merged_file" ]]; then
+        _source_file="$_merged_file"
+    elif [[ -f "$DISCOVERIES_FILE" ]]; then
+        _source_file="$DISCOVERIES_FILE"
+    fi
+
+    if [[ -z "$_source_file" ]]; then
+        [[ -n "$_merged_file" ]] && rm -f "$_merged_file" 2>/dev/null || true
         info "No discoveries available"
         return 0
-    }
+    fi
 
     local seen_file
     seen_file=$(get_seen_file "$pipeline_id")
@@ -318,7 +423,10 @@ inject_discoveries() {
             injected_entries+=("$line")
             new_count=$((new_count + 1))
         fi
-    done < "$DISCOVERIES_FILE"
+    done < "$_source_file"
+
+    # Cleanup merged temp file
+    [[ -n "$_merged_file" ]] && rm -f "$_merged_file" 2>/dev/null || true
 
     if [[ "$new_count" -eq 0 ]]; then
         info "No new discoveries to inject"
@@ -597,6 +705,9 @@ main() {
             ;;
         status)
             show_status
+            ;;
+        ci_push)
+            sw_discovery_ci_push
             ;;
         help|--help|-h)
             show_help

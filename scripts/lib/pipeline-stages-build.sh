@@ -162,6 +162,33 @@ ${tdd_context}"
     return 0
 }
 
+_build_branch_progress() {
+    # compound_quality-aware diff base.
+    # OUTER_STAGE_START_COMMIT missing from old state files → falls back to merge-base silently.
+    local _base_branch _merge_base _progress
+    _base_branch="$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||' || true)"
+    [[ -z "$_base_branch" || "$_base_branch" == "HEAD" ]] && _base_branch="main"
+
+    if [[ "${OUTER_STAGE:-}" == "compound_quality" && -n "${OUTER_STAGE_START_COMMIT:-}" ]]; then
+        _merge_base="$OUTER_STAGE_START_COMMIT"
+    else
+        _merge_base="$(git merge-base "origin/${_base_branch}" HEAD 2>/dev/null \
+            || git merge-base "${_base_branch}" HEAD 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$_merge_base" ]]; then
+        echo "No changes committed to this branch yet (first pass)."
+        return 0
+    fi
+
+    _progress="$(git diff --name-status "${_merge_base}..HEAD" 2>/dev/null | head -40 || true)"
+    if [[ -z "$_progress" ]]; then
+        echo "No changes committed to this branch yet (first pass)."
+    else
+        printf '## Branch starting state (files changed before this build pass)\n%s\n' "$_progress"
+    fi
+}
+
 stage_build() {
     CURRENT_STAGE_ID="build"
     # Consume retry context if this is a retry attempt
@@ -212,13 +239,23 @@ ${memory_context}"
     # Inject cross-pipeline discoveries for build stage
     if [[ -x "$SCRIPT_DIR/sw-discovery.sh" ]]; then
         local build_discoveries
-        build_discoveries=$("$SCRIPT_DIR/sw-discovery.sh" inject "src/*,*.ts,*.tsx,*.js" 2>/dev/null | head -20 || true)
+        DISCOVERY_FILE_PATTERNS="${DISCOVERY_FILE_PATTERNS:-src/*,*.ts,*.tsx,*.js,*.jsx,*.mjs,*.cjs,*.sh,*.bash,*.zsh,*.swift,*.m,*.mm,*.h,*.java,*.kt,*.py,*.rb,*.go,*.rs,*.cs,*.cpp,*.cc,*.c,*.vue,*.svelte}"
+        build_discoveries=$("$SCRIPT_DIR/sw-discovery.sh" inject "$DISCOVERY_FILE_PATTERNS" 2>/dev/null | head -20 || true)
         if [[ -n "$build_discoveries" ]]; then
             build_context_body="${build_context_body}
 
 Discoveries from other pipelines:
 ${build_discoveries}"
         fi
+    fi
+
+    # Inject branch starting state
+    local _branch_progress
+    _branch_progress="$(_build_branch_progress 2>/dev/null || true)"
+    if [[ -n "$_branch_progress" ]]; then
+        build_context_body="${build_context_body}
+
+${_branch_progress}"
     fi
 
     # Validate task list before loop start — clean up stale or malformed files.
@@ -356,6 +393,8 @@ ${_skill_prompts}
 ## Historical Build Context
 ${_build_recall_ctx}"
             info "Ruflo: injected historical build context (${#_build_recall_ctx} chars)"
+        else
+            info "Ruflo: no similar outcomes found yet for this repo. Outcomes accumulate across pipeline runs in the repo and issue namespaces."
         fi
     fi
 
@@ -663,6 +702,26 @@ ${commit_msgs}" --model haiku < /dev/null 2>/dev/null || true)
         ruflo_store "stage-build-result" \
             "Build loop completed: $commit_count commits. Branch: ${GIT_BRANCH:-unknown}." \
             "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
+    fi
+
+    # Store build outcome in issue namespace for future iterations
+    if type ruflo_store_issue_outcome >/dev/null 2>&1 && [[ "${commit_count:-0}" -gt 0 ]]; then
+        local _build_ts _build_files _build_base _build_base_branch
+        _build_ts="$(date +%s 2>/dev/null || echo 0)"
+        _build_base_branch="$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||' || true)"
+        [[ -z "$_build_base_branch" || "$_build_base_branch" == "HEAD" ]] && _build_base_branch="main"
+        if [[ "${OUTER_STAGE:-}" == "compound_quality" && -n "${OUTER_STAGE_START_COMMIT:-}" ]]; then
+            _build_base="$OUTER_STAGE_START_COMMIT"
+        else
+            _build_base="$(git merge-base "origin/${_build_base_branch}" HEAD 2>/dev/null \
+                || git merge-base "${_build_base_branch}" HEAD 2>/dev/null || echo "HEAD~1")"
+        fi
+        _build_files="$(git diff --name-status "${_build_base}..HEAD" 2>/dev/null | head -20 | tr '\n' '|' || true)"
+        ruflo_store_issue_outcome \
+            "build-${SHIPWRIGHT_PIPELINE_ID:-$$}-${_build_ts}" \
+            "$(jq -n --arg goal "${GOAL:-}" --arg files "$_build_files" \
+                '{goal:$goal,stage:"build",files_changed:$files,status:"success"}' 2>/dev/null || echo '{}')" \
+            "build,${TASK_TYPE:-feature}" 2>/dev/null || true
     fi
 
     log_stage "build" "Build loop completed ($commit_count commits)"

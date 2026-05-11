@@ -472,6 +472,20 @@ ${_ctx}
         fi
     fi
 
+    # Definition of Done — inject when DOD_FILE is set and the file exists
+    local dod_section=""
+    if [[ -n "${DOD_FILE:-}" && -f "$DOD_FILE" ]]; then
+        local _dod_raw
+        _dod_raw="$(cat "$DOD_FILE" 2>/dev/null || true)"
+        if [[ -n "$_dod_raw" ]]; then
+            dod_section="## Definition of Done — your work must satisfy ALL of these
+${_dod_raw}
+
+Treat unchecked items as outstanding requirements. The DoD will be evaluated against the cumulative branch diff at the end of each iteration.
+"
+        fi
+    fi
+
     # Session restart context — inject previous session progress
     local restart_section=""
     if [[ "$SESSION_RESTART" == "true" ]] && [[ -f "$LOG_DIR/progress.md" ]]; then
@@ -577,7 +591,7 @@ ${error_summary_section:+$error_summary_section
 }${stuckness_section:+$stuckness_section
 }${alt_strategy_section:+$alt_strategy_section
 }${iteration_guidance_section:+$iteration_guidance_section
-}${pipeline_context_section}${cumulative_section}${task_section:+## Task Progress
+}${pipeline_context_section}${dod_section}${cumulative_section}${task_section:+## Task Progress
 $task_section
 
 }## Current Progress

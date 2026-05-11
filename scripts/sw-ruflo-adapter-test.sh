@@ -5079,4 +5079,87 @@ fi
 unset _adapter_src _func_line _timeout_sum _n
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Tests: Two-namespace memory strategy
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_store_issue_outcome — no-op when ISSUE_NUMBER unset"
+
+unset ISSUE_NUMBER 2>/dev/null || true
+RUFLO_AVAILABLE=true
+mock_binary "ruflo" 'exit 0'
+hash -d ruflo 2>/dev/null || true
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+_timeout() { local _ts="$1"; shift; "$@"; }
+
+exit_code=0
+ruflo_store_issue_outcome "test-key" "test-value" "tag1" || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_store_issue_outcome returns 0 (no-op) when ISSUE_NUMBER unset"
+else
+    assert_fail "ruflo_store_issue_outcome returns 0 (no-op) when ISSUE_NUMBER unset" "got exit code: $exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_recall_similar_outcomes — empty string when ruflo unavailable"
+
+RUFLO_AVAILABLE=false
+_recall_out=""
+_recall_out=$(ruflo_recall_similar_outcomes "feature" "bug,enhancement" 2>/dev/null) || true
+if [[ -z "$_recall_out" ]]; then
+    assert_pass "ruflo_recall_similar_outcomes returns empty string when ruflo unavailable"
+else
+    assert_fail "ruflo_recall_similar_outcomes returns empty string when ruflo unavailable" "got: $_recall_out"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_recall_similar_outcomes — bracket-marked output format"
+
+# Mock ruflo to return simulated memory content for any namespace query
+# _ruflo_recall_cli calls: ruflo memory search --query <q> --namespace <ns> --limit 3
+# argument positions:       $1    $2     $3      $4   $5    $6           $7  $8     $9
+_recall_call_log="$TEST_TEMP_DIR/recall-calls.txt"
+rm -f "$_recall_call_log"
+mock_binary "ruflo" "echo \"\$*\" >> '$_recall_call_log'
+case \"\${6:-}\" in
+    shipwright-repo) echo 'cross-pipeline data for feature' ;;
+    shipwright-*) echo 'issue-specific build outcome' ;;
+    *) echo '' ;;
+esac
+exit 0"
+hash -d ruflo 2>/dev/null || true
+unset _RUFLO_ADAPTER_LOADED
+source "$SCRIPT_DIR/lib/ruflo-adapter.sh"
+_timeout() { local _ts="$1"; shift; "$@"; }
+RUFLO_AVAILABLE=true
+export ISSUE_NUMBER="42"
+
+_recall_out=""
+_recall_out=$(ruflo_recall_similar_outcomes "feature" "bug" 2>/dev/null) || true
+if printf '%s' "$_recall_out" | grep -q '\[cross-pipeline\]'; then
+    assert_pass "ruflo_recall_similar_outcomes includes [cross-pipeline] bracket marker"
+else
+    assert_fail "ruflo_recall_similar_outcomes includes [cross-pipeline] bracket marker" "got: $_recall_out"
+fi
+if printf '%s' "$_recall_out" | grep -q '\[current-issue\]'; then
+    assert_pass "ruflo_recall_similar_outcomes includes [current-issue] bracket marker"
+else
+    assert_fail "ruflo_recall_similar_outcomes includes [current-issue] bracket marker" "got: $_recall_out"
+fi
+unset ISSUE_NUMBER
+
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "ruflo_distill_issue_to_repo — no-op when ISSUE_NUMBER unset"
+
+unset ISSUE_NUMBER 2>/dev/null || true
+RUFLO_AVAILABLE=true
+
+exit_code=0
+ruflo_distill_issue_to_repo || exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+    assert_pass "ruflo_distill_issue_to_repo returns 0 (no-op) when ISSUE_NUMBER unset"
+else
+    assert_fail "ruflo_distill_issue_to_repo returns 0 (no-op) when ISSUE_NUMBER unset" "got exit code: $exit_code"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 print_test_results

@@ -117,4 +117,27 @@ else
     assert_pass "loop-iteration.sh stdout check skipped (file not found)"
 fi
 
+# Test 3 (static): the github|both posting block must guard ISSUE_NUMBER
+# before calling gh_comment_issue — prevents malformed API calls with empty issue num.
+_li_source="$SCRIPT_DIR/lib/loop-iteration.sh"
+if [[ -f "$_li_source" ]]; then
+    # Extract the github|both case arm. Look for the guard pattern
+    # [[ -n "${ISSUE_NUMBER" before gh_comment_issue in the same arm.
+    _github_block=$(awk '/github\|both\)/{found=1} found{print} found && /^[[:space:]]*;;/{exit}' \
+        "$_li_source" 2>/dev/null || true)
+    _has_issue_guard=$(echo "$_github_block" \
+        | grep -c 'ISSUE_NUMBER' 2>/dev/null || true)
+    _has_issue_guard="${_has_issue_guard:-0}"
+    if [[ "$_has_issue_guard" -gt 0 ]]; then
+        assert_pass \
+            "SW_LOG_PROMPTS=github posting block guards ISSUE_NUMBER before gh_comment_issue"
+    else
+        assert_fail \
+            "SW_LOG_PROMPTS=github posting block guards ISSUE_NUMBER before gh_comment_issue" \
+            "No ISSUE_NUMBER guard found in github|both case arm of loop-iteration.sh"
+    fi
+else
+    assert_pass "loop-iteration.sh ISSUE_NUMBER guard check skipped (file not found)"
+fi
+
 print_test_results

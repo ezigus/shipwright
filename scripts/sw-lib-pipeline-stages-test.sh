@@ -1909,6 +1909,39 @@ fi
     fi
 done
 
+# Test 2b (runtime): when _build_branch_progress returns changed files, the
+# posting block in pipeline-stages-build.sh must call gh_comment_issue at least once.
+# Run in a subshell with a lightweight source that extracts and evals the posting block.
+(
+    _gh_comment_issue_called=0
+    gh_comment_issue() { _gh_comment_issue_called=$((_gh_comment_issue_called + 1)); }
+    export -f gh_comment_issue
+
+    ISSUE_NUMBER="99"
+    export ISSUE_NUMBER
+
+    _build_branch_progress() { echo "M src/auth.ts"; }
+    export -f _build_branch_progress
+
+    # Extract and eval only the branch-state posting block (lines 408-420).
+    # This avoids sourcing all of stage_build's heavy dependencies.
+    _psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
+    _block=$(awk 'NR>=408 && NR<=420' "$_psb_source" 2>/dev/null || true)
+    eval "$_block" 2>/dev/null || true
+
+    if [[ "$_gh_comment_issue_called" -gt 0 ]]; then
+        echo "PASS: branch state comment: gh_comment_issue fires at runtime when files changed"
+    else
+        echo "FAIL: branch state comment: gh_comment_issue fires at runtime when files changed"
+    fi
+) | while IFS= read -r _line; do
+    if [[ "$_line" == PASS:* ]]; then
+        assert_pass "${_line#PASS: }"
+    else
+        assert_fail "${_line#FAIL: }" "gh_comment_issue was not called — Fix 2 posting block did not execute"
+    fi
+done
+
 # Test 3 (static): the posting block in pipeline-stages-build.sh must guard
 # against "No changes committed" so gh_comment_issue is skipped on fresh branches.
 # This test checks that the guard string is present in the new posting block.

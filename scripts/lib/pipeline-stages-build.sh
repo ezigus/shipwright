@@ -715,10 +715,21 @@ ${commit_msgs}" --model haiku < /dev/null 2>/dev/null || true)
             "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
     fi
 
-    # Store build outcome in issue namespace for future iterations
-    if type ruflo_store_issue_outcome >/dev/null 2>&1 && [[ "${commit_count:-0}" -gt 0 ]]; then
-        local _build_ts _build_files _build_base _build_base_branch
+    # Store build outcome in issue namespace for future iterations (always, not just on commits).
+    # Uses a stable key for no-commits outcomes so compound_quality re-entries overwrite
+    # the same slot instead of accumulating (intentional last-write-wins); timestamped key
+    # for success outcomes. Requires SHIPWRIGHT_PIPELINE_ID to be run-scoped (not issue-scoped)
+    # for the stable key to be unique per pipeline run; the :-$$ fallback uses shell PID.
+    if type ruflo_store_issue_outcome >/dev/null 2>&1; then
+        local _build_ts _build_files _build_base _build_base_branch _build_status _build_key
         _build_ts="$(date +%s 2>/dev/null || echo 0)"
+        if [[ "${commit_count:-0}" -gt 0 ]]; then
+            _build_status="success"
+            _build_key="build-${SHIPWRIGHT_PIPELINE_ID:-$$}-${_build_ts}"
+        else
+            _build_status="no-commits"
+            _build_key="build-${SHIPWRIGHT_PIPELINE_ID:-$$}-current"
+        fi
         _build_base_branch="$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||' || true)"
         [[ -z "$_build_base_branch" || "$_build_base_branch" == "HEAD" ]] && _build_base_branch="main"
         if [[ "${OUTER_STAGE:-}" == "compound_quality" && -n "${OUTER_STAGE_START_COMMIT:-}" ]]; then
@@ -729,9 +740,9 @@ ${commit_msgs}" --model haiku < /dev/null 2>/dev/null || true)
         fi
         _build_files="$(git diff --name-status "${_build_base}..HEAD" 2>/dev/null | head -20 | tr '\n' '|' || true)"
         ruflo_store_issue_outcome \
-            "build-${SHIPWRIGHT_PIPELINE_ID:-$$}-${_build_ts}" \
-            "$(jq -n --arg goal "${GOAL:-}" --arg files "$_build_files" \
-                '{goal:$goal,stage:"build",files_changed:$files,status:"success"}' 2>/dev/null || echo '{}')" \
+            "$_build_key" \
+            "$(jq -n --arg goal "${GOAL:-}" --arg files "$_build_files" --arg status "$_build_status" \
+                '{goal:$goal,stage:"build",files_changed:$files,status:$status}' 2>/dev/null || echo '{}')" \
             "build,${TASK_TYPE:-feature}" 2>/dev/null || true
     fi
 

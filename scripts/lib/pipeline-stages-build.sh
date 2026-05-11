@@ -393,6 +393,8 @@ ${_skill_prompts}
 ## Historical Build Context
 ${_build_recall_ctx}"
             info "Ruflo: injected historical build context (${#_build_recall_ctx} chars)"
+        else
+            info "Ruflo: no similar outcomes found. Tip: pipeline outcomes populate shipwright-repo at PR creation and shipwright-{issue} during build/review (active after Ruflo two-namespace feature ships)."
         fi
     fi
 
@@ -700,6 +702,20 @@ ${commit_msgs}" --model haiku < /dev/null 2>/dev/null || true)
         ruflo_store "stage-build-result" \
             "Build loop completed: $commit_count commits. Branch: ${GIT_BRANCH:-unknown}." \
             "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
+    fi
+
+    # Store build outcome in issue namespace for future iterations
+    if type ruflo_store_issue_outcome >/dev/null 2>&1 && [[ "${commit_count:-0}" -gt 0 ]]; then
+        local _build_ts _build_files
+        _build_ts="$(date +%s 2>/dev/null || echo 0)"
+        local _merge_base_ref
+        _merge_base_ref="${_merge_base:-HEAD~1}"
+        _build_files="$(git diff --name-status "${_merge_base_ref}..HEAD" 2>/dev/null | head -20 | tr '\n' '|' || true)"
+        ruflo_store_issue_outcome \
+            "build-${SHIPWRIGHT_PIPELINE_ID:-$$}-${_build_ts}" \
+            "$(jq -n --arg goal "${GOAL:-}" --arg files "$_build_files" \
+                '{goal:$goal,stage:"build",files_changed:$files,status:"success"}' 2>/dev/null || echo '{}')" \
+            "build,${TASK_TYPE:-feature}" 2>/dev/null || true
     fi
 
     log_stage "build" "Build loop completed ($commit_count commits)"

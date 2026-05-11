@@ -472,6 +472,11 @@ EOF
             "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
     fi
 
+    # Distill issue outcomes into repo namespace for cross-pipeline learning
+    if type ruflo_distill_issue_to_repo >/dev/null 2>&1; then
+        ruflo_distill_issue_to_repo 2>/dev/null || true
+    fi
+
     # ── Intelligent Reviewer Selection (GraphQL-enhanced) ──
     if [[ "${NO_GITHUB:-false}" != "true" && -n "$PR_NUMBER" && -z "$reviewers" ]]; then
         local reviewer_assigned=false

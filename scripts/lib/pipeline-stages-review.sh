@@ -602,6 +602,27 @@ ${review_summary}
             "pipeline-${SHIPWRIGHT_PIPELINE_ID:-unknown}" || true
     fi
 
+    # Store review outcome in issue namespace
+    if type ruflo_store_issue_outcome >/dev/null 2>&1; then
+        local _review_ts
+        _review_ts="$(date +%s 2>/dev/null || echo 0)"
+        local _verdict
+        if [[ "$blocking_issues" -gt 0 ]]; then
+            _verdict="blocked"
+        elif [[ "$critical_count" -gt 0 ]]; then
+            _verdict="critical"
+        elif [[ "$bug_count" -gt 0 ]]; then
+            _verdict="bugs"
+        else
+            _verdict="clean"
+        fi
+        ruflo_store_issue_outcome \
+            "review-${SHIPWRIGHT_PIPELINE_ID:-$$}-${_review_ts}" \
+            "$(jq -n --arg goal "${GOAL:-}" --arg verdict "$_verdict" \
+                '{goal:$goal,stage:"review",verdict:$verdict}' 2>/dev/null || echo '{}')" \
+            "review,${TASK_TYPE:-feature}" 2>/dev/null || true
+    fi
+
     log_stage "review" "AI review complete ($total_issues issues: $critical_count critical, $bug_count bugs, $warning_count suggestions)"
 }
 

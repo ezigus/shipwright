@@ -2192,18 +2192,89 @@ ruflo_learn_from_shipwright() {
     return 0
 }
 
-# ─── ruflo_recall_similar_outcomes — query ruflo for vector-similar past outcomes
-# Supplements Shipwright's file-based skill selection with semantic vector search.
-# Returns matching outcomes to stdout. Returns empty string when unavailable or
-# when repo hash cannot be determined (to prevent cross-repo namespace pollution).
+# ─── ruflo_recall_similar_outcomes — query ruflo for vector-similar past outcomes ─
+# Queries shipwright-repo (cross-pipeline distilled context, 800-char cap) and
+# shipwright-{ISSUE_NUMBER} (current-issue outcomes, 1000-char cap).
+# Returns bracket-marked sections. Total ~1800 chars, safely under the 2000-char
+# outer truncator in pipeline-stages-build.sh.
+# Bracket markers (not ### headers) survive the sed /^#/d sanitizer.
 ruflo_recall_similar_outcomes() {
     ruflo_available || { echo ""; return 0; }
     local task_type="$1" issue_labels="${2:-}"
-    local _ns_hash
-    _ns_hash=$(_ruflo_resolve_repo_hash) || { echo ""; return 0; }
-    ruflo_recall "skill selection for ${task_type} ${issue_labels}" \
-        "learning-$_ns_hash"
-    return 0
+    local _query="skill selection for ${task_type} ${issue_labels}"
+    local _repo_ctx="" _issue_ctx="" _out=""
+
+    _repo_ctx=$(ruflo_recall "$_query" "shipwright-repo" 2>/dev/null) || true
+    if [[ ${#_repo_ctx} -gt 800 ]]; then
+        _repo_ctx="${_repo_ctx:0:800}"
+        # Trim to last complete UTF-8 sequence (avoid mojibake at byte boundary)
+        _repo_ctx="$(printf '%s' "$_repo_ctx" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null \
+            || printf '%s' "$_repo_ctx")"
+    fi
+
+    if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+        _issue_ctx=$(ruflo_recall "$_query" "shipwright-${ISSUE_NUMBER}" 2>/dev/null) || true
+        if [[ ${#_issue_ctx} -gt 1000 ]]; then
+            _issue_ctx="${_issue_ctx:0:1000}"
+            _issue_ctx="$(printf '%s' "$_issue_ctx" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null \
+                || printf '%s' "$_issue_ctx")"
+        fi
+    fi
+
+    if [[ -n "$_repo_ctx" ]]; then
+        _out="[cross-pipeline]
+${_repo_ctx}"
+    fi
+    if [[ -n "$_issue_ctx" ]]; then
+        if [[ -n "$_out" ]]; then
+            _out="${_out}
+[current-issue]
+${_issue_ctx}"
+        else
+            _out="[current-issue]
+${_issue_ctx}"
+        fi
+    fi
+    printf '%s' "$_out"
+}
+
+# ─── ruflo_store_issue_outcome — write build/review outcome to issue namespace ─
+# Populates shipwright-{ISSUE_NUMBER} so future iterations have in-flight context.
+# No-op when ruflo unavailable or ISSUE_NUMBER unset.
+ruflo_store_issue_outcome() {
+    ruflo_available || return 0
+    [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
+    local key="$1" value="$2" tags="${3:-}"
+    ruflo_store "$key" "$value" "shipwright-${ISSUE_NUMBER}" "$tags" 2>/dev/null || true
+}
+
+# ─── ruflo_distill_issue_to_repo — distill issue outcomes into repo namespace ─
+# Called at PR creation. Reads top entries from shipwright-{ISSUE_NUMBER} and
+# writes a distilled summary to shipwright-repo using jq (no LLM).
+# No-op when ruflo unavailable or ISSUE_NUMBER unset.
+ruflo_distill_issue_to_repo() {
+    ruflo_available || return 0
+    [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
+    local _ts _distilled
+    _ts="$(date +%s 2>/dev/null || echo 0)"
+    # Recall top outcomes from issue namespace
+    local _raw
+    _raw=$(ruflo_recall "build review outcomes" "shipwright-${ISSUE_NUMBER}" 2>/dev/null) || true
+    [[ -z "$_raw" ]] && return 0
+    # Build distilled JSON summary using jq
+    _distilled="$(jq -n \
+        --arg goal "${GOAL:-}" \
+        --arg issue "${ISSUE_NUMBER}" \
+        --arg branch "${GIT_BRANCH:-}" \
+        --arg raw "$_raw" \
+        --arg ts "$_ts" \
+        '{issue:$issue,goal:$goal,branch:$branch,outcomes:$raw,distilled_at:$ts}' 2>/dev/null)" || true
+    [[ -z "$_distilled" ]] && return 0
+    ruflo_store \
+        "repo-outcome-issue-${ISSUE_NUMBER}-${_ts}" \
+        "$_distilled" \
+        "shipwright-repo" \
+        "distilled,issue-${ISSUE_NUMBER},${TASK_TYPE:-feature}" 2>/dev/null || true
 }
 
 # ─── ruflo_index_adr_artifacts — index pipeline ADR artifacts into ruflo ────

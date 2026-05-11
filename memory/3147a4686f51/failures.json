@@ -9,6 +9,16 @@
       "seen_count": 1,
       "last_seen": "2026-05-10T21:49:23Z",
       "category": "test_failure"
+    },
+    {
+      "stage": "test",
+      "pattern": "✓ daemon_patrol_security_scan runs without errors",
+      "root_cause": "patrol_dead_code test timed out — the function likely scans untracked/all files instead of only git-tracked files, causing unbounded execution",
+      "fix": "Ensure patrol_dead_code limits its scan to files returned by `git ls-files` or equivalent, and add a timeout guard or file count cap in the test",
+      "exit_code": 124,
+      "seen_count": 1,
+      "last_seen": "2026-05-11T14:20:08Z",
+      "category": "timeout"
     }
   ]
 }

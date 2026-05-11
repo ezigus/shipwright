@@ -706,11 +706,17 @@ ${commit_msgs}" --model haiku < /dev/null 2>/dev/null || true)
 
     # Store build outcome in issue namespace for future iterations
     if type ruflo_store_issue_outcome >/dev/null 2>&1 && [[ "${commit_count:-0}" -gt 0 ]]; then
-        local _build_ts _build_files
+        local _build_ts _build_files _build_base _build_base_branch
         _build_ts="$(date +%s 2>/dev/null || echo 0)"
-        local _merge_base_ref
-        _merge_base_ref="${_merge_base:-HEAD~1}"
-        _build_files="$(git diff --name-status "${_merge_base_ref}..HEAD" 2>/dev/null | head -20 | tr '\n' '|' || true)"
+        _build_base_branch="$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||' || true)"
+        [[ -z "$_build_base_branch" || "$_build_base_branch" == "HEAD" ]] && _build_base_branch="main"
+        if [[ "${OUTER_STAGE:-}" == "compound_quality" && -n "${OUTER_STAGE_START_COMMIT:-}" ]]; then
+            _build_base="$OUTER_STAGE_START_COMMIT"
+        else
+            _build_base="$(git merge-base "origin/${_build_base_branch}" HEAD 2>/dev/null \
+                || git merge-base "${_build_base_branch}" HEAD 2>/dev/null || echo "HEAD~1")"
+        fi
+        _build_files="$(git diff --name-status "${_build_base}..HEAD" 2>/dev/null | head -20 | tr '\n' '|' || true)"
         ruflo_store_issue_outcome \
             "build-${SHIPWRIGHT_PIPELINE_ID:-$$}-${_build_ts}" \
             "$(jq -n --arg goal "${GOAL:-}" --arg files "$_build_files" \

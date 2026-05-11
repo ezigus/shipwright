@@ -980,4 +980,193 @@ else
     fi
 fi
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# PR-B: OUTER_STAGE / INNER_STAGE — update_status outer-stage awareness
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "update_status: no OUTER_STAGE — standard path unchanged"
+
+OUTER_STAGE=""
+INNER_STAGE=""
+CURRENT_STAGE="intake"
+PIPELINE_STATUS="running"
+update_status "running" "build"
+assert_eq "update_status (no outer): CURRENT_STAGE set to build" "build" "$CURRENT_STAGE"
+assert_eq "update_status (no outer): INNER_STAGE remains empty" "" "$INNER_STAGE"
+
+print_test_section "update_status: OUTER_STAGE set — redirects to INNER_STAGE"
+
+OUTER_STAGE="compound_quality"
+INNER_STAGE=""
+CURRENT_STAGE="compound_quality"
+PIPELINE_STATUS="running"
+update_status "running" "build"
+assert_eq "update_status (with outer): CURRENT_STAGE unchanged" "compound_quality" "$CURRENT_STAGE"
+assert_eq "update_status (with outer): INNER_STAGE set to build" "build" "$INNER_STAGE"
+
+print_test_section "set_outer_stage / clear_outer_stage helpers"
+
+# set_outer_stage must set OUTER_STAGE and clear INNER_STAGE
+OUTER_STAGE=""
+INNER_STAGE="leftover"
+# Temporarily make write_state trackable
+_write_state_called=0
+write_state() { (( _write_state_called++ )) || true; }
+set_outer_stage "compound_quality"
+assert_eq "set_outer_stage: OUTER_STAGE set" "compound_quality" "$OUTER_STAGE"
+assert_eq "set_outer_stage: INNER_STAGE cleared" "" "$INNER_STAGE"
+assert_eq "set_outer_stage: write_state called" "1" "$_write_state_called"
+
+# Idempotent: second call with same arg is semantically no-op
+set_outer_stage "compound_quality"
+assert_eq "set_outer_stage idempotent: OUTER_STAGE unchanged" "compound_quality" "$OUTER_STAGE"
+
+# clear_outer_stage must zero both fields
+_write_state_called=0
+clear_outer_stage
+assert_eq "clear_outer_stage: OUTER_STAGE cleared" "" "$OUTER_STAGE"
+assert_eq "clear_outer_stage: INNER_STAGE cleared" "" "$INNER_STAGE"
+assert_eq "clear_outer_stage: write_state called" "1" "$_write_state_called"
+
+# Restore write_state stub
+write_state() { :; }
+
+print_test_section "resume_state: outer_stage / inner_stage fields parsed correctly"
+
+# Write a minimal state file that includes outer_stage / inner_stage
+cat > "$STATE_FILE" << 'STATEOF'
+---
+pipeline: standard
+goal: "test goal"
+original_goal: "test goal"
+status: running
+issue: ""
+branch: ""
+template: ""
+current_stage: compound_quality
+current_stage_description: ""
+stage_progress: ""
+started_at: 2026-01-01T00:00:00Z
+pipeline_run_epoch: 0
+updated_at: 2026-01-01T00:00:01Z
+elapsed: 0s
+test_cmd: ""
+pr_number: 0
+progress_comment_id:
+outer_stage: compound_quality
+inner_stage: build
+stages:
+  intake: complete
+  build: complete
+---
+
+## Log
+STATEOF
+
+OUTER_STAGE=""
+INNER_STAGE=""
+CURRENT_STAGE=""
+PIPELINE_STATUS=""
+STAGE_STATUSES=""
+resume_state 2>/dev/null
+assert_eq "resume_state: OUTER_STAGE parsed" "compound_quality" "$OUTER_STAGE"
+assert_eq "resume_state: INNER_STAGE parsed" "build" "$INNER_STAGE"
+assert_eq "resume_state: CURRENT_STAGE parsed" "compound_quality" "$CURRENT_STAGE"
+
+print_test_section "resume_state: old state files without outer_stage/inner_stage parse cleanly"
+
+cat > "$STATE_FILE" << 'OLD_STATEOF'
+---
+pipeline: standard
+goal: "old goal"
+original_goal: "old goal"
+status: running
+current_stage: build
+stages:
+  intake: complete
+---
+
+## Log
+OLD_STATEOF
+
+OUTER_STAGE=""
+INNER_STAGE=""
+CURRENT_STAGE=""
+PIPELINE_STATUS=""
+STAGE_STATUSES=""
+_old_resume_rc=0
+resume_state 2>/dev/null || _old_resume_rc=$?
+assert_eq "resume_state: old state file parses without error" "0" "$_old_resume_rc"
+assert_eq "resume_state: OUTER_STAGE empty for old state file" "" "$OUTER_STAGE"
+assert_eq "resume_state: INNER_STAGE empty for old state file" "" "$INNER_STAGE"
+assert_eq "resume_state: CURRENT_STAGE parsed from old state file" "build" "$CURRENT_STAGE"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PR-C: set_stage_status outer-stage gate
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "set_stage_status: no OUTER_STAGE — standard path unchanged"
+
+OUTER_STAGE=""
+STAGE_STATUSES="build:complete
+test:complete"
+set_stage_status "build" "failed"
+_ss=$(get_stage_status "build")
+assert_eq "set_stage_status (no outer): build status updated to failed" "failed" "$_ss"
+
+print_test_section "set_stage_status: OUTER_STAGE set — suppresses non-outer mutations"
+
+OUTER_STAGE="compound_quality"
+STAGE_STATUSES="build:complete
+test:complete
+compound_quality:running"
+set_stage_status "build" "failed"
+_ss_build=$(get_stage_status "build")
+assert_eq "set_stage_status (with outer): build NOT flipped to failed" "complete" "$_ss_build"
+
+print_test_section "set_stage_status: OUTER_STAGE set — outer stage itself writes through"
+
+OUTER_STAGE="compound_quality"
+STAGE_STATUSES="compound_quality:running"
+set_stage_status "compound_quality" "complete"
+_ss_cq=$(get_stage_status "compound_quality")
+assert_eq "set_stage_status (with outer): compound_quality itself writes through" "complete" "$_ss_cq"
+
+print_test_section "mark_stage_failed: gh_comment_issue suppressed when OUTER_STAGE set"
+
+# Track whether gh_comment_issue was called
+_comment_issue_called=0
+gh_comment_issue() { (( _comment_issue_called++ )) || true; }
+_update_progress_called=0
+gh_update_progress() { (( _update_progress_called++ )) || true; }
+
+OUTER_STAGE="compound_quality"
+STAGE_STATUSES="build:complete"
+ISSUE_NUMBER="123"
+CURRENT_STAGE="compound_quality"
+PIPELINE_STATUS="running"
+# mark_stage_failed calls set_stage_status (gated), log_stage, and gh calls
+mark_stage_failed "build" 2>/dev/null || true
+
+assert_eq "mark_stage_failed (with outer): gh_comment_issue NOT called" "0" "$_comment_issue_called"
+# STAGE_STATUSES should NOT be flipped to failed
+_ss_build2=$(get_stage_status "build")
+assert_eq "mark_stage_failed (with outer): build status remains complete" "complete" "$_ss_build2"
+
+print_test_section "mark_stage_failed: gh_comment_issue fires when OUTER_STAGE empty"
+
+_comment_issue_called=0
+gh_comment_issue() { (( _comment_issue_called++ )) || true; }
+
+OUTER_STAGE=""
+STAGE_STATUSES="build:running"
+ISSUE_NUMBER="123"
+mark_stage_failed "build" 2>/dev/null || true
+
+assert_eq "mark_stage_failed (no outer): gh_comment_issue called" "1" "$_comment_issue_called"
+
+# Restore stubs
+gh_comment_issue() { :; }
+gh_update_progress() { :; }
+ISSUE_NUMBER=""
+OUTER_STAGE=""
+
 print_test_results

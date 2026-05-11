@@ -40,6 +40,12 @@ success() { echo -e "✓ $*"; }
 warn() { echo -e "⚠ $*"; }
 error() { echo -e "✗ $*" >&2; }
 rotate_jsonl() { :; }
+log_stage() { :; }
+write_state() { :; }
+set_outer_stage() { OUTER_STAGE="${1:-}"; INNER_STAGE=""; write_state; }
+clear_outer_stage() { OUTER_STAGE=""; INNER_STAGE=""; write_state; }
+export OUTER_STAGE=""
+export INNER_STAGE=""
 
 # Minimal pipeline config for jq reads
 echo '{"stages":[{"id":"compound_quality","config":{"audit_intensity":"auto"}}]}' > "$PIPELINE_CONFIG"
@@ -954,5 +960,131 @@ assert_gt "stage_compound_quality wires pipeline_run_ruflo_cq_hive (issue #418)"
 # Restore real emit_event stub for any later sections (none currently).
 emit_event() { :; }
 unset -f ruflo_available ruflo_execute_compound_quality 2>/dev/null || true
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PR-B: compound_rebuild_with_feedback — outer-stage awareness
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "compound_rebuild_with_feedback: happy path sets/clears OUTER_STAGE"
+
+export OUTER_STAGE=""
+export INNER_STAGE=""
+export CURRENT_STAGE="compound_quality"
+export PIPELINE_STATUS="running"
+export GOAL="fix all issues"
+export STAGE_STATUSES="build:complete
+test:complete
+review:complete"
+
+# Provide required stubs
+write_state() { :; }
+set_outer_stage() { OUTER_STAGE="$1"; INNER_STAGE=""; write_state; }
+clear_outer_stage() { OUTER_STAGE=""; INNER_STAGE=""; write_state; }
+log_stage() { :; }
+get_stage_timing() { echo "0s"; }
+get_stage_status() { echo "${STAGE_STATUSES}" | grep "^${1}:" | cut -d: -f2 | tail -1 || echo ""; }
+set_stage_status() {
+    if [[ -n "${OUTER_STAGE:-}" && "$1" != "${OUTER_STAGE:-}" ]]; then return 0; fi
+    STAGE_STATUSES=$(echo "$STAGE_STATUSES" | grep -v "^${1}:" || true)
+    STAGE_STATUSES="${STAGE_STATUSES}
+${1}:${2}"
+}
+mark_stage_failed() { set_stage_status "$1" "failed"; log_stage "$1" "failed"; }
+mark_stage_complete() { set_stage_status "$1" "complete"; log_stage "$1" "complete"; }
+classify_quality_findings() { echo "correctness"; }
+_extract_blocking_items() { echo ""; }
+_write_quality_feedback() { echo "some feedback" > "${2:-$ARTIFACTS_DIR/quality-feedback.md}"; }
+
+# Stub self_healing_build_test to succeed
+self_healing_build_test() { return 0; }
+
+# Write a non-empty feedback file so the early-return guard passes
+echo "fix this issue" > "$ARTIFACTS_DIR/quality-feedback.md"
+
+_crwf_rc=0
+compound_rebuild_with_feedback 2 2>/dev/null || _crwf_rc=$?
+
+assert_eq "compound_rebuild_with_feedback (happy): returns 0" "0" "$_crwf_rc"
+assert_eq "compound_rebuild_with_feedback (happy): CURRENT_STAGE preserved" "compound_quality" "$CURRENT_STAGE"
+assert_eq "compound_rebuild_with_feedback (happy): OUTER_STAGE cleared after return" "" "$OUTER_STAGE"
+assert_eq "compound_rebuild_with_feedback (happy): INNER_STAGE cleared after return" "" "$INNER_STAGE"
+
+print_test_section "compound_rebuild_with_feedback: build/test/review NOT reset to pending"
+
+_sb=$(get_stage_status "build")
+_st=$(get_stage_status "test")
+_sr=$(get_stage_status "review")
+assert_eq "compound_rebuild_with_feedback: build remains complete (not pending)" "complete" "$_sb"
+assert_eq "compound_rebuild_with_feedback: test remains complete (not pending)" "complete" "$_st"
+assert_eq "compound_rebuild_with_feedback: review remains complete (not pending)" "complete" "$_sr"
+
+print_test_section "compound_rebuild_with_feedback: inner cycle snapshot has correct fields"
+
+export OUTER_STAGE=""
+export INNER_STAGE=""
+export CURRENT_STAGE="compound_quality"
+export PIPELINE_STATUS="running"
+export STATE_FILE="$TEST_TEMP_DIR/state.md"
+_snapshot_file="$TEST_TEMP_DIR/inner-snapshot.md"
+
+# Stub self_healing_build_test to call update_status (simulating the real inner cycle)
+# and capture a state snapshot
+update_status() {
+    local _status="$1" _stage="$2"
+    PIPELINE_STATUS="$_status"
+    if [[ -n "${OUTER_STAGE:-}" ]]; then
+        INNER_STAGE="$_stage"
+    else
+        CURRENT_STAGE="$_stage"
+        INNER_STAGE=""
+    fi
+    # Write a minimal snapshot for test inspection
+    {
+        printf 'current_stage: %s\n' "$CURRENT_STAGE"
+        printf 'outer_stage: %s\n' "${OUTER_STAGE:-}"
+        printf 'inner_stage: %s\n' "${INNER_STAGE:-}"
+        printf 'status: %s\n' "$PIPELINE_STATUS"
+    } > "$_snapshot_file"
+    return 0
+}
+self_healing_build_test() {
+    update_status "running" "build"
+    return 0
+}
+
+echo "fix this issue" > "$ARTIFACTS_DIR/quality-feedback.md"
+OUTER_STAGE=""
+INNER_STAGE=""
+CURRENT_STAGE="compound_quality"
+
+compound_rebuild_with_feedback 3 2>/dev/null || true
+
+# Inspect the snapshot written during the inner cycle
+_snap_current=$(grep "^current_stage:" "$_snapshot_file" 2>/dev/null | cut -d' ' -f2 || echo "")
+_snap_outer=$(grep "^outer_stage:" "$_snapshot_file" 2>/dev/null | cut -d' ' -f2 || echo "")
+_snap_inner=$(grep "^inner_stage:" "$_snapshot_file" 2>/dev/null | cut -d' ' -f2 || echo "")
+
+assert_eq "inner snapshot: current_stage is compound_quality" "compound_quality" "$_snap_current"
+assert_eq "inner snapshot: outer_stage is compound_quality" "compound_quality" "$_snap_outer"
+assert_eq "inner snapshot: inner_stage is build" "build" "$_snap_inner"
+
+print_test_section "compound_rebuild_with_feedback: early-return safety (empty feedback)"
+
+OUTER_STAGE=""
+INNER_STAGE=""
+CURRENT_STAGE="compound_quality"
+# _write_quality_feedback must NOT populate the file so the guard fires
+_write_quality_feedback() { :; }
+# Empty feedback file — forces the early-return guard to fire before OUTER_STAGE is set
+rm -f "$ARTIFACTS_DIR/quality-feedback.md"
+touch "$ARTIFACTS_DIR/quality-feedback.md"   # exists but empty
+
+_early_rc=0
+compound_rebuild_with_feedback 1 2>/dev/null || _early_rc=$?
+
+assert_eq "early-return: function returns 1" "1" "$_early_rc"
+assert_eq "early-return: OUTER_STAGE is empty after early exit" "" "$OUTER_STAGE"
+
+# Restore update_status to normal stub
+update_status() { :; }
 
 print_test_results

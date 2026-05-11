@@ -3153,6 +3153,10 @@ pipeline_start() {
         existing_status="$(sed -n 's/^status: *//p' "$STATE_FILE" | head -1)"
         if [[ "$existing_status" == "failed" || "$existing_status" == "interrupted" || "$existing_status" == "running" ]]; then
             resume_state
+            if [[ -n "${OUTER_STAGE:-}" ]]; then
+                CURRENT_STAGE="$OUTER_STAGE"
+                clear_outer_stage   # writes state; no transient memory/file divergence
+            fi
         else
             initialize_state
         fi

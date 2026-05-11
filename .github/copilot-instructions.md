@@ -825,7 +825,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 1084 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 616 | Unit tests for quality |
 | `scripts/sw-lib-pipeline-stages-review-test.sh` | 589 | Unit tests for cross-stage drift detector |
-| `scripts/sw-lib-pipeline-stages-test.sh` | 1943 | Unit tests for stage functions |
+| `scripts/sw-lib-pipeline-stages-test.sh` | 1944 | Unit tests for stage functions |
 | `scripts/sw-lib-pipeline-state-test.sh` | 1163 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 281 | Validate agent pane log viewing, searching, |

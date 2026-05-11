@@ -10221,3 +10221,11 @@
 {"ts":"2026-05-11T12:48:05Z","ts_epoch":1778503685,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
 {"ts":"2026-05-11T12:48:08Z","ts_epoch":1778503688,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
 {"ts":"2026-05-11T12:48:27Z","ts_epoch":1778503707,"type":"cost.baseline_updated","repo":"ezigus/shipwright","stages":2,"issue":504}
+{"ts":"2026-05-11T12:49:20Z","ts_epoch":1778503760,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-11T12:49:22Z","ts_epoch":1778503762,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-11T12:49:25Z","ts_epoch":1778503765,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-11T12:49:27Z","ts_epoch":1778503767,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-11T12:49:29Z","ts_epoch":1778503769,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-11T12:49:31Z","ts_epoch":1778503771,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-11T12:49:52Z","ts_epoch":1778503792,"type":"cost.baseline_updated","repo":"ezigus/shipwright","stages":2,"issue":504}
+{"ts":"2026-05-11T12:50:35Z","ts_epoch":1778503835,"type":"daemon.auto_pause","repo":"e3b0c44298fc","reason":"gh_auth_failure"}

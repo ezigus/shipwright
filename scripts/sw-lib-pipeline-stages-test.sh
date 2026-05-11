@@ -1895,6 +1895,7 @@ fi
 
     ISSUE_NUMBER="99"
     _branch_progress="M src/auth.ts"
+    unset _BRANCH_STATE_POSTED
     export ISSUE_NUMBER _branch_progress
 
     _psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"

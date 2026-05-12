@@ -3322,11 +3322,25 @@ else
         "Remove rules that duplicate Instructions"
 fi
 
-# ─── Test: DoD section strips checkbox markers before display ─────────────────
-if grep '_dod_raw=' "$SCRIPT_DIR/lib/loop-iteration.sh" | grep -q 'sed'; then
-    assert_pass "dod_section strips checkbox markers via sed before display"
+# ─── Test: DoD sed expression strips checkboxes at any indentation level ──────
+_dod_sed_expr=$(grep '_dod_raw=' "$SCRIPT_DIR/lib/loop-iteration.sh" \
+    | grep -o "sed '[^']*'" 2>/dev/null | head -1 || true)
+if [[ -z "$_dod_sed_expr" ]]; then
+    assert_fail "dod_section must use sed to strip checkbox markers"
 else
-    assert_fail "dod_section must strip '- [ ]' / '- [x]' markers via sed before injecting into prompt"
+    _dod_result=$(eval "$_dod_sed_expr" 2>/dev/null <<'DOD_TEST_INPUT' || true
+- [ ] top level
+   - [x] indented
+- [x] checked
+- plain line
+DOD_TEST_INPUT
+)
+    if echo "$_dod_result" | grep -qE '\[.?\]'; then
+        assert_fail "DoD sed expression leaves checkbox markers in output (all indent levels)" \
+            "got: $(echo "$_dod_result" | grep -E '\[.?\]' | head -3)"
+    else
+        assert_pass "DoD sed expression strips checkboxes at all indentation levels"
+    fi
 fi
 
 # ─── Test: DoD section does not say 'unchecked items' ─────────────────────────

@@ -477,7 +477,7 @@ ${_ctx}
     local dod_section=""
     if [[ -n "${DOD_FILE:-}" && -f "$DOD_FILE" ]]; then
         local _dod_raw
-        _dod_raw="$(sed 's/^- \[.\] /- /; s/^  - \[.\] /  - /' "$DOD_FILE" 2>/dev/null || true)"
+        _dod_raw="$(sed 's/^\([[:space:]]*\)- \[.\] /\1- /' "$DOD_FILE" 2>/dev/null || true)"
         if [[ -n "$_dod_raw" ]]; then
             dod_section="## Definition of Done
 ${_dod_raw}

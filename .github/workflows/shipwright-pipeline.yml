@@ -1008,8 +1008,11 @@ jobs:
           # Placed before the diff check so it guarantees staged content on failure,
           # ensuring the push always carries context about what went wrong.
           EXIT_CODE="${{ steps.pipeline.outputs.exit_code }}"
-          if [[ "${EXIT_CODE}" != "0" ]]; then
-            LAST_STAGE=$(grep "current_stage:" .claude/pipeline-state.md 2>/dev/null | awk '{print $2}' || echo "unknown")
+          # Guard: only write a failure note when the pipeline actually ran and failed.
+          # An empty EXIT_CODE means the pipeline step was skipped (e.g. AUTH_SKIP=true);
+          # treating that as failure would create misleading snapshot commits.
+          if [[ -n "${EXIT_CODE}" && "${EXIT_CODE}" != "0" ]]; then
+            LAST_STAGE=$(grep -m1 '^current_stage:' .claude/pipeline-state.md 2>/dev/null | awk '{print $2}' || echo "unknown")
             LOG_SNIP=$(tail -20 /tmp/pipeline.log 2>/dev/null | grep -iE "error|fail|assert" | head -5 || echo "(see pipeline log)")
             mkdir -p .claude/pipeline-artifacts
             printf '# Pipeline Failure Note\nRun: %s\nStage: %s\nLog:\n%s\n' \

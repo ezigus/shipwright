@@ -477,12 +477,12 @@ ${_ctx}
     local dod_section=""
     if [[ -n "${DOD_FILE:-}" && -f "$DOD_FILE" ]]; then
         local _dod_raw
-        _dod_raw="$(cat "$DOD_FILE" 2>/dev/null || true)"
+        _dod_raw="$(sed 's/^\([[:space:]]*\)- \[.\] /\1- /' "$DOD_FILE" 2>/dev/null || true)"
         if [[ -n "$_dod_raw" ]]; then
-            dod_section="## Definition of Done — your work must satisfy ALL of these
+            dod_section="## Definition of Done
 ${_dod_raw}
 
-Treat unchecked items as outstanding requirements. The DoD will be evaluated against the cumulative branch diff at the end of each iteration.
+The DoD is evaluated automatically against the cumulative branch diff at the end of each iteration.
 "
         fi
     fi
@@ -621,11 +621,8 @@ $discovery_section
 - Keep working memory lean — summarize completed steps, don't preserve full outputs
 
 ## Rules
-- Focus on ONE task per iteration — do it well
 - Always commit with descriptive messages
-- If tests fail, fix them before ending
 - If stuck on the same issue for 2+ iterations, try a different approach
-- Do NOT output LOOP_COMPLETE unless the goal is genuinely achieved
 ${reference_trailer}
 PROMPT
 

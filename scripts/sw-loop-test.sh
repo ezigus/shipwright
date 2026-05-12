@@ -1961,13 +1961,13 @@ fi
 
 # Test: COMPLETION_REJECTED and GATES_PASSED_NO_SIGNAL reset AFTER run_claude_iteration
 # (not before — reset before was the bug: compose_prompt never saw the rejected flag)
-if grep -A5 'Reset per-iteration completion signal flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'COMPLETION_REJECTED=false'; then
+if grep -A8 'Reset per-iteration completion signal flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'COMPLETION_REJECTED=false'; then
     assert_pass "COMPLETION_REJECTED reset in main loop (not in subshell)"
 else
     assert_fail "COMPLETION_REJECTED reset in main loop (not in subshell)"
 fi
 
-if grep -A5 'Reset per-iteration completion signal flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'GATES_PASSED_NO_SIGNAL=false'; then
+if grep -A8 'Reset per-iteration completion signal flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'GATES_PASSED_NO_SIGNAL=false'; then
     assert_pass "GATES_PASSED_NO_SIGNAL reset in main loop (not in subshell)"
 else
     assert_fail "GATES_PASSED_NO_SIGNAL reset in main loop (not in subshell)"

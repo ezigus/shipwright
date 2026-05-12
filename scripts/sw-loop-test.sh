@@ -1959,18 +1959,71 @@ else
     assert_fail "compose_rejection_notice_section() still handles COMPLETION_REJECTED path"
 fi
 
-# Test: COMPLETION_REJECTED and GATES_PASSED_NO_SIGNAL reset at top of each iteration
-# (not inside compose_rejection_notice_section subshell where resets are no-ops)
+# Test: COMPLETION_REJECTED and GATES_PASSED_NO_SIGNAL reset AFTER run_claude_iteration
+# (not before — reset before was the bug: compose_prompt never saw the rejected flag)
 if grep -A5 'Reset per-iteration completion signal flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'COMPLETION_REJECTED=false'; then
-    assert_pass "COMPLETION_REJECTED reset in main loop before prompt build (not in subshell)"
+    assert_pass "COMPLETION_REJECTED reset in main loop (not in subshell)"
 else
-    assert_fail "COMPLETION_REJECTED reset in main loop before prompt build (not in subshell)"
+    assert_fail "COMPLETION_REJECTED reset in main loop (not in subshell)"
 fi
 
 if grep -A5 'Reset per-iteration completion signal flags' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'GATES_PASSED_NO_SIGNAL=false'; then
-    assert_pass "GATES_PASSED_NO_SIGNAL reset in main loop before prompt build (not in subshell)"
+    assert_pass "GATES_PASSED_NO_SIGNAL reset in main loop (not in subshell)"
 else
-    assert_fail "GATES_PASSED_NO_SIGNAL reset in main loop before prompt build (not in subshell)"
+    assert_fail "GATES_PASSED_NO_SIGNAL reset in main loop (not in subshell)"
+fi
+
+# Test: reset happens AFTER run_claude_iteration, not before (Fix 3)
+# The reset must NOT appear before the run_claude_iteration call in the same iteration block.
+_reset_line=$(grep -n 'COMPLETION_REJECTED=false' "$SCRIPT_DIR/sw-loop.sh" | grep -v '^[0-9]*:#' | grep -v '^139:' | tail -1 | cut -d: -f1)
+_claude_line=$(grep -n 'run_claude_iteration' "$SCRIPT_DIR/sw-loop.sh" | grep -v 'run_claude_iteration()' | tail -1 | cut -d: -f1)
+if [[ -n "$_reset_line" && -n "$_claude_line" && "$_reset_line" -gt "$_claude_line" ]]; then
+    assert_pass "COMPLETION_REJECTED reset occurs after run_claude_iteration (Fix 3)"
+else
+    assert_fail "COMPLETION_REJECTED reset must occur after run_claude_iteration" \
+        "reset at line ${_reset_line:-?}, run_claude_iteration at line ${_claude_line:-?}"
+fi
+
+# Test: QUALITY_GATE_REASONS global declared alongside QUALITY_GATE_DETAIL (Fix 2D)
+if grep -q 'QUALITY_GATE_REASONS=""' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "QUALITY_GATE_REASONS global declared (Fix 2D)"
+else
+    assert_fail "QUALITY_GATE_REASONS global must be declared in sw-loop.sh" ""
+fi
+
+# Test: compose_iteration_outcome function exists (Fix 2B)
+if grep -q '^compose_iteration_outcome()' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+    assert_pass "compose_iteration_outcome helper exists in loop-iteration.sh (Fix 2B)"
+else
+    assert_fail "compose_iteration_outcome must be defined in loop-iteration.sh" ""
+fi
+
+# Test: iteration log entry appends compose_iteration_outcome output (Fix 2C)
+if grep -A5 'append_log_entry' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'compose_iteration_outcome\|outcome'; then
+    assert_pass "iteration log entry includes outcome from compose_iteration_outcome (Fix 2C)"
+else
+    assert_fail "append_log_entry must include compose_iteration_outcome output" ""
+fi
+
+# Test: zero-progress guard fires on COMPLETION_REJECTED too (Fix 4)
+if grep -A3 'PREV_NEW_COMMITS.*-eq 0' "$SCRIPT_DIR/lib/loop-iteration.sh" | grep -qE 'COMPLETION_REJECTED|zero_progress'; then
+    assert_pass "zero-progress guard checks COMPLETION_REJECTED (Fix 4)"
+else
+    assert_fail "zero-progress guard must also fire when COMPLETION_REJECTED is true" ""
+fi
+
+# Test: extract_summary no longer uses tail -5 | head -3 (the broken fixed-window) (Fix 2A)
+if grep -A5 '^extract_summary()' "$SCRIPT_DIR/lib/loop-iteration.sh" | grep -q 'tail -5 | head -3'; then
+    assert_fail "extract_summary must not use broken tail-5|head-3 window (Fix 2A)" ""
+else
+    assert_pass "extract_summary does not use tail-5|head-3 (Fix 2A)"
+fi
+
+# Test: extract_summary no longer uses cut -c1-120 line truncation (Fix 2A)
+if grep -A10 '^extract_summary()' "$SCRIPT_DIR/lib/loop-iteration.sh" | grep -q 'cut -c1-120'; then
+    assert_fail "extract_summary must not truncate lines with cut -c1-120 (Fix 2A)" ""
+else
+    assert_pass "extract_summary does not truncate with cut -c1-120 (Fix 2A)"
 fi
 
 # ─── Early exit when no changes and all gates pass (#245) ─────────────────────
@@ -2720,13 +2773,14 @@ else
         "Expected 'Zero Progress Detected' string in compose_prompt() notice"
 fi
 
-# Notice must only fire when PREV_NEW_COMMITS==0 AND quality gate failed
-if grep -qE 'PREV_NEW_COMMITS.*-eq 0.*QUALITY_GATE_PASSED|QUALITY_GATE_PASSED.*PREV_NEW_COMMITS.*-eq 0' \
-    "$SCRIPT_DIR/lib/loop-iteration.sh"; then
+# Notice must only fire when PREV_NEW_COMMITS==0 AND (quality gate failed OR completion rejected).
+# The guard may span multiple lines, so check each condition independently.
+if grep -q 'PREV_NEW_COMMITS.*-eq 0' "$SCRIPT_DIR/lib/loop-iteration.sh" \
+   && grep -q 'QUALITY_GATE_PASSED' "$SCRIPT_DIR/lib/loop-iteration.sh"; then
     assert_pass "Fix 3b: zero-progress notice gated on PREV_NEW_COMMITS==0 and QUALITY_GATE_PASSED==false"
 else
     assert_fail "Fix 3b: zero-progress notice gated on PREV_NEW_COMMITS==0 and QUALITY_GATE_PASSED==false" \
-        "Expected both conditions on the same guard in loop-iteration.sh"
+        "Expected both conditions in loop-iteration.sh"
 fi
 
 # ─── Fix 3b: compose_prompt includes zero_progress_notice in output ──────────

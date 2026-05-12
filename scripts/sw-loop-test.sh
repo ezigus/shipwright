@@ -1939,21 +1939,24 @@ else
 fi
 
 # Test: compose_rejection_notice_section handles GATES_PASSED_NO_SIGNAL branch
-if grep -A10 '^compose_rejection_notice_section()' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'GATES_PASSED_NO_SIGNAL'; then
+if awk '/^compose_rejection_notice_section\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" | \
+        grep -q 'GATES_PASSED_NO_SIGNAL'; then
     assert_pass "compose_rejection_notice_section() handles GATES_PASSED_NO_SIGNAL branch"
 else
     assert_fail "compose_rejection_notice_section() handles GATES_PASSED_NO_SIGNAL branch"
 fi
 
 # Test: quality gates passed hint injected into prompt (not rejection notice)
-if grep -A20 'GATES_PASSED_NO_SIGNAL.*true' "$SCRIPT_DIR/sw-loop.sh" | grep -qi 'quality.*gates.*passed\|gates.*passed'; then
+if awk '/^compose_rejection_notice_section\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" | \
+        grep -qi 'quality.*gates.*passed\|gates.*passed'; then
     assert_pass "GATES_PASSED_NO_SIGNAL branch emits quality gates passed hint"
 else
     assert_fail "GATES_PASSED_NO_SIGNAL branch emits quality gates passed hint"
 fi
 
-# Test: COMPLETION_REJECTED path unchanged (rejection notice still present)
-if grep -A5 '^compose_rejection_notice_section()' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'COMPLETION_REJECTED'; then
+# Test: COMPLETION_REJECTED path present in rejection notice function
+if awk '/^compose_rejection_notice_section\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" | \
+        grep -q 'COMPLETION_REJECTED'; then
     assert_pass "compose_rejection_notice_section() still handles COMPLETION_REJECTED path"
 else
     assert_fail "compose_rejection_notice_section() still handles COMPLETION_REJECTED path"
@@ -3297,6 +3300,40 @@ if echo "$_lp_no_gh_out" | grep -qiE "command not found|gh_comment_issue"; then
     assert_fail "SW_LOG_PROMPTS github no-helpers: no command-not-found error"
 else
     assert_pass "SW_LOG_PROMPTS github no-helpers: no command-not-found error"
+fi
+
+# ─── Test: compose_rejection_notice_section includes QUALITY_GATE_REASONS ─────
+if awk '/^compose_rejection_notice_section\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" | \
+        grep -q 'QUALITY_GATE_REASONS'; then
+    assert_pass "compose_rejection_notice_section() surfaces QUALITY_GATE_REASONS"
+else
+    assert_fail "compose_rejection_notice_section() must include QUALITY_GATE_REASONS in rejection notice"
+fi
+
+# ─── Test: Rules section has no more than 2 items (duplicates removed) ────────
+_rules_raw=$(awk '/^## Rules$/{found=1; next} found && /^\$\{reference_trailer\}/{exit} found{print}' \
+    "$SCRIPT_DIR/lib/loop-iteration.sh" 2>/dev/null || true)
+_rules_count=$(printf '%s\n' "$_rules_raw" | grep -c '^- ' 2>/dev/null || true)
+_rules_count="${_rules_count:-0}"
+if [[ "$_rules_count" -le 2 ]]; then
+    assert_pass "Rules section has at most 2 items (duplicates removed)"
+else
+    assert_fail "Rules section must have at most 2 items — found ${_rules_count}" \
+        "Remove rules that duplicate Instructions"
+fi
+
+# ─── Test: DoD section strips checkbox markers before display ─────────────────
+if grep '_dod_raw=' "$SCRIPT_DIR/lib/loop-iteration.sh" | grep -q 'sed'; then
+    assert_pass "dod_section strips checkbox markers via sed before display"
+else
+    assert_fail "dod_section must strip '- [ ]' / '- [x]' markers via sed before injecting into prompt"
+fi
+
+# ─── Test: DoD section does not say 'unchecked items' ─────────────────────────
+if ! grep -A10 'dod_section=' "$SCRIPT_DIR/lib/loop-iteration.sh" | grep -q 'unchecked'; then
+    assert_pass "dod_section does not reference 'unchecked items'"
+else
+    assert_fail "dod_section must not say 'unchecked items' — DoD items are plain bullets"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

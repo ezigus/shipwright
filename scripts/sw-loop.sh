@@ -2075,10 +2075,14 @@ GATE_DETAIL
 
 compose_rejection_notice_section() {
     if $COMPLETION_REJECTED; then
-        cat <<'REJECTION'
-## ⚠ Completion Rejected
-Your previous <<<LOOP:PASS>>> was REJECTED because quality gates did not pass.
-Review the audit feedback and test results above, fix the issues, then try again.
+        local _reasons="${QUALITY_GATE_REASONS:-}"
+        local _failed_line=""
+        [[ -n "$_reasons" ]] && _failed_line="
+Failed: ${_reasons}"
+        cat <<REJECTION
+## ⚠ Completion Rejected${_failed_line}
+Your previous <<<LOOP:PASS>>> was REJECTED.
+Fix the issues and test, then try again.
 Do NOT output <<<LOOP:PASS>>> until all quality checks pass.
 REJECTION
     elif [[ "${GATES_PASSED_NO_SIGNAL:-false}" == "true" ]]; then

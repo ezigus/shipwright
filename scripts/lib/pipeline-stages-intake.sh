@@ -656,8 +656,32 @@ CC_TASKS_EOF
         info "Claude Code tasks: ${DIM}$cc_tasks_file${RESET}"
     fi
 
-    # Extract definition of done for quality gates
-    sed -n '/[Dd]efinition [Oo]f [Dd]one/,/^#/p' "$plan_file" | head -20 > "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true
+    # Extract definition of done for quality gates.
+    # Uses awk to find the LAST heading matching "Definition of Done" (heading-anchored, not
+    # prose mentions), captures lines until the next H2, and strips checkbox markers so the
+    # evaluator receives plain bullets. "Last" is more robust: canonical plan structure puts
+    # the real DoD as the final H2; prose/sub-section mentions appear earlier.
+    awk '
+        /^##+[[:space:]].*[Dd]efinition[[:space:]][Oo]f[[:space:]][Dd]one[[:space:]]*$/ { last_dod = NR }
+        { lines[NR] = $0 }
+        END {
+            if (last_dod == 0) { exit 0 }
+            n = 0
+            for (i = last_dod + 1; i <= NR; i++) {
+                line = lines[i]
+                if (line ~ /^##[^#]/) break
+                sub(/^([[:space:]]*)-[[:space:]]+\[[xX[:space:]]\][[:space:]]+/, "\\1- ", line)
+                content[++n] = line
+            }
+            while (n > 0 && content[n] == "") n--
+            started = 0
+            for (i = 1; i <= n; i++) {
+                if (!started && content[i] == "") continue
+                started = 1
+                print content[i]
+            }
+        }
+    ' "$plan_file" > "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true
 
     # ── Plan Validation Gate ──
     # Ask Claude to validate the plan before proceeding

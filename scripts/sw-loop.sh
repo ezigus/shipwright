@@ -136,6 +136,7 @@ QUALITY_GATES_ENABLED=false
 AUDIT_RESULT=""
 HOLISTIC_RESULT=""
 QUALITY_GATE_DETAIL=""
+QUALITY_GATE_REASONS=""
 COMPLETION_REJECTED=false
 QUALITY_GATE_PASSED=true
 PREV_NEW_COMMITS=0          # Commit count from previous iteration (for zero-progress detection)
@@ -1548,8 +1549,10 @@ ${_todo_locations}"
         local failures_str
         failures_str="$(printf ', %s' "${gate_failures[@]}")"
         failures_str="${failures_str:2}"  # trim leading ", "
+        QUALITY_GATE_REASONS="$failures_str"
         echo -e "  ${RED}✗${RESET} Quality gates: FAILED (${failures_str})"
     else
+        QUALITY_GATE_REASONS=""
         echo -e "  ${GREEN}✓${RESET} Quality gates: all passed"
     fi
 }
@@ -1746,6 +1749,10 @@ DOD_PROMPT
     if [[ ! -s "$dod_log" ]] || [[ "$dod_log_bytes" -le 2 ]]; then
         warn "DoD: claude -p returned empty output (exit_code=${dod_exit_code}) — check CLI flags and model availability"
         warn "DoD log: $dod_log (${dod_log_bytes} bytes), stderr: $dod_err_log"
+        QUALITY_GATE_DETAIL="${QUALITY_GATE_DETAIL}
+### Definition of Done — evaluator failure
+The DoD evaluator returned no usable response (exit_code=${dod_exit_code}). The DoD content was:
+$(head -20 "$DOD_FILE" 2>/dev/null | sed 's/^/  /' || true)"
         return 1
     fi
 
@@ -2781,12 +2788,6 @@ run_single_agent_loop() {
             ruflo_health_check || true
         fi
 
-        # Reset per-iteration completion signal flags before prompt is built.
-        # These cannot be reset inside compose_rejection_notice_section() because
-        # that function runs in a $(...) subshell and side effects don't persist.
-        COMPLETION_REJECTED=false
-        GATES_PASSED_NO_SIGNAL=false
-
         # Emit iteration start event for pipeline visibility
         if type emit_event >/dev/null 2>&1; then
             emit_event "loop.iteration_start" \
@@ -2896,6 +2897,13 @@ ${GOAL}"
         # Run Claude
         local exit_code=0
         run_claude_iteration || exit_code=$?
+
+        # Reset per-iteration completion signal flags now that compose_prompt has consumed them.
+        # Resetting here (after run_claude_iteration) rather than before it ensures compose_prompt
+        # sees the PREVIOUS iteration's COMPLETION_REJECTED value and can include the rejection
+        # notice in the prompt. Quality gates below will set fresh values for this iteration.
+        COMPLETION_REJECTED=false
+        GATES_PASSED_NO_SIGNAL=false
 
         # Record per-iteration delta to the pipeline's loop-iteration-costs.jsonl sidecar.
         # No-ops silently when ITER_COST_JSONL is not exported (e.g. standalone `sw loop`).
@@ -3146,10 +3154,13 @@ ${GOAL}"
         PREV_NEW_COMMITS="${new_commits:-0}"
 
         # Extract summary and update state
-        local summary
+        local summary outcome
         summary="$(extract_summary "$log_file")"
+        outcome="$(compose_iteration_outcome)"
         append_log_entry "### Iteration $ITERATION ($(now_iso))
-$summary
+${summary}
+
+${outcome}
 "
         write_state
         write_progress

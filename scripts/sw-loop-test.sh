@@ -3350,6 +3350,18 @@ else
     assert_fail "dod_section must not say 'unchecked items' — DoD items are plain bullets"
 fi
 
+# ─── Test: git_auto_commit() uses mixed reset, not --hard (issue #preserve-edits) ─
+# Negative test — git reset --hard HEAD must NOT appear inside the git_auto_commit()
+# function body. A mixed reset (git reset HEAD) preserves the working tree so that
+# agent source-code edits survive a validate_claude_output failure and can be
+# captured by the post-audit cleanup commit or the GHA snapshot push.
+if ! awk '/^git_auto_commit\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" | \
+        grep -q 'reset --hard HEAD'; then
+    assert_pass "git_auto_commit() does not use git reset --hard HEAD (working tree preserved on validation failure)"
+else
+    assert_fail "git_auto_commit() must not use git reset --hard HEAD — use mixed reset to preserve agent working-tree edits"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════

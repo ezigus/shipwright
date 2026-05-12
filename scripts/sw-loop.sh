@@ -920,7 +920,7 @@ git_auto_commit() {
     # Semantic validation before commit — skip commit if validation fails
     if ! validate_claude_output "$work_dir"; then
         warn "Validation failed — skipping commit for this iteration"
-        git -C "$work_dir" reset --hard HEAD 2>/dev/null || true
+        git -C "$work_dir" reset HEAD 2>/dev/null || true
         return 1
     fi
 

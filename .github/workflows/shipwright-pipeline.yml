@@ -1004,15 +1004,37 @@ jobs:
           git restore --staged '*.pem'          2>/dev/null || true
           git restore --staged '*.key'          2>/dev/null || true
 
-          if git diff --cached --quiet 2>/dev/null; then
-            echo "No resume-essentials changed — skipping snapshot push"
-            exit 0
+          # Write a failure note so the reason is visible on the branch and in artifacts.
+          # Placed before the diff check so it guarantees staged content on failure,
+          # ensuring the push always carries context about what went wrong.
+          EXIT_CODE="${{ steps.pipeline.outputs.exit_code }}"
+          if [[ "${EXIT_CODE}" != "0" ]]; then
+            LAST_STAGE=$(grep "current_stage:" .claude/pipeline-state.md 2>/dev/null | awk '{print $2}' || echo "unknown")
+            LOG_SNIP=$(tail -20 /tmp/pipeline.log 2>/dev/null | grep -iE "error|fail|assert" | head -5 || echo "(see pipeline log)")
+            mkdir -p .claude/pipeline-artifacts
+            printf '# Pipeline Failure Note\nRun: %s\nStage: %s\nLog:\n%s\n' \
+              "${{ github.run_id }}" "$LAST_STAGE" "$LOG_SNIP" \
+              > .claude/pipeline-artifacts/failure-note.md
+            git add -f .claude/pipeline-artifacts/failure-note.md 2>/dev/null || true
           fi
 
-          git -c user.email=shipwright-bot@users.noreply.github.com \
-              -c user.name='shipwright-bot' \
-              commit -m "chore: resume snapshot for #${ISSUE_NUMBER} (run ${{ github.run_id }}, pipeline=${OUTCOME}) [skip ci]" \
-              --no-verify || { echo "::warning::snapshot commit failed (non-fatal)"; exit 0; }
+          # Decouple "nothing new to commit" from "nothing to push": when the build
+          # loop's git_auto_commit succeeded, the working tree is clean and there is
+          # nothing new to stage — but local implementation commits still exist on the
+          # branch and must reach GitHub. Skipping the push here (the old exit 0) meant
+          # those commits were lost when the fresh runner exited.
+          SKIP_COMMIT=false
+          if git diff --cached --quiet 2>/dev/null; then
+            echo "No resume-essentials to commit — will still push any local commits"
+            SKIP_COMMIT=true
+          fi
+
+          if [[ "$SKIP_COMMIT" == "false" ]]; then
+            git -c user.email=shipwright-bot@users.noreply.github.com \
+                -c user.name='shipwright-bot' \
+                commit -m "chore: resume snapshot for #${ISSUE_NUMBER} (run ${{ github.run_id }}, pipeline=${OUTCOME}) [skip ci]" \
+                --no-verify || echo "::warning::snapshot commit failed (non-fatal)"
+          fi
 
           # Use GITHUBTOKEN (PAT with workflow scope) when available so pushes
           # that include workflow file changes are not rejected by the default

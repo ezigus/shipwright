@@ -666,16 +666,22 @@ CC_TASKS_EOF
         { lines[NR] = $0 }
         END {
             if (last_dod == 0) { exit 0 }
+            n = 0
             for (i = last_dod + 1; i <= NR; i++) {
                 line = lines[i]
                 if (line ~ /^##[^#]/) break
                 sub(/^([[:space:]]*)-[[:space:]]+\[[xX[:space:]]\][[:space:]]+/, "\\1- ", line)
-                print line
+                content[++n] = line
+            }
+            while (n > 0 && content[n] == "") n--
+            started = 0
+            for (i = 1; i <= n; i++) {
+                if (!started && content[i] == "") continue
+                started = 1
+                print content[i]
             }
         }
-    ' "$plan_file" | awk 'NF || p { print; p=1 }' \
-    | tail -r 2>/dev/null | awk 'NF || p { print; p=1 }' | tail -r 2>/dev/null \
-    > "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true
+    ' "$plan_file" > "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true
 
     # ── Plan Validation Gate ──
     # Ask Claude to validate the plan before proceeding

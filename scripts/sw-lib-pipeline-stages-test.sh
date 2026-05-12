@@ -2042,6 +2042,8 @@ fi
     _branch_progress="M src/auth.ts"
     unset _BRANCH_STATE_POSTED
     export ISSUE_NUMBER _branch_progress
+    git() { :; }  # stub — prevent eval'd code from touching the real repo
+    export -f git
 
     _psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
     # Extract the posting block using the same anchors as the static Test 2:

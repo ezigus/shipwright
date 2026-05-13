@@ -1064,7 +1064,7 @@ jobs:
           # edits made during the build loop but not yet committed). Most bulky runtime
           # paths (.claude/loop-logs, .claude/pipeline-artifacts/, .claude/intelligence-cache.json)
           # are excluded by .gitignore so git add -A will not stage them.
-          git add -A 2>/dev/null || true
+          git add -A 2>&1 | head -10 || echo "::warning::git add -A exited non-zero — staged file list may be incomplete"
           # Force-add gitignored pipeline artifacts we DO want to persist across runs.
           git add -f .claude/pipeline-artifacts/plan.md                2>/dev/null || true
           git add -f .claude/pipeline-artifacts/context-bundle.md      2>/dev/null || true
@@ -1079,15 +1079,27 @@ jobs:
           git restore --staged '*.env' '.env*' '*credentials*' '*secret*' '*.pem' '*.key' \
               2>/dev/null || true
 
-          if git diff --cached --quiet 2>/dev/null; then
-            echo "No resume-essentials changed — skipping snapshot push"
-            exit 0
+          # Diagnostic: show exactly what will be committed (key signal for debugging)
+          _staged_files=$(git diff --cached --name-status 2>/dev/null || true)
+          if [[ -n "$_staged_files" ]]; then
+            echo "=== Artifact snapshot will commit ==="
+            echo "$_staged_files"
+            echo "====================================="
+          else
+            echo "No artifacts to stage — snapshot push will carry any prior git_auto_commit commits"
           fi
 
-          git -c user.email=shipwright-bot@users.noreply.github.com \
-              -c user.name='shipwright-bot' \
-              commit -m "chore: resume snapshot for #${ISSUE_NUMBER} (run ${{ github.run_id }}, pipeline=${OUTCOME}) [skip ci]" \
-              --no-verify || { echo "::warning::snapshot commit failed (non-fatal)"; exit 0; }
+          # Decouple "nothing to commit" from "nothing to push": git_auto_commit may have
+          # already committed source changes that must reach GitHub even when there are no
+          # new artifact changes to snapshot. Only skip the COMMIT; always run the PUSH.
+          if git diff --cached --quiet 2>/dev/null; then
+            echo "No resume-essentials to commit — will still push any local WIP commits"
+          else
+            git -c user.email=shipwright-bot@users.noreply.github.com \
+                -c user.name='shipwright-bot' \
+                commit -m "chore: resume snapshot for #${ISSUE_NUMBER} (run ${{ github.run_id }}, pipeline=${OUTCOME}) [skip ci]" \
+                --no-verify || echo "::warning::snapshot commit failed (non-fatal)"
+          fi
 
           # Use GITHUBTOKEN (PAT with workflow scope) when available so pushes
           # that include workflow file changes are not rejected by the default

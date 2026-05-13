@@ -651,7 +651,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 703 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 643 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 353 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 3343 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 3475 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 2272 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 473 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 606 | Intelligent Model Routing & Cost Optimization |
@@ -807,7 +807,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-jira-test.sh` | 284 | Validate Jira ↔ GitHub bidirectional sync |
 | `scripts/sw-launchd-test.sh` | 899 | Validate service management on |
 | `scripts/sw-lib-audit-trail-test.sh` | 311 |  |
-| `scripts/sw-lib-ci-reconcile-state-test.sh` | 160 | Unit tests |
+| `scripts/sw-lib-ci-reconcile-state-test.sh` | 225 | Unit tests |
 | `scripts/sw-lib-compat-test.sh` | 297 | Unit tests for cross-platform helpers |
 | `scripts/sw-lib-compound-audit-test.sh` | 795 |  |
 | `scripts/sw-lib-daemon-dispatch-test.sh` | 414 | Unit tests for spawn/reap/queue |
@@ -831,7 +831,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-pipeline-state-test.sh` | 1163 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 281 | Validate agent pane log viewing, searching, |
-| `scripts/sw-loop-test.sh` | 3371 | Validate continuous agent loop harness |
+| `scripts/sw-loop-test.sh` | 3705 | Validate continuous agent loop harness |
 | `scripts/sw-memory-discovery-e2e-test.sh` | 412 | Memory & Discovery E2E Test |
 | `scripts/sw-memory-test.sh` | 1095 | Unit tests for memory system & cost tracking |
 | `scripts/sw-mission-control-test.sh` | 153 | Validate mission control dashboard |

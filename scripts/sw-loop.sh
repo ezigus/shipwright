@@ -916,6 +916,15 @@ git_auto_commit() {
 
     safe_git_stage "$work_dir"
 
+    # Diagnostic: surface exactly what is staged so push-tracing is possible
+    local _staged_stat
+    _staged_stat=$(git -C "$work_dir" diff --cached --stat 2>/dev/null || true)
+    if [[ -z "$_staged_stat" ]]; then
+        warn "git_auto_commit: nothing staged after safe_git_stage — skipping commit"
+        return 1
+    fi
+    info "git_auto_commit staged:\n${_staged_stat}"
+
     # Semantic validation before commit — skip commit if validation fails
     if ! validate_claude_output "$work_dir"; then
         warn "Validation failed — skipping commit for this iteration"
@@ -923,7 +932,12 @@ git_auto_commit() {
         return 1
     fi
 
-    git -C "$work_dir" commit -m "loop: iteration $ITERATION — autonomous progress" --no-verify 2>/dev/null || return 1
+    # Descriptive message: include diff summary so commit history is self-documenting
+    local _summary
+    _summary=$(echo "$_staged_stat" | tail -1 | sed 's/^ *//' || echo "autonomous progress")
+    git -C "$work_dir" commit \
+        -m "loop: iteration ${ITERATION} — ${_summary}" \
+        --no-verify 2>/dev/null || return 1
     return 0
 }
 

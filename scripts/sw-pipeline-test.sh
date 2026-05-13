@@ -3039,6 +3039,12 @@ info()    { true; }
 warn()    { true; }
 error()   { true; }
 success() { true; }
+_git_excluded_pathspecs()            { true; }
+_git_branch_merge_base() {
+    local _base="\${1:-}" _fallback="\${2:-}" _root="\${PROJECT_ROOT:-.}"
+    [[ -z "\$_base" ]] && _base="main"
+    git -C "\$_root" merge-base "\${_base}" HEAD 2>/dev/null || echo "\${_fallback}"
+}
 ${emit_override}
 
 # --- environment expected by compose_prompt ---
@@ -3537,8 +3543,8 @@ test_compose_prompt_iter2_cumulative_uses_merge_base() {
 
     rm -rf "$tmp_dir"
 
-    if ! echo "$output" | grep -qF "Cumulative Progress (full branch vs"; then
-        echo "Expected 'Cumulative Progress (full branch vs ...)' heading in iter-2 prompt"
+    if ! echo "$output" | grep -qF "Cumulative Progress (all branch changes)"; then
+        echo "Expected 'Cumulative Progress (all branch changes)' heading in iter-2 prompt"
         return 1
     fi
 
@@ -3556,7 +3562,7 @@ test_compose_prompt_iter2_cumulative_uses_merge_base() {
     # grep -c exits 1 on no matches but still prints "0"; || echo 0 would produce "0\n0".
     # Use || true and default separately to guarantee a single integer.
     local file_line_count
-    file_line_count=$(echo "$output" | grep -A 20 "Cumulative Progress (full branch vs" | grep -c "\.txt" || true)
+    file_line_count=$(echo "$output" | grep -A 20 "Cumulative Progress (all branch changes)" | grep -c "\.txt" || true)
     if [[ "${file_line_count:-0}" -lt 2 ]]; then
         echo "Expected at least 2 file lines in cumulative progress, got ${file_line_count:-0}"
         return 1

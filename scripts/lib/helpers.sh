@@ -521,6 +521,24 @@ _git_bookkeeping_pathspecs() {
     done
 }
 
+# Resolve the merge-base between HEAD and the repo's default branch.
+# Usage: _git_branch_merge_base [base_branch] [fallback_commit]
+#   base_branch    — override default branch; auto-detected from origin/HEAD when omitted or empty
+#   fallback_commit — returned when merge-base resolution fails (e.g. offline, no remote)
+# Outputs the merge-base SHA (or fallback) on stdout.
+_git_branch_merge_base() {
+    local _base="${1:-}"
+    local _fallback="${2:-}"
+    local _root="${PROJECT_ROOT:-.}"
+    if [[ -z "$_base" ]]; then
+        _base="$(git -C "$_root" rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||' || true)"
+        [[ -z "$_base" || "$_base" == "HEAD" ]] && _base="main"
+    fi
+    git -C "$_root" merge-base "origin/${_base}" HEAD 2>/dev/null \
+        || git -C "$_root" merge-base "${_base}" HEAD 2>/dev/null \
+        || echo "${_fallback}"
+}
+
 # ─── Pipeline Tasks File Helper ──────────────────────────────────
 # Extracts the issue number from the "- Issue:" header line of a
 # pipeline-tasks.md file. Returns the normalized issue number (no #)

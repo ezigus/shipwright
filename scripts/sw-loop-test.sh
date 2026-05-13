@@ -1163,14 +1163,15 @@ else
 fi
 
 # Test: base branch detection uses git rev-parse (not hardcoded 'main')
-if grep -q "rev-parse --abbrev-ref origin/HEAD" "$SCRIPT_DIR/sw-loop.sh"; then
+# The logic lives in _git_branch_merge_base() in lib/helpers.sh (used by holistic gate via helper call)
+if grep -q "rev-parse --abbrev-ref origin/HEAD" "$SCRIPT_DIR/lib/helpers.sh"; then
     assert_pass "Holistic gate detects base branch dynamically via git rev-parse"
 else
     assert_fail "Holistic gate detects base branch dynamically via git rev-parse"
 fi
 
 # Test: fallback to 'main' if rev-parse fails
-if grep -A2 'rev-parse --abbrev-ref origin/HEAD' "$SCRIPT_DIR/sw-loop.sh" | grep -q 'base_branch.*main'; then
+if grep -A2 'rev-parse --abbrev-ref origin/HEAD' "$SCRIPT_DIR/lib/helpers.sh" | grep -q 'main'; then
     assert_pass "Holistic gate falls back to main if base branch detection fails"
 else
     assert_fail "Holistic gate falls back to main if base branch detection fails"

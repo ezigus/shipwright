@@ -949,6 +949,96 @@ jobs:
           )"
           fi
 
+      - name: Push WIP branch code commits (always)
+        if: always() && steps.claim_check.outputs.skip != 'true'
+        run: |
+          BRANCH="${WORKSPACE_BRANCH:-shipwright/issue-${ISSUE_NUMBER}}"
+
+          # Guard: only push when HEAD is on the WIP branch.
+          # If "Prepare workspace branch" was skipped or cancelled before completing,
+          # HEAD will be on main/default — no WIP code commits exist here.
+          CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+          if [[ "$CURRENT_BRANCH" != "$BRANCH" ]]; then
+            echo "HEAD is on '${CURRENT_BRANCH}', not '${BRANCH}' — no WIP code commits to push (snapshot step is the fallback)"
+            exit 0
+          fi
+
+          # Fetch so we can compute what is unpushed
+          git fetch --no-tags origin "$BRANCH" 2>/dev/null || true
+
+          UNPUSHED=$(git log --oneline "origin/${BRANCH}..HEAD" 2>/dev/null || true)
+          if [[ -z "$UNPUSHED" ]]; then
+            echo "No new commits on ${BRANCH} ahead of origin — nothing to push here"
+            exit 0
+          fi
+
+          echo "=== Unpushed WIP commits ==="
+          echo "$UNPUSHED"
+          echo "=== Files changed in unpushed commits ==="
+          git diff --name-status "origin/${BRANCH}..HEAD" 2>/dev/null | head -40 || true
+          echo "==========================="
+
+          # Auth: use GITHUBTOKEN (PAT with workflow scope) when available.
+          # Clear the extraheader set by actions/checkout before embedding credentials.
+          if [[ -n "${GITHUBTOKEN:-}" ]]; then
+            git config --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+            git remote set-url origin "https://x-access-token:${GITHUBTOKEN}@github.com/${{ github.repository }}.git"
+          fi
+
+          # Push with --force-with-lease only. If a concurrent run already pushed
+          # something, lease failure is expected — log it and let the snapshot step
+          # serve as the safety-net fallback. No --force here to avoid clobbering.
+          if timeout 60 git push origin "HEAD:refs/heads/${BRANCH}" --force-with-lease 2>&1; then
+            echo "✓ WIP code commits pushed to ${BRANCH}"
+            WIP_PUSH_STATUS="success"
+          else
+            echo "::warning::WIP code push failed with --force-with-lease — snapshot step push will serve as fallback"
+            WIP_PUSH_STATUS="failed"
+          fi
+
+          # Scrub PAT from remote URL
+          git remote set-url origin "https://github.com/${{ github.repository }}.git" 2>/dev/null || true
+
+          # Post or update a single deduped issue comment showing what was pushed.
+          # Uses PATCH on existing SHIPWRIGHT-WIP-PUSH comment to avoid flooding.
+          if [[ "$WIP_PUSH_STATUS" == "success" ]] && [[ -n "${ISSUE_NUMBER:-}" ]]; then
+            _head_sha=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+            _head_msg=$(git log -1 --format='%s' HEAD 2>/dev/null || echo "")
+            _changed=$(git diff --name-status "origin/${BRANCH}..HEAD" 2>/dev/null \
+              | grep -v '^[[:space:]]*$' | head -25 || true)
+
+            _comment_body="$(cat <<EOF
+🔀 **WIP branch updated** — \`${BRANCH}\` @ \`${_head_sha}\`
+
+**Latest commit:** ${_head_msg}
+
+**Files pushed:**
+\`\`\`
+${_changed:-no source file changes (artifact-only)}
+\`\`\`
+
+<!-- SHIPWRIGHT-WIP-PUSH: ${{ github.run_id }}:${BRANCH} -->
+EOF
+)"
+
+            _existing_id=$(gh api \
+              "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" \
+              --paginate \
+              --jq '.[] | select(.body | contains("SHIPWRIGHT-WIP-PUSH")) | .id' \
+              2>/dev/null | tail -1 || true)
+
+            if [[ -n "$_existing_id" ]]; then
+              gh api -X PATCH \
+                "repos/${{ github.repository }}/issues/comments/${_existing_id}" \
+                -f body="$_comment_body" 2>/dev/null \
+                && echo "Updated WIP-push comment ${_existing_id}" \
+                || echo "::warning::Could not update WIP-push comment (non-fatal)"
+            else
+              gh issue comment "$ISSUE_NUMBER" --body "$_comment_body" 2>/dev/null \
+                || echo "::warning::Could not post WIP-push comment (non-fatal)"
+            fi
+          fi
+
       - name: Snapshot resume-essentials to WIP branch (always)
         if: always() && steps.claim_check.outputs.skip != 'true'
         run: |
@@ -982,7 +1072,7 @@ jobs:
           # edits made during the build loop but not yet committed). Most bulky runtime
           # paths (.claude/loop-logs, .claude/pipeline-artifacts/, .claude/intelligence-cache.json)
           # are excluded by .gitignore so git add -A will not stage them.
-          git add -A 2>/dev/null || true
+          _add_out=$(git add -A 2>&1) || echo "::warning::git add -A failed: ${_add_out}"
           # Force-add gitignored pipeline artifacts we DO want to persist across runs.
           git add -f .claude/pipeline-artifacts/plan.md                2>/dev/null || true
           git add -f .claude/pipeline-artifacts/context-bundle.md      2>/dev/null || true
@@ -1003,6 +1093,16 @@ jobs:
           git restore --staged '*secret*'       2>/dev/null || true
           git restore --staged '*.pem'          2>/dev/null || true
           git restore --staged '*.key'          2>/dev/null || true
+
+          # Diagnostic: show exactly what will be committed (key signal for debugging)
+          _staged_files=$(git diff --cached --name-status 2>/dev/null || true)
+          if [[ -n "$_staged_files" ]]; then
+            echo "=== Artifact snapshot will commit ==="
+            echo "$_staged_files"
+            echo "====================================="
+          else
+            echo "No artifacts to stage — snapshot push will carry any prior git_auto_commit commits"
+          fi
 
           # Write a failure note so the reason is visible on the branch and in artifacts.
           # Placed before the diff check so it guarantees staged content on failure,

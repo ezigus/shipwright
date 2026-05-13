@@ -15,7 +15,7 @@ compose_task_section() {
 
     local changed_files=""
     if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
-        changed_files="$(git -C "${PROJECT_ROOT:-.}" diff --name-only "${LOOP_START_COMMIT}..HEAD" 2>/dev/null || true)"
+        changed_files="$(git -C "${PROJECT_ROOT:-.}" diff --name-only "${LOOP_START_COMMIT}..HEAD" -- . $(_git_excluded_pathspecs 2>/dev/null) 2>/dev/null || true)"
     fi
 
     # No commits yet — show raw list as initial guidance
@@ -526,26 +526,20 @@ ${_test_tail}
         RESUMED_TEST_OUTPUT=""
     fi
 
-    # Build cumulative progress summary showing all commits on the WIP branch.
-    # Use merge-base with the default branch (mirrors run_holistic_gate in sw-loop.sh:1873-1888)
-    # so the section spans ALL CI jobs on this branch, not just the current job's LOOP_START_COMMIT.
+    # Build cumulative progress summary showing all commits on the WIP branch since creation.
+    # Uses _git_branch_merge_base() to find where this branch diverged from the default branch,
+    # covering ALL CI jobs on this branch (not just the current session's LOOP_START_COMMIT).
+    # Excludes bookkeeping/runtime files so the stat reflects only meaningful code changes.
     # Falls back to LOOP_START_COMMIT if merge-base is unavailable (local-only repo, no remote).
     local cumulative_section=""
     if [[ "${ITERATION:-1}" -gt 1 ]]; then
-        local _base_branch _merge_base
-        # || true prevents errexit from firing when origin/HEAD is absent (no remote / offline repo).
-        # git rev-parse --abbrev-ref outputs 'origin/HEAD' verbatim (→ 'HEAD' after sed) when the
-        # ref doesn't exist. Treat 'HEAD' as the failure sentinel alongside the empty-string case.
-        _base_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||' || true)"
-        [[ -z "$_base_branch" || "$_base_branch" == "HEAD" ]] && _base_branch="main"
-        _merge_base="$(git -C "$PROJECT_ROOT" merge-base "origin/${_base_branch}" HEAD 2>/dev/null \
-            || git -C "$PROJECT_ROOT" merge-base "$_base_branch" HEAD 2>/dev/null \
-            || echo "${LOOP_START_COMMIT:-}")"
+        local _merge_base
+        _merge_base="$(_git_branch_merge_base "" "${LOOP_START_COMMIT:-}" 2>/dev/null || echo "${LOOP_START_COMMIT:-}")"
         if [[ -n "$_merge_base" ]]; then
             local cum_stat
-            cum_stat="$(git -C "$PROJECT_ROOT" diff --stat "${_merge_base}..HEAD" 2>/dev/null | head -40 || true)"
+            cum_stat="$(git -C "$PROJECT_ROOT" diff --stat "${_merge_base}..HEAD" -- . $(_git_excluded_pathspecs 2>/dev/null) 2>/dev/null | head -40 || true)"
             if [[ -n "$cum_stat" ]]; then
-                cumulative_section="## Cumulative Progress (full branch vs ${_base_branch})
+                cumulative_section="## Cumulative Progress (all branch changes)
 ${cum_stat}
 
 "

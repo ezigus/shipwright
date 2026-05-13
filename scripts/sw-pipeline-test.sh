@@ -3039,6 +3039,12 @@ info()    { true; }
 warn()    { true; }
 error()   { true; }
 success() { true; }
+_git_excluded_pathspecs()            { true; }
+_git_branch_merge_base() {
+    local _base="\${1:-}" _fallback="\${2:-}" _root="\${PROJECT_ROOT:-.}"
+    [[ -z "\$_base" ]] && _base="main"
+    git -C "\$_root" merge-base "\${_base}" HEAD 2>/dev/null || echo "\${_fallback}"
+}
 ${emit_override}
 
 # --- environment expected by compose_prompt ---

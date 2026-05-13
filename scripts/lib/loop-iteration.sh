@@ -15,7 +15,7 @@ compose_task_section() {
 
     local changed_files=""
     if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
-        changed_files="$(git -C "${PROJECT_ROOT:-.}" diff --name-only "${LOOP_START_COMMIT}..HEAD" 2>/dev/null || true)"
+        changed_files="$(git -C "${PROJECT_ROOT:-.}" diff --name-only "${LOOP_START_COMMIT}..HEAD" -- . $(_git_excluded_pathspecs 2>/dev/null) 2>/dev/null || true)"
     fi
 
     # No commits yet — show raw list as initial guidance

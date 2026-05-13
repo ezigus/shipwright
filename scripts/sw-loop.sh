@@ -1641,19 +1641,18 @@ $(git -C "$PROJECT_ROOT" diff "${_diff_range}" 2>/dev/null | head -"${DOD_DIFF_M
     local branch_diff_content=""
     local _dod_merge_base=""
     type _ensure_base_branch_ref >/dev/null 2>&1 && { _ensure_base_branch_ref || true; }
-    _dod_merge_base="$(git -C "$PROJECT_ROOT" merge-base "origin/${BASE_BRANCH:-main}" HEAD 2>/dev/null \
-        || git -C "$PROJECT_ROOT" merge-base "${BASE_BRANCH:-main}" HEAD 2>/dev/null || echo "")"
+    _dod_merge_base="$(_git_branch_merge_base "${BASE_BRANCH:-}")"
     if [[ -n "$_dod_merge_base" ]]; then
         local _dod_branch_stat _dod_branch_diff
-        _dod_branch_stat="$(git -C "$PROJECT_ROOT" diff --stat "${_dod_merge_base}..HEAD" 2>/dev/null || echo "(none)")"
-        _dod_branch_diff="$(git -C "$PROJECT_ROOT" diff "${_dod_merge_base}..HEAD" 2>/dev/null \
+        _dod_branch_stat="$(git -C "$PROJECT_ROOT" diff --stat "${_dod_merge_base}..HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null || echo "(none)")"
+        _dod_branch_diff="$(git -C "$PROJECT_ROOT" diff "${_dod_merge_base}..HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null \
             | head -"${DOD_DIFF_MAX_LINES}" \
             | sed 's/<<<DOD:PASS>>>/[REDACTED:DOD:PASS]/g; s/<<<DOD:FAIL>>>/[REDACTED:DOD:FAIL]/g' \
             || echo "(none)")"
         # Detect actual truncation by checking if git diff output exceeded the limit.
         local _branch_was_truncated=false
         local _branch_extra_line
-        _branch_extra_line=$(git -C "$PROJECT_ROOT" diff "${_dod_merge_base}..HEAD" 2>/dev/null | head -$((DOD_DIFF_MAX_LINES + 1)) | tail -1 || true)
+        _branch_extra_line=$(git -C "$PROJECT_ROOT" diff "${_dod_merge_base}..HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null | head -$((DOD_DIFF_MAX_LINES + 1)) | tail -1 || true)
         if [[ -n "$_branch_extra_line" ]]; then
             _branch_was_truncated=true
         fi
@@ -1884,19 +1883,15 @@ run_holistic_gate() {
     local file_count
     file_count=$(git -C "$PROJECT_ROOT" ls-files | wc -l | tr -d ' ')
     local cumulative_stat
-    cumulative_stat="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | tail -1 || echo "(no changes)")"
+    cumulative_stat="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null | tail -1 || echo "(no changes)")"
     local merge_base branch_stat branch_diff
-    local base_branch
-    base_branch="$(git -C "$PROJECT_ROOT" rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||')"
-    [[ -z "$base_branch" ]] && base_branch="main"
-    type _ensure_base_branch_ref >/dev/null 2>&1 && { _ensure_base_branch_ref "${base_branch}" || true; }
-    merge_base="$(git -C "$PROJECT_ROOT" merge-base "origin/${base_branch}" HEAD 2>/dev/null \
-        || git -C "$PROJECT_ROOT" merge-base "$base_branch" HEAD 2>/dev/null || echo "")"
+    type _ensure_base_branch_ref >/dev/null 2>&1 && { _ensure_base_branch_ref || true; }
+    merge_base="$(_git_branch_merge_base)"
     if [[ -n "$merge_base" ]]; then
-        branch_stat="$(git -C "$PROJECT_ROOT" diff --stat "${merge_base}..HEAD" 2>/dev/null | head -40 || echo "(none)")"
+        branch_stat="$(git -C "$PROJECT_ROOT" diff --stat "${merge_base}..HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null | head -40 || echo "(none)")"
         # Cap diff and sanitize gate delimiter tokens to prevent prompt injection
         # via diff content that happens to contain <<<HOLISTIC:PASS>>> or similar strings.
-        branch_diff="$(git -C "$PROJECT_ROOT" diff "${merge_base}..HEAD" 2>/dev/null \
+        branch_diff="$(git -C "$PROJECT_ROOT" diff "${merge_base}..HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null \
             | head -"${HOLISTIC_DIFF_MAX_LINES}" \
             | sed 's/<<<HOLISTIC:PASS>>>/[REDACTED:HOLISTIC:PASS]/g; s/<<<HOLISTIC:FAIL>>>/[REDACTED:HOLISTIC:FAIL]/g' \
             || echo "(none)")"

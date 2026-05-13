@@ -3363,6 +3363,340 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# GATE-FINDINGS FUNNEL TESTS (TDD — written before implementation)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo ""
+echo -e "${DIM}  gate-findings funnel${RESET}"
+
+# Load the sw-loop.sh function definitions into a subshell for isolated testing.
+# We source only the declaration portion, not the main execution body.
+# Each test runs in its own subshell with a fresh environment.
+
+_source_gate_funcs() {
+    # Stub out everything sw-loop.sh depends on at source time
+    detect_gate_signal() { return 1; }
+    emit_event()         { :; }
+    info()               { :; }
+    warn()               { echo "WARN: $*" >&2; }
+    error()              { echo "ERROR: $*" >&2; }
+    success()            { :; }
+    select_audit_model() { echo "haiku"; }
+    _git_excluded_pathspecs() { echo ""; }
+    QUALITY_GATES_ENABLED=false
+    QUALITY_GATE_PASSED=true
+    QUALITY_GATE_REASONS=""
+    HOLISTIC_RESULT=""
+    QUALITY_GATE_DETAIL=""
+    GATE_FINDINGS=""
+    GATE_PASSED_NAMES=""
+    COMPLETION_REJECTED=false
+    GATES_PASSED_NO_SIGNAL=false
+    ITERATION=1
+    ARTIFACTS_DIR=""
+    TEST_CMD=""
+    TEST_PASSED=true
+    PROJECT_ROOT="${TMPDIR:-/tmp}"
+    # source only up to the end of compose functions
+    # Use a subshell-safe approach: export needed vars
+    true
+}
+
+# Helper: run a self-contained subshell that defines record_gate_finding inline.
+# This avoids depending on whether sw-loop.sh has been modified yet.
+_run_rgf_test() {
+    # Args: gate verdict summary detail
+    # Outputs PASSED_NAMES=... and FINDINGS=... lines
+    local _g="$1" _v="$2" _s="$3" _d="$4"
+    bash -c "
+        GATE_FINDINGS=''
+        GATE_PASSED_NAMES=''
+        # Source only record_gate_finding from sw-loop.sh (first occurrence)
+        eval \"\$(awk '/^record_gate_finding\(\)/{p=1} p{print} p && /^\}$/{exit}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null)\" 2>/dev/null || true
+        record_gate_finding '$_g' '$_v' '$_s' '$_d' 2>/dev/null || true
+        echo \"PASSED_NAMES=\$GATE_PASSED_NAMES\"
+        printf 'FINDINGS=%s\n' \"\$GATE_FINDINGS\"
+    " 2>/dev/null
+}
+
+_run_cgf_test() {
+    # Run compose_gate_findings_section with given env vars
+    # Args: passed_names findings
+    local _pn="$1" _fn="$2"
+    bash -c "
+        GATE_PASSED_NAMES='$_pn'
+        GATE_FINDINGS='$_fn'
+        eval \"\$(awk '/^compose_gate_findings_section\(\)/{p=1} p{print} p && /^\}$/{exit}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null)\" 2>/dev/null || true
+        compose_gate_findings_section 2>/dev/null || true
+    " 2>/dev/null
+}
+
+_run_crn_test() {
+    # Run compose_rejection_notice_section with given env vars
+    # Args: quality_gate_passed completion_rejected gates_passed_no_signal quality_gate_reasons
+    local _qgp="$1" _cr="$2" _gpns="$3" _qgr="$4"
+    bash -c "
+        QUALITY_GATE_PASSED=$_qgp
+        COMPLETION_REJECTED=$_cr
+        GATES_PASSED_NO_SIGNAL=$_gpns
+        QUALITY_GATE_REASONS='$_qgr'
+        eval \"\$(awk '/^compose_rejection_notice_section\(\)/{p=1} p{print} p && /^\}$/{exit}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null)\" 2>/dev/null || true
+        compose_rejection_notice_section 2>/dev/null || true
+    " 2>/dev/null
+}
+
+# ─── Test 1: record_gate_finding pass tracks name ────────────────────────────
+_t_out="$(_run_rgf_test "tests" "pass" "" "")"
+if echo "$_t_out" | grep -qF "PASSED_NAMES=" && echo "$_t_out" | grep -qF "tests"; then
+    assert_pass "test_record_gate_finding_pass_tracks_name: GATE_PASSED_NAMES contains gate"
+else
+    assert_fail "test_record_gate_finding_pass_tracks_name: GATE_PASSED_NAMES contains gate" \
+        "output: $_t_out"
+fi
+if echo "$_t_out" | grep -q "FINDINGS=$"; then
+    assert_pass "test_record_gate_finding_pass_tracks_name: GATE_FINDINGS is empty"
+else
+    _findings_val="$(echo "$_t_out" | grep "^FINDINGS=" | cut -d= -f2-)"
+    if [[ -z "$_findings_val" ]]; then
+        assert_pass "test_record_gate_finding_pass_tracks_name: GATE_FINDINGS is empty"
+    else
+        assert_fail "test_record_gate_finding_pass_tracks_name: GATE_FINDINGS is empty" \
+            "findings: $_findings_val"
+    fi
+fi
+
+# ─── Test 2: record_gate_finding fail appends detail ────────────────────────
+_t_out="$(_run_rgf_test "dod" "fail" "summary" "detail text")"
+if echo "$_t_out" | grep -qF "### dod"; then
+    assert_pass "test_record_gate_finding_fail_appends_detail: GATE_FINDINGS has gate header"
+else
+    assert_fail "test_record_gate_finding_fail_appends_detail: GATE_FINDINGS has gate header" \
+        "output: $_t_out"
+fi
+if echo "$_t_out" | grep -qF "detail text"; then
+    assert_pass "test_record_gate_finding_fail_appends_detail: GATE_FINDINGS has detail"
+else
+    assert_fail "test_record_gate_finding_fail_appends_detail: GATE_FINDINGS has detail" \
+        "output: $_t_out"
+fi
+
+# ─── Test 3: record_gate_finding fail empty detail uses fallback ─────────────
+_t_out="$(_run_rgf_test "dod" "fail" "" "")"
+if echo "$_t_out" | grep -qi "Manually verify"; then
+    assert_pass "test_record_gate_finding_fail_empty_detail_uses_fallback: fallback text present"
+else
+    assert_fail "test_record_gate_finding_fail_empty_detail_uses_fallback: fallback text present" \
+        "output: $_t_out"
+fi
+
+# ─── Test 4: record_gate_finding multi-gate accumulates ──────────────────────
+_t_out="$(bash -c "
+    GATE_FINDINGS=''
+    GATE_PASSED_NAMES=''
+    eval \"\$(awk '/^record_gate_finding\(\)/{p=1} p{print} p && /^\}$/{exit}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null)\" 2>/dev/null || true
+    record_gate_finding 'dod' 'fail' '' '' 2>/dev/null || true
+    record_gate_finding 'audit' 'fail' '' '' 2>/dev/null || true
+    record_gate_finding 'tests' 'pass' '' '' 2>/dev/null || true
+    echo \"PASSED_NAMES=\$GATE_PASSED_NAMES\"
+    printf 'FINDINGS=%s\n' \"\$GATE_FINDINGS\"
+" 2>/dev/null)"
+if echo "$_t_out" | grep -qF "tests"; then
+    assert_pass "test_record_gate_finding_multi_gate_accumulates: GATE_PASSED_NAMES has tests"
+else
+    assert_fail "test_record_gate_finding_multi_gate_accumulates: GATE_PASSED_NAMES has tests" \
+        "output: $_t_out"
+fi
+if echo "$_t_out" | grep -qF "### dod" && echo "$_t_out" | grep -qF "### audit"; then
+    assert_pass "test_record_gate_finding_multi_gate_accumulates: GATE_FINDINGS has both dod and audit"
+else
+    assert_fail "test_record_gate_finding_multi_gate_accumulates: GATE_FINDINGS has both dod and audit" \
+        "output: $_t_out"
+fi
+
+# ─── Test 5: compose_gate_findings_section shows passed and failed ───────────
+_t_out="$(_run_cgf_test " tests audit" "
+### dod — verdict: fail
+fix this")"
+if echo "$_t_out" | grep -qF "Passed:"; then
+    assert_pass "test_compose_gate_findings_section_shows_passed_and_failed: shows Passed:"
+else
+    assert_fail "test_compose_gate_findings_section_shows_passed_and_failed: shows Passed:" \
+        "output: $_t_out"
+fi
+if echo "$_t_out" | grep -qF "tests" && echo "$_t_out" | grep -qF "audit"; then
+    assert_pass "test_compose_gate_findings_section_shows_passed_and_failed: shows passed gate names"
+else
+    assert_fail "test_compose_gate_findings_section_shows_passed_and_failed: shows passed gate names" \
+        "output: $_t_out"
+fi
+if echo "$_t_out" | grep -qF "### dod" && echo "$_t_out" | grep -qF "⚠"; then
+    assert_pass "test_compose_gate_findings_section_shows_passed_and_failed: shows failure block with warning"
+else
+    assert_fail "test_compose_gate_findings_section_shows_passed_and_failed: shows failure block with warning" \
+        "output: $_t_out"
+fi
+
+# ─── Test 6: compose_gate_findings_section all pass no findings ──────────────
+_t_out="$(_run_cgf_test " tests" "")"
+if echo "$_t_out" | grep -qF "Passed:"; then
+    assert_pass "test_compose_gate_findings_section_all_pass_no_findings: shows Passed:"
+else
+    assert_fail "test_compose_gate_findings_section_all_pass_no_findings: shows Passed:" \
+        "output: $_t_out"
+fi
+if echo "$_t_out" | grep -qF "⚠"; then
+    assert_fail "test_compose_gate_findings_section_all_pass_no_findings: no warning symbol"
+else
+    assert_pass "test_compose_gate_findings_section_all_pass_no_findings: no warning symbol"
+fi
+
+# ─── Test 7: compose_gate_findings_section empty returns nothing ─────────────
+_t_out="$(_run_cgf_test "" "")"
+if [[ -z "$(echo "$_t_out" | tr -d '[:space:]')" ]]; then
+    assert_pass "test_compose_gate_findings_section_empty_returns_nothing: empty output"
+else
+    assert_fail "test_compose_gate_findings_section_empty_returns_nothing: empty output" \
+        "output: $_t_out"
+fi
+
+# ─── Test 8: compose_rejection_notice gates_failing no_signal ────────────────
+_t_out="$(_run_crn_test "false" "false" "false" "dod")"
+if echo "$_t_out" | grep -qi "Quality Gates Not Passing"; then
+    assert_pass "test_compose_rejection_notice_gates_failing_no_signal: shows quality gates not passing"
+else
+    assert_fail "test_compose_rejection_notice_gates_failing_no_signal: shows quality gates not passing" \
+        "output: $_t_out"
+fi
+
+# ─── Test 9: gate findings resets each iteration ─────────────────────────────
+# Simulate reset by checking the run_quality_gates function resets accumulators
+_t_out="$(bash -c "
+    GATE_FINDINGS='stale findings from prev iter'
+    GATE_PASSED_NAMES='stale names'
+    HOLISTIC_RESULT=''
+    QUALITY_GATE_DETAIL=''
+    QUALITY_GATE_PASSED=true
+    QUALITY_GATE_REASONS=''
+    # Simulate the reset block that run_quality_gates should do
+    eval \"\$(awk '/^run_quality_gates\(\)/{p=1} p && /GATE_FINDINGS=/{print; exit} p{print}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null | head -20)\" 2>/dev/null || true
+    # Check if GATE_FINDINGS and GATE_PASSED_NAMES appear as reset targets in run_quality_gates
+    if grep -q 'GATE_FINDINGS=\"\"' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null; then
+        echo 'RESET_GATE_FINDINGS=yes'
+    fi
+    if grep -q 'GATE_PASSED_NAMES=\"\"' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null; then
+        echo 'RESET_GATE_PASSED_NAMES=yes'
+    fi
+" 2>/dev/null)"
+if echo "$_t_out" | grep -qF "RESET_GATE_FINDINGS=yes"; then
+    assert_pass "test_gate_findings_resets_each_iteration: GATE_FINDINGS reset in run_quality_gates"
+else
+    assert_fail "test_gate_findings_resets_each_iteration: GATE_FINDINGS reset in run_quality_gates" \
+        "GATE_FINDINGS='' not found in run_quality_gates block"
+fi
+if echo "$_t_out" | grep -qF "RESET_GATE_PASSED_NAMES=yes"; then
+    assert_pass "test_gate_findings_resets_each_iteration: GATE_PASSED_NAMES reset in run_quality_gates"
+else
+    assert_fail "test_gate_findings_resets_each_iteration: GATE_PASSED_NAMES reset in run_quality_gates" \
+        "GATE_PASSED_NAMES='' not found in run_quality_gates block"
+fi
+
+# ─── Test 10: ingest_pipeline_stage_findings iteration1 only ─────────────────
+_artifacts_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-test-artifacts.XXXXXX")"
+# Create a mock adversarial-review.json with critical findings
+printf '{"severity":"critical","message":"SQL injection risk"}\n' > "$_artifacts_dir/adversarial-review.json"
+_t_out="$(bash -c "
+    GATE_FINDINGS=''
+    GATE_PASSED_NAMES=''
+    ITERATION=1
+    ARTIFACTS_DIR='$_artifacts_dir'
+    eval \"\$(awk '/^record_gate_finding\(\)/{p=1} p{print} p && /^\}$/{exit}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null)\" 2>/dev/null || true
+    eval \"\$(awk '/^ingest_pipeline_stage_findings\(\)/{p=1} p{print} p && /^\}$/{exit}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null)\" 2>/dev/null || true
+    ingest_pipeline_stage_findings 2>/dev/null || true
+    printf 'FINDINGS=%s\n' \"\$GATE_FINDINGS\"
+" 2>/dev/null)"
+if echo "$_t_out" | grep -qF "pipeline:adversarial"; then
+    assert_pass "test_ingest_pipeline_stage_findings_iteration1: adversarial findings ingested on iter 1"
+else
+    assert_fail "test_ingest_pipeline_stage_findings_iteration1: adversarial findings ingested on iter 1" \
+        "output: $_t_out"
+fi
+# Now test iteration 2 - should return early
+_t_out2="$(bash -c "
+    GATE_FINDINGS=''
+    GATE_PASSED_NAMES=''
+    ITERATION=2
+    ARTIFACTS_DIR='$_artifacts_dir'
+    eval \"\$(awk '/^record_gate_finding\(\)/{p=1} p{print} p && /^\}$/{exit}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null)\" 2>/dev/null || true
+    eval \"\$(awk '/^ingest_pipeline_stage_findings\(\)/{p=1} p{print} p && /^\}$/{exit}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null)\" 2>/dev/null || true
+    ingest_pipeline_stage_findings 2>/dev/null || true
+    printf 'FINDINGS=%s\n' \"\$GATE_FINDINGS\"
+" 2>/dev/null)"
+if echo "$_t_out2" | grep -qF "pipeline:adversarial"; then
+    assert_fail "test_ingest_pipeline_stage_findings_iteration2_skipped: no ingestion on iter 2"
+else
+    assert_pass "test_ingest_pipeline_stage_findings_iteration2_skipped: no ingestion on iter 2"
+fi
+rm -rf "$_artifacts_dir"
+
+# ─── Test 11: ingest_pipeline_missing_artifact_silent ────────────────────────
+_artifacts_dir2="$(mktemp -d "${TMPDIR:-/tmp}/sw-test-artifacts2.XXXXXX")"
+# No artifacts in dir
+_t_out="$(bash -c "
+    GATE_FINDINGS=''
+    GATE_PASSED_NAMES=''
+    ITERATION=1
+    ARTIFACTS_DIR='$_artifacts_dir2'
+    eval \"\$(awk '/^record_gate_finding\(\)/{p=1} p{print} p && /^\}$/{exit}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null)\" 2>/dev/null || true
+    eval \"\$(awk '/^ingest_pipeline_stage_findings\(\)/{p=1} p{print} p && /^\}$/{exit}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null)\" 2>/dev/null || true
+    ingest_pipeline_stage_findings 2>/dev/null || true
+    printf 'FINDINGS=%s\n' \"\$GATE_FINDINGS\"
+    echo 'COMPLETED'
+" 2>/dev/null)"
+if echo "$_t_out" | grep -qF "COMPLETED"; then
+    assert_pass "test_ingest_pipeline_missing_artifact_silent: no error when no artifacts"
+else
+    assert_fail "test_ingest_pipeline_missing_artifact_silent: no error when no artifacts" \
+        "output: $_t_out"
+fi
+_findings_val="$(echo "$_t_out" | grep "^FINDINGS=" | sed 's/^FINDINGS=//')"
+if [[ -z "$_findings_val" ]]; then
+    assert_pass "test_ingest_pipeline_missing_artifact_silent: GATE_FINDINGS empty"
+else
+    assert_fail "test_ingest_pipeline_missing_artifact_silent: GATE_FINDINGS empty" \
+        "findings: $_findings_val"
+fi
+rm -rf "$_artifacts_dir2"
+
+# ─── Test 12: ingest_pipeline_empty_artifact_uses_fallback ───────────────────
+_artifacts_dir3="$(mktemp -d "${TMPDIR:-/tmp}/sw-test-artifacts3.XXXXXX")"
+# Create empty adversarial-review.json
+touch "$_artifacts_dir3/adversarial-review.json"
+_t_out="$(bash -c "
+    GATE_FINDINGS=''
+    GATE_PASSED_NAMES=''
+    ITERATION=1
+    ARTIFACTS_DIR='$_artifacts_dir3'
+    eval \"\$(awk '/^record_gate_finding\(\)/{p=1} p{print} p && /^\}$/{exit}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null)\" 2>/dev/null || true
+    eval \"\$(awk '/^ingest_pipeline_stage_findings\(\)/{p=1} p{print} p && /^\}$/{exit}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null)\" 2>/dev/null || true
+    ingest_pipeline_stage_findings 2>/dev/null || true
+    printf 'FINDINGS=%s\n' \"\$GATE_FINDINGS\"
+    echo 'COMPLETED'
+" 2>/dev/null)"
+if echo "$_t_out" | grep -qF "COMPLETED"; then
+    assert_pass "test_ingest_pipeline_empty_artifact_uses_fallback: no crash on empty artifact"
+else
+    assert_fail "test_ingest_pipeline_empty_artifact_uses_fallback: no crash on empty artifact" \
+        "output: $_t_out"
+fi
+if echo "$_t_out" | grep -qi "Manually verify"; then
+    assert_pass "test_ingest_pipeline_empty_artifact_uses_fallback: fallback text present"
+else
+    assert_fail "test_ingest_pipeline_empty_artifact_uses_fallback: fallback text present" \
+        "output: $_t_out"
+fi
+rm -rf "$_artifacts_dir3"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

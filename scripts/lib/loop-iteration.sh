@@ -236,6 +236,8 @@ $TEST_OUTPUT"
     holistic_feedback_section="$(compose_holistic_feedback_section)"
     local quality_gate_detail_section
     quality_gate_detail_section="$(compose_quality_gate_detail_section)"
+    local gate_findings_section
+    gate_findings_section="$(compose_gate_findings_section)"
     local rejection_notice_section
     rejection_notice_section="$(compose_rejection_notice_section)"
 
@@ -584,6 +586,7 @@ ${prompt_goal}
 6. When the goal is FULLY achieved, output exactly: LOOP_COMPLETE
 
 ${error_summary_section:+$error_summary_section
+}${gate_findings_section:+$gate_findings_section
 }${holistic_feedback_section:+$holistic_feedback_section
 }${quality_gate_detail_section:+$quality_gate_detail_section
 }${rejection_notice_section:+$rejection_notice_section

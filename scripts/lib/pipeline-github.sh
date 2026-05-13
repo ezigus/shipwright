@@ -90,7 +90,7 @@ gh_update_progress() {
     [[ "$GH_AVAILABLE" != "true" || -z "$PROGRESS_COMMENT_ID" ]] && return 0
     local body="$1"
     _timeout 30 gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${PROGRESS_COMMENT_ID}" \
-        -X PATCH -f body="$body" 2>/dev/null || true
+        -X PATCH -f body="$body" >/dev/null 2>&1 || true
 }
 
 # Ensure origin/<base> ref is available with enough history for merge-base.

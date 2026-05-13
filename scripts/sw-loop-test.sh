@@ -3339,39 +3339,6 @@ _source_gate_funcs() {
     true
 }
 
-# ─── Test: record_gate_finding pass ─────────────────────────────────────────
-_rgf_pass_out="$(
-    (
-        source "$SCRIPT_DIR/sw-loop.sh" --help >/dev/null 2>&1 || true
-        _source_gate_funcs
-        source "$SCRIPT_DIR/sw-loop.sh" --help >/dev/null 2>&1 || true
-        # inline the function body from sw-loop.sh by sourcing selectively
-        # We source the function definitions using bash's ability to load via '. file'
-        # but guard against the script executing. We override the guard pattern.
-        GOAL="test" MAX_ITERATIONS=1 SW_LOOP_TEST_MODE=1 \
-        bash -c "
-            source '$SCRIPT_DIR/lib/test-helpers.sh' 2>/dev/null || true
-            # Stub dependencies
-            detect_gate_signal() { return 1; }
-            emit_event() { :; }
-            info() { :; }
-            warn() { :; }
-            QUALITY_GATES_ENABLED=false
-            QUALITY_GATE_PASSED=true
-            GATE_FINDINGS=''
-            GATE_PASSED_NAMES=''
-            # Define function under test
-            $(grep -A 20 '^record_gate_finding()' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null | head -25)
-            record_gate_finding 'tests' 'pass' '' '' 2>/dev/null || true
-            echo \"PASSED_NAMES=\$GATE_PASSED_NAMES\"
-            echo \"FINDINGS=\$GATE_FINDINGS\"
-        " 2>/dev/null
-    ) 2>/dev/null
-)"
-
-# Since the function doesn't exist yet (TDD), the tests will fail initially.
-# They test the EXPECTED behavior once implemented.
-
 # Helper: run a self-contained subshell that defines record_gate_finding inline.
 # This avoids depending on whether sw-loop.sh has been modified yet.
 _run_rgf_test() {

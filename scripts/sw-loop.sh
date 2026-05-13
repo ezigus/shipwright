@@ -1506,7 +1506,7 @@ ingest_pipeline_stage_findings() {
         if [[ ! -s "$_artifact" ]]; then
             record_gate_finding "pipeline:adversarial" "fail" "adversarial review ran" ""
         else
-            _count="$(grep -c '"severity"[[:space:]]*:[[:space:]]*"\(critical\|high\)"' "$_artifact" 2>/dev/null || echo "0")"
+            _count="$(grep -c '"severity"[[:space:]]*:[[:space:]]*"\(critical\|high\)"' "$_artifact" 2>/dev/null || true)"
             _count="${_count:-0}"
             if [[ "$_count" -gt 0 ]]; then
                 _detail="$(grep -A2 '"severity"[[:space:]]*:[[:space:]]*"\(critical\|high\)"' "$_artifact" 2>/dev/null | head -20 || true)"
@@ -1523,7 +1523,7 @@ ingest_pipeline_stage_findings() {
         if [[ ! -s "$_artifact" ]]; then
             record_gate_finding "pipeline:negative" "fail" "negative review ran" ""
         else
-            _count="$(grep -ic 'critical' "$_artifact" 2>/dev/null || echo "0")"
+            _count="$(grep -ic 'critical' "$_artifact" 2>/dev/null || true)"
             _count="${_count:-0}"
             if [[ "$_count" -gt 0 ]]; then
                 _detail="$(grep -i 'critical' "$_artifact" 2>/dev/null | head -10 || true)"
@@ -1535,10 +1535,8 @@ ingest_pipeline_stage_findings() {
     fi
 
     # pipeline:security — look for any security artifact or audit log
-    local _sec_found=false
     for _artifact in "${ARTIFACTS_DIR}"/security*.json "${ARTIFACTS_DIR}"/security*.log; do
         [[ -f "$_artifact" ]] || continue
-        _sec_found=true
         if [[ ! -s "$_artifact" ]]; then
             record_gate_finding "pipeline:security" "fail" "security scan ran but produced no output" ""
         else
@@ -1564,8 +1562,11 @@ ingest_pipeline_stage_findings() {
         fi
     fi
 
-    # pipeline:coverage
+    # pipeline:coverage — check both flat and nested locations used in the codebase
     _artifact="${ARTIFACTS_DIR}/coverage-summary.json"
+    if [[ ! -f "$_artifact" ]]; then
+        _artifact="${ARTIFACTS_DIR}/coverage/coverage-summary.json"
+    fi
     if [[ -f "$_artifact" ]]; then
         if [[ ! -s "$_artifact" ]]; then
             record_gate_finding "pipeline:coverage" "fail" "coverage report empty" ""
@@ -1613,9 +1614,13 @@ run_quality_gates() {
     echo -e "  ${PURPLE}▸${RESET} Running quality gates..."
 
     # Gate 1: Tests pass (if TEST_CMD set)
-    if [[ -n "$TEST_CMD" ]] && [[ "$TEST_PASSED" == "false" ]]; then
-        gate_failures+=("tests failing")
-        record_gate_finding "tests" "fail" "tests failing" ""
+    if [[ -n "$TEST_CMD" ]]; then
+        if [[ "$TEST_PASSED" == "false" ]]; then
+            gate_failures+=("tests failing")
+            record_gate_finding "tests" "fail" "tests failing" ""
+        else
+            record_gate_finding "tests" "pass" "" ""
+        fi
     fi
 
     # Gate 2: No uncommitted changes (excluding all bookkeeping/runtime files)
@@ -1625,6 +1630,8 @@ run_quality_gates() {
         local _uc_files
         _uc_files="$(git -C "$PROJECT_ROOT" diff --name-only -- $(_git_excluded_pathspecs) 2>/dev/null | head -10 || true)"
         record_gate_finding "uncommitted-changes" "fail" "uncommitted changes present" "${_uc_files:-no file list available}"
+    else
+        record_gate_finding "uncommitted-changes" "pass" "" ""
     fi
 
     # Gate 3: No TODO/FIXME/HACK/XXX in new source code
@@ -1665,6 +1672,8 @@ run_quality_gates() {
               }
             ' | head -10 || true)"
         record_gate_finding "task-markers" "fail" "${todo_count} task-marker(s) in new code" "${_todo_locations:-no locations extracted — grep the diff manually}"
+    else
+        record_gate_finding "task-markers" "pass" "" ""
     fi
 
     # Gate 4: Definition of Done (if DOD_FILE set)
@@ -2183,10 +2192,12 @@ compose_gate_findings_section() {
     fi
 }
 
-# Legacy delegates — kept so any caller that references these by name still works
-compose_audit_feedback_section()       { compose_gate_findings_section; }
-compose_holistic_feedback_section()    { compose_gate_findings_section; }
-compose_quality_gate_detail_section()  { compose_gate_findings_section; }
+# Legacy delegates — kept for back-compat; return empty because compose_gate_findings_section
+# now renders all gate content, and loop-iteration.sh calls gate_findings_section directly.
+# Callers that still invoke these by name get no output (no duplication).
+compose_audit_feedback_section()       { return 0; }
+compose_holistic_feedback_section()    { return 0; }
+compose_quality_gate_detail_section()  { return 0; }
 
 compose_rejection_notice_section() {
     if $COMPLETION_REJECTED; then

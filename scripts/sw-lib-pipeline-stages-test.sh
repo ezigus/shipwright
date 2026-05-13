@@ -307,7 +307,152 @@ plan_content=$(cat "$ARTIFACTS_DIR/plan.md")
 assert_contains "Plan has checklist" "$plan_content" "Task Checklist"
 assert_contains "Plan has steps" "$plan_content" "Files to Modify"
 assert_file_exists "DoD extracted" "$ARTIFACTS_DIR/dod.md"
+dod_content=$(cat "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true)
+assert_contains "DoD has item text" "$dod_content" "All tests pass"
+if echo "$dod_content" | grep -q '\- \['; then
+    assert_fail "DoD must not contain checkbox markers" "found '- [' in dod.md"
+else
+    assert_pass "DoD has no checkbox markers"
+fi
+if echo "$dod_content" | grep -qE '^###? Definition of Done'; then
+    assert_fail "DoD must not contain the heading line itself" "heading leaked into dod.md"
+else
+    assert_pass "DoD heading not leaked into dod.md"
+fi
 assert_file_exists "Tasks file" "$TASKS_FILE"
+
+# DoD extraction: plan with prose mention of DoD before real heading → only real section extracted
+dod_prose_plan="$ARTIFACTS_DIR/dod-prose-test-plan.md"
+cat > "$dod_prose_plan" <<'PROSE_PLAN'
+# Plan
+
+## Overview
+This feature satisfies the definition of done once auth works.
+
+## Files to Modify
+- src/auth.js
+
+## Design alternatives
+Consider other approaches.
+
+## Definition of Done
+- Only real item here
+PROSE_PLAN
+rm -f "$ARTIFACTS_DIR/dod.md"
+awk '
+    /^##+[[:space:]].*[Dd]efinition[[:space:]][Oo]f[[:space:]][Dd]one[[:space:]]*$/ { last_dod = NR }
+    { lines[NR] = $0 }
+    END {
+        if (last_dod == 0) { exit 0 }
+        for (i = last_dod + 1; i <= NR; i++) {
+            line = lines[i]
+            if (line ~ /^##[^#]/) break
+            sub(/^([[:space:]]*)-[[:space:]]+\[[xX[:space:]]\][[:space:]]+/, "\\1- ", line)
+            print line
+        }
+    }
+' "$dod_prose_plan" | awk 'NF || p { print; p=1 }' > "$ARTIFACTS_DIR/dod.md" || true
+prose_dod=$(cat "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true)
+assert_contains "DoD: prose plan — real item present" "$prose_dod" "Only real item"
+if echo "$prose_dod" | grep -q "satisfies the definition"; then
+    assert_fail "DoD: prose mention must not appear in extracted DoD" "prose leaked"
+else
+    assert_pass "DoD: prose mention not included"
+fi
+
+# DoD extraction: plan with two ## DoD headings → only last one extracted
+dod_two_headings_plan="$ARTIFACTS_DIR/dod-two-headings-plan.md"
+cat > "$dod_two_headings_plan" <<'TWO_PLAN'
+# Plan
+
+## Definition of Done
+- First section item (should NOT appear)
+
+## Other Section
+
+## Definition of Done
+- Last section item (should appear)
+TWO_PLAN
+rm -f "$ARTIFACTS_DIR/dod.md"
+awk '
+    /^##+[[:space:]].*[Dd]efinition[[:space:]][Oo]f[[:space:]][Dd]one[[:space:]]*$/ { last_dod = NR }
+    { lines[NR] = $0 }
+    END {
+        if (last_dod == 0) { exit 0 }
+        for (i = last_dod + 1; i <= NR; i++) {
+            line = lines[i]
+            if (line ~ /^##[^#]/) break
+            sub(/^([[:space:]]*)-[[:space:]]+\[[xX[:space:]]\][[:space:]]+/, "\\1- ", line)
+            print line
+        }
+    }
+' "$dod_two_headings_plan" | awk 'NF || p { print; p=1 }' > "$ARTIFACTS_DIR/dod.md" || true
+two_dod=$(cat "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true)
+assert_contains "DoD: two headings — last section item present" "$two_dod" "Last section item"
+if echo "$two_dod" | grep -q "First section item"; then
+    assert_fail "DoD: two headings — first section must not appear" "first section leaked"
+else
+    assert_pass "DoD: two headings — first section not included"
+fi
+
+# DoD extraction: checkboxes stripped
+dod_checkbox_plan="$ARTIFACTS_DIR/dod-checkbox-plan.md"
+cat > "$dod_checkbox_plan" <<'CB_PLAN'
+## Definition of Done
+- [ ] Unchecked item
+- [x] Checked item
+- Plain item
+CB_PLAN
+rm -f "$ARTIFACTS_DIR/dod.md"
+awk '
+    /^##+[[:space:]].*[Dd]efinition[[:space:]][Oo]f[[:space:]][Dd]one[[:space:]]*$/ { last_dod = NR }
+    { lines[NR] = $0 }
+    END {
+        if (last_dod == 0) { exit 0 }
+        for (i = last_dod + 1; i <= NR; i++) {
+            line = lines[i]
+            if (line ~ /^##[^#]/) break
+            sub(/^([[:space:]]*)-[[:space:]]+\[[xX[:space:]]\][[:space:]]+/, "\\1- ", line)
+            print line
+        }
+    }
+' "$dod_checkbox_plan" | awk 'NF || p { print; p=1 }' > "$ARTIFACTS_DIR/dod.md" || true
+cb_dod=$(cat "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true)
+if echo "$cb_dod" | grep -q '\- \['; then
+    assert_fail "DoD: checkboxes must be stripped" "found '- [' in output"
+else
+    assert_pass "DoD: checkboxes stripped"
+fi
+assert_contains "DoD: checkbox content preserved" "$cb_dod" "Unchecked item"
+assert_contains "DoD: checked item content preserved" "$cb_dod" "Checked item"
+
+# DoD extraction: no heading → empty file
+dod_noheading_plan="$ARTIFACTS_DIR/dod-noheading-plan.md"
+cat > "$dod_noheading_plan" <<'NH_PLAN'
+# Plan
+No definition of done here.
+NH_PLAN
+rm -f "$ARTIFACTS_DIR/dod.md"
+awk '
+    /^##+[[:space:]].*[Dd]efinition[[:space:]][Oo]f[[:space:]][Dd]one[[:space:]]*$/ { last_dod = NR }
+    { lines[NR] = $0 }
+    END {
+        if (last_dod == 0) { exit 0 }
+        for (i = last_dod + 1; i <= NR; i++) {
+            line = lines[i]
+            if (line ~ /^##[^#]/) break
+            sub(/^([[:space:]]*)-[[:space:]]+\[[xX[:space:]]\][[:space:]]+/, "\\1- ", line)
+            print line
+        }
+    }
+' "$dod_noheading_plan" | awk 'NF || p { print; p=1 }' > "$ARTIFACTS_DIR/dod.md" || true
+noheading_dod=$(cat "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true)
+if [[ -n "$noheading_dod" ]]; then
+    assert_fail "DoD: no heading — dod.md must be empty" "got: $noheading_dod"
+else
+    assert_pass "DoD: no heading — dod.md is empty"
+fi
+rm -f "$dod_prose_plan" "$dod_two_headings_plan" "$dod_checkbox_plan" "$dod_noheading_plan"
 
 # stage_plan: max-turns exhaustion — with trailing newline
 mock_binary "claude" 'printf "Error: Reached max turns (25)\n"'
@@ -1897,6 +2042,8 @@ fi
     _branch_progress="M src/auth.ts"
     unset _BRANCH_STATE_POSTED
     export ISSUE_NUMBER _branch_progress
+    git() { :; }  # stub — prevent eval'd code from touching the real repo
+    export -f git
 
     _psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
     # Extract the posting block using the same anchors as the static Test 2:
@@ -2033,7 +2180,9 @@ fi
         "$_psb_source" 2>/dev/null || true)
 
     if [[ -n "$_block" ]]; then
-        eval "$_block" 2>/dev/null || true
+        # Wrap in a function so 'local' declarations inside the eval block are valid bash.
+        _run_store_block() { eval "$_block"; }
+        _run_store_block 2>/dev/null || true
     fi
 
     if [[ "$_store_call_count" -eq 1 ]]; then
@@ -2086,7 +2235,8 @@ done
         "$_psb_source" 2>/dev/null || true)
 
     if [[ -n "$_block" ]]; then
-        eval "$_block" 2>/dev/null || true
+        _run_store_block() { eval "$_block"; }
+        _run_store_block 2>/dev/null || true
     fi
 
     if [[ "$_store_call_count" -eq 1 ]]; then

@@ -136,8 +136,11 @@ QUALITY_GATES_ENABLED=false
 AUDIT_RESULT=""
 HOLISTIC_RESULT=""
 QUALITY_GATE_DETAIL=""
+QUALITY_GATE_REASONS=""
 COMPLETION_REJECTED=false
 QUALITY_GATE_PASSED=true
+GATE_FINDINGS=""
+GATE_PASSED_NAMES=""
 PREV_NEW_COMMITS=0          # Commit count from previous iteration (for zero-progress detection)
 
 # ─── Multi-Test Defaults ──────────────────────────────────────────────────
@@ -929,7 +932,7 @@ git_auto_commit() {
     # Semantic validation before commit — skip commit if validation fails
     if ! validate_claude_output "$work_dir"; then
         warn "Validation failed — skipping commit for this iteration"
-        git -C "$work_dir" reset --hard HEAD 2>/dev/null || true
+        git -C "$work_dir" reset HEAD 2>/dev/null || true
         return 1
     fi
 
@@ -1475,14 +1478,138 @@ AUDIT_PROMPT
         'AUDIT_PASS|"verdict"[[:space:]]*:[[:space:]]*"pass"' \
         'AUDIT_FAIL|<<<AUDIT:FAIL>>>'; then
         AUDIT_RESULT="pass"
+        record_gate_finding "audit" "pass" "" ""
         echo -e "  ${GREEN}✓${RESET} Audit: passed"
     else
         AUDIT_RESULT="$(grep -v '^$' "$audit_log" | tail -20 | head -10 2>/dev/null || echo "Audit returned no output")"
+        record_gate_finding "audit" "fail" "audit issues found" "$AUDIT_RESULT"
         echo -e "  ${YELLOW}⚠${RESET} Audit: issues found"
     fi
 }
 
 # ─── Quality Gates ───────────────────────────────────────────────────────────
+
+# Record a gate result into the single-funnel accumulators.
+# Passes go to GATE_PASSED_NAMES; failures get a guaranteed non-empty detail block in GATE_FINDINGS.
+# Usage: record_gate_finding <gate_name> <verdict> <summary> [detail]
+record_gate_finding() {
+    local _gate="$1" _verdict="$2" _summary="$3" _detail="${4:-}"
+    if [[ "$_verdict" == "pass" ]]; then
+        GATE_PASSED_NAMES="${GATE_PASSED_NAMES} ${_gate}"
+        return 0
+    fi
+    if [[ -z "$_detail" ]]; then
+        _detail="Evaluator returned no item-level detail. Manually verify each ${_gate} requirement against your branch diff — do not rely on your self-audit alone."
+    fi
+    GATE_FINDINGS="${GATE_FINDINGS}
+
+### ${_gate} — verdict: ${_verdict}${_summary:+
+${_summary}}
+${_detail}"
+}
+
+# Ingest pipeline-stage gate artifacts into the findings funnel.
+# Only runs on iteration 1 — pipeline artifacts are one-shot context, not repeated each loop.
+ingest_pipeline_stage_findings() {
+    [[ "${ITERATION:-0}" -gt 1 ]] && return 0
+    [[ -z "${ARTIFACTS_DIR:-}" ]] || [[ ! -d "$ARTIFACTS_DIR" ]] && return 0
+
+    local _artifact _detail _count
+
+    # pipeline:adversarial
+    _artifact="${ARTIFACTS_DIR}/adversarial-review.json"
+    if [[ -f "$_artifact" ]]; then
+        if [[ ! -s "$_artifact" ]]; then
+            record_gate_finding "pipeline:adversarial" "fail" "adversarial review ran" ""
+        else
+            _count="$(grep -c '"severity"[[:space:]]*:[[:space:]]*"\(critical\|high\)"' "$_artifact" 2>/dev/null || true)"
+            _count="${_count:-0}"
+            if [[ "$_count" -gt 0 ]]; then
+                _detail="$(grep -A2 '"severity"[[:space:]]*:[[:space:]]*"\(critical\|high\)"' "$_artifact" 2>/dev/null | head -20 || true)"
+                record_gate_finding "pipeline:adversarial" "fail" "${_count} critical/high finding(s)" "${_detail}"
+            else
+                record_gate_finding "pipeline:adversarial" "pass" "" ""
+            fi
+        fi
+    fi
+
+    # pipeline:negative
+    _artifact="${ARTIFACTS_DIR}/negative-review.md"
+    if [[ -f "$_artifact" ]]; then
+        if [[ ! -s "$_artifact" ]]; then
+            record_gate_finding "pipeline:negative" "fail" "negative review ran" ""
+        else
+            _count="$(grep -ic 'critical' "$_artifact" 2>/dev/null || true)"
+            _count="${_count:-0}"
+            if [[ "$_count" -gt 0 ]]; then
+                _detail="$(grep -i 'critical' "$_artifact" 2>/dev/null | head -10 || true)"
+                record_gate_finding "pipeline:negative" "fail" "${_count} critical finding(s)" "${_detail}"
+            else
+                record_gate_finding "pipeline:negative" "pass" "" ""
+            fi
+        fi
+    fi
+
+    # pipeline:security — look for any security artifact or audit log
+    for _artifact in "${ARTIFACTS_DIR}"/security*.json "${ARTIFACTS_DIR}"/security*.log; do
+        [[ -f "$_artifact" ]] || continue
+        if [[ ! -s "$_artifact" ]]; then
+            record_gate_finding "pipeline:security" "fail" "security scan ran but produced no output" ""
+        else
+            _detail="$(tail -15 "$_artifact" 2>/dev/null || true)"
+            record_gate_finding "pipeline:security" "fail" "security findings present" "${_detail}"
+        fi
+        break   # only ingest first match to avoid duplicate entries
+    done
+
+    # pipeline:lint
+    _artifact="${ARTIFACTS_DIR}/lint-report.json"
+    if [[ -f "$_artifact" ]]; then
+        if [[ ! -s "$_artifact" ]]; then
+            record_gate_finding "pipeline:lint" "fail" "lint ran but produced no output" ""
+        else
+            _count="$(jq '[.[] | select(.type=="error")] | length' "$_artifact" 2>/dev/null || echo "")"
+            if [[ "${_count:-0}" -gt 0 ]]; then
+                _detail="$(jq -r '.[] | select(.type=="error") | .file + ":" + (.line|tostring) + " " + .message' "$_artifact" 2>/dev/null | head -10 || true)"
+                record_gate_finding "pipeline:lint" "fail" "${_count} lint error(s)" "${_detail}"
+            else
+                record_gate_finding "pipeline:lint" "pass" "" ""
+            fi
+        fi
+    fi
+
+    # pipeline:coverage — check both flat and nested locations used in the codebase
+    _artifact="${ARTIFACTS_DIR}/coverage-summary.json"
+    if [[ ! -f "$_artifact" ]]; then
+        _artifact="${ARTIFACTS_DIR}/coverage/coverage-summary.json"
+    fi
+    if [[ -f "$_artifact" ]]; then
+        if [[ ! -s "$_artifact" ]]; then
+            record_gate_finding "pipeline:coverage" "fail" "coverage report empty" ""
+        else
+            _detail="$(jq -r 'to_entries[] | select(.key=="total") | .value | to_entries[] | .key + ": " + (.value.pct|tostring) + "%"' "$_artifact" 2>/dev/null | head -10 || true)"
+            record_gate_finding "pipeline:coverage" "fail" "coverage below threshold" "${_detail:-see coverage-summary.json}"
+        fi
+    fi
+
+    # pipeline:holistic (compound quality from pipeline stage)
+    local _hol_artifact="${ARTIFACTS_DIR}/compound-quality.json"
+    if [[ ! -f "$_hol_artifact" ]]; then
+        _hol_artifact="${ARTIFACTS_DIR}/holistic-assessment.json"
+    fi
+    if [[ -f "$_hol_artifact" ]]; then
+        if [[ ! -s "$_hol_artifact" ]]; then
+            record_gate_finding "pipeline:holistic" "fail" "compound quality check ran" ""
+        else
+            _detail="$(jq -r '.summary // .gaps // ""' "$_hol_artifact" 2>/dev/null || tail -10 "$_hol_artifact" 2>/dev/null || true)"
+            if jq -e '.verdict == "pass"' "$_hol_artifact" >/dev/null 2>&1; then
+                record_gate_finding "pipeline:holistic" "pass" "" ""
+            else
+                record_gate_finding "pipeline:holistic" "fail" "pipeline holistic found gaps" "${_detail}"
+            fi
+        fi
+    fi
+}
 
 run_quality_gates() {
     if ! $QUALITY_GATES_ENABLED; then
@@ -1492,20 +1619,35 @@ run_quality_gates() {
 
     HOLISTIC_RESULT=""       # reset: stale holistic text from a prior gate-run must not persist across iterations
     QUALITY_GATE_DETAIL=""   # reset: stale gate detail must not persist across iterations
+    GATE_FINDINGS=""
+    GATE_PASSED_NAMES=""
+    QUALITY_GATE_REASONS=""
     QUALITY_GATE_PASSED=true
     local gate_failures=()
+
+    ingest_pipeline_stage_findings
 
     echo -e "  ${PURPLE}▸${RESET} Running quality gates..."
 
     # Gate 1: Tests pass (if TEST_CMD set)
-    if [[ -n "$TEST_CMD" ]] && [[ "$TEST_PASSED" == "false" ]]; then
-        gate_failures+=("tests failing")
+    if [[ -n "$TEST_CMD" ]]; then
+        if [[ "$TEST_PASSED" == "false" ]]; then
+            gate_failures+=("tests failing")
+            record_gate_finding "tests" "fail" "tests failing" ""
+        else
+            record_gate_finding "tests" "pass" "" ""
+        fi
     fi
 
     # Gate 2: No uncommitted changes (excluding all bookkeeping/runtime files)
     if ! git -C "$PROJECT_ROOT" diff --quiet -- $(_git_excluded_pathspecs) 2>/dev/null || \
        ! git -C "$PROJECT_ROOT" diff --cached --quiet -- $(_git_excluded_pathspecs) 2>/dev/null; then
         gate_failures+=("uncommitted changes present")
+        local _uc_files
+        _uc_files="$(git -C "$PROJECT_ROOT" diff --name-only -- $(_git_excluded_pathspecs) 2>/dev/null | head -10 || true)"
+        record_gate_finding "uncommitted-changes" "fail" "uncommitted changes present" "${_uc_files:-no file list available}"
+    else
+        record_gate_finding "uncommitted-changes" "pass" "" ""
     fi
 
     # Gate 3: No TODO/FIXME/HACK/XXX in new source code
@@ -1545,11 +1687,9 @@ run_quality_gates() {
                   print file ":" lineno ": " substr($0,2)
               }
             ' | head -10 || true)"
-        if [[ -n "$_todo_locations" ]]; then
-            QUALITY_GATE_DETAIL="${QUALITY_GATE_DETAIL}
-### Task markers to remove
-${_todo_locations}"
-        fi
+        record_gate_finding "task-markers" "fail" "${todo_count} task-marker(s) in new code" "${_todo_locations:-no locations extracted — grep the diff manually}"
+    else
+        record_gate_finding "task-markers" "pass" "" ""
     fi
 
     # Gate 4: Definition of Done (if DOD_FILE set)
@@ -1564,8 +1704,10 @@ ${_todo_locations}"
         local failures_str
         failures_str="$(printf ', %s' "${gate_failures[@]}")"
         failures_str="${failures_str:2}"  # trim leading ", "
+        QUALITY_GATE_REASONS="$failures_str"
         echo -e "  ${RED}✗${RESET} Quality gates: FAILED (${failures_str})"
     else
+        QUALITY_GATE_REASONS=""
         echo -e "  ${GREEN}✓${RESET} Quality gates: all passed"
     fi
 }
@@ -1761,6 +1903,10 @@ DOD_PROMPT
     if [[ ! -s "$dod_log" ]] || [[ "$dod_log_bytes" -le 2 ]]; then
         warn "DoD: claude -p returned empty output (exit_code=${dod_exit_code}) — check CLI flags and model availability"
         warn "DoD log: $dod_log (${dod_log_bytes} bytes), stderr: $dod_err_log"
+        QUALITY_GATE_DETAIL="${QUALITY_GATE_DETAIL}
+### Definition of Done — evaluator failure
+The DoD evaluator returned no usable response (exit_code=${dod_exit_code}). The DoD content was:
+$(head -20 "$DOD_FILE" 2>/dev/null | sed 's/^/  /' || true)"
         return 1
     fi
 
@@ -1787,6 +1933,7 @@ DOD_PROMPT
         local dod_summary
         dod_summary="$(jq -r '.summary // ""' "$dod_clean" 2>/dev/null || echo "")"
         [[ -n "$dod_summary" ]] && info "  DoD summary: $dod_summary"
+        record_gate_finding "dod" "pass" "" ""
         return 0
     else
         echo -e "  ${YELLOW}⚠${RESET} Definition of Done: not satisfied"
@@ -1801,11 +1948,9 @@ DOD_PROMPT
           (if ((.files | type) == "array") and ((.files | length) > 0) then "  Files: " + (.files | join(", ")) + "\n" else "" end) +
           (if .hint then "  Fix: " + .hint else "" end)
         ' "$dod_clean" 2>/dev/null | head -20 || true)"
-        if [[ -n "$_dod_detail" ]]; then
-            QUALITY_GATE_DETAIL="${QUALITY_GATE_DETAIL}
-### Definition of Done — unsatisfied items
-${_dod_detail}"
-        fi
+        local _dod_summary
+        _dod_summary="$(jq -r '.summary // ""' "$dod_clean" 2>/dev/null || echo "")"
+        record_gate_finding "dod" "fail" "${_dod_summary}" "${_dod_detail}"
         # Fallback: only when jq parse failed (dod_verdict empty) — not when jq returned "fail".
         # Without this guard, prose in a legitimately-parsed "fail" summary (e.g. "all requirements
         # are now satisfied") could match the legacy pattern and incorrectly flip the verdict to pass.
@@ -1976,10 +2121,12 @@ HOLISTIC_PROMPT
         '<<<HOLISTIC:FAIL>>>'; then
         echo -e "  ${GREEN}✓${RESET} Holistic assessment: passed"
         HOLISTIC_RESULT="pass"
+        record_gate_finding "holistic" "pass" "" ""
         return 0
     else
         echo -e "  ${YELLOW}⚠${RESET} Holistic assessment: gaps found"
         HOLISTIC_RESULT="$(grep -v '^$' "$holistic_log" | tail -20 | head -10 2>/dev/null || echo "Holistic assessment found gaps")"
+        record_gate_finding "holistic" "fail" "holistic assessment found gaps" "$HOLISTIC_RESULT"
         return 1
     fi
 }
@@ -2040,49 +2187,39 @@ compose_audit_section() {
     echo "If ANY answer is \"no\", do NOT output <<<LOOP:PASS>>>. Instead, fix the issues first."
 }
 
-compose_audit_feedback_section() {
-    if [[ -z "$AUDIT_RESULT" ]] || [[ "$AUDIT_RESULT" == "pass" ]]; then
-        return
+compose_gate_findings_section() {
+    local _passed="${GATE_PASSED_NAMES# }"
+    local _failed="${GATE_FINDINGS:-}"
+    [[ -z "$_passed" && -z "$_failed" ]] && return
+    echo "## Quality Gate Results — Previous Iteration"
+    echo ""
+    if [[ -n "$_passed" ]]; then
+        echo "**Passed:** ${_passed// /, }"
+        echo ""
     fi
-    cat <<AUDIT_FEEDBACK
-## Audit Feedback (Previous Iteration)
-An independent audit of your last iteration found these issues:
-${AUDIT_RESULT}
-
-Address ALL audit findings before proceeding with new work.
-AUDIT_FEEDBACK
+    if [[ -n "$_failed" ]]; then
+        echo "**⚠ Findings — Address all items below before signalling completion. Multiple gates may have failed simultaneously.**"
+        echo "${_failed}"
+    fi
 }
 
-compose_holistic_feedback_section() {
-    if [[ -z "$HOLISTIC_RESULT" ]] || [[ "$HOLISTIC_RESULT" == "pass" ]]; then
-        return
-    fi
-    cat <<HOLISTIC_FEEDBACK
-## Holistic Assessment Feedback (Previous Iteration)
-The final quality gate found these gaps:
-${HOLISTIC_RESULT}
-
-Address ALL gaps before declaring the goal complete.
-HOLISTIC_FEEDBACK
-}
-
-compose_quality_gate_detail_section() {
-    if [[ -z "${QUALITY_GATE_DETAIL:-}" ]]; then
-        return
-    fi
-    cat <<GATE_DETAIL
-## Quality Gate Failure — Specific Locations
-Fix these exact issues before attempting LOOP_COMPLETE again:
-${QUALITY_GATE_DETAIL}
-GATE_DETAIL
-}
+# Legacy delegates — kept for back-compat; return empty because compose_gate_findings_section
+# now renders all gate content, and loop-iteration.sh calls gate_findings_section directly.
+# Callers that still invoke these by name get no output (no duplication).
+compose_audit_feedback_section()       { return 0; }
+compose_holistic_feedback_section()    { return 0; }
+compose_quality_gate_detail_section()  { return 0; }
 
 compose_rejection_notice_section() {
     if $COMPLETION_REJECTED; then
-        cat <<'REJECTION'
-## ⚠ Completion Rejected
-Your previous <<<LOOP:PASS>>> was REJECTED because quality gates did not pass.
-Review the audit feedback and test results above, fix the issues, then try again.
+        local _reasons="${QUALITY_GATE_REASONS:-}"
+        local _failed_line=""
+        [[ -n "$_reasons" ]] && _failed_line="
+Failed: ${_reasons}"
+        cat <<REJECTION
+## ⚠ Completion Rejected${_failed_line}
+Your previous <<<LOOP:PASS>>> was REJECTED.
+Fix the issues and test, then try again.
 Do NOT output <<<LOOP:PASS>>> until all quality checks pass.
 REJECTION
     elif [[ "${GATES_PASSED_NO_SIGNAL:-false}" == "true" ]]; then
@@ -2090,6 +2227,12 @@ REJECTION
 ## ✓ Quality Gates Passed
 All configured quality gates (tests, uncommitted changes, DoD) passed on the previous iteration. If the goal is fully achieved and any audit issues above are addressed, output <<<LOOP:PASS>>> to finish the loop.
 GATES_PASSED
+    elif ! ${QUALITY_GATE_PASSED:-true}; then
+        local _reasons="${QUALITY_GATE_REASONS:-quality checks}"
+        echo "## ⚠ Quality Gates Not Passing"
+        echo "Failed: ${_reasons}"
+        echo "Review the findings section above and fix all issues before signalling completion."
+        echo "Do NOT output <<<LOOP:PASS>>> until all quality checks pass."
     fi
 }
 
@@ -2792,12 +2935,6 @@ run_single_agent_loop() {
             ruflo_health_check || true
         fi
 
-        # Reset per-iteration completion signal flags before prompt is built.
-        # These cannot be reset inside compose_rejection_notice_section() because
-        # that function runs in a $(...) subshell and side effects don't persist.
-        COMPLETION_REJECTED=false
-        GATES_PASSED_NO_SIGNAL=false
-
         # Emit iteration start event for pipeline visibility
         if type emit_event >/dev/null 2>&1; then
             emit_event "loop.iteration_start" \
@@ -2907,6 +3044,13 @@ ${GOAL}"
         # Run Claude
         local exit_code=0
         run_claude_iteration || exit_code=$?
+
+        # Reset per-iteration completion signal flags now that compose_prompt has consumed them.
+        # Resetting here (after run_claude_iteration) rather than before it ensures compose_prompt
+        # sees the PREVIOUS iteration's COMPLETION_REJECTED value and can include the rejection
+        # notice in the prompt. Quality gates below will set fresh values for this iteration.
+        COMPLETION_REJECTED=false
+        GATES_PASSED_NO_SIGNAL=false
 
         # Record per-iteration delta to the pipeline's loop-iteration-costs.jsonl sidecar.
         # No-ops silently when ITER_COST_JSONL is not exported (e.g. standalone `sw loop`).
@@ -3157,10 +3301,13 @@ ${GOAL}"
         PREV_NEW_COMMITS="${new_commits:-0}"
 
         # Extract summary and update state
-        local summary
+        local summary outcome
         summary="$(extract_summary "$log_file")"
+        outcome="$(compose_iteration_outcome)"
         append_log_entry "### Iteration $ITERATION ($(now_iso))
-$summary
+${summary}
+
+${outcome}
 "
         write_state
         write_progress

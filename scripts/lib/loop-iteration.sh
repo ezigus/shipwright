@@ -236,6 +236,8 @@ $TEST_OUTPUT"
     holistic_feedback_section="$(compose_holistic_feedback_section)"
     local quality_gate_detail_section
     quality_gate_detail_section="$(compose_quality_gate_detail_section)"
+    local gate_findings_section
+    gate_findings_section="$(compose_gate_findings_section)"
     local rejection_notice_section
     rejection_notice_section="$(compose_rejection_notice_section)"
 
@@ -243,7 +245,8 @@ $TEST_OUTPUT"
     # AND the quality gate is still failing. Without this, the agent reads passing
     # tests + the same gate feedback and silently exits in seconds, making no changes.
     local zero_progress_notice=""
-    if [[ "${PREV_NEW_COMMITS:-0}" -eq 0 ]] && [[ "${QUALITY_GATE_PASSED:-true}" == "false" ]]; then
+    if [[ "${PREV_NEW_COMMITS:-0}" -eq 0 ]] \
+       && { [[ "${QUALITY_GATE_PASSED:-true}" == "false" ]] || $COMPLETION_REJECTED; }; then
         zero_progress_notice="
 ## Zero Progress Detected (IMPORTANT)
 Your previous iteration made NO new commits. The working tree is identical to before.
@@ -476,12 +479,12 @@ ${_ctx}
     local dod_section=""
     if [[ -n "${DOD_FILE:-}" && -f "$DOD_FILE" ]]; then
         local _dod_raw
-        _dod_raw="$(cat "$DOD_FILE" 2>/dev/null || true)"
+        _dod_raw="$(sed 's/^\([[:space:]]*\)- \[.\] /\1- /' "$DOD_FILE" 2>/dev/null || true)"
         if [[ -n "$_dod_raw" ]]; then
-            dod_section="## Definition of Done — your work must satisfy ALL of these
+            dod_section="## Definition of Done
 ${_dod_raw}
 
-Treat unchecked items as outstanding requirements. The DoD will be evaluated against the cumulative branch diff at the end of each iteration.
+The DoD is evaluated automatically against the cumulative branch diff at the end of each iteration.
 "
         fi
     fi
@@ -577,6 +580,7 @@ ${prompt_goal}
 6. When the goal is FULLY achieved, output exactly: LOOP_COMPLETE
 
 ${error_summary_section:+$error_summary_section
+}${gate_findings_section:+$gate_findings_section
 }${holistic_feedback_section:+$holistic_feedback_section
 }${quality_gate_detail_section:+$quality_gate_detail_section
 }${rejection_notice_section:+$rejection_notice_section
@@ -614,11 +618,8 @@ $discovery_section
 - Keep working memory lean — summarize completed steps, don't preserve full outputs
 
 ## Rules
-- Focus on ONE task per iteration — do it well
 - Always commit with descriptive messages
-- If tests fail, fix them before ending
 - If stuck on the same issue for 2+ iterations, try a different approach
-- Do NOT output LOOP_COMPLETE unless the goal is genuinely achieved
 ${reference_trailer}
 PROMPT
 
@@ -865,16 +866,57 @@ ${truncated}
 
 extract_summary() {
     local log_file="$1"
-    # Grab last meaningful lines from Claude output, skipping empty lines
-    local summary
-    summary="$(grep -v '^$' "$log_file" | tail -5 | head -3 2>/dev/null || echo "(no output)")"
-    # Truncate long lines
-    summary="$(echo "$summary" | cut -c1-120)"
+    [[ ! -s "$log_file" ]] && { echo "(no output)"; return; }
 
-    # Sanitize: if summary is just a CLI/API error, replace with generic text
+    local summary
+    # Prefer an explicit summary block written by the agent (## Summary or ## Iteration Summary).
+    summary="$(awk '
+        /^## +(Iteration )?[Ss]ummary/ { capture=1; next }
+        capture && /^## / { capture=0 }
+        capture { print }
+    ' "$log_file" | grep -v '^$' | head -20 || true)"
+
+    # Fall back to the last 20 non-blank lines of output.
+    if [[ -z "$summary" ]]; then
+        summary="$(grep -v '^$' "$log_file" | tail -20 || true)"
+    fi
+
+    # Sanitize: if summary is just a CLI/API error, replace with generic text.
     if echo "$summary" | grep -qiE 'Invalid API key|authentication_error|rate_limit|API key expired|ANTHROPIC_API_KEY'; then
         summary="(CLI error — no useful output this iteration)"
     fi
 
+    # LOOP_COMPLETE / <<<LOOP:PASS>>> markers are intentionally preserved so the
+    # next iteration's compose_iteration_outcome can pair them with rejection detail.
+    # No per-line char truncation — manage_context_window handles prompt size.
     echo "$summary"
+}
+
+# compose_iteration_outcome — renders a structured outcome block for the just-finished
+# iteration. Called after run_quality_gates so all gate globals are populated.
+# Output is appended to the iteration log entry read by the next iteration's prompt.
+compose_iteration_outcome() {
+    local outcome=""
+    if $COMPLETION_REJECTED; then
+        outcome="**Outcome: LOOP_COMPLETE was REJECTED.**
+Reason(s): ${QUALITY_GATE_REASONS:-quality gates failed}"
+        if [[ -n "${QUALITY_GATE_DETAIL:-}" ]]; then
+            outcome="${outcome}
+
+Specific failures:
+${QUALITY_GATE_DETAIL}"
+        fi
+    elif [[ "${QUALITY_GATE_PASSED:-true}" == "false" ]]; then
+        outcome="**Outcome: gates FAILED** — ${QUALITY_GATE_REASONS:-see above}"
+        if [[ -n "${QUALITY_GATE_DETAIL:-}" ]]; then
+            outcome="${outcome}
+
+${QUALITY_GATE_DETAIL}"
+        fi
+    elif [[ "${TEST_PASSED:-true}" == "false" ]]; then
+        outcome="**Outcome: tests FAILED** in this iteration."
+    else
+        outcome="**Outcome: iteration completed; gates pending or passed.**"
+    fi
+    printf '%s' "$outcome"
 }

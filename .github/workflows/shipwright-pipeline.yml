@@ -1008,18 +1008,18 @@ jobs:
               | grep -v '^[[:space:]]*$' | head -25 || true)
 
             _comment_body="$(cat <<EOF
-🔀 **WIP branch updated** — \`${BRANCH}\` @ \`${_head_sha}\`
+          🔀 **WIP branch updated** — \`${BRANCH}\` @ \`${_head_sha}\`
 
-**Latest commit:** ${_head_msg}
+          **Latest commit:** ${_head_msg}
 
-**Files pushed:**
-\`\`\`
-${_changed:-no source file changes (artifact-only)}
-\`\`\`
+          **Files pushed:**
+          \`\`\`
+          ${_changed:-no source file changes (artifact-only)}
+          \`\`\`
 
-<!-- SHIPWRIGHT-WIP-PUSH: ${{ github.run_id }}:${BRANCH} -->
-EOF
-)"
+          <!-- SHIPWRIGHT-WIP-PUSH run_id=${{ github.run_id }} branch=${BRANCH} -->
+          EOF
+          )"
 
             _existing_id=$(gh api \
               "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" \

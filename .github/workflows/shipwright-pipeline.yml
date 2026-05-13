@@ -1004,14 +1004,22 @@ jobs:
           if [[ "$WIP_PUSH_STATUS" == "success" ]] && [[ -n "${ISSUE_NUMBER:-}" ]]; then
             _head_sha=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
             _head_msg=$(git log -1 --format='%s' HEAD 2>/dev/null || echo "")
-            _changed=$(git diff --name-status "origin/${BRANCH}^..HEAD" 2>/dev/null \
+            _changed=$(git diff --name-status "origin/${BRANCH}..HEAD" 2>/dev/null \
               | grep -v '^[[:space:]]*$' | head -25 || true)
 
-            _comment_body="$(printf \
-'🔀 **WIP branch updated** — \`%s\` @ \`%s\`\n\n**Latest commit:** %s\n\n**Files pushed:**\n```\n%s\n```\n\n<!-- SHIPWRIGHT-WIP-PUSH: %s:%s -->' \
-              "$BRANCH" "$_head_sha" "$_head_msg" \
-              "${_changed:-no source file changes (artifact-only)}" \
-              "${{ github.run_id }}" "$BRANCH")"
+            _comment_body="$(cat <<EOF
+🔀 **WIP branch updated** — \`${BRANCH}\` @ \`${_head_sha}\`
+
+**Latest commit:** ${_head_msg}
+
+**Files pushed:**
+\`\`\`
+${_changed:-no source file changes (artifact-only)}
+\`\`\`
+
+<!-- SHIPWRIGHT-WIP-PUSH: ${{ github.run_id }}:${BRANCH} -->
+EOF
+)"
 
             _existing_id=$(gh api \
               "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" \
@@ -1064,7 +1072,8 @@ jobs:
           # edits made during the build loop but not yet committed). Most bulky runtime
           # paths (.claude/loop-logs, .claude/pipeline-artifacts/, .claude/intelligence-cache.json)
           # are excluded by .gitignore so git add -A will not stage them.
-          git add -A 2>&1 | head -10 || echo "::warning::git add -A exited non-zero — staged file list may be incomplete"
+          _add_out=$(git add -A 2>&1) || echo "::warning::git add -A failed: ${_add_out}"
+          echo "$_add_out" | head -10
           # Force-add gitignored pipeline artifacts we DO want to persist across runs.
           git add -f .claude/pipeline-artifacts/plan.md                2>/dev/null || true
           git add -f .claude/pipeline-artifacts/context-bundle.md      2>/dev/null || true
@@ -1076,8 +1085,11 @@ jobs:
           # Unstage files we never want in the snapshot.
           git restore --staged .claude/daemon-config.json 2>/dev/null || true
           # Drop any sensitive files that may not be covered by .gitignore.
-          git restore --staged '*.env' '.env*' '*credentials*' '*secret*' '*.pem' '*.key' \
-              2>/dev/null || true
+          # One pathspec per call — git restore --staged aborts on first unmatched pattern,
+          # so combining them would silently skip later patterns when an earlier one misses.
+          for _sensitive_pat in '*.env' '.env*' '*credentials*' '*secret*' '*.pem' '*.key'; do
+            git restore --staged "$_sensitive_pat" 2>/dev/null || true
+          done
 
           # Diagnostic: show exactly what will be committed (key signal for debugging)
           _staged_files=$(git diff --cached --name-status 2>/dev/null || true)

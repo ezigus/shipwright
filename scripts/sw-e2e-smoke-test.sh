@@ -360,7 +360,7 @@ invoke_pipeline() {
         PATH="$TEST_TEMP_DIR/bin:$PATH" \
         SHIPWRIGHT_ACTIVE_PIPELINES_DIR="$_admit_dir" \
         SHIPWRIGHT_MIN_FREE_GB=0 \
-        NO_GITHUB=true \
+        NO_ARTIFACT_PUSH=true \
         bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
     ) || PIPELINE_EXIT=$?
 }
@@ -747,7 +747,7 @@ test_headless_auto_detection() {
         PATH="$TEST_TEMP_DIR/bin:$PATH" \
         SHIPWRIGHT_ACTIVE_PIPELINES_DIR="$_admit_dir" \
         SHIPWRIGHT_MIN_FREE_GB=0 \
-        NO_GITHUB=true \
+        NO_ARTIFACT_PUSH=true \
         bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" start --issue 42 --dry-run < /dev/null 2>&1
     ) || PIPELINE_EXIT=$?
     assert_exit_code 0 "dry-run should succeed in headless mode" &&
@@ -832,7 +832,7 @@ _invoke_pipeline_with_admission_env() {
         SHIPWRIGHT_ACTIVE_PIPELINES_DIR="$active_dir" \
         SHIPWRIGHT_MIN_FREE_GB="$min_gb" \
         SHIPWRIGHT_MAX_ACTIVE_PIPELINES="$max_active" \
-        NO_GITHUB=true \
+        NO_ARTIFACT_PUSH=true \
         bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" "$@" 2>&1
     ) || PIPELINE_EXIT=$?
 }

@@ -780,8 +780,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-durable-test.sh` | 221 | Validate durable workflow engine |
 | `scripts/sw-e2e-integration-test.sh` | 355 | Real Claude + Real GitHub |
 | `scripts/sw-e2e-orchestrator-test.sh` | 157 | Test suite registry & execution |
-| `scripts/sw-e2e-smoke-test.sh` | 1071 | Pipeline orchestration without API keys |
-| `scripts/sw-e2e-system-test.sh` | 575 | Proves full daemon→pipeline→loop→PR flow |
+| `scripts/sw-e2e-smoke-test.sh` | 1074 | Pipeline orchestration without API keys |
+| `scripts/sw-e2e-system-test.sh` | 576 | Proves full daemon→pipeline→loop→PR flow |
 | `scripts/sw-eventbus-test.sh` | 155 | Durable event bus tests |
 | `scripts/sw-evidence-test.sh` | 214 | Unit tests for sw-evidence.sh |
 | `scripts/sw-feedback-test.sh` | 176 | Production Feedback Loop tests |
@@ -843,7 +843,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-pipeline-composer-test.sh` | 632 | Test Suite |
 | `scripts/sw-pipeline-memory-guard-test.sh` | 190 |  |
 | `scripts/sw-pipeline-resume-test.sh` | 410 | Validate workflow shell logic |
-| `scripts/sw-pipeline-test.sh` | 3778 | E2E validation invoking the REAL pipeline |
+| `scripts/sw-pipeline-test.sh` | 3779 | E2E validation invoking the REAL pipeline |
 | `scripts/sw-pipeline-vitals-test.sh` | 226 | Validate pipeline health scoring |
 | `scripts/sw-pm-test.sh` | 225 | Autonomous PM Agent test suite |
 | `scripts/sw-policy-e2e-test.sh` | 290 | Verify config/policy.json is honored |

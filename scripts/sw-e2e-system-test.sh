@@ -285,6 +285,7 @@ invoke_pipeline() {
     # are not affected by the CI runner's actual available RAM.
     PIPELINE_OUTPUT=$(cd "$TEMP_DIR/project" && PATH="$TEMP_DIR/bin:$PATH" HOME="$TEMP_DIR/home" \
         SHIPWRIGHT_MIN_FREE_GB=0 \
+        NO_GITHUB=true \
         $_timeout_cmd bash "$TEMP_DIR/scripts/sw-pipeline.sh" "$@" 2>&1) || PIPELINE_EXIT=$?
 }
 

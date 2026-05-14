@@ -407,6 +407,7 @@ invoke_pipeline() {
         INTELLIGENCE_COMPLEXITY="${_TEST_INTELLIGENCE_COMPLEXITY:-}" \
         INTELLIGENCE_ISSUE_TYPE="${_TEST_INTELLIGENCE_ISSUE_TYPE:-}" \
         SHIPWRIGHT_MIN_FREE_GB=0 \
+        NO_GITHUB=true \
         bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
     ) || PIPELINE_EXIT=$?
 }

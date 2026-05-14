@@ -1499,7 +1499,7 @@ record_gate_finding() {
         return 0
     fi
     if [[ -z "$_detail" ]]; then
-        _detail="Evaluator returned no item-level detail. Manually verify each ${_gate} requirement against your branch diff — do not rely on your self-audit alone."
+        _detail="Evaluator returned no item-level detail (harness diagnostic gap — the evaluator path did not produce structured output for this gate). Inspect the iteration log for raw evaluator output."
     fi
     GATE_FINDINGS="${GATE_FINDINGS}
 
@@ -1939,17 +1939,44 @@ $(head -20 "$DOD_FILE" 2>/dev/null | sed 's/^/  /' || true)"
         echo -e "  ${YELLOW}⚠${RESET} Definition of Done: not satisfied"
         # Surface failing items for diagnostics
         jq -r '.items[] | select(.satisfied == false) | "  - \(.item): " + (.reason // "not satisfied")' "$dod_clean" 2>/dev/null || true
-        # Extract optional file:hint details and store for next-iteration prompt injection.
-        # Uses null-safe // [] so missing "files" field does not cause jq errors.
-        local _dod_detail
-        _dod_detail="$(jq -r '
-          .items[] | select(.satisfied == false) |
-          "- " + .item + "\n" +
-          (if ((.files | type) == "array") and ((.files | length) > 0) then "  Files: " + (.files | join(", ")) + "\n" else "" end) +
-          (if .hint then "  Fix: " + .hint else "" end)
-        ' "$dod_clean" 2>/dev/null | head -20 || true)"
-        local _dod_summary
+
+        # Determine items array health for branched diagnostics
+        local dod_items_type dod_items_len dod_unsatisfied_count
+        dod_items_type="$(jq -r '(.items | type)' "$dod_clean" 2>/dev/null || echo "unknown")"
+        dod_items_len="$(jq '(if (.items | type) == "array" then (.items | length) else 0 end)' "$dod_clean" 2>/dev/null || echo "0")"
+        dod_unsatisfied_count="$(jq '(if (.items | type) == "array" then ([.items[] | select(.satisfied == false)] | length) else 0 end)' "$dod_clean" 2>/dev/null || echo "0")"
+        dod_unsatisfied_count="${dod_unsatisfied_count// /}"
+        dod_items_len="${dod_items_len// /}"
+
+        local _dod_detail _dod_summary
         _dod_summary="$(jq -r '.summary // ""' "$dod_clean" 2>/dev/null || echo "")"
+
+        if [[ -z "$dod_verdict" ]]; then
+            # JSON was unparseable — most valuable case: tells agent the harness is broken
+            _dod_detail="DoD evaluator output was unparseable JSON. Raw response (first 20 lines):
+$(head -20 "$dod_clean" 2>/dev/null | sed 's/^/  /' || echo "  (no content)")"
+        elif [[ "$dod_items_type" != "array" ]]; then
+            _dod_detail="DoD evaluator reported fail but .items was missing or not an array (type: ${dod_items_type}). Summary: ${_dod_summary:-none}"
+        elif [[ "${dod_items_len:-0}" -eq 0 ]]; then
+            _dod_detail="DoD evaluator reported fail but .items was an empty array — likely a per-item evaluation skip. Summary: ${_dod_summary:-none}"
+        elif [[ "${dod_unsatisfied_count:-0}" -eq 0 ]]; then
+            _dod_detail="DoD evaluator reported fail but all .items were marked satisfied — likely model inconsistency. Summary: ${_dod_summary:-none}"
+        else
+            # Rich detail path: has real unsatisfied items
+            # Extract optional file:hint details for next-iteration prompt injection.
+            # Uses null-safe // [] so missing "files" field does not cause jq errors.
+            _dod_detail="$(jq -r '
+              .items[] | select(.satisfied == false) |
+              "- " + .item + "\n" +
+              (if ((.files | type) == "array") and ((.files | length) > 0) then "  Files: " + (.files | join(", ")) + "\n" else "" end) +
+              (if .hint then "  Fix: " + .hint else "" end)
+            ' "$dod_clean" 2>/dev/null | head -20 || true)"
+            # Minimal fallback if rich detail somehow still empty (schema drift guard)
+            if [[ -z "$_dod_detail" ]]; then
+                _dod_detail="$(jq -r '.items[] | select(.satisfied == false) | "- " + .item' "$dod_clean" 2>/dev/null | head -20 || true)"
+            fi
+        fi
+
         record_gate_finding "dod" "fail" "${_dod_summary}" "${_dod_detail}"
         # Fallback: only when jq parse failed (dod_verdict empty) — not when jq returned "fail".
         # Without this guard, prose in a legitimately-parsed "fail" summary (e.g. "all requirements

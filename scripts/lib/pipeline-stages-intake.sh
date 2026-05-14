@@ -678,7 +678,14 @@ CC_TASKS_EOF
             for (i = last_dod + 1; i <= NR; i++) {
                 line = lines[i]
                 if (line ~ /^##[^#]/) break
-                sub(/^([[:space:]]*)-[[:space:]]+\[[xX[:space:]]\][[:space:]]+/, "\\1- ", line)
+                # Portable checkbox strip: use match() + substr() to avoid \1 backrefs
+                # which BSD awk and mawk do not honour in sub() replacement strings.
+                # match() sets RSTART/RLENGTH to the position of "- [x/X/ ]..." inside
+                # the line (which may be preceded by leading whitespace). RSTART-1 bytes
+                # before the match are the indent; RSTART+RLENGTH skips past the marker.
+                if (match(line, /-[[:space:]]+\[[xX[:space:]]\][[:space:]]*/)) {
+                    line = substr(line, 1, RSTART - 1) "- " substr(line, RSTART + RLENGTH)
+                }
                 content[++n] = line
             }
             while (n > 0 && content[n] == "") n--
@@ -690,6 +697,32 @@ CC_TASKS_EOF
             }
         }
     ' "$plan_file" > "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true
+
+    # Validate the extracted dod.md for unprocessed awk markers.
+    # Fails intake loudly if the extraction produced literal \1 sequences or
+    # leftover checkbox patterns, converting a silent corruption into a visible error.
+    _validate_dod_md() {
+        local _dod_file="$1"
+        # No-op when dod.md is absent or empty (valid: plan has no DoD section)
+        [[ ! -s "$_dod_file" ]] && return 0
+        local _bad_lines _rc=0
+        # Check for literal backref leak (\1, \2, etc.)
+        _bad_lines="$(grep -n '\\[0-9]' "$_dod_file" 2>/dev/null || true)"
+        if [[ -n "$_bad_lines" ]]; then
+            error "DoD extraction produced unprocessed backref markers in dod.md (check awk dialect). Offending lines:"
+            printf '%s\n' "$_bad_lines" >&2
+            _rc=1
+        fi
+        # Check for any surviving checkbox markers that should have been stripped
+        _bad_lines="$(grep -n '^[[:space:]]*-[[:space:]]\+\[[xX[:space:]]\]' "$_dod_file" 2>/dev/null || true)"
+        if [[ -n "$_bad_lines" ]]; then
+            error "DoD extraction left checkbox markers in dod.md (awk pattern may have drifted). Offending lines:"
+            printf '%s\n' "$_bad_lines" >&2
+            _rc=1
+        fi
+        return "$_rc"
+    }
+    _validate_dod_md "$ARTIFACTS_DIR/dod.md" || return 1
 
     # ── Plan Validation Gate ──
     # Ask Claude to validate the plan before proceeding

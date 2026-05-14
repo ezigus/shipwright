@@ -2264,4 +2264,131 @@ done
     fi
 done
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DoD extraction awk — portable checkbox strip regression tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Helper: run only the DoD awk block from pipeline-stages-intake.sh against stdin.
+# Returns the awk-processed output.
+_run_dod_awk() {
+    local _intake_src="$SCRIPT_DIR/lib/pipeline-stages-intake.sh"
+    # Extract the awk program between the heredoc-style quotes (awk '...')
+    # This grabs the awk script block so we can run it independently.
+    local _awk_prog
+    _awk_prog="$(awk \
+        '/^[[:space:]]*awk[[:space:]]*'"'"'$/{p=1; next} p && /^[[:space:]]*'"'"'[[:space:]]*"/{p=0; next} p{print}' \
+        "$_intake_src" 2>/dev/null || true)"
+    if [[ -z "$_awk_prog" ]]; then
+        # Fallback: extract by known marker lines
+        _awk_prog="$(sed -n "/^[[:space:]]*awk '$/,/^[[:space:]]*' \"\\\$plan_file\"/{/^[[:space:]]*awk '$/d; /^[[:space:]]*' \"\\\$plan_file\"/d; p}" \
+            "$_intake_src" 2>/dev/null || true)"
+    fi
+    printf '%s' "$1" | awk "$_awk_prog" /dev/stdin 2>/dev/null || true
+}
+
+# ─── Test: awk no \1 leak on top-level checkbox ──────────────────────────────
+_dod_input="## Definition of Done
+- [x] item one
+- [ ] item two
+- [X] item three
+"
+_dod_out="$(_run_dod_awk "$_dod_input")"
+if echo "$_dod_out" | grep -qF '\1'; then
+    assert_fail "dod_awk_no_backref_leak_toplevel: no \\1 in output" \
+        "output contained literal \\1: $_dod_out"
+else
+    assert_pass "dod_awk_no_backref_leak_toplevel: no \\1 in output"
+fi
+if echo "$_dod_out" | grep -q '^- item one$'; then
+    assert_pass "dod_awk_strips_checkbox_toplevel: item one has no checkbox prefix"
+else
+    assert_fail "dod_awk_strips_checkbox_toplevel: item one has no checkbox prefix" \
+        "output: $_dod_out"
+fi
+
+# ─── Test: awk preserves leading whitespace on indented checkbox ──────────────
+_dod_input2="## Definition of Done
+- [x] top item
+  - [x] sub-item
+"
+_dod_out2="$(_run_dod_awk "$_dod_input2")"
+if echo "$_dod_out2" | grep -qF '\1'; then
+    assert_fail "dod_awk_no_backref_leak_indented: no \\1 in output" \
+        "output contained literal \\1: $_dod_out2"
+else
+    assert_pass "dod_awk_no_backref_leak_indented: no \\1 in output"
+fi
+# Sub-item should be preserved with leading whitespace and stripped checkbox
+if echo "$_dod_out2" | grep -q '^  - sub-item$'; then
+    assert_pass "dod_awk_preserves_indent_on_sub_item: sub-item retains 2-space indent"
+else
+    assert_fail "dod_awk_preserves_indent_on_sub_item: sub-item retains 2-space indent" \
+        "output lines: $(echo "$_dod_out2" | cat -A)"
+fi
+
+# ─── Helper: run _validate_dod_md from intake script in an isolated subshell ──
+# Writes a small driver script to a tmpfile to avoid quoting/interpolation issues
+# when inlining the function body. Passes the target file as $1.
+_run_validate_dod_md() {
+    local _target_file="$1"
+    local _driver
+    _driver="$(mktemp "${TMPDIR:-/tmp}/dod-driver.XXXXXX")"
+    cat > "$_driver" << 'DRIVER_EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+error() { echo "ERROR: $*" >&2; }
+warn()  { echo "WARN: $*" >&2; }
+DRIVER_EOF
+    # Append just the _validate_dod_md function definition from the intake script
+    awk '/^[[:space:]]*_validate_dod_md\(\)/{ p=1 } p{ print } p && /^[[:space:]]*\}[[:space:]]*$/ && NR>1 { exit }' \
+        "$SCRIPT_DIR/lib/pipeline-stages-intake.sh" >> "$_driver" 2>/dev/null || true
+    printf '_validate_dod_md %s\n' "\"$_target_file\"" >> "$_driver"
+    chmod +x "$_driver"
+    bash "$_driver" 2>/dev/null
+    local _rc=$?
+    rm -f "$_driver"
+    return "$_rc"
+}
+
+# ─── Test: _validate_dod_md rejects file containing \1 ───────────────────────
+_val_tmp="$(mktemp "${TMPDIR:-/tmp}/dod-val-test.XXXXXX")"
+# Write a line with a literal backslash-1 sequence
+printf '%s\n' '\1- foo' '- bar' > "$_val_tmp"
+_val_rc=0
+_run_validate_dod_md "$_val_tmp" || _val_rc=$?
+if [[ "$_val_rc" -ne 0 ]]; then
+    assert_pass "dod_validate_rejects_backref_leak: validator returns non-zero for \\1 content"
+else
+    assert_fail "dod_validate_rejects_backref_leak: validator returns non-zero for \\1 content" \
+        "returned 0"
+fi
+rm -f "$_val_tmp"
+
+# ─── Test: _validate_dod_md accepts clean file ────────────────────────────────
+_val_tmp2="$(mktemp "${TMPDIR:-/tmp}/dod-val-clean.XXXXXX")"
+printf '%s\n' '- foo' '- bar' '  - nested' > "$_val_tmp2"
+_val_rc2=0
+_run_validate_dod_md "$_val_tmp2" || _val_rc2=$?
+if [[ "$_val_rc2" -eq 0 ]]; then
+    assert_pass "dod_validate_accepts_clean_file: validator returns zero for clean content"
+else
+    assert_fail "dod_validate_accepts_clean_file: validator returns zero for clean content" \
+        "returned $_val_rc2"
+fi
+rm -f "$_val_tmp2"
+
+# ─── Test: _validate_dod_md is no-op for empty/missing file ──────────────────
+_val_tmp3="$(mktemp "${TMPDIR:-/tmp}/dod-val-empty.XXXXXX")"
+# file is empty (mktemp creates it empty)
+_val_rc3=0
+_run_validate_dod_md "$_val_tmp3" || _val_rc3=$?
+if [[ "$_val_rc3" -eq 0 ]]; then
+    assert_pass "dod_validate_noop_empty_file: validator is no-op for empty file"
+else
+    assert_fail "dod_validate_noop_empty_file: validator is no-op for empty file" \
+        "returned $_val_rc3"
+fi
+rm -f "$_val_tmp3"
+
 print_test_results

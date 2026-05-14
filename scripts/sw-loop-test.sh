@@ -3483,7 +3483,7 @@ fi
 
 # ─── Test 3: record_gate_finding fail empty detail uses fallback ─────────────
 _t_out="$(_run_rgf_test "dod" "fail" "" "")"
-if echo "$_t_out" | grep -qi "Manually verify"; then
+if echo "$_t_out" | grep -qi "harness diagnostic gap"; then
     assert_pass "test_record_gate_finding_fail_empty_detail_uses_fallback: fallback text present"
 else
     assert_fail "test_record_gate_finding_fail_empty_detail_uses_fallback: fallback text present" \
@@ -3689,13 +3689,138 @@ else
     assert_fail "test_ingest_pipeline_empty_artifact_uses_fallback: no crash on empty artifact" \
         "output: $_t_out"
 fi
-if echo "$_t_out" | grep -qi "Manually verify"; then
+if echo "$_t_out" | grep -qi "harness diagnostic gap"; then
     assert_pass "test_ingest_pipeline_empty_artifact_uses_fallback: fallback text present"
 else
     assert_fail "test_ingest_pipeline_empty_artifact_uses_fallback: fallback text present" \
         "output: $_t_out"
 fi
 rm -rf "$_artifacts_dir3"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DoD branch-diagnostic tests for check_definition_of_done
+# Each test feeds a fixture JSON through the fail branch and asserts that
+# GATE_FINDINGS contains a diagnosis-specific string.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Helper: run the check_definition_of_done fail branch with a fixture dod_clean file.
+# Extracts just the diagnostic branching block (from "else" through record_gate_finding)
+# and exercises it in isolation, then emits the resulting GATE_FINDINGS.
+_run_dod_branch_test() {
+    local _fixture_json="$1"
+    local _dod_clean
+    _dod_clean="$(mktemp "${TMPDIR:-/tmp}/dod-test-clean.XXXXXX.json")"
+    printf '%s' "$_fixture_json" > "$_dod_clean"
+
+    bash -c "
+        GATE_FINDINGS=''
+        GATE_PASSED_NAMES=''
+        YELLOW='' GREEN='' RESET=''
+
+        eval \"\$(awk '/^record_gate_finding\(\)/{p=1} p{print} p && /^\}$/{exit}' '$SCRIPT_DIR/sw-loop.sh' 2>/dev/null)\" 2>/dev/null || true
+
+        dod_clean='$_dod_clean'
+        dod_verdict=\"\$(jq -r '.verdict // empty' \"\$dod_clean\" 2>/dev/null || echo '')\"
+
+        dod_items_type=\"\$(jq -r '(.items | type)' \"\$dod_clean\" 2>/dev/null || echo 'unknown')\"
+        dod_items_len=\"\$(jq '(if (.items | type) == \"array\" then (.items | length) else 0 end)' \"\$dod_clean\" 2>/dev/null || echo '0')\"
+        dod_unsatisfied_count=\"\$(jq '(if (.items | type) == \"array\" then ([.items[] | select(.satisfied == false)] | length) else 0 end)' \"\$dod_clean\" 2>/dev/null || echo '0')\"
+        dod_unsatisfied_count=\"\${dod_unsatisfied_count// /}\"
+        dod_items_len=\"\${dod_items_len// /}\"
+
+        _dod_summary=\"\$(jq -r '.summary // \"\"' \"\$dod_clean\" 2>/dev/null || echo '')\"
+        _dod_detail=''
+
+        if [[ -z \"\$dod_verdict\" ]]; then
+            _dod_detail=\"DoD evaluator output was unparseable JSON. Raw response (first 20 lines):
+\$(head -20 \"\$dod_clean\" 2>/dev/null | sed 's/^/  /' || echo '  (no content)')\"
+        elif [[ \"\$dod_items_type\" != 'array' ]]; then
+            _dod_detail=\"DoD evaluator reported fail but .items was missing or not an array (type: \${dod_items_type}). Summary: \${_dod_summary:-none}\"
+        elif [[ \"\${dod_items_len:-0}\" -eq 0 ]]; then
+            _dod_detail=\"DoD evaluator reported fail but .items was an empty array — likely a per-item evaluation skip. Summary: \${_dod_summary:-none}\"
+        elif [[ \"\${dod_unsatisfied_count:-0}\" -eq 0 ]]; then
+            _dod_detail=\"DoD evaluator reported fail but all .items were marked satisfied — likely model inconsistency. Summary: \${_dod_summary:-none}\"
+        else
+            _dod_detail=\"\$(jq -r '
+              .items[] | select(.satisfied == false) |
+              \"- \" + .item + \"\n\" +
+              (if ((.files | type) == \"array\") and ((.files | length) > 0) then \"  Files: \" + (.files | join(\", \")) + \"\n\" else \"\" end) +
+              (if .hint then \"  Fix: \" + .hint else \"\" end)
+            ' \"\$dod_clean\" 2>/dev/null | head -20 || true)\"
+            if [[ -z \"\$_dod_detail\" ]]; then
+                _dod_detail=\"\$(jq -r '.items[] | select(.satisfied == false) | \"- \" + .item' \"\$dod_clean\" 2>/dev/null | head -20 || true)\"
+            fi
+        fi
+
+        record_gate_finding 'dod' 'fail' \"\${_dod_summary}\" \"\${_dod_detail}\" 2>/dev/null || true
+        printf 'FINDINGS=%s\n' \"\$GATE_FINDINGS\"
+    " 2>/dev/null
+    rm -f "$_dod_clean"
+}
+
+# ─── DoD branch test 1: unparseable JSON ─────────────────────────────────────
+_dod_t1="$(_run_dod_branch_test 'not json at all')"
+if echo "$_dod_t1" | grep -qi "unparseable JSON"; then
+    assert_pass "dod_branch_unparseable_json: GATE_FINDINGS contains 'unparseable JSON' diagnostic"
+else
+    assert_fail "dod_branch_unparseable_json: GATE_FINDINGS contains 'unparseable JSON' diagnostic" \
+        "findings: $_dod_t1"
+fi
+# Must NOT contain the generic fallback phrase (that would mean we fell through to record_gate_finding default)
+if echo "$_dod_t1" | grep -qi "harness diagnostic gap"; then
+    assert_fail "dod_branch_unparseable_json: should not use generic harness fallback" \
+        "findings contained generic fallback: $_dod_t1"
+else
+    assert_pass "dod_branch_unparseable_json: does not use generic harness fallback"
+fi
+
+# ─── DoD branch test 2: empty items array ────────────────────────────────────
+_dod_t2="$(_run_dod_branch_test '{"verdict":"fail","items":[],"summary":"nothing evaluated"}')"
+if echo "$_dod_t2" | grep -qi "empty array"; then
+    assert_pass "dod_branch_empty_items_array: GATE_FINDINGS contains 'empty array' diagnostic"
+else
+    assert_fail "dod_branch_empty_items_array: GATE_FINDINGS contains 'empty array' diagnostic" \
+        "findings: $_dod_t2"
+fi
+
+# ─── DoD branch test 3: all items satisfied but verdict=fail ─────────────────
+_dod_t3="$(_run_dod_branch_test '{"verdict":"fail","items":[{"item":"x","satisfied":true}],"summary":"inconsistent"}')"
+if echo "$_dod_t3" | grep -qi "all .items were marked satisfied"; then
+    assert_pass "dod_branch_all_satisfied_inconsistency: GATE_FINDINGS contains 'all items satisfied' diagnostic"
+else
+    assert_fail "dod_branch_all_satisfied_inconsistency: GATE_FINDINGS contains 'all items satisfied' diagnostic" \
+        "findings: $_dod_t3"
+fi
+
+# ─── DoD branch test 4: happy fail path — rich detail present ────────────────
+_dod_t4="$(_run_dod_branch_test '{"verdict":"fail","items":[{"item":"Add tests","satisfied":false,"reason":"no tests found","files":["tests/foo.sh"],"hint":"add unit tests"}],"summary":"tests missing"}')"
+if echo "$_dod_t4" | grep -qF -- "- Add tests"; then
+    assert_pass "dod_branch_happy_fail_path: GATE_FINDINGS contains unsatisfied item name"
+else
+    assert_fail "dod_branch_happy_fail_path: GATE_FINDINGS contains unsatisfied item name" \
+        "findings: $_dod_t4"
+fi
+if echo "$_dod_t4" | grep -qF -- "Files: tests/foo.sh"; then
+    assert_pass "dod_branch_happy_fail_path: GATE_FINDINGS contains Files hint"
+else
+    assert_fail "dod_branch_happy_fail_path: GATE_FINDINGS contains Files hint" \
+        "findings: $_dod_t4"
+fi
+if echo "$_dod_t4" | grep -qF -- "Fix: add unit tests"; then
+    assert_pass "dod_branch_happy_fail_path: GATE_FINDINGS contains Fix hint"
+else
+    assert_fail "dod_branch_happy_fail_path: GATE_FINDINGS contains Fix hint" \
+        "findings: $_dod_t4"
+fi
+
+# ─── Test: generic fallback message updated ──────────────────────────────────
+# Verify the new fallback text is in sw-loop.sh (not the old "Manually verify" text)
+if grep -qF "harness diagnostic gap" "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null; then
+    assert_pass "dod_generic_fallback_updated: sw-loop.sh contains updated harness diagnostic gap text"
+else
+    assert_fail "dod_generic_fallback_updated: sw-loop.sh contains updated harness diagnostic gap text" \
+        "expected 'harness diagnostic gap' in record_gate_finding fallback"
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS

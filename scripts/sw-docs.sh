@@ -280,7 +280,9 @@ Connect log:~/.shipwright/connect.log
 GitHub cache:~/.shipwright/github-cache/
 Check run IDs:.claude/pipeline-artifacts/check-run-ids.json
 Deployment tracking:.claude/pipeline-artifacts/deployment.json
-Error log:.claude/pipeline-artifacts/error-log.jsonl"
+Error log:.claude/pipeline-artifacts/error-log.jsonl
+Cost-breakdown artifact (CI):cost-breakdown-issue-<N>-run-<run_id>-attempt-<attempt> (90d retention)
+Fetched-runs tracking:~/.shipwright/baselines/.fetched-runs.json"
 
     while IFS= read -r loc; do
         [[ -z "$loc" ]] && continue

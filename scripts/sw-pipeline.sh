@@ -478,6 +478,11 @@ NO_GITHUB_LABEL=false
 CI_MODE=false
 DRY_RUN=false
 IGNORE_BUDGET=false
+# --bootstrap-baselines | SHIPWRIGHT_BOOTSTRAP_BASELINES=true → pull remote
+# cost-breakdown artifacts after intake so a fresh machine starts with a
+# populated baseline. Default off (zero behaviour change).
+BOOTSTRAP_BASELINES="${SHIPWRIGHT_BOOTSTRAP_BASELINES:-false}"
+[[ "$BOOTSTRAP_BASELINES" == "1" ]] && BOOTSTRAP_BASELINES=true
 COMPLETED_STAGES=""
 RESUME_FROM_CHECKPOINT=false
 MAX_ITERATIONS_OVERRIDE=""
@@ -586,6 +591,7 @@ show_help() {
     echo -e "  ${DIM}--fast-test-cmd <cmd>${RESET}      Fast/subset test for build loop"
     echo -e "  ${DIM}--fast-test-interval <n>${RESET}   Run full tests every N iterations (default: 5)"
     echo -e "  ${DIM}--tdd${RESET}                     Test-first: generate tests before implementation"
+    echo -e "  ${DIM}--bootstrap-baselines${RESET}     After intake, pull remote cost-breakdown artifacts into local baselines (opt-in)"
     echo -e "  ${DIM}--completed-stages \"a,b\"${RESET}   Skip these stages (CI resume)"
     echo ""
     echo -e "${BOLD}STAGES${RESET}  ${DIM}(configurable per pipeline template)${RESET}"
@@ -697,6 +703,7 @@ parse_args() {
                 fi
                 shift 2 ;;
             --tdd)         TDD_ENABLED=true; shift ;;
+            --bootstrap-baselines) BOOTSTRAP_BASELINES=true; shift ;;
             --help|-h)     show_help; exit 0 ;;
             *)
                 if [[ -z "$PIPELINE_NAME_ARG" ]]; then
@@ -2397,6 +2404,20 @@ run_pipeline() {
             # Capture project pattern after intake (for memory context in later stages)
             if [[ "$id" == "intake" ]] && [[ -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
                 (cd "$REPO_DIR" && bash "$SCRIPT_DIR/sw-memory.sh" pattern "project" "{}" 2>/dev/null) || true
+            fi
+            # Bootstrap cross-machine cost baselines after intake (opt-in).
+            # Pulls remote cost-breakdown.json artifacts via gh, validates the
+            # schema, and merges into ~/.shipwright/baselines/ so subsequent
+            # stages (review/compound_quality) have non-empty data to classify
+            # against. Soft-fail: a fetch failure never blocks the pipeline.
+            if [[ "$id" == "intake" ]] && [[ "${BOOTSTRAP_BASELINES:-false}" == "true" ]]; then
+                if [[ -x "$SCRIPT_DIR/sw-cost.sh" ]]; then
+                    info "bootstrap-baselines: fetching remote cost-breakdown artifacts"
+                    if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+                        (cd "$REPO_DIR" && bash "$SCRIPT_DIR/sw-cost.sh" breakdown-fetch "issue:${ISSUE_NUMBER}" 10) || true
+                    fi
+                    (cd "$REPO_DIR" && bash "$SCRIPT_DIR/sw-cost.sh" breakdown-fetch "all" 20) || true
+                fi
             fi
             local timing stage_dur_s
             timing=$(get_stage_timing "$id")

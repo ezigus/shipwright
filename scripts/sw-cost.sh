@@ -63,6 +63,8 @@ fi
 [[ -f "$_COST_SCRIPT_DIR/lib/cost/baselines.sh"     ]] && source "$_COST_SCRIPT_DIR/lib/cost/baselines.sh"
 # shellcheck source=lib/cost/table-render.sh
 [[ -f "$_COST_SCRIPT_DIR/lib/cost/table-render.sh"  ]] && source "$_COST_SCRIPT_DIR/lib/cost/table-render.sh"
+# shellcheck source=lib/cost/artifact-fetch.sh
+[[ -f "$_COST_SCRIPT_DIR/lib/cost/artifact-fetch.sh" ]] && source "$_COST_SCRIPT_DIR/lib/cost/artifact-fetch.sh"
 
 ensure_cost_dir() {
     mkdir -p "$COST_DIR"
@@ -668,6 +670,7 @@ cost_generate_breakdown() {
         --arg pipeline_id "$pipeline_id" \
         --arg issue "$issue" \
         --arg ts "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+        --argjson schema_version 1 \
         --argjson by_stage "$stage_json" \
         --argjson by_iteration "$iter_json" \
         --argjson iter_count "$iter_count" \
@@ -676,6 +679,7 @@ cost_generate_breakdown() {
         --argjson total_output "$total_output" \
         --argjson total_cost "$total_cost" \
         '{
+            schema_version: $schema_version,
             pipeline_id: $pipeline_id,
             issue: $issue,
             generated_at: $ts,
@@ -1212,6 +1216,8 @@ show_help() {
     echo -e "  ${CYAN}breakdown${RESET} <artifacts_dir> [pipeline_id] [issue]  Generate cost-breakdown.json artifact"
     echo -e "  ${CYAN}breakdown${RESET} ... --render                        Render formatted table with HIGH/LOW flags"
     echo -e "  ${CYAN}breakdown${RESET} ... --render-plain                  Plain ASCII table (GitHub comment friendly)"
+    echo -e "  ${CYAN}breakdown-fetch${RESET} [filter] [limit]               Pull remote cost-breakdown artifacts → merge into baselines"
+    echo -e "  ${CYAN}breakdown-list${RESET}  [filter] [limit]               List remote cost-breakdown artifacts (no download)"
     echo -e "  ${CYAN}budget set${RESET} <amount>            Set daily budget (USD)"
     echo -e "  ${CYAN}budget show${RESET}                    Show current budget/usage"
     echo ""
@@ -1284,6 +1290,26 @@ case "$SUBCOMMAND" in
         ;;
     breakdown)
         cost_breakdown_command "$@"
+        ;;
+    breakdown-fetch)
+        # Download remote cost-breakdown artifacts and merge into local baselines.
+        # Usage: shipwright cost breakdown-fetch [filter] [limit]
+        #   filter: "all" | "issue:<N>" | "branch:<name>"  (default: all)
+        #   limit:  positive integer, default 20, max 100
+        if ! type cost_fetch_remote_breakdowns >/dev/null 2>&1; then
+            error "breakdown-fetch: artifact-fetch.sh not loaded"
+            exit 1
+        fi
+        cost_fetch_remote_breakdowns "$@"
+        ;;
+    breakdown-list)
+        # List remote cost-breakdown artifacts without downloading.
+        # Usage: shipwright cost breakdown-list [filter] [limit]
+        if ! type cost_list_remote_breakdowns >/dev/null 2>&1; then
+            error "breakdown-list: artifact-fetch.sh not loaded"
+            exit 1
+        fi
+        cost_list_remote_breakdowns "$@"
         ;;
     breakdown-update-baseline)
         # Internal: invoked by sw-pipeline.sh at pipeline completion to roll

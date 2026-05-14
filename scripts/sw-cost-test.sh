@@ -262,11 +262,19 @@ if [[ -f "$_bd_dir/cost-breakdown.json" ]]; then
     else
         assert_fail "breakdown: by_iteration has 3 entries" "got: ${_iter_len}"
     fi
+    # schema_version field — load-bearing for cross-machine artifact fetch.
+    _schema_version=$(jq -r '.schema_version // empty' "$_bd_dir/cost-breakdown.json" 2>/dev/null || echo "")
+    if [[ "$_schema_version" == "1" ]]; then
+        assert_pass "breakdown: schema_version == 1"
+    else
+        assert_fail "breakdown: schema_version == 1" "got: ${_schema_version}"
+    fi
 else
     assert_fail "cost_generate_breakdown creates cost-breakdown.json" "output: $(echo "$_bd_out" | tail -3)"
     assert_fail "breakdown: summary.iteration_count == 3"
     assert_fail "breakdown: by_stage has 2 entries"
     assert_fail "breakdown: by_iteration has 3 entries"
+    assert_fail "breakdown: schema_version == 1"
 fi
 
 # ── Test 2: cost_generate_breakdown with no sidecars ───────────────────────────

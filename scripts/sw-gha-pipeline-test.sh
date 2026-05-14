@@ -49,29 +49,53 @@ assert_contains_regex \
 # ─── upload-artifact ────────────────────────────────────────────────────────
 
 UPLOAD_COUNT=$(grep -c 'upload-artifact' "$WORKFLOW" || true)
+# Two upload steps now:
+#   1) pipeline-logs-* (catch-all, 7d retention)
+#   2) cost-breakdown-issue-*-run-*-attempt-* (90d retention, for cross-machine
+#      cost baseline bootstrap — #460)
 assert_eq \
     "upload-artifact step present" \
-    "1" "$UPLOAD_COUNT"
+    "2" "$UPLOAD_COUNT"
 
 assert_contains_regex \
     "upload-artifact uses v4" \
     "$(grep 'upload-artifact' "$WORKFLOW" || true)" \
     "upload-artifact@v4"
 
-assert_contains_regex \
-    "upload-artifact if-condition has always() and claim_check skip guard" \
-    "$(grep -B3 'upload-artifact@v4' "$WORKFLOW" || true)" \
-    "always\(\).*claim_check.*skip"
+# Both upload steps must have always() + claim_check guard (run on success AND
+# failure exit paths). Inspect the 6 lines before each upload-artifact@v4 to
+# capture the if: line plus surrounding step name/uses lines.
+UPLOAD_GUARD_HITS=$(grep -B6 'upload-artifact@v4' "$WORKFLOW" \
+    | grep -c "always() && steps.claim_check.outputs.skip != 'true'" || true)
+assert_eq \
+    "upload-artifact if-condition has always() and claim_check skip guard (both steps)" \
+    "2" "$UPLOAD_GUARD_HITS"
 
 assert_contains_regex \
     "upload-artifact skips when claim_check skips" \
-    "$(grep -B3 'upload-artifact@v4' "$WORKFLOW" || true)" \
+    "$(grep -B6 'upload-artifact@v4' "$WORKFLOW" || true)" \
     "claim_check\.outputs\.skip"
 
 assert_contains_regex \
     "upload-artifact includes pipeline.log" \
     "$(grep -A15 'upload-artifact@v4' "$WORKFLOW" || true)" \
     "/tmp/pipeline\.log"
+
+# Cross-machine cost baseline artifact (#460)
+assert_contains_regex \
+    "dedicated cost-breakdown upload step present (90d retention)" \
+    "$(cat "$WORKFLOW")" \
+    "cost-breakdown-issue-"
+
+assert_contains_regex \
+    "cost-breakdown upload step uses 90-day retention" \
+    "$(grep -A6 'cost-breakdown-issue-' "$WORKFLOW" || true)" \
+    "retention-days:[[:space:]]*90"
+
+assert_contains_regex \
+    "cost-breakdown upload step uses if-no-files-found: ignore (early-failure tolerant)" \
+    "$(grep -A6 'cost-breakdown-issue-' "$WORKFLOW" || true)" \
+    "if-no-files-found:[[:space:]]*ignore"
 
 assert_contains_regex \
     "upload-artifact includes pipeline-artifacts dir" \

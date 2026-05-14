@@ -143,6 +143,8 @@ The build stage delegates to `shipwright loop`. Self-healing: when tests fail, t
 - Check run IDs: `.claude/pipeline-artifacts/check-run-ids.json`
 - Deployment tracking: `.claude/pipeline-artifacts/deployment.json`
 - Error log: `.claude/pipeline-artifacts/error-log.jsonl`
+- Cost-breakdown artifact (CI): `cost-breakdown-issue-<N>-run-<run_id>-attempt-<attempt> (90d retention)`
+- Fetched-runs tracking: `~/.shipwright/baselines/.fetched-runs.json`
 <!-- /AUTO:runtime-state -->
 
 ## Development Guidelines

@@ -112,8 +112,12 @@ async function main() {
   const toolInput = hookInput.toolInput || hookInput.tool_input || {};
   const toolName = hookInput.toolName || hookInput.tool_name || '';
 
-  // Merge stdin data into prompt resolution: prefer stdin fields, then env, then argv
-  const prompt = hookInput.prompt || hookInput.command || toolInput
+  // Merge stdin data into prompt resolution: prefer stdin fields, then env, then argv.
+  // `toolInput` is an object (e.g. {command:"ls"}) — it's truthy but not a string,
+  // so falling back to it directly bound `prompt` to the object and tripped
+  // `.toLowerCase()` / `.substring()` on every Bash hook (#1944). Use the
+  // `.command` field instead, which is the actual string the hook needs.
+  const prompt = hookInput.prompt || hookInput.command || toolInput.command
     || process.env.PROMPT || process.env.TOOL_INPUT_command || args.join(' ') || '';
 
 const handlers = {

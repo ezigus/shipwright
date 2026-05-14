@@ -1057,8 +1057,28 @@ if [[ -f "$_bd_dir/cost-breakdown.json" ]] && command -v jq >/dev/null 2>&1; the
         _bd_iters=$(jq '.summary.iteration_count // 0' "$_bd_dir/cost-breakdown.json" 2>/dev/null || echo "0")
         check_pass "cost-breakdown.json: valid schema (${_bd_stages} stages, ${_bd_iters} iterations)"
     fi
+    # schema_version field (added for cross-machine artifact bootstrap)
+    _bd_sv=$(jq -r '.schema_version // empty' "$_bd_dir/cost-breakdown.json" 2>/dev/null || echo "")
+    if [[ "$_bd_sv" == "1" ]]; then
+        check_pass "cost-breakdown.json: schema_version=1"
+    elif [[ -z "$_bd_sv" ]]; then
+        check_warn "cost-breakdown.json: missing .schema_version (regenerate to get cross-machine bootstrap support)"
+    else
+        check_warn "cost-breakdown.json: unknown schema_version=${_bd_sv} (expected 1)"
+    fi
 else
     info "  No cost-breakdown.json ${DIM}(generated after each pipeline run)${RESET}"
+fi
+
+# Workflow check — verify the dedicated cost-breakdown upload step exists.
+# This guards against accidental revert of the workflow YAML change.
+_pipeline_yml=".github/workflows/shipwright-pipeline.yml"
+if [[ -f "$_pipeline_yml" ]]; then
+    if grep -q "cost-breakdown-issue-" "$_pipeline_yml" 2>/dev/null; then
+        check_pass "Workflow: dedicated cost-breakdown.json upload step present"
+    else
+        check_warn "Workflow: dedicated cost-breakdown.json upload step missing in ${_pipeline_yml} (cross-machine baselines won't be populated by CI)"
+    fi
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════

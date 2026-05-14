@@ -616,7 +616,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-code-review.sh` | 707 | Clean Code & Architecture Analysis |
 | `scripts/sw-connect.sh` | 625 | Sync local state to team dashboard |
 | `scripts/sw-context.sh` | 613 | Context Engine for Pipeline Stages |
-| `scripts/sw-cost.sh` | 1305 | Token Usage & Cost Intelligence |
+| `scripts/sw-cost.sh` | 1331 | Token Usage & Cost Intelligence |
 | `scripts/sw-daemon.sh` | 1526 | Autonomous GitHub Issue Watcher |
 | `scripts/sw-dashboard.sh` | 523 | Fleet Command Dashboard |
 | `scripts/sw-db.sh` | 1939 | SQLite Persistence Layer |
@@ -627,8 +627,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-discovery.sh` | 726 | Cross-Pipeline Real-Time Learning |
 | `scripts/sw-doc-fleet.sh` | 825 | Documentation Fleet Orchestrator |
 | `scripts/sw-docs-agent.sh` | 525 | Auto-sync README, wiki, API docs |
-| `scripts/sw-docs.sh` | 626 | Documentation Keeper |
-| `scripts/sw-doctor.sh` | 1415 | Validate Shipwright setup |
+| `scripts/sw-docs.sh` | 628 | Documentation Keeper |
+| `scripts/sw-doctor.sh` | 1435 | Validate Shipwright setup |
 | `scripts/sw-dora.sh` | 605 | DORA Metrics Dashboard with Engineering Intelligence |
 | `scripts/sw-durable.sh` | 708 | Durable Workflow Engine |
 | `scripts/sw-e2e-orchestrator.sh` | 536 | Test suite registry & execution |
@@ -660,7 +660,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 445 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 444 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1086 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 3957 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 3978 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 749 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 698 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 857 | Predictive & Proactive Intelligence |
@@ -761,7 +761,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-code-review-test.sh` | 174 | Clean code & architecture analysis tests |
 | `scripts/sw-connect-test.sh` | 882 | Validate dashboard connection, heartbeat |
 | `scripts/sw-context-test.sh` | 219 | Context Engine for Pipeline Stages tests |
-| `scripts/sw-cost-test.sh` | 968 | Validate token usage & cost intelligence |
+| `scripts/sw-cost-artifact-test.sh` | 420 | Cross-machine baselines fetch |
+| `scripts/sw-cost-test.sh` | 976 | Validate token usage & cost intelligence |
 | `scripts/sw-cross-repo-isolation-test.sh` | 424 | Issue #425 |
 | `scripts/sw-daemon-test.sh` | 2205 | Unit tests for daemon metrics, health, alerting |
 | `scripts/sw-dashboard-e2e-test.sh` | 595 | full live validation |
@@ -790,7 +791,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-fleet-test.sh` | 822 | Unit tests for fleet orchestration |
 | `scripts/sw-fleet-viz-test.sh` | 278 | Validate fleet visualization dashboard, |
 | `scripts/sw-frontier-test.sh` | 574 | Validate adversarial review, developer |
-| `scripts/sw-gha-pipeline-test.sh` | 492 | Static validation of shipwright-pipeline.yml |
+| `scripts/sw-gha-pipeline-test.sh` | 516 | Static validation of shipwright-pipeline.yml |
 | `scripts/sw-github-app-test.sh` | 145 | Validate GitHub App management |
 | `scripts/sw-github-checks-test.sh` | 535 | Validate Checks API wrapper |
 | `scripts/sw-github-deploy-test.sh` | 523 | Validate Deployments API wrapper |
@@ -934,6 +935,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 - Check run IDs: `.claude/pipeline-artifacts/check-run-ids.json`
 - Deployment tracking: `.claude/pipeline-artifacts/deployment.json`
 - Error log: `.claude/pipeline-artifacts/error-log.jsonl`
+- Cost-breakdown artifact (CI): `cost-breakdown-issue-<N>-run-<run_id>-attempt-<attempt> (90d retention)`
+- Fetched-runs tracking: `~/.shipwright/baselines/.fetched-runs.json`
 <!-- /AUTO:runtime-state -->
 
 ## GitHub Integration

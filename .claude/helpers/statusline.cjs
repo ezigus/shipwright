@@ -614,23 +614,34 @@ function generateStatusline() {
   const integration = getIntegrationStatus();
   const lines = [];
 
-  // Header
-  // Read version from package.json
+  // Header — read version from the FIRST package.json we find, preferring
+  // the plugin install at ~/.claude/plugins/marketplaces/ruflo/package.json.
+  // The previous list only checked project-local node_modules, so plugin
+  // users saw the hard-coded fallback (V3.5) even on newer alphas (#1951).
   let pkgVersion = '3.6';
   try {
-    const pkgPath = path.join(CWD, 'node_modules', '@claude-flow', 'cli', 'package.json');
-    if (fs.existsSync(pkgPath)) {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-      if (pkg.version) pkgVersion = pkg.version;
-    } else {
-      // Try npx-installed location
-      const npxPkg = path.join(CWD, 'v3', '@claude-flow', 'cli', 'package.json');
-      if (fs.existsSync(npxPkg)) {
-        const pkg = JSON.parse(fs.readFileSync(npxPkg, 'utf-8'));
-        if (pkg.version) pkgVersion = pkg.version;
-      }
+    const home = require('os').homedir();
+    const pkgPaths = [
+      // 1. The plugin's own root (installed via /plugin install).
+      path.join(home, '.claude', 'plugins', 'marketplaces', 'ruflo', 'package.json'),
+      // 2. Project-local @claude-flow/cli — npm-style install.
+      path.join(CWD, 'node_modules', '@claude-flow', 'cli', 'package.json'),
+      // 3. Project-local ruflo umbrella.
+      path.join(CWD, 'node_modules', 'ruflo', 'package.json'),
+      // 4. Source-checkout location (when developing in this repo).
+      path.join(CWD, 'v3', '@claude-flow', 'cli', 'package.json'),
+    ];
+    for (const p of pkgPaths) {
+      if (!fs.existsSync(p)) continue;
+      try {
+        const pkg = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        if (pkg && typeof pkg.version === 'string' && pkg.version.length > 0) {
+          pkgVersion = pkg.version;
+          break;
+        }
+      } catch { /* malformed package.json — try next */ }
     }
-  } catch { /* use default */ }
+  } catch { /* fall through to the hardcoded default */ }
   let header = c.bold + c.brightPurple + '\u258A RuFlo V' + pkgVersion + ' ' + c.reset;
   header += (swarm.coordinationActive ? c.brightCyan : c.dim) + '\u25CF ' + c.brightCyan + git.name + c.reset;
   if (git.gitBranch) {

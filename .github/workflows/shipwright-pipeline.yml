@@ -1254,6 +1254,16 @@ jobs:
           if-no-files-found: warn
         continue-on-error: true
 
+      - name: Upload cost-breakdown.json (cross-run baselines)
+        if: always() && steps.claim_check.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cost-breakdown-issue-${{ github.event.inputs.issue_number || github.event.issue.number }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: .claude/pipeline-artifacts/cost-breakdown.json
+          retention-days: 90
+          if-no-files-found: ignore
+        continue-on-error: true
+
       # Gatekeeper: ensure job fails if pipeline failed (triggers auto-retry)
       - name: Propagate pipeline exit code
         if: always() && steps.claim_check.outputs.skip != 'true'

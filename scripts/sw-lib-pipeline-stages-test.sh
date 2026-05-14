@@ -2327,45 +2327,49 @@ else
         "output lines: $(echo "$_dod_out2" | cat -A)"
 fi
 
+# ─── Helper: run _validate_dod_md from intake script in an isolated subshell ──
+# Writes a small driver script to a tmpfile to avoid quoting/interpolation issues
+# when inlining the function body. Passes the target file as $1.
+_run_validate_dod_md() {
+    local _target_file="$1"
+    local _driver
+    _driver="$(mktemp "${TMPDIR:-/tmp}/dod-driver.XXXXXX")"
+    cat > "$_driver" << 'DRIVER_EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+error() { echo "ERROR: $*" >&2; }
+warn()  { echo "WARN: $*" >&2; }
+DRIVER_EOF
+    # Append just the _validate_dod_md function definition from the intake script
+    awk '/^[[:space:]]*_validate_dod_md\(\)/{ p=1 } p{ print } p && /^[[:space:]]*\}[[:space:]]*$/ && NR>1 { exit }' \
+        "$SCRIPT_DIR/lib/pipeline-stages-intake.sh" >> "$_driver" 2>/dev/null || true
+    printf '_validate_dod_md %s\n' "\"$_target_file\"" >> "$_driver"
+    chmod +x "$_driver"
+    bash "$_driver" 2>/dev/null
+    local _rc=$?
+    rm -f "$_driver"
+    return "$_rc"
+}
+
 # ─── Test: _validate_dod_md rejects file containing \1 ───────────────────────
 _val_tmp="$(mktemp "${TMPDIR:-/tmp}/dod-val-test.XXXXXX")"
-printf '\\1- foo\n- bar\n' > "$_val_tmp"
-# Extract and eval the validator function from the intake script
-_val_fn_src="$(awk '/^[[:space:]]*_validate_dod_md\(\)/{p=1} p{print} p && /^[[:space:]]*\}$/{exit}' \
-    "$SCRIPT_DIR/lib/pipeline-stages-intake.sh" 2>/dev/null || true)"
+# Write a line with a literal backslash-1 sequence
+printf '%s\n' '\1- foo' '- bar' > "$_val_tmp"
 _val_rc=0
-if [[ -n "$_val_fn_src" ]]; then
-    bash -c "
-        error() { echo \"ERROR: \$*\" >&2; }
-        $_val_fn_src
-        _validate_dod_md '$_val_tmp'
-    " 2>/dev/null
-    _val_rc=$?
-else
-    _val_rc=99
-fi
+_run_validate_dod_md "$_val_tmp" || _val_rc=$?
 if [[ "$_val_rc" -ne 0 ]]; then
     assert_pass "dod_validate_rejects_backref_leak: validator returns non-zero for \\1 content"
 else
     assert_fail "dod_validate_rejects_backref_leak: validator returns non-zero for \\1 content" \
-        "returned 0 (fn_src empty=$([[ -z $_val_fn_src ]] && echo yes || echo no))"
+        "returned 0"
 fi
 rm -f "$_val_tmp"
 
 # ─── Test: _validate_dod_md accepts clean file ────────────────────────────────
-_val_tmp2="$(mktemp "${TMPDIR:-/tmp}/dod-val-clean.XXXXXX.md")"
-printf '- foo\n- bar\n  - nested\n' > "$_val_tmp2"
+_val_tmp2="$(mktemp "${TMPDIR:-/tmp}/dod-val-clean.XXXXXX")"
+printf '%s\n' '- foo' '- bar' '  - nested' > "$_val_tmp2"
 _val_rc2=0
-if [[ -n "$_val_fn_src" ]]; then
-    bash -c "
-        error() { echo \"ERROR: \$*\" >&2; }
-        $_val_fn_src
-        _validate_dod_md '$_val_tmp2'
-    " 2>/dev/null
-    _val_rc2=$?
-else
-    _val_rc2=99
-fi
+_run_validate_dod_md "$_val_tmp2" || _val_rc2=$?
 if [[ "$_val_rc2" -eq 0 ]]; then
     assert_pass "dod_validate_accepts_clean_file: validator returns zero for clean content"
 else
@@ -2375,19 +2379,10 @@ fi
 rm -f "$_val_tmp2"
 
 # ─── Test: _validate_dod_md is no-op for empty/missing file ──────────────────
-_val_tmp3="$(mktemp "${TMPDIR:-/tmp}/dod-val-empty.XXXXXX.md")"
-# empty file
+_val_tmp3="$(mktemp "${TMPDIR:-/tmp}/dod-val-empty.XXXXXX")"
+# file is empty (mktemp creates it empty)
 _val_rc3=0
-if [[ -n "$_val_fn_src" ]]; then
-    bash -c "
-        error() { echo \"ERROR: \$*\" >&2; }
-        $_val_fn_src
-        _validate_dod_md '$_val_tmp3'
-    " 2>/dev/null
-    _val_rc3=$?
-else
-    _val_rc3=99
-fi
+_run_validate_dod_md "$_val_tmp3" || _val_rc3=$?
 if [[ "$_val_rc3" -eq 0 ]]; then
     assert_pass "dod_validate_noop_empty_file: validator is no-op for empty file"
 else

@@ -473,8 +473,8 @@ TASK_TYPE=""
 REVIEWERS=""
 LABELS=""
 BASE_BRANCH="main"
-NO_GITHUB=false
-NO_GITHUB_LABEL=false
+NO_GITHUB="${NO_GITHUB:-false}"
+NO_GITHUB_LABEL="${NO_GITHUB_LABEL:-false}"
 CI_MODE=false
 DRY_RUN=false
 IGNORE_BUDGET=false
@@ -942,7 +942,7 @@ ci_push_partial_work() {
 pipeline_final_artifact_push() {
     local push_timeout="${1:-60}"
     [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
-    [[ "${NO_GITHUB:-false}" == "true" ]] && return 0
+    [[ "${NO_GITHUB:-false}" == "true" || "${NO_ARTIFACT_PUSH:-false}" == "true" ]] && return 0
     [[ "${DRY_RUN:-false}" == "true" ]] && return 0
 
     local branch="shipwright/issue-${ISSUE_NUMBER}"

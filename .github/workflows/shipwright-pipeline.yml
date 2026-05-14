@@ -651,6 +651,25 @@ jobs:
               echo "  ✗ ${f}: not found"
             fi
           done
+          # Restore state files that live outside pipeline-artifacts/
+          # Policy matches the canonical-artifacts loop above: restore when missing/empty,
+          # count present files as recovered, skip silently when snapshot is also absent.
+          for pair in \
+            "pipeline-state.md:.claude/pipeline-state.md" \
+            "pipeline-status.json:.claude/pipeline-status.json" \
+            "failure-note.md:.claude/pipeline-artifacts/failure-note.md"; do
+            src="$SNAP_DIR/${pair%%:*}"
+            dst="${pair##*:}"
+            mkdir -p "$(dirname "$dst")"
+            if [[ ! -s "$dst" && -s "$src" ]]; then
+              cp "$src" "$dst"
+              echo "  ↩ ${pair%%:*}: restored from issue-${ISSUE_NUMBER} snapshot"
+              RECOVERED=$((RECOVERED + 1))
+            elif [[ -f "$dst" && -s "$dst" ]]; then
+              echo "  ✓ ${pair%%:*}: present"
+              RECOVERED=$((RECOVERED + 1))
+            fi
+          done
           echo "Recovered ${RECOVERED} artifact file(s) from partial work branch"
 
       - name: Validate setup
@@ -1049,45 +1068,33 @@ jobs:
           BRANCH="${WORKSPACE_BRANCH:-shipwright/issue-${ISSUE_NUMBER}}"
           OUTCOME="${{ job.status }}"
 
-          # If HEAD is not on the WIP branch, move it using plumbing instead of
-          # checkout — checkout silently fails when tracked files differ between
-          # the GHA checkout branch and the WIP branch, leaving HEAD on the wrong
-          # branch and polluting the WIP branch's history on force-push.
-          if [[ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$BRANCH" ]]; then
-            git fetch --no-tags origin "$BRANCH" 2>/dev/null || true
-            if git rev-parse --verify "refs/remotes/origin/$BRANCH" >/dev/null 2>&1; then
-              BASE_REF="refs/remotes/origin/$BRANCH"
-            else
-              BASE_REF="refs/remotes/origin/main"
-            fi
-            git update-ref "refs/heads/$BRANCH" "$BASE_REF" \
-              || { echo "::error::Snapshot guard: update-ref failed for $BRANCH — aborting"; exit 1; }
-            git symbolic-ref HEAD "refs/heads/$BRANCH" \
-              || { echo "::error::Snapshot guard: symbolic-ref failed for $BRANCH — aborting"; exit 1; }
-            git reset --mixed HEAD 2>/dev/null \
-              || { echo "::error::Snapshot guard: reset --mixed failed for $BRANCH — aborting"; exit 1; }
-            if [[ "$(git rev-parse --abbrev-ref HEAD)" != "$BRANCH" ]]; then
-              echo "::error::Snapshot guard failed to move HEAD to $BRANCH — aborting to prevent history pollution"
-              exit 1
-            fi
+          # Mirror canonical artifacts into issue-N/ and stage only that directory.
+          # Source-code edits belong in git_auto_commit commits, not here.
+          # The .gitignore uses contents-form exclusion (pipeline-artifacts/*) with
+          # two negation lines for issue-*/ so no -f flag is needed.
+          # Safety: abort if HEAD is not on the WIP branch — prevents artifact snapshot
+          # from committing to the wrong branch when intake or resume branch logic fails.
+          _snap_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "DETACHED")
+          if [[ "$_snap_branch" != "$BRANCH" ]]; then
+            echo "ERROR: HEAD is on '${_snap_branch}', expected '${BRANCH}' — aborting snapshot to prevent cross-branch pollution" >&2
+            exit 1
           fi
 
-          # Stage all working-tree changes that respect .gitignore (captures agent source-code
-          # edits made during the build loop but not yet committed). Most bulky runtime
-          # paths (.claude/loop-logs, .claude/pipeline-artifacts/, .claude/intelligence-cache.json)
-          # are excluded by .gitignore so git add -A will not stage them.
-          _add_out=$(git add -A 2>&1) || echo "::warning::git add -A failed: ${_add_out}"
-          # Force-add gitignored pipeline artifacts we DO want to persist across runs.
-          git add -f .claude/pipeline-artifacts/plan.md                2>/dev/null || true
-          git add -f .claude/pipeline-artifacts/context-bundle.md      2>/dev/null || true
-          git add -f .claude/pipeline-artifacts/composed-pipeline.json 2>/dev/null || true
-          git add -f ".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}/" 2>/dev/null || true
-          git add -f .claude/pipeline-state.md                         2>/dev/null || true
-          git add -f .claude/pipeline-status.json                      2>/dev/null || true
+          ISSUE_DIR=".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}"
+          mkdir -p "$ISSUE_DIR"
 
-          # Unstage files we never want in the snapshot.
-          git restore --staged .claude/daemon-config.json 2>/dev/null || true
-          # Drop any sensitive files that may not be covered by .gitignore.
+          for rel in plan.md dod.md context-bundle.md design.md composed-pipeline.json; do
+            src=".claude/pipeline-artifacts/$rel"
+            [[ -s "$src" ]] && cp "$src" "$ISSUE_DIR/$rel"
+          done
+
+          # State files live at .claude/, one level above pipeline-artifacts/
+          [[ -s .claude/pipeline-state.md    ]] && cp .claude/pipeline-state.md    "$ISSUE_DIR/pipeline-state.md"
+          [[ -s .claude/pipeline-status.json ]] && cp .claude/pipeline-status.json "$ISSUE_DIR/pipeline-status.json"
+
+          git add "$ISSUE_DIR"
+
+          # Safety net: unstage sensitive files that should never be committed.
           # One pathspec per call — git restore --staged aborts the entire call when
           # any single pattern matches nothing, so combining them would leave real
           # sensitive files staged if another pattern happens to be absent.
@@ -1122,7 +1129,8 @@ jobs:
             printf '# Pipeline Failure Note\nRun: %s\nStage: %s\nLog:\n%s\n' \
               "${{ github.run_id }}" "$LAST_STAGE" "$LOG_SNIP" \
               > .claude/pipeline-artifacts/failure-note.md
-            git add -f .claude/pipeline-artifacts/failure-note.md 2>/dev/null || true
+            cp .claude/pipeline-artifacts/failure-note.md "$ISSUE_DIR/failure-note.md"
+            git add "$ISSUE_DIR/failure-note.md" 2>/dev/null || true
           fi
 
           # Decouple "nothing new to commit" from "nothing to push": when the build

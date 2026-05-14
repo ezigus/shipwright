@@ -3185,16 +3185,16 @@ pipeline_start() {
 
         # Restore branch context
         if [[ -z "$GIT_BRANCH" ]]; then
-            local ci_branch="ci/issue-${ISSUE_NUMBER}"
-            info "CI resume: creating branch ${ci_branch} from current HEAD"
-            if ! git checkout -b "$ci_branch" 2>/dev/null && ! git checkout "$ci_branch" 2>/dev/null; then
-                warn "CI resume: failed to create or checkout branch ${ci_branch}"
+            local _fallback="${WORKSPACE_BRANCH:-ci/issue-${ISSUE_NUMBER}}"
+            info "CI resume: restoring branch ${_fallback}"
+            if ! git checkout "$_fallback" 2>/dev/null && ! git checkout -b "$_fallback" 2>/dev/null; then
+                warn "CI resume: failed to checkout branch ${_fallback}"
             fi
-            GIT_BRANCH="$ci_branch"
+            GIT_BRANCH="$_fallback"
         elif [[ "$(git branch --show-current 2>/dev/null)" != "$GIT_BRANCH" ]]; then
             info "CI resume: checking out branch ${GIT_BRANCH}"
-            if ! git checkout -b "$GIT_BRANCH" 2>/dev/null && ! git checkout "$GIT_BRANCH" 2>/dev/null; then
-                warn "CI resume: failed to create or checkout branch ${GIT_BRANCH}"
+            if ! git checkout "$GIT_BRANCH" 2>/dev/null && ! git checkout -b "$GIT_BRANCH" 2>/dev/null; then
+                warn "CI resume: failed to checkout branch ${GIT_BRANCH}"
             fi
         fi
         # Capture clean goal before write_state — prevents lazy bootstrap contamination

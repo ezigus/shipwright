@@ -455,11 +455,11 @@ LOOP_CONVERGENCE_SH="$SCRIPT_DIR/lib/loop-convergence.sh"
 LOOP_RESTART_SH="$SCRIPT_DIR/lib/loop-restart.sh"
 PIPELINE_STAGES_BUILD_SH="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
 
-# Phase 6 fix: pipeline-status.json must be git-added in snapshot step
+# Phase 6 fix: pipeline-status.json must be mirrored into issue-N/ in snapshot step
 assert_contains_regex \
-    "snapshot step force-adds .claude/pipeline-status.json to WIP branch" \
-    "$(grep 'pipeline-status.json' "$WORKFLOW" | grep 'git add' || true)" \
-    "git add.*pipeline-status\.json"
+    "snapshot step mirrors pipeline-status.json into issue-N/ directory" \
+    "$(grep 'pipeline-status.json' "$WORKFLOW" | grep 'cp ' || true)" \
+    "cp.*pipeline-status\.json.*ISSUE_DIR"
 
 # Phase 8 fix: sw-predictive.sh main() must handle --issue flag
 assert_contains_regex \

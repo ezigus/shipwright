@@ -823,7 +823,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-loop-iteration-test.sh` | 146 | Unit tests for loop-iteration.sh |
 | `scripts/sw-lib-loop-restart-test.sh` | 409 | Unit tests for loop state |
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
-| `scripts/sw-lib-pipeline-github-test.sh` | 371 | Unit tests for GitHub helpers |
+| `scripts/sw-lib-pipeline-github-test.sh` | 366 | Unit tests for GitHub helpers |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 1084 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 616 | Unit tests for quality |
 | `scripts/sw-lib-pipeline-stages-review-test.sh` | 589 | Unit tests for cross-stage drift detector |
@@ -843,7 +843,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-pipeline-composer-test.sh` | 632 | Test Suite |
 | `scripts/sw-pipeline-memory-guard-test.sh` | 190 |  |
 | `scripts/sw-pipeline-resume-test.sh` | 410 | Validate workflow shell logic |
-| `scripts/sw-pipeline-test.sh` | 3779 | E2E validation invoking the REAL pipeline |
+| `scripts/sw-pipeline-test.sh` | 4102 | E2E validation invoking the REAL pipeline |
 | `scripts/sw-pipeline-vitals-test.sh` | 226 | Validate pipeline health scoring |
 | `scripts/sw-pm-test.sh` | 225 | Autonomous PM Agent test suite |
 | `scripts/sw-policy-e2e-test.sh` | 290 | Verify config/policy.json is honored |

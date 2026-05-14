@@ -324,47 +324,42 @@ $_sweep_hits"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Fix 1: Workflow snapshot captures source-code edits
+# Fix 1: Workflow snapshot uses mirror-into-ISSUE_DIR approach (not git add -A)
 # Source: .github/workflows/shipwright-pipeline.yml
-# The "Snapshot resume-essentials to WIP branch (always)" step must contain
-# "git add -A" BEFORE the first "git add -f .claude/pipeline-artifacts/plan.md"
-# so uncommitted agent source-code edits are captured in the snapshot.
+# The "Snapshot resume-essentials to WIP branch (always)" step must NOT use
+# "git add -A" (which mixed source-code edits into artifact commits). Instead
+# it must mirror canonical artifacts into .claude/pipeline-artifacts/issue-N/
+# and stage only that directory via "git add ISSUE_DIR".
 # ─────────────────────────────────────────────────────────────────────────────
-print_test_section "workflow snapshot: git add -A appears before git add -f plan.md"
+print_test_section "workflow snapshot: mirrors artifacts into issue-N/ (not git add -A)"
 
 _workflow_file="$SCRIPT_DIR/../.github/workflows/shipwright-pipeline.yml"
 
 if [[ -f "$_workflow_file" ]]; then
-    # Extract the snapshot step block anchored on the step name and the
-    # "Force-add only" comment that introduces the add block.  We stop at the
-    # first "git restore --staged" line which follows the add block.
+    # Extract the snapshot step block.
     _snapshot_block=$(awk \
         '/Snapshot resume-essentials/{found=1} found{print} found && /git restore --staged/{exit}' \
         "$_workflow_file" 2>/dev/null || true)
 
-    # git add -A must be present in the block at all.
+    # git add -A must NOT be present — replaced by mirror approach.
     if echo "$_snapshot_block" | grep -q 'git add -A' 2>/dev/null; then
-        assert_pass "workflow snapshot: 'git add -A' is present in the snapshot step"
+        assert_fail "workflow snapshot: 'git add -A' absent from the snapshot step" \
+            "'git add -A' must be removed — use mirror-into-ISSUE_DIR instead"
     else
-        assert_fail "workflow snapshot: 'git add -A' is present in the snapshot step" \
-            "'git add -A' not found between 'Snapshot resume-essentials' and 'git restore --staged'"
+        assert_pass "workflow snapshot: 'git add -A' absent from the snapshot step"
     fi
 
-    # git add -A must appear BEFORE git add -f .claude/pipeline-artifacts/plan.md.
-    # Capture the line numbers (within the extracted block) of each.
-    _add_A_line=$(echo "$_snapshot_block" | grep -n 'git add -A' | head -1 | cut -d: -f1 || true)
-    _add_f_line=$(echo "$_snapshot_block" | grep -n 'git add -f[[:space:]].*pipeline-artifacts/plan\.md' | head -1 | cut -d: -f1 || true)
-
-    if [[ -n "$_add_A_line" && -n "$_add_f_line" && "$_add_A_line" -lt "$_add_f_line" ]]; then
-        assert_pass "workflow snapshot: 'git add -A' appears before 'git add -f .../plan.md'"
+    # ISSUE_DIR mirror approach must be present instead.
+    if echo "$_snapshot_block" | grep -q 'ISSUE_DIR' 2>/dev/null; then
+        assert_pass "workflow snapshot: ISSUE_DIR mirror approach present"
     else
-        assert_fail "workflow snapshot: 'git add -A' appears before 'git add -f .../plan.md'" \
-            "git add -A line=$_add_A_line, git add -f plan.md line=$_add_f_line (must have add-A < add-f)"
+        assert_fail "workflow snapshot: ISSUE_DIR mirror approach present" \
+            "ISSUE_DIR variable not found — mirror-into-issue-N/ approach not implemented"
     fi
 else
     assert_fail "workflow snapshot: workflow file exists" \
         "File not found: $_workflow_file"
-    assert_fail "workflow snapshot: 'git add -A' appears before 'git add -f .../plan.md'" \
+    assert_fail "workflow snapshot: ISSUE_DIR mirror approach present" \
         "Skipped — workflow file not found"
 fi
 

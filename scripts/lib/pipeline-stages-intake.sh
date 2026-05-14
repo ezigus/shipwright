@@ -64,18 +64,26 @@ stage_intake() {
     fi
 
     # 4. Create branch with smart prefix
-    local prefix
-    prefix=$(branch_prefix_for_type "$TASK_TYPE")
-    local slug
-    slug=$(echo "$GOAL" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | cut -c1-40)
-    slug="${slug%-}"
-    [[ -n "$ISSUE_NUMBER" ]] && slug="${slug}-${ISSUE_NUMBER}"
-    GIT_BRANCH="${prefix}/${slug}"
+    if [[ -n "${WORKSPACE_BRANCH:-}" ]]; then
+        # CI mode: the workflow already created and exported the WIP branch.
+        # Skip branch creation to avoid the two-branch identity conflict where
+        # intake's descriptive branch diverges from the workflow's shipwright/issue-N.
+        GIT_BRANCH="$WORKSPACE_BRANCH"
+        info "CI mode: using workspace branch ${GIT_BRANCH}"
+    else
+        local prefix
+        prefix=$(branch_prefix_for_type "$TASK_TYPE")
+        local slug
+        slug=$(echo "$GOAL" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | cut -c1-40)
+        slug="${slug%-}"
+        [[ -n "$ISSUE_NUMBER" ]] && slug="${slug}-${ISSUE_NUMBER}"
+        GIT_BRANCH="${prefix}/${slug}"
 
-    git checkout -b "$GIT_BRANCH" 2>/dev/null || {
-        info "Branch $GIT_BRANCH exists, checking out"
-        git checkout "$GIT_BRANCH" 2>/dev/null || true
-    }
+        git checkout -b "$GIT_BRANCH" 2>/dev/null || {
+            info "Branch $GIT_BRANCH exists, checking out"
+            git checkout "$GIT_BRANCH" 2>/dev/null || true
+        }
+    fi
     success "Branch: ${BOLD}$GIT_BRANCH${RESET}"
 
     # 5. Post initial progress comment on GitHub issue

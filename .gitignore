@@ -13,9 +13,11 @@ demo/*.gif
 
 # Pipeline runtime artifacts (created per-repo at runtime)
 .claude/worktrees/
-.claude/pipeline-artifacts/
-# Issue-scoped artifact snapshots ARE committed so plan/design survive CI resume
+.claude/pipeline-artifacts/*
+# Issue-scoped artifact snapshots ARE committed so plan/design survive CI resume.
+# Two negation lines required: first re-includes the subdirectory, second its contents.
 !.claude/pipeline-artifacts/issue-*/
+!.claude/pipeline-artifacts/issue-*/**
 .claude/pipeline-state.md
 .claude/pipeline-tasks*.md
 .claude/loop-logs/

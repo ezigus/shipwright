@@ -2175,6 +2175,140 @@ test_ci_post_stage_event_noop_outside_ci() {
     [[ ! -f "$capture_file" ]] || { echo "ci_post_stage_event should be no-op when CI_MODE=false"; return 1; }
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Issue 2: events snapshot code removed from pipeline_wip_push and
+# pipeline_final_artifact_push. These snapshots had no consumer and were
+# force-committed into every WIP branch, inflating DoD prompts.
+# ──────────────────────────────────────────────────────────────────────────────
+
+test_events_snapshot_code_absent() {
+    # Static: _events_snap must not appear anywhere in sw-pipeline.sh.
+    # After removal of the two snapshot blocks, no reference to the snapshot
+    # variable should remain.
+    if grep -qn "_events_snap" "$REAL_PIPELINE_SCRIPT"; then
+        local hits
+        hits=$(grep -n "_events_snap" "$REAL_PIPELINE_SCRIPT")
+        echo "    FAIL: _events_snap still referenced in sw-pipeline.sh:"
+        echo "$hits" | sed 's/^/      /'
+        return 1
+    fi
+    return 0
+}
+
+test_events_snapshot_not_created_on_wip_push() {
+    # Behavioral: ci_push_partial_work must not create .shipwright/events-*.jsonl.
+    # The WIP-push function (ci_push_partial_work) is gated on CI_MODE=true.
+    # We set that here so the snapshot block is actually reached.
+    local workdir fake_events
+    workdir=$(mktemp -d "${TMPDIR:-/tmp}/sw-wip-push-test.XXXXXX")
+    fake_events="$workdir/fake-events.jsonl"
+    echo '{"type":"event"}' > "$fake_events"
+
+    (
+        cd "$workdir" || exit 1
+        mkdir -p ".shipwright" 2>/dev/null || true
+
+        git() {
+            case "${1:-}" in
+                push) return 0 ;;
+                rev-parse) echo "shipwright/issue-42" ;;
+                add|commit|config|remote) return 0 ;;
+                diff) echo ""; return 0 ;;
+                *) return 0 ;;
+            esac
+        }
+        export -f git
+
+        info()    { true; }
+        warn()    { true; }
+        error()   { true; }
+        success() { true; }
+        emit_event() { true; }
+        _git_bookkeeping_pathspecs() { echo ""; }
+        safe_git_stage() { true; }
+        _timeout() { shift; "$@"; }
+        export -f info warn error success emit_event _git_bookkeeping_pathspecs safe_git_stage _timeout
+
+        CI_MODE=true
+        ISSUE_NUMBER="42"
+        EVENTS_FILE="$fake_events"
+        _PIPELINE_RUN_STARTED=true
+
+        source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
+        ci_push_partial_work 5 2>/dev/null || true
+    ) 2>/dev/null || true
+
+    local snap_count
+    snap_count=$(find "$workdir/.shipwright" -name "events-*.jsonl" 2>/dev/null | wc -l)
+    snap_count="${snap_count// /}"
+
+    rm -rf "$workdir"
+
+    if [[ "$snap_count" -gt 0 ]]; then
+        echo "    FAIL: ci_push_partial_work created ${snap_count} events snapshot file(s) — snapshot code not removed"
+        return 1
+    fi
+    return 0
+}
+
+test_events_snapshot_not_created_on_final_push() {
+    # Behavioral: pipeline_final_artifact_push must not create .shipwright/events-*.jsonl.
+    local workdir fake_events
+    workdir=$(mktemp -d "${TMPDIR:-/tmp}/sw-final-push-test.XXXXXX")
+    fake_events="$workdir/fake-events.jsonl"
+    echo '{"type":"event"}' > "$fake_events"
+
+    (
+        cd "$workdir" || exit 1
+        mkdir -p ".shipwright" 2>/dev/null || true
+
+        git() {
+            case "${1:-}" in
+                push) return 0 ;;
+                rev-parse) echo "shipwright/issue-42" ;;
+                add|commit|config|remote) return 0 ;;
+                diff) echo ""; return 0 ;;
+                *) return 0 ;;
+            esac
+        }
+        export -f git
+
+        info()    { true; }
+        warn()    { true; }
+        error()   { true; }
+        success() { true; }
+        emit_event() { true; }
+        _git_bookkeeping_pathspecs() { echo ""; }
+        safe_git_stage() { true; }
+        _timeout() { shift; "$@"; }
+        export -f info warn error success emit_event _git_bookkeeping_pathspecs safe_git_stage _timeout
+
+        ISSUE_NUMBER="42"
+        NO_GITHUB=false
+        NO_ARTIFACT_PUSH=false
+        DRY_RUN=false
+        EVENTS_FILE="$fake_events"
+        _PIPELINE_RUN_STARTED=true
+        ARTIFACTS_DIR="$workdir/.claude"
+        STATE_DIR="$workdir/.claude"
+
+        source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
+        pipeline_final_artifact_push 5 2>/dev/null || true
+    ) 2>/dev/null || true
+
+    local snap_count
+    snap_count=$(find "$workdir/.shipwright" -name "events-*.jsonl" 2>/dev/null | wc -l)
+    snap_count="${snap_count// /}"
+
+    rm -rf "$workdir"
+
+    if [[ "$snap_count" -gt 0 ]]; then
+        echo "    FAIL: pipeline_final_artifact_push created ${snap_count} events snapshot file(s) — snapshot code not removed"
+        return 1
+    fi
+    return 0
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -4098,6 +4232,9 @@ main() {
         "test_intake_git_branch_equals_workspace_branch_when_set:CI Change 3: GIT_BRANCH equals WORKSPACE_BRANCH after intake (GHA snapshot precondition)"
         "test_restore_loop_copies_snapshot_to_canonical:CI Change 4: restore loop copies issue-N/ snapshot files to canonical locations"
         "test_ci_resume_fallback_uses_workspace_branch:CI Change 5: resume fallback uses WORKSPACE_BRANCH not ci/issue-N when WORKSPACE_BRANCH set"
+        "test_events_snapshot_code_absent:Issue2: _events_snap code fully removed from sw-pipeline.sh"
+        "test_events_snapshot_not_created_on_wip_push:Issue2: pipeline_wip_push does not create .shipwright/events-*.jsonl"
+        "test_events_snapshot_not_created_on_final_push:Issue2: pipeline_final_artifact_push does not create .shipwright/events-*.jsonl"
     )
 
     for entry in "${tests[@]}"; do

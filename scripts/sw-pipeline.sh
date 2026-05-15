@@ -896,17 +896,6 @@ ci_push_partial_work() {
     local branch="shipwright/issue-${ISSUE_NUMBER}"
     echo "[WIP-PUSH-START] $(date -u +%FT%TZ) issue=${ISSUE_NUMBER} timeout=${push_timeout}s caller=${FUNCNAME[1]:-top}" >&2
 
-    # Snapshot events.jsonl into the repo so it survives the ephemeral runner disk
-    # and gets pushed with the WIP commit — enables post-mortem watchdog analysis.
-    # Stage immediately after copy so git diff --cached detects it even when it is
-    # the only change (untracked files are invisible to git diff --quiet).
-    if [[ -f "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" ]]; then
-        mkdir -p ".shipwright" 2>/dev/null || true
-        local _events_snap=".shipwright/events-${ISSUE_NUMBER}-${GITHUB_RUN_ID:-local}.jsonl"
-        cp "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" "$_events_snap" 2>/dev/null || true
-        git add -f "$_events_snap" 2>/dev/null || true
-    fi
-
     # Force-add issue-scoped artifact snapshots — .gitignore ignores the parent
     # pipeline-artifacts/ directory as a unit, which silently defeats the !issue-*/
     # negation rule. git add -f bypasses .gitignore for these specific paths.
@@ -956,14 +945,6 @@ pipeline_final_artifact_push() {
 
     local branch="shipwright/issue-${ISSUE_NUMBER}"
     echo "[ARTIFACT-PUSH-START] $(date -u +%FT%TZ) issue=${ISSUE_NUMBER} timeout=${push_timeout}s" >&2
-
-    # Snapshot events.jsonl into the repo for post-mortem analysis.
-    if [[ -f "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" ]]; then
-        mkdir -p ".shipwright" 2>/dev/null || true
-        local _events_snap=".shipwright/events-${ISSUE_NUMBER}-${GITHUB_RUN_ID:-local}.jsonl"
-        cp "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" "$_events_snap" 2>/dev/null || true
-        git add -f "$_events_snap" 2>/dev/null || true
-    fi
 
     # Force-add issue-scoped artifact snapshots (.gitignore bypassed intentionally).
     local _snap_dir="${ARTIFACTS_DIR:-${STATE_DIR:-}/pipeline-artifacts}/issue-${ISSUE_NUMBER}"

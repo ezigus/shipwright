@@ -2,20 +2,20 @@
 pipeline: autonomous
 goal: "Upload cost-breakdown.json as GitHub Actions artifact for cross-machine optimization"
 original_goal: "Upload cost-breakdown.json as GitHub Actions artifact for cross-machine optimization"
-status: running
+status: failed
 issue: "#460"
 branch: "ci/upload-cost-breakdown-json-as-github-act-460"
 template: ""
-current_stage: build
+current_stage: test
 outer_stage: 
 outer_stage_start_commit: 
 inner_stage: 
-current_stage_description: "Building with 20 max iterations using claude-opus-4-6"
-stage_progress: "intake:complete plan:complete design:complete build:pending test:pending review:pending compound_quality:pending audit:pending pr:pending merge:pending monitor:pending"
+current_stage_description: "Running test suite and validating coverage"
+stage_progress: "intake:complete plan:complete design:complete build:failed test:pending review:pending compound_quality:pending audit:pending pr:pending merge:pending monitor:pending"
 started_at: 2026-05-13T23:04:48Z
 pipeline_run_epoch: 1778713488
-updated_at: 2026-05-15T21:16:54Z
-elapsed: 31s
+updated_at: 2026-05-15T22:09:00Z
+elapsed: 52m 37s
 test_cmd: "npm test"
 pr_number: 
 model: claude-opus-4-6
@@ -24,6 +24,7 @@ stages:
   intake: complete
   plan: complete
   design: complete
+  build: failed
 ---
 
 ## Log
@@ -50,3 +51,6 @@ Generated design.md (250 lines)
 
 ### design (23:14:50)
 complete (2m 37s)
+### build (22:08:56)
+failed (52m 2s)
+

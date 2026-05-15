@@ -406,7 +406,7 @@ jobs:
           mkdir -p ~/.shipwright/memory
           if git fetch origin shipwright-data 2>/dev/null; then
             echo "Restoring state from shipwright-data branch..."
-            for file in events.jsonl costs.json budget.json; do
+            for file in events.jsonl costs.json budget.json discoveries.jsonl; do
               git show "origin/shipwright-data:${file}" > ~/.shipwright/"${file}" 2>/dev/null || true
             done
             for file in $(git ls-tree -r --name-only origin/shipwright-data -- memory/ 2>/dev/null); do
@@ -1195,6 +1195,7 @@ jobs:
           cp ~/.shipwright/events.jsonl . 2>/dev/null || true
           cp ~/.shipwright/costs.json . 2>/dev/null || true
           cp ~/.shipwright/budget.json . 2>/dev/null || true
+          cp ~/.shipwright/discoveries.jsonl . 2>/dev/null || true
           if [[ -d ~/.shipwright/memory ]]; then
             cp -r ~/.shipwright/memory . 2>/dev/null || true
           fi

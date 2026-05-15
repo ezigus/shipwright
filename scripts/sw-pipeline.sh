@@ -474,6 +474,7 @@ REVIEWERS=""
 LABELS=""
 BASE_BRANCH="main"
 NO_GITHUB="${NO_GITHUB:-false}"
+NO_ARTIFACT_PUSH="${NO_ARTIFACT_PUSH:-false}"
 NO_GITHUB_LABEL="${NO_GITHUB_LABEL:-false}"
 CI_MODE=false
 DRY_RUN=false
@@ -884,6 +885,14 @@ ci_push_partial_work() {
     [[ "${CI_MODE:-false}" != "true" ]] && return 0
     [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
 
+    local _expected_wip="shipwright/issue-${ISSUE_NUMBER}"
+    local _actual_head
+    _actual_head=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [[ -n "$_actual_head" && "$_actual_head" != "HEAD" && "$_actual_head" != "$_expected_wip" ]]; then
+        echo "[WIP-PUSH-SKIP] HEAD=${_actual_head} != expected ${_expected_wip} — skipping to prevent cross-branch pollution" >&2
+        return 0
+    fi
+
     local branch="shipwright/issue-${ISSUE_NUMBER}"
     echo "[WIP-PUSH-START] $(date -u +%FT%TZ) issue=${ISSUE_NUMBER} timeout=${push_timeout}s caller=${FUNCNAME[1]:-top}" >&2
 
@@ -909,7 +918,7 @@ ci_push_partial_work() {
     if ! git diff --quiet -- $(_git_bookkeeping_pathspecs) 2>/dev/null || \
        ! git diff --cached --quiet -- $(_git_bookkeeping_pathspecs) 2>/dev/null; then
         safe_git_stage
-        git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
+        git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER} [skip ci]" --no-verify 2>/dev/null || true
     fi
 
     # Push branch (create if needed, force to overwrite previous WIP).
@@ -1055,14 +1064,16 @@ cleanup_on_exit() {
     # Use 60s timeout — stage-failure path needs headroom for first-time remote branch creation.
     if [[ "${CI_MODE:-false}" == "true" \
           && -n "${ISSUE_NUMBER:-}" \
-          && "$exit_code" -ne 0 ]]; then
+          && "$exit_code" -ne 0 \
+          && "${_PIPELINE_RUN_STARTED:-false}" == "true" ]]; then
         ci_push_partial_work 60
     fi
 
     # Push final artifacts on all exits (success + failure, local + CI).
     # Captures post-PR stage outputs (deploy/validate/monitor) that ci_push_partial_work
     # misses (it only runs on CI failure).
-    if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+    if [[ -n "${ISSUE_NUMBER:-}" \
+          && "${_PIPELINE_RUN_STARTED:-false}" == "true" ]]; then
         pipeline_final_artifact_push 60 || true
     fi
 
@@ -1090,7 +1101,8 @@ cleanup_on_exit() {
     fi
 
     # Push discoveries to shared orphan branch for cross-machine access
-    if declare -f sw_discovery_ci_push >/dev/null 2>&1; then
+    if declare -f sw_discovery_ci_push >/dev/null 2>&1 \
+       && [[ "${_PIPELINE_RUN_STARTED:-false}" == "true" ]]; then
         sw_discovery_ci_push || true
     fi
 
@@ -2105,6 +2117,8 @@ auto_rebase() {
 }
 
 run_pipeline() {
+    _PIPELINE_RUN_STARTED=true
+
     # Rotate event log if needed (standalone mode)
     rotate_event_log_if_needed
 

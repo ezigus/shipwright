@@ -1832,6 +1832,9 @@ test_persist_artifacts_ci_guard() {
         # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
         unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
         # Source pipeline — sets ARTIFACTS_DIR="" so we must set vars AFTER source
+        # Belt-and-suspenders: guard against EXIT trap pushing to real GitHub.
+        # The primary fix is _PIPELINE_RUN_STARTED sentinel; this is a safety net.
+        NO_ARTIFACT_PUSH=true
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1857,6 +1860,8 @@ test_verify_artifacts_present() {
     (
         # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
         unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
+        # Belt-and-suspenders: guard against EXIT trap pushing to real GitHub.
+        NO_ARTIFACT_PUSH=true
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1877,6 +1882,8 @@ test_verify_artifacts_missing() {
     (
         # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
         unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
+        # Belt-and-suspenders: guard against EXIT trap pushing to real GitHub.
+        NO_ARTIFACT_PUSH=true
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1900,6 +1907,8 @@ test_verify_artifacts_empty() {
     (
         # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
         unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
+        # Belt-and-suspenders: guard against EXIT trap pushing to real GitHub.
+        NO_ARTIFACT_PUSH=true
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1923,6 +1932,8 @@ test_verify_artifacts_no_requirements() {
     (
         # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
         unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
+        # Belt-and-suspenders: guard against EXIT trap pushing to real GitHub.
+        NO_ARTIFACT_PUSH=true
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1943,6 +1954,8 @@ test_verify_artifacts_design_needs_plan() {
     (
         # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
         unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
+        # Belt-and-suspenders: guard against EXIT trap pushing to real GitHub.
+        NO_ARTIFACT_PUSH=true
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1958,6 +1971,68 @@ test_verify_artifacts_design_needs_plan() {
             exit 0  # Correctly detected missing plan.md
         fi
     )
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 57b. _PIPELINE_RUN_STARTED sentinel: no push when sourced without run_pipeline
+#      Regression test — written BEFORE implementation (TDD red).
+#      Verifies the sentinel added to cleanup_on_exit gates all remote-push calls
+#      so that sourcing sw-pipeline.sh in tests never touches real GitHub.
+# ──────────────────────────────────────────────────────────────────────────────
+test_no_push_when_sourced_without_pipeline_start() {
+    local push_log
+    push_log=$(mktemp "${TMPDIR:-/tmp}/sw-push-log.XXXXXX")
+
+    (
+        # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
+        unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
+
+        # Fake git that logs any push call and returns non-zero.
+        # Exported so subshell child processes inherit it.
+        git() {
+            if [[ "${1:-}" == "push" ]]; then
+                echo "git push called: $*" >> "$push_log"
+                return 1
+            fi
+            command git "$@"
+        }
+        export -f git
+
+        # Explicitly disable the NO_ARTIFACT_PUSH guard so the ONLY thing
+        # preventing a push is the _PIPELINE_RUN_STARTED sentinel.
+        # This makes the test a true behavioral regression for the sentinel fix.
+        # shellcheck disable=SC2034
+        NO_ARTIFACT_PUSH=false
+        # shellcheck disable=SC2034
+        ISSUE_NUMBER="99"
+
+        # Source the pipeline WITHOUT calling run_pipeline().
+        # The EXIT trap installed by source fires on subshell exit.
+        # shellcheck disable=SC1090
+        source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
+
+        # Exit WITHOUT ever calling run_pipeline() — sentinel must block the push.
+        exit 0
+    ) 2>/dev/null || true
+
+    # Assert: push log must be empty — sentinel blocked pipeline_final_artifact_push.
+    local rc=0
+    if [[ -s "$push_log" ]]; then
+        echo "    FAIL: git push was called despite _PIPELINE_RUN_STARTED not being set:"
+        cat "$push_log"
+        rc=1
+    fi
+    rm -f "$push_log"
+
+    # Assert: events snapshot must NOT have been created in the real project dir.
+    local events_snap="$REPO_DIR/.shipwright/events-99-local.jsonl"
+    if [[ -f "$events_snap" ]]; then
+        echo "    FAIL: events snapshot was created in real project dir: $events_snap"
+        rm -f "$events_snap"
+        rc=1
+    fi
+
+    return "$rc"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -3977,6 +4052,7 @@ main() {
         "test_verify_artifacts_empty:Durable: verify_stage_artifacts fails when artifacts empty"
         "test_verify_artifacts_no_requirements:Durable: verify_stage_artifacts passes for stages with no requirements"
         "test_verify_artifacts_design_needs_plan:Durable: verify_stage_artifacts design requires plan.md"
+        "test_no_push_when_sourced_without_pipeline_start:Durable: no push when sourced without run_pipeline (_PIPELINE_RUN_STARTED sentinel)"
         "test_mark_complete_persists_plan:Durable: mark_stage_complete wires persist for plan stage"
         "test_fresh_start_cleans_stale_checkpoints:Cleanup: stale checkpoints/ removed on fresh pipeline start"
         "test_ci_post_stage_event_visible_body:CI: ci_post_stage_event posts visible comment body"

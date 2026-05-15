@@ -89,7 +89,7 @@ checkpoint_save_context() {
 
     # Save files modified (git diff)
     local modified
-    modified="$(git diff --name-only HEAD 2>/dev/null | head -50 || true)"
+    modified="$(git diff --name-only HEAD -- . $(_git_excluded_pathspecs) 2>/dev/null | head -50 || true)"
     if [[ -z "$modified" ]]; then
         modified="${SW_LOOP_MODIFIED:-}"
     fi

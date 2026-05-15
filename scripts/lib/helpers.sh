@@ -480,7 +480,6 @@ _GIT_RUNTIME_EXCLUDES=(
     ".claude/pipeline-status.json"
     ".ai-standards/generated/"
     ".github/copilot-instructions.md"
-    ".github/workflows/"
     "AGENTS.md"
 )
 

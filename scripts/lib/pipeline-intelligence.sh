@@ -1757,7 +1757,7 @@ ${_cascade_test_tail}"
                 echo ""
                 info "Running developer simulation review..."
                 local sim_diff
-                sim_diff=$(git diff "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+                sim_diff=$(git diff "${BASE_BRANCH}...HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null || true)
                 if [[ -n "$sim_diff" ]]; then
                     local sim_result
                     sim_result=$(simulation_review "$sim_diff" "${GOAL:-}" 2>/dev/null || echo "[]")
@@ -1797,7 +1797,7 @@ ${_cascade_test_tail}"
                 echo ""
                 info "Running architecture validation..."
                 local arch_diff
-                arch_diff=$(git diff "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+                arch_diff=$(git diff "${BASE_BRANCH}...HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null || true)
                 if [[ -n "$arch_diff" ]]; then
                     local arch_result
                     arch_result=$(architecture_validate_changes "$arch_diff" "" 2>/dev/null || echo "[]")

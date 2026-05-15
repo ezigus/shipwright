@@ -1,0 +1,11 @@
+{
+    "routes": {
+        "plan": {"recommended": "opus", "source": "bootstrap"},
+        "design": {"recommended": "opus", "source": "bootstrap"},
+        "build": {"recommended": "sonnet", "source": "bootstrap"},
+        "test": {"recommended": "sonnet", "source": "bootstrap"},
+        "review": {"recommended": "sonnet", "source": "bootstrap"}
+    },
+    "default": "sonnet",
+    "source": "bootstrap"
+}

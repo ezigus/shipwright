@@ -5511,3 +5511,5 @@
 {"ts":"2026-05-15T10:46:25Z","ts_epoch":1778841985,"type":"loop.iteration_start","repo":"ezigus/shipwright","iteration":2,"max":25,"job_id":"autonomous","agent":1,"test_passed":"true"}
 {"ts":"2026-05-15T10:46:25Z","ts_epoch":1778841985,"type":"context.iteration_prompt","repo":"ezigus/shipwright","iteration":2,"chars":7800,"full_context":"false","skipped_pipeline":"true","skipped_intelligence_static":"true"}
 {"ts":"2026-05-15T10:46:26Z","ts_epoch":1778841986,"type":"loop.context_efficiency","repo":"ezigus/shipwright","iteration":2,"raw_prompt_chars":7775,"trimmed_prompt_chars":7775,"trim_ratio":0.0,"budget_utilization":3.9,"budget_chars":200000,"job_id":"autonomous"}
+{"ts":"2026-05-15T21:06:30Z","ts_epoch":1778879190,"type":"cost.baseline_updated","repo":"ezigus/shipwright","stages":2,"issue":504}
+{"ts":"2026-05-15T21:06:39Z","ts_epoch":1778879199,"type":"regression.baseline","repo":"ezigus/shipwright","timestamp":"2026-05-15T21:06:39Z","test_count":0,"pass_rate":0,"script_count":268,"total_lines":310394}

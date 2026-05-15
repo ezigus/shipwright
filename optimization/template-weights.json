@@ -1,0 +1,7 @@
+{
+    "standard": 1.0,
+    "hotfix": 1.0,
+    "docs": 1.0,
+    "refactor": 1.0,
+    "source": "bootstrap"
+}

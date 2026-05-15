@@ -1,0 +1,5 @@
+{
+    "low": {"mean": 5, "stddev": 2, "samples": 0, "source": "bootstrap"},
+    "medium": {"mean": 12, "stddev": 4, "samples": 0, "source": "bootstrap"},
+    "high": {"mean": 25, "stddev": 8, "samples": 0, "source": "bootstrap"}
+}

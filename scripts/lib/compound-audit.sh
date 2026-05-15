@@ -359,7 +359,7 @@ compound_audit_collect_file_contents() {
     # path field is a single real path (not "old => new" syntax that breaks
     # every downstream git show / cat).
     local numstat
-    numstat=$(git diff --no-renames --numstat "${base}...HEAD" 2>/dev/null) || return 0
+    numstat=$(git diff --no-renames --numstat "${base}...HEAD" 2>/dev/null | _filter_gitignored_paths) || return 0
     [[ -z "$numstat" ]] && return 0
 
     local added deleted file

@@ -1863,6 +1863,126 @@ done
     fi
 done
 
+# ─── Tests: _filter_gitignored_paths ─────────────────────────────────────────
+print_test_section "_filter_gitignored_paths"
+
+# Ensure the helper is available (sourced via pipeline-stages-build.sh or helpers.sh)
+_HELPERS_LOADED=""
+source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null || true
+
+# 1. Helper unit test: verify format handling and gitignore filtering in a temp repo.
+(
+    _fg_dir=$(mktemp -d 2>/dev/null || mktemp -d -t swtest)
+    cd "$_fg_dir"
+    git init -q
+    git config user.email "t@t.com"
+    git config user.name "T"
+
+    # Create .gitignore with patterns for known runtime files
+    printf '.claude/pipeline-state.md\nignored.txt\n' > .gitignore
+    git add .gitignore && git commit -q -m "init"
+
+    git checkout -q -b test-filter 2>/dev/null || true
+
+    # Force-add an ignored file (simulating tracked bookkeeping files)
+    mkdir -p .claude
+    touch .claude/pipeline-state.md
+    touch keep.txt
+    git add -f .claude/pipeline-state.md keep.txt
+    git commit -q -m "add files"
+
+    # Test name-only format: ignored path dropped, non-ignored kept
+    result=$(printf '.claude/pipeline-state.md\nkeep.txt\n' | _filter_gitignored_paths 2>/dev/null || true)
+    if printf '%s\n' "$result" | grep -q "keep.txt" && ! printf '%s\n' "$result" | grep -q "pipeline-state.md"; then
+        echo "PASS: name-only: ignored path dropped, tracked path kept"
+    else
+        echo "FAIL: name-only filter output: $result"
+    fi
+
+    # Test name-status format: status column preserved for survivors
+    result=$(printf 'M\t.claude/pipeline-state.md\nA\tkeep.txt\n' | _filter_gitignored_paths 2>/dev/null || true)
+    if printf '%s\n' "$result" | grep -q "^A"$'\t'"keep.txt" && ! printf '%s\n' "$result" | grep -q "pipeline-state.md"; then
+        echo "PASS: name-status: status column preserved, ignored path dropped"
+    else
+        echo "FAIL: name-status filter output: $result"
+    fi
+
+    # Test numstat format (adds<TAB>dels<TAB>path)
+    result=$(printf '5\t2\t.claude/pipeline-state.md\n3\t1\tkeep.txt\n' | _filter_gitignored_paths 2>/dev/null || true)
+    if printf '%s\n' "$result" | grep -q "keep.txt" && ! printf '%s\n' "$result" | grep -q "pipeline-state.md"; then
+        echo "PASS: numstat: ignored path dropped, counts preserved for survivor"
+    else
+        echo "FAIL: numstat filter output: $result"
+    fi
+
+    # Test rename entry (R100<TAB>old<TAB>new) — last field is the new path
+    touch renamed.txt
+    git add renamed.txt && git commit -q -m "add renamed"
+    result=$(printf 'R100\told.txt\t.claude/pipeline-state.md\nR100\told2.txt\trenamed.txt\n' | _filter_gitignored_paths 2>/dev/null || true)
+    if printf '%s\n' "$result" | grep -q "renamed.txt" && ! printf '%s\n' "$result" | grep -q "pipeline-state.md"; then
+        echo "PASS: rename: ignored destination dropped, non-ignored destination kept"
+    else
+        echo "FAIL: rename filter output: $result"
+    fi
+
+    rm -rf "$_fg_dir"
+) | while IFS= read -r _line; do
+    if [[ "$_line" == PASS:* ]]; then
+        assert_pass "${_line#PASS: }"
+    else
+        assert_fail "${_line#FAIL: }" ""
+    fi
+done
+
+# 2. End-to-end: _build_branch_progress filters gitignored tracked files.
+(
+    _fg2_dir=$(mktemp -d 2>/dev/null || mktemp -d -t swtest)
+    cd "$_fg2_dir"
+    git init -q
+    git config user.email "t@t.com"
+    git config user.name "T"
+    mkdir -p .claude
+    printf '.claude/pipeline-state.md\n' > .gitignore
+    git add .gitignore && git commit -q -m "init"
+    git checkout -q -b test-progress 2>/dev/null || true
+    touch .claude/pipeline-state.md keep-feature.js
+    git add -f .claude/pipeline-state.md keep-feature.js
+    git commit -q -m "feat: add files"
+    unset OUTER_STAGE OUTER_STAGE_START_COMMIT
+    out=$(_build_branch_progress 2>/dev/null || true)
+    if printf '%s\n' "$out" | grep -q "keep-feature.js" && ! printf '%s\n' "$out" | grep -q "pipeline-state.md"; then
+        echo "PASS: _build_branch_progress excludes gitignored tracked files"
+    else
+        echo "FAIL: _build_branch_progress filter output: $out"
+    fi
+    rm -rf "$_fg2_dir"
+) | while IFS= read -r _line; do
+    if [[ "$_line" == PASS:* ]]; then
+        assert_pass "${_line#PASS: }"
+    else
+        assert_fail "${_line#FAIL: }" ""
+    fi
+done
+
+# 3. Fail-open: outside a git repo, all lines pass through unfiltered.
+(
+    _fg3_dir=$(mktemp -d 2>/dev/null || mktemp -d -t swtest)
+    cd "$_fg3_dir"
+    result=$(printf 'file-a.txt\nfile-b.txt\n' | _filter_gitignored_paths 2>/dev/null || true)
+    if printf '%s\n' "$result" | grep -q "file-a.txt" && printf '%s\n' "$result" | grep -q "file-b.txt"; then
+        echo "PASS: fail-open: all lines pass through outside git repo"
+    else
+        echo "FAIL: fail-open output: $result"
+    fi
+    rm -rf "$_fg3_dir"
+) | while IFS= read -r _line; do
+    if [[ "$_line" == PASS:* ]]; then
+        assert_pass "${_line#PASS: }"
+    else
+        assert_fail "${_line#FAIL: }" ""
+    fi
+done
+
 # ─── Tests: OUTER_STAGE_START_COMMIT round-trip via write_state/resume_state ──
 print_test_section "OUTER_STAGE_START_COMMIT state round-trip"
 

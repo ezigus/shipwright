@@ -846,7 +846,7 @@ $diff_content"
 run_negative_prompting() {
     type _ensure_base_branch_ref >/dev/null 2>&1 && { _ensure_base_branch_ref || true; }
     local changed_files
-    changed_files=$(git diff --name-only "origin/${BASE_BRANCH:-main}...HEAD" 2>/dev/null || true)
+    changed_files=$(git diff --name-only "origin/${BASE_BRANCH:-main}...HEAD" 2>/dev/null | _filter_gitignored_paths || true)
 
     if [[ -z "$changed_files" ]]; then
         info "No changed files to analyze"

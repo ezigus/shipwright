@@ -181,7 +181,7 @@ _build_branch_progress() {
         return 0
     fi
 
-    _progress="$(git diff --name-status "${_merge_base}..HEAD" 2>/dev/null | head -40 || true)"
+    _progress="$(git diff --name-status "${_merge_base}..HEAD" 2>/dev/null | _filter_gitignored_paths | head -40 || true)"
     if [[ -z "$_progress" ]]; then
         echo "No changes committed to this branch yet (first pass)."
     else
@@ -738,7 +738,7 @@ ${commit_msgs}" --model haiku < /dev/null 2>/dev/null || true)
             _build_base="$(git merge-base "origin/${_build_base_branch}" HEAD 2>/dev/null \
                 || git merge-base "${_build_base_branch}" HEAD 2>/dev/null || echo "HEAD~1")"
         fi
-        _build_files="$(git diff --name-status "${_build_base}..HEAD" 2>/dev/null | head -20 | tr '\n' '|' || true)"
+        _build_files="$(git diff --name-status "${_build_base}..HEAD" 2>/dev/null | _filter_gitignored_paths | head -20 | tr '\n' '|' || true)"
         ruflo_store_issue_outcome \
             "$_build_key" \
             "$(jq -n --arg goal "${GOAL:-}" --arg files "$_build_files" --arg status "$_build_status" \

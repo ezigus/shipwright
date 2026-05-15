@@ -93,10 +93,10 @@ summarize_loop_state() {
         printf '## Modified Files\n'
         local modified_files=""
         if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
-            modified_files="$(git -C "${PROJECT_ROOT:-.}" diff --name-only "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | head -20 || true)"
+            modified_files="$(cd "${PROJECT_ROOT:-.}" && git diff --name-only "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | _filter_gitignored_paths | head -20 || true)"
         fi
         if [[ -z "$modified_files" ]]; then
-            modified_files="$(git -C "${PROJECT_ROOT:-.}" diff --name-only HEAD 2>/dev/null | head -20 || true)"
+            modified_files="$(cd "${PROJECT_ROOT:-.}" && git diff --name-only HEAD 2>/dev/null | _filter_gitignored_paths | head -20 || true)"
         fi
         if [[ -n "$modified_files" ]]; then
             while IFS= read -r f; do

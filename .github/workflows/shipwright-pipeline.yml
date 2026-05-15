@@ -1072,12 +1072,22 @@ jobs:
           # Source-code edits belong in git_auto_commit commits, not here.
           # The .gitignore uses contents-form exclusion (pipeline-artifacts/*) with
           # two negation lines for issue-*/ so no -f flag is needed.
-          # Safety: abort if HEAD is not on the WIP branch — prevents artifact snapshot
-          # from committing to the wrong branch when intake or resume branch logic fails.
+
+          # Restore HEAD to WIP branch if a build agent left it on a temp branch
+          # (e.g. ci/feature-branch created during implementation). Safe in the
+          # post-PR-#594 architecture: we stage only issue-N/ artifacts (not all
+          # working-tree files), so no wrong-branch source files are staged even
+          # if checkout updates the working tree.
+          git checkout "$BRANCH" 2>/dev/null || true
+
+          # Safety: skip snapshot if HEAD is still not on the WIP branch after restore
+          # attempt. Use exit 0 (not exit 1) — this is a defensive guard, not a pipeline
+          # failure; marking CI failed when the pipeline itself succeeded is misleading.
+          # Consistent with the WIP push step above which also exits 0 on HEAD drift.
           _snap_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "DETACHED")
           if [[ "$_snap_branch" != "$BRANCH" ]]; then
-            echo "ERROR: HEAD is on '${_snap_branch}', expected '${BRANCH}' — aborting snapshot to prevent cross-branch pollution" >&2
-            exit 1
+            echo "::warning::HEAD is on '${_snap_branch}', expected '${BRANCH}' — skipping artifact snapshot to prevent cross-branch pollution" >&2
+            exit 0
           fi
 
           ISSUE_DIR=".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}"

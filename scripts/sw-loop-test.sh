@@ -3823,6 +3823,57 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Issue B: DoD hard stop when prompt exceeds context limit
+# Tests verify the LOOP_ABORT_FATAL mechanism is wired correctly.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Static: LOOP_ABORT_FATAL global initialised to false
+if grep -qF "LOOP_ABORT_FATAL=false" "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null; then
+    assert_pass "issueB_loop_abort_fatal_global: LOOP_ABORT_FATAL=false declared in sw-loop.sh"
+else
+    assert_fail "issueB_loop_abort_fatal_global: LOOP_ABORT_FATAL=false declared in sw-loop.sh" \
+        "expected 'LOOP_ABORT_FATAL=false' in sw-loop.sh globals section"
+fi
+
+# Static: SHIPWRIGHT_DOD_PROMPT_MAX_BYTES env var used for overridable threshold
+if grep -qF "SHIPWRIGHT_DOD_PROMPT_MAX_BYTES" "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null; then
+    assert_pass "issueB_dod_max_bytes_env_var: SHIPWRIGHT_DOD_PROMPT_MAX_BYTES used in sw-loop.sh"
+else
+    assert_fail "issueB_dod_max_bytes_env_var: SHIPWRIGHT_DOD_PROMPT_MAX_BYTES used in sw-loop.sh" \
+        "expected SHIPWRIGHT_DOD_PROMPT_MAX_BYTES threshold var in check_definition_of_done"
+fi
+
+# Static: post-invocation error detection greps BOTH dod_log and dod_err_log
+# Extract the block around the context-error grep and verify both appear together.
+_dod_stderr_check=$(grep -A3 "prompt is too long\|context.?length" "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | head -20 || true)
+if echo "$_dod_stderr_check" | grep -q "dod_err_log"; then
+    assert_pass "issueB_post_invocation_checks_stderr: context-error grep covers dod_err_log (stderr)"
+else
+    assert_fail "issueB_post_invocation_checks_stderr: context-error grep covers dod_err_log (stderr)" \
+        "expected dod_err_log in the grep pattern near 'prompt is too long'"
+fi
+
+# Static: LOOP_ABORT_FATAL hard-stop is wired inside run_single_agent_loop (after quality gates)
+_loop_abort_in_single=$(awk '/^run_single_agent_loop\(\)/{p=1} p{print} p && /^\}$/{if(--d<0) exit} p && /{/{d++}' \
+    "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | grep "LOOP_ABORT_FATAL" || true)
+if [[ -n "$_loop_abort_in_single" ]]; then
+    assert_pass "issueB_hard_stop_in_run_single_agent_loop: LOOP_ABORT_FATAL check present in run_single_agent_loop"
+else
+    assert_fail "issueB_hard_stop_in_run_single_agent_loop: LOOP_ABORT_FATAL check present in run_single_agent_loop" \
+        "expected LOOP_ABORT_FATAL guard in run_single_agent_loop body"
+fi
+
+# Static: LOOP_ABORT_FATAL restart-suppression is wired inside run_loop_with_restarts
+_loop_abort_in_restarts=$(awk '/^run_loop_with_restarts\(\)/{p=1} p{print} p && /^\}$/{if(--d<0) exit} p && /{/{d++}' \
+    "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | grep "LOOP_ABORT_FATAL" || true)
+if [[ -n "$_loop_abort_in_restarts" ]]; then
+    assert_pass "issueB_restart_suppression_in_run_loop_with_restarts: LOOP_ABORT_FATAL check present in run_loop_with_restarts"
+else
+    assert_fail "issueB_restart_suppression_in_run_loop_with_restarts: LOOP_ABORT_FATAL check present in run_loop_with_restarts" \
+        "expected LOOP_ABORT_FATAL restart guard in run_loop_with_restarts body"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ═══════════════════════════════════════════════════════════════════════════════
 

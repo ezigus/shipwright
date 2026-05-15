@@ -107,6 +107,8 @@ RESTART_COUNT=0
 REPO_OVERRIDE=""
 VERSION="3.6.1"
 
+LOOP_ABORT_FATAL=false   # Set true by DoD when a tooling failure makes retry futile
+
 # ─── Token Tracking ─────────────────────────────────────────────────────────
 LOOP_INPUT_TOKENS=0
 LOOP_OUTPUT_TOKENS=0
@@ -1885,6 +1887,29 @@ DOD_PROMPT
         dod_flags+=("--dangerously-skip-permissions")
     fi
 
+    # Pre-flight: if the assembled prompt exceeds the context limit, fail fast with a
+    # clear diagnostic instead of sending it and getting a cryptic parse error back.
+    # Retry would not help — the prompt will be the same size next iteration.
+    local _dod_bytes=${#dod_prompt}
+    local _dod_max="${SHIPWRIGHT_DOD_PROMPT_MAX_BYTES:-700000}"
+    if [[ "$_dod_bytes" -gt "$_dod_max" ]]; then
+        local _branch_stat=""
+        [[ -n "${_dod_merge_base:-}" ]] && \
+            _branch_stat="$(git -C "$PROJECT_ROOT" diff --stat "${_dod_merge_base}..HEAD" \
+                -- . $(_git_excluded_pathspecs) 2>/dev/null | tail -20 || true)"
+        warn "DoD: FATAL — prompt ${_dod_bytes} bytes (~$((_dod_bytes / 4)) tokens) exceeds limit (${_dod_max})"
+        warn "DoD: branch diff --stat (what inflated the prompt):"
+        [[ -n "$_branch_stat" ]] && warn "$_branch_stat"
+        warn "DoD: fix — remove accidentally-committed runtime files: git rm --cached <file>"
+        LOOP_ABORT_FATAL=true
+        record_gate_finding "dod" "fail" \
+            "DoD prompt too large (${_dod_bytes} bytes, ~$((_dod_bytes / 4)) tokens)" \
+            "DoD prompt exceeded context limit (${_dod_max} bytes). Branch diff stat:
+${_branch_stat}
+Fix: git rm --cached <accidentally-committed-runtime-file>"
+        return 1
+    fi
+
     local dod_err_log="${dod_log%.log}-stderr.log"
     local dod_exit_code=0
     # Pipe prompt via stdin to bypass exec ARG_MAX. The DoD prompt embeds the
@@ -1895,6 +1920,29 @@ DOD_PROMPT
     CHILD_PID=$!
     wait "$CHILD_PID" 2>/dev/null || dod_exit_code=$?
     CHILD_PID=""
+
+    # Post-invocation: check both stdout and stderr for CLI context-limit errors.
+    # The Anthropic CLI may report "Prompt is too long" on either stream depending
+    # on how the error surfaces (HTTP 400 vs local pre-check).
+    if grep -qiE "prompt is too long|context.?length.?exceeded|request.{0,20}too large" \
+            "$dod_log" "$dod_err_log" 2>/dev/null; then
+        local _cli_err _bytes=${#dod_prompt}
+        _cli_err="$(cat "$dod_log" "$dod_err_log" 2>/dev/null | grep -iE "prompt is too long|context.?length.?exceeded|request.{0,20}too large" | head -1 || true)"
+        local _branch_stat=""
+        [[ -n "${_dod_merge_base:-}" ]] && \
+            _branch_stat="$(git -C "$PROJECT_ROOT" diff --stat "${_dod_merge_base}..HEAD" \
+                -- . $(_git_excluded_pathspecs) 2>/dev/null | tail -20 || true)"
+        warn "DoD: FATAL — claude -p returned context error: ${_cli_err}"
+        warn "DoD: prompt was ${_bytes} bytes (~$((_bytes / 4)) tokens)"
+        [[ -n "$_branch_stat" ]] && warn "$_branch_stat"
+        LOOP_ABORT_FATAL=true
+        record_gate_finding "dod" "fail" \
+            "DoD evaluator context error: ${_cli_err}" \
+            "claude -p returned context-limit error. Prompt was ${_bytes} bytes.
+Branch diff stat:
+${_branch_stat}"
+        return 1
+    fi
 
     # Guard: if claude -p returned nothing, surface a diagnostic rather than silently failing.
     local dod_log_bytes
@@ -3261,6 +3309,16 @@ ${GOAL}"
         # Quality gates (automated checks)
         run_quality_gates
 
+        # Hard stop: a fatal tooling error (e.g., DoD prompt too large) means retry
+        # won't help. Exit immediately so the user gets an actionable diagnostic.
+        if [[ "${LOOP_ABORT_FATAL:-false}" == "true" ]]; then
+            error "Loop aborted: fatal tooling error — see DoD diagnostic above"
+            STATUS="failed"
+            write_state
+            write_progress
+            return 1
+        fi
+
         # Guarded completion (replaces naive grep check)
         if guard_completion; then
             STATUS="complete"
@@ -3399,6 +3457,12 @@ run_loop_with_restarts() {
     while true; do
         local loop_exit=0
         run_single_agent_loop || loop_exit=$?
+
+        # Fatal tooling error — restart won't fix it; surface the diagnostic and stop.
+        if [[ "${LOOP_ABORT_FATAL:-false}" == "true" ]]; then
+            warn "Fatal error — suppressing restart"
+            return "$loop_exit"
+        fi
 
         # If completed successfully or no restarts configured, exit
         if [[ "$STATUS" == "complete" ]]; then

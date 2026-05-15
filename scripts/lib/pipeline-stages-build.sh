@@ -174,6 +174,9 @@ _build_branch_progress() {
     else
         _merge_base="$(git merge-base "origin/${_base_branch}" HEAD 2>/dev/null \
             || git merge-base "${_base_branch}" HEAD 2>/dev/null || true)"
+        # Fall back to root commit when branch-name lookup fails (no remote, unusual default branch name)
+        [[ -z "$_merge_base" ]] && \
+            _merge_base="$(git rev-list --max-parents=0 HEAD 2>/dev/null || true)"
     fi
 
     if [[ -z "$_merge_base" ]]; then

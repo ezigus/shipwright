@@ -1942,7 +1942,7 @@ _pgt2_out=$(mktemp)
 (
     _fg2_dir=$(mktemp -d 2>/dev/null || mktemp -d -t swtest)
     cd "$_fg2_dir"
-    git init -q -b main 2>/dev/null || git init -q
+    git init -q
     git config user.email "t@t.com"
     git config user.name "T"
     mkdir -p .claude

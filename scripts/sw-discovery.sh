@@ -129,27 +129,7 @@ broadcast_discovery() {
 # Push local discoveries to shipwright-discoveries orphan branch for cross-machine sharing.
 # Mirrors the ruflo-memory/shipwright-data orphan pattern. Fail-open.
 sw_discovery_ci_push() {
-    [[ "${NO_GITHUB:-}" == "true" ]] && return 0
-    command -v git >/dev/null 2>&1 || return 0
-    [[ -f "${DISCOVERIES_FILE}" ]] || return 0
-    local push_dir attempt jitter pushed=false
-    for attempt in 1 2 3; do
-        push_dir=$(mktemp -d "${TMPDIR:-/tmp}/sw-discovery-push.XXXXXX" 2>/dev/null) || return 0
-        if _sw_discovery_do_push "$push_dir"; then
-            rm -rf "$push_dir" 2>/dev/null || true
-            pushed=true
-            break
-        fi
-        rm -rf "$push_dir" 2>/dev/null || true
-        jitter=$(( RANDOM % 8 + 2 ))
-        emit_event "discovery.ci_push_retry" "attempt=$attempt" "wait=${jitter}s" 2>/dev/null || true
-        read -t "$jitter" < /dev/null 2>/dev/null || true
-    done
-    if [[ "$pushed" == "true" ]]; then
-        emit_event "discovery.ci_push_ok" "" 2>/dev/null || true
-    else
-        emit_event "discovery.ci_push_warn" "reason=all_attempts_failed" 2>/dev/null || true
-    fi
+    # Discoveries are now persisted via the pipeline's shipwright-data persist step.
     return 0
 }
 
@@ -338,12 +318,20 @@ inject_discoveries() {
         || echo 0)
     if [[ ! -f "$_orphan_cache" ]] || [[ $(( _now - _cache_age )) -gt 1800 ]]; then
         mkdir -p "${HOME}/.shipwright" 2>/dev/null || true
-        if ! git show "origin/shipwright-discoveries:discoveries.jsonl" > "$_orphan_cache" 2>/dev/null; then
-            if git fetch origin shipwright-discoveries --depth=1 2>/dev/null; then
-                git show "origin/shipwright-discoveries:discoveries.jsonl" > "$_orphan_cache" 2>/dev/null || : > "$_orphan_cache"
-            else
-                : > "$_orphan_cache"
+        if ! git show "origin/shipwright-data:discoveries.jsonl" > "$_orphan_cache" 2>/dev/null; then
+            if git fetch origin shipwright-data --depth=1 2>/dev/null; then
+                git show "origin/shipwright-data:discoveries.jsonl" > "$_orphan_cache" 2>/dev/null
             fi
+        fi
+        # Migration fallback: if shipwright-data has no discoveries yet, try the legacy
+        # shipwright-discoveries branch until Phase 6 one-time migration runs.
+        if [[ ! -s "$_orphan_cache" ]]; then
+            if ! git show "origin/shipwright-discoveries:discoveries.jsonl" > "$_orphan_cache" 2>/dev/null; then
+                if git fetch origin shipwright-discoveries --depth=1 2>/dev/null; then
+                    git show "origin/shipwright-discoveries:discoveries.jsonl" > "$_orphan_cache" 2>/dev/null
+                fi
+            fi
+            [[ -f "$_orphan_cache" ]] || : > "$_orphan_cache"
         fi
     fi
 

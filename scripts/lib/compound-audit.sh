@@ -11,8 +11,15 @@
 _COMPOUND_AUDIT_LOADED=1
 
 # _filter_gitignored_paths lives in helpers.sh — load it if not already present.
-_COMPOUND_AUDIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)"
-[[ -z "${_SW_HELPERS_LOADED:-}" ]] && source "${_COMPOUND_AUDIT_DIR}/helpers.sh" 2>/dev/null || true
+_COMPOUND_AUDIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+if [[ -z "${_SW_HELPERS_LOADED:-}" ]]; then
+    if [[ -f "${_COMPOUND_AUDIT_DIR}/helpers.sh" ]]; then
+        source "${_COMPOUND_AUDIT_DIR}/helpers.sh"
+    else
+        echo "[compound-audit] WARNING: helpers.sh not found at ${_COMPOUND_AUDIT_DIR}/helpers.sh — _filter_gitignored_paths unavailable" >&2
+    fi
+fi
+unset _COMPOUND_AUDIT_DIR
 
 # ─── Agent prompt templates ────────────────────────────────────────────────
 # Each agent gets the same context but a specialized lens.

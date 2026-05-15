@@ -320,10 +320,18 @@ inject_discoveries() {
         mkdir -p "${HOME}/.shipwright" 2>/dev/null || true
         if ! git show "origin/shipwright-data:discoveries.jsonl" > "$_orphan_cache" 2>/dev/null; then
             if git fetch origin shipwright-data --depth=1 2>/dev/null; then
-                git show "origin/shipwright-data:discoveries.jsonl" > "$_orphan_cache" 2>/dev/null || : > "$_orphan_cache"
-            else
-                : > "$_orphan_cache"
+                git show "origin/shipwright-data:discoveries.jsonl" > "$_orphan_cache" 2>/dev/null
             fi
+        fi
+        # Migration fallback: if shipwright-data has no discoveries yet, try the legacy
+        # shipwright-discoveries branch until Phase 6 one-time migration runs.
+        if [[ ! -s "$_orphan_cache" ]]; then
+            if ! git show "origin/shipwright-discoveries:discoveries.jsonl" > "$_orphan_cache" 2>/dev/null; then
+                if git fetch origin shipwright-discoveries --depth=1 2>/dev/null; then
+                    git show "origin/shipwright-discoveries:discoveries.jsonl" > "$_orphan_cache" 2>/dev/null
+                fi
+            fi
+            [[ -f "$_orphan_cache" ]] || : > "$_orphan_cache"
         fi
     fi
 

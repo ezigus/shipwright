@@ -5,7 +5,7 @@ original_goal: "Upload cost-breakdown.json as GitHub Actions artifact for cross-
 status: running
 issue: "#460"
 branch: "ci/upload-cost-breakdown-json-as-github-act-460"
-template: "devops"
+template: ""
 current_stage: build
 outer_stage: 
 outer_stage_start_commit: 
@@ -14,11 +14,11 @@ current_stage_description: "Building with 20 max iterations using claude-opus-4-
 stage_progress: "intake:complete plan:complete design:complete build:pending test:pending review:pending compound_quality:pending audit:pending pr:pending merge:pending monitor:pending"
 started_at: 2026-05-13T23:04:48Z
 pipeline_run_epoch: 1778713488
-updated_at: 2026-05-13T23:14:55Z
-elapsed: 10m 7s
+updated_at: 2026-05-15T21:16:54Z
+elapsed: 31s
 test_cmd: "npm test"
 pr_number: 
-model: opus
+model: claude-opus-4-6
 progress_comment_id: 4445866328
 stages:
   intake: complete
@@ -50,4 +50,3 @@ Generated design.md (250 lines)
 
 ### design (23:14:50)
 complete (2m 37s)
-

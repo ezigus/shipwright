@@ -1871,6 +1871,7 @@ _HELPERS_LOADED=""
 source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null || true
 
 # 1. Helper unit test: verify format handling and gitignore filtering in a temp repo.
+_pgt1_out=$(mktemp)
 (
     _fg_dir=$(mktemp -d 2>/dev/null || mktemp -d -t swtest)
     cd "$_fg_dir"
@@ -1926,15 +1927,18 @@ source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null || true
     fi
 
     rm -rf "$_fg_dir"
-) | while IFS= read -r _line; do
+) > "$_pgt1_out" 2>/dev/null || true
+while IFS= read -r _line; do
     if [[ "$_line" == PASS:* ]]; then
         assert_pass "${_line#PASS: }"
     else
         assert_fail "${_line#FAIL: }" ""
     fi
-done
+done < "$_pgt1_out"
+rm -f "$_pgt1_out"
 
 # 2. End-to-end: _build_branch_progress filters gitignored tracked files.
+_pgt2_out=$(mktemp)
 (
     _fg2_dir=$(mktemp -d 2>/dev/null || mktemp -d -t swtest)
     cd "$_fg2_dir"
@@ -1956,15 +1960,18 @@ done
         echo "FAIL: _build_branch_progress filter output: $out"
     fi
     rm -rf "$_fg2_dir"
-) | while IFS= read -r _line; do
+) > "$_pgt2_out" 2>/dev/null || true
+while IFS= read -r _line; do
     if [[ "$_line" == PASS:* ]]; then
         assert_pass "${_line#PASS: }"
     else
         assert_fail "${_line#FAIL: }" ""
     fi
-done
+done < "$_pgt2_out"
+rm -f "$_pgt2_out"
 
 # 3. Fail-open: outside a git repo, all lines pass through unfiltered.
+_pgt3_out=$(mktemp)
 (
     _fg3_dir=$(mktemp -d 2>/dev/null || mktemp -d -t swtest)
     cd "$_fg3_dir"
@@ -1975,13 +1982,15 @@ done
         echo "FAIL: fail-open output: $result"
     fi
     rm -rf "$_fg3_dir"
-) | while IFS= read -r _line; do
+) > "$_pgt3_out" 2>/dev/null || true
+while IFS= read -r _line; do
     if [[ "$_line" == PASS:* ]]; then
         assert_pass "${_line#PASS: }"
     else
         assert_fail "${_line#FAIL: }" ""
     fi
-done
+done < "$_pgt3_out"
+rm -f "$_pgt3_out"
 
 # ─── Tests: OUTER_STAGE_START_COMMIT round-trip via write_state/resume_state ──
 print_test_section "OUTER_STAGE_START_COMMIT state round-trip"

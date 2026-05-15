@@ -982,7 +982,7 @@ jobs:
           # HEAD will be on main/default — no WIP code commits exist here.
           CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
           if [[ "$CURRENT_BRANCH" != "$BRANCH" ]]; then
-            echo "HEAD is on '${CURRENT_BRANCH}', not '${BRANCH}' — no WIP code commits to push (snapshot step is the fallback)"
+            echo "HEAD is on '${CURRENT_BRANCH}', not '${BRANCH}' — no WIP code commits to push (snapshot step will attempt checkout-then-skip)"
             exit 0
           fi
 
@@ -1015,7 +1015,7 @@ jobs:
             echo "✓ WIP code commits pushed to ${BRANCH}"
             WIP_PUSH_STATUS="success"
           else
-            echo "::warning::WIP code push failed with --force-with-lease — snapshot step push will serve as fallback"
+            echo "::warning::WIP code push failed with --force-with-lease — snapshot step push will attempt as fallback (also skips on HEAD drift)"
             WIP_PUSH_STATUS="failed"
           fi
 
@@ -1078,7 +1078,7 @@ jobs:
           # post-PR-#594 architecture: we stage only issue-N/ artifacts (not all
           # working-tree files), so no wrong-branch source files are staged even
           # if checkout updates the working tree.
-          git checkout "$BRANCH" 2>/dev/null || true
+          git checkout "$BRANCH" 2>&1 || true
 
           # Safety: skip snapshot if HEAD is still not on the WIP branch after restore
           # attempt. Use exit 0 (not exit 1) — this is a defensive guard, not a pipeline

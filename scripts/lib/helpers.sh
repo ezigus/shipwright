@@ -475,6 +475,12 @@ _GIT_RUNTIME_EXCLUDES=(
     ".claude/pipeline-state.md"
     "**/progress.md"
     "**/error-summary.json"
+    ".shipwright/events-*.jsonl"
+    ".claude/pipeline-artifacts/"
+    ".claude/pipeline-status.json"
+    ".ai-standards/generated/"
+    ".github/copilot-instructions.md"
+    "AGENTS.md"
 )
 
 # Git diff --stat excluding all bookkeeping and runtime files.

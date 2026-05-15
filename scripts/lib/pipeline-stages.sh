@@ -152,12 +152,12 @@ _safe_base_log() {
 _safe_base_diff() {
     local branch="${BASE_BRANCH:-main}"
     if git rev-parse --verify "$branch" >/dev/null 2>&1; then
-        git diff "${branch}...HEAD" "$@" 2>/dev/null || true
+        git diff "${branch}...HEAD" "$@" -- . $(_git_excluded_pathspecs) 2>/dev/null || true
     elif git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
-        git diff "origin/${branch}...HEAD" "$@" 2>/dev/null || true
+        git diff "origin/${branch}...HEAD" "$@" -- . $(_git_excluded_pathspecs) 2>/dev/null || true
     else
         echo "[warn] _safe_base_diff: neither $branch nor origin/$branch verifiable; using HEAD~5" >&2
-        git diff HEAD~5 "$@" 2>/dev/null || true
+        git diff HEAD~5 "$@" -- . $(_git_excluded_pathspecs) 2>/dev/null || true
     fi
 }
 

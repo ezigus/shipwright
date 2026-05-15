@@ -1647,7 +1647,7 @@ stage_compound_quality() {
     local _cascade_prebuild_commit=""
     _cascade_prebuild_commit=$(git rev-parse HEAD 2>/dev/null) || _cascade_prebuild_commit=""
     local _cascade_diff=""
-    _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" 2>/dev/null | head -5000) || _cascade_diff=""
+    _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null | head -5000) || _cascade_diff=""
     if [[ -n "$_cascade_diff" ]] && [[ $(echo "$_cascade_diff" | wc -l) -ge 5000 ]]; then
         warn "Diff may be truncated at 5000 lines — audit findings for files beyond this limit may be incomplete"
     fi
@@ -2178,7 +2178,7 @@ All quality checks clean:
                 if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]]; then
                     mv "$ARTIFACTS_DIR/negative-review.md" "$ARTIFACTS_DIR/negative-review-cycle${cycle}.md" 2>/dev/null || true
                 fi
-                _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" 2>/dev/null | head -5000) || true
+                _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null | head -5000) || true
                 if [[ -z "$_cascade_diff" ]]; then
                     warn "Git diff failed after rebuild — cascade will operate without diff context"
                 elif [[ $(echo "$_cascade_diff" | wc -l) -ge 5000 ]]; then

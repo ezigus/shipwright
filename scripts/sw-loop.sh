@@ -1760,19 +1760,19 @@ check_definition_of_done() {
     local _diff_range
     if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
         _diff_range="${LOOP_START_COMMIT}..HEAD"
-        diff_content="$(git -C "$PROJECT_ROOT" diff --stat "${_diff_range}" 2>/dev/null || echo "(no diff)")"
+        diff_content="$(git -C "$PROJECT_ROOT" diff --stat "${_diff_range}" -- . $(_git_excluded_pathspecs) 2>/dev/null || echo "(no diff)")"
         diff_content="${diff_content}
 
 ## Detailed Changes (cumulative diff, capped at ${DOD_DIFF_MAX_LINES} lines)
-$(git -C "$PROJECT_ROOT" diff "${_diff_range}" 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
+$(git -C "$PROJECT_ROOT" diff "${_diff_range}" -- . $(_git_excluded_pathspecs) 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
     else
         _diff_range="HEAD~1"
-        diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
+        diff_content="$(git -C "$PROJECT_ROOT" diff HEAD~1 -- . $(_git_excluded_pathspecs) 2>/dev/null | head -"${DOD_DIFF_MAX_LINES}" || echo "(no diff)")"
     fi
 
     # Detect actual truncation using N+1 probe against the same range used above.
     local _extra_line
-    _extra_line=$(git -C "$PROJECT_ROOT" diff "${_diff_range}" 2>/dev/null | head -$((DOD_DIFF_MAX_LINES + 1)) | tail -1 || true)
+    _extra_line=$(git -C "$PROJECT_ROOT" diff "${_diff_range}" -- . $(_git_excluded_pathspecs) 2>/dev/null | head -$((DOD_DIFF_MAX_LINES + 1)) | tail -1 || true)
     if [[ -n "$_extra_line" ]]; then
         diff_content="${diff_content}
 [DIFF TRUNCATED at ${DOD_DIFF_MAX_LINES} lines — some changes are not shown. Do not conclude 'no changes' from missing sections.]"

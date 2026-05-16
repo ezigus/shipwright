@@ -658,7 +658,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 445 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 444 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1086 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 3952 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 4087 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 749 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 698 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 857 | Predictive & Proactive Intelligence |
@@ -837,11 +837,11 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-otel-test.sh` | 146 | OpenTelemetry observability |
 | `scripts/sw-oversight-test.sh` | 164 | Quality oversight board tests |
 | `scripts/sw-patrol-meta-test.sh` | 306 | Validate self-improvement patrol |
-| `scripts/sw-pipeline-artifact-push-test.sh` | 324 | PAT push (loop + final artifact save) |
+| `scripts/sw-pipeline-artifact-push-test.sh` | 325 | PAT push (loop + final artifact save) |
 | `scripts/sw-pipeline-composer-test.sh` | 632 | Test Suite |
 | `scripts/sw-pipeline-memory-guard-test.sh` | 190 |  |
 | `scripts/sw-pipeline-resume-test.sh` | 410 | Validate workflow shell logic |
-| `scripts/sw-pipeline-test.sh` | 4315 | E2E validation invoking the REAL pipeline |
+| `scripts/sw-pipeline-test.sh` | 4561 | E2E validation invoking the REAL pipeline |
 | `scripts/sw-pipeline-vitals-test.sh` | 226 | Validate pipeline health scoring |
 | `scripts/sw-pm-test.sh` | 225 | Autonomous PM Agent test suite |
 | `scripts/sw-policy-e2e-test.sh` | 290 | Verify config/policy.json is honored |
@@ -862,7 +862,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-resume-test.sh` | 267 | TDD tests for WIP branch resume logic |
 | `scripts/sw-retro-test.sh` | 171 | Sprint retrospective engine tests |
 | `scripts/sw-review-rerun-test.sh` | 307 | SHA-deduped rerun comment writer |
-| `scripts/sw-ruflo-adapter-test.sh` | 5165 |  |
+| `scripts/sw-ruflo-adapter-test.sh` | 5452 |  |
 | `scripts/sw-ruflo-benchmark-test.sh` | 269 | Validation tests for the #504 acceptance |
 | `scripts/sw-ruflo-bridge-test.sh` | 293 | Mock-driven tests for the ruflo unix socket |
 | `scripts/sw-ruflo-timeout-test.sh` | 282 | regression tests for ruflo_with_timeout FD hang (#426) |

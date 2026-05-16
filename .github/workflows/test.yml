@@ -30,6 +30,14 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y tmux jq
 
+      - name: Install ruflo and agentic-flow (macOS)
+        if: runner.os == 'macOS'
+        run: npm install -g ruflo agentic-flow
+
+      - name: Install ruflo and agentic-flow (Linux)
+        if: runner.os == 'Linux'
+        run: npm install -g ruflo agentic-flow
+
       - name: Run all test suites
         run: |
           # Auto-discover and run every test script listed in package.json "test"

@@ -587,6 +587,15 @@ jobs:
             git checkout -B "$BRANCH" "origin/$BRANCH"
             echo "Resumed ${BRANCH} — continuing from prior work"
 
+            # Discard state file if it belongs to a different issue (stale workspace)
+            if [[ -f .claude/pipeline-state.md ]]; then
+              _state_issue=$(awk '/^issue:/{gsub(/^issue:[[:space:]]*/,""); print; exit}' .claude/pipeline-state.md 2>/dev/null || echo "")
+              if [[ -n "$_state_issue" && "$_state_issue" != "#${ISSUE_NUMBER}" ]]; then
+                echo "::warning::Branch $BRANCH has state for $_state_issue (expected #${ISSUE_NUMBER}). Discarding stale state."
+                rm -f .claude/pipeline-state.md
+              fi
+            fi
+
             # Reconcile stale 'running'/'paused' state from a killed prior CI job.
             # Helper handles both the atomic rewrite and the log-stage extraction.
             # "Verify merged artifacts" (next step) only touches plan.md/dod.md/etc — safe ordering.
@@ -610,6 +619,9 @@ jobs:
             # prior work existed. Push immediately so a pre-stage crash still
             # leaves a resumable branch on origin.
             git checkout -B "$BRANCH" origin/main
+            if [[ "$BRANCH" =~ ^shipwright/issue-([0-9]+)$ ]] && [[ "${BASH_REMATCH[1]}" != "${ISSUE_NUMBER}" ]]; then
+              echo "::error::push-guard: target branch $BRANCH does not match active issue $ISSUE_NUMBER"; exit 87
+            fi
             git push -u origin "$BRANCH" 2>/dev/null || \
               echo "::warning::Could not pre-push ${BRANCH} — first persist_artifacts will create it"
             echo "Created fresh ${BRANCH} from origin/main"
@@ -617,6 +629,17 @@ jobs:
 
           echo "GIT_BRANCH=${BRANCH}"        >> "$GITHUB_ENV"
           echo "WORKSPACE_BRANCH=${BRANCH}"  >> "$GITHUB_ENV"
+
+      - name: Re-export workspace branch (idempotent on retry)
+        if: always() && env.ISSUE_NUMBER != ''
+        shell: bash
+        run: |
+          BRANCH="shipwright/issue-${ISSUE_NUMBER}"
+          if [[ "${WORKSPACE_BRANCH:-}" != "$BRANCH" ]]; then
+            echo "WORKSPACE_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+            echo "GIT_BRANCH=$BRANCH"       >> "$GITHUB_ENV"
+            echo "Re-exported WORKSPACE_BRANCH=$BRANCH (was: ${WORKSPACE_BRANCH:-<unset>})"
+          fi
 
       - name: Verify CLI still pinned to main snapshot
         if: steps.claim_check.outputs.skip != 'true' && env.AUTH_SKIP != 'true'
@@ -935,6 +958,11 @@ jobs:
             LOG_TAIL=""
             if [[ -f /tmp/pipeline.log ]]; then
               LOG_TAIL=$(tail -20 /tmp/pipeline.log 2>/dev/null || echo "")
+              LOG_TAIL=$(printf '%s' "$LOG_TAIL" \
+                | sed 's/x-access-token:[^[:space:]@]*/x-access-token:***/g' \
+                | sed 's/GITHUBTOKEN=[^[:space:]]*/GITHUBTOKEN=***/g' \
+                | sed 's/CLAUDECODEOAUTHTOKEN=[^[:space:]]*/CLAUDECODEOAUTHTOKEN=***/g' \
+                || true)
               if echo "$LOG_TAIL" | grep -qi "test.*fail\|assertion.*fail\|FAIL\|jest\|pytest"; then
                 ERROR_TYPE="test_failure"
               elif echo "$LOG_TAIL" | grep -qi "build.*error\|compile.*error\|syntax.*error\|tsc"; then
@@ -975,7 +1003,11 @@ jobs:
       - name: Push WIP branch code commits (always)
         if: always() && steps.claim_check.outputs.skip != 'true'
         run: |
-          BRANCH="${WORKSPACE_BRANCH:-shipwright/issue-${ISSUE_NUMBER}}"
+          if [[ -z "${WORKSPACE_BRANCH:-}" ]]; then
+            echo "::error::WORKSPACE_BRANCH is unset in post-step (retry lost it). Cannot push — set WORKSPACE_BRANCH before this step."
+            exit 1
+          fi
+          BRANCH="$WORKSPACE_BRANCH"
 
           # Guard: only push when HEAD is on the WIP branch.
           # If "Prepare workspace branch" was skipped or cancelled before completing,
@@ -1065,7 +1097,11 @@ jobs:
       - name: Snapshot resume-essentials to WIP branch (always)
         if: always() && steps.claim_check.outputs.skip != 'true'
         run: |
-          BRANCH="${WORKSPACE_BRANCH:-shipwright/issue-${ISSUE_NUMBER}}"
+          if [[ -z "${WORKSPACE_BRANCH:-}" ]]; then
+            echo "::error::WORKSPACE_BRANCH is unset in post-step (retry lost it). Cannot push — set WORKSPACE_BRANCH before this step."
+            exit 1
+          fi
+          BRANCH="$WORKSPACE_BRANCH"
           OUTCOME="${{ job.status }}"
 
           # Mirror canonical artifacts into issue-N/ and stage only that directory.
@@ -1173,8 +1209,7 @@ jobs:
             echo "INFO: GITHUBTOKEN secret is not set — push will fail if this branch modifies workflow files (add the secret to fix this)"
           fi
 
-          if timeout 120 git push origin "HEAD:refs/heads/${BRANCH}" --force-with-lease 2>/dev/null \
-              || timeout 120 git push origin "HEAD:refs/heads/${BRANCH}" --force; then
+          if timeout 120 git push origin "HEAD:refs/heads/${BRANCH}" --force-with-lease 2>/dev/null; then
             echo "✓ Resume snapshot pushed to ${BRANCH} (pipeline=${OUTCOME})"
           else
             echo "WARN: resume snapshot push timed out or failed (non-fatal)"

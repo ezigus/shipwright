@@ -103,11 +103,12 @@ _source_pipeline_fn() {
     safe_git_stage() { git add -A 2>/dev/null || true; }
     _timeout() { local _t="$1"; shift; "$@"; }
 
-    # Extract the function from its start line to the first line that is just '}'
-    # (the function closing brace). The function has no top-level closing } at col 0
-    # except its own, so this is safe.
+    # Extract the push guard helper and the main function.
     local _fn_text _fn_tmp
-    _fn_text=$(sed -n '/^pipeline_final_artifact_push()/,/^}$/p' "$REAL_PIPELINE_SCRIPT" 2>/dev/null) || true
+    _fn_text=$(
+        sed -n '/^_assert_push_target_matches_active_issue()/,/^}$/p' "$REAL_PIPELINE_SCRIPT" 2>/dev/null
+        sed -n '/^pipeline_final_artifact_push()/,/^}$/p' "$REAL_PIPELINE_SCRIPT" 2>/dev/null
+    ) || true
     _fn_tmp=$(mktemp "$_SW_TMPBASE/sw-fn-source.XXXXXX")
     echo "$_fn_text" > "$_fn_tmp"
 

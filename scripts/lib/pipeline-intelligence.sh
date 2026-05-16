@@ -713,7 +713,7 @@ XSSEOF
 
         # Command injection patterns
         local cmd_matches
-        cmd_matches=$(grep -nE 'eval\s*\(|child_process|os\.system\s*\(|subprocess\.(call|run|Popen)\s*\(' "$file" 2>/dev/null || true)
+        cmd_matches=$(grep -nE 'eval\s*\(|\bexecSync\s*\(|child_process\.(exec|spawn)\s*\(|os\.system\s*\(|subprocess\.(call|run|Popen)\s*\(' "$file" 2>/dev/null || true)
         if [[ -n "$cmd_matches" ]]; then
             while IFS= read -r match; do
                 [[ -z "$match" ]] && continue

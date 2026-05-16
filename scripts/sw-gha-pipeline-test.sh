@@ -149,6 +149,22 @@ assert_contains_regex \
     "$COST_STEP_BODY" \
     "name: cost-breakdown-issue-.*-run-"
 
+# Regression guard: artifact name MUST use github.run_id (unique per workflow run),
+# not github.run_number (re-used across re-runs of the same workflow). Mixing the
+# two would collide artifact names on retry and silently overwrite history.
+assert_contains_regex \
+    "cost-breakdown artifact name uses github.run_id (not run_number)" \
+    "$COST_STEP_BODY" \
+    "run-\\\$\\{\\{ *github\\.run_id *\\}\\}"
+
+# Regression guard: issue-number expression MUST honour both workflow_dispatch
+# inputs and issue events so the artifact is correctly tagged regardless of
+# trigger source.
+assert_contains_regex \
+    "cost-breakdown artifact name expands issue from inputs OR issue event" \
+    "$COST_STEP_BODY" \
+    "github\\.event\\.inputs\\.issue_number *\\|\\| *github\\.event\\.issue\\.number"
+
 assert_contains_regex \
     "cost-breakdown step uploads cost-breakdown.json" \
     "$COST_STEP_BODY" \

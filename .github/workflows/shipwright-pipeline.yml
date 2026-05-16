@@ -958,6 +958,11 @@ jobs:
             LOG_TAIL=""
             if [[ -f /tmp/pipeline.log ]]; then
               LOG_TAIL=$(tail -20 /tmp/pipeline.log 2>/dev/null || echo "")
+              LOG_TAIL=$(printf '%s' "$LOG_TAIL" \
+                | sed 's/x-access-token:[^[:space:]@]*/x-access-token:***/g' \
+                | sed 's/GITHUBTOKEN=[^[:space:]]*/GITHUBTOKEN=***/g' \
+                | sed 's/CLAUDECODEOAUTHTOKEN=[^[:space:]]*/CLAUDECODEOAUTHTOKEN=***/g' \
+                || true)
               if echo "$LOG_TAIL" | grep -qi "test.*fail\|assertion.*fail\|FAIL\|jest\|pytest"; then
                 ERROR_TYPE="test_failure"
               elif echo "$LOG_TAIL" | grep -qi "build.*error\|compile.*error\|syntax.*error\|tsc"; then
@@ -1204,8 +1209,7 @@ jobs:
             echo "INFO: GITHUBTOKEN secret is not set — push will fail if this branch modifies workflow files (add the secret to fix this)"
           fi
 
-          if timeout 120 git push origin "HEAD:refs/heads/${BRANCH}" --force-with-lease 2>/dev/null \
-              || timeout 120 git push origin "HEAD:refs/heads/${BRANCH}" --force; then
+          if timeout 120 git push origin "HEAD:refs/heads/${BRANCH}" --force-with-lease 2>/dev/null; then
             echo "✓ Resume snapshot pushed to ${BRANCH} (pipeline=${OUTCOME})"
           else
             echo "WARN: resume snapshot push timed out or failed (non-fatal)"

@@ -12,7 +12,7 @@
 # ║      && source "$SCRIPT_DIR/lib/ruflo-adapter.sh" 2>/dev/null || true    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
-export VERSION="3.6.1"
+VERSION="3.6.1"
 
 # ─── Double-source guard ──────────────────────────────────────────────────────
 [[ -n "${_RUFLO_ADAPTER_LOADED:-}" ]] && return 0
@@ -817,10 +817,14 @@ _ruflo_seed_specialist_history() {
 }
 
 # ─── SONA self-learning helpers ───────────────────────────────────────────────
-# These four helpers + _ruflo_maybe_promote_backend wire Shipwright pipeline
-# events into SONA's EWC++ routing layer (intelligence_trajectory_*) and
-# ReasoningBank (intelligence_pattern_*). All are fail-open — they never
-# propagate errors to callers. SW_SONA_LEARNING=off disables all MCP traffic.
+# These helpers wire Shipwright pipeline events into SONA's EWC++ routing layer
+# (intelligence_trajectory_*) and ReasoningBank (intelligence_pattern_*).
+# Action helpers (_ruflo_sona_trajectory_start, _ruflo_sona_trajectory_end,
+# _ruflo_sona_pattern_store, _ruflo_maybe_promote_backend) are fail-open —
+# they absorb MCP errors and always return 0.
+# _ruflo_sona_enabled is a gate predicate that returns 1 when SONA is disabled
+# or unavailable; call it with `|| return 0` in action helpers to propagate
+# the gate correctly. SW_SONA_LEARNING=off disables all MCP traffic.
 
 _ruflo_sona_enabled() {
     [[ "${SW_SONA_LEARNING:-on}" != "off" ]] || return 1

@@ -882,14 +882,17 @@ stop_heartbeat() {
 # ─── CI Helpers ───────────────────────────────────────────────────────────
 
 # _assert_push_target_matches_active_issue <branch>
-# Returns 87 if <branch> is shipwright/issue-* and its number != ISSUE_NUMBER.
+# Returns 87 if <branch> is shipwright/issue-N and N != ISSUE_NUMBER.
+# On block: writes a structured diagnostic to stderr (branch, ISSUE_NUMBER,
+# SHIPWRIGHT_PIPELINE_ID, HEAD, state-file issue; full callerstack only when
+# SHIPWRIGHT_DEBUG=1) and emits a pipeline.push_guard_blocked event.
 # Passive (returns 0) for shipwright-data, ci/*, refs/notes/*, etc.
 _assert_push_target_matches_active_issue() {
     local branch="$1"
     [[ "$branch" =~ ^shipwright/issue-([0-9]+)$ ]] || return 0
     local target_num="${BASH_REMATCH[1]}"
     local active="${ISSUE_NUMBER:-}"
-    if [[ -z "$active" || "$active" != "$target_num" ]]; then
+    if [[ "$active" != "$target_num" ]]; then
         {
             echo "[PUSH-GUARD-FAIL] $(date -u +%FT%TZ)"
             echo "  branch=$branch target_issue=$target_num"
@@ -897,12 +900,14 @@ _assert_push_target_matches_active_issue() {
             echo "  SHIPWRIGHT_PIPELINE_ID=${SHIPWRIGHT_PIPELINE_ID:-<unset>}"
             echo "  HEAD=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
             echo "  state_file_issue=$(grep -m1 '^issue:' .claude/pipeline-state.md 2>/dev/null || echo none)"
-            echo "  caller stack:"
-            local i
-            for ((i=0; i<${#FUNCNAME[@]}; i++)); do
-                printf '    #%d %s at %s:%s\n' "$i" "${FUNCNAME[$i]}" \
-                    "${BASH_SOURCE[$i]:-?}" "${BASH_LINENO[$i]:-?}"
-            done
+            if [[ "${SHIPWRIGHT_DEBUG:-0}" == "1" ]]; then
+                echo "  caller stack:"
+                local i
+                for ((i=0; i<${#FUNCNAME[@]}; i++)); do
+                    printf '    #%d %s at %s:%s\n' "$i" "${FUNCNAME[$i]}" \
+                        "${BASH_SOURCE[$i]:-?}" "${BASH_LINENO[$i]:-?}"
+                done
+            fi
         } >&2
         emit_event "pipeline.push_guard_blocked" \
             "branch=$branch target=$target_num active=${active:-none}" 2>/dev/null || true
@@ -911,11 +916,13 @@ _assert_push_target_matches_active_issue() {
     return 0
 }
 
-# State persistence heartbeat — commits pipeline-state.md + progress.md every
-# HEARTBEAT_INTERVAL seconds so a hard job timeout loses minutes not hours.
-# Only runs in CI mode. Uses the same push lock as persist_artifacts.
+# State persistence heartbeat — commits pipeline-state.md + progress.md when the
+# state file has changed (sha1 comparison) up to every SHIPWRIGHT_HEARTBEAT_INTERVAL
+# seconds (default 600s). Interval is captured at startup; runtime changes to the
+# env var do not affect a running heartbeat. Only runs in CI mode. Uses the same
+# flock push lock (.push.lock) as persist_artifacts to prevent concurrent git-push
+# races.
 _STATE_HEARTBEAT_PID=""
-HEARTBEAT_INTERVAL="${SHIPWRIGHT_HEARTBEAT_INTERVAL:-600}"
 
 _start_state_heartbeat() {
     [[ "${CI_MODE:-false}" == "true" && -n "${WORKSPACE_BRANCH:-}" ]] || return 0
@@ -928,7 +935,9 @@ _start_state_heartbeat() {
         local _last_sha=""
         while sleep "$_hb_interval"; do
             local _cur_sha
-            _cur_sha=$(sha1sum "$_hb_state_file" 2>/dev/null | awk '{print $1}' || echo "")
+            _cur_sha=$(shasum -a 1 "$_hb_state_file" 2>/dev/null | awk '{print $1}' \
+                || sha1sum "$_hb_state_file" 2>/dev/null | awk '{print $1}' \
+                || echo "")
             [[ -z "$_cur_sha" || "$_cur_sha" == "$_last_sha" ]] && continue
             # Snapshot progress.md into artifacts dir
             if [[ -n "$_hb_artifacts_dir" && -f ".claude/loop-logs/progress.md" ]]; then
@@ -945,6 +954,10 @@ _start_state_heartbeat() {
                         git commit -m "chore: heartbeat state snapshot for #${_hb_issue} [skip ci]" \
                             --no-verify 2>/dev/null || true
                     fi
+                    _assert_push_target_matches_active_issue "$_hb_branch" 2>/dev/null || {
+                        echo "[HEARTBEAT-GUARD] push blocked: branch $_hb_branch does not match active issue ${_hb_issue}" >&2
+                        exit 0
+                    }
                     _timeout 30 git push --force-with-lease origin \
                         "HEAD:refs/heads/${_hb_branch}" 2>/dev/null || true
                 ) 9>"$_lock_file"
@@ -955,6 +968,10 @@ _start_state_heartbeat() {
                     git commit -m "chore: heartbeat state snapshot for #${_hb_issue} [skip ci]" \
                         --no-verify 2>/dev/null || true
                 fi
+                _assert_push_target_matches_active_issue "$_hb_branch" 2>/dev/null || {
+                    echo "[HEARTBEAT-GUARD] push blocked: branch $_hb_branch does not match active issue ${_hb_issue}" >&2
+                    continue
+                }
                 _timeout 30 git push --force-with-lease origin \
                     "HEAD:refs/heads/${_hb_branch}" 2>/dev/null || true
             fi
@@ -1013,7 +1030,12 @@ ci_push_partial_work() {
         git config --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
         git remote set-url origin "https://x-access-token:${GITHUBTOKEN}@github.com/${_wip_repo_slug}.git" 2>/dev/null || true
     fi
-    _assert_push_target_matches_active_issue "$branch" || return $?
+    local _guard_rc=0
+    _assert_push_target_matches_active_issue "$branch" || _guard_rc=$?
+    if [[ "$_guard_rc" -ne 0 ]]; then
+        [[ -n "${_wip_repo_slug:-}" ]] && git remote set-url origin "https://github.com/${_wip_repo_slug}.git" 2>/dev/null || true
+        return "$_guard_rc"
+    fi
     if _timeout "$push_timeout" git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null; then
         echo "[WIP-PUSH-OK] $(date -u +%FT%TZ) branch=$branch" >&2
     else
@@ -1065,7 +1087,12 @@ pipeline_final_artifact_push() {
         git config --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
         git remote set-url origin "https://x-access-token:${GITHUBTOKEN}@github.com/${_af_repo_slug}.git" 2>/dev/null || true
     fi
-    _assert_push_target_matches_active_issue "$branch" || { git remote set-url origin "https://github.com/${_af_repo_slug}.git" 2>/dev/null || true; return $?; }
+    local _guard_rc=0
+    _assert_push_target_matches_active_issue "$branch" || _guard_rc=$?
+    if [[ "$_guard_rc" -ne 0 ]]; then
+        git remote set-url origin "https://github.com/${_af_repo_slug}.git" 2>/dev/null || true
+        return "$_guard_rc"
+    fi
     if _timeout "$push_timeout" git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null; then
         echo "[ARTIFACT-PUSH-OK] $(date -u +%FT%TZ) branch=$branch" >&2
     else

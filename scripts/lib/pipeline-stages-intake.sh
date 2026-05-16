@@ -69,7 +69,7 @@ stage_intake() {
         # If it's unset the workspace is in an invalid state — refuse to continue.
         if [[ -z "${WORKSPACE_BRANCH:-}" ]]; then
             error "CI mode but WORKSPACE_BRANCH is unset. The workflow's 'Prepare workspace branch' step must export it before intake runs."
-            exit 2
+            return 2
         fi
         GIT_BRANCH="$WORKSPACE_BRANCH"
         info "CI mode: using workspace branch ${GIT_BRANCH}"

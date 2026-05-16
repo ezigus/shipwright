@@ -287,6 +287,7 @@ mark_stage_complete() {
                 info "Branch drift recovered: merged ${_drift_sha:0:7} from ${_head} into ${WORKSPACE_BRANCH}"
                 emit_event "pipeline.branch_drift_recovered" "merged=${_drift_sha:0:7}" 2>/dev/null || true
             else
+                git merge --abort 2>/dev/null || true
                 error "Branch drift unrecoverable: could not merge drift from ${_head} into ${WORKSPACE_BRANCH}. Stage '${stage_id}' not marked complete."
                 return 1
             fi
@@ -387,15 +388,21 @@ mark_stage_complete() {
     fi
 
     # Write structured JSON status file for meta-workflows
-    write_pipeline_status_json || warn "Failed to write pipeline-status.json"
+    if ! write_pipeline_status_json; then
+        warn "Failed to write pipeline-status.json — CI resume may restart from stage 1"
+        emit_event "pipeline.status_json_failed" "stage=${stage_id}" 2>/dev/null || true
+    fi
 }
 
 persist_artifacts() {
     # Commit pipeline artifacts + state files to the feature branch mid-pipeline.
     # Always force-adds pipeline-state.md (gitignored) for resume reliability.
     # Snapshots progress.md from loop-logs so mid-stage resume has an iteration cursor.
-    # Opportunistically pushes after commit — GHA always() does NOT run on hard timeout,
-    # so we can't rely on the post-step alone.
+    # Opportunistically pushes after commit using flock (.claude/.push.lock), shared
+    # with _start_state_heartbeat to prevent concurrent git-push races. Push is
+    # non-fatal; GHA post-steps and heartbeat are additional safety nets.
+    # GHA always() does NOT fire on hard timeout-minutes job kill, so we can't rely
+    # on the post-step alone — hence the opportunistic push here.
     [[ "${CI_MODE:-false}" != "true" ]] && return 0
     [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
 
@@ -432,17 +439,14 @@ persist_artifacts() {
         return 0
     fi
 
-    local commit_status="noop"
-    {
-        if ! git diff --cached --quiet 2>/dev/null; then
-            if git commit -m "chore: persist ${stage} artifacts for #${ISSUE_NUMBER} [skip ci]" \
-                    --no-verify 2>/dev/null; then
-                commit_status="committed"
-            else
-                commit_status="commit_failed"
-            fi
-        fi
-    } || true
+    local commit_status="commit_failed"
+    local _commit_err
+    if _commit_err=$(git commit -m "chore: persist ${stage} artifacts for #${ISSUE_NUMBER} [skip ci]" \
+            --no-verify 2>&1); then
+        commit_status="committed"
+    else
+        warn "persist_artifacts($stage): commit failed: ${_commit_err:-<no output>}"
+    fi
 
     case "$commit_status" in
         committed)
@@ -450,30 +454,40 @@ persist_artifacts() {
                 "issue=${ISSUE_NUMBER}" "stage=$stage" 2>/dev/null || true
             # Opportunistic push: GHA always() doesn't fire on hard job timeout.
             # Non-fatal; post-step + heartbeat are additional safety nets.
+            # Uses flock (.claude/.push.lock) shared with _start_state_heartbeat
+            # to prevent concurrent git-push races.
             if [[ -n "${WORKSPACE_BRANCH:-}" ]]; then
-                local _lock_file=".claude/.push.lock"
-                if command -v flock >/dev/null 2>&1; then
-                    (
-                        flock -n 9 2>/dev/null || exit 0
-                        _timeout 30 git push --force-with-lease origin \
-                            "HEAD:refs/heads/${WORKSPACE_BRANCH}" 2>/dev/null \
-                            && info "persist_artifacts: pushed state for ${stage}" \
-                            || warn "persist_artifacts: push failed for ${stage} (post-step will retry)"
-                    ) 9>"$_lock_file"
+                local _pa_push_ok=true
+                if type _assert_push_target_matches_active_issue >/dev/null 2>&1; then
+                    _assert_push_target_matches_active_issue "$WORKSPACE_BRANCH" || _pa_push_ok=false
+                fi
+                if [[ "$_pa_push_ok" == "true" ]]; then
+                    local _lock_file=".claude/.push.lock"
+                    if command -v flock >/dev/null 2>&1; then
+                        (
+                            flock -n 9 2>/dev/null || exit 0
+                            if _timeout 30 git push --force-with-lease origin \
+                                "HEAD:refs/heads/${WORKSPACE_BRANCH}" 2>/dev/null; then
+                                info "persist_artifacts: pushed state for ${stage}"
+                            else
+                                warn "persist_artifacts: push failed for ${stage} (post-step will retry)"
+                            fi
+                        ) 9>"$_lock_file"
+                    else
+                        if _timeout 30 git push --force-with-lease origin \
+                            "HEAD:refs/heads/${WORKSPACE_BRANCH}" 2>/dev/null; then
+                            info "persist_artifacts: pushed state for ${stage}"
+                        else
+                            warn "persist_artifacts: push failed for ${stage} (post-step will retry)"
+                        fi
+                    fi
                 else
-                    _timeout 30 git push --force-with-lease origin \
-                        "HEAD:refs/heads/${WORKSPACE_BRANCH}" 2>/dev/null \
-                        && info "persist_artifacts: pushed state for ${stage}" \
-                        || warn "persist_artifacts: push failed for ${stage} (post-step will retry)"
+                    warn "persist_artifacts($stage): push guard blocked push to $WORKSPACE_BRANCH"
                 fi
             fi
             ;;
         commit_failed)
-            warn "persist_artifacts($stage): local commit failed — non-fatal, continuing"
             emit_event "artifacts.persist_failed" "issue=${ISSUE_NUMBER}" "stage=$stage" 2>/dev/null || true
-            ;;
-        noop)
-            : # nothing to commit
             ;;
     esac
 

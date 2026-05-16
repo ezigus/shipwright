@@ -4398,7 +4398,8 @@ test_resume_state_does_not_clobber_explicit_issue() {
     # Verify the guard pattern: `-z "${ISSUE_NUMBER:-}"` before the assignment.
     local guard_count
     guard_count=$(awk '/^resume_state\(\)/,/^}$/{print}' "$real_state_lib" 2>/dev/null \
-        | grep -c '\-z.*ISSUE_NUMBER' || echo "0")
+        | grep -c '\-z.*ISSUE_NUMBER' || true)
+    guard_count="${guard_count:-0}"
     if [[ "${guard_count:-0}" -eq 0 ]]; then
         echo "FAIL: resume_state does not guard ISSUE_NUMBER assignment with -z check (explicit-arg-wins not implemented)"
         return 1
@@ -4413,9 +4414,11 @@ test_resume_state_rejects_stale_when_mismatch() {
     # to avoid killing test scripts that call resume_state without --issue.
     local ret2_count explicit_gate_count
     ret2_count=$(awk '/^resume_state\(\)/,/^}$/{print}' "$real_state_lib" 2>/dev/null \
-        | grep -cE 'return 2|exit 2' || echo "0")
+        | grep -cE 'return 2|exit 2' || true)
+    ret2_count="${ret2_count:-0}"
     explicit_gate_count=$(awk '/^resume_state\(\)/,/^}$/{print}' "$real_state_lib" 2>/dev/null \
-        | grep -c '_ISSUE_NUMBER_EXPLICIT' || echo "0")
+        | grep -c '_ISSUE_NUMBER_EXPLICIT' || true)
+    explicit_gate_count="${explicit_gate_count:-0}"
     if [[ "${ret2_count:-0}" -eq 0 ]]; then
         echo "FAIL: resume_state does not return 2 on stale-state mismatch"
         return 1
@@ -4491,7 +4494,8 @@ test_intake_refuses_local_mode_when_ci_and_workspace_branch_unset() {
     fi
     # Check that there's an error/exit for unset WORKSPACE_BRANCH in CI mode
     local has_guard
-    has_guard=$(grep -c 'WORKSPACE_BRANCH.*unset\|WORKSPACE_BRANCH.*is unset\|exit 2' "$intake_lib" 2>/dev/null || echo "0")
+    has_guard=$(grep -c 'WORKSPACE_BRANCH.*unset\|WORKSPACE_BRANCH.*is unset\|exit 2\|return 2' "$intake_lib" 2>/dev/null || true)
+    has_guard="${has_guard:-0}"
     if [[ "$has_guard" -eq 0 ]]; then
         echo "FAIL: intake does not guard against unset WORKSPACE_BRANCH in CI mode (expected after fix)"
         return 1

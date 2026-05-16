@@ -47,11 +47,19 @@ assert_contains_regex \
     "restore-keys:"
 
 # ─── upload-artifact ────────────────────────────────────────────────────────
+# NOTE: Two upload-artifact@v4 steps now exist:
+#   1) pipeline-logs-issue-<N>-run-<run_id>      (retention: 7 days)  — existing
+#   2) cost-breakdown-issue-<N>-run-<run_id>     (retention: 90 days) — issue #460
+# TODO: The legacy `grep -A15 'upload-artifact@v4'` scoping below concatenates
+# context from BOTH steps separated by `--`. Patterns still match (truthy), but
+# scope is now ambiguous. Tighten in a follow-up to use line-range extraction
+# scoped to each step's `- name:` header. For now, the cost-breakdown block
+# below uses an awk line-range to validate the new step in isolation.
 
 UPLOAD_COUNT=$(grep -c 'upload-artifact' "$WORKFLOW" || true)
 assert_eq \
-    "upload-artifact step present" \
-    "1" "$UPLOAD_COUNT"
+    "upload-artifact step present (pipeline-logs + cost-breakdown)" \
+    "2" "$UPLOAD_COUNT"
 
 assert_contains_regex \
     "upload-artifact uses v4" \
@@ -108,6 +116,81 @@ if [[ "$UPLOAD_LINE" -gt 0 && "$EXITCODE_LINE" -gt 0 && "$UPLOAD_LINE" -lt "$EXI
 else
     assert_fail "upload-artifact appears before exit-code propagation step" \
         "(upload line=$UPLOAD_LINE, exitcode line=$EXITCODE_LINE)"
+fi
+
+# ─── Issue #460: cost-breakdown artifact step (scoped, line-range) ──────────
+
+# Extract only the cost-breakdown step's YAML block (from its `- name:` header
+# until — but not including — the next `- name:` line). This avoids the
+# `grep -A15` ambiguity that now sees both upload steps.
+COST_STEP_BODY=$(awk '
+    /^[[:space:]]*- name: Upload cost-breakdown artifact \(always\)/ { in_step=1; print; next }
+    in_step && /^[[:space:]]*- name: / { exit }
+    in_step { print }
+' "$WORKFLOW" 2>/dev/null || true)
+
+assert_contains_regex \
+    "cost-breakdown step exists with literal name" \
+    "$COST_STEP_BODY" \
+    "Upload cost-breakdown artifact \(always\)"
+
+assert_contains_regex \
+    "cost-breakdown step uses upload-artifact@v4" \
+    "$COST_STEP_BODY" \
+    "uses: actions/upload-artifact@v4"
+
+assert_contains_regex \
+    "cost-breakdown step has always() and claim_check skip guard" \
+    "$COST_STEP_BODY" \
+    "always\(\).*steps\.claim_check\.outputs\.skip.*!= 'true'"
+
+assert_contains_regex \
+    "cost-breakdown artifact name follows cost-breakdown-issue-<N>-run-<run_id>" \
+    "$COST_STEP_BODY" \
+    "name: cost-breakdown-issue-.*-run-"
+
+assert_contains_regex \
+    "cost-breakdown step uploads cost-breakdown.json" \
+    "$COST_STEP_BODY" \
+    "\.claude/pipeline-artifacts/cost-breakdown\.json"
+
+assert_contains_regex \
+    "cost-breakdown step uploads stage-costs.jsonl" \
+    "$COST_STEP_BODY" \
+    "\.claude/pipeline-artifacts/stage-costs\.jsonl"
+
+assert_contains_regex \
+    "cost-breakdown step uploads ~/.shipwright/baselines/" \
+    "$COST_STEP_BODY" \
+    "~/\.shipwright/baselines/"
+
+assert_contains_regex \
+    "cost-breakdown step has retention-days: 90" \
+    "$COST_STEP_BODY" \
+    "retention-days: 90"
+
+assert_contains_regex \
+    "cost-breakdown step has if-no-files-found: warn" \
+    "$COST_STEP_BODY" \
+    "if-no-files-found:.*warn"
+
+assert_contains_regex \
+    "cost-breakdown step has continue-on-error: true" \
+    "$COST_STEP_BODY" \
+    "continue-on-error: true"
+
+# Ordering: cost-breakdown step is strictly between pipeline-logs upload and
+# Propagate pipeline exit code.
+PIPELINE_LOGS_LINE=$(grep -n 'name: Upload pipeline logs and artifacts' "$WORKFLOW" | head -1 | cut -d: -f1 || echo 0)
+COST_STEP_LINE=$(grep -n 'name: Upload cost-breakdown artifact' "$WORKFLOW" | head -1 | cut -d: -f1 || echo 0)
+
+if [[ "$PIPELINE_LOGS_LINE" -gt 0 && "$COST_STEP_LINE" -gt 0 && "$EXITCODE_LINE" -gt 0 \
+        && "$PIPELINE_LOGS_LINE" -lt "$COST_STEP_LINE" \
+        && "$COST_STEP_LINE" -lt "$EXITCODE_LINE" ]]; then
+    assert_pass "cost-breakdown step appears between pipeline-logs upload and exit-code propagation"
+else
+    assert_fail "cost-breakdown step appears between pipeline-logs upload and exit-code propagation" \
+        "(pipeline-logs=$PIPELINE_LOGS_LINE, cost-breakdown=$COST_STEP_LINE, exit-code=$EXITCODE_LINE)"
 fi
 
 # ─── ordering: npm cache before Install Claude Code ─────────────────────────

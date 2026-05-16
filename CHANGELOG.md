@@ -9,6 +9,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Cost-breakdown GitHub Actions artifact (#460)** — `shipwright-pipeline.yml` now uploads a dedicated `cost-breakdown-issue-<N>-run-<run_id>` artifact (`.claude/pipeline-artifacts/cost-breakdown.json`, `stage-costs.jsonl`, `~/.shipwright/baselines/`) with 90-day retention on every exit path (`if: always()`, `continue-on-error: true`). Independent of the existing 7-day `pipeline-logs-*` artifact so cross-machine cost history is queryable via `gh run download` / `gh api .../actions/artifacts?name=cost-breakdown-issue-*` for UCB1 bootstrap, adaptive routing, and trend analysis. Producer side (`cost_generate_breakdown`) unchanged from #87 — this only adds the transport channel. See `website/src/content/docs/guides/cost.mdx` § "Cross-machine cost history".
+
 ### Per-Stage Cost Summary — Pipeline Wiring (#504 D2)
 
 Wires the cost-table foundation (rolling baselines + ASCII renderer) into the pipeline runtime so reviewers and operators see per-stage spend with HIGH/LOW vs-baseline flags at every pipeline completion.

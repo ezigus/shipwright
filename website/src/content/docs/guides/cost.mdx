@@ -134,3 +134,56 @@ The dashboard compares spending in the first and second halves of the period to 
 ## Intelligent Cost Prediction
 
 With the intelligence layer enabled, the `intelligence_predict_cost` function estimates token usage and cost before a pipeline runs, based on issue complexity and historical data. The `intelligence_recommend_model` function routes each stage to the cheapest model that can handle the task — using haiku for simple stages and opus only when complexity warrants it. See the [Intelligence guide](/guides/intelligence/) for details.
+
+## Cross-machine cost history
+
+Per-pipeline cost data is uploaded as a dedicated GitHub Actions artifact on every workflow run, so cost history travels across runners and developer machines without requiring a backend service. Use it to seed UCB1 model selection, train the `cost-aware` template, or build longer-horizon trend reports across runs that finished on different hosts.
+
+### Artifact contract
+
+Every run of `shipwright-pipeline.yml` produces an artifact named:
+
+```
+cost-breakdown-issue-<issue>-run-<run_id>
+```
+
+The artifact contains:
+
+| Path                                                  | Always present? | Source                                |
+| ----------------------------------------------------- | --------------- | ------------------------------------- |
+| `.claude/pipeline-artifacts/cost-breakdown.json`      | Yes (priced runs) | `cost_generate_breakdown`            |
+| `.claude/pipeline-artifacts/stage-costs.jsonl`        | Yes (priced runs) | per-stage record sidecar             |
+| `~/.shipwright/baselines/`                            | Best-effort      | rolling baseline directory           |
+
+Retention is **90 days** (independent of the 7-day `pipeline-logs-*` artifact). The upload step runs under `if: always() && steps.claim_check.outputs.skip != 'true'` and has `continue-on-error: true`, so it can never fail the job — cost data is observability, not correctness.
+
+### Retrieving artifacts
+
+Download the latest cost artifact for a specific issue/run with `gh`:
+
+```bash
+# By run ID (resolves the artifact name automatically)
+gh run download <run_id> -n cost-breakdown-issue-<issue>-run-<run_id>
+
+# By artifact-name pattern across recent runs (paginate as needed)
+gh api repos/:owner/:repo/actions/artifacts \
+  --jq '.artifacts[] | select(.name | startswith("cost-breakdown-issue-460-")) | {name, id, created_at, expires_at, archive_download_url}'
+```
+
+Aggregate per-stage averages across the last 30 days of priced runs:
+
+```bash
+gh api repos/:owner/:repo/actions/artifacts \
+  --jq '.artifacts[] | select(.name | startswith("cost-breakdown-issue-")) | .archive_download_url' \
+  | while read -r url; do
+      gh api "$url" --header 'Accept: application/zip' > /tmp/a.zip
+      unzip -p /tmp/a.zip 'cost-breakdown.json' \
+        | jq '.by_stage[] | {stage, cost_usd, input_tokens, output_tokens}'
+    done | jq -s 'group_by(.stage) | map({stage: .[0].stage, runs: length, avg_cost: (map(.cost_usd) | add / length)})'
+```
+
+### Known gaps
+
+- **No schema_version field yet.** `cost-breakdown.json` does not currently emit a `schema_version` key. Until that lands (tracked as a follow-up to #87), consumers should treat missing keys as `null`/`0`, check `generated_at` for staleness, and defensively handle `by_stage` / `by_iteration` shapes.
+- **No backfill.** Historic runs from before this change have no `cost-breakdown-*` artifact attached — only new runs accrue.
+- **90-day retention.** Beyond 90 days the artifact auto-prunes. For longer-horizon analysis, snapshot artifacts to external storage (S3/GCS) on a schedule.

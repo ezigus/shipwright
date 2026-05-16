@@ -1,6 +1,6 @@
 # Pipeline Context Bundle
 
-Generated: 2026-05-16T19:27:08Z
+Generated: 2026-05-16T19:37:48Z
 Stage: plan
 Goal: Upload cost-breakdown.json as GitHub Actions artifact for cross-machine optimization
 
@@ -37,7 +37,7 @@ fix: stop spurious shipwright/issue-99 pushes + migrate discoveries to shipwrigh
 ## Successful Patterns
 
 - **repo**: ezigus/shipwright
-- **captured_at**: 2026-05-16T19:27:07Z
+- **captured_at**: 2026-05-16T19:37:47Z
 - **project**: {"type":"node","framework":"","test_runner":"vitest","package_manager":"npm","language":"javascript"}
 - **conventions**: {"source_dir":"","test_pattern":"*.test.js","import_style":"commonjs"}
 

@@ -202,8 +202,19 @@ function getLearningStats() {
     } catch { /* ignore */ }
   }
 
-  // 3. Count patterns from memory.db using row count (sqlite header bytes 28-31)
+  // 3. Count patterns from memory.db using row count (sqlite header bytes 28-31).
+  //
+  // ruflo#1989: when encryption at rest is enabled, memory.db is no
+  // longer a SQLite database -- it is an RFE1-magicked ciphertext blob.
+  // The original code blindly read bytes 28-31 as a page count and
+  // rendered 3.3B patterns (uint32 of random ciphertext). That
+  // cascaded into fake DDD 5/5 / 100% indicators downstream.
+  //
+  // Guard with the SQLite magic ("SQLite format 3\0", 16 bytes at
+  // offset 0). Also clamp implausible page counts (>1M pages ~= 4GB)
+  // to avoid reporting nonsense even on plaintext SQLite.
   if (patterns === 0) {
+    const SQLITE_MAGIC = Buffer.from('SQLite format 3\0', 'binary');
     const memoryPaths = [
       path.join(CWD, '.claude-flow', 'memory.db'),
       path.join(CWD, 'data', 'memory.db'),
@@ -211,18 +222,27 @@ function getLearningStats() {
     ];
     for (const dbPath of memoryPaths) {
       try {
-        if (fs.existsSync(dbPath)) {
-          // Read SQLite header: page count at offset 28 (4 bytes big-endian)
-          const fd = fs.openSync(dbPath, 'r');
-          const buf = Buffer.alloc(4);
-          fs.readSync(fd, buf, 0, 4, 28);
+        if (!fs.existsSync(dbPath)) continue;
+        const fd = fs.openSync(dbPath, 'r');
+        const head = Buffer.alloc(16);
+        fs.readSync(fd, head, 0, 16, 0);
+        if (!head.equals(SQLITE_MAGIC)) {
+          // Not plaintext SQLite (likely RFE1 encrypted, an empty
+          // file, or some other format). Skip — let the daemon or
+          // patterns.json fallback report the real number.
           fs.closeSync(fd);
-          const pageCount = buf.readUInt32BE(0);
-          // Each page typically holds ~10-50 rows; use page count as conservative estimate
-          // But report 0 if DB exists but has only schema pages (< 3)
-          patterns = pageCount > 2 ? pageCount - 2 : 0;
-          break;
+          continue;
         }
+        const buf = Buffer.alloc(4);
+        fs.readSync(fd, buf, 0, 4, 28);
+        fs.closeSync(fd);
+        const pageCount = buf.readUInt32BE(0);
+        // Sanity: reject implausible counts (> 1M pages ≈ 4 GB DB).
+        if (pageCount > 1_000_000) continue;
+        // Each page typically holds ~10-50 rows; use page count as
+        // conservative estimate. Report 0 if only schema pages (< 3).
+        patterns = pageCount > 2 ? pageCount - 2 : 0;
+        break;
       } catch { /* ignore */ }
     }
   }
@@ -258,17 +278,24 @@ function getV3Progress() {
   let domainsCompleted = Math.min(5, Math.floor(dddProgress / 20));
 
   // Only derive DDD progress from real ddd-progress.json or real pattern data
-  // Don't inflate domains from pattern count — 0 means no DDD work tracked
-  if (dddProgress === 0 && learning.patterns > 0) {
+  // Don't inflate domains from pattern count — 0 means no DDD work tracked.
+  // ruflo#1989: defensively clamp learning.patterns even though
+  // getLearningStats already guards against the RFE1-encrypted case --
+  // if any future regression in the upstream reader returns a wild
+  // value, we do not want to silently inflate DDD to 5/5 / 100%.
+  const realPatterns = Number.isFinite(learning.patterns) && learning.patterns >= 0 && learning.patterns < 1_000_000
+    ? learning.patterns
+    : 0;
+  if (dddProgress === 0 && realPatterns > 0) {
     // Conservative: only count domains if we have substantial real pattern data
     // Each domain requires ~100 real stored patterns to claim completion
-    domainsCompleted = Math.min(5, Math.floor(learning.patterns / 100));
+    domainsCompleted = Math.min(5, Math.floor(realPatterns / 100));
     dddProgress = Math.floor((domainsCompleted / totalDomains) * 100);
   }
 
   return {
     domainsCompleted, totalDomains, dddProgress,
-    patternsLearned: learning.patterns,
+    patternsLearned: realPatterns,
     sessionsCompleted: learning.sessions,
   };
 }
@@ -354,8 +381,14 @@ function getSystemMetrics() {
   if (learningData && learningData.intelligence && learningData.intelligence.score !== undefined) {
     intelligencePct = Math.min(100, Math.floor(learningData.intelligence.score));
   } else {
-    // Use real data only — patterns from actual store, vectors from actual DB
-    const fromPatterns = learning.patterns > 0 ? Math.min(100, Math.floor(learning.patterns / 20)) : 0;
+    // Use real data only — patterns from actual store, vectors from actual DB.
+    // ruflo#1989: clamp patterns to a sane upper bound. A multi-billion
+    // pattern count from a buggy reader would saturate intelligencePct
+    // to 100% and silently lie about progress.
+    const realPatterns = Number.isFinite(learning.patterns) && learning.patterns >= 0 && learning.patterns < 1_000_000
+      ? learning.patterns
+      : 0;
+    const fromPatterns = realPatterns > 0 ? Math.min(100, Math.floor(realPatterns / 20)) : 0;
     const fromVectors = agentdb.vectorCount > 0 ? Math.min(100, Math.floor(agentdb.vectorCount / 20)) : 0;
     intelligencePct = Math.max(fromPatterns, fromVectors);
   }
@@ -614,23 +647,34 @@ function generateStatusline() {
   const integration = getIntegrationStatus();
   const lines = [];
 
-  // Header
-  // Read version from package.json
+  // Header — read version from the FIRST package.json we find, preferring
+  // the plugin install at ~/.claude/plugins/marketplaces/ruflo/package.json.
+  // The previous list only checked project-local node_modules, so plugin
+  // users saw the hard-coded fallback (V3.5) even on newer alphas (#1951).
   let pkgVersion = '3.6';
   try {
-    const pkgPath = path.join(CWD, 'node_modules', '@claude-flow', 'cli', 'package.json');
-    if (fs.existsSync(pkgPath)) {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-      if (pkg.version) pkgVersion = pkg.version;
-    } else {
-      // Try npx-installed location
-      const npxPkg = path.join(CWD, 'v3', '@claude-flow', 'cli', 'package.json');
-      if (fs.existsSync(npxPkg)) {
-        const pkg = JSON.parse(fs.readFileSync(npxPkg, 'utf-8'));
-        if (pkg.version) pkgVersion = pkg.version;
-      }
+    const home = require('os').homedir();
+    const pkgPaths = [
+      // 1. The plugin's own root (installed via /plugin install).
+      path.join(home, '.claude', 'plugins', 'marketplaces', 'ruflo', 'package.json'),
+      // 2. Project-local @claude-flow/cli — npm-style install.
+      path.join(CWD, 'node_modules', '@claude-flow', 'cli', 'package.json'),
+      // 3. Project-local ruflo umbrella.
+      path.join(CWD, 'node_modules', 'ruflo', 'package.json'),
+      // 4. Source-checkout location (when developing in this repo).
+      path.join(CWD, 'v3', '@claude-flow', 'cli', 'package.json'),
+    ];
+    for (const p of pkgPaths) {
+      if (!fs.existsSync(p)) continue;
+      try {
+        const pkg = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        if (pkg && typeof pkg.version === 'string' && pkg.version.length > 0) {
+          pkgVersion = pkg.version;
+          break;
+        }
+      } catch { /* malformed package.json — try next */ }
     }
-  } catch { /* use default */ }
+  } catch { /* fall through to the hardcoded default */ }
   let header = c.bold + c.brightPurple + '\u258A RuFlo V' + pkgVersion + ' ' + c.reset;
   header += (swarm.coordinationActive ? c.brightCyan : c.dim) + '\u25CF ' + c.brightCyan + git.name + c.reset;
   if (git.gitBranch) {

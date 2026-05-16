@@ -1,0 +1,14 @@
+- `.github/workflows/shipwright-pipeline.yml` contains exactly two `upload-artifact@v4` steps, the new one named "Upload cost-breakdown artifact (always)".
+- New artifact name evaluates to `cost-breakdown-issue-<issue>-run-<run_id>` (verified by test asserting the literal string fragment).
+- New step has `retention-days: 90`, `if-no-files-found: warn`, `continue-on-error: true`, `if: always() && steps.claim_check.outputs.skip != 'true'`.
+- New step uploads `.claude/pipeline-artifacts/cost-breakdown.json`, `.claude/pipeline-artifacts/stage-costs.jsonl`, and `~/.shipwright/baselines/`.
+- New step appears before "Propagate pipeline exit code".
+- `./scripts/sw-gha-pipeline-test.sh` exits 0 with the new and updated assertions.
+- `actionlint` passes on the workflow file.
+- `npm test` passes.
+- `website/src/content/docs/guides/cost.mdx` includes the new "Cross-machine cost history" section with `gh` examples and the schema-version known-gap note.
+- `CHANGELOG.md` has an "Added" entry referencing #460.
+- PR opened with title `feat(ci): upload cost-breakdown artifact for cross-machine optimization (#460)` and body `Closes #460. Extends #87 by making per-stage cost data accessible outside the local machine.`
+- No changes to production shell scripts, templates, or runtime behavior outside CI (verified by `git diff --stat` showing only `.github/`, `scripts/sw-gha-pipeline-test.sh`, `website/`, `CHANGELOG.md`).
+
+---

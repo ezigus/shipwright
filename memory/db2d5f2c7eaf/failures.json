@@ -1,1 +1,14 @@
-{"failures":[]}
+{
+  "failures": [
+    {
+      "stage": "test",
+      "pattern": "▸ Loop: compose_prompt iter 1 includes pipeline_context_section... /home/runner/work/shipwright/shipwright/scripts/lib/loop-iteration.sh: line 240: compose_gate_findings_section: command not found",
+      "root_cause": "compose_gate_findings_section function called at loop-iteration.sh:240 but never defined, causing command not found errors on every compose_prompt invocation",
+      "fix": "Define compose_gate_findings_section in scripts/lib/loop-iteration.sh (or the file that sources it) before line 240, matching the signature expected by compose_prompt",
+      "exit_code": 1,
+      "seen_count": 2,
+      "last_seen": "2026-05-16T20:22:22Z",
+      "category": "test_failure"
+    }
+  ]
+}

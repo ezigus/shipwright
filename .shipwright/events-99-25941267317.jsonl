@@ -6787,3 +6787,10 @@
 {"ts":"2026-05-16T00:46:21Z","ts_epoch":1778892381,"type":"loop.iteration_start","repo":"ezigus/shipwright","iteration":2,"max":20,"job_id":"autonomous","agent":1,"test_passed":"true"}
 {"ts":"2026-05-16T00:46:22Z","ts_epoch":1778892382,"type":"context.iteration_prompt","repo":"ezigus/shipwright","iteration":2,"chars":7965,"full_context":"false","skipped_pipeline":"true","skipped_intelligence_static":"true"}
 {"ts":"2026-05-16T00:46:22Z","ts_epoch":1778892382,"type":"loop.context_efficiency","repo":"ezigus/shipwright","iteration":2,"raw_prompt_chars":7932,"trimmed_prompt_chars":7932,"trim_ratio":0.0,"budget_utilization":4.0,"budget_chars":200000,"job_id":"autonomous"}
+{"ts":"2026-05-16T00:56:14Z","ts_epoch":1778892974,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-16T00:56:17Z","ts_epoch":1778892977,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-16T00:56:19Z","ts_epoch":1778892979,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-16T00:56:21Z","ts_epoch":1778892981,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-16T00:56:23Z","ts_epoch":1778892983,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-16T00:56:25Z","ts_epoch":1778892985,"type":"discovery.ci_push_ok","repo":"ezigus/shipwright","":""}
+{"ts":"2026-05-16T00:56:46Z","ts_epoch":1778893006,"type":"cost.baseline_updated","repo":"ezigus/shipwright","stages":2,"issue":504}

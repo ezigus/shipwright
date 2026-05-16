@@ -16,6 +16,11 @@ Load local generated instructions:
 Optional repo-specific additions:
 @../.ai-standards/local/claude-additions.md
 
+## Runtime State
+
+- Cost-breakdown artifact (CI): `cost-breakdown-issue-<N>-run-<run_id>-attempt-<attempt> (90d retention)`
+- Fetched-runs tracking: `~/.shipwright/baselines/.fetched-runs.json`
+
 ## Feature Flags
 
 | Flag | Default | Purpose |

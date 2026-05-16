@@ -15,7 +15,7 @@ compose_task_section() {
 
     local changed_files=""
     if [[ -n "${LOOP_START_COMMIT:-}" ]]; then
-        changed_files="$(git -C "${PROJECT_ROOT:-.}" diff --name-only "${LOOP_START_COMMIT}..HEAD" 2>/dev/null || true)"
+        changed_files="$(git -C "${PROJECT_ROOT:-.}" diff --name-only "${LOOP_START_COMMIT}..HEAD" -- . $(_git_excluded_pathspecs 2>/dev/null) 2>/dev/null || true)"
     fi
 
     # No commits yet — show raw list as initial guidance
@@ -207,7 +207,15 @@ Fix these specific errors. Each line above is one distinct error from the test o
     elif [[ -z "$TEST_PASSED" ]]; then
         test_section="No test results yet (first iteration). Test command: $TEST_CMD"
     elif $TEST_PASSED; then
-        test_section="$TEST_OUTPUT"
+        if ! $_needs_full_context; then
+            # Iter 2+: tests pass — the relevant signal is gate feedback, not 60 lines of checkmarks.
+            local _test_summary
+            _test_summary="$(echo "$TEST_OUTPUT" | grep -E 'pass|All [0-9]+ tests passed' | tail -3 || true)"
+            test_section="TESTS PASSED.
+${_test_summary:-(see iteration-$((ITERATION - 1)).log for full output)}"
+        else
+            test_section="$TEST_OUTPUT"
+        fi
     elif ! $_needs_full_context && [[ -n "$error_summary_section" ]]; then
         # Iter 2+: structured errors available — demote full output, primary signal is the summary below
         test_section="TESTS FAILED — see Structured Error Summary below for specific errors.
@@ -228,6 +236,8 @@ $TEST_OUTPUT"
     holistic_feedback_section="$(compose_holistic_feedback_section)"
     local quality_gate_detail_section
     quality_gate_detail_section="$(compose_quality_gate_detail_section)"
+    local gate_findings_section
+    gate_findings_section="$(compose_gate_findings_section)"
     local rejection_notice_section
     rejection_notice_section="$(compose_rejection_notice_section)"
 
@@ -235,7 +245,8 @@ $TEST_OUTPUT"
     # AND the quality gate is still failing. Without this, the agent reads passing
     # tests + the same gate feedback and silently exits in seconds, making no changes.
     local zero_progress_notice=""
-    if [[ "${PREV_NEW_COMMITS:-0}" -eq 0 ]] && [[ "${QUALITY_GATE_PASSED:-true}" == "false" ]]; then
+    if [[ "${PREV_NEW_COMMITS:-0}" -eq 0 ]] \
+       && { [[ "${QUALITY_GATE_PASSED:-true}" == "false" ]] || $COMPLETION_REJECTED; }; then
         zero_progress_notice="
 ## Zero Progress Detected (IMPORTANT)
 Your previous iteration made NO new commits. The working tree is identical to before.
@@ -464,6 +475,20 @@ ${_ctx}
         fi
     fi
 
+    # Definition of Done — inject when DOD_FILE is set and the file exists
+    local dod_section=""
+    if [[ -n "${DOD_FILE:-}" && -f "$DOD_FILE" ]]; then
+        local _dod_raw
+        _dod_raw="$(sed 's/^\([[:space:]]*\)- \[.\] /\1- /' "$DOD_FILE" 2>/dev/null || true)"
+        if [[ -n "$_dod_raw" ]]; then
+            dod_section="## Definition of Done
+${_dod_raw}
+
+The DoD is evaluated automatically against the cumulative branch diff at the end of each iteration.
+"
+        fi
+    fi
+
     # Session restart context — inject previous session progress
     local restart_section=""
     if [[ "$SESSION_RESTART" == "true" ]] && [[ -f "$LOG_DIR/progress.md" ]]; then
@@ -501,15 +526,24 @@ ${_test_tail}
         RESUMED_TEST_OUTPUT=""
     fi
 
-    # Build cumulative progress summary showing all iterations' work
+    # Build cumulative progress summary showing all commits on the WIP branch since creation.
+    # Uses _git_branch_merge_base() to find where this branch diverged from the default branch,
+    # covering ALL CI jobs on this branch (not just the current session's LOOP_START_COMMIT).
+    # Excludes bookkeeping/runtime files so the stat reflects only meaningful code changes.
+    # Falls back to LOOP_START_COMMIT if merge-base is unavailable (local-only repo, no remote).
     local cumulative_section=""
-    if [[ -n "${LOOP_START_COMMIT:-}" ]] && [[ "$ITERATION" -gt 1 ]]; then
-        local cum_stat
-        cum_stat="$(git -C "$PROJECT_ROOT" diff --stat "${LOOP_START_COMMIT}..HEAD" 2>/dev/null | tail -1 || true)"
-        if [[ -n "$cum_stat" ]]; then
-            cumulative_section="## Cumulative Progress (all iterations combined)
+    if [[ "${ITERATION:-1}" -gt 1 ]]; then
+        local _merge_base
+        _merge_base="$(_git_branch_merge_base "" "${LOOP_START_COMMIT:-}" 2>/dev/null || echo "${LOOP_START_COMMIT:-}")"
+        if [[ -n "$_merge_base" ]]; then
+            local cum_stat
+            cum_stat="$(git -C "$PROJECT_ROOT" diff --stat "${_merge_base}..HEAD" -- . $(_git_excluded_pathspecs 2>/dev/null) 2>/dev/null | head -40 || true)"
+            if [[ -n "$cum_stat" ]]; then
+                cumulative_section="## Cumulative Progress (all branch changes)
 ${cum_stat}
+
 "
+            fi
         fi
     fi
 
@@ -537,8 +571,25 @@ ${resume_section}
 ## Your Goal
 ${prompt_goal}
 
-${pipeline_context_section}${cumulative_section}
-${task_section:+## Task Progress
+## Instructions
+1. Read the codebase and understand the current state
+2. Identify the highest-priority remaining work toward the goal
+3. Implement ONE meaningful chunk of progress
+4. Run tests if a test command exists: ${TEST_CMD:-"(none)"}
+5. Commit your work with a descriptive message
+6. When the goal is FULLY achieved, output exactly: LOOP_COMPLETE
+
+${error_summary_section:+$error_summary_section
+}${gate_findings_section:+$gate_findings_section
+}${holistic_feedback_section:+$holistic_feedback_section
+}${quality_gate_detail_section:+$quality_gate_detail_section
+}${rejection_notice_section:+$rejection_notice_section
+}${audit_feedback_section:+$audit_feedback_section
+}${zero_progress_notice:+$zero_progress_notice
+}${stuckness_section:+$stuckness_section
+}${alt_strategy_section:+$alt_strategy_section
+}${iteration_guidance_section:+$iteration_guidance_section
+}${pipeline_context_section}${dod_section}${cumulative_section}${task_section:+## Task Progress
 $task_section
 
 }## Current Progress
@@ -550,29 +601,14 @@ ${git_log}
 ${recent_commits_section}## Test Results (Previous Iteration)
 ${test_section}
 
-${error_summary_section:+$error_summary_section
-}
-${iteration_guidance_section:+$iteration_guidance_section
-}
 ${memory_section:+## Memory Context
 $memory_section
-}
-${discovery_section:+## Cross-Pipeline Learnings
+}${discovery_section:+## Cross-Pipeline Learnings
 $discovery_section
-}
-${dora_section:+$dora_section
-}
-${intelligence_section:+$intelligence_section
-}
-${restart_section:+$restart_section
-}
-## Instructions
-1. Read the codebase and understand the current state
-2. Identify the highest-priority remaining work toward the goal
-3. Implement ONE meaningful chunk of progress
-4. Run tests if a test command exists: ${TEST_CMD:-"(none)"}
-5. Commit your work with a descriptive message
-6. When the goal is FULLY achieved, output exactly: LOOP_COMPLETE
+}${dora_section:+$dora_section
+}${intelligence_section:+$intelligence_section
+}${restart_section:+$restart_section
+}${audit_section}
 
 ## Context Efficiency
 - Batch independent tool calls in parallel — avoid sequential round-trips
@@ -581,28 +617,9 @@ ${restart_section:+$restart_section
 - Filter tool results with grep/jq before reasoning over them
 - Keep working memory lean — summarize completed steps, don't preserve full outputs
 
-${audit_section}
-
-${audit_feedback_section}
-
-${holistic_feedback_section}
-
-${quality_gate_detail_section:+$quality_gate_detail_section
-}
-${rejection_notice_section}
-
-${zero_progress_notice}
-
-${stuckness_section}
-
-${alt_strategy_section:+$alt_strategy_section
-}
 ## Rules
-- Focus on ONE task per iteration — do it well
 - Always commit with descriptive messages
-- If tests fail, fix them before ending
 - If stuck on the same issue for 2+ iterations, try a different approach
-- Do NOT output LOOP_COMPLETE unless the goal is genuinely achieved
 ${reference_trailer}
 PROMPT
 
@@ -719,7 +736,7 @@ run_claude_iteration() {
     case "${SW_LOG_PROMPTS:-off}" in
         stdout|both)
             echo ""
-            echo "━━━━━━━━━━━ AGENT PROMPT — Iteration ${ITERATION} ━━━━━━━━━━━"
+            echo "━━━━━━━━━━━ BUILD PROMPT — Iteration ${ITERATION} ━━━━━━━━━━━"
             printf '%s\n' "$final_prompt"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo ""
@@ -736,7 +753,7 @@ run_claude_iteration() {
                 else
                     truncated="$redacted"
                 fi
-                body="### Agent Prompt — Iteration ${ITERATION}
+                body="### Build Prompt — Iteration ${ITERATION}
 
 <details><summary>Prompt (${prompt_chars} chars, redacted)</summary>
 
@@ -745,10 +762,10 @@ ${truncated}
 \`\`\`
 
 </details>"
-                if [[ -n "${PROGRESS_COMMENT_ID:-}" ]] && type gh_update_progress >/dev/null 2>&1; then
-                    gh_update_progress "$body"
-                elif type gh_comment_issue >/dev/null 2>&1; then
+                if [[ -n "${ISSUE_NUMBER:-}" ]] && type gh_comment_issue >/dev/null 2>&1; then
                     gh_comment_issue "$ISSUE_NUMBER" "$body"
+                elif type gh_post_progress >/dev/null 2>&1 && [[ -n "${ISSUE_NUMBER:-}" ]]; then
+                    gh_post_progress "$ISSUE_NUMBER" "$body"
                 fi
             fi
             ;;
@@ -849,16 +866,57 @@ ${truncated}
 
 extract_summary() {
     local log_file="$1"
-    # Grab last meaningful lines from Claude output, skipping empty lines
-    local summary
-    summary="$(grep -v '^$' "$log_file" | tail -5 | head -3 2>/dev/null || echo "(no output)")"
-    # Truncate long lines
-    summary="$(echo "$summary" | cut -c1-120)"
+    [[ ! -s "$log_file" ]] && { echo "(no output)"; return; }
 
-    # Sanitize: if summary is just a CLI/API error, replace with generic text
+    local summary
+    # Prefer an explicit summary block written by the agent (## Summary or ## Iteration Summary).
+    summary="$(awk '
+        /^## +(Iteration )?[Ss]ummary/ { capture=1; next }
+        capture && /^## / { capture=0 }
+        capture { print }
+    ' "$log_file" | grep -v '^$' | head -20 || true)"
+
+    # Fall back to the last 20 non-blank lines of output.
+    if [[ -z "$summary" ]]; then
+        summary="$(grep -v '^$' "$log_file" | tail -20 || true)"
+    fi
+
+    # Sanitize: if summary is just a CLI/API error, replace with generic text.
     if echo "$summary" | grep -qiE 'Invalid API key|authentication_error|rate_limit|API key expired|ANTHROPIC_API_KEY'; then
         summary="(CLI error — no useful output this iteration)"
     fi
 
+    # LOOP_COMPLETE / <<<LOOP:PASS>>> markers are intentionally preserved so the
+    # next iteration's compose_iteration_outcome can pair them with rejection detail.
+    # No per-line char truncation — manage_context_window handles prompt size.
     echo "$summary"
+}
+
+# compose_iteration_outcome — renders a structured outcome block for the just-finished
+# iteration. Called after run_quality_gates so all gate globals are populated.
+# Output is appended to the iteration log entry read by the next iteration's prompt.
+compose_iteration_outcome() {
+    local outcome=""
+    if $COMPLETION_REJECTED; then
+        outcome="**Outcome: LOOP_COMPLETE was REJECTED.**
+Reason(s): ${QUALITY_GATE_REASONS:-quality gates failed}"
+        if [[ -n "${QUALITY_GATE_DETAIL:-}" ]]; then
+            outcome="${outcome}
+
+Specific failures:
+${QUALITY_GATE_DETAIL}"
+        fi
+    elif [[ "${QUALITY_GATE_PASSED:-true}" == "false" ]]; then
+        outcome="**Outcome: gates FAILED** — ${QUALITY_GATE_REASONS:-see above}"
+        if [[ -n "${QUALITY_GATE_DETAIL:-}" ]]; then
+            outcome="${outcome}
+
+${QUALITY_GATE_DETAIL}"
+        fi
+    elif [[ "${TEST_PASSED:-true}" == "false" ]]; then
+        outcome="**Outcome: tests FAILED** in this iteration."
+    else
+        outcome="**Outcome: iteration completed; gates pending or passed.**"
+    fi
+    printf '%s' "$outcome"
 }

@@ -1267,6 +1267,7 @@ _write_quality_feedback() {
 }
 
 compound_rebuild_with_feedback() {
+    local cycle_num="${1:-?}"
     local feedback_file="$ARTIFACTS_DIR/quality-feedback.md"
 
     # ── Intelligence: classify findings and determine routing ──
@@ -1317,16 +1318,31 @@ compound_rebuild_with_feedback() {
         return 1
     fi
 
-    # Reset build/test stages
-    set_stage_status "build" "pending"
-    set_stage_status "test" "pending"
-    set_stage_status "review" "pending"
+    set_outer_stage "compound_quality"
+    OUTER_STAGE_START_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+    write_state 2>/dev/null || true
+    log_stage "compound_quality" "rebuild cycle ${cycle_num} starting"
+    # Note: format deliberately avoids the 'complete (' pattern so it is not treated as a stage completion signal.
 
     # Augment GOAL with quality feedback (route-specific instructions).
     # Save original_goal and install a RETURN trap so it is always restored even
     # if self_healing_build_test exits unexpectedly under set -e.
     local original_goal="$GOAL"
-    trap '{ GOAL="$original_goal"; trap - RETURN; }' RETURN
+    local _saved_current_stage="${CURRENT_STAGE:-}"
+    local _saved_pipeline_status="${PIPELINE_STATUS:-}"
+    trap '{
+        # Preserve PIPELINE_STUCK_CYCLING if the inner cycle set it (retry-cap hit);
+        # restoring status unconditionally would mask the stuck indicator.
+        if [[ "${PIPELINE_STUCK_CYCLING:-false}" != "true" ]]; then
+            PIPELINE_STATUS="$_saved_pipeline_status"
+        fi
+        GOAL="$original_goal"
+        CURRENT_STAGE="$_saved_current_stage"
+        OUTER_STAGE_START_COMMIT=""
+        clear_outer_stage
+        log_stage "compound_quality" "rebuild cycle '"${cycle_num}"' finished"
+        trap - RETURN
+    }' RETURN
     local feedback_content
     feedback_content=$(cat "$feedback_file")
 
@@ -1445,6 +1461,7 @@ stage_compound_quality() {
     _cleanup_cycle_files
 
     # Pre-check: verify meaningful changes exist before running expensive quality checks
+    type _ensure_base_branch_ref >/dev/null 2>&1 && { _ensure_base_branch_ref || true; }
     local _cq_real_changes
     _cq_real_changes=$(git diff --name-only "origin/${BASE_BRANCH:-main}...HEAD" \
         -- . ':!.claude/loop-state.md' ':!.claude/pipeline-state.md' \
@@ -1527,7 +1544,8 @@ stage_compound_quality() {
 
     # 2. Test coverage check
     local coverage_pct=0
-    coverage_pct=$(run_test_coverage_check 2>/dev/null | tr -d '[:space:][:cntrl:]') || coverage_pct=0
+    info "Running test coverage check..."
+    coverage_pct=$(run_test_coverage_check | tr -d '[:space:][:cntrl:]') || coverage_pct=0
     coverage_pct="${coverage_pct:-0}"
     # Sanitize: strip anything non-numeric (ANSI codes, whitespace, etc.)
     coverage_pct=$(echo "$coverage_pct" | sed 's/[^0-9]//g')
@@ -1629,7 +1647,7 @@ stage_compound_quality() {
     local _cascade_prebuild_commit=""
     _cascade_prebuild_commit=$(git rev-parse HEAD 2>/dev/null) || _cascade_prebuild_commit=""
     local _cascade_diff=""
-    _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" 2>/dev/null | head -5000) || _cascade_diff=""
+    _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null | head -5000) || _cascade_diff=""
     if [[ -n "$_cascade_diff" ]] && [[ $(echo "$_cascade_diff" | wc -l) -ge 5000 ]]; then
         warn "Diff may be truncated at 5000 lines — audit findings for files beyond this limit may be incomplete"
     fi
@@ -1739,7 +1757,7 @@ ${_cascade_test_tail}"
                 echo ""
                 info "Running developer simulation review..."
                 local sim_diff
-                sim_diff=$(git diff "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+                sim_diff=$(git diff "${BASE_BRANCH}...HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null || true)
                 if [[ -n "$sim_diff" ]]; then
                     local sim_result
                     sim_result=$(simulation_review "$sim_diff" "${GOAL:-}" 2>/dev/null || echo "[]")
@@ -1779,7 +1797,7 @@ ${_cascade_test_tail}"
                 echo ""
                 info "Running architecture validation..."
                 local arch_diff
-                arch_diff=$(git diff "${BASE_BRANCH}...HEAD" 2>/dev/null || true)
+                arch_diff=$(git diff "${BASE_BRANCH}...HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null || true)
                 if [[ -n "$arch_diff" ]]; then
                     local arch_result
                     arch_result=$(architecture_validate_changes "$arch_diff" "" 2>/dev/null || echo "[]")
@@ -2130,7 +2148,7 @@ All quality checks clean:
         if [[ "$cycle" -lt "$max_cycles" ]]; then
             warn "Quality checks failed — rebuilding with feedback (cycle $((cycle + 1))/${max_cycles})"
 
-            if ! compound_rebuild_with_feedback; then
+            if ! compound_rebuild_with_feedback "$((cycle + 1))"; then
                 error "Rebuild with feedback failed"
                 log_stage "compound_quality" "Rebuild failed on cycle ${cycle}"
                 return 1
@@ -2160,7 +2178,7 @@ All quality checks clean:
                 if [[ -f "$ARTIFACTS_DIR/negative-review.md" ]]; then
                     mv "$ARTIFACTS_DIR/negative-review.md" "$ARTIFACTS_DIR/negative-review-cycle${cycle}.md" 2>/dev/null || true
                 fi
-                _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" 2>/dev/null | head -5000) || true
+                _cascade_diff=$(git diff "${BASE_BRANCH:-main}...HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null | head -5000) || true
                 if [[ -z "$_cascade_diff" ]]; then
                     warn "Git diff failed after rebuild — cascade will operate without diff context"
                 elif [[ $(echo "$_cascade_diff" | wc -l) -ge 5000 ]]; then

@@ -64,18 +64,26 @@ stage_intake() {
     fi
 
     # 4. Create branch with smart prefix
-    local prefix
-    prefix=$(branch_prefix_for_type "$TASK_TYPE")
-    local slug
-    slug=$(echo "$GOAL" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | cut -c1-40)
-    slug="${slug%-}"
-    [[ -n "$ISSUE_NUMBER" ]] && slug="${slug}-${ISSUE_NUMBER}"
-    GIT_BRANCH="${prefix}/${slug}"
+    if [[ -n "${WORKSPACE_BRANCH:-}" ]]; then
+        # CI mode: the workflow already created and exported the WIP branch.
+        # Skip branch creation to avoid the two-branch identity conflict where
+        # intake's descriptive branch diverges from the workflow's shipwright/issue-N.
+        GIT_BRANCH="$WORKSPACE_BRANCH"
+        info "CI mode: using workspace branch ${GIT_BRANCH}"
+    else
+        local prefix
+        prefix=$(branch_prefix_for_type "$TASK_TYPE")
+        local slug
+        slug=$(echo "$GOAL" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | cut -c1-40)
+        slug="${slug%-}"
+        [[ -n "$ISSUE_NUMBER" ]] && slug="${slug}-${ISSUE_NUMBER}"
+        GIT_BRANCH="${prefix}/${slug}"
 
-    git checkout -b "$GIT_BRANCH" 2>/dev/null || {
-        info "Branch $GIT_BRANCH exists, checking out"
-        git checkout "$GIT_BRANCH" 2>/dev/null || true
-    }
+        git checkout -b "$GIT_BRANCH" 2>/dev/null || {
+            info "Branch $GIT_BRANCH exists, checking out"
+            git checkout "$GIT_BRANCH" 2>/dev/null || true
+        }
+    fi
     success "Branch: ${BOLD}$GIT_BRANCH${RESET}"
 
     # 5. Post initial progress comment on GitHub issue
@@ -656,8 +664,65 @@ CC_TASKS_EOF
         info "Claude Code tasks: ${DIM}$cc_tasks_file${RESET}"
     fi
 
-    # Extract definition of done for quality gates
-    sed -n '/[Dd]efinition [Oo]f [Dd]one/,/^#/p' "$plan_file" | head -20 > "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true
+    # Extract definition of done for quality gates.
+    # Uses awk to find the LAST heading matching "Definition of Done" (heading-anchored, not
+    # prose mentions), captures lines until the next H2, and strips checkbox markers so the
+    # evaluator receives plain bullets. "Last" is more robust: canonical plan structure puts
+    # the real DoD as the final H2; prose/sub-section mentions appear earlier.
+    awk '
+        /^##+[[:space:]].*[Dd]efinition[[:space:]][Oo]f[[:space:]][Dd]one[[:space:]]*$/ { last_dod = NR }
+        { lines[NR] = $0 }
+        END {
+            if (last_dod == 0) { exit 0 }
+            n = 0
+            for (i = last_dod + 1; i <= NR; i++) {
+                line = lines[i]
+                if (line ~ /^##[^#]/) break
+                # Portable checkbox strip: use match() + substr() to avoid \1 backrefs
+                # which BSD awk and mawk do not honour in sub() replacement strings.
+                # match() sets RSTART/RLENGTH to the position of "- [x/X/ ]..." inside
+                # the line (which may be preceded by leading whitespace). RSTART-1 bytes
+                # before the match are the indent; RSTART+RLENGTH skips past the marker.
+                if (match(line, /-[[:space:]]+\[[xX[:space:]]\][[:space:]]*/)) {
+                    line = substr(line, 1, RSTART - 1) "- " substr(line, RSTART + RLENGTH)
+                }
+                content[++n] = line
+            }
+            while (n > 0 && content[n] == "") n--
+            started = 0
+            for (i = 1; i <= n; i++) {
+                if (!started && content[i] == "") continue
+                started = 1
+                print content[i]
+            }
+        }
+    ' "$plan_file" > "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true
+
+    # Validate the extracted dod.md for unprocessed awk markers.
+    # Fails intake loudly if the extraction produced literal \1 sequences or
+    # leftover checkbox patterns, converting a silent corruption into a visible error.
+    _validate_dod_md() {
+        local _dod_file="$1"
+        # No-op when dod.md is absent or empty (valid: plan has no DoD section)
+        [[ ! -s "$_dod_file" ]] && return 0
+        local _bad_lines _rc=0
+        # Check for literal backref leak (\1, \2, etc.)
+        _bad_lines="$(grep -n '\\[0-9]' "$_dod_file" 2>/dev/null || true)"
+        if [[ -n "$_bad_lines" ]]; then
+            error "DoD extraction produced unprocessed backref markers in dod.md (check awk dialect). Offending lines:"
+            printf '%s\n' "$_bad_lines" >&2
+            _rc=1
+        fi
+        # Check for any surviving checkbox markers that should have been stripped
+        _bad_lines="$(grep -n '^[[:space:]]*-[[:space:]]\+\[[xX[:space:]]\]' "$_dod_file" 2>/dev/null || true)"
+        if [[ -n "$_bad_lines" ]]; then
+            error "DoD extraction left checkbox markers in dod.md (awk pattern may have drifted). Offending lines:"
+            printf '%s\n' "$_bad_lines" >&2
+            _rc=1
+        fi
+        return "$_rc"
+    }
+    _validate_dod_md "$ARTIFACTS_DIR/dod.md" || return 1
 
     # ── Plan Validation Gate ──
     # Ask Claude to validate the plan before proceeding

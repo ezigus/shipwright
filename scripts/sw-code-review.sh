@@ -449,9 +449,9 @@ review_changes() {
     # Get changed files (Bash 3.2 compatible — no mapfile)
     local changed_files=()
     if [[ "$review_scope" == "staged" ]]; then
-        while IFS= read -r _f; do [[ -n "$_f" ]] && changed_files+=("$_f"); done < <(cd "$PROJECT_ROOT" && git diff --cached --name-only 2>/dev/null || true)
+        while IFS= read -r _f; do [[ -n "$_f" ]] && changed_files+=("$_f"); done < <(cd "$PROJECT_ROOT" && git diff --cached --name-only -- . $(_git_excluded_pathspecs) 2>/dev/null || true)
     else
-        while IFS= read -r _f; do [[ -n "$_f" ]] && changed_files+=("$_f"); done < <(cd "$PROJECT_ROOT" && git diff main...HEAD --name-only 2>/dev/null || true)
+        while IFS= read -r _f; do [[ -n "$_f" ]] && changed_files+=("$_f"); done < <(cd "$PROJECT_ROOT" && git diff main...HEAD --name-only -- . $(_git_excluded_pathspecs) 2>/dev/null || true)
     fi
 
     [[ ${#changed_files[@]} -eq 0 ]] && { success "No changes to review"; return 0; }
@@ -459,9 +459,9 @@ review_changes() {
     # Claude-powered semantic review (logic, race conditions, API usage) when available
     local diff_content
     if [[ "$review_scope" == "staged" ]]; then
-        diff_content=$(cd "$PROJECT_ROOT" && git diff --cached 2>/dev/null || true)
+        diff_content=$(cd "$PROJECT_ROOT" && git diff --cached -- . $(_git_excluded_pathspecs) 2>/dev/null || true)
     else
-        diff_content=$(cd "$PROJECT_ROOT" && git diff main...HEAD 2>/dev/null || true)
+        diff_content=$(cd "$PROJECT_ROOT" && git diff main...HEAD -- . $(_git_excluded_pathspecs) 2>/dev/null || true)
     fi
     local semantic_issues=()
     if [[ -n "$diff_content" ]] && command -v claude >/dev/null 2>&1; then

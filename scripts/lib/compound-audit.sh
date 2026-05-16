@@ -10,6 +10,17 @@
 [[ -n "${_COMPOUND_AUDIT_LOADED:-}" ]] && return 0
 _COMPOUND_AUDIT_LOADED=1
 
+# _filter_gitignored_paths lives in helpers.sh — load it if not already present.
+_COMPOUND_AUDIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+if [[ -z "${_SW_HELPERS_LOADED:-}" ]]; then
+    if [[ -f "${_COMPOUND_AUDIT_DIR}/helpers.sh" ]]; then
+        source "${_COMPOUND_AUDIT_DIR}/helpers.sh"
+    else
+        echo "[compound-audit] WARNING: helpers.sh not found at ${_COMPOUND_AUDIT_DIR}/helpers.sh — _filter_gitignored_paths unavailable" >&2
+    fi
+fi
+unset _COMPOUND_AUDIT_DIR
+
 # ─── Agent prompt templates ────────────────────────────────────────────────
 # Each agent gets the same context but a specialized lens.
 
@@ -359,7 +370,7 @@ compound_audit_collect_file_contents() {
     # path field is a single real path (not "old => new" syntax that breaks
     # every downstream git show / cat).
     local numstat
-    numstat=$(git diff --no-renames --numstat "${base}...HEAD" 2>/dev/null) || return 0
+    numstat=$(git diff --no-renames --numstat "${base}...HEAD" -- . $(_git_excluded_pathspecs) 2>/dev/null | _filter_gitignored_paths) || return 0
     [[ -z "$numstat" ]] && return 0
 
     local added deleted file

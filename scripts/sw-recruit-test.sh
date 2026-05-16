@@ -804,7 +804,7 @@ fi
 # Test: unknown command fails
 test_case "unknown command fails"
 unk_err=$("$RECRUIT_SCRIPT" nonexistent-command 2>&1 || true)
-if echo "$unk_err" | grep -qiE "Unknown command"; then
+if grep -qiE "Unknown command" <<< "$unk_err"; then
     pass
 else
     fail "Expected unknown command error"

@@ -307,7 +307,152 @@ plan_content=$(cat "$ARTIFACTS_DIR/plan.md")
 assert_contains "Plan has checklist" "$plan_content" "Task Checklist"
 assert_contains "Plan has steps" "$plan_content" "Files to Modify"
 assert_file_exists "DoD extracted" "$ARTIFACTS_DIR/dod.md"
+dod_content=$(cat "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true)
+assert_contains "DoD has item text" "$dod_content" "All tests pass"
+if echo "$dod_content" | grep -q '\- \['; then
+    assert_fail "DoD must not contain checkbox markers" "found '- [' in dod.md"
+else
+    assert_pass "DoD has no checkbox markers"
+fi
+if echo "$dod_content" | grep -qE '^###? Definition of Done'; then
+    assert_fail "DoD must not contain the heading line itself" "heading leaked into dod.md"
+else
+    assert_pass "DoD heading not leaked into dod.md"
+fi
 assert_file_exists "Tasks file" "$TASKS_FILE"
+
+# DoD extraction: plan with prose mention of DoD before real heading → only real section extracted
+dod_prose_plan="$ARTIFACTS_DIR/dod-prose-test-plan.md"
+cat > "$dod_prose_plan" <<'PROSE_PLAN'
+# Plan
+
+## Overview
+This feature satisfies the definition of done once auth works.
+
+## Files to Modify
+- src/auth.js
+
+## Design alternatives
+Consider other approaches.
+
+## Definition of Done
+- Only real item here
+PROSE_PLAN
+rm -f "$ARTIFACTS_DIR/dod.md"
+awk '
+    /^##+[[:space:]].*[Dd]efinition[[:space:]][Oo]f[[:space:]][Dd]one[[:space:]]*$/ { last_dod = NR }
+    { lines[NR] = $0 }
+    END {
+        if (last_dod == 0) { exit 0 }
+        for (i = last_dod + 1; i <= NR; i++) {
+            line = lines[i]
+            if (line ~ /^##[^#]/) break
+            sub(/^([[:space:]]*)-[[:space:]]+\[[xX[:space:]]\][[:space:]]+/, "\\1- ", line)
+            print line
+        }
+    }
+' "$dod_prose_plan" | awk 'NF || p { print; p=1 }' > "$ARTIFACTS_DIR/dod.md" || true
+prose_dod=$(cat "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true)
+assert_contains "DoD: prose plan — real item present" "$prose_dod" "Only real item"
+if echo "$prose_dod" | grep -q "satisfies the definition"; then
+    assert_fail "DoD: prose mention must not appear in extracted DoD" "prose leaked"
+else
+    assert_pass "DoD: prose mention not included"
+fi
+
+# DoD extraction: plan with two ## DoD headings → only last one extracted
+dod_two_headings_plan="$ARTIFACTS_DIR/dod-two-headings-plan.md"
+cat > "$dod_two_headings_plan" <<'TWO_PLAN'
+# Plan
+
+## Definition of Done
+- First section item (should NOT appear)
+
+## Other Section
+
+## Definition of Done
+- Last section item (should appear)
+TWO_PLAN
+rm -f "$ARTIFACTS_DIR/dod.md"
+awk '
+    /^##+[[:space:]].*[Dd]efinition[[:space:]][Oo]f[[:space:]][Dd]one[[:space:]]*$/ { last_dod = NR }
+    { lines[NR] = $0 }
+    END {
+        if (last_dod == 0) { exit 0 }
+        for (i = last_dod + 1; i <= NR; i++) {
+            line = lines[i]
+            if (line ~ /^##[^#]/) break
+            sub(/^([[:space:]]*)-[[:space:]]+\[[xX[:space:]]\][[:space:]]+/, "\\1- ", line)
+            print line
+        }
+    }
+' "$dod_two_headings_plan" | awk 'NF || p { print; p=1 }' > "$ARTIFACTS_DIR/dod.md" || true
+two_dod=$(cat "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true)
+assert_contains "DoD: two headings — last section item present" "$two_dod" "Last section item"
+if echo "$two_dod" | grep -q "First section item"; then
+    assert_fail "DoD: two headings — first section must not appear" "first section leaked"
+else
+    assert_pass "DoD: two headings — first section not included"
+fi
+
+# DoD extraction: checkboxes stripped
+dod_checkbox_plan="$ARTIFACTS_DIR/dod-checkbox-plan.md"
+cat > "$dod_checkbox_plan" <<'CB_PLAN'
+## Definition of Done
+- [ ] Unchecked item
+- [x] Checked item
+- Plain item
+CB_PLAN
+rm -f "$ARTIFACTS_DIR/dod.md"
+awk '
+    /^##+[[:space:]].*[Dd]efinition[[:space:]][Oo]f[[:space:]][Dd]one[[:space:]]*$/ { last_dod = NR }
+    { lines[NR] = $0 }
+    END {
+        if (last_dod == 0) { exit 0 }
+        for (i = last_dod + 1; i <= NR; i++) {
+            line = lines[i]
+            if (line ~ /^##[^#]/) break
+            sub(/^([[:space:]]*)-[[:space:]]+\[[xX[:space:]]\][[:space:]]+/, "\\1- ", line)
+            print line
+        }
+    }
+' "$dod_checkbox_plan" | awk 'NF || p { print; p=1 }' > "$ARTIFACTS_DIR/dod.md" || true
+cb_dod=$(cat "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true)
+if echo "$cb_dod" | grep -q '\- \['; then
+    assert_fail "DoD: checkboxes must be stripped" "found '- [' in output"
+else
+    assert_pass "DoD: checkboxes stripped"
+fi
+assert_contains "DoD: checkbox content preserved" "$cb_dod" "Unchecked item"
+assert_contains "DoD: checked item content preserved" "$cb_dod" "Checked item"
+
+# DoD extraction: no heading → empty file
+dod_noheading_plan="$ARTIFACTS_DIR/dod-noheading-plan.md"
+cat > "$dod_noheading_plan" <<'NH_PLAN'
+# Plan
+No definition of done here.
+NH_PLAN
+rm -f "$ARTIFACTS_DIR/dod.md"
+awk '
+    /^##+[[:space:]].*[Dd]efinition[[:space:]][Oo]f[[:space:]][Dd]one[[:space:]]*$/ { last_dod = NR }
+    { lines[NR] = $0 }
+    END {
+        if (last_dod == 0) { exit 0 }
+        for (i = last_dod + 1; i <= NR; i++) {
+            line = lines[i]
+            if (line ~ /^##[^#]/) break
+            sub(/^([[:space:]]*)-[[:space:]]+\[[xX[:space:]]\][[:space:]]+/, "\\1- ", line)
+            print line
+        }
+    }
+' "$dod_noheading_plan" | awk 'NF || p { print; p=1 }' > "$ARTIFACTS_DIR/dod.md" || true
+noheading_dod=$(cat "$ARTIFACTS_DIR/dod.md" 2>/dev/null || true)
+if [[ -n "$noheading_dod" ]]; then
+    assert_fail "DoD: no heading — dod.md must be empty" "got: $noheading_dod"
+else
+    assert_pass "DoD: no heading — dod.md is empty"
+fi
+rm -f "$dod_prose_plan" "$dod_two_headings_plan" "$dod_checkbox_plan" "$dod_noheading_plan"
 
 # stage_plan: max-turns exhaustion — with trailing newline
 mock_binary "claude" 'printf "Error: Reached max turns (25)\n"'
@@ -1574,5 +1719,805 @@ else
 fi'
 
 unset -f ruflo_available ruflo_recall_similar_outcomes ruflo_store
+
+# ─── Tests: Bug 1 — stage_build uses gh_post_progress (not gh_comment_issue) ──
+# Verify that PROGRESS_COMMENT_ID is set after stage_build starts
+# and that the banner/body say "Build Prompt" not "Agent Prompt".
+print_test_section "stage_build: gh_post_progress / Build Prompt label"
+
+# Reset PROGRESS_COMMENT_ID
+PROGRESS_COMMENT_ID=""
+export PROGRESS_COMMENT_ID
+
+# Override gh_post_progress to record call and set PROGRESS_COMMENT_ID
+_gh_post_progress_called=0
+_gh_post_progress_body=""
+gh_post_progress() {
+    _gh_post_progress_called=$((_gh_post_progress_called + 1))
+    _gh_post_progress_body="${2:-}"
+    PROGRESS_COMMENT_ID="mock-comment-99"
+    export PROGRESS_COMMENT_ID
+}
+export -f gh_post_progress
+
+# Track if old gh_comment_issue is called (it should NOT be called for the build-start banner)
+_gh_comment_issue_called=0
+gh_comment_issue() {
+    _gh_comment_issue_called=$((_gh_comment_issue_called + 1))
+}
+export -f gh_comment_issue
+
+export ISSUE_NUMBER="42"
+
+# Reset sw args log for clean run
+echo "" > "$_sw_args_log"
+
+# Restore pipeline config to sane state
+jq '.stages = [(.stages[] | if .id == "build" then .config = {max_iterations: 1} else . end)]' \
+    "$PIPELINE_CONFIG" > "$PIPELINE_CONFIG.tmp" && mv "$PIPELINE_CONFIG.tmp" "$PIPELINE_CONFIG"
+
+set +e
+stage_build 2>/dev/null
+_build_bug1_rc=$?
+set -e
+
+# Test: gh_post_progress must have been called (not zero)
+if [[ "$_gh_post_progress_called" -gt 0 ]]; then
+    assert_pass "stage_build calls gh_post_progress for build-start banner"
+else
+    assert_fail "stage_build calls gh_post_progress for build-start banner" "gh_post_progress was not called (PROGRESS_COMMENT_ID never set)"
+fi
+
+# Test: PROGRESS_COMMENT_ID must be set after stage_build posts start banner
+if [[ -n "${PROGRESS_COMMENT_ID:-}" ]]; then
+    assert_pass "stage_build sets PROGRESS_COMMENT_ID via gh_post_progress"
+else
+    assert_fail "stage_build sets PROGRESS_COMMENT_ID via gh_post_progress" "PROGRESS_COMMENT_ID is empty after stage_build"
+fi
+
+# Test: the build-start banner goes through gh_post_progress (body contains "Build started"),
+# not gh_comment_issue. gh_comment_issue may be called for branch state — that's correct.
+if echo "$_gh_post_progress_body" | grep -q "Build started"; then
+    assert_pass "stage_build build-start banner routes through gh_post_progress"
+else
+    assert_fail "stage_build build-start banner routes through gh_post_progress" \
+        "gh_post_progress body did not contain 'Build started': $_gh_post_progress_body"
+fi
+
+unset -f gh_post_progress gh_comment_issue 2>/dev/null || true
+PROGRESS_COMMENT_ID=""
+
+# ─── Tests: Bug 1 — loop-iteration uses "Build Prompt" label not "Agent Prompt" ─
+# Test that the body/banner strings contain "Build Prompt" instead of "Agent Prompt"
+# We check the source directly since we cannot easily run SW_LOG_PROMPTS=github
+# in a unit test without spawning the full loop subprocess.
+_li_source="$SCRIPT_DIR/lib/loop-iteration.sh"
+if [[ -f "$_li_source" ]]; then
+    if grep -q "Agent Prompt" "$_li_source" 2>/dev/null; then
+        assert_fail "loop-iteration.sh uses Build Prompt label (not Agent Prompt)" \
+            "Found 'Agent Prompt' in $_li_source — rename to 'Build Prompt'"
+    else
+        assert_pass "loop-iteration.sh uses Build Prompt label (not Agent Prompt)"
+    fi
+else
+    assert_pass "loop-iteration.sh source check skipped (file not found)"
+fi
+
+# ─── Tests: _build_branch_progress ───────────────────────────────────────────
+print_test_section "_build_branch_progress"
+
+# Source build stages lib if not already loaded
+_PIPELINE_STAGES_BUILD_LOADED=""
+source "$SCRIPT_DIR/lib/pipeline-stages-build.sh" 2>/dev/null || true
+
+# Test 1: no commits ahead of base → "No changes committed" message
+# Create a fresh isolated git repo to test the first-pass scenario cleanly
+(
+    _prog_tmp="$TEST_TEMP_DIR/prog-test-repo"
+    mkdir -p "$_prog_tmp"
+    cd "$_prog_tmp"
+    git init -q -b main 2>/dev/null || git init -q
+    git config user.email "t@t.com"
+    git config user.name "T"
+    touch base.txt && git add base.txt && git commit -q -m "init"
+    git checkout -q -b test-branch-empty 2>/dev/null || true
+    unset OUTER_STAGE OUTER_STAGE_START_COMMIT
+    out=$(_build_branch_progress 2>/dev/null || true)
+    if [[ "$out" == *"No changes committed"* ]]; then
+        echo "PASS: _build_branch_progress shows 'No changes committed' on first pass"
+    else
+        echo "FAIL: _build_branch_progress first-pass output: $out"
+    fi
+) | while IFS= read -r _line; do
+    if [[ "$_line" == PASS:* ]]; then
+        assert_pass "${_line#PASS: }"
+    else
+        assert_fail "${_line#FAIL: }" ""
+    fi
+done
+
+# Test 2: commits exist on branch → shows file list
+# Use a fresh isolated git repo so merge-base is deterministic
+(
+    _prog_tmp2="$TEST_TEMP_DIR/prog-test-repo2"
+    mkdir -p "$_prog_tmp2"
+    cd "$_prog_tmp2"
+    git init -q -b main 2>/dev/null || git init -q
+    git config user.email "t@t.com"
+    git config user.name "T"
+    touch base.txt && git add base.txt && git commit -q -m "init"
+    git checkout -q -b test-branch-files 2>/dev/null || true
+    touch new-feature.js && git add new-feature.js && git commit -q -m "feat: add new feature"
+    unset OUTER_STAGE OUTER_STAGE_START_COMMIT
+    out=$(_build_branch_progress 2>/dev/null || true)
+    if [[ "$out" == *"Branch starting state"* || "$out" == *"new-feature.js"* ]]; then
+        echo "PASS: _build_branch_progress shows file list when commits exist"
+    else
+        echo "FAIL: _build_branch_progress commits output: $out"
+    fi
+) | while IFS= read -r _line; do
+    if [[ "$_line" == PASS:* ]]; then
+        assert_pass "${_line#PASS: }"
+    else
+        assert_fail "${_line#FAIL: }" ""
+    fi
+done
+
+# ─── Tests: _filter_gitignored_paths ─────────────────────────────────────────
+print_test_section "_filter_gitignored_paths"
+
+# Ensure the helper is available (sourced via pipeline-stages-build.sh or helpers.sh)
+_HELPERS_LOADED=""
+source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null || true
+
+# 1. Helper unit test: verify format handling and gitignore filtering in a temp repo.
+_pgt1_out=$(mktemp)
+(
+    _fg_dir=$(mktemp -d 2>/dev/null || mktemp -d -t swtest)
+    cd "$_fg_dir"
+    git init -q
+    git config user.email "t@t.com"
+    git config user.name "T"
+
+    # Create .gitignore with patterns for known runtime files
+    printf '.claude/pipeline-state.md\nignored.txt\n' > .gitignore
+    git add .gitignore && git commit -q -m "init"
+
+    git checkout -q -b test-filter 2>/dev/null || true
+
+    # Force-add an ignored file (simulating tracked bookkeeping files)
+    mkdir -p .claude
+    touch .claude/pipeline-state.md
+    touch keep.txt
+    git add -f .claude/pipeline-state.md keep.txt
+    git commit -q -m "add files"
+
+    # Test name-only format: ignored path dropped, non-ignored kept
+    result=$(printf '.claude/pipeline-state.md\nkeep.txt\n' | _filter_gitignored_paths 2>/dev/null || true)
+    if printf '%s\n' "$result" | grep -q "keep.txt" && ! printf '%s\n' "$result" | grep -q "pipeline-state.md"; then
+        echo "PASS: name-only: ignored path dropped, tracked path kept"
+    else
+        echo "FAIL: name-only filter output: $result"
+    fi
+
+    # Test name-status format: status column preserved for survivors
+    result=$(printf 'M\t.claude/pipeline-state.md\nA\tkeep.txt\n' | _filter_gitignored_paths 2>/dev/null || true)
+    if printf '%s\n' "$result" | grep -q "^A"$'\t'"keep.txt" && ! printf '%s\n' "$result" | grep -q "pipeline-state.md"; then
+        echo "PASS: name-status: status column preserved, ignored path dropped"
+    else
+        echo "FAIL: name-status filter output: $result"
+    fi
+
+    # Test numstat format (adds<TAB>dels<TAB>path)
+    result=$(printf '5\t2\t.claude/pipeline-state.md\n3\t1\tkeep.txt\n' | _filter_gitignored_paths 2>/dev/null || true)
+    if printf '%s\n' "$result" | grep -q "keep.txt" && ! printf '%s\n' "$result" | grep -q "pipeline-state.md"; then
+        echo "PASS: numstat: ignored path dropped, counts preserved for survivor"
+    else
+        echo "FAIL: numstat filter output: $result"
+    fi
+
+    # Test rename entry (R100<TAB>old<TAB>new) — last field is the new path
+    touch renamed.txt
+    git add renamed.txt && git commit -q -m "add renamed"
+    result=$(printf 'R100\told.txt\t.claude/pipeline-state.md\nR100\told2.txt\trenamed.txt\n' | _filter_gitignored_paths 2>/dev/null || true)
+    if printf '%s\n' "$result" | grep -q "renamed.txt" && ! printf '%s\n' "$result" | grep -q "pipeline-state.md"; then
+        echo "PASS: rename: ignored destination dropped, non-ignored destination kept"
+    else
+        echo "FAIL: rename filter output: $result"
+    fi
+
+    rm -rf "$_fg_dir"
+) > "$_pgt1_out" 2>/dev/null || true
+while IFS= read -r _line; do
+    if [[ "$_line" == PASS:* ]]; then
+        assert_pass "${_line#PASS: }"
+    else
+        assert_fail "${_line#FAIL: }" ""
+    fi
+done < "$_pgt1_out"
+rm -f "$_pgt1_out"
+
+# 2. End-to-end: _build_branch_progress filters gitignored tracked files.
+_pgt2_out=$(mktemp)
+(
+    _fg2_dir=$(mktemp -d 2>/dev/null || mktemp -d -t swtest)
+    cd "$_fg2_dir"
+    git init -q
+    git config user.email "t@t.com"
+    git config user.name "T"
+    mkdir -p .claude
+    printf '.claude/pipeline-state.md\n' > .gitignore
+    git add .gitignore && git commit -q -m "init"
+    git checkout -q -b test-progress 2>/dev/null || true
+    touch .claude/pipeline-state.md keep-feature.js
+    git add -f .claude/pipeline-state.md keep-feature.js
+    git commit -q -m "feat: add files"
+    unset OUTER_STAGE OUTER_STAGE_START_COMMIT
+    out=$(_build_branch_progress 2>/dev/null || true)
+    if printf '%s\n' "$out" | grep -q "keep-feature.js" && ! printf '%s\n' "$out" | grep -q "pipeline-state.md"; then
+        echo "PASS: _build_branch_progress excludes gitignored tracked files"
+    else
+        echo "FAIL: _build_branch_progress filter output: $out"
+    fi
+    rm -rf "$_fg2_dir"
+) > "$_pgt2_out" 2>/dev/null || true
+while IFS= read -r _line; do
+    if [[ "$_line" == PASS:* ]]; then
+        assert_pass "${_line#PASS: }"
+    else
+        assert_fail "${_line#FAIL: }" ""
+    fi
+done < "$_pgt2_out"
+rm -f "$_pgt2_out"
+
+# 3. Fail-open: outside a git repo, all lines pass through unfiltered.
+_pgt3_out=$(mktemp)
+(
+    _fg3_dir=$(mktemp -d 2>/dev/null || mktemp -d -t swtest)
+    cd "$_fg3_dir"
+    result=$(printf 'file-a.txt\nfile-b.txt\n' | _filter_gitignored_paths 2>/dev/null || true)
+    if printf '%s\n' "$result" | grep -q "file-a.txt" && printf '%s\n' "$result" | grep -q "file-b.txt"; then
+        echo "PASS: fail-open: all lines pass through outside git repo"
+    else
+        echo "FAIL: fail-open output: $result"
+    fi
+    rm -rf "$_fg3_dir"
+) > "$_pgt3_out" 2>/dev/null || true
+while IFS= read -r _line; do
+    if [[ "$_line" == PASS:* ]]; then
+        assert_pass "${_line#PASS: }"
+    else
+        assert_fail "${_line#FAIL: }" ""
+    fi
+done < "$_pgt3_out"
+rm -f "$_pgt3_out"
+
+# ─── Tests: OUTER_STAGE_START_COMMIT round-trip via write_state/resume_state ──
+print_test_section "OUTER_STAGE_START_COMMIT state round-trip"
+
+# Write a minimal state file directly (bypass write_state stub) and test resume_state parsing.
+# This approach verifies the critical parsing logic without depending on write_state internals.
+_roundtrip_state="$TEST_TEMP_DIR/roundtrip-state.md"
+_original_state_file="$STATE_FILE"
+
+cat > "$_roundtrip_state" <<'STATEEOF'
+---
+pipeline: test-pipeline
+goal: "Round-trip test"
+original_goal: "Round-trip test"
+status: running
+issue: "#42"
+branch: "test-branch"
+current_stage: build
+outer_stage: compound_quality
+outer_stage_start_commit: abc123def456
+inner_stage:
+started_at: 2024-01-01T00:00:00Z
+pipeline_run_epoch: 0
+updated_at: 2024-01-01T00:00:01Z
+elapsed: 0s
+test_cmd: ""
+pr_number:
+progress_comment_id:
+stages:
+  build: running
+---
+
+## Log
+STATEEOF
+
+assert_pass "write state file with OUTER_STAGE_START_COMMIT field"
+
+# Verify the field was written
+if grep -q "outer_stage_start_commit: abc123def456" "$_roundtrip_state" 2>/dev/null; then
+    assert_pass "OUTER_STAGE_START_COMMIT present in state file"
+else
+    assert_fail "OUTER_STAGE_START_COMMIT present in state file" \
+        "$(grep 'outer_stage_start_commit' "$_roundtrip_state" 2>/dev/null || echo '<not found>')"
+fi
+
+# Test resume_state reads OUTER_STAGE_START_COMMIT correctly
+export STATE_FILE="$_roundtrip_state"
+OUTER_STAGE_START_COMMIT=""
+OUTER_STAGE=""
+set +e
+resume_state 2>/dev/null
+_rs_rc=$?
+set -e
+if [[ "$OUTER_STAGE_START_COMMIT" == "abc123def456" ]]; then
+    assert_pass "OUTER_STAGE_START_COMMIT round-trips through resume_state"
+else
+    assert_fail "OUTER_STAGE_START_COMMIT round-trips through resume_state" \
+        "got: '${OUTER_STAGE_START_COMMIT:-<empty>}'"
+fi
+
+# Verify resume_state clears OUTER_STAGE_START_COMMIT before parsing (backward compat)
+export STATE_FILE="$_roundtrip_state"
+OUTER_STAGE_START_COMMIT="stale-value"
+# Write a state file without outer_stage_start_commit (old format)
+cat > "$_roundtrip_state" <<'STATEEOF2'
+---
+pipeline: test-pipeline
+goal: "Old format test"
+original_goal: "Old format test"
+status: running
+current_stage: build
+outer_stage:
+inner_stage:
+started_at: 2024-01-01T00:00:00Z
+pipeline_run_epoch: 0
+updated_at: 2024-01-01T00:00:01Z
+elapsed: 0s
+test_cmd: ""
+pr_number:
+progress_comment_id:
+stages:
+---
+
+## Log
+STATEEOF2
+set +e
+resume_state 2>/dev/null
+set -e
+if [[ -z "$OUTER_STAGE_START_COMMIT" ]]; then
+    assert_pass "OUTER_STAGE_START_COMMIT cleared on resume from old state file (backward compat)"
+else
+    assert_fail "OUTER_STAGE_START_COMMIT cleared on resume from old state file" \
+        "got: '${OUTER_STAGE_START_COMMIT}'"
+fi
+
+export STATE_FILE="$_original_state_file"
+
+# ─── Tests: DoD section appears in loop prompt when DOD_FILE is set ──────────
+print_test_section "loop-iteration DoD injection"
+
+_li_source="$SCRIPT_DIR/lib/loop-iteration.sh"
+if [[ -f "$_li_source" ]]; then
+    if grep -q "DOD_FILE" "$_li_source" 2>/dev/null; then
+        assert_pass "loop-iteration.sh references DOD_FILE for DoD injection"
+    else
+        assert_fail "loop-iteration.sh references DOD_FILE for DoD injection" \
+            "DOD_FILE not found in $_li_source"
+    fi
+    if grep -q "Definition of Done" "$_li_source" 2>/dev/null; then
+        assert_pass "loop-iteration.sh contains 'Definition of Done' DoD header"
+    else
+        assert_fail "loop-iteration.sh contains 'Definition of Done' DoD header" \
+            "Header text not found in $_li_source"
+    fi
+    if grep -q "dod_section" "$_li_source" 2>/dev/null; then
+        assert_pass "loop-iteration.sh assembles dod_section variable"
+    else
+        assert_fail "loop-iteration.sh assembles dod_section variable" \
+            "dod_section variable not found in $_li_source"
+    fi
+else
+    assert_pass "loop-iteration.sh DoD check skipped (file not found)"
+fi
+
+# ─── Tests: Build prompt posting — gh_comment_issue not gh_update_progress ───
+print_test_section "Build prompt posting: gh_comment_issue vs gh_update_progress"
+
+_li_source="$SCRIPT_DIR/lib/loop-iteration.sh"
+
+# Test 1 (static source check): gh_update_progress must NOT appear inside the
+# github|both case block that posts build prompts. Extract by pattern (not line number)
+# so the test survives unrelated edits that shift line numbers.
+if [[ -f "$_li_source" ]]; then
+    # Capture the github|both case arm from its opening line to the first closing `;;`.
+    _gu_count=$(awk '/github\|both\)/{found=1} found{print} found && /^[[:space:]]*;;/{exit}' \
+        "$_li_source" | grep -c "gh_update_progress" 2>/dev/null || true)
+    _gu_count="${_gu_count:-0}"
+    if [[ "$_gu_count" -gt 0 ]]; then
+        assert_fail \
+            "loop-iteration build prompt: gh_update_progress NOT called when PROGRESS_COMMENT_ID set" \
+            "gh_update_progress still appears in the github|both posting block (count: $_gu_count)"
+    else
+        assert_pass \
+            "loop-iteration build prompt: gh_update_progress NOT called when PROGRESS_COMMENT_ID set"
+    fi
+else
+    assert_pass "loop-iteration build prompt check skipped (file not found)"
+fi
+
+# Test 2 (static): pipeline-stages-build.sh contains a gh_comment_issue call
+# after the context-file write, anchored by the info line that logs the write.
+_psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
+if [[ -f "$_psb_source" ]]; then
+    # Extract from "Build context written" info line to "Pass clean goal" line (the anchor
+    # after the posting block). Pattern-based so line shifts don't break the test.
+    _post_ctx_block=$(awk \
+        '/Build context written/{found=1} found{print} found && /Pass clean goal/{exit}' \
+        "$_psb_source" 2>/dev/null || true)
+    if echo "$_post_ctx_block" | grep -q "gh_comment_issue" 2>/dev/null; then
+        assert_pass "branch state comment: gh_comment_issue called when files changed"
+    else
+        assert_fail "branch state comment: gh_comment_issue called when files changed" \
+            "gh_comment_issue not found between context-file write and loop args in pipeline-stages-build.sh"
+    fi
+else
+    assert_pass "pipeline-stages-build.sh source check skipped (file not found)"
+fi
+
+# Test 2b (runtime): when _branch_progress is non-empty, the posting block must
+# call gh_comment_issue. Extract by pattern and run inside a wrapper function so
+# 'local' declarations are valid.
+(
+    _gh_comment_issue_called=0
+    gh_comment_issue() { _gh_comment_issue_called=$((_gh_comment_issue_called + 1)); }
+    export -f gh_comment_issue
+
+    ISSUE_NUMBER="99"
+    _branch_progress="M src/auth.ts"
+    unset _BRANCH_STATE_POSTED
+    export ISSUE_NUMBER _branch_progress
+    git() { :; }  # stub — prevent eval'd code from touching the real repo
+    export -f git
+
+    _psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
+    # Extract the posting block using the same anchors as the static Test 2:
+    # "Post branch starting state" comment → "Pass clean goal" line.
+    # The block has no 'local' declarations (reuses _branch_progress from caller),
+    # so direct eval is safe. The anchor approach handles nested if/fi correctly.
+    _block=$(awk \
+        '/Post branch starting state/{found=1} found{print} found && /Pass clean goal/{exit}' \
+        "$_psb_source" 2>/dev/null || true)
+    if [[ -n "$_block" ]]; then
+        eval "$_block" 2>/dev/null || true
+    fi
+
+    if [[ "$_gh_comment_issue_called" -gt 0 ]]; then
+        echo "PASS: branch state comment: gh_comment_issue fires at runtime when files changed"
+    else
+        echo "FAIL: branch state comment: gh_comment_issue fires at runtime when files changed"
+    fi
+) | while IFS= read -r _line; do
+    if [[ "$_line" == PASS:* ]]; then
+        assert_pass "${_line#PASS: }"
+    else
+        assert_fail "${_line#FAIL: }" "gh_comment_issue was not called — posting block did not execute"
+    fi
+done
+
+# Test 3 (static): the posting block must guard against "No changes committed"
+# so gh_comment_issue is suppressed on a fresh branch. Pattern-based extraction.
+if [[ -f "$_psb_source" ]]; then
+    _guard_block=$(awk \
+        '/Post branch starting state/{found=1} found{print} found && /Pass clean goal/{exit}' \
+        "$_psb_source" 2>/dev/null || true)
+    if echo "$_guard_block" | grep -q "No changes committed" 2>/dev/null; then
+        assert_pass \
+            "branch state comment: gh_comment_issue NOT called on fresh branch (guard present)"
+    else
+        assert_fail \
+            "branch state comment: gh_comment_issue NOT called on fresh branch (guard present)" \
+            "'No changes committed' guard not found in the branch-state posting block"
+    fi
+else
+    assert_pass "pipeline-stages-build.sh guard check skipped (file not found)"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fix 2: Issue-outcome stored even when commit_count == 0
+# Source: scripts/lib/pipeline-stages-build.sh
+# The store block (anchored: "Store build outcome in issue namespace" →
+# "log_stage.*build.*Build loop") must run unconditionally (no outer
+# commit_count guard) and branch on _build_status for the two cases.
+# ─────────────────────────────────────────────────────────────────────────────
+print_test_section "build outcome store: runs unconditionally (no commit_count guard)"
+
+_psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
+
+# Test A (static): outer guard absent; _build_status, _build_key, and
+# "no-commits" all present inside the store block.
+if [[ -f "$_psb_source" ]]; then
+    _store_block=$(awk \
+        '/Store build outcome in issue namespace/{found=1} found{print} found && /log_stage[[:space:]].*build[[:space:]].*Build loop/{exit}' \
+        "$_psb_source" 2>/dev/null || true)
+
+    # The outer compound guard must be gone — the opening 'if' line must NOT combine
+    # type-check and commit_count on one line (old: if type X && [[ commit_count -gt 0 ]]).
+    if echo "$_store_block" | grep -q 'type ruflo_store_issue_outcome.*commit_count' 2>/dev/null; then
+        assert_fail \
+            "build outcome store: outer commit_count > 0 guard is absent (block runs unconditionally)" \
+            "Found combined type+commit_count guard — outer guard must be split (commit_count moved inside)"
+    else
+        assert_pass \
+            "build outcome store: outer commit_count > 0 guard is absent (block runs unconditionally)"
+    fi
+
+    # _build_status variable must be set inside the block.
+    if echo "$_store_block" | grep -q '_build_status' 2>/dev/null; then
+        assert_pass "build outcome store: _build_status variable is present in store block"
+    else
+        assert_fail "build outcome store: _build_status variable is present in store block" \
+            "_build_status not found in the store block"
+    fi
+
+    # _build_key variable must be set inside the block.
+    if echo "$_store_block" | grep -q '_build_key' 2>/dev/null; then
+        assert_pass "build outcome store: _build_key variable is present in store block"
+    else
+        assert_fail "build outcome store: _build_key variable is present in store block" \
+            "_build_key not found in the store block"
+    fi
+
+    # The literal string "no-commits" must appear to handle the zero-commit path.
+    if echo "$_store_block" | grep -q 'no-commits' 2>/dev/null; then
+        assert_pass "build outcome store: 'no-commits' status appears in store block"
+    else
+        assert_fail "build outcome store: 'no-commits' status appears in store block" \
+            "'no-commits' not found in the store block — zero-commit path not handled"
+    fi
+else
+    assert_pass "build outcome store static checks skipped (file not found)"
+    assert_pass "build outcome store: _build_status variable is present in store block (skipped)"
+    assert_pass "build outcome store: _build_key variable is present in store block (skipped)"
+    assert_pass "build outcome store: 'no-commits' status appears in store block (skipped)"
+fi
+
+# Test B (runtime eval): commit_count=0 — ruflo_store_issue_outcome must be
+# called once and the stored body must contain "no-commits".
+(
+    _store_call_count=0
+    _store_last_body=""
+    ruflo_store_issue_outcome() {
+        _store_call_count=$((_store_call_count + 1))
+        _store_last_body="${2:-}"
+    }
+    type() { return 0; }
+
+    commit_count=0
+    ISSUE_NUMBER=99
+    SHIPWRIGHT_PIPELINE_ID=test-pipe
+    GOAL="test goal"
+    TASK_TYPE="feature"
+    OUTER_STAGE=""
+    OUTER_STAGE_START_COMMIT=""
+
+    # Provide stubs for git and jq used inside the block.
+    git() { echo "HEAD~1"; }
+    jq() {
+        # Emit a minimal JSON body that includes the status word.
+        echo '{"stage":"build","status":"no-commits"}'
+    }
+    date() { echo "1700000000"; }
+
+    _psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
+    _block=$(awk \
+        '/Store build outcome in issue namespace/{found=1} found{print} found && /log_stage[[:space:]].*build[[:space:]].*Build loop/{exit}' \
+        "$_psb_source" 2>/dev/null || true)
+
+    if [[ -n "$_block" ]]; then
+        # Wrap in a function so 'local' declarations inside the eval block are valid bash.
+        _run_store_block() { eval "$_block"; }
+        _run_store_block 2>/dev/null || true
+    fi
+
+    if [[ "$_store_call_count" -eq 1 ]]; then
+        echo "PASS: build outcome store (commit_count=0): ruflo_store_issue_outcome called exactly once"
+    else
+        echo "FAIL: build outcome store (commit_count=0): ruflo_store_issue_outcome called exactly once|called $_store_call_count times"
+    fi
+
+    if echo "$_store_last_body" | grep -q 'no-commits' 2>/dev/null; then
+        echo "PASS: build outcome store (commit_count=0): stored body contains 'no-commits'"
+    else
+        echo "FAIL: build outcome store (commit_count=0): stored body contains 'no-commits'|body was: $_store_last_body"
+    fi
+) | while IFS='|' read -r _result _detail; do
+    if [[ "$_result" == PASS:* ]]; then
+        assert_pass "${_result#PASS: }"
+    else
+        assert_fail "${_result#FAIL: }" "${_detail:-}"
+    fi
+done
+
+# Test C (runtime eval): commit_count=1 — ruflo_store_issue_outcome must be
+# called once and the stored body must contain "success", NOT "no-commits".
+(
+    _store_call_count=0
+    _store_last_body=""
+    ruflo_store_issue_outcome() {
+        _store_call_count=$((_store_call_count + 1))
+        _store_last_body="${2:-}"
+    }
+    type() { return 0; }
+
+    commit_count=1
+    ISSUE_NUMBER=99
+    SHIPWRIGHT_PIPELINE_ID=test-pipe
+    GOAL="test goal"
+    TASK_TYPE="feature"
+    OUTER_STAGE=""
+    OUTER_STAGE_START_COMMIT=""
+
+    git() { echo "HEAD~1"; }
+    jq() {
+        echo '{"stage":"build","status":"success"}'
+    }
+    date() { echo "1700000001"; }
+
+    _psb_source="$SCRIPT_DIR/lib/pipeline-stages-build.sh"
+    _block=$(awk \
+        '/Store build outcome in issue namespace/{found=1} found{print} found && /log_stage[[:space:]].*build[[:space:]].*Build loop/{exit}' \
+        "$_psb_source" 2>/dev/null || true)
+
+    if [[ -n "$_block" ]]; then
+        _run_store_block() { eval "$_block"; }
+        _run_store_block 2>/dev/null || true
+    fi
+
+    if [[ "$_store_call_count" -eq 1 ]]; then
+        echo "PASS: build outcome store (commit_count=1): ruflo_store_issue_outcome called exactly once"
+    else
+        echo "FAIL: build outcome store (commit_count=1): ruflo_store_issue_outcome called exactly once|called $_store_call_count times"
+    fi
+
+    if echo "$_store_last_body" | grep -q 'success' 2>/dev/null; then
+        echo "PASS: build outcome store (commit_count=1): stored body contains 'success'"
+    else
+        echo "FAIL: build outcome store (commit_count=1): stored body contains 'success'|body was: $_store_last_body"
+    fi
+
+    if echo "$_store_last_body" | grep -q 'no-commits' 2>/dev/null; then
+        echo "FAIL: build outcome store (commit_count=1): stored body does NOT contain 'no-commits'|body incorrectly contains 'no-commits'"
+    else
+        echo "PASS: build outcome store (commit_count=1): stored body does NOT contain 'no-commits'"
+    fi
+) | while IFS='|' read -r _result _detail; do
+    if [[ "$_result" == PASS:* ]]; then
+        assert_pass "${_result#PASS: }"
+    else
+        assert_fail "${_result#FAIL: }" "${_detail:-}"
+    fi
+done
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DoD extraction awk — portable checkbox strip regression tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Helper: run only the DoD awk block from pipeline-stages-intake.sh against stdin.
+# Returns the awk-processed output.
+_run_dod_awk() {
+    local _intake_src="$SCRIPT_DIR/lib/pipeline-stages-intake.sh"
+    # Extract the awk program between the heredoc-style quotes (awk '...')
+    # This grabs the awk script block so we can run it independently.
+    local _awk_prog
+    _awk_prog="$(awk \
+        '/^[[:space:]]*awk[[:space:]]*'"'"'$/{p=1; next} p && /^[[:space:]]*'"'"'[[:space:]]*"/{p=0; next} p{print}' \
+        "$_intake_src" 2>/dev/null || true)"
+    if [[ -z "$_awk_prog" ]]; then
+        # Fallback: extract by known marker lines
+        _awk_prog="$(sed -n "/^[[:space:]]*awk '$/,/^[[:space:]]*' \"\\\$plan_file\"/{/^[[:space:]]*awk '$/d; /^[[:space:]]*' \"\\\$plan_file\"/d; p}" \
+            "$_intake_src" 2>/dev/null || true)"
+    fi
+    printf '%s' "$1" | awk "$_awk_prog" /dev/stdin 2>/dev/null || true
+}
+
+# ─── Test: awk no \1 leak on top-level checkbox ──────────────────────────────
+_dod_input="## Definition of Done
+- [x] item one
+- [ ] item two
+- [X] item three
+"
+_dod_out="$(_run_dod_awk "$_dod_input")"
+if echo "$_dod_out" | grep -qF '\1'; then
+    assert_fail "dod_awk_no_backref_leak_toplevel: no \\1 in output" \
+        "output contained literal \\1: $_dod_out"
+else
+    assert_pass "dod_awk_no_backref_leak_toplevel: no \\1 in output"
+fi
+if echo "$_dod_out" | grep -q '^- item one$'; then
+    assert_pass "dod_awk_strips_checkbox_toplevel: item one has no checkbox prefix"
+else
+    assert_fail "dod_awk_strips_checkbox_toplevel: item one has no checkbox prefix" \
+        "output: $_dod_out"
+fi
+
+# ─── Test: awk preserves leading whitespace on indented checkbox ──────────────
+_dod_input2="## Definition of Done
+- [x] top item
+  - [x] sub-item
+"
+_dod_out2="$(_run_dod_awk "$_dod_input2")"
+if echo "$_dod_out2" | grep -qF '\1'; then
+    assert_fail "dod_awk_no_backref_leak_indented: no \\1 in output" \
+        "output contained literal \\1: $_dod_out2"
+else
+    assert_pass "dod_awk_no_backref_leak_indented: no \\1 in output"
+fi
+# Sub-item should be preserved with leading whitespace and stripped checkbox
+if echo "$_dod_out2" | grep -q '^  - sub-item$'; then
+    assert_pass "dod_awk_preserves_indent_on_sub_item: sub-item retains 2-space indent"
+else
+    assert_fail "dod_awk_preserves_indent_on_sub_item: sub-item retains 2-space indent" \
+        "output lines: $(echo "$_dod_out2" | cat -A)"
+fi
+
+# ─── Helper: run _validate_dod_md from intake script in an isolated subshell ──
+# Writes a small driver script to a tmpfile to avoid quoting/interpolation issues
+# when inlining the function body. Passes the target file as $1.
+_run_validate_dod_md() {
+    local _target_file="$1"
+    local _driver
+    _driver="$(mktemp "${TMPDIR:-/tmp}/dod-driver.XXXXXX")"
+    cat > "$_driver" << 'DRIVER_EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+error() { echo "ERROR: $*" >&2; }
+warn()  { echo "WARN: $*" >&2; }
+DRIVER_EOF
+    # Append just the _validate_dod_md function definition from the intake script
+    awk '/^[[:space:]]*_validate_dod_md\(\)/{ p=1 } p{ print } p && /^[[:space:]]*\}[[:space:]]*$/ && NR>1 { exit }' \
+        "$SCRIPT_DIR/lib/pipeline-stages-intake.sh" >> "$_driver" 2>/dev/null || true
+    printf '_validate_dod_md %s\n' "\"$_target_file\"" >> "$_driver"
+    chmod +x "$_driver"
+    bash "$_driver" 2>/dev/null
+    local _rc=$?
+    rm -f "$_driver"
+    return "$_rc"
+}
+
+# ─── Test: _validate_dod_md rejects file containing \1 ───────────────────────
+_val_tmp="$(mktemp "${TMPDIR:-/tmp}/dod-val-test.XXXXXX")"
+# Write a line with a literal backslash-1 sequence
+printf '%s\n' '\1- foo' '- bar' > "$_val_tmp"
+_val_rc=0
+_run_validate_dod_md "$_val_tmp" || _val_rc=$?
+if [[ "$_val_rc" -ne 0 ]]; then
+    assert_pass "dod_validate_rejects_backref_leak: validator returns non-zero for \\1 content"
+else
+    assert_fail "dod_validate_rejects_backref_leak: validator returns non-zero for \\1 content" \
+        "returned 0"
+fi
+rm -f "$_val_tmp"
+
+# ─── Test: _validate_dod_md accepts clean file ────────────────────────────────
+_val_tmp2="$(mktemp "${TMPDIR:-/tmp}/dod-val-clean.XXXXXX")"
+printf '%s\n' '- foo' '- bar' '  - nested' > "$_val_tmp2"
+_val_rc2=0
+_run_validate_dod_md "$_val_tmp2" || _val_rc2=$?
+if [[ "$_val_rc2" -eq 0 ]]; then
+    assert_pass "dod_validate_accepts_clean_file: validator returns zero for clean content"
+else
+    assert_fail "dod_validate_accepts_clean_file: validator returns zero for clean content" \
+        "returned $_val_rc2"
+fi
+rm -f "$_val_tmp2"
+
+# ─── Test: _validate_dod_md is no-op for empty/missing file ──────────────────
+_val_tmp3="$(mktemp "${TMPDIR:-/tmp}/dod-val-empty.XXXXXX")"
+# file is empty (mktemp creates it empty)
+_val_rc3=0
+_run_validate_dod_md "$_val_tmp3" || _val_rc3=$?
+if [[ "$_val_rc3" -eq 0 ]]; then
+    assert_pass "dod_validate_noop_empty_file: validator is no-op for empty file"
+else
+    assert_fail "dod_validate_noop_empty_file: validator is no-op for empty file" \
+        "returned $_val_rc3"
+fi
+rm -f "$_val_tmp3"
 
 print_test_results

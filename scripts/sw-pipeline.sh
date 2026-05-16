@@ -140,6 +140,9 @@ fi
 # ─── Ruflo Adapter (optional) ───────────────────────────────────────────────
 # shellcheck source=lib/ruflo-adapter.sh
 [[ -f "$SCRIPT_DIR/lib/ruflo-adapter.sh" ]] && source "$SCRIPT_DIR/lib/ruflo-adapter.sh" 2>/dev/null || true
+if [[ "${SHIPWRIGHT_RUFLO_MCP_ONLY:-0}" == "1" ]]; then
+    export SW_RUFLO_BACKEND=mcp
+fi
 
 # Parse coverage percentage from test output — multi-framework patterns
 # Usage: parse_coverage_from_output <log_file>
@@ -470,8 +473,9 @@ TASK_TYPE=""
 REVIEWERS=""
 LABELS=""
 BASE_BRANCH="main"
-NO_GITHUB=false
-NO_GITHUB_LABEL=false
+NO_GITHUB="${NO_GITHUB:-false}"
+NO_ARTIFACT_PUSH="${NO_ARTIFACT_PUSH:-false}"
+NO_GITHUB_LABEL="${NO_GITHUB_LABEL:-false}"
 CI_MODE=false
 DRY_RUN=false
 IGNORE_BUDGET=false
@@ -881,19 +885,16 @@ ci_push_partial_work() {
     [[ "${CI_MODE:-false}" != "true" ]] && return 0
     [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
 
+    local _expected_wip="shipwright/issue-${ISSUE_NUMBER}"
+    local _actual_head
+    _actual_head=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [[ -n "$_actual_head" && "$_actual_head" != "HEAD" && "$_actual_head" != "$_expected_wip" ]]; then
+        echo "[WIP-PUSH-SKIP] HEAD=${_actual_head} != expected ${_expected_wip} — skipping to prevent cross-branch pollution" >&2
+        return 0
+    fi
+
     local branch="shipwright/issue-${ISSUE_NUMBER}"
     echo "[WIP-PUSH-START] $(date -u +%FT%TZ) issue=${ISSUE_NUMBER} timeout=${push_timeout}s caller=${FUNCNAME[1]:-top}" >&2
-
-    # Snapshot events.jsonl into the repo so it survives the ephemeral runner disk
-    # and gets pushed with the WIP commit — enables post-mortem watchdog analysis.
-    # Stage immediately after copy so git diff --cached detects it even when it is
-    # the only change (untracked files are invisible to git diff --quiet).
-    if [[ -f "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" ]]; then
-        mkdir -p ".shipwright" 2>/dev/null || true
-        local _events_snap=".shipwright/events-${ISSUE_NUMBER}-${GITHUB_RUN_ID:-local}.jsonl"
-        cp "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" "$_events_snap" 2>/dev/null || true
-        git add -f "$_events_snap" 2>/dev/null || true
-    fi
 
     # Force-add issue-scoped artifact snapshots — .gitignore ignores the parent
     # pipeline-artifacts/ directory as a unit, which silently defeats the !issue-*/
@@ -906,7 +907,7 @@ ci_push_partial_work() {
     if ! git diff --quiet -- $(_git_bookkeeping_pathspecs) 2>/dev/null || \
        ! git diff --cached --quiet -- $(_git_bookkeeping_pathspecs) 2>/dev/null; then
         safe_git_stage
-        git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER}" --no-verify 2>/dev/null || true
+        git commit -m "WIP: partial pipeline progress for #${ISSUE_NUMBER} [skip ci]" --no-verify 2>/dev/null || true
     fi
 
     # Push branch (create if needed, force to overwrite previous WIP).
@@ -939,19 +940,11 @@ ci_push_partial_work() {
 pipeline_final_artifact_push() {
     local push_timeout="${1:-60}"
     [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
-    [[ "${NO_GITHUB:-false}" == "true" ]] && return 0
+    [[ "${NO_GITHUB:-false}" == "true" || "${NO_ARTIFACT_PUSH:-false}" == "true" ]] && return 0
     [[ "${DRY_RUN:-false}" == "true" ]] && return 0
 
     local branch="shipwright/issue-${ISSUE_NUMBER}"
     echo "[ARTIFACT-PUSH-START] $(date -u +%FT%TZ) issue=${ISSUE_NUMBER} timeout=${push_timeout}s" >&2
-
-    # Snapshot events.jsonl into the repo for post-mortem analysis.
-    if [[ -f "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" ]]; then
-        mkdir -p ".shipwright" 2>/dev/null || true
-        local _events_snap=".shipwright/events-${ISSUE_NUMBER}-${GITHUB_RUN_ID:-local}.jsonl"
-        cp "${EVENTS_FILE:-$HOME/.shipwright/events.jsonl}" "$_events_snap" 2>/dev/null || true
-        git add -f "$_events_snap" 2>/dev/null || true
-    fi
 
     # Force-add issue-scoped artifact snapshots (.gitignore bypassed intentionally).
     local _snap_dir="${ARTIFACTS_DIR:-${STATE_DIR:-}/pipeline-artifacts}/issue-${ISSUE_NUMBER}"
@@ -1052,14 +1045,16 @@ cleanup_on_exit() {
     # Use 60s timeout — stage-failure path needs headroom for first-time remote branch creation.
     if [[ "${CI_MODE:-false}" == "true" \
           && -n "${ISSUE_NUMBER:-}" \
-          && "$exit_code" -ne 0 ]]; then
+          && "$exit_code" -ne 0 \
+          && "${_PIPELINE_RUN_STARTED:-false}" == "true" ]]; then
         ci_push_partial_work 60
     fi
 
     # Push final artifacts on all exits (success + failure, local + CI).
     # Captures post-PR stage outputs (deploy/validate/monitor) that ci_push_partial_work
     # misses (it only runs on CI failure).
-    if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+    if [[ -n "${ISSUE_NUMBER:-}" \
+          && "${_PIPELINE_RUN_STARTED:-false}" == "true" ]]; then
         pipeline_final_artifact_push 60 || true
     fi
 
@@ -1084,6 +1079,12 @@ cleanup_on_exit() {
                 cost_baseline_update "$_bd_file" "${ISSUE_NUMBER:-}" >/dev/null 2>&1 || true
             fi
         fi
+    fi
+
+    # Push discoveries to shared orphan branch for cross-machine access
+    if declare -f sw_discovery_ci_push >/dev/null 2>&1 \
+       && [[ "${_PIPELINE_RUN_STARTED:-false}" == "true" ]]; then
+        sw_discovery_ci_push || true
     fi
 
     # Cleanup ruflo MCP server
@@ -2097,6 +2098,8 @@ auto_rebase() {
 }
 
 run_pipeline() {
+    _PIPELINE_RUN_STARTED=true
+
     # Rotate event log if needed (standalone mode)
     rotate_event_log_if_needed
 
@@ -3153,6 +3156,10 @@ pipeline_start() {
         existing_status="$(sed -n 's/^status: *//p' "$STATE_FILE" | head -1)"
         if [[ "$existing_status" == "failed" || "$existing_status" == "interrupted" || "$existing_status" == "running" ]]; then
             resume_state
+            if [[ -n "${OUTER_STAGE:-}" ]]; then
+                CURRENT_STAGE="$OUTER_STAGE"
+                clear_outer_stage   # writes state; no transient memory/file divergence
+            fi
         else
             initialize_state
         fi
@@ -3173,16 +3180,16 @@ pipeline_start() {
 
         # Restore branch context
         if [[ -z "$GIT_BRANCH" ]]; then
-            local ci_branch="ci/issue-${ISSUE_NUMBER}"
-            info "CI resume: creating branch ${ci_branch} from current HEAD"
-            if ! git checkout -b "$ci_branch" 2>/dev/null && ! git checkout "$ci_branch" 2>/dev/null; then
-                warn "CI resume: failed to create or checkout branch ${ci_branch}"
+            local _fallback="${WORKSPACE_BRANCH:-ci/issue-${ISSUE_NUMBER}}"
+            info "CI resume: restoring branch ${_fallback}"
+            if ! git checkout "$_fallback" 2>/dev/null && ! git checkout -b "$_fallback" 2>/dev/null; then
+                warn "CI resume: failed to checkout branch ${_fallback}"
             fi
-            GIT_BRANCH="$ci_branch"
+            GIT_BRANCH="$_fallback"
         elif [[ "$(git branch --show-current 2>/dev/null)" != "$GIT_BRANCH" ]]; then
             info "CI resume: checking out branch ${GIT_BRANCH}"
-            if ! git checkout -b "$GIT_BRANCH" 2>/dev/null && ! git checkout "$GIT_BRANCH" 2>/dev/null; then
-                warn "CI resume: failed to create or checkout branch ${GIT_BRANCH}"
+            if ! git checkout "$GIT_BRANCH" 2>/dev/null && ! git checkout -b "$GIT_BRANCH" 2>/dev/null; then
+                warn "CI resume: failed to checkout branch ${GIT_BRANCH}"
             fi
         fi
         # Capture clean goal before write_state — prevents lazy bootstrap contamination

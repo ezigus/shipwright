@@ -393,12 +393,20 @@ jobs:
             > .git/hooks/commit-msg
           chmod +x .git/hooks/commit-msg
 
+      - name: Record CI job start epoch
+        run: |
+          # Per-CI-job budget anchor for check_time_budget() in loop-convergence.sh.
+          # Ephemeral — never written to .claude/pipeline-state.md. Replaces the
+          # PIPELINE_RUN_EPOCH export from commit 591c8e8, which inadvertently used
+          # a persisted field that survived across CI jobs via the WIP branch.
+          echo "CI_JOB_START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Restore persistent state
         run: |
           mkdir -p ~/.shipwright/memory
           if git fetch origin shipwright-data 2>/dev/null; then
             echo "Restoring state from shipwright-data branch..."
-            for file in events.jsonl costs.json budget.json; do
+            for file in events.jsonl costs.json budget.json discoveries.jsonl; do
               git show "origin/shipwright-data:${file}" > ~/.shipwright/"${file}" 2>/dev/null || true
             done
             for file in $(git ls-tree -r --name-only origin/shipwright-data -- memory/ 2>/dev/null); do
@@ -485,7 +493,7 @@ jobs:
       - name: Install Shipwright (pinned to main snapshot)
         if: steps.claim_check.outputs.skip != 'true' && env.AUTH_SKIP != 'true'
         run: |
-          git fetch --no-tags --depth=1 origin main || git fetch --no-tags origin main
+          git fetch --no-tags origin main
 
           # Materialize origin/main into a separate worktree so the global
           # `shipwright` CLI is immune to later workspace checkouts (e.g. to a
@@ -643,6 +651,25 @@ jobs:
               echo "  ✗ ${f}: not found"
             fi
           done
+          # Restore state files that live outside pipeline-artifacts/
+          # Policy matches the canonical-artifacts loop above: restore when missing/empty,
+          # count present files as recovered, skip silently when snapshot is also absent.
+          for pair in \
+            "pipeline-state.md:.claude/pipeline-state.md" \
+            "pipeline-status.json:.claude/pipeline-status.json" \
+            "failure-note.md:.claude/pipeline-artifacts/failure-note.md"; do
+            src="$SNAP_DIR/${pair%%:*}"
+            dst="${pair##*:}"
+            mkdir -p "$(dirname "$dst")"
+            if [[ ! -s "$dst" && -s "$src" ]]; then
+              cp "$src" "$dst"
+              echo "  ↩ ${pair%%:*}: restored from issue-${ISSUE_NUMBER} snapshot"
+              RECOVERED=$((RECOVERED + 1))
+            elif [[ -f "$dst" && -s "$dst" ]]; then
+              echo "  ✓ ${pair%%:*}: present"
+              RECOVERED=$((RECOVERED + 1))
+            fi
+          done
           echo "Recovered ${RECOVERED} artifact file(s) from partial work branch"
 
       - name: Validate setup
@@ -748,14 +775,18 @@ jobs:
           # Heartbeat: post progress marker every 10 minutes so watchdog knows we're alive.
           # Visible body first so subscribers see content; HTML comment retained for
           # watchdog parsing (shipwright-watchdog.yml uses `contains("SHIPWRIGHT-HEARTBEAT")`).
-          (sleep_pid=""; trap 'if [[ -n "${sleep_pid:-}" ]]; then kill "$sleep_pid" 2>/dev/null || true; fi; exit 0' TERM; while true; do
+          (_HB_COUNT=0; sleep_pid=""; trap 'if [[ -n "${sleep_pid:-}" ]]; then kill "$sleep_pid" 2>/dev/null || true; fi; exit 0' TERM; while true; do
             sleep 600 &
             sleep_pid=$!
             wait "$sleep_pid"
             sleep_pid=""
+            _HB_COUNT=$((_HB_COUNT + 1))
+            _HB_MINS=$((_HB_COUNT * 10))
+            _HB_HH=$((_HB_MINS / 60))
+            _HB_MM=$((_HB_MINS % 60))
+            _HB_DISPLAY=$(printf "%02d:%02d" "$_HB_HH" "$_HB_MM")
             _HB_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-            _HB_DISPLAY=$(date -u '+%H:%M UTC')
-            _HB_BODY="⏳ Pipeline still running — last heartbeat ${_HB_DISPLAY}"$'\n'"<!-- SHIPWRIGHT-HEARTBEAT: ${_HB_TS}:running -->"
+            _HB_BODY="⏳ Pipeline still running — ${_HB_DISPLAY} elapsed"$'\n'"<!-- SHIPWRIGHT-HEARTBEAT: ${_HB_TS}:running -->"
             gh issue comment "$ISSUE_NUMBER" --body "$_HB_BODY" 2>/dev/null || true
           done) &
           HEARTBEAT_PID=$!
@@ -941,57 +972,194 @@ jobs:
           )"
           fi
 
+      - name: Push WIP branch code commits (always)
+        if: always() && steps.claim_check.outputs.skip != 'true'
+        run: |
+          BRANCH="${WORKSPACE_BRANCH:-shipwright/issue-${ISSUE_NUMBER}}"
+
+          # Guard: only push when HEAD is on the WIP branch.
+          # If "Prepare workspace branch" was skipped or cancelled before completing,
+          # HEAD will be on main/default — no WIP code commits exist here.
+          CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+          if [[ "$CURRENT_BRANCH" != "$BRANCH" ]]; then
+            echo "HEAD is on '${CURRENT_BRANCH}', not '${BRANCH}' — no WIP code commits to push (snapshot step will attempt checkout-then-skip)"
+            exit 0
+          fi
+
+          # Fetch so we can compute what is unpushed
+          git fetch --no-tags origin "$BRANCH" 2>/dev/null || true
+
+          UNPUSHED=$(git log --oneline "origin/${BRANCH}..HEAD" 2>/dev/null || true)
+          if [[ -z "$UNPUSHED" ]]; then
+            echo "No new commits on ${BRANCH} ahead of origin — nothing to push here"
+            exit 0
+          fi
+
+          echo "=== Unpushed WIP commits ==="
+          echo "$UNPUSHED"
+          echo "=== Files changed in unpushed commits ==="
+          git diff --name-status "origin/${BRANCH}..HEAD" 2>/dev/null | head -40 || true
+          echo "==========================="
+
+          # Auth: use GITHUBTOKEN (PAT with workflow scope) when available.
+          # Clear the extraheader set by actions/checkout before embedding credentials.
+          if [[ -n "${GITHUBTOKEN:-}" ]]; then
+            git config --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
+            git remote set-url origin "https://x-access-token:${GITHUBTOKEN}@github.com/${{ github.repository }}.git"
+          fi
+
+          # Push with --force-with-lease only. If a concurrent run already pushed
+          # something, lease failure is expected — log it and let the snapshot step
+          # serve as the safety-net fallback. No --force here to avoid clobbering.
+          if timeout 60 git push origin "HEAD:refs/heads/${BRANCH}" --force-with-lease 2>&1; then
+            echo "✓ WIP code commits pushed to ${BRANCH}"
+            WIP_PUSH_STATUS="success"
+          else
+            echo "::warning::WIP code push failed with --force-with-lease — snapshot step push will attempt as fallback (also skips on HEAD drift)"
+            WIP_PUSH_STATUS="failed"
+          fi
+
+          # Scrub PAT from remote URL
+          git remote set-url origin "https://github.com/${{ github.repository }}.git" 2>/dev/null || true
+
+          # Post or update a single deduped issue comment showing what was pushed.
+          # Uses PATCH on existing SHIPWRIGHT-WIP-PUSH comment to avoid flooding.
+          if [[ "$WIP_PUSH_STATUS" == "success" ]] && [[ -n "${ISSUE_NUMBER:-}" ]]; then
+            _head_sha=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+            _head_msg=$(git log -1 --format='%s' HEAD 2>/dev/null || echo "")
+            _changed=$(git diff --name-status "origin/${BRANCH}..HEAD" 2>/dev/null \
+              | grep -v '^[[:space:]]*$' | head -25 || true)
+
+            _comment_body="$(cat <<EOF
+          🔀 **WIP branch updated** — \`${BRANCH}\` @ \`${_head_sha}\`
+
+          **Latest commit:** ${_head_msg}
+
+          **Files pushed:**
+          \`\`\`
+          ${_changed:-no source file changes (artifact-only)}
+          \`\`\`
+
+          <!-- SHIPWRIGHT-WIP-PUSH run_id=${{ github.run_id }} branch=${BRANCH} -->
+          EOF
+          )"
+
+            _existing_id=$(gh api \
+              "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" \
+              --paginate \
+              --jq '.[] | select(.body | contains("SHIPWRIGHT-WIP-PUSH")) | .id' \
+              2>/dev/null | tail -1 || true)
+
+            if [[ -n "$_existing_id" ]]; then
+              gh api -X PATCH \
+                "repos/${{ github.repository }}/issues/comments/${_existing_id}" \
+                -f body="$_comment_body" 2>/dev/null \
+                && echo "Updated WIP-push comment ${_existing_id}" \
+                || echo "::warning::Could not update WIP-push comment (non-fatal)"
+            else
+              gh issue comment "$ISSUE_NUMBER" --body "$_comment_body" 2>/dev/null \
+                || echo "::warning::Could not post WIP-push comment (non-fatal)"
+            fi
+          fi
+
       - name: Snapshot resume-essentials to WIP branch (always)
         if: always() && steps.claim_check.outputs.skip != 'true'
         run: |
           BRANCH="${WORKSPACE_BRANCH:-shipwright/issue-${ISSUE_NUMBER}}"
           OUTCOME="${{ job.status }}"
 
-          # If HEAD is not on the WIP branch, move it using plumbing instead of
-          # checkout — checkout silently fails when tracked files differ between
-          # the GHA checkout branch and the WIP branch, leaving HEAD on the wrong
-          # branch and polluting the WIP branch's history on force-push.
-          if [[ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" != "$BRANCH" ]]; then
-            git fetch --no-tags origin "$BRANCH" 2>/dev/null || true
-            if git rev-parse --verify "refs/remotes/origin/$BRANCH" >/dev/null 2>&1; then
-              BASE_REF="refs/remotes/origin/$BRANCH"
-            else
-              BASE_REF="refs/remotes/origin/main"
-            fi
-            git update-ref "refs/heads/$BRANCH" "$BASE_REF" \
-              || { echo "::error::Snapshot guard: update-ref failed for $BRANCH — aborting"; exit 1; }
-            git symbolic-ref HEAD "refs/heads/$BRANCH" \
-              || { echo "::error::Snapshot guard: symbolic-ref failed for $BRANCH — aborting"; exit 1; }
-            git reset --mixed HEAD 2>/dev/null \
-              || { echo "::error::Snapshot guard: reset --mixed failed for $BRANCH — aborting"; exit 1; }
-            if [[ "$(git rev-parse --abbrev-ref HEAD)" != "$BRANCH" ]]; then
-              echo "::error::Snapshot guard failed to move HEAD to $BRANCH — aborting to prevent history pollution"
-              exit 1
-            fi
-          fi
+          # Mirror canonical artifacts into issue-N/ and stage only that directory.
+          # Source-code edits belong in git_auto_commit commits, not here.
+          # The .gitignore uses contents-form exclusion (pipeline-artifacts/*) with
+          # two negation lines for issue-*/ so no -f flag is needed.
 
-          # Force-add only the files needed to resume a future pipeline run.
-          # Bulky logs (.claude/loop-logs, checkpoints, error-log.jsonl,
-          # intelligence-cache.json) are intentionally excluded — they are
-          # regenerable and would grow the repo unboundedly across issues.
-          git add -f .claude/pipeline-artifacts/plan.md                2>/dev/null || true
-          git add -f .claude/pipeline-artifacts/context-bundle.md      2>/dev/null || true
-          git add -f .claude/pipeline-artifacts/composed-pipeline.json 2>/dev/null || true
-          git add -f ".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}/" 2>/dev/null || true
-          git add -f .claude/pipeline-state.md                         2>/dev/null || true
-          git add -f .claude/pipeline-status.json                      2>/dev/null || true
+          # Restore HEAD to WIP branch if a build agent left it on a temp branch
+          # (e.g. ci/feature-branch created during implementation). Safe in the
+          # post-PR-#594 architecture: we stage only issue-N/ artifacts (not all
+          # working-tree files), so no wrong-branch source files are staged even
+          # if checkout updates the working tree.
+          git checkout "$BRANCH" 2>&1 || true
 
-          git restore --staged .claude/daemon-config.json 2>/dev/null || true
-
-          if git diff --cached --quiet 2>/dev/null; then
-            echo "No resume-essentials changed — skipping snapshot push"
+          # Safety: skip snapshot if HEAD is still not on the WIP branch after restore
+          # attempt. Use exit 0 (not exit 1) — this is a defensive guard, not a pipeline
+          # failure; marking CI failed when the pipeline itself succeeded is misleading.
+          # Consistent with the WIP push step above which also exits 0 on HEAD drift.
+          _snap_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "DETACHED")
+          if [[ "$_snap_branch" != "$BRANCH" ]]; then
+            echo "::warning::HEAD is on '${_snap_branch}', expected '${BRANCH}' — skipping artifact snapshot to prevent cross-branch pollution" >&2
             exit 0
           fi
 
-          git -c user.email=shipwright-bot@users.noreply.github.com \
-              -c user.name='shipwright-bot' \
-              commit -m "chore: resume snapshot for #${ISSUE_NUMBER} (run ${{ github.run_id }}, pipeline=${OUTCOME}) [skip ci]" \
-              --no-verify || { echo "::warning::snapshot commit failed (non-fatal)"; exit 0; }
+          ISSUE_DIR=".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}"
+          mkdir -p "$ISSUE_DIR"
+
+          for rel in plan.md dod.md context-bundle.md design.md composed-pipeline.json; do
+            src=".claude/pipeline-artifacts/$rel"
+            [[ -s "$src" ]] && cp "$src" "$ISSUE_DIR/$rel"
+          done
+
+          # State files live at .claude/, one level above pipeline-artifacts/
+          [[ -s .claude/pipeline-state.md    ]] && cp .claude/pipeline-state.md    "$ISSUE_DIR/pipeline-state.md"
+          [[ -s .claude/pipeline-status.json ]] && cp .claude/pipeline-status.json "$ISSUE_DIR/pipeline-status.json"
+
+          git add "$ISSUE_DIR"
+
+          # Safety net: unstage sensitive files that should never be committed.
+          # One pathspec per call — git restore --staged aborts the entire call when
+          # any single pattern matches nothing, so combining them would leave real
+          # sensitive files staged if another pattern happens to be absent.
+          git restore --staged '*.env'          2>/dev/null || true
+          git restore --staged '.env*'          2>/dev/null || true
+          git restore --staged '*credentials*'  2>/dev/null || true
+          git restore --staged '*secret*'       2>/dev/null || true
+          git restore --staged '*.pem'          2>/dev/null || true
+          git restore --staged '*.key'          2>/dev/null || true
+
+          # Diagnostic: show exactly what will be committed (key signal for debugging)
+          _staged_files=$(git diff --cached --name-status 2>/dev/null || true)
+          if [[ -n "$_staged_files" ]]; then
+            echo "=== Artifact snapshot will commit ==="
+            echo "$_staged_files"
+            echo "====================================="
+          else
+            echo "No artifacts to stage — snapshot push will carry any prior git_auto_commit commits"
+          fi
+
+          # Write a failure note so the reason is visible on the branch and in artifacts.
+          # Placed before the diff check so it guarantees staged content on failure,
+          # ensuring the push always carries context about what went wrong.
+          EXIT_CODE="${{ steps.pipeline.outputs.exit_code }}"
+          # Guard: only write a failure note when the pipeline actually ran and failed.
+          # An empty EXIT_CODE means the pipeline step was skipped (e.g. AUTH_SKIP=true);
+          # treating that as failure would create misleading snapshot commits.
+          if [[ -n "${EXIT_CODE}" && "${EXIT_CODE}" != "0" ]]; then
+            LAST_STAGE=$(grep -m1 '^current_stage:' .claude/pipeline-state.md 2>/dev/null | awk '{print $2}' || echo "unknown")
+            LOG_SNIP=$(tail -20 /tmp/pipeline.log 2>/dev/null | grep -iE "error|fail|assert" | head -5 || echo "(see pipeline log)")
+            mkdir -p .claude/pipeline-artifacts
+            printf '# Pipeline Failure Note\nRun: %s\nStage: %s\nLog:\n%s\n' \
+              "${{ github.run_id }}" "$LAST_STAGE" "$LOG_SNIP" \
+              > .claude/pipeline-artifacts/failure-note.md
+            cp .claude/pipeline-artifacts/failure-note.md "$ISSUE_DIR/failure-note.md"
+            git add "$ISSUE_DIR/failure-note.md" 2>/dev/null || true
+          fi
+
+          # Decouple "nothing new to commit" from "nothing to push": when the build
+          # loop's git_auto_commit succeeded, the working tree is clean and there is
+          # nothing new to stage — but local implementation commits still exist on the
+          # branch and must reach GitHub. Skipping the push here (the old exit 0) meant
+          # those commits were lost when the fresh runner exited.
+          SKIP_COMMIT=false
+          if git diff --cached --quiet 2>/dev/null; then
+            echo "No resume-essentials to commit — will still push any local commits"
+            SKIP_COMMIT=true
+          fi
+
+          if [[ "$SKIP_COMMIT" == "false" ]]; then
+            git -c user.email=shipwright-bot@users.noreply.github.com \
+                -c user.name='shipwright-bot' \
+                commit -m "chore: resume snapshot for #${ISSUE_NUMBER} (run ${{ github.run_id }}, pipeline=${OUTCOME}) [skip ci]" \
+                --no-verify || echo "::warning::snapshot commit failed (non-fatal)"
+          fi
 
           # Use GITHUBTOKEN (PAT with workflow scope) when available so pushes
           # that include workflow file changes are not rejected by the default
@@ -1037,6 +1205,7 @@ jobs:
           cp ~/.shipwright/events.jsonl . 2>/dev/null || true
           cp ~/.shipwright/costs.json . 2>/dev/null || true
           cp ~/.shipwright/budget.json . 2>/dev/null || true
+          cp ~/.shipwright/discoveries.jsonl . 2>/dev/null || true
           if [[ -d ~/.shipwright/memory ]]; then
             cp -r ~/.shipwright/memory . 2>/dev/null || true
           fi

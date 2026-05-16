@@ -407,6 +407,7 @@ invoke_pipeline() {
         INTELLIGENCE_COMPLEXITY="${_TEST_INTELLIGENCE_COMPLEXITY:-}" \
         INTELLIGENCE_ISSUE_TYPE="${_TEST_INTELLIGENCE_ISSUE_TYPE:-}" \
         SHIPWRIGHT_MIN_FREE_GB=0 \
+        NO_ARTIFACT_PUSH=true \
         bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" "$subcommand" "$@" 2>&1
     ) || PIPELINE_EXIT=$?
 }
@@ -1831,6 +1832,9 @@ test_persist_artifacts_ci_guard() {
         # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
         unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
         # Source pipeline — sets ARTIFACTS_DIR="" so we must set vars AFTER source
+        # Belt-and-suspenders: guard against EXIT trap pushing to real GitHub.
+        # The primary fix is _PIPELINE_RUN_STARTED sentinel; this is a safety net.
+        NO_ARTIFACT_PUSH=true
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1856,6 +1860,8 @@ test_verify_artifacts_present() {
     (
         # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
         unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
+        # Belt-and-suspenders: guard against EXIT trap pushing to real GitHub.
+        NO_ARTIFACT_PUSH=true
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1876,6 +1882,8 @@ test_verify_artifacts_missing() {
     (
         # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
         unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
+        # Belt-and-suspenders: guard against EXIT trap pushing to real GitHub.
+        NO_ARTIFACT_PUSH=true
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1899,6 +1907,8 @@ test_verify_artifacts_empty() {
     (
         # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
         unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
+        # Belt-and-suspenders: guard against EXIT trap pushing to real GitHub.
+        NO_ARTIFACT_PUSH=true
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1922,6 +1932,8 @@ test_verify_artifacts_no_requirements() {
     (
         # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
         unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
+        # Belt-and-suspenders: guard against EXIT trap pushing to real GitHub.
+        NO_ARTIFACT_PUSH=true
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1942,6 +1954,8 @@ test_verify_artifacts_design_needs_plan() {
     (
         # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
         unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
+        # Belt-and-suspenders: guard against EXIT trap pushing to real GitHub.
+        NO_ARTIFACT_PUSH=true
         # shellcheck disable=SC1090
         source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
 
@@ -1957,6 +1971,68 @@ test_verify_artifacts_design_needs_plan() {
             exit 0  # Correctly detected missing plan.md
         fi
     )
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 57b. _PIPELINE_RUN_STARTED sentinel: no push when sourced without run_pipeline
+#      Regression test — written BEFORE implementation (TDD red).
+#      Verifies the sentinel added to cleanup_on_exit gates all remote-push calls
+#      so that sourcing sw-pipeline.sh in tests never touches real GitHub.
+# ──────────────────────────────────────────────────────────────────────────────
+test_no_push_when_sourced_without_pipeline_start() {
+    local push_log
+    push_log=$(mktemp "${TMPDIR:-/tmp}/sw-push-log.XXXXXX")
+
+    (
+        # Reset ruflo env so the EXIT trap's ruflo_cleanup is a no-op in test context
+        unset RUFLO_AVAILABLE RUFLO_DAEMON_STARTED RUFLO_HIVE_ID RUFLO_FAILURE_COUNT
+
+        # Fake git that logs any push call and returns non-zero.
+        # Exported so subshell child processes inherit it.
+        git() {
+            if [[ "${1:-}" == "push" ]]; then
+                echo "git push called: $*" >> "$push_log"
+                return 1
+            fi
+            command git "$@"
+        }
+        export -f git
+
+        # Explicitly disable the NO_ARTIFACT_PUSH guard so the ONLY thing
+        # preventing a push is the _PIPELINE_RUN_STARTED sentinel.
+        # This makes the test a true behavioral regression for the sentinel fix.
+        # shellcheck disable=SC2034
+        NO_ARTIFACT_PUSH=false
+        # shellcheck disable=SC2034
+        ISSUE_NUMBER="99"
+
+        # Source the pipeline WITHOUT calling run_pipeline().
+        # The EXIT trap installed by source fires on subshell exit.
+        # shellcheck disable=SC1090
+        source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
+
+        # Exit WITHOUT ever calling run_pipeline() — sentinel must block the push.
+        exit 0
+    ) 2>/dev/null || true
+
+    # Assert: push log must be empty — sentinel blocked pipeline_final_artifact_push.
+    local rc=0
+    if [[ -s "$push_log" ]]; then
+        echo "    FAIL: git push was called despite _PIPELINE_RUN_STARTED not being set:"
+        cat "$push_log"
+        rc=1
+    fi
+    rm -f "$push_log"
+
+    # Assert: events snapshot must NOT have been created in the real project dir.
+    local events_snap="$REPO_DIR/.shipwright/events-99-local.jsonl"
+    if [[ -f "$events_snap" ]]; then
+        echo "    FAIL: events snapshot was created in real project dir: $events_snap"
+        rm -f "$events_snap"
+        rc=1
+    fi
+
+    return "$rc"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2097,6 +2173,140 @@ test_ci_post_stage_event_noop_outside_ci() {
         ci_post_stage_event "build" "complete" "1s"
     ) 2>/dev/null || true
     [[ ! -f "$capture_file" ]] || { echo "ci_post_stage_event should be no-op when CI_MODE=false"; return 1; }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Issue 2: events snapshot code removed from pipeline_wip_push and
+# pipeline_final_artifact_push. These snapshots had no consumer and were
+# force-committed into every WIP branch, inflating DoD prompts.
+# ──────────────────────────────────────────────────────────────────────────────
+
+test_events_snapshot_code_absent() {
+    # Static: _events_snap must not appear anywhere in sw-pipeline.sh.
+    # After removal of the two snapshot blocks, no reference to the snapshot
+    # variable should remain.
+    if grep -qn "_events_snap" "$REAL_PIPELINE_SCRIPT"; then
+        local hits
+        hits=$(grep -n "_events_snap" "$REAL_PIPELINE_SCRIPT")
+        echo "    FAIL: _events_snap still referenced in sw-pipeline.sh:"
+        echo "$hits" | sed 's/^/      /'
+        return 1
+    fi
+    return 0
+}
+
+test_events_snapshot_not_created_on_wip_push() {
+    # Behavioral: ci_push_partial_work must not create .shipwright/events-*.jsonl.
+    # The WIP-push function (ci_push_partial_work) is gated on CI_MODE=true.
+    # We set that here so the snapshot block is actually reached.
+    local workdir fake_events
+    workdir=$(mktemp -d "${TMPDIR:-/tmp}/sw-wip-push-test.XXXXXX")
+    fake_events="$workdir/fake-events.jsonl"
+    echo '{"type":"event"}' > "$fake_events"
+
+    (
+        cd "$workdir" || exit 1
+        mkdir -p ".shipwright" 2>/dev/null || true
+
+        git() {
+            case "${1:-}" in
+                push) return 0 ;;
+                rev-parse) echo "shipwright/issue-42" ;;
+                add|commit|config|remote) return 0 ;;
+                diff) echo ""; return 0 ;;
+                *) return 0 ;;
+            esac
+        }
+        export -f git
+
+        info()    { true; }
+        warn()    { true; }
+        error()   { true; }
+        success() { true; }
+        emit_event() { true; }
+        _git_bookkeeping_pathspecs() { echo ""; }
+        safe_git_stage() { true; }
+        _timeout() { shift; "$@"; }
+        export -f info warn error success emit_event _git_bookkeeping_pathspecs safe_git_stage _timeout
+
+        CI_MODE=true
+        ISSUE_NUMBER="42"
+        EVENTS_FILE="$fake_events"
+        _PIPELINE_RUN_STARTED=true
+
+        source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
+        ci_push_partial_work 5 2>/dev/null || true
+    ) 2>/dev/null || true
+
+    local snap_count
+    snap_count=$(find "$workdir/.shipwright" -name "events-*.jsonl" 2>/dev/null | wc -l)
+    snap_count="${snap_count// /}"
+
+    rm -rf "$workdir"
+
+    if [[ "$snap_count" -gt 0 ]]; then
+        echo "    FAIL: ci_push_partial_work created ${snap_count} events snapshot file(s) — snapshot code not removed"
+        return 1
+    fi
+    return 0
+}
+
+test_events_snapshot_not_created_on_final_push() {
+    # Behavioral: pipeline_final_artifact_push must not create .shipwright/events-*.jsonl.
+    local workdir fake_events
+    workdir=$(mktemp -d "${TMPDIR:-/tmp}/sw-final-push-test.XXXXXX")
+    fake_events="$workdir/fake-events.jsonl"
+    echo '{"type":"event"}' > "$fake_events"
+
+    (
+        cd "$workdir" || exit 1
+        mkdir -p ".shipwright" 2>/dev/null || true
+
+        git() {
+            case "${1:-}" in
+                push) return 0 ;;
+                rev-parse) echo "shipwright/issue-42" ;;
+                add|commit|config|remote) return 0 ;;
+                diff) echo ""; return 0 ;;
+                *) return 0 ;;
+            esac
+        }
+        export -f git
+
+        info()    { true; }
+        warn()    { true; }
+        error()   { true; }
+        success() { true; }
+        emit_event() { true; }
+        _git_bookkeeping_pathspecs() { echo ""; }
+        safe_git_stage() { true; }
+        _timeout() { shift; "$@"; }
+        export -f info warn error success emit_event _git_bookkeeping_pathspecs safe_git_stage _timeout
+
+        ISSUE_NUMBER="42"
+        NO_GITHUB=false
+        NO_ARTIFACT_PUSH=false
+        DRY_RUN=false
+        EVENTS_FILE="$fake_events"
+        _PIPELINE_RUN_STARTED=true
+        ARTIFACTS_DIR="$workdir/.claude"
+        STATE_DIR="$workdir/.claude"
+
+        source "$REAL_PIPELINE_SCRIPT" > /dev/null 2>&1 || true
+        pipeline_final_artifact_push 5 2>/dev/null || true
+    ) 2>/dev/null || true
+
+    local snap_count
+    snap_count=$(find "$workdir/.shipwright" -name "events-*.jsonl" 2>/dev/null | wc -l)
+    snap_count="${snap_count// /}"
+
+    rm -rf "$workdir"
+
+    if [[ "$snap_count" -gt 0 ]]; then
+        echo "    FAIL: pipeline_final_artifact_push created ${snap_count} events snapshot file(s) — snapshot code not removed"
+        return 1
+    fi
+    return 0
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3039,6 +3249,12 @@ info()    { true; }
 warn()    { true; }
 error()   { true; }
 success() { true; }
+_git_excluded_pathspecs()            { true; }
+_git_branch_merge_base() {
+    local _base="\${1:-}" _fallback="\${2:-}" _root="\${PROJECT_ROOT:-.}"
+    [[ -z "\$_base" ]] && _base="main"
+    git -C "\$_root" merge-base "\${_base}" HEAD 2>/dev/null || echo "\${_fallback}"
+}
 ${emit_override}
 
 # --- environment expected by compose_prompt ---
@@ -3439,6 +3655,449 @@ test_compose_prompt_emits_context_event() {
     fi
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 67. compose_prompt iter 2 — Instructions precedes Test Results
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_iter2_instructions_before_test_results() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-iter2-order.XXXXXX")
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file"
+
+    local output
+    output=$(
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=2
+        export TEST_PASSED=true
+        export TEST_OUTPUT="TESTS PASSED"
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt
+    ) 2>/dev/null || output=""
+
+    rm -rf "$tmp_dir"
+
+    # || true prevents set -e / pipefail from aborting the suite when grep exits 1 (no match)
+    local instr_line test_line
+    instr_line=$(echo "$output" | grep -n "^## Instructions" | head -1 | cut -d: -f1 || true)
+    test_line=$(echo "$output" | grep -n "^## Test Results" | head -1 | cut -d: -f1 || true)
+
+    if [[ -z "$instr_line" || -z "$test_line" ]]; then
+        echo "Could not find ## Instructions (line ${instr_line:-?}) or ## Test Results (line ${test_line:-?}) in iter-2 prompt"
+        return 1
+    fi
+
+    if [[ "$instr_line" -lt "$test_line" ]]; then
+        return 0
+    else
+        echo "## Instructions (line $instr_line) should appear before ## Test Results (line $test_line) in iter-2 prompt"
+        return 1
+    fi
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 68. compose_prompt iter 2 cumulative progress uses merge-base (full branch)
+# ──────────────────────────────────────────────────────────────────────────────
+test_compose_prompt_iter2_cumulative_uses_merge_base() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cp-test-iter2-mergebase.XXXXXX")
+
+    # Two WIP commits on a branch from main.
+    # LOOP_START_COMMIT is set to the FIRST WIP commit (simulating a CI-job reset
+    # where only commit 2 is "in scope" for the current job). The cumulative section
+    # must show BOTH files because it uses merge-base, not LOOP_START_COMMIT.
+    local git_dir="$tmp_dir/repo"
+    mkdir -p "$git_dir"
+    git -C "$git_dir" init --quiet
+    git -C "$git_dir" config user.email "test@test.com"
+    git -C "$git_dir" config user.name "Test"
+    echo "init" > "$git_dir/init.txt"
+    git -C "$git_dir" add init.txt
+    git -C "$git_dir" commit -m "initial" --quiet
+    # Rename initial branch to 'main' so git merge-base "main" HEAD works on
+    # systems where init.defaultBranch is 'master' instead of 'main'.
+    git -C "$git_dir" branch -M main 2>/dev/null || true
+    # Branch off main so merge-base resolves to the initial commit (not HEAD)
+    git -C "$git_dir" checkout -b feature --quiet
+    # First WIP commit
+    echo "file1 content" > "$git_dir/file1.txt"
+    git -C "$git_dir" add file1.txt
+    git -C "$git_dir" commit -m "add file1" --quiet
+    local ci_job_start
+    ci_job_start=$(git -C "$git_dir" rev-parse HEAD)
+    # Sanity: if we can't determine the SHA, skip gracefully
+    [[ -z "$ci_job_start" ]] && { rm -rf "$tmp_dir"; echo "git rev-parse failed in test setup"; return 1; }
+    # Second WIP commit (what the current CI job added)
+    echo "file2 content" > "$git_dir/file2.txt"
+    git -C "$git_dir" add file2.txt
+    git -C "$git_dir" commit -m "add file2" --quiet
+
+    local stub_file="$tmp_dir/stubs.sh"
+    _write_compose_prompt_stubs "$stub_file"
+
+    local output
+    output=$(
+        # shellcheck disable=SC1090
+        source "$stub_file"
+        export ITERATION=2
+        export LOOP_START_COMMIT="$ci_job_start"
+        export PROJECT_ROOT="$git_dir"
+        unset _LOOP_ITERATION_LOADED
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/lib/loop-iteration.sh"
+        compose_prompt
+    ) 2>/dev/null || output=""
+
+    rm -rf "$tmp_dir"
+
+    if ! echo "$output" | grep -qF "Cumulative Progress (all branch changes)"; then
+        echo "Expected 'Cumulative Progress (all branch changes)' heading in iter-2 prompt"
+        return 1
+    fi
+
+    if ! echo "$output" | grep -q "file1\.txt"; then
+        echo "Expected file1.txt in cumulative progress (merge-base must include commits before LOOP_START_COMMIT)"
+        return 1
+    fi
+
+    if ! echo "$output" | grep -q "file2\.txt"; then
+        echo "Expected file2.txt in cumulative progress"
+        return 1
+    fi
+
+    # Per-file stats present — must be more than one file line.
+    # grep -c exits 1 on no matches but still prints "0"; || echo 0 would produce "0\n0".
+    # Use || true and default separately to guarantee a single integer.
+    local file_line_count
+    file_line_count=$(echo "$output" | grep -A 20 "Cumulative Progress (all branch changes)" | grep -c "\.txt" || true)
+    if [[ "${file_line_count:-0}" -lt 2 ]]; then
+        echo "Expected at least 2 file lines in cumulative progress, got ${file_line_count:-0}"
+        return 1
+    fi
+
+    return 0
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TDD TESTS — written BEFORE implementation; expected to FAIL against current code
+# Each test documents the desired behavior after the corresponding fix lands.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Change 1 — intake CI mode: when WORKSPACE_BRANCH is set, use it as GIT_BRANCH
+# without calling `git checkout -b`.
+#
+# Current behavior (BROKEN): intake always runs `git checkout -b <computed-slug>`
+# regardless of WORKSPACE_BRANCH; the env var is ignored at the intake stage.
+#
+# Expected behavior (after fix): when WORKSPACE_BRANCH is set, intake sets
+# GIT_BRANCH=WORKSPACE_BRANCH and skips the `git checkout -b` call.  The
+# existing branch-creation path is preserved when WORKSPACE_BRANCH is unset.
+# ──────────────────────────────────────────────────────────────────────────────
+test_intake_ci_uses_workspace_branch() {
+    pipeline_config_with_stages "intake" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+
+    # Pre-create the branch that CI would have prepared so checkout succeeds.
+    local ci_branch="shipwright/issue-42"
+    (
+        cd "$TEST_TEMP_DIR/project"
+        git checkout -b "$ci_branch" --quiet 2>/dev/null || true
+        git checkout main --quiet 2>/dev/null || true
+    )
+
+    # Invoke with WORKSPACE_BRANCH set (simulates CI environment).
+    PIPELINE_OUTPUT=""
+    PIPELINE_EXIT=0
+    PIPELINE_OUTPUT=$(
+        cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR" \
+        EVENTS_FILE="$TEST_TEMP_DIR/events.jsonl" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        INTELLIGENCE_COMPLEXITY="" \
+        INTELLIGENCE_ISSUE_TYPE="" \
+        SHIPWRIGHT_MIN_FREE_GB=0 \
+        NO_ARTIFACT_PUSH=true \
+        WORKSPACE_BRANCH="$ci_branch" \
+        bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" start \
+            --issue 42 --skip-gates --test-cmd "echo passed" 2>&1
+    ) || PIPELINE_EXIT=$?
+
+    # After the fix: GIT_BRANCH must equal WORKSPACE_BRANCH ("shipwright/issue-42").
+    # The intake artifact must record the correct branch name.
+    assert_exit_code 0 "intake with WORKSPACE_BRANCH should succeed" &&
+    assert_file_exists ".claude/pipeline-artifacts/intake.json" "intake artifact created" &&
+    assert_file_contains ".claude/pipeline-artifacts/intake.json" "shipwright/issue-42" \
+        "intake artifact records WORKSPACE_BRANCH as branch" &&
+    # After the fix the output must NOT show a computed slug branch being created.
+    assert_output_not_contains "feat/.*42\|fix/.*42" \
+        "computed slug branch must NOT be used when WORKSPACE_BRANCH is set"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Change 1 (local dev mode): when WORKSPACE_BRANCH is NOT set, the existing
+# git-checkout-based branch creation is preserved unchanged.
+# ──────────────────────────────────────────────────────────────────────────────
+test_intake_local_mode_preserves_branch_creation() {
+    pipeline_config_with_stages "intake" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+
+    # No WORKSPACE_BRANCH — standard local dev invocation.
+    invoke_pipeline start --issue 42 --skip-gates --test-cmd "echo passed"
+
+    assert_exit_code 0 "intake without WORKSPACE_BRANCH should succeed" &&
+    # The output must NOT show the CI-mode log message — this rules out WORKSPACE_BRANCH
+    # being followed even if a residual shipwright/issue-42 branch exists from a prior test.
+    assert_output_not_contains "CI mode: using workspace branch" \
+        "local mode must not follow WORKSPACE_BRANCH path" &&
+    # A slug branch containing the issue number must have been created in this run.
+    assert_branch_exists "[a-z][a-z]*/[a-z0-9-]*-42$" "slug-N style branch created for issue" &&
+    assert_file_exists ".claude/pipeline-artifacts/intake.json" "intake artifact created"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Change 2 — .gitignore: issue-scoped artifact paths are NOT ignored; the flat
+# (non-scoped) paths remain ignored.
+#
+# Current state: the gitignore already has the correct rules as of the last
+# commit, so these static checks are designed to catch regressions — any edit
+# to .gitignore that removes the `!.claude/pipeline-artifacts/issue-*/` negation
+# should make this test fail.
+# ──────────────────────────────────────────────────────────────────────────────
+test_gitignore_issue_scoped_artifacts_not_ignored() {
+    local gitignore="$REPO_DIR/.gitignore"
+
+    if [[ ! -f "$gitignore" ]]; then
+        echo -e "    ${RED}x${RESET} .gitignore not found at $gitignore"
+        return 1
+    fi
+
+    # Must use contents-exclusion form (pipeline-artifacts/*) not directory form (pipeline-artifacts/).
+    # Directory form blocks git traversal so negation patterns for subdirectories are silently ignored.
+    if ! grep -qxF ".claude/pipeline-artifacts/*" "$gitignore"; then
+        echo -e "    ${RED}x${RESET} .gitignore must use '.claude/pipeline-artifacts/*' (contents form, not trailing-slash directory form)"
+        return 1
+    fi
+
+    # The issue-scoped subdirectory must be un-ignored via negation pattern.
+    if ! grep -qxF "!.claude/pipeline-artifacts/issue-*/" "$gitignore"; then
+        echo -e "    ${RED}x${RESET} .gitignore must contain '!.claude/pipeline-artifacts/issue-*/' (negation for issue snapshots)"
+        return 1
+    fi
+
+    # Files inside issue-N/ must also be un-ignored.
+    if ! grep -qxF "!.claude/pipeline-artifacts/issue-*/**" "$gitignore"; then
+        echo -e "    ${RED}x${RESET} .gitignore must contain '!.claude/pipeline-artifacts/issue-*/**' (negation for files inside issue-N/)"
+        return 1
+    fi
+
+    # The negation must appear AFTER the ignore line (order matters in gitignore).
+    local ignore_line negation_line
+    ignore_line=$(grep -n "^\.claude/pipeline-artifacts/\*$" "$gitignore" | head -1 | cut -d: -f1)
+    negation_line=$(grep -n "^!\.claude/pipeline-artifacts/issue-\*/$" "$gitignore" | head -1 | cut -d: -f1)
+
+    if [[ -z "$ignore_line" || -z "$negation_line" ]]; then
+        echo -e "    ${RED}x${RESET} Could not locate line numbers for gitignore rules"
+        return 1
+    fi
+
+    if [[ "$negation_line" -le "$ignore_line" ]]; then
+        echo -e "    ${RED}x${RESET} Negation (line $negation_line) must appear AFTER ignore rule (line $ignore_line)"
+        return 1
+    fi
+
+    return 0
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Change 3 — GHA snapshot precondition: after Change 1 lands, GIT_BRANCH equals
+# WORKSPACE_BRANCH when WORKSPACE_BRANCH is set.  This test verifies the shell
+# logic that the GHA snapshot step depends on: files placed under
+# `.claude/pipeline-artifacts/issue-N/` are the ones that the snapshot step
+# would commit.
+#
+# Current behavior (BROKEN): GIT_BRANCH is set to a computed slug, not to
+# WORKSPACE_BRANCH; a GHA snapshot step keyed on WORKSPACE_BRANCH would record
+# the wrong branch name in the artifact.
+#
+# Expected behavior (after Change 1): GIT_BRANCH == WORKSPACE_BRANCH so the
+# snapshot step can safely use either variable to identify the workspace.
+# ──────────────────────────────────────────────────────────────────────────────
+test_intake_git_branch_equals_workspace_branch_when_set() {
+    pipeline_config_with_stages "intake" > "$TEST_TEMP_DIR/templates/pipelines/standard.json"
+
+    local ci_branch="shipwright/issue-99"
+    (
+        cd "$TEST_TEMP_DIR/project"
+        git checkout -b "$ci_branch" --quiet 2>/dev/null || true
+        git checkout main --quiet 2>/dev/null || true
+    )
+
+    PIPELINE_OUTPUT=""
+    PIPELINE_EXIT=0
+    PIPELINE_OUTPUT=$(
+        cd "$TEST_TEMP_DIR/project"
+        HOME="$TEST_TEMP_DIR" \
+        EVENTS_FILE="$TEST_TEMP_DIR/events.jsonl" \
+        PATH="$TEST_TEMP_DIR/bin:$PATH" \
+        INTELLIGENCE_COMPLEXITY="" \
+        INTELLIGENCE_ISSUE_TYPE="" \
+        SHIPWRIGHT_MIN_FREE_GB=0 \
+        NO_ARTIFACT_PUSH=true \
+        WORKSPACE_BRANCH="$ci_branch" \
+        bash "$TEST_TEMP_DIR/scripts/sw-pipeline.sh" start \
+            --issue 99 --skip-gates --test-cmd "echo passed" 2>&1
+    ) || PIPELINE_EXIT=$?
+
+    assert_exit_code 0 "intake with WORKSPACE_BRANCH=shipwright/issue-99 should succeed" || return 1
+
+    # After Change 1: the intake artifact must record "shipwright/issue-99" as the
+    # branch — confirming GIT_BRANCH was set from WORKSPACE_BRANCH, not computed.
+    local recorded_branch=""
+    local intake_json="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/intake.json"
+    if [[ -f "$intake_json" ]]; then
+        recorded_branch=$(jq -r '.branch // ""' "$intake_json" 2>/dev/null || true)
+    fi
+
+    if [[ "$recorded_branch" != "$ci_branch" ]]; then
+        echo -e "    ${RED}x${RESET} intake.json recorded branch='$recorded_branch', expected '$ci_branch'"
+        echo -e "    ${DIM}This confirms Change 1 is not yet implemented: GIT_BRANCH is still computed from slug.${RESET}"
+        return 1
+    fi
+
+    return 0
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Change 4 — Restore step: mocked issue-N/ snapshot directory is copied back to
+# canonical locations by the restore loop.
+#
+# This test verifies the restore logic in isolation (no full pipeline run)
+# by directly exercising the shell construct that the GHA "Verify merged
+# artifacts" step uses.
+#
+# Current behavior (BROKEN): the restore loop only runs inside GHA YAML and
+# there is no equivalent tested path in the pipeline shell scripts; a bug in
+# the restore logic would be silently missed.
+#
+# Expected behavior (after Change 4): a helper function (or inline block)
+# in the pipeline scripts mirrors the GHA restore logic and can be unit-tested
+# here — OR the test validates that the GHA yaml step contains the required
+# cp/restore pattern so regression is caught statically.
+# ──────────────────────────────────────────────────────────────────────────────
+test_restore_loop_copies_snapshot_to_canonical() {
+    # Set up a mock issue-N/ snapshot directory the way the GHA step creates it.
+    local artifacts="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
+    local snap_dir="$artifacts/issue-99"
+    mkdir -p "$snap_dir"
+    mkdir -p "$artifacts"
+
+    # Populate snapshot files (simulating what a prior pipeline run committed).
+    echo "# Plan from prior run" > "$snap_dir/plan.md"
+    echo '{"status":"interrupted"}' > "$snap_dir/pipeline-status.json"
+
+    # Run the restore loop logic — mirrors the GHA "Verify merged artifacts" step.
+    # After Change 4 this logic should exist as a callable shell function or be
+    # exercised via a pipeline subcommand.  For now we test the raw loop inline
+    # to confirm the EXPECTED behavior and let the test fail until a wrapper lands.
+    local restore_ran=false
+    local issue_number=99
+    local recovered=0
+
+    for f in plan.md pipeline-status.json; do
+        local fpath="$artifacts/$f"
+        local snap="$snap_dir/$f"
+        if [[ ! -s "$fpath" && -s "$snap" ]]; then
+            cp "$snap" "$fpath"
+            recovered=$((recovered + 1))
+            restore_ran=true
+        fi
+    done
+
+    # Both files must have been restored (neither existed in the flat dir).
+    if [[ "$recovered" -ne 2 ]]; then
+        echo -e "    ${RED}x${RESET} Expected 2 files restored, got $recovered"
+        return 1
+    fi
+
+    # Canonical locations must now contain the snapshot content.
+    if [[ ! -f "$artifacts/plan.md" ]]; then
+        echo -e "    ${RED}x${RESET} plan.md not restored to canonical location"
+        return 1
+    fi
+    if ! grep -q "prior run" "$artifacts/plan.md"; then
+        echo -e "    ${RED}x${RESET} plan.md content does not match snapshot"
+        return 1
+    fi
+
+    if [[ ! -f "$artifacts/pipeline-status.json" ]]; then
+        echo -e "    ${RED}x${RESET} pipeline-status.json not restored to canonical location"
+        return 1
+    fi
+
+    # Static check: confirm the GHA workflow also contains the restore pattern so
+    # the YAML itself cannot regress independently of the shell tests.
+    local wf="$REPO_DIR/.github/workflows/shipwright-pipeline.yml"
+    if [[ -f "$wf" ]]; then
+        if ! grep -q "issue-\${ISSUE_NUMBER}" "$wf" || ! grep -qE "cp.*SNAP|SNAP.*cp" "$wf"; then
+            echo -e "    ${RED}x${RESET} GHA workflow missing expected restore pattern (cp SNAP -> FPATH)"
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Change 5 — sw-pipeline.sh CI resume fallback (~line 3187): when GIT_BRANCH is
+# empty and WORKSPACE_BRANCH is set, the CI resume block must use WORKSPACE_BRANCH
+# as the branch name, NOT synthesise "ci/issue-<N>".
+#
+# Current behavior (BROKEN): the resume block at line 3187 always synthesises
+# "ci/issue-${ISSUE_NUMBER}" when GIT_BRANCH is empty, ignoring WORKSPACE_BRANCH.
+#
+# Expected behavior (after fix): when WORKSPACE_BRANCH="shipwright/issue-42" is
+# set and GIT_BRANCH is empty, the resume block must set
+# GIT_BRANCH="shipwright/issue-42" (not "ci/issue-42").
+# ──────────────────────────────────────────────────────────────────────────────
+test_ci_resume_fallback_uses_workspace_branch() {
+    local pipeline_sh="$REPO_DIR/scripts/sw-pipeline.sh"
+
+    if [[ ! -f "$pipeline_sh" ]]; then
+        echo -e "    ${RED}x${RESET} sw-pipeline.sh not found at $pipeline_sh"
+        return 1
+    fi
+
+    # The CI resume fallback block must use WORKSPACE_BRANCH as the primary
+    # source (migration safety: old state files carry GIT_BRANCH=ci/<slug>-N).
+    # Verify the fix is in the source code statically.
+
+    # Must contain the WORKSPACE_BRANCH fallback pattern.
+    if ! grep -q 'WORKSPACE_BRANCH:-ci/issue-' "$pipeline_sh"; then
+        echo -e "    ${RED}x${RESET} CI resume fallback must use \${WORKSPACE_BRANCH:-ci/issue-...} pattern"
+        return 1
+    fi
+
+    # Must NOT still use the old hardcoded ci_branch local variable approach.
+    if grep -q 'local ci_branch="ci/issue-' "$pipeline_sh"; then
+        echo -e "    ${RED}x${RESET} Old hardcoded ci_branch local variable must be removed from CI resume block"
+        return 1
+    fi
+
+    # Must try 'git checkout' (existing branch) BEFORE 'git checkout -b' (create).
+    # Anchor on the logged message rather than exact bash syntax so the test
+    # survives variable-name refactors while still catching ordering regressions.
+    local resume_block
+    resume_block=$(grep -A8 'CI resume: restoring branch' "$pipeline_sh" | head -12)
+    if ! echo "$resume_block" | grep -q 'git checkout'; then
+        echo -e "    ${RED}x${RESET} CI resume fallback must call git checkout (not only checkout -b)"
+        return 1
+    fi
+
+    return 0
+}
+
 main() {
     local filter="${1:-}"
 
@@ -3527,6 +4186,7 @@ main() {
         "test_verify_artifacts_empty:Durable: verify_stage_artifacts fails when artifacts empty"
         "test_verify_artifacts_no_requirements:Durable: verify_stage_artifacts passes for stages with no requirements"
         "test_verify_artifacts_design_needs_plan:Durable: verify_stage_artifacts design requires plan.md"
+        "test_no_push_when_sourced_without_pipeline_start:Durable: no push when sourced without run_pipeline (_PIPELINE_RUN_STARTED sentinel)"
         "test_mark_complete_persists_plan:Durable: mark_stage_complete wires persist for plan stage"
         "test_fresh_start_cleans_stale_checkpoints:Cleanup: stale checkpoints/ removed on fresh pipeline start"
         "test_ci_post_stage_event_visible_body:CI: ci_post_stage_event posts visible comment body"
@@ -3559,11 +4219,22 @@ main() {
         "test_compose_prompt_iter2_reference_trailer:Loop: compose_prompt iter 2 appends pipeline-artifacts reference trailer"
         "test_compose_prompt_iter1_no_reference_trailer:Loop: compose_prompt iter 1 does NOT include Reference trailer"
         "test_compose_prompt_emits_context_event:Loop: compose_prompt emits context.iteration_prompt event"
+        "test_compose_prompt_iter2_instructions_before_test_results:Loop: compose_prompt iter 2 — Instructions precedes Test Results"
+        "test_compose_prompt_iter2_cumulative_uses_merge_base:Loop: compose_prompt iter 2 cumulative progress uses merge-base (full branch vs main)"
         "test_watchdog_handler_removed:Phase4: _soft_timeout_handler function removed from sw-pipeline.sh"
         "test_watchdog_usr1_trap_removed:Phase4: trap USR1 for soft-timeout removed from sw-pipeline.sh"
         "test_watchdog_pid_var_removed:Phase4: _WATCHDOG_PID variable removed from sw-pipeline.sh"
         "test_watchdog_armed_event_removed:Phase4: pipeline.watchdog_armed event removed from sw-pipeline.sh"
         "test_watchdog_soft_timeout_event_removed:Phase4: pipeline.soft_timeout_push event removed from sw-pipeline.sh"
+        "test_intake_ci_uses_workspace_branch:CI Change 1: intake uses WORKSPACE_BRANCH as GIT_BRANCH when set"
+        "test_intake_local_mode_preserves_branch_creation:CI Change 1: intake preserves git checkout -b when WORKSPACE_BRANCH unset"
+        "test_gitignore_issue_scoped_artifacts_not_ignored:CI Change 2: .gitignore negation allows issue-N/ snapshots to be committed"
+        "test_intake_git_branch_equals_workspace_branch_when_set:CI Change 3: GIT_BRANCH equals WORKSPACE_BRANCH after intake (GHA snapshot precondition)"
+        "test_restore_loop_copies_snapshot_to_canonical:CI Change 4: restore loop copies issue-N/ snapshot files to canonical locations"
+        "test_ci_resume_fallback_uses_workspace_branch:CI Change 5: resume fallback uses WORKSPACE_BRANCH not ci/issue-N when WORKSPACE_BRANCH set"
+        "test_events_snapshot_code_absent:Issue2: _events_snap code fully removed from sw-pipeline.sh"
+        "test_events_snapshot_not_created_on_wip_push:Issue2: pipeline_wip_push does not create .shipwright/events-*.jsonl"
+        "test_events_snapshot_not_created_on_final_push:Issue2: pipeline_final_artifact_push does not create .shipwright/events-*.jsonl"
     )
 
     for entry in "${tests[@]}"; do

@@ -475,6 +475,12 @@ _GIT_RUNTIME_EXCLUDES=(
     ".claude/pipeline-state.md"
     "**/progress.md"
     "**/error-summary.json"
+    ".shipwright/events-*.jsonl"
+    ".claude/pipeline-artifacts/"
+    ".claude/pipeline-status.json"
+    ".ai-standards/generated/"
+    ".github/copilot-instructions.md"
+    "AGENTS.md"
 )
 
 # Git diff --stat excluding all bookkeeping and runtime files.
@@ -519,6 +525,67 @@ _git_bookkeeping_pathspecs() {
     for _f in "${_GIT_BOOKKEEPING_FILES[@]+"${_GIT_BOOKKEEPING_FILES[@]}"}"; do
         printf ':!%s ' "$_f"
     done
+}
+
+# Filter gitignored paths out of file-list output before it reaches agent prompts.
+# Accepts name-status, name-only, and numstat formats from stdin; writes survivors to stdout.
+# Any new prompt file-list should pipe through this helper.
+# Usage: git diff --name-status base..HEAD | _filter_gitignored_paths
+#        ( cd "$dir" && git diff --name-only | _filter_gitignored_paths )
+_filter_gitignored_paths() {
+    local _lines=() _paths=() _line _path _i _ignored_set
+    # Read all input lines and extract the path column from each.
+    while IFS= read -r _line; do
+        [[ -z "$_line" ]] && continue
+        _lines+=("$_line")
+        # name-status (M\tpath) / numstat (adds\tdels\tpath) / rename (R100\told\tnew):
+        # take the last tab-separated field. name-only: use the line as-is.
+        if printf '%s' "$_line" | grep -q $'\t'; then
+            _path="${_line##*$'\t'}"
+        else
+            _path="$_line"
+        fi
+        _paths+=("$_path")
+    done
+
+    [[ ${#_paths[@]} -eq 0 ]] && return 0
+
+    # One subprocess for all paths. Newline-separated input avoids NUL-in-variable
+    # limitations (bash variables cannot hold NUL bytes). --no-index is critical:
+    # without it, tracked files are never reported as ignored even when they match
+    # .gitignore — which is exactly the condition we're correcting.
+    # Exit 0 = at least one path ignored (output = those paths, one per line).
+    # Exit 1 = no paths ignored. Exit 128 = fatal error.
+    # All non-zero cases yield empty _ignored_set → fail-open (all lines pass through).
+    _ignored_set=$(printf '%s\n' "${_paths[@]+"${_paths[@]}"}" \
+        | git check-ignore --stdin --no-index 2>/dev/null) || true
+
+    for _i in "${!_lines[@]}"; do
+        _path="${_paths[$_i]}"
+        # Drop the line only when the path appears in the ignored set.
+        if [[ -n "$_ignored_set" ]] && printf '%s\n' "$_ignored_set" | grep -qxF "$_path" 2>/dev/null; then
+            continue
+        fi
+        printf '%s\n' "${_lines[$_i]}"
+    done
+}
+
+# Resolve the merge-base between HEAD and the repo's default branch.
+# Usage: _git_branch_merge_base [base_branch] [fallback_commit]
+#   base_branch    — override default branch; auto-detected from origin/HEAD when omitted or empty
+#   fallback_commit — returned when merge-base resolution fails (e.g. offline, no remote)
+# Outputs the merge-base SHA (or fallback) on stdout.
+_git_branch_merge_base() {
+    local _base="${1:-}"
+    local _fallback="${2:-}"
+    local _root="${PROJECT_ROOT:-.}"
+    if [[ -z "$_base" ]]; then
+        _base="$(git -C "$_root" rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||' || true)"
+        [[ -z "$_base" || "$_base" == "HEAD" ]] && _base="main"
+    fi
+    git -C "$_root" merge-base "origin/${_base}" HEAD 2>/dev/null \
+        || git -C "$_root" merge-base "${_base}" HEAD 2>/dev/null \
+        || echo "${_fallback}"
 }
 
 # ─── Pipeline Tasks File Helper ──────────────────────────────────

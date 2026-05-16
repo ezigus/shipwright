@@ -10,7 +10,7 @@ write_progress() {
     local recent_commits
     recent_commits=$(git -C "$PROJECT_ROOT" log --oneline -5 2>/dev/null || echo "(no commits)")
     local changed_files
-    changed_files=$(git -C "$PROJECT_ROOT" diff --name-only HEAD~3 2>/dev/null | head -20 || echo "(none)")
+    changed_files=$(cd "$PROJECT_ROOT" && git diff --name-only HEAD~3 -- . $(_git_excluded_pathspecs) 2>/dev/null | _filter_gitignored_paths | head -20 || echo "(none)")
     local last_error=""
     local prev_test_log="$LOG_DIR/tests-iter-${ITERATION}.log"
     if [[ -f "$prev_test_log" ]] && [[ "${TEST_PASSED:-}" == "false" ]]; then

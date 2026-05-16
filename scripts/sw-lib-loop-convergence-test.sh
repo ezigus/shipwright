@@ -231,6 +231,67 @@ _t7_warn=$(_count "$WARN_CALLS")
 assert_eq "Test 7: emit_event still fires on restart detection (now 5)" "5" "$_t7_emit"
 assert_eq "Test 7: warn still fires on restart detection (now 5)" "5" "$_t7_warn"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# check_time_budget — CI_JOB_START_EPOCH path (issue #460 / commit 591c8e8 fix)
+# ═══════════════════════════════════════════════════════════════════════════════
+# now_epoch is sourced from helpers.sh via loop-convergence.sh (line 66 above).
+# Redefine AFTER source — bash function redefinition replaces the prior binding.
+# Do NOT invoke check_time_budget inside $(...) — overrides don't cross subshells.
+_MOCK_NOW=""
+now_epoch() { echo "$_MOCK_NOW"; }
+_BASE="$(date +%s)"
+
+print_test_section "check_time_budget T1: recent CI_JOB_START_EPOCH → continue"
+unset PIPELINE_RUN_EPOCH LOOP_START_EPOCH || true
+export SHIPWRIGHT_JOB_TIMEOUT_MINUTES=300
+export CI_JOB_START_EPOCH=$(( _BASE - 100 ))     # 1m 40s elapsed
+_MOCK_NOW="$_BASE"
+check_time_budget
+assert_eq "T1: recent epoch returns 0 (loop continues)" "0" "$?"
+
+print_test_section "check_time_budget T2: nearly-exhausted CI_JOB_START_EPOCH → stop"
+export CI_JOB_START_EPOCH=$(( _BASE - 17000 ))   # 283m elapsed; 17m remaining < 20m threshold
+_MOCK_NOW="$_BASE"
+_ctb_result=0; check_time_budget || _ctb_result=$?
+assert_eq "T2: near-exhausted returns 1 (loop stops)" "1" "$_ctb_result"
+
+print_test_section "check_time_budget T3a: CI_JOB_START_EPOCH wins over PIPELINE_RUN_EPOCH above"
+# Both set. PIPELINE_RUN_EPOCH is nearly-exhausted (would force return 1 if consulted);
+# CI_JOB_START_EPOCH is recent. Catches re-introduction of PIPELINE_RUN_EPOCH ABOVE
+# CI_JOB_START_EPOCH in the chain (the original 591c8e8 structure).
+# Using a year-2001 PIPELINE_RUN_EPOCH would be defeated by the stale-ref defense —
+# a nearly-exhausted value produces a real regression signal.
+export PIPELINE_RUN_EPOCH=$(( _BASE - 17000 ))   # nearly-exhausted: 17m remaining if consulted
+export CI_JOB_START_EPOCH=$(( _BASE - 100 ))     # recent: controls correct result
+_MOCK_NOW="$_BASE"
+check_time_budget
+assert_eq "T3a: CI_JOB_START_EPOCH dominates: returns 0" "0" "$?"
+
+print_test_section "check_time_budget T3b: PIPELINE_RUN_EPOCH not consulted as sole fallback"
+# Only PIPELINE_RUN_EPOCH set; CI_JOB_START_EPOCH and LOOP_START_EPOCH unset.
+# If PIPELINE_RUN_EPOCH were in the chain: _remaining_min=17 < 20 → return 1.
+# If it is NOT in the chain: _ref_epoch is empty → [[ -z ]] guard → return 0.
+# Same nearly-exhausted value: year-2001 would pass via stale-ref defense → vacuous.
+unset CI_JOB_START_EPOCH LOOP_START_EPOCH || true
+export PIPELINE_RUN_EPOCH=$(( _BASE - 17000 ))   # nearly-exhausted: would force return 1 if consulted
+_MOCK_NOW="$_BASE"
+check_time_budget
+assert_eq "T3b: PIPELINE_RUN_EPOCH not in chain: returns 0 (empty _ref_epoch)" "0" "$?"
+
+print_test_section "check_time_budget T4: stale-ref defense fires when anchor is impossibly old"
+unset CI_JOB_START_EPOCH PIPELINE_RUN_EPOCH || true
+export LOOP_START_EPOCH=1000000000               # year 2001 — forces _elapsed_min > _job_timeout_min
+_MOCK_NOW="$_BASE"
+: > "$EMIT_CALLS"                                # clear previous emit captures
+check_time_budget
+assert_eq "T4: stale-ref defense returns 0 (not insta-exit)" "0" "$?"
+# emit_event mock (line 44) writes "$*" space-joined onto one line.
+# $EMIT_CALLS: "loop.time_budget_stale_ref elapsed_min=N ref_epoch=N job_timeout_min=N"
+assert_contains "T4: stale-ref defense emits loop.time_budget_stale_ref" \
+    "$(cat "$EMIT_CALLS")" "loop.time_budget_stale_ref"
+
+unset PIPELINE_RUN_EPOCH CI_JOB_START_EPOCH LOOP_START_EPOCH SHIPWRIGHT_JOB_TIMEOUT_MINUTES || true
+
 # Emit explicit "$PASS/$TOTAL pass" as the final visible line for DoD audit parsers.
 printf '%s/%s pass\n' "$PASS" "$TOTAL"
 print_test_results

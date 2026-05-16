@@ -4235,6 +4235,19 @@ main() {
         "test_events_snapshot_code_absent:Issue2: _events_snap code fully removed from sw-pipeline.sh"
         "test_events_snapshot_not_created_on_wip_push:Issue2: pipeline_wip_push does not create .shipwright/events-*.jsonl"
         "test_events_snapshot_not_created_on_final_push:Issue2: pipeline_final_artifact_push does not create .shipwright/events-*.jsonl"
+        "test_push_guard_blocks_cross_issue_target:PushGuard: _assert_push_target_matches_active_issue returns 87 for cross-issue branch"
+        "test_push_guard_passes_matching_and_neutral_targets:PushGuard: guard passes for matching issue and neutral branches"
+        "test_ci_push_partial_work_respects_no_artifact_push:PushGuard: ci_push_partial_work respects NO_ARTIFACT_PUSH flag"
+        "test_resume_state_does_not_clobber_explicit_issue:PR2: resume_state preserves explicit --issue arg over stale state file"
+        "test_resume_state_rejects_stale_when_mismatch:PR2: resume_state exits 2 on issue number mismatch"
+        "test_persist_artifacts_commits_state_files_every_stage:PR3: persist_artifacts called for every stage in mark_stage_complete"
+        "test_persist_artifacts_push_guard_present:PR3: persist_artifacts contains opportunistic push"
+        "test_branch_drift_auto_recover_present_in_mark_stage_complete:PR3: mark_stage_complete checks for branch drift"
+        "test_intake_refuses_local_mode_when_ci_and_workspace_branch_unset:PR3: intake exits 2 when CI_MODE=true and WORKSPACE_BRANCH unset"
+        "test_ci_resume_does_not_fall_back_to_ci_issue_n:PR3: CI resume refuses ci/issue-N fallback when WORKSPACE_BRANCH unset"
+        "test_state_heartbeat_helpers_present:PR3: _start_state_heartbeat and _stop_state_heartbeat exist in sw-pipeline.sh"
+        "test_heartbeat_called_in_run_pipeline:PR3: _start_state_heartbeat called inside run_pipeline"
+        "test_workflow_workspace_branch_re_export_step_present:PR3: workflow has idempotent WORKSPACE_BRANCH re-export step"
     )
 
     for entry in "${tests[@]}"; do
@@ -4307,6 +4320,227 @@ test_watchdog_armed_event_removed() {
 test_watchdog_soft_timeout_event_removed() {
     if grep -q 'pipeline\.soft_timeout_push' "$REAL_PIPELINE_SCRIPT"; then
         echo "FAIL: pipeline.soft_timeout_push event still emitted in sw-pipeline.sh"
+        return 1
+    fi
+    return 0
+}
+
+test_push_guard_blocks_cross_issue_target() {
+    local rc
+    if ! grep -q '_assert_push_target_matches_active_issue' "$REAL_PIPELINE_SCRIPT" 2>/dev/null; then
+        echo "SKIP: _assert_push_target_matches_active_issue not yet implemented"
+        return 0
+    fi
+    # Extract just the function body to avoid sourcing full script (which resets ISSUE_NUMBER).
+    local func_body
+    func_body=$(awk '/^_assert_push_target_matches_active_issue\(\)/,/^}$/{print}' "$REAL_PIPELINE_SCRIPT")
+    (
+        emit_event() { :; }
+        eval "$func_body"
+        ISSUE_NUMBER=460
+        _assert_push_target_matches_active_issue "shipwright/issue-99"
+    ) 2>/dev/null
+    rc=$?
+    if [[ "$rc" -ne 87 ]]; then
+        echo "FAIL: expected exit 87 for cross-issue push, got $rc"
+        return 1
+    fi
+    return 0
+}
+
+test_push_guard_passes_matching_and_neutral_targets() {
+    if ! grep -q '_assert_push_target_matches_active_issue' "$REAL_PIPELINE_SCRIPT" 2>/dev/null; then
+        echo "SKIP: _assert_push_target_matches_active_issue not yet implemented"
+        return 0
+    fi
+    # Extract just the function body to avoid sourcing full script (which resets ISSUE_NUMBER).
+    local func_body
+    func_body=$(awk '/^_assert_push_target_matches_active_issue\(\)/,/^}$/{print}' "$REAL_PIPELINE_SCRIPT")
+    (
+        emit_event() { :; }
+        eval "$func_body"
+        ISSUE_NUMBER=460
+        _assert_push_target_matches_active_issue "shipwright/issue-460" || exit 1
+        _assert_push_target_matches_active_issue "shipwright-data" || exit 1
+        _assert_push_target_matches_active_issue "ci/sub-branch" || exit 1
+    ) 2>/dev/null
+    if [[ $? -ne 0 ]]; then
+        echo "FAIL: push guard should pass for matching/neutral targets"
+        return 1
+    fi
+    return 0
+}
+
+test_ci_push_partial_work_respects_no_artifact_push() {
+    # Verify the guard exists in the function
+    local guard_line
+    guard_line=$(grep -n 'NO_ARTIFACT_PUSH' "$REAL_PIPELINE_SCRIPT" | grep -i 'ci_push_partial' | head -1 || true)
+    if [[ -z "$guard_line" ]]; then
+        # Check within function body (between ci_push_partial_work and the next function)
+        local in_func=false found=false
+        while IFS= read -r line; do
+            [[ "$line" =~ ^ci_push_partial_work ]] && in_func=true
+            [[ "$in_func" == "true" && "$line" =~ NO_ARTIFACT_PUSH ]] && found=true && break
+            [[ "$in_func" == "true" && "$line" =~ ^\} ]] && break
+        done < "$REAL_PIPELINE_SCRIPT"
+        if [[ "$found" != "true" ]]; then
+            echo "FAIL: ci_push_partial_work does not check NO_ARTIFACT_PUSH"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+test_resume_state_does_not_clobber_explicit_issue() {
+    local real_state_lib="$SCRIPT_DIR/lib/pipeline-state.sh"
+    # Static check: resume_state must only assign ISSUE_NUMBER from state file
+    # when it is currently unset (explicit --issue arg wins).
+    # Verify the guard pattern: `-z "${ISSUE_NUMBER:-}"` before the assignment.
+    local guard_count
+    guard_count=$(awk '/^resume_state\(\)/,/^}$/{print}' "$real_state_lib" 2>/dev/null \
+        | grep -c '\-z.*ISSUE_NUMBER' || echo "0")
+    if [[ "${guard_count:-0}" -eq 0 ]]; then
+        echo "FAIL: resume_state does not guard ISSUE_NUMBER assignment with -z check (explicit-arg-wins not implemented)"
+        return 1
+    fi
+    return 0
+}
+
+test_resume_state_rejects_stale_when_mismatch() {
+    local real_state_lib="$SCRIPT_DIR/lib/pipeline-state.sh"
+    # Static check: resume_state must exit 2 when state file issue != explicit ISSUE_NUMBER.
+    local exit2_count
+    exit2_count=$(awk '/^resume_state\(\)/,/^}$/{print}' "$real_state_lib" 2>/dev/null \
+        | grep -c 'exit 2' || echo "0")
+    if [[ "${exit2_count:-0}" -eq 0 ]]; then
+        echo "FAIL: resume_state does not exit 2 on stale-state mismatch (not yet implemented)"
+        return 1
+    fi
+    return 0
+}
+
+test_persist_artifacts_commits_state_files_every_stage() {
+    local real_state_lib="$SCRIPT_DIR/lib/pipeline-state.sh"
+    # Verify that mark_stage_complete calls persist_artifacts for stages beyond plan/design.
+    # After the fix, every stage should have persist_artifacts called.
+    local has_all_stages
+    # Look for the case statement in mark_stage_complete that calls persist_artifacts
+    # After fix: should see "*)  persist_artifacts" or remove the case (call unconditionally)
+    # Before fix: only plan|design have persist_artifacts
+    has_all_stages=$(awk '
+        /mark_stage_complete/,/^}/ {
+            if (/persist_artifacts/ && !/plan|design/) found=1
+        }
+        END { print (found ? "yes" : "no") }
+    ' "$real_state_lib" 2>/dev/null || echo "no")
+    if [[ "$has_all_stages" != "yes" ]]; then
+        echo "FAIL: persist_artifacts not called for all stages in mark_stage_complete (expected after fix)"
+        return 1
+    fi
+    return 0
+}
+
+test_persist_artifacts_push_guard_present() {
+    local real_state_lib="$SCRIPT_DIR/lib/pipeline-state.sh"
+    # After fix: persist_artifacts should contain a git push (opportunistic)
+    # Before fix: explicitly says "Intentionally no git push here"
+    if grep -q 'Intentionally no git push' "$real_state_lib" 2>/dev/null; then
+        echo "FAIL: persist_artifacts still has 'Intentionally no git push' comment (not yet fixed)"
+        return 1
+    fi
+    if ! grep -q 'git push' "$real_state_lib" 2>/dev/null; then
+        # Maybe it's there but in a different form; check for push within persist_artifacts body
+        echo "FAIL: persist_artifacts does not contain a git push (expected after fix)"
+        return 1
+    fi
+    return 0
+}
+
+test_branch_drift_auto_recover_present_in_mark_stage_complete() {
+    local real_state_lib="$SCRIPT_DIR/lib/pipeline-state.sh"
+    # After fix: should see branch_drift or WORKSPACE_BRANCH check in mark_stage_complete
+    local has_drift_check
+    has_drift_check=$(awk '
+        /^mark_stage_complete/,/^}/ {
+            if (/WORKSPACE_BRANCH/ || /branch_drift/ || /symbolic-ref/) found=1
+        }
+        END { print (found ? "yes" : "no") }
+    ' "$real_state_lib" 2>/dev/null || echo "no")
+    if [[ "$has_drift_check" != "yes" ]]; then
+        echo "FAIL: mark_stage_complete does not check for branch drift (expected after fix)"
+        return 1
+    fi
+    return 0
+}
+
+test_intake_refuses_local_mode_when_ci_and_workspace_branch_unset() {
+    # After fix: intake should error out if CI_MODE=true and WORKSPACE_BRANCH is unset
+    local intake_lib
+    intake_lib="$REPO_DIR/scripts/lib/pipeline-stages-intake.sh"
+    if [[ ! -f "$intake_lib" ]]; then
+        echo "SKIP: intake lib not found"
+        return 0
+    fi
+    # Check that there's an error/exit for unset WORKSPACE_BRANCH in CI mode
+    local has_guard
+    has_guard=$(grep -c 'WORKSPACE_BRANCH.*unset\|WORKSPACE_BRANCH.*is unset\|exit 2' "$intake_lib" 2>/dev/null || echo "0")
+    if [[ "$has_guard" -eq 0 ]]; then
+        echo "FAIL: intake does not guard against unset WORKSPACE_BRANCH in CI mode (expected after fix)"
+        return 1
+    fi
+    return 0
+}
+
+test_ci_resume_does_not_fall_back_to_ci_issue_n() {
+    # After fix: in CI mode, resume must hard-fail when WORKSPACE_BRANCH is unset
+    # rather than silently falling back to ci/issue-N.
+    # Verify the guard: error "CI resume: WORKSPACE_BRANCH unset. Refusing to fall back..."
+    local has_ci_guard
+    has_ci_guard=$(grep -c 'CI resume.*WORKSPACE_BRANCH unset\|CI resume: WORKSPACE_BRANCH' \
+        "$REAL_PIPELINE_SCRIPT" 2>/dev/null || echo "0")
+    if [[ "${has_ci_guard:-0}" -eq 0 ]]; then
+        echo "FAIL: CI resume does not hard-fail on unset WORKSPACE_BRANCH (expected guard with error+exit 2)"
+        return 1
+    fi
+    return 0
+}
+
+test_state_heartbeat_helpers_present() {
+    if ! grep -q '_start_state_heartbeat' "$REAL_PIPELINE_SCRIPT" 2>/dev/null; then
+        echo "FAIL: _start_state_heartbeat not found in sw-pipeline.sh (expected after fix)"
+        return 1
+    fi
+    if ! grep -q '_stop_state_heartbeat' "$REAL_PIPELINE_SCRIPT" 2>/dev/null; then
+        echo "FAIL: _stop_state_heartbeat not found in sw-pipeline.sh (expected after fix)"
+        return 1
+    fi
+    return 0
+}
+
+test_heartbeat_called_in_run_pipeline() {
+    # After fix: run_pipeline should call _start_state_heartbeat
+    local found
+    found=$(awk '
+        /^run_pipeline\(\)/ { in_func=1 }
+        in_func && /_start_state_heartbeat/ { found=1 }
+        in_func && /^}/ && !/^run_pipeline/ { in_func=0 }
+        END { print (found ? "yes" : "no") }
+    ' "$REAL_PIPELINE_SCRIPT" 2>/dev/null || echo "no")
+    if [[ "$found" != "yes" ]]; then
+        echo "FAIL: _start_state_heartbeat not called in run_pipeline (expected after fix)"
+        return 1
+    fi
+    return 0
+}
+
+test_workflow_workspace_branch_re_export_step_present() {
+    local workflow="$REPO_DIR/.github/workflows/shipwright-pipeline.yml"
+    if [[ ! -f "$workflow" ]]; then
+        echo "SKIP: workflow file not found"
+        return 0
+    fi
+    if ! grep -q 'Re-export workspace branch\|idempotent.*WORKSPACE_BRANCH\|WORKSPACE_BRANCH.*idempotent' "$workflow" 2>/dev/null; then
+        echo "FAIL: workflow missing idempotent WORKSPACE_BRANCH re-export step (expected after fix)"
         return 1
     fi
     return 0

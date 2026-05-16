@@ -655,7 +655,8 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --goal)        GOAL="$2"; shift 2 ;;
-            --issue)       ISSUE_NUMBER="$2"; shift 2 ;;
+            --issue)       ISSUE_NUMBER="$2"; shift 2
+                           [[ "${SHIPWRIGHT_DEBUG:-0}" == "1" ]] && echo "[ISSUE-TRACE] parse_args: ISSUE_NUMBER=${ISSUE_NUMBER}" >&2 || true ;;
             --repo)        REPO_OVERRIDE="$2"; shift 2 ;;
             --local)       NO_GITHUB=true; NO_GITHUB_LABEL=true; shift ;;
             --pipeline|--template) PIPELINE_NAME="$2"; shift 2 ;;
@@ -880,10 +881,103 @@ stop_heartbeat() {
 
 # ─── CI Helpers ───────────────────────────────────────────────────────────
 
+# _assert_push_target_matches_active_issue <branch>
+# Returns 87 if <branch> is shipwright/issue-* and its number != ISSUE_NUMBER.
+# Passive (returns 0) for shipwright-data, ci/*, refs/notes/*, etc.
+_assert_push_target_matches_active_issue() {
+    local branch="$1"
+    [[ "$branch" =~ ^shipwright/issue-([0-9]+)$ ]] || return 0
+    local target_num="${BASH_REMATCH[1]}"
+    local active="${ISSUE_NUMBER:-}"
+    if [[ -z "$active" || "$active" != "$target_num" ]]; then
+        {
+            echo "[PUSH-GUARD-FAIL] $(date -u +%FT%TZ)"
+            echo "  branch=$branch target_issue=$target_num"
+            echo "  ISSUE_NUMBER=${active:-<unset>}"
+            echo "  SHIPWRIGHT_PIPELINE_ID=${SHIPWRIGHT_PIPELINE_ID:-<unset>}"
+            echo "  HEAD=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+            echo "  state_file_issue=$(grep -m1 '^issue:' .claude/pipeline-state.md 2>/dev/null || echo none)"
+            echo "  caller stack:"
+            local i
+            for ((i=0; i<${#FUNCNAME[@]}; i++)); do
+                printf '    #%d %s at %s:%s\n' "$i" "${FUNCNAME[$i]}" \
+                    "${BASH_SOURCE[$i]:-?}" "${BASH_LINENO[$i]:-?}"
+            done
+        } >&2
+        emit_event "pipeline.push_guard_blocked" \
+            "branch=$branch target=$target_num active=${active:-none}" 2>/dev/null || true
+        return 87
+    fi
+    return 0
+}
+
+# State persistence heartbeat — commits pipeline-state.md + progress.md every
+# HEARTBEAT_INTERVAL seconds so a hard job timeout loses minutes not hours.
+# Only runs in CI mode. Uses the same push lock as persist_artifacts.
+_STATE_HEARTBEAT_PID=""
+HEARTBEAT_INTERVAL="${SHIPWRIGHT_HEARTBEAT_INTERVAL:-600}"
+
+_start_state_heartbeat() {
+    [[ "${CI_MODE:-false}" == "true" && -n "${WORKSPACE_BRANCH:-}" ]] || return 0
+    local _hb_branch="$WORKSPACE_BRANCH"
+    local _hb_state_file="${STATE_FILE:-.claude/pipeline-state.md}"
+    local _hb_artifacts_dir="${ARTIFACTS_DIR:-}"
+    local _hb_issue="${ISSUE_NUMBER:-}"
+    local _hb_interval="${SHIPWRIGHT_HEARTBEAT_INTERVAL:-600}"
+    (
+        local _last_sha=""
+        while sleep "$_hb_interval"; do
+            local _cur_sha
+            _cur_sha=$(sha1sum "$_hb_state_file" 2>/dev/null | awk '{print $1}' || echo "")
+            [[ -z "$_cur_sha" || "$_cur_sha" == "$_last_sha" ]] && continue
+            # Snapshot progress.md into artifacts dir
+            if [[ -n "$_hb_artifacts_dir" && -f ".claude/loop-logs/progress.md" ]]; then
+                cp ".claude/loop-logs/progress.md" "${_hb_artifacts_dir}/progress.md" 2>/dev/null || true
+            fi
+            # Commit + push with lock to avoid racing persist_artifacts
+            local _lock_file="${_hb_state_file%/*}/.push.lock"
+            if command -v flock >/dev/null 2>&1; then
+                (
+                    flock -n 9 2>/dev/null || exit 0
+                    git add -f "$_hb_state_file" 2>/dev/null || true
+                    [[ -n "$_hb_artifacts_dir" ]] && git add -f "${_hb_artifacts_dir}/progress.md" 2>/dev/null || true
+                    if ! git diff --cached --quiet 2>/dev/null; then
+                        git commit -m "chore: heartbeat state snapshot for #${_hb_issue} [skip ci]" \
+                            --no-verify 2>/dev/null || true
+                    fi
+                    _timeout 30 git push --force-with-lease origin \
+                        "HEAD:refs/heads/${_hb_branch}" 2>/dev/null || true
+                ) 9>"$_lock_file"
+            else
+                git add -f "$_hb_state_file" 2>/dev/null || true
+                [[ -n "$_hb_artifacts_dir" ]] && git add -f "${_hb_artifacts_dir}/progress.md" 2>/dev/null || true
+                if ! git diff --cached --quiet 2>/dev/null; then
+                    git commit -m "chore: heartbeat state snapshot for #${_hb_issue} [skip ci]" \
+                        --no-verify 2>/dev/null || true
+                fi
+                _timeout 30 git push --force-with-lease origin \
+                    "HEAD:refs/heads/${_hb_branch}" 2>/dev/null || true
+            fi
+            _last_sha="$_cur_sha"
+        done
+    ) &
+    _STATE_HEARTBEAT_PID=$!
+    info "State heartbeat: started (every ${_hb_interval}s, pid=${_STATE_HEARTBEAT_PID})"
+}
+
+_stop_state_heartbeat() {
+    [[ -n "${_STATE_HEARTBEAT_PID:-}" ]] || return 0
+    kill "$_STATE_HEARTBEAT_PID" 2>/dev/null || true
+    wait "$_STATE_HEARTBEAT_PID" 2>/dev/null || true
+    unset _STATE_HEARTBEAT_PID
+}
+
 ci_push_partial_work() {
     local push_timeout="${1:-5}"   # 5s default for SIGTERM grace path; watchdog passes 120
     [[ "${CI_MODE:-false}" != "true" ]] && return 0
     [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
+    [[ "${NO_GITHUB:-false}" == "true" || "${NO_ARTIFACT_PUSH:-false}" == "true" ]] && return 0
+    [[ "${_PIPELINE_RUN_STARTED:-false}" == "true" ]] || return 0
 
     local _expected_wip="shipwright/issue-${ISSUE_NUMBER}"
     local _actual_head
@@ -919,6 +1013,7 @@ ci_push_partial_work() {
         git config --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
         git remote set-url origin "https://x-access-token:${GITHUBTOKEN}@github.com/${_wip_repo_slug}.git" 2>/dev/null || true
     fi
+    _assert_push_target_matches_active_issue "$branch" || return $?
     if _timeout "$push_timeout" git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null; then
         echo "[WIP-PUSH-OK] $(date -u +%FT%TZ) branch=$branch" >&2
     else
@@ -970,6 +1065,7 @@ pipeline_final_artifact_push() {
         git config --unset-all "http.https://github.com/.extraheader" 2>/dev/null || true
         git remote set-url origin "https://x-access-token:${GITHUBTOKEN}@github.com/${_af_repo_slug}.git" 2>/dev/null || true
     fi
+    _assert_push_target_matches_active_issue "$branch" || { git remote set-url origin "https://github.com/${_af_repo_slug}.git" 2>/dev/null || true; return $?; }
     if _timeout "$push_timeout" git push origin "HEAD:refs/heads/$branch" --force 2>/dev/null; then
         echo "[ARTIFACT-PUSH-OK] $(date -u +%FT%TZ) branch=$branch" >&2
     else
@@ -1018,6 +1114,7 @@ cleanup_on_exit() {
     [[ "$_grace" =~ ^[0-9]+$ ]] || _grace=25
     [[ "${_cleanup_done:-}" == "true" ]] && return 0
     _cleanup_done=true
+    _stop_state_heartbeat
 
     # Only mark as interrupted and post GitHub comment if actually signal-driven.
     # On clean completions the pipeline stages handle their own state/comments.
@@ -2099,6 +2196,8 @@ auto_rebase() {
 
 run_pipeline() {
     _PIPELINE_RUN_STARTED=true
+    [[ "${SHIPWRIGHT_DEBUG:-0}" == "1" ]] && echo "[ISSUE-TRACE] run_pipeline: ISSUE_NUMBER=${ISSUE_NUMBER:-<unset>}" >&2 || true
+    _start_state_heartbeat
 
     # Rotate event log if needed (standalone mode)
     rotate_event_log_if_needed
@@ -3180,7 +3279,16 @@ pipeline_start() {
 
         # Restore branch context
         if [[ -z "$GIT_BRANCH" ]]; then
-            local _fallback="${WORKSPACE_BRANCH:-ci/issue-${ISSUE_NUMBER}}"
+            local _fallback
+            if [[ "${CI_MODE:-false}" == "true" ]]; then
+                if [[ -z "${WORKSPACE_BRANCH:-}" ]]; then
+                    error "CI resume: WORKSPACE_BRANCH unset. Refusing to fall back to ci/issue-${ISSUE_NUMBER}."
+                    exit 2
+                fi
+                _fallback="$WORKSPACE_BRANCH"
+            else
+                _fallback="${WORKSPACE_BRANCH:-ci/issue-${ISSUE_NUMBER}}"
+            fi
             info "CI resume: restoring branch ${_fallback}"
             if ! git checkout "$_fallback" 2>/dev/null && ! git checkout -b "$_fallback" 2>/dev/null; then
                 warn "CI resume: failed to checkout branch ${_fallback}"

@@ -64,10 +64,17 @@ stage_intake() {
     fi
 
     # 4. Create branch with smart prefix
-    if [[ -n "${WORKSPACE_BRANCH:-}" ]]; then
-        # CI mode: the workflow already created and exported the WIP branch.
-        # Skip branch creation to avoid the two-branch identity conflict where
-        # intake's descriptive branch diverges from the workflow's shipwright/issue-N.
+    if [[ "${CI_MODE:-false}" == "true" ]]; then
+        # In CI the workflow must have set WORKSPACE_BRANCH before intake runs.
+        # If it's unset the workspace is in an invalid state — refuse to continue.
+        if [[ -z "${WORKSPACE_BRANCH:-}" ]]; then
+            error "CI mode but WORKSPACE_BRANCH is unset. The workflow's 'Prepare workspace branch' step must export it before intake runs."
+            exit 2
+        fi
+        GIT_BRANCH="$WORKSPACE_BRANCH"
+        info "CI mode: using workspace branch ${GIT_BRANCH}"
+    elif [[ -n "${WORKSPACE_BRANCH:-}" ]]; then
+        # WORKSPACE_BRANCH set without CI_MODE (explicit override or test harness)
         GIT_BRANCH="$WORKSPACE_BRANCH"
         info "CI mode: using workspace branch ${GIT_BRANCH}"
     else

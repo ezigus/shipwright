@@ -268,14 +268,37 @@ EOF
 
 mark_stage_complete() {
     local stage_id="$1"
+    record_stage_effectiveness "$stage_id" "complete"
+
+    # CI branch invariant: HEAD must be on WORKSPACE_BRANCH.
+    # If drift is detected, attempt to recover via merge, fail loudly only if unmergeable.
+    if [[ "${CI_MODE:-false}" == "true" && -n "${WORKSPACE_BRANCH:-}" ]]; then
+        local _head
+        _head=$(git symbolic-ref --short HEAD 2>/dev/null || echo "<detached>")
+        if [[ "$_head" != "$WORKSPACE_BRANCH" ]]; then
+            warn "Branch drift: HEAD=${_head}, expected=${WORKSPACE_BRANCH}. Attempting auto-recover for stage '${stage_id}'."
+            emit_event "pipeline.branch_drift_detected" \
+                "head=${_head} expected=${WORKSPACE_BRANCH} stage=${stage_id}" 2>/dev/null || true
+            local _drift_sha
+            _drift_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+            if [[ -n "$_drift_sha" ]] \
+               && git checkout "$WORKSPACE_BRANCH" 2>/dev/null \
+               && git merge --no-edit --no-ff "$_drift_sha" 2>/dev/null; then
+                info "Branch drift recovered: merged ${_drift_sha:0:7} from ${_head} into ${WORKSPACE_BRANCH}"
+                emit_event "pipeline.branch_drift_recovered" "merged=${_drift_sha:0:7}" 2>/dev/null || true
+            else
+                error "Branch drift unrecoverable: could not merge drift from ${_head} into ${WORKSPACE_BRANCH}. Stage '${stage_id}' not marked complete."
+                return 1
+            fi
+        fi
+    fi
+
     record_stage_end "$stage_id"
     set_stage_status "$stage_id" "complete"
     local timing
     timing=$(get_stage_timing "$stage_id")
     log_stage "$stage_id" "complete (${timing})"
     write_state
-
-    record_stage_effectiveness "$stage_id" "complete"
 
     # Record stage completion in SQLite pipeline_stages table
     if type record_stage >/dev/null 2>&1; then
@@ -327,10 +350,13 @@ mark_stage_complete() {
         gh_checks_stage_update "$stage_id" "completed" "success" "Stage $stage_id: ${timing}" 2>/dev/null || true
     fi
 
-    # Persist artifacts to feature branch after expensive stages
+    # Persist artifacts to feature branch at every stage boundary.
+    # persist_artifacts now always force-adds pipeline-state.md (gitignored);
+    # stage-specific artifact files are additive on top.
     case "$stage_id" in
-        plan)   persist_artifacts "plan" "plan.md" "dod.md" "context-bundle.md" ;;
+        plan)   persist_artifacts "plan"   "plan.md" "dod.md" "context-bundle.md" ;;
         design) persist_artifacts "design" "design.md" ;;
+        *)      persist_artifacts "$stage_id" ;;
     esac
 
     # Automatic checkpoint at every stage boundary (for crash recovery)
@@ -365,42 +391,49 @@ mark_stage_complete() {
 }
 
 persist_artifacts() {
-    # Commit pipeline artifacts to the feature branch mid-pipeline.
-    # Only runs in CI — local runs skip. Non-fatal: logs failure but never crashes.
-    # NOTE: intentionally does NOT push — GHA post-step and ci_push_partial_work
-    # safety nets handle remote push so this stays outside the pipeline loop.
+    # Commit pipeline artifacts + state files to the feature branch mid-pipeline.
+    # Always force-adds pipeline-state.md (gitignored) for resume reliability.
+    # Snapshots progress.md from loop-logs so mid-stage resume has an iteration cursor.
+    # Opportunistically pushes after commit — GHA always() does NOT run on hard timeout,
+    # so we can't rely on the post-step alone.
     [[ "${CI_MODE:-false}" != "true" ]] && return 0
     [[ -z "${ISSUE_NUMBER:-}" ]] && return 0
-    [[ -z "${ARTIFACTS_DIR:-}" ]] && return 0
 
     local stage="${1:-unknown}"
     shift
     local files=("$@")
 
-    # Collect files that actually exist
-    local to_add=()
-    for f in "${files[@]}"; do
-        local path="${ARTIFACTS_DIR}/${f}"
-        if [[ -f "$path" && -s "$path" ]]; then
-            to_add+=("$path")
-        fi
-    done
+    # Always force-add state files (gitignored but critical for resume)
+    git add -f ".claude/pipeline-state.md" ".claude/pipeline-status.json" 2>/dev/null || true
 
-    if [[ ${#to_add[@]} -eq 0 ]]; then
-        warn "persist_artifacts($stage): no artifact files found — skipping"
+    # Snapshot gitignored progress.md into artifacts dir so it travels with state
+    if [[ -n "${ARTIFACTS_DIR:-}" && -f ".claude/loop-logs/progress.md" ]]; then
+        cp ".claude/loop-logs/progress.md" "${ARTIFACTS_DIR}/progress.md" 2>/dev/null || true
+        git add -f "${ARTIFACTS_DIR}/progress.md" 2>/dev/null || true
+    fi
+
+    # Collect stage-specific artifact files from ARTIFACTS_DIR
+    if [[ -n "${ARTIFACTS_DIR:-}" ]]; then
+        local to_add=()
+        for f in "${files[@]}"; do
+            local path="${ARTIFACTS_DIR}/${f}"
+            if [[ -f "$path" && -s "$path" ]]; then
+                to_add+=("$path")
+            fi
+        done
+        if [[ ${#to_add[@]} -gt 0 ]]; then
+            git add "${to_add[@]}" 2>/dev/null || true
+            git restore --staged .claude/daemon-config.json 2>/dev/null || true
+        fi
+    fi
+
+    # Nothing staged — nothing to do
+    if git diff --cached --quiet 2>/dev/null; then
         return 0
     fi
 
-    info "Persisting ${#to_add[@]} artifact(s) after stage ${stage}..."
-
     local commit_status="noop"
-
-    # Use compound command (not subshell) so commit_status is visible in parent scope.
-    # Intentionally no git push here — GHA always-step and ci_push_partial_work
-    # safety nets (watchdog at T-5min, cleanup_on_exit on failure) handle remote push.
     {
-        git add "${to_add[@]}" 2>/dev/null || true
-        git restore --staged .claude/daemon-config.json 2>/dev/null || true
         if ! git diff --cached --quiet 2>/dev/null; then
             if git commit -m "chore: persist ${stage} artifacts for #${ISSUE_NUMBER} [skip ci]" \
                     --no-verify 2>/dev/null; then
@@ -414,14 +447,33 @@ persist_artifacts() {
     case "$commit_status" in
         committed)
             emit_event "artifacts.persisted" \
-                "issue=${ISSUE_NUMBER}" "stage=$stage" "file_count=${#to_add[@]}" 2>/dev/null || true
+                "issue=${ISSUE_NUMBER}" "stage=$stage" 2>/dev/null || true
+            # Opportunistic push: GHA always() doesn't fire on hard job timeout.
+            # Non-fatal; post-step + heartbeat are additional safety nets.
+            if [[ -n "${WORKSPACE_BRANCH:-}" ]]; then
+                local _lock_file=".claude/.push.lock"
+                if command -v flock >/dev/null 2>&1; then
+                    (
+                        flock -n 9 2>/dev/null || exit 0
+                        _timeout 30 git push --force-with-lease origin \
+                            "HEAD:refs/heads/${WORKSPACE_BRANCH}" 2>/dev/null \
+                            && info "persist_artifacts: pushed state for ${stage}" \
+                            || warn "persist_artifacts: push failed for ${stage} (post-step will retry)"
+                    ) 9>"$_lock_file"
+                else
+                    _timeout 30 git push --force-with-lease origin \
+                        "HEAD:refs/heads/${WORKSPACE_BRANCH}" 2>/dev/null \
+                        && info "persist_artifacts: pushed state for ${stage}" \
+                        || warn "persist_artifacts: push failed for ${stage} (post-step will retry)"
+                fi
+            fi
             ;;
         commit_failed)
             warn "persist_artifacts($stage): local commit failed — non-fatal, continuing"
             emit_event "artifacts.persist_failed" "issue=${ISSUE_NUMBER}" "stage=$stage" 2>/dev/null || true
             ;;
         noop)
-            : # nothing to commit — silent
+            : # nothing to commit
             ;;
     esac
 
@@ -903,8 +955,19 @@ ${stage_id}:failed"
         fi
     fi
 
-    if [[ -n "$GITHUB_ISSUE" && "$GITHUB_ISSUE" =~ ^#([0-9]+)$ ]]; then
+    # Explicit --issue arg wins over state file. Only restore if CLI didn't set it.
+    if [[ -z "${ISSUE_NUMBER:-}" ]] \
+       && [[ -n "$GITHUB_ISSUE" && "$GITHUB_ISSUE" =~ ^#([0-9]+)$ ]]; then
         ISSUE_NUMBER="${BASH_REMATCH[1]}"
+    fi
+    [[ "${SHIPWRIGHT_DEBUG:-0}" == "1" ]] && echo "[ISSUE-TRACE] resume_state: ISSUE_NUMBER=${ISSUE_NUMBER:-<unset>} GITHUB_ISSUE=${GITHUB_ISSUE:-<unset>}" >&2 || true
+
+    # Mismatch: state file belongs to a different issue than the CLI specified.
+    if [[ -n "${ISSUE_NUMBER:-}" && -n "$GITHUB_ISSUE" \
+          && "$GITHUB_ISSUE" =~ ^#([0-9]+)$ \
+          && "${BASH_REMATCH[1]}" != "$ISSUE_NUMBER" ]]; then
+        error "Stale state: $STATE_FILE has issue=$GITHUB_ISSUE but pipeline launched with --issue $ISSUE_NUMBER. Remove the stale file and retry."
+        exit 2
     fi
 
     # Clear stale pipeline-tasks.md if it belongs to a different pipeline run.

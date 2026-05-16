@@ -209,6 +209,27 @@ else
         "(pipeline-logs=$PIPELINE_LOGS_LINE, cost-breakdown=$COST_STEP_LINE, exit-code=$EXITCODE_LINE)"
 fi
 
+# Producer/consumer contract: the upload paths in the workflow must match the
+# paths the cost library actually writes. If someone renames cost-breakdown.json
+# or stage-costs.jsonl in lib/cost/* but forgets to update the workflow, the
+# uploaded artifact would silently become empty. Guard against that drift here.
+COST_LIB_DIR="$SCRIPT_DIR/lib/cost"
+if [[ -d "$COST_LIB_DIR" ]]; then
+    if grep -rqE '(cost-breakdown\.json|cost_breakdown\.json|COST_BREAKDOWN_JSON)' "$COST_LIB_DIR" 2>/dev/null; then
+        assert_pass "cost library still references cost-breakdown.json (matches workflow upload path)"
+    else
+        assert_fail "cost library still references cost-breakdown.json" \
+            "workflow uploads .claude/pipeline-artifacts/cost-breakdown.json but no producer reference found in $COST_LIB_DIR"
+    fi
+
+    if grep -rqE '(stage-costs\.jsonl|STAGE_COSTS_JSONL)' "$COST_LIB_DIR" 2>/dev/null; then
+        assert_pass "cost library still references stage-costs.jsonl (matches workflow upload path)"
+    else
+        assert_fail "cost library still references stage-costs.jsonl" \
+            "workflow uploads .claude/pipeline-artifacts/stage-costs.jsonl but no producer reference found in $COST_LIB_DIR"
+    fi
+fi
+
 # ─── ordering: npm cache before Install Claude Code ─────────────────────────
 
 NPM_CACHE_LINE=$(grep -n 'Restore npm cache' "$WORKFLOW" | head -1 | cut -d: -f1 || echo 0)

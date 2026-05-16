@@ -11,7 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync, execFileSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 // #1892 — derive RuFlo banner version from the installed cli package.json
 // so the statusline never drifts from `ruflo doctor`. Falls back to a
@@ -208,8 +208,9 @@ function getSwarmStatus() {
   let coordinationActive = false;
 
   try {
-    const ps = execSync('ps aux 2>/dev/null | grep -c agentic-flow || echo "0"', { encoding: 'utf-8' });
-    activeAgents = Math.max(0, parseInt(ps.trim()) - 1);
+    const ps = execFileSync('ps', ['aux'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const count = ps.split('\n').filter(line => line.includes('agentic-flow')).length;
+    activeAgents = Math.max(0, count - 1);
     coordinationActive = activeAgents > 0;
   } catch (e) {
     // Ignore errors
@@ -228,10 +229,16 @@ function getSystemMetrics() {
   let subAgents = 0;
 
   try {
-    const mem = execSync('ps aux | grep -E "(node|agentic|claude)" | grep -v grep | awk \'{sum += \$6} END {print int(sum/1024)}\'', { encoding: 'utf-8' });
-    memoryMB = parseInt(mem.trim()) || 0;
+    const psOut = execFileSync('ps', ['aux'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+    let totalKB = 0;
+    for (const line of psOut.split('\n')) {
+      if (/node|agentic|claude/.test(line) && !line.includes('grep')) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length > 5) totalKB += parseInt(parts[5]) || 0;
+      }
+    }
+    memoryMB = Math.floor(totalKB / 1024);
   } catch (e) {
-    // Fallback
     memoryMB = Math.floor(process.memoryUsage().heapUsed / 1024 / 1024);
   }
 
@@ -246,8 +253,9 @@ function getSystemMetrics() {
 
   // Count active sub-agents from process list
   try {
-    const agents = execSync('ps aux 2>/dev/null | grep -c "claude-flow.*agent" || echo "0"', { encoding: 'utf-8' });
-    subAgents = Math.max(0, parseInt(agents.trim()) - 1);
+    const psOut2 = execFileSync('ps', ['aux'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const agentCount = psOut2.split('\n').filter(line => /claude-flow.*agent/.test(line)).length;
+    subAgents = Math.max(0, agentCount - 1);
   } catch (e) {
     // Ignore
   }

@@ -655,7 +655,7 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --goal)        GOAL="$2"; shift 2 ;;
-            --issue)       ISSUE_NUMBER="$2"; shift 2
+            --issue)       ISSUE_NUMBER="$2"; _ISSUE_NUMBER_EXPLICIT=true; shift 2
                            [[ "${SHIPWRIGHT_DEBUG:-0}" == "1" ]] && echo "[ISSUE-TRACE] parse_args: ISSUE_NUMBER=${ISSUE_NUMBER}" >&2 || true ;;
             --repo)        REPO_OVERRIDE="$2"; shift 2 ;;
             --local)       NO_GITHUB=true; NO_GITHUB_LABEL=true; shift ;;
@@ -3254,7 +3254,7 @@ pipeline_start() {
         local existing_status
         existing_status="$(sed -n 's/^status: *//p' "$STATE_FILE" | head -1)"
         if [[ "$existing_status" == "failed" || "$existing_status" == "interrupted" || "$existing_status" == "running" ]]; then
-            resume_state
+            resume_state || exit $?
             if [[ -n "${OUTER_STAGE:-}" ]]; then
                 CURRENT_STAGE="$OUTER_STAGE"
                 clear_outer_stage   # writes state; no transient memory/file divergence
@@ -3764,7 +3764,7 @@ pipeline_resume() {
         fi
     fi
 
-    resume_state
+    resume_state || exit $?
 
     # Refuse to resume if pipeline is stuck (terminal state)
     if [[ "${STATUS:-}" == "stuck" ]]; then

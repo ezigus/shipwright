@@ -4408,12 +4408,20 @@ test_resume_state_does_not_clobber_explicit_issue() {
 
 test_resume_state_rejects_stale_when_mismatch() {
     local real_state_lib="$SCRIPT_DIR/lib/pipeline-state.sh"
-    # Static check: resume_state must exit 2 when state file issue != explicit ISSUE_NUMBER.
-    local exit2_count
-    exit2_count=$(awk '/^resume_state\(\)/,/^}$/{print}' "$real_state_lib" 2>/dev/null \
-        | grep -c 'exit 2' || echo "0")
-    if [[ "${exit2_count:-0}" -eq 0 ]]; then
-        echo "FAIL: resume_state does not exit 2 on stale-state mismatch (not yet implemented)"
+    # Static check: resume_state must return 2 when _ISSUE_NUMBER_EXPLICIT=true and
+    # state file issue != ISSUE_NUMBER. The check must be gated on _ISSUE_NUMBER_EXPLICIT
+    # to avoid killing test scripts that call resume_state without --issue.
+    local ret2_count explicit_gate_count
+    ret2_count=$(awk '/^resume_state\(\)/,/^}$/{print}' "$real_state_lib" 2>/dev/null \
+        | grep -cE 'return 2|exit 2' || echo "0")
+    explicit_gate_count=$(awk '/^resume_state\(\)/,/^}$/{print}' "$real_state_lib" 2>/dev/null \
+        | grep -c '_ISSUE_NUMBER_EXPLICIT' || echo "0")
+    if [[ "${ret2_count:-0}" -eq 0 ]]; then
+        echo "FAIL: resume_state does not return 2 on stale-state mismatch"
+        return 1
+    fi
+    if [[ "${explicit_gate_count:-0}" -eq 0 ]]; then
+        echo "FAIL: resume_state mismatch check not gated on _ISSUE_NUMBER_EXPLICIT"
         return 1
     fi
     return 0

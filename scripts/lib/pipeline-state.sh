@@ -963,11 +963,13 @@ ${stage_id}:failed"
     [[ "${SHIPWRIGHT_DEBUG:-0}" == "1" ]] && echo "[ISSUE-TRACE] resume_state: ISSUE_NUMBER=${ISSUE_NUMBER:-<unset>} GITHUB_ISSUE=${GITHUB_ISSUE:-<unset>}" >&2 || true
 
     # Mismatch: state file belongs to a different issue than the CLI specified.
-    if [[ -n "${ISSUE_NUMBER:-}" && -n "$GITHUB_ISSUE" \
+    # Only hard-fail when --issue was explicitly passed on the CLI (not inferred).
+    if [[ "${_ISSUE_NUMBER_EXPLICIT:-false}" == "true" \
+          && -n "${ISSUE_NUMBER:-}" && -n "$GITHUB_ISSUE" \
           && "$GITHUB_ISSUE" =~ ^#([0-9]+)$ \
           && "${BASH_REMATCH[1]}" != "$ISSUE_NUMBER" ]]; then
         error "Stale state: $STATE_FILE has issue=$GITHUB_ISSUE but pipeline launched with --issue $ISSUE_NUMBER. Remove the stale file and retry."
-        exit 2
+        return 2
     fi
 
     # Clear stale pipeline-tasks.md if it belongs to a different pipeline run.

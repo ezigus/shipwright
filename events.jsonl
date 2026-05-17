@@ -5858,3 +5858,6 @@
 {"ts":"2026-05-16T21:25:56Z","ts_epoch":1778966756,"type":"ruflo.circuit_break","repo":"db2d5f2c7eaf","exit_code":1}
 {"ts":"2026-05-16T21:25:56Z","ts_epoch":1778966756,"type":"ruflo.export_memory_failed","repo":"db2d5f2c7eaf","file":"./.claude-flow/data/memory-export.json"}
 {"ts":"2026-05-16T21:25:57Z","ts_epoch":1778966757,"type":"ruflo.mcp_stopped","repo":"db2d5f2c7eaf","mode":"daemon"}
+{"ts":"2026-05-17T04:27:05Z","ts_epoch":1778992025,"type":"optimize.memory_pruned","repo":"ezigus/shipwright","pruned":0,"strengthened":1,"promoted":0}
+{"ts":"2026-05-17T04:27:05Z","ts_epoch":1778992025,"type":"optimize.context_recommendation","repo":"ezigus/shipwright","action":"decrease_budget","current":200000,"recommended":170000,"avg_utilization":5.2,"samples":14}
+{"ts":"2026-05-17T04:27:05Z","ts_epoch":1778992025,"type":"optimize.memory_pruned","repo":"ezigus/shipwright","pruned":0,"strengthened":1,"promoted":0}

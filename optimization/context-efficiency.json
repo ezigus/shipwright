@@ -1,0 +1,11 @@
+{
+  "avg_budget_utilization": 5.2,
+  "avg_trim_ratio": 0.0,
+  "avg_raw_chars": 10336,
+  "avg_trimmed_chars": 10336,
+  "current_budget_chars": 200000,
+  "sample_count": 14,
+  "recommendation_count": 1,
+  "recommendations": "decrease_budget:170000 ",
+  "updated_at": "2026-05-17T04:27:05Z"
+}

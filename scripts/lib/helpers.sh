@@ -449,8 +449,9 @@ sanitize_secrets() {
     text="$(echo "$text" | sed 's/sk-[a-zA-Z0-9_-]*/sk-***REDACTED***/g')"
     # Redact Bearer tokens
     text="$(echo "$text" | sed 's/Bearer [a-zA-Z0-9_.-]*/Bearer ***REDACTED***/g')"
-    # Redact oauth tokens (gh_...)
-    text="$(echo "$text" | sed 's/gh_[a-zA-Z0-9_]*/gh_***REDACTED***/g')"
+    # Redact GitHub OAuth tokens (ghp_, gho_, ghu_, ghs_, ghr_ — 5 known prefixes)
+    # Length-bound: GitHub tokens are minimum 36 base62 chars [A-Za-z0-9], no underscores
+    text="$(echo "$text" | sed -E 's/gh[pousr]_[A-Za-z0-9]{36,255}/gh_***REDACTED***/g')"
     echo "$text"
 }
 

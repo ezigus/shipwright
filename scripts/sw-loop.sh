@@ -2622,6 +2622,7 @@ RESET='\033[0m'
 cd "$WORK_DIR"
 ITERATION=0
 CONSECUTIVE_FAILURES=0
+CONSECUTIVE_NOOP=0
 
 echo -e "${CYAN}${BOLD}▸${RESET} Agent ${AGENT_NUM}/${TOTAL_AGENTS} starting in ${WORK_DIR}"
 
@@ -2638,6 +2639,7 @@ while [[ "$ITERATION" -lt "$MAX_ITERATIONS" ]]; do
     fi
 
     ITERATION=$(( ITERATION + 1 ))
+    _iter_start=$(date +%s 2>/dev/null || echo 0)
     echo -e "\n${CYAN}${BOLD}▸${RESET} Agent ${AGENT_NUM} — Iteration ${ITERATION}/${MAX_ITERATIONS}"
 
     # Pull latest from other agents
@@ -2734,13 +2736,37 @@ PROMPT
     _commits_after=$(git rev-list --count HEAD 2>/dev/null || echo 0)
     _new_commits=$(( _commits_after - _commits_before ))
 
-    # Circuit breaker: check for progress using commit count delta (not HEAD~1 diff,
-    # which is fooled by prior commits when the current iteration produces no changes)
-    if [[ "$_new_commits" -gt 0 ]]; then
+    # Iteration elapsed time (set _iter_start at top of loop body)
+    _iter_end=$(date +%s 2>/dev/null || echo 0)
+    _iter_seconds=$(( _iter_end - ${_iter_start:-_iter_end} ))
+
+    # No-op detection: track iterations with no meaningful progress
+    # A "real" iteration requires: >=1 commit, OR (>=10 diff lines AND >=60s elapsed)
+    _diff_lines=$(git diff --shortstat "HEAD@{1}" HEAD 2>/dev/null \
+        | awk '{print $4+$6}' | head -1 || true)
+    _diff_lines="${_diff_lines:-0}"
+    # Guard: ensure numeric (strip whitespace, default to 0)
+    _diff_lines=$(echo "$_diff_lines" | tr -d '[:space:]')
+    [[ -z "$_diff_lines" ]] && _diff_lines=0
+
+    if [[ "$_new_commits" -gt 0 ]] || \
+       { [[ "$_diff_lines" -ge 10 ]] && [[ "$_iter_seconds" -ge 60 ]]; }; then
         CONSECUTIVE_FAILURES=0
+        CONSECUTIVE_NOOP=0
     else
         CONSECUTIVE_FAILURES=$(( CONSECUTIVE_FAILURES + 1 ))
-        echo -e "  ${YELLOW}⚠${RESET} Low progress (${CONSECUTIVE_FAILURES}/3)"
+        CONSECUTIVE_NOOP=$(( ${CONSECUTIVE_NOOP:-0} + 1 ))
+        echo -e "  ${YELLOW}⚠${RESET} Low progress (${CONSECUTIVE_FAILURES}/3): ${_iter_seconds}s, ${_new_commits} commits, ${_diff_lines} diff lines"
+    fi
+
+    if [[ "${CONSECUTIVE_NOOP:-0}" -ge 2 ]]; then
+        echo -e "  ${RED}✗${RESET} No-op abort: ${CONSECUTIVE_NOOP} consecutive no-op iterations (${_iter_seconds}s, ${_new_commits} commits)"
+        # Write abort-reason file so the parent monitoring loop can detect this.
+        # LOOP_ABORT_FATAL cannot propagate from this worker subshell to the parent
+        # process — use a marker file instead.
+        echo "NOOP_ITERATIONS" > "$LOG_DIR/.agent-${AGENT_NUM}-abort-reason" 2>/dev/null || true
+        touch "$LOG_DIR/.agent-${AGENT_NUM}-complete" 2>/dev/null || true
+        break
     fi
 
     if [[ "$CONSECUTIVE_FAILURES" -ge 3 ]]; then

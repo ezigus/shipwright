@@ -3303,6 +3303,44 @@ else
     assert_pass "SW_LOG_PROMPTS github no-helpers: no command-not-found error"
 fi
 
+# ─── sanitize_secrets regression: over-broad gh_ regex fix (F6) ───────────────
+# Load the real sanitize_secrets from helpers.sh for these tests.
+_ss_helpers="$SCRIPT_DIR/lib/helpers.sh"
+
+# Helper: negative assertion (not present in test-helpers.sh for this file)
+_assert_not_contains() {
+    local desc="$1" haystack="$2" needle="$3"
+    if printf '%s\n' "$haystack" | grep -qF -- "$needle" 2>/dev/null; then
+        assert_fail "$desc" "output unexpectedly contains: $needle"
+    else
+        assert_pass "$desc"
+    fi
+}
+
+echo -e "${DIM}  sanitize_secrets: over-broad gh_ regex regression (F6)${RESET}"
+
+# Test: function names like gh_comment_issue must not be redacted
+_ss_fn_result="$(
+    source "$_ss_helpers" 2>/dev/null
+    sanitize_secrets "call gh_comment_issue and gh_post_progress on issue 460"
+)"
+assert_contains "sanitize should preserve gh_comment_issue function name" \
+    "$_ss_fn_result" "gh_comment_issue"
+assert_contains "sanitize should preserve gh_post_progress function name" \
+    "$_ss_fn_result" "gh_post_progress"
+_assert_not_contains "no redaction should occur for function names" \
+    "$_ss_fn_result" "REDACTED"
+
+# Test: real GitHub OAuth tokens must be redacted
+_ss_token_result="$(
+    source "$_ss_helpers" 2>/dev/null
+    sanitize_secrets "GITHUB_TOKEN=ghp_AaBbCcDd1234567890AbCdEfGhIjKlMnOpQrStUvWx"
+)"
+assert_contains "real GitHub token should be redacted" \
+    "$_ss_token_result" "REDACTED"
+_assert_not_contains "token value should not be present after redaction" \
+    "$_ss_token_result" "ghp_AaBbCcDd"
+
 # ─── Test: compose_rejection_notice_section includes QUALITY_GATE_REASONS ─────
 if awk '/^compose_rejection_notice_section\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" | \
         grep -q 'QUALITY_GATE_REASONS'; then

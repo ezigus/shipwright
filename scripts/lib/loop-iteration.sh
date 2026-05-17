@@ -561,12 +561,41 @@ ${cum_stat}
 - Full build context: \`${_adir}/build-context.md\`"
     fi
 
+    # v2 prompt template — gated behind SHIPWRIGHT_PROMPT_V2=1
+    if [[ "${SHIPWRIGHT_PROMPT_V2:-0}" == "1" ]]; then
+        # Source the template module if not already loaded
+        local _tpl_dir
+        _tpl_dir="$(dirname "${BASH_SOURCE[0]}")"
+        if [[ -f "${_tpl_dir}/loop-prompt-template.sh" ]] && ! declare -f render_task_header >/dev/null 2>&1; then
+            # shellcheck source=./loop-prompt-template.sh
+            source "${_tpl_dir}/loop-prompt-template.sh" 2>/dev/null || true
+        fi
+        if declare -f render_task_header >/dev/null 2>&1; then
+            local _v2_adir="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
+            local _v2_prompt
+            _v2_prompt=$(
+                render_task_header "${prompt_goal:-${GOAL:-}}" "$(scope_label 2>/dev/null || echo 'Build')" "${MAX_ITERATIONS:-10}"
+                render_dynamic_state \
+                    "${test_section:-No previous test results}" \
+                    "${git_log:-No recent commits}" \
+                    "${gate_findings_section:-}" \
+                    "${dod_section:-}"
+                if declare -f render_design_findings >/dev/null 2>&1; then
+                    render_design_findings "${_v2_adir}"
+                fi
+                render_static_reference "${_v2_adir}"
+            )
+            echo "$_v2_prompt"
+            return 0
+        fi
+    fi
+
     # Bash 3.2 compat: heredoc inside $() is rejected by bash 3.2.
     # Write to a temp file, measure with wc -c, cat and remove.
     local _ptmp
     _ptmp=$(mktemp "${TMPDIR:-/tmp}/sw-prompt.XXXXXX")
     cat > "$_ptmp" <<PROMPT
-You are an autonomous coding agent on iteration ${ITERATION}/${MAX_ITERATIONS} of a continuous loop.
+You are an autonomous coding agent. $(scope_label) of ${MAX_ITERATIONS} max iterations.
 ${resume_section}
 ## Your Goal
 ${prompt_goal}
@@ -753,7 +782,7 @@ run_claude_iteration() {
                 else
                     truncated="$redacted"
                 fi
-                body="### Build Prompt — Iteration ${ITERATION}
+                body="### Build Prompt — $(scope_label)
 
 <details><summary>Prompt (${prompt_chars} chars, redacted)</summary>
 

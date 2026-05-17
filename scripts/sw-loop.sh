@@ -2684,9 +2684,11 @@ Focus on areas they haven't touched yet.
 PROMPT
 )"
 
-    # Capture commit count before Claude runs so Claude-initiated commits are included in delta
-    local _commits_before _commits_after _new_commits
+    # Capture commit count AND HEAD SHA before Claude runs so delta is iteration-scoped.
+    # C4: _iter_start_sha replaces HEAD@{1} (reflog-relative — wrong when HEAD didn't move).
+    local _commits_before _commits_after _new_commits _iter_start_sha
     _commits_before=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+    _iter_start_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
 
     # Run Claude (output is JSON due to --output-format json in CLAUDE_FLAGS)
     local JSON_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.json"
@@ -2742,11 +2744,19 @@ PROMPT
 
     # No-op detection: track iterations with no meaningful progress
     # A "real" iteration requires: >=1 commit, OR (>=10 diff lines AND >=60s elapsed)
-    _diff_lines=$(git diff --shortstat "HEAD@{1}" HEAD 2>/dev/null \
-        | awk '{print $4+$6}' | head -1 || true)
+    # C4: compare against captured start SHA (not HEAD@{1} which is reflog-relative and
+    # wrong if HEAD didn't move — would compare against a prior iteration's position).
+    # awk: key-driven parser handles insertions-only/deletions-only --shortstat output
+    # where positional $4/$6 fields vary.
+    _diff_lines=0
+    if [[ -n "${_iter_start_sha:-}" ]]; then
+        _diff_lines=$(git diff --shortstat "${_iter_start_sha}" HEAD 2>/dev/null \
+            | awk '{ins=0;del=0; for(i=1;i<=NF;i++){if($i~/insert/)ins=$(i-1); if($i~/delet/)del=$(i-1)} print ins+del}' \
+            | head -1 || echo "0")
+    fi
     _diff_lines="${_diff_lines:-0}"
-    # Guard: ensure numeric (strip whitespace, default to 0)
-    _diff_lines=$(echo "$_diff_lines" | tr -d '[:space:]')
+    # Guard: ensure numeric (strip whitespace/letters, default to 0)
+    _diff_lines=$(echo "$_diff_lines" | tr -dc '0-9')
     [[ -z "$_diff_lines" ]] && _diff_lines=0
 
     if [[ "$_new_commits" -gt 0 ]] || \
@@ -2762,9 +2772,11 @@ PROMPT
     if [[ "${CONSECUTIVE_NOOP:-0}" -ge 2 ]]; then
         echo -e "  ${RED}✗${RESET} No-op abort: ${CONSECUTIVE_NOOP} consecutive no-op iterations (${_iter_seconds}s, ${_new_commits} commits)"
         # Write abort-reason file so the parent monitoring loop can detect this.
-        # LOOP_ABORT_FATAL cannot propagate from this worker subshell to the parent
-        # process — use a marker file instead.
-        echo "NOOP_ITERATIONS" > "$LOG_DIR/.agent-${AGENT_NUM}-abort-reason" 2>/dev/null || true
+        # LOOP_ABORT_FATAL cannot propagate from this worker tmux-pane process to the
+        # parent — use a marker file instead. Atomic tmp+mv prevents partial reads.
+        echo "NOOP_ITERATIONS" > "$LOG_DIR/.agent-${AGENT_NUM}-abort-reason.tmp" 2>/dev/null \
+            && mv "$LOG_DIR/.agent-${AGENT_NUM}-abort-reason.tmp" \
+               "$LOG_DIR/.agent-${AGENT_NUM}-abort-reason" 2>/dev/null || true
         touch "$LOG_DIR/.agent-${AGENT_NUM}-complete" 2>/dev/null || true
         break
     fi
@@ -2858,13 +2870,27 @@ launch_multi_agent() {
 
 wait_for_multi_completion() {
     while true; do
-        # Check if any agent signaled completion
+        # Check if any agent signaled completion or NOOP-abort
         for i in $(seq 1 "$AGENTS"); do
             if [[ -f "$LOG_DIR/.agent-${i}-complete" ]]; then
                 success "Agent $i signaled <<<LOOP:PASS>>>!"
                 STATUS="complete"
                 write_state
                 return 0
+            fi
+            # C1: read abort-reason marker written by no-op detection inside worker subshell.
+            # LOOP_ABORT_FATAL can't propagate across the tmux-pane process boundary, so
+            # the worker writes a marker file instead; this is the reader that closes the loop.
+            if [[ -f "$LOG_DIR/.agent-${i}-abort-reason" ]]; then
+                local _abort_reason
+                _abort_reason=$(cat "$LOG_DIR/.agent-${i}-abort-reason" 2>/dev/null | tr -d '[:space:]' || true)
+                if [[ "${_abort_reason:-}" == "NOOP_ITERATIONS" ]]; then
+                    warn "Agent $i aborted: ${_abort_reason} — suppressing restarts"
+                    LOOP_ABORT_FATAL=true
+                    STATUS="failed"
+                    write_state
+                    return 1
+                fi
             fi
         done
 

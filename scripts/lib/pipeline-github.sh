@@ -81,10 +81,12 @@ gh_post_progress() {
         -f body="$body" --jq '.id' 2>/dev/null) || true
     if [[ -n "$result" && "$result" != "null" ]]; then
         PROGRESS_COMMENT_ID="$result"
-        # Persist to disk so nested contexts and shell restarts can restore it
+        # Persist to disk so nested contexts and shell restarts can restore it.
+        # M2: atomic tmp+mv write prevents concurrent readers from seeing truncated content.
         if [[ -n "${ARTIFACTS_DIR:-}" ]]; then
             mkdir -p "$ARTIFACTS_DIR" 2>/dev/null || true
-            echo "$result" > "${ARTIFACTS_DIR}/progress-comment.id" 2>/dev/null || true
+            local _id_tmp="${ARTIFACTS_DIR}/progress-comment.id.tmp"
+            echo "$result" > "$_id_tmp" && mv "$_id_tmp" "${ARTIFACTS_DIR}/progress-comment.id" 2>/dev/null || true
         fi
     fi
 }

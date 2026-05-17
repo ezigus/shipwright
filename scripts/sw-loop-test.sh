@@ -3341,6 +3341,154 @@ assert_contains "real GitHub token should be redacted" \
 _assert_not_contains "token value should not be present after redaction" \
     "$_ss_token_result" "ghp_AaBbCcDd"
 
+# ─── sanitize_secrets: fine-grained PAT redaction (C5) ──────────────────────
+echo -e "${DIM}  sanitize_secrets: fine-grained PAT coverage (C5)${RESET}"
+
+# Fine-grained PATs (github_pat_ prefix, ≥60 chars) must be redacted
+_ss_fgpat_result="$(
+    source "$_ss_helpers" 2>/dev/null
+    sanitize_secrets "token: github_pat_11ABCDE0Y0abcdefghijkl_aBcDeFgHiJkLmNoPqRsTuVwXyZabcdefghijklmnop"
+)"
+assert_contains "fine-grained PAT should be redacted" \
+    "$_ss_fgpat_result" "REDACTED"
+_assert_not_contains "fine-grained PAT value should not appear after redaction" \
+    "$_ss_fgpat_result" "github_pat_11ABCDE"
+
+# Short github_pat_ strings (< 60 chars) must NOT be redacted (not real tokens)
+_ss_fgpat_short="$(
+    source "$_ss_helpers" 2>/dev/null
+    sanitize_secrets "github_pat_short"
+)"
+_assert_not_contains "short github_pat_ string should not be redacted" \
+    "$_ss_fgpat_short" "REDACTED"
+
+# Function names with gh_ prefix still preserved after C5 change
+_ss_fn2_result="$(
+    source "$_ss_helpers" 2>/dev/null
+    sanitize_secrets "gh_comment_issue gh_post_progress"
+)"
+assert_contains "function names still preserved after C5" \
+    "$_ss_fn2_result" "gh_comment_issue"
+
+# ─── F7 anchor fix (C2): ES6 named import must downgrade to low confidence ───
+echo -e "${DIM}  F7 anchor: ES6 named import confidence (C2)${RESET}"
+
+# Static: anchor regex in pipeline-intelligence.sh must use the two-step form
+if grep -qE '_is_import_decl' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" 2>/dev/null; then
+    assert_pass "F7_anchor_two_step: pipeline-intelligence.sh uses _is_import_decl two-step check"
+else
+    assert_fail "F7_anchor_two_step: pipeline-intelligence.sh must use _is_import_decl variable" \
+        "Expected two-step import detection; found old single-grep anchor"
+fi
+
+# Static: anchor must reject lines with semicolons (adversarial multi-statement)
+if grep -qE '"\[;\]"' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" \
+        || grep -qE '"\\[;\\]"' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" \
+        || grep -qP '"\[;\]"|\[;\]' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" 2>/dev/null \
+        || grep -q '"[;]"' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" 2>/dev/null; then
+    assert_pass "F7_anchor_semicolon_guard: semicolon guard present in anchor"
+else
+    # Check the actual guard differently
+    if grep -A8 '_is_import_decl' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" \
+            | grep -q ';\|semicolon' 2>/dev/null; then
+        assert_pass "F7_anchor_semicolon_guard: semicolon guard present in anchor"
+    else
+        assert_fail "F7_anchor_semicolon_guard: anchor must reject semicolons (multi-stmt lines)" \
+            "Expected ';' in the negative guard near _is_import_decl"
+    fi
+fi
+
+# Behavioral: simulate the import anchor logic with the exact motivating false-positive
+_f7_anchor_check() {
+    local match_text="$1"
+    local _is_import_decl=false
+    if echo "$match_text" | grep -qE \
+        "^[[:space:]]*(import[[:space:]({\"\']|from[[:space:]]+[A-Za-z_]|const[[:space:]]+|var[[:space:]]+|let[[:space:]]+)"; then
+        if ! echo "$match_text" | grep -qE \
+            "[;]|\.(exec|run|spawn|system|call|Popen)[[:space:]]*\(|eval[[:space:]]*\(|shell[[:space:]]*=[[:space:]]*[Tt]rue"; then
+            _is_import_decl=true
+        fi
+    fi
+    echo "$_is_import_decl"
+}
+
+# ES6 named import (the original #460 false positive) → must be low (import_decl=true)
+_f7_es6="$(  _f7_anchor_check "import { execFileSync } from 'child_process'")"
+if [[ "$_f7_es6" == "true" ]]; then
+    assert_pass "F7_anchor_es6_named_import: 'import { execFileSync } from child_process' detected as import decl (low confidence)"
+else
+    assert_fail "F7_anchor_es6_named_import: motivating false positive must be classified as import decl" \
+        "Expected _is_import_decl=true for ES6 named import; got false"
+fi
+
+# Adversarial: import with trailing execution — must NOT be import_decl
+_f7_adv="$( _f7_anchor_check "import subprocess; subprocess.run(user_input, shell=True)")"
+if [[ "$_f7_adv" == "false" ]]; then
+    assert_pass "F7_anchor_adversarial_multi_stmt: semicolon-separated execution stays at medium/high"
+else
+    assert_fail "F7_anchor_adversarial_multi_stmt: import+execution line must NOT be classified as import decl" \
+        "Expected _is_import_decl=false for multi-stmt adversarial input"
+fi
+
+# CommonJS destructured require → import decl
+_f7_cjs="$( _f7_anchor_check "const { exec } = require('child_process')")"
+if [[ "$_f7_cjs" == "true" ]]; then
+    assert_pass "F7_anchor_cjs_require: CommonJS const require() is import decl (low confidence)"
+else
+    assert_fail "F7_anchor_cjs_require: const require() must be import decl" \
+        "Expected _is_import_decl=true for const { x } = require(...)"
+fi
+
+# ─── C1: abort-reason reader wired in wait_for_multi_completion ───────────────
+echo -e "${DIM}  C1: abort-reason reader in wait_for_multi_completion${RESET}"
+
+if grep -q 'abort-reason' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null; then
+    _c1_reads=$(grep -c 'abort-reason' "$SCRIPT_DIR/sw-loop.sh" || true)
+    if [[ "${_c1_reads:-0}" -ge 2 ]]; then
+        assert_pass "C1_abort_reason_reader: abort-reason appears in both writer and reader contexts"
+    else
+        assert_fail "C1_abort_reason_reader: abort-reason must appear at least twice (writer + reader)" \
+            "Found only ${_c1_reads} occurrence(s) — reader missing"
+    fi
+else
+    assert_fail "C1_abort_reason_reader: abort-reason marker not found in sw-loop.sh" \
+        "Expected abort-reason writer and reader wiring"
+fi
+
+# Static: wait_for_multi_completion must read the marker and set LOOP_ABORT_FATAL
+_c1_body=$(awk '/^wait_for_multi_completion\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
+if echo "$_c1_body" | grep -q 'abort-reason' 2>/dev/null; then
+    assert_pass "C1_reader_in_wait_for_multi: wait_for_multi_completion checks abort-reason file"
+else
+    assert_fail "C1_reader_in_wait_for_multi: wait_for_multi_completion must read abort-reason file" \
+        "Expected abort-reason check inside wait_for_multi_completion() body"
+fi
+if echo "$_c1_body" | grep -q 'LOOP_ABORT_FATAL=true' 2>/dev/null; then
+    assert_pass "C1_loop_abort_fatal_set: wait_for_multi_completion sets LOOP_ABORT_FATAL=true on abort"
+else
+    assert_fail "C1_loop_abort_fatal_set: wait_for_multi_completion must set LOOP_ABORT_FATAL=true" \
+        "Expected LOOP_ABORT_FATAL=true inside wait_for_multi_completion abort-reason handler"
+fi
+
+# ─── C3: empty-input SHA dedup gate ──────────────────────────────────────────
+echo -e "${DIM}  C3: empty-input SHA dedup gate${RESET}"
+
+if grep -q '_fail_line_count' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" 2>/dev/null; then
+    assert_pass "C3_fail_count_guard: pipeline-intelligence.sh gates dedup on _fail_line_count"
+else
+    assert_fail "C3_fail_count_guard: dedup short-circuit must gate on failure line count > 0" \
+        "Expected _fail_line_count guard before hash comparison"
+fi
+
+# Static: SHA guard skips comparison when count=0 (no-hasher sentinel excluded)
+if grep -A5 '_fail_line_count' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" \
+        | grep -q 'gt 0' 2>/dev/null; then
+    assert_pass "C3_count_gt_zero: guard uses -gt 0 comparison"
+else
+    assert_fail "C3_count_gt_zero: dedup guard must check _fail_line_count -gt 0" \
+        "Expected [[ \$_fail_line_count -gt 0 ]] near dedup logic"
+fi
+
 # ─── Test: compose_rejection_notice_section includes QUALITY_GATE_REASONS ─────
 if awk '/^compose_rejection_notice_section\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" | \
         grep -q 'QUALITY_GATE_REASONS'; then

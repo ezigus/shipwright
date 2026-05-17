@@ -721,14 +721,24 @@ XSSEOF
                 finding_count=$((finding_count + 1))
                 local current
                 current=$(cat "$tmp_findings")
-                # Determine confidence: low for bare import/require lines (nothing
-                # executable after the module name), high when shell-injection markers
-                # are present, medium otherwise.
-                # Security note: require bare-import form ONLY — `import subprocess;
-                # subprocess.run(x, shell=True)` must NOT downgrade to low.
+                # Determine confidence: low for pure import/require declarations (nothing
+                # executable), high when injection markers are present, medium otherwise.
+                # Two-step check: (1) line starts with an import form, AND (2) has no
+                # inline execution markers (semicolons, shell=True, direct calls).
+                # This correctly downgrades `import { execFileSync } from 'child_process'`
+                # (ES6 named import — no execution) while keeping
+                # `import subprocess; subprocess.run(x, shell=True)` at high.
                 local confidence="medium"
                 local match_text="${match#*:}"
-                if echo "$match_text" | grep -qE "^[[:space:]]*(import|require|from)[[:space:]]+[a-zA-Z0-9_./@'\"-]+[[:space:]]*$"; then
+                local _is_import_decl=false
+                if echo "$match_text" | grep -qE \
+                    "^[[:space:]]*(import[[:space:]({\"\']|from[[:space:]]+[A-Za-z_]|const[[:space:]]+|var[[:space:]]+|let[[:space:]]+)"; then
+                    if ! echo "$match_text" | grep -qE \
+                        "[;]|\.(exec|run|spawn|system|call|Popen)[[:space:]]*\(|eval[[:space:]]*\(|shell[[:space:]]*=[[:space:]]*[Tt]rue"; then
+                        _is_import_decl=true
+                    fi
+                fi
+                if [[ "$_is_import_decl" == "true" ]]; then
                     confidence="low"
                 elif echo "$match_text" | grep -qE '\$\{|`|shell[[:space:]]*=[[:space:]]*[Tt]rue|exec[[:space:]]*\('; then
                     confidence="high"
@@ -1136,10 +1146,18 @@ _extract_blocking_items() {
                 "$ARTIFACTS_DIR/security-source-scan.json" 2>/dev/null \
                 >> "${ARTIFACTS_DIR}/security-advisories.log" 2>/dev/null || true
         else
-            # Fallback: plain-text log — treat all critical/high lines as medium confidence (blocking)
-            while IFS= read -r line; do
-                _dedup_add_item "$line" "security-source" "$tmp_fps" "$tmp_items"
-            done < <(grep -iE 'critical|high' "$ARTIFACTS_DIR/security-source-scan.log" 2>/dev/null || true)
+            # JSON unavailable or invalid — do NOT route plain-text log into BLOCKING.
+            # Routing all log lines as blocking when confidence is unknown was the
+            # pre-F7 behavior that caused the #460 false-positive regression. Fail-closed:
+            # warn and write to advisory sidecar only.
+            warn "security-source-scan: JSON artifact missing/invalid — skipping injection into GOAL (advisory only)"
+            if [[ -f "$ARTIFACTS_DIR/security-source-scan.log" ]]; then
+                while IFS= read -r line; do
+                    [[ -z "$line" ]] && continue
+                    echo "ADVISORY (no-json-fallback): $line" \
+                        >> "${ARTIFACTS_DIR}/security-advisories.log" 2>/dev/null || true
+                done < <(grep -iE 'critical|high' "$ARTIFACTS_DIR/security-source-scan.log" 2>/dev/null || true)
+            fi
         fi
     fi
 
@@ -2227,27 +2245,39 @@ All quality checks clean:
                 fi
             fi
 
-            # Short-circuit: if failures are identical to previous cycle, abort early
+            # Short-circuit: if failures are identical to previous cycle, abort early.
+            # Guard: only compare when there are actual failure lines — SHA-1 of empty
+            # input is a constant hash, which would fire a false short-circuit on
+            # missing/empty test-results.log (infrastructure failure masking as
+            # "identical failures, no progress possible").
             if [[ "$cycle" -ge 2 && -f "${ARTIFACTS_DIR}/last-failure-set.sha" ]]; then
-                local _cur_hash _prev_hash
-                _prev_hash=$(cat "${ARTIFACTS_DIR}/last-failure-set.sha" 2>/dev/null | tr -d '[:space:]' || true)
-                _cur_hash=$(grep -E '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null \
-                    | sort | { command -v shasum >/dev/null 2>&1 && shasum -a 1 | awk '{print $1}'; } \
-                    || grep -E '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null \
-                    | sort | sha1sum 2>/dev/null | awk '{print $1}' \
-                    || echo "")
-                if [[ -n "$_cur_hash" && "$_cur_hash" == "$_prev_hash" ]]; then
-                    warn "Compound quality: identical failures to previous cycle — aborting (no progress possible)"
-                    _cycles_executed=$cycle
-                    break
+                local _cur_hash _prev_hash _fail_line_count
+                _fail_line_count=$(grep -cE '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' \
+                    "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null || echo "0")
+                _fail_line_count="${_fail_line_count:-0}"
+                if [[ "$_fail_line_count" -gt 0 ]]; then
+                    _prev_hash=$(cat "${ARTIFACTS_DIR}/last-failure-set.sha" 2>/dev/null | tr -d '[:space:]' || true)
+                    _cur_hash=$(grep -E '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' \
+                        "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null \
+                        | sort | _compute_sha1 || echo "")
+                    if [[ -n "$_cur_hash" && "$_cur_hash" == "$_prev_hash" \
+                          && "$_cur_hash" != no-hasher-* ]]; then
+                        warn "Compound quality: identical failures to previous cycle — aborting (no progress possible)"
+                        _cycles_executed=$cycle
+                        break
+                    fi
                 fi
             fi
             # Record current failure set hash for next cycle's short-circuit check
-            { grep -E '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null \
-                | sort | { command -v shasum >/dev/null 2>&1 && shasum -a 1 | awk '{print $1}'; } \
-                || grep -E '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null \
-                | sort | sha1sum 2>/dev/null | awk '{print $1}'; } \
-                > "${ARTIFACTS_DIR}/last-failure-set.sha" 2>/dev/null || true
+            { local _record_count
+              _record_count=$(grep -cE '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' \
+                  "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null || echo "0")
+              if [[ "${_record_count:-0}" -gt 0 ]]; then
+                  grep -E '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' \
+                      "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null \
+                      | sort | _compute_sha1
+              fi
+            } > "${ARTIFACTS_DIR}/last-failure-set.sha" 2>/dev/null || true
 
             if ! TEST_CMD="$_cq_test_cmd" compound_rebuild_with_feedback "$((cycle + 1))"; then
                 error "Rebuild with feedback failed"

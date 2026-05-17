@@ -452,7 +452,24 @@ sanitize_secrets() {
     # Redact GitHub OAuth tokens (ghp_, gho_, ghu_, ghs_, ghr_ — 5 known prefixes)
     # Length-bound: GitHub tokens are minimum 36 base62 chars [A-Za-z0-9], no underscores
     text="$(echo "$text" | sed -E 's/gh[pousr]_[A-Za-z0-9]{36,255}/gh_***REDACTED***/g')"
+    # Redact GitHub fine-grained PATs (github_pat_ prefix, ≥60 base62+underscore chars)
+    text="$(echo "$text" | sed -E 's/github_pat_[A-Za-z0-9_]{60,}/github_pat_***REDACTED***/g')"
     echo "$text"
+}
+
+# Portable SHA-1 hash of stdin — macOS (shasum) and Linux (sha1sum / openssl).
+# Returns a 40-char hex digest, or a unique no-hasher sentinel to disable dedup.
+# Usage: echo "data" | _compute_sha1
+_compute_sha1() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 1 | awk '{print $1}'
+    elif command -v sha1sum >/dev/null 2>&1; then
+        sha1sum | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha1 -hex | awk '{print $NF}'
+    else
+        printf 'no-hasher-%s-%s' "$PPID" "$(date +%s 2>/dev/null || echo 0)"
+    fi
 }
 
 # ─── Git Bookkeeping Exclusions ──────────────────────────────────

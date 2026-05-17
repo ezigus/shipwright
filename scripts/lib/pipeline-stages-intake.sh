@@ -802,8 +802,13 @@ CC_TASKS_EOF
 
         mv "$_tmp_dod" "$dod_file" || rm -f "$_tmp_dod"
 
-        # Write classification sidecar
-        echo "{\"total\":${_total},\"auto\":$((_total - _skipped)),\"skipped_manual\":${_skipped}}" \
+        # Write classification sidecar via jq --argjson to avoid string interpolation
+        local _auto=$(( _total - _skipped ))
+        jq -n \
+            --argjson total "$_total" \
+            --argjson auto "$_auto" \
+            --argjson skipped_manual "$_skipped" \
+            '{"total":$total,"auto":$auto,"skipped_manual":$skipped_manual}' \
             > "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || true
 
         if [[ "$_skipped" -gt 0 ]]; then

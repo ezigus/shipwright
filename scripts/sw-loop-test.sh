@@ -3626,6 +3626,37 @@ else
         "got: $_vr_normal_result"
 fi
 
+# ─── C1 pre-run marker cleanup (regression guard) ────────────────────────────
+# launch_multi_agent MUST remove stale .agent-*-abort-reason / .agent-*-complete
+# markers BEFORE setup_worktrees runs. Without this, a crashed prior run leaves
+# .agent-N-abort-reason in $LOG_DIR; wait_for_multi_completion reads it on the
+# first poll of the new run and false-aborts before agents have started.
+_lma_body=$(awk '/^launch_multi_agent\(\)/{p=1} p{print} p && /^\}$/{exit}' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
+_lma_cleanup_line=$(echo "$_lma_body" | grep -n 'abort-reason' | head -1 | cut -d: -f1 || echo "0")
+_lma_setup_line=$(echo "$_lma_body" | grep -n 'setup_worktrees' | head -1 | cut -d: -f1 || echo "0")
+if [[ "${_lma_cleanup_line:-0}" -gt 0 && "${_lma_cleanup_line:-0}" -lt "${_lma_setup_line:-9999}" ]]; then
+    assert_pass "C1_pre_run_marker_cleanup: launch_multi_agent removes stale abort-reason markers BEFORE setup_worktrees"
+else
+    assert_fail "C1_pre_run_marker_cleanup: launch_multi_agent must clean .agent-*-abort-reason before setup_worktrees" \
+        "cleanup at line ${_lma_cleanup_line}, setup at line ${_lma_setup_line} (within function body)"
+fi
+
+# ─── loop-iteration: ALL scope_label callers must be guarded ──────────────────
+# Codex P1 was about line 786 in caabd4a, but lines 577 and 598 also call
+# $(scope_label). All must have a fallback because sw-loop.sh does NOT source
+# pipeline-state.sh (which defines scope_label).
+_unguarded_scope_label=$(grep -n '\$(scope_label)' "$SCRIPT_DIR/lib/loop-iteration.sh" 2>/dev/null \
+    | grep -v '|| echo' \
+    | wc -l | tr -d '[:space:]' || echo "0")
+if [[ "${_unguarded_scope_label:-0}" -eq 0 ]]; then
+    assert_pass "loop_iteration_all_scope_label_guarded: every \$(scope_label) call has || echo fallback"
+else
+    _unguarded_lines=$(grep -n '\$(scope_label)' "$SCRIPT_DIR/lib/loop-iteration.sh" 2>/dev/null \
+        | grep -v '|| echo' | head -3 || true)
+    assert_fail "loop_iteration_all_scope_label_guarded: \$(scope_label) must always be guarded with || echo fallback" \
+        "found ${_unguarded_scope_label} unguarded call(s): ${_unguarded_lines}"
+fi
+
 # ─── pipeline-stages-intake.sh atomic jq write review-fix (Copilot #7) ─────────
 # Verify the jq write goes to _tmp_json AND there's an mv from _tmp_json into the
 # final dod-classification.json path.

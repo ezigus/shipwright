@@ -2830,6 +2830,16 @@ MULTI_WINDOW_NAME=""
 launch_multi_agent() {
     info "Setting up multi-agent mode ($AGENTS agents)..."
 
+    # Pre-run cleanup: remove stale markers from any prior crashed run that
+    # did not reach cleanup_multi_agent. Without this, wait_for_multi_completion
+    # reads the prior run's abort-reason marker on its first poll and
+    # false-aborts before agents have even started. cleanup_multi_agent only
+    # fires at end-of-run, so OOM/SIGKILL/host-reboot leaves zombies behind.
+    if [[ -n "${LOG_DIR:-}" ]]; then
+        rm -f "$LOG_DIR"/.agent-*-abort-reason 2>/dev/null || true
+        rm -f "$LOG_DIR"/.agent-*-complete 2>/dev/null || true
+    fi
+
     # Setup worktrees
     setup_worktrees || { error "Failed to setup worktrees"; exit 1; }
 

@@ -595,7 +595,7 @@ ${cum_stat}
     local _ptmp
     _ptmp=$(mktemp "${TMPDIR:-/tmp}/sw-prompt.XXXXXX")
     cat > "$_ptmp" <<PROMPT
-You are an autonomous coding agent. $(scope_label) of ${MAX_ITERATIONS} max iterations.
+You are an autonomous coding agent. $(scope_label 2>/dev/null || echo "Build Iteration ${ITERATION:-?}") of ${MAX_ITERATIONS} max iterations.
 ${resume_section}
 ## Your Goal
 ${prompt_goal}

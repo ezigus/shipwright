@@ -2749,8 +2749,10 @@ PROMPT
     # awk: key-driven parser handles insertions-only/deletions-only --shortstat output
     # where positional $4/$6 fields vary.
     _diff_lines=0
+    _diff_stat=""
     if [[ -n "${_iter_start_sha:-}" ]]; then
-        _diff_lines=$(git diff --shortstat "${_iter_start_sha}" HEAD 2>/dev/null \
+        _diff_stat=$(git diff --shortstat "${_iter_start_sha}" HEAD 2>/dev/null || true)
+        _diff_lines=$(echo "$_diff_stat" \
             | awk '{ins=0;del=0; for(i=1;i<=NF;i++){if($i~/insert/)ins=$(i-1); if($i~/delet/)del=$(i-1)} print ins+del}' \
             | head -1 || echo "0")
     fi
@@ -2758,6 +2760,10 @@ PROMPT
     # Guard: ensure numeric (strip whitespace/letters, default to 0)
     _diff_lines=$(echo "$_diff_lines" | tr -dc '0-9')
     [[ -z "$_diff_lines" ]] && _diff_lines=0
+    # Guard: binary-only diffs produce "N files changed" with no insert/delet tokens.
+    # awk yields 0 in that case, which false-positively looks like a no-op.
+    # If shortstat output is non-empty (something changed) but awk found nothing, count it as 1.
+    [[ "$_diff_lines" -eq 0 && -n "$_diff_stat" ]] && _diff_lines=1
 
     if [[ "$_new_commits" -gt 0 ]] || \
        { [[ "$_diff_lines" -ge 10 ]] && [[ "$_iter_seconds" -ge 60 ]]; }; then
@@ -2992,8 +2998,9 @@ cleanup_multi_agent() {
 
     tmux kill-window -t "$MULTI_WINDOW_NAME" 2>/dev/null || true
 
-    # Clean up completion markers
+    # Clean up completion markers and abort-reason markers
     rm -f "$LOG_DIR"/.agent-*-complete 2>/dev/null || true
+    rm -f "$LOG_DIR"/.agent-*-abort-reason 2>/dev/null || true
 }
 
 # ─── Main: Single-Agent Loop ─────────────────────────────────────────────────
@@ -3620,6 +3627,10 @@ main() {
         fi
         show_banner
         launch_multi_agent
+        if [[ "${LOOP_ABORT_FATAL:-false}" == "true" ]]; then
+            warn "Abort-fatal flag set by multi-agent worker — suppressing any restart"
+            STATUS="${STATUS:-failed}"
+        fi
         show_summary
     else
         run_loop_with_restarts

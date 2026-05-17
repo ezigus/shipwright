@@ -588,13 +588,7 @@ _resolve_stage_log_path() {
     elif [[ -f "$hyphen_form" ]]; then
         echo "$hyphen_form"
     else
-        # Glob fallback: find any matching log file
-        local globbed
-        globbed=$(ls "${ARTIFACTS_DIR}/${stage_id}"*.log 2>/dev/null | head -1 || true)
-        if [[ -n "$globbed" ]]; then
-            echo "$globbed"
-        fi
-        # Returns empty string if no log found
+        return 1
     fi
 }
 
@@ -868,7 +862,7 @@ write_state() {
         printf 'progress_comment_id: %s\n' "${PROGRESS_COMMENT_ID:-}"
         printf 'stages:\n'
         printf '%s' "${stages_yaml}"
-        printf -- '---\n\n'
+        printf -- '---\n'
         printf '## Log\n'
         printf '%s\n' "$LOG_ENTRIES"
     } > "$tmp_state"

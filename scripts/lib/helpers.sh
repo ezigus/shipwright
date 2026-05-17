@@ -472,6 +472,15 @@ _compute_sha1() {
     fi
 }
 
+# Validates a git ref/branch name against a safe allowlist pattern.
+# Exits 1 if the ref is unsafe, so callers can: _validate_ref "$BASE_BRANCH" || BASE_BRANCH=main
+_validate_ref() {
+    local ref="${1:-}"
+    [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] && return 0
+    warn "_validate_ref: unsafe ref '${ref}' — refusing to use as git argument"
+    return 1
+}
+
 # ─── Git Bookkeeping Exclusions ──────────────────────────────────
 # Two categories of files excluded from loop progress/diff tracking:
 #

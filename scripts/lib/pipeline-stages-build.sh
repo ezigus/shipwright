@@ -883,20 +883,6 @@ stage_test() {
       warn "Failed to write test-results.status.json — downstream consumers will fall back to log parsing"
     fi
 
-    # Portable SHA-1 hash of stdin — works on macOS (shasum) and Linux (sha1sum/shasum).
-    _compute_sha1() {
-        if command -v shasum >/dev/null 2>&1; then
-            shasum -a 1 | awk '{print $1}'
-        elif command -v sha1sum >/dev/null 2>&1; then
-            sha1sum | awk '{print $1}'
-        elif command -v openssl >/dev/null 2>&1; then
-            openssl dgst -sha1 -hex | awk '{print $NF}'
-        else
-            # No hasher available — return a unique sentinel to disable dedup
-            printf 'no-hasher-%s-%s' "$PPID" "$(date +%s 2>/dev/null || echo 0)"
-        fi
-    }
-
     # Extracts per-suite failure summaries from a test log.
     # Looks for suite headers (sw-*-test.sh lines) and failure markers (✗, ●, FAIL).
     _summarize_test_failures() {

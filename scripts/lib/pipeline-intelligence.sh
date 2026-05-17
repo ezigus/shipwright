@@ -1146,11 +1146,19 @@ _extract_blocking_items() {
                 "$ARTIFACTS_DIR/security-source-scan.json" 2>/dev/null \
                 >> "${ARTIFACTS_DIR}/security-advisories.log" 2>/dev/null || true
         else
-            # JSON unavailable or invalid — do NOT route plain-text log into BLOCKING.
-            # Routing all log lines as blocking when confidence is unknown was the
-            # pre-F7 behavior that caused the #460 false-positive regression. Fail-closed:
-            # warn and write to advisory sidecar only.
-            warn "security-source-scan: JSON artifact missing/invalid — skipping injection into GOAL (advisory only)"
+            # JSON unavailable or invalid — inject a synthetic BLOCKING item so the
+            # security gate stays closed. A scanner crash or build race must never
+            # cause the gate to disappear silently (fail-OPEN). Operators will see
+            # this finding and must re-run the pipeline to generate a valid scan.
+            local _synthetic_fp="SCANNER_ARTIFACT_MISSING:security-source-scan.json"
+            if ! grep -qxF "$_synthetic_fp" "$tmp_fps" 2>/dev/null; then
+                printf '%s\n' "$_synthetic_fp" >> "$tmp_fps"
+                printf '%s [source: %s]\n' \
+                    "SCANNER_ARTIFACT_MISSING: security-source-scan.json unavailable — re-run pipeline to generate fresh scan results" \
+                    "security-source (synthetic)" >> "$tmp_items"
+            fi
+            # Also warn and write to advisory sidecar for diagnostics.
+            warn "security-source-scan: JSON artifact missing/invalid — injecting synthetic BLOCKING item (gate closed)"
             if [[ -f "$ARTIFACTS_DIR/security-source-scan.log" ]]; then
                 while IFS= read -r line; do
                     [[ -z "$line" ]] && continue
@@ -2236,7 +2244,7 @@ All quality checks clean:
             # Cycles 2+ use smoke test to save time; only cycle 1 runs full suite
             local _cq_test_cmd="${TEST_CMD:-npm test}"
             local _smoke_from="${SHIPWRIGHT_CQ_SMOKE_FROM_CYCLE:-2}"
-            if [[ "$cycle" -ge "$_smoke_from" ]]; then
+            if [[ "$cycle" -ge "$_smoke_from" && "$cycle" -lt "$max_cycles" ]]; then
                 if [[ -f "package.json" ]] && jq -e '.scripts["test:smoke"]' package.json >/dev/null 2>&1; then
                     _cq_test_cmd="npm run test:smoke"
                     info "Compound quality cycle ${cycle}: using smoke test (not full suite)"
@@ -2253,7 +2261,7 @@ All quality checks clean:
             if [[ "$cycle" -ge 2 && -f "${ARTIFACTS_DIR}/last-failure-set.sha" ]]; then
                 local _cur_hash _prev_hash _fail_line_count
                 _fail_line_count=$(grep -cE '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' \
-                    "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null || echo "0")
+                    "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null) || _fail_line_count=0
                 _fail_line_count="${_fail_line_count:-0}"
                 if [[ "$_fail_line_count" -gt 0 ]]; then
                     _prev_hash=$(cat "${ARTIFACTS_DIR}/last-failure-set.sha" 2>/dev/null | tr -d '[:space:]' || true)
@@ -2271,7 +2279,7 @@ All quality checks clean:
             # Record current failure set hash for next cycle's short-circuit check
             { local _record_count
               _record_count=$(grep -cE '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' \
-                  "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null || echo "0")
+                  "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null) || _record_count=0
               if [[ "${_record_count:-0}" -gt 0 ]]; then
                   grep -E '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' \
                       "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null \

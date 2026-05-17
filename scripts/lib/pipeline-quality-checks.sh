@@ -1099,6 +1099,12 @@ run_dod_audit() {
         [[ -f "${ARTIFACTS_DIR}/dod-classification.json" ]] && \
             _skipped_c=$(jq -r '.skipped_manual // 0' "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || echo 0)
         if [[ "$_skipped_c" -gt 0 ]]; then
+            local _total_items
+            _total_items=$(grep -cE '^\s*-\s*\[' "$ARTIFACTS_DIR/dod-audit.md" 2>/dev/null || echo "0") || _total_items=0
+            if [[ "$_skipped_c" -ge "$_total_items" && "$_total_items" -gt 0 ]]; then
+                error "DoD audit: all ${_total_items} item(s) classified as manual — at least one item must be auto-verified"
+                return 1
+            fi
             warn "DoD audit: all ${_skipped_c} items are manual — skipped in autonomous mode (passing)"
             return 0
         fi

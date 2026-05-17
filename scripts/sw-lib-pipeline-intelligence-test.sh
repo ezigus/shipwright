@@ -1081,4 +1081,65 @@ else
         "guard at line ${_guard_line:-?}, set_outer_stage at line ${_set_outer_line:-?} — must be guard < set_outer_stage"
 fi
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# H2: JSON-absent fail-closed — security-source-scan.json missing → BLOCKING item
+# When security-source-scan.log exists but security-source-scan.json is absent or
+# invalid, _extract_blocking_items must inject a synthetic SCANNER_ARTIFACT_MISSING
+# blocking item so the gate stays closed (fail-closed, not fail-open).
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "H2: JSON-absent fail-closed for security-source-scan"
+
+# Restore the real _extract_blocking_items — earlier tests stub it with { echo ""; }
+# to isolate compound_rebuild_with_feedback. Clear the load guard and re-source the lib.
+unset -f _extract_blocking_items 2>/dev/null || true
+_PIPELINE_INTELLIGENCE_LOADED=""
+source "$SCRIPT_DIR/lib/pipeline-intelligence.sh" 2>/dev/null
+
+rm -f "$ARTIFACTS_DIR/security-source-scan.json" "$ARTIFACTS_DIR/security-source-scan.log" \
+      "$ARTIFACTS_DIR/security-audit.log" "$ARTIFACTS_DIR/adversarial-review.json" \
+      "$ARTIFACTS_DIR/adversarial-review.md" "$ARTIFACTS_DIR/negative-review.md" \
+      "$ARTIFACTS_DIR/dod-audit.md" "$ARTIFACTS_DIR/classified-findings.json" \
+      "$ARTIFACTS_DIR/security-advisories.log"
+
+# Create a security-source-scan.log without a corresponding .json artifact
+printf '# security scan log\nCRITICAL: src/app.sh:5 — potential secret\n' \
+    > "$ARTIFACTS_DIR/security-source-scan.log"
+
+# Confirm .json is absent
+_h2_blocking=$(_extract_blocking_items)
+
+_h2_has_missing=$(echo "$_h2_blocking" | grep -c "SCANNER_ARTIFACT_MISSING" 2>/dev/null || true)
+_h2_has_missing="${_h2_has_missing:-0}"
+assert_gt \
+    "H2: SCANNER_ARTIFACT_MISSING blocking item emitted when security-source-scan.json absent" \
+    "${_h2_has_missing:-0}" "0"
+
+# Verify the finding appears in the blocking output (non-empty output means it is blocking)
+if [[ -n "$_h2_blocking" ]]; then
+    assert_pass "H2: _extract_blocking_items output is non-empty (finding is blocking, not advisory-only)"
+else
+    assert_fail "H2: _extract_blocking_items output is non-empty (finding is blocking, not advisory-only)" \
+        "got empty output — SCANNER_ARTIFACT_MISSING was not promoted to blocking"
+fi
+
+# Verify advisory sidecar does NOT contain the blocking item (it's in blocking, not advisory)
+_h2_advisory=$(cat "$ARTIFACTS_DIR/security-advisories.log" 2>/dev/null || true)
+_h2_in_advisory=$(echo "$_h2_advisory" | grep -c "SCANNER_ARTIFACT_MISSING" 2>/dev/null || true)
+_h2_in_advisory="${_h2_in_advisory:-0}"
+assert_eq \
+    "H2: SCANNER_ARTIFACT_MISSING is NOT placed in advisory sidecar (it is blocking)" \
+    "0" "${_h2_in_advisory:-0}"
+
+# Also test: when security-source-scan.log is absent, no synthetic item injected
+rm -f "$ARTIFACTS_DIR/security-source-scan.log" "$ARTIFACTS_DIR/security-advisories.log"
+_h2_no_log_blocking=$(_extract_blocking_items)
+_h2_no_log_missing=$(echo "$_h2_no_log_blocking" | grep -c "SCANNER_ARTIFACT_MISSING" 2>/dev/null || true)
+_h2_no_log_missing="${_h2_no_log_missing:-0}"
+assert_eq \
+    "H2: SCANNER_ARTIFACT_MISSING not injected when security-source-scan.log is also absent" \
+    "0" "${_h2_no_log_missing:-0}"
+
+rm -f "$ARTIFACTS_DIR/security-source-scan.json" "$ARTIFACTS_DIR/security-source-scan.log" \
+      "$ARTIFACTS_DIR/security-advisories.log"
+
 print_test_results

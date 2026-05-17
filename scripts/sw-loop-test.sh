@@ -3455,6 +3455,39 @@ else
         "Expected abort-reason writer and reader wiring"
 fi
 
+# C1 review-fix: worker must NOT touch .agent-N-complete when aborting, otherwise the
+# parent's completion check wins over the abort-reason check (Copilot review #4).
+_c1_noop_block=$(awk '/CONSECUTIVE_NOOP.*-ge 2/,/break$/' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | head -20 || true)
+# Match an actual touch COMMAND (not a comment that mentions "touch .agent-N-complete")
+if echo "$_c1_noop_block" | grep -qE '^[[:space:]]*touch[[:space:]].*agent.*complete' 2>/dev/null; then
+    assert_fail "C1_no_complete_on_abort: worker must NOT touch .agent-N-complete during noop abort" \
+        "Found 'touch .agent-N-complete' COMMAND in NOOP abort block — would mask abort"
+else
+    assert_pass "C1_no_complete_on_abort: worker noop-abort block does not touch .agent-N-complete"
+fi
+
+# C1 review-fix: wait_for_multi_completion must check abort-reason BEFORE .agent-N-complete
+# (Copilot review #4). If complete wins, abort never registers.
+_c1_body_full=$(awk '/^wait_for_multi_completion\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
+_c1_abort_pos=$(echo "$_c1_body_full" | grep -n 'abort-reason' | head -1 | cut -d: -f1 || echo "9999")
+_c1_complete_pos=$(echo "$_c1_body_full" | grep -n '\.agent-${i}-complete' | head -1 | cut -d: -f1 || echo "0")
+if [[ "${_c1_abort_pos:-9999}" -lt "${_c1_complete_pos:-0}" ]]; then
+    assert_pass "C1_abort_before_complete: wait_for_multi_completion checks abort-reason before completion marker"
+else
+    assert_fail "C1_abort_before_complete: abort-reason check must come before .agent-N-complete check" \
+        "abort-reason at line ${_c1_abort_pos}, complete at line ${_c1_complete_pos} (within function body)"
+fi
+
+# C1 review-fix: main() must guard launch_multi_agent under set -e (Copilot review #3).
+# Without `|| true` or `if`, set -e exits before the LOOP_ABORT_FATAL check can fire.
+_c1_main=$(awk '/^main\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
+if echo "$_c1_main" | grep -qE 'launch_multi_agent[[:space:]]*\|\|[[:space:]]*true|if[[:space:]]+(!|launch_multi_agent)' 2>/dev/null; then
+    assert_pass "C1_main_set_e_guard: launch_multi_agent guarded against set -e in main()"
+else
+    assert_fail "C1_main_set_e_guard: launch_multi_agent must be guarded (|| true or if) so LOOP_ABORT_FATAL check fires" \
+        "Bare 'launch_multi_agent' under set -e exits before post-check"
+fi
+
 # Static: wait_for_multi_completion must read the marker and set LOOP_ABORT_FATAL
 _c1_body=$(awk '/^wait_for_multi_completion\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
 if echo "$_c1_body" | grep -q 'abort-reason' 2>/dev/null; then
@@ -3487,6 +3520,120 @@ if grep -A5 '_fail_line_count' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" \
 else
     assert_fail "C3_count_gt_zero: dedup guard must check _fail_line_count -gt 0" \
         "Expected [[ \$_fail_line_count -gt 0 ]] near dedup logic"
+fi
+
+# ─── R4 review-fix: all-manual DoD guard uses sidecar total, not post-strip count ──
+# Copilot review #8: counting from dod-audit.md after [~] items are stripped yields 0,
+# so the all-manual guard never fires. Must use dod-classification.json's `total`.
+if grep -A5 'all.*items.*classified as manual' "$SCRIPT_DIR/lib/pipeline-quality-checks.sh" 2>/dev/null \
+        | grep -q '_orig_total\|jq.*total' 2>/dev/null; then
+    assert_pass "R4_orig_total_from_sidecar: all-manual guard uses dod-classification.json total"
+else
+    # Check the broader context
+    if grep -B3 -A8 'classified as manual' "$SCRIPT_DIR/lib/pipeline-quality-checks.sh" 2>/dev/null \
+            | grep -q '\.total\|_orig_total' 2>/dev/null; then
+        assert_pass "R4_orig_total_from_sidecar: all-manual guard reads from sidecar JSON"
+    else
+        assert_fail "R4_orig_total_from_sidecar: all-manual guard must use dod-classification.json total" \
+            "Counting dod-audit.md after [~] strip yields 0; guard never fires"
+    fi
+fi
+
+# ─── stage_test review-fix: dedup file separated from compound_quality (Codex #2) ──
+# stage_test must NOT write last-failure-set.sha — that file belongs to compound_quality.
+# Cross-writes cause cycle N+1 to compare current failures against its own (mid-rebuild)
+# hash, falsely short-circuiting as "identical failures".
+if grep -qF 'stage-test-last-comment.sha' "$SCRIPT_DIR/lib/pipeline-stages-build.sh" 2>/dev/null; then
+    assert_pass "stage_test_dedup_separate: stage_test uses its own dedup file (stage-test-last-comment.sha)"
+else
+    assert_fail "stage_test_dedup_separate: stage_test must use a separate dedup file from compound_quality" \
+        "Expected stage-test-last-comment.sha (or similar non-shared path)"
+fi
+# And confirm it no longer WRITES last-failure-set.sha (comment references OK).
+# Match a redirect (>) or printf-into pattern, not a comment-only mention.
+_st_writes_shared=$(grep -E '(>|printf|tee)[^#]*last-failure-set\.sha' "$SCRIPT_DIR/lib/pipeline-stages-build.sh" 2>/dev/null \
+    | grep -v '^[[:space:]]*#' | wc -l | tr -d '[:space:]' || echo "0")
+if [[ "${_st_writes_shared:-0}" -eq 0 ]]; then
+    assert_pass "stage_test_no_compound_collision: pipeline-stages-build.sh does not write last-failure-set.sha"
+else
+    assert_fail "stage_test_no_compound_collision: stage_test must not write last-failure-set.sha (cycle dedup collision)" \
+        "Found ${_st_writes_shared} write(s) to last-failure-set.sha in pipeline-stages-build.sh"
+fi
+
+# ─── stage_test review-fix: empty-input SHA guard (same as C3 but in stage_test) ─
+# Codex blocker: stage_test hashes test_log; empty grep yields constant SHA, collides.
+if grep -B2 -A8 '_stage_test_count' "$SCRIPT_DIR/lib/pipeline-stages-build.sh" 2>/dev/null \
+        | grep -q 'gt 0' 2>/dev/null; then
+    assert_pass "stage_test_empty_sha_guard: dedup hash gated on failure count > 0"
+else
+    assert_fail "stage_test_empty_sha_guard: dedup hash must be gated on failure count > 0" \
+        "Empty grep input yields constant SHA-1 — false 'same failures' match on infra errors"
+fi
+
+# ─── loop-iteration scope_label review-fix: guarded against missing function (Codex P1) ──
+# scope_label is defined in pipeline-state.sh; sw-loop.sh doesn't source it, so the
+# command substitution returns 127 under set -e. Need a `type` check or fallback.
+_li_scope_block=$(grep -A2 'Build Prompt' "$SCRIPT_DIR/lib/loop-iteration.sh" 2>/dev/null | head -3 || true)
+if echo "$_li_scope_block" | grep -qE 'type scope_label|_scope_label' 2>/dev/null; then
+    assert_pass "loop_iteration_scope_label_guard: Build Prompt body guards scope_label with type check"
+elif grep -B3 'Build Prompt' "$SCRIPT_DIR/lib/loop-iteration.sh" 2>/dev/null | grep -q 'type scope_label' 2>/dev/null; then
+    assert_pass "loop_iteration_scope_label_guard: Build Prompt body guards scope_label with type check"
+else
+    assert_fail "loop_iteration_scope_label_guard: scope_label must be guarded (set -e + missing function = 127 exit)" \
+        "Expected 'type scope_label' check or fallback variable assignment before use in Build Prompt body"
+fi
+
+# ─── pipeline-state.sh _resolve_stage_log_path review-fix (Copilot #5) ─────────
+# Under set -e, _resolve_stage_log_path returns 1 on miss → mark_stage_failed exits.
+# Must be guarded with `|| _x_log=""` before tail.
+if grep -qE '_(ec|fs)_log=.*_resolve_stage_log_path.*\|\| _' "$SCRIPT_DIR/lib/pipeline-state.sh" 2>/dev/null; then
+    assert_pass "resolve_stage_log_path_set_e_guard: _resolve_stage_log_path call guarded with || fallback"
+else
+    assert_fail "resolve_stage_log_path_set_e_guard: callers must guard with || fallback against set -e" \
+        "Expected '_ec_log=\$(...) || _ec_log=\"\"' pattern in mark_stage_failed"
+fi
+
+# ─── _validate_ref review-fix: rejects leading dash and path traversal (Copilot #9) ─
+_vr_helper="$SCRIPT_DIR/lib/helpers.sh"
+_vr_dash_result="$(
+    source "$_vr_helper" 2>/dev/null
+    _validate_ref "--output=/etc/passwd" 2>&1 || echo "REJECTED"
+)"
+if echo "$_vr_dash_result" | grep -qF "REJECTED"; then
+    assert_pass "validate_ref_rejects_leading_dash: --output=/etc/passwd rejected"
+else
+    assert_fail "validate_ref_rejects_leading_dash: leading-dash refs must be rejected (option injection)" \
+        "got: $_vr_dash_result"
+fi
+_vr_traversal_result="$(
+    source "$_vr_helper" 2>/dev/null
+    _validate_ref "main..injected" 2>&1 || echo "REJECTED"
+)"
+if echo "$_vr_traversal_result" | grep -qF "REJECTED"; then
+    assert_pass "validate_ref_rejects_traversal: '..' sequences rejected"
+else
+    assert_fail "validate_ref_rejects_traversal: '..' sequences must be rejected (range injection)" \
+        "got: $_vr_traversal_result"
+fi
+_vr_normal_result="$(
+    source "$_vr_helper" 2>/dev/null
+    _validate_ref "main" >/dev/null 2>&1 && echo "OK" || echo "REJECTED"
+)"
+if echo "$_vr_normal_result" | grep -qF "OK"; then
+    assert_pass "validate_ref_accepts_normal: 'main' accepted"
+else
+    assert_fail "validate_ref_accepts_normal: normal branch names must be accepted" \
+        "got: $_vr_normal_result"
+fi
+
+# ─── pipeline-stages-intake.sh atomic jq write review-fix (Copilot #7) ─────────
+# Verify the jq write goes to _tmp_json AND there's an mv from _tmp_json into the
+# final dod-classification.json path.
+if grep -qE '^[[:space:]]*mv[[:space:]]+"\$_tmp_json".*dod-classification' "$SCRIPT_DIR/lib/pipeline-stages-intake.sh" 2>/dev/null; then
+    assert_pass "intake_dod_classification_atomic_write: dod-classification.json uses tmp+mv pattern"
+else
+    assert_fail "intake_dod_classification_atomic_write: dod-classification.json write must be atomic (tmp + mv)" \
+        "Expected 'mv \"\$_tmp_json\" .../dod-classification.json' after jq succeeds"
 fi
 
 # ─── Test: compose_rejection_notice_section includes QUALITY_GATE_REASONS ─────

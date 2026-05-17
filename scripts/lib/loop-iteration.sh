@@ -782,7 +782,13 @@ run_claude_iteration() {
                 else
                     truncated="$redacted"
                 fi
-                body="### Build Prompt — $(scope_label)
+                local _scope_label
+                if type scope_label >/dev/null 2>&1; then
+                    _scope_label="$(scope_label 2>/dev/null || echo "Build Iteration ${ITERATION:-?}")"
+                else
+                    _scope_label="Build Iteration ${ITERATION:-?}"
+                fi
+                body="### Build Prompt — ${_scope_label}
 
 <details><summary>Prompt (${prompt_chars} chars, redacted)</summary>
 

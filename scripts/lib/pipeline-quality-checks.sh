@@ -1093,19 +1093,22 @@ run_dod_audit() {
         { printf 'created_at_commit: %s\n' "$_dod_sha"; cat "$ARTIFACTS_DIR/dod-audit.md"; } > "$_dod_tmp" && mv "$_dod_tmp" "$ARTIFACTS_DIR/dod-audit.md" || rm -f "$_dod_tmp"
     fi
 
-    # If all items were skipped (all manual), pass with a warning
+    # If all items were skipped (all manual), pass with a warning.
+    # Counts come from dod-classification.json (which knows the ORIGINAL DoD count
+    # before [~] stripping). Counting from dod-audit.md would zero out for an
+    # all-manual plan (since [~] items are dropped), defeating the guard.
     if [[ "$total" -eq 0 ]]; then
-        local _skipped_c=0
-        [[ -f "${ARTIFACTS_DIR}/dod-classification.json" ]] && \
+        local _skipped_c=0 _orig_total=0
+        if [[ -f "${ARTIFACTS_DIR}/dod-classification.json" ]]; then
             _skipped_c=$(jq -r '.skipped_manual // 0' "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || echo 0)
+            _orig_total=$(jq -r '.total // 0' "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || echo 0)
+        fi
+        if [[ "$_orig_total" -gt 0 && "$_skipped_c" -ge "$_orig_total" ]]; then
+            error "DoD audit: all ${_orig_total} item(s) classified as manual — at least one item must be auto-verified"
+            return 1
+        fi
         if [[ "$_skipped_c" -gt 0 ]]; then
-            local _total_items
-            _total_items=$(grep -cE '^\s*-\s*\[' "$ARTIFACTS_DIR/dod-audit.md" 2>/dev/null || echo "0") || _total_items=0
-            if [[ "$_skipped_c" -ge "$_total_items" && "$_total_items" -gt 0 ]]; then
-                error "DoD audit: all ${_total_items} item(s) classified as manual — at least one item must be auto-verified"
-                return 1
-            fi
-            warn "DoD audit: all ${_skipped_c} items are manual — skipped in autonomous mode (passing)"
+            warn "DoD audit: ${_skipped_c} items are manual — skipped in autonomous mode (passing)"
             return 0
         fi
         warn "DoD audit: no items found in dod.md"

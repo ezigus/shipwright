@@ -472,10 +472,28 @@ _compute_sha1() {
     fi
 }
 
-# Validates a git ref/branch name against a safe allowlist pattern.
+# Validates a git ref/branch name against safe-ref rules.
 # Exits 1 if the ref is unsafe, so callers can: _validate_ref "$BASE_BRANCH" || BASE_BRANCH=main
+# Rejects leading dashes (option-injection vector for git commands), `..` path
+# traversal sequences, and anything else `git check-ref-format` flags. Falls back to
+# a tight charset regex when git is unavailable in the environment.
 _validate_ref() {
     local ref="${1:-}"
+    [[ -z "$ref" ]] && { warn "_validate_ref: empty ref"; return 1; }
+    # Hard reject: leading dash, embedded "..", whitespace, or git-ref reserved chars.
+    case "$ref" in
+        -*|*..*|*' '*|*$'\t'*|*$'\n'*|*'~'*|*'^'*|*':'*|*'?'*|*'*'*|*'['*|*'\\'*)
+            warn "_validate_ref: unsafe ref '${ref}' (option/traversal/reserved char) — refusing"
+            return 1
+            ;;
+    esac
+    if command -v git >/dev/null 2>&1; then
+        # Authoritative check: git's own ref-format validator (branch form).
+        git check-ref-format --branch "$ref" >/dev/null 2>&1 && return 0
+        warn "_validate_ref: git check-ref-format rejected '${ref}'"
+        return 1
+    fi
+    # No git available — fall back to a conservative charset check.
     [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] && return 0
     warn "_validate_ref: unsafe ref '${ref}' — refusing to use as git argument"
     return 1

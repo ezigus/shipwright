@@ -802,14 +802,19 @@ CC_TASKS_EOF
 
         mv "$_tmp_dod" "$dod_file" || rm -f "$_tmp_dod"
 
-        # Write classification sidecar via jq --argjson to avoid string interpolation
+        # Write classification sidecar via jq --argjson to avoid string interpolation.
+        # Atomic: write to the pre-allocated _tmp_json then mv into place — a failing
+        # or interrupted jq must not leave a partial dod-classification.json that
+        # downstream consumers might mistakenly trust.
         local _auto=$(( _total - _skipped ))
-        jq -n \
+        if jq -n \
             --argjson total "$_total" \
             --argjson auto "$_auto" \
             --argjson skipped_manual "$_skipped" \
             '{"total":$total,"auto":$auto,"skipped_manual":$skipped_manual}' \
-            > "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || true
+            > "$_tmp_json" 2>/dev/null; then
+            mv "$_tmp_json" "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || true
+        fi
 
         if [[ "$_skipped" -gt 0 ]]; then
             info "DoD: ${_skipped}/${_total} items marked as manual-only — will be skipped in autonomous audit"

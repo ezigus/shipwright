@@ -2780,10 +2780,12 @@ PROMPT
         # Write abort-reason file so the parent monitoring loop can detect this.
         # LOOP_ABORT_FATAL cannot propagate from this worker tmux-pane process to the
         # parent — use a marker file instead. Atomic tmp+mv prevents partial reads.
+        # Do NOT touch .agent-N-complete here: completion = success in the parent's
+        # eyes, which would mask the abort and let restarts fire. The parent reads
+        # the abort-reason marker on its own polling cycle.
         echo "NOOP_ITERATIONS" > "$LOG_DIR/.agent-${AGENT_NUM}-abort-reason.tmp" 2>/dev/null \
             && mv "$LOG_DIR/.agent-${AGENT_NUM}-abort-reason.tmp" \
                "$LOG_DIR/.agent-${AGENT_NUM}-abort-reason" 2>/dev/null || true
-        touch "$LOG_DIR/.agent-${AGENT_NUM}-complete" 2>/dev/null || true
         break
     fi
 
@@ -2876,14 +2878,10 @@ launch_multi_agent() {
 
 wait_for_multi_completion() {
     while true; do
-        # Check if any agent signaled completion or NOOP-abort
+        # Check abort-reason marker FIRST. If a worker no-op-aborted AND another agent
+        # happens to legitimately complete in the same cycle, the abort takes precedence
+        # so restarts stay suppressed. Reading complete first would mask the abort.
         for i in $(seq 1 "$AGENTS"); do
-            if [[ -f "$LOG_DIR/.agent-${i}-complete" ]]; then
-                success "Agent $i signaled <<<LOOP:PASS>>>!"
-                STATUS="complete"
-                write_state
-                return 0
-            fi
             # C1: read abort-reason marker written by no-op detection inside worker subshell.
             # LOOP_ABORT_FATAL can't propagate across the tmux-pane process boundary, so
             # the worker writes a marker file instead; this is the reader that closes the loop.
@@ -2895,8 +2893,19 @@ wait_for_multi_completion() {
                     LOOP_ABORT_FATAL=true
                     STATUS="failed"
                     write_state
-                    return 1
+                    # Return 0 so callers under `set -e` continue to the LOOP_ABORT_FATAL
+                    # post-check. The flag is the authoritative signal; return code is advisory.
+                    return 0
                 fi
+            fi
+        done
+        # Then check completion markers
+        for i in $(seq 1 "$AGENTS"); do
+            if [[ -f "$LOG_DIR/.agent-${i}-complete" ]]; then
+                success "Agent $i signaled <<<LOOP:PASS>>>!"
+                STATUS="complete"
+                write_state
+                return 0
             fi
         done
 
@@ -3626,7 +3635,10 @@ main() {
             initialize_state
         fi
         show_banner
-        launch_multi_agent
+        # Guard against set -e: launch_multi_agent → wait_for_multi_completion may
+        # return non-zero on abort. The LOOP_ABORT_FATAL flag is the authoritative
+        # signal; `|| true` ensures the post-check always runs.
+        launch_multi_agent || true
         if [[ "${LOOP_ABORT_FATAL:-false}" == "true" ]]; then
             warn "Abort-fatal flag set by multi-agent worker — suppressing any restart"
             STATUS="${STATUS:-failed}"

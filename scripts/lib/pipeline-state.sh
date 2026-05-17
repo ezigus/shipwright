@@ -642,9 +642,10 @@ $( \
 \`\`\`"
         fi
 
-        # Notify tracker (Linear/Jira) of stage failure
-        local error_context
-        _ec_log=$(_resolve_stage_log_path "${stage_id:-unknown}"); \
+        # Notify tracker (Linear/Jira) of stage failure.
+        # `|| _ec_log=""` so set -e doesn't abort mark_stage_failed when no log found.
+        local error_context _ec_log
+        _ec_log=$(_resolve_stage_log_path "${stage_id:-unknown}") || _ec_log=""
         error_context=$(tail -5 "${_ec_log:-/dev/null}" 2>/dev/null || echo "No log")
         "$SCRIPT_DIR/sw-tracker.sh" notify "stage_failed" "$ISSUE_NUMBER" \
             "${stage_id}|${error_context}" 2>/dev/null || true
@@ -655,8 +656,8 @@ $( \
 
     # Update GitHub Check Run for this stage
     if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_stage_update >/dev/null 2>&1; then
-        local fail_summary
-        _fs_log=$(_resolve_stage_log_path "${stage_id:-unknown}"); \
+        local fail_summary _fs_log
+        _fs_log=$(_resolve_stage_log_path "${stage_id:-unknown}") || _fs_log=""
         fail_summary=$(tail -3 "${_fs_log:-/dev/null}" 2>/dev/null | head -c 500 || echo "Stage $stage_id failed")
         gh_checks_stage_update "$stage_id" "completed" "failure" "$fail_summary" 2>/dev/null || true
     fi

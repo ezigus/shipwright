@@ -918,17 +918,25 @@ stage_test() {
             log_lines=$(wc -l < "$test_log" 2>/dev/null || echo 0)
             log_lines="${log_lines:-0}"
 
-            # Compute dedup hash from sorted failure names to detect identical consecutive failures
-            local _fail_hash _prev_hash
-            _fail_hash=$(grep -E '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' "$test_log" 2>/dev/null \
-                | sort | _compute_sha1 || echo "")
-            _prev_hash=""
-            if [[ -n "${ARTIFACTS_DIR:-}" && -f "${ARTIFACTS_DIR}/last-failure-set.sha" ]]; then
-                _prev_hash=$(cat "${ARTIFACTS_DIR}/last-failure-set.sha" 2>/dev/null | tr -d '[:space:]' || true)
+            # Compute dedup hash from sorted failure names to detect identical
+            # consecutive GitHub comments. Uses its own state file (NOT the one
+            # compound_quality uses for cycle short-circuit, which lives at
+            # last-failure-set.sha — shared writes would cross-contaminate the
+            # cycle dedup logic). Gated on positive failure count: SHA-1 of empty
+            # stdin is a constant, which would falsely match unrelated infra failures.
+            local _fail_hash="" _prev_hash="" _stage_test_count
+            _stage_test_count=$(grep -cE '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' "$test_log" 2>/dev/null) || _stage_test_count=0
+            _stage_test_count="${_stage_test_count:-0}"
+            if [[ "$_stage_test_count" -gt 0 ]]; then
+                _fail_hash=$(grep -E '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' "$test_log" 2>/dev/null \
+                    | sort | _compute_sha1 || echo "")
+            fi
+            if [[ -n "${ARTIFACTS_DIR:-}" && -f "${ARTIFACTS_DIR}/stage-test-last-comment.sha" ]]; then
+                _prev_hash=$(cat "${ARTIFACTS_DIR}/stage-test-last-comment.sha" 2>/dev/null | tr -d '[:space:]' || true)
             fi
 
             local _gh_body
-            if [[ -n "$_fail_hash" && "$_fail_hash" == "$_prev_hash" ]]; then
+            if [[ -n "$_fail_hash" && "$_fail_hash" == "$_prev_hash" && "$_fail_hash" != no-hasher-* ]]; then
                 # Same failures as previous cycle — abbreviated notice
                 _gh_body="↺ **Same test failures as previous cycle** (exit code: $test_exit, ${log_lines} lines)
 
@@ -948,10 +956,10 @@ ${_failure_summary}
 \`\`\`"
             fi
 
-            # Save current hash for next cycle dedup
+            # Save current hash for next stage_test comment dedup (separate from compound_quality)
             if [[ -n "${ARTIFACTS_DIR:-}" && -n "$_fail_hash" ]]; then
                 mkdir -p "$ARTIFACTS_DIR" 2>/dev/null || true
-                echo "$_fail_hash" > "${ARTIFACTS_DIR}/last-failure-set.sha" 2>/dev/null || true
+                echo "$_fail_hash" > "${ARTIFACTS_DIR}/stage-test-last-comment.sha" 2>/dev/null || true
             fi
 
             gh_comment_issue "$ISSUE_NUMBER" "$_gh_body"

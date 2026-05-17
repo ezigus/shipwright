@@ -808,13 +808,14 @@ CC_TASKS_EOF
         # or interrupted jq must not leave a partial dod-classification.json that
         # downstream consumers might mistakenly trust.
         local _auto=$(( _total - _skipped ))
-        jq -n \
+        if jq -n \
             --argjson total "$_total" \
             --argjson auto "$_auto" \
             --argjson skipped_manual "$_skipped" \
             '{"total":$total,"auto":$auto,"skipped_manual":$skipped_manual}' \
-            > "$_tmp_json" 2>/dev/null \
-        && mv "$_tmp_json" "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || true
+            > "$_tmp_json" 2>/dev/null; then
+            mv "$_tmp_json" "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || true
+        fi
         rm -f "$_tmp_json" 2>/dev/null || true
 
         if [[ "$_skipped" -gt 0 ]]; then

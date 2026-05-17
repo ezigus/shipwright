@@ -408,7 +408,7 @@ Checklist of completion criteria. EVERY item MUST end with a verification tag:
 
 RULES:
 1. Prefer auto: tags. A {manual} item in autonomous mode = SKIPPED, not FAILED.
-2. NEVER phrase an auto item as "manual verification" — it will block the loop.
+2. NEVER phrase an auto item as \"manual verification\" — it will block the loop.
 3. If you cannot define a verification command, put it in the PR description instead.
 4. Maximum 10 items. Each must be independently verifiable.
 5. Example: - [ ] \`npm test\` exits 0 with all 339 tests passing {auto:tests}
@@ -779,9 +779,10 @@ CC_TASKS_EOF
         fi
 
         local _tmp_dod _tmp_json
-        _tmp_dod=$(mktemp "${TMPDIR:-/tmp}/sw-dod-class.XXXXXX")
-        _tmp_json=$(mktemp "${TMPDIR:-/tmp}/sw-dod-json.XXXXXX")
-        trap 'rm -f "$_tmp_dod" "$_tmp_json"' RETURN
+        # Explicit mktemp with fallback — avoids using a RETURN trap, which leaks into
+        # the parent function scope in bash and fires again with out-of-scope locals.
+        _tmp_dod=$(mktemp "${TMPDIR:-/tmp}/sw-dod-class.XXXXXX") || return 0
+        _tmp_json=$(mktemp "${TMPDIR:-/tmp}/sw-dod-json.XXXXXX") || { rm -f "$_tmp_dod"; return 0; }
         echo '[]' > "$_tmp_json"
         local _total=0 _skipped=0
 
@@ -800,21 +801,21 @@ CC_TASKS_EOF
             echo "$line" >> "$_tmp_dod"
         done < "$dod_file"
 
-        mv "$_tmp_dod" "$dod_file" || rm -f "$_tmp_dod"
+        mv "$_tmp_dod" "$dod_file" 2>/dev/null || rm -f "$_tmp_dod" 2>/dev/null || true
 
         # Write classification sidecar via jq --argjson to avoid string interpolation.
         # Atomic: write to the pre-allocated _tmp_json then mv into place — a failing
         # or interrupted jq must not leave a partial dod-classification.json that
         # downstream consumers might mistakenly trust.
         local _auto=$(( _total - _skipped ))
-        if jq -n \
+        jq -n \
             --argjson total "$_total" \
             --argjson auto "$_auto" \
             --argjson skipped_manual "$_skipped" \
             '{"total":$total,"auto":$auto,"skipped_manual":$skipped_manual}' \
-            > "$_tmp_json" 2>/dev/null; then
-            mv "$_tmp_json" "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || true
-        fi
+            > "$_tmp_json" 2>/dev/null \
+        && mv "$_tmp_json" "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || true
+        rm -f "$_tmp_json" 2>/dev/null || true
 
         if [[ "$_skipped" -gt 0 ]]; then
             info "DoD: ${_skipped}/${_total} items marked as manual-only — will be skipped in autonomous audit"

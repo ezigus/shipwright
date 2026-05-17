@@ -7452,3 +7452,5 @@
 {"ts":"2026-05-17T07:23:12Z","ts_epoch":1779002592,"type":"checks.update","repo":"ezigus/shipwright","run_id":76364714815,"status":"completed","conclusion":"cancelled"}
 {"ts":"2026-05-17T07:23:12Z","ts_epoch":1779002592,"type":"checks.update","repo":"ezigus/shipwright","run_id":76364713494,"status":"completed","conclusion":"cancelled"}
 {"ts":"2026-05-17T07:23:13Z","ts_epoch":1779002593,"type":"checks.update","repo":"ezigus/shipwright","run_id":76364712874,"status":"completed","conclusion":"cancelled"}
+{"ts":"2026-05-17T23:46:29Z","ts_epoch":1779061589,"type":"cost.baseline_updated","repo":"ezigus/shipwright","stages":2,"issue":504}
+{"ts":"2026-05-17T23:46:38Z","ts_epoch":1779061598,"type":"regression.baseline","repo":"ezigus/shipwright","timestamp":"2026-05-17T23:46:38Z","test_count":0,"pass_rate":0,"script_count":268,"total_lines":312756}

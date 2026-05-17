@@ -28,8 +28,7 @@
       "exit_code": 1,
       "seen_count": 3,
       "last_seen": "2026-05-16T21:23:29Z",
-      "category": "test_failure",
-      "weight": 2.25
+      "category": "test_failure"
     }
   ]
 }

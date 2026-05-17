@@ -81,13 +81,31 @@ gh_post_progress() {
         -f body="$body" --jq '.id' 2>/dev/null) || true
     if [[ -n "$result" && "$result" != "null" ]]; then
         PROGRESS_COMMENT_ID="$result"
+        # Persist to disk so nested contexts and shell restarts can restore it.
+        # M2: atomic tmp+mv write prevents concurrent readers from seeing truncated content.
+        if [[ -n "${ARTIFACTS_DIR:-}" ]]; then
+            mkdir -p "$ARTIFACTS_DIR" 2>/dev/null || true
+            local _id_tmp
+            _id_tmp=$(mktemp "${ARTIFACTS_DIR}/progress-comment.id.XXXXXX" 2>/dev/null) || _id_tmp="${ARTIFACTS_DIR}/progress-comment.id.tmp.$$"
+            printf '%s\n' "$result" > "$_id_tmp" && mv "$_id_tmp" "${ARTIFACTS_DIR}/progress-comment.id" || rm -f "$_id_tmp"
+        fi
     fi
 }
 
 # Update an existing progress comment by ID
 # Usage: gh_update_progress <body>
 gh_update_progress() {
-    [[ "$GH_AVAILABLE" != "true" || -z "$PROGRESS_COMMENT_ID" ]] && return 0
+    [[ "$GH_AVAILABLE" != "true" ]] && return 0
+    # Restore from disk if env var was lost (shell restart / nested context)
+    if [[ -z "${PROGRESS_COMMENT_ID:-}" && -n "${ARTIFACTS_DIR:-}" ]]; then
+        local _saved_id
+        _saved_id=$(cat "${ARTIFACTS_DIR}/progress-comment.id" 2>/dev/null | tr -d '[:space:]' || true)
+        if [[ -n "$_saved_id" ]]; then
+            PROGRESS_COMMENT_ID="$_saved_id"
+            warn "heartbeat: restored PROGRESS_COMMENT_ID=${PROGRESS_COMMENT_ID} from disk" 2>/dev/null || true
+        fi
+    fi
+    [[ -z "${PROGRESS_COMMENT_ID:-}" ]] && return 0
     local body="$1"
     _timeout 30 gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${PROGRESS_COMMENT_ID}" \
         -X PATCH -f body="$body" >/dev/null 2>&1 || true

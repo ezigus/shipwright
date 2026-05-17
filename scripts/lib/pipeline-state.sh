@@ -34,6 +34,8 @@ PIPELINE_RUN_EPOCH="${PIPELINE_RUN_EPOCH:-0}"
 OUTER_STAGE="${OUTER_STAGE:-}"   # set when inside a nested execution context (e.g. compound rebuild)
 OUTER_STAGE_START_COMMIT="${OUTER_STAGE_START_COMMIT:-}"  # HEAD at compound_quality entry (for diff-base accuracy)
 INNER_STAGE="${INNER_STAGE:-}"   # the nested stage being executed (build/test/review)
+COMPOUND_QUALITY_CYCLE="${COMPOUND_QUALITY_CYCLE:-1}"  # current compound_quality cycle number (1-based)
+SELF_HEAL_COUNT="${SELF_HEAL_COUNT:-0}"                # build iterations completed (0 = first run)
 
 save_artifact() {
     local name="$1" content="$2"
@@ -48,6 +50,32 @@ get_stage_status() {
 
 set_outer_stage() { OUTER_STAGE="$1"; INNER_STAGE=""; write_state; }
 clear_outer_stage() { OUTER_STAGE=""; INNER_STAGE=""; write_state; }
+
+# Returns a human-readable label for the current execution scope.
+# Examples:
+#   Top-level:               "Build Iteration 1"
+#   Inside compound_quality: "Compound Quality 2 — Build Iteration 3"
+scope_label() {
+    local outer="${OUTER_STAGE:-}"
+    local inner="${INNER_STAGE:-}"
+    # Bash 3.2 compat: use awk for capitalization instead of ${var^}
+    local build_iter
+    build_iter=$(( ${SELF_HEAL_COUNT:-0} + 1 ))
+    local cq_cycle="${COMPOUND_QUALITY_CYCLE:-1}"
+
+    if [[ -n "$outer" ]]; then
+        # e.g. "compound_quality" -> "Compound Quality"
+        local outer_pretty
+        outer_pretty=$(echo "$outer" | tr '_' ' ' | awk '{for(i=1;i<=NF;i++){$i=toupper(substr($i,1,1)) substr($i,2)}} 1')
+        local inner_pretty="${inner:-build}"
+        inner_pretty=$(echo "$inner_pretty" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
+        echo "${outer_pretty} ${cq_cycle} — ${inner_pretty} Iteration ${build_iter}"
+    else
+        local top_pretty="${inner:-Build}"
+        top_pretty=$(echo "$top_pretty" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
+        echo "${top_pretty} Iteration ${build_iter}"
+    fi
+}
 
 set_stage_status() {
     local stage_id="$1" status="$2"
@@ -549,6 +577,21 @@ get_stage_self_awareness_hint() {
     fi
 }
 
+# Resolves the log file path for a stage, handling both underscore and hyphen forms.
+# stage_id may use underscores (compound_quality) but log files may use hyphens (compound-quality.log).
+_resolve_stage_log_path() {
+    local stage_id="$1"
+    local underscore_form="${ARTIFACTS_DIR}/${stage_id}.log"
+    local hyphen_form="${ARTIFACTS_DIR}/${stage_id//_/-}.log"
+    if [[ -f "$underscore_form" ]]; then
+        echo "$underscore_form"
+    elif [[ -f "$hyphen_form" ]]; then
+        echo "$hyphen_form"
+    else
+        return 1
+    fi
+}
+
 mark_stage_failed() {
     local stage_id="$1"
     record_stage_end "$stage_id"
@@ -585,13 +628,25 @@ mark_stage_failed() {
             gh_comment_issue "$ISSUE_NUMBER" "❌ Pipeline failed at stage **${stage_id}** after ${timing}.
 
 \`\`\`
-$(tail -5 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null || echo 'No log available')
+$( \
+    _log_path=$(_resolve_stage_log_path "${stage_id:-unknown}"); \
+    if [[ -n "$_log_path" ]]; then \
+        tail -5 "$_log_path" 2>/dev/null || echo 'Log file unreadable'; \
+    else \
+        printf 'Diagnostic: stage %s produced no log at %s/{%s,%s}.log\n' \
+            "${stage_id:-unknown}" "${ARTIFACTS_DIR}" \
+            "${stage_id:-unknown}" "${stage_id//_/-}"; \
+        printf 'Check: ARTIFACTS_DIR=%s, last-stderr.log for process output\n' "${ARTIFACTS_DIR}"; \
+    fi \
+)
 \`\`\`"
         fi
 
-        # Notify tracker (Linear/Jira) of stage failure
-        local error_context
-        error_context=$(tail -5 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null || echo "No log")
+        # Notify tracker (Linear/Jira) of stage failure.
+        # `|| _ec_log=""` so set -e doesn't abort mark_stage_failed when no log found.
+        local error_context _ec_log
+        _ec_log=$(_resolve_stage_log_path "${stage_id:-unknown}") || _ec_log=""
+        error_context=$(tail -5 "${_ec_log:-/dev/null}" 2>/dev/null || echo "No log")
         "$SCRIPT_DIR/sw-tracker.sh" notify "stage_failed" "$ISSUE_NUMBER" \
             "${stage_id}|${error_context}" 2>/dev/null || true
 
@@ -601,8 +656,9 @@ $(tail -5 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null || echo 'No log availabl
 
     # Update GitHub Check Run for this stage
     if [[ "${NO_GITHUB:-false}" != "true" ]] && type gh_checks_stage_update >/dev/null 2>&1; then
-        local fail_summary
-        fail_summary=$(tail -3 "$ARTIFACTS_DIR/${stage_id}"*.log 2>/dev/null | head -c 500 || echo "Stage $stage_id failed")
+        local fail_summary _fs_log
+        _fs_log=$(_resolve_stage_log_path "${stage_id:-unknown}") || _fs_log=""
+        fail_summary=$(tail -3 "${_fs_log:-/dev/null}" 2>/dev/null | head -c 500 || echo "Stage $stage_id failed")
         gh_checks_stage_update "$stage_id" "completed" "failure" "$fail_summary" 2>/dev/null || true
     fi
 
@@ -807,7 +863,7 @@ write_state() {
         printf 'progress_comment_id: %s\n' "${PROGRESS_COMMENT_ID:-}"
         printf 'stages:\n'
         printf '%s' "${stages_yaml}"
-        printf -- '---\n\n'
+        printf -- '---\n'
         printf '## Log\n'
         printf '%s\n' "$LOG_ENTRIES"
     } > "$tmp_state"
@@ -822,6 +878,7 @@ write_state() {
         fi
         update_pipeline_status "$_job_id" "$PIPELINE_STATUS" "$CURRENT_STAGE" "" "$_dur_secs" 2>/dev/null || true
     fi
+
 }
 
 resume_state() {

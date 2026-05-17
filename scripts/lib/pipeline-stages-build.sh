@@ -883,6 +883,23 @@ stage_test() {
       warn "Failed to write test-results.status.json — downstream consumers will fall back to log parsing"
     fi
 
+    # Extracts per-suite failure summaries from a test log.
+    # Looks for suite headers (sw-*-test.sh lines) and failure markers (✗, ●, FAIL).
+    _summarize_test_failures() {
+        local test_log="$1"
+        local max_lines="${2:-40}"
+        [[ ! -f "$test_log" ]] && return 0
+        awk '
+            /sw-[a-z]+-test\.sh/ { suite = $0; gsub(/^[[:space:]]+|[[:space:]]+$/, "", suite) }
+            /^[[:space:]]*(FAIL|✗|●|×)[[:space:]]/ && suite != "" {
+                print "  • " suite " — " $0
+            }
+            /[0-9]+ of [0-9]+ tests? failed/ && suite != "" {
+                print "  " suite ": " $0
+            }
+        ' "$test_log" 2>/dev/null | head -"$max_lines"
+    }
+
     if [[ "$test_exit" -eq 0 ]]; then
         success "Tests passed"
     else
@@ -895,23 +912,57 @@ stage_test() {
         fi
         echo "$relevant_output"
 
-        # Post failure to GitHub with more context
+        # Post failure to GitHub with actionable summary (not full log dump)
         if [[ -n "$ISSUE_NUMBER" ]]; then
             local log_lines
-            log_lines=$(wc -l < "$test_log" 2>/dev/null || true)
+            log_lines=$(wc -l < "$test_log" 2>/dev/null || echo 0)
             log_lines="${log_lines:-0}"
-            local log_excerpt
-            if [[ "$log_lines" -lt 60 ]]; then
-                log_excerpt="$(cat "$test_log" 2>/dev/null | strip_ansi || true)"
-            else
-                log_excerpt="$(head -20 "$test_log" 2>/dev/null | strip_ansi || true)
-... (${log_lines} lines total, showing head + tail) ...
-$(tail -30 "$test_log" 2>/dev/null | strip_ansi || true)"
+
+            # Compute dedup hash from sorted failure names to detect identical
+            # consecutive GitHub comments. Uses its own state file (NOT the one
+            # compound_quality uses for cycle short-circuit, which lives at
+            # last-failure-set.sha — shared writes would cross-contaminate the
+            # cycle dedup logic). Gated on positive failure count: SHA-1 of empty
+            # stdin is a constant, which would falsely match unrelated infra failures.
+            local _fail_hash="" _prev_hash="" _stage_test_count
+            _stage_test_count=$(grep -cE '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' "$test_log" 2>/dev/null) || _stage_test_count=0
+            _stage_test_count="${_stage_test_count:-0}"
+            if [[ "$_stage_test_count" -gt 0 ]]; then
+                _fail_hash=$(grep -E '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' "$test_log" 2>/dev/null \
+                    | sort | _compute_sha1 || echo "")
             fi
-            gh_comment_issue "$ISSUE_NUMBER" "❌ **Tests failed** (exit code: $test_exit, ${log_lines} lines)
+            if [[ -n "${ARTIFACTS_DIR:-}" && -f "${ARTIFACTS_DIR}/stage-test-last-comment.sha" ]]; then
+                _prev_hash=$(cat "${ARTIFACTS_DIR}/stage-test-last-comment.sha" 2>/dev/null | tr -d '[:space:]' || true)
+            fi
+
+            local _gh_body
+            if [[ -n "$_fail_hash" && "$_fail_hash" == "$_prev_hash" && "$_fail_hash" != no-hasher-* ]]; then
+                # Same failures as previous cycle — abbreviated notice
+                _gh_body="↺ **Same test failures as previous cycle** (exit code: $test_exit, ${log_lines} lines)
+
+No new failures introduced. See previous comment for details."
+            else
+                # New or changed failures — show actionable summary
+                local _failure_summary
+                _failure_summary=$(_summarize_test_failures "$test_log" 30)
+                if [[ -z "$_failure_summary" ]]; then
+                    # Fallback: last 20 lines of relevant output
+                    _failure_summary=$(echo "$relevant_output" | tail -20)
+                fi
+                _gh_body="❌ **Tests failed** (exit code: $test_exit, ${log_lines} lines)
+
 \`\`\`
-${log_excerpt}
+${_failure_summary}
 \`\`\`"
+            fi
+
+            # Save current hash for next stage_test comment dedup (separate from compound_quality)
+            if [[ -n "${ARTIFACTS_DIR:-}" && -n "$_fail_hash" ]]; then
+                mkdir -p "$ARTIFACTS_DIR" 2>/dev/null || true
+                echo "$_fail_hash" > "${ARTIFACTS_DIR}/stage-test-last-comment.sha" 2>/dev/null || true
+            fi
+
+            gh_comment_issue "$ISSUE_NUMBER" "$_gh_body"
         fi
         # Store failed test result in ruflo for flakiness tracking
         if declare -f ruflo_store >/dev/null 2>&1 && \

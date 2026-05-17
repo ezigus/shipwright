@@ -109,7 +109,7 @@ mkdir -p "$log_dir" 2>/dev/null || true
 echo "cwd=$(pwd) use_json=$use_json args=$raw_args" >> "$log_dir/mock-claude.log"
 
 if [[ "$use_json" == "true" ]]; then
-    if echo "$prompt" | grep -qi "autonomous coding agent on iteration"; then
+    if echo "$prompt" | grep -qiE "autonomous coding agent([.] | on iteration)"; then
         # Loop mode: create files, then output JSON with LOOP_COMPLETE.
         repo_root=""
         repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)

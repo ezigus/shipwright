@@ -3303,6 +3303,370 @@ else
     assert_pass "SW_LOG_PROMPTS github no-helpers: no command-not-found error"
 fi
 
+# ─── sanitize_secrets regression: over-broad gh_ regex fix (F6) ───────────────
+# Load the real sanitize_secrets from helpers.sh for these tests.
+_ss_helpers="$SCRIPT_DIR/lib/helpers.sh"
+
+# Helper: negative assertion (not present in test-helpers.sh for this file)
+_assert_not_contains() {
+    local desc="$1" haystack="$2" needle="$3"
+    if printf '%s\n' "$haystack" | grep -qF -- "$needle" 2>/dev/null; then
+        assert_fail "$desc" "output unexpectedly contains: $needle"
+    else
+        assert_pass "$desc"
+    fi
+}
+
+echo -e "${DIM}  sanitize_secrets: over-broad gh_ regex regression (F6)${RESET}"
+
+# Test: function names like gh_comment_issue must not be redacted
+_ss_fn_result="$(
+    source "$_ss_helpers" 2>/dev/null
+    sanitize_secrets "call gh_comment_issue and gh_post_progress on issue 460"
+)"
+assert_contains "sanitize should preserve gh_comment_issue function name" \
+    "$_ss_fn_result" "gh_comment_issue"
+assert_contains "sanitize should preserve gh_post_progress function name" \
+    "$_ss_fn_result" "gh_post_progress"
+_assert_not_contains "no redaction should occur for function names" \
+    "$_ss_fn_result" "REDACTED"
+
+# Test: real GitHub OAuth tokens must be redacted
+_ss_token_result="$(
+    source "$_ss_helpers" 2>/dev/null
+    sanitize_secrets "GITHUB_TOKEN=ghp_AaBbCcDd1234567890AbCdEfGhIjKlMnOpQrStUvWx"
+)"
+assert_contains "real GitHub token should be redacted" \
+    "$_ss_token_result" "REDACTED"
+_assert_not_contains "token value should not be present after redaction" \
+    "$_ss_token_result" "ghp_AaBbCcDd"
+
+# ─── sanitize_secrets: fine-grained PAT redaction (C5) ──────────────────────
+echo -e "${DIM}  sanitize_secrets: fine-grained PAT coverage (C5)${RESET}"
+
+# Fine-grained PATs (github_pat_ prefix, ≥60 chars) must be redacted
+_ss_fgpat_result="$(
+    source "$_ss_helpers" 2>/dev/null
+    sanitize_secrets "token: github_pat_11ABCDE0Y0abcdefghijkl_aBcDeFgHiJkLmNoPqRsTuVwXyZabcdefghijklmnop"
+)"
+assert_contains "fine-grained PAT should be redacted" \
+    "$_ss_fgpat_result" "REDACTED"
+_assert_not_contains "fine-grained PAT value should not appear after redaction" \
+    "$_ss_fgpat_result" "github_pat_11ABCDE"
+
+# Short github_pat_ strings (< 60 chars) must NOT be redacted (not real tokens)
+_ss_fgpat_short="$(
+    source "$_ss_helpers" 2>/dev/null
+    sanitize_secrets "github_pat_short"
+)"
+_assert_not_contains "short github_pat_ string should not be redacted" \
+    "$_ss_fgpat_short" "REDACTED"
+
+# Function names with gh_ prefix still preserved after C5 change
+_ss_fn2_result="$(
+    source "$_ss_helpers" 2>/dev/null
+    sanitize_secrets "gh_comment_issue gh_post_progress"
+)"
+assert_contains "function names still preserved after C5" \
+    "$_ss_fn2_result" "gh_comment_issue"
+
+# ─── F7 anchor fix (C2): ES6 named import must downgrade to low confidence ───
+echo -e "${DIM}  F7 anchor: ES6 named import confidence (C2)${RESET}"
+
+# Static: anchor regex in pipeline-intelligence.sh must use the two-step form
+if grep -qE '_is_import_decl' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" 2>/dev/null; then
+    assert_pass "F7_anchor_two_step: pipeline-intelligence.sh uses _is_import_decl two-step check"
+else
+    assert_fail "F7_anchor_two_step: pipeline-intelligence.sh must use _is_import_decl variable" \
+        "Expected two-step import detection; found old single-grep anchor"
+fi
+
+# Static: anchor must reject lines with semicolons (adversarial multi-statement)
+if grep -qE '"\[;\]"' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" \
+        || grep -qE '"\\[;\\]"' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" \
+        || grep -qP '"\[;\]"|\[;\]' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" 2>/dev/null \
+        || grep -q '"[;]"' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" 2>/dev/null; then
+    assert_pass "F7_anchor_semicolon_guard: semicolon guard present in anchor"
+else
+    # Check the actual guard differently
+    if grep -A8 '_is_import_decl' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" \
+            | grep -q ';\|semicolon' 2>/dev/null; then
+        assert_pass "F7_anchor_semicolon_guard: semicolon guard present in anchor"
+    else
+        assert_fail "F7_anchor_semicolon_guard: anchor must reject semicolons (multi-stmt lines)" \
+            "Expected ';' in the negative guard near _is_import_decl"
+    fi
+fi
+
+# Behavioral: simulate the import anchor logic with the exact motivating false-positive
+_f7_anchor_check() {
+    local match_text="$1"
+    local _is_import_decl=false
+    if echo "$match_text" | grep -qE \
+        "^[[:space:]]*(import[[:space:]({\"\']|from[[:space:]]+[A-Za-z_]|const[[:space:]]+|var[[:space:]]+|let[[:space:]]+)"; then
+        if ! echo "$match_text" | grep -qE \
+            "[;]|\.(exec|run|spawn|system|call|Popen)[[:space:]]*\(|eval[[:space:]]*\(|shell[[:space:]]*=[[:space:]]*[Tt]rue"; then
+            _is_import_decl=true
+        fi
+    fi
+    echo "$_is_import_decl"
+}
+
+# ES6 named import (the original #460 false positive) → must be low (import_decl=true)
+_f7_es6="$(  _f7_anchor_check "import { execFileSync } from 'child_process'")"
+if [[ "$_f7_es6" == "true" ]]; then
+    assert_pass "F7_anchor_es6_named_import: 'import { execFileSync } from child_process' detected as import decl (low confidence)"
+else
+    assert_fail "F7_anchor_es6_named_import: motivating false positive must be classified as import decl" \
+        "Expected _is_import_decl=true for ES6 named import; got false"
+fi
+
+# Adversarial: import with trailing execution — must NOT be import_decl
+_f7_adv="$( _f7_anchor_check "import subprocess; subprocess.run(user_input, shell=True)")"
+if [[ "$_f7_adv" == "false" ]]; then
+    assert_pass "F7_anchor_adversarial_multi_stmt: semicolon-separated execution stays at medium/high"
+else
+    assert_fail "F7_anchor_adversarial_multi_stmt: import+execution line must NOT be classified as import decl" \
+        "Expected _is_import_decl=false for multi-stmt adversarial input"
+fi
+
+# CommonJS destructured require → import decl
+_f7_cjs="$( _f7_anchor_check "const { exec } = require('child_process')")"
+if [[ "$_f7_cjs" == "true" ]]; then
+    assert_pass "F7_anchor_cjs_require: CommonJS const require() is import decl (low confidence)"
+else
+    assert_fail "F7_anchor_cjs_require: const require() must be import decl" \
+        "Expected _is_import_decl=true for const { x } = require(...)"
+fi
+
+# ─── C1: abort-reason reader wired in wait_for_multi_completion ───────────────
+echo -e "${DIM}  C1: abort-reason reader in wait_for_multi_completion${RESET}"
+
+if grep -q 'abort-reason' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null; then
+    _c1_reads=$(grep -c 'abort-reason' "$SCRIPT_DIR/sw-loop.sh" || true)
+    if [[ "${_c1_reads:-0}" -ge 2 ]]; then
+        assert_pass "C1_abort_reason_reader: abort-reason appears in both writer and reader contexts"
+    else
+        assert_fail "C1_abort_reason_reader: abort-reason must appear at least twice (writer + reader)" \
+            "Found only ${_c1_reads} occurrence(s) — reader missing"
+    fi
+else
+    assert_fail "C1_abort_reason_reader: abort-reason marker not found in sw-loop.sh" \
+        "Expected abort-reason writer and reader wiring"
+fi
+
+# C1 review-fix: worker must NOT touch .agent-N-complete when aborting, otherwise the
+# parent's completion check wins over the abort-reason check (Copilot review #4).
+_c1_noop_block=$(awk '/CONSECUTIVE_NOOP.*-ge 2/,/break$/' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | head -20 || true)
+# Match an actual touch COMMAND (not a comment that mentions "touch .agent-N-complete")
+if echo "$_c1_noop_block" | grep -qE '^[[:space:]]*touch[[:space:]].*agent.*complete' 2>/dev/null; then
+    assert_fail "C1_no_complete_on_abort: worker must NOT touch .agent-N-complete during noop abort" \
+        "Found 'touch .agent-N-complete' COMMAND in NOOP abort block — would mask abort"
+else
+    assert_pass "C1_no_complete_on_abort: worker noop-abort block does not touch .agent-N-complete"
+fi
+
+# C1 review-fix: wait_for_multi_completion must check abort-reason BEFORE .agent-N-complete
+# (Copilot review #4). If complete wins, abort never registers.
+_c1_body_full=$(awk '/^wait_for_multi_completion\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
+_c1_abort_pos=$(echo "$_c1_body_full" | grep -n 'abort-reason' | head -1 | cut -d: -f1 || echo "9999")
+_c1_complete_pos=$(echo "$_c1_body_full" | grep -n '\.agent-${i}-complete' | head -1 | cut -d: -f1 || echo "0")
+if [[ "${_c1_abort_pos:-9999}" -lt "${_c1_complete_pos:-0}" ]]; then
+    assert_pass "C1_abort_before_complete: wait_for_multi_completion checks abort-reason before completion marker"
+else
+    assert_fail "C1_abort_before_complete: abort-reason check must come before .agent-N-complete check" \
+        "abort-reason at line ${_c1_abort_pos}, complete at line ${_c1_complete_pos} (within function body)"
+fi
+
+# C1 review-fix: main() must guard launch_multi_agent under set -e (Copilot review #3).
+# Without `|| true` or `if`, set -e exits before the LOOP_ABORT_FATAL check can fire.
+_c1_main=$(awk '/^main\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
+if echo "$_c1_main" | grep -qE 'launch_multi_agent[[:space:]]*\|\|[[:space:]]*true|if[[:space:]]+(!|launch_multi_agent)' 2>/dev/null; then
+    assert_pass "C1_main_set_e_guard: launch_multi_agent guarded against set -e in main()"
+else
+    assert_fail "C1_main_set_e_guard: launch_multi_agent must be guarded (|| true or if) so LOOP_ABORT_FATAL check fires" \
+        "Bare 'launch_multi_agent' under set -e exits before post-check"
+fi
+
+# Static: wait_for_multi_completion must read the marker and set LOOP_ABORT_FATAL
+_c1_body=$(awk '/^wait_for_multi_completion\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
+if echo "$_c1_body" | grep -q 'abort-reason' 2>/dev/null; then
+    assert_pass "C1_reader_in_wait_for_multi: wait_for_multi_completion checks abort-reason file"
+else
+    assert_fail "C1_reader_in_wait_for_multi: wait_for_multi_completion must read abort-reason file" \
+        "Expected abort-reason check inside wait_for_multi_completion() body"
+fi
+if echo "$_c1_body" | grep -q 'LOOP_ABORT_FATAL=true' 2>/dev/null; then
+    assert_pass "C1_loop_abort_fatal_set: wait_for_multi_completion sets LOOP_ABORT_FATAL=true on abort"
+else
+    assert_fail "C1_loop_abort_fatal_set: wait_for_multi_completion must set LOOP_ABORT_FATAL=true" \
+        "Expected LOOP_ABORT_FATAL=true inside wait_for_multi_completion abort-reason handler"
+fi
+
+# ─── C3: empty-input SHA dedup gate ──────────────────────────────────────────
+echo -e "${DIM}  C3: empty-input SHA dedup gate${RESET}"
+
+if grep -q '_fail_line_count' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" 2>/dev/null; then
+    assert_pass "C3_fail_count_guard: pipeline-intelligence.sh gates dedup on _fail_line_count"
+else
+    assert_fail "C3_fail_count_guard: dedup short-circuit must gate on failure line count > 0" \
+        "Expected _fail_line_count guard before hash comparison"
+fi
+
+# Static: SHA guard skips comparison when count=0 (no-hasher sentinel excluded)
+if grep -A5 '_fail_line_count' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" \
+        | grep -q 'gt 0' 2>/dev/null; then
+    assert_pass "C3_count_gt_zero: guard uses -gt 0 comparison"
+else
+    assert_fail "C3_count_gt_zero: dedup guard must check _fail_line_count -gt 0" \
+        "Expected [[ \$_fail_line_count -gt 0 ]] near dedup logic"
+fi
+
+# ─── R4 review-fix: all-manual DoD guard uses sidecar total, not post-strip count ──
+# Copilot review #8: counting from dod-audit.md after [~] items are stripped yields 0,
+# so the all-manual guard never fires. Must use dod-classification.json's `total`.
+if grep -A5 'all.*items.*classified as manual' "$SCRIPT_DIR/lib/pipeline-quality-checks.sh" 2>/dev/null \
+        | grep -q '_orig_total\|jq.*total' 2>/dev/null; then
+    assert_pass "R4_orig_total_from_sidecar: all-manual guard uses dod-classification.json total"
+else
+    # Check the broader context
+    if grep -B3 -A8 'classified as manual' "$SCRIPT_DIR/lib/pipeline-quality-checks.sh" 2>/dev/null \
+            | grep -q '\.total\|_orig_total' 2>/dev/null; then
+        assert_pass "R4_orig_total_from_sidecar: all-manual guard reads from sidecar JSON"
+    else
+        assert_fail "R4_orig_total_from_sidecar: all-manual guard must use dod-classification.json total" \
+            "Counting dod-audit.md after [~] strip yields 0; guard never fires"
+    fi
+fi
+
+# ─── stage_test review-fix: dedup file separated from compound_quality (Codex #2) ──
+# stage_test must NOT write last-failure-set.sha — that file belongs to compound_quality.
+# Cross-writes cause cycle N+1 to compare current failures against its own (mid-rebuild)
+# hash, falsely short-circuiting as "identical failures".
+if grep -qF 'stage-test-last-comment.sha' "$SCRIPT_DIR/lib/pipeline-stages-build.sh" 2>/dev/null; then
+    assert_pass "stage_test_dedup_separate: stage_test uses its own dedup file (stage-test-last-comment.sha)"
+else
+    assert_fail "stage_test_dedup_separate: stage_test must use a separate dedup file from compound_quality" \
+        "Expected stage-test-last-comment.sha (or similar non-shared path)"
+fi
+# And confirm it no longer WRITES last-failure-set.sha (comment references OK).
+# Match a redirect (>) or printf-into pattern, not a comment-only mention.
+_st_writes_shared=$(grep -E '(>|printf|tee)[^#]*last-failure-set\.sha' "$SCRIPT_DIR/lib/pipeline-stages-build.sh" 2>/dev/null \
+    | grep -v '^[[:space:]]*#' | wc -l | tr -d '[:space:]' || echo "0")
+if [[ "${_st_writes_shared:-0}" -eq 0 ]]; then
+    assert_pass "stage_test_no_compound_collision: pipeline-stages-build.sh does not write last-failure-set.sha"
+else
+    assert_fail "stage_test_no_compound_collision: stage_test must not write last-failure-set.sha (cycle dedup collision)" \
+        "Found ${_st_writes_shared} write(s) to last-failure-set.sha in pipeline-stages-build.sh"
+fi
+
+# ─── stage_test review-fix: empty-input SHA guard (same as C3 but in stage_test) ─
+# Codex blocker: stage_test hashes test_log; empty grep yields constant SHA, collides.
+if grep -B2 -A8 '_stage_test_count' "$SCRIPT_DIR/lib/pipeline-stages-build.sh" 2>/dev/null \
+        | grep -q 'gt 0' 2>/dev/null; then
+    assert_pass "stage_test_empty_sha_guard: dedup hash gated on failure count > 0"
+else
+    assert_fail "stage_test_empty_sha_guard: dedup hash must be gated on failure count > 0" \
+        "Empty grep input yields constant SHA-1 — false 'same failures' match on infra errors"
+fi
+
+# ─── loop-iteration scope_label review-fix: guarded against missing function (Codex P1) ──
+# scope_label is defined in pipeline-state.sh; sw-loop.sh doesn't source it, so the
+# command substitution returns 127 under set -e. Need a `type` check or fallback.
+_li_scope_block=$(grep -A2 'Build Prompt' "$SCRIPT_DIR/lib/loop-iteration.sh" 2>/dev/null | head -3 || true)
+if echo "$_li_scope_block" | grep -qE 'type scope_label|_scope_label' 2>/dev/null; then
+    assert_pass "loop_iteration_scope_label_guard: Build Prompt body guards scope_label with type check"
+elif grep -B3 'Build Prompt' "$SCRIPT_DIR/lib/loop-iteration.sh" 2>/dev/null | grep -q 'type scope_label' 2>/dev/null; then
+    assert_pass "loop_iteration_scope_label_guard: Build Prompt body guards scope_label with type check"
+else
+    assert_fail "loop_iteration_scope_label_guard: scope_label must be guarded (set -e + missing function = 127 exit)" \
+        "Expected 'type scope_label' check or fallback variable assignment before use in Build Prompt body"
+fi
+
+# ─── pipeline-state.sh _resolve_stage_log_path review-fix (Copilot #5) ─────────
+# Under set -e, _resolve_stage_log_path returns 1 on miss → mark_stage_failed exits.
+# Must be guarded with `|| _x_log=""` before tail.
+if grep -qE '_(ec|fs)_log=.*_resolve_stage_log_path.*\|\| _' "$SCRIPT_DIR/lib/pipeline-state.sh" 2>/dev/null; then
+    assert_pass "resolve_stage_log_path_set_e_guard: _resolve_stage_log_path call guarded with || fallback"
+else
+    assert_fail "resolve_stage_log_path_set_e_guard: callers must guard with || fallback against set -e" \
+        "Expected '_ec_log=\$(...) || _ec_log=\"\"' pattern in mark_stage_failed"
+fi
+
+# ─── _validate_ref review-fix: rejects leading dash and path traversal (Copilot #9) ─
+_vr_helper="$SCRIPT_DIR/lib/helpers.sh"
+_vr_dash_result="$(
+    source "$_vr_helper" 2>/dev/null
+    _validate_ref "--output=/etc/passwd" 2>&1 || echo "REJECTED"
+)"
+if echo "$_vr_dash_result" | grep -qF "REJECTED"; then
+    assert_pass "validate_ref_rejects_leading_dash: --output=/etc/passwd rejected"
+else
+    assert_fail "validate_ref_rejects_leading_dash: leading-dash refs must be rejected (option injection)" \
+        "got: $_vr_dash_result"
+fi
+_vr_traversal_result="$(
+    source "$_vr_helper" 2>/dev/null
+    _validate_ref "main..injected" 2>&1 || echo "REJECTED"
+)"
+if echo "$_vr_traversal_result" | grep -qF "REJECTED"; then
+    assert_pass "validate_ref_rejects_traversal: '..' sequences rejected"
+else
+    assert_fail "validate_ref_rejects_traversal: '..' sequences must be rejected (range injection)" \
+        "got: $_vr_traversal_result"
+fi
+_vr_normal_result="$(
+    source "$_vr_helper" 2>/dev/null
+    _validate_ref "main" >/dev/null 2>&1 && echo "OK" || echo "REJECTED"
+)"
+if echo "$_vr_normal_result" | grep -qF "OK"; then
+    assert_pass "validate_ref_accepts_normal: 'main' accepted"
+else
+    assert_fail "validate_ref_accepts_normal: normal branch names must be accepted" \
+        "got: $_vr_normal_result"
+fi
+
+# ─── C1 pre-run marker cleanup (regression guard) ────────────────────────────
+# launch_multi_agent MUST remove stale .agent-*-abort-reason / .agent-*-complete
+# markers BEFORE setup_worktrees runs. Without this, a crashed prior run leaves
+# .agent-N-abort-reason in $LOG_DIR; wait_for_multi_completion reads it on the
+# first poll of the new run and false-aborts before agents have started.
+_lma_body=$(awk '/^launch_multi_agent\(\)/{p=1} p{print} p && /^\}$/{exit}' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
+_lma_cleanup_line=$(echo "$_lma_body" | grep -n 'abort-reason' | head -1 | cut -d: -f1 || echo "0")
+_lma_setup_line=$(echo "$_lma_body" | grep -n 'setup_worktrees' | head -1 | cut -d: -f1 || echo "0")
+if [[ "${_lma_cleanup_line:-0}" -gt 0 && "${_lma_cleanup_line:-0}" -lt "${_lma_setup_line:-9999}" ]]; then
+    assert_pass "C1_pre_run_marker_cleanup: launch_multi_agent removes stale abort-reason markers BEFORE setup_worktrees"
+else
+    assert_fail "C1_pre_run_marker_cleanup: launch_multi_agent must clean .agent-*-abort-reason before setup_worktrees" \
+        "cleanup at line ${_lma_cleanup_line}, setup at line ${_lma_setup_line} (within function body)"
+fi
+
+# ─── loop-iteration: ALL scope_label callers must be guarded ──────────────────
+# Codex P1 was about line 786 in caabd4a, but lines 577 and 598 also call
+# $(scope_label). All must have a fallback because sw-loop.sh does NOT source
+# pipeline-state.sh (which defines scope_label).
+_unguarded_scope_label=$(grep -n '\$(scope_label)' "$SCRIPT_DIR/lib/loop-iteration.sh" 2>/dev/null \
+    | grep -v '|| echo' \
+    | wc -l | tr -d '[:space:]' || echo "0")
+if [[ "${_unguarded_scope_label:-0}" -eq 0 ]]; then
+    assert_pass "loop_iteration_all_scope_label_guarded: every \$(scope_label) call has || echo fallback"
+else
+    _unguarded_lines=$(grep -n '\$(scope_label)' "$SCRIPT_DIR/lib/loop-iteration.sh" 2>/dev/null \
+        | grep -v '|| echo' | head -3 || true)
+    assert_fail "loop_iteration_all_scope_label_guarded: \$(scope_label) must always be guarded with || echo fallback" \
+        "found ${_unguarded_scope_label} unguarded call(s): ${_unguarded_lines}"
+fi
+
+# ─── pipeline-stages-intake.sh atomic jq write review-fix (Copilot #7) ─────────
+# Verify the jq write goes to _tmp_json AND there's an mv from _tmp_json into the
+# final dod-classification.json path.
+if grep -qE '^[[:space:]]*mv[[:space:]]+"\$_tmp_json".*dod-classification' "$SCRIPT_DIR/lib/pipeline-stages-intake.sh" 2>/dev/null; then
+    assert_pass "intake_dod_classification_atomic_write: dod-classification.json uses tmp+mv pattern"
+else
+    assert_fail "intake_dod_classification_atomic_write: dod-classification.json write must be atomic (tmp + mv)" \
+        "Expected 'mv \"\$_tmp_json\" .../dod-classification.json' after jq succeeds"
+fi
+
 # ─── Test: compose_rejection_notice_section includes QUALITY_GATE_REASONS ─────
 if awk '/^compose_rejection_notice_section\(\)/,/^\}/' "$SCRIPT_DIR/sw-loop.sh" | \
         grep -q 'QUALITY_GATE_REASONS'; then

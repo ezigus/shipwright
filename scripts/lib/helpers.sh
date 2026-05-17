@@ -449,9 +449,54 @@ sanitize_secrets() {
     text="$(echo "$text" | sed 's/sk-[a-zA-Z0-9_-]*/sk-***REDACTED***/g')"
     # Redact Bearer tokens
     text="$(echo "$text" | sed 's/Bearer [a-zA-Z0-9_.-]*/Bearer ***REDACTED***/g')"
-    # Redact oauth tokens (gh_...)
-    text="$(echo "$text" | sed 's/gh_[a-zA-Z0-9_]*/gh_***REDACTED***/g')"
+    # Redact GitHub OAuth tokens (ghp_, gho_, ghu_, ghs_, ghr_ — 5 known prefixes)
+    # Length-bound: GitHub tokens are minimum 36 base62 chars [A-Za-z0-9], no underscores
+    text="$(echo "$text" | sed -E 's/gh[pousr]_[A-Za-z0-9]{36,255}/gh_***REDACTED***/g')"
+    # Redact GitHub fine-grained PATs (github_pat_ prefix, ≥60 base62+underscore chars)
+    text="$(echo "$text" | sed -E 's/github_pat_[A-Za-z0-9_]{60,}/github_pat_***REDACTED***/g')"
     echo "$text"
+}
+
+# Portable SHA-1 hash of stdin — macOS (shasum) and Linux (sha1sum / openssl).
+# Returns a 40-char hex digest, or a unique no-hasher sentinel to disable dedup.
+# Usage: echo "data" | _compute_sha1
+_compute_sha1() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 1 | awk '{print $1}'
+    elif command -v sha1sum >/dev/null 2>&1; then
+        sha1sum | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha1 -hex | awk '{print $NF}'
+    else
+        printf 'no-hasher-%s-%s' "$PPID" "$(date +%s 2>/dev/null || echo 0)"
+    fi
+}
+
+# Validates a git ref/branch name against safe-ref rules.
+# Exits 1 if the ref is unsafe, so callers can: _validate_ref "$BASE_BRANCH" || BASE_BRANCH=main
+# Rejects leading dashes (option-injection vector for git commands), `..` path
+# traversal sequences, and anything else `git check-ref-format` flags. Falls back to
+# a tight charset regex when git is unavailable in the environment.
+_validate_ref() {
+    local ref="${1:-}"
+    [[ -z "$ref" ]] && { warn "_validate_ref: empty ref"; return 1; }
+    # Hard reject: leading dash, embedded "..", whitespace, or git-ref reserved chars.
+    case "$ref" in
+        -*|*..*|*' '*|*$'\t'*|*$'\n'*|*'~'*|*'^'*|*':'*|*'?'*|*'*'*|*'['*|*'\\'*)
+            warn "_validate_ref: unsafe ref '${ref}' (option/traversal/reserved char) — refusing"
+            return 1
+            ;;
+    esac
+    if command -v git >/dev/null 2>&1; then
+        # Authoritative check: git's own ref-format validator (branch form).
+        git check-ref-format --branch "$ref" >/dev/null 2>&1 && return 0
+        warn "_validate_ref: git check-ref-format rejected '${ref}'"
+        return 1
+    fi
+    # No git available — fall back to a conservative charset check.
+    [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] && return 0
+    warn "_validate_ref: unsafe ref '${ref}' — refusing to use as git argument"
+    return 1
 }
 
 # ─── Git Bookkeeping Exclusions ──────────────────────────────────

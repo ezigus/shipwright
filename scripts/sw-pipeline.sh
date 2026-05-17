@@ -2679,9 +2679,11 @@ pipeline_post_completion_cleanup() {
         "${ARTIFACTS_DIR}/skip-stage.txt" \
         "${ARTIFACTS_DIR}/human-message.txt" \
         "${ARTIFACTS_DIR}/model-routing.log" \
-        "${ARTIFACTS_DIR}/.plan-failure-sig.txt"; do
+        "${ARTIFACTS_DIR}/.plan-failure-sig.txt" \
+        "${ARTIFACTS_DIR}/progress-comment.id"; do
         [[ -f "$_f" ]] && rm -f "$_f" && cleaned=$((cleaned + 1)) || true
     done
+    rm -f "${STATE_DIR}/loop-logs"/.agent-*-abort-reason 2>/dev/null || true
 
     # 3. Clear stale pipeline state (mark as idle so next run starts clean)
     if [[ -f "$STATE_FILE" ]]; then

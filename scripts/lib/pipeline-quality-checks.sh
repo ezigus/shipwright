@@ -1015,6 +1015,10 @@ run_dod_audit() {
     local audit_output="# DoD Audit Results\n\n"
 
     while IFS= read -r line; do
+        # Skip [~] lines — these are manual items deferred in autonomous mode
+        if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*\[~\] ]]; then
+            continue
+        fi
         if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*\[[[:space:]]\] ]]; then
             total=$((total + 1))
             local item="${line#*] }"
@@ -1071,6 +1075,15 @@ run_dod_audit() {
 
     echo -e "$audit_output\n\n**Score: ${passed}/${total} passed**" > "$ARTIFACTS_DIR/dod-audit.md"
 
+    # Append skipped count if classification sidecar exists
+    local _skipped_count=0
+    if [[ -f "${ARTIFACTS_DIR}/dod-classification.json" ]]; then
+        _skipped_count=$(jq -r '.skipped_manual // 0' "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || echo 0)
+    fi
+    if [[ "$_skipped_count" -gt 0 ]]; then
+        echo -e "\n_${_skipped_count} item(s) skipped (require human verification)_" >> "$ARTIFACTS_DIR/dod-audit.md"
+    fi
+
     # Stamp markdown with current commit SHA
     local _dod_sha
     _dod_sha=$(_pipeline_head_sha)
@@ -1080,6 +1093,27 @@ run_dod_audit() {
         { printf 'created_at_commit: %s\n' "$_dod_sha"; cat "$ARTIFACTS_DIR/dod-audit.md"; } > "$_dod_tmp" && mv "$_dod_tmp" "$ARTIFACTS_DIR/dod-audit.md" || rm -f "$_dod_tmp"
     fi
 
+    # If all items were skipped (all manual), pass with a warning.
+    # Counts come from dod-classification.json (which knows the ORIGINAL DoD count
+    # before [~] stripping). Counting from dod-audit.md would zero out for an
+    # all-manual plan (since [~] items are dropped), defeating the guard.
+    if [[ "$total" -eq 0 ]]; then
+        local _skipped_c=0 _orig_total=0
+        if [[ -f "${ARTIFACTS_DIR}/dod-classification.json" ]]; then
+            _skipped_c=$(jq -r '.skipped_manual // 0' "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || echo 0)
+            _orig_total=$(jq -r '.total // 0' "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || echo 0)
+        fi
+        if [[ "$_orig_total" -gt 0 && "$_skipped_c" -ge "$_orig_total" ]]; then
+            error "DoD audit: all ${_orig_total} item(s) classified as manual — at least one item must be auto-verified"
+            return 1
+        fi
+        if [[ "$_skipped_c" -gt 0 ]]; then
+            warn "DoD audit: ${_skipped_c} items are manual — skipped in autonomous mode (passing)"
+            return 0
+        fi
+        warn "DoD audit: no items found in dod.md"
+        return 0
+    fi
     if [[ "$failed" -gt 0 ]]; then
         warn "DoD audit: ${passed}/${total} passed, ${failed} failed"
         return 1

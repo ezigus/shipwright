@@ -524,6 +524,18 @@ important decisions and mcp__ruflo__memory_search to recall prior context from n
     fi
     local total_issues=$((critical_count + bug_count + warning_count))
 
+    # M7: Fail-closed scope count — shell computed N violations; review must contain ≥ N scope findings.
+    # Prevents Claude from silently omitting scope findings when the prompt told it to emit them.
+    if [[ -f "$_scope_violations_file" ]] && [[ -s "$_scope_violations_file" ]]; then
+        local _shell_scope_count _parsed_scope_count
+        _shell_scope_count=$(wc -l < "$_scope_violations_file" 2>/dev/null | tr -d ' ' || echo 0)
+        _parsed_scope_count=$(grep -ciE 'SCOPE VIOLATION' "$review_file" 2>/dev/null || echo 0)
+        if (( _shell_scope_count > 0 && _parsed_scope_count < _shell_scope_count )); then
+            error "Review fail-closed: ${_shell_scope_count} shell-computed scope violation(s) but only ${_parsed_scope_count} scope finding(s) in review output — review omitted a required finding."
+            return 1
+        fi
+    fi
+
     if [[ "$critical_count" -gt 0 ]]; then
         error "Review found ${BOLD}$critical_count critical${RESET} issue(s) — see $review_file"
     elif [[ "$bug_count" -gt 0 ]]; then

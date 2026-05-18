@@ -984,7 +984,11 @@ daemon_self_optimize() {
             local _tmp_sidecar="${_sidecar}.tmp.$$"
             printf '%s\n' "$_tmp_config" > "$_tmp_sidecar"
             chmod 600 "$_tmp_sidecar"
-            mv "$_tmp_sidecar" "$_sidecar"
+            local _sc_lock="${_sidecar_dir}/.tuned-config.lock"
+            (
+                command -v flock >/dev/null 2>&1 && flock -w 2 200 2>/dev/null || true
+                mv "$_tmp_sidecar" "$_sidecar"
+            ) 200>"$_sc_lock"
             daemon_log INFO "Self-optimize: persisted DORA adjustments to ${_sidecar}"
         fi
 

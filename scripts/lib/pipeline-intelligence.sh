@@ -1912,9 +1912,14 @@ ${_cascade_test_tail}"
         if type simulation_review >/dev/null 2>&1; then
             local sim_enabled
             sim_enabled=$(jq -r '.intelligence.simulation_enabled // false' "$PIPELINE_CONFIG" 2>/dev/null || echo "false")
-            local daemon_cfg="${PROJECT_ROOT}/.claude/daemon-config.json"
-            if [[ "$sim_enabled" != "true" && -f "$daemon_cfg" ]]; then
-                sim_enabled=$(jq -r '.intelligence.simulation_enabled // false' "$daemon_cfg" 2>/dev/null || echo "false")
+            if [[ "$sim_enabled" != "true" ]]; then
+                local _dc_sim
+                if declare -f _load_daemon_config >/dev/null 2>&1; then
+                    _dc_sim=$(_load_daemon_config)
+                else
+                    _dc_sim=$(cat "${PROJECT_ROOT:-.}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
+                fi
+                sim_enabled=$(echo "$_dc_sim" | jq -r '.intelligence.simulation_enabled // false' 2>/dev/null || echo "false")
             fi
             if [[ "$sim_enabled" == "true" ]]; then
                 echo ""
@@ -1952,9 +1957,14 @@ ${_cascade_test_tail}"
         if type architecture_validate_changes >/dev/null 2>&1; then
             local arch_enabled
             arch_enabled=$(jq -r '.intelligence.architecture_enabled // false' "$PIPELINE_CONFIG" 2>/dev/null || echo "false")
-            local daemon_cfg="${PROJECT_ROOT}/.claude/daemon-config.json"
-            if [[ "$arch_enabled" != "true" && -f "$daemon_cfg" ]]; then
-                arch_enabled=$(jq -r '.intelligence.architecture_enabled // false' "$daemon_cfg" 2>/dev/null || echo "false")
+            if [[ "$arch_enabled" != "true" ]]; then
+                local _dc_arch
+                if declare -f _load_daemon_config >/dev/null 2>&1; then
+                    _dc_arch=$(_load_daemon_config)
+                else
+                    _dc_arch=$(cat "${PROJECT_ROOT:-.}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
+                fi
+                arch_enabled=$(echo "$_dc_arch" | jq -r '.intelligence.architecture_enabled // false' 2>/dev/null || echo "false")
             fi
             if [[ "$arch_enabled" == "true" ]]; then
                 echo ""

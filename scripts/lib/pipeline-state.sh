@@ -438,6 +438,9 @@ persist_artifacts() {
     shift
     local files=("$@")
 
+    # Migrate committed last_optimization blocks to sidecar on WIP branches
+    declare -f _migrate_last_optimization >/dev/null 2>&1 && _migrate_last_optimization || true
+
     # Always force-add state files (gitignored but critical for resume)
     git add -f ".claude/pipeline-state.md" ".claude/pipeline-status.json" 2>/dev/null || true
 

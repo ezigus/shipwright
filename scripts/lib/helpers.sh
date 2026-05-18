@@ -578,7 +578,8 @@ _git_bookkeeping_pathspecs() {
 # Output: merged JSON to stdout; returns {} if base is absent; sidecar absence is not an error.
 _load_daemon_config() {
     local base_config="${1:-${PROJECT_ROOT:-.}/.claude/daemon-config.json}"
-    local sidecar="${HOME:-$HOME}/.shipwright/optimization/tuned-config.json"
+    local sidecar="${HOME}/.shipwright/optimization/tuned-config.json"
+    local _sc_lock="${HOME}/.shipwright/optimization/.tuned-config.lock"
 
     if [[ ! -f "$base_config" ]]; then
         printf '{}'
@@ -586,9 +587,58 @@ _load_daemon_config() {
     fi
 
     if [[ -f "$sidecar" ]]; then
-        jq -s '.[0] * .[1]' "$base_config" "$sidecar" 2>/dev/null || cat "$base_config"
+        (
+            command -v flock >/dev/null 2>&1 && flock -s -w 2 200 2>/dev/null || true
+            jq -s '.[0] * .[1]' "$base_config" "$sidecar" 2>/dev/null || cat "$base_config"
+        ) 200>"$_sc_lock"
     else
         cat "$base_config"
+    fi
+}
+
+# One-shot migration: if daemon-config.json has a committed last_optimization block
+# (written by pre-T1.1 code), move it to the sidecar and strip it from the base file.
+# Idempotent: no-op when key is absent. Called at daemon startup and persist_artifacts.
+_migrate_last_optimization() {
+    local _base="${PROJECT_ROOT:-.}/.claude/daemon-config.json"
+    [[ -f "$_base" ]] || return 0
+    local _has_lo
+    _has_lo=$(jq -r 'has("last_optimization")' "$_base" 2>/dev/null || echo "false")
+    [[ "$_has_lo" != "true" ]] && return 0
+
+    local _sidecar_dir="${HOME}/.shipwright/optimization"
+    local _sidecar="${_sidecar_dir}/tuned-config.json"
+    mkdir -p "$_sidecar_dir" 2>/dev/null || true
+
+    # Merge last_optimization into sidecar
+    local _lo_block
+    _lo_block=$(jq '{last_optimization: .last_optimization}' "$_base" 2>/dev/null || true)
+    if [[ -n "$_lo_block" ]]; then
+        local _sc_lock="${_sidecar_dir}/.tuned-config.lock"
+        local _merged
+        if [[ -f "$_sidecar" ]]; then
+            _merged=$(jq -s '.[0] * .[1]' "$_sidecar" <(echo "$_lo_block") 2>/dev/null || cat "$_sidecar")
+        else
+            _merged="$_lo_block"
+        fi
+        (
+            command -v flock >/dev/null 2>&1 && flock -w 2 200 2>/dev/null || true
+            printf '%s\n' "$_merged" > "${_sidecar}.tmp.$$" && mv "${_sidecar}.tmp.$$" "$_sidecar" || true
+        ) 200>"$_sc_lock"
+    fi
+
+    # Strip last_optimization from base and commit if inside a git repo
+    local _stripped
+    _stripped=$(jq 'del(.last_optimization)' "$_base" 2>/dev/null || true)
+    if [[ -n "$_stripped" ]]; then
+        printf '%s\n' "$_stripped" > "${_base}.tmp.$$" && mv "${_base}.tmp.$$" "$_base" || true
+        if git -C "${PROJECT_ROOT:-.}" rev-parse --git-dir >/dev/null 2>&1; then
+            git -C "${PROJECT_ROOT:-.}" add ".claude/daemon-config.json" 2>/dev/null || true
+            git -C "${PROJECT_ROOT:-.}" diff --cached --quiet 2>/dev/null || \
+                git -C "${PROJECT_ROOT:-.}" commit \
+                    -m "chore: migrate last_optimization to tuned-config sidecar" \
+                    --no-verify 2>/dev/null || true
+        fi
     fi
 }
 

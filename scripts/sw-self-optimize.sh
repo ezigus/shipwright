@@ -1638,7 +1638,12 @@ optimize_adjust_audit_intensity() {
         trap "rm -f '$tmp_sc'" RETURN
         printf '%s\n' "$existing_sidecar" \
             | jq '.intelligence.adversarial_enabled = true | .intelligence.architecture_enabled = true' \
-            > "$tmp_sc" 2>/dev/null && mv "$tmp_sc" "$sidecar" || rm -f "$tmp_sc"
+            > "$tmp_sc" 2>/dev/null || { rm -f "$tmp_sc"; return 0; }
+        local _sc_lock="${sidecar_dir}/.tuned-config.lock"
+        (
+            command -v flock >/dev/null 2>&1 && flock -w 2 200 2>/dev/null || true
+            mv "$tmp_sc" "$sidecar"
+        ) 200>"$_sc_lock"
         emit_event "optimize.audit_intensity" \
             "avg_quality=$avg_quality" \
             "trend=$trend" \

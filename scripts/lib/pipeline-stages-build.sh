@@ -545,11 +545,14 @@ ${_build_recall_ctx}"
         [[ "$_fast_test_cmd" == "null" ]] && _fast_test_cmd=""
     fi
     if [[ -z "$_fast_test_cmd" ]]; then
-        local _daemon_cfg="${PROJECT_ROOT:-$PWD}/.claude/daemon-config.json"
-        if [[ -f "$_daemon_cfg" ]]; then
-            _fast_test_cmd=$(jq -r '.fast_test_cmd // ""' "$_daemon_cfg" 2>/dev/null) || true
-            [[ "$_fast_test_cmd" == "null" ]] && _fast_test_cmd=""
+        local _dc_build
+        if declare -f _load_daemon_config >/dev/null 2>&1; then
+            _dc_build=$(_load_daemon_config)
+        else
+            _dc_build=$(cat "${PROJECT_ROOT:-$PWD}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
         fi
+        _fast_test_cmd=$(echo "$_dc_build" | jq -r '.fast_test_cmd // ""' 2>/dev/null) || true
+        [[ "$_fast_test_cmd" == "null" ]] && _fast_test_cmd=""
     fi
     [[ -n "$_fast_test_cmd" ]] && loop_args+=(--fast-test-cmd "$_fast_test_cmd")
 
@@ -562,11 +565,14 @@ ${_build_recall_ctx}"
         [[ "$_fast_test_interval" == "null" ]] && _fast_test_interval=""
     fi
     if [[ -z "$_fast_test_interval" ]]; then
-        local _daemon_cfg="${PROJECT_ROOT:-$PWD}/.claude/daemon-config.json"
-        if [[ -f "$_daemon_cfg" ]]; then
-            _fast_test_interval=$(jq -r '.fast_test_interval // ""' "$_daemon_cfg" 2>/dev/null) || true
-            [[ "$_fast_test_interval" == "null" ]] && _fast_test_interval=""
+        local _dc_build_int
+        if declare -f _load_daemon_config >/dev/null 2>&1; then
+            _dc_build_int=$(_load_daemon_config)
+        else
+            _dc_build_int=$(cat "${PROJECT_ROOT:-$PWD}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
         fi
+        _fast_test_interval=$(echo "$_dc_build_int" | jq -r '.fast_test_interval // ""' 2>/dev/null) || true
+        [[ "$_fast_test_interval" == "null" ]] && _fast_test_interval=""
     fi
     if [[ -n "$_fast_test_interval" ]]; then
         if ! [[ "$_fast_test_interval" =~ ^[1-9][0-9]*$ ]]; then

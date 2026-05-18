@@ -58,14 +58,15 @@ fi
 MEMORY_DIR="${HOME}/.shipwright/memory"
 
 _architecture_enabled() {
-    local config="${PROJECT_ROOT}/.claude/daemon-config.json"
-    if [[ -f "$config" ]]; then
-        local enabled
-        enabled=$(jq -r '.intelligence.architecture_enabled // false' "$config" 2>/dev/null || echo "false")
-        [[ "$enabled" == "true" ]]
+    local enabled
+    if declare -f _load_daemon_config >/dev/null 2>&1; then
+        enabled=$(_load_daemon_config | jq -r '.intelligence.architecture_enabled // false' 2>/dev/null || echo "false")
     else
-        return 1
+        local config="${PROJECT_ROOT}/.claude/daemon-config.json"
+        [[ -f "$config" ]] || return 1
+        enabled=$(jq -r '.intelligence.architecture_enabled // false' "$config" 2>/dev/null || echo "false")
     fi
+    [[ "$enabled" == "true" ]]
 }
 
 repo_hash() {

@@ -98,10 +98,22 @@ _validate_dod_no_excluded_paths() {
         echo "$line" | grep -qF '{auto:diff}' || continue
 
         for ex_path in "${excluded_paths[@]}"; do
-            # Strip glob wildcards for the basename comparison (e.g. **/progress.md → progress.md)
-            local ex_base
-            ex_base=$(basename "$ex_path")
-            if echo "$line" | grep -qF "$ex_base" || echo "$line" | grep -qF "$ex_path"; then
+            local matched=false
+            # For glob paths (contain *), strip the leading **/ and match suffix.
+            # For literal paths (no *), match the exact path string only.
+            if [[ "$ex_path" == *"*"* ]]; then
+                local ex_suffix
+                ex_suffix="${ex_path##**/}"
+                ex_suffix="${ex_suffix%%/*}"
+                if echo "$line" | grep -qF "$ex_suffix"; then
+                    matched=true
+                fi
+            else
+                if echo "$line" | grep -qF "$ex_path"; then
+                    matched=true
+                fi
+            fi
+            if [[ "$matched" == "true" ]]; then
                 error "DoD validator: {auto:diff} item references excluded path '${ex_path}'." \
                     "Remove it from the DoD, or convert to a non-{auto:diff} check."
                 has_violation=true

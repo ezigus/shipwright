@@ -968,6 +968,7 @@ daemon_self_optimize() {
             if command -v flock >/dev/null 2>&1; then
                 if ! flock -w 5 200; then
                     daemon_log WARN "sidecar lock contended; skipping DORA persist"
+                    emit_event "sidecar.lock_contention" "site=dora_autotune" 2>/dev/null || true
                     exit 1
                 fi
             fi

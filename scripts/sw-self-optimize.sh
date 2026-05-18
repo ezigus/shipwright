@@ -1636,6 +1636,7 @@ optimize_adjust_audit_intensity() {
             if command -v flock >/dev/null 2>&1; then
                 if ! flock -w 5 200; then
                     warn "sidecar lock contended; skipping intensity write"
+                    emit_event "sidecar.lock_contention" "site=audit_intensity" 2>/dev/null || true
                     exit 1
                 fi
             fi

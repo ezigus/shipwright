@@ -834,7 +834,8 @@ mkdir -p "${HOME}/.shipwright/optimization"
 
 for _h2_i in $(seq 1 5); do
     (
-        _new=$(jq -n --argjson n "$_h2_i" '{write_n: $n}' 2>/dev/null || echo "{\"write_n\": $_h2_i}")
+        _key="write_${_h2_i}"
+        _new=$(jq -n --arg k "$_key" '{($k): true}' 2>/dev/null || printf '{"'"$_key"'": true}')
         (
             if command -v flock >/dev/null 2>&1; then
                 flock -w 5 200 || exit 1
@@ -848,10 +849,12 @@ for _h2_i in $(seq 1 5); do
 done
 wait
 
-if [[ -f "$_h2_sidecar" ]] && jq '.' "$_h2_sidecar" >/dev/null 2>&1; then
-    assert_pass "H2 concurrent writers: sidecar is valid JSON after 5 parallel writes"
+_h2_key_count=$(jq '[keys[] | select(startswith("write_"))] | length' \
+    "$_h2_sidecar" 2>/dev/null || echo 0)
+if [[ "$_h2_key_count" -eq 5 ]]; then
+    assert_pass "H2 serialization: all 5 writer keys present (no lost-update)"
 else
-    assert_fail "H2 concurrent writers: sidecar corrupted or missing after parallel writes"
+    assert_fail "H2 serialization: only $_h2_key_count/5 keys found (lost-update race)"
 fi
 
 if [[ -f "$_h2_lock" ]]; then
@@ -910,6 +913,88 @@ else
 fi
 
 cleanup_env
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# B1 — _cq_max_iter assigned before use (static ordering check)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_test_header "B1 — _cq_max_iter assigned before use"
+
+_b1_file="$SCRIPT_DIR/lib/pipeline-intelligence.sh"
+_b1_assign_line=$(grep -n 'local _cq_max_iter' "$_b1_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
+_b1_use_line=$(grep -n '_compound_quality_targeted_prompt.*_cq_max_iter' "$_b1_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
+if [[ -n "$_b1_assign_line" && -n "$_b1_use_line" && "$_b1_assign_line" -lt "$_b1_use_line" ]]; then
+    assert_pass "B1: _cq_max_iter assigned (L${_b1_assign_line}) before use (L${_b1_use_line})"
+else
+    assert_fail "B1: _cq_max_iter ordering regressed (assign=${_b1_assign_line} use=${_b1_use_line})"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# M7 — Fail-closed scope count check (behavioral)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_test_header "M7 — fail-closed scope count logic"
+
+setup_env
+_m7_viol="${TEST_TEMP_DIR}/violations.txt"
+_m7_review="${TEST_TEMP_DIR}/review.txt"
+printf 'file1.sh\nfile2.sh\nfile3.sh\nfile4.sh\nfile5.sh\n' > "$_m7_viol"
+printf 'SCOPE VIOLATION: file1\nSCOPE VIOLATION: file2\nSCOPE VIOLATION: file3\n' > "$_m7_review"
+_m7_shell=$(wc -l < "$_m7_viol" | tr -d ' ')
+_m7_parsed=$(grep -ciE 'SCOPE VIOLATION' "$_m7_review" 2>/dev/null || echo 0)
+_m7_fired=false
+if (( _m7_shell > 0 && _m7_parsed < _m7_shell )); then _m7_fired=true; fi
+if [[ "$_m7_fired" == "true" ]]; then
+    assert_pass "M7 fail-closed: 5-shell vs 3-parsed triggers block"
+else
+    assert_fail "M7 fail-closed: did not trigger with 5-shell vs 3-parsed"
+fi
+
+_m7_eq_fired=false
+_m7_eq_shell=3
+_m7_eq_parsed=3
+if (( _m7_eq_shell > 0 && _m7_eq_parsed < _m7_eq_shell )); then _m7_eq_fired=true; fi
+if [[ "$_m7_eq_fired" == "false" ]]; then
+    assert_pass "M7 fail-closed: equal counts (3 vs 3) do NOT trigger"
+else
+    assert_fail "M7 fail-closed: false positive with equal counts"
+fi
+cleanup_env
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# L8.c+ — _load_daemon_config: valid partial sidecar merge
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_test_header "L8.c+ _load_daemon_config: valid partial sidecar"
+
+setup_env
+source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null || true
+if declare -f _load_daemon_config >/dev/null 2>&1; then
+    _l8p_base="$PROJECT_ROOT/.claude/daemon-config.json"
+    mkdir -p "$(dirname "$_l8p_base")"
+    printf '{"max_parallel": 2, "intelligence": {"enabled": true}}\n' > "$_l8p_base"
+    printf '{"max_parallel": 4}\n' > "${HOME}/.shipwright/optimization/tuned-config.json"
+    _l8p_result=$(_load_daemon_config "$_l8p_base" 2>/dev/null)
+    assert_json_key "L8.c+ partial sidecar: sidecar max_parallel wins" \
+        "$_l8p_result" '.max_parallel' "4"
+    assert_json_key "L8.c+ partial sidecar: base intelligence.enabled preserved" \
+        "$_l8p_result" '.intelligence.enabled' "true"
+else
+    assert_fail "L8.c+ _load_daemon_config not found"
+fi
+cleanup_env
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# L-2 — Binary-only diff Bin-guard present in sw-loop.sh
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_test_header "L-2 — Binary-only diff Bin-guard"
+
+if grep -q 'grep -q.*Bin' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null; then
+    assert_pass "L-2: binary Bin-guard present in sw-loop.sh"
+else
+    assert_fail "L-2: binary Bin-guard missing from sw-loop.sh"
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Results

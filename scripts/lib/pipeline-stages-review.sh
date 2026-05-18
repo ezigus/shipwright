@@ -140,6 +140,39 @@ stage_review() {
         fi
     fi
 
+    # T2.4: Scope audit — compute off-scope files deterministically in shell before
+    # prompting Claude, so the reviewer cannot miss a scope violation.
+    local _scope_violations_block=""
+    local _scope_violations_file="${ARTIFACTS_DIR}/issue-${ISSUE_NUMBER:-0}/logs/scope-violations.txt"
+    if declare -f _extract_scope_from_design >/dev/null 2>&1 && \
+       declare -f _compute_scope_violations >/dev/null 2>&1; then
+        local _review_scope _review_changed _review_violations
+        _review_scope=$(_extract_scope_from_design "$ARTIFACTS_DIR" 2>/dev/null)
+        if [[ -n "$_review_scope" ]]; then
+            _review_changed=$(_safe_base_diff --name-only 2>/dev/null || true)
+            if [[ -n "$_review_changed" ]]; then
+                _review_violations=$(_compute_scope_violations "$_review_changed" "$_review_scope" 2>/dev/null)
+                if [[ -n "$_review_violations" ]]; then
+                    mkdir -p "$(dirname "$_scope_violations_file")" 2>/dev/null || true
+                    printf '%s\n' "$_review_violations" > "$_scope_violations_file" 2>/dev/null || true
+                    local _viol_list
+                    _viol_list=$(printf '%s\n' "$_review_violations" | sed 's/^/  - /')
+                    _scope_violations_block="
+SCOPE AUDIT (computed deterministically from git diff vs design.md):
+The following files are out of declared scope:
+${_viol_list}
+For each file above, emit a finding with severity=Critical, category=scope:
+  {\"severity\":\"Critical\",\"category\":\"scope\",\"file\":\"<path>\",\"summary\":\"Out of declared scope per design.md\"}
+Then explain (one paragraph) what the change appears to do and whether the design should be updated to include it.
+"
+                    emit_event "review.scope_violations" \
+                        "issue=${ISSUE_NUMBER:-0}" \
+                        "count=$(printf '%s\n' "$_review_violations" | wc -l | tr -d ' ')" 2>/dev/null || true
+                fi
+            fi
+        fi
+    fi
+
     local review_model="${MODEL:-opus}"
     # Intelligence model routing (when no explicit CLI --model override)
     if [[ -z "$MODEL" && -n "${CLAUDE_MODEL:-}" ]]; then
@@ -186,6 +219,11 @@ Focus on:
 Be specific. Reference exact file paths and line numbers. Only flag genuine issues.
 If no issues are found, write: \"Review clean — no issues found.\"
 "
+
+    # Inject scope violations block when out-of-scope files were detected (T2.4)
+    if [[ -n "$_scope_violations_block" ]]; then
+        review_prompt+="${_scope_violations_block}"
+    fi
 
     # Inject previous review findings and anti-patterns from memory
     if type intelligence_search_memory >/dev/null 2>&1; then

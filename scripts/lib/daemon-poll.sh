@@ -957,11 +957,17 @@ daemon_self_optimize() {
             --arg ts "$(now_iso)" \
             '.last_optimization = {timestamp: $ts, adjustments: $adj}'
 
-        # ── Persist adjustments to daemon-config.json (survives restart) ──
-        local config_file="${CONFIG_PATH:-.claude/daemon-config.json}"
-        if [[ -f "$config_file" ]]; then
-            local tmp_config
-            tmp_config=$(jq \
+        # ── Persist DORA adjustments to tuned-config.json sidecar (gitignored) ──
+        # Writing to the sidecar (not daemon-config.json) prevents auto-optimizer
+        # runtime values from appearing as branch diff noise on feature branches.
+        local _sidecar_dir="${HOME}/.shipwright/optimization"
+        local _sidecar="${_sidecar_dir}/tuned-config.json"
+        mkdir -p "$_sidecar_dir" 2>/dev/null || true
+        local _existing_sidecar="{}"
+        [[ -f "$_sidecar" ]] && _existing_sidecar=$(cat "$_sidecar" 2>/dev/null || echo "{}")
+        local _tmp_config
+        _tmp_config=$(printf '%s\n' "$_existing_sidecar" \
+            | jq \
                 --argjson max_parallel "$MAX_PARALLEL" \
                 --argjson poll_interval "$POLL_INTERVAL" \
                 --arg template "$PIPELINE_TEMPLATE" \
@@ -973,13 +979,13 @@ daemon_self_optimize() {
                  .pipeline_template = $template |
                  .auto_template = ($auto_template == "true") |
                  .last_optimization = {timestamp: $ts, adjustments: $adj}' \
-                "$config_file")
-            # Atomic write: tmp file + mv (preserve 600 permissions)
-            local tmp_cfg_file="${config_file}.tmp.$$"
-            echo "$tmp_config" > "$tmp_cfg_file"
-            chmod 600 "$tmp_cfg_file"
-            mv "$tmp_cfg_file" "$config_file"
-            daemon_log INFO "Self-optimize: persisted adjustments to ${config_file}"
+            2>/dev/null) || true
+        if [[ -n "$_tmp_config" ]]; then
+            local _tmp_sidecar="${_sidecar}.tmp.$$"
+            printf '%s\n' "$_tmp_config" > "$_tmp_sidecar"
+            chmod 600 "$_tmp_sidecar"
+            mv "$_tmp_sidecar" "$_sidecar"
+            daemon_log INFO "Self-optimize: persisted DORA adjustments to ${_sidecar}"
         fi
 
         emit_event "daemon.optimize" "adjustments=${adj_str}" "cfr=$cfr" "cycle_time=$cycle_time_median" "deploy_freq=$deploy_freq" "mttr=$mttr"

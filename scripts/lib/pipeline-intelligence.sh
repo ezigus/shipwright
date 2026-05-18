@@ -1455,16 +1455,34 @@ compound_rebuild_with_feedback() {
         architecture)
             route_instruction="ARCHITECTURE: Fix structural issues. Check dependency direction, layer boundaries, and separation of concerns."
             ;;
+        scope)
+            route_instruction="SCOPE VIOLATION: Out-of-scope edits found. Revert these files to their main-branch state entirely — do not 'fix' them, just remove your changes. If a file mixes on-scope and off-scope changes, revert ONLY the off-scope hunks. If the change is genuinely required as new scope, STOP and emit: <<<LOOP:SCOPE_ESCALATION:reason>>>. Do NOT introduce new refactoring."
+            ;;
         *)
             route_instruction="Fix every issue listed above while keeping all existing functionality working."
             ;;
     esac
+
+    # T2.1: Targeted-fix mode — extract affected files from findings for scoped prompt + bounded dispatch.
+    # Reduces worst-case per-cycle wall-clock from ~2h (45 iters full suite) to ~15m (5 iters scoped tests).
+    local targeted_files=""
+    targeted_files=$(_compound_quality_targeted_prompt "$feedback_file" 2>/dev/null || true)
+
+    # Bound iterations for scope-revert cycles (cheaper task than full fix)
+    local _cq_max_iter="${MAX_ITERATIONS_OVERRIDE:-}"
+    if [[ "$route" == "scope" ]]; then
+        _cq_max_iter="3"
+    elif [[ -n "$blocking_items" ]]; then
+        _cq_max_iter="${_cq_max_iter:-5}"
+    fi
 
     if [[ -n "$blocking_items" ]]; then
         GOAL="$GOAL
 
 BLOCKING ISSUES — fix all of these before merge:
 $blocking_items
+${targeted_files:+
+${targeted_files}}
 
 Full review context:
 $feedback_content
@@ -1474,20 +1492,44 @@ ${route_instruction}"
         GOAL="$GOAL
 
 IMPORTANT — Compound quality review found issues (route: ${route}). Fix ALL of these:
+${targeted_files:+${targeted_files}
+}
 $feedback_content
 
 ${route_instruction}"
     fi
 
-    # Re-run self-healing build→test
+    # Re-run self-healing build→test (bounded iterations for targeted cycles)
     info "Rebuilding with quality feedback (route: ${route})..."
-    if self_healing_build_test; then
-        GOAL="$original_goal"
-        return 0
-    else
-        GOAL="$original_goal"
-        return 1
-    fi
+    local _save_max_iter="${MAX_ITERATIONS_OVERRIDE:-}"
+    [[ -n "$_cq_max_iter" ]] && MAX_ITERATIONS_OVERRIDE="$_cq_max_iter"
+    local _rebuild_rc=0
+    self_healing_build_test || _rebuild_rc=$?
+    MAX_ITERATIONS_OVERRIDE="$_save_max_iter"
+    GOAL="$original_goal"
+    return "$_rebuild_rc"
+}
+
+# _compound_quality_targeted_prompt — Extract affected files from a findings file and
+# compose a TARGETED FIX block listing exact files + iteration budget.
+# Usage: _compound_quality_targeted_prompt <feedback_file>
+_compound_quality_targeted_prompt() {
+    local feedback_file="${1:-}"
+    [[ -f "$feedback_file" ]] || return 0
+
+    local affected_files
+    # Extract file paths: look for lines with path-like tokens (contains / or ends with known extension)
+    affected_files=$(grep -oE '[a-zA-Z0-9_./-]+\.(sh|js|cjs|mjs|ts|tsx|py|go|rs|rb|swift|yaml|yml|json|md)' \
+        "$feedback_file" 2>/dev/null | sort -u | head -20 || true)
+    [[ -z "$affected_files" ]] && return 0
+
+    local file_count
+    file_count=$(printf '%s\n' "$affected_files" | wc -l | tr -d ' ')
+    local file_list
+    file_list=$(printf '%s\n' "$affected_files" | sed 's/^/  - /')
+
+    printf 'TARGETED FIX — %s file(s) cited in findings:\n%s\nModify ONLY these files. Iteration budget for this cycle: 5 max. Do NOT refactor unrelated code.\n' \
+        "$file_count" "$file_list"
 }
 
 # Removes negative-review-cycle*.md files from ARTIFACTS_DIR.
@@ -1548,6 +1590,16 @@ pipeline_run_ruflo_cq_hive() {
 
 stage_compound_quality() {
     CURRENT_STAGE_ID="compound_quality"
+
+    # T2.3: Exit trap — flush compound_quality.log to pipeline artifacts on any exit path
+    # (including abort / hard timeout), so postmortem diagnosis always has findings.
+    local _cq_log_dir="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}/issue-${ISSUE_NUMBER:-0}/logs"
+    local _cq_log_file="${_cq_log_dir}/compound_quality.log"
+    local _cq_trap_installed=false
+    if mkdir -p "$_cq_log_dir" 2>/dev/null; then
+        _cq_trap_installed=true
+        trap 'printf "[compound_quality EXIT at %s]\n" "$(date -u +%FT%TZ 2>/dev/null || date)" >> "$_cq_log_file" 2>/dev/null || true' RETURN
+    fi
 
     # Clean up any stale cycle files from prior runs before starting
     _cleanup_cycle_files

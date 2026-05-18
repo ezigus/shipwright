@@ -1623,14 +1623,22 @@ optimize_adjust_audit_intensity() {
         trend="stable_or_improving"
     fi
 
-    # Declining quality → enable more audits
+    # Declining quality → enable more audits.
+    # Write to tuned-config.json sidecar (gitignored) instead of daemon-config.json so
+    # auto-optimizer writes never appear as branch diff noise on feature branches.
     if [[ "$trend" == "declining" || "${avg_quality:-70}" -lt 60 ]]; then
         info "Quality trend: ${trend} (avg: ${avg_quality}) — increasing audit intensity"
-        local tmp_dc
-        tmp_dc=$(mktemp "${daemon_config}.tmp.XXXXXX")
-        trap "rm -f '$tmp_dc'" RETURN
-        jq '.intelligence.adversarial_enabled = true | .intelligence.architecture_enabled = true' \
-            "$daemon_config" > "$tmp_dc" 2>/dev/null && mv "$tmp_dc" "$daemon_config" || rm -f "$tmp_dc"
+        local sidecar_dir="${HOME}/.shipwright/optimization"
+        local sidecar="${sidecar_dir}/tuned-config.json"
+        mkdir -p "$sidecar_dir" 2>/dev/null || true
+        local existing_sidecar="{}"
+        [[ -f "$sidecar" ]] && existing_sidecar=$(cat "$sidecar" 2>/dev/null || echo "{}")
+        local tmp_sc
+        tmp_sc=$(mktemp "${sidecar}.tmp.XXXXXX")
+        trap "rm -f '$tmp_sc'" RETURN
+        printf '%s\n' "$existing_sidecar" \
+            | jq '.intelligence.adversarial_enabled = true | .intelligence.architecture_enabled = true' \
+            > "$tmp_sc" 2>/dev/null && mv "$tmp_sc" "$sidecar" || rm -f "$tmp_sc"
         emit_event "optimize.audit_intensity" \
             "avg_quality=$avg_quality" \
             "trend=$trend" \

@@ -1008,7 +1008,7 @@ function stats(outputJson) {
   return report;
 }
 
-module.exports = { init, getContext, recordEdit, feedback, consolidate, stats };
+module.exports = { init, getContext, recordEdit, feedback, consolidate, stats, fingerprintContent };
 
 // ── CLI entrypoint ──────────────────────────────────────────────────────────
 if (require.main === module) {

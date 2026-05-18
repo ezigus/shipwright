@@ -562,6 +562,49 @@ CFG
     assert_contains "$intelligence_cache" "$canonical_project/.claude" "INTELLIGENCE_CACHE should be under project .claude even when REPO_DIR is install root"
 }
 
+test_fingerprint_content_not_truncated() {
+    reset_test
+    # T2.5 regression: verify FNV-1a 64-bit prime is NOT truncated to 435.
+    # The bug: Math.imul(h2, 0x100000001b3 & 0xffffffff) → Math.imul(h2, 435)
+    # because JS evaluates the & in 32-bit bitwise context.
+    local intelligence_cjs
+    intelligence_cjs="$(dirname "$INTELLIGENCE_SCRIPT")/../.claude/helpers/intelligence.cjs"
+    intelligence_cjs="$(cd "$(dirname "$intelligence_cjs")" && pwd)/$(basename "$intelligence_cjs")" 2>/dev/null || true
+
+    if [[ -f "$intelligence_cjs" ]]; then
+        # Static check: file must not contain the truncating expression
+        local has_truncation
+        has_truncation=$(grep -c '0x100000001b3[[:space:]]*&[[:space:]]*0xffffffff' "$intelligence_cjs" 2>/dev/null || echo 0)
+        assert_equals "0" "$has_truncation" "intelligence.cjs must not contain 435-truncation bug (0x100000001b3 & 0xffffffff)"
+
+        # Runtime check: fingerprintContent("hello world") must return a non-empty, non-zero value
+        if command -v node >/dev/null 2>&1; then
+            local fp_result
+            fp_result=$(node -e "
+                try {
+                    const m = require('$intelligence_cjs');
+                    if (typeof m.fingerprintContent === 'function') {
+                        process.stdout.write(String(m.fingerprintContent('hello world')));
+                    } else {
+                        process.stdout.write('NOFUNC');
+                    }
+                } catch(e) { process.stdout.write('ERROR:' + e.message); }
+            " 2>/dev/null) || fp_result="ERROR"
+            if [[ "$fp_result" == "NOFUNC" ]]; then
+                assert_fail "fingerprintContent not exported" "fingerprintContent function not found in intelligence.cjs"
+            elif [[ "$fp_result" == ERROR* ]]; then
+                assert_fail "fingerprintContent threw error" "$fp_result"
+            elif [[ "$fp_result" == "0" || -z "$fp_result" ]]; then
+                assert_fail "fingerprintContent returned zero/empty" "hash appears broken — check FNV-1a prime"
+            else
+                assert_pass "fingerprintContent returns non-zero value: $fp_result"
+            fi
+        fi
+    else
+        assert_fail "intelligence.cjs not found at: $intelligence_cjs" ""
+    fi
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -609,6 +652,7 @@ main() {
         "test_cache_init:Cache init creates file if missing"
         "test_intelligence_enabled_path_install:PATH install does not disable intelligence"
         "test_intelligence_cache_when_repo_dir_is_install_root:INTELLIGENCE_CACHE correct when REPO_DIR pre-set to install root"
+        "test_fingerprint_content_not_truncated:fingerprintContent FNV-1a prime not truncated to 435"
     )
 
     for entry in "${tests[@]}"; do

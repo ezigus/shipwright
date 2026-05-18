@@ -261,6 +261,26 @@ ${build_discoveries}"
 ${_branch_progress}"
     fi
 
+    # Inject scope guardrail from design.md (T1.2c).
+    # Reads the machine-parseable ```scope block and prepends a SCOPE constraint
+    # to the build context so the agent knows which files it is allowed to touch.
+    if declare -f _extract_scope_from_design >/dev/null 2>&1; then
+        local _scope_list
+        _scope_list=$(_extract_scope_from_design "$ARTIFACTS_DIR" 2>/dev/null)
+        if [[ -n "$_scope_list" ]]; then
+            local _scope_block
+            _scope_block=$(printf '%s\n' "$_scope_list" | sed 's/^/  - /')
+            build_context_body="SCOPE — modify ONLY these files (from design.md):
+${_scope_block}
+Do NOT modify any file outside this list. If an out-of-scope change is genuinely
+required, STOP and emit: <<<LOOP:SCOPE_ESCALATION:reason>>>
+The design will be updated by a human before you proceed.
+
+${build_context_body}"
+            emit_event "build.scope_injected" "issue=${ISSUE_NUMBER:-0}" "file_count=$(echo "$_scope_list" | wc -l | tr -d ' ')"
+        fi
+    fi
+
     # Validate task list before loop start — clean up stale or malformed files.
     # Task content is injected dynamically each iteration by compose_task_section()
     # in loop-iteration.sh; do not inject the full file into the goal here.

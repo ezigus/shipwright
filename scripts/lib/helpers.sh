@@ -510,7 +510,6 @@ _validate_ref() {
 # Add new files here — all consumers read these lists.
 
 _GIT_BOOKKEEPING_FILES=(
-    ".claude/daemon-config.json"
     ".claude/pipeline-tasks.md"
     ".claude/tasks.md"
 )
@@ -570,6 +569,27 @@ _git_bookkeeping_pathspecs() {
     for _f in "${_GIT_BOOKKEEPING_FILES[@]+"${_GIT_BOOKKEEPING_FILES[@]}"}"; do
         printf ':!%s ' "$_f"
     done
+}
+
+# Load daemon-config.json, merging the auto-tuned sidecar (~/.shipwright/optimization/tuned-config.json)
+# on top of the base config.  Sidecar carries auto-optimizer writes (intelligence flags, DORA
+# autotune values) so they do not pollute committed daemon-config.json on feature branches.
+# Usage: _load_daemon_config [base_config_path]
+# Output: merged JSON to stdout; returns {} if base is absent; sidecar absence is not an error.
+_load_daemon_config() {
+    local base_config="${1:-${PROJECT_ROOT:-.}/.claude/daemon-config.json}"
+    local sidecar="${HOME:-$HOME}/.shipwright/optimization/tuned-config.json"
+
+    if [[ ! -f "$base_config" ]]; then
+        printf '{}'
+        return 0
+    fi
+
+    if [[ -f "$sidecar" ]]; then
+        jq -s '.[0] * .[1]' "$base_config" "$sidecar" 2>/dev/null || cat "$base_config"
+    else
+        cat "$base_config"
+    fi
 }
 
 # Filter gitignored paths out of file-list output before it reaches agent prompts.
@@ -650,6 +670,8 @@ extract_issue_from_tasks_file() {
 # ─── Git Staging Helper ───────────────────────────────────────────
 # Stage all changes, then unstage any bookkeeping files listed in
 # _GIT_BOOKKEEPING_FILES so they are not included in commits.
+# When SCOPE_GUARD_ENABLED=true and a design.md scope block is present, also
+# unstage out-of-scope files and emit a loop.scope_violation event for each.
 # Usage: safe_git_stage [dir]   (dir defaults to current directory)
 safe_git_stage() {
     local dir="${1:-.}"
@@ -661,6 +683,41 @@ safe_git_stage() {
         for _bf in "${_GIT_BOOKKEEPING_FILES[@]+"${_GIT_BOOKKEEPING_FILES[@]}"}"; do
             git -C "$dir" restore --staged "$toplevel/$_bf" 2>/dev/null || true
         done
+    fi
+
+    # Scope guard: when enabled, unstage files outside the declared design scope.
+    # Requires _extract_scope_from_design and _compute_scope_violations (pipeline-stages.sh).
+    # Operator override: set SCOPE_OVERRIDE=1 and create ~/.shipwright/scope-override.token.
+    if [[ "${SCOPE_GUARD_ENABLED:-false}" == "true" ]] && \
+       declare -f _extract_scope_from_design >/dev/null 2>&1 && \
+       declare -f _compute_scope_violations >/dev/null 2>&1; then
+        # Operator escape hatch: both env var AND token file required (agent cannot self-grant)
+        if [[ "${SCOPE_OVERRIDE:-0}" == "1" && -f "${HOME}/.shipwright/scope-override.token" ]]; then
+            warn "scope guard: SCOPE_OVERRIDE active — skipping scope check"
+            return 0
+        fi
+        local _scope_list
+        _scope_list=$(_extract_scope_from_design 2>/dev/null)
+        if [[ -n "$_scope_list" ]]; then
+            local _staged_files
+            _staged_files=$(git -C "$dir" diff --cached --name-only 2>/dev/null || true)
+            if [[ -n "$_staged_files" ]]; then
+                local _violations
+                _violations=$(_compute_scope_violations "$_staged_files" "$_scope_list" 2>/dev/null)
+                if [[ -n "$_violations" ]]; then
+                    while IFS= read -r _vf; do
+                        [[ -z "$_vf" ]] && continue
+                        warn "scope guard: unstaging out-of-scope file: ${_vf}"
+                        git -C "$dir" restore --staged "${toplevel:+$toplevel/}${_vf}" 2>/dev/null || true
+                        declare -f emit_event >/dev/null 2>&1 && \
+                            emit_event "loop.scope_violation" "file=${_vf}" "issue=${ISSUE_NUMBER:-0}" || true
+                    done <<< "$_violations"
+                    # Write violation summary for next iteration prompt injection
+                    local _viol_file="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}/.scope-violations.txt"
+                    printf '%s\n' "$_violations" > "$_viol_file" 2>/dev/null || true
+                fi
+            fi
+        fi
     fi
 }
 

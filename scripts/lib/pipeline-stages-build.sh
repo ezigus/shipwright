@@ -663,6 +663,8 @@ ${_build_recall_ctx}"
     # across CI jobs in .claude/pipeline-state.md and is therefore an unsafe budget anchor.
     # PIPELINE_RUN_EPOCH remains in the state file for historical display only.
     export CI_JOB_START_EPOCH="${CI_JOB_START_EPOCH:-}"
+    # Enable scope guard so safe_git_stage() blocks out-of-scope commits (T1.2)
+    export SCOPE_GUARD_ENABLED="true"
     sw loop "${loop_args[@]}" < /dev/null 2>"$_token_log" || {
         local _loop_exit=$?
         parse_claude_tokens "$_token_log"

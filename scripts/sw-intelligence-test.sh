@@ -573,9 +573,11 @@ test_fingerprint_content_not_truncated() {
 
     if [[ -f "$intelligence_cjs" ]]; then
         # Static check: file must not contain the truncating expression
-        local has_truncation
-        has_truncation=$(grep -c '0x100000001b3[[:space:]]*&[[:space:]]*0xffffffff' "$intelligence_cjs" 2>/dev/null || echo 0)
-        assert_equals "0" "$has_truncation" "intelligence.cjs must not contain 435-truncation bug (0x100000001b3 & 0xffffffff)"
+        if grep -qE '0x100000001b3[[:space:]]*&[[:space:]]*0xffffffff' "$intelligence_cjs" 2>/dev/null; then
+            assert_fail "T2.5 intelligence.cjs does not have 435-truncation bug" "" "Found 0x100000001b3 & 0xffffffff truncation in intelligence.cjs"
+        else
+            assert_pass "T2.5 intelligence.cjs does not have 435-truncation bug"
+        fi
 
         # Runtime check: fingerprintContent("hello world") must return a non-empty, non-zero value
         if command -v node >/dev/null 2>&1; then

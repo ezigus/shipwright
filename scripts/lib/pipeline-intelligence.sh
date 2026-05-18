@@ -230,6 +230,14 @@ $content"
         correctness_count=$((correctness_count + ${neg_corr:-0}))
     fi
 
+    # ── Scope check: highest priority — overrides semantic classification ──
+    # If scope-violations.txt exists and has content, route to scope revert regardless of other findings.
+    local _scope_viol_file="${findings_dir}/issue-${ISSUE_NUMBER:-0}/logs/scope-violations.txt"
+    [[ ! -f "$_scope_viol_file" ]] && _scope_viol_file="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}/.scope-violations.txt"
+    if [[ -f "$_scope_viol_file" ]] && [[ -s "$_scope_viol_file" ]]; then
+        route="scope"
+    fi
+
     # ── Determine routing ──
     # Use semantic classification when available; else fall back to grep-derived priority
     local needs_backtrack=false
@@ -1422,6 +1430,10 @@ compound_rebuild_with_feedback() {
     local original_goal="$GOAL"
     local _saved_current_stage="${CURRENT_STAGE:-}"
     local _saved_pipeline_status="${PIPELINE_STATUS:-}"
+    # Capture any outer RETURN trap (e.g. stage_compound_quality log-flush trap) so we
+    # can restore it after clearing our own, rather than dropping it with `trap - RETURN`.
+    local _outer_return_trap
+    _outer_return_trap=$(trap -p RETURN 2>/dev/null || true)
     trap '{
         # Preserve PIPELINE_STUCK_CYCLING if the inner cycle set it (retry-cap hit);
         # restoring status unconditionally would mask the stuck indicator.
@@ -1434,6 +1446,8 @@ compound_rebuild_with_feedback() {
         clear_outer_stage
         log_stage "compound_quality" "rebuild cycle '"${cycle_num}"' finished"
         trap - RETURN
+        # Restore outer trap (e.g. stage_compound_quality log-flush trap)
+        [[ -n "$_outer_return_trap" ]] && eval "$_outer_return_trap" 2>/dev/null || true
     }' RETURN
     local feedback_content
     feedback_content=$(cat "$feedback_file")
@@ -1466,14 +1480,14 @@ compound_rebuild_with_feedback() {
     # T2.1: Targeted-fix mode — extract affected files from findings for scoped prompt + bounded dispatch.
     # Reduces worst-case per-cycle wall-clock from ~2h (45 iters full suite) to ~15m (5 iters scoped tests).
     local targeted_files=""
-    targeted_files=$(_compound_quality_targeted_prompt "$feedback_file" 2>/dev/null || true)
+    targeted_files=$(_compound_quality_targeted_prompt "$feedback_file" "${_cq_max_iter:-5}" 2>/dev/null || true)
 
-    # Bound iterations for scope-revert cycles (cheaper task than full fix)
-    local _cq_max_iter="${MAX_ITERATIONS_OVERRIDE:-}"
+    # Bound iterations for targeted cycles — always cap regardless of outer MAX_ITERATIONS_OVERRIDE.
+    local _cq_max_iter=""
     if [[ "$route" == "scope" ]]; then
         _cq_max_iter="3"
     elif [[ -n "$blocking_items" ]]; then
-        _cq_max_iter="${_cq_max_iter:-5}"
+        _cq_max_iter="5"
     fi
 
     if [[ -n "$blocking_items" ]]; then
@@ -1512,9 +1526,10 @@ ${route_instruction}"
 
 # _compound_quality_targeted_prompt — Extract affected files from a findings file and
 # compose a TARGETED FIX block listing exact files + iteration budget.
-# Usage: _compound_quality_targeted_prompt <feedback_file>
+# Usage: _compound_quality_targeted_prompt <feedback_file> [max_iterations]
 _compound_quality_targeted_prompt() {
     local feedback_file="${1:-}"
+    local max_iter="${2:-5}"
     [[ -f "$feedback_file" ]] || return 0
 
     local affected_files
@@ -1528,8 +1543,8 @@ _compound_quality_targeted_prompt() {
     local file_list
     file_list=$(printf '%s\n' "$affected_files" | sed 's/^/  - /')
 
-    printf 'TARGETED FIX — %s file(s) cited in findings:\n%s\nModify ONLY these files. Iteration budget for this cycle: 5 max. Do NOT refactor unrelated code.\n' \
-        "$file_count" "$file_list"
+    printf 'TARGETED FIX — %s file(s) cited in findings:\n%s\nModify ONLY these files. Iteration budget for this cycle: %s max. Do NOT refactor unrelated code.\n' \
+        "$file_count" "$file_list" "$max_iter"
 }
 
 # Removes negative-review-cycle*.md files from ARTIFACTS_DIR.
@@ -1598,7 +1613,11 @@ stage_compound_quality() {
     local _cq_trap_installed=false
     if mkdir -p "$_cq_log_dir" 2>/dev/null; then
         _cq_trap_installed=true
-        trap 'printf "[compound_quality EXIT at %s]\n" "$(date -u +%FT%TZ 2>/dev/null || date)" >> "$_cq_log_file" 2>/dev/null || true' RETURN
+        trap '{
+            printf "[compound_quality EXIT at %s]\n" "$(date -u +%FT%TZ 2>/dev/null || date)" >> "$_cq_log_file" 2>/dev/null || true
+            { cat "${ARTIFACTS_DIR}/review.findings.json" 2>/dev/null || true; } >> "$_cq_log_file" 2>/dev/null || true
+            { cat "${ARTIFACTS_DIR}/quality-feedback.md" 2>/dev/null || true; } >> "$_cq_log_file" 2>/dev/null || true
+        }' RETURN
     fi
 
     # Clean up any stale cycle files from prior runs before starting

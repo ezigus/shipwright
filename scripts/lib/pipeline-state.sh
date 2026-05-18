@@ -458,7 +458,6 @@ persist_artifacts() {
         done
         if [[ ${#to_add[@]} -gt 0 ]]; then
             git add "${to_add[@]}" 2>/dev/null || true
-            git restore --staged .claude/daemon-config.json 2>/dev/null || true
         fi
     fi
 

@@ -1597,7 +1597,7 @@ else
     assert_fail "safe_git_stage() defined in helpers.sh"
 fi
 
-# Test: safe_git_stage() calls restore --staged daemon-config.json
+# Test: safe_git_stage() uses _GIT_BOOKKEEPING_FILES (not hard-coded daemon-config.json path)
 if grep -A10 '^safe_git_stage()' "$SCRIPT_DIR/lib/helpers.sh" | grep -q '_GIT_BOOKKEEPING_FILES'; then
     assert_pass "safe_git_stage() uses _GIT_BOOKKEEPING_FILES to unstage bookkeeping files"
 else
@@ -1639,11 +1639,11 @@ else
     assert_fail "pipeline-stages-delivery.sh cleanup commit uses safe_git_stage"
 fi
 
-# Test: pipeline-state.sh artifact commit guards daemon-config.json
+# Test: pipeline-state.sh does NOT hard-code a daemon-config.json restore (T1.1 sidecar split)
 if grep -A3 'git add.*to_add' "$SCRIPT_DIR/lib/pipeline-state.sh" | grep -q 'daemon-config.json'; then
-    assert_pass "pipeline-state.sh artifact commit guards daemon-config.json"
+    assert_fail "pipeline-state.sh must NOT hard-code daemon-config.json restore (T1.1: sidecar split)"
 else
-    assert_fail "pipeline-state.sh artifact commit guards daemon-config.json"
+    assert_pass "pipeline-state.sh artifact commit does not hard-code daemon-config.json exclusion"
 fi
 
 # Test: _GIT_BOOKKEEPING_FILES array is defined in helpers.sh
@@ -1667,14 +1667,20 @@ else
     assert_fail "_git_diff_stat_excluded() defined in helpers.sh"
 fi
 
-# Test: all three bookkeeping files are listed in _GIT_BOOKKEEPING_FILES
-for _bf in daemon-config.json pipeline-tasks.md tasks.md; do
+# Test: pipeline-tasks.md and tasks.md are listed in _GIT_BOOKKEEPING_FILES
+for _bf in pipeline-tasks.md tasks.md; do
     if awk '/_GIT_BOOKKEEPING_FILES=/,/\)/' "$SCRIPT_DIR/lib/helpers.sh" | grep -Fq "$_bf"; then
         assert_pass "_GIT_BOOKKEEPING_FILES includes $_bf"
     else
         assert_fail "_GIT_BOOKKEEPING_FILES includes $_bf"
     fi
 done
+# Test: daemon-config.json is NOT in _GIT_BOOKKEEPING_FILES (moved to sidecar pattern — T1.1)
+if awk '/_GIT_BOOKKEEPING_FILES=/,/\)/' "$SCRIPT_DIR/lib/helpers.sh" | grep -Fq "daemon-config.json"; then
+    assert_fail "_GIT_BOOKKEEPING_FILES must NOT include daemon-config.json (T1.1: sidecar split)"
+else
+    assert_pass "_GIT_BOOKKEEPING_FILES does not include daemon-config.json (sidecar pattern active)"
+fi
 
 # Test: safe_git_stage() loops over _GIT_BOOKKEEPING_FILES (not a hardcoded path)
 if grep -A10 '^safe_git_stage()' "$SCRIPT_DIR/lib/helpers.sh" | grep -q '_GIT_BOOKKEEPING_FILES'; then

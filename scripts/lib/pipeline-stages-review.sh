@@ -161,8 +161,8 @@ stage_review() {
 SCOPE AUDIT (computed deterministically from git diff vs design.md):
 The following files are out of declared scope:
 ${_viol_list}
-For each file above, emit a finding with severity=Critical, category=scope:
-  {\"severity\":\"Critical\",\"category\":\"scope\",\"file\":\"<path>\",\"summary\":\"Out of declared scope per design.md\"}
+For each file above, you MUST emit a finding in this exact format (so the review parser counts it as blocking):
+  **[Critical]** SCOPE VIOLATION: <path> is out of declared scope per design.md — revert this file or update the design.
 Then explain (one paragraph) what the change appears to do and whether the design should be updated to include it.
 "
                     emit_event "review.scope_violations" \

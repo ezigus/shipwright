@@ -496,8 +496,8 @@ detect_stuckness() {
         local _snap_failing_tests=""
         local _snap_unresolved=""
         if [[ -f "$log1" ]]; then
-            _snap_edited_files=$(grep -oE '^\s*(Edit|Write|Create)\s+\S+' "$log1" 2>/dev/null \
-                | sed 's/^\s*//' | sort | uniq -c | sort -rn | head -5 | sed 's/^/    /' || true)
+            _snap_edited_files=$(grep -oE '^[[:space:]]*(Edit|Write|Create)[[:space:]]+[^[:space:]]+' "$log1" 2>/dev/null \
+                | sed 's/^[[:space:]]*//' | sort | uniq -c | sort -rn | head -5 | sed 's/^/    /' || true)
         fi
         if [[ -f "${ERROR_SUMMARY_FILE:-/dev/null}" ]]; then
             _snap_failing_tests=$(jq -r '.failing_tests[]? // empty' "${ERROR_SUMMARY_FILE}" 2>/dev/null \

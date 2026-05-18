@@ -3602,12 +3602,12 @@ else
         "scope-label.sh not sourced — scope_label undefined in loop subprocess (set -e + missing function = 127 exit)"
 fi
 
-# Verify read_state is called at startup (PR C — loads OUTER_STAGE / COMPOUND_QUALITY_CYCLE from state file)
-if grep -qF 'read_state' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null; then
-    assert_pass "loop_iteration_scope_label_guard: sw-loop.sh calls read_state at startup (PR C)"
+# Verify _read_scope_state is called at startup (PR C — loads OUTER_STAGE from state file)
+if grep -qF '_read_scope_state' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null; then
+    assert_pass "loop_iteration_scope_label_guard: sw-loop.sh calls _read_scope_state at startup (PR C)"
 else
-    assert_fail "loop_iteration_scope_label_guard: sw-loop.sh must call read_state at startup (PR C)" \
-        "read_state not found in sw-loop.sh — OUTER_STAGE / COMPOUND_QUALITY_CYCLE may be unset"
+    assert_fail "loop_iteration_scope_label_guard: sw-loop.sh must call _read_scope_state at startup (PR C)" \
+        "_read_scope_state not found in sw-loop.sh — OUTER_STAGE may be unset in loop subprocess"
 fi
 
 # ─── PR C: subprocess scope_label correctness ────────────────────────────────

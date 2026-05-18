@@ -65,7 +65,7 @@ fi
 type gh_init >/dev/null 2>&1 && gh_init 2>/dev/null || true
 # Scope-label state hydration (PR C) — source lib if present, then hydrate state
 [[ -f "${SCRIPT_DIR}/lib/scope-label.sh" ]] && source "${SCRIPT_DIR}/lib/scope-label.sh"
-type read_state >/dev/null 2>&1 && read_state
+type _read_scope_state >/dev/null 2>&1 && _read_scope_state
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -105,6 +105,7 @@ MAX_ITERATIONS_EXPLICIT=false
 MAX_RESTARTS=$(_config_get_int "loop.max_restarts" 0 2>/dev/null || echo 0)
 DOD_DIFF_MAX_LINES=$(_config_get_int "loop.dod_diff_max_lines" 5000 2>/dev/null || echo 5000)
 HOLISTIC_DIFF_MAX_LINES=$(_config_get_int "loop.holistic_diff_max_lines" 1000 2>/dev/null || echo 1000)
+LOOP_INNER_STAGE_COMMENTS="${LOOP_INNER_STAGE_COMMENTS:-$(_config_get "loop.inner_stage_comments" "off" 2>/dev/null || echo "off")}"
 SESSION_RESTART=false
 RESTART_COUNT=0
 REPO_OVERRIDE=""

@@ -14,6 +14,32 @@ COMPOUND_QUALITY_CYCLE="${COMPOUND_QUALITY_CYCLE:-}"
 INNER_STAGE="${INNER_STAGE:-}"
 SELF_HEAL_COUNT="${SELF_HEAL_COUNT:-0}"
 
+# Read OUTER_STAGE, OUTER_STAGE_START_COMMIT, INNER_STAGE from the pipeline
+# state file. Only sets a variable if it is currently empty (env takes
+# precedence). No-op when the state file is absent.
+_read_scope_state() {
+    local _sf="${PROJECT_ROOT:-.}/.claude/pipeline-state.md"
+    [[ -f "$_sf" ]] || return 0
+    local _in_fm=false _line _v
+    while IFS= read -r _line; do
+        if [[ "$_line" == "---" ]]; then
+            if $_in_fm; then break; else _in_fm=true; continue; fi
+        fi
+        $_in_fm || continue
+        case "$_line" in
+            outer_stage:*)
+                _v="${_line#outer_stage:}"; _v="${_v# }"
+                [[ -z "${OUTER_STAGE:-}" && -n "$_v" ]] && OUTER_STAGE="$_v" ;;
+            outer_stage_start_commit:*)
+                _v="${_line#outer_stage_start_commit:}"; _v="${_v# }"
+                [[ -z "${OUTER_STAGE_START_COMMIT:-}" && -n "$_v" ]] && OUTER_STAGE_START_COMMIT="$_v" ;;
+            inner_stage:*)
+                _v="${_line#inner_stage:}"; _v="${_v# }"
+                [[ -z "${INNER_STAGE:-}" && -n "$_v" ]] && INNER_STAGE="$_v" ;;
+        esac
+    done < "$_sf"
+}
+
 # Returns a human-readable label for the current execution scope.
 # Examples:
 #   Top-level:               "Build Iteration 1"

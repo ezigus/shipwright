@@ -1783,13 +1783,19 @@ _test_safe_git_stage() {
     ( cd "$tmpdir" && PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin source "$SCRIPT_DIR/lib/helpers.sh" && safe_git_stage )
     local staged
     staged="$("$real_git" -C "$tmpdir" diff --cached --name-only)"
-    # Bookkeeping files must NOT be staged
+    # Bookkeeping files (tasks.md, pipeline-tasks.md) must NOT be staged.
+    # daemon-config.json is no longer in _GIT_BOOKKEEPING_FILES (T1.1 sidecar split)
+    # so it IS expected to be staged as a normal committed file.
     local _bf
-    for _bf in .claude/daemon-config.json .claude/pipeline-tasks.md .claude/tasks.md; do
+    for _bf in .claude/pipeline-tasks.md .claude/tasks.md; do
         if echo "$staged" | grep -F -x -q "$_bf"; then
             return 1
         fi
     done
+    # daemon-config.json MUST be staged (it's a normal file now, not bookkeeping)
+    if ! echo "$staged" | grep -F -x -q ".claude/daemon-config.json"; then
+        return 1
+    fi
     # Real code file MUST be staged
     if ! echo "$staged" | grep -F -x -q "app.sh"; then
         return 1

@@ -347,18 +347,17 @@ cat > "$REPO_DIR/.claude/daemon-config.json" <<'EOF'
 {"intelligence": {"enabled": true, "adversarial_enabled": false, "architecture_enabled": false}}
 EOF
 
-# Record pre-call modification time for daemon-config.json
-pre_call_mtime=$(stat -f %m "$REPO_DIR/.claude/daemon-config.json" 2>/dev/null \
-    || stat -c %Y "$REPO_DIR/.claude/daemon-config.json" 2>/dev/null || echo "0")
+# Record pre-call content hash for daemon-config.json (content comparison is more
+# reliable than mtime on Linux CI where filesystems may have 1-second resolution).
+pre_call_content=$(cat "$REPO_DIR/.claude/daemon-config.json" 2>/dev/null || echo "MISSING")
 
 if declare -f optimize_adjust_audit_intensity >/dev/null 2>&1; then
     optimize_adjust_audit_intensity 2>/dev/null || true
 
-    post_call_mtime=$(stat -f %m "$REPO_DIR/.claude/daemon-config.json" 2>/dev/null \
-        || stat -c %Y "$REPO_DIR/.claude/daemon-config.json" 2>/dev/null || echo "0")
+    post_call_content=$(cat "$REPO_DIR/.claude/daemon-config.json" 2>/dev/null || echo "MISSING")
 
     # daemon-config.json must NOT have been modified
-    if [[ "$pre_call_mtime" == "$post_call_mtime" ]]; then
+    if [[ "$pre_call_content" == "$post_call_content" ]]; then
         assert_pass "T1.1 self-optimizer does NOT modify daemon-config.json"
     else
         assert_fail "T1.1 self-optimizer modified daemon-config.json (should write to sidecar)"

@@ -615,15 +615,21 @@ _migrate_last_optimization() {
     _lo_block=$(jq '{last_optimization: .last_optimization}' "$_base" 2>/dev/null || true)
     if [[ -n "$_lo_block" ]]; then
         local _sc_lock="${_sidecar_dir}/.tuned-config.lock"
-        local _merged
-        if [[ -f "$_sidecar" ]]; then
-            _merged=$(jq -s '.[0] * .[1]' "$_sidecar" <(echo "$_lo_block") 2>/dev/null || cat "$_sidecar")
-        else
-            _merged="$_lo_block"
-        fi
         (
-            command -v flock >/dev/null 2>&1 && flock -w 2 200 2>/dev/null || true
-            printf '%s\n' "$_merged" > "${_sidecar}.tmp.$$" && mv "${_sidecar}.tmp.$$" "$_sidecar" || true
+            if command -v flock >/dev/null 2>&1; then
+                if ! flock -w 5 200; then
+                    warn "sidecar lock contended; skipping migration write"
+                    exit 1
+                fi
+            fi
+            if [[ -f "$_sidecar" ]]; then
+                _merged=$(jq -s '.[0] * .[1]' "$_sidecar" <(echo "$_lo_block") 2>/dev/null \
+                    || cat "$_sidecar")
+            else
+                _merged="$_lo_block"
+            fi
+            printf '%s\n' "$_merged" > "${_sidecar}.tmp.$$" \
+                && mv "${_sidecar}.tmp.$$" "$_sidecar" || true
         ) 200>"$_sc_lock"
     fi
 

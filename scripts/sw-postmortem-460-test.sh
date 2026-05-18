@@ -821,6 +821,97 @@ fi
 cleanup_env
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# H2 — Concurrent-writer safety (flock read-modify-write atomicity)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_test_header "H2 — Concurrent-writer sidecar safety"
+
+setup_env
+
+_h2_sidecar="${HOME}/.shipwright/optimization/tuned-config.json"
+_h2_lock="${HOME}/.shipwright/optimization/.tuned-config.lock"
+mkdir -p "${HOME}/.shipwright/optimization"
+
+for _h2_i in $(seq 1 5); do
+    (
+        _new=$(jq -n --argjson n "$_h2_i" '{write_n: $n}' 2>/dev/null || echo "{\"write_n\": $_h2_i}")
+        (
+            if command -v flock >/dev/null 2>&1; then
+                flock -w 5 200 || exit 1
+            fi
+            _cur="{}"
+            [[ -f "$_h2_sidecar" ]] && _cur=$(cat "$_h2_sidecar" 2>/dev/null || echo "{}")
+            _merged=$(jq -s '.[0] * .[1]' <(echo "$_cur") <(echo "$_new") 2>/dev/null || echo "$_cur")
+            printf '%s\n' "$_merged" > "${_h2_sidecar}.tmp.$$" && mv "${_h2_sidecar}.tmp.$$" "$_h2_sidecar" || true
+        ) 200>"$_h2_lock"
+    ) &
+done
+wait
+
+if [[ -f "$_h2_sidecar" ]] && jq '.' "$_h2_sidecar" >/dev/null 2>&1; then
+    assert_pass "H2 concurrent writers: sidecar is valid JSON after 5 parallel writes"
+else
+    assert_fail "H2 concurrent writers: sidecar corrupted or missing after parallel writes"
+fi
+
+if [[ -f "$_h2_lock" ]]; then
+    assert_pass "H2 concurrent writers: lock file exists"
+else
+    assert_fail "H2 concurrent writers: lock file missing"
+fi
+
+cleanup_env
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# H3 — _migrate_last_optimization idempotency
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_test_header "H3 — _migrate_last_optimization idempotency"
+
+setup_env
+source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null || true
+
+if declare -f _migrate_last_optimization >/dev/null 2>&1; then
+    _h3_base="$PROJECT_ROOT/.claude/daemon-config.json"
+    _h3_sidecar="${HOME}/.shipwright/optimization/tuned-config.json"
+    mkdir -p "$(dirname "$_h3_base")" "${HOME}/.shipwright/optimization"
+
+    cat > "$_h3_base" <<'EOF'
+{"max_parallel": 2, "last_optimization": {"timestamp": "2026-01-01T00:00:00Z", "adjustments": "cfr=90"}}
+EOF
+
+    _migrate_last_optimization 2>/dev/null || true
+
+    _h3_base_has_lo=$(jq -r 'has("last_optimization")' "$_h3_base" 2>/dev/null || echo "unknown")
+    if [[ "$_h3_base_has_lo" == "false" ]]; then
+        assert_pass "H3.a first migration: last_optimization stripped from base"
+    else
+        assert_fail "H3.a first migration: last_optimization still in base (got: $_h3_base_has_lo)"
+    fi
+
+    _h3_sidecar_has_lo=$(jq -r 'has("last_optimization")' "$_h3_sidecar" 2>/dev/null || echo "unknown")
+    if [[ "$_h3_sidecar_has_lo" == "true" ]]; then
+        assert_pass "H3.b first migration: last_optimization present in sidecar"
+    else
+        assert_fail "H3.b first migration: last_optimization missing from sidecar (got: $_h3_sidecar_has_lo)"
+    fi
+
+    _h3_sidecar_before=$(cat "$_h3_sidecar" 2>/dev/null || echo "")
+    _migrate_last_optimization 2>/dev/null || true
+    _h3_sidecar_after=$(cat "$_h3_sidecar" 2>/dev/null || echo "")
+
+    if [[ "$_h3_sidecar_before" == "$_h3_sidecar_after" ]]; then
+        assert_pass "H3.c second migration: idempotent (sidecar unchanged)"
+    else
+        assert_fail "H3.c second migration: sidecar changed on second call (not idempotent)"
+    fi
+else
+    assert_fail "H3 _migrate_last_optimization not found"
+fi
+
+cleanup_env
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Results
 # ═══════════════════════════════════════════════════════════════════════════════
 

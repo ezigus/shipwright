@@ -1631,18 +1631,23 @@ optimize_adjust_audit_intensity() {
         local sidecar_dir="${HOME}/.shipwright/optimization"
         local sidecar="${sidecar_dir}/tuned-config.json"
         mkdir -p "$sidecar_dir" 2>/dev/null || true
-        local existing_sidecar="{}"
-        [[ -f "$sidecar" ]] && existing_sidecar=$(cat "$sidecar" 2>/dev/null || echo "{}")
-        local tmp_sc
-        tmp_sc=$(mktemp "${sidecar}.tmp.XXXXXX")
-        trap "rm -f '$tmp_sc'" RETURN
-        printf '%s\n' "$existing_sidecar" \
-            | jq '.intelligence.adversarial_enabled = true | .intelligence.architecture_enabled = true' \
-            > "$tmp_sc" 2>/dev/null || { rm -f "$tmp_sc"; return 0; }
         local _sc_lock="${sidecar_dir}/.tuned-config.lock"
         (
-            command -v flock >/dev/null 2>&1 && flock -w 2 200 2>/dev/null || true
-            mv "$tmp_sc" "$sidecar"
+            if command -v flock >/dev/null 2>&1; then
+                if ! flock -w 5 200; then
+                    warn "sidecar lock contended; skipping intensity write"
+                    exit 1
+                fi
+            fi
+            _es="{}"
+            [[ -f "$sidecar" ]] && _es=$(cat "$sidecar" 2>/dev/null || echo "{}")
+            _tc=$(printf '%s\n' "$_es" \
+                | jq '.intelligence.adversarial_enabled = true | .intelligence.architecture_enabled = true' \
+                2>/dev/null) || exit 0
+            _tmp=$(mktemp "${sidecar}.tmp.XXXXXX")
+            trap "rm -f '$_tmp'" EXIT
+            printf '%s\n' "$_tc" > "$_tmp" || exit 0
+            mv "$_tmp" "$sidecar"
         ) 200>"$_sc_lock"
         emit_event "optimize.audit_intensity" \
             "avg_quality=$avg_quality" \

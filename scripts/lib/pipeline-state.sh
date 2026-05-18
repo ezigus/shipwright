@@ -438,7 +438,8 @@ persist_artifacts() {
     shift
     local files=("$@")
 
-    # Migrate committed last_optimization blocks to sidecar on WIP branches
+    # Migrate committed last_optimization blocks to sidecar on WIP branches.
+    # Note: persist_artifacts only runs when CI_MODE=true; daemon startup handles local runs.
     declare -f _migrate_last_optimization >/dev/null 2>&1 && _migrate_last_optimization || true
 
     # Always force-add state files (gitignored but critical for resume)

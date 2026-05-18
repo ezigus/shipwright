@@ -634,6 +634,7 @@ _migrate_last_optimization() {
         printf '%s\n' "$_stripped" > "${_base}.tmp.$$" && mv "${_base}.tmp.$$" "$_base" || true
         if git -C "${PROJECT_ROOT:-.}" rev-parse --git-dir >/dev/null 2>&1; then
             git -C "${PROJECT_ROOT:-.}" add ".claude/daemon-config.json" 2>/dev/null || true
+            # --no-verify: infrastructure-automation commit consistent with other pipeline commits
             git -C "${PROJECT_ROOT:-.}" diff --cached --quiet 2>/dev/null || \
                 git -C "${PROJECT_ROOT:-.}" commit \
                     -m "chore: migrate last_optimization to tuned-config sidecar" \

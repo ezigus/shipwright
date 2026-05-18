@@ -645,9 +645,9 @@ if declare -f detect_stuckness >/dev/null 2>&1; then
     STUCKNESS_COUNT=0
 
     # Manually trigger stuckness by pre-populating the tracking file with
-    # 10 identical hash entries (cyclic diff signal) and 10 non-zero exit entries
+    # 10 identical hash entries in pipe-delimited format (hash|error_hash|exit_code)
     for _i in $(seq 1 10); do
-        printf 'abc123def 0\n' >> "$STUCKNESS_TRACKING_FILE"
+        printf 'abc123def|none|1\n' >> "$STUCKNESS_TRACKING_FILE"
     done
 
     detect_stuckness 2>/dev/null || true
@@ -690,39 +690,11 @@ else
     assert_fail "M6 T2.3 EXIT trap body missing from stage_compound_quality"
 fi
 
-# Behavioral: simulate the trap pattern in a subshell to verify the log is created
-export ARTIFACTS_DIR="$TEST_TEMP_DIR/artifacts"
-export ISSUE_NUMBER="42"
-mkdir -p "$ARTIFACTS_DIR"
-printf '{"findings":[{"summary":"test finding"}]}' > "$ARTIFACTS_DIR/review.findings.json"
-
-_cq_log_dir_test="${ARTIFACTS_DIR}/issue-${ISSUE_NUMBER}/logs"
-_cq_log_file_test="${_cq_log_dir_test}/compound_quality.log"
-mkdir -p "$_cq_log_dir_test"
-
-# Simulate the trap: write EXIT marker + append findings
-(
-    ARTIFACTS_DIR="$ARTIFACTS_DIR"
-    ISSUE_NUMBER="42"
-    _cq_log_file="$_cq_log_file_test"
-    printf "[compound_quality EXIT at %s]\n" "$(date -u +%FT%TZ 2>/dev/null || date)" >> "$_cq_log_file" 2>/dev/null || true
-    { cat "${ARTIFACTS_DIR}/review.findings.json" 2>/dev/null || true; } >> "$_cq_log_file" 2>/dev/null || true
-) 2>/dev/null || true
-
-if [[ -f "$_cq_log_file_test" ]]; then
-    assert_pass "M6 T2.3 compound_quality.log created by EXIT trap pattern"
-    if grep -q "compound_quality EXIT" "$_cq_log_file_test" 2>/dev/null; then
-        assert_pass "M6 T2.3 compound_quality.log contains EXIT trailer"
-    else
-        assert_fail "M6 T2.3 compound_quality.log missing EXIT trailer"
-    fi
-    if grep -q "findings" "$_cq_log_file_test" 2>/dev/null; then
-        assert_pass "M6 T2.3 compound_quality.log contains appended findings"
-    else
-        assert_fail "M6 T2.3 compound_quality.log missing appended findings content"
-    fi
+# Static check: verify the RETURN trap flush is wired in the correct location
+if grep -q 'compound_quality EXIT at' "$SCRIPT_DIR/lib/pipeline-intelligence.sh" 2>/dev/null; then
+    assert_pass "M6 T2.3 EXIT flush writes compound_quality.log path present in trap body"
 else
-    assert_fail "M6 T2.3 compound_quality.log not created"
+    assert_fail "M6 T2.3 EXIT flush path missing from stage_compound_quality trap"
 fi
 
 cleanup_env

@@ -233,7 +233,6 @@ $content"
     # ── Scope check: highest priority — overrides semantic classification ──
     # If scope-violations.txt exists and has content, route to scope revert regardless of other findings.
     local _scope_viol_file="${findings_dir}/issue-${ISSUE_NUMBER:-0}/logs/scope-violations.txt"
-    [[ ! -f "$_scope_viol_file" ]] && _scope_viol_file="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}/.scope-violations.txt"
     if [[ -f "$_scope_viol_file" ]] && [[ -s "$_scope_viol_file" ]]; then
         route="scope"
     fi
@@ -1477,11 +1476,6 @@ compound_rebuild_with_feedback() {
             ;;
     esac
 
-    # T2.1: Targeted-fix mode — extract affected files from findings for scoped prompt + bounded dispatch.
-    # Reduces worst-case per-cycle wall-clock from ~2h (45 iters full suite) to ~15m (5 iters scoped tests).
-    local targeted_files=""
-    targeted_files=$(_compound_quality_targeted_prompt "$feedback_file" "${_cq_max_iter:-5}" 2>/dev/null || true)
-
     # Bound iterations for targeted cycles — always cap regardless of outer MAX_ITERATIONS_OVERRIDE.
     local _cq_max_iter=""
     if [[ "$route" == "scope" ]]; then
@@ -1489,6 +1483,11 @@ compound_rebuild_with_feedback() {
     elif [[ -n "$blocking_items" ]]; then
         _cq_max_iter="5"
     fi
+
+    # T2.1: Targeted-fix mode — extract affected files from findings for scoped prompt + bounded dispatch.
+    # Reduces worst-case per-cycle wall-clock from ~2h (45 iters full suite) to ~15m (5 iters scoped tests).
+    local targeted_files=""
+    targeted_files=$(_compound_quality_targeted_prompt "$feedback_file" "${_cq_max_iter:-5}" 2>/dev/null || true)
 
     if [[ -n "$blocking_items" ]]; then
         GOAL="$GOAL

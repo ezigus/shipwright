@@ -696,6 +696,11 @@ safe_git_stage() {
             warn "scope guard: SCOPE_OVERRIDE active — skipping scope check"
             return 0
         fi
+        # Canonical path — matches classify_quality_findings reader and review-stage reader.
+        # Clear unconditionally so a clean commit after a revert doesn't re-trigger scope route.
+        local _viol_file="${ARTIFACTS_DIR:-${PROJECT_ROOT:-.}/.claude/pipeline-artifacts}/issue-${ISSUE_NUMBER:-0}/logs/scope-violations.txt"
+        mkdir -p "$(dirname "$_viol_file")" 2>/dev/null || true
+        rm -f "$_viol_file" 2>/dev/null || true
         local _scope_list
         _scope_list=$(_extract_scope_from_design 2>/dev/null)
         if [[ -n "$_scope_list" ]]; then
@@ -713,7 +718,6 @@ safe_git_stage() {
                             emit_event "loop.scope_violation" "file=${_vf}" "issue=${ISSUE_NUMBER:-0}" || true
                     done <<< "$_violations"
                     # Write violation summary for next iteration prompt injection
-                    local _viol_file="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}/.scope-violations.txt"
                     printf '%s\n' "$_violations" > "$_viol_file" 2>/dev/null || true
                 fi
             fi

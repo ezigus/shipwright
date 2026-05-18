@@ -99,13 +99,16 @@ _validate_dod_no_excluded_paths() {
 
         for ex_path in "${excluded_paths[@]}"; do
             local matched=false
-            # For glob paths (contain *), strip the leading **/ and match suffix.
+            # For glob paths (contain *), convert to ERE and match semantically.
             # For literal paths (no *), match the exact path string only.
             if [[ "$ex_path" == *"*"* ]]; then
-                local ex_suffix
-                ex_suffix="${ex_path##**/}"
-                ex_suffix="${ex_suffix%%/*}"
-                if echo "$line" | grep -qF "$ex_suffix"; then
+                local ex_regex
+                ex_regex="${ex_path##**/}"        # strip leading **/
+                ex_regex="${ex_regex//\./\\.}"    # escape dots
+                ex_regex="${ex_regex//\*\*/DSTAR}" # protect ** before single-* sub
+                ex_regex="${ex_regex//\*/[^/]*}"  # single * → [^/]*
+                ex_regex="${ex_regex//DSTAR/.*}"  # ** → .*
+                if echo "$line" | grep -qE "$ex_regex"; then
                     matched=true
                 fi
             else

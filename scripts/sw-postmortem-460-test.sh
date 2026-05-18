@@ -513,6 +513,102 @@ fi
 cleanup_env
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# M5 — DoD validator glob-pattern matching
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_test_header "M5 — DoD validator glob patterns"
+
+setup_env
+source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null || true
+ARTIFACTS_DIR="$TEST_TEMP_DIR/project/artifacts"
+mkdir -p "$ARTIFACTS_DIR"
+ISSUE_NUMBER="123"
+BASE_BRANCH="main"
+NO_GITHUB="true"
+source "$SCRIPT_DIR/lib/pipeline-stages.sh" 2>/dev/null || true
+
+if declare -f _validate_dod_no_excluded_paths >/dev/null 2>&1; then
+    # M5.a — glob path: DoD cites a filename matching a runtime-excluded glob (e.g. events-2026.jsonl)
+    cat > "$ARTIFACTS_DIR/dod.md" <<'EOF'
+- Branch diff includes .shipwright/events-2026.jsonl {auto:diff}
+EOF
+    validator_exit=0
+    _validate_dod_no_excluded_paths "$ARTIFACTS_DIR/dod.md" 2>/dev/null || validator_exit=$?
+    if [[ "$validator_exit" -ne 0 ]]; then
+        assert_pass "M5.a glob-matched runtime-excluded path causes validator failure"
+    else
+        assert_fail "M5.a DoD with glob-matched excluded path should fail validator" \
+            "events-2026.jsonl matches events-*.jsonl pattern but validator returned 0"
+    fi
+
+    # M5.b — glob path: DoD cites a non-excluded file matching the same prefix — should pass
+    cat > "$ARTIFACTS_DIR/dod.md" <<'EOF'
+- Branch diff includes scripts/lib/cost/share.sh {auto:diff}
+EOF
+    validator_exit=0
+    _validate_dod_no_excluded_paths "$ARTIFACTS_DIR/dod.md" 2>/dev/null || validator_exit=$?
+    assert_exit_code "M5.b non-excluded path still passes validator" "0" "$validator_exit"
+else
+    assert_fail "M5 _validate_dod_no_excluded_paths function not found"
+fi
+
+cleanup_env
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# B2 — scope-violations.txt sticky-route regression
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_test_header "B2 — scope-violations.txt clear-on-entry"
+
+setup_env
+source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null || true
+
+if declare -f safe_git_stage >/dev/null 2>&1; then
+    export ARTIFACTS_DIR="$TEST_TEMP_DIR/project/artifacts"
+    export ISSUE_NUMBER="777"
+    export SCOPE_GUARD_ENABLED="true"
+    export PROJECT_ROOT="$TEST_TEMP_DIR/project"
+    canonical_viol="${ARTIFACTS_DIR}/issue-${ISSUE_NUMBER}/logs/scope-violations.txt"
+    mkdir -p "$(dirname "$canonical_viol")"
+
+    # Pre-seed a stale violation file from a previous cycle
+    printf 'stale/violation.sh\n' > "$canonical_viol"
+
+    # Create a git repo with no violations (clean commit)
+    mkdir -p "$TEST_TEMP_DIR/project"
+    git -C "$TEST_TEMP_DIR/project" init -q 2>/dev/null || true
+    git -C "$TEST_TEMP_DIR/project" config user.email "test@test.com" 2>/dev/null || true
+    git -C "$TEST_TEMP_DIR/project" config user.name "Test" 2>/dev/null || true
+    mkdir -p "$TEST_TEMP_DIR/project/scripts/lib/cost"
+    echo "x" > "$TEST_TEMP_DIR/project/scripts/lib/cost/share.sh"
+    git -C "$TEST_TEMP_DIR/project" add . 2>/dev/null || true
+
+    # Create a design.md with a scope block so _extract_scope_from_design returns something
+    mkdir -p "$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/issue-777"
+    cat > "$TEST_TEMP_DIR/project/.claude/pipeline-artifacts/issue-777/design.md" <<'EOF'
+## Scope (machine-parseable; do not edit by hand)
+```scope
+scripts/lib/cost/share.sh
+```
+EOF
+
+    # Call safe_git_stage — no violations since staged file is in-scope
+    safe_git_stage "$TEST_TEMP_DIR/project" 2>/dev/null || true
+
+    # After a clean safe_git_stage, the stale violations file must be gone
+    if [[ ! -f "$canonical_viol" ]]; then
+        assert_pass "B2 stale scope-violations.txt cleared after clean commit"
+    else
+        assert_fail "B2 scope-violations.txt must be cleared on clean safe_git_stage" \
+            "file still exists: $canonical_viol"
+    fi
+else
+    assert_pass "B2 safe_git_stage not loaded in this env — skipping sticky-route test"
+fi
+
+cleanup_env
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Results
 # ═══════════════════════════════════════════════════════════════════════════════
 

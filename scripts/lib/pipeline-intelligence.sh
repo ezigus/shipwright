@@ -1476,26 +1476,11 @@ compound_rebuild_with_feedback() {
             ;;
     esac
 
-    # Bound iterations for targeted cycles — always cap regardless of outer MAX_ITERATIONS_OVERRIDE.
-    local _cq_max_iter=""
-    if [[ "$route" == "scope" ]]; then
-        _cq_max_iter="3"
-    elif [[ -n "$blocking_items" ]]; then
-        _cq_max_iter="5"
-    fi
-
-    # T2.1: Targeted-fix mode — extract affected files from findings for scoped prompt + bounded dispatch.
-    # Reduces worst-case per-cycle wall-clock from ~2h (45 iters full suite) to ~15m (5 iters scoped tests).
-    local targeted_files=""
-    targeted_files=$(_compound_quality_targeted_prompt "$feedback_file" "${_cq_max_iter:-5}" 2>/dev/null || true)
-
     if [[ -n "$blocking_items" ]]; then
         GOAL="$GOAL
 
 BLOCKING ISSUES — fix all of these before merge:
 $blocking_items
-${targeted_files:+
-${targeted_files}}
 
 Full review context:
 $feedback_content
@@ -1505,45 +1490,19 @@ ${route_instruction}"
         GOAL="$GOAL
 
 IMPORTANT — Compound quality review found issues (route: ${route}). Fix ALL of these:
-${targeted_files:+${targeted_files}
-}
 $feedback_content
 
 ${route_instruction}"
     fi
 
-    # Re-run self-healing build→test (bounded iterations for targeted cycles)
+    # Re-run self-healing build→test with findings injected into GOAL.
+    # The build loop's own scope guard and DoD enforcement govern the cycle —
+    # no iteration cap, no targeted-file list (both regressed scope enforcement).
     info "Rebuilding with quality feedback (route: ${route})..."
-    local _save_max_iter="${MAX_ITERATIONS_OVERRIDE:-}"
-    [[ -n "$_cq_max_iter" ]] && MAX_ITERATIONS_OVERRIDE="$_cq_max_iter"
     local _rebuild_rc=0
     self_healing_build_test || _rebuild_rc=$?
-    MAX_ITERATIONS_OVERRIDE="$_save_max_iter"
     GOAL="$original_goal"
     return "$_rebuild_rc"
-}
-
-# _compound_quality_targeted_prompt — Extract affected files from a findings file and
-# compose a TARGETED FIX block listing exact files + iteration budget.
-# Usage: _compound_quality_targeted_prompt <feedback_file> [max_iterations]
-_compound_quality_targeted_prompt() {
-    local feedback_file="${1:-}"
-    local max_iter="${2:-5}"
-    [[ -f "$feedback_file" ]] || return 0
-
-    local affected_files
-    # Extract file paths: look for lines with path-like tokens (contains / or ends with known extension)
-    affected_files=$(grep -oE '[a-zA-Z0-9_./-]+\.(sh|js|cjs|mjs|ts|tsx|py|go|rs|rb|swift|yaml|yml|json|md)' \
-        "$feedback_file" 2>/dev/null | sort -u | head -20 || true)
-    [[ -z "$affected_files" ]] && return 0
-
-    local file_count
-    file_count=$(printf '%s\n' "$affected_files" | wc -l | tr -d ' ')
-    local file_list
-    file_list=$(printf '%s\n' "$affected_files" | sed 's/^/  - /')
-
-    printf 'TARGETED FIX — %s file(s) cited in findings:\n%s\nModify ONLY these files. Iteration budget for this cycle: %s max. Do NOT refactor unrelated code.\n' \
-        "$file_count" "$file_list" "$max_iter"
 }
 
 # Removes negative-review-cycle*.md files from ARTIFACTS_DIR.

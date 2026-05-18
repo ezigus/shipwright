@@ -2,7 +2,7 @@
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  sw-postmortem-460-test — Behavioral tests for pipeline hardening fixes  ║
 # ║  Covers: T1.1 daemon-config sidecar, T1.2 scope guardrail,               ║
-# ║          T1.3 DoD exclusion validator, T2.1 targeted-fix mode,            ║
+# ║          T1.3 DoD exclusion validator,                                    ║
 # ║          T2.2 stuckness snapshot, T2.4 scope-creep review,                ║
 # ║          T2.5 fingerprintContent hash correctness                         ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
@@ -281,42 +281,6 @@ rm -f "$ARTIFACTS_DIR/dod.md"
 validator_exit=0
 _validate_dod_no_excluded_paths "$ARTIFACTS_DIR/dod.md" 2>/dev/null || validator_exit=$?
 assert_exit_code "T1.3.e missing dod.md passes validator (fail-open)" "0" "$validator_exit"
-
-cleanup_env
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# T2.1 — compound_quality targeted-fix mode prompts
-# ═══════════════════════════════════════════════════════════════════════════════
-
-print_test_header "T2.1 — Compound quality TARGETED FIX prompt block"
-
-setup_env
-source "$SCRIPT_DIR/lib/helpers.sh" 2>/dev/null || true
-
-# _compound_quality_targeted_prompt should produce a TARGETED FIX block
-# when given a findings file with file-path references.
-ARTIFACTS_DIR="$TEST_TEMP_DIR/project/.claude/pipeline-artifacts"
-mkdir -p "$ARTIFACTS_DIR"
-source "$SCRIPT_DIR/lib/pipeline-stages.sh" 2>/dev/null || true
-# pipeline-intelligence.sh defines _compound_quality_targeted_prompt (T2.1)
-# It has complex runtime deps; source it with guards so missing vars are tolerated.
-PIPELINE_CONFIG="${PIPELINE_CONFIG:-}" \
-source "$SCRIPT_DIR/lib/pipeline-intelligence.sh" 2>/dev/null || true
-
-cat > "$TEST_TEMP_DIR/findings.txt" <<'EOF'
-[CRITICAL] scripts/lib/cost/share.sh:45 — null pointer dereference in cost merge
-[CRITICAL] scripts/sw-pipeline.sh:207 — execSync with shell interpolation
-EOF
-
-# Call the targeted prompt builder
-if declare -f _compound_quality_targeted_prompt >/dev/null 2>&1; then
-    targeted_prompt=$(_compound_quality_targeted_prompt "$TEST_TEMP_DIR/findings.txt" 2>/dev/null)
-    assert_contains "T2.1 prompt contains TARGETED FIX" "$targeted_prompt" "TARGETED FIX"
-    assert_contains "T2.1 prompt lists affected files" "$targeted_prompt" "scripts/lib/cost/share.sh"
-    assert_contains "T2.1 prompt includes iteration budget" "$targeted_prompt" "budget"
-else
-    assert_fail "T2.1 _compound_quality_targeted_prompt function not found — T2.1 not implemented"
-fi
 
 cleanup_env
 
@@ -928,21 +892,6 @@ else
 fi
 
 cleanup_env
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# B1 — _cq_max_iter assigned before use (static ordering check)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-print_test_header "B1 — _cq_max_iter assigned before use"
-
-_b1_file="$SCRIPT_DIR/lib/pipeline-intelligence.sh"
-_b1_assign_line=$(grep -n 'local _cq_max_iter' "$_b1_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
-_b1_use_line=$(grep -n '_compound_quality_targeted_prompt.*_cq_max_iter' "$_b1_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
-if [[ -n "$_b1_assign_line" && -n "$_b1_use_line" && "$_b1_assign_line" -lt "$_b1_use_line" ]]; then
-    assert_pass "B1: _cq_max_iter assigned (L${_b1_assign_line}) before use (L${_b1_use_line})"
-else
-    assert_fail "B1: _cq_max_iter ordering regressed (assign=${_b1_assign_line} use=${_b1_use_line})"
-fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # M7 — Fail-closed scope count check (behavioral)

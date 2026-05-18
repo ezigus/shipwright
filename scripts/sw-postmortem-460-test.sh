@@ -852,9 +852,7 @@ wait
 
 _h2_key_count=$(jq '[keys[] | select(startswith("write_"))] | length' \
     "$_h2_sidecar" 2>/dev/null || echo 0)
-if ! command -v flock >/dev/null 2>&1; then
-    assert_pass "H2 serialization: flock unavailable on this platform — skipping key-count assertion"
-elif [[ "$_h2_key_count" -eq 5 ]]; then
+if [[ "$_h2_key_count" -eq 5 ]]; then
     assert_pass "H2 serialization: all 5 writer keys present (no lost-update)"
 else
     assert_fail "H2 serialization: only $_h2_key_count/5 keys found (lost-update race)"

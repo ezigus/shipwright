@@ -593,7 +593,7 @@ _load_daemon_config() {
         (
             command -v flock >/dev/null 2>&1 && flock -s -w 2 200 2>/dev/null || true
             jq -s '.[0] * .[1]' "$base_config" "$sidecar" 2>/dev/null || cat "$base_config"
-        ) 200>"$_sc_lock"
+        ) 200>>"$_sc_lock"
     else
         cat "$base_config"
     fi

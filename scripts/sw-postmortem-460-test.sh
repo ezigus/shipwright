@@ -843,7 +843,8 @@ for _h2_i in $(seq 1 5); do
             _cur="{}"
             [[ -f "$_h2_sidecar" ]] && _cur=$(cat "$_h2_sidecar" 2>/dev/null || echo "{}")
             _merged=$(jq -s '.[0] * .[1]' <(echo "$_cur") <(echo "$_new") 2>/dev/null || echo "$_cur")
-            printf '%s\n' "$_merged" > "${_h2_sidecar}.tmp.$$" && mv "${_h2_sidecar}.tmp.$$" "$_h2_sidecar" || true
+            _h2_tmp=$(mktemp "${_h2_sidecar}.tmp.XXXXXX")
+            printf '%s\n' "$_merged" > "$_h2_tmp" && mv "$_h2_tmp" "$_h2_sidecar" || rm -f "$_h2_tmp"
         ) 200>"$_h2_lock"
     ) &
 done
@@ -883,6 +884,13 @@ if declare -f _migrate_last_optimization >/dev/null 2>&1; then
 {"max_parallel": 2, "last_optimization": {"timestamp": "2026-01-01T00:00:00Z", "adjustments": "cfr=90"}}
 EOF
 
+    # Init git repo so the function's git-commit path is exercised
+    git -C "$PROJECT_ROOT" init -q 2>/dev/null || true
+    git -C "$PROJECT_ROOT" config user.email "t@t.com" 2>/dev/null || true
+    git -C "$PROJECT_ROOT" config user.name "T" 2>/dev/null || true
+    git -C "$PROJECT_ROOT" add .claude/daemon-config.json 2>/dev/null || true
+    git -C "$PROJECT_ROOT" commit -m "init" --no-verify 2>/dev/null || true
+
     _migrate_last_optimization 2>/dev/null || true
 
     _h3_base_has_lo=$(jq -r 'has("last_optimization")' "$_h3_base" 2>/dev/null || echo "unknown")
@@ -897,6 +905,13 @@ EOF
         assert_pass "H3.b first migration: last_optimization present in sidecar"
     else
         assert_fail "H3.b first migration: last_optimization missing from sidecar (got: $_h3_sidecar_has_lo)"
+    fi
+
+    _h3_git_log=$(git -C "$PROJECT_ROOT" log --oneline 2>/dev/null || echo "")
+    if echo "$_h3_git_log" | grep -q "migrate last_optimization"; then
+        assert_pass "H3.d migration commit created by git-commit path"
+    else
+        assert_fail "H3.d git-commit path: migration commit not found in log"
     fi
 
     _h3_sidecar_before=$(cat "$_h3_sidecar" 2>/dev/null || echo "")

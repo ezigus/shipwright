@@ -46,7 +46,9 @@ setup_env() {
 }
 
 cleanup_env() {
-    [[ -n "$TEST_TEMP_DIR" && -d "$TEST_TEMP_DIR" ]] && rm -rf "$TEST_TEMP_DIR"
+    if [[ -n "${TEST_TEMP_DIR:-}" && -d "$TEST_TEMP_DIR" ]]; then
+        rm -rf "$TEST_TEMP_DIR"
+    fi
 }
 _test_cleanup_hook() { cleanup_env; }
 

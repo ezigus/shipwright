@@ -86,7 +86,8 @@
     "context_trim_hotspot_files": 5,
     "context_trim_test_lines": 50,
     "dod_diff_max_lines": 3000,
-    "holistic_diff_max_lines": 1000
+    "holistic_diff_max_lines": 1000,
+    "inner_stage_comments": "off"
   },
   "ai": {
     "provider": {

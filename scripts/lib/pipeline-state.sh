@@ -7,6 +7,11 @@ _PIPELINE_STATE_LOADED=1
 # shellcheck source=goal-sanitize.sh
 [[ -f "$(dirname "${BASH_SOURCE[0]}")/goal-sanitize.sh" ]] && source "$(dirname "${BASH_SOURCE[0]}")/goal-sanitize.sh"
 
+# Source scope_label into this process (also sourced by sw-loop.sh for cross-process label availability)
+_SCOPE_LABEL_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scope-label.sh"
+[[ -f "$_SCOPE_LABEL_SH" ]] && source "$_SCOPE_LABEL_SH"
+unset _SCOPE_LABEL_SH
+
 # Ensure _trim is available (normally provided by helpers.sh, but this file
 # may be sourced in test harnesses that stub helpers instead of sourcing them).
 if ! type _trim >/dev/null 2>&1; then
@@ -51,31 +56,7 @@ get_stage_status() {
 set_outer_stage() { OUTER_STAGE="$1"; INNER_STAGE=""; write_state; }
 clear_outer_stage() { OUTER_STAGE=""; INNER_STAGE=""; write_state; }
 
-# Returns a human-readable label for the current execution scope.
-# Examples:
-#   Top-level:               "Build Iteration 1"
-#   Inside compound_quality: "Compound Quality 2 — Build Iteration 3"
-scope_label() {
-    local outer="${OUTER_STAGE:-}"
-    local inner="${INNER_STAGE:-}"
-    # Bash 3.2 compat: use awk for capitalization instead of ${var^}
-    local build_iter
-    build_iter=$(( ${SELF_HEAL_COUNT:-0} + 1 ))
-    local cq_cycle="${COMPOUND_QUALITY_CYCLE:-1}"
-
-    if [[ -n "$outer" ]]; then
-        # e.g. "compound_quality" -> "Compound Quality"
-        local outer_pretty
-        outer_pretty=$(echo "$outer" | tr '_' ' ' | awk '{for(i=1;i<=NF;i++){$i=toupper(substr($i,1,1)) substr($i,2)}} 1')
-        local inner_pretty="${inner:-build}"
-        inner_pretty=$(echo "$inner_pretty" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
-        echo "${outer_pretty} ${cq_cycle} — ${inner_pretty} Iteration ${build_iter}"
-    else
-        local top_pretty="${inner:-Build}"
-        top_pretty=$(echo "$top_pretty" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
-        echo "${top_pretty} Iteration ${build_iter}"
-    fi
-}
+# scope_label is defined in scope-label.sh (sourced above).
 
 set_stage_status() {
     local stage_id="$1" status="$2"

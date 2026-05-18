@@ -71,6 +71,29 @@ gh_comment_issue() {
     _timeout 30 gh issue comment "$issue_num" --body "$body" 2>/dev/null || true
 }
 
+# Inner-stage event poster for compound_quality / build loop observability.
+# Args: $1=scope (outer|inner), $2=stage, $3=event, $4=label
+# Posts to GitHub issue if LOOP_INNER_STAGE_COMMENTS=github|both and CI_MODE and ISSUE_NUMBER set.
+# Always emits JSONL via emit_event regardless of comment toggle.
+_emit_inner_stage_event() {
+    local _scope="${1:-inner}" _stage="${2:-build}" _event="${3:-status}" _label="${4:-}"
+    local _marker="SHIPWRIGHT-STAGE: ${_scope}:${_stage}:${_event}"
+
+    # Always emit JSONL (unconditional)
+    type emit_event >/dev/null 2>&1 && \
+        emit_event "loop.inner_stage" "scope=${_scope}" "stage=${_stage}" "event=${_event}" "label=${_label}"
+
+    # Post to GitHub only if configured and context available
+    local _comments_cfg="${LOOP_INNER_STAGE_COMMENTS:-off}"
+    if [[ "$_comments_cfg" == "github" || "$_comments_cfg" == "both" ]]; then
+        if [[ -n "${CI_MODE:-}" && -n "${ISSUE_NUMBER:-}" ]]; then
+            local _body="<!-- ${_marker} -->"$'\n'"**[${_scope}/${_stage}]** ${_label:-${_event}}"
+            type gh_comment_issue >/dev/null 2>&1 && \
+                gh_comment_issue "${ISSUE_NUMBER}" "${_body}" 2>/dev/null || true
+        fi
+    fi
+}
+
 # Post a progress-tracking comment and save its ID for later updates
 # Usage: gh_post_progress <issue_number> <body>
 gh_post_progress() {

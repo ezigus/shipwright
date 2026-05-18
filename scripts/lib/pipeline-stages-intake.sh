@@ -747,6 +747,13 @@ CC_TASKS_EOF
     }
     _validate_dod_md "$ARTIFACTS_DIR/dod.md" || return 1
 
+    # Validate {auto:diff} DoD items do not reference pipeline-excluded paths.
+    # Uses _validate_dod_no_excluded_paths from pipeline-stages.sh (already sourced).
+    # Fail-open if the helper is not yet available (e.g. during bootstrap).
+    if declare -f _validate_dod_no_excluded_paths >/dev/null 2>&1; then
+        _validate_dod_no_excluded_paths "$ARTIFACTS_DIR/dod.md" || return 1
+    fi
+
     # Classify DoD items as "auto" or "manual" for autonomous pipeline mode.
     # Items tagged {manual} or matching human-verification heuristics are rewritten
     # as [~] lines that the DoD audit skips in autonomous mode.

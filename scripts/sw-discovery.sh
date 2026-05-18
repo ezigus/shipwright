@@ -52,8 +52,12 @@ DISCOVERY_TTL_SECS=$((24 * 60 * 60))  # 24 hours default
 # ─── Remote Discovery Server (optional) ─────────────────────────────────────
 # Set via env var or daemon-config.json: "discovery_server_url"
 DISCOVERY_SERVER_URL="${DISCOVERY_SERVER_URL:-}"
-if [[ -z "$DISCOVERY_SERVER_URL" && -f ".claude/daemon-config.json" ]]; then
-    DISCOVERY_SERVER_URL=$(jq -r '.discovery_server_url // ""' ".claude/daemon-config.json" 2>/dev/null || true)
+if [[ -z "$DISCOVERY_SERVER_URL" ]]; then
+    if declare -f _load_daemon_config >/dev/null 2>&1; then
+        DISCOVERY_SERVER_URL=$(_load_daemon_config | jq -r '.discovery_server_url // ""' 2>/dev/null || true)
+    elif [[ -f ".claude/daemon-config.json" ]]; then
+        DISCOVERY_SERVER_URL=$(jq -r '.discovery_server_url // ""' ".claude/daemon-config.json" 2>/dev/null || true)
+    fi
 fi
 
 ensure_discoveries_dir() {

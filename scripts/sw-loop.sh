@@ -2764,6 +2764,12 @@ PROMPT
     # awk yields 0 in that case, which false-positively looks like a no-op.
     # If shortstat output is non-empty (something changed) but awk found nothing, count it as 1.
     [[ "$_diff_lines" -eq 0 && -n "$_diff_stat" ]] && _diff_lines=1
+    # Belt-and-suspenders: some git versions omit --shortstat entry for binary-only changes.
+    if [[ "$_diff_lines" -eq 0 && -n "${_iter_start_sha:-}" ]]; then
+        if git diff --stat "${_iter_start_sha}" HEAD 2>/dev/null | grep -q 'Bin'; then
+            _diff_lines=1
+        fi
+    fi
 
     if [[ "$_new_commits" -gt 0 ]] || \
        { [[ "$_diff_lines" -ge 10 ]] && [[ "$_iter_seconds" -ge 60 ]]; }; then

@@ -438,6 +438,10 @@ persist_artifacts() {
     shift
     local files=("$@")
 
+    # Migrate committed last_optimization blocks to sidecar on WIP branches.
+    # Note: persist_artifacts only runs when CI_MODE=true; daemon startup handles local runs.
+    declare -f _migrate_last_optimization >/dev/null 2>&1 && _migrate_last_optimization || true
+
     # Always force-add state files (gitignored but critical for resume)
     git add -f ".claude/pipeline-state.md" ".claude/pipeline-status.json" 2>/dev/null || true
 
@@ -458,7 +462,6 @@ persist_artifacts() {
         done
         if [[ ${#to_add[@]} -gt 0 ]]; then
             git add "${to_add[@]}" 2>/dev/null || true
-            git restore --staged .claude/daemon-config.json 2>/dev/null || true
         fi
     fi
 

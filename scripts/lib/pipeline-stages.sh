@@ -33,6 +33,101 @@ TEST_CMD="${TEST_CMD:-}"
 GIT_BRANCH="${GIT_BRANCH:-}"
 TASKS_FILE="${TASKS_FILE:-}"
 
+# ─── Scope helpers (T1.2 / T2.4) ───────────────────────────────────────────
+
+# _extract_scope_from_design — Extract file paths from a fenced ```scope block in design.md.
+# Usage: _extract_scope_from_design [artifacts_dir]
+# Output: newline-separated file paths (blank lines stripped); empty when block absent or file missing.
+# Fail-open: returns empty on any error so callers can skip the guard gracefully.
+_extract_scope_from_design() {
+    local artifacts_dir="${1:-${ARTIFACTS_DIR:-${PROJECT_ROOT:-.}/.claude/pipeline-artifacts}}"
+    local issue_suffix="${ISSUE_NUMBER:+/issue-${ISSUE_NUMBER}}"
+    local design_file="${artifacts_dir}${issue_suffix}/design.md"
+    [[ -f "$design_file" ]] || design_file="${artifacts_dir}/design.md"
+    [[ -f "$design_file" ]] || return 0
+
+    awk '/^```scope[[:space:]]*$/{found=1; next} found && /^```/{exit} found{print}' \
+        "$design_file" 2>/dev/null \
+        | grep -v '^[[:space:]]*$' || true
+}
+
+# _compute_scope_violations — Compare changed_files against scope_allowlist.
+# Usage: _compute_scope_violations <changed_files_newline_sep> <scope_allowlist_newline_sep>
+# Output: newline-separated paths that are in changed but NOT in allowlist; empty when no violations.
+_compute_scope_violations() {
+    local changed="${1:-}"
+    local allowlist="${2:-}"
+    [[ -z "$changed" ]] && return 0
+    [[ -z "$allowlist" ]] && { printf '%s\n' "$changed"; return 0; }
+    comm -23 \
+        <(printf '%s\n' "$changed" | sort -u) \
+        <(printf '%s\n' "$allowlist" | sort -u) \
+        2>/dev/null || true
+}
+
+# _validate_dod_no_excluded_paths — Fail if any {auto:diff} DoD line references a path
+# that lives in _GIT_BOOKKEEPING_FILES or _GIT_RUNTIME_EXCLUDES.
+# Called after plan-stage DoD extraction to catch unsatisfiable auto-checks early.
+# Usage: _validate_dod_no_excluded_paths <dod_file>
+# Returns 0 on pass, 1 when at least one excluded path is cited.
+_validate_dod_no_excluded_paths() {
+    local dod_file="${1:-}"
+    [[ -f "$dod_file" ]] || return 0
+    [[ -s "$dod_file" ]] || return 0
+
+    # Collect all paths from _GIT_BOOKKEEPING_FILES and _GIT_RUNTIME_EXCLUDES.
+    # These arrays are defined in helpers.sh and available at call time.
+    local excluded_paths=()
+    if declare -p _GIT_BOOKKEEPING_FILES >/dev/null 2>&1; then
+        for _bf in "${_GIT_BOOKKEEPING_FILES[@]+"${_GIT_BOOKKEEPING_FILES[@]}"}"; do
+            excluded_paths+=("$_bf")
+        done
+    fi
+    if declare -p _GIT_RUNTIME_EXCLUDES >/dev/null 2>&1; then
+        for _rf in "${_GIT_RUNTIME_EXCLUDES[@]+"${_GIT_RUNTIME_EXCLUDES[@]}"}"; do
+            excluded_paths+=("$_rf")
+        done
+    fi
+    [[ "${#excluded_paths[@]}" -eq 0 ]] && return 0
+
+    # Extract all {auto:diff} lines from dod.md, then look for excluded names within them.
+    local has_violation=false
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        # Only inspect lines that contain the {auto:diff} tag
+        echo "$line" | grep -qF '{auto:diff}' || continue
+
+        for ex_path in "${excluded_paths[@]}"; do
+            local matched=false
+            # For glob paths (contain *), convert to ERE and match semantically.
+            # For literal paths (no *), match the exact path string only.
+            if [[ "$ex_path" == *"*"* ]]; then
+                local ex_regex
+                ex_regex="${ex_path##**/}"        # strip leading **/
+                ex_regex="${ex_regex//\./\\.}"    # escape dots
+                ex_regex="${ex_regex//\*\*/DSTAR}" # protect ** before single-* sub
+                ex_regex="${ex_regex//\*/[^/]*}"  # single * → [^/]*
+                ex_regex="${ex_regex//DSTAR/.*}"  # ** → .*
+                if echo "$line" | grep -qE "$ex_regex"; then
+                    matched=true
+                fi
+            else
+                if echo "$line" | grep -qF "$ex_path"; then
+                    matched=true
+                fi
+            fi
+            if [[ "$matched" == "true" ]]; then
+                error "DoD validator: {auto:diff} item references excluded path '${ex_path}'." \
+                    "Remove it from the DoD, or convert to a non-{auto:diff} check."
+                has_violation=true
+            fi
+        done
+    done < "$dod_file"
+
+    [[ "$has_violation" == "true" ]] && return 1
+    return 0
+}
+
 # ─── Context pruning helpers ────────────────────────────────────────────────
 
 # prune_context_section — Intelligently truncate a context section to fit a char budget.

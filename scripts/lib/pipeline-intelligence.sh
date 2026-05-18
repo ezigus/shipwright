@@ -230,6 +230,13 @@ $content"
         correctness_count=$((correctness_count + ${neg_corr:-0}))
     fi
 
+    # ── Scope check: highest priority — overrides semantic classification ──
+    # If scope-violations.txt exists and has content, route to scope revert regardless of other findings.
+    local _scope_viol_file="${findings_dir}/issue-${ISSUE_NUMBER:-0}/logs/scope-violations.txt"
+    if [[ -f "$_scope_viol_file" ]] && [[ -s "$_scope_viol_file" ]]; then
+        route="scope"
+    fi
+
     # ── Determine routing ──
     # Use semantic classification when available; else fall back to grep-derived priority
     local needs_backtrack=false
@@ -1422,6 +1429,10 @@ compound_rebuild_with_feedback() {
     local original_goal="$GOAL"
     local _saved_current_stage="${CURRENT_STAGE:-}"
     local _saved_pipeline_status="${PIPELINE_STATUS:-}"
+    # Capture any outer RETURN trap (e.g. stage_compound_quality log-flush trap) so we
+    # can restore it after clearing our own, rather than dropping it with `trap - RETURN`.
+    local _outer_return_trap
+    _outer_return_trap=$(trap -p RETURN 2>/dev/null || true)
     trap '{
         # Preserve PIPELINE_STUCK_CYCLING if the inner cycle set it (retry-cap hit);
         # restoring status unconditionally would mask the stuck indicator.
@@ -1434,6 +1445,8 @@ compound_rebuild_with_feedback() {
         clear_outer_stage
         log_stage "compound_quality" "rebuild cycle '"${cycle_num}"' finished"
         trap - RETURN
+        # Restore outer trap (e.g. stage_compound_quality log-flush trap)
+        [[ -n "$_outer_return_trap" ]] && eval "$_outer_return_trap" 2>/dev/null || true
     }' RETURN
     local feedback_content
     feedback_content=$(cat "$feedback_file")
@@ -1455,16 +1468,34 @@ compound_rebuild_with_feedback() {
         architecture)
             route_instruction="ARCHITECTURE: Fix structural issues. Check dependency direction, layer boundaries, and separation of concerns."
             ;;
+        scope)
+            route_instruction="SCOPE VIOLATION: Out-of-scope edits found. Revert these files to their main-branch state entirely — do not 'fix' them, just remove your changes. If a file mixes on-scope and off-scope changes, revert ONLY the off-scope hunks. If the change is genuinely required as new scope, STOP and emit: <<<LOOP:SCOPE_ESCALATION:reason>>>. Do NOT introduce new refactoring."
+            ;;
         *)
             route_instruction="Fix every issue listed above while keeping all existing functionality working."
             ;;
     esac
+
+    # Bound iterations for targeted cycles — always cap regardless of outer MAX_ITERATIONS_OVERRIDE.
+    local _cq_max_iter=""
+    if [[ "$route" == "scope" ]]; then
+        _cq_max_iter="3"
+    elif [[ -n "$blocking_items" ]]; then
+        _cq_max_iter="5"
+    fi
+
+    # T2.1: Targeted-fix mode — extract affected files from findings for scoped prompt + bounded dispatch.
+    # Reduces worst-case per-cycle wall-clock from ~2h (45 iters full suite) to ~15m (5 iters scoped tests).
+    local targeted_files=""
+    targeted_files=$(_compound_quality_targeted_prompt "$feedback_file" "${_cq_max_iter:-5}" 2>/dev/null || true)
 
     if [[ -n "$blocking_items" ]]; then
         GOAL="$GOAL
 
 BLOCKING ISSUES — fix all of these before merge:
 $blocking_items
+${targeted_files:+
+${targeted_files}}
 
 Full review context:
 $feedback_content
@@ -1474,20 +1505,45 @@ ${route_instruction}"
         GOAL="$GOAL
 
 IMPORTANT — Compound quality review found issues (route: ${route}). Fix ALL of these:
+${targeted_files:+${targeted_files}
+}
 $feedback_content
 
 ${route_instruction}"
     fi
 
-    # Re-run self-healing build→test
+    # Re-run self-healing build→test (bounded iterations for targeted cycles)
     info "Rebuilding with quality feedback (route: ${route})..."
-    if self_healing_build_test; then
-        GOAL="$original_goal"
-        return 0
-    else
-        GOAL="$original_goal"
-        return 1
-    fi
+    local _save_max_iter="${MAX_ITERATIONS_OVERRIDE:-}"
+    [[ -n "$_cq_max_iter" ]] && MAX_ITERATIONS_OVERRIDE="$_cq_max_iter"
+    local _rebuild_rc=0
+    self_healing_build_test || _rebuild_rc=$?
+    MAX_ITERATIONS_OVERRIDE="$_save_max_iter"
+    GOAL="$original_goal"
+    return "$_rebuild_rc"
+}
+
+# _compound_quality_targeted_prompt — Extract affected files from a findings file and
+# compose a TARGETED FIX block listing exact files + iteration budget.
+# Usage: _compound_quality_targeted_prompt <feedback_file> [max_iterations]
+_compound_quality_targeted_prompt() {
+    local feedback_file="${1:-}"
+    local max_iter="${2:-5}"
+    [[ -f "$feedback_file" ]] || return 0
+
+    local affected_files
+    # Extract file paths: look for lines with path-like tokens (contains / or ends with known extension)
+    affected_files=$(grep -oE '[a-zA-Z0-9_./-]+\.(sh|js|cjs|mjs|ts|tsx|py|go|rs|rb|swift|yaml|yml|json|md)' \
+        "$feedback_file" 2>/dev/null | sort -u | head -20 || true)
+    [[ -z "$affected_files" ]] && return 0
+
+    local file_count
+    file_count=$(printf '%s\n' "$affected_files" | wc -l | tr -d ' ')
+    local file_list
+    file_list=$(printf '%s\n' "$affected_files" | sed 's/^/  - /')
+
+    printf 'TARGETED FIX — %s file(s) cited in findings:\n%s\nModify ONLY these files. Iteration budget for this cycle: %s max. Do NOT refactor unrelated code.\n' \
+        "$file_count" "$file_list" "$max_iter"
 }
 
 # Removes negative-review-cycle*.md files from ARTIFACTS_DIR.
@@ -1548,6 +1604,20 @@ pipeline_run_ruflo_cq_hive() {
 
 stage_compound_quality() {
     CURRENT_STAGE_ID="compound_quality"
+
+    # T2.3: Exit trap — flush compound_quality.log to pipeline artifacts on any exit path
+    # (including abort / hard timeout), so postmortem diagnosis always has findings.
+    local _cq_log_dir="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}/issue-${ISSUE_NUMBER:-0}/logs"
+    local _cq_log_file="${_cq_log_dir}/compound_quality.log"
+    local _cq_trap_installed=false
+    if mkdir -p "$_cq_log_dir" 2>/dev/null; then
+        _cq_trap_installed=true
+        trap '{
+            printf "[compound_quality EXIT at %s]\n" "$(date -u +%FT%TZ 2>/dev/null || date)" >> "$_cq_log_file" 2>/dev/null || true
+            { cat "${ARTIFACTS_DIR}/review.findings.json" 2>/dev/null || true; } >> "$_cq_log_file" 2>/dev/null || true
+            { cat "${ARTIFACTS_DIR}/quality-feedback.md" 2>/dev/null || true; } >> "$_cq_log_file" 2>/dev/null || true
+        }' RETURN
+    fi
 
     # Clean up any stale cycle files from prior runs before starting
     _cleanup_cycle_files
@@ -1842,9 +1912,14 @@ ${_cascade_test_tail}"
         if type simulation_review >/dev/null 2>&1; then
             local sim_enabled
             sim_enabled=$(jq -r '.intelligence.simulation_enabled // false' "$PIPELINE_CONFIG" 2>/dev/null || echo "false")
-            local daemon_cfg="${PROJECT_ROOT}/.claude/daemon-config.json"
-            if [[ "$sim_enabled" != "true" && -f "$daemon_cfg" ]]; then
-                sim_enabled=$(jq -r '.intelligence.simulation_enabled // false' "$daemon_cfg" 2>/dev/null || echo "false")
+            if [[ "$sim_enabled" != "true" ]]; then
+                local _dc_sim
+                if declare -f _load_daemon_config >/dev/null 2>&1; then
+                    _dc_sim=$(_load_daemon_config)
+                else
+                    _dc_sim=$(cat "${PROJECT_ROOT:-.}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
+                fi
+                sim_enabled=$(echo "$_dc_sim" | jq -r '.intelligence.simulation_enabled // false' 2>/dev/null || echo "false")
             fi
             if [[ "$sim_enabled" == "true" ]]; then
                 echo ""
@@ -1882,9 +1957,14 @@ ${_cascade_test_tail}"
         if type architecture_validate_changes >/dev/null 2>&1; then
             local arch_enabled
             arch_enabled=$(jq -r '.intelligence.architecture_enabled // false' "$PIPELINE_CONFIG" 2>/dev/null || echo "false")
-            local daemon_cfg="${PROJECT_ROOT}/.claude/daemon-config.json"
-            if [[ "$arch_enabled" != "true" && -f "$daemon_cfg" ]]; then
-                arch_enabled=$(jq -r '.intelligence.architecture_enabled // false' "$daemon_cfg" 2>/dev/null || echo "false")
+            if [[ "$arch_enabled" != "true" ]]; then
+                local _dc_arch
+                if declare -f _load_daemon_config >/dev/null 2>&1; then
+                    _dc_arch=$(_load_daemon_config)
+                else
+                    _dc_arch=$(cat "${PROJECT_ROOT:-.}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
+                fi
+                arch_enabled=$(echo "$_dc_arch" | jq -r '.intelligence.architecture_enabled // false' 2>/dev/null || echo "false")
             fi
             if [[ "$arch_enabled" == "true" ]]; then
                 echo ""

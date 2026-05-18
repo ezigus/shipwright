@@ -140,6 +140,39 @@ stage_review() {
         fi
     fi
 
+    # T2.4: Scope audit — compute off-scope files deterministically in shell before
+    # prompting Claude, so the reviewer cannot miss a scope violation.
+    local _scope_violations_block=""
+    local _scope_violations_file="${ARTIFACTS_DIR}/issue-${ISSUE_NUMBER:-0}/logs/scope-violations.txt"
+    if declare -f _extract_scope_from_design >/dev/null 2>&1 && \
+       declare -f _compute_scope_violations >/dev/null 2>&1; then
+        local _review_scope _review_changed _review_violations
+        _review_scope=$(_extract_scope_from_design "$ARTIFACTS_DIR" 2>/dev/null)
+        if [[ -n "$_review_scope" ]]; then
+            _review_changed=$(_safe_base_diff --name-only 2>/dev/null || true)
+            if [[ -n "$_review_changed" ]]; then
+                _review_violations=$(_compute_scope_violations "$_review_changed" "$_review_scope" 2>/dev/null)
+                if [[ -n "$_review_violations" ]]; then
+                    mkdir -p "$(dirname "$_scope_violations_file")" 2>/dev/null || true
+                    printf '%s\n' "$_review_violations" > "$_scope_violations_file" 2>/dev/null || true
+                    local _viol_list
+                    _viol_list=$(printf '%s\n' "$_review_violations" | sed 's/^/  - /')
+                    _scope_violations_block="
+SCOPE AUDIT (computed deterministically from git diff vs design.md):
+The following files are out of declared scope:
+${_viol_list}
+For each file above, you MUST emit a finding in this exact format (so the review parser counts it as blocking):
+  **[Critical]** SCOPE VIOLATION: <path> is out of declared scope per design.md — revert this file or update the design.
+Then explain (one paragraph) what the change appears to do and whether the design should be updated to include it.
+"
+                    emit_event "review.scope_violations" \
+                        "issue=${ISSUE_NUMBER:-0}" \
+                        "count=$(printf '%s\n' "$_review_violations" | wc -l | tr -d ' ')" 2>/dev/null || true
+                fi
+            fi
+        fi
+    fi
+
     local review_model="${MODEL:-opus}"
     # Intelligence model routing (when no explicit CLI --model override)
     if [[ -z "$MODEL" && -n "${CLAUDE_MODEL:-}" ]]; then
@@ -186,6 +219,11 @@ Focus on:
 Be specific. Reference exact file paths and line numbers. Only flag genuine issues.
 If no issues are found, write: \"Review clean — no issues found.\"
 "
+
+    # Inject scope violations block when out-of-scope files were detected (T2.4)
+    if [[ -n "$_scope_violations_block" ]]; then
+        review_prompt+="${_scope_violations_block}"
+    fi
 
     # Inject previous review findings and anti-patterns from memory
     if type intelligence_search_memory >/dev/null 2>&1; then
@@ -485,6 +523,18 @@ important decisions and mcp__ruflo__memory_search to recall prior context from n
         warning_count="${warning_count:-0}"
     fi
     local total_issues=$((critical_count + bug_count + warning_count))
+
+    # M7: Fail-closed scope count — shell computed N violations; review must contain ≥ N scope findings.
+    # Prevents Claude from silently omitting scope findings when the prompt told it to emit them.
+    if [[ -f "$_scope_violations_file" ]] && [[ -s "$_scope_violations_file" ]]; then
+        local _shell_scope_count _parsed_scope_count
+        _shell_scope_count=$(wc -l < "$_scope_violations_file" 2>/dev/null | tr -d ' ' || echo 0)
+        _parsed_scope_count=$(grep -ciE 'SCOPE VIOLATION' "$review_file" 2>/dev/null || echo 0)
+        if (( _shell_scope_count > 0 && _parsed_scope_count < _shell_scope_count )); then
+            error "Review fail-closed: ${_shell_scope_count} shell-computed scope violation(s) but only ${_parsed_scope_count} scope finding(s) in review output — review omitted a required finding."
+            return 1
+        fi
+    fi
 
     if [[ "$critical_count" -gt 0 ]]; then
         error "Review found ${BOLD}$critical_count critical${RESET} issue(s) — see $review_file"

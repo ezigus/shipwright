@@ -380,10 +380,13 @@ quality_check_perf_regression() {
     # Claude fallback: parse test output when no pattern matches
     if [[ -z "$duration_ms" ]]; then
         local intel_enabled="false"
-        local daemon_cfg="${PROJECT_ROOT}/.claude/daemon-config.json"
-        if [[ -f "$daemon_cfg" ]]; then
-            intel_enabled=$(jq -r '.intelligence.enabled // false' "$daemon_cfg" 2>/dev/null || echo "false")
+        local _dc_intel
+        if declare -f _load_daemon_config >/dev/null 2>&1; then
+            _dc_intel=$(_load_daemon_config)
+        else
+            _dc_intel=$(cat "${PROJECT_ROOT:-.}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
         fi
+        intel_enabled=$(echo "$_dc_intel" | jq -r '.intelligence.enabled // false' 2>/dev/null || echo "false")
         if [[ "$intel_enabled" == "true" ]] && _pipeline_quality_ai_ready; then
             local tail_output
             tail_output=$(tail -30 "$test_log" 2>/dev/null || true)
@@ -628,10 +631,13 @@ quality_check_coverage() {
     # Claude fallback: parse test output when no pattern matches
     if [[ -z "$coverage" ]]; then
         local intel_enabled_cov="false"
-        local daemon_cfg_cov="${PROJECT_ROOT}/.claude/daemon-config.json"
-        if [[ -f "$daemon_cfg_cov" ]]; then
-            intel_enabled_cov=$(jq -r '.intelligence.enabled // false' "$daemon_cfg_cov" 2>/dev/null || echo "false")
+        local _dc_intel_cov
+        if declare -f _load_daemon_config >/dev/null 2>&1; then
+            _dc_intel_cov=$(_load_daemon_config)
+        else
+            _dc_intel_cov=$(cat "${PROJECT_ROOT:-.}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
         fi
+        intel_enabled_cov=$(echo "$_dc_intel_cov" | jq -r '.intelligence.enabled // false' 2>/dev/null || echo "false")
         if [[ "$intel_enabled_cov" == "true" ]] && _pipeline_quality_ai_ready; then
             local tail_cov_output
             tail_cov_output=$(tail -40 "$test_log" 2>/dev/null || true)

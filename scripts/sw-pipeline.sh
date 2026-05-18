@@ -667,7 +667,12 @@ parse_args() {
             --agents)      AGENTS="$2"; shift 2 ;;
             --skip-gates)  SKIP_GATES=true; shift ;;
             --headless)    HEADLESS=true; SKIP_GATES=true; shift ;;
-            --base)        BASE_BRANCH="$2"; shift 2 ;;
+            --base)
+                BASE_BRANCH="$2"
+                if declare -f _validate_ref >/dev/null 2>&1; then
+                    _validate_ref "$BASE_BRANCH" "--base" || exit 1
+                fi
+                shift 2 ;;
             --reviewers)   REVIEWERS="$2"; shift 2 ;;
             --labels)      LABELS="$2"; shift 2 ;;
             --no-github)   NO_GITHUB=true; shift ;;
@@ -2223,6 +2228,9 @@ auto_rebase() {
 
 run_pipeline() {
     _PIPELINE_RUN_STARTED=true
+    if declare -f _validate_ref >/dev/null 2>&1; then
+        _validate_ref "${BASE_BRANCH:-}" "BASE_BRANCH" || return 1
+    fi
     [[ "${SHIPWRIGHT_DEBUG:-0}" == "1" ]] && echo "[ISSUE-TRACE] run_pipeline: ISSUE_NUMBER=${ISSUE_NUMBER:-<unset>}" >&2 || true
     _start_state_heartbeat
 

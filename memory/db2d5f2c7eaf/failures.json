@@ -6,8 +6,8 @@
       "root_cause": "compose_gate_findings_section function is called at loop-iteration.sh:240 but is not defined or sourced, causing 'command not found' errors in all compose_prompt tests",
       "fix": "Define compose_gate_findings_section in scripts/lib/loop-iteration.sh or source the file that contains it before line 240",
       "exit_code": 1,
-      "seen_count": 3,
-      "last_seen": "2026-05-17T03:17:30Z",
+      "seen_count": 4,
+      "last_seen": "2026-05-19T01:31:20Z",
       "category": "test_failure"
     },
     {
@@ -18,6 +18,16 @@
       "exit_code": 1,
       "seen_count": 1,
       "last_seen": "2026-05-17T04:48:28Z",
+      "category": "test_failure"
+    },
+    {
+      "stage": "test",
+      "pattern": "✓ upload-artifact warns on missing files",
+      "root_cause": "Intake stage enters CI branch path even when WORKSPACE_BRANCH is unset, printing 'CI mode: using workspace branch' in local mode and bypassing git checkout -b",
+      "fix": "Fix the WORKSPACE_BRANCH guard condition in intake so it only activates the CI path when WORKSPACE_BRANCH is non-empty (e.g., [ -n \"${WORKSPACE_BRANCH:-}\" ])",
+      "exit_code": 1,
+      "seen_count": 1,
+      "last_seen": "2026-05-19T00:42:17Z",
       "category": "test_failure"
     }
   ]

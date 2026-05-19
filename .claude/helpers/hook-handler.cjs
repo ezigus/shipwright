@@ -112,8 +112,12 @@ async function main() {
   const toolInput = hookInput.toolInput || hookInput.tool_input || {};
   const toolName = hookInput.toolName || hookInput.tool_name || '';
 
-  // Merge stdin data into prompt resolution: prefer stdin fields, then env, then argv
-  const prompt = hookInput.prompt || hookInput.command || toolInput
+  // Merge stdin data into prompt resolution: prefer stdin fields, then env, then argv.
+  // `toolInput` is an object (e.g. {command:"ls"}) — it's truthy but not a string,
+  // so falling back to it directly bound `prompt` to the object and tripped
+  // `.toLowerCase()` / `.substring()` on every Bash hook (#1944). Use the
+  // `.command` field instead, which is the actual string the hook needs.
+  const prompt = hookInput.prompt || hookInput.command || toolInput.command
     || process.env.PROMPT || process.env.TOOL_INPUT_command || args.join(' ') || '';
 
 const handlers = {
@@ -144,8 +148,12 @@ const handlers = {
   },
 
   'pre-bash': () => {
-    // Basic command safety check — prefer stdin command data from Claude Code
-    const cmd = (hookInput.command || prompt).toLowerCase();
+    // Basic command safety check — prefer stdin command data from Claude Code.
+    // String() wrap is belt-and-suspenders for #2017: even if a future regression
+    // re-binds `prompt` or `hookInput.command` to a non-string, `.toLowerCase()`
+    // can no longer throw a TypeError that the global try/catch would swallow
+    // (silently exiting 0 and letting the dangerous command through).
+    const cmd = String(hookInput.command || toolInput.command || prompt || '').toLowerCase();
     const dangerous = ['rm -rf /', 'format c:', 'del /s /q c:\\', ':(){:|:&};:'];
     for (const d of dangerous) {
       if (cmd.includes(d)) {

@@ -1,0 +1,10 @@
+- `bash scripts/sw-cost-share-test.sh` exits 0 with all assertions passing {auto:other:bash scripts/sw-cost-share-test.sh}
+- `bash scripts/sw-cost-test.sh` exits 0 — no regression in existing cost tests {auto:other:bash scripts/sw-cost-test.sh}
+- `npm test` exits 0 {auto:tests}
+- `shellcheck scripts/lib/cost/share.sh scripts/sw-cost-share-test.sh` exits 0 {auto:lint}
+- Branch diff shows `upload-artifact` step in `.github/workflows/shipwright-pipeline.yml` with `name: cost-breakdown-issue-...` {auto:other:grep -q 'cost-breakdown-issue-' .github/workflows/shipwright-pipeline.yml}
+- Branch diff shows download/merge steps wired into `shipwright-optimize.yml` {auto:other:grep -q 'cost_merge_breakdowns' .github/workflows/shipwright-optimize.yml}
+- `scripts/lib/cost/share.sh` exports `cost_merge_breakdowns` (sourceable in subshell) {auto:other:bash -c 'source scripts/lib/cost/share.sh && type cost_merge_breakdowns'}
+- `docs/cost-sharing.md` exists and documents the artifact-name contract {auto:other:test -f docs/cost-sharing.md && grep -q 'cost-breakdown-issue-' docs/cost-sharing.md}
+- `scripts/sw-cost.sh` sources the new lib and accepts a `merge` subcommand {auto:other:grep -q 'lib/cost/share.sh' scripts/sw-cost.sh}
+- Cumulative branch diff touches only the files listed in this plan {auto:diff}

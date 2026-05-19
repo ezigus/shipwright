@@ -125,7 +125,7 @@ function fingerprintContent(text) {
   for (let i = 0; i < norm.length; i++) {
     const c = norm.charCodeAt(i);
     h1 ^= c; h1 = Math.imul(h1, 0x01000193) >>> 0;
-    h2 ^= c; h2 = Math.imul(h2, 0x01000193) >>> 0;
+    h2 ^= c; h2 = Math.imul(h2, 0x100000001b3 & 0xffffffff) >>> 0;
   }
   return `${h1.toString(16)}_${h2.toString(16)}_${norm.length}`;
 }
@@ -624,12 +624,9 @@ function consolidate() {
     return { entries: 0, edges: 0, newEntries: 0, message: 'No store to consolidate' };
   }
 
-  // Deduplicate store entries before processing: first by ID (exact match),
-  // then by content fingerprint (catches same-content / different-ID dupes that
-  // accumulate via the session-end rebuild path — mirrors the dedup in init()).
+  // Deduplicate store entries by ID before processing (fixes #1518)
   const preDedupCount = store.length;
   store = deduplicateById(store);
-  store = deduplicateByContent(store);
 
   // 1. Process pending insights
   let newEntries = 0;
@@ -1008,7 +1005,7 @@ function stats(outputJson) {
   return report;
 }
 
-module.exports = { init, getContext, recordEdit, feedback, consolidate, stats, fingerprintContent };
+module.exports = { init, getContext, recordEdit, feedback, consolidate, stats };
 
 // ── CLI entrypoint ──────────────────────────────────────────────────────────
 if (require.main === module) {

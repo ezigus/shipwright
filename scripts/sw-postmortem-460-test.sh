@@ -1154,7 +1154,7 @@ print_test_header "compound_quality RETURN trap — self-clears, does not leak t
 # Static guard 1: trap body must begin with trap - RETURN (self-clear idiom).
 _pi_file="scripts/lib/pipeline-intelligence.sh"
 if [[ -f "$_pi_file" ]]; then
-    if awk '/T2\.3: Exit trap/,/\}'\'' RETURN/' "$_pi_file" | grep -qE '^\s+trap - RETURN\s*$'; then
+    if awk '/T2\.3: Exit trap/,/\}'\'' RETURN/' "$_pi_file" | grep -qE '^[[:space:]]+trap - RETURN[[:space:]]*$'; then
         assert_pass "trap_self_clear: trap body starts with 'trap - RETURN'"
     else
         assert_fail "trap_self_clear: trap body must begin with 'trap - RETURN'" \

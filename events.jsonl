@@ -6142,3 +6142,10 @@
 {"ts":"2026-05-19T13:16:04Z","ts_epoch":1779196564,"type":"compound.cycle","repo":"ezigus/shipwright","issue":460,"cycle":1,"max_cycles":3,"passed":"true","critical_issues":0,"self_heal_count":0}
 {"ts":"2026-05-19T13:16:05Z","ts_epoch":1779196565,"type":"pipeline.dod_verification","repo":"ezigus/shipwright","issue":460,"checks_total":34,"checks_passed":33,"pass_rate":97}
 {"ts":"2026-05-19T13:16:05Z","ts_epoch":1779196565,"type":"pipeline.quality_score_recorded","repo":"ezigus/shipwright","issue":460,"quality_score":100,"critical":0,"major":0,"minor":0}
+{"ts":"2026-05-19T23:45:41Z","ts_epoch":1779234341,"type":"hygiene_platform_refactor","repo":"ezigus/shipwright","hardcoded":70,"fallback":87,"todo":43}
+{"ts":"2026-05-19T23:45:43Z","ts_epoch":1779234343,"type":"pipeline.lock_acquired","repo":"ezigus/shipwright","pid":5155,"issue_or_goal":460}
+{"ts":"2026-05-19T23:45:56Z","ts_epoch":1779234356,"type":"intelligence.analysis","repo":"ezigus/shipwright","complexity":5,"risk_level":"medium","success_probability":78,"recommended_template":"standard","issue_type":"infrastructure"}
+{"ts":"2026-05-19T23:45:56Z","ts_epoch":1779234356,"type":"reasoning.trace","repo":"ezigus/shipwright","job_id":"db2d5f2c7eaf-pipeline-5155-460","complexity":"medium","risk":50,"template":"standard"}
+{"ts":"2026-05-19T23:45:56Z","ts_epoch":1779234356,"type":"cost.breakdown_generated","repo":"ezigus/shipwright","pipeline_id":"db2d5f2c7eaf-pipeline-5155-460","issue":460,"stages":0,"iterations":0}
+{"ts":"2026-05-19T23:45:56Z","ts_epoch":1779234356,"type":"cost.baseline_updated","repo":"ezigus/shipwright","stages":0,"issue":460}
+{"ts":"2026-05-19T23:45:56Z","ts_epoch":1779234356,"type":"pipeline.lock_released","repo":"ezigus/shipwright","pid":5155}

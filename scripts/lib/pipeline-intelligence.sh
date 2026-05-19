@@ -1572,9 +1572,15 @@ stage_compound_quality() {
     if mkdir -p "$_cq_log_dir" 2>/dev/null; then
         _cq_trap_installed=true
         trap '{
-            printf "[compound_quality EXIT at %s]\n" "$(date -u +%FT%TZ 2>/dev/null || date)" >> "$_cq_log_file" 2>/dev/null || true
-            { cat "${ARTIFACTS_DIR}/review.findings.json" 2>/dev/null || true; } >> "$_cq_log_file" 2>/dev/null || true
-            { cat "${ARTIFACTS_DIR}/quality-feedback.md" 2>/dev/null || true; } >> "$_cq_log_file" 2>/dev/null || true
+            # Self-clear: bash RETURN traps without set -T persist past the installing
+            # function and fire on every parent return up the call stack. Without this,
+            # run_stage_with_retry fires the trap again with $_cq_log_file unbound,
+            # crashing under set -u. The :-/dev/null defaults guard the secondary path
+            # where compound_rebuild_with_feedback re-evals this trap text in its scope.
+            trap - RETURN
+            printf "[compound_quality EXIT at %s]\n" "$(date -u +%FT%TZ 2>/dev/null || date)" >> "${_cq_log_file:-/dev/null}" 2>/dev/null || true
+            { cat "${ARTIFACTS_DIR:-/dev/null}/review.findings.json" 2>/dev/null || true; } >> "${_cq_log_file:-/dev/null}" 2>/dev/null || true
+            { cat "${ARTIFACTS_DIR:-/dev/null}/quality-feedback.md" 2>/dev/null || true; } >> "${_cq_log_file:-/dev/null}" 2>/dev/null || true
         }' RETURN
     fi
 

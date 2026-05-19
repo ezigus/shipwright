@@ -1143,6 +1143,84 @@ for _subj in \
 done
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# compound_quality RETURN trap — self-clears, does not leak to caller
+# Root cause: bash RETURN traps without set -T persist past the installing
+# function and fire at every subsequent function return up the call stack.
+# Fix: trap - RETURN as the first statement of the trap body.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_test_header "compound_quality RETURN trap — self-clears, does not leak to caller"
+
+# Static guard 1: trap body must begin with trap - RETURN (self-clear idiom).
+_pi_file="scripts/lib/pipeline-intelligence.sh"
+if [[ -f "$_pi_file" ]]; then
+    if awk '/T2\.3: Exit trap/,/\}'\'' RETURN/' "$_pi_file" | grep -qE '^\s+trap - RETURN\s*$'; then
+        assert_pass "trap_self_clear: trap body starts with 'trap - RETURN'"
+    else
+        assert_fail "trap_self_clear: trap body must begin with 'trap - RETURN'" \
+            "First statement of the RETURN trap must be 'trap - RETURN' so it cannot fire twice on parent returns"
+    fi
+else
+    assert_fail "trap_self_clear: $_pi_file not found" ""
+fi
+
+# Static guard 2: defensive default for _cq_log_file must be present.
+if [[ -f "$_pi_file" ]] && grep -q '\${_cq_log_file:-/dev/null}' "$_pi_file"; then
+    assert_pass "trap_default_cq_log: \${_cq_log_file:-/dev/null} present in trap body"
+else
+    assert_fail "trap_default_cq_log: \${_cq_log_file:-/dev/null} must be present in the trap body" \
+        "Defensive default missing — eval-restore secondary path could still hit unbound variable"
+fi
+
+# Static guard 3: defensive default for ARTIFACTS_DIR must be present.
+if [[ -f "$_pi_file" ]] && grep -q '\${ARTIFACTS_DIR:-/dev/null}' "$_pi_file"; then
+    assert_pass "trap_default_artifacts_dir: \${ARTIFACTS_DIR:-/dev/null} present in trap body"
+else
+    assert_fail "trap_default_artifacts_dir: \${ARTIFACTS_DIR:-/dev/null} must be present in the trap body" \
+        "Defensive default missing for ARTIFACTS_DIR"
+fi
+
+# Behavioral: self-clearing trap fires exactly once across a nested return,
+# even under set -euo pipefail, without leaking to the caller.
+_behavior_out=$(bash -c '
+    set -euo pipefail
+    fire_count=0
+    outer() {
+        local _local_var="ok"
+        trap "{ trap - RETURN; fire_count=\$((fire_count + 1)); printf x >> \"/dev/null\" 2>/dev/null || true; }" RETURN
+        return 0
+    }
+    caller_fn() { outer; return 0; }
+    caller_fn
+    echo "fire_count=$fire_count"
+' 2>&1)
+if [[ "$_behavior_out" == *"fire_count=1"* ]]; then
+    assert_pass "trap_fires_once: self-clearing trap fires exactly once on nested return"
+else
+    assert_fail "trap_fires_once: self-clearing trap must fire exactly once" \
+        "Expected 'fire_count=1' in output; got: $_behavior_out"
+fi
+
+# Regression guard: without self-clear, the same trap shape MUST crash with
+# unbound variable under set -u. Documents why the fix is necessary.
+_bug_repro=$(bash -c '
+    set -euo pipefail
+    outer() {
+        local _local_var="ok"
+        trap "{ printf %s \"\$_local_var\" >/dev/null; }" RETURN
+        return 0
+    }
+    caller_fn() { outer; return 0; }
+    caller_fn
+' 2>&1; echo "rc=$?")
+if [[ "$_bug_repro" == *"unbound variable"* && "$_bug_repro" == *"rc=1"* ]]; then
+    assert_pass "trap_leak_bug_documented: non-self-clearing trap demonstrably leaks (the bug this fixes)"
+else
+    assert_fail "trap_leak_bug_documented: expected unbound-variable crash without self-clear" \
+        "Repro pattern did not produce expected failure; got: $_bug_repro"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Results
 # ═══════════════════════════════════════════════════════════════════════════════
 

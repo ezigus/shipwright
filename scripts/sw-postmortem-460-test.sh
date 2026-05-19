@@ -1093,6 +1093,56 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Polluted-detection anchoring — false-positive guard
+# Regression guard for the PR #517 widening (rate_limit_error, overloaded_error)
+# that allowed legitimate fix commits like "fix: handle rate_limit_error in retry
+# logic" to trigger WIP branch deletion. After this fix the regex requires the
+# error marker at the start of the subject line.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_test_header "polluted-detect — anchored pattern (false-positive guard)"
+
+POLLUTED_REGEX='^[[:space:]]*(Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error)'
+
+# Workflow contains the anchored pattern (static check)
+_wf=".github/workflows/shipwright-pipeline.yml"
+if [[ -f "$_wf" ]] && grep -qF "$POLLUTED_REGEX" "$_wf"; then
+    assert_pass "polluted_regex_anchored: shipwright-pipeline.yml uses anchored polluted-detection pattern"
+else
+    assert_fail "polluted_regex_anchored: shipwright-pipeline.yml must contain anchored polluted-detection pattern" \
+        "Expected pattern '${POLLUTED_REGEX}' not found in $_wf — has PR #517 widening been re-introduced?"
+fi
+
+# False-positive cases: legitimate fix commits that contain the error words mid-subject
+for _subj in \
+    'fix: handle rate_limit_error in retry logic' \
+    'feat(api): improve overloaded_error retry' \
+    'chore: log API key expired event' \
+    'docs: document Invalid API key recovery' \
+    'test: cover authentication_error path'; do
+    if echo "$_subj" | grep -qiE "$POLLUTED_REGEX"; then
+        assert_fail "polluted_false_positive: subject must NOT match anchored polluted pattern" \
+            "Subject '$_subj' triggered polluted-deletion — this is the bug PR #517 introduced"
+    else
+        assert_pass "polluted_false_positive: '$_subj' correctly preserved"
+    fi
+done
+
+# True-positive cases: Claude-crash subjects that start with the error string
+for _subj in \
+    'Invalid API key · Please run /login' \
+    'authentication_error: token expired' \
+    'rate_limit_error: token bucket depleted' \
+    'overloaded_error: upstream throttled'; do
+    if echo "$_subj" | grep -qiE "$POLLUTED_REGEX"; then
+        assert_pass "polluted_true_positive: '$_subj' correctly matches"
+    else
+        assert_fail "polluted_true_positive: subject MUST match anchored polluted pattern" \
+            "Subject '$_subj' did not match — anchoring is too strict, real pollution will slip through"
+    fi
+done
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Results
 # ═══════════════════════════════════════════════════════════════════════════════
 

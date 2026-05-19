@@ -2710,17 +2710,13 @@ fi
 echo ""
 echo -e "${DIM}  loop stuckness fixes (#345)${RESET}"
 
-# ─── Fix 1: Holistic gate uses ORIGINAL_GOAL, not polluted GOAL ──────────────
-# run_holistic_gate() must inject ${ORIGINAL_GOAL:-$GOAL} so that feedback
-# accumulated in GOAL during a session does not poison the holistic assessment.
-if grep -q 'ORIGINAL_GOAL:-\$GOAL' "$SCRIPT_DIR/sw-loop.sh"; then
-    assert_pass "Fix 1: holistic gate uses \${ORIGINAL_GOAL:-\$GOAL}"
-else
-    assert_fail "Fix 1: holistic gate uses \${ORIGINAL_GOAL:-\$GOAL}" \
-        "Expected ORIGINAL_GOAL:-\$GOAL in sw-loop.sh holistic prompt; got raw \${GOAL}"
-fi
-
-# Verify the fix is specifically inside run_holistic_gate (not just anywhere in the file)
+# ─── Fix 1 (updated PR B): Context-aware holistic goal selection ─────────────
+# run_holistic_gate() is now context-aware:
+#   - compound_quality context: uses $GOAL (findings appended there by the feedback cycle)
+#   - Standalone loop context: uses $ORIGINAL_GOAL when set (prevents accumulated-feedback
+#     pollution of the holistic assessment — preserves issue #345 fix non-regression)
+# The literal ${ORIGINAL_GOAL:-$GOAL} form is intentionally absent; each branch is
+# explicit. Verify the compound_quality branch exists inside the function.
 holistic_gate_block=$(
     awk '
         /^run_holistic_gate\(\)[[:space:]]*\{/ { in_fn=1 }
@@ -2728,11 +2724,19 @@ holistic_gate_block=$(
         in_fn && /^\}/ { exit }
     ' "$SCRIPT_DIR/sw-loop.sh" || true
 )
-if printf '%s\n' "$holistic_gate_block" | grep -q 'ORIGINAL_GOAL:-\$GOAL'; then
-    assert_pass "Fix 1: ORIGINAL_GOAL:-\$GOAL present inside run_holistic_gate"
+if printf '%s\n' "$holistic_gate_block" | grep -q 'compound_quality'; then
+    assert_pass "Fix 1 (context-aware): compound_quality branch present inside run_holistic_gate"
 else
-    assert_fail "Fix 1: ORIGINAL_GOAL:-\$GOAL present inside run_holistic_gate" \
-        "Expected ORIGINAL_GOAL:-\$GOAL inside run_holistic_gate in sw-loop.sh"
+    assert_fail "Fix 1 (context-aware): compound_quality branch present inside run_holistic_gate" \
+        "Expected compound_quality context check inside run_holistic_gate in sw-loop.sh"
+fi
+
+# Verify _holistic_judge_goal is set and used in the prompt
+if printf '%s\n' "$holistic_gate_block" | grep -q '_holistic_judge_goal'; then
+    assert_pass "Fix 1 (context-aware): _holistic_judge_goal variable used in run_holistic_gate"
+else
+    assert_fail "Fix 1 (context-aware): _holistic_judge_goal variable used in run_holistic_gate" \
+        "Expected _holistic_judge_goal variable inside run_holistic_gate in sw-loop.sh"
 fi
 
 # ─── Fix 2: Circuit breaker escape hatch respects quality gates ──────────────
@@ -3582,17 +3586,63 @@ else
         "Empty grep input yields constant SHA-1 — false 'same failures' match on infra errors"
 fi
 
-# ─── loop-iteration scope_label review-fix: guarded against missing function (Codex P1) ──
-# scope_label is defined in pipeline-state.sh; sw-loop.sh doesn't source it, so the
-# command substitution returns 127 under set -e. Need a `type` check or fallback.
-_li_scope_block=$(grep -A2 'Build Prompt' "$SCRIPT_DIR/lib/loop-iteration.sh" 2>/dev/null | head -3 || true)
-if echo "$_li_scope_block" | grep -qE 'type scope_label|_scope_label' 2>/dev/null; then
-    assert_pass "loop_iteration_scope_label_guard: Build Prompt body guards scope_label with type check"
-elif grep -B3 'Build Prompt' "$SCRIPT_DIR/lib/loop-iteration.sh" 2>/dev/null | grep -q 'type scope_label' 2>/dev/null; then
-    assert_pass "loop_iteration_scope_label_guard: Build Prompt body guards scope_label with type check"
+# ─── loop-iteration scope_label review-fix: scope_label now defined via scope-label.sh (PR C) ──
+# PR C: sw-loop.sh now sources scripts/lib/scope-label.sh at startup and calls read_state.
+# scope_label IS defined in the loop subprocess. The old Codex P1 guard (type check or
+# fallback) is no longer the primary mechanism — the function is directly available.
+# Updated assertion: scope_label must be a defined function inside the sw-loop.sh environment.
+_prc_scope_label_sourced=false
+if grep -qF 'scope-label.sh' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null; then
+    _prc_scope_label_sourced=true
+fi
+if [[ "$_prc_scope_label_sourced" == "true" ]]; then
+    assert_pass "loop_iteration_scope_label_guard: sw-loop.sh sources scope-label.sh (PR C — scope_label defined in subprocess)"
 else
-    assert_fail "loop_iteration_scope_label_guard: scope_label must be guarded (set -e + missing function = 127 exit)" \
-        "Expected 'type scope_label' check or fallback variable assignment before use in Build Prompt body"
+    assert_fail "loop_iteration_scope_label_guard: sw-loop.sh must source scripts/lib/scope-label.sh (PR C)" \
+        "scope-label.sh not sourced — scope_label undefined in loop subprocess (set -e + missing function = 127 exit)"
+fi
+
+# Verify _read_scope_state is called at startup (PR C — loads OUTER_STAGE from state file)
+if grep -qF '_read_scope_state' "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null; then
+    assert_pass "loop_iteration_scope_label_guard: sw-loop.sh calls _read_scope_state at startup (PR C)"
+else
+    assert_fail "loop_iteration_scope_label_guard: sw-loop.sh must call _read_scope_state at startup (PR C)" \
+        "_read_scope_state not found in sw-loop.sh — OUTER_STAGE may be unset in loop subprocess"
+fi
+
+# ─── PR C: subprocess scope_label correctness ────────────────────────────────
+# Verify that sourcing scope-label.sh and setting the expected env vars produces
+# a correctly formatted label string matching "Compound Quality N — * Iteration K".
+_prc_label_result=$(bash -c '
+    OUTER_STAGE="compound_quality"
+    COMPOUND_QUALITY_CYCLE=2
+    INNER_STAGE="build"
+    SELF_HEAL_COUNT=0
+    source "'"$SCRIPT_DIR"'/lib/scope-label.sh" 2>/dev/null || { echo "SOURCE_FAILED"; exit 0; }
+    label=$(scope_label 2>/dev/null || echo "CALL_FAILED")
+    echo "LABEL=$label"
+' 2>/dev/null)
+
+if echo "$_prc_label_result" | grep -q 'SOURCE_FAILED'; then
+    assert_fail "prc_scope_label_correctness: scripts/lib/scope-label.sh must be sourceable" \
+        "source failed — file missing or has syntax errors"
+elif echo "$_prc_label_result" | grep -q 'CALL_FAILED'; then
+    assert_fail "prc_scope_label_correctness: scope_label() must be callable after sourcing scope-label.sh" \
+        "scope_label() returned non-zero or is not defined"
+else
+    _prc_label_val=$(echo "$_prc_label_result" | grep '^LABEL=' | sed 's/^LABEL=//')
+    if echo "$_prc_label_val" | grep -qiE 'Compound Quality 2' 2>/dev/null; then
+        assert_pass "prc_scope_label_correctness: scope_label returns 'Compound Quality 2 ...' for COMPOUND_QUALITY_CYCLE=2"
+    else
+        assert_fail "prc_scope_label_correctness: scope_label must contain 'Compound Quality 2' when COMPOUND_QUALITY_CYCLE=2" \
+            "got: $_prc_label_val"
+    fi
+    if echo "$_prc_label_val" | grep -qiE 'Build Iteration' 2>/dev/null; then
+        assert_pass "prc_scope_label_correctness: scope_label includes 'Build Iteration' suffix"
+    else
+        assert_fail "prc_scope_label_correctness: scope_label must include 'Build Iteration' suffix" \
+            "got: $_prc_label_val"
+    fi
 fi
 
 # ─── pipeline-state.sh _resolve_stage_log_path review-fix (Copilot #5) ─────────

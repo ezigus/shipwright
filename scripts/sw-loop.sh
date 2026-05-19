@@ -63,6 +63,9 @@ fi
 [[ -f "$SCRIPT_DIR/lib/pipeline-github.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-github.sh" 2>/dev/null || true
 # Initialize GitHub integration so GH_AVAILABLE is set for SW_LOG_PROMPTS=github|both
 type gh_init >/dev/null 2>&1 && gh_init 2>/dev/null || true
+# Scope-label state hydration (PR C) — source lib if present, then hydrate state
+[[ -f "${SCRIPT_DIR}/lib/scope-label.sh" ]] && source "${SCRIPT_DIR}/lib/scope-label.sh"
+type _read_scope_state >/dev/null 2>&1 && _read_scope_state
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -102,6 +105,7 @@ MAX_ITERATIONS_EXPLICIT=false
 MAX_RESTARTS=$(_config_get_int "loop.max_restarts" 0 2>/dev/null || echo 0)
 DOD_DIFF_MAX_LINES=$(_config_get_int "loop.dod_diff_max_lines" 5000 2>/dev/null || echo 5000)
 HOLISTIC_DIFF_MAX_LINES=$(_config_get_int "loop.holistic_diff_max_lines" 1000 2>/dev/null || echo 1000)
+LOOP_INNER_STAGE_COMMENTS="${LOOP_INNER_STAGE_COMMENTS:-$(_config_get "loop.inner_stage_comments" "off" 2>/dev/null || echo "off")}"
 SESSION_RESTART=false
 RESTART_COUNT=0
 REPO_OVERRIDE=""
@@ -1696,6 +1700,7 @@ run_quality_gates() {
 
     # Gate 4: Definition of Done (if DOD_FILE set)
     if [[ -n "$DOD_FILE" ]]; then
+        type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "dod_start" "Definition of Done check"
         if ! check_definition_of_done; then
             gate_failures+=("definition of done not satisfied")
         fi
@@ -2073,6 +2078,7 @@ guard_completion() {
     # Holistic final gate: when all other gates pass, run a project-level assessment
     # that evaluates the entire codebase against the goal (not just the latest diff)
     if [[ ${#rejection_reasons[@]} -eq 0 ]]; then
+        type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "holistic_start" "Holistic gate check"
         if ! run_holistic_gate; then
             rejection_reasons+=("holistic project assessment found gaps")
         fi
@@ -2124,12 +2130,21 @@ run_holistic_gate() {
         test_summary="$(echo "$TEST_OUTPUT" | tail -5)"
     fi
 
+    # Context-aware goal selection: compound_quality appends findings to GOAL so the
+    # rebuild agent knows what to address — use it directly. In standalone loop runs,
+    # GOAL accumulates iteration feedback that can poison the holistic assessment, so
+    # prefer ORIGINAL_GOAL when available (fixes issue #345 non-regression).
+    local _holistic_judge_goal="$GOAL"
+    if [[ "${OUTER_STAGE:-}" != "compound_quality" && -n "${ORIGINAL_GOAL:-}" ]]; then
+        _holistic_judge_goal="$ORIGINAL_GOAL"
+    fi
+
     local holistic_prompt
     read -r -d '' holistic_prompt <<HOLISTIC_PROMPT || true
 You are a final quality gate evaluating whether an autonomous coding agent has FULLY achieved its goal.
 
 ## Original Goal
-${ORIGINAL_GOAL:-$GOAL}
+${_holistic_judge_goal}
 
 ## Project Stats
 - Files in repo: ${file_count}
@@ -3103,6 +3118,7 @@ run_single_agent_loop() {
                 "agent=${AGENT_NUM:-1}" \
                 "test_passed=${TEST_PASSED:-unknown}"
         fi
+        type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "iteration_start" "Iteration ${ITERATION:-?}"
 
         # Root-cause diagnosis and memory-based fix on retry after test failure
         if [[ "${TEST_PASSED:-}" == "false" ]]; then
@@ -3335,6 +3351,7 @@ ${GOAL}"
         # Verification gap detection: audit failed but tests passed
         # Instead of a full retry (which causes context bloat/timeout), run targeted verification
         if [[ "${AUDIT_RESULT:-}" != "pass" ]] && [[ "${TEST_PASSED:-}" == "true" ]]; then
+            type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "verification_gap_warning" "Verification gap detected"
             echo -e "  ${YELLOW}▸${RESET} Verification gap detected (tests pass, audit disagrees)"
 
             local verification_passed=true
@@ -3357,14 +3374,30 @@ ${GOAL}"
 
             if [[ "$verification_passed" == "true" ]]; then
                 echo -e "  ${GREEN}✓${RESET} Verification passed — overriding audit"
-                AUDIT_RESULT="pass"
-                emit_event "loop.verification_gap_resolved" \
-                    "iteration=$ITERATION" "action=override_audit"
-                if type audit_emit >/dev/null 2>&1; then
-                    audit_emit "loop.verification_gap" "iteration=$ITERATION" \
-                        "resolution=override" "tests_recheck=pass" || true
+                # Root-cause fix (PR B): only override AUDIT_RESULT if cumulative diff vs
+                # cycle-start commit is non-empty. A no-op iteration trivially satisfies
+                # "tests pass + tree clean", so guard the override with an actual change check.
+                local _vgap_cumulative_diff=""
+                if [[ -n "${OUTER_STAGE_START_COMMIT:-}" ]]; then
+                    _vgap_cumulative_diff="$(git -C "${PROJECT_ROOT:-.}" diff --name-only "${OUTER_STAGE_START_COMMIT}..HEAD" 2>/dev/null || true)"
+                fi
+                if [[ -z "${OUTER_STAGE_START_COMMIT:-}" ]] || [[ -n "$_vgap_cumulative_diff" ]]; then
+                    AUDIT_RESULT="pass"
+                    type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "verification_gap_resolved" "Audit override applied"
+                    emit_event "loop.verification_gap_resolved" \
+                        "iteration=$ITERATION" "action=override_audit"
+                    if type audit_emit >/dev/null 2>&1; then
+                        audit_emit "loop.verification_gap" "iteration=$ITERATION" \
+                            "resolution=override" "tests_recheck=pass" || true
+                    fi
+                else
+                    type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "verification_gap_confirmed" "Audit override NOT applied"
+                    emit_event "loop.verification_gap_confirmed" \
+                        "iteration=$ITERATION" "action=noop_no_cumulative_diff"
+                    warn "Verification gap: no cumulative diff vs cycle-start — audit override suppressed (no-op iteration)"
                 fi
             else
+                type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "verification_gap_confirmed" "Audit override NOT applied"
                 echo -e "  ${RED}✗${RESET} Verification failed — audit stands"
                 emit_event "loop.verification_gap_confirmed" \
                     "iteration=$ITERATION" "action=retry"
@@ -3492,6 +3525,7 @@ ${outcome}
                 "commits=$TOTAL_COMMITS" \
                 "status=${STATUS:-running}"
         fi
+        type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "iteration_complete" "Iteration ${ITERATION:-?}"
 
         # Update heartbeat
         "$SCRIPT_DIR/sw-heartbeat.sh" write "${PIPELINE_JOB_ID:-loop-$$}" \

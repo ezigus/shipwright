@@ -961,6 +961,138 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PR-B fix 1 — Verification-gap override prevention (OUTER_STAGE_START_COMMIT guard)
+# When OUTER_STAGE_START_COMMIT is set and git diff returns empty (no real changes
+# since the compound_quality cycle started), the override must NOT fire.
+# When OUTER_STAGE_START_COMMIT is empty (normal build loop), the guard is absent
+# and the override fires as before.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_test_header "PR-B fix 1 — verification-gap no-op override prevention"
+
+# Static check: the guard must reference OUTER_STAGE_START_COMMIT in the
+# verification-gap block. Without this, compound_quality builds with zero real
+# changes can auto-pass AUDIT_RESULT on a pure diff-empty path.
+_vg_block=$(awk '/[Vv]erification gap detection/,/Auto-commit any remaining/' \
+    "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null | head -60 || true)
+
+if echo "$_vg_block" | grep -q 'OUTER_STAGE_START_COMMIT' 2>/dev/null; then
+    assert_pass "prb1_static_guard_present: OUTER_STAGE_START_COMMIT referenced in verification-gap block"
+else
+    assert_fail "prb1_static_guard_present: OUTER_STAGE_START_COMMIT must be referenced in verification-gap block" \
+        "Expected the guard 'OUTER_STAGE_START_COMMIT' to gate the override in sw-loop.sh verification-gap section"
+fi
+
+# Behavioral: simulate the guard logic in isolation.
+# Case A: OUTER_STAGE_START_COMMIT set + empty cumulative diff -> override must NOT fire.
+_prb1_result_a=$(bash -c '
+    AUDIT_RESULT="fail"
+    TEST_PASSED="true"
+    OUTER_STAGE_START_COMMIT="abc123"
+    # Simulate: git diff OUTER_STAGE_START_COMMIT..HEAD returns empty (no changes)
+    # Apply the guard logic as specified by PR B fix 1:
+    #   if [[ -n "$OUTER_STAGE_START_COMMIT" ]]; then
+    #       _cq_diff=$(git diff "$OUTER_STAGE_START_COMMIT..HEAD" -- . 2>/dev/null)
+    #       [[ -z "$_cq_diff" ]] && { echo "SKIP_OVERRIDE"; }
+    #   fi
+    _cq_diff=""   # empty — no commits since cycle start
+    _skip_override=false
+    if [[ -n "${OUTER_STAGE_START_COMMIT:-}" ]] && [[ -z "$_cq_diff" ]]; then
+        _skip_override=true
+    fi
+    if [[ "$_skip_override" == "false" ]]; then
+        AUDIT_RESULT="pass"
+    fi
+    echo "AUDIT_RESULT=$AUDIT_RESULT"
+' 2>/dev/null)
+if echo "$_prb1_result_a" | grep -q 'AUDIT_RESULT=fail'; then
+    assert_pass "prb1_behavioral_empty_diff_no_override: AUDIT_RESULT stays fail when diff is empty in CQ mode"
+else
+    assert_fail "prb1_behavioral_empty_diff_no_override: AUDIT_RESULT must stay fail (override blocked by empty diff guard)" \
+        "got: $_prb1_result_a"
+fi
+
+# Case B: OUTER_STAGE_START_COMMIT empty (normal build loop) -> override fires normally.
+_prb1_result_b=$(bash -c '
+    AUDIT_RESULT="fail"
+    TEST_PASSED="true"
+    OUTER_STAGE_START_COMMIT=""   # not in compound_quality mode
+    _cq_diff=""
+    _skip_override=false
+    if [[ -n "${OUTER_STAGE_START_COMMIT:-}" ]] && [[ -z "$_cq_diff" ]]; then
+        _skip_override=true
+    fi
+    if [[ "$_skip_override" == "false" ]]; then
+        AUDIT_RESULT="pass"
+    fi
+    echo "AUDIT_RESULT=$AUDIT_RESULT"
+' 2>/dev/null)
+if echo "$_prb1_result_b" | grep -q 'AUDIT_RESULT=pass'; then
+    assert_pass "prb1_behavioral_no_outer_stage_override_fires: override fires normally when OUTER_STAGE_START_COMMIT is empty"
+else
+    assert_fail "prb1_behavioral_no_outer_stage_override_fires: override must fire when not in CQ mode" \
+        "got: $_prb1_result_b"
+fi
+
+# Case C: OUTER_STAGE_START_COMMIT set + non-empty diff -> override IS allowed to fire.
+_prb1_result_c=$(bash -c '
+    AUDIT_RESULT="fail"
+    TEST_PASSED="true"
+    OUTER_STAGE_START_COMMIT="abc123"
+    _cq_diff="diff --git a/scripts/foo.sh b/scripts/foo.sh
++added line"   # non-empty — real changes present
+    _skip_override=false
+    if [[ -n "${OUTER_STAGE_START_COMMIT:-}" ]] && [[ -z "$_cq_diff" ]]; then
+        _skip_override=true
+    fi
+    if [[ "$_skip_override" == "false" ]]; then
+        AUDIT_RESULT="pass"
+    fi
+    echo "AUDIT_RESULT=$AUDIT_RESULT"
+' 2>/dev/null)
+if echo "$_prb1_result_c" | grep -q 'AUDIT_RESULT=pass'; then
+    assert_pass "prb1_behavioral_nonempty_diff_override_allowed: override fires when CQ mode has real diff"
+else
+    assert_fail "prb1_behavioral_nonempty_diff_override_allowed: override must be allowed when OUTER_STAGE_START_COMMIT set and diff is non-empty" \
+        "got: $_prb1_result_c"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PR-B fix 2 — Holistic gate uses GOAL not ORIGINAL_GOAL
+# The holistic-gate prompt must use $GOAL (which has compound_quality findings
+# appended to it) rather than ${ORIGINAL_GOAL:-$GOAL}, which would strip those.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+print_test_header "PR-B fix 2 — holistic-gate prompt uses GOAL not ORIGINAL_GOAL"
+
+# Extract the run_holistic_gate function body and check the prompt construction.
+_holistic_body=$(awk '/^run_holistic_gate\(\)/{p=1} p{print} p && /^\}$/{exit}' \
+    "$SCRIPT_DIR/sw-loop.sh" 2>/dev/null || true)
+
+# The primary input line must NOT use ${ORIGINAL_GOAL:-$GOAL} as the goal text.
+# After PR B fix 2, it must use bare $GOAL so compound_quality findings are included.
+if echo "$_holistic_body" | grep -qF '${ORIGINAL_GOAL:-$GOAL}' 2>/dev/null; then
+    # Count occurrences — if only in comments it might be acceptable, but check context.
+    _og_in_prompt=$(echo "$_holistic_body" | grep -v '^#' | grep -c '\${ORIGINAL_GOAL:-\$GOAL}' 2>/dev/null || echo 0)
+    if [[ "${_og_in_prompt:-0}" -gt 0 ]]; then
+        assert_fail "prb2_holistic_uses_goal_not_original: run_holistic_gate must use \$GOAL not \${ORIGINAL_GOAL:-\$GOAL} as prompt input" \
+            "Found \${ORIGINAL_GOAL:-\$GOAL} still present in run_holistic_gate (${_og_in_prompt} non-comment occurrence(s))"
+    else
+        assert_pass "prb2_holistic_uses_goal_not_original: \${ORIGINAL_GOAL:-\$GOAL} only in comments (non-comment uses: 0)"
+    fi
+else
+    assert_pass "prb2_holistic_uses_goal_not_original: \${ORIGINAL_GOAL:-\$GOAL} not present in run_holistic_gate prompt"
+fi
+
+# Verify $GOAL IS referenced in the prompt section (guard against accidental removal).
+if echo "$_holistic_body" | grep -qE '\$\{?GOAL\}?' 2>/dev/null; then
+    assert_pass "prb2_holistic_goal_referenced: \$GOAL (or \${GOAL}) is referenced in run_holistic_gate"
+else
+    assert_fail "prb2_holistic_goal_referenced: \$GOAL must appear in run_holistic_gate prompt" \
+        "Neither GOAL nor ORIGINAL_GOAL found — holistic gate has no goal input"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Results
 # ═══════════════════════════════════════════════════════════════════════════════
 

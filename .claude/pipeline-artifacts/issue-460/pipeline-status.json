@@ -1,10 +1,10 @@
 {
   "run_id": "26068114437",
   "branch": "shipwright/issue-460",
-  "stage": "review",
+  "stage": "test",
   "iteration": 0,
   "retry_count": 0,
-  "last_heartbeat": "2026-05-19T13:13:35Z",
+  "last_heartbeat": "2026-05-19T13:09:39Z",
   "exit_reason": "",
   "error_category": "",
   "completed_stages": [
@@ -12,7 +12,6 @@
     "plan",
     "design",
     "build",
-    "test",
-    "review"
+    "test"
   ]
 }

@@ -656,6 +656,18 @@ ${_build_recall_ctx}"
     fi
 
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-build.log"
+    local _build_log="${ARTIFACTS_DIR}/build.log"
+    # Pre-write a header line so the file exists even if `sw loop` is killed before
+    # writing anything to stdout (e.g., on a 5-hour job hard-timeout). The file is
+    # read by _resolve_stage_log_path() (pipeline-state.sh:566) when subsequent
+    # stages or post-mortems need the build output. Without this, hard timeouts
+    # leave the diagnostic "stage build produced no log" with nothing to show.
+    {
+        printf '=== build.log — issue %s — run %s — started %s ===\n' \
+            "${ISSUE_NUMBER:-?}" \
+            "${SHIPWRIGHT_PIPELINE_ID:-?}" \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    } > "$_build_log"
     export PIPELINE_JOB_ID="${PIPELINE_NAME:-pipeline-$$}"
     # Per-iteration cost sidecar (issue #87) — read by sw-loop.sh's record_iteration_cost.
     export ITER_COST_JSONL="${ARTIFACTS_DIR}/loop-iteration-costs.jsonl"
@@ -671,8 +683,15 @@ ${_build_recall_ctx}"
     export CI_JOB_START_EPOCH="${CI_JOB_START_EPOCH:-}"
     # Enable scope guard so safe_git_stage() blocks out-of-scope commits (T1.2)
     export SCOPE_GUARD_ENABLED="true"
-    sw loop "${loop_args[@]}" < /dev/null 2>"$_token_log" || {
-        local _loop_exit=$?
+    # Pipe stdout through `tee -a` so build.log grows incrementally — whatever the
+    # loop emitted before a SIGTERM kill survives on disk for post-mortems.
+    # `set +e` around the pipeline lets us read PIPESTATUS[0] for the loop's true
+    # exit code instead of tee's, without errexit aborting on a non-zero loop.
+    set +e
+    sw loop "${loop_args[@]}" < /dev/null 2>"$_token_log" | tee -a "$_build_log"
+    local _loop_exit=${PIPESTATUS[0]}
+    set -e
+    if [[ "$_loop_exit" -ne 0 ]]; then
         parse_claude_tokens "$_token_log"
 
         # Detect context exhaustion from progress file
@@ -691,7 +710,7 @@ ${_build_recall_ctx}"
 
         error "Build loop failed"
         return 1
-    }
+    fi
     parse_claude_tokens "$_token_log"
 
     # Read accumulated token counts from build loop (written by sw-loop.sh)

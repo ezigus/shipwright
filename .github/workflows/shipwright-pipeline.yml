@@ -564,12 +564,17 @@ jobs:
           if git ls-remote --heads --exit-code origin "$BRANCH" >/dev/null 2>&1; then
             git fetch --no-tags origin "$BRANCH" 2>/dev/null || true
             BRANCH_CONTENT=$(git log -5 --format='%s' "origin/$BRANCH" 2>/dev/null || echo "")
-            if echo "$BRANCH_CONTENT" | grep -qiE 'Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error'; then
+            # Anchor the pattern to the start of the subject line. Claude-crash commits
+            # always begin with the error string; conventional-commit prefixed fixes
+            # (fix:, feat:, chore:, etc.) never do — so "fix: handle rate_limit_error
+            # in retry logic" no longer trips the polluted-branch deletion.
+            if echo "$BRANCH_CONTENT" | grep -qiE '^[[:space:]]*(Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error)'; then
               POLLUTED_SUBJECT=$(echo "$BRANCH_CONTENT" \
-                | grep -iE 'Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error' | head -1 || echo "unknown")
+                | grep -iE '^[[:space:]]*(Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error)' | head -1 || echo "unknown")
               echo "::warning::Partial work branch appears polluted with API errors — deleting. Trigger commit subject: ${POLLUTED_SUBJECT}"
               git push origin --delete "$BRANCH" 2>/dev/null || true
             else
+              echo "::notice::WIP branch last 5 commit subjects look clean — resuming"
               USE_WIP=true
             fi
           fi

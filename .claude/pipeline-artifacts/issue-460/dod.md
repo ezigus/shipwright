@@ -1,3 +1,7 @@
+(Copied verbatim from `.claude/pipeline-artifacts/issue-460/dod.md` so the
+auto-validator can find them in this canonical location too. Bounded to 10
+items per harness contract.)
+
 - `bash scripts/sw-cost-share-test.sh` exits 0 with all assertions passing {auto:other:bash scripts/sw-cost-share-test.sh}
 - `bash scripts/sw-cost-test.sh` exits 0 — no regression in existing cost tests {auto:other:bash scripts/sw-cost-test.sh}
 - `npm test` exits 0 {auto:tests}

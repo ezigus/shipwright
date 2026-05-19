@@ -1,6 +1,6 @@
 # Pipeline Context Bundle
 
-Generated: 2026-05-19T00:21:09Z
+Generated: 2026-05-19T12:27:13Z
 Stage: plan
 Goal: Upload cost-breakdown.json as GitHub Actions artifact for cross-machine optimization
 
@@ -24,11 +24,11 @@ From intelligence analysis:
 
 ## Merged PRs (last 5)
 
+fix(pipeline): anchor polluted-commit detect + capture build stdout to log (author: ezigus, +150−5)
+fix(ci): remove auto-cleanup workflow that destroyed live WIP branches (author: ezigus, +0−49)
 fix(compound-quality): correct root causes for no-op LOOP:PASS and silent cycles (#460) (author: ezigus, +347−59)
 revert(compound-quality): remove targeted-file list and iteration cap (T2.1) (author: ezigus, +4−96)
 fix(pipeline): postmortem-460 hardening — scope guardrail, sidecar config, DoD validator (author: ezigus, +1683−112)
-fix(pipeline): remediate #460 postmortem (F1-F15) + two audit passes (author: ezigus, +1203−60)
-fix(pipeline): stop spurious cross-issue force-pushes + reliable WIP save on hard timeout (author: ezigus, +1041−62)
 
 ---
 
@@ -38,11 +38,12 @@ fix(pipeline): stop spurious cross-issue force-pushes + reliable WIP save on har
 
 - **test_failure**: null
 - **test_failure**: null
+- **test_failure**: null
 
 ## Successful Patterns
 
 - **repo**: ezigus/shipwright
-- **captured_at**: 2026-05-19T00:21:08Z
+- **captured_at**: 2026-05-19T12:27:12Z
 - **project**: {"type":"node","framework":"","test_runner":"vitest","package_manager":"npm","language":"javascript"}
 - **conventions**: {"source_dir":"","test_pattern":"*.test.js","import_style":"commonjs"}
 

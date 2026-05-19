@@ -1,100 +1,95 @@
-Verification complete. The plan's claims hold except for one naming error: the existing baseline-update function is `baseline_update_from_breakdown` (not `cost_baseline_update`), and it already handles the per-stage iteration. I'll flag that in the ADR.
+WIP verified on disk. Producing the ADR now.
 
 # Design: Upload cost-breakdown.json as GitHub Actions artifact for cross-machine optimization
 
 ## Context
 
-`scripts/sw-cost.sh::cost_generate_breakdown` already writes `cost-breakdown.json` into `.claude/pipeline-artifacts/` on every pipeline exit path (`scripts/sw-pipeline.sh:1200`). Today the only way that JSON leaves the runner is via the single combined upload step at `.github/workflows/shipwright-pipeline.yml:1302-1313`, which packages the entire `.claude/pipeline-artifacts/` directory plus `/tmp/pipeline.log` and `events.jsonl` into one artifact named `pipeline-logs-issue-<N>-run-<RUN_ID>` with `retention-days: 7`.
+Each shipwright pipeline run generates `.claude/pipeline-artifacts/cost-breakdown.json` (per-stage token/cost telemetry), but today it is bundled into the omnibus `pipeline-logs-*` artifact and never read back. The `shipwright-optimize` workflow runs on a different machine/clock and only sees the local `~/.shipwright/baselines/` for that runner — so cost baselines drift per-runner and the system has no cross-run, cross-machine view of where tokens are being spent. Issue #460 asks for a dedicated, discoverable artifact channel so the optimize job can aggregate breakdowns across runs and feed merged stats back into rolling baselines.
 
-Two consequences:
-
-1. **Not discoverable by name.** Any consumer that just wants cost data has to download a multi-MB log bundle and rummage. The `shipwright-optimize.yml` cron (Sunday 03:00 UTC) currently doesn't try — it only restores baselines from the `shipwright-data` orphan branch (`shipwright-optimize.yml:35-52`).
-2. **7-day retention is shorter than the optimizer's 7-day cadence.** A single missed Sunday loses everything.
-
-The reuse opportunity is real: `scripts/lib/cost/baselines.sh::baseline_update_from_breakdown` already folds one `cost-breakdown.json` into per-stage rolling averages under `~/.shipwright/baselines/`, which the optimize workflow already persists to `shipwright-data`. Cross-machine optimization is therefore one upload step + one download/merge step away.
-
-Constraints from the repo: Bash 3.2 compatibility (no associative arrays, no `${var,,}`), `set -euo pipefail`, atomic `tmp + mv` writes, `jq` for all JSON, no network in tests, `info`/`success`/`warn` helpers, `emit_event` for observability.
-
-The implementation plan as written is mostly sound but contains one inaccuracy: it refers to `cost_baseline_update` as the reuse target. The actual function is `baseline_update_from_breakdown` (and the per-stage primitive is `baseline_update_stage`). The merge layer should call `baseline_update_from_breakdown` per merged input — not invent a new wrapper.
+Constraints we have to respect:
+- **Bash 3.2 compatibility** (`scripts/lib/*` runs on macOS default bash) — no `declare -A`, no `readarray`, no `${var,,}`. Confirmed in `.ai-standards/generated/claude-instructions.md` and `scripts/lib/cost/baselines.sh`.
+- **Additive workflow change** — `sw-gha-pipeline-test.sh` was tightened (commit `9f5743b`) to assert **two** `upload-artifact` steps; the existing `pipeline-logs-*` upload must stay.
+- **Artifact name must be globally unique** — keyed on `${{ github.run_id }}` and the issue number so concurrent pipelines on different issues/machines cannot collide.
+- **Hermetic local tests** — no `act`, no network, no real `gh`. The optimize-side download path is validated structurally (grep on YAML), not end-to-end.
+- **DoD already declared on disk** at `.claude/pipeline-artifacts/issue-460/dod.md` (10 items, every implementation file in scope already exists).
+- **Resume-from-build directive** — `run 26068114437` failed in the test stage after build/test self-heal exhausted; the implementation is on disk, the work is to verify and fix the specific failing assertion, not to re-implement.
 
 ## Decision
 
-Adopt **Alternative B** from the plan with one refinement: the merge step calls the existing `baseline_update_from_breakdown` directly on each downloaded file, instead of synthesizing a single merged breakdown and re-applying. This preserves per-pipeline provenance (each run's stages get folded with their own weight) and avoids a second JSON schema we'd have to maintain.
+**Resume the existing WIP (Alternative A in the plan), do not re-architect.** The branch already carries the full design:
 
-**Data flow:**
+**Data flow (memorize this; it is the contract the tests pin):**
 
 ```
-pipeline run (any machine)
-  └─ writes .claude/pipeline-artifacts/cost-breakdown.json
-       └─ new step uploads it as `cost-breakdown-issue-<N>-run-<RUN_ID>` (retention 30d, always)
-            └─ stays additive — combined logs upload is untouched
-
-shipwright-optimize.yml (weekly cron)
-  └─ gh run list → top 20 successful pipeline runs on main
-       └─ gh run download --pattern 'cost-breakdown-*' → /tmp/cost-merge/run-<id>/
-            └─ scripts/lib/cost/share.sh::cost_merge_apply
-                 ├─ for each cost-breakdown.json found:
-                 │    ├─ schema check: jq -e '.summary.total_cost_usd' (numeric)
-                 │    └─ baseline_update_from_breakdown <file> ""
-                 └─ emits cost.breakdown_merged event with count
-                      └─ existing "Persist state to shipwright-data" step pushes baselines
+pipeline run on machine X
+  → scripts/sw-cost.sh writes .claude/pipeline-artifacts/cost-breakdown.json
+  → shipwright-pipeline.yml step "Upload cost-breakdown artifact" uploads as
+        cost-breakdown-issue-<N>-run-<run_id>
+  ─ (artifacts retained per GHA default) ─
+shipwright-optimize.yml run on machine Y (scheduled / dispatch)
+  → gh run download with pattern "cost-breakdown-issue-*"
+  → sources scripts/lib/cost/share.sh
+  → cost_merge_breakdowns <dir> <out.json>
+        (validates each file with cost_share_validate_breakdown; skips invalid;
+         sums tokens + cost_usd per stage across files)
+  → cost_apply_merged_to_baselines <merged.json>
+        (writes per-stage rolling baselines into ~/.shipwright/baselines/)
 ```
 
-**Error handling pattern:** identical to `cost_generate_breakdown` (`scripts/sw-cost.sh:619-634`) — per-file `try`/`catch` in `jq`, malformed files dropped with a `warn`, never fatal. `gh run download` is wrapped in `|| true` per run. `if-no-files-found: ignore` on the upload so pipelines that skip cost tracking don't trigger upload warnings (this addresses the prior "upload-artifact warns on missing files" failure pattern surfaced in historical context).
+**Library boundary:** all merge/validation logic lives in `scripts/lib/cost/share.sh` and is exercised by the hermetic suite `scripts/sw-cost-share-test.sh`. The CLI surface is `scripts/sw-cost.sh merge <dir> <out>` which sources the lib and dispatches — keeping the workflow YAML thin and testable.
 
-**Artifact name as semver contract:** `cost-breakdown-issue-<N>-run-<RUN_ID>`. Documented in `docs/cost-sharing.md` so external tooling can rely on it.
+**Error handling — degrade-don't-abort:** a malformed JSON file or a schema violation in one downloaded breakdown must not fail the merge; `cost_share_validate_breakdown` returns non-zero, `cost_merge_breakdowns` `warn`s and skips it. Empty input directory produces a valid empty merged JSON. This is the contract the unit test pins.
 
-**Permissions:** add `actions: read` to the optimize job (not workflow-wide). This is the minimum scope needed for `gh run download` to pull artifacts from the pipeline workflow.
+**Concurrency:** artifact names embed `${{ github.run_id }}` (globally unique), so two pipelines on different machines for different issues cannot collide. No locking needed.
+
+**Permissions:** the optimize job must declare `permissions: { actions: read }` to use `gh run download` across the workflow boundary — not fully testable locally; flagged as a post-merge validation in the PR description rather than blocking DoD.
 
 ## Alternatives Considered
 
-1. **Just upload, no consumer (Plan's Alt A)** — Pros: smallest blast radius, ~10 LOC in YAML. Cons: doesn't deliver "cross-machine optimization" from the issue title; baselines remain machine-local until someone manually downloads. *Rejected as insufficient.*
-
-2. **Upload + synthesize a single merged JSON, then apply (Plan's Alt B as written)** — Pros: produces a human-inspectable merged artifact. Cons: invents a second JSON schema (`merged-cost-breakdown.json`) with its own aggregation semantics we'd have to keep in sync with `cost_generate_breakdown`; doubles the maintenance surface. *Rejected in favor of refined B.*
-
-3. **Upload + apply per-file via existing `baseline_update_from_breakdown` (chosen)** — Pros: no new schema; reuses the function that already powers single-machine baselines so behavior stays identical; per-pipeline updates compose naturally via the existing rolling average. Cons: no single merged-snapshot file for human inspection (mitigation: emit a summary line + event with counts). *Chosen.*
-
-4. **Push merged baseline as a checked-in file on main (Plan's Alt C)** — Pros: visible in PRs. Cons: noisy auto-commits every Sunday; baselines already live on `shipwright-data`. *Rejected.*
-
-5. **Stream to a third-party telemetry service (Plan's Alt D)** — Out of scope, adds secret management and external coupling. *Rejected.*
+1. **Resume from existing WIP (chosen).** — Pros: zero greenfield, reuses ~700 LOC already written and reviewed across prior loop iterations, honors the issue's explicit resume directive, smallest blast radius. Cons: inherits latent design flaws in the WIP; mitigated by running the full DoD harness literally before PR.
+2. **Discard WIP, re-implement from plan.** — Pros: clean slate, no inherited bugs. Cons: throws away committed work, doubles cost, ignores the resume directive, and the failing signal (test-stage assertion) is cheaper to fix than to recreate.
+3. **Upload-only, skip the optimize-side consumer.** — Pros: smallest possible diff. Cons: doesn't deliver the "cross-machine *optimization*" the issue title demands; `cost_merge_breakdowns` is already written and tested — leaving the producer half-wired would regress committed work.
+4. **Stash everything in `~/.shipwright/costs.json` and skip artifacts entirely.** — Pros: no GHA dependency. Cons: that file is per-runner; "cross-machine" is exactly what artifacts solve. Rejected on first principles.
 
 ## Implementation Plan
 
-**Files to create:**
-- `scripts/lib/cost/share.sh` — Bash 3.2 lib with `_COST_SHARE_LOADED` guard. Exposes `cost_merge_apply <input_dir>` which globs `${input_dir}/*/cost-breakdown.json`, validates `.summary.total_cost_usd` is numeric via `jq -e`, calls `baseline_update_from_breakdown` per valid file, emits a `cost.breakdown_merged` event with `files_total=`/`files_applied=` keys. Uses `info`/`success`/`warn` from the standard helpers.
-- `scripts/sw-cost-share-test.sh` — hermetic harness mirroring `scripts/sw-cost-test.sh`. Overrides `baseline_dir()` via env to a temp dir so no `$HOME` writes leak. Fixtures live in a temp dir, never the repo.
-- `docs/cost-sharing.md` — documents the artifact-name contract (`cost-breakdown-issue-<N>-run-<RUN_ID>`), schema reference pointing at `scripts/sw-cost.sh:667-691`, retention (30 days), consumer pattern, and opt-out via repo variable `SHIPWRIGHT_SKIP_COST_ARTIFACT`.
+**Files to create:** none. All implementation files are already present on `shipwright/issue-460`:
+- `scripts/lib/cost/share.sh` (264 lines — exports `cost_share_validate_breakdown`, `cost_merge_breakdowns`, `cost_apply_merged_to_baselines`)
+- `scripts/sw-cost-share-test.sh` (311 lines — 5 hermetic cases: happy path, invalid JSON, schema violation, empty dir, baseline application)
+- `docs/cost-sharing.md` (117 lines — artifact-name contract + permissions note)
 
-**Files to modify:**
-- `.github/workflows/shipwright-pipeline.yml` — insert a new `upload-artifact@v4` step immediately after the existing line 1313 with `if: always() && steps.claim_check.outputs.skip != 'true'`, `path: .claude/pipeline-artifacts/cost-breakdown.json`, `retention-days: 30`, `if-no-files-found: ignore`, `continue-on-error: true`. Combined upload stays.
-- `.github/workflows/shipwright-optimize.yml` — add `actions: read` to the `optimize` job's `permissions:` block (job-scoped, not workflow-scoped); add a "Download recent cost-breakdown artifacts" step using `gh run list --workflow=shipwright-pipeline.yml --branch=main --status=completed --limit=20` piped to `gh run download --pattern 'cost-breakdown-*' || true`; add a "Merge cost breakdowns into baselines" step that sources `scripts/lib/cost/share.sh` and calls `cost_merge_apply /tmp/cost-merge`. Insert both between current "Restore persistent state" (line 35) and "Run self-optimization" (line 54). The existing "Persist state to shipwright-data branch" step (line 70) needs no changes.
-- `scripts/sw-cost.sh` — add `source "$SCRIPT_DIR/lib/cost/share.sh"` near the existing baselines source line; add `merge <dir>` subcommand to the CLI dispatcher and update the usage block. Strictly for local debugging.
+**Files to modify (only if a DoD check flags them — conservative, demand-driven):**
+- `scripts/sw-cost.sh` — already sources `lib/cost/share.sh` and adds the `merge` subcommand; touch only if dispatch grep fails.
+- `.github/workflows/shipwright-pipeline.yml` — already has the dedicated upload step at line 1304/1321 with name `cost-breakdown-issue-${issue}-run-${run_id}`; leave as-is.
+- `.github/workflows/shipwright-optimize.yml` — already wires `cost_merge_breakdowns /tmp/cost-merge ~/.shipwright/baselines/merged-cost-breakdown.json` (line 100); leave as-is.
+- `scripts/sw-gha-pipeline-test.sh` — already asserts 2 upload-artifact steps; touch only if the count assertion is off.
+- `scripts/sw-cost-share-test.sh` — modify only to align an assertion that points at a real bug in `share.sh`; prefer fixing the lib.
 
-**Files NOT in the plan that may need touching (check during implementation):**
-- `package.json::scripts.test` — only if `sw-cost-share-test.sh` isn't auto-discovered. The repo's pattern is per-script harnesses chained from `npm test`; mirror whatever `sw-cost-test.sh` does.
+**Hard scope rule:** the cumulative diff vs `origin/main` at PR time touches only the files in the inventory table in the plan. Any stray `.claude/helpers/*` or pipeline bookkeeping edits get either reverted or split into a separate `[skip ci]` chore commit before PR.
 
-**Dependencies:** none new. Uses `jq`, `gh` CLI (already installed on `ubuntu-latest`), existing helpers.
+**Dependencies:** none new. `jq` is already a project dependency (used in `scripts/lib/cost/baselines.sh`). `gh` is provided by the GHA runner. No new npm packages.
 
 **Risk areas:**
-- *Concurrent runs / artifact name collisions:* Mitigated — `${{ github.run_id }}` is unique per workflow run.
-- *Malformed `cost-breakdown.json` from old runs:* Per-file `jq -e` schema check; drops with `warn`, never aborts. Same pattern as `cost_generate_breakdown:619-634`.
-- *`gh run download` rate limits or partial failures:* `|| true` per run, hard cap at 20 runs/week. Worst case: optimize falls back to existing baselines.
-- *`actions: read` privilege creep:* Scope to the `optimize` job only with an inline comment referencing #460.
-- *Storage cost of 30-day retention:* `cost-breakdown.json` is small (~1-10 KB); 30d × weekly pipelines is well under 1 MB total. Acceptable.
-- *External consumers depending on artifact name later:* Documented in `docs/cost-sharing.md` as a stable contract.
-- *Past failure pattern "upload-artifact warns on missing files":* Addressed by `if-no-files-found: ignore` (this is the specific value that suppresses the warn, not `warn` or `error`).
+- **`cost_merge_breakdowns` JSON aggregation** — bash + `jq` reduce loops are easy to get wrong on edge inputs (empty dir, single file, overlapping stage names). Mitigated by the 5 explicit unit cases.
+- **YAML drift** — a future workflow refactor could drop one of the two `upload-artifact` steps and break `sw-gha-pipeline-test.sh`. Mitigated by running that suite first in this run before touching anything.
+- **GHA `actions: read` permission** — required for cross-workflow `gh run download`; missing this fails silently in real CI (returns empty dir, merge produces empty output, optimize is a no-op). Cannot be reproduced locally; documented as a post-merge smoke check.
+- **Build-loop bookkeeping leaks** — `git status` shows uncommitted modifications in `.claude/helpers/*` and `.claude/pipeline-state.md`. These must not land in the feature PR; either revert or commit separately as `[skip ci]`.
+- **Bash 3.2 trap** — easy to regress to bash-4-isms when editing `share.sh`. Mitigated by `shellcheck` on the two new files (it doesn't catch all bash-4-isms but catches most associative-array usage).
 
 ## Validation Criteria
 
-- [ ] `bash scripts/sw-cost-share-test.sh` exits 0 with all assertions passing — covers happy path (3 files, summed correctly), malformed-JSON drop, schema-violation drop, empty input dir, and verification that `baseline_update_from_breakdown` is invoked exactly once per valid file (assert via a stub that increments a counter file).
-- [ ] `bash scripts/sw-cost-test.sh` exits 0 — no regression in existing cost tests.
-- [ ] `npm test` exits 0.
-- [ ] `shellcheck scripts/lib/cost/share.sh scripts/sw-cost-share-test.sh` exits 0.
-- [ ] `grep -q 'cost-breakdown-issue-' .github/workflows/shipwright-pipeline.yml` succeeds.
-- [ ] `grep -q 'cost_merge_apply' .github/workflows/shipwright-optimize.yml` succeeds.
-- [ ] `grep -q 'actions: read' .github/workflows/shipwright-optimize.yml` succeeds and the permission is job-scoped (under `jobs.optimize.permissions`, not top-level).
-- [ ] `bash -c 'source scripts/lib/cost/share.sh && type cost_merge_apply'` reports a function.
-- [ ] `test -f docs/cost-sharing.md && grep -q 'cost-breakdown-issue-' docs/cost-sharing.md` succeeds.
-- [ ] First post-merge pipeline run produces a discoverable artifact named `cost-breakdown-issue-<N>-run-<RUN_ID>` (verify in Actions UI; cannot be tested locally).
-- [ ] First post-merge optimize cron logs `cost.breakdown_merged` with `files_applied >= 1` and the resulting baseline diff appears on the `shipwright-data` branch.
-- [ ] Cumulative branch diff touches only: `.github/workflows/shipwright-pipeline.yml`, `.github/workflows/shipwright-optimize.yml`, `scripts/lib/cost/share.sh`, `scripts/sw-cost-share-test.sh`, `scripts/sw-cost.sh`, `docs/cost-sharing.md`, and optionally `package.json`.
+Every item below is `auto:`-tagged in `.claude/pipeline-artifacts/issue-460/dod.md`; the harness will run each command literally.
+
+- [ ] `bash scripts/sw-cost-share-test.sh` exits 0 — all 5 hermetic cases pass (happy, invalid JSON, schema violation, empty dir, baseline application).
+- [ ] `bash scripts/sw-cost-test.sh` exits 0 — no regression in the pre-existing cost suite.
+- [ ] `bash scripts/sw-gha-pipeline-test.sh` exits 0 — workflow YAML still has exactly 2 `upload-artifact` steps and the new one is named `cost-breakdown-issue-*`.
+- [ ] `npm test` exits 0 end-to-end.
+- [ ] `shellcheck scripts/lib/cost/share.sh scripts/sw-cost-share-test.sh` exits 0 (only the new files; the rest of the tree is out of scope).
+- [ ] `bash -c 'source scripts/lib/cost/share.sh && type cost_merge_breakdowns'` exits 0 — function is sourceable and exported.
+- [ ] `grep -q 'cost-breakdown-issue-' .github/workflows/shipwright-pipeline.yml` exits 0 — dedicated upload step present with correct name pattern.
+- [ ] `grep -q 'cost_merge_breakdowns' .github/workflows/shipwright-optimize.yml` exits 0 — consumer-side merge wired in.
+- [ ] `test -f docs/cost-sharing.md && grep -q 'cost-breakdown-issue-' docs/cost-sharing.md` exits 0 — artifact-name contract documented.
+- [ ] `grep -q 'lib/cost/share.sh' scripts/sw-cost.sh` exits 0 — CLI sources the lib.
+- [ ] `git diff --stat origin/main...HEAD` touches only the files listed in the plan inventory table — no surprise files from loop bookkeeping.
+
+**Out-of-band post-merge check (not in DoD, documented in PR):** first real `shipwright-optimize.yml` run on `main` produces a non-empty `merged-cost-breakdown.json` in the job artifacts, confirming the `actions: read` permission is correctly scoped.

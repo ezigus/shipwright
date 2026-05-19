@@ -399,8 +399,14 @@ invoke_pipeline() {
     # Tests that need these should set _TEST_INTELLIGENCE_COMPLEXITY instead.
     # SHIPWRIGHT_MIN_FREE_GB=0 disables the memory threshold so pipeline unit
     # tests are not affected by the host's actual available RAM.
+    # WORKSPACE_BRANCH/CI_MODE are explicitly unset so this subprocess does NOT
+    # inherit them from the surrounding GitHub Actions run — tests that want
+    # those set invoke the pipeline directly with their own env, bypassing this
+    # helper. Without this, tests asserting local-dev branch-creation behavior
+    # silently follow the CI workspace-branch path and fail.
     PIPELINE_OUTPUT=$(
         cd "$TEST_TEMP_DIR/project"
+        unset WORKSPACE_BRANCH CI_MODE
         HOME="$TEST_TEMP_DIR" \
         EVENTS_FILE="$TEST_TEMP_DIR/events.jsonl" \
         PATH="$TEST_TEMP_DIR/bin:$PATH" \

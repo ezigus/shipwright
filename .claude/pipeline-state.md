@@ -2,7 +2,7 @@
 pipeline: autonomous
 goal: "Upload cost-breakdown.json as GitHub Actions artifact for cross-machine optimization"
 original_goal: "Upload cost-breakdown.json as GitHub Actions artifact for cross-machine optimization"
-status: running
+status: failed
 issue: "#460"
 branch: "shipwright/issue-460"
 template: "devops"

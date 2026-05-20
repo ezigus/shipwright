@@ -3120,10 +3120,15 @@ test_merge_stage_checks_already_merged_on_failure() {
     fi
     # Both gh-CLI failure paths must query state and accept MERGED as success.
     # Count is 2 because there are two distinct merge attempts (auto + direct).
-    local state_check_count
-    state_check_count=$(grep -c 'gh pr view "$pr_number" --json state' "$delivery" || echo 0)
-    local merged_branch_count
-    merged_branch_count=$(grep -c '"\$_pr_state_auto" == "MERGED"\|"\$_pr_state_direct" == "MERGED"' "$delivery" || echo 0)
+    # Use `|| true` + `${var:-0}` (not `|| echo 0`) — under set -e pipefail,
+    # `grep -c` exits 1 on no-match but still prints "0", so `|| echo 0` would
+    # yield "0\n0" and break numeric comparison. Use grep -E for | alternation
+    # (POSIX BRE \| is non-portable on BSD grep / macOS).
+    local state_check_count merged_branch_count
+    state_check_count=$(grep -c 'gh pr view "$pr_number" --json state' "$delivery" || true)
+    state_check_count=${state_check_count:-0}
+    merged_branch_count=$(grep -cE '"\$_pr_state_auto" == "MERGED"|"\$_pr_state_direct" == "MERGED"' "$delivery" || true)
+    merged_branch_count=${merged_branch_count:-0}
     if [[ "$state_check_count" -ge 2 ]] && [[ "$merged_branch_count" -ge 2 ]] && \
        grep -q 'merge.race_won' "$delivery"; then
         return 0

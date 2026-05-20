@@ -3106,6 +3106,34 @@ test_pr_stage_posts_cost_table_comment() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Merge-stage race: both failure paths must check if PR is already MERGED
+# before treating gh-CLI non-zero as a stage failure. Race seen in run
+# 26134391810 — GitHub auto-merge completed between `gh pr merge --auto`
+# request and response, causing both the auto-merge fallthrough and the
+# direct-merge attempt to exit non-zero even though PR was merged on main.
+# ──────────────────────────────────────────────────────────────────────────────
+test_merge_stage_checks_already_merged_on_failure() {
+    local delivery="$TEST_TEMP_DIR/scripts/lib/pipeline-stages-delivery.sh"
+    if [[ ! -f "$delivery" ]]; then
+        echo -e "    ${RED}✗${RESET} delivery lib missing at $delivery"
+        return 1
+    fi
+    # Both gh-CLI failure paths must query state and accept MERGED as success.
+    # Count is 2 because there are two distinct merge attempts (auto + direct).
+    local state_check_count
+    state_check_count=$(grep -c 'gh pr view "$pr_number" --json state' "$delivery" || echo 0)
+    local merged_branch_count
+    merged_branch_count=$(grep -c '"\$_pr_state_auto" == "MERGED"\|"\$_pr_state_direct" == "MERGED"' "$delivery" || echo 0)
+    if [[ "$state_check_count" -ge 2 ]] && [[ "$merged_branch_count" -ge 2 ]] && \
+       grep -q 'merge.race_won' "$delivery"; then
+        return 0
+    fi
+    echo -e "    ${RED}✗${RESET} merge stage missing race-check (state_checks=$state_check_count, merged_branches=$merged_branch_count)"
+    grep -n 'gh pr view\|race_won\|MERGED' "$delivery" || true
+    return 1
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # #504 D2 — hermetic: render_cost_table_plain + cost_baseline_update from a
 # staged cost-breakdown.json produce a non-empty table and update baseline file.
 # Validates the helpers wired into cleanup_on_exit are functional, not just
@@ -4214,6 +4242,7 @@ main() {
         "test_stuck_cycling_fires_through_review_self_heal_path:Cycling: stuck_cycling fires through review self-heal path (issue #448 DoD)"
         "test_cleanup_wires_cost_baseline_and_render:Cost: cleanup_on_exit wires render + baseline_update (#504 D2)"
         "test_pr_stage_posts_cost_table_comment:Cost: PR stage posts cost-table comment (#504 D2)"
+        "test_merge_stage_checks_already_merged_on_failure:Merge: both failure paths accept MERGED state (race with auto-merge)"
         "test_cost_helpers_functional_against_staged_breakdown:Cost: hermetic render + baseline_update against staged breakdown (#504 D2)"
         "test_compose_prompt_iter1_includes_pipeline_context:Loop: compose_prompt iter 1 includes pipeline_context_section"
         "test_compose_prompt_iter2_omits_pipeline_context:Loop: compose_prompt iter 2 omits pipeline_context_section"

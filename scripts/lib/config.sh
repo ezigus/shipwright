@@ -89,3 +89,35 @@ _config_get_bool() {
         *) return 1 ;;
     esac
 }
+
+# _config_get_list "section.key" [fallback_csv]
+# Returns a JSON array from the precedence chain as a comma-separated string
+# so callers can split with `IFS=, read -r -a arr <<< "$csv"` (bash 3.2 safe).
+# Returns the fallback_csv only when every config source omits the key.
+_config_get_list() {
+    local dotpath="$1"
+    local fallback="${2:-}"
+    local jq_path=".${dotpath}"
+    local jq_filter="${jq_path} | if . == null then empty elif type == \"array\" then join(\",\") else tostring end"
+    local file val
+
+    # 1. Env var: list as CSV in SHIPWRIGHT_<DOTPATH>
+    local env_name="SHIPWRIGHT_$(echo "$dotpath" | tr '[:lower:].' '[:upper:]_')"
+    local env_val="${!env_name:-}"
+    if [[ -n "$env_val" ]]; then
+        echo "$env_val"
+        return 0
+    fi
+
+    for file in "$_DAEMON_CONFIG_FILE" "$_POLICY_FILE" "$_DEFAULTS_FILE"; do
+        if [[ -f "$file" ]]; then
+            val=$(jq -r "$jq_filter" "$file" 2>/dev/null || echo "")
+            if [[ -n "$val" ]]; then
+                echo "$val"
+                return 0
+            fi
+        fi
+    done
+
+    echo "$fallback"
+}

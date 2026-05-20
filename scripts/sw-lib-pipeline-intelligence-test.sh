@@ -165,6 +165,126 @@ result=$(pipeline_adaptive_cycles 3 "compound_quality" 0 -1)
 assert_gt "Result within ceiling" "$result" "0"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# _dod_find_test_for — configurable structural test pairing (issue #615)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "_dod_find_test_for"
+
+# Each test builds a synthetic project tree under $TEST_TEMP_DIR/dod-fixture-N,
+# cd's in, and asserts the helper resolves the correct test file path.
+_dod_fixture_root="$TEST_TEMP_DIR/dod-fixture"
+
+# Test 1: Shipwright prefix_flat — scripts/lib/cost/share.sh → scripts/sw-lib-cost-share-test.sh
+mkdir -p "$_dod_fixture_root/t1/scripts/lib/cost"
+touch "$_dod_fixture_root/t1/scripts/lib/cost/share.sh"
+touch "$_dod_fixture_root/t1/scripts/sw-lib-cost-share-test.sh"
+(
+    cd "$_dod_fixture_root/t1"
+    _resolved=$(_dod_find_test_for "scripts/lib/cost/share.sh" 2>/dev/null || echo "NOT_FOUND")
+    if [[ "$_resolved" == "scripts/sw-lib-cost-share-test.sh" ]]; then
+        assert_pass "_dod_find_test_for: prefix_flat resolves scripts/lib/cost/share.sh → sw-lib-cost-share-test.sh"
+    else
+        assert_fail "_dod_find_test_for: prefix_flat resolves scripts/lib/cost/share.sh → sw-lib-cost-share-test.sh" \
+            "got: $_resolved"
+    fi
+)
+
+# Test 2: Shipwright top-level lib — scripts/lib/pipeline-intelligence.sh → scripts/sw-lib-pipeline-intelligence-test.sh
+mkdir -p "$_dod_fixture_root/t2/scripts/lib"
+touch "$_dod_fixture_root/t2/scripts/lib/pipeline-intelligence.sh"
+touch "$_dod_fixture_root/t2/scripts/sw-lib-pipeline-intelligence-test.sh"
+(
+    cd "$_dod_fixture_root/t2"
+    _resolved=$(_dod_find_test_for "scripts/lib/pipeline-intelligence.sh" 2>/dev/null || echo "NOT_FOUND")
+    if [[ "$_resolved" == "scripts/sw-lib-pipeline-intelligence-test.sh" ]]; then
+        assert_pass "_dod_find_test_for: prefix_flat resolves scripts/lib/pipeline-intelligence.sh → sw-lib-pipeline-intelligence-test.sh"
+    else
+        assert_fail "_dod_find_test_for: prefix_flat resolves top-level lib" "got: $_resolved"
+    fi
+)
+
+# Test 3: Mirror strategy — src/foo.ts → tests/foo.test.ts (mirror with empty rel_dir)
+mkdir -p "$_dod_fixture_root/t3/src" "$_dod_fixture_root/t3/tests"
+touch "$_dod_fixture_root/t3/src/foo.ts"
+touch "$_dod_fixture_root/t3/tests/foo.test.ts"
+(
+    cd "$_dod_fixture_root/t3"
+    _resolved=$(_dod_find_test_for "src/foo.ts" 2>/dev/null || echo "NOT_FOUND")
+    if [[ "$_resolved" == "tests/foo.test.ts" ]]; then
+        assert_pass "_dod_find_test_for: mirror resolves src/foo.ts → tests/foo.test.ts"
+    else
+        assert_fail "_dod_find_test_for: mirror resolves src/foo.ts → tests/foo.test.ts" "got: $_resolved"
+    fi
+)
+
+# Test 4: Co-located Jest — src/components/Button.jsx → src/components/__tests__/Button.test.jsx
+mkdir -p "$_dod_fixture_root/t4/src/components/__tests__"
+touch "$_dod_fixture_root/t4/src/components/Button.jsx"
+touch "$_dod_fixture_root/t4/src/components/__tests__/Button.test.jsx"
+(
+    cd "$_dod_fixture_root/t4"
+    _resolved=$(_dod_find_test_for "src/components/Button.jsx" 2>/dev/null || echo "NOT_FOUND")
+    if [[ "$_resolved" == "src/components/__tests__/Button.test.jsx" ]]; then
+        assert_pass "_dod_find_test_for: co-located __tests__ resolves Button.jsx → __tests__/Button.test.jsx"
+    else
+        assert_fail "_dod_find_test_for: co-located __tests__" "got: $_resolved"
+    fi
+)
+
+# Test 5: Case-insensitive Swift — Sources/Foo.swift → Tests/FooTests.swift
+# Needs a custom source root and test_dir capitalization handled by the helper.
+mkdir -p "$_dod_fixture_root/t5/Sources" "$_dod_fixture_root/t5/Tests"
+touch "$_dod_fixture_root/t5/Sources/Foo.swift"
+touch "$_dod_fixture_root/t5/Tests/FooTests.swift"
+mkdir -p "$_dod_fixture_root/t5/.claude"
+cat > "$_dod_fixture_root/t5/.claude/daemon-config.json" <<'EOF'
+{"pipeline":{"dod":{"source_roots":["Sources/",""]}}}
+EOF
+(
+    cd "$_dod_fixture_root/t5"
+    _orig_dc="$_DAEMON_CONFIG_FILE"
+    _DAEMON_CONFIG_FILE="$_dod_fixture_root/t5/.claude/daemon-config.json"
+    _resolved=$(_dod_find_test_for "Sources/Foo.swift" 2>/dev/null || echo "NOT_FOUND")
+    _DAEMON_CONFIG_FILE="$_orig_dc"
+    if [[ "$_resolved" == "Tests/FooTests.swift" ]]; then
+        assert_pass "_dod_find_test_for: case-insensitive Swift resolves Sources/Foo.swift → Tests/FooTests.swift"
+    else
+        assert_fail "_dod_find_test_for: case-insensitive Swift" "got: $_resolved"
+    fi
+)
+
+# Test 6: Override — custom prefix_flat_template via daemon-config.json takes precedence
+mkdir -p "$_dod_fixture_root/t6/scripts/lib/foo" "$_dod_fixture_root/t6/spec" "$_dod_fixture_root/t6/.claude"
+touch "$_dod_fixture_root/t6/scripts/lib/foo/bar.sh"
+touch "$_dod_fixture_root/t6/spec/custom-bar.sh"
+cat > "$_dod_fixture_root/t6/.claude/daemon-config.json" <<'EOF'
+{"pipeline":{"dod":{"search_strategies":["prefix_flat"],"prefix_flat_template":"spec/custom-{stem}.sh"}}}
+EOF
+(
+    cd "$_dod_fixture_root/t6"
+    _orig_dc="$_DAEMON_CONFIG_FILE"
+    _DAEMON_CONFIG_FILE="$_dod_fixture_root/t6/.claude/daemon-config.json"
+    _resolved=$(_dod_find_test_for "scripts/lib/foo/bar.sh" 2>/dev/null || echo "NOT_FOUND")
+    _DAEMON_CONFIG_FILE="$_orig_dc"
+    if [[ "$_resolved" == "spec/custom-bar.sh" ]]; then
+        assert_pass "_dod_find_test_for: custom prefix_flat_template via daemon-config takes precedence"
+    else
+        assert_fail "_dod_find_test_for: custom prefix_flat_template via daemon-config" "got: $_resolved"
+    fi
+)
+
+# Negative: no candidate exists → non-zero exit
+mkdir -p "$_dod_fixture_root/tneg/src"
+touch "$_dod_fixture_root/tneg/src/lonely.ts"
+(
+    cd "$_dod_fixture_root/tneg"
+    if _dod_find_test_for "src/lonely.ts" >/dev/null 2>&1; then
+        assert_fail "_dod_find_test_for: returns non-zero when no candidate exists"
+    else
+        assert_pass "_dod_find_test_for: returns non-zero when no candidate exists"
+    fi
+)
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # pipeline_verify_dod
 # ═══════════════════════════════════════════════════════════════════════════════
 print_test_section "pipeline_verify_dod"

@@ -113,5 +113,5 @@ pre-upload step.
 | Download + merge (consumer) | `.github/workflows/shipwright-optimize.yml` |
 | Merge library | `scripts/lib/cost/share.sh` |
 | Baseline integration | `scripts/lib/cost/baselines.sh` (reused) |
-| Test harness | `scripts/sw-cost-share-test.sh` |
+| Test harness | `scripts/sw-lib-cost-share-test.sh` |
 | CLI subcommand | `shipwright cost merge <input_dir> [out_file] [--apply-baselines]` |

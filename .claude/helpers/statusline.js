@@ -1,45 +1,19 @@
 #!/usr/bin/env node
 /**
- * RuFlo Statusline Generator
- * Displays real-time V3 implementation progress and system status.
- * Version is read from the installed @claude-flow/cli package.json at
- * runtime — #1892 fix: previously hardcoded to V3.5 which drifted from
- * the actual installed alpha series.
+ * RuFlo V3.5 Statusline Generator
+ * Displays real-time V3 implementation progress and system status
  *
  * Usage: node statusline.js [--json] [--compact]
  */
 
 const fs = require('fs');
 const path = require('path');
-const { execSync, execFileSync } = require('child_process');
-
-// #1892 — derive RuFlo banner version from the installed cli package.json
-// so the statusline never drifts from `ruflo doctor`. Falls back to a
-// generic "RuFlo" label only if every resolution path fails.
-function resolveBannerVersion() {
-  const candidates = [
-    // Local-checkout / monorepo case
-    path.join(__dirname, '..', '..', 'package.json'),
-    // npm-installed-as-dep case
-    path.join(__dirname, '..', '..', '..', '@claude-flow', 'cli', 'package.json'),
-    // npm-installed-globally case
-    path.join(__dirname, '..', '..', '..', 'cli', 'package.json'),
-  ];
-  for (const p of candidates) {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(p, 'utf-8'));
-      if (pkg.name && pkg.name.includes('claude-flow') && typeof pkg.version === 'string') {
-        // Render as "V<major>.<minor>" so the banner stays compact —
-        // patch+pre-release detail still shows under `doctor`.
-        const m = pkg.version.match(/^(\d+)\.(\d+)/);
-        if (m) return `V${m[1]}.${m[2]}`;
-        return `V${pkg.version}`;
-      }
-    } catch {/* try next */}
-  }
-  return ''; // empty → header just says "RuFlo"
-}
-const BANNER_VERSION = resolveBannerVersion();
+// SECURITY (audit_1776853149979): execSync was previously imported here and
+// used with shell-interpolated strings. Replaced with execFileSync only —
+// every invocation now passes argv arrays through execve directly, so there
+// is no shell to interpret metacharacters. Keep this comment to explain why
+// `execSync` is intentionally absent.
+const { execFileSync } = require('child_process');
 
 // Configuration
 const CONFIG = {
@@ -202,55 +176,80 @@ function getSecurityStatus() {
   };
 }
 
+// Count `ps aux` rows whose command field matches the given substring.
+// Uses execFileSync('ps', ['aux']) — argv goes through execve, no shell.
+// Returns 0 on any error (fail-quiet, statusline must never throw).
+function countProcessesMatching(needle) {
+  try {
+    const out = execFileSync('ps', ['aux'], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let n = 0;
+    for (const line of out.split('\n')) {
+      if (line.includes(needle)) n++;
+    }
+    return n;
+  } catch {
+    return 0;
+  }
+}
+
 // Get swarm status
 function getSwarmStatus() {
-  let activeAgents = 0;
-  let coordinationActive = false;
-
-  try {
-    const ps = execSync('ps aux 2>/dev/null | grep -c agentic-flow || echo "0"', { encoding: 'utf-8' });
-    activeAgents = Math.max(0, parseInt(ps.trim()) - 1);
-    coordinationActive = activeAgents > 0;
-  } catch (e) {
-    // Ignore errors
-  }
-
+  const activeAgents = countProcessesMatching('agentic-flow');
   return {
     activeAgents,
     maxAgents: CONFIG.maxAgents,
-    coordinationActive,
+    coordinationActive: activeAgents > 0,
   };
+}
+
+// Sum the RSS column (column 6 of `ps aux`) for rows whose command matches
+// any of the given substrings. Returns megabytes; 0 on parse failure.
+function sumRssForCommands(needles) {
+  try {
+    const out = execFileSync('ps', ['aux'], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let totalKB = 0;
+    for (const line of out.split('\n')) {
+      if (!needles.some((n) => line.includes(n))) continue;
+      // ps aux columns: USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND
+      const cols = line.trim().split(/\s+/);
+      const rss = parseInt(cols[5], 10);
+      if (Number.isFinite(rss)) totalKB += rss;
+    }
+    return Math.floor(totalKB / 1024);
+  } catch {
+    return 0;
+  }
 }
 
 // Get system metrics (dynamic based on actual state)
 function getSystemMetrics() {
-  let memoryMB = 0;
-  let subAgents = 0;
-
-  try {
-    const mem = execSync('ps aux | grep -E "(node|agentic|claude)" | grep -v grep | awk \'{sum += \$6} END {print int(sum/1024)}\'', { encoding: 'utf-8' });
-    memoryMB = parseInt(mem.trim()) || 0;
-  } catch (e) {
-    // Fallback
+  let memoryMB = sumRssForCommands(['node', 'agentic', 'claude']);
+  if (memoryMB === 0) {
     memoryMB = Math.floor(process.memoryUsage().heapUsed / 1024 / 1024);
   }
 
-  // Get learning stats for intelligence %
   const learning = getLearningStats();
-
-  // Intelligence % based on learned patterns (0 patterns = 0%, 1000+ = 100%)
   const intelligencePct = Math.min(100, Math.floor((learning.patterns / 10) * 1));
-
-  // Context % based on session history (0 sessions = 0%, grows with usage)
   const contextPct = Math.min(100, Math.floor(learning.sessions * 5));
 
-  // Count active sub-agents from process list
+  // Count active sub-agents from process list (rows mentioning both
+  // 'claude-flow' and 'agent' in the command).
+  let subAgents = 0;
   try {
-    const agents = execSync('ps aux 2>/dev/null | grep -c "claude-flow.*agent" || echo "0"', { encoding: 'utf-8' });
-    subAgents = Math.max(0, parseInt(agents.trim()) - 1);
-  } catch (e) {
-    // Ignore
-  }
+    const out = execFileSync('ps', ['aux'], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    for (const line of out.split('\n')) {
+      if (line.includes('claude-flow') && line.includes('agent')) subAgents++;
+    }
+  } catch { /* keep 0 */ }
 
   return {
     memoryMB,
@@ -277,8 +276,8 @@ function generateStatusline() {
   const system = getSystemMetrics();
   const lines = [];
 
-  // Header Line — #1892: BANNER_VERSION resolved at module load from package.json
-  let header = `${c.bold}${c.brightPurple}▊ RuFlo${BANNER_VERSION ? ' ' + BANNER_VERSION : ''} ${c.reset}`;
+  // Header Line
+  let header = `${c.bold}${c.brightPurple}▊ RuFlo V3.5 ${c.reset}`;
   header += `${swarm.coordinationActive ? c.brightCyan : c.dim}● ${c.brightCyan}${user.name}${c.reset}`;
   if (user.gitBranch) {
     header += `  ${c.dim}│${c.reset}  ${c.brightBlue}⎇ ${user.gitBranch}${c.reset}`;

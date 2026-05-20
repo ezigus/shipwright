@@ -761,7 +761,6 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-code-review-test.sh` | 174 | Clean code & architecture analysis tests |
 | `scripts/sw-connect-test.sh` | 882 | Validate dashboard connection, heartbeat |
 | `scripts/sw-context-test.sh` | 219 | Context Engine for Pipeline Stages tests |
-| `scripts/sw-lib-cost-share-test.sh` | 311 | Validate cross-machine cost merging |
 | `scripts/sw-cost-test.sh` | 968 | Validate token usage & cost intelligence |
 | `scripts/sw-cross-repo-isolation-test.sh` | 424 | Issue #425 |
 | `scripts/sw-daemon-test.sh` | 2205 | Unit tests for daemon metrics, health, alerting |
@@ -811,6 +810,8 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-ci-reconcile-state-test.sh` | 225 | Unit tests |
 | `scripts/sw-lib-compat-test.sh` | 297 | Unit tests for cross-platform helpers |
 | `scripts/sw-lib-compound-audit-test.sh` | 795 |  |
+| `scripts/sw-lib-config-test.sh` | 113 | Unit tests for centralized config reader |
+| `scripts/sw-lib-cost-share-test.sh` | 311 | Validate cross-machine cost merging |
 | `scripts/sw-lib-daemon-dispatch-test.sh` | 414 | Unit tests for spawn/reap/queue |
 | `scripts/sw-lib-daemon-failure-test.sh` | 213 | Unit tests for failure handling |
 | `scripts/sw-lib-daemon-patrol-test.sh` | 406 | Unit tests for all patrol functions |
@@ -825,7 +826,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-loop-restart-test.sh` | 409 | Unit tests for loop state |
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-github-test.sh` | 366 | Unit tests for GitHub helpers |
-| `scripts/sw-lib-pipeline-intelligence-test.sh` | 1145 | Unit tests for intelligence |
+| `scripts/sw-lib-pipeline-intelligence-test.sh` | 1265 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 616 | Unit tests for quality |
 | `scripts/sw-lib-pipeline-stages-review-test.sh` | 589 | Unit tests for cross-stage drift detector |
 | `scripts/sw-lib-pipeline-stages-test.sh` | 2596 | Unit tests for stage functions |

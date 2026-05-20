@@ -953,6 +953,16 @@ _start_state_heartbeat() {
             if command -v flock >/dev/null 2>&1; then
                 (
                     flock -n 9 2>/dev/null || exit 0
+                    # Copy state files into issue-scoped snapshot dir (never stage root paths).
+                    if [[ -n "$_hb_artifacts_dir" && -n "$_hb_issue" ]]; then
+                        local _hb_snap_dir="${_hb_artifacts_dir}/issue-${_hb_issue}"
+                        mkdir -p "$_hb_snap_dir" 2>/dev/null || true
+                        cp "$_hb_state_file" "${_hb_snap_dir}/pipeline-state.md" 2>/dev/null || true
+                        local _hb_status_file="${_hb_state_file%pipeline-state.md}pipeline-status.json"
+                        [[ -f "$_hb_status_file" ]] && cp "$_hb_status_file" "${_hb_snap_dir}/pipeline-status.json" 2>/dev/null || true
+                        git add -f "${_hb_snap_dir}/pipeline-state.md" \
+                                   "${_hb_snap_dir}/pipeline-status.json" 2>/dev/null || true
+                    fi
                     [[ -n "$_hb_artifacts_dir" ]] && git add -f "${_hb_artifacts_dir}/progress.md" 2>/dev/null || true
                     if ! git diff --cached --quiet 2>/dev/null; then
                         git commit -m "chore: heartbeat state snapshot for #${_hb_issue} [skip ci]" \
@@ -966,6 +976,16 @@ _start_state_heartbeat() {
                         "HEAD:refs/heads/${_hb_branch}" 2>/dev/null || true
                 ) 9>"$_lock_file"
             else
+                # Copy state files into issue-scoped snapshot dir (never stage root paths).
+                if [[ -n "$_hb_artifacts_dir" && -n "$_hb_issue" ]]; then
+                    local _hb_snap_dir="${_hb_artifacts_dir}/issue-${_hb_issue}"
+                    mkdir -p "$_hb_snap_dir" 2>/dev/null || true
+                    cp "$_hb_state_file" "${_hb_snap_dir}/pipeline-state.md" 2>/dev/null || true
+                    local _hb_status_file="${_hb_state_file%pipeline-state.md}pipeline-status.json"
+                    [[ -f "$_hb_status_file" ]] && cp "$_hb_status_file" "${_hb_snap_dir}/pipeline-status.json" 2>/dev/null || true
+                    git add -f "${_hb_snap_dir}/pipeline-state.md" \
+                               "${_hb_snap_dir}/pipeline-status.json" 2>/dev/null || true
+                fi
                 [[ -n "$_hb_artifacts_dir" ]] && git add -f "${_hb_artifacts_dir}/progress.md" 2>/dev/null || true
                 if ! git diff --cached --quiet 2>/dev/null; then
                     git commit -m "chore: heartbeat state snapshot for #${_hb_issue} [skip ci]" \
@@ -1070,13 +1090,13 @@ pipeline_final_artifact_push() {
     local _snap_dir="${ARTIFACTS_DIR:-${STATE_DIR:-}/pipeline-artifacts}/issue-${ISSUE_NUMBER}"
     [[ -d "$_snap_dir" ]] && git add -f "$_snap_dir/" 2>/dev/null || true
 
-    # Stage progress.md only — root state files must not be committed (they leak to main on merge;
-    # the issue-N/ snapshot above is the correct resume path for the GHA restore step).
-    git add -f "progress.md" 2>/dev/null || true
+    # Stage progress.md from the artifacts dir (not the repo root, which has no such file).
+    # Root state files must not be committed — they leak to main on merge; the issue-N/
+    # snapshot staged above is the correct resume path for the GHA restore step.
+    git add -f "${ARTIFACTS_DIR}/progress.md" 2>/dev/null || true
 
     # Only commit if there are unstaged/staged changes (excluding bookkeeping files;
-    # runtime files like pipeline-state.md and progress.md are force-added above
-    # for the audit trail and must trigger this commit)
+    # the issue-N/ snapshot dir and progress.md are force-added above and must trigger this commit)
     if ! git diff --quiet -- $(_git_bookkeeping_pathspecs) 2>/dev/null || \
        ! git diff --cached --quiet -- $(_git_bookkeeping_pathspecs) 2>/dev/null; then
         safe_git_stage

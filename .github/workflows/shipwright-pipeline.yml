@@ -1126,6 +1126,30 @@ jobs:
             fi
           fi
 
+      - name: Reset stale blocking status before snapshot
+        if: always() && steps.claim_check.outputs.skip != 'true'
+        run: |
+          # A crashed pipeline leaves .claude/pipeline-state.md with status
+          # `running` / `paused` / `interrupted`. The snapshot step below
+          # copies that file into issue-${ISSUE_NUMBER}/ and pushes; on the
+          # next CI run "Verify merged artifacts" restores it back, and the
+          # in-shell guard at sw-pipeline.sh:3189-3198 then refuses to start
+          # ("A pipeline is already in progress"). Rewrite blocking statuses
+          # to `failed` here so the snapshot step persists a non-blocking
+          # value. No-op if the script is missing (WIP branch predates this
+          # fix), if the state file is missing, or if status is already
+          # non-blocking.
+          if [[ ! -x scripts/sw-ci-reset-stale-state.sh ]]; then
+            echo "Helper not present on this WIP branch — skipping reset"
+            exit 0
+          fi
+          prev=$(bash scripts/sw-ci-reset-stale-state.sh .claude/pipeline-state.md || echo "")
+          if [[ -n "$prev" ]]; then
+            echo "::notice::Pipeline ended with stale '$prev' status — rewrote pipeline-state.md status to 'failed' so the next CI run is not blocked"
+          else
+            echo "No stale blocking status to reset."
+          fi
+
       - name: Snapshot resume-essentials to WIP branch (always)
         if: always() && steps.claim_check.outputs.skip != 'true'
         run: |

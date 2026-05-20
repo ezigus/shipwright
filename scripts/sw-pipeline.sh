@@ -1070,13 +1070,13 @@ pipeline_final_artifact_push() {
     local _snap_dir="${ARTIFACTS_DIR:-${STATE_DIR:-}/pipeline-artifacts}/issue-${ISSUE_NUMBER}"
     [[ -d "$_snap_dir" ]] && git add -f "$_snap_dir/" 2>/dev/null || true
 
-    # Stage progress.md only — root state files must not be committed (they leak to main on merge;
-    # the issue-N/ snapshot above is the correct resume path for the GHA restore step).
-    git add -f "progress.md" 2>/dev/null || true
+    # Stage progress.md from the artifacts dir (not the repo root, which has no such file).
+    # Root state files must not be committed — they leak to main on merge; the issue-N/
+    # snapshot staged above is the correct resume path for the GHA restore step.
+    git add -f "${ARTIFACTS_DIR}/progress.md" 2>/dev/null || true
 
     # Only commit if there are unstaged/staged changes (excluding bookkeeping files;
-    # runtime files like pipeline-state.md and progress.md are force-added above
-    # for the audit trail and must trigger this commit)
+    # the issue-N/ snapshot dir and progress.md are force-added above and must trigger this commit)
     if ! git diff --quiet -- $(_git_bookkeeping_pathspecs) 2>/dev/null || \
        ! git diff --cached --quiet -- $(_git_bookkeeping_pathspecs) 2>/dev/null; then
         safe_git_stage

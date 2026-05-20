@@ -29,6 +29,16 @@
       "seen_count": 1,
       "last_seen": "2026-05-19T00:42:17Z",
       "category": "test_failure"
+    },
+    {
+      "stage": "test",
+      "pattern": "✓ record on missing run exits non-zero",
+      "root_cause": "fingerprintContent function is missing or not exported from intelligence.cjs, causing both the export check and the 435-truncation regression test to fail",
+      "fix": "Export fingerprintContent from intelligence.cjs with a correct FNV-1a implementation that does not truncate the prime to 435",
+      "exit_code": 1,
+      "seen_count": 1,
+      "last_seen": "2026-05-20T11:23:18Z",
+      "category": "test_failure"
     }
   ]
 }

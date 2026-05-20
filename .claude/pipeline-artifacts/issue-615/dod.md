@@ -1,0 +1,9 @@
+- `bash scripts/sw-lib-pipeline-intelligence-test.sh` exits 0 with all assertions (existing + new) passing {auto:other:bash scripts/sw-lib-pipeline-intelligence-test.sh}
+- `bash scripts/sw-lib-cost-share-test.sh` exits 0 after the rename {auto:other:bash scripts/sw-lib-cost-share-test.sh}
+- `bash scripts/sw-postmortem-460-test.sh` exits 0 (regression) {auto:other:bash scripts/sw-postmortem-460-test.sh}
+- `npm test` exits 0 with no new failures {auto:tests}
+- `shellcheck scripts/lib/pipeline-intelligence.sh scripts/lib/config.sh` exits 0 {auto:other:shellcheck scripts/lib/pipeline-intelligence.sh scripts/lib/config.sh}
+- `jq -e '.pipeline.dod.test_dir_names | length == 5' config/defaults.json` exits 0 {auto:other:jq -e '.pipeline.dod.test_dir_names | length == 5' config/defaults.json}
+- `git diff --name-only main...HEAD` confirms `scripts/sw-cost-share-test.sh` was renamed (R status), not duplicated {auto:diff}
+- `bash -c 'source scripts/lib/pipeline-intelligence.sh && _dod_find_test_for scripts/lib/cost/share.sh' | grep -q sw-lib-cost-share-test.sh` {auto:other:bash -c 'source scripts/lib/pipeline-intelligence.sh && _dod_find_test_for scripts/lib/cost/share.sh' | grep -q sw-lib-cost-share-test.sh}
+- DoD verifier reports `pass_rate: 100` on this branch {auto:other:bash -c 'source scripts/lib/pipeline-intelligence.sh && pipeline_verify_dod .claude/pipeline-artifacts >/dev/null; jq -e ".pass_rate == 100" .claude/pipeline-artifacts/dod-verification.json'}

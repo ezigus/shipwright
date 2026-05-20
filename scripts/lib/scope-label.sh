@@ -41,27 +41,31 @@ _read_scope_state() {
 }
 
 # Returns a human-readable label for the current execution scope.
+# Inner defaults to "Build" when INNER_STAGE is unset.
+# Outer prefix is omitted when OUTER_STAGE is unset.
 # Examples:
-#   Top-level:               "Build Iteration 1"
+#   Top-level:               "Build Iteration 3"
 #   Inside compound_quality: "Compound Quality 2 — Build Iteration 3"
 scope_label() {
     local outer="${OUTER_STAGE:-}"
     local inner="${INNER_STAGE:-}"
     # Bash 3.2 compat: use awk for capitalization instead of ${var^}
     local build_iter
-    build_iter=$(( ${SELF_HEAL_COUNT:-0} + 1 ))
+    if (( ${ITERATION:-0} > 0 )); then
+        build_iter="${ITERATION}"
+    else
+        build_iter=$(( ${SELF_HEAL_COUNT:-0} + 1 ))
+    fi
     local cq_cycle="${COMPOUND_QUALITY_CYCLE:-1}"
 
+    local inner_pretty
+    inner_pretty=$(echo "${inner:-build}" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
+
     if [[ -n "$outer" ]]; then
-        # e.g. "compound_quality" -> "Compound Quality"
         local outer_pretty
         outer_pretty=$(echo "$outer" | tr '_' ' ' | awk '{for(i=1;i<=NF;i++){$i=toupper(substr($i,1,1)) substr($i,2)}} 1')
-        local inner_pretty="${inner:-build}"
-        inner_pretty=$(echo "$inner_pretty" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
         echo "${outer_pretty} ${cq_cycle} — ${inner_pretty} Iteration ${build_iter}"
     else
-        local top_pretty="${inner:-Build}"
-        top_pretty=$(echo "$top_pretty" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
-        echo "${top_pretty} Iteration ${build_iter}"
+        echo "${inner_pretty} Iteration ${build_iter}"
     fi
 }

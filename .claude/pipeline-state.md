@@ -7,15 +7,15 @@ issue: "#460"
 branch: "shipwright/issue-460"
 template: ""
 current_stage: compound_quality
-outer_stage: compound_quality
-outer_stage_start_commit: 1504deb4ac4426aa57f19d69e85f1b73033c3005
-inner_stage: test
+outer_stage: 
+outer_stage_start_commit: 
+inner_stage: 
 current_stage_description: "Adversarial testing, E2E validation, DoD checklist"
 stage_progress: "intake:complete plan:complete design:complete build:complete test:complete review:complete compound_quality:pending audit:pending pr:pending merge:pending monitor:pending"
 started_at: 2026-05-19T12:25:47Z
 pipeline_run_epoch: 1779193547
-updated_at: 2026-05-20T03:01:54Z
-elapsed: 2h 7m 11s
+updated_at: 2026-05-20T03:01:58Z
+elapsed: 2h 7m 15s
 test_cmd: "npm test"
 pr_number: 
 model: opus

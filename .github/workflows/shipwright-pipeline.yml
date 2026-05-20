@@ -628,10 +628,6 @@ jobs:
             # prior work existed. Push immediately so a pre-stage crash still
             # leaves a resumable branch on origin.
             git checkout -B "$BRANCH" origin/main
-            # Defense-in-depth: a fresh issue has no prior state; any root state file
-            # present after checkout from main is definitionally stale (leaked via git add -f).
-            rm -f .claude/pipeline-state.md .claude/pipeline-status.json
-            echo "Cleared any stale pipeline state from origin/main"
             if [[ "$BRANCH" =~ ^shipwright/issue-([0-9]+)$ ]] && [[ "${BASH_REMATCH[1]}" != "${ISSUE_NUMBER}" ]]; then
               echo "::error::push-guard: target branch $BRANCH does not match active issue $ISSUE_NUMBER"; exit 87
             fi
@@ -1204,14 +1200,12 @@ jobs:
           # One pathspec per call — git restore --staged aborts the entire call when
           # any single pattern matches nothing, so combining them would leave real
           # sensitive files staged if another pattern happens to be absent.
-          git restore --staged '*.env'                      2>/dev/null || true
-          git restore --staged '.env*'                      2>/dev/null || true
-          git restore --staged '*credentials*'              2>/dev/null || true
-          git restore --staged '*secret*'                   2>/dev/null || true
-          git restore --staged '*.pem'                      2>/dev/null || true
-          git restore --staged '*.key'                      2>/dev/null || true
-          git restore --staged '.claude/pipeline-state.md'  2>/dev/null || true
-          git restore --staged '.claude/pipeline-status.json' 2>/dev/null || true
+          git restore --staged '*.env'          2>/dev/null || true
+          git restore --staged '.env*'          2>/dev/null || true
+          git restore --staged '*credentials*'  2>/dev/null || true
+          git restore --staged '*secret*'       2>/dev/null || true
+          git restore --staged '*.pem'          2>/dev/null || true
+          git restore --staged '*.key'          2>/dev/null || true
 
           # Diagnostic: show exactly what will be committed (key signal for debugging)
           _staged_files=$(git diff --cached --name-status 2>/dev/null || true)

@@ -423,9 +423,8 @@ persist_artifacts() {
     # Note: persist_artifacts only runs when CI_MODE=true; daemon startup handles local runs.
     declare -f _migrate_last_optimization >/dev/null 2>&1 && _migrate_last_optimization || true
 
-    # Root state files (.claude/pipeline-state.md, .claude/pipeline-status.json) must
-    # never be committed — the GHA snapshot step copies them to issue-N/ and stages
-    # only that scoped directory. Staging the root files here leaks them onto main on merge.
+    # Always force-add state files (gitignored but critical for resume)
+    git add -f ".claude/pipeline-state.md" ".claude/pipeline-status.json" 2>/dev/null || true
 
     # Snapshot gitignored progress.md into artifacts dir so it travels with state
     if [[ -n "${ARTIFACTS_DIR:-}" && -f ".claude/loop-logs/progress.md" ]]; then

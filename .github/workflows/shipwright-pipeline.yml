@@ -564,12 +564,17 @@ jobs:
           if git ls-remote --heads --exit-code origin "$BRANCH" >/dev/null 2>&1; then
             git fetch --no-tags origin "$BRANCH" 2>/dev/null || true
             BRANCH_CONTENT=$(git log -5 --format='%s' "origin/$BRANCH" 2>/dev/null || echo "")
-            if echo "$BRANCH_CONTENT" | grep -qiE 'Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error'; then
+            # Anchor the pattern to the start of the subject line. Claude-crash commits
+            # always begin with the error string; conventional-commit prefixed fixes
+            # (fix:, feat:, chore:, etc.) never do — so "fix: handle rate_limit_error
+            # in retry logic" no longer trips the polluted-branch deletion.
+            if echo "$BRANCH_CONTENT" | grep -qiE '^[[:space:]]*(Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error)'; then
               POLLUTED_SUBJECT=$(echo "$BRANCH_CONTENT" \
-                | grep -iE 'Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error' | head -1 || echo "unknown")
+                | grep -iE '^[[:space:]]*(Invalid API key|authentication_error|API key expired|rate_limit_error|overloaded_error)' | head -1 || echo "unknown")
               echo "::warning::Partial work branch appears polluted with API errors — deleting. Trigger commit subject: ${POLLUTED_SUBJECT}"
               git push origin --delete "$BRANCH" 2>/dev/null || true
             else
+              echo "::notice::WIP branch last 5 commit subjects look clean — resuming"
               USE_WIP=true
             fi
           fi
@@ -598,7 +603,11 @@ jobs:
 
             # Reconcile stale 'running'/'paused' state from a killed prior CI job.
             # Helper handles both the atomic rewrite and the log-stage extraction.
-            # "Verify merged artifacts" (next step) only touches plan.md/dod.md/etc — safe ordering.
+            # NOTE: "Verify merged artifacts" later restores pipeline-state.md from the
+            # issue-N/ snapshot if the live file is missing, so it runs the reconciler
+            # again post-restore. Without that second pass, a deleted live file + a
+            # snapshot still holding status:running would skip reconcile here and trip
+            # the "pipeline already in progress" guard on `shipwright pipeline start`.
             if [[ -f ".claude/pipeline-state.md" ]] && [[ -n "$_RECONCILE_HELPER" ]]; then
               source "$_RECONCILE_HELPER"
               RECONCILED_STAGES="$(ci_reconcile_state .claude/pipeline-state.md)"
@@ -694,6 +703,29 @@ jobs:
             fi
           done
           echo "Recovered ${RECOVERED} artifact file(s) from partial work branch"
+
+          # Re-reconcile pipeline-state.md if it was just restored from the
+          # issue-N/ snapshot. The snapshot is committed mid-run and can hold
+          # status:running from a killed CI job; without this pass, the next
+          # step's `shipwright pipeline start` would refuse to start with
+          # "A pipeline is already in progress". Mirrors the logic in the
+          # "Prepare workspace branch" step; the helper was copied to
+          # $RUNNER_TEMP/ci-reconcile-state.sh there and survives across steps.
+          _RECONCILE_HELPER="${RUNNER_TEMP}/ci-reconcile-state.sh"
+          if [[ -f ".claude/pipeline-state.md" ]] && [[ -f "$_RECONCILE_HELPER" ]] \
+             && [[ "${PIPELINE_WIP_RESUME:-}" != "true" ]]; then
+            # shellcheck disable=SC1090
+            source "$_RECONCILE_HELPER"
+            RECONCILED_STAGES="$(ci_reconcile_state .claude/pipeline-state.md)"
+            if [[ -n "$RECONCILED_STAGES" ]]; then
+              echo "::notice::Reconciled restored pipeline-state.md to 'interrupted'; completed stages from log: ${RECONCILED_STAGES}"
+              echo "PIPELINE_LOG_COMPLETED_STAGES=${RECONCILED_STAGES}" >> "$GITHUB_ENV"
+              echo "PIPELINE_WIP_RESUME=true" >> "$GITHUB_ENV"
+            elif grep -q '^status: interrupted$' .claude/pipeline-state.md 2>/dev/null; then
+              echo "::warning::Restored state reconciled to 'interrupted', but no completed stages parsed from log — pipeline will resume from scratch"
+              echo "PIPELINE_WIP_RESUME=true" >> "$GITHUB_ENV"
+            fi
+          fi
 
       - name: Validate setup
         if: steps.claim_check.outputs.skip != 'true' && env.AUTH_SKIP != 'true'

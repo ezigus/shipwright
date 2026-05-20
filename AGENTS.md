@@ -827,7 +827,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 1145 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 616 | Unit tests for quality |
 | `scripts/sw-lib-pipeline-stages-review-test.sh` | 589 | Unit tests for cross-stage drift detector |
-| `scripts/sw-lib-pipeline-stages-test.sh` | 2523 | Unit tests for stage functions |
+| `scripts/sw-lib-pipeline-stages-test.sh` | 2594 | Unit tests for stage functions |
 | `scripts/sw-lib-pipeline-state-test.sh` | 1163 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 281 | Validate agent pane log viewing, searching, |
@@ -847,7 +847,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-pipeline-vitals-test.sh` | 226 | Validate pipeline health scoring |
 | `scripts/sw-pm-test.sh` | 225 | Autonomous PM Agent test suite |
 | `scripts/sw-policy-e2e-test.sh` | 290 | Verify config/policy.json is honored |
-| `scripts/sw-postmortem-460-test.sh` | 1099 | Behavioral tests for pipeline hardening fixes |
+| `scripts/sw-postmortem-460-test.sh` | 1227 | Behavioral tests for pipeline hardening fixes |
 | `scripts/sw-pr-lifecycle-test.sh` | 317 | Validate autonomous PR management |
 | `scripts/sw-predictive-test.sh` | 755 | Unit tests for predictive intelligence |
 | `scripts/sw-prep-test.sh` | 636 | Validate repo preparation |

@@ -801,9 +801,22 @@ stage_merge() {
                 "pr=$pr_number" \
                 "strategy=$merge_method"
         else
-            warn "Auto-merge not available — falling back to direct merge"
-            # Fall through to direct merge below
-            auto_merge="false"
+            # `gh pr merge --auto` can exit non-zero when GitHub has already
+            # auto-merged the PR between the request and the response (race).
+            # Treat already-merged as success before falling through.
+            local _pr_state_auto
+            _pr_state_auto=$(gh pr view "$pr_number" --json state --jq '.state' 2>/dev/null || echo "")
+            if [[ "$_pr_state_auto" == "MERGED" ]]; then
+                success "PR #${pr_number} already merged (auto-merge raced ahead of CLI response)"
+                emit_event "merge.race_won" \
+                    "issue=${ISSUE_NUMBER:-0}" \
+                    "pr=$pr_number" \
+                    "path=auto_merge"
+            else
+                warn "Auto-merge not available — falling back to direct merge"
+                # Fall through to direct merge below
+                auto_merge="false"
+            fi
         fi
     fi
 
@@ -817,8 +830,21 @@ stage_merge() {
         if gh "${merge_args[@]}" 2>/dev/null; then
             success "PR #${pr_number} merged successfully"
         else
-            error "Failed to merge PR #${pr_number}"
-            return 1
+            # Direct merge can also race with GitHub auto-merge if --auto was
+            # enabled earlier in the same run (or by a concurrent process).
+            # Treat already-merged as success before failing the stage.
+            local _pr_state_direct
+            _pr_state_direct=$(gh pr view "$pr_number" --json state --jq '.state' 2>/dev/null || echo "")
+            if [[ "$_pr_state_direct" == "MERGED" ]]; then
+                success "PR #${pr_number} already merged (concurrent merge won the race)"
+                emit_event "merge.race_won" \
+                    "issue=${ISSUE_NUMBER:-0}" \
+                    "pr=$pr_number" \
+                    "path=direct_merge"
+            else
+                error "Failed to merge PR #${pr_number}"
+                return 1
+            fi
         fi
     fi
 

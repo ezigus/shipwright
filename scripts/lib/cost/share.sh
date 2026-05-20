@@ -164,9 +164,10 @@ cost_merge_breakdowns() {
     #
     # We feed file contents via stdin (cat) so file paths with spaces are safe
     # — passing $(cat "$valid_list") as positional args is unsafe under
-    # word-splitting.
+    # word-splitting. `xargs -a FILE` is a GNU extension (not on BSD/macOS);
+    # redirect the list into xargs's stdin for portability.
     local merged_json
-    if ! merged_json=$(xargs -a "$valid_list" -I{} cat {} 2>/dev/null \
+    if ! merged_json=$(xargs -I{} cat {} < "$valid_list" 2>/dev/null \
         | jq -s --arg ts "$ts" --argjson sources "$valid_count" '
         ([ .[] | (.by_stage // [])[] ]
          | group_by(.stage)

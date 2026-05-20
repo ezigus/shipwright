@@ -24,6 +24,11 @@ if [[ -f "${SCRIPT_DIR}/lib/compound-audit.sh" ]]; then
     source "${SCRIPT_DIR}/lib/compound-audit.sh"
 fi
 
+# Source config reader (defensive — host script may have loaded it already)
+if [[ -f "${SCRIPT_DIR}/lib/config.sh" ]]; then
+    source "${SCRIPT_DIR}/lib/config.sh"
+fi
+
 pipeline_should_skip_stage() {
     local stage_id="$1"
     local reason=""
@@ -504,8 +509,295 @@ pipeline_select_audits() {
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 6. Definition of Done Verification
-# Strict DoD enforcement after compound quality completes.
+# Configurable structural test-pairing for `pipeline_verify_dod`.
+# Replaces the fixed pattern loop with config-driven search via lists from
+# `pipeline.dod` in defaults.json (test_dir_names, test_filename_patterns,
+# search_strategies, source_roots, prefix_flat_template). Each list can be
+# overridden through the precedence chain in `lib/config.sh`.
 # ──────────────────────────────────────────────────────────────────────────────
+
+# Lowercase a string (bash 3.2 safe — no ${var,,})
+_dod_to_lower() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+# Capitalize the first letter of a string (bash 3.2 safe — no ${var^})
+_dod_capitalize() {
+    local s="$1"
+    [[ -z "$s" ]] && return 0
+    local first rest
+    first=$(printf '%s' "${s:0:1}" | tr '[:lower:]' '[:upper:]')
+    rest="${s:1}"
+    printf '%s%s' "$first" "$rest"
+}
+
+# Convert kebab/snake-case to PascalCase: cost-share → CostShare
+_dod_to_pascal() {
+    local s="$1"
+    [[ -z "$s" ]] && return 0
+    local out=""
+    local token rest
+    while [[ -n "$s" ]]; do
+        case "$s" in
+            *[-_.]*)
+                token="${s%%[-_.]*}"
+                rest="${s#"$token"}"
+                rest="${rest:1}"
+                ;;
+            *)
+                token="$s"
+                rest=""
+                ;;
+        esac
+        out="${out}$(_dod_capitalize "$token")"
+        s="$rest"
+    done
+    printf '%s' "$out"
+}
+
+# Compute lib_subpath for prefix_flat template.
+# For files under scripts/, returns the dir segments under scripts/ joined with '-'.
+# Examples:
+#   scripts/lib/cost/share.sh        → lib-cost
+#   scripts/lib/pipeline-intel.sh    → lib
+#   scripts/sw-foo.sh                → (empty)
+_dod_lib_subpath() {
+    local rel_dir="$1"
+    [[ -z "$rel_dir" || "$rel_dir" == "." ]] && return 0
+    case "$rel_dir" in
+        scripts)
+            printf ''
+            return 0
+            ;;
+        scripts/*)
+            local under="${rel_dir#scripts/}"
+            printf '%s' "$under" | tr '/' '-'
+            return 0
+            ;;
+        *)
+            # Not under scripts/: join entire rel_dir with '-'
+            printf '%s' "$rel_dir" | tr '/' '-'
+            return 0
+            ;;
+    esac
+}
+
+# Strip the longest source-root prefix from a relative dir; returns the remainder.
+_dod_strip_source_root() {
+    local rel_dir="$1"
+    local roots_csv="$2"
+    local best_rest="$rel_dir"
+    local best_root=""
+    local best_len=-1
+    local IFS_OLD="$IFS"
+    IFS=','
+    local roots
+    # shellcheck disable=SC2206
+    roots=( $roots_csv )
+    IFS="$IFS_OLD"
+    local root r
+    for root in "${roots[@]}"; do
+        r="${root%/}"
+        if [[ -z "$r" ]]; then
+            if [[ 0 -gt $best_len ]]; then
+                best_len=0
+                best_root=""
+                best_rest="$rel_dir"
+            fi
+            continue
+        fi
+        if [[ "$rel_dir" == "$r" ]]; then
+            if [[ ${#r} -gt $best_len ]]; then
+                best_len=${#r}
+                best_root="$r"
+                best_rest=""
+            fi
+        elif [[ "$rel_dir" == "$r"/* ]]; then
+            if [[ ${#r} -gt $best_len ]]; then
+                best_len=${#r}
+                best_root="$r"
+                best_rest="${rel_dir#"$r"/}"
+            fi
+        fi
+    done
+    # Output: root|rest (best root and rest after strip)
+    printf '%s|%s' "$best_root" "$best_rest"
+}
+
+# Render a pattern with placeholders: {stem} {ext} {stem_pascal} {test_dir} {lib_subpath} {rel_dir}
+_dod_render_pattern() {
+    local pattern="$1" stem="$2" ext="$3" stem_pascal="$4" test_dir="$5" lib_subpath="$6" rel_dir="$7"
+    local out="$pattern"
+    out="${out//\{stem\}/$stem}"
+    out="${out//\{ext\}/$ext}"
+    out="${out//\{stem_pascal\}/$stem_pascal}"
+    out="${out//\{test_dir\}/$test_dir}"
+    out="${out//\{lib_subpath\}/$lib_subpath}"
+    out="${out//\{rel_dir\}/$rel_dir}"
+    # Collapse double dashes left by empty placeholders (e.g. empty lib_subpath)
+    while [[ "$out" == *--* ]]; do
+        out="${out//--/-}"
+    done
+    # Strip stray "-" adjacent to "/" introduced by empty placeholders
+    out="${out//\/-/\/}"
+    out="${out//-\//\/}"
+    printf '%s' "$out"
+}
+
+# Return case variants for a test_dir name (lowercase original + Capitalized + UPPERCASE).
+_dod_test_dir_variants() {
+    local dir="$1"
+    local lower cap
+    lower=$(_dod_to_lower "$dir")
+    cap=$(_dod_capitalize "$lower")
+    printf '%s\n' "$lower"
+    [[ "$cap" != "$lower" ]] && printf '%s\n' "$cap"
+}
+
+# Normalize a candidate path: collapse `//`, strip leading `./`
+_dod_normalize_path() {
+    local p="$1"
+    while [[ "$p" == *//* ]]; do
+        p="${p//\/\//\/}"
+    done
+    p="${p#./}"
+    printf '%s' "$p"
+}
+
+# Emit candidate test paths (one per line) for a source file under the
+# configured strategies / test_dir_names / test_filename_patterns.
+_dod_candidate_paths() {
+    local src_file="$1"
+    local test_dirs_csv="$2"
+    local patterns_csv="$3"
+    local strategies_csv="$4"
+    local roots_csv="$5"
+    local prefix_template="$6"
+
+    local base_name dir_name ext stem stem_pascal
+    base_name=$(basename "$src_file")
+    dir_name=$(dirname "$src_file")
+    [[ "$dir_name" == "." ]] && dir_name=""
+    ext="${base_name##*.}"
+    stem="${base_name%.*}"
+    stem_pascal=$(_dod_to_pascal "$stem")
+
+    # Split source root
+    local root_split src_root rel_dir
+    root_split=$(_dod_strip_source_root "$dir_name" "$roots_csv")
+    src_root="${root_split%%|*}"
+    rel_dir="${root_split#*|}"
+
+    local lib_subpath
+    lib_subpath=$(_dod_lib_subpath "$dir_name")
+
+    local IFS_OLD="$IFS"
+    IFS=','
+    local strategies test_dirs patterns
+    # shellcheck disable=SC2206
+    strategies=( $strategies_csv )
+    # shellcheck disable=SC2206
+    test_dirs=( $test_dirs_csv )
+    # shellcheck disable=SC2206
+    patterns=( $patterns_csv )
+    IFS="$IFS_OLD"
+
+    local strategy td td_variant pattern rendered candidate
+
+    for strategy in "${strategies[@]}"; do
+        case "$strategy" in
+            colocated)
+                # Same directory as the source file, optionally inside a test_dir subdir
+                for pattern in "${patterns[@]}"; do
+                    rendered=$(_dod_render_pattern "$pattern" "$stem" "$ext" "$stem_pascal" "" "$lib_subpath" "$rel_dir")
+                    if [[ -n "$dir_name" ]]; then
+                        candidate="$dir_name/$rendered"
+                    else
+                        candidate="$rendered"
+                    fi
+                    _dod_normalize_path "$candidate"; echo
+                done
+                for td in "${test_dirs[@]}"; do
+                    while IFS= read -r td_variant; do
+                        [[ -z "$td_variant" ]] && continue
+                        for pattern in "${patterns[@]}"; do
+                            rendered=$(_dod_render_pattern "$pattern" "$stem" "$ext" "$stem_pascal" "$td_variant" "$lib_subpath" "$rel_dir")
+                            if [[ -n "$dir_name" ]]; then
+                                candidate="$dir_name/$td_variant/$rendered"
+                            else
+                                candidate="$td_variant/$rendered"
+                            fi
+                            _dod_normalize_path "$candidate"; echo
+                        done
+                    done < <(_dod_test_dir_variants "$td")
+                done
+                ;;
+            mirror)
+                # Replace source_root with a test_dir while keeping rel_dir
+                for td in "${test_dirs[@]}"; do
+                    while IFS= read -r td_variant; do
+                        [[ -z "$td_variant" ]] && continue
+                        for pattern in "${patterns[@]}"; do
+                            rendered=$(_dod_render_pattern "$pattern" "$stem" "$ext" "$stem_pascal" "$td_variant" "$lib_subpath" "$rel_dir")
+                            if [[ -n "$rel_dir" ]]; then
+                                candidate="$td_variant/$rel_dir/$rendered"
+                            else
+                                candidate="$td_variant/$rendered"
+                            fi
+                            _dod_normalize_path "$candidate"; echo
+                        done
+                    done < <(_dod_test_dir_variants "$td")
+                done
+                ;;
+            flat)
+                # test_dir at repo root, file directly under it
+                for td in "${test_dirs[@]}"; do
+                    while IFS= read -r td_variant; do
+                        [[ -z "$td_variant" ]] && continue
+                        for pattern in "${patterns[@]}"; do
+                            rendered=$(_dod_render_pattern "$pattern" "$stem" "$ext" "$stem_pascal" "$td_variant" "$lib_subpath" "$rel_dir")
+                            candidate="$td_variant/$rendered"
+                            _dod_normalize_path "$candidate"; echo
+                        done
+                    done < <(_dod_test_dir_variants "$td")
+                done
+                ;;
+            prefix_flat)
+                if [[ -n "$prefix_template" ]]; then
+                    rendered=$(_dod_render_pattern "$prefix_template" "$stem" "$ext" "$stem_pascal" "" "$lib_subpath" "$rel_dir")
+                    _dod_normalize_path "$rendered"; echo
+                fi
+                ;;
+        esac
+    done
+    # Suppress unused-var warnings under shellcheck
+    : "$src_root"
+}
+
+# Locate a test file paired with $src_file. Echoes the first existing candidate
+# and returns 0; returns 1 if no candidate exists on disk.
+_dod_find_test_for() {
+    local src_file="$1"
+    local test_dirs_csv patterns_csv strategies_csv roots_csv prefix_template
+
+    test_dirs_csv=$(_config_get_list "pipeline.dod.test_dir_names" "test,tests,__tests__,spec,specs")
+    patterns_csv=$(_config_get_list "pipeline.dod.test_filename_patterns" \
+        "{stem}.test.{ext},{stem}.spec.{ext},{stem}_test.{ext},{stem}-test.{ext},{stem}_spec.{ext},test_{stem}.{ext},{stem_pascal}Test.{ext},{stem_pascal}Tests.{ext}")
+    strategies_csv=$(_config_get_list "pipeline.dod.search_strategies" "colocated,mirror,flat,prefix_flat")
+    roots_csv=$(_config_get_list "pipeline.dod.source_roots" "src/,lib/,app/,scripts/,pkg/,")
+    prefix_template=$(_config_get "pipeline.dod.prefix_flat_template" "scripts/sw-{lib_subpath}-{stem}-test.sh")
+
+    local candidate
+    while IFS= read -r candidate; do
+        [[ -z "$candidate" ]] && continue
+        if [[ -f "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done < <(_dod_candidate_paths "$src_file" "$test_dirs_csv" "$patterns_csv" "$strategies_csv" "$roots_csv" "$prefix_template")
+    return 1
+}
+
 pipeline_verify_dod() {
     local artifacts_dir="${1:-$ARTIFACTS_DIR}"
     local checks_total=0 checks_passed=0
@@ -529,27 +821,8 @@ pipeline_verify_dod() {
                     esac
                     files_checked=$((files_checked + 1))
                     checks_total=$((checks_total + 1))
-                    # Check for corresponding test file
-                    local base_name dir_name ext
-                    base_name=$(basename "$src_file")
-                    dir_name=$(dirname "$src_file")
-                    ext="${base_name##*.}"
-                    local stem="${base_name%.*}"
-                    local test_found=false
-                    # Common test file patterns
-                    for pattern in \
-                        "${dir_name}/${stem}.test.${ext}" \
-                        "${dir_name}/${stem}.spec.${ext}" \
-                        "${dir_name}/__tests__/${stem}.test.${ext}" \
-                        "${dir_name}/${stem}-test.${ext}" \
-                        "${dir_name}/test_${stem}.${ext}" \
-                        "${dir_name}/${stem}_test.${ext}"; do
-                        if [[ -f "$pattern" ]]; then
-                            test_found=true
-                            break
-                        fi
-                    done
-                    if $test_found; then
+                    # Config-driven structural search — see _dod_find_test_for above
+                    if _dod_find_test_for "$src_file" >/dev/null 2>&1; then
                         checks_passed=$((checks_passed + 1))
                     else
                         missing_tests="${missing_tests}${src_file}\n"

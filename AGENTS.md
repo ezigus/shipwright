@@ -763,7 +763,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-code-review-test.sh` | 174 | Clean code & architecture analysis tests |
 | `scripts/sw-connect-test.sh` | 882 | Validate dashboard connection, heartbeat |
 | `scripts/sw-context-test.sh` | 219 | Context Engine for Pipeline Stages tests |
-| `scripts/sw-cost-share-test.sh` | 311 | Validate cross-machine cost merging |
+| `scripts/sw-lib-cost-share-test.sh` | 311 | Validate cross-machine cost merging |
 | `scripts/sw-cost-test.sh` | 968 | Validate token usage & cost intelligence |
 | `scripts/sw-cross-repo-isolation-test.sh` | 424 | Issue #425 |
 | `scripts/sw-daemon-test.sh` | 2205 | Unit tests for daemon metrics, health, alerting |

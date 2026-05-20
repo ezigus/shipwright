@@ -69,6 +69,22 @@
           "prefer_helper": true
         }
       ]
+    },
+    "dod": {
+      "test_dir_names": ["test", "tests", "__tests__", "spec", "specs"],
+      "test_filename_patterns": [
+        "{stem}.test.{ext}",
+        "{stem}.spec.{ext}",
+        "{stem}_test.{ext}",
+        "{stem}-test.{ext}",
+        "{stem}_spec.{ext}",
+        "test_{stem}.{ext}",
+        "{stem_pascal}Test.{ext}",
+        "{stem_pascal}Tests.{ext}"
+      ],
+      "search_strategies": ["colocated", "mirror", "flat", "prefix_flat"],
+      "source_roots": ["src/", "lib/", "app/", "scripts/", "pkg/", ""],
+      "prefix_flat_template": "scripts/sw-{lib_subpath}-{stem}-test.sh"
     }
   },
   "loop": {

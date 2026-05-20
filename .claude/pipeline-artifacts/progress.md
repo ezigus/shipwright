@@ -1,23 +1,38 @@
 # Session Progress (Auto-Generated)
 
 ## Goal
-Upload cost-breakdown.json as GitHub Actions artifact for cross-machine optimization
+fix(dod): configurable structural test-pairing for DoD verifier
+
+## Failure Diagnosis (Iteration 2)
+Classification: unknown
+Strategy: retry_with_context
+Repeat count: 1
 
 ## Status
-- Iteration: 2/20
+- Iteration: 2/25
 - Session restart: 0/0
 - Tests passing: true
 - Status: complete
 
 ## Recent Commits
-61e4c78 fix(loop): parse security gate artifacts instead of always-failing (#460)
-1504deb chore: heartbeat state snapshot for #460 [skip ci]
-dd7c56d chore: clear pipeline-state lock for issue #460 [skip ci]
-3f8f4e5 chore: clear stale running lock — set status: failed so next CI run can start [skip ci]
-c2cf7c6 chore: resume snapshot for #460 (run 26132033956, pipeline=failure) [skip ci]
+60d1c0d fix(dod): restore intelligence.cjs fingerprint + revert iteration-1 regressions
+6146de8 loop: iteration 1 — 5 files changed, 157 insertions(+), 114 deletions(-)
+aa40907 fix(dod): configurable structural test-pairing for DoD verifier (#615)
+262f77c chore: heartbeat state snapshot for #615 [skip ci]
+d3064b5 chore: persist plan artifacts for #615 [skip ci]
 
 ## Changed Files
-scripts/sw-loop.sh
+.claude/helpers/hook-handler.cjs
+.claude/helpers/intelligence.cjs
+.claude/helpers/statusline.cjs
+config/defaults.json
+docs/cost-sharing.md
+package.json
+scripts/lib/config.sh
+scripts/lib/pipeline-intelligence.sh
+scripts/sw-lib-config-test.sh
+scripts/sw-lib-cost-share-test.sh
+scripts/sw-lib-pipeline-intelligence-test.sh
 
 ## Timestamp
-2026-05-20T02:48:27Z
+2026-05-20T12:22:57Z

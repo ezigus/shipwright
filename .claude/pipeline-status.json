@@ -1,10 +1,10 @@
 {
   "run_id": "26134391810",
   "branch": "shipwright/issue-460",
-  "stage": "review",
+  "stage": "compound_quality",
   "iteration": 0,
   "retry_count": 0,
-  "last_heartbeat": "2026-05-20T03:01:58Z",
+  "last_heartbeat": "2026-05-20T03:09:54Z",
   "exit_reason": "",
   "error_category": "",
   "completed_stages": [
@@ -13,6 +13,7 @@
     "design",
     "build",
     "test",
-    "review"
+    "review",
+    "compound_quality"
   ]
 }

@@ -449,9 +449,57 @@ sanitize_secrets() {
     text="$(echo "$text" | sed 's/sk-[a-zA-Z0-9_-]*/sk-***REDACTED***/g')"
     # Redact Bearer tokens
     text="$(echo "$text" | sed 's/Bearer [a-zA-Z0-9_.-]*/Bearer ***REDACTED***/g')"
-    # Redact oauth tokens (gh_...)
-    text="$(echo "$text" | sed 's/gh_[a-zA-Z0-9_]*/gh_***REDACTED***/g')"
+    # Redact GitHub OAuth tokens (ghp_, gho_, ghu_, ghs_, ghr_ — 5 known prefixes)
+    # Length-bound: GitHub tokens are minimum 36 base62 chars [A-Za-z0-9], no underscores
+    text="$(echo "$text" | sed -E 's/gh[pousr]_[A-Za-z0-9]{36,255}/gh_***REDACTED***/g')"
+    # Redact GitHub fine-grained PATs (github_pat_ prefix, ≥60 base62+underscore chars)
+    text="$(echo "$text" | sed -E 's/github_pat_[A-Za-z0-9_]{60,}/github_pat_***REDACTED***/g')"
     echo "$text"
+}
+
+# Portable SHA-1 hash of stdin — macOS (shasum) and Linux (sha1sum / openssl).
+# Returns a 40-char hex digest, or a unique no-hasher sentinel to disable dedup.
+# Usage: echo "data" | _compute_sha1
+_compute_sha1() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 1 | awk '{print $1}'
+    elif command -v sha1sum >/dev/null 2>&1; then
+        sha1sum | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha1 -hex | awk '{print $NF}'
+    else
+        printf 'no-hasher-%s-%s' "$PPID" "$(date +%s 2>/dev/null || echo 0)"
+    fi
+}
+
+# Validates a git ref/branch name against safe-ref rules.
+# Usage: _validate_ref <ref> [label]
+# Returns 0 for empty ref (unset is allowed; caller supplies default later).
+# Returns 1 if the ref is unsafe so callers can: _validate_ref "$BASE_BRANCH" || BASE_BRANCH=main
+# Rejects leading dashes (option-injection vector for git commands), `..` path
+# traversal sequences, and anything else `git check-ref-format` flags. Falls back to
+# a tight charset regex when git is unavailable in the environment.
+_validate_ref() {
+    local ref="${1:-}"
+    local label="${2:-ref}"
+    [[ -z "$ref" ]] && return 0
+    # Hard reject: leading dash, embedded "..", whitespace, or git-ref reserved chars.
+    case "$ref" in
+        -*|*..*|*' '*|*$'\t'*|*$'\n'*|*'~'*|*'^'*|*':'*|*'?'*|*'*'*|*'['*|*'\\'*)
+            error "_validate_ref: unsafe ${label} value '${ref}' (option/traversal/reserved char) — refusing"
+            return 1
+            ;;
+    esac
+    if command -v git >/dev/null 2>&1; then
+        # Authoritative check: git's own ref-format validator (branch form).
+        git check-ref-format --branch "$ref" >/dev/null 2>&1 && return 0
+        error "_validate_ref: git check-ref-format rejected '${ref}' for ${label}"
+        return 1
+    fi
+    # No git available — fall back to a conservative charset check.
+    [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] && return 0
+    error "_validate_ref: unsafe ${label} value '${ref}' — only [A-Za-z0-9._/-] allowed"
+    return 1
 }
 
 # ─── Git Bookkeeping Exclusions ──────────────────────────────────
@@ -465,7 +513,6 @@ sanitize_secrets() {
 # Add new files here — all consumers read these lists.
 
 _GIT_BOOKKEEPING_FILES=(
-    ".claude/daemon-config.json"
     ".claude/pipeline-tasks.md"
     ".claude/tasks.md"
 )
@@ -525,6 +572,85 @@ _git_bookkeeping_pathspecs() {
     for _f in "${_GIT_BOOKKEEPING_FILES[@]+"${_GIT_BOOKKEEPING_FILES[@]}"}"; do
         printf ':!%s ' "$_f"
     done
+}
+
+# Load daemon-config.json, merging the auto-tuned sidecar (~/.shipwright/optimization/tuned-config.json)
+# on top of the base config.  Sidecar carries auto-optimizer writes (intelligence flags, DORA
+# autotune values) so they do not pollute committed daemon-config.json on feature branches.
+# Usage: _load_daemon_config [base_config_path]
+# Output: merged JSON to stdout; returns {} if base is absent; sidecar absence is not an error.
+_load_daemon_config() {
+    local base_config="${1:-${PROJECT_ROOT:-.}/.claude/daemon-config.json}"
+    local sidecar="${HOME}/.shipwright/optimization/tuned-config.json"
+    local _sc_lock="${HOME}/.shipwright/optimization/.tuned-config.lock"
+
+    if [[ ! -f "$base_config" ]]; then
+        printf '{}'
+        return 0
+    fi
+
+    if [[ -f "$sidecar" ]]; then
+        (
+            command -v flock >/dev/null 2>&1 && flock -s -w 2 200 2>/dev/null || true
+            jq -s '.[0] * .[1]' "$base_config" "$sidecar" 2>/dev/null || cat "$base_config"
+        ) 200>>"$_sc_lock"
+    else
+        cat "$base_config"
+    fi
+}
+
+# One-shot migration: if daemon-config.json has a committed last_optimization block
+# (written by pre-T1.1 code), move it to the sidecar and strip it from the base file.
+# Idempotent: no-op when key is absent. Called at daemon startup and persist_artifacts.
+_migrate_last_optimization() {
+    local _base="${PROJECT_ROOT:-.}/.claude/daemon-config.json"
+    [[ -f "$_base" ]] || return 0
+    local _has_lo
+    _has_lo=$(jq -r 'has("last_optimization")' "$_base" 2>/dev/null || echo "false")
+    [[ "$_has_lo" != "true" ]] && return 0
+
+    local _sidecar_dir="${HOME}/.shipwright/optimization"
+    local _sidecar="${_sidecar_dir}/tuned-config.json"
+    mkdir -p "$_sidecar_dir" 2>/dev/null || true
+
+    # Merge last_optimization into sidecar
+    local _lo_block
+    _lo_block=$(jq '{last_optimization: .last_optimization}' "$_base" 2>/dev/null || true)
+    if [[ -n "$_lo_block" ]]; then
+        local _sc_lock="${_sidecar_dir}/.tuned-config.lock"
+        (
+            if command -v flock >/dev/null 2>&1; then
+                if ! flock -w 5 200; then
+                    warn "sidecar lock contended; skipping migration write"
+                    emit_event "sidecar.lock_contention" "site=migrate_last_optimization" 2>/dev/null || true
+                    exit 1
+                fi
+            fi
+            if [[ -f "$_sidecar" ]]; then
+                _merged=$(jq -s '.[0] * .[1]' "$_sidecar" <(echo "$_lo_block") 2>/dev/null \
+                    || cat "$_sidecar")
+            else
+                _merged="$_lo_block"
+            fi
+            printf '%s\n' "$_merged" > "${_sidecar}.tmp.$$" \
+                && mv "${_sidecar}.tmp.$$" "$_sidecar" || true
+        ) 200>"$_sc_lock"
+    fi
+
+    # Strip last_optimization from base and commit if inside a git repo
+    local _stripped
+    _stripped=$(jq 'del(.last_optimization)' "$_base" 2>/dev/null || true)
+    if [[ -n "$_stripped" ]]; then
+        printf '%s\n' "$_stripped" > "${_base}.tmp.$$" && mv "${_base}.tmp.$$" "$_base" || true
+        if git -C "${PROJECT_ROOT:-.}" rev-parse --git-dir >/dev/null 2>&1; then
+            git -C "${PROJECT_ROOT:-.}" add ".claude/daemon-config.json" 2>/dev/null || true
+            # --no-verify: infrastructure-automation commit consistent with other pipeline commits
+            git -C "${PROJECT_ROOT:-.}" diff --cached --quiet 2>/dev/null || \
+                git -C "${PROJECT_ROOT:-.}" commit \
+                    -m "chore: migrate last_optimization to tuned-config sidecar" \
+                    --no-verify 2>/dev/null || true
+        fi
+    fi
 }
 
 # Filter gitignored paths out of file-list output before it reaches agent prompts.
@@ -605,6 +731,8 @@ extract_issue_from_tasks_file() {
 # ─── Git Staging Helper ───────────────────────────────────────────
 # Stage all changes, then unstage any bookkeeping files listed in
 # _GIT_BOOKKEEPING_FILES so they are not included in commits.
+# When SCOPE_GUARD_ENABLED=true and a design.md scope block is present, also
+# unstage out-of-scope files and emit a loop.scope_violation event for each.
 # Usage: safe_git_stage [dir]   (dir defaults to current directory)
 safe_git_stage() {
     local dir="${1:-.}"
@@ -616,6 +744,45 @@ safe_git_stage() {
         for _bf in "${_GIT_BOOKKEEPING_FILES[@]+"${_GIT_BOOKKEEPING_FILES[@]}"}"; do
             git -C "$dir" restore --staged "$toplevel/$_bf" 2>/dev/null || true
         done
+    fi
+
+    # Scope guard: when enabled, unstage files outside the declared design scope.
+    # Requires _extract_scope_from_design and _compute_scope_violations (pipeline-stages.sh).
+    # Operator override: set SCOPE_OVERRIDE=1 and create ~/.shipwright/scope-override.token.
+    if [[ "${SCOPE_GUARD_ENABLED:-false}" == "true" ]] && \
+       declare -f _extract_scope_from_design >/dev/null 2>&1 && \
+       declare -f _compute_scope_violations >/dev/null 2>&1; then
+        # Operator escape hatch: both env var AND token file required (agent cannot self-grant)
+        if [[ "${SCOPE_OVERRIDE:-0}" == "1" && -f "${HOME}/.shipwright/scope-override.token" ]]; then
+            warn "scope guard: SCOPE_OVERRIDE active — skipping scope check"
+            return 0
+        fi
+        # Canonical path — matches classify_quality_findings reader and review-stage reader.
+        # Clear unconditionally so a clean commit after a revert doesn't re-trigger scope route.
+        local _viol_file="${ARTIFACTS_DIR:-${PROJECT_ROOT:-.}/.claude/pipeline-artifacts}/issue-${ISSUE_NUMBER:-0}/logs/scope-violations.txt"
+        mkdir -p "$(dirname "$_viol_file")" 2>/dev/null || true
+        rm -f "$_viol_file" 2>/dev/null || true
+        local _scope_list
+        _scope_list=$(_extract_scope_from_design 2>/dev/null)
+        if [[ -n "$_scope_list" ]]; then
+            local _staged_files
+            _staged_files=$(git -C "$dir" diff --cached --name-only 2>/dev/null || true)
+            if [[ -n "$_staged_files" ]]; then
+                local _violations
+                _violations=$(_compute_scope_violations "$_staged_files" "$_scope_list" 2>/dev/null)
+                if [[ -n "$_violations" ]]; then
+                    while IFS= read -r _vf; do
+                        [[ -z "$_vf" ]] && continue
+                        warn "scope guard: unstaging out-of-scope file: ${_vf}"
+                        git -C "$dir" restore --staged "${toplevel:+$toplevel/}${_vf}" 2>/dev/null || true
+                        declare -f emit_event >/dev/null 2>&1 && \
+                            emit_event "loop.scope_violation" "file=${_vf}" "issue=${ISSUE_NUMBER:-0}" || true
+                    done <<< "$_violations"
+                    # Write violation summary for next iteration prompt injection
+                    printf '%s\n' "$_violations" > "$_viol_file" 2>/dev/null || true
+                fi
+            fi
+        fi
     fi
 }
 

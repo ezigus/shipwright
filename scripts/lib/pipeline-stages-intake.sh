@@ -64,10 +64,17 @@ stage_intake() {
     fi
 
     # 4. Create branch with smart prefix
-    if [[ -n "${WORKSPACE_BRANCH:-}" ]]; then
-        # CI mode: the workflow already created and exported the WIP branch.
-        # Skip branch creation to avoid the two-branch identity conflict where
-        # intake's descriptive branch diverges from the workflow's shipwright/issue-N.
+    if [[ "${CI_MODE:-false}" == "true" ]]; then
+        # In CI the workflow must have set WORKSPACE_BRANCH before intake runs.
+        # If it's unset the workspace is in an invalid state — refuse to continue.
+        if [[ -z "${WORKSPACE_BRANCH:-}" ]]; then
+            error "CI mode but WORKSPACE_BRANCH is unset. The workflow's 'Prepare workspace branch' step must export it before intake runs."
+            return 2
+        fi
+        GIT_BRANCH="$WORKSPACE_BRANCH"
+        info "CI mode: using workspace branch ${GIT_BRANCH}"
+    elif [[ -n "${WORKSPACE_BRANCH:-}" ]]; then
+        # WORKSPACE_BRANCH set without CI_MODE (explicit override or test harness)
         GIT_BRANCH="$WORKSPACE_BRANCH"
         info "CI mode: using workspace branch ${GIT_BRANCH}"
     else
@@ -390,7 +397,23 @@ A checkbox list of discrete tasks that can be tracked:
 How to verify the implementation works.
 
 ### Definition of Done
-Checklist of completion criteria.
+Checklist of completion criteria. EVERY item MUST end with a verification tag:
+
+  {auto:tests}       — verified by \`npm test\` or a specific test script
+  {auto:lint}        — verified by \`shellcheck\` / \`eslint\` / equivalent
+  {auto:diff}        — verified by inspecting the cumulative branch diff
+  {auto:build}       — verified by \`npm run build\` or workflow assertion
+  {auto:other:CMD}   — verified by running CMD and checking exit/output
+  {manual}           — requires a human (WILL BE SKIPPED in autonomous pipeline mode)
+
+RULES:
+1. Prefer auto: tags. A {manual} item in autonomous mode = SKIPPED, not FAILED.
+2. NEVER phrase an auto item as \"manual verification\" — it will block the loop.
+3. If you cannot define a verification command, put it in the PR description instead.
+4. Maximum 10 items. Each must be independently verifiable.
+5. Example: - [ ] \`npm test\` exits 0 with all 339 tests passing {auto:tests}
+6. Example: - [ ] \`scripts/sw-cost-share-test.sh\` exits 0 {auto:other:bash scripts/sw-cost-share-test.sh}
+7. Example: - [ ] PR description includes architecture diagram {manual}
 "
 
     # Inject skill prompts — prefer AI-powered plan, fallback to adaptive, then static
@@ -723,6 +746,91 @@ CC_TASKS_EOF
         return "$_rc"
     }
     _validate_dod_md "$ARTIFACTS_DIR/dod.md" || return 1
+
+    # Validate {auto:diff} DoD items do not reference pipeline-excluded paths.
+    # Uses _validate_dod_no_excluded_paths from pipeline-stages.sh (already sourced).
+    # Fail-open if the helper is not yet available (e.g. during bootstrap).
+    if declare -f _validate_dod_no_excluded_paths >/dev/null 2>&1; then
+        _validate_dod_no_excluded_paths "$ARTIFACTS_DIR/dod.md" || return 1
+    fi
+
+    # Classify DoD items as "auto" or "manual" for autonomous pipeline mode.
+    # Items tagged {manual} or matching human-verification heuristics are rewritten
+    # as [~] lines that the DoD audit skips in autonomous mode.
+    _classify_dod_item() {
+        local line="$1"
+        # Explicit tag wins
+        if echo "$line" | grep -qE '\{auto:'; then echo "auto"; return; fi
+        if echo "$line" | grep -qE '\{manual\}'; then echo "manual"; return; fi
+        # Heuristic for untagged items (legacy + LLM forgot to tag)
+        # Exclude lines that contain a backtick-quoted command — these are auto items.
+        if echo "$line" | grep -qE '`(npm|bash|yarn|pnpm|make|node|sh|python|go)[[:space:]]'; then
+            echo "auto"; return
+        fi
+        if echo "$line" | grep -qiE 'manual|smoke[[:space:]]+test|by[[:space:]]+hand|human[[:space:]]+verif|visually[[:space:]]|ux[[:space:]]+review|stakeholder|screenshot|demo[[:space:]]+to'; then
+            echo "manual"
+        else
+            echo "auto"
+        fi
+    }
+
+    # In autonomous pipeline mode, rewrite {manual} DoD items as [~] (skipped).
+    # Writes dod-classification.json sidecar for downstream consumers.
+    _apply_dod_classification() {
+        local dod_file="$1"
+        [[ ! -s "$dod_file" ]] && return 0
+        # Only reclassify in autonomous mode
+        local _source="${SHIPWRIGHT_SOURCE:-session}"
+        if [[ "$_source" != "pipeline" && "$_source" != "daemon" ]]; then
+            return 0
+        fi
+
+        local _tmp_dod _tmp_json
+        # Explicit mktemp with fallback — avoids using a RETURN trap, which leaks into
+        # the parent function scope in bash and fires again with out-of-scope locals.
+        _tmp_dod=$(mktemp "${TMPDIR:-/tmp}/sw-dod-class.XXXXXX") || return 0
+        _tmp_json=$(mktemp "${TMPDIR:-/tmp}/sw-dod-json.XXXXXX") || { rm -f "$_tmp_dod"; return 0; }
+        echo '[]' > "$_tmp_json"
+        local _total=0 _skipped=0
+
+        while IFS= read -r line; do
+            if echo "$line" | grep -qE '^[[:space:]]*-[[:space:]]'; then
+                _total=$(( _total + 1 ))
+                local _class
+                _class=$(_classify_dod_item "$line")
+                if [[ "$_class" == "manual" ]]; then
+                    _skipped=$(( _skipped + 1 ))
+                    # Rewrite as [~] skipped marker
+                    line=$(echo "$line" | sed 's/^[[:space:]]*-[[:space:]]*/- [~] /')
+                    line="${line} (skipped: requires human verification)"
+                fi
+            fi
+            echo "$line" >> "$_tmp_dod"
+        done < "$dod_file"
+
+        mv "$_tmp_dod" "$dod_file" 2>/dev/null || rm -f "$_tmp_dod" 2>/dev/null || true
+
+        # Write classification sidecar via jq --argjson to avoid string interpolation.
+        # Atomic: write to the pre-allocated _tmp_json then mv into place — a failing
+        # or interrupted jq must not leave a partial dod-classification.json that
+        # downstream consumers might mistakenly trust.
+        local _auto=$(( _total - _skipped ))
+        if jq -n \
+            --argjson total "$_total" \
+            --argjson auto "$_auto" \
+            --argjson skipped_manual "$_skipped" \
+            '{"total":$total,"auto":$auto,"skipped_manual":$skipped_manual}' \
+            > "$_tmp_json" 2>/dev/null; then
+            mv "$_tmp_json" "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || true
+        fi
+        rm -f "$_tmp_json" 2>/dev/null || true
+
+        if [[ "$_skipped" -gt 0 ]]; then
+            info "DoD: ${_skipped}/${_total} items marked as manual-only — will be skipped in autonomous audit"
+        fi
+    }
+
+    _apply_dod_classification "$ARTIFACTS_DIR/dod.md"
 
     # ── Plan Validation Gate ──
     # Ask Claude to validate the plan before proceeding

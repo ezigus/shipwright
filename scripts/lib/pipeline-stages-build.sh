@@ -261,6 +261,26 @@ ${build_discoveries}"
 ${_branch_progress}"
     fi
 
+    # Inject scope guardrail from design.md (T1.2c).
+    # Reads the machine-parseable ```scope block and prepends a SCOPE constraint
+    # to the build context so the agent knows which files it is allowed to touch.
+    if declare -f _extract_scope_from_design >/dev/null 2>&1; then
+        local _scope_list
+        _scope_list=$(_extract_scope_from_design "$ARTIFACTS_DIR" 2>/dev/null)
+        if [[ -n "$_scope_list" ]]; then
+            local _scope_block
+            _scope_block=$(printf '%s\n' "$_scope_list" | sed 's/^/  - /')
+            build_context_body="SCOPE — modify ONLY these files (from design.md):
+${_scope_block}
+Do NOT modify any file outside this list. If an out-of-scope change is genuinely
+required, STOP and emit: <<<LOOP:SCOPE_ESCALATION:reason>>>
+The design will be updated by a human before you proceed.
+
+${build_context_body}"
+            emit_event "build.scope_injected" "issue=${ISSUE_NUMBER:-0}" "file_count=$(echo "$_scope_list" | wc -l | tr -d ' ')"
+        fi
+    fi
+
     # Validate task list before loop start — clean up stale or malformed files.
     # Task content is injected dynamically each iteration by compose_task_section()
     # in loop-iteration.sh; do not inject the full file into the goal here.
@@ -525,11 +545,14 @@ ${_build_recall_ctx}"
         [[ "$_fast_test_cmd" == "null" ]] && _fast_test_cmd=""
     fi
     if [[ -z "$_fast_test_cmd" ]]; then
-        local _daemon_cfg="${PROJECT_ROOT:-$PWD}/.claude/daemon-config.json"
-        if [[ -f "$_daemon_cfg" ]]; then
-            _fast_test_cmd=$(jq -r '.fast_test_cmd // ""' "$_daemon_cfg" 2>/dev/null) || true
-            [[ "$_fast_test_cmd" == "null" ]] && _fast_test_cmd=""
+        local _dc_build
+        if declare -f _load_daemon_config >/dev/null 2>&1; then
+            _dc_build=$(_load_daemon_config)
+        else
+            _dc_build=$(cat "${PROJECT_ROOT:-$PWD}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
         fi
+        _fast_test_cmd=$(echo "$_dc_build" | jq -r '.fast_test_cmd // ""' 2>/dev/null) || true
+        [[ "$_fast_test_cmd" == "null" ]] && _fast_test_cmd=""
     fi
     [[ -n "$_fast_test_cmd" ]] && loop_args+=(--fast-test-cmd "$_fast_test_cmd")
 
@@ -542,11 +565,14 @@ ${_build_recall_ctx}"
         [[ "$_fast_test_interval" == "null" ]] && _fast_test_interval=""
     fi
     if [[ -z "$_fast_test_interval" ]]; then
-        local _daemon_cfg="${PROJECT_ROOT:-$PWD}/.claude/daemon-config.json"
-        if [[ -f "$_daemon_cfg" ]]; then
-            _fast_test_interval=$(jq -r '.fast_test_interval // ""' "$_daemon_cfg" 2>/dev/null) || true
-            [[ "$_fast_test_interval" == "null" ]] && _fast_test_interval=""
+        local _dc_build_int
+        if declare -f _load_daemon_config >/dev/null 2>&1; then
+            _dc_build_int=$(_load_daemon_config)
+        else
+            _dc_build_int=$(cat "${PROJECT_ROOT:-$PWD}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
         fi
+        _fast_test_interval=$(echo "$_dc_build_int" | jq -r '.fast_test_interval // ""' 2>/dev/null) || true
+        [[ "$_fast_test_interval" == "null" ]] && _fast_test_interval=""
     fi
     if [[ -n "$_fast_test_interval" ]]; then
         if ! [[ "$_fast_test_interval" =~ ^[1-9][0-9]*$ ]]; then
@@ -630,6 +656,18 @@ ${_build_recall_ctx}"
     fi
 
     local _token_log="${ARTIFACTS_DIR}/.claude-tokens-build.log"
+    local _build_log="${ARTIFACTS_DIR}/build.log"
+    # Pre-write a header line so the file exists even if `sw loop` is killed before
+    # writing anything to stdout (e.g., on a 5-hour job hard-timeout). The file is
+    # read by _resolve_stage_log_path() (pipeline-state.sh:566) when subsequent
+    # stages or post-mortems need the build output. Without this, hard timeouts
+    # leave the diagnostic "stage build produced no log" with nothing to show.
+    {
+        printf '=== build.log — issue %s — run %s — started %s ===\n' \
+            "${ISSUE_NUMBER:-?}" \
+            "${SHIPWRIGHT_PIPELINE_ID:-?}" \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    } > "$_build_log"
     export PIPELINE_JOB_ID="${PIPELINE_NAME:-pipeline-$$}"
     # Per-iteration cost sidecar (issue #87) — read by sw-loop.sh's record_iteration_cost.
     export ITER_COST_JSONL="${ARTIFACTS_DIR}/loop-iteration-costs.jsonl"
@@ -643,8 +681,17 @@ ${_build_recall_ctx}"
     # across CI jobs in .claude/pipeline-state.md and is therefore an unsafe budget anchor.
     # PIPELINE_RUN_EPOCH remains in the state file for historical display only.
     export CI_JOB_START_EPOCH="${CI_JOB_START_EPOCH:-}"
-    sw loop "${loop_args[@]}" < /dev/null 2>"$_token_log" || {
-        local _loop_exit=$?
+    # Enable scope guard so safe_git_stage() blocks out-of-scope commits (T1.2)
+    export SCOPE_GUARD_ENABLED="true"
+    # Pipe stdout through `tee -a` so build.log grows incrementally — whatever the
+    # loop emitted before a SIGTERM kill survives on disk for post-mortems.
+    # `set +e` around the pipeline lets us read PIPESTATUS[0] for the loop's true
+    # exit code instead of tee's, without errexit aborting on a non-zero loop.
+    set +e
+    sw loop "${loop_args[@]}" < /dev/null 2>"$_token_log" | tee -a "$_build_log"
+    local _loop_exit=${PIPESTATUS[0]}
+    set -e
+    if [[ "$_loop_exit" -ne 0 ]]; then
         parse_claude_tokens "$_token_log"
 
         # Detect context exhaustion from progress file
@@ -663,7 +710,7 @@ ${_build_recall_ctx}"
 
         error "Build loop failed"
         return 1
-    }
+    fi
     parse_claude_tokens "$_token_log"
 
     # Read accumulated token counts from build loop (written by sw-loop.sh)
@@ -883,6 +930,23 @@ stage_test() {
       warn "Failed to write test-results.status.json — downstream consumers will fall back to log parsing"
     fi
 
+    # Extracts per-suite failure summaries from a test log.
+    # Looks for suite headers (sw-*-test.sh lines) and failure markers (✗, ●, FAIL).
+    _summarize_test_failures() {
+        local test_log="$1"
+        local max_lines="${2:-40}"
+        [[ ! -f "$test_log" ]] && return 0
+        awk '
+            /sw-[a-z]+-test\.sh/ { suite = $0; gsub(/^[[:space:]]+|[[:space:]]+$/, "", suite) }
+            /^[[:space:]]*(FAIL|✗|●|×)[[:space:]]/ && suite != "" {
+                print "  • " suite " — " $0
+            }
+            /[0-9]+ of [0-9]+ tests? failed/ && suite != "" {
+                print "  " suite ": " $0
+            }
+        ' "$test_log" 2>/dev/null | head -"$max_lines"
+    }
+
     if [[ "$test_exit" -eq 0 ]]; then
         success "Tests passed"
     else
@@ -895,23 +959,57 @@ stage_test() {
         fi
         echo "$relevant_output"
 
-        # Post failure to GitHub with more context
+        # Post failure to GitHub with actionable summary (not full log dump)
         if [[ -n "$ISSUE_NUMBER" ]]; then
             local log_lines
-            log_lines=$(wc -l < "$test_log" 2>/dev/null || true)
+            log_lines=$(wc -l < "$test_log" 2>/dev/null || echo 0)
             log_lines="${log_lines:-0}"
-            local log_excerpt
-            if [[ "$log_lines" -lt 60 ]]; then
-                log_excerpt="$(cat "$test_log" 2>/dev/null | strip_ansi || true)"
-            else
-                log_excerpt="$(head -20 "$test_log" 2>/dev/null | strip_ansi || true)
-... (${log_lines} lines total, showing head + tail) ...
-$(tail -30 "$test_log" 2>/dev/null | strip_ansi || true)"
+
+            # Compute dedup hash from sorted failure names to detect identical
+            # consecutive GitHub comments. Uses its own state file (NOT the one
+            # compound_quality uses for cycle short-circuit, which lives at
+            # last-failure-set.sha — shared writes would cross-contaminate the
+            # cycle dedup logic). Gated on positive failure count: SHA-1 of empty
+            # stdin is a constant, which would falsely match unrelated infra failures.
+            local _fail_hash="" _prev_hash="" _stage_test_count
+            _stage_test_count=$(grep -cE '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' "$test_log" 2>/dev/null) || _stage_test_count=0
+            _stage_test_count="${_stage_test_count:-0}"
+            if [[ "$_stage_test_count" -gt 0 ]]; then
+                _fail_hash=$(grep -E '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' "$test_log" 2>/dev/null \
+                    | sort | _compute_sha1 || echo "")
             fi
-            gh_comment_issue "$ISSUE_NUMBER" "❌ **Tests failed** (exit code: $test_exit, ${log_lines} lines)
+            if [[ -n "${ARTIFACTS_DIR:-}" && -f "${ARTIFACTS_DIR}/stage-test-last-comment.sha" ]]; then
+                _prev_hash=$(cat "${ARTIFACTS_DIR}/stage-test-last-comment.sha" 2>/dev/null | tr -d '[:space:]' || true)
+            fi
+
+            local _gh_body
+            if [[ -n "$_fail_hash" && "$_fail_hash" == "$_prev_hash" && "$_fail_hash" != no-hasher-* ]]; then
+                # Same failures as previous cycle — abbreviated notice
+                _gh_body="↺ **Same test failures as previous cycle** (exit code: $test_exit, ${log_lines} lines)
+
+No new failures introduced. See previous comment for details."
+            else
+                # New or changed failures — show actionable summary
+                local _failure_summary
+                _failure_summary=$(_summarize_test_failures "$test_log" 30)
+                if [[ -z "$_failure_summary" ]]; then
+                    # Fallback: last 20 lines of relevant output
+                    _failure_summary=$(echo "$relevant_output" | tail -20)
+                fi
+                _gh_body="❌ **Tests failed** (exit code: $test_exit, ${log_lines} lines)
+
 \`\`\`
-${log_excerpt}
+${_failure_summary}
 \`\`\`"
+            fi
+
+            # Save current hash for next stage_test comment dedup (separate from compound_quality)
+            if [[ -n "${ARTIFACTS_DIR:-}" && -n "$_fail_hash" ]]; then
+                mkdir -p "$ARTIFACTS_DIR" 2>/dev/null || true
+                echo "$_fail_hash" > "${ARTIFACTS_DIR}/stage-test-last-comment.sha" 2>/dev/null || true
+            fi
+
+            gh_comment_issue "$ISSUE_NUMBER" "$_gh_body"
         fi
         # Store failed test result in ruflo for flakiness tracking
         if declare -f ruflo_store >/dev/null 2>&1 && \

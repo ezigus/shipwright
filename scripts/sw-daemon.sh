@@ -868,6 +868,9 @@ daemon_start() {
         "max_parallel=$MAX_PARALLEL" \
         "watch_label=$WATCH_LABEL"
 
+    # One-shot migration: move any committed last_optimization blocks to the sidecar
+    declare -f _migrate_last_optimization >/dev/null 2>&1 && _migrate_last_optimization || true
+
     # Enter poll loop with watchdog self-restart on unexpected exit
     local _watchdog_restarts=0
     local _watchdog_max=${WATCHDOG_MAX_RESTARTS:-5}

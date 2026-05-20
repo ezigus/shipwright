@@ -957,30 +957,45 @@ daemon_self_optimize() {
             --arg ts "$(now_iso)" \
             '.last_optimization = {timestamp: $ts, adjustments: $adj}'
 
-        # ── Persist adjustments to daemon-config.json (survives restart) ──
-        local config_file="${CONFIG_PATH:-.claude/daemon-config.json}"
-        if [[ -f "$config_file" ]]; then
-            local tmp_config
-            tmp_config=$(jq \
-                --argjson max_parallel "$MAX_PARALLEL" \
-                --argjson poll_interval "$POLL_INTERVAL" \
-                --arg template "$PIPELINE_TEMPLATE" \
-                --arg auto_template "${AUTO_TEMPLATE:-false}" \
-                --arg ts "$(now_iso)" \
-                --arg adj "$adj_str" \
-                '.max_parallel = $max_parallel |
-                 .poll_interval = $poll_interval |
-                 .pipeline_template = $template |
-                 .auto_template = ($auto_template == "true") |
-                 .last_optimization = {timestamp: $ts, adjustments: $adj}' \
-                "$config_file")
-            # Atomic write: tmp file + mv (preserve 600 permissions)
-            local tmp_cfg_file="${config_file}.tmp.$$"
-            echo "$tmp_config" > "$tmp_cfg_file"
-            chmod 600 "$tmp_cfg_file"
-            mv "$tmp_cfg_file" "$config_file"
-            daemon_log INFO "Self-optimize: persisted adjustments to ${config_file}"
-        fi
+        # ── Persist DORA adjustments to tuned-config.json sidecar (gitignored) ──
+        # Writing to the sidecar (not daemon-config.json) prevents auto-optimizer
+        # runtime values from appearing as branch diff noise on feature branches.
+        local _sidecar_dir="${HOME}/.shipwright/optimization"
+        local _sidecar="${_sidecar_dir}/tuned-config.json"
+        mkdir -p "$_sidecar_dir" 2>/dev/null || true
+        local _sc_lock="${_sidecar_dir}/.tuned-config.lock"
+        (
+            if command -v flock >/dev/null 2>&1; then
+                if ! flock -w 5 200; then
+                    daemon_log WARN "sidecar lock contended; skipping DORA persist"
+                    emit_event "sidecar.lock_contention" "site=dora_autotune" 2>/dev/null || true
+                    exit 1
+                fi
+            fi
+            _es="{}"
+            [[ -f "$_sidecar" ]] && _es=$(cat "$_sidecar" 2>/dev/null || echo "{}")
+            _tc=$(printf '%s\n' "$_es" \
+                | jq \
+                    --argjson max_parallel "$MAX_PARALLEL" \
+                    --argjson poll_interval "$POLL_INTERVAL" \
+                    --arg template "$PIPELINE_TEMPLATE" \
+                    --arg auto_template "${AUTO_TEMPLATE:-false}" \
+                    --arg ts "$(now_iso)" \
+                    --arg adj "$adj_str" \
+                    '.max_parallel = $max_parallel |
+                     .poll_interval = $poll_interval |
+                     .pipeline_template = $template |
+                     .auto_template = ($auto_template == "true") |
+                     .last_optimization = {timestamp: $ts, adjustments: $adj}' \
+                2>/dev/null) || exit 0
+            if [[ -n "$_tc" ]]; then
+                _tmp="${_sidecar}.tmp.$$"
+                printf '%s\n' "$_tc" > "$_tmp"
+                chmod 600 "$_tmp"
+                mv "$_tmp" "$_sidecar"
+                daemon_log INFO "Self-optimize: persisted DORA adjustments to ${_sidecar}"
+            fi
+        ) 200>"$_sc_lock"
 
         emit_event "daemon.optimize" "adjustments=${adj_str}" "cfr=$cfr" "cycle_time=$cycle_time_median" "deploy_freq=$deploy_freq" "mttr=$mttr"
         daemon_log SUCCESS "Self-optimization applied ${#adjustments[@]} adjustment(s)"

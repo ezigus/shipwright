@@ -71,6 +71,29 @@ gh_comment_issue() {
     _timeout 30 gh issue comment "$issue_num" --body "$body" 2>/dev/null || true
 }
 
+# Inner-stage event poster for compound_quality / build loop observability.
+# Args: $1=scope (outer|inner), $2=stage, $3=event, $4=label
+# Posts to GitHub issue if LOOP_INNER_STAGE_COMMENTS=github|both and CI_MODE and ISSUE_NUMBER set.
+# Always emits JSONL via emit_event regardless of comment toggle.
+_emit_inner_stage_event() {
+    local _scope="${1:-inner}" _stage="${2:-build}" _event="${3:-status}" _label="${4:-}"
+    local _marker="SHIPWRIGHT-STAGE: ${_scope}:${_stage}:${_event}"
+
+    # Always emit JSONL (unconditional)
+    type emit_event >/dev/null 2>&1 && \
+        emit_event "loop.inner_stage" "scope=${_scope}" "stage=${_stage}" "event=${_event}" "label=${_label}"
+
+    # Post to GitHub only if configured and context available
+    local _comments_cfg="${LOOP_INNER_STAGE_COMMENTS:-off}"
+    if [[ "$_comments_cfg" == "github" || "$_comments_cfg" == "both" ]]; then
+        if [[ -n "${CI_MODE:-}" && -n "${ISSUE_NUMBER:-}" ]]; then
+            local _body="<!-- ${_marker} -->"$'\n'"**[${_scope}/${_stage}]** ${_label:-${_event}}"
+            type gh_comment_issue >/dev/null 2>&1 && \
+                gh_comment_issue "${ISSUE_NUMBER}" "${_body}" 2>/dev/null || true
+        fi
+    fi
+}
+
 # Post a progress-tracking comment and save its ID for later updates
 # Usage: gh_post_progress <issue_number> <body>
 gh_post_progress() {
@@ -81,13 +104,31 @@ gh_post_progress() {
         -f body="$body" --jq '.id' 2>/dev/null) || true
     if [[ -n "$result" && "$result" != "null" ]]; then
         PROGRESS_COMMENT_ID="$result"
+        # Persist to disk so nested contexts and shell restarts can restore it.
+        # M2: atomic tmp+mv write prevents concurrent readers from seeing truncated content.
+        if [[ -n "${ARTIFACTS_DIR:-}" ]]; then
+            mkdir -p "$ARTIFACTS_DIR" 2>/dev/null || true
+            local _id_tmp
+            _id_tmp=$(mktemp "${ARTIFACTS_DIR}/progress-comment.id.XXXXXX" 2>/dev/null) || _id_tmp="${ARTIFACTS_DIR}/progress-comment.id.tmp.$$"
+            printf '%s\n' "$result" > "$_id_tmp" && mv "$_id_tmp" "${ARTIFACTS_DIR}/progress-comment.id" || rm -f "$_id_tmp"
+        fi
     fi
 }
 
 # Update an existing progress comment by ID
 # Usage: gh_update_progress <body>
 gh_update_progress() {
-    [[ "$GH_AVAILABLE" != "true" || -z "$PROGRESS_COMMENT_ID" ]] && return 0
+    [[ "$GH_AVAILABLE" != "true" ]] && return 0
+    # Restore from disk if env var was lost (shell restart / nested context)
+    if [[ -z "${PROGRESS_COMMENT_ID:-}" && -n "${ARTIFACTS_DIR:-}" ]]; then
+        local _saved_id
+        _saved_id=$(cat "${ARTIFACTS_DIR}/progress-comment.id" 2>/dev/null | tr -d '[:space:]' || true)
+        if [[ -n "$_saved_id" ]]; then
+            PROGRESS_COMMENT_ID="$_saved_id"
+            warn "heartbeat: restored PROGRESS_COMMENT_ID=${PROGRESS_COMMENT_ID} from disk" 2>/dev/null || true
+        fi
+    fi
+    [[ -z "${PROGRESS_COMMENT_ID:-}" ]] && return 0
     local body="$1"
     _timeout 30 gh api "repos/${REPO_OWNER}/${REPO_NAME}/issues/comments/${PROGRESS_COMMENT_ID}" \
         -X PATCH -f body="$body" >/dev/null 2>&1 || true

@@ -54,14 +54,15 @@ fi
 MAX_ROUNDS="${ADVERSARIAL_MAX_ROUNDS:-3}"
 
 _adversarial_enabled() {
-    local config="${PROJECT_ROOT}/.claude/daemon-config.json"
-    if [[ -f "$config" ]]; then
-        local enabled
-        enabled=$(jq -r '.intelligence.adversarial_enabled // false' "$config" 2>/dev/null || echo "false")
-        [[ "$enabled" == "true" ]]
+    local _dc_adv
+    if declare -f _load_daemon_config >/dev/null 2>&1; then
+        _dc_adv=$(_load_daemon_config)
     else
-        return 1
+        _dc_adv=$(cat "${PROJECT_ROOT:-.}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
     fi
+    local enabled
+    enabled=$(echo "$_dc_adv" | jq -r '.intelligence.adversarial_enabled // false' 2>/dev/null || echo "false")
+    [[ "$enabled" == "true" ]]
 }
 
 # ─── GitHub Security Context ─────────────────────────────────────────────

@@ -171,7 +171,7 @@ print_test_section "Test 5: observability calls fire every iteration"
 _t5_emit=$(_count "$EMIT_CALLS")
 _t5_warn=$(_count "$WARN_CALLS")
 # We invoked detect_stuckness 4 times across Tests 1-4; observability must be 4.
-assert_eq "Test 5: emit_event fired on every detection (4 total)" "4" "$_t5_emit"
+assert_eq "Test 5: emit_event fired on every detection (8 total: 2 per detection)" "8" "$_t5_emit"
 assert_eq "Test 5: warn fired on every detection (4 total)" "4" "$_t5_warn"
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -228,7 +228,7 @@ assert_eq "Test 7: ruflo_recall NOT called after restart for unchanged pattern (
 
 _t7_emit=$(_count "$EMIT_CALLS")
 _t7_warn=$(_count "$WARN_CALLS")
-assert_eq "Test 7: emit_event still fires on restart detection (now 5)" "5" "$_t7_emit"
+assert_eq "Test 7: emit_event still fires on restart detection (now 10: 2 per detection)" "10" "$_t7_emit"
 assert_eq "Test 7: warn still fires on restart detection (now 5)" "5" "$_t7_warn"
 
 # ═══════════════════════════════════════════════════════════════════════════════

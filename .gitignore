@@ -27,6 +27,7 @@ demo/*.gif
 .claude/code-review.json
 .claude/hygiene-report.json
 .claude/scheduled_tasks.lock
+.claude/.push.lock
 
 # Shipwright runtime event logs (per-issue/per-run JSONL streams)
 .shipwright/events-*.jsonl

@@ -63,6 +63,10 @@ fi
 [[ -f "$_COST_SCRIPT_DIR/lib/cost/baselines.sh"     ]] && source "$_COST_SCRIPT_DIR/lib/cost/baselines.sh"
 # shellcheck source=lib/cost/table-render.sh
 [[ -f "$_COST_SCRIPT_DIR/lib/cost/table-render.sh"  ]] && source "$_COST_SCRIPT_DIR/lib/cost/table-render.sh"
+# shellcheck source=lib/cost/share.sh
+# Cross-machine breakdown merging (#460) — folds artifacts downloaded by
+# the shipwright-optimize workflow into the shared rolling baseline.
+[[ -f "$_COST_SCRIPT_DIR/lib/cost/share.sh"         ]] && source "$_COST_SCRIPT_DIR/lib/cost/share.sh"
 
 ensure_cost_dir() {
     mkdir -p "$COST_DIR"
@@ -1178,6 +1182,70 @@ BDHELP
     fi
 }
 
+# cost_merge_command — CLI wrapper for cost_merge_breakdowns.
+#
+# Usage:
+#   sw cost merge <input_dir> [out_file] [--apply-baselines]
+#
+# Walks <input_dir> for every cost-breakdown.json (typically the output of
+# `gh run download --pattern 'cost-breakdown-*'` in the optimize workflow) and
+# writes a single merged JSON to <out_file> (default:
+# ~/.shipwright/baselines/merged-cost-breakdown.json). With --apply-baselines
+# the merged file is also folded into the rolling per-stage baseline.
+cost_merge_command() {
+    local input_dir=""
+    local out_file=""
+    local apply_baselines=0
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --apply-baselines) apply_baselines=1; shift ;;
+            --help|-h)
+                cat <<'MGHELP'
+Usage: shipwright cost merge <input_dir> [out_file] [--apply-baselines]
+
+Merges every cost-breakdown.json found under <input_dir> into a single
+aggregated breakdown JSON. Used by the shipwright-optimize workflow to fold
+cross-machine pipeline cost data into the shared rolling baseline.
+
+Arguments:
+  input_dir         Directory containing downloaded cost-breakdown-* artifacts
+                    (each artifact unpacks into its own subdir).
+  out_file          Output path (default: ~/.shipwright/baselines/merged-cost-breakdown.json)
+  --apply-baselines Also fold the merged result into the rolling baseline.
+
+See docs/cost-sharing.md for the artifact-name contract and consumer pattern.
+MGHELP
+                return 0 ;;
+            -*) shift ;;
+            *)
+                if [[ -z "$input_dir" ]]; then input_dir="$1"
+                elif [[ -z "$out_file" ]]; then out_file="$1"
+                fi
+                shift ;;
+        esac
+    done
+
+    [[ -z "$input_dir" ]] && { error "merge: missing <input_dir>"; return 1; }
+    [[ -z "$out_file" ]] && out_file="${HOME}/.shipwright/baselines/merged-cost-breakdown.json"
+
+    if ! type cost_merge_breakdowns >/dev/null 2>&1; then
+        error "merge: lib/cost/share.sh not loaded"
+        return 1
+    fi
+    cost_merge_breakdowns "$input_dir" "$out_file" || return 1
+
+    if [[ "$apply_baselines" == "1" ]]; then
+        if ! type cost_apply_merged_to_baselines >/dev/null 2>&1; then
+            warn "merge: --apply-baselines requested but lib not loaded"
+            return 1
+        fi
+        local n
+        n=$(cost_apply_merged_to_baselines "$out_file" | tail -1)
+        info "merge: baseline updated for ${n:-0} stage(s)"
+    fi
+}
+
 # cost_baseline_update <breakdown_file> [issue]
 # Internal hook for pipeline completion. Quiet on success.
 cost_baseline_update() {
@@ -1284,6 +1352,11 @@ case "$SUBCOMMAND" in
         ;;
     breakdown)
         cost_breakdown_command "$@"
+        ;;
+    merge)
+        # Cross-machine cost-breakdown merge (#460). Consumed by the
+        # shipwright-optimize workflow; also reachable for local debugging.
+        cost_merge_command "$@"
         ;;
     breakdown-update-baseline)
         # Internal: invoked by sw-pipeline.sh at pipeline completion to roll

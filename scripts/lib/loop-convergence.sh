@@ -256,6 +256,7 @@ record_iteration_stuckness_data() {
 
 detect_stuckness() {
     STUCKNESS_HINT=""
+    STUCKNESS_SNAPSHOT=""
     local iteration="${ITERATION:-0}"
     local stuckness_signals=0
     # Subset of signals that indicate something is *actively wrong* (cycling on a real
@@ -489,6 +490,38 @@ detect_stuckness() {
             diff_summary=$(diff <(tail -30 "$log3" 2>/dev/null) <(tail -30 "$log1" 2>/dev/null) 2>/dev/null | head -10 || true)
         fi
 
+        # T2.2: Compose structured STUCKNESS_SNAPSHOT with richer telemetry (file edit counts,
+        # failing tests, unresolved findings) so the agent has actionable context.
+        local _snap_edited_files=""
+        local _snap_failing_tests=""
+        local _snap_unresolved=""
+        if [[ -f "$log1" ]]; then
+            _snap_edited_files=$(grep -oE '^[[:space:]]*(Edit|Write|Create)[[:space:]]+[^[:space:]]+' "$log1" 2>/dev/null \
+                | sed 's/^[[:space:]]*//' | sort | uniq -c | sort -rn | head -5 | sed 's/^/    /' || true)
+        fi
+        if [[ -f "${ERROR_SUMMARY_FILE:-/dev/null}" ]]; then
+            _snap_failing_tests=$(jq -r '.failing_tests[]? // empty' "${ERROR_SUMMARY_FILE}" 2>/dev/null \
+                | head -5 | sed 's/^/    /' || true)
+        fi
+        if [[ -f "${ARTIFACTS_DIR:-/dev/null}/review.findings.json" ]]; then
+            _snap_unresolved=$(jq -r '.findings[]? | select(.resolved != true) | .summary // empty' \
+                "${ARTIFACTS_DIR}/review.findings.json" 2>/dev/null | head -3 | sed 's/^/    /' || true)
+        fi
+
+        STUCKNESS_SNAPSHOT="STUCKNESS SIGNALS DETECTED (${stuckness_reasons[*]}):
+${_snap_edited_files:+  Files touched most in last iterations:
+$_snap_edited_files
+}${_snap_failing_tests:+  Tests still failing:
+$_snap_failing_tests
+}${_snap_unresolved:+  Findings unresolved across cycles:
+$_snap_unresolved
+}  You appear to be reverting between two states. Review your diff against HEAD~3 before continuing."
+
+        emit_event "loop.stuckness_snapshot" \
+            "signals=${stuckness_signals}" \
+            "reasons=${stuckness_reasons[*]}" \
+            "iteration=${iteration}" 2>/dev/null || true
+
         local alternatives=""
         if type memory_inject_context >/dev/null 2>&1; then
             alternatives=$(memory_inject_context "build" 2>/dev/null | grep -i "fix:" | head -3 || true)
@@ -521,6 +554,8 @@ detect_stuckness() {
         cat <<STUCK_SECTION
 ## Stuckness Detected
 ${STUCKNESS_HINT}
+
+${STUCKNESS_SNAPSHOT}
 
 ${diff_summary:+Changes between recent iterations:
 $diff_summary

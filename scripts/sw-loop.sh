@@ -63,6 +63,9 @@ fi
 [[ -f "$SCRIPT_DIR/lib/pipeline-github.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-github.sh" 2>/dev/null || true
 # Initialize GitHub integration so GH_AVAILABLE is set for SW_LOG_PROMPTS=github|both
 type gh_init >/dev/null 2>&1 && gh_init 2>/dev/null || true
+# Scope-label state hydration (PR C) — source lib if present, then hydrate state
+[[ -f "${SCRIPT_DIR}/lib/scope-label.sh" ]] && source "${SCRIPT_DIR}/lib/scope-label.sh"
+type _read_scope_state >/dev/null 2>&1 && _read_scope_state
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -102,6 +105,7 @@ MAX_ITERATIONS_EXPLICIT=false
 MAX_RESTARTS=$(_config_get_int "loop.max_restarts" 0 2>/dev/null || echo 0)
 DOD_DIFF_MAX_LINES=$(_config_get_int "loop.dod_diff_max_lines" 5000 2>/dev/null || echo 5000)
 HOLISTIC_DIFF_MAX_LINES=$(_config_get_int "loop.holistic_diff_max_lines" 1000 2>/dev/null || echo 1000)
+LOOP_INNER_STAGE_COMMENTS="${LOOP_INNER_STAGE_COMMENTS:-$(_config_get "loop.inner_stage_comments" "off" 2>/dev/null || echo "off")}"
 SESSION_RESTART=false
 RESTART_COUNT=0
 REPO_OVERRIDE=""
@@ -1552,17 +1556,50 @@ ingest_pipeline_stage_findings() {
         fi
     fi
 
-    # pipeline:security — look for any security artifact or audit log
+    # pipeline:security — parse security artifacts/logs for ACTUAL findings.
+    # Earlier versions of this gate marked any non-empty artifact as "fail",
+    # which produced false positives when scans emit "[]" (empty JSON array)
+    # or audit logs that say "found 0 vulnerabilities". Mirror the proven
+    # parsing in scripts/lib/pipeline-intelligence.sh:1142 (uses jq length > 0)
+    # and scripts/sw-loop.sh:1525-1540 (pipeline:adversarial pattern).
+    _sec_verdict=""; _sec_summary=""; _sec_detail=""
     for _artifact in "${ARTIFACTS_DIR}"/security*.json "${ARTIFACTS_DIR}"/security*.log; do
         [[ -f "$_artifact" ]] || continue
-        if [[ ! -s "$_artifact" ]]; then
-            record_gate_finding "pipeline:security" "fail" "security scan ran but produced no output" ""
-        else
-            _detail="$(tail -15 "$_artifact" 2>/dev/null || true)"
-            record_gate_finding "pipeline:security" "fail" "security findings present" "${_detail}"
-        fi
-        break   # only ingest first match to avoid duplicate entries
+        case "$_artifact" in
+            *.json)
+                # Empty file or `[]` array → no findings. Count entries via jq.
+                if [[ ! -s "$_artifact" ]]; then
+                    [[ -z "$_sec_verdict" ]] && _sec_verdict="pass"
+                    continue
+                fi
+                _count="$(jq 'if type=="array" then length else 0 end' "$_artifact" 2>/dev/null || echo "0")"
+                _count="${_count:-0}"
+                if [[ "$_count" -gt 0 ]]; then
+                    _sec_verdict="fail"
+                    _sec_summary="${_count} security finding(s)"
+                    _sec_detail="$(jq -r '.[0:5] | .[] | tostring' "$_artifact" 2>/dev/null | head -20 || true)"
+                    break
+                fi
+                [[ -z "$_sec_verdict" ]] && _sec_verdict="pass"
+                ;;
+            *.log)
+                # Empty log → skip (no signal). "found 0 vulnerabilities" / "no vulnerabilities" → pass.
+                [[ ! -s "$_artifact" ]] && continue
+                if grep -qiE '(0 vulnerabilities|no vulnerabilities|0 advisories)' "$_artifact" 2>/dev/null; then
+                    [[ -z "$_sec_verdict" ]] && _sec_verdict="pass"
+                    continue
+                fi
+                if grep -qiE '(severity[[:space:]]*:[[:space:]]*(critical|high)|CVE-[0-9])' "$_artifact" 2>/dev/null; then
+                    _sec_verdict="fail"
+                    _sec_summary="security findings present"
+                    _sec_detail="$(tail -15 "$_artifact" 2>/dev/null || true)"
+                    break
+                fi
+                [[ -z "$_sec_verdict" ]] && _sec_verdict="pass"
+                ;;
+        esac
     done
+    [[ -n "$_sec_verdict" ]] && record_gate_finding "pipeline:security" "$_sec_verdict" "$_sec_summary" "$_sec_detail"
 
     # pipeline:lint
     _artifact="${ARTIFACTS_DIR}/lint-report.json"
@@ -1696,6 +1733,7 @@ run_quality_gates() {
 
     # Gate 4: Definition of Done (if DOD_FILE set)
     if [[ -n "$DOD_FILE" ]]; then
+        type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "dod_start" "Definition of Done check"
         if ! check_definition_of_done; then
             gate_failures+=("definition of done not satisfied")
         fi
@@ -2073,6 +2111,7 @@ guard_completion() {
     # Holistic final gate: when all other gates pass, run a project-level assessment
     # that evaluates the entire codebase against the goal (not just the latest diff)
     if [[ ${#rejection_reasons[@]} -eq 0 ]]; then
+        type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "holistic_start" "Holistic gate check"
         if ! run_holistic_gate; then
             rejection_reasons+=("holistic project assessment found gaps")
         fi
@@ -2124,12 +2163,21 @@ run_holistic_gate() {
         test_summary="$(echo "$TEST_OUTPUT" | tail -5)"
     fi
 
+    # Context-aware goal selection: compound_quality appends findings to GOAL so the
+    # rebuild agent knows what to address — use it directly. In standalone loop runs,
+    # GOAL accumulates iteration feedback that can poison the holistic assessment, so
+    # prefer ORIGINAL_GOAL when available (fixes issue #345 non-regression).
+    local _holistic_judge_goal="$GOAL"
+    if [[ "${OUTER_STAGE:-}" != "compound_quality" && -n "${ORIGINAL_GOAL:-}" ]]; then
+        _holistic_judge_goal="$ORIGINAL_GOAL"
+    fi
+
     local holistic_prompt
     read -r -d '' holistic_prompt <<HOLISTIC_PROMPT || true
 You are a final quality gate evaluating whether an autonomous coding agent has FULLY achieved its goal.
 
 ## Original Goal
-${ORIGINAL_GOAL:-$GOAL}
+${_holistic_judge_goal}
 
 ## Project Stats
 - Files in repo: ${file_count}
@@ -2622,6 +2670,7 @@ RESET='\033[0m'
 cd "$WORK_DIR"
 ITERATION=0
 CONSECUTIVE_FAILURES=0
+CONSECUTIVE_NOOP=0
 
 echo -e "${CYAN}${BOLD}▸${RESET} Agent ${AGENT_NUM}/${TOTAL_AGENTS} starting in ${WORK_DIR}"
 
@@ -2638,6 +2687,7 @@ while [[ "$ITERATION" -lt "$MAX_ITERATIONS" ]]; do
     fi
 
     ITERATION=$(( ITERATION + 1 ))
+    _iter_start=$(date +%s 2>/dev/null || echo 0)
     echo -e "\n${CYAN}${BOLD}▸${RESET} Agent ${AGENT_NUM} — Iteration ${ITERATION}/${MAX_ITERATIONS}"
 
     # Pull latest from other agents
@@ -2682,9 +2732,11 @@ Focus on areas they haven't touched yet.
 PROMPT
 )"
 
-    # Capture commit count before Claude runs so Claude-initiated commits are included in delta
-    local _commits_before _commits_after _new_commits
+    # Capture commit count AND HEAD SHA before Claude runs so delta is iteration-scoped.
+    # C4: _iter_start_sha replaces HEAD@{1} (reflog-relative — wrong when HEAD didn't move).
+    local _commits_before _commits_after _new_commits _iter_start_sha
     _commits_before=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+    _iter_start_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
 
     # Run Claude (output is JSON due to --output-format json in CLAUDE_FLAGS)
     local JSON_FILE="$LOG_DIR/agent-${AGENT_NUM}-iter-${ITERATION}.json"
@@ -2734,13 +2786,61 @@ PROMPT
     _commits_after=$(git rev-list --count HEAD 2>/dev/null || echo 0)
     _new_commits=$(( _commits_after - _commits_before ))
 
-    # Circuit breaker: check for progress using commit count delta (not HEAD~1 diff,
-    # which is fooled by prior commits when the current iteration produces no changes)
-    if [[ "$_new_commits" -gt 0 ]]; then
+    # Iteration elapsed time (set _iter_start at top of loop body)
+    _iter_end=$(date +%s 2>/dev/null || echo 0)
+    _iter_seconds=$(( _iter_end - ${_iter_start:-_iter_end} ))
+
+    # No-op detection: track iterations with no meaningful progress
+    # A "real" iteration requires: >=1 commit, OR (>=10 diff lines AND >=60s elapsed)
+    # C4: compare against captured start SHA (not HEAD@{1} which is reflog-relative and
+    # wrong if HEAD didn't move — would compare against a prior iteration's position).
+    # awk: key-driven parser handles insertions-only/deletions-only --shortstat output
+    # where positional $4/$6 fields vary.
+    _diff_lines=0
+    _diff_stat=""
+    if [[ -n "${_iter_start_sha:-}" ]]; then
+        _diff_stat=$(git diff --shortstat "${_iter_start_sha}" HEAD 2>/dev/null || true)
+        _diff_lines=$(echo "$_diff_stat" \
+            | awk '{ins=0;del=0; for(i=1;i<=NF;i++){if($i~/insert/)ins=$(i-1); if($i~/delet/)del=$(i-1)} print ins+del}' \
+            | head -1 || echo "0")
+    fi
+    _diff_lines="${_diff_lines:-0}"
+    # Guard: ensure numeric (strip whitespace/letters, default to 0)
+    _diff_lines=$(echo "$_diff_lines" | tr -dc '0-9')
+    [[ -z "$_diff_lines" ]] && _diff_lines=0
+    # Guard: binary-only diffs produce "N files changed" with no insert/delet tokens.
+    # awk yields 0 in that case, which false-positively looks like a no-op.
+    # If shortstat output is non-empty (something changed) but awk found nothing, count it as 1.
+    [[ "$_diff_lines" -eq 0 && -n "$_diff_stat" ]] && _diff_lines=1
+    # Belt-and-suspenders: some git versions omit --shortstat entry for binary-only changes.
+    if [[ "$_diff_lines" -eq 0 && -n "${_iter_start_sha:-}" ]]; then
+        if git diff --stat "${_iter_start_sha}" HEAD 2>/dev/null | grep -q 'Bin'; then
+            _diff_lines=1
+        fi
+    fi
+
+    if [[ "$_new_commits" -gt 0 ]] || \
+       { [[ "$_diff_lines" -ge 10 ]] && [[ "$_iter_seconds" -ge 60 ]]; }; then
         CONSECUTIVE_FAILURES=0
+        CONSECUTIVE_NOOP=0
     else
         CONSECUTIVE_FAILURES=$(( CONSECUTIVE_FAILURES + 1 ))
-        echo -e "  ${YELLOW}⚠${RESET} Low progress (${CONSECUTIVE_FAILURES}/3)"
+        CONSECUTIVE_NOOP=$(( ${CONSECUTIVE_NOOP:-0} + 1 ))
+        echo -e "  ${YELLOW}⚠${RESET} Low progress (${CONSECUTIVE_FAILURES}/3): ${_iter_seconds}s, ${_new_commits} commits, ${_diff_lines} diff lines"
+    fi
+
+    if [[ "${CONSECUTIVE_NOOP:-0}" -ge 2 ]]; then
+        echo -e "  ${RED}✗${RESET} No-op abort: ${CONSECUTIVE_NOOP} consecutive no-op iterations (${_iter_seconds}s, ${_new_commits} commits)"
+        # Write abort-reason file so the parent monitoring loop can detect this.
+        # LOOP_ABORT_FATAL cannot propagate from this worker tmux-pane process to the
+        # parent — use a marker file instead. Atomic tmp+mv prevents partial reads.
+        # Do NOT touch .agent-N-complete here: completion = success in the parent's
+        # eyes, which would mask the abort and let restarts fire. The parent reads
+        # the abort-reason marker on its own polling cycle.
+        echo "NOOP_ITERATIONS" > "$LOG_DIR/.agent-${AGENT_NUM}-abort-reason.tmp" 2>/dev/null \
+            && mv "$LOG_DIR/.agent-${AGENT_NUM}-abort-reason.tmp" \
+               "$LOG_DIR/.agent-${AGENT_NUM}-abort-reason" 2>/dev/null || true
+        break
     fi
 
     if [[ "$CONSECUTIVE_FAILURES" -ge 3 ]]; then
@@ -2783,6 +2883,16 @@ MULTI_WINDOW_NAME=""
 
 launch_multi_agent() {
     info "Setting up multi-agent mode ($AGENTS agents)..."
+
+    # Pre-run cleanup: remove stale markers from any prior crashed run that
+    # did not reach cleanup_multi_agent. Without this, wait_for_multi_completion
+    # reads the prior run's abort-reason marker on its first poll and
+    # false-aborts before agents have even started. cleanup_multi_agent only
+    # fires at end-of-run, so OOM/SIGKILL/host-reboot leaves zombies behind.
+    if [[ -n "${LOG_DIR:-}" ]]; then
+        rm -f "$LOG_DIR"/.agent-*-abort-reason 2>/dev/null || true
+        rm -f "$LOG_DIR"/.agent-*-complete 2>/dev/null || true
+    fi
 
     # Setup worktrees
     setup_worktrees || { error "Failed to setup worktrees"; exit 1; }
@@ -2832,7 +2942,28 @@ launch_multi_agent() {
 
 wait_for_multi_completion() {
     while true; do
-        # Check if any agent signaled completion
+        # Check abort-reason marker FIRST. If a worker no-op-aborted AND another agent
+        # happens to legitimately complete in the same cycle, the abort takes precedence
+        # so restarts stay suppressed. Reading complete first would mask the abort.
+        for i in $(seq 1 "$AGENTS"); do
+            # C1: read abort-reason marker written by no-op detection inside worker subshell.
+            # LOOP_ABORT_FATAL can't propagate across the tmux-pane process boundary, so
+            # the worker writes a marker file instead; this is the reader that closes the loop.
+            if [[ -f "$LOG_DIR/.agent-${i}-abort-reason" ]]; then
+                local _abort_reason
+                _abort_reason=$(cat "$LOG_DIR/.agent-${i}-abort-reason" 2>/dev/null | tr -d '[:space:]' || true)
+                if [[ "${_abort_reason:-}" == "NOOP_ITERATIONS" ]]; then
+                    warn "Agent $i aborted: ${_abort_reason} — suppressing restarts"
+                    LOOP_ABORT_FATAL=true
+                    STATUS="failed"
+                    write_state
+                    # Return 0 so callers under `set -e` continue to the LOOP_ABORT_FATAL
+                    # post-check. The flag is the authoritative signal; return code is advisory.
+                    return 0
+                fi
+            fi
+        done
+        # Then check completion markers
         for i in $(seq 1 "$AGENTS"); do
             if [[ -f "$LOG_DIR/.agent-${i}-complete" ]]; then
                 success "Agent $i signaled <<<LOOP:PASS>>>!"
@@ -2940,8 +3071,9 @@ cleanup_multi_agent() {
 
     tmux kill-window -t "$MULTI_WINDOW_NAME" 2>/dev/null || true
 
-    # Clean up completion markers
+    # Clean up completion markers and abort-reason markers
     rm -f "$LOG_DIR"/.agent-*-complete 2>/dev/null || true
+    rm -f "$LOG_DIR"/.agent-*-abort-reason 2>/dev/null || true
 }
 
 # ─── Main: Single-Agent Loop ─────────────────────────────────────────────────
@@ -3019,6 +3151,7 @@ run_single_agent_loop() {
                 "agent=${AGENT_NUM:-1}" \
                 "test_passed=${TEST_PASSED:-unknown}"
         fi
+        type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "iteration_start" "Iteration ${ITERATION:-?}"
 
         # Root-cause diagnosis and memory-based fix on retry after test failure
         if [[ "${TEST_PASSED:-}" == "false" ]]; then
@@ -3251,6 +3384,7 @@ ${GOAL}"
         # Verification gap detection: audit failed but tests passed
         # Instead of a full retry (which causes context bloat/timeout), run targeted verification
         if [[ "${AUDIT_RESULT:-}" != "pass" ]] && [[ "${TEST_PASSED:-}" == "true" ]]; then
+            type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "verification_gap_warning" "Verification gap detected"
             echo -e "  ${YELLOW}▸${RESET} Verification gap detected (tests pass, audit disagrees)"
 
             local verification_passed=true
@@ -3273,14 +3407,30 @@ ${GOAL}"
 
             if [[ "$verification_passed" == "true" ]]; then
                 echo -e "  ${GREEN}✓${RESET} Verification passed — overriding audit"
-                AUDIT_RESULT="pass"
-                emit_event "loop.verification_gap_resolved" \
-                    "iteration=$ITERATION" "action=override_audit"
-                if type audit_emit >/dev/null 2>&1; then
-                    audit_emit "loop.verification_gap" "iteration=$ITERATION" \
-                        "resolution=override" "tests_recheck=pass" || true
+                # Root-cause fix (PR B): only override AUDIT_RESULT if cumulative diff vs
+                # cycle-start commit is non-empty. A no-op iteration trivially satisfies
+                # "tests pass + tree clean", so guard the override with an actual change check.
+                local _vgap_cumulative_diff=""
+                if [[ -n "${OUTER_STAGE_START_COMMIT:-}" ]]; then
+                    _vgap_cumulative_diff="$(git -C "${PROJECT_ROOT:-.}" diff --name-only "${OUTER_STAGE_START_COMMIT}..HEAD" 2>/dev/null || true)"
+                fi
+                if [[ -z "${OUTER_STAGE_START_COMMIT:-}" ]] || [[ -n "$_vgap_cumulative_diff" ]]; then
+                    AUDIT_RESULT="pass"
+                    type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "verification_gap_resolved" "Audit override applied"
+                    emit_event "loop.verification_gap_resolved" \
+                        "iteration=$ITERATION" "action=override_audit"
+                    if type audit_emit >/dev/null 2>&1; then
+                        audit_emit "loop.verification_gap" "iteration=$ITERATION" \
+                            "resolution=override" "tests_recheck=pass" || true
+                    fi
+                else
+                    type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "verification_gap_confirmed" "Audit override NOT applied"
+                    emit_event "loop.verification_gap_confirmed" \
+                        "iteration=$ITERATION" "action=noop_no_cumulative_diff"
+                    warn "Verification gap: no cumulative diff vs cycle-start — audit override suppressed (no-op iteration)"
                 fi
             else
+                type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "verification_gap_confirmed" "Audit override NOT applied"
                 echo -e "  ${RED}✗${RESET} Verification failed — audit stands"
                 emit_event "loop.verification_gap_confirmed" \
                     "iteration=$ITERATION" "action=retry"
@@ -3408,6 +3558,7 @@ ${outcome}
                 "commits=$TOTAL_COMMITS" \
                 "status=${STATUS:-running}"
         fi
+        type _emit_inner_stage_event >/dev/null 2>&1 && _emit_inner_stage_event "inner" "build" "iteration_complete" "Iteration ${ITERATION:-?}"
 
         # Update heartbeat
         "$SCRIPT_DIR/sw-heartbeat.sh" write "${PIPELINE_JOB_ID:-loop-$$}" \
@@ -3567,7 +3718,14 @@ main() {
             initialize_state
         fi
         show_banner
-        launch_multi_agent
+        # Guard against set -e: launch_multi_agent → wait_for_multi_completion may
+        # return non-zero on abort. The LOOP_ABORT_FATAL flag is the authoritative
+        # signal; `|| true` ensures the post-check always runs.
+        launch_multi_agent || true
+        if [[ "${LOOP_ABORT_FATAL:-false}" == "true" ]]; then
+            warn "Abort-fatal flag set by multi-agent worker — suppressing any restart"
+            STATUS="${STATUS:-failed}"
+        fi
         show_summary
     else
         run_loop_with_restarts

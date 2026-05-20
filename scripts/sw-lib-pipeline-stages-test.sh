@@ -664,6 +664,77 @@ echo "// auth" > src/auth.js
 git add src/auth.js 2>/dev/null || true
 git commit -m "feat: add auth" --allow-empty 2>/dev/null || true'
 
+# ─── Tests: stage_build — build.log capture ────────────────────────────────
+# Regression guard: stage_build must write ${ARTIFACTS_DIR}/build.log so
+# _resolve_stage_log_path() can surface the build output on post-mortem.
+# Before this fix, only stderr went to the token log and stdout vanished.
+print_test_section "stage_build build.log capture"
+
+# Reset state from prior tests
+rm -f "$ARTIFACTS_DIR/build.log" "$ARTIFACTS_DIR/.claude-tokens-build.log"
+
+# Mock sw that emits known stdout and stderr we can assert on
+mock_binary "sw" 'echo "MOCK_LOOP_STDOUT_MARKER iteration 1"
+echo "MOCK_LOOP_STDERR_MARKER" >&2
+echo "iteration 1 complete"
+exit 0'
+
+stage_build 2>/dev/null || true
+
+# build.log file must exist after stage_build runs
+if [[ -f "$ARTIFACTS_DIR/build.log" ]]; then
+    assert_pass "build.log: file exists after stage_build"
+else
+    assert_fail "build.log: file exists after stage_build" "expected $ARTIFACTS_DIR/build.log to exist"
+fi
+
+# Must contain the header line
+_header_line=$(head -1 "$ARTIFACTS_DIR/build.log" 2>/dev/null || echo "")
+if [[ "$_header_line" =~ ^===\ build\.log\ —\  ]]; then
+    assert_pass "build.log: header line present"
+else
+    assert_fail "build.log: header line present" "got: $_header_line"
+fi
+
+# Must capture mock loop stdout (the whole point of the fix)
+if grep -q "MOCK_LOOP_STDOUT_MARKER" "$ARTIFACTS_DIR/build.log" 2>/dev/null; then
+    assert_pass "build.log: captures sw loop stdout"
+else
+    assert_fail "build.log: captures sw loop stdout" "MOCK_LOOP_STDOUT_MARKER not found in build.log"
+fi
+
+# Stderr must NOT be in build.log (it goes to the token log)
+if grep -q "MOCK_LOOP_STDERR_MARKER" "$ARTIFACTS_DIR/build.log" 2>/dev/null; then
+    assert_fail "build.log: does not capture stderr" "MOCK_LOOP_STDERR_MARKER leaked into build.log"
+else
+    assert_pass "build.log: does not capture stderr"
+fi
+
+# Token log still gets stderr (existing behavior preserved)
+if [[ -f "$ARTIFACTS_DIR/.claude-tokens-build.log" ]] && \
+   grep -q "MOCK_LOOP_STDERR_MARKER" "$ARTIFACTS_DIR/.claude-tokens-build.log" 2>/dev/null; then
+    assert_pass "token log: stderr capture preserved"
+else
+    assert_fail "token log: stderr capture preserved" "expected MOCK_LOOP_STDERR_MARKER in token log"
+fi
+
+# Failure path: build.log must exist even when sw loop exits non-zero
+rm -f "$ARTIFACTS_DIR/build.log" "$ARTIFACTS_DIR/.claude-tokens-build.log"
+mock_binary "sw" 'echo "MOCK_LOOP_FAILURE_STDOUT"
+exit 1'
+stage_build 2>/dev/null || true
+if [[ -f "$ARTIFACTS_DIR/build.log" ]] && grep -q "MOCK_LOOP_FAILURE_STDOUT" "$ARTIFACTS_DIR/build.log" 2>/dev/null; then
+    assert_pass "build.log: captures stdout even on sw loop failure"
+else
+    assert_fail "build.log: captures stdout even on sw loop failure" "expected MOCK_LOOP_FAILURE_STDOUT in build.log after non-zero exit"
+fi
+
+# Restore original sw mock for downstream tests
+mock_binary "sw" 'mkdir -p src
+echo "// auth" > src/auth.js
+git add src/auth.js 2>/dev/null || true
+git commit -m "feat: add auth" --allow-empty 2>/dev/null || true'
+
 # ─── Tests: stage_build — ruflo_recall_similar_outcomes injection ────────────
 print_test_section "stage_build ruflo recall injection"
 
@@ -1001,7 +1072,9 @@ print_test_section "stage_review"
 
 (cd "$PROJECT_ROOT" && git checkout -b feat/review-test 2>/dev/null)
 echo "change" >> "$PROJECT_ROOT/src/auth.js" 2>/dev/null || touch "$PROJECT_ROOT/src/auth.js"
-(cd "$PROJECT_ROOT" && git add -A && git diff main...HEAD > "$ARTIFACTS_DIR/review-diff.patch" 2>/dev/null || echo "diff" > "$ARTIFACTS_DIR/review-diff.patch")
+# Commit so `git diff main...HEAD` (triple-dot) actually returns content;
+# stage_review re-runs _safe_base_diff internally and would skip on an empty diff.
+(cd "$PROJECT_ROOT" && git add -A && git -c user.email=t@t -c user.name=t commit -q -m "review-test change" 2>/dev/null && git diff main...HEAD > "$ARTIFACTS_DIR/review-diff.patch" 2>/dev/null || echo "diff" > "$ARTIFACTS_DIR/review-diff.patch")
 
 stage_review 2>/dev/null
 assert_file_exists "Review generated" "$ARTIFACTS_DIR/review.md"

@@ -230,6 +230,13 @@ $content"
         correctness_count=$((correctness_count + ${neg_corr:-0}))
     fi
 
+    # ── Scope check: highest priority — overrides semantic classification ──
+    # If scope-violations.txt exists and has content, route to scope revert regardless of other findings.
+    local _scope_viol_file="${findings_dir}/issue-${ISSUE_NUMBER:-0}/logs/scope-violations.txt"
+    if [[ -f "$_scope_viol_file" ]] && [[ -s "$_scope_viol_file" ]]; then
+        route="scope"
+    fi
+
     # ── Determine routing ──
     # Use semantic classification when available; else fall back to grep-derived priority
     local needs_backtrack=false
@@ -650,7 +657,7 @@ pipeline_security_source_scan() {
     local finding_count=0
 
     local changed_files
-    changed_files=$(git diff --name-only "${base_branch}...HEAD" 2>/dev/null || true)
+    changed_files=$(git diff --name-only "${base_branch}...HEAD" -- 2>/dev/null || true)
     [[ -z "$changed_files" ]] && { echo "[]"; return 0; }
 
     local tmp_findings
@@ -704,7 +711,7 @@ SQLEOF
                 local current
                 current=$(cat "$tmp_findings")
                 echo "$current" | jq --arg f "$file" --arg l "$line_num" --arg p "xss" \
-                    '. + [{"file":$f,"line":($l|tonumber),"pattern":$p,"severity":"critical","description":"Potential XSS via unsafe DOM manipulation"}]' \
+                    '. + [{"file":$f,"line":($l|tonumber),"pattern":$p,"severity":"critical","confidence":"medium","description":"Potential XSS via unsafe DOM manipulation"}]' \
                     > "$tmp_findings" 2>/dev/null || true
             done <<XSSEOF
 $xss_matches
@@ -721,8 +728,30 @@ XSSEOF
                 finding_count=$((finding_count + 1))
                 local current
                 current=$(cat "$tmp_findings")
-                echo "$current" | jq --arg f "$file" --arg l "$line_num" --arg p "command_injection" \
-                    '. + [{"file":$f,"line":($l|tonumber),"pattern":$p,"severity":"critical","description":"Potential command injection via unsafe execution"}]' \
+                # Determine confidence: low for pure import/require declarations (nothing
+                # executable), high when injection markers are present, medium otherwise.
+                # Two-step check: (1) line starts with an import form, AND (2) has no
+                # inline execution markers (semicolons, shell=True, direct calls).
+                # This correctly downgrades `import { execFileSync } from 'child_process'`
+                # (ES6 named import — no execution) while keeping
+                # `import subprocess; subprocess.run(x, shell=True)` at high.
+                local confidence="medium"
+                local match_text="${match#*:}"
+                local _is_import_decl=false
+                if echo "$match_text" | grep -qE \
+                    "^[[:space:]]*(import[[:space:]({\"\']|from[[:space:]]+[A-Za-z_]|const[[:space:]]+|var[[:space:]]+|let[[:space:]]+)"; then
+                    if ! echo "$match_text" | grep -qE \
+                        "[;]|\.(exec|run|spawn|system|call|Popen)[[:space:]]*\(|eval[[:space:]]*\(|shell[[:space:]]*=[[:space:]]*[Tt]rue"; then
+                        _is_import_decl=true
+                    fi
+                fi
+                if [[ "$_is_import_decl" == "true" ]]; then
+                    confidence="low"
+                elif echo "$match_text" | grep -qE '\$\{|`|shell[[:space:]]*=[[:space:]]*[Tt]rue|exec[[:space:]]*\('; then
+                    confidence="high"
+                fi
+                echo "$current" | jq --arg f "$file" --arg l "$line_num" --arg p "command_injection" --arg c "$confidence" \
+                    '. + [{"file":$f,"line":($l|tonumber),"pattern":$p,"severity":"critical","confidence":$c,"description":"Potential command injection via unsafe execution"}]' \
                     > "$tmp_findings" 2>/dev/null || true
             done <<CMDEOF
 $cmd_matches
@@ -740,7 +769,7 @@ CMDEOF
                 local current
                 current=$(cat "$tmp_findings")
                 echo "$current" | jq --arg f "$file" --arg l "$line_num" --arg p "hardcoded_secret" \
-                    '. + [{"file":$f,"line":($l|tonumber),"pattern":$p,"severity":"critical","description":"Potential hardcoded secret or credential"}]' \
+                    '. + [{"file":$f,"line":($l|tonumber),"pattern":$p,"severity":"critical","confidence":"medium","description":"Potential hardcoded secret or credential"}]' \
                     > "$tmp_findings" 2>/dev/null || true
             done <<SECEOF
 $secret_matches
@@ -1107,9 +1136,44 @@ _extract_blocking_items() {
         done < <(grep -iE 'critical|high' "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null || true)
     fi
     if [[ -f "$ARTIFACTS_DIR/security-source-scan.log" ]] && pipeline_artifact_is_current "$ARTIFACTS_DIR/security-source-scan.log"; then
-        while IFS= read -r line; do
-            _dedup_add_item "$line" "security-source" "$tmp_fps" "$tmp_items"
-        done < <(grep -iE 'critical|high' "$ARTIFACTS_DIR/security-source-scan.log" 2>/dev/null || true)
+        # Prefer the JSON artifact (confidence-tagged) when available; fall back to
+        # plain-text log which lacks confidence and is treated as medium confidence.
+        if [[ -f "$ARTIFACTS_DIR/security-source-scan.json" ]] && \
+           jq -e . "$ARTIFACTS_DIR/security-source-scan.json" >/dev/null 2>&1; then
+            # Route by confidence: high/medium → blocking, low → advisory only.
+            # (.confidence == null): conservative fallback for findings written before
+            # confidence tagging was introduced — treat as medium (blocking). Intentional.
+            while IFS= read -r line; do
+                [[ -z "$line" ]] && continue
+                _dedup_add_item "$line" "security-source" "$tmp_fps" "$tmp_items"
+            done < <(jq -r '.[] | select(.confidence == "high" or .confidence == "medium" or (.confidence == null)) | select(.severity == "critical" or .severity == "high" or .severity == "major") | "\(.file // "unknown"):\(.line // "?") \u2014 \(.description // "finding")"' \
+                "$ARTIFACTS_DIR/security-source-scan.json" 2>/dev/null | grep -v '^null' || true)
+            # Low-confidence findings → advisory sidecar, NOT blocking
+            jq -r '.[] | select(.confidence == "low") | "ADVISORY: \(.file // "unknown"):\(.line // "?") \u2014 \(.description // "finding") [low confidence \u2014 verify before acting]"' \
+                "$ARTIFACTS_DIR/security-source-scan.json" 2>/dev/null \
+                >> "${ARTIFACTS_DIR}/security-advisories.log" 2>/dev/null || true
+        else
+            # JSON unavailable or invalid — inject a synthetic BLOCKING item so the
+            # security gate stays closed. A scanner crash or build race must never
+            # cause the gate to disappear silently (fail-OPEN). Operators will see
+            # this finding and must re-run the pipeline to generate a valid scan.
+            local _synthetic_fp="SCANNER_ARTIFACT_MISSING:security-source-scan.json"
+            if ! grep -qxF "$_synthetic_fp" "$tmp_fps" 2>/dev/null; then
+                printf '%s\n' "$_synthetic_fp" >> "$tmp_fps"
+                printf '%s [source: %s]\n' \
+                    "SCANNER_ARTIFACT_MISSING: security-source-scan.json unavailable — re-run pipeline to generate fresh scan results" \
+                    "security-source (synthetic)" >> "$tmp_items"
+            fi
+            # Also warn and write to advisory sidecar for diagnostics.
+            warn "security-source-scan: JSON artifact missing/invalid — injecting synthetic BLOCKING item (gate closed)"
+            if [[ -f "$ARTIFACTS_DIR/security-source-scan.log" ]]; then
+                while IFS= read -r line; do
+                    [[ -z "$line" ]] && continue
+                    echo "ADVISORY (no-json-fallback): $line" \
+                        >> "${ARTIFACTS_DIR}/security-advisories.log" 2>/dev/null || true
+                done < <(grep -iE 'critical|high' "$ARTIFACTS_DIR/security-source-scan.log" 2>/dev/null || true)
+            fi
+        fi
     fi
 
     # ── 3. negative-review.md — [Critical] lines only ──
@@ -1207,21 +1271,56 @@ _write_quality_feedback() {
         echo "## Review Findings"
         echo ""
 
-        # Security findings (npm audit via security-audit.log and source scan via security-source-scan.log)
-        local _show_sec=false
-        if [[ -f "$ARTIFACTS_DIR/security-audit.log" ]] && grep -qiE 'critical|high' "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null; then
-            _show_sec=true
-        fi
-        if [[ -f "$ARTIFACTS_DIR/security-source-scan.log" ]] && grep -qiE 'critical|high' "$ARTIFACTS_DIR/security-source-scan.log" 2>/dev/null; then
-            _show_sec=true
-        fi
-        if $_show_sec; then
-            echo "### 🔴 PRIORITY: Security Findings (fix these first)"
-            [[ -f "$ARTIFACTS_DIR/security-audit.log" ]] && cat "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null || true
-            [[ -f "$ARTIFACTS_DIR/security-source-scan.log" ]] && cat "$ARTIFACTS_DIR/security-source-scan.log" 2>/dev/null || true
-            echo ""
-            echo "Security issues MUST be resolved before any other changes."
-            echo ""
+        # Security findings: split by confidence when JSON artifact is available.
+        if [[ -f "$ARTIFACTS_DIR/security-source-scan.json" ]] && \
+           jq -e 'length > 0' "$ARTIFACTS_DIR/security-source-scan.json" >/dev/null 2>&1; then
+            # Blocking: high confidence + medium (medium treated as blocking — conservative)
+            local _sec_blocking _sec_advisory
+            _sec_blocking=$(jq -r \
+                '.[] | select(.confidence == "high" or .confidence == "medium") | "  - \(.file // "unknown"):\(.line // "?") — \(.description // "finding") [confidence: \(.confidence)]"' \
+                "$ARTIFACTS_DIR/security-source-scan.json" 2>/dev/null || true)
+            _sec_advisory=$(jq -r \
+                '.[] | select(.confidence == "low") | "  - \(.file // "unknown"):\(.line // "?") — \(.description // "finding") [low confidence — verify before acting]"' \
+                "$ARTIFACTS_DIR/security-source-scan.json" 2>/dev/null || true)
+            # Also include npm audit (always blocking)
+            if [[ -f "$ARTIFACTS_DIR/security-audit.log" ]] && grep -qiE 'critical|high' "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null; then
+                if [[ -z "$_sec_blocking" ]]; then
+                    _sec_blocking=$(grep -iE 'critical|high' "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null || true)
+                else
+                    _sec_blocking="${_sec_blocking}"$'\n'"$(grep -iE 'critical|high' "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null || true)"
+                fi
+            fi
+            if [[ -n "$_sec_blocking" ]]; then
+                echo "### 🔴 BLOCKING: Security Findings (must fix before merge)"
+                echo "$_sec_blocking"
+                echo ""
+                echo "These security issues MUST be resolved before merge."
+                echo ""
+            fi
+            if [[ -n "$_sec_advisory" ]]; then
+                echo "### ⚠️ ADVISORIES: Low-Confidence Security Findings (review, may be false positives)"
+                echo "$_sec_advisory"
+                echo ""
+                echo "These are single-source, low-confidence findings. Investigate but do not treat as blocking."
+                echo ""
+            fi
+        else
+            # Fallback: raw log dump when JSON not available
+            local _show_sec=false
+            if [[ -f "$ARTIFACTS_DIR/security-audit.log" ]] && grep -qiE 'critical|high' "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null; then
+                _show_sec=true
+            fi
+            if [[ -f "$ARTIFACTS_DIR/security-source-scan.log" ]] && grep -qiE 'critical|high' "$ARTIFACTS_DIR/security-source-scan.log" 2>/dev/null; then
+                _show_sec=true
+            fi
+            if $_show_sec; then
+                echo "### 🔴 PRIORITY: Security Findings (fix these first)"
+                [[ -f "$ARTIFACTS_DIR/security-audit.log" ]] && cat "$ARTIFACTS_DIR/security-audit.log" 2>/dev/null || true
+                [[ -f "$ARTIFACTS_DIR/security-source-scan.log" ]] && cat "$ARTIFACTS_DIR/security-source-scan.log" 2>/dev/null || true
+                echo ""
+                echo "Security issues MUST be resolved before any other changes."
+                echo ""
+            fi
         fi
 
         # Adversarial review narrative
@@ -1330,6 +1429,10 @@ compound_rebuild_with_feedback() {
     local original_goal="$GOAL"
     local _saved_current_stage="${CURRENT_STAGE:-}"
     local _saved_pipeline_status="${PIPELINE_STATUS:-}"
+    # Capture any outer RETURN trap (e.g. stage_compound_quality log-flush trap) so we
+    # can restore it after clearing our own, rather than dropping it with `trap - RETURN`.
+    local _outer_return_trap
+    _outer_return_trap=$(trap -p RETURN 2>/dev/null || true)
     trap '{
         # Preserve PIPELINE_STUCK_CYCLING if the inner cycle set it (retry-cap hit);
         # restoring status unconditionally would mask the stuck indicator.
@@ -1342,6 +1445,8 @@ compound_rebuild_with_feedback() {
         clear_outer_stage
         log_stage "compound_quality" "rebuild cycle '"${cycle_num}"' finished"
         trap - RETURN
+        # Restore outer trap (e.g. stage_compound_quality log-flush trap)
+        [[ -n "$_outer_return_trap" ]] && eval "$_outer_return_trap" 2>/dev/null || true
     }' RETURN
     local feedback_content
     feedback_content=$(cat "$feedback_file")
@@ -1362,6 +1467,9 @@ compound_rebuild_with_feedback() {
             ;;
         architecture)
             route_instruction="ARCHITECTURE: Fix structural issues. Check dependency direction, layer boundaries, and separation of concerns."
+            ;;
+        scope)
+            route_instruction="SCOPE VIOLATION: Out-of-scope edits found. Revert these files to their main-branch state entirely — do not 'fix' them, just remove your changes. If a file mixes on-scope and off-scope changes, revert ONLY the off-scope hunks. If the change is genuinely required as new scope, STOP and emit: <<<LOOP:SCOPE_ESCALATION:reason>>>. Do NOT introduce new refactoring."
             ;;
         *)
             route_instruction="Fix every issue listed above while keeping all existing functionality working."
@@ -1387,15 +1495,14 @@ $feedback_content
 ${route_instruction}"
     fi
 
-    # Re-run self-healing build→test
+    # Re-run self-healing build→test with findings injected into GOAL.
+    # The build loop's own scope guard and DoD enforcement govern the cycle —
+    # no iteration cap, no targeted-file list (both regressed scope enforcement).
     info "Rebuilding with quality feedback (route: ${route})..."
-    if self_healing_build_test; then
-        GOAL="$original_goal"
-        return 0
-    else
-        GOAL="$original_goal"
-        return 1
-    fi
+    local _rebuild_rc=0
+    self_healing_build_test || _rebuild_rc=$?
+    GOAL="$original_goal"
+    return "$_rebuild_rc"
 }
 
 # Removes negative-review-cycle*.md files from ARTIFACTS_DIR.
@@ -1456,6 +1563,26 @@ pipeline_run_ruflo_cq_hive() {
 
 stage_compound_quality() {
     CURRENT_STAGE_ID="compound_quality"
+
+    # T2.3: Exit trap — flush compound_quality.log to pipeline artifacts on any exit path
+    # (including abort / hard timeout), so postmortem diagnosis always has findings.
+    local _cq_log_dir="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}/issue-${ISSUE_NUMBER:-0}/logs"
+    local _cq_log_file="${_cq_log_dir}/compound_quality.log"
+    local _cq_trap_installed=false
+    if mkdir -p "$_cq_log_dir" 2>/dev/null; then
+        _cq_trap_installed=true
+        trap '{
+            # Self-clear: bash RETURN traps without set -T persist past the installing
+            # function and fire on every parent return up the call stack. Without this,
+            # run_stage_with_retry fires the trap again with $_cq_log_file unbound,
+            # crashing under set -u. The :-/dev/null defaults are belt-and-suspenders
+            # in case this trap text is ever captured and re-evaled in another scope.
+            trap - RETURN
+            printf "[compound_quality EXIT at %s]\n" "$(date -u +%FT%TZ 2>/dev/null || date)" >> "${_cq_log_file:-/dev/null}" 2>/dev/null || true
+            { cat "${ARTIFACTS_DIR:-/dev/null}/review.findings.json" 2>/dev/null || true; } >> "${_cq_log_file:-/dev/null}" 2>/dev/null || true
+            { cat "${ARTIFACTS_DIR:-/dev/null}/quality-feedback.md" 2>/dev/null || true; } >> "${_cq_log_file:-/dev/null}" 2>/dev/null || true
+        }' RETURN
+    fi
 
     # Clean up any stale cycle files from prior runs before starting
     _cleanup_cycle_files
@@ -1715,6 +1842,7 @@ ${_cascade_test_tail}"
     local _cycles_executed=0
     while [[ "$cycle" -lt "$max_cycles" ]]; do
         cycle=$((cycle + 1))
+        COMPOUND_QUALITY_CYCLE=$cycle
         local all_passed=true
 
         echo ""
@@ -1749,9 +1877,14 @@ ${_cascade_test_tail}"
         if type simulation_review >/dev/null 2>&1; then
             local sim_enabled
             sim_enabled=$(jq -r '.intelligence.simulation_enabled // false' "$PIPELINE_CONFIG" 2>/dev/null || echo "false")
-            local daemon_cfg="${PROJECT_ROOT}/.claude/daemon-config.json"
-            if [[ "$sim_enabled" != "true" && -f "$daemon_cfg" ]]; then
-                sim_enabled=$(jq -r '.intelligence.simulation_enabled // false' "$daemon_cfg" 2>/dev/null || echo "false")
+            if [[ "$sim_enabled" != "true" ]]; then
+                local _dc_sim
+                if declare -f _load_daemon_config >/dev/null 2>&1; then
+                    _dc_sim=$(_load_daemon_config)
+                else
+                    _dc_sim=$(cat "${PROJECT_ROOT:-.}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
+                fi
+                sim_enabled=$(echo "$_dc_sim" | jq -r '.intelligence.simulation_enabled // false' 2>/dev/null || echo "false")
             fi
             if [[ "$sim_enabled" == "true" ]]; then
                 echo ""
@@ -1789,9 +1922,14 @@ ${_cascade_test_tail}"
         if type architecture_validate_changes >/dev/null 2>&1; then
             local arch_enabled
             arch_enabled=$(jq -r '.intelligence.architecture_enabled // false' "$PIPELINE_CONFIG" 2>/dev/null || echo "false")
-            local daemon_cfg="${PROJECT_ROOT}/.claude/daemon-config.json"
-            if [[ "$arch_enabled" != "true" && -f "$daemon_cfg" ]]; then
-                arch_enabled=$(jq -r '.intelligence.architecture_enabled // false' "$daemon_cfg" 2>/dev/null || echo "false")
+            if [[ "$arch_enabled" != "true" ]]; then
+                local _dc_arch
+                if declare -f _load_daemon_config >/dev/null 2>&1; then
+                    _dc_arch=$(_load_daemon_config)
+                else
+                    _dc_arch=$(cat "${PROJECT_ROOT:-.}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
+                fi
+                arch_enabled=$(echo "$_dc_arch" | jq -r '.intelligence.architecture_enabled // false' 2>/dev/null || echo "false")
             fi
             if [[ "$arch_enabled" == "true" ]]; then
                 echo ""
@@ -2148,7 +2286,53 @@ All quality checks clean:
         if [[ "$cycle" -lt "$max_cycles" ]]; then
             warn "Quality checks failed — rebuilding with feedback (cycle $((cycle + 1))/${max_cycles})"
 
-            if ! compound_rebuild_with_feedback "$((cycle + 1))"; then
+            # Cycles 2+ use smoke test to save time; only cycle 1 runs full suite
+            local _cq_test_cmd="${TEST_CMD:-npm test}"
+            local _smoke_from="${SHIPWRIGHT_CQ_SMOKE_FROM_CYCLE:-2}"
+            if [[ "$cycle" -ge "$_smoke_from" && "$cycle" -lt "$max_cycles" ]]; then
+                if [[ -f "package.json" ]] && jq -e '.scripts["test:smoke"]' package.json >/dev/null 2>&1; then
+                    _cq_test_cmd="npm run test:smoke"
+                    info "Compound quality cycle ${cycle}: using smoke test (not full suite)"
+                else
+                    info "Compound quality cycle ${cycle}: test:smoke not defined — using full test suite"
+                fi
+            fi
+
+            # Short-circuit: if failures are identical to previous cycle, abort early.
+            # Guard: only compare when there are actual failure lines — SHA-1 of empty
+            # input is a constant hash, which would fire a false short-circuit on
+            # missing/empty test-results.log (infrastructure failure masking as
+            # "identical failures, no progress possible").
+            if [[ "$cycle" -ge 2 && -f "${ARTIFACTS_DIR}/last-failure-set.sha" ]]; then
+                local _cur_hash _prev_hash _fail_line_count
+                _fail_line_count=$(grep -cE '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' \
+                    "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null) || _fail_line_count=0
+                _fail_line_count="${_fail_line_count:-0}"
+                if [[ "$_fail_line_count" -gt 0 ]]; then
+                    _prev_hash=$(cat "${ARTIFACTS_DIR}/last-failure-set.sha" 2>/dev/null | tr -d '[:space:]' || true)
+                    _cur_hash=$(grep -E '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' \
+                        "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null \
+                        | sort | _compute_sha1 || echo "")
+                    if [[ -n "$_cur_hash" && "$_cur_hash" == "$_prev_hash" \
+                          && "$_cur_hash" != no-hasher-* ]]; then
+                        warn "Compound quality: identical failures to previous cycle — aborting (no progress possible)"
+                        _cycles_executed=$cycle
+                        break
+                    fi
+                fi
+            fi
+            # Record current failure set hash for next cycle's short-circuit check
+            { local _record_count
+              _record_count=$(grep -cE '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' \
+                  "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null) || _record_count=0
+              if [[ "${_record_count:-0}" -gt 0 ]]; then
+                  grep -E '^[[:space:]]*(FAIL|✗|●|×)[[:space:]]' \
+                      "${ARTIFACTS_DIR}/test-results.log" 2>/dev/null \
+                      | sort | _compute_sha1
+              fi
+            } > "${ARTIFACTS_DIR}/last-failure-set.sha" 2>/dev/null || true
+
+            if ! TEST_CMD="$_cq_test_cmd" compound_rebuild_with_feedback "$((cycle + 1))"; then
                 error "Rebuild with feedback failed"
                 log_stage "compound_quality" "Rebuild failed on cycle ${cycle}"
                 return 1

@@ -380,10 +380,13 @@ quality_check_perf_regression() {
     # Claude fallback: parse test output when no pattern matches
     if [[ -z "$duration_ms" ]]; then
         local intel_enabled="false"
-        local daemon_cfg="${PROJECT_ROOT}/.claude/daemon-config.json"
-        if [[ -f "$daemon_cfg" ]]; then
-            intel_enabled=$(jq -r '.intelligence.enabled // false' "$daemon_cfg" 2>/dev/null || echo "false")
+        local _dc_intel
+        if declare -f _load_daemon_config >/dev/null 2>&1; then
+            _dc_intel=$(_load_daemon_config)
+        else
+            _dc_intel=$(cat "${PROJECT_ROOT:-.}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
         fi
+        intel_enabled=$(echo "$_dc_intel" | jq -r '.intelligence.enabled // false' 2>/dev/null || echo "false")
         if [[ "$intel_enabled" == "true" ]] && _pipeline_quality_ai_ready; then
             local tail_output
             tail_output=$(tail -30 "$test_log" 2>/dev/null || true)
@@ -628,10 +631,13 @@ quality_check_coverage() {
     # Claude fallback: parse test output when no pattern matches
     if [[ -z "$coverage" ]]; then
         local intel_enabled_cov="false"
-        local daemon_cfg_cov="${PROJECT_ROOT}/.claude/daemon-config.json"
-        if [[ -f "$daemon_cfg_cov" ]]; then
-            intel_enabled_cov=$(jq -r '.intelligence.enabled // false' "$daemon_cfg_cov" 2>/dev/null || echo "false")
+        local _dc_intel_cov
+        if declare -f _load_daemon_config >/dev/null 2>&1; then
+            _dc_intel_cov=$(_load_daemon_config)
+        else
+            _dc_intel_cov=$(cat "${PROJECT_ROOT:-.}/.claude/daemon-config.json" 2>/dev/null || echo '{}')
         fi
+        intel_enabled_cov=$(echo "$_dc_intel_cov" | jq -r '.intelligence.enabled // false' 2>/dev/null || echo "false")
         if [[ "$intel_enabled_cov" == "true" ]] && _pipeline_quality_ai_ready; then
             local tail_cov_output
             tail_cov_output=$(tail -40 "$test_log" 2>/dev/null || true)
@@ -1015,6 +1021,10 @@ run_dod_audit() {
     local audit_output="# DoD Audit Results\n\n"
 
     while IFS= read -r line; do
+        # Skip [~] lines — these are manual items deferred in autonomous mode
+        if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*\[~\] ]]; then
+            continue
+        fi
         if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*\[[[:space:]]\] ]]; then
             total=$((total + 1))
             local item="${line#*] }"
@@ -1071,6 +1081,15 @@ run_dod_audit() {
 
     echo -e "$audit_output\n\n**Score: ${passed}/${total} passed**" > "$ARTIFACTS_DIR/dod-audit.md"
 
+    # Append skipped count if classification sidecar exists
+    local _skipped_count=0
+    if [[ -f "${ARTIFACTS_DIR}/dod-classification.json" ]]; then
+        _skipped_count=$(jq -r '.skipped_manual // 0' "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || echo 0)
+    fi
+    if [[ "$_skipped_count" -gt 0 ]]; then
+        echo -e "\n_${_skipped_count} item(s) skipped (require human verification)_" >> "$ARTIFACTS_DIR/dod-audit.md"
+    fi
+
     # Stamp markdown with current commit SHA
     local _dod_sha
     _dod_sha=$(_pipeline_head_sha)
@@ -1080,6 +1099,27 @@ run_dod_audit() {
         { printf 'created_at_commit: %s\n' "$_dod_sha"; cat "$ARTIFACTS_DIR/dod-audit.md"; } > "$_dod_tmp" && mv "$_dod_tmp" "$ARTIFACTS_DIR/dod-audit.md" || rm -f "$_dod_tmp"
     fi
 
+    # If all items were skipped (all manual), pass with a warning.
+    # Counts come from dod-classification.json (which knows the ORIGINAL DoD count
+    # before [~] stripping). Counting from dod-audit.md would zero out for an
+    # all-manual plan (since [~] items are dropped), defeating the guard.
+    if [[ "$total" -eq 0 ]]; then
+        local _skipped_c=0 _orig_total=0
+        if [[ -f "${ARTIFACTS_DIR}/dod-classification.json" ]]; then
+            _skipped_c=$(jq -r '.skipped_manual // 0' "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || echo 0)
+            _orig_total=$(jq -r '.total // 0' "${ARTIFACTS_DIR}/dod-classification.json" 2>/dev/null || echo 0)
+        fi
+        if [[ "$_orig_total" -gt 0 && "$_skipped_c" -ge "$_orig_total" ]]; then
+            error "DoD audit: all ${_orig_total} item(s) classified as manual — at least one item must be auto-verified"
+            return 1
+        fi
+        if [[ "$_skipped_c" -gt 0 ]]; then
+            warn "DoD audit: ${_skipped_c} items are manual — skipped in autonomous mode (passing)"
+            return 0
+        fi
+        warn "DoD audit: no items found in dod.md"
+        return 0
+    fi
     if [[ "$failed" -gt 0 ]]; then
         warn "DoD audit: ${passed}/${total} passed, ${failed} failed"
         return 1

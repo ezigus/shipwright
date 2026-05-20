@@ -65,14 +65,15 @@ SYNC_CONFIG_FILE="${DB_DIR}/sync-config.json"
 # ─── Feature Flag ─────────────────────────────────────────────────────────────
 # Check if DB is enabled in daemon config (default: true)
 _db_feature_enabled() {
-    local config_file=".claude/daemon-config.json"
-    if [[ -f "$config_file" ]]; then
-        local enabled
+    local enabled
+    if declare -f _load_daemon_config >/dev/null 2>&1; then
+        enabled=$(_load_daemon_config | jq -r '.db.enabled // true' 2>/dev/null || echo "true")
+    else
+        local config_file=".claude/daemon-config.json"
+        [[ -f "$config_file" ]] || return 0
         enabled=$(jq -r '.db.enabled // true' "$config_file" 2>/dev/null || echo "true")
-        [[ "$enabled" == "true" ]]
-        return $?
     fi
-    return 0
+    [[ "$enabled" == "true" ]]
 }
 
 # ─── Check Prerequisites ─────────────────────────────────────────────────────

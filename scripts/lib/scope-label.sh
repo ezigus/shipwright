@@ -51,7 +51,7 @@ scope_label() {
     local inner="${INNER_STAGE:-}"
     # Bash 3.2 compat: use awk for capitalization instead of ${var^}
     local build_iter
-    if [[ -n "${ITERATION:-}" && "${ITERATION:-0}" -gt 0 ]]; then
+    if (( ${ITERATION:-0} > 0 )); then
         build_iter="${ITERATION}"
     else
         build_iter=$(( ${SELF_HEAL_COUNT:-0} + 1 ))

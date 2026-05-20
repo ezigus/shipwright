@@ -1556,17 +1556,50 @@ ingest_pipeline_stage_findings() {
         fi
     fi
 
-    # pipeline:security — look for any security artifact or audit log
+    # pipeline:security — parse security artifacts/logs for ACTUAL findings.
+    # Earlier versions of this gate marked any non-empty artifact as "fail",
+    # which produced false positives when scans emit "[]" (empty JSON array)
+    # or audit logs that say "found 0 vulnerabilities". Mirror the proven
+    # parsing in scripts/lib/pipeline-intelligence.sh:1142 (uses jq length > 0)
+    # and scripts/sw-loop.sh:1525-1540 (pipeline:adversarial pattern).
+    _sec_verdict=""; _sec_summary=""; _sec_detail=""
     for _artifact in "${ARTIFACTS_DIR}"/security*.json "${ARTIFACTS_DIR}"/security*.log; do
         [[ -f "$_artifact" ]] || continue
-        if [[ ! -s "$_artifact" ]]; then
-            record_gate_finding "pipeline:security" "fail" "security scan ran but produced no output" ""
-        else
-            _detail="$(tail -15 "$_artifact" 2>/dev/null || true)"
-            record_gate_finding "pipeline:security" "fail" "security findings present" "${_detail}"
-        fi
-        break   # only ingest first match to avoid duplicate entries
+        case "$_artifact" in
+            *.json)
+                # Empty file or `[]` array → no findings. Count entries via jq.
+                if [[ ! -s "$_artifact" ]]; then
+                    [[ -z "$_sec_verdict" ]] && _sec_verdict="pass"
+                    continue
+                fi
+                _count="$(jq 'if type=="array" then length else 0 end' "$_artifact" 2>/dev/null || echo "0")"
+                _count="${_count:-0}"
+                if [[ "$_count" -gt 0 ]]; then
+                    _sec_verdict="fail"
+                    _sec_summary="${_count} security finding(s)"
+                    _sec_detail="$(jq -r '.[0:5] | .[] | tostring' "$_artifact" 2>/dev/null | head -20 || true)"
+                    break
+                fi
+                [[ -z "$_sec_verdict" ]] && _sec_verdict="pass"
+                ;;
+            *.log)
+                # Empty log → skip (no signal). "found 0 vulnerabilities" / "no vulnerabilities" → pass.
+                [[ ! -s "$_artifact" ]] && continue
+                if grep -qiE '(0 vulnerabilities|no vulnerabilities|0 advisories)' "$_artifact" 2>/dev/null; then
+                    [[ -z "$_sec_verdict" ]] && _sec_verdict="pass"
+                    continue
+                fi
+                if grep -qiE '(severity[[:space:]]*:[[:space:]]*(critical|high)|CVE-[0-9])' "$_artifact" 2>/dev/null; then
+                    _sec_verdict="fail"
+                    _sec_summary="security findings present"
+                    _sec_detail="$(tail -15 "$_artifact" 2>/dev/null || true)"
+                    break
+                fi
+                [[ -z "$_sec_verdict" ]] && _sec_verdict="pass"
+                ;;
+        esac
     done
+    [[ -n "$_sec_verdict" ]] && record_gate_finding "pipeline:security" "$_sec_verdict" "$_sec_summary" "$_sec_detail"
 
     # pipeline:lint
     _artifact="${ARTIFACTS_DIR}/lint-report.json"

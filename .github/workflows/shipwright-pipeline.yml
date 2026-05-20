@@ -1344,6 +1344,20 @@ jobs:
           if-no-files-found: warn
         continue-on-error: true
 
+      # Issue #460 — dedicated cost-breakdown.json artifact so the
+      # shipwright-optimize workflow can discover and fold cross-machine cost
+      # data into the shared rolling baseline without re-downloading the entire
+      # log bundle. See docs/cost-sharing.md for the artifact-name contract.
+      - name: Upload cost breakdown (always)
+        if: always() && steps.claim_check.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cost-breakdown-issue-${{ github.event.inputs.issue_number || github.event.issue.number }}-run-${{ github.run_id }}
+          path: .claude/pipeline-artifacts/cost-breakdown.json
+          retention-days: 30
+          if-no-files-found: ignore
+        continue-on-error: true
+
       # Gatekeeper: ensure job fails if pipeline failed (triggers auto-retry)
       - name: Propagate pipeline exit code
         if: always() && steps.claim_check.outputs.skip != 'true'

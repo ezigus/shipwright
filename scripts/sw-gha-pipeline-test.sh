@@ -47,11 +47,19 @@ assert_contains_regex \
     "restore-keys:"
 
 # ─── upload-artifact ────────────────────────────────────────────────────────
+# Workflow has two upload-artifact steps:
+#   1. pipeline-logs-issue-<N>-run-<RUN_ID> — full log bundle
+#   2. cost-breakdown-issue-<N>-run-<RUN_ID> — dedicated cost artifact (issue #460)
 
 UPLOAD_COUNT=$(grep -c 'upload-artifact' "$WORKFLOW" || true)
 assert_eq \
     "upload-artifact step present" \
-    "1" "$UPLOAD_COUNT"
+    "2" "$UPLOAD_COUNT"
+
+PIPELINE_LOGS_UPLOAD_COUNT=$(grep -c 'name: pipeline-logs-issue-' "$WORKFLOW" || true)
+assert_eq \
+    "pipeline-logs upload step present" \
+    "1" "$PIPELINE_LOGS_UPLOAD_COUNT"
 
 assert_contains_regex \
     "upload-artifact uses v4" \
@@ -97,6 +105,33 @@ assert_contains_regex \
     "upload-artifact has continue-on-error" \
     "$(grep -A18 'upload-artifact@v4' "$WORKFLOW" || true)" \
     "continue-on-error: true"
+
+# ─── cost-breakdown upload (issue #460) ─────────────────────────────────────
+
+COST_UPLOAD_COUNT=$(grep -c 'name: cost-breakdown-issue-' "$WORKFLOW" || true)
+assert_eq \
+    "cost-breakdown upload step present" \
+    "1" "$COST_UPLOAD_COUNT"
+
+assert_contains_regex \
+    "cost-breakdown upload uses v4" \
+    "$(grep -B2 'name: cost-breakdown-issue-' "$WORKFLOW" || true)" \
+    "upload-artifact@v4"
+
+assert_contains_regex \
+    "cost-breakdown upload has if-condition with always() and claim_check skip guard" \
+    "$(grep -B5 'name: cost-breakdown-issue-' "$WORKFLOW" || true)" \
+    "always\(\).*claim_check.*skip"
+
+assert_contains_regex \
+    "cost-breakdown upload references cost-breakdown.json path" \
+    "$(grep -A5 'name: cost-breakdown-issue-' "$WORKFLOW" || true)" \
+    "cost-breakdown\.json"
+
+assert_contains_regex \
+    "cost-breakdown upload has 30-day retention" \
+    "$(grep -A6 'name: cost-breakdown-issue-' "$WORKFLOW" || true)" \
+    "retention-days:[[:space:]]*30"
 
 # ─── ordering: upload before exit-code propagation ──────────────────────────
 

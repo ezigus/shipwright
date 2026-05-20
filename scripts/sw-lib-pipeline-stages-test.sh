@@ -1072,7 +1072,9 @@ print_test_section "stage_review"
 
 (cd "$PROJECT_ROOT" && git checkout -b feat/review-test 2>/dev/null)
 echo "change" >> "$PROJECT_ROOT/src/auth.js" 2>/dev/null || touch "$PROJECT_ROOT/src/auth.js"
-(cd "$PROJECT_ROOT" && git add -A && git diff main...HEAD > "$ARTIFACTS_DIR/review-diff.patch" 2>/dev/null || echo "diff" > "$ARTIFACTS_DIR/review-diff.patch")
+# Commit so `git diff main...HEAD` (triple-dot) actually returns content;
+# stage_review re-runs _safe_base_diff internally and would skip on an empty diff.
+(cd "$PROJECT_ROOT" && git add -A && git -c user.email=t@t -c user.name=t commit -q -m "review-test change" 2>/dev/null && git diff main...HEAD > "$ARTIFACTS_DIR/review-diff.patch" 2>/dev/null || echo "diff" > "$ARTIFACTS_DIR/review-diff.patch")
 
 stage_review 2>/dev/null
 assert_file_exists "Review generated" "$ARTIFACTS_DIR/review.md"

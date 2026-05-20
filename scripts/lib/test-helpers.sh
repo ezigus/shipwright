@@ -208,6 +208,12 @@ setup_test_env() {
     export NO_GITHUB=true
     export GIT_TERMINAL_PROMPT=0
 
+    # Prevent CI-environment leakage into the test subprocess.
+    # GitHub Actions exports WORKSPACE_BRANCH and (in some workflows) CI_MODE; if
+    # those leak into stage-level unit tests they silently divert intake into the
+    # CI-workspace-branch path, breaking branch-creation assertions.
+    unset WORKSPACE_BRANCH CI_MODE
+
     # Link real jq if available
     if command -v jq >/dev/null 2>&1; then
         ln -sf "$(command -v jq)" "$TEST_TEMP_DIR/bin/jq"

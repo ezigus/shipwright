@@ -19,6 +19,7 @@ demo/*.gif
 !.claude/pipeline-artifacts/issue-*/
 !.claude/pipeline-artifacts/issue-*/**
 .claude/pipeline-state.md
+.claude/pipeline-status.json
 .claude/pipeline-tasks*.md
 .claude/loop-logs/
 .claude/loop-state.md

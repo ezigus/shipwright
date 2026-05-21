@@ -7464,3 +7464,33 @@
 {"ts":"2026-05-21T04:16:46Z","ts_epoch":1779337006,"type":"stage.failed","repo":"ezigus/shipwright","event_id":"evt-1779337006-2961383674","payload":"{\"stage\":\"compound_quality\",\"issue\":\"605\",\"timing\":\"2h 12m 47s\"}"}
 {"ts":"2026-05-21T04:16:46Z","ts_epoch":1779337006,"type":"stage.failed","repo":"ezigus/shipwright","issue":605,"stage":"compound_quality","duration_s":7971,"error":"  [38;2;0;212;255m▸[0m Invalid template errors correctly... [38;2;74;222;128m✓[0m","error_class":"unknown"}
 {"ts":"2026-05-21T04:16:46Z","ts_epoch":1779337006,"type":"vitals.snapshot","repo":"ezigus/shipwright","issue":605,"stage":"compound_quality","iteration":0,"diff_lines":0,"no_progress":0}
+{"ts":"2026-05-21T10:43:04Z","ts_epoch":1779360184,"type":"hygiene_platform_refactor","repo":"ezigus/shipwright","hardcoded":70,"fallback":87,"todo":43}
+{"ts":"2026-05-21T10:43:06Z","ts_epoch":1779360186,"type":"pipeline.lock_acquired","repo":"ezigus/shipwright","pid":5050,"issue_or_goal":608}
+{"ts":"2026-05-21T10:43:22Z","ts_epoch":1779360202,"type":"intelligence.analysis","repo":"ezigus/shipwright","complexity":8,"risk_level":"high","success_probability":72,"recommended_template":"full","issue_type":"backend"}
+{"ts":"2026-05-21T10:43:22Z","ts_epoch":1779360202,"type":"reasoning.trace","repo":"ezigus/shipwright","job_id":"db2d5f2c7eaf-pipeline-5050-608","complexity":"medium","risk":50,"template":"standard"}
+{"ts":"2026-05-21T10:43:23Z","ts_epoch":1779360203,"type":"intelligence.cache_hit","repo":"ezigus/shipwright","cache_key":"analyze_issue_0e116b969bfe5452b3b1e6ce50dc123f"}
+{"ts":"2026-05-21T10:43:23Z","ts_epoch":1779360203,"type":"intelligence.analysis","repo":"ezigus/shipwright","complexity":8,"risk_level":"high","success_probability":72,"recommended_template":"full","issue_type":"backend"}
+{"ts":"2026-05-21T10:43:32Z","ts_epoch":1779360212,"type":"intelligence.estimate_iterations","repo":"ezigus/shipwright","estimate":10,"complexity":5,"source":"claude"}
+{"ts":"2026-05-21T10:43:42Z","ts_epoch":1779360222,"type":"intelligence.prediction","repo":"ezigus/shipwright","estimated_cost":78.50,"estimated_iterations":3,"complexity":5}
+{"ts":"2026-05-21T10:43:44Z","ts_epoch":1779360224,"type":"checks.pipeline_start","repo":"ezigus/shipwright","stages":11}
+{"ts":"2026-05-21T10:43:44Z","ts_epoch":1779360224,"type":"pipeline.started","repo":"ezigus/shipwright","issue":608,"template":"autonomous","complexity":0,"machine":"runnervmg397c","pipeline":"autonomous","model":"claude-opus-4-6","goal":""}
+{"ts":"2026-05-21T10:43:45Z","ts_epoch":1779360225,"type":"pipeline.started","repo":"ezigus/shipwright","event_id":"evt-1779360224-1347895579","payload":"{\"issue\":\"608\",\"pipeline\":\"autonomous\",\"goal\":\"\"}"}
+{"ts":"2026-05-21T10:43:45Z","ts_epoch":1779360225,"type":"ruflo.init","repo":"ezigus/shipwright","available":"true"}
+{"ts":"2026-05-21T10:43:47Z","ts_epoch":1779360227,"type":"ruflo.init_repaired","repo":"ezigus/shipwright","reason":"force_reinit"}
+{"ts":"2026-05-21T10:43:47Z","ts_epoch":1779360227,"type":"ruflo.mcp_started","repo":"ezigus/shipwright","mode":"daemon"}
+{"ts":"2026-05-21T10:43:47Z","ts_epoch":1779360227,"type":"ruflo.indexing_complete","repo":"ezigus/shipwright","repo_hash":"db2d5f2c7eaf"}
+{"ts":"2026-05-21T10:43:47Z","ts_epoch":1779360227,"type":"ruflo.hive_available","repo":"ezigus/shipwright","hive_id":"hive-1779360227911-5hymsg","max_agents":4}
+{"ts":"2026-05-21T10:43:48Z","ts_epoch":1779360228,"type":"intelligence.model","repo":"ezigus/shipwright","stage":"intake","complexity":5,"model":"haiku","source":"heuristic"}
+{"ts":"2026-05-21T10:43:48Z","ts_epoch":1779360228,"type":"intelligence.model_ab","repo":"ezigus/shipwright","issue":608,"stage":"intake","recommended":"haiku","applied":"opus","ab_group":"control","ab_ratio":20}
+{"ts":"2026-05-21T10:43:48Z","ts_epoch":1779360228,"type":"stage.started","repo":"ezigus/shipwright","issue":608,"stage":"intake"}
+{"ts":"2026-05-21T10:45:03Z","ts_epoch":1779360303,"type":"stage.complete","repo":"ezigus/shipwright","event_id":"evt-1779360303-3799460105","payload":"{\"stage\":\"intake\",\"issue\":\"608\",\"timing\":\"1m 12s\"}"}
+{"ts":"2026-05-21T10:45:03Z","ts_epoch":1779360303,"type":"memory.pattern","repo":"ezigus/shipwright","type":"project","proj_type":"node","framework":""}
+{"ts":"2026-05-21T10:45:04Z","ts_epoch":1779360304,"type":"stage.completed","repo":"ezigus/shipwright","issue":608,"stage":"intake","duration_s":76,"result":"success"}
+{"ts":"2026-05-21T10:45:04Z","ts_epoch":1779360304,"type":"vitals.snapshot","repo":"ezigus/shipwright","issue":608,"stage":"intake","iteration":0,"diff_lines":0,"no_progress":0}
+{"ts":"2026-05-21T10:45:04Z","ts_epoch":1779360304,"type":"intelligence.model","repo":"ezigus/shipwright","stage":"plan","complexity":7,"model":"haiku","source":"heuristic"}
+{"ts":"2026-05-21T10:45:04Z","ts_epoch":1779360304,"type":"intelligence.model_ab","repo":"ezigus/shipwright","issue":608,"stage":"plan","recommended":"haiku","applied":"opus","ab_group":"control","ab_ratio":20}
+{"ts":"2026-05-21T10:45:04Z","ts_epoch":1779360304,"type":"stage.started","repo":"ezigus/shipwright","issue":608,"stage":"plan"}
+{"ts":"2026-05-21T10:49:39Z","ts_epoch":1779360579,"type":"ruflo.learn_from_shipwright","task_type":"infrastructure","repo":"db2d5f2c7eaf"}
+{"ts":"2026-05-21T10:49:42Z","ts_epoch":1779360582,"type":"stage.failed","repo":"ezigus/shipwright","event_id":"evt-1779360582-2783455831","payload":"{\"stage\":\"plan\",\"issue\":\"608\",\"timing\":\"4m 33s\"}"}
+{"ts":"2026-05-21T10:49:43Z","ts_epoch":1779360583,"type":"stage.failed","repo":"ezigus/shipwright","issue":608,"stage":"plan","duration_s":278,"error":"unknown","error_class":"unknown"}
+{"ts":"2026-05-21T10:49:43Z","ts_epoch":1779360583,"type":"vitals.snapshot","repo":"ezigus/shipwright","issue":608,"stage":"plan","iteration":0,"diff_lines":0,"no_progress":0}

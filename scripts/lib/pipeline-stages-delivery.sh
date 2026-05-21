@@ -715,6 +715,8 @@ stage_merge() {
         wait_ci_timeout=$(_config_get "pipeline.merge.wait_ci_timeout_s" "1500")
     fi
     [[ -z "$wait_ci_timeout" || "$wait_ci_timeout" == "null" ]] && wait_ci_timeout=1500
+    # Coerce to integer — _config_get can return non-numeric values from env/JSON
+    [[ "$wait_ci_timeout" =~ ^[0-9]+$ ]] || wait_ci_timeout=1500
     auto_delete_branch=$(jq -r --arg id "merge" '(.stages[] | select(.id == $id) | .config.auto_delete_branch) // "true"' "$PIPELINE_CONFIG" 2>/dev/null) || true
     [[ -z "$auto_delete_branch" || "$auto_delete_branch" == "null" ]] && auto_delete_branch="true"
     auto_merge=$(jq -r --arg id "merge" '(.stages[] | select(.id == $id) | .config.auto_merge) // false' "$PIPELINE_CONFIG" 2>/dev/null) || true
@@ -745,7 +747,9 @@ stage_merge() {
 
     # Wait for CI checks to pass
     info "Waiting for CI on PR #${pr_number} (ceiling: ${wait_ci_timeout}s)"
-    local elapsed=0 poll=60 empty_grace=60 empty_elapsed=0 _ci_wait_done=""
+    # empty_grace must be > poll so at least 2 polls pass before bailing on missing checks.
+    # This gives CI time to register after a freshly opened PR.
+    local elapsed=0 poll=60 empty_grace=120 empty_elapsed=0 _ci_wait_done=""
 
     while [[ "$elapsed" -lt "$wait_ci_timeout" ]]; do
         local buckets review_decision

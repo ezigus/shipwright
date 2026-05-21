@@ -89,10 +89,11 @@ PR: $(cat "$ARTIFACTS_DIR/pr-url.txt" 2>/dev/null || echo 'unknown')" 2>/dev/nul
 
 _Closed automatically by \`shipwright pipeline\`_" 2>/dev/null || true
             emit_event "merge.issue_autoclose_fallback" "issue=$ISSUE_NUMBER"
-            gh_remove_label "$ISSUE_NUMBER" "pipeline/pr-created" 2>/dev/null || true
-            gh_add_labels "$ISSUE_NUMBER" "pipeline/complete" 2>/dev/null || true
             success "Issue #$ISSUE_NUMBER closed"
         fi
+        # Label cleanup is idempotent — run regardless of current state
+        gh_remove_label "$ISSUE_NUMBER" "pipeline/pr-created" 2>/dev/null || true
+        gh_add_labels "$ISSUE_NUMBER" "pipeline/complete" 2>/dev/null || true
     fi
 
     # Push pipeline report to wiki

@@ -652,7 +652,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 703 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 643 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 353 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 3735 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 3736 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 2272 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 473 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 606 | Intelligent Model Routing & Cost Optimization |
@@ -809,7 +809,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-jira-test.sh` | 284 | Validate Jira ↔ GitHub bidirectional sync |
 | `scripts/sw-launchd-test.sh` | 899 | Validate service management on |
 | `scripts/sw-lib-audit-trail-test.sh` | 311 |  |
-| `scripts/sw-lib-ci-reconcile-state-test.sh` | 225 | Unit tests |
+| `scripts/sw-lib-ci-reconcile-state-test.sh` | 236 | Unit tests |
 | `scripts/sw-lib-compat-test.sh` | 297 | Unit tests for cross-platform helpers |
 | `scripts/sw-lib-compound-audit-test.sh` | 795 |  |
 | `scripts/sw-lib-config-test.sh` | 113 | Unit tests for centralized config reader |
@@ -825,7 +825,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-helpers-test.sh` | 318 | Unit tests for shared helper functions |
 | `scripts/sw-lib-loop-convergence-test.sh` | 297 | Stuckness throttle (issue #447) |
 | `scripts/sw-lib-loop-iteration-test.sh` | 146 | Unit tests for loop-iteration.sh |
-| `scripts/sw-lib-loop-restart-test.sh` | 409 | Unit tests for loop state |
+| `scripts/sw-lib-loop-restart-test.sh` | 490 | Unit tests for loop state |
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-github-test.sh` | 366 | Unit tests for GitHub helpers |
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 1265 | Unit tests for intelligence |
@@ -847,7 +847,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-pipeline-composer-test.sh` | 632 | Test Suite |
 | `scripts/sw-pipeline-memory-guard-test.sh` | 190 |  |
 | `scripts/sw-pipeline-resume-test.sh` | 410 | Validate workflow shell logic |
-| `scripts/sw-pipeline-test.sh` | 4601 | E2E validation invoking the REAL pipeline |
+| `scripts/sw-pipeline-test.sh` | 4617 | E2E validation invoking the REAL pipeline |
 | `scripts/sw-pipeline-vitals-test.sh` | 226 | Validate pipeline health scoring |
 | `scripts/sw-pm-test.sh` | 225 | Autonomous PM Agent test suite |
 | `scripts/sw-policy-e2e-test.sh` | 290 | Verify config/policy.json is honored |

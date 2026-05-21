@@ -3270,12 +3270,13 @@ ${GOAL}"
         fi
 
         local log_file="$LOG_DIR/iteration-${ITERATION}.log"
+        local _err_file="${log_file%.log}.stderr"
 
         # Record iteration data for stuckness detection (diff hash, error hash, exit code)
         record_iteration_stuckness_data "$exit_code"
 
-        # Detect fatal CLI errors (API key, auth, network) — abort immediately
-        if check_fatal_error "$log_file" "$exit_code"; then
+        # Detect fatal CLI errors (API key, auth, network, session/usage limits) — abort immediately
+        if check_fatal_error "$log_file" "$exit_code" "$_err_file"; then
             STATUS="error"
             write_state
             write_progress

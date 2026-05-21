@@ -917,7 +917,11 @@ extract_summary() {
     fi
 
     # Sanitize: if summary is just a CLI/API error, replace with generic text.
-    if echo "$summary" | grep -qiE 'Invalid API key|authentication_error|rate_limit|API key expired|ANTHROPIC_API_KEY'; then
+    # Warn on session/usage limits so the operator sees the signal before it disappears.
+    if echo "$summary" | grep -qiE 'Usage limit reached|out of credits|credit balance|session.*limit|usage.*limit|human turn limit|claude\.ai/usage'; then
+        warn "Session/usage limit detected in iteration output — loop will abort on fatal error check"
+        summary="(CLI error — no useful output this iteration)"
+    elif echo "$summary" | grep -qiE 'Invalid API key|authentication_error|rate_limit|API key expired|ANTHROPIC_API_KEY'; then
         summary="(CLI error — no useful output this iteration)"
     fi
 

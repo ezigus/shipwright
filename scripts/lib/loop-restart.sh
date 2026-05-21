@@ -269,6 +269,7 @@ write_state() {
 check_fatal_error() {
     local log_file="$1"
     local cli_exit_code="${2:-0}"
+    local err_file="${3:-}"
     [[ -f "$log_file" ]] || return 1
 
     # Known fatal error patterns from Claude CLI / Anthropic API
@@ -276,10 +277,25 @@ check_fatal_error() {
     fatal_patterns="${fatal_patterns}|rate_limit_error|overloaded_error|billing"
     fatal_patterns="${fatal_patterns}|Could not resolve host|connection refused|ECONNREFUSED"
     fatal_patterns="${fatal_patterns}|ANTHROPIC_API_KEY.*not set|No API key"
+    # Session/usage limit patterns — treated as fatal (not transient retryable errors)
+    fatal_patterns="${fatal_patterns}|Usage limit reached|out of credits|credit balance|session.*limit|usage.*limit"
+    fatal_patterns="${fatal_patterns}|claude\.ai/usage|Your credit balance is|human turn limit"
 
+    # Search stdout log; also search stderr file when provided and non-empty.
+    local _matched=false
     if grep -qiE "$fatal_patterns" "$log_file" 2>/dev/null; then
+        _matched=true
+    elif [[ -n "$err_file" && -s "$err_file" ]] && grep -qiE "$fatal_patterns" "$err_file" 2>/dev/null; then
+        _matched=true
+    fi
+
+    if [[ "$_matched" == "true" ]]; then
         local match
-        match=$(grep -iE "$fatal_patterns" "$log_file" 2>/dev/null | head -1 | cut -c1-120)
+        if grep -qiE "$fatal_patterns" "$log_file" 2>/dev/null; then
+            match=$(grep -iE "$fatal_patterns" "$log_file" 2>/dev/null | head -1 | cut -c1-120)
+        else
+            match=$(grep -iE "$fatal_patterns" "$err_file" 2>/dev/null | head -1 | cut -c1-120)
+        fi
         error "Fatal CLI error: $match"
         return 0  # fatal error detected — abort loop
     fi

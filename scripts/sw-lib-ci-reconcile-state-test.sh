@@ -60,10 +60,10 @@ make_state_file_with_yaml() {
     } > "$filepath"
 }
 
-# ─── Test 1: running → interrupted, extracts completed stages ────────────────
-print_test_section "1. running → interrupted + log extraction"
+# ─── Test 1: running → interrupted, extracts completed stages from YAML ──────
+print_test_section "1. running → interrupted + YAML stage extraction"
 STATE="$TEST_TEMP_DIR/state1.md"
-make_state_file "$STATE" "running" \
+make_state_file_with_yaml "$STATE" "running" \
     "intake:complete" "plan:complete" "design:complete" \
     "build:complete" "test:complete" "review:complete"
 
@@ -81,7 +81,7 @@ assert_contains "review in result" "$result" "review"
 # ─── Test 2: paused → interrupted ────────────────────────────────────────────
 print_test_section "2. paused → interrupted"
 STATE="$TEST_TEMP_DIR/state2.md"
-make_state_file "$STATE" "paused" "intake:complete" "plan:complete"
+make_state_file_with_yaml "$STATE" "paused" "intake:complete" "plan:complete"
 
 result="$(ci_reconcile_state "$STATE")"
 rewritten_status="$(sed -n 's/^status: *//p' "$STATE" | head -1 | tr -d '[:space:]')"
@@ -93,7 +93,7 @@ assert_contains "plan in result" "$result" "plan"
 # ─── Test 3: failed — status left alone, completed stages still returned ─────
 print_test_section "3. failed — status untouched, stages returned"
 STATE="$TEST_TEMP_DIR/state3.md"
-make_state_file "$STATE" "failed" "intake:complete" "plan:complete"
+make_state_file_with_yaml "$STATE" "failed" "intake:complete" "plan:complete"
 
 result="$(ci_reconcile_state "$STATE")"
 rewritten_status="$(sed -n 's/^status: *//p' "$STATE" | head -1 | tr -d '[:space:]')"
@@ -105,7 +105,7 @@ assert_contains "plan returned for failed status" "$result" "plan"
 # ─── Test 4: interrupted — status left alone, completed stages still returned ─
 print_test_section "4. interrupted — status untouched, stages returned"
 STATE="$TEST_TEMP_DIR/state4.md"
-make_state_file "$STATE" "interrupted" "intake:complete" "plan:complete"
+make_state_file_with_yaml "$STATE" "interrupted" "intake:complete" "plan:complete"
 
 result="$(ci_reconcile_state "$STATE")"
 rewritten_status="$(sed -n 's/^status: *//p' "$STATE" | head -1 | tr -d '[:space:]')"
@@ -117,7 +117,7 @@ assert_contains "plan returned for interrupted status" "$result" "plan"
 # ─── Test 5: stuck_cycling — status left alone, completed stages returned ─────
 print_test_section "5. stuck_cycling — status untouched, stages returned"
 STATE="$TEST_TEMP_DIR/state5.md"
-make_state_file "$STATE" "stuck_cycling" "intake:complete"
+make_state_file_with_yaml "$STATE" "stuck_cycling" "intake:complete"
 
 result="$(ci_reconcile_state "$STATE")"
 rewritten_status="$(sed -n 's/^status: *//p' "$STATE" | head -1 | tr -d '[:space:]')"
@@ -128,7 +128,7 @@ assert_contains "intake returned for stuck_cycling" "$result" "intake"
 # ─── Test 6: mixed-case stage IDs (COMPOUND_QUALITY, test_2) ─────────────────
 print_test_section "6. mixed-case stage IDs"
 STATE="$TEST_TEMP_DIR/state6.md"
-make_state_file "$STATE" "running" \
+make_state_file_with_yaml "$STATE" "running" \
     "intake:complete" "COMPOUND_QUALITY:complete" "test_2:complete"
 
 result="$(ci_reconcile_state "$STATE")"
@@ -137,17 +137,28 @@ assert_contains "COMPOUND_QUALITY in result" "$result" "COMPOUND_QUALITY"
 assert_contains "test_2 in result" "$result" "test_2"
 assert_contains "intake in result" "$result" "intake"
 
-# ─── Test 7: stage appears failed then later complete → counted as complete ───
-print_test_section "7. stage with retry (failed then complete)"
+# ─── Test 7: YAML is authoritative — log-only completed entries are ignored ───
+# The YAML `stages:` block is the single source of truth. If a stage is
+# complete in the log but not in the YAML (e.g. interrupted mid-persist),
+# it is NOT returned. The YAML reflects the last successful mark_stage_complete.
+print_test_section "7. YAML-only: log entries don't affect result"
 STATE="$TEST_TEMP_DIR/state7.md"
-make_state_file "$STATE" "running" \
-    "build:Build loop iteration 1" \
-    "build:complete"
+make_state_file_with_yaml "$STATE" "interrupted" "intake:complete" "build:complete"
+# Append a log showing build failed (YAML says complete — YAML wins)
+cat >> "$STATE" <<LOG
+
+### intake (12:00:00)
+complete (58s)
+
+### build (12:01:00)
+failed (2m 0s)
+
+LOG
 
 result="$(ci_reconcile_state "$STATE")"
 
 assert_contains "build in result (completed after retry)" "$result" "build"
-# Should appear exactly once (deduped)
+# Should appear exactly once (no duplication from log)
 count="$(echo "$result" | tr ',' '\n' | grep -c "^build$" || true)"
 count="${count:-0}"
 assert_eq "build deduped to single occurrence" "1" "$count"

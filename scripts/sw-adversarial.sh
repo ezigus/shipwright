@@ -140,7 +140,7 @@ adversarial_review() {
         security_context=$(_adversarial_security_context "$diff_paths" 2>/dev/null || true)
     fi
     if [[ -n "$security_context" ]]; then
-        context="The following security alerts exist for files in this change. Pay special attention to these areas:
+        context="PRE-EXISTING SECURITY CONTEXT — do NOT auto-fix these; they exist before this change. Use them only to understand the security posture of the files being modified:
 ${security_context}
 ${context}"
     fi

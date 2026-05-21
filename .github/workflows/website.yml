@@ -52,6 +52,8 @@ jobs:
     permissions:
       pages: write
       id-token: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUBTOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - name: Check GitHub Pages is enabled
         id: pages_check

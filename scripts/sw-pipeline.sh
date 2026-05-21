@@ -2131,6 +2131,90 @@ Focus on fixing the failing tests while keeping all passing tests working."
     return 1
 }
 
+# ─── Merge Self-Healing ───────────────────────────────────────────────────
+# When the merge stage is blocked by CI failure or reviewer CHANGES_REQUESTED,
+# inject the retry context back into the build loop and re-run
+# build→test→pr→merge until resolved or max cycles exhausted.
+
+self_healing_merge_build_test() {
+    local cycle=0
+    local max_cycles=3
+    local retry_ctx="${ARTIFACTS_DIR}/.retry-context-build.md"
+
+    while [[ "$cycle" -lt "$max_cycles" ]]; do
+        cycle=$((cycle + 1))
+        SELF_HEAL_COUNT=$((SELF_HEAL_COUNT + 1))
+        echo ""
+        echo -e "${YELLOW}${BOLD}━━━ Merge Self-Healing Cycle ${cycle}/${max_cycles} ━━━${RESET}"
+
+        if [[ -n "${ISSUE_NUMBER:-}" ]]; then
+            gh_comment_issue "$ISSUE_NUMBER" \
+                "🔄 **Merge self-healing cycle ${cycle}** — rebuilding to address CI/review feedback" 2>/dev/null || true
+        fi
+
+        # Load retry context (CI failure log or review change-request pointer)
+        local heal_context=""
+        if [[ -f "$retry_ctx" ]]; then
+            heal_context=$(cat "$retry_ctx")
+        fi
+        [[ -z "${heal_context// }" ]] && heal_context="CI or code review blocked the merge. Read the PR and fix any issues."
+
+        # Inject context into GOAL for the build loop
+        local original_goal="$GOAL"
+        trap '{ GOAL="$original_goal"; trap - RETURN; }' RETURN
+        GOAL="$GOAL
+
+IMPORTANT — CI or code review requires fixes before this PR can merge:
+${heal_context}
+
+Fix all issues. Do not break existing tests."
+
+        rm -f "$retry_ctx"  # consumed; stage_merge will write a fresh one if needed
+
+        # Re-run build → test loop
+        if ! self_healing_build_test; then
+            GOAL="$original_goal"
+            error "Build loop failed during merge self-healing cycle ${cycle}"
+            return 1
+        fi
+        GOAL="$original_goal"
+
+        # Re-run pr and merge stages to push fixes and attempt merge again
+        echo ""
+        echo -e "${CYAN}${BOLD}▸ Re-running pr stage (merge self-healing cycle ${cycle})${RESET}"
+        CURRENT_STAGE_ID="pr"
+        update_status "running" "pr"
+        record_stage_start "pr"
+        if ! run_stage_with_retry "pr"; then
+            error "PR stage failed during merge self-healing cycle ${cycle}"
+            return 1
+        fi
+        mark_stage_complete "pr"
+
+        echo ""
+        echo -e "${CYAN}${BOLD}▸ Re-running merge stage (merge self-healing cycle ${cycle})${RESET}"
+        CURRENT_STAGE_ID="merge"
+        update_status "running" "merge"
+        record_stage_start "merge"
+        if run_stage_with_retry "merge"; then
+            mark_stage_complete "merge"
+            success "Stage ${BOLD}merge${RESET} complete after self-healing ${DIM}(cycle ${cycle})${RESET}"
+            emit_event "merge.self_healed" "issue=${ISSUE_NUMBER:-0}" "cycle=$cycle"
+            return 0
+        fi
+
+        warn "Merge still blocked after cycle ${cycle}"
+        emit_event "merge.still_blocked" "issue=${ISSUE_NUMBER:-0}" "cycle=$cycle"
+    done
+
+    error "Merge self-healing exhausted after ${max_cycles} cycle(s)"
+    # Label PR for human review
+    local _pr_num=""
+    _pr_num=$(cat "$ARTIFACTS_DIR/pr-url.txt" 2>/dev/null | grep -oE '[0-9]+$' || true)
+    [[ -n "$_pr_num" ]] && gh pr edit "$_pr_num" --add-label "pipeline/needs-human" 2>/dev/null || true
+    return 1
+}
+
 # ─── Review Self-Healing ──────────────────────────────────────────────────
 # When the review stage blocks on critical/security issues, inject the review
 # findings back into the build loop goal and re-run build→test→review until
@@ -2170,7 +2254,7 @@ self_healing_review_build_test() {
 IMPORTANT — Code review found critical/security issues that MUST be fixed:
 ${review_context}
 
-Fix ALL of the above issues completely. Do not introduce any new critical or security issues."
+Fix the listed blockers that were introduced by this PR. Do not modify pre-existing code outside the scope of issue #${ISSUE_NUMBER:-0}."
 
         # Re-run build→test loop with the review context in goal
         if ! self_healing_build_test; then
@@ -2194,6 +2278,35 @@ Fix ALL of the above issues completely. Do not introduce any new critical or sec
             timing=$(get_stage_timing "review")
             success "Stage ${BOLD}review${RESET} complete after self-healing ${DIM}(${timing})${RESET}"
             emit_event "review.self_healed" "issue=${ISSUE_NUMBER:-0}" "cycle=$cycle"
+            # File pre-existing findings as follow-up GitHub issues
+            if [[ -s "${ARTIFACTS_DIR:-}/review-followups.md" ]] && [[ -n "${ISSUE_NUMBER:-}" ]] && [[ "${NO_GITHUB:-false}" != "true" ]]; then
+                local _followup_label="follow-up,pre-existing,from-${ISSUE_NUMBER}"
+                gh label create "follow-up" --color "#e4e669" --description "Follow-up issue" 2>/dev/null || true
+                gh label create "pre-existing" --color "#f9d0c4" --description "Pre-existing issue found during review" 2>/dev/null || true
+                gh label create "from-${ISSUE_NUMBER}" --color "#bfdadc" --description "Found during review of #${ISSUE_NUMBER}" 2>/dev/null || true
+                local _finding_title _finding_count=0
+                while IFS= read -r _line; do
+                    _finding_title=$(echo "$_line" | sed 's/.*\[Pre-existing\][[:space:]]*//' | cut -c1-100)
+                    if [[ -n "$_finding_title" ]]; then
+                        local _existing
+                        _existing=$(gh issue list --label "from-${ISSUE_NUMBER}" --search "$_finding_title" --json number --jq 'length' 2>/dev/null || echo "0")
+                        if [[ "${_existing:-0}" -eq 0 ]]; then
+                            local _followup_body
+                            _followup_body="Pre-existing finding identified during review of #${ISSUE_NUMBER}.
+
+$(grep -A5 "$_finding_title" "${ARTIFACTS_DIR}/review-followups.md" 2>/dev/null | head -10 || true)"
+                            gh issue create \
+                                --title "[follow-up from #${ISSUE_NUMBER}] ${_finding_title}" \
+                                --body "$_followup_body" \
+                                --label "$_followup_label" 2>/dev/null || true
+                            _finding_count=$(( _finding_count + 1 ))
+                        fi
+                    fi
+                done < <(grep -E '\[Pre-existing\]' "${ARTIFACTS_DIR}/review-followups.md" 2>/dev/null || true)
+                if [[ "$_finding_count" -gt 0 ]]; then
+                    info "Filed ${_finding_count} pre-existing finding(s) as follow-up GitHub issues"
+                fi
+            fi
             return 0
         fi
 
@@ -2585,6 +2698,21 @@ run_pipeline() {
                 && [[ -s "$ARTIFACTS_DIR/review-blockers.md" ]]; then
                 info "Review blocked — attempting review self-healing rebuild..."
                 if self_healing_review_build_test; then
+                    stage_model_used="$(get_effective_model)"
+                    mark_stage_complete "$id"
+                    completed=$((completed + 1))
+                    echo "${id}|${stage_model_used}|true" >> "${ARTIFACTS_DIR}/model-routing.log"
+                    continue
+                fi
+                # Self-healing exhausted — fall through to normal failure
+            fi
+
+            # Self-healing: merge blocked by CI failure or review change-request → rebuild
+            if [[ "$id" == "merge" && "$use_self_healing" == "true" ]] \
+                && [[ -f "${ARTIFACTS_DIR}/.retry-context-build.md" ]] \
+                && [[ -s "${ARTIFACTS_DIR}/.retry-context-build.md" ]]; then
+                info "Merge blocked — attempting merge self-healing rebuild..."
+                if self_healing_merge_build_test; then
                     stage_model_used="$(get_effective_model)"
                     mark_stage_complete "$id"
                     completed=$((completed + 1))

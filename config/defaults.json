@@ -21,6 +21,9 @@
     "worktree_dir": ".worktrees"
   },
   "pipeline": {
+    "merge": {
+      "wait_ci_timeout_s": 1500
+    },
     "max_iterations": 20,
     "build_test_retries": 3,
     "claude_timeout": 1800,

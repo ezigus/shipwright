@@ -16,6 +16,8 @@ jobs:
   risk-policy-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    env:
+      GH_TOKEN: ${{ secrets.GITHUBTOKEN || secrets.GITHUB_TOKEN }}
     outputs:
       risk_tier: ${{ steps.classify.outputs.risk_tier }}
       required_checks: ${{ steps.classify.outputs.required_checks }}

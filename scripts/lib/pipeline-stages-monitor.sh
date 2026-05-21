@@ -29,7 +29,7 @@ stage_validate() {
     [[ "$health_url" == "null" ]] && health_url=""
 
     local close_issue
-    close_issue=$(jq -r --arg id "validate" '(.stages[] | select(.id == $id) | .config.close_issue) // false' "$PIPELINE_CONFIG" 2>/dev/null) || true
+    close_issue=$(jq -r --arg id "validate" '(.stages[] | select(.id == $id) | .config.close_issue) // true' "$PIPELINE_CONFIG" 2>/dev/null) || true
 
     # Smoke tests
     if [[ -n "$smoke_cmd" ]]; then
@@ -75,7 +75,10 @@ PR: $(cat "$ARTIFACTS_DIR/pr-url.txt" 2>/dev/null || echo 'unknown')" 2>/dev/nul
 
     # Close original issue with comprehensive summary
     if [[ "$close_issue" == "true" && -n "$ISSUE_NUMBER" ]]; then
-        gh issue close "$ISSUE_NUMBER" --comment "## ✅ Complete — Deployed & Validated
+        local _issue_state=""
+        _issue_state=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state' 2>/dev/null || echo "")
+        if [[ "$_issue_state" == "OPEN" ]]; then
+            gh issue close "$ISSUE_NUMBER" --comment "## ✅ Complete — Deployed & Validated
 
 | Metric | Value |
 |--------|-------|
@@ -85,10 +88,11 @@ PR: $(cat "$ARTIFACTS_DIR/pr-url.txt" 2>/dev/null || echo 'unknown')" 2>/dev/nul
 | Duration | ${total_dur:-unknown} |
 
 _Closed automatically by \`shipwright pipeline\`_" 2>/dev/null || true
-
-        gh_remove_label "$ISSUE_NUMBER" "pipeline/pr-created"
-        gh_add_labels "$ISSUE_NUMBER" "pipeline/complete"
-        success "Issue #$ISSUE_NUMBER closed"
+            emit_event "merge.issue_autoclose_fallback" "issue=$ISSUE_NUMBER"
+            gh_remove_label "$ISSUE_NUMBER" "pipeline/pr-created" 2>/dev/null || true
+            gh_add_labels "$ISSUE_NUMBER" "pipeline/complete" 2>/dev/null || true
+            success "Issue #$ISSUE_NUMBER closed"
+        fi
     fi
 
     # Push pipeline report to wiki

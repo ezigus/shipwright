@@ -16,6 +16,8 @@ jobs:
     if: contains(github.event.issue.labels.*.name, 'auto-patrol')
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    env:
+      GH_TOKEN: ${{ secrets.GITHUBTOKEN || secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Add shipwright label

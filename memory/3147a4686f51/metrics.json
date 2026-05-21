@@ -1,7 +1,9 @@
 {
   "baselines": {
-    "build_duration_s": 3406,
-    "test_duration_s": 679
+    "build_duration_s": 9514,
+    "test_duration_s": 679,
+    "total_cost_usd": 0.0000,
+    "iterations": 1
   },
-  "last_updated": "2026-05-16T10:13:16Z"
+  "last_updated": "2026-05-21T13:03:05Z"
 }

@@ -120,16 +120,18 @@ function deduplicateById(entries) {
 function fingerprintContent(text) {
   if (typeof text !== 'string' || text.length === 0) return '0';
   const norm = text.replace(/\s+/g, ' ').trim().toLowerCase();
-  // Two 32-bit hashes with different primes + seeds give us a 64-bit-equivalent
-  // fingerprint. Avoid masking the 64-bit FNV prime into 32 bits — its low
-  // 32 bits is 435, which collapses Math.imul into near-trivial hashing.
-  let h1 = 0x811c9dc5, h2 = 0xcbf29ce4;
+  // FNV-1a 64-bit using BigInt so the 64-bit prime stays 64-bit. Do NOT
+  // attempt to use the 64-bit prime with Math.imul or 32-bit bitwise ops:
+  // JS will silently truncate it to its low 32 bits (decimal 435) and
+  // destroy hash quality. BigInt preserves all 64 bits through XOR + multiply.
+  const FNV_PRIME = 0x100000001b3n;
+  const FNV_OFFSET = 0xcbf29ce484222325n;
+  const MASK64 = 0xffffffffffffffffn;
+  let h = FNV_OFFSET;
   for (let i = 0; i < norm.length; i++) {
-    const c = norm.charCodeAt(i);
-    h1 ^= c; h1 = Math.imul(h1, 0x01000193) >>> 0;
-    h2 ^= c; h2 = Math.imul(h2, 0x85ebca77) >>> 0;
+    h = ((h ^ BigInt(norm.charCodeAt(i))) * FNV_PRIME) & MASK64;
   }
-  return `${h1.toString(16)}_${h2.toString(16)}_${norm.length}`;
+  return `${h.toString(16)}_${norm.length}`;
 }
 
 function deduplicateByContent(entries) {

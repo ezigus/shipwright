@@ -598,12 +598,140 @@ test_fingerprint_content_not_truncated() {
                 assert_fail "fingerprintContent threw error" "$fp_result"
             elif [[ "$fp_result" == "0" || -z "$fp_result" ]]; then
                 assert_fail "fingerprintContent returned zero/empty" "hash appears broken — check FNV-1a prime"
+            elif [[ "$fp_result" =~ ^[0-9a-f]+_[0-9]+$ ]]; then
+                # New format: 64-bit BigInt FNV-1a hex + length. Canonical FNV-1a-64
+                # of "hello world" is 0x779a65e7023cd2e7 — verify exact match.
+                if [[ "$fp_result" == "779a65e7023cd2e7_11" ]]; then
+                    assert_pass "fingerprintContent('hello world') matches canonical FNV-1a-64: $fp_result"
+                else
+                    assert_fail "fingerprintContent('hello world') does not match canonical FNV-1a-64" \
+                        "expected 779a65e7023cd2e7_11, got $fp_result"
+                fi
             else
-                assert_pass "fingerprintContent returns non-zero value: $fp_result"
+                assert_fail "fingerprintContent output format unexpected" \
+                    "expected <hex>_<len>, got $fp_result"
             fi
         fi
     else
         assert_fail "intelligence.cjs not found at: $intelligence_cjs" ""
+    fi
+}
+
+test_audit_suppress_directive_recognized() {
+    reset_test
+    # Regression: @audit-suppress <id> -- <reason> directive must suppress
+    # command-injection findings AND route them to the suppression sidecar.
+    local pipeline_intel_sh
+    pipeline_intel_sh="$SCRIPT_DIR/lib/pipeline-intelligence.sh"
+    if [[ ! -f "$pipeline_intel_sh" ]]; then
+        assert_fail "pipeline-intelligence.sh not found at: $pipeline_intel_sh" ""
+        return
+    fi
+
+    # Source the whole pipeline-intelligence.sh in a subshell — we only call
+    # the two helper functions but sourcing the full file is simplest and correct.
+    local fixture_dir="$TEST_TEMP_DIR/audit-suppress-fixture"
+    mkdir -p "$fixture_dir"
+    local artifacts_dir="$fixture_dir/.claude/pipeline-artifacts"
+    mkdir -p "$artifacts_dir"
+
+    # Fixture 1: suppressed import (directive on same line)
+    cat > "$fixture_dir/safe.js" <<'SAFE'
+#!/usr/bin/env node
+const { execFileSync } = require('child_process'); // @audit-suppress audit_test_1234 -- argv-only execve path; no shell
+SAFE
+
+    # Fixture 2: suppressed import (directive on preceding line)
+    cat > "$fixture_dir/safe-above.js" <<'SAFEABOVE'
+#!/usr/bin/env node
+// @audit-suppress audit_test_5678 -- justified by upstream allow-list gate
+const { execFileSync } = require('child_process');
+SAFEABOVE
+
+    # Fixture 3: un-suppressed (must still flag)
+    cat > "$fixture_dir/unsafe.js" <<'UNSAFE'
+#!/usr/bin/env node
+const { execSync } = require('child_process');
+UNSAFE
+
+    # Run helpers in a subshell with controlled ARTIFACTS_DIR
+    local check_safe check_safe_above check_unsafe
+    check_safe=$(ARTIFACTS_DIR="$artifacts_dir" bash -c "source '$pipeline_intel_sh' >/dev/null 2>&1; _audit_suppress_check '$fixture_dir/safe.js' 2")
+    check_safe_above=$(ARTIFACTS_DIR="$artifacts_dir" bash -c "source '$pipeline_intel_sh' >/dev/null 2>&1; _audit_suppress_check '$fixture_dir/safe-above.js' 3")
+    check_unsafe=$(ARTIFACTS_DIR="$artifacts_dir" bash -c "source '$pipeline_intel_sh' >/dev/null 2>&1; _audit_suppress_check '$fixture_dir/unsafe.js' 2")
+
+    if [[ "$check_safe" == "audit_test_1234|argv-only execve path; no shell" ]]; then
+        assert_pass "directive on same line recognized: $check_safe"
+    else
+        assert_fail "directive on same line not recognized" "got: '$check_safe'"
+    fi
+
+    if [[ "$check_safe_above" == "audit_test_5678|justified by upstream allow-list gate" ]]; then
+        assert_pass "directive on preceding line recognized: $check_safe_above"
+    else
+        assert_fail "directive on preceding line not recognized" "got: '$check_safe_above'"
+    fi
+
+    if [[ -z "$check_unsafe" ]]; then
+        assert_pass "un-suppressed import correctly not matched as suppressed"
+    else
+        assert_fail "un-suppressed import wrongly matched" "got: '$check_unsafe'"
+    fi
+
+    # Sidecar write — record a finding and verify JSON shape
+    ARTIFACTS_DIR="$artifacts_dir" bash -c "source '$pipeline_intel_sh' >/dev/null 2>&1; _audit_suppress_record '$fixture_dir/safe.js' 2 'command_injection' 'audit_test_1234' 'argv-only execve path; no shell'"
+
+    local sidecar="$artifacts_dir/compound-quality-suppressions.json"
+    if [[ ! -f "$sidecar" ]]; then
+        assert_fail "suppression sidecar not written" "expected: $sidecar"
+        return
+    fi
+
+    local recorded_id recorded_reason recorded_pattern
+    recorded_id=$(jq -r '.[0].suppressed_by.id // empty' "$sidecar" 2>/dev/null || true)
+    recorded_reason=$(jq -r '.[0].suppressed_by.reason // empty' "$sidecar" 2>/dev/null || true)
+    recorded_pattern=$(jq -r '.[0].pattern // empty' "$sidecar" 2>/dev/null || true)
+
+    if [[ "$recorded_id" == "audit_test_1234" && "$recorded_pattern" == "command_injection" && "$recorded_reason" == "argv-only execve path; no shell" ]]; then
+        assert_pass "suppression sidecar records id, pattern, and reason"
+    else
+        assert_fail "suppression sidecar contents wrong" \
+            "id=$recorded_id pattern=$recorded_pattern reason=$recorded_reason"
+    fi
+}
+
+test_audit_suppress_load_bearing_comments_present() {
+    reset_test
+    # Enforces that the two known load-bearing @audit-suppress directives
+    # exist. If a future contributor (or autonomous loop) deletes them, this
+    # test fails — it IS the enforcement. See issue #605 review for context.
+    local repo_root
+    repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+    local statusline_js="$repo_root/.claude/helpers/statusline.js"
+    local github_safe_js="$repo_root/.claude/helpers/github-safe.js"
+
+    if [[ ! -f "$statusline_js" ]]; then
+        assert_fail "statusline.js not found at: $statusline_js" ""
+        return
+    fi
+    if [[ ! -f "$github_safe_js" ]]; then
+        assert_fail "github-safe.js not found at: $github_safe_js" ""
+        return
+    fi
+
+    if grep -qE '@audit-suppress[[:space:]]+audit_1776853149979[[:space:]]+--' "$statusline_js"; then
+        assert_pass "statusline.js carries @audit-suppress audit_1776853149979"
+    else
+        assert_fail "statusline.js MISSING @audit-suppress audit_1776853149979" \
+            "this directive is load-bearing — see #605 review"
+    fi
+
+    if grep -qE '@audit-suppress[[:space:]]+audit_1776853149979[[:space:]]+--' "$github_safe_js"; then
+        assert_pass "github-safe.js carries @audit-suppress audit_1776853149979"
+    else
+        assert_fail "github-safe.js MISSING @audit-suppress audit_1776853149979" \
+            "this directive is load-bearing — see #605 review"
     fi
 }
 
@@ -655,6 +783,8 @@ main() {
         "test_intelligence_enabled_path_install:PATH install does not disable intelligence"
         "test_intelligence_cache_when_repo_dir_is_install_root:INTELLIGENCE_CACHE correct when REPO_DIR pre-set to install root"
         "test_fingerprint_content_not_truncated:fingerprintContent FNV-1a prime not truncated to 435"
+        "test_audit_suppress_directive_recognized:@audit-suppress directive suppresses SAST findings and records to sidecar"
+        "test_audit_suppress_load_bearing_comments_present:statusline.js and github-safe.js carry @audit-suppress audit_1776853149979"
     )
 
     for entry in "${tests[@]}"; do

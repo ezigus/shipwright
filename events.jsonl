@@ -7494,3 +7494,5 @@
 {"ts":"2026-05-21T10:49:42Z","ts_epoch":1779360582,"type":"stage.failed","repo":"ezigus/shipwright","event_id":"evt-1779360582-2783455831","payload":"{\"stage\":\"plan\",\"issue\":\"608\",\"timing\":\"4m 33s\"}"}
 {"ts":"2026-05-21T10:49:43Z","ts_epoch":1779360583,"type":"stage.failed","repo":"ezigus/shipwright","issue":608,"stage":"plan","duration_s":278,"error":"unknown","error_class":"unknown"}
 {"ts":"2026-05-21T10:49:43Z","ts_epoch":1779360583,"type":"vitals.snapshot","repo":"ezigus/shipwright","issue":608,"stage":"plan","iteration":0,"diff_lines":0,"no_progress":0}
+{"ts":"2026-05-21T10:56:40Z","ts_epoch":1779361000,"type":"cost.baseline_updated","repo":"ezigus/shipwright","stages":2,"issue":504}
+{"ts":"2026-05-21T10:56:50Z","ts_epoch":1779361010,"type":"regression.baseline","repo":"ezigus/shipwright","timestamp":"2026-05-21T10:56:50Z","test_count":0,"pass_rate":0,"script_count":273,"total_lines":318148}

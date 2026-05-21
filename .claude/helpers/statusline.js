@@ -13,7 +13,7 @@ const path = require('path');
 // every invocation now passes argv arrays through execve directly, so there
 // is no shell to interpret metacharacters. Keep this comment to explain why
 // `execSync` is intentionally absent.
-const { execFileSync } = require('child_process');
+const { execFileSync } = require('child_process'); // @audit-suppress audit_1776853149979 -- execFileSync uses execve directly (shell:false); argv-only; no metacharacter interpolation
 
 // Configuration
 const CONFIG = {

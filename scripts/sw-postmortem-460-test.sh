@@ -387,34 +387,30 @@ if [[ -f "$INTELLIGENCE_CJS" ]]; then
                 assert_pass "T2.5 fingerprintContent('hello world') returns non-zero value: $FP_RESULT"
             fi
 
-            # Regression: if multiplier were 435 instead of 0x01000193, hash would differ
-            # Run with the CORRECT multiplier to get the expected value, then verify same
+            # Regression: verify match against canonical 64-bit FNV-1a reference.
+            # If the prime were truncated to 435, the hash would not match.
             CORRECT_FP=$(node -e "
-                // FNV-1a 32 with correct prime 0x01000193
+                // FNV-1a 64-bit BigInt reference (canonical).
+                const FNV_PRIME = 0x100000001b3n;
+                const FNV_OFFSET = 0xcbf29ce484222325n;
+                const MASK64 = 0xffffffffffffffffn;
                 function fpCorrect(s) {
-                    let h1 = 0x811c9dc5 >>> 0;
-                    let h2 = 0x811c9dc5 >>> 0;
-                    for (let i = 0; i < s.length; i++) {
-                        const c = s.charCodeAt(i);
-                        h1 ^= c;
-                        h1 = (Math.imul(h1, 0x01000193) >>> 0);
-                        h2 ^= c;
-                        h2 = (Math.imul(h2, 0x01000193) >>> 0);
+                    const norm = s.replace(/\s+/g, ' ').trim().toLowerCase();
+                    let h = FNV_OFFSET;
+                    for (let i = 0; i < norm.length; i++) {
+                        h = ((h ^ BigInt(norm.charCodeAt(i))) * FNV_PRIME) & MASK64;
                     }
-                    return (h1 ^ h2).toString(16);
+                    return h.toString(16) + '_' + norm.length;
                 }
                 process.stdout.write(fpCorrect('hello world'));
             " 2>/dev/null) || CORRECT_FP="ERROR"
 
-            # They should match (both use the correct prime)
-            # Note: if the implementation uses the truncated 435, they would NOT match
             if [[ "$FP_RESULT" != "ERROR" && "$CORRECT_FP" != "ERROR" ]]; then
                 if [[ "$FP_RESULT" == "$CORRECT_FP" ]]; then
-                    assert_pass "T2.5 fingerprintContent matches reference implementation (prime not truncated)"
+                    assert_pass "T2.5 fingerprintContent matches canonical FNV-1a-64 reference: $FP_RESULT"
                 else
-                    # Don't fail if algorithms differ slightly — just verify it's not the known-bad 435
-                    # The key regression test is that the output is stable and non-trivial
-                    assert_pass "T2.5 fingerprintContent returns stable non-trivial value (algorithm variant OK)"
+                    assert_fail "T2.5 fingerprintContent does not match canonical FNV-1a-64 reference" \
+                        "expected $CORRECT_FP, got $FP_RESULT"
                 fi
             fi
         fi

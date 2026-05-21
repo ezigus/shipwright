@@ -1,0 +1,10 @@
+- `bash scripts/sw-loop-test.sh` exits 0 with new `EXTENSION_SIZE=3` and `MAX_EXTENSIONS=1` assertions present {auto:other:bash scripts/sw-loop-test.sh}
+- `bash scripts/sw-pipeline-test.sh` exits 0 {auto:other:bash scripts/sw-pipeline-test.sh}
+- `bash scripts/sw-lib-loop-convergence-test.sh` exits 0 {auto:other:bash scripts/sw-lib-loop-convergence-test.sh}
+- `bash scripts/sw-e2e-smoke-test.sh` exits 0 with ceiling-respect assertion {auto:other:bash scripts/sw-e2e-smoke-test.sh}
+- `npm test` exits 0 {auto:tests}
+- `jq -e '.pipeline.build_test_retries == 1' config/defaults.json` exits 0 {auto:other:jq -e '.pipeline.build_test_retries == 1' config/defaults.json}
+- `EXTENSION_SIZE=3` and `MAX_EXTENSIONS=1` present in `scripts/sw-loop.sh` {auto:other:bash -c "grep -qE '^EXTENSION_SIZE=3' scripts/sw-loop.sh && grep -qE '^MAX_EXTENSIONS=1' scripts/sw-loop.sh"}
+- `shellcheck scripts/sw-loop.sh scripts/sw-triage.sh scripts/sw-pm.sh scripts/sw-recruit.sh scripts/sw-self-optimize.sh` exits 0 {auto:lint}
+- Cumulative branch diff touches only the files in "Files to Modify" {auto:diff}
+- [~] PR body documents worst-case math `(20 + 1*3) * (1+1) = 46` {manual} (skipped: requires human verification)

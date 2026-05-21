@@ -581,6 +581,36 @@ ${_cost_table}
     log_stage "pr" "PR created: $pr_url (${reviewers:+reviewers: $reviewers})"
 }
 
+_write_merge_retry_ctx_ci_failure() {
+    local pr_number="$1" pr_url="$2"
+    local failed_link=""
+    failed_link=$(gh pr checks "$pr_number" --json bucket,link \
+        --jq '[.[] | select(.bucket == "fail")] | .[0].link // ""' 2>/dev/null || echo "")
+    cat > "${ARTIFACTS_DIR}/.retry-context-build.md" <<RETRYEOF
+# CI failed on PR #${pr_number}
+
+Run \`gh pr checks ${pr_number}\` to list failing checks, then \`gh run view <run-id> --log-failed\` for details.
+
+PR: ${pr_url}
+First failed run: ${failed_link}
+
+Fix the failure(s), commit, and push to the same branch.
+RETRYEOF
+}
+
+_write_merge_retry_ctx_review() {
+    local pr_number="$1" pr_url="$2"
+    cat > "${ARTIFACTS_DIR}/.retry-context-build.md" <<RETRYEOF
+# Reviewer requested changes on PR #${pr_number}
+
+Run \`gh pr view ${pr_number} --comments\` to read the review feedback.
+
+PR: ${pr_url}
+
+Address every change-request, commit, and push to the same branch.
+RETRYEOF
+}
+
 stage_merge() {
     CURRENT_STAGE_ID="merge"
 
@@ -679,34 +709,12 @@ stage_merge() {
     local merge_method wait_ci_timeout auto_delete_branch auto_merge auto_approve merge_strategy
     merge_method=$(jq -r --arg id "merge" '(.stages[] | select(.id == $id) | .config.merge_method) // "squash"' "$PIPELINE_CONFIG" 2>/dev/null) || true
     [[ -z "$merge_method" || "$merge_method" == "null" ]] && merge_method="squash"
-    wait_ci_timeout=$(jq -r --arg id "merge" '(.stages[] | select(.id == $id) | .config.wait_ci_timeout_s) // 0' "$PIPELINE_CONFIG" 2>/dev/null) || true
+    wait_ci_timeout=$(jq -r --arg id "merge" '(.stages[] | select(.id == $id) | .config.wait_ci_timeout_s) // empty' "$PIPELINE_CONFIG" 2>/dev/null) || true
     [[ -z "$wait_ci_timeout" || "$wait_ci_timeout" == "null" ]] && wait_ci_timeout=0
-
-    # Adaptive CI timeout: 90th percentile of historical times × 1.5 safety margin
     if [[ "$wait_ci_timeout" -eq 0 ]] 2>/dev/null; then
-        local repo_hash_ci
-        repo_hash_ci=$(echo -n "$PROJECT_ROOT" | shasum -a 256 2>/dev/null | cut -c1-12 || echo "unknown")
-        local ci_times_file="${HOME}/.shipwright/baselines/${repo_hash_ci}/ci-times.json"
-        if [[ -f "$ci_times_file" ]]; then
-            local p90_time
-            p90_time=$(jq '
-                .times | sort |
-                (length * 0.9 | floor) as $idx |
-                .[$idx] // 600
-            ' "$ci_times_file" 2>/dev/null || echo "0")
-            if [[ -n "$p90_time" ]] && awk -v t="$p90_time" 'BEGIN{exit !(t > 0)}' 2>/dev/null; then
-                # 1.5x safety margin, clamped to [120, 1800]
-                wait_ci_timeout=$(awk -v p90="$p90_time" 'BEGIN{
-                    t = p90 * 1.5;
-                    if (t < 120) t = 120;
-                    if (t > 1800) t = 1800;
-                    printf "%d", t
-                }')
-            fi
-        fi
-        # Default fallback if no history
-        [[ "$wait_ci_timeout" -eq 0 ]] && wait_ci_timeout=600
+        wait_ci_timeout=$(_config_get "pipeline.merge.wait_ci_timeout_s" "1500")
     fi
+    [[ -z "$wait_ci_timeout" || "$wait_ci_timeout" == "null" ]] && wait_ci_timeout=1500
     auto_delete_branch=$(jq -r --arg id "merge" '(.stages[] | select(.id == $id) | .config.auto_delete_branch) // "true"' "$PIPELINE_CONFIG" 2>/dev/null) || true
     [[ -z "$auto_delete_branch" || "$auto_delete_branch" == "null" ]] && auto_delete_branch="true"
     auto_merge=$(jq -r --arg id "merge" '(.stages[] | select(.id == $id) | .config.auto_merge) // false' "$PIPELINE_CONFIG" 2>/dev/null) || true
@@ -731,53 +739,62 @@ stage_merge() {
 
     info "Found PR #${pr_number} for branch ${GIT_BRANCH}"
 
+    local pr_url=""
+    pr_url=$(cat "$ARTIFACTS_DIR/pr-url.txt" 2>/dev/null || \
+        gh pr view "$pr_number" --json url --jq '.url' 2>/dev/null || echo "")
+
     # Wait for CI checks to pass
-    info "Waiting for CI checks (timeout: ${wait_ci_timeout}s)..."
-    local elapsed=0
-    local check_interval=15
+    info "Waiting for CI on PR #${pr_number} (ceiling: ${wait_ci_timeout}s)"
+    local elapsed=0 poll=60 empty_grace=60 empty_elapsed=0 _ci_wait_done=""
 
     while [[ "$elapsed" -lt "$wait_ci_timeout" ]]; do
-        local check_status
-        check_status=$(gh pr checks "$pr_number" --json 'bucket,name' --jq '[.[] | .bucket] | unique | sort' 2>/dev/null || echo '["pending"]')
+        local buckets review_decision
+        buckets=$(gh pr checks "$pr_number" --json bucket \
+            --jq '[.[].bucket] | unique | sort' 2>/dev/null || echo '["pending"]')
+        review_decision=$(gh pr view "$pr_number" --json reviewDecision \
+            --jq '.reviewDecision' 2>/dev/null || echo "PENDING")
 
-        # If all checks passed (only "pass" in buckets)
-        if echo "$check_status" | jq -e '. == ["pass"]' >/dev/null 2>&1; then
-            success "All CI checks passed"
-            break
-        fi
-
-        # If any check failed
-        if echo "$check_status" | jq -e 'any(. == "fail")' >/dev/null 2>&1; then
-            error "CI checks failed — aborting merge"
+        # CI failure → write build retry context, bounce back to build
+        if echo "$buckets" | jq -e 'any(. == "fail")' >/dev/null 2>&1; then
+            _write_merge_retry_ctx_ci_failure "$pr_number" "$pr_url"
+            emit_event "merge.ci_failed" "issue=${ISSUE_NUMBER:-0}" "pr=$pr_number" "elapsed=$elapsed"
             return 1
         fi
 
-        sleep "$check_interval"
-        elapsed=$((elapsed + check_interval))
+        # Reviewer requested changes → write build retry context, bounce back to build
+        if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
+            _write_merge_retry_ctx_review "$pr_number" "$pr_url"
+            emit_event "merge.changes_requested" "issue=${ISSUE_NUMBER:-0}" "pr=$pr_number"
+            return 1
+        fi
+
+        # All checks passed → proceed to merge
+        if echo "$buckets" | jq -e '. == ["pass"]' >/dev/null 2>&1; then
+            success "All CI checks passed at ${elapsed}s"
+            _ci_wait_done="pass"
+            break
+        fi
+
+        # No checks appeared yet → bail after empty_grace seconds
+        if [[ "$buckets" == "[]" ]]; then
+            empty_elapsed=$((empty_elapsed + poll))
+            if [[ "$empty_elapsed" -ge "$empty_grace" ]]; then
+                warn "No CI checks present after ${empty_grace}s — proceeding"
+                emit_event "merge.no_checks" "issue=${ISSUE_NUMBER:-0}" "pr=$pr_number"
+                _ci_wait_done="no_checks"
+                break
+            fi
+        else
+            empty_elapsed=0
+        fi
+
+        sleep "$poll"
+        elapsed=$((elapsed + poll))
     done
 
-    # Record CI wait time for adaptive timeout calculation
-    if [[ "$elapsed" -gt 0 ]]; then
-        local repo_hash_ci_rec
-        repo_hash_ci_rec=$(echo -n "$PROJECT_ROOT" | shasum -a 256 2>/dev/null | cut -c1-12 || echo "unknown")
-        local ci_times_dir="${HOME}/.shipwright/baselines/${repo_hash_ci_rec}"
-        local ci_times_rec_file="${ci_times_dir}/ci-times.json"
-        mkdir -p "$ci_times_dir"
-        local ci_history="[]"
-        if [[ -f "$ci_times_rec_file" ]]; then
-            ci_history=$(jq '.times // []' "$ci_times_rec_file" 2>/dev/null || echo "[]")
-        fi
-        local updated_ci
-        updated_ci=$(echo "$ci_history" | jq --arg t "$elapsed" '. + [($t | tonumber)] | .[-20:]' 2>/dev/null || echo "[$elapsed]")
-        local tmp_ci
-        tmp_ci=$(mktemp "${ci_times_dir}/ci-times.json.XXXXXX")
-        jq -n --argjson times "$updated_ci" --arg updated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{times: $times, updated: $updated}' > "$tmp_ci" 2>/dev/null
-        mv "$tmp_ci" "$ci_times_rec_file" 2>/dev/null || true
-    fi
-
-    if [[ "$elapsed" -ge "$wait_ci_timeout" ]]; then
-        warn "CI check timeout (${wait_ci_timeout}s) — proceeding with merge anyway"
+    if [[ -z "$_ci_wait_done" ]]; then
+        warn "CI wait ceiling (${wait_ci_timeout}s) reached — proceeding with merge"
+        emit_event "merge.ci_timeout" "issue=${ISSUE_NUMBER:-0}" "pr=$pr_number"
     fi
 
     # Auto-approve if configured (for branch protection requiring reviews)

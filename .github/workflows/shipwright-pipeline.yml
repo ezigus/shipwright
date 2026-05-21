@@ -75,6 +75,7 @@ jobs:
       ISSUE_NUMBER: ${{ github.event.inputs.issue_number || github.event.issue.number }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUBTOKEN || secrets.GITHUB_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -365,6 +366,7 @@ jobs:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUBTOKEN: ${{ secrets.GITHUBTOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUBTOKEN || secrets.GITHUB_TOKEN }}
       NO_COLOR: "1"
       SHIPWRIGHT_JOB_TIMEOUT_MINUTES: "300" # MUST match timeout-minutes: 300 above
       SW_LOG_PROMPTS: "github"

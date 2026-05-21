@@ -20,5 +20,10 @@
   "max_parallel": 2,
   "poll_interval": 60,
   "pipeline_template": "autonomous",
-  "auto_template": false
+  "auto_template": false,
+  "pipeline": {
+    "merge": {
+      "wait_ci_timeout_s": 1500
+    }
+  }
 }

@@ -2257,22 +2257,31 @@ ${_cascade_test_tail}"
             fi
         fi
 
-        # 6b. Security Source Scan
+        # 6b. Source Pattern Scan (grep-based source security patterns)
         local _sec_intensity
         _sec_intensity=$(echo "$audit_plan" | jq -r '.security // "targeted"' 2>/dev/null || echo "targeted")
         if [[ "$_sec_intensity" != "off" ]]; then
             echo ""
-            info "Running security source scan (${_sec_intensity})..."
+            info "Running source pattern scan (${_sec_intensity})..."
             audits_run_list="${audits_run_list:+${audits_run_list},}security"
             local sec_finding_count=0
             sec_finding_count=$(pipeline_security_source_scan 2>/dev/null) || true
             sec_finding_count="${sec_finding_count:-0}"
             if [[ "$sec_finding_count" -gt 0 ]]; then
-                warn "Security source scan: ${sec_finding_count} finding(s)"
+                local _sec_first_title=""
+                if [[ -f "$ARTIFACTS_DIR/security-source-scan.json" ]]; then
+                    _sec_first_title=$(jq -r '[.[] | select(.severity == "critical" or .severity == "high") | .description // ""] | .[0] // ""' \
+                        "$ARTIFACTS_DIR/security-source-scan.json" 2>/dev/null | head -c 80 || true)
+                fi
+                if [[ -n "$_sec_first_title" ]]; then
+                    warn "Source pattern scan: ${sec_finding_count} finding(s) (scope: changed files, all lines) — e.g. ${_sec_first_title}"
+                else
+                    warn "Source pattern scan: ${sec_finding_count} finding(s) (scope: changed files, all lines)"
+                fi
                 total_critical=$((total_critical + sec_finding_count))
                 all_passed=false
             else
-                success "Security source scan: clean"
+                success "Source pattern scan: clean (scope: changed files, all lines)"
             fi
         fi
 
@@ -2466,7 +2475,8 @@ All quality checks clean:
 - Architecture validation: ✅
 - E2E validation: ✅
 - DoD audit: ✅
-- Security audit: ✅
+- Source pattern scan: ✅ (scope: changed files, all lines)
+- Dependency CVE audit: ✅ (scope: all dependencies)
 - Coverage: ✅
 - Performance: ✅
 - Bundle size: ✅

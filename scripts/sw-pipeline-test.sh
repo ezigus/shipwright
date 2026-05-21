@@ -4137,6 +4137,20 @@ test_ci_resume_fallback_uses_workspace_branch() {
     return 0
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Merge self-healing: function exists and dispatch is wired
+# ──────────────────────────────────────────────────────────────────────────────
+test_self_healing_merge_build_test_exists() {
+    grep -q "^self_healing_merge_build_test()" "$REAL_PIPELINE_SCRIPT"
+}
+
+test_self_healing_merge_build_test_dispatch_wired() {
+    # The stage loop must call self_healing_merge_build_test when the merge stage
+    # fails and .retry-context-build.md is present.
+    grep -q 'self_healing_merge_build_test' "$REAL_PIPELINE_SCRIPT" &&
+    grep -q '\.retry-context-build\.md' "$REAL_PIPELINE_SCRIPT"
+}
+
 main() {
     local filter="${1:-}"
 
@@ -4288,6 +4302,8 @@ main() {
         "test_state_heartbeat_helpers_present:PR3: _start_state_heartbeat and _stop_state_heartbeat exist in sw-pipeline.sh"
         "test_heartbeat_called_in_run_pipeline:PR3: _start_state_heartbeat called inside run_pipeline"
         "test_workflow_workspace_branch_re_export_step_present:PR3: workflow has idempotent WORKSPACE_BRANCH re-export step"
+        "test_self_healing_merge_build_test_exists:Merge: self_healing_merge_build_test function exists in sw-pipeline.sh"
+        "test_self_healing_merge_build_test_dispatch_wired:Merge: stage loop dispatches self_healing_merge_build_test on merge failure with retry context"
     )
 
     for entry in "${tests[@]}"; do

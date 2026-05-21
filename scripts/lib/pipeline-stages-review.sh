@@ -548,15 +548,21 @@ important decisions and mcp__ruflo__memory_search to recall prior context from n
 
     # ── Oversight gate: pipeline review/quality stages block on verdict ──
     # Compute blocking issues and save blockers early (for self-healing, independent of gates)
+    # Exclude [Pre-existing] lines from counts — they are not introduced by this PR.
     local _sec_count _blocking reject_reason=""
-    _sec_count=$(grep -ciE '\*\*\[?Security\]?\*\*' "$review_file" 2>/dev/null || true)
+    _sec_count=$(grep -iE '\*\*\[?Security\]?\*\*' "$review_file" 2>/dev/null \
+        | grep -civE '\[Pre-existing\]' || true)
     _sec_count="${_sec_count:-0}"
     _blocking=$((critical_count + _sec_count))
     [[ "$_blocking" -gt 0 ]] && reject_reason="Review found ${_blocking} critical/security issue(s)"
     if [[ "$_blocking" -gt 0 ]]; then
         grep -iE '\*\*\[?(Critical|Security)\]?\*\*' "$review_file" \
+            | grep -viE '\[Pre-existing\]' \
             > "$ARTIFACTS_DIR/review-blockers.md" 2>/dev/null || true
     fi
+    # Partition pre-existing findings to a follow-up file (not blockers).
+    grep -iE '\[Pre-existing\]' "$review_file" \
+        > "$ARTIFACTS_DIR/review-followups.md" 2>/dev/null || true
     if [[ -x "$SCRIPT_DIR/sw-oversight.sh" ]] && [[ "${SKIP_GATES:-false}" != "true" ]]; then
         if ! bash "$SCRIPT_DIR/sw-oversight.sh" gate --diff "$diff_file" --description "${GOAL:-Pipeline review}" --reject-if "$reject_reason" >/dev/null 2>&1; then
             error "Oversight gate rejected — blocking pipeline"
@@ -568,8 +574,10 @@ important decisions and mcp__ruflo__memory_search to recall prior context from n
 
     # ── Review Blocking Gate ──
     # Block pipeline on critical/security issues unless compound_quality handles them
+    # Exclude [Pre-existing] lines from blocking counts — only PR-introduced findings block.
     local security_count
-    security_count=$(grep -ciE '\*\*\[?Security\]?\*\*' "$review_file" 2>/dev/null || true)
+    security_count=$(grep -iE '\*\*\[?Security\]?\*\*' "$review_file" 2>/dev/null \
+        | grep -civE '\[Pre-existing\]' || true)
     security_count="${security_count:-0}"
 
     local blocking_issues=$((critical_count + security_count))
@@ -601,8 +609,10 @@ important decisions and mcp__ruflo__memory_search to recall prior context from n
                 "critical=${critical_count}" \
                 "security=${security_count}"
 
-            # Save blocking issues for self-healing context
-            grep -iE '\*\*\[?(Critical|Security)\]?\*\*' "$review_file" > "$ARTIFACTS_DIR/review-blockers.md" 2>/dev/null || true
+            # Save blocking issues for self-healing context (exclude pre-existing findings)
+            grep -iE '\*\*\[?(Critical|Security)\]?\*\*' "$review_file" \
+                | grep -viE '\[Pre-existing\]' \
+                > "$ARTIFACTS_DIR/review-blockers.md" 2>/dev/null || true
 
             # Post review to GitHub before failing
             if [[ -n "$ISSUE_NUMBER" ]]; then

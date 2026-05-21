@@ -140,7 +140,7 @@ pipeline_test_passed() {
 }
 
 quality_check_security() {
-    info "Security audit..."
+    info "Dependency CVE audit..."
     local audit_log="$ARTIFACTS_DIR/security-audit.log"
     local audit_exit=0
     local tool_found=false
@@ -187,11 +187,11 @@ quality_check_security() {
         "high=$high_count"
 
     if [[ "$critical_count" -gt 0 ]]; then
-        warn "Security audit: ${critical_count} critical, ${high_count} high"
+        warn "Dependency CVE audit: ${critical_count} critical, ${high_count} high (scope: all dependencies)"
         return 1
     fi
 
-    success "Security audit: clean"
+    success "Dependency CVE audit: clean (scope: all dependencies)"
     return 0
 }
 

@@ -2294,7 +2294,7 @@ Fix the listed blockers that were introduced by this PR. Do not modify pre-exist
                             local _followup_body
                             _followup_body="Pre-existing finding identified during review of #${ISSUE_NUMBER}.
 
-$(grep -A5 "$_finding_title" "${ARTIFACTS_DIR}/review-followups.md" 2>/dev/null | head -10 || true)"
+$(grep -F -A5 "$_finding_title" "${ARTIFACTS_DIR}/review-followups.md" 2>/dev/null | head -10 || true)"
                             gh issue create \
                                 --title "[follow-up from #${ISSUE_NUMBER}] ${_finding_title}" \
                                 --body "$_followup_body" \

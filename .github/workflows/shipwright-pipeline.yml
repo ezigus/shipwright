@@ -673,39 +673,26 @@ jobs:
           RECOVERED=0
           SNAP_DIR=".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}"
           mkdir -p ".claude/pipeline-artifacts"
-          for f in plan.md dod.md context-bundle.md design.md composed-pipeline.json; do
-            FPATH=".claude/pipeline-artifacts/${f}"
-            SNAP=".claude/pipeline-artifacts/issue-${ISSUE_NUMBER}/${f}"
-            # Restore from issue-scoped snapshot if flat file is missing/empty
-            if [[ ! -s "$FPATH" && -s "$SNAP" ]]; then
-              cp "$SNAP" "$FPATH"
-              echo "  ↩ ${f}: restored from issue-${ISSUE_NUMBER} snapshot"
-              RECOVERED=$((RECOVERED + 1))
-            elif [[ -f "$FPATH" && -s "$FPATH" ]]; then
-              LINES=$(wc -l < "$FPATH")
-              echo "  ✓ ${f}: ${LINES} lines"
-              RECOVERED=$((RECOVERED + 1))
-            else
-              echo "  ✗ ${f}: not found"
-            fi
-          done
-          # Restore state files that live outside pipeline-artifacts/
-          # Policy matches the canonical-artifacts loop above: restore when missing/empty,
-          # count present files as recovered, skip silently when snapshot is also absent.
+          # Restore all artifacts from the issue-scoped snapshot directory in one shot.
+          # Using a directory copy means new artifact types added by future stages
+          # restore automatically without requiring a workflow edit.
+          if [[ -d "$SNAP_DIR" ]]; then
+            cp -r "$SNAP_DIR/." .claude/pipeline-artifacts/
+            echo "  ↩ Restored all artifacts from issue-${ISSUE_NUMBER} snapshot"
+            RECOVERED=$(find "$SNAP_DIR" -type f | wc -l | tr -d ' ')
+          fi
+          # Restore canonical state files to their expected locations outside pipeline-artifacts/
           for pair in \
             "pipeline-state.md:.claude/pipeline-state.md" \
-            "pipeline-status.json:.claude/pipeline-status.json" \
-            "failure-note.md:.claude/pipeline-artifacts/failure-note.md"; do
+            "pipeline-status.json:.claude/pipeline-status.json"; do
             src="$SNAP_DIR/${pair%%:*}"
             dst="${pair##*:}"
             mkdir -p "$(dirname "$dst")"
-            if [[ ! -s "$dst" && -s "$src" ]]; then
+            if [[ -s "$src" && ! -s "$dst" ]]; then
               cp "$src" "$dst"
-              echo "  ↩ ${pair%%:*}: restored from issue-${ISSUE_NUMBER} snapshot"
-              RECOVERED=$((RECOVERED + 1))
-            elif [[ -f "$dst" && -s "$dst" ]]; then
+              echo "  ↩ ${pair%%:*}: restored to $(dirname "$dst")/"
+            elif [[ -s "$dst" ]]; then
               echo "  ✓ ${pair%%:*}: present"
-              RECOVERED=$((RECOVERED + 1))
             fi
           done
           echo "Recovered ${RECOVERED} artifact file(s) from partial work branch"

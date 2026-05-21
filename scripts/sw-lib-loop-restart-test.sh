@@ -404,6 +404,87 @@ GOAL="" ORIGINAL_GOAL="" STATUS=""
 resume_state 2>/dev/null
 assert_eq "legacy: resume_state strips ## Plan Summary from goal" "Clean goal" "$GOAL"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Layer D: check_fatal_error — session-limit patterns + err_file arg (F1 fix)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "Layer D: check_fatal_error — session/usage limit detection"
+
+# Source check_fatal_error from loop-restart.sh
+source "$SCRIPT_DIR/lib/loop-restart.sh" 2>/dev/null || {
+    assert_fail "loop-restart.sh not sourceable" "cannot load loop-restart.sh"
+}
+
+_cfe_log="$TEST_TEMP_DIR/cfe-stdout.log"
+_cfe_err="$TEST_TEMP_DIR/cfe-stderr.log"
+
+# F1-D1: returns 1 (no fatal error) for normal output
+printf 'All tests passed\n' > "$_cfe_log"
+: > "$_cfe_err"
+if check_fatal_error "$_cfe_log" "0" "$_cfe_err" 2>/dev/null; then
+    assert_fail "F1-D1: check_fatal_error must return 1 for normal output" "returned 0 (fatal)"
+else
+    assert_pass "F1-D1: check_fatal_error returns 1 (no error) for normal output"
+fi
+
+# F1-D2: detects session limit pattern in stdout
+printf "You've hit your session limit · resets 2:40pm (UTC)\n" > "$_cfe_log"
+: > "$_cfe_err"
+if check_fatal_error "$_cfe_log" "1" "$_cfe_err" 2>/dev/null; then
+    assert_pass "F1-D2: check_fatal_error detects 'session limit' pattern in stdout"
+else
+    assert_fail "F1-D2: check_fatal_error must detect 'session limit' pattern in stdout" \
+        "pattern not matched in: $(cat "$_cfe_log")"
+fi
+
+# F1-D3: detects session limit pattern in stderr (err_file arg)
+printf 'No useful output\n' > "$_cfe_log"
+printf "Usage limit reached — please check claude.ai/usage\n" > "$_cfe_err"
+if check_fatal_error "$_cfe_log" "1" "$_cfe_err" 2>/dev/null; then
+    assert_pass "F1-D3: check_fatal_error detects 'Usage limit reached' in stderr (err_file arg)"
+else
+    assert_fail "F1-D3: check_fatal_error must detect usage limit from err_file" \
+        "stderr was: $(cat "$_cfe_err")"
+fi
+
+# F1-D4: does NOT detect session limit when err_file arg is omitted (2-arg call)
+printf 'No useful output\n' > "$_cfe_log"
+printf "Usage limit reached\n" > "$_cfe_err"
+if check_fatal_error "$_cfe_log" "1" 2>/dev/null; then
+    assert_fail "F1-D4: without err_file arg, stderr patterns should not be detected" \
+        "check_fatal_error incorrectly returned 0 (fatal) without err_file"
+else
+    assert_pass "F1-D4: without err_file arg, stderr-only patterns are not detected (expected)"
+fi
+
+# F1-D5: detects API key error in stdout (pre-existing pattern)
+printf 'Error: Invalid API key provided\n' > "$_cfe_log"
+: > "$_cfe_err"
+if check_fatal_error "$_cfe_log" "1" "$_cfe_err" 2>/dev/null; then
+    assert_pass "F1-D5: check_fatal_error detects 'Invalid API key' in stdout"
+else
+    assert_fail "F1-D5: check_fatal_error must detect 'Invalid API key' pattern" \
+        "pattern not matched"
+fi
+
+# F1-D6: non-zero exit + tiny output returns 1 (not conclusively fatal)
+printf 'err\n' > "$_cfe_log"
+: > "$_cfe_err"
+if check_fatal_error "$_cfe_log" "1" "$_cfe_err" 2>/dev/null; then
+    assert_fail "F1-D6: tiny output with non-zero exit should return 1 (non-conclusive)" \
+        "returned 0 (conclusive fatal)"
+else
+    assert_pass "F1-D6: tiny output + non-zero exit returns 1 (non-conclusive, deferred to circuit breaker)"
+fi
+
+# F1-D7: missing log file returns 1 (guard at top of function)
+rm -f "$TEST_TEMP_DIR/missing.log"
+if check_fatal_error "$TEST_TEMP_DIR/missing.log" "0" 2>/dev/null; then
+    assert_fail "F1-D7: missing log file must return 1 (not fatal)" \
+        "returned 0 (fatal) for missing file"
+else
+    assert_pass "F1-D7: missing log file returns 1 safely"
+fi
+
 # Emit explicit "$PASS/$TOTAL pass" as the final visible line for DoD audit parsers.
 printf '%s/%s pass\n' "$PASS" "$TOTAL"
 print_test_results

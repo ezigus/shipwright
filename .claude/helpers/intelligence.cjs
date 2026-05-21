@@ -120,12 +120,14 @@ function deduplicateById(entries) {
 function fingerprintContent(text) {
   if (typeof text !== 'string' || text.length === 0) return '0';
   const norm = text.replace(/\s+/g, ' ').trim().toLowerCase();
-  // FNV-1a 64-bit (split into 32-bit halves to stay within Number safe int)
+  // Two 32-bit hashes with different primes + seeds give us a 64-bit-equivalent
+  // fingerprint. Avoid masking the 64-bit FNV prime into 32 bits — its low
+  // 32 bits is 435, which collapses Math.imul into near-trivial hashing.
   let h1 = 0x811c9dc5, h2 = 0xcbf29ce4;
   for (let i = 0; i < norm.length; i++) {
     const c = norm.charCodeAt(i);
     h1 ^= c; h1 = Math.imul(h1, 0x01000193) >>> 0;
-    h2 ^= c; h2 = Math.imul(h2, 0x100000001b3 & 0xffffffff) >>> 0;
+    h2 ^= c; h2 = Math.imul(h2, 0x85ebca77) >>> 0;
   }
   return `${h1.toString(16)}_${h2.toString(16)}_${norm.length}`;
 }
@@ -1005,7 +1007,7 @@ function stats(outputJson) {
   return report;
 }
 
-module.exports = { init, getContext, recordEdit, feedback, consolidate, stats };
+module.exports = { init, getContext, recordEdit, feedback, consolidate, stats, fingerprintContent };
 
 // ── CLI entrypoint ──────────────────────────────────────────────────────────
 if (require.main === module) {

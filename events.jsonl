@@ -8694,3 +8694,5 @@
 {"ts":"2026-05-21T13:04:06Z","ts_epoch":1779368646,"type":"memory.global_aggregated","repo":"ezigus/shipwright","promoted":1}
 {"ts":"2026-05-21T13:04:06Z","ts_epoch":1779368646,"type":"pipeline.cost","repo":"ezigus/shipwright","input_tokens":0,"output_tokens":0,"model":"opus","cost_usd":0.0000}
 {"ts":"2026-05-21T13:04:06Z","ts_epoch":1779368646,"type":"intelligence.prediction_validated","repo":"ezigus/shipwright","metric":"cost","predicted":2.15,"actual":0.0000,"delta":2.15}
+{"ts":"2026-05-21T13:06:46Z","ts_epoch":1779368806,"type":"cost.baseline_updated","repo":"ezigus/shipwright","stages":2,"issue":504}
+{"ts":"2026-05-21T13:06:56Z","ts_epoch":1779368816,"type":"regression.baseline","repo":"ezigus/shipwright","timestamp":"2026-05-21T13:06:56Z","test_count":0,"pass_rate":0,"script_count":273,"total_lines":318304}

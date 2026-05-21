@@ -25,7 +25,7 @@
       "wait_ci_timeout_s": 1500
     },
     "max_iterations": 20,
-    "build_test_retries": 3,
+    "build_test_retries": 1,
     "claude_timeout": 1800,
     "heartbeat_interval": 30,
     "composed_cache_ttl": 3600,

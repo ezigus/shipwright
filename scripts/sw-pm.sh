@@ -225,10 +225,10 @@ recommend_team() {
                 recruit_cost=$(echo "$recruit_result" | jq -r '.estimated_cost // 0')
 
                 # Map recruit roles/model to PM output format
-                local max_iterations=5
+                local max_iterations=10
                 local template="standard"
-                if [[ "$recruit_agents" -ge 4 ]]; then template="full"; max_iterations=8;
-                elif [[ "$recruit_agents" -le 1 ]]; then template="fast"; max_iterations=3;
+                if [[ "$recruit_agents" -ge 4 ]]; then template="full"; max_iterations=20;
+                elif [[ "$recruit_agents" -le 1 ]]; then template="fast"; max_iterations=10;
                 fi
 
                 local team_rec
@@ -274,7 +274,7 @@ recommend_team() {
         template="fast"
         estimated_agents=1
         model="haiku"
-        max_iterations=3
+        max_iterations=10
         confidence=85
         risk_factors="Low complexity, single module"
         mitigations="Standard code review"
@@ -284,7 +284,7 @@ recommend_team() {
         template="standard"
         estimated_agents=2
         model="sonnet"
-        max_iterations=5
+        max_iterations=10
         confidence=80
         risk_factors="Moderate complexity across modules"
         mitigations="Build + test iteration cycles"
@@ -294,7 +294,7 @@ recommend_team() {
         template="standard"
         estimated_agents=3
         model="sonnet"
-        max_iterations=6
+        max_iterations=15
         confidence=75
         risk_factors="Moderate-high complexity, coordination needed"
         mitigations="Parallel builders with test validation"
@@ -304,7 +304,7 @@ recommend_team() {
         template="full"
         estimated_agents=4
         model="opus"
-        max_iterations=8
+        max_iterations=20
         confidence=70
         risk_factors="High complexity, cross-system impact"
         mitigations="Full pipeline with review gates"
@@ -323,14 +323,14 @@ recommend_team() {
     case "$risk" in
         critical)
             template="enterprise"
-            max_iterations=$((max_iterations + 4))
+            if [[ $((max_iterations + 4)) -gt 20 ]]; then max_iterations=20; else max_iterations=$((max_iterations + 4)); fi
             confidence=$((confidence - 15))
             risk_factors="${risk_factors}; critical risk"
             mitigations="${mitigations}; emergency rollback plan"
             ;;
         high)
             template="full"
-            max_iterations=$((max_iterations + 2))
+            if [[ $((max_iterations + 2)) -gt 20 ]]; then max_iterations=20; else max_iterations=$((max_iterations + 2)); fi
             confidence=$((confidence - 5))
             ;;
     esac

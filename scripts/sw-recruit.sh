@@ -1124,11 +1124,11 @@ Return JSON only."
 
         # Derive template and max_iterations from team size/composition (triage needs these)
         local team_template="full"
-        local team_max_iterations=10
+        local team_max_iterations=15
         local team_size=${#recommended_team[@]}
         if [[ $team_size -le 2 ]]; then
             team_template="quick-fix"
-            team_max_iterations=5
+            team_max_iterations=10
         elif [[ $team_size -ge 5 ]]; then
             team_template="careful"
             team_max_iterations=20

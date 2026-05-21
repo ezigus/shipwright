@@ -600,8 +600,8 @@ optimize_learn_iterations() {
         --arg updated "$(now_iso)" \
         '{
             low: {max_iterations: (if $low.mean > 0 then (($low.mean + $low.stddev) | floor | if . < 5 then 5 else . end) else 10 end), confidence: (if $low.samples >= 10 then 0.8 elif $low.samples >= 5 then 0.6 else 0.4 end), mean: $low.mean, stddev: $low.stddev, samples: $low.samples},
-            medium: {max_iterations: (if $medium.mean > 0 then (($medium.mean + $medium.stddev) | floor | if . < 10 then 10 else . end) else 20 end), confidence: (if $medium.samples >= 10 then 0.8 elif $medium.samples >= 5 then 0.6 else 0.4 end), mean: $medium.mean, stddev: $medium.stddev, samples: $medium.samples},
-            high: {max_iterations: (if $high.mean > 0 then (($high.mean + $high.stddev) | floor | if . < 15 then 15 else . end) else 30 end), confidence: (if $high.samples >= 10 then 0.8 elif $high.samples >= 5 then 0.6 else 0.4 end), mean: $high.mean, stddev: $high.stddev, samples: $high.samples},
+            medium: {max_iterations: (if $medium.mean > 0 then (($medium.mean + $medium.stddev) | floor | if . < 10 then 10 else . end) else 15 end), confidence: (if $medium.samples >= 10 then 0.8 elif $medium.samples >= 5 then 0.6 else 0.4 end), mean: $medium.mean, stddev: $medium.stddev, samples: $medium.samples},
+            high: {max_iterations: (if $high.mean > 0 then (($high.mean + $high.stddev) | floor | if . < 15 then 15 else . end) else 20 end), confidence: (if $high.samples >= 10 then 0.8 elif $high.samples >= 5 then 0.6 else 0.4 end), mean: $high.mean, stddev: $high.stddev, samples: $high.samples},
             updated_at: $updated
         }' \
         > "$tmp_model" && mv "$tmp_model" "$ITERATION_MODEL_FILE" || rm -f "$tmp_model"

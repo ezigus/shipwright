@@ -957,6 +957,38 @@ test_admission_lock_released_after_run() {
     return 0
 }
 
+# 24. Build-loop ceiling math respects target (worst case ≤50 invocations)
+# ──────────────────────────────────────────────────────────────────────────────
+# Validates that the build-loop iteration ceiling computes to ≤50:
+#   worst_case = (MAX_ITERATIONS + MAX_EXTENSIONS * EXTENSION_SIZE) * (BUILD_TEST_RETRIES + 1)
+# With current defaults: (20 + 1*3) * (1+1) = 46
+test_build_loop_ceiling_respected() {
+    local max_iter ext_size max_ext build_retries
+    max_iter=$(grep -E '^MAX_ITERATIONS=' "$REPO_DIR/scripts/sw-loop.sh" | head -1 | sed -E 's/.*-([0-9]+).*/\1/')
+    ext_size=$(grep -E '^EXTENSION_SIZE=' "$REPO_DIR/scripts/sw-loop.sh" | head -1 | sed -E 's/^EXTENSION_SIZE=([0-9]+).*/\1/')
+    max_ext=$(grep -E '^MAX_EXTENSIONS=' "$REPO_DIR/scripts/sw-loop.sh" | head -1 | sed -E 's/^MAX_EXTENSIONS=([0-9]+).*/\1/')
+    build_retries=$(jq -r '.pipeline.build_test_retries' "$REPO_DIR/config/defaults.json")
+
+    if [[ -z "$max_iter" || -z "$ext_size" || -z "$max_ext" || -z "$build_retries" ]]; then
+        echo -e "    ${RED}✗${RESET} Could not extract ceiling knobs (max_iter='$max_iter' ext_size='$ext_size' max_ext='$max_ext' build_retries='$build_retries')"
+        return 1
+    fi
+
+    local per_cycle worst_case
+    per_cycle=$(( max_iter + max_ext * ext_size ))
+    worst_case=$(( per_cycle * (build_retries + 1) ))
+
+    if [[ "$worst_case" -gt 50 ]]; then
+        echo -e "    ${RED}✗${RESET} Worst case $worst_case > 50 (per_cycle=$per_cycle cycles=$((build_retries+1)))"
+        return 1
+    fi
+    if [[ "$per_cycle" -gt 25 ]]; then
+        echo -e "    ${RED}✗${RESET} Per-cycle ceiling $per_cycle > 25"
+        return 1
+    fi
+    return 0
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1020,6 +1052,7 @@ main() {
         "test_admission_reaps_stale_lock:Admission gate reaps stale lock and admits"
         "test_admission_refuses_low_memory:Admission gate refuses on low free memory"
         "test_admission_lock_released_after_run:Admission lock released after pipeline exit"
+        "test_build_loop_ceiling_respected:Build-loop iteration ceiling respects target (≤50 invocations)"
     )
 
     for entry in "${tests[@]}"; do

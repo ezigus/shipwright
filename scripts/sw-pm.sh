@@ -15,6 +15,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# Central iteration ceiling helper
+# shellcheck source=lib/policy.sh
+[[ -f "$SCRIPT_DIR/lib/policy.sh" ]] && source "$SCRIPT_DIR/lib/policy.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -319,18 +322,20 @@ recommend_team() {
         mitigations="${mitigations}; security review before merge"
     fi
 
-    # Adjust for risk level
+    # Adjust for risk level — caps at the central iteration ceiling (see lib/policy.sh).
+    # apply_iteration_ceiling emits an event when capping kicks in so silent truncation
+    # is observable in events.jsonl.
     case "$risk" in
         critical)
             template="enterprise"
-            if [[ $((max_iterations + 4)) -gt 20 ]]; then max_iterations=20; else max_iterations=$((max_iterations + 4)); fi
+            max_iterations=$(apply_iteration_ceiling $((max_iterations + 4)) "pm.risk.critical")
             confidence=$((confidence - 15))
             risk_factors="${risk_factors}; critical risk"
             mitigations="${mitigations}; emergency rollback plan"
             ;;
         high)
             template="full"
-            if [[ $((max_iterations + 2)) -gt 20 ]]; then max_iterations=20; else max_iterations=$((max_iterations + 2)); fi
+            max_iterations=$(apply_iteration_ceiling $((max_iterations + 2)) "pm.risk.high")
             confidence=$((confidence - 5))
             ;;
     esac

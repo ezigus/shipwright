@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # policy.sh — Load central policy from config/policy.json or ~/.shipwright/policy.json
 # Source this to get POLICY_* vars (optional). Scripts can also jq config/policy.json directly.
 # Usage: source "$SCRIPT_DIR/lib/policy.sh"   (after SCRIPT_DIR is set)
@@ -28,5 +29,32 @@ policy_get() {
         echo "$default"
     else
         echo "$val"
+    fi
+}
+
+# Central iteration ceiling — single source of truth for build-loop worst-case math.
+# Reads .pipeline.retry_max_iterations from policy.json (default 20).
+iteration_ceiling() {
+    policy_get '.pipeline.retry_max_iterations' 20
+}
+
+# apply_iteration_ceiling <proposed> [source_label]
+# Echoes the capped value. Emits an event when capping occurred so silent
+# truncation is observable in events.jsonl.
+apply_iteration_ceiling() {
+    local proposed="${1:-0}"
+    local source_label="${2:-unknown}"
+    local ceiling
+    ceiling=$(iteration_ceiling)
+    if [[ "$proposed" -gt "$ceiling" ]]; then
+        if [[ "$(type -t emit_event 2>/dev/null)" == "function" ]]; then
+            emit_event "iteration_ceiling_applied" \
+                "source=$source_label" \
+                "proposed=$proposed" \
+                "ceiling=$ceiling" >/dev/null 2>&1 || true
+        fi
+        echo "$ceiling"
+    else
+        echo "$proposed"
     fi
 }

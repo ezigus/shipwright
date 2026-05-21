@@ -628,8 +628,8 @@ test_audit_suppress_directive_recognized() {
         return
     fi
 
-    # Source just the two helper functions by extracting them — avoids
-    # pulling in the rest of the file's globals.
+    # Source the whole pipeline-intelligence.sh in a subshell — we only call
+    # the two helper functions but sourcing the full file is simplest and correct.
     local fixture_dir="$TEST_TEMP_DIR/audit-suppress-fixture"
     mkdir -p "$fixture_dir"
     local artifacts_dir="$fixture_dir/.claude/pipeline-artifacts"

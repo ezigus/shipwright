@@ -944,7 +944,7 @@ _audit_suppress_check() {
     _excerpt=$(sed -n "${_start},${_line}p" "$_file" 2>/dev/null || true)
     [[ -z "$_excerpt" ]] && return 0
     local _hit
-    _hit=$(echo "$_excerpt" | grep -oE '@audit-suppress[[:space:]]+[A-Za-z0-9_]{8,}[[:space:]]+--[[:space:]]+.+$' | tail -1)
+    _hit=$(echo "$_excerpt" | grep -oE '@audit-suppress[[:space:]]+[A-Za-z0-9_]{8,}[[:space:]]+--[[:space:]]+.+$' | tail -1 || true)
     [[ -z "$_hit" ]] && return 0
     local _id _reason
     _id=$(echo "$_hit" | sed -E 's/^@audit-suppress[[:space:]]+([A-Za-z0-9_]+)[[:space:]]+--[[:space:]]+.*$/\1/')
@@ -952,7 +952,7 @@ _audit_suppress_check() {
     echo "${_id}|${_reason}"
 }
 
-# Append a suppression record to the sidecar audit log. Idempotent best-effort.
+# Append a suppression record to the sidecar audit log. Best-effort (not deduplicated).
 _audit_suppress_record() {
     local _file="$1"
     local _line="$2"
@@ -971,7 +971,7 @@ _audit_suppress_record() {
     # Validate existing is JSON array; reset if corrupt.
     echo "$_existing" | jq -e 'type == "array"' >/dev/null 2>&1 || _existing="[]"
     local _tmp
-    _tmp=$(mktemp)
+    _tmp=$(mktemp "${TMPDIR:-/tmp}/audit-suppress.XXXXXX")
     echo "$_existing" | jq \
         --arg f "$_file" \
         --arg l "$_line" \

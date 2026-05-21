@@ -679,7 +679,7 @@ jobs:
           if [[ -d "$SNAP_DIR" ]]; then
             cp -r "$SNAP_DIR/." .claude/pipeline-artifacts/
             echo "  ↩ Restored all artifacts from issue-${ISSUE_NUMBER} snapshot"
-            RECOVERED=$(find "$SNAP_DIR" -maxdepth 1 -type f | wc -l | tr -d ' ')
+            RECOVERED=$(find "$SNAP_DIR" -type f | wc -l | tr -d ' ')
           fi
           # Restore canonical state files to their expected locations outside pipeline-artifacts/
           for pair in \

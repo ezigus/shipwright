@@ -548,8 +548,10 @@ important decisions and mcp__ruflo__memory_search to recall prior context from n
 
     # ── Oversight gate: pipeline review/quality stages block on verdict ──
     # Compute blocking issues and save blockers early (for self-healing, independent of gates)
+    # Exclude [Pre-existing] lines from counts — they are not introduced by this PR.
     local _sec_count _blocking reject_reason=""
-    _sec_count=$(grep -ciE '\*\*\[?Security\]?\*\*' "$review_file" 2>/dev/null || true)
+    _sec_count=$(grep -iE '\*\*\[?Security\]?\*\*' "$review_file" 2>/dev/null \
+        | grep -civE '\[Pre-existing\]' || true)
     _sec_count="${_sec_count:-0}"
     _blocking=$((critical_count + _sec_count))
     [[ "$_blocking" -gt 0 ]] && reject_reason="Review found ${_blocking} critical/security issue(s)"
@@ -572,8 +574,10 @@ important decisions and mcp__ruflo__memory_search to recall prior context from n
 
     # ── Review Blocking Gate ──
     # Block pipeline on critical/security issues unless compound_quality handles them
+    # Exclude [Pre-existing] lines from blocking counts — only PR-introduced findings block.
     local security_count
-    security_count=$(grep -ciE '\*\*\[?Security\]?\*\*' "$review_file" 2>/dev/null || true)
+    security_count=$(grep -iE '\*\*\[?Security\]?\*\*' "$review_file" 2>/dev/null \
+        | grep -civE '\[Pre-existing\]' || true)
     security_count="${security_count:-0}"
 
     local blocking_issues=$((critical_count + security_count))

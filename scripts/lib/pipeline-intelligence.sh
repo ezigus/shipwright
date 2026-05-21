@@ -2270,18 +2270,18 @@ ${_cascade_test_tail}"
             if [[ "$sec_finding_count" -gt 0 ]]; then
                 local _sec_first_title=""
                 if [[ -f "$ARTIFACTS_DIR/security-source-scan.json" ]]; then
-                    _sec_first_title=$(jq -r 'first(.[] | select(.severity == "critical" or .severity == "high") | .description // "") // ""' \
+                    _sec_first_title=$(jq -r '[.[] | select(.severity == "critical" or .severity == "high") | .description // ""] | .[0] // ""' \
                         "$ARTIFACTS_DIR/security-source-scan.json" 2>/dev/null | head -c 80 || true)
                 fi
                 if [[ -n "$_sec_first_title" ]]; then
-                    warn "Source pattern scan: ${sec_finding_count} finding(s) (scope: PR-introduced) — e.g. ${_sec_first_title}"
+                    warn "Source pattern scan: ${sec_finding_count} finding(s) (scope: changed files, all lines) — e.g. ${_sec_first_title}"
                 else
-                    warn "Source pattern scan: ${sec_finding_count} finding(s) (scope: PR-introduced)"
+                    warn "Source pattern scan: ${sec_finding_count} finding(s) (scope: changed files, all lines)"
                 fi
                 total_critical=$((total_critical + sec_finding_count))
                 all_passed=false
             else
-                success "Source pattern scan: clean (scope: PR-introduced)"
+                success "Source pattern scan: clean (scope: changed files, all lines)"
             fi
         fi
 
@@ -2475,7 +2475,7 @@ All quality checks clean:
 - Architecture validation: ✅
 - E2E validation: ✅
 - DoD audit: ✅
-- Source pattern scan: ✅ (scope: PR-introduced)
+- Source pattern scan: ✅ (scope: changed files, all lines)
 - Dependency CVE audit: ✅ (scope: all dependencies)
 - Coverage: ✅
 - Performance: ✅

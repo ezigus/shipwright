@@ -957,6 +957,65 @@ test_admission_lock_released_after_run() {
     return 0
 }
 
+# 24. Build-loop ceiling math respects target (worst case ≤50 invocations)
+# ──────────────────────────────────────────────────────────────────────────────
+# Validates that the build-loop iteration ceiling computes to ≤50:
+#   worst_case = (MAX_ITERATIONS + MAX_EXTENSIONS * EXTENSION_SIZE) * (BUILD_TEST_RETRIES + 1)
+# With current defaults: (20 + 1*3) * (1+1) = 46
+test_build_loop_ceiling_respected() {
+    local loop_sh="$REPO_DIR/scripts/sw-loop.sh"
+    local defaults_json="$REPO_DIR/config/defaults.json"
+    local max_iter ext_size max_ext build_retries
+
+    # Match either bash parameter expansion form (`${VAR:-N}`) or a literal assignment (`=N`).
+    # The previous regex `.*-([0-9]+).*` only worked by accident under greedy matching and
+    # silently failed when the line was refactored to a literal — anchor explicitly instead.
+    max_iter=$(grep -E '^MAX_ITERATIONS=' "$loop_sh" | head -1 \
+        | sed -E -e 's/.*:-([0-9]+).*/\1/' -e 's/^MAX_ITERATIONS=([0-9]+).*/\1/')
+    ext_size=$(grep -E '^EXTENSION_SIZE=' "$loop_sh" | head -1 | sed -E 's/^EXTENSION_SIZE=([0-9]+).*/\1/')
+    max_ext=$(grep -E '^MAX_EXTENSIONS=' "$loop_sh" | head -1 | sed -E 's/^MAX_EXTENSIONS=([0-9]+).*/\1/')
+    build_retries=$(jq -r '.pipeline.build_test_retries' "$defaults_json")
+
+    # Validate extractions are pure integers (catches silent regex failure).
+    local v
+    for v in "$max_iter" "$ext_size" "$max_ext" "$build_retries"; do
+        if ! [[ "$v" =~ ^[0-9]+$ ]]; then
+            echo -e "    ${RED}✗${RESET} Could not extract ceiling knobs (max_iter='$max_iter' ext_size='$ext_size' max_ext='$max_ext' build_retries='$build_retries')"
+            return 1
+        fi
+    done
+
+    local per_cycle worst_case
+    per_cycle=$(( max_iter + max_ext * ext_size ))
+    worst_case=$(( per_cycle * (build_retries + 1) ))
+
+    if [[ "$worst_case" -gt 50 ]]; then
+        echo -e "    ${RED}✗${RESET} Worst case $worst_case > 50 (per_cycle=$per_cycle cycles=$((build_retries+1)))"
+        return 1
+    fi
+    if [[ "$per_cycle" -gt 25 ]]; then
+        echo -e "    ${RED}✗${RESET} Per-cycle ceiling $per_cycle > 25"
+        return 1
+    fi
+
+    # Ceiling enforcement across all paths that set max_iterations.
+    # Any literal `max_iterations=N` greater than MAX_ITERATIONS in sw-pm.sh / sw-triage.sh
+    # would let a single pipeline silently exceed the ceiling.
+    local script bad
+    for script in sw-pm.sh sw-triage.sh sw-recruit.sh; do
+        if [[ ! -f "$REPO_DIR/scripts/$script" ]]; then continue; fi
+        # Match bash assignments only (avoid jq `.max_iterations: ...` etc.)
+        bad=$(grep -oE 'max_iterations=[0-9]+' "$REPO_DIR/scripts/$script" \
+            | awk -F= -v cap="$max_iter" '$2+0 > cap+0 {print}' || true)
+        if [[ -n "$bad" ]]; then
+            echo -e "    ${RED}✗${RESET} $script has max_iterations literal exceeding ceiling $max_iter: $bad"
+            return 1
+        fi
+    done
+
+    return 0
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1020,6 +1079,7 @@ main() {
         "test_admission_reaps_stale_lock:Admission gate reaps stale lock and admits"
         "test_admission_refuses_low_memory:Admission gate refuses on low free memory"
         "test_admission_lock_released_after_run:Admission lock released after pipeline exit"
+        "test_build_loop_ceiling_respected:Build-loop iteration ceiling respects target (≤50 invocations)"
     )
 
     for entry in "${tests[@]}"; do

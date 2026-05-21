@@ -2115,7 +2115,7 @@ ${_cascade_test_tail}"
     local _cycles_executed=0
     while [[ "$cycle" -lt "$max_cycles" ]]; do
         cycle=$((cycle + 1))
-        COMPOUND_QUALITY_CYCLE=$cycle
+        export COMPOUND_QUALITY_CYCLE=$cycle
         local all_passed=true
 
         echo ""

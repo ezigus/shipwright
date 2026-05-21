@@ -1,7 +1,7 @@
 {
   "baselines": {
-    "build_duration_s": 559,
-    "test_duration_s": 21
+    "build_duration_s": 2499,
+    "test_duration_s": 741
   },
-  "last_updated": "2026-05-21T17:31:27Z"
+  "last_updated": "2026-05-21T20:27:24Z"
 }

@@ -39,6 +39,16 @@
       "seen_count": 2,
       "last_seen": "2026-05-21T12:55:50Z",
       "category": "test_failure"
+    },
+    {
+      "stage": "test",
+      "pattern": "Error Handling",
+      "root_cause": "intelligence.cjs is missing an exported fingerprintContent function and statusline.js/github-safe.js are missing required @audit-suppress audit_1776853149979 directives",
+      "fix": "Export fingerprintContent from intelligence.cjs and add @audit-suppress audit_1776853149979 comments to statusline.js and github-safe.js",
+      "exit_code": 1,
+      "seen_count": 1,
+      "last_seen": "2026-05-21T18:31:38Z",
+      "category": "test_failure"
     }
   ]
 }

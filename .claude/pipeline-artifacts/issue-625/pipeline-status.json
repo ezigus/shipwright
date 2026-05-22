@@ -1,0 +1,13 @@
+{
+  "run_id": "26308497382",
+  "branch": "shipwright/issue-625",
+  "stage": "intake",
+  "iteration": 0,
+  "retry_count": 0,
+  "last_heartbeat": "2026-05-22T19:49:17Z",
+  "exit_reason": "",
+  "error_category": "",
+  "completed_stages": [
+    "intake"
+  ]
+}

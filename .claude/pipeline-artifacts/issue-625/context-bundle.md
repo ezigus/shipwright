@@ -1,6 +1,6 @@
 # Pipeline Context Bundle
 
-Generated: 2026-05-22T19:49:18Z
+Generated: 2026-05-22T19:55:19Z
 Stage: plan
 Goal: Pipeline: resync stage — agent conflict resolution with retry budget and escalation
 

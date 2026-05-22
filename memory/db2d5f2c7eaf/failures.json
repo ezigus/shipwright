@@ -43,11 +43,11 @@
     {
       "stage": "test",
       "pattern": "Error Handling",
-      "root_cause": "intelligence.cjs is missing fingerprintContent export and has FNV-1a prime truncation bug; statusline.js and github-safe.js are missing required @audit-suppress audit_1776853149979 directives",
-      "fix": "Export fingerprintContent from intelligence.cjs with correct non-truncated FNV-1a prime, and add @audit-suppress audit_1776853149979 directives to statusline.js and github-safe.js",
+      "root_cause": "intelligence.cjs does not export fingerprintContent and statusline.js/github-safe.js are missing required @audit-suppress audit_1776853149979 directives",
+      "fix": "export fingerprintContent from intelligence.cjs and add @audit-suppress audit_1776853149979 directive to statusline.js and github-safe.js",
       "exit_code": 1,
-      "seen_count": 4,
-      "last_seen": "2026-05-22T20:49:07Z",
+      "seen_count": 5,
+      "last_seen": "2026-05-22T23:00:01Z",
       "category": "test_failure"
     }
   ]

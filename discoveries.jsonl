@@ -404,3 +404,4 @@
 {"ts":"2026-05-22T19:11:33Z","ts_epoch":1779477093,"pipeline_id":"db2d5f2c7eaf-pipeline-5059-624","category":"merge","file_patterns":"*","discovery":"Stage merge completed","resolution":""}
 {"ts":"2026-05-22T19:11:37Z","ts_epoch":1779477097,"pipeline_id":"db2d5f2c7eaf-pipeline-5059-624","category":"monitor","file_patterns":"*","discovery":"Stage monitor completed","resolution":""}
 {"ts":"2026-05-22T19:12:44Z","ts_epoch":1779477164,"pipeline_id":"db2d5f2c7eaf-pipeline-5059-624","category":"pipeline_success","file_patterns":".claude/pipeline-artifacts/issue-624/pipeline-state.md,.claude/pipeline-artifacts/issue-624/pipeline-status.json,","discovery":"Pipeline success for issue #624 (autonomous template, stage=monitor)","resolution":"success"}
+{"ts":"2026-05-22T19:49:18Z","ts_epoch":1779479358,"pipeline_id":"db2d5f2c7eaf-pipeline-5016-625","category":"intake","file_patterns":"*","discovery":"Stage intake completed","resolution":""}

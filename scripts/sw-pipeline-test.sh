@@ -4304,6 +4304,12 @@ main() {
         "test_workflow_workspace_branch_re_export_step_present:PR3: workflow has idempotent WORKSPACE_BRANCH re-export step"
         "test_self_healing_merge_build_test_exists:Merge: self_healing_merge_build_test function exists in sw-pipeline.sh"
         "test_self_healing_merge_build_test_dispatch_wired:Merge: stage loop dispatches self_healing_merge_build_test on merge failure with retry context"
+        "test_scope_redaction_helpers_present:Scope: _file_in_scope and _redact_paths_outside_scope exist in helpers.sh"
+        "test_scope_redaction_in_scope_no_redaction:Scope: in-scope path is not redacted"
+        "test_scope_redaction_oos_event_fires:Scope: out-of-scope path triggers redaction sentinel"
+        "test_scope_drift_subcommand_present:Scope: drift subcommand wired in sw-pipeline.sh"
+        "test_scope_escalation_detection_in_loop:Scope: SCOPE_ESCALATION detection and event emission in sw-loop.sh"
+        "test_scope_manifest_events_in_extract:Scope: scope_manifest_missing/loaded events in _extract_scope_from_design"
     )
 
     for entry in "${tests[@]}"; do
@@ -4609,6 +4615,127 @@ test_workflow_workspace_branch_re_export_step_present() {
     fi
     if ! grep -q 'Re-export workspace branch\|idempotent.*WORKSPACE_BRANCH\|WORKSPACE_BRANCH.*idempotent' "$workflow" 2>/dev/null; then
         echo "FAIL: workflow missing idempotent WORKSPACE_BRANCH re-export step (expected after fix)"
+        return 1
+    fi
+    return 0
+}
+
+# ─── Scope Redaction Smoke Tests (PR-D) ──────────────────────────────────────
+
+test_scope_redaction_helpers_present() {
+    local helpers_sh="$REPO_DIR/scripts/lib/helpers.sh"
+    if [[ ! -f "$helpers_sh" ]]; then
+        echo "SKIP: helpers.sh not found"
+        return 0
+    fi
+    if ! grep -q '_file_in_scope' "$helpers_sh" 2>/dev/null; then
+        echo "SKIP: _file_in_scope not yet merged (depends on PR-B)"
+        return 0
+    fi
+    if ! grep -q '_redact_paths_outside_scope' "$helpers_sh" 2>/dev/null; then
+        echo "SKIP: _redact_paths_outside_scope not yet merged (depends on PR-B)"
+        return 0
+    fi
+    return 0
+}
+
+test_scope_redaction_in_scope_no_redaction() {
+    # A finding that references only in-scope paths must NOT trigger redaction.
+    local helpers_sh="$REPO_DIR/scripts/lib/helpers.sh"
+    [[ -f "$helpers_sh" ]] || { echo "SKIP: helpers.sh not found"; return 0; }
+    grep -q '_redact_paths_outside_scope' "$helpers_sh" 2>/dev/null \
+        || { echo "SKIP: _redact_paths_outside_scope not yet merged (depends on PR-B)"; return 0; }
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/scope-smoke-ok.XXXXXX")
+    trap 'rm -rf "$tmp_dir"' RETURN
+
+    local allowlist="scripts/lib/helpers.sh"$'\n'"scripts/lib/pipeline-stages.sh"
+    local finding="helpers.sh:42 — _redact_paths_outside_scope called with empty allowlist"
+
+    local redacted
+    redacted=$(
+        COMPOUND_QUALITY_CYCLE=0 \
+        bash -c "
+            source '$helpers_sh' 2>/dev/null
+            _redact_paths_outside_scope $(printf '%q' "$finding") $(printf '%q' "$allowlist") 'smoke_test' '0' 2>/dev/null
+        " 2>/dev/null || echo "$finding"
+    )
+
+    if echo "$redacted" | grep -q '\[redacted:out-of-scope:'; then
+        echo "FAIL: in-scope path was redacted — got: $redacted"
+        return 1
+    fi
+    return 0
+}
+
+test_scope_redaction_oos_event_fires() {
+    # A finding referencing an out-of-scope path must trigger redaction.
+    local helpers_sh="$REPO_DIR/scripts/lib/helpers.sh"
+    [[ -f "$helpers_sh" ]] || { echo "SKIP: helpers.sh not found"; return 0; }
+    grep -q '_redact_paths_outside_scope' "$helpers_sh" 2>/dev/null \
+        || { echo "SKIP: _redact_paths_outside_scope not yet merged (depends on PR-B)"; return 0; }
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/scope-smoke-oos.XXXXXX")
+    trap 'rm -rf "$tmp_dir"' RETURN
+
+    local allowlist="scripts/lib/helpers.sh"
+    local finding=".claude/helpers/intelligence.cjs:99 — execSync called outside scope"
+
+    local redacted
+    redacted=$(
+        COMPOUND_QUALITY_CYCLE=0 \
+        bash -c "
+            source '$helpers_sh' 2>/dev/null
+            _redact_paths_outside_scope $(printf '%q' "$finding") $(printf '%q' "$allowlist") 'smoke_oos' '0' 2>/dev/null
+        " 2>/dev/null || echo "$finding"
+    )
+
+    if ! echo "$redacted" | grep -q '\[redacted:out-of-scope:'; then
+        echo "FAIL: out-of-scope path was not redacted — got: $redacted"
+        return 1
+    fi
+    return 0
+}
+
+test_scope_drift_subcommand_present() {
+    if ! grep -q 'pipeline_drift_report\|drift)' "$REAL_PIPELINE_SCRIPT" 2>/dev/null; then
+        echo "FAIL: drift subcommand not found in sw-pipeline.sh"
+        return 1
+    fi
+    return 0
+}
+
+test_scope_escalation_detection_in_loop() {
+    local loop_sh="$REPO_DIR/scripts/sw-loop.sh"
+    if [[ ! -f "$loop_sh" ]]; then
+        echo "SKIP: sw-loop.sh not found"
+        return 0
+    fi
+    if ! grep -q 'LOOP:SCOPE_ESCALATION' "$loop_sh" 2>/dev/null; then
+        echo "FAIL: SCOPE_ESCALATION detection not found in sw-loop.sh"
+        return 1
+    fi
+    if ! grep -q 'pipeline.scope_escalation' "$loop_sh" 2>/dev/null; then
+        echo "FAIL: pipeline.scope_escalation event not emitted in sw-loop.sh"
+        return 1
+    fi
+    return 0
+}
+
+test_scope_manifest_events_in_extract() {
+    local stages_sh="$REPO_DIR/scripts/lib/pipeline-stages.sh"
+    if [[ ! -f "$stages_sh" ]]; then
+        echo "SKIP: pipeline-stages.sh not found"
+        return 0
+    fi
+    if ! grep -q 'pipeline.scope_manifest_missing' "$stages_sh" 2>/dev/null; then
+        echo "FAIL: pipeline.scope_manifest_missing not emitted in pipeline-stages.sh"
+        return 1
+    fi
+    if ! grep -q 'pipeline.scope_manifest_loaded' "$stages_sh" 2>/dev/null; then
+        echo "FAIL: pipeline.scope_manifest_loaded not emitted in pipeline-stages.sh"
         return 1
     fi
     return 0

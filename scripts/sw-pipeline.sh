@@ -558,6 +558,7 @@ show_help() {
     echo -e "  ${CYAN}abort${RESET}                   Stop pipeline and mark aborted"
     echo -e "  ${CYAN}list${RESET}                    Show available pipeline templates"
     echo -e "  ${CYAN}show${RESET}    <name>          Display pipeline stages"
+    echo -e "  ${CYAN}drift${RESET}                   Show scope drift report (redactions, violations, escalations)"
     echo ""
     echo -e "${BOLD}START OPTIONS${RESET}"
     echo -e "  ${DIM}--goal \"description\"${RESET}     What to build (required unless --issue)"
@@ -4224,7 +4225,7 @@ pipeline_show() {
 # ─── Drift Report ───────────────────────────────────────────────────────────
 
 pipeline_drift_report() {
-    local events_file="${HOME}/.shipwright/events.jsonl"
+    local events_file="${EVENTS_FILE:-${HOME}/.shipwright/events.jsonl}"
     if [[ ! -f "$events_file" ]]; then
         warn "No events log found at $events_file — run a pipeline first."
         return 0
@@ -4236,8 +4237,10 @@ pipeline_drift_report() {
 
     # Scope manifest adoption
     local missing_count loaded_count
-    missing_count=$(grep -c '"pipeline.scope_manifest_missing"' "$events_file" 2>/dev/null || echo 0)
-    loaded_count=$(grep -c '"pipeline.scope_manifest_loaded"' "$events_file" 2>/dev/null || echo 0)
+    missing_count=$(grep -c '"pipeline.scope_manifest_missing"' "$events_file" 2>/dev/null || true)
+    missing_count=${missing_count:-0}
+    loaded_count=$(grep -c '"pipeline.scope_manifest_loaded"' "$events_file" 2>/dev/null || true)
+    loaded_count=${loaded_count:-0}
     echo -e "${BOLD}  Scope fence adoption:${RESET}"
     echo -e "    Stages with fence:    ${GREEN}${loaded_count}${RESET}"
     echo -e "    Stages without fence: ${YELLOW}${missing_count}${RESET}"
@@ -4245,7 +4248,8 @@ pipeline_drift_report() {
 
     # Path redactions
     local redacted_count
-    redacted_count=$(grep -c '"pipeline.prompt_path_redacted"' "$events_file" 2>/dev/null || echo 0)
+    redacted_count=$(grep -c '"pipeline.prompt_path_redacted"' "$events_file" 2>/dev/null || true)
+    redacted_count=${redacted_count:-0}
     echo -e "${BOLD}  Out-of-scope path redactions:${RESET}"
     echo -e "    Total redacted: ${redacted_count}"
     if [[ "$redacted_count" -gt 0 ]] && command -v jq >/dev/null 2>&1; then
@@ -4253,20 +4257,22 @@ pipeline_drift_report() {
         grep '"pipeline.prompt_path_redacted"' "$events_file" 2>/dev/null \
             | jq -r '.prompt_section // .seam // "unknown"' 2>/dev/null \
             | sort | uniq -c | sort -rn \
-            | awk '{printf "      %-40s %s\n", $2, $1}' || true
+            | awk '{count=$1; $1=""; sub(/^ /,""); printf "      %-40s %s\n", $0, count}' || true
     fi
     echo ""
 
     # Staging violations (pre-existing)
     local violation_count
-    violation_count=$(grep -c '"loop.scope_violation"' "$events_file" 2>/dev/null || echo 0)
+    violation_count=$(grep -c '"loop.scope_violation"' "$events_file" 2>/dev/null || true)
+    violation_count=${violation_count:-0}
     echo -e "${BOLD}  Staging violations (loop.scope_violation):${RESET}"
     echo -e "    Total: ${violation_count}"
     echo ""
 
     # Scope escalations
     local escalation_count
-    escalation_count=$(grep -c '"pipeline.scope_escalation"' "$events_file" 2>/dev/null || echo 0)
+    escalation_count=$(grep -c '"pipeline.scope_escalation"' "$events_file" 2>/dev/null || true)
+    escalation_count=${escalation_count:-0}
     echo -e "${BOLD}  Scope escalations (agent requested scope expansion):${RESET}"
     echo -e "    Total: ${escalation_count}"
     if [[ "$escalation_count" -gt 0 ]] && command -v jq >/dev/null 2>&1; then
@@ -4274,7 +4280,7 @@ pipeline_drift_report() {
         grep '"pipeline.scope_escalation"' "$events_file" 2>/dev/null \
             | jq -r '.reason // "unspecified"' 2>/dev/null \
             | sort | uniq -c | sort -rn \
-            | awk '{printf "      %-60s %s\n", $2, $1}' || true
+            | awk '{count=$1; $1=""; sub(/^ /,""); printf "      %-60s %s\n", $0, count}' || true
     fi
     echo ""
 }

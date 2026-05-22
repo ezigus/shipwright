@@ -3279,7 +3279,7 @@ ${GOAL}"
         if grep -q '<<<LOOP:SCOPE_ESCALATION:' "$log_file" 2>/dev/null; then
             local _esc_reason
             _esc_reason=$(grep -o '<<<LOOP:SCOPE_ESCALATION:[^>]*>>>' "$log_file" 2>/dev/null \
-                | head -1 | sed 's/<<<LOOP:SCOPE_ESCALATION:\(.*\)>>>/\1/')
+                | head -1 | sed 's/<<<LOOP:SCOPE_ESCALATION:\(.*\)>>>/\1/' || true)
             type emit_event >/dev/null 2>&1 && emit_event "pipeline.scope_escalation" \
                 "iteration=$ITERATION" \
                 "reason=${_esc_reason:-unspecified}" \

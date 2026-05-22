@@ -58,7 +58,8 @@ _extract_scope_from_design() {
                 "issue=${ISSUE_NUMBER:-0}" 2>/dev/null || true
     else
         local _file_count
-        _file_count=$(printf '%s\n' "$_scope_out" | grep -c . 2>/dev/null || echo 0)
+        _file_count=$(printf '%s\n' "$_scope_out" | grep -c . 2>/dev/null || true)
+        _file_count=${_file_count:-0}
         declare -f emit_event >/dev/null 2>&1 && \
             emit_event "pipeline.scope_manifest_loaded" \
                 "stage=${PIPELINE_STAGE:-unknown}" \

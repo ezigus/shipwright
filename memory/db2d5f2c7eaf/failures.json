@@ -43,11 +43,11 @@
     {
       "stage": "test",
       "pattern": "Error Handling",
-      "root_cause": "fingerprintContent function is not exported from intelligence.cjs, causing both the export test and the 435-truncation regression test to fail",
-      "fix": "Export the fingerprintContent function from intelligence.cjs so tests can verify it exists and validate the FNV-1a prime is not truncated to 435",
+      "root_cause": "intelligence.cjs is missing the fingerprintContent export (and likely has the 435-truncation bug in FNV-1a prime), and statusline.js/github-safe.js are missing required @audit-suppress audit_1776853149979 directives",
+      "fix": "export fingerprintContent from intelligence.cjs with correct FNV-1a prime, and add @audit-suppress audit_1776853149979 directives to statusline.js and github-safe.js",
       "exit_code": 1,
-      "seen_count": 2,
-      "last_seen": "2026-05-22T15:09:27Z",
+      "seen_count": 3,
+      "last_seen": "2026-05-22T17:10:46Z",
       "category": "test_failure"
     }
   ]

@@ -1,1 +1,33 @@
-{"common_patterns":[],"cross_repo_learnings":[]}
+{
+  "common_patterns": [
+    {
+      "pattern": "▸ Loop: compose_prompt iter 1 includes pipeline_context_section... /home/runner/work/shipwright/shipwright/scripts/lib/loop-iteration.sh: line 240: compose_gate_findings_section: command not found",
+      "promoted_at": "2026-05-22T19:12:44Z",
+      "category": "general",
+      "source": "aggregate"
+    }
+  ],
+  "cross_repo_learnings": [
+    {
+      "repo": "ezigus/shipwright",
+      "type": "review_feedback",
+      "bugs": 2,
+      "warnings": 3,
+      "captured_at": "2026-05-22T19:11:37Z"
+    },
+    {
+      "repo": "ezigus/shipwright",
+      "type": "review_feedback",
+      "bugs": 2,
+      "warnings": 3,
+      "captured_at": "2026-05-22T19:12:42Z"
+    },
+    {
+      "repo": "ezigus/shipwright",
+      "type": "review_feedback",
+      "bugs": 2,
+      "warnings": 3,
+      "captured_at": "2026-05-22T19:12:44Z"
+    }
+  ]
+}

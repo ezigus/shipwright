@@ -411,13 +411,18 @@ ${_skill_prompts}
             warn "Ruflo: recall output was sanitized before injection (potential injection attempt or malformed data)"
         fi
         # Validate threshold: must be a non-negative integer; fall back to 50 if not.
+        # Use :-50 in both places so an unset variable doesn't trigger nounset (set -u).
         local _ruflo_min_len
         if [[ "${SHIPWRIGHT_RUFLO_RECALL_MIN_LEN:-50}" =~ ^[0-9]+$ ]]; then
-            _ruflo_min_len="${SHIPWRIGHT_RUFLO_RECALL_MIN_LEN}"
+            _ruflo_min_len="${SHIPWRIGHT_RUFLO_RECALL_MIN_LEN:-50}"
         else
             _ruflo_min_len=50
         fi
-        if [[ -n "$_build_recall_ctx" && "${#_build_recall_ctx}" -ge "$_ruflo_min_len" ]]; then
+        # Length gate uses the RAW (pre-sanitization) length so that stripping
+        # injected markdown headers doesn't cause substantive content to fall
+        # below the threshold. Sanitization can only remove content, so if the
+        # raw result is too short, the sanitized result will be too.
+        if [[ -n "$_build_recall_ctx" && "${#_raw_recall_ctx}" -ge "$_ruflo_min_len" ]]; then
             build_context_body="${build_context_body}
 
 ## Historical Build Context
@@ -425,7 +430,7 @@ ${_build_recall_ctx}"
             info "Ruflo: injected historical build context (${#_build_recall_ctx} chars)"
         else
             if [[ -n "$_build_recall_ctx" ]]; then
-                info "Ruflo: recall result too short to be useful (${#_build_recall_ctx} chars, min=${_ruflo_min_len}) — skipping injection"
+                info "Ruflo: recall result too short to be useful (${#_raw_recall_ctx} chars raw, min=${_ruflo_min_len}) — skipping injection"
             else
                 info "Ruflo: no similar outcomes found yet for this repo. Outcomes accumulate across pipeline runs in the repo and issue namespaces."
             fi

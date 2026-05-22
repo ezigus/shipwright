@@ -78,7 +78,9 @@ ${memory_context}"
     fi
 
     # Lines ~392-422 of pipeline-stages-build.sh (post-fix):
-    # inject ruflo recall only when non-empty AND length >= min_len
+    # inject ruflo recall only when non-empty AND RAW length >= min_len.
+    # (Raw length is used so sanitization of injected headers doesn't drop
+    #  substantive content below the threshold.)
     if [[ -n "$mock_ruflo_result" && "${#mock_ruflo_result}" -ge "$min_len" ]]; then
         body="${body}
 ## Historical Build Context

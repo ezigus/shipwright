@@ -574,6 +574,169 @@ _git_bookkeeping_pathspecs() {
     done
 }
 
+# ─── Scope-redaction helpers (PR-B invariant) ───────────────────────────────
+#
+# Invariant: no file path token in any agent prompt may name a file outside the
+# design.md ```scope allow-list (except inside <out-of-scope-context> blocks).
+# Codified at prompt-construction time — detective guards (safe_git_stage) remain
+# as defense-in-depth but are not the primary enforcement mechanism.
+
+# _file_in_scope — Test whether a single file path is permitted by the scope allowlist.
+# Usage: _file_in_scope <file> <allowlist_newline_sep>
+# Returns 0 (in-scope / allowed) or 1 (out-of-scope).
+# When allowlist is empty, returns 0 (fail-open — warn-mode default).
+# Handles: literals, directory prefixes (entry ends /), single-star globs, double-star globs.
+# Do NOT reuse _compute_scope_violations — that is set-difference via comm and silently
+# no-ops on dir/glob entries (different contract).
+_file_in_scope() {
+    local file="$1" allowlist="$2" entry _pfx _sdir _spat _fdir _fbase
+    [ -z "$allowlist" ] && return 0
+    while IFS= read -r entry; do
+        [ -z "$entry" ] && continue
+        case "$entry" in
+            \#*) continue ;;
+            */)  case "$file" in "${entry}"*) return 0 ;; esac ;;
+            *\*\**) _pfx="${entry%%\*\**}"; case "$file" in "${_pfx}"*) return 0 ;; esac ;;
+            *\**)
+                # Single-star: must NOT cross directory boundaries (star ≠ /)
+                case "$entry" in
+                    */*) _sdir="${entry%/*}"; _spat="${entry##*/}" ;;
+                    *)   _sdir="";            _spat="$entry" ;;
+                esac
+                case "$file" in
+                    */*) _fdir="${file%/*}"; _fbase="${file##*/}" ;;
+                    *)   _fdir="";           _fbase="$file" ;;
+                esac
+                if [ "$_sdir" = "$_fdir" ]; then
+                    case "$_fbase" in $_spat) return 0 ;; esac
+                fi ;;
+            *) [ "$file" = "$entry" ] && return 0 ;;
+        esac
+    done <<< "$allowlist"
+    return 1
+}
+
+# _redact_paths_outside_scope — Replace out-of-scope file path tokens in text with
+# redaction sentinels. Preserves code-fence blocks and <out-of-scope-context> blocks verbatim.
+# Usage: result=$(_redact_paths_outside_scope "$text" "$allowlist" [seam] [cycle])
+# When allowlist is empty, returns text unchanged (fail-open / warn-mode default —
+# zero behaviour change for existing repos with no scope fence).
+# Side effects per redaction:
+#   - Appends a record to .claude/pipeline-artifacts/oos-redactions-cycle-N.json
+#   - Emits pipeline.prompt_path_redacted via emit_event
+_redact_paths_outside_scope() {
+    local text="$1"
+    local allowlist="$2"
+    local seam="${3:-unknown}"
+    local cycle="${4:-0}"
+
+    # Pass-through when allowlist empty (warn mode — zero behaviour change for existing repos)
+    if [ -z "$allowlist" ]; then
+        printf '%s' "$text"
+        return 0
+    fi
+
+    local token_counter=0
+    local in_fence=0
+    local in_oos_ctx=0
+    local sidecar_dir="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
+    local sidecar_file="${sidecar_dir}/oos-redactions-cycle-${cycle}.json"
+    local allowlist_hash
+    allowlist_hash=$(printf '%s' "$allowlist" | md5sum 2>/dev/null | cut -d' ' -f1 \
+        || printf '%s' "$allowlist" | md5 2>/dev/null || echo "nohash")
+
+    [ ! -d "$sidecar_dir" ] && mkdir -p "$sidecar_dir"
+    [ ! -f "$sidecar_file" ] && printf '[]' > "$sidecar_file"
+
+    local line processed candidates raw_token candidate suffix sentinel replacement _tmp
+
+    while IFS= read -r line; do
+        # Track <out-of-scope-context> escape markers
+        case "$line" in
+            *'<out-of-scope-context>'*)  in_oos_ctx=1 ;;
+            *'</out-of-scope-context>'*) in_oos_ctx=0 ;;
+        esac
+
+        # Toggle code-fence state on ``` lines; emit verbatim and skip tokenizer
+        case "$line" in
+            '```'*)
+                if [ "$in_fence" -eq 1 ]; then in_fence=0; else in_fence=1; fi
+                printf '%s\n' "$line"
+                continue ;;
+        esac
+
+        # Preserve lines verbatim inside fences and escape markers
+        if [ "$in_fence" -eq 1 ] || [ "$in_oos_ctx" -eq 1 ]; then
+            printf '%s\n' "$line"
+            continue
+        fi
+
+        # Strip URLs before tokenizing so hostnames (example.com) aren't extracted as candidates.
+        # Use -E for portable extended-regex (BSD sed and GNU sed both support -E).
+        local _stripped_line
+        _stripped_line=$(printf '%s' "$line" \
+            | sed -E 's|https?://[^[:space:]]*||g; s|ftp://[^[:space:]]*||g; s|git@[^[:space:]]*||g' \
+            2>/dev/null || printf '%s' "$line")
+
+        # Extract file-path-shaped tokens: word-chars+dot+extension, optional :N or :N-M suffix
+        candidates=$(printf '%s' "$_stripped_line" \
+            | grep -oE '[A-Za-z0-9_./-]+\.[A-Za-z0-9]+(:[0-9]+(-[0-9]+)?)?' 2>/dev/null || true)
+
+        processed="$line"
+        while IFS= read -r raw_token; do
+            [ -z "$raw_token" ] && continue
+
+            # Strip line-number suffix before scope check
+            candidate="${raw_token%%:*}"
+
+            # Negative filters — skip URLs, absolute paths, lang-prefixed tokens, version strings
+            case "$candidate" in
+                http://*|https://*|ftp://*|git@*) continue ;;
+                //*|/*) continue ;;    # absolute or double-slash (URL path fragment after stripping)
+                Node:*|TypeScript:*|v[0-9]*) continue ;;
+                [0-9]*) continue ;;
+            esac
+
+            # Idempotency: skip already-redacted sentinels so running twice is a no-op
+            case "$raw_token" in
+                '[redacted:out-of-scope:'*) continue ;;
+            esac
+
+            # Scope check — nothing to do when in-scope
+            _file_in_scope "$candidate" "$allowlist" && continue
+
+            # Out of scope: assign a stable sentinel for this token
+            token_counter=$((token_counter + 1))
+            sentinel="[redacted:out-of-scope:TOKEN-${token_counter}]"
+            suffix="${raw_token#"$candidate"}"
+            replacement="${sentinel}${suffix}"
+
+            # Bash literal string substitution (// form; . and / are literal in bash globs)
+            processed="${processed//"$raw_token"/"$replacement"}"
+
+            # Append to sidecar manifest (requires jq; silently skips if absent)
+            if command -v jq >/dev/null 2>&1; then
+                _tmp="${sidecar_file}.tmp.$$"
+                jq -c --arg cycle "$cycle" --arg seam "$seam" \
+                    --arg tid "TOKEN-${token_counter}" \
+                    --arg orig "$candidate" --arg hash "$allowlist_hash" \
+                    '. + [{"cycle":($cycle|tonumber),"source_seam":$seam,"token_id":$tid,"original_path":$orig,"allowlist_snapshot_hash":$hash}]' \
+                    "$sidecar_file" > "$_tmp" 2>/dev/null && mv "$_tmp" "$sidecar_file" \
+                    || rm -f "$_tmp"
+            fi
+
+            # Emit telemetry event
+            declare -f emit_event >/dev/null 2>&1 && \
+                emit_event "pipeline.prompt_path_redacted" \
+                    "stage=${seam}" "file=${candidate}" "token=TOKEN-${token_counter}" \
+                    2>/dev/null || true
+
+        done <<< "$candidates"
+
+        printf '%s\n' "$processed"
+    done <<< "$text"
+}
+
 # Load daemon-config.json, merging the auto-tuned sidecar (~/.shipwright/optimization/tuned-config.json)
 # on top of the base config.  Sidecar carries auto-optimizer writes (intelligence flags, DORA
 # autotune values) so they do not pollute committed daemon-config.json on feature branches.

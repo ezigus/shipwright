@@ -796,6 +796,20 @@ run_adversarial_review() {
         adv_memory=$(intelligence_search_memory "adversarial review security findings for: ${GOAL:-}" "${HOME}/.shipwright/memory" 5 2>/dev/null) || true
     fi
 
+    # Seam (b): redact out-of-scope paths from diff_content and adv_memory before
+    # adversarial-review prompt construction. adv_memory cites paths from previous runs;
+    # diff_content may reference helper files adjacent to changed files.
+    local _pqc_scope_allowlist=""
+    _pqc_scope_allowlist=$(_extract_scope_from_design 2>/dev/null || true)
+    local _pqc_diff="$diff_content"
+    local _pqc_mem="$adv_memory"
+    if [ -n "$_pqc_scope_allowlist" ]; then
+        _pqc_diff=$(_redact_paths_outside_scope "$diff_content" "$_pqc_scope_allowlist" \
+            "adversarial_diff" "${COMPOUND_QUALITY_CYCLE:-0}" 2>/dev/null || printf '%s' "$diff_content")
+        _pqc_mem=$(_redact_paths_outside_scope "$adv_memory" "$_pqc_scope_allowlist" \
+            "adversarial_memory" "${COMPOUND_QUALITY_CYCLE:-0}" 2>/dev/null || printf '%s' "$adv_memory")
+    fi
+
     local prompt="You are a hostile code reviewer. Your job is to find EVERY possible issue in this diff.
 Look for:
 - Bugs (logic errors, off-by-one, null/undefined access, race conditions)
@@ -808,13 +822,13 @@ Look for:
 
 Be thorough and adversarial. List every issue with severity [Critical/Bug/Warning].
 Format: **[Severity]** file:line — description
-${adv_memory:+
+${_pqc_mem:+
 ## Known Security Issues from Previous Reviews
 These security issues have been found in past reviews. Check if any recur:
-${adv_memory}
+${_pqc_mem}
 }
 Diff:
-$diff_content"
+$_pqc_diff"
 
     local review_output
     review_output=$(_pipeline_quality_ai_text "$prompt" "haiku" "8")

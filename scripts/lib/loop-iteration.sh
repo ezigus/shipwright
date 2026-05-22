@@ -663,6 +663,20 @@ PROMPT
         "skipped_intelligence_static=$( [[ "$_needs_full_context" == false ]] && echo true || echo false )" \
         2>/dev/null || true
 
+    # Redact out-of-scope file path tokens from the assembled prompt before it reaches the agent.
+    # Seam (f): final assembly gate — broadest protection as it catches content from all upstream
+    # sources (error-summary, audit_feedback, intelligence_section, gate_findings, commits).
+    local _loop_scope_allowlist=""
+    _loop_scope_allowlist=$(_extract_scope_from_design 2>/dev/null || true)
+    if [ -n "$_loop_scope_allowlist" ]; then
+        local _prompt_content
+        _prompt_content=$(cat "$_ptmp")
+        _prompt_content=$(_redact_paths_outside_scope "$_prompt_content" "$_loop_scope_allowlist" \
+            "compose_prompt" "${COMPOUND_QUALITY_CYCLE:-0}" 2>/dev/null \
+            || cat "$_ptmp")
+        printf '%s' "$_prompt_content" > "$_ptmp"
+    fi
+
     cat "$_ptmp"
     rm -f "$_ptmp"
 }

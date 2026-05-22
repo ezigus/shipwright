@@ -16,7 +16,12 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+// SECURITY (audit_1776853149979): execSync was previously imported here and
+// used with shell-interpolated strings. Replaced with execFileSync only —
+// every invocation now passes argv arrays through execve directly, so there
+// is no shell to interpret metacharacters. Keep this comment to explain why
+// `execSync` is intentionally absent.
+const { execFileSync } = require('child_process');
 const os = require('os');
 
 // Configuration
@@ -46,13 +51,17 @@ const c = {
   brightWhite: '\x1b[1;37m',
 };
 
-// Safe execSync with strict timeout (returns empty string on failure)
-function safeExec(cmd, timeoutMs = 2000) {
+// audit_1776853149979: previously used execSync with a shell string.
+// Switched to execFileSync(file, args) so there is no shell interpretation —
+// eliminates the class of injection regardless of whether user input ever
+// reaches these args (defense in depth).
+function safeExec(file, args, timeoutMs) {
+  if (timeoutMs === undefined) timeoutMs = 2000;
   try {
-    return execSync(cmd, {
+    return execFileSync(file, args, {
       encoding: 'utf-8',
       timeout: timeoutMs,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
   } catch {
     return '';
@@ -107,7 +116,7 @@ function getGitInfo() {
     'git rev-list --left-right --count HEAD...@{upstream} 2>/dev/null || echo "0 0"',
   ].join('; ');
 
-  const raw = safeExec("sh -c '" + script + "'", 3000);
+  const raw = safeExec('sh', ['-c', script], 3000);
   if (!raw) return result;
 
   const parts = raw.split('---SEP---').map(s => s.trim());

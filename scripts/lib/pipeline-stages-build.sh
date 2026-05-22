@@ -410,7 +410,13 @@ ${_skill_prompts}
         if [[ "$_raw_recall_ctx" != "$_build_recall_ctx" && -n "$_raw_recall_ctx" ]]; then
             warn "Ruflo: recall output was sanitized before injection (potential injection attempt or malformed data)"
         fi
-        local _ruflo_min_len="${SHIPWRIGHT_RUFLO_RECALL_MIN_LEN:-50}"
+        # Validate threshold: must be a non-negative integer; fall back to 50 if not.
+        local _ruflo_min_len
+        if [[ "${SHIPWRIGHT_RUFLO_RECALL_MIN_LEN:-50}" =~ ^[0-9]+$ ]]; then
+            _ruflo_min_len="${SHIPWRIGHT_RUFLO_RECALL_MIN_LEN}"
+        else
+            _ruflo_min_len=50
+        fi
         if [[ -n "$_build_recall_ctx" && "${#_build_recall_ctx}" -ge "$_ruflo_min_len" ]]; then
             build_context_body="${build_context_body}
 

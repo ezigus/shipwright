@@ -13,7 +13,10 @@
 # The test exercises the COMPOSITION LOGIC only — not the full stage_build()
 # pipeline loop. A small inline helper (_test_compose_memory_block) mirrors
 # the exact injection decision code present in pipeline-stages-build.sh so
-# the assertions remain valid against the fixed behaviour.
+# The helper mirrors the injection decision logic, not the full sanitization
+# pipeline (control-char stripping, 2000-char truncation, header removal).
+# Tests use clean ASCII strings well under 2000 chars, so the omission is
+# intentional and noted here rather than implied to be exact parity.
 #
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
@@ -38,6 +41,10 @@ print_test_header "Build Prompt: Memory Injection Guard"
 
 setup_test_env "build-prompt-memory-guard"
 _test_cleanup_hook() { cleanup_test_env; }
+# Prevent env leakage: pin the threshold to the default so external overrides
+# don't affect the boundary assertions. Tests that need a different value set it
+# locally via SHIPWRIGHT_RUFLO_RECALL_MIN_LEN=N _test_compose_memory_block ...
+unset SHIPWRIGHT_RUFLO_RECALL_MIN_LEN
 
 # ─── Helper: mirrors the memory-injection decision from stage_build() ────────
 #

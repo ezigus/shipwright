@@ -206,14 +206,14 @@ stage_build() {
     local dod_file="$ARTIFACTS_DIR/dod.md"
     local loop_args=()
 
-    # Memory integration — inject context if memory system available
+    # Memory integration — inject goal-aware context if memory system has prior runs.
+    # No fallback: if the focused search returns nothing, the block is omitted entirely.
+    # A goal-agnostic fallback was removed (see PR fix/cold-pipeline-memory-injection)
+    # because it injected unrelated failure history on cold (first-run) issues.
     local memory_context=""
     if type intelligence_search_memory >/dev/null 2>&1; then
         local mem_dir="${HOME}/.shipwright/memory"
         memory_context=$(intelligence_search_memory "build stage for: ${GOAL:-}" "$mem_dir" 5 2>/dev/null) || true
-    fi
-    if [[ -z "$memory_context" ]] && [[ -x "$SCRIPT_DIR/sw-memory.sh" ]]; then
-        memory_context=$(bash "$SCRIPT_DIR/sw-memory.sh" inject "build" 2>/dev/null) || true
     fi
 
     # Build clean goal (no synthesis context)
@@ -410,14 +410,19 @@ ${_skill_prompts}
         if [[ "$_raw_recall_ctx" != "$_build_recall_ctx" && -n "$_raw_recall_ctx" ]]; then
             warn "Ruflo: recall output was sanitized before injection (potential injection attempt or malformed data)"
         fi
-        if [[ -n "$_build_recall_ctx" ]]; then
+        local _ruflo_min_len="${SHIPWRIGHT_RUFLO_RECALL_MIN_LEN:-50}"
+        if [[ -n "$_build_recall_ctx" && "${#_build_recall_ctx}" -ge "$_ruflo_min_len" ]]; then
             build_context_body="${build_context_body}
 
 ## Historical Build Context
 ${_build_recall_ctx}"
             info "Ruflo: injected historical build context (${#_build_recall_ctx} chars)"
         else
-            info "Ruflo: no similar outcomes found yet for this repo. Outcomes accumulate across pipeline runs in the repo and issue namespaces."
+            if [[ -n "$_build_recall_ctx" ]]; then
+                info "Ruflo: recall result too short to be useful (${#_build_recall_ctx} chars, min=${_ruflo_min_len}) — skipping injection"
+            else
+                info "Ruflo: no similar outcomes found yet for this repo. Outcomes accumulate across pipeline runs in the repo and issue namespaces."
+            fi
         fi
     fi
 

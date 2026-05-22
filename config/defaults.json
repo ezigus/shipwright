@@ -91,6 +91,9 @@
       "prefix_flat_template": "scripts/sw-{lib_subpath}-{stem}-test.sh"
     }
   },
+  "resync": {
+    "retry_budget": 3
+  },
   "loop": {
     "claude_timeout": 1800,
     "test_timeout": 900,

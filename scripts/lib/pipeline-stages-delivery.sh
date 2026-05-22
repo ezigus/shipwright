@@ -19,11 +19,31 @@ resync_abort() {
 
 # stage_resync — Sync WIP branch with origin/$BASE_BRANCH via git merge.
 # Scaffold for issue #624: basic merge, no conflict-resolution retry.
+# Issue #635: BASE_BRANCH guard + retry_budget read (loop body lands in Part 2).
 # Success: HEAD merged with origin/$BASE_BRANCH (or no-op when remote absent).
 # Failure: merge aborted, working tree clean, mark_stage_failed("resync", ...) invoked.
 stage_resync() {
     CURRENT_STAGE_ID="resync"
     local base="${BASE_BRANCH:-main}"
+
+    # Guard: refuse unsafe BASE_BRANCH values (option-injection, traversal, reserved chars).
+    # Mirrors the --base CLI guard at sw-pipeline.sh:674 so env-only callers are covered too.
+    if declare -f _validate_ref >/dev/null 2>&1; then
+        if ! _validate_ref "$base" "--base"; then
+            mark_stage_failed "resync" "invalid BASE_BRANCH '${base}' — refusing to merge" 2>/dev/null || true
+            return 1
+        fi
+    fi
+
+    # Retry budget — read for Part 2 (retry loop body lands there). Held in
+    # _RESYNC_RETRY_BUDGET so follow-up loop helpers can pick it up without
+    # re-reading config on every iteration.
+    local retry_budget=3
+    if declare -f _config_get_int >/dev/null 2>&1; then
+        retry_budget=$(_config_get_int "resync.retry_budget" "3" 2>/dev/null || echo 3)
+        [[ -z "$retry_budget" || ! "$retry_budget" =~ ^[0-9]+$ ]] && retry_budget=3
+    fi
+    _RESYNC_RETRY_BUDGET="$retry_budget"
 
     info "Syncing branch with origin/${base}..."
 

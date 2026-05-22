@@ -1411,6 +1411,43 @@ else
     assert_fail "resync_abort should be safe when no merge in progress" "got rc=$rc"
 fi
 
+# Test 5 (issue #635): BASE_BRANCH guard rejects unsafe ref values
+# Uses `--foo` to trip the option-injection arm of _validate_ref.
+rc=0
+( cd "$_resync_tmp1" && BASE_BRANCH="--evil" stage_resync >/dev/null 2>&1 ) || rc=$?
+if [[ "$rc" -ne 0 ]]; then
+    assert_pass "stage_resync rejects unsafe BASE_BRANCH (option-injection vector)"
+else
+    assert_fail "stage_resync should fail on unsafe BASE_BRANCH" "got rc=$rc"
+fi
+
+# Test 6 (issue #635): retry budget defaults to 3 and is exposed via _RESYNC_RETRY_BUDGET.
+# Run in a subshell + capture state so the parent test process is unaffected.
+unset _RESYNC_RETRY_BUDGET
+_resync_budget_out=$(
+    cd "$_resync_tmp1"
+    BASE_BRANCH=main stage_resync >/dev/null 2>&1 || true
+    echo "${_RESYNC_RETRY_BUDGET:-unset}"
+)
+if [[ "$_resync_budget_out" == "3" ]]; then
+    assert_pass "stage_resync reads resync.retry_budget default (3) from defaults.json"
+else
+    assert_fail "stage_resync should set _RESYNC_RETRY_BUDGET=3" "got: $_resync_budget_out"
+fi
+
+# Test 7 (issue #635): env override SHIPWRIGHT_RESYNC_RETRY_BUDGET wins over default
+unset _RESYNC_RETRY_BUDGET
+_resync_budget_env=$(
+    cd "$_resync_tmp1"
+    SHIPWRIGHT_RESYNC_RETRY_BUDGET=5 BASE_BRANCH=main stage_resync >/dev/null 2>&1 || true
+    echo "${_RESYNC_RETRY_BUDGET:-unset}"
+)
+if [[ "$_resync_budget_env" == "5" ]]; then
+    assert_pass "stage_resync respects SHIPWRIGHT_RESYNC_RETRY_BUDGET env override"
+else
+    assert_fail "stage_resync should pick up env override" "got: $_resync_budget_env"
+fi
+
 # ─── Tests: detect_task_type ────────────────────────────────────────────────
 print_test_section "detect_task_type"
 

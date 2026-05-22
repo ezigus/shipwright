@@ -186,6 +186,7 @@ get_stage_description() {
         test)             echo "Running test suite and validating coverage" ;;
         review)           echo "Code quality, security audit, performance review" ;;
         compound_quality) echo "Adversarial testing, E2E validation, DoD checklist" ;;
+        resync)           echo "Syncing branch with base before PR" ;;
         pr)               echo "Creating pull request with CI integration" ;;
         merge)            echo "Merging PR with branch cleanup" ;;
         deploy)           echo "Deploying to staging/production" ;;

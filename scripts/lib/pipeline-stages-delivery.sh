@@ -1,7 +1,62 @@
-# pipeline-stages-delivery.sh — pr, merge, deploy stages
+# pipeline-stages-delivery.sh — resync, pr, merge, deploy stages
 # Source from pipeline-stages.sh. Requires all pipeline globals and dependencies.
 [[ -n "${_PIPELINE_STAGES_DELIVERY_LOADED:-}" ]] && return 0
 _PIPELINE_STAGES_DELIVERY_LOADED=1
+
+# resync_abort — Clean up after a failed merge in stage_resync.
+# Always returns 0. Warns (does not fail) if the tree remains dirty after abort.
+resync_abort() {
+    git merge --abort 2>/dev/null || true
+    if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+        warn "resync_abort: working tree still dirty after git merge --abort"
+    fi
+    return 0
+}
+
+# stage_resync — Sync WIP branch with origin/$BASE_BRANCH via git merge.
+# Scaffold for issue #624: basic merge, no conflict-resolution retry.
+# Success: HEAD merged with origin/$BASE_BRANCH (or no-op when remote absent).
+# Failure: merge aborted, working tree clean, mark_stage_failed("resync", ...) invoked.
+stage_resync() {
+    CURRENT_STAGE_ID="resync"
+    local base="${BASE_BRANCH:-main}"
+
+    info "Syncing branch with origin/${base}..."
+
+    # Fetch base — failure is non-fatal (offline / no remote in tests)
+    if ! git fetch origin "$base" 2>/dev/null; then
+        warn "Could not fetch origin/${base} — assuming local-only base"
+    fi
+
+    # Pick the best available ref: origin/<base>, then local <base>; otherwise no-op.
+    local merge_ref=""
+    if git rev-parse --verify "origin/${base}" >/dev/null 2>&1; then
+        merge_ref="origin/${base}"
+    elif git rev-parse --verify "$base" >/dev/null 2>&1; then
+        merge_ref="$base"
+    else
+        log_stage "resync" "no-op (no base ref available)" 2>/dev/null || true
+        return 0
+    fi
+
+    if git merge "$merge_ref" --no-edit >/dev/null 2>&1; then
+        success "Branch is current with ${merge_ref}"
+        emit_event "resync.complete" \
+            "issue=${ISSUE_NUMBER:-0}" \
+            "base=${base}" 2>/dev/null || true
+        log_stage "resync" "merged ${merge_ref}" 2>/dev/null || true
+        return 0
+    fi
+
+    # Merge failed → assume conflict (only failure mode for a non-no-op merge).
+    error "Merge conflict against ${merge_ref} — conflict resolution coming in follow-up issue"
+    resync_abort
+    emit_event "resync.conflict" \
+        "issue=${ISSUE_NUMBER:-0}" \
+        "base=${base}" 2>/dev/null || true
+    mark_stage_failed "resync" "conflicts detected — conflict resolution coming in follow-up issue" 2>/dev/null || true
+    return 1
+}
 
 stage_pr() {
     CURRENT_STAGE_ID="pr"

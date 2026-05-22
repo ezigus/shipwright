@@ -60,6 +60,12 @@
       }
     },
     {
+      "id": "resync",
+      "enabled": false,
+      "gate": "auto",
+      "config": {}
+    },
+    {
       "id": "pr",
       "enabled": true,
       "gate": "auto",

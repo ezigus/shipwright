@@ -54,6 +54,12 @@
       }
     },
     {
+      "id": "resync",
+      "enabled": true,
+      "gate": "auto",
+      "config": {}
+    },
+    {
       "id": "pr",
       "enabled": true,
       "gate": "auto",

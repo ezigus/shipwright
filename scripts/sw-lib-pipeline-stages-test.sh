@@ -1316,6 +1316,101 @@ fi
 rm -f "$TEST_TEMP_DIR/bin/git"
 hash -r
 
+# ─── Tests: stage_resync (issue #624 scaffold) ─────────────────────────────
+print_test_section "stage_resync"
+
+# Test 1: happy-path no-op — WIP branch already current with base
+_resync_tmp1="$TEST_TEMP_DIR/resync-noop"
+mkdir -p "$_resync_tmp1"
+(
+    cd "$_resync_tmp1"
+    git init -q -b main
+    git config user.email "t@t.com"
+    git config user.name "T"
+    echo "v1" > a.txt
+    git add a.txt
+    git commit -qm "init"
+    git checkout -q -b shipwright/resync-noop
+) 2>/dev/null
+rc=0
+( cd "$_resync_tmp1" && BASE_BRANCH=main stage_resync >/dev/null 2>&1 ) || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+    assert_pass "stage_resync no-op returns 0 when WIP is current with base"
+else
+    assert_fail "stage_resync no-op should return 0" "got rc=$rc"
+fi
+
+# Test 2: missing-remote/missing-base — no origin, no local base ref
+_resync_tmp2="$TEST_TEMP_DIR/resync-noremote"
+mkdir -p "$_resync_tmp2"
+(
+    cd "$_resync_tmp2"
+    git init -q -b feature-only
+    git config user.email "t@t.com"
+    git config user.name "T"
+    echo "x" > f.txt
+    git add f.txt
+    git commit -qm "init"
+) 2>/dev/null
+rc=0
+( cd "$_resync_tmp2" && BASE_BRANCH=main stage_resync >/dev/null 2>&1 ) || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+    assert_pass "stage_resync no-op returns 0 when no base ref available"
+else
+    assert_fail "stage_resync should no-op when no base ref" "got rc=$rc"
+fi
+
+# Test 3: conflict path — WIP and base both modified the same line
+_resync_tmp3="$TEST_TEMP_DIR/resync-conflict"
+mkdir -p "$_resync_tmp3"
+(
+    cd "$_resync_tmp3"
+    git init -q -b main
+    git config user.email "t@t.com"
+    git config user.name "T"
+    printf 'base-v1\n' > shared.txt
+    git add shared.txt
+    git commit -qm "init"
+    git checkout -q -b shipwright/resync-conflict
+    printf 'wip-changed\n' > shared.txt
+    git commit -qam "wip change"
+    git checkout -q main
+    printf 'base-changed\n' > shared.txt
+    git commit -qam "base change"
+    git checkout -q shipwright/resync-conflict
+) 2>/dev/null
+rc=0
+( cd "$_resync_tmp3" && BASE_BRANCH=main stage_resync >/dev/null 2>&1 ) || rc=$?
+if [[ "$rc" -ne 0 ]]; then
+    assert_pass "stage_resync returns non-zero on merge conflict"
+else
+    assert_fail "stage_resync should fail on merge conflict" "got rc=$rc"
+fi
+
+# After conflict, working tree must be clean (resync_abort)
+porcelain=$(cd "$_resync_tmp3" && git status --porcelain 2>/dev/null || true)
+if [[ -z "$porcelain" ]]; then
+    assert_pass "resync_abort leaves working tree clean after conflict"
+else
+    assert_fail "resync_abort should clean tree after conflict" "porcelain: $porcelain"
+fi
+
+# No conflict markers should remain in the working file
+if (cd "$_resync_tmp3" && grep -q '^<<<<<<<' shared.txt 2>/dev/null); then
+    assert_fail "no conflict markers should remain after resync_abort" "found <<<<<<< in shared.txt"
+else
+    assert_pass "no conflict markers remain in working file after resync_abort"
+fi
+
+# Test 4: resync_abort is callable and idempotent (no merge in progress is OK)
+rc=0
+( cd "$_resync_tmp1" && resync_abort >/dev/null 2>&1 ) || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+    assert_pass "resync_abort returns 0 even when no merge is in progress"
+else
+    assert_fail "resync_abort should be safe when no merge in progress" "got rc=$rc"
+fi
+
 # ─── Tests: detect_task_type ────────────────────────────────────────────────
 print_test_section "detect_task_type"
 

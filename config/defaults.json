@@ -38,6 +38,7 @@
       "test",
       "review",
       "compound_quality",
+      "resync",
       "pr",
       "merge",
       "deploy",

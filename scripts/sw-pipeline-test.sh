@@ -4306,7 +4306,7 @@ main() {
         "test_self_healing_merge_build_test_dispatch_wired:Merge: stage loop dispatches self_healing_merge_build_test on merge failure with retry context"
         "test_scope_redaction_helpers_present:Scope: _file_in_scope and _redact_paths_outside_scope exist in helpers.sh"
         "test_scope_redaction_in_scope_no_redaction:Scope: in-scope path is not redacted"
-        "test_scope_redaction_oos_event_fires:Scope: out-of-scope path triggers redaction sentinel"
+        "test_scope_redaction_oos_path_redacted:Scope: out-of-scope path triggers redaction sentinel in output"
         "test_scope_drift_subcommand_present:Scope: drift subcommand wired in sw-pipeline.sh"
         "test_scope_escalation_detection_in_loop:Scope: SCOPE_ESCALATION detection and event emission in sw-loop.sh"
         "test_scope_manifest_events_in_extract:Scope: scope_manifest_missing/loaded events in _extract_scope_from_design"
@@ -4651,7 +4651,7 @@ test_scope_redaction_in_scope_no_redaction() {
     trap 'rm -rf "$tmp_dir"' RETURN
 
     local allowlist="scripts/lib/helpers.sh"$'\n'"scripts/lib/pipeline-stages.sh"
-    local finding="helpers.sh:42 — _redact_paths_outside_scope called with empty allowlist"
+    local finding="scripts/lib/helpers.sh:42 — _redact_paths_outside_scope called with empty allowlist"
 
     local redacted
     redacted=$(
@@ -4669,8 +4669,8 @@ test_scope_redaction_in_scope_no_redaction() {
     return 0
 }
 
-test_scope_redaction_oos_event_fires() {
-    # A finding referencing an out-of-scope path must trigger redaction.
+test_scope_redaction_oos_path_redacted() {
+    # A finding referencing an out-of-scope path must produce a redaction sentinel in the output.
     local helpers_sh="$REPO_DIR/scripts/lib/helpers.sh"
     [[ -f "$helpers_sh" ]] || { echo "SKIP: helpers.sh not found"; return 0; }
     grep -q '_redact_paths_outside_scope' "$helpers_sh" 2>/dev/null \

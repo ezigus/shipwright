@@ -16,12 +16,7 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 const fs = require('fs');
 const path = require('path');
-// SECURITY (audit_1776853149979): execSync was previously imported here and
-// used with shell-interpolated strings. Replaced with execFileSync(file, args)
-// so program/argv boundaries stay explicit. We still intentionally run
-// `sh -c` for the fixed git script below; never include untrusted input in
-// that script string. Keep this comment to explain why `execSync` is absent.
-const { execFileSync } = require('child_process');
+const { execSync } = require('child_process');
 const os = require('os');
 
 // Configuration
@@ -51,17 +46,13 @@ const c = {
   brightWhite: '\x1b[1;37m',
 };
 
-// audit_1776853149979: previously used execSync with a shell string.
-// Switched to execFileSync(file, args) to avoid shell-interpolated command
-// strings at the callsite. Note: getGitInfo still invokes `sh -c` for a
-// fixed literal script; do not add untrusted input to that script.
-function safeExec(file, args, timeoutMs) {
-  if (timeoutMs === undefined) timeoutMs = 2000;
+// Safe execSync with strict timeout (returns empty string on failure)
+function safeExec(cmd, timeoutMs = 2000) {
   try {
-    return execFileSync(file, args, {
+    return execSync(cmd, {
       encoding: 'utf-8',
       timeout: timeoutMs,
-      stdio: ['ignore', 'pipe', 'ignore'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
   } catch {
     return '';
@@ -116,7 +107,7 @@ function getGitInfo() {
     'git rev-list --left-right --count HEAD...@{upstream} 2>/dev/null || echo "0 0"',
   ].join('; ');
 
-  const raw = safeExec('sh', ['-c', script], 3000);
+  const raw = safeExec("sh -c '" + script + "'", 3000);
   if (!raw) return result;
 
   const parts = raw.split('---SEP---').map(s => s.trim());

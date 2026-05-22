@@ -4646,10 +4646,6 @@ test_scope_redaction_in_scope_no_redaction() {
     grep -q '_redact_paths_outside_scope' "$helpers_sh" 2>/dev/null \
         || { echo "SKIP: _redact_paths_outside_scope not yet merged (depends on PR-B)"; return 0; }
 
-    local tmp_dir
-    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/scope-smoke-ok.XXXXXX")
-    trap 'rm -rf "$tmp_dir"' RETURN
-
     local allowlist="scripts/lib/helpers.sh"$'\n'"scripts/lib/pipeline-stages.sh"
     local finding="scripts/lib/helpers.sh:42 — _redact_paths_outside_scope called with empty allowlist"
 
@@ -4675,10 +4671,6 @@ test_scope_redaction_oos_path_redacted() {
     [[ -f "$helpers_sh" ]] || { echo "SKIP: helpers.sh not found"; return 0; }
     grep -q '_redact_paths_outside_scope' "$helpers_sh" 2>/dev/null \
         || { echo "SKIP: _redact_paths_outside_scope not yet merged (depends on PR-B)"; return 0; }
-
-    local tmp_dir
-    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/scope-smoke-oos.XXXXXX")
-    trap 'rm -rf "$tmp_dir"' RETURN
 
     local allowlist="scripts/lib/helpers.sh"
     local finding=".claude/helpers/intelligence.cjs:99 — execSync called outside scope"

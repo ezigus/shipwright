@@ -1,0 +1,19 @@
+{
+  "run_id": "26220052459",
+  "branch": "shipwright/issue-605",
+  "stage": "compound_quality",
+  "iteration": 0,
+  "retry_count": 0,
+  "last_heartbeat": "2026-05-21T12:50:36Z",
+  "exit_reason": "",
+  "error_category": "",
+  "completed_stages": [
+    "intake",
+    "plan",
+    "design",
+    "build",
+    "test",
+    "review",
+    "compound_quality"
+  ]
+}

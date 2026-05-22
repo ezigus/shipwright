@@ -921,6 +921,68 @@ EOF
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
+# @audit-suppress directive parser.
+#
+# Grammar:
+#   @audit-suppress <id> -- <reason>
+#   - <id>:    [A-Za-z0-9_]{8,}  (convention: audit_<unix-ms-timestamp>)
+#   - <reason>: free text to EOL, surfaced in suppression sidecar.
+#
+# Scope: matches when the directive appears on the same line as a flagged
+# pattern OR up to 3 lines above. This is intentionally narrow — it prevents
+# whole-file suppression-by-accident and forces the directive to sit next to
+# what it's justifying.
+#
+# Echoes "<id>|<reason>" on hit (one line). Empty on miss.
+# ──────────────────────────────────────────────────────────────────────────────
+_audit_suppress_check() {
+    local _file="$1"
+    local _line="$2"
+    [[ -z "$_file" || ! -f "$_file" || -z "$_line" ]] && return 0
+    local _start=$(( _line > 3 ? _line - 3 : 1 ))
+    local _excerpt
+    _excerpt=$(sed -n "${_start},${_line}p" "$_file" 2>/dev/null || true)
+    [[ -z "$_excerpt" ]] && return 0
+    local _hit
+    _hit=$(echo "$_excerpt" | grep -oE '@audit-suppress[[:space:]]+[A-Za-z0-9_]{8,}[[:space:]]+--[[:space:]]+.+$' | tail -1 || true)
+    [[ -z "$_hit" ]] && return 0
+    local _id _reason
+    _id=$(echo "$_hit" | sed -E 's/^@audit-suppress[[:space:]]+([A-Za-z0-9_]+)[[:space:]]+--[[:space:]]+.*$/\1/')
+    _reason=$(echo "$_hit" | sed -E 's/^@audit-suppress[[:space:]]+[A-Za-z0-9_]+[[:space:]]+--[[:space:]]+(.*)$/\1/')
+    echo "${_id}|${_reason}"
+}
+
+# Append a suppression record to the sidecar audit log. Best-effort (not deduplicated).
+_audit_suppress_record() {
+    local _file="$1"
+    local _line="$2"
+    local _pattern="$3"
+    local _id="$4"
+    local _reason="$5"
+    local _sup_dir="${ARTIFACTS_DIR:-.claude/pipeline-artifacts}"
+    local _sup_file="${_sup_dir}/compound-quality-suppressions.json"
+    mkdir -p "$_sup_dir" 2>/dev/null || true
+    local _existing
+    if [[ -f "$_sup_file" ]]; then
+        _existing=$(cat "$_sup_file" 2>/dev/null || echo "[]")
+    else
+        _existing="[]"
+    fi
+    # Validate existing is JSON array; reset if corrupt.
+    echo "$_existing" | jq -e 'type == "array"' >/dev/null 2>&1 || _existing="[]"
+    local _tmp
+    _tmp=$(mktemp "${TMPDIR:-/tmp}/audit-suppress.XXXXXX")
+    echo "$_existing" | jq \
+        --arg f "$_file" \
+        --arg l "$_line" \
+        --arg p "$_pattern" \
+        --arg id "$_id" \
+        --arg r "$_reason" \
+        '. + [{"file":$f,"line":($l|tonumber),"pattern":$p,"suppressed_by":{"id":$id,"reason":$r}}]' \
+        > "$_tmp" 2>/dev/null && mv "$_tmp" "$_sup_file" || rm -f "$_tmp"
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 7. Source Code Security Scan
 # Grep-based vulnerability pattern matching on changed files.
 # ──────────────────────────────────────────────────────────────────────────────
@@ -998,6 +1060,20 @@ XSSEOF
             while IFS= read -r match; do
                 [[ -z "$match" ]] && continue
                 local line_num="${match%%:*}"
+                # @audit-suppress directive check — if the matched line carries
+                # (or is preceded within 3 lines by) a structured suppression
+                # directive, record it in the audit sidecar and skip the
+                # blocking finding. This turns the previously-implicit
+                # "trust the SAST confidence tier" defense into an explicit
+                # contract that survives refactors and is enforceable by tests.
+                local _suppress_hit
+                _suppress_hit=$(_audit_suppress_check "$file" "$line_num")
+                if [[ -n "$_suppress_hit" ]]; then
+                    local _sup_id="${_suppress_hit%%|*}"
+                    local _sup_reason="${_suppress_hit#*|}"
+                    _audit_suppress_record "$file" "$line_num" "command_injection" "$_sup_id" "$_sup_reason"
+                    continue
+                fi
                 finding_count=$((finding_count + 1))
                 local current
                 current=$(cat "$tmp_findings")

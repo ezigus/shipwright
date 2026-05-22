@@ -126,8 +126,8 @@ reset_token_counters() {
 
 # ─── Flexible Iteration Defaults ────────────────────────────────────────────
 AUTO_EXTEND=true          # Auto-extend iterations when work is incomplete
-EXTENSION_SIZE=5          # Additional iterations per extension
-MAX_EXTENSIONS=3          # Max number of extensions (hard cap safety net)
+EXTENSION_SIZE=3          # Additional iterations per extension
+MAX_EXTENSIONS=1          # Max number of extensions (hard cap safety net) — 1×3 = 23 per-cycle ceiling
 EXTENSION_COUNT=0         # Current number of extensions applied
 
 # ─── Circuit Breaker Defaults ──────────────────────────────────────────────

@@ -201,6 +201,19 @@ else
     assert_fail "Default MAX_RESTARTS is 0"
 fi
 
+# Anchor on a non-digit (or end-of-line) to avoid matching EXTENSION_SIZE=30 etc.
+if grep -qE '^EXTENSION_SIZE=3([^0-9]|$)' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Default EXTENSION_SIZE is 3"
+else
+    assert_fail "Default EXTENSION_SIZE is 3"
+fi
+
+if grep -qE '^MAX_EXTENSIONS=1([^0-9]|$)' "$SCRIPT_DIR/sw-loop.sh"; then
+    assert_pass "Default MAX_EXTENSIONS is 1"
+else
+    assert_fail "Default MAX_EXTENSIONS is 1"
+fi
+
 # ─── Test 10: Compat library sourced ─────────────────────────────────────────
 if grep -q 'lib/compat.sh' "$SCRIPT_DIR/sw-loop.sh"; then
     assert_pass "Sources lib/compat.sh"

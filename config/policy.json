@@ -209,8 +209,8 @@
     "cron_minutes": 30,
     "stuck_threshold_hours": 4,
     "retry_template": "full",
-    "retry_max_iterations": 25,
-    "stuck_retry_max_iterations": 30
+    "retry_max_iterations": 20,
+    "stuck_retry_max_iterations": 23
   },
   "hygiene": {
     "artifact_age_days": 7

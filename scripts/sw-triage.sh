@@ -604,10 +604,10 @@ cmd_team() {
             max_iterations=$(echo "$recruit_result" | jq -r '.max_iterations // ""')
             # If recruit didn't provide template/max_iterations, derive from agent count
             if [[ -z "$template" ]]; then
-                if [[ "$agents" -ge 4 ]]; then template="full"; max_iterations="${max_iterations:-15}";
-                elif [[ "$agents" -ge 3 ]]; then template="standard"; max_iterations="${max_iterations:-8}";
-                elif [[ "$agents" -le 1 ]]; then template="fast"; max_iterations="${max_iterations:-2}";
-                else template="standard"; max_iterations="${max_iterations:-5}"; fi
+                if [[ "$agents" -ge 4 ]]; then template="full"; max_iterations="${max_iterations:-20}";
+                elif [[ "$agents" -ge 3 ]]; then template="standard"; max_iterations="${max_iterations:-15}";
+                elif [[ "$agents" -le 1 ]]; then template="fast"; max_iterations="${max_iterations:-10}";
+                else template="standard"; max_iterations="${max_iterations:-10}"; fi
             fi
             recruit_source="recruit"
         fi
@@ -625,25 +625,25 @@ cmd_team() {
             simple-*|moderate-low)
                 template="standard"
                 model="sonnet"
-                max_iterations=5
+                max_iterations=10
                 agents=2
                 ;;
             moderate-*|complex-low)
                 template="standard"
                 model="sonnet"
-                max_iterations=8
+                max_iterations=15
                 agents=3
                 ;;
             complex-*|epic-*)
                 template="full"
                 model="opus"
-                max_iterations=15
+                max_iterations=20
                 agents=4
                 ;;
             *)
                 template="standard"
                 model="sonnet"
-                max_iterations=5
+                max_iterations=10
                 agents=2
                 ;;
         esac

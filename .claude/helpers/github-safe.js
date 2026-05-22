@@ -25,6 +25,7 @@
 // commands. See ALLOWED_COMMANDS below for the additional allowlist gate.
 // Any static analyzer flagging this import as command-injection-prone
 // should be treated as a false positive: there is no shell on this code path.
+// @audit-suppress audit_1776853149979 -- execFileSync uses execve directly (shell:false); argv-only; no metacharacter interpolation; see ALLOWED_COMMANDS gate below
 import { execFileSync } from 'child_process'; // eslint-disable-line -- safe: argv-only, shell:false
 import { writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';

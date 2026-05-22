@@ -15,6 +15,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Canonical helpers (colors, output, events)
 # shellcheck source=lib/helpers.sh
 [[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
+# Central iteration ceiling helper
+# shellcheck source=lib/policy.sh
+[[ -f "$SCRIPT_DIR/lib/policy.sh" ]] && source "$SCRIPT_DIR/lib/policy.sh"
 # Fallbacks when helpers not loaded (e.g. test env with overridden SCRIPT_DIR)
 [[ "$(type -t info 2>/dev/null)" == "function" ]]    || info()    { echo -e "\033[38;2;0;212;255m\033[1m▸\033[0m $*"; }
 [[ "$(type -t success 2>/dev/null)" == "function" ]] || success() { echo -e "\033[38;2;74;222;128m\033[1m✓\033[0m $*"; }
@@ -225,10 +228,10 @@ recommend_team() {
                 recruit_cost=$(echo "$recruit_result" | jq -r '.estimated_cost // 0')
 
                 # Map recruit roles/model to PM output format
-                local max_iterations=5
+                local max_iterations=10
                 local template="standard"
-                if [[ "$recruit_agents" -ge 4 ]]; then template="full"; max_iterations=8;
-                elif [[ "$recruit_agents" -le 1 ]]; then template="fast"; max_iterations=3;
+                if [[ "$recruit_agents" -ge 4 ]]; then template="full"; max_iterations=20;
+                elif [[ "$recruit_agents" -le 1 ]]; then template="fast"; max_iterations=10;
                 fi
 
                 local team_rec
@@ -274,7 +277,7 @@ recommend_team() {
         template="fast"
         estimated_agents=1
         model="haiku"
-        max_iterations=3
+        max_iterations=10
         confidence=85
         risk_factors="Low complexity, single module"
         mitigations="Standard code review"
@@ -284,7 +287,7 @@ recommend_team() {
         template="standard"
         estimated_agents=2
         model="sonnet"
-        max_iterations=5
+        max_iterations=10
         confidence=80
         risk_factors="Moderate complexity across modules"
         mitigations="Build + test iteration cycles"
@@ -294,7 +297,7 @@ recommend_team() {
         template="standard"
         estimated_agents=3
         model="sonnet"
-        max_iterations=6
+        max_iterations=15
         confidence=75
         risk_factors="Moderate-high complexity, coordination needed"
         mitigations="Parallel builders with test validation"
@@ -304,7 +307,7 @@ recommend_team() {
         template="full"
         estimated_agents=4
         model="opus"
-        max_iterations=8
+        max_iterations=20
         confidence=70
         risk_factors="High complexity, cross-system impact"
         mitigations="Full pipeline with review gates"
@@ -319,18 +322,20 @@ recommend_team() {
         mitigations="${mitigations}; security review before merge"
     fi
 
-    # Adjust for risk level
+    # Adjust for risk level — caps at the central iteration ceiling (see lib/policy.sh).
+    # apply_iteration_ceiling emits an event when capping kicks in so silent truncation
+    # is observable in events.jsonl.
     case "$risk" in
         critical)
             template="enterprise"
-            max_iterations=$((max_iterations + 4))
+            max_iterations=$(apply_iteration_ceiling $((max_iterations + 4)) "pm.risk.critical")
             confidence=$((confidence - 15))
             risk_factors="${risk_factors}; critical risk"
             mitigations="${mitigations}; emergency rollback plan"
             ;;
         high)
             template="full"
-            max_iterations=$((max_iterations + 2))
+            max_iterations=$(apply_iteration_ceiling $((max_iterations + 2)) "pm.risk.high")
             confidence=$((confidence - 5))
             ;;
     esac

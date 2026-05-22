@@ -652,7 +652,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-launchd.sh` | 703 | Process supervision (macOS + Linux) |
 | `scripts/sw-linear.sh` | 643 | Linear ↔ GitHub Bidirectional Sync |
 | `scripts/sw-logs.sh` | 353 | View and search agent pane logs |
-| `scripts/sw-loop.sh` | 3736 | Continuous agent loop harness for Claude Code |
+| `scripts/sw-loop.sh` | 3748 | Continuous agent loop harness for Claude Code |
 | `scripts/sw-memory.sh` | 2272 | Persistent Learning & Context System |
 | `scripts/sw-mission-control.sh` | 473 | Terminal-based pipeline mission control |
 | `scripts/sw-model-router.sh` | 606 | Intelligent Model Routing & Cost Optimization |
@@ -661,7 +661,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-patrol-meta.sh` | 445 | Shipwright Self-Improvement Patrol |
 | `scripts/sw-pipeline-composer.sh` | 444 | Dynamic Pipeline Composition |
 | `scripts/sw-pipeline-vitals.sh` | 1086 | Pipeline Vitals Engine |
-| `scripts/sw-pipeline.sh` | 4244 | Autonomous Feature Delivery (Idea → Production) |
+| `scripts/sw-pipeline.sh` | 4309 | Autonomous Feature Delivery (Idea → Production) |
 | `scripts/sw-pm.sh` | 754 | Autonomous PM Agent for Team Orchestration |
 | `scripts/sw-pr-lifecycle.sh` | 698 | Autonomous PR Management |
 | `scripts/sw-predictive.sh` | 857 | Predictive & Proactive Intelligence |
@@ -822,7 +822,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-daemon-triage-test.sh` | 267 | Unit tests for triage scoring |
 | `scripts/sw-lib-error-actionability-test.sh` | 149 |  |
 | `scripts/sw-lib-goal-mutation-test.sh` | 71 | issue #362 |
-| `scripts/sw-lib-helpers-test.sh` | 318 | Unit tests for shared helper functions |
+| `scripts/sw-lib-helpers-test.sh` | 439 | Unit tests for shared helper functions |
 | `scripts/sw-lib-loop-convergence-test.sh` | 297 | Stuckness throttle (issue #447) |
 | `scripts/sw-lib-loop-iteration-test.sh` | 146 | Unit tests for loop-iteration.sh |
 | `scripts/sw-lib-loop-restart-test.sh` | 490 | Unit tests for loop state |

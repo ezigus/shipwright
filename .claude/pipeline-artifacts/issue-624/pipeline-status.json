@@ -1,14 +1,15 @@
 {
   "run_id": "26299480869",
   "branch": "shipwright/issue-624",
-  "stage": "plan",
+  "stage": "design",
   "iteration": 0,
   "retry_count": 0,
-  "last_heartbeat": "2026-05-22T16:38:09Z",
+  "last_heartbeat": "2026-05-22T16:40:57Z",
   "exit_reason": "",
   "error_category": "",
   "completed_stages": [
     "intake",
-    "plan"
+    "plan",
+    "design"
   ]
 }

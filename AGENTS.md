@@ -847,7 +847,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-pipeline-composer-test.sh` | 632 | Test Suite |
 | `scripts/sw-pipeline-memory-guard-test.sh` | 190 |  |
 | `scripts/sw-pipeline-resume-test.sh` | 410 | Validate workflow shell logic |
-| `scripts/sw-pipeline-test.sh` | 4617 | E2E validation invoking the REAL pipeline |
+| `scripts/sw-pipeline-test.sh` | 4736 | E2E validation invoking the REAL pipeline |
 | `scripts/sw-pipeline-vitals-test.sh` | 226 | Validate pipeline health scoring |
 | `scripts/sw-pm-test.sh` | 225 | Autonomous PM Agent test suite |
 | `scripts/sw-policy-e2e-test.sh` | 290 | Verify config/policy.json is honored |

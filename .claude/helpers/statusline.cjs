@@ -17,10 +17,10 @@
 const fs = require('fs');
 const path = require('path');
 // SECURITY (audit_1776853149979): execSync was previously imported here and
-// used with shell-interpolated strings. Replaced with execFileSync only —
-// every invocation now passes argv arrays through execve directly, so there
-// is no shell to interpret metacharacters. Keep this comment to explain why
-// `execSync` is intentionally absent.
+// used with shell-interpolated strings. Replaced with execFileSync(file, args)
+// so program/argv boundaries stay explicit. We still intentionally run
+// `sh -c` for the fixed git script below; never include untrusted input in
+// that script string. Keep this comment to explain why `execSync` is absent.
 const { execFileSync } = require('child_process');
 const os = require('os');
 
@@ -52,9 +52,9 @@ const c = {
 };
 
 // audit_1776853149979: previously used execSync with a shell string.
-// Switched to execFileSync(file, args) so there is no shell interpretation —
-// eliminates the class of injection regardless of whether user input ever
-// reaches these args (defense in depth).
+// Switched to execFileSync(file, args) to avoid shell-interpolated command
+// strings at the callsite. Note: getGitInfo still invokes `sh -c` for a
+// fixed literal script; do not add untrusted input to that script.
 function safeExec(file, args, timeoutMs) {
   if (timeoutMs === undefined) timeoutMs = 2000;
   try {

@@ -117,21 +117,38 @@ ${file_contents}
 "
     fi
 
+    # Seam (a): redact out-of-scope paths from diff, prev_findings, and file_contents_section
+    # before audit-prompt construction. This is upstream of intel.sh:_extract_blocking_items —
+    # audit findings feed _extract_blocking_items which feeds the GOAL string.
+    local _ca_scope_allowlist=""
+    _ca_scope_allowlist=$(_extract_scope_from_design 2>/dev/null || true)
+    local _ca_diff="$diff"
+    local _ca_prev="$prev_findings"
+    local _ca_fcs="$file_contents_section"
+    if [ -n "$_ca_scope_allowlist" ]; then
+        _ca_diff=$(_redact_paths_outside_scope "$diff" "$_ca_scope_allowlist" \
+            "compound_audit_diff" "${COMPOUND_QUALITY_CYCLE:-0}" 2>/dev/null || printf '%s' "$diff")
+        _ca_prev=$(_redact_paths_outside_scope "$prev_findings" "$_ca_scope_allowlist" \
+            "compound_audit_prev" "${COMPOUND_QUALITY_CYCLE:-0}" 2>/dev/null || printf '%s' "$prev_findings")
+        _ca_fcs=$(_redact_paths_outside_scope "$file_contents_section" "$_ca_scope_allowlist" \
+            "compound_audit_files" "${COMPOUND_QUALITY_CYCLE:-0}" 2>/dev/null || printf '%s' "$file_contents_section")
+    fi
+
     cat <<EOF
 ${specialization}
 
 ## Code Changes (cumulative diff)
 \`\`\`
-${diff}
+${_ca_diff}
 \`\`\`
 
 ## Implementation Plan/Spec
 ${plan_summary}
 
 ## Previously Found Issues (do NOT repeat these)
-${prev_findings}
+${_ca_prev}
 ${evidence_section}
-${file_contents_section}
+${_ca_fcs}
 ## Output Format
 Return ONLY valid JSON (no markdown, no explanation):
 {"findings":[{"severity":"critical|high|medium|low","category":"${agent_type}","file":"path/to/file","line":0,"description":"One sentence","evidence":"The specific code","suggestion":"How to fix"}]}

@@ -1757,6 +1757,17 @@ compound_rebuild_with_feedback() {
     local blocking_items
     blocking_items=$(_extract_blocking_items)
 
+    # Redact out-of-scope path tokens from blocking_items before any prompt injection.
+    # This is the load-bearing safety seam (d) — if a path is not in the prompt, the
+    # agent cannot open/edit it by name. Pass-through when scope_allowlist is empty
+    # (warn-mode default — zero behaviour change for repos without a scope fence).
+    local _scope_allowlist=""
+    _scope_allowlist=$(_extract_scope_from_design 2>/dev/null || true)
+    if [ -n "$_scope_allowlist" ]; then
+        blocking_items=$(_redact_paths_outside_scope "$blocking_items" "$_scope_allowlist" \
+            "compound_rebuild_blocking" "${COMPOUND_QUALITY_CYCLE:-0}" 2>/dev/null || printf '%s' "$blocking_items")
+    fi
+
     # Collect all findings (prioritized by classification)
     _write_quality_feedback "$route" "$feedback_file" "$blocking_items"
 
@@ -1799,6 +1810,13 @@ compound_rebuild_with_feedback() {
     }' RETURN
     local feedback_content
     feedback_content=$(cat "$feedback_file")
+
+    # Redact out-of-scope paths from feedback_content (second exposure — _write_quality_feedback
+    # re-includes blocking items under its own "## Blocking Issues" header).
+    if [ -n "$_scope_allowlist" ]; then
+        feedback_content=$(_redact_paths_outside_scope "$feedback_content" "$_scope_allowlist" \
+            "compound_rebuild_feedback" "${COMPOUND_QUALITY_CYCLE:-0}" 2>/dev/null || printf '%s' "$feedback_content")
+    fi
 
     local route_instruction=""
     case "$route" in

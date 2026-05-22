@@ -315,4 +315,125 @@ assert_eq "_trim handles empty string" "" "$(_trim "")"
 assert_eq "_trim handles single quotes" "it's a test" "$(_trim "  it's a test  ")"
 assert_eq "_trim handles tabs" "hello" "$(_trim "	hello	")"
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# _file_in_scope
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "_file_in_scope"
+
+# Empty allowlist → fail-open (return 0)
+_file_in_scope "scripts/lib/helpers.sh" "" && assert_pass "_file_in_scope: empty allowlist returns 0 (fail-open)" \
+    || assert_fail "_file_in_scope: empty allowlist returns 0 (fail-open)" ""
+
+# Literal match
+_file_in_scope "scripts/lib/helpers.sh" "scripts/lib/helpers.sh" && assert_pass "_file_in_scope: literal exact match" \
+    || assert_fail "_file_in_scope: literal exact match" ""
+
+# Literal non-match
+_file_in_scope ".claude/helpers/foo.cjs" "scripts/lib/helpers.sh" && assert_fail "_file_in_scope: literal non-match should return 1" "" \
+    || assert_pass "_file_in_scope: literal non-match returns 1"
+
+# Directory prefix (trailing /)
+_file_in_scope "scripts/lib/helpers.sh" "scripts/lib/" && assert_pass "_file_in_scope: directory prefix match" \
+    || assert_fail "_file_in_scope: directory prefix match" ""
+
+_file_in_scope ".claude/helpers/foo.cjs" "scripts/lib/" && assert_fail "_file_in_scope: directory prefix non-match should return 1" "" \
+    || assert_pass "_file_in_scope: directory prefix non-match returns 1"
+
+# Single-star glob
+_file_in_scope "scripts/lib/helpers.sh" "scripts/lib/*.sh" && assert_pass "_file_in_scope: single-star glob match" \
+    || assert_fail "_file_in_scope: single-star glob match" ""
+
+_file_in_scope "scripts/lib/sub/helpers.sh" "scripts/lib/*.sh" && assert_fail "_file_in_scope: single-star does not cross dirs" "" \
+    || assert_pass "_file_in_scope: single-star does not cross dirs"
+
+# Double-star glob (**) — matches across directories
+_file_in_scope "scripts/lib/sub/helpers.sh" "scripts/**" && assert_pass "_file_in_scope: double-star matches subdirs" \
+    || assert_fail "_file_in_scope: double-star matches subdirs" ""
+
+_file_in_scope ".claude/helpers/foo.cjs" "scripts/**" && assert_fail "_file_in_scope: double-star non-match returns 1" "" \
+    || assert_pass "_file_in_scope: double-star non-match returns 1"
+
+# Double-star with suffix (e.g. **/*.ts) — must NOT fail-open
+_file_in_scope "scripts/lib/helpers.sh" "**/*.ts" && assert_fail "_file_in_scope: **/*.ts does not match non-.ts file" "" \
+    || assert_pass "_file_in_scope: **/*.ts does not match non-.ts file"
+
+_file_in_scope "src/components/Button.ts" "**/*.ts" && assert_pass "_file_in_scope: **/*.ts matches .ts file anywhere" \
+    || assert_fail "_file_in_scope: **/*.ts matches .ts file anywhere" ""
+
+# Comment lines are ignored
+_file_in_scope "scripts/lib/helpers.sh" "# this is a comment
+scripts/lib/helpers.sh" && assert_pass "_file_in_scope: comment lines are skipped" \
+    || assert_fail "_file_in_scope: comment lines are skipped" ""
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# _redact_paths_outside_scope
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "_redact_paths_outside_scope"
+
+# Pass-through when allowlist is empty
+_rps_out=$(_redact_paths_outside_scope "some text with scripts/lib/helpers.sh:42" "")
+assert_eq "_redact_paths_outside_scope: empty allowlist pass-through" \
+    "some text with scripts/lib/helpers.sh:42" "$_rps_out"
+
+# In-scope path is NOT redacted
+_rps_out=$(_redact_paths_outside_scope "fix scripts/lib/helpers.sh:42" "scripts/lib/helpers.sh" "test" "0")
+assert_eq "_redact_paths_outside_scope: in-scope path not redacted" \
+    "fix scripts/lib/helpers.sh:42" "$_rps_out"
+
+# Out-of-scope path IS redacted
+_rps_out=$(_redact_paths_outside_scope "found .claude/helpers/foo.cjs:88" "scripts/lib/helpers.sh" "test" "0")
+if echo "$_rps_out" | grep -qF ".claude/helpers/foo.cjs"; then
+    assert_fail "_redact_paths_outside_scope: OOS path removed" "path still visible in output: $_rps_out"
+else
+    assert_pass "_redact_paths_outside_scope: OOS path removed"
+fi
+assert_contains "_redact_paths_outside_scope: sentinel present" "$_rps_out" "[redacted:out-of-scope:TOKEN-1]"
+
+# URL is NOT redacted (negative filter)
+_rps_url_out=$(_redact_paths_outside_scope "see https://example.com/foo.js for details" "scripts/" "test" "0")
+assert_contains "_redact_paths_outside_scope: URL not redacted" "$_rps_url_out" "https://example.com/foo.js"
+
+# Version string is NOT redacted (negative filter — starts with digit)
+_rps_ver_out=$(_redact_paths_outside_scope "requires node 18.1.0 or newer" "scripts/" "test" "0")
+assert_contains "_redact_paths_outside_scope: version not redacted" "$_rps_ver_out" "18.1.0"
+
+# Code fence block is preserved verbatim
+_rps_fence_in=$'## diff\n```\nscripts/lib/helpers.sh:42\n```\nafter fence'
+_rps_fence_out=$(_redact_paths_outside_scope "$_rps_fence_in" "nothing/" "test" "0")
+assert_contains "_redact_paths_outside_scope: code fence preserved verbatim" \
+    "$_rps_fence_out" "scripts/lib/helpers.sh:42"
+
+# <out-of-scope-context> block preserved verbatim
+_rps_oos_in=$'line before\n<out-of-scope-context>\n.claude/helpers/foo.cjs:10\n</out-of-scope-context>\nline after'
+_rps_oos_out=$(_redact_paths_outside_scope "$_rps_oos_in" "scripts/lib/" "test" "0")
+assert_contains "_redact_paths_outside_scope: out-of-scope-context block preserved" \
+    "$_rps_oos_out" ".claude/helpers/foo.cjs:10"
+
+# Idempotency: running redaction twice produces no further changes
+_rps_once=$(_redact_paths_outside_scope "fixed .claude/helpers/bar.cjs:5" "scripts/" "test" "0")
+_rps_twice=$(_redact_paths_outside_scope "$_rps_once" "scripts/" "test" "0")
+assert_eq "_redact_paths_outside_scope: idempotent (second pass no-op)" "$_rps_once" "$_rps_twice"
+
+# Sidecar manifest is written when allowlist non-empty and OOS token found
+_rps_sidecar_dir=$(mktemp -d "${TMPDIR:-/tmp}/sw-rps-sidecar.XXXXXX")
+ARTIFACTS_DIR="$_rps_sidecar_dir" _redact_paths_outside_scope \
+    "found .claude/helpers/baz.cjs" "scripts/lib/" "test_seam" "5" >/dev/null
+if [[ -f "${_rps_sidecar_dir}/oos-redactions-cycle-5.json" ]]; then
+    assert_pass "_redact_paths_outside_scope: sidecar manifest written"
+    _sidecar_content=$(cat "${_rps_sidecar_dir}/oos-redactions-cycle-5.json")
+    assert_contains "_redact_paths_outside_scope: sidecar contains original path" \
+        "$_sidecar_content" ".claude/helpers/baz.cjs"
+else
+    assert_fail "_redact_paths_outside_scope: sidecar manifest written" "file not found"
+fi
+rm -rf "$_rps_sidecar_dir"
+
+# Extensionless path with slash component is detected and redacted when OOS
+_rps_out=$(_redact_paths_outside_scope "check scripts/sw for issues" "scripts/lib/" "test" "0")
+if echo "$_rps_out" | grep -qF "scripts/sw"; then
+    assert_fail "_redact_paths_outside_scope: extensionless slashed path redacted" "path still visible: $_rps_out"
+else
+    assert_pass "_redact_paths_outside_scope: extensionless slashed path redacted"
+fi
+
 print_test_results

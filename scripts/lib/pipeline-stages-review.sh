@@ -353,9 +353,23 @@ Reviewer: Verify whether these files were intentionally skipped or represent inc
         emit_event "review.drift_detected" "issue=${ISSUE_NUMBER:-0}" || true
     fi
 
+    # Seam (e): redact out-of-scope paths from diff content before injecting into review prompt.
+    local _rev_diff_content
+    _rev_diff_content=$(cat "$diff_file" 2>/dev/null || true)
+    if declare -f _redact_paths_outside_scope >/dev/null 2>&1 && \
+       declare -f _extract_scope_from_design >/dev/null 2>&1; then
+        local _rev_scope_allowlist=""
+        _rev_scope_allowlist=$(_extract_scope_from_design "$ARTIFACTS_DIR" 2>/dev/null || true)
+        if [ -n "$_rev_scope_allowlist" ]; then
+            _rev_diff_content=$(_redact_paths_outside_scope "$_rev_diff_content" \
+                "$_rev_scope_allowlist" "review_diff" "${COMPOUND_QUALITY_CYCLE:-0}" \
+                2>/dev/null || cat "$diff_file")
+        fi
+    fi
+
     review_prompt+="
 ## Diff to Review
-$(cat "$diff_file")"
+${_rev_diff_content}"
 
     # Inject skill prompts for review stage
     _skill_prompts=""

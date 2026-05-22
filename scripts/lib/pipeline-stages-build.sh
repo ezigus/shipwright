@@ -421,6 +421,20 @@ ${_build_recall_ctx}"
         fi
     fi
 
+    # Seam (c): redact out-of-scope paths from build_context_body before writing to disk.
+    # Memory-context and historical recall may reference paths from previous pipeline runs
+    # in different scopes; strip them now so the loop agent never sees them.
+    if declare -f _redact_paths_outside_scope >/dev/null 2>&1 && \
+       declare -f _extract_scope_from_design >/dev/null 2>&1; then
+        local _bld_scope_allowlist=""
+        _bld_scope_allowlist=$(_extract_scope_from_design "$ARTIFACTS_DIR" 2>/dev/null || true)
+        if [ -n "$_bld_scope_allowlist" ]; then
+            build_context_body=$(_redact_paths_outside_scope "$build_context_body" \
+                "$_bld_scope_allowlist" "build_context" "${COMPOUND_QUALITY_CYCLE:-0}" \
+                2>/dev/null || printf '%s' "$build_context_body")
+        fi
+    fi
+
     # Layer A: Write synthesized context to sidecar (atomic write)
     local _ctx_file="${ARTIFACTS_DIR}/build-context.md"
     local _ctx_tmp="${_ctx_file}.tmp.$$"

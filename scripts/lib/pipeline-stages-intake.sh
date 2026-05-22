@@ -1144,6 +1144,22 @@ Produce this EXACT format:
 - [ ] [How we'll know the design is correct — testable criteria]
 - [ ] [Additional validation items]
 
+## Scope (REQUIRED — machine-parsed by the build pipeline)
+Include this section EXACTLY — the build loop reads the fenced block to enforce file boundaries.
+
+\`\`\`scope
+scripts/lib/example.sh
+scripts/lib/another.sh
+src/components/
+\`\`\`
+
+List EVERY file or directory the implementation will touch, one entry per line.
+- Exact file paths (e.g. \`scripts/lib/helpers.sh\`) or directory prefixes ending in \`/\` (e.g. \`src/\`)
+- Globs are supported: \`**/*.ts\` matches all TypeScript files recursively
+- Only list files in THIS repo — no external deps
+- The build agent will NOT edit files outside this list; if a change genuinely requires
+  an unlisted file, it will emit \`<<<LOOP:SCOPE_ESCALATION:reason>>>\` to pause for human review.
+
 Be concrete and specific. Reference actual file paths in the codebase. Consider edge cases and failure modes."
 
     # Inject skill prompts for design stage
@@ -1270,6 +1286,41 @@ $(printf '%s\n' "${INTELLIGENCE_INTAKE_CTX}")"
         return 1
     fi
     info "Design saved: ${DIM}$design_file${RESET} (${line_count} lines)"
+
+    # Enforce scope-fence policy (require_scope_fence: warn|error|off; default: warn).
+    # warn (default): log a notice and proceed — zero behaviour change for existing repos.
+    # error: exit non-zero with a message; operator must add a scope fence or set warn/off.
+    # off:  skip the check entirely (legacy issue replay).
+    local _sfence_mode="warn"
+    if [[ -s "${PIPELINE_CONFIG:-}" ]]; then
+        local _sfence_cfg
+        _sfence_cfg=$(jq -r '.require_scope_fence // "warn"' "${PIPELINE_CONFIG}" 2>/dev/null || echo "warn")
+        [[ "$_sfence_cfg" == "error" || "$_sfence_cfg" == "off" ]] && _sfence_mode="$_sfence_cfg"
+    fi
+
+    if [[ "$_sfence_mode" != "off" ]]; then
+        local _scope_fence_lines=""
+        if declare -f _extract_scope_from_design >/dev/null 2>&1; then
+            _scope_fence_lines=$(_extract_scope_from_design "$ARTIFACTS_DIR" 2>/dev/null || true)
+        fi
+
+        if [[ -z "$_scope_fence_lines" ]]; then
+            if [[ "$_sfence_mode" == "error" ]]; then
+                error "design.md is missing required \`scope\` fence — set require_scope_fence: warn or off in pipeline config to disable enforcement"
+                return 1
+            else
+                warn "design.md has no \`\`\`scope block — scope-redaction inactive for this issue (set require_scope_fence: error to enforce)"
+                emit_event "pipeline.scope_manifest_missing" \
+                    "stage=design" "issue=${ISSUE_NUMBER:-0}" 2>/dev/null || true
+            fi
+        else
+            local _fence_file_count
+            _fence_file_count=$(printf '%s\n' "$_scope_fence_lines" | grep -c '[^[:space:]]' 2>/dev/null || echo "0")
+            emit_event "pipeline.scope_manifest_loaded" \
+                "stage=design" "issue=${ISSUE_NUMBER:-0}" "file_count=${_fence_file_count}" 2>/dev/null || true
+            info "Scope fence loaded: ${_fence_file_count} entries — path redaction active"
+        fi
+    fi
 
     # Persist design (and plan, if present) to issue-scoped snapshot.
     if [[ -n "${ISSUE_NUMBER:-}" ]]; then

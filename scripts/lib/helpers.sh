@@ -596,7 +596,22 @@ _file_in_scope() {
         case "$entry" in
             \#*) continue ;;
             */)  case "$file" in "${entry}"*) return 0 ;; esac ;;
-            *\*\**) _pfx="${entry%%\*\**}"; case "$file" in "${_pfx}"*) return 0 ;; esac ;;
+            *\*\**)
+                # Double-star: recursive match with optional prefix and suffix
+                # e.g. scripts/** → prefix="scripts/", suffix=""
+                #      **/*.ts  → prefix="",           suffix="*.ts"
+                _pfx="${entry%%\*\**}"
+                _sfx="${entry##*\*\*}"
+                case "$_sfx" in /*) _sfx="${_sfx#/}" ;; esac   # strip leading /
+                local _pmatch=1 _smatch=1
+                if [ -n "$_pfx" ]; then
+                    case "$file" in "${_pfx}"*) ;; *) _pmatch=0 ;; esac
+                fi
+                if [ -n "$_sfx" ]; then
+                    case "${file##*/}" in $_sfx) ;; *) _smatch=0 ;; esac
+                fi
+                [ "$_pmatch" -eq 1 ] && [ "$_smatch" -eq 1 ] && return 0
+                ;;
             *\**)
                 # Single-star: must NOT cross directory boundaries (star ≠ /)
                 case "$entry" in
@@ -678,9 +693,14 @@ _redact_paths_outside_scope() {
             | sed -E 's|https?://[^[:space:]]*||g; s|ftp://[^[:space:]]*||g; s|git@[^[:space:]]*||g' \
             2>/dev/null || printf '%s' "$line")
 
-        # Extract file-path-shaped tokens: word-chars+dot+extension, optional :N or :N-M suffix
+        # Extract file-path-shaped tokens.
+        # Two shapes:
+        #   1. Dotted extension:    foo/bar.sh:42   foo.ts
+        #   2. Extensionless slash: scripts/sw      src/main (must contain / to avoid noise)
+        # Combined via alternation; sort -u deduplicates overlapping matches.
         candidates=$(printf '%s' "$_stripped_line" \
-            | grep -oE '[A-Za-z0-9_./-]+\.[A-Za-z0-9]+(:[0-9]+(-[0-9]+)?)?' 2>/dev/null || true)
+            | grep -oE '([A-Za-z0-9_./-]+\.[A-Za-z0-9]+(:[0-9]+(-[0-9]+)?)?|[A-Za-z0-9_-]+(/[A-Za-z0-9_.@-]+)+)' \
+            2>/dev/null | sort -u || true)
 
         processed="$line"
         while IFS= read -r raw_token; do

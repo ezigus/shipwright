@@ -353,6 +353,13 @@ _file_in_scope "scripts/lib/sub/helpers.sh" "scripts/**" && assert_pass "_file_i
 _file_in_scope ".claude/helpers/foo.cjs" "scripts/**" && assert_fail "_file_in_scope: double-star non-match returns 1" "" \
     || assert_pass "_file_in_scope: double-star non-match returns 1"
 
+# Double-star with suffix (e.g. **/*.ts) — must NOT fail-open
+_file_in_scope "scripts/lib/helpers.sh" "**/*.ts" && assert_fail "_file_in_scope: **/*.ts does not match non-.ts file" "" \
+    || assert_pass "_file_in_scope: **/*.ts does not match non-.ts file"
+
+_file_in_scope "src/components/Button.ts" "**/*.ts" && assert_pass "_file_in_scope: **/*.ts matches .ts file anywhere" \
+    || assert_fail "_file_in_scope: **/*.ts matches .ts file anywhere" ""
+
 # Comment lines are ignored
 _file_in_scope "scripts/lib/helpers.sh" "# this is a comment
 scripts/lib/helpers.sh" && assert_pass "_file_in_scope: comment lines are skipped" \
@@ -408,7 +415,7 @@ _rps_twice=$(_redact_paths_outside_scope "$_rps_once" "scripts/" "test" "0")
 assert_eq "_redact_paths_outside_scope: idempotent (second pass no-op)" "$_rps_once" "$_rps_twice"
 
 # Sidecar manifest is written when allowlist non-empty and OOS token found
-_rps_sidecar_dir=$(mktemp -d)
+_rps_sidecar_dir=$(mktemp -d "${TMPDIR:-/tmp}/sw-rps-sidecar.XXXXXX")
 ARTIFACTS_DIR="$_rps_sidecar_dir" _redact_paths_outside_scope \
     "found .claude/helpers/baz.cjs" "scripts/lib/" "test_seam" "5" >/dev/null
 if [[ -f "${_rps_sidecar_dir}/oos-redactions-cycle-5.json" ]]; then
@@ -420,5 +427,13 @@ else
     assert_fail "_redact_paths_outside_scope: sidecar manifest written" "file not found"
 fi
 rm -rf "$_rps_sidecar_dir"
+
+# Extensionless path with slash component is detected and redacted when OOS
+_rps_out=$(_redact_paths_outside_scope "check scripts/sw for issues" "scripts/lib/" "test" "0")
+if echo "$_rps_out" | grep -qF "scripts/sw"; then
+    assert_fail "_redact_paths_outside_scope: extensionless slashed path redacted" "path still visible: $_rps_out"
+else
+    assert_pass "_redact_paths_outside_scope: extensionless slashed path redacted"
+fi
 
 print_test_results

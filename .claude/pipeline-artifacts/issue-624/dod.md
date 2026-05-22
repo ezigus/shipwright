@@ -1,0 +1,9 @@
+- `bash scripts/sw-lib-pipeline-stages-test.sh` exits 0 with new `stage_resync` tests included {auto:other:bash scripts/sw-lib-pipeline-stages-test.sh}
+- `bash scripts/sw-pipeline-test.sh` exits 0 (pipeline-smoke gate still green) {auto:other:bash scripts/sw-pipeline-test.sh}
+- All 11 template files contain a `resync` stage object {auto:other:bash -c 'for f in templates/pipelines/*.json; do jq -e "[.stages[].id] | index(\"resync\") != null" "$f" >/dev/null || { echo FAIL:$f; exit 1; }; done'}
+- `config/defaults.json` `pipeline.stage_order` contains `resync` immediately after `compound_quality` and immediately before `pr` {auto:other:jq -e '.pipeline.stage_order | (index("resync") == (index("compound_quality") + 1)) and ((index("resync") + 1) == index("pr"))' config/defaults.json}
+- `stage_resync` and `resync_abort` functions are defined and callable {auto:other:bash -c 'source scripts/lib/pipeline-state.sh 2>/dev/null; source scripts/lib/pipeline-stages-delivery.sh; type stage_resync resync_abort >/dev/null'}
+- All template JSON files parse cleanly {auto:other:bash -c 'jq . templates/pipelines/*.json >/dev/null'}
+- `npm test` exits 0 {auto:tests}
+- Diff includes `stage_resync` and `resync_abort` definitions in `pipeline-stages-delivery.sh` {auto:diff}
+- Diff modifies 11 template files plus the 4 script/config files (`pipeline-stages-delivery.sh`, `pipeline-stages.sh`, `pipeline-state.sh`, `defaults.json`) plus the test file {auto:diff}

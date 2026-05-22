@@ -1,7 +1,7 @@
 # Session Progress (Auto-Generated)
 
 ## Goal
-Reduce build-loop iteration ceiling — current 45/cycle × 3 cycles = 135 invocations is excessive
+Pipeline: add resync stage scaffold between audit and pr (basic git merge, no conflict handling)
 
 ## Status
 - Iteration: 1/20
@@ -10,18 +10,14 @@ Reduce build-loop iteration ceiling — current 45/cycle × 3 cycles = 135 invoc
 - Status: complete
 
 ## Recent Commits
-224b5f8 fix(loop): harden iteration ceiling — central cap helper + robust tests
-22ac181 chore: heartbeat state snapshot for #605 [skip ci]
-ccfe7ba chore: heartbeat state snapshot for #605 [skip ci]
-108cb50 chore: persist review artifacts for #605 [skip ci]
-26f42ba chore: persist test artifacts for #605 [skip ci]
+b0592f6 fix(resync): log conflicted files and add recovery guidance on merge conflict
+09555a9 chore: heartbeat state snapshot for #624 [skip ci]
+3f187fe chore: heartbeat state snapshot for #624 [skip ci]
+9c0580d chore: persist review artifacts for #624 [skip ci]
+8735790 chore: persist test artifacts for #624 [skip ci]
 
 ## Changed Files
-scripts/lib/policy.sh
-scripts/sw-e2e-smoke-test.sh
-scripts/sw-loop-test.sh
-scripts/sw-pm.sh
-scripts/sw-self-optimize.sh
+scripts/lib/pipeline-stages-delivery.sh
 
 ## Timestamp
-2026-05-21T12:31:00Z
+2026-05-22T18:41:19Z

@@ -288,6 +288,7 @@ show_stage_preview() {
         test)     echo -e "  Run test suite and check coverage" ;;
         review)   echo -e "  AI code review on the diff, post findings" ;;
         compound_quality) echo -e "  Adversarial review, negative tests, e2e, DoD audit" ;;
+        resync)   echo -e "  Sync branch with base via git merge (no conflict resolution)" ;;
         pr)       echo -e "  Create GitHub PR with labels, reviewers, milestone" ;;
         merge)    echo -e "  Wait for CI checks, merge PR, optionally delete branch" ;;
         deploy)   echo -e "  Deploy to staging/production with rollback" ;;

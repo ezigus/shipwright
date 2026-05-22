@@ -67,6 +67,12 @@
       }
     },
     {
+      "id": "resync",
+      "enabled": true,
+      "gate": "approve",
+      "config": {}
+    },
+    {
       "id": "pr",
       "enabled": true,
       "gate": "approve",

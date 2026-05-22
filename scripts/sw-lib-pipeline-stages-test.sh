@@ -2310,7 +2310,7 @@ if [[ -f "$_psb_source" ]]; then
 
     # The outer compound guard must be gone — the opening 'if' line must NOT combine
     # type-check and commit_count on one line (old: if type X && [[ commit_count -gt 0 ]]).
-    if echo "$_store_block" | grep -q 'type ruflo_store_issue_outcome.*commit_count' 2>/dev/null; then
+    if grep -q 'type ruflo_store_issue_outcome.*commit_count' <<< "$_store_block" 2>/dev/null; then
         assert_fail \
             "build outcome store: outer commit_count > 0 guard is absent (block runs unconditionally)" \
             "Found combined type+commit_count guard — outer guard must be split (commit_count moved inside)"
@@ -2320,7 +2320,7 @@ if [[ -f "$_psb_source" ]]; then
     fi
 
     # _build_status variable must be set inside the block.
-    if echo "$_store_block" | grep -q '_build_status' 2>/dev/null; then
+    if grep -q '_build_status' <<< "$_store_block" 2>/dev/null; then
         assert_pass "build outcome store: _build_status variable is present in store block"
     else
         assert_fail "build outcome store: _build_status variable is present in store block" \
@@ -2328,7 +2328,7 @@ if [[ -f "$_psb_source" ]]; then
     fi
 
     # _build_key variable must be set inside the block.
-    if echo "$_store_block" | grep -q '_build_key' 2>/dev/null; then
+    if grep -q '_build_key' <<< "$_store_block" 2>/dev/null; then
         assert_pass "build outcome store: _build_key variable is present in store block"
     else
         assert_fail "build outcome store: _build_key variable is present in store block" \
@@ -2336,7 +2336,7 @@ if [[ -f "$_psb_source" ]]; then
     fi
 
     # The literal string "no-commits" must appear to handle the zero-commit path.
-    if echo "$_store_block" | grep -q 'no-commits' 2>/dev/null; then
+    if grep -q 'no-commits' <<< "$_store_block" 2>/dev/null; then
         assert_pass "build outcome store: 'no-commits' status appears in store block"
     else
         assert_fail "build outcome store: 'no-commits' status appears in store block" \

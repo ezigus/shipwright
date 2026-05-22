@@ -754,6 +754,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-autonomous-e2e-test.sh` | 293 | Autonomous Loop E2E Test |
 | `scripts/sw-autonomous-test.sh` | 207 | AI-building-AI master controller tests |
 | `scripts/sw-budget-chaos-test.sh` | 252 | Budget Exhaustion & Chaos Tests |
+| `scripts/sw-build-prompt-memory-guard-test.sh` | 165 |  |
 | `scripts/sw-changelog-test.sh` | 201 | Validate release notes generation |
 | `scripts/sw-chaos-test.sh` | 387 | Fault injection & recovery validation |
 | `scripts/sw-checkpoint-test.sh` | 341 | Validate checkpoint save/restore |
@@ -831,7 +832,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-pipeline-intelligence-test.sh` | 1265 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 616 | Unit tests for quality |
 | `scripts/sw-lib-pipeline-stages-review-test.sh` | 589 | Unit tests for cross-stage drift detector |
-| `scripts/sw-lib-pipeline-stages-test.sh` | 2596 | Unit tests for stage functions |
+| `scripts/sw-lib-pipeline-stages-test.sh` | 2691 | Unit tests for stage functions |
 | `scripts/sw-lib-pipeline-state-test.sh` | 1163 | Unit tests for pipeline state |
 | `scripts/sw-linear-test.sh` | 300 | Validate Linear ↔ GitHub bidirectional sync |
 | `scripts/sw-logs-test.sh` | 281 | Validate agent pane log viewing, searching, |

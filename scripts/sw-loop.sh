@@ -3275,6 +3275,18 @@ ${GOAL}"
         # Record iteration data for stuckness detection (diff hash, error hash, exit code)
         record_iteration_stuckness_data "$exit_code"
 
+        # Detect <<<LOOP:SCOPE_ESCALATION:reason>>> signal — agent is flagging a new-scope need
+        if grep -q '<<<LOOP:SCOPE_ESCALATION:' "$log_file" 2>/dev/null; then
+            local _esc_reason
+            _esc_reason=$(grep -o '<<<LOOP:SCOPE_ESCALATION:[^>]*>>>' "$log_file" 2>/dev/null \
+                | head -1 | sed 's/<<<LOOP:SCOPE_ESCALATION:\(.*\)>>>/\1/' || true)
+            type emit_event >/dev/null 2>&1 && emit_event "pipeline.scope_escalation" \
+                "iteration=$ITERATION" \
+                "reason=${_esc_reason:-unspecified}" \
+                "job_id=${PIPELINE_JOB_ID:-loop-$$}" 2>/dev/null || true
+            warn "Agent signaled scope escalation (iteration $ITERATION): ${_esc_reason:-unspecified}"
+        fi
+
         # Detect fatal CLI errors (API key, auth, network, session/usage limits) — abort immediately
         if check_fatal_error "$log_file" "$exit_code" "$_err_file"; then
             STATUS="error"

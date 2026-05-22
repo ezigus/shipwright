@@ -46,9 +46,28 @@ _extract_scope_from_design() {
     [[ -f "$design_file" ]] || design_file="${artifacts_dir}/design.md"
     [[ -f "$design_file" ]] || return 0
 
-    awk '/^```scope[[:space:]]*$/{found=1; next} found && /^```/{exit} found{print}' \
+    local _scope_out
+    _scope_out=$(awk '/^```scope[[:space:]]*$/{found=1; next} found && /^```/{exit} found{print}' \
         "$design_file" 2>/dev/null \
-        | grep -v '^[[:space:]]*$' || true
+        | grep -v '^[[:space:]]*$' || true)
+
+    if [ -z "$_scope_out" ]; then
+        declare -f emit_event >/dev/null 2>&1 && \
+            emit_event "pipeline.scope_manifest_missing" \
+                "stage=${PIPELINE_STAGE:-unknown}" \
+                "issue=${ISSUE_NUMBER:-0}" 2>/dev/null || true
+    else
+        local _file_count
+        _file_count=$(printf '%s\n' "$_scope_out" | grep -c . 2>/dev/null || true)
+        _file_count=${_file_count:-0}
+        declare -f emit_event >/dev/null 2>&1 && \
+            emit_event "pipeline.scope_manifest_loaded" \
+                "stage=${PIPELINE_STAGE:-unknown}" \
+                "issue=${ISSUE_NUMBER:-0}" \
+                "file_count=${_file_count}" 2>/dev/null || true
+    fi
+
+    printf '%s\n' "$_scope_out"
 }
 
 # _compute_scope_violations — Compare changed_files against scope_allowlist.

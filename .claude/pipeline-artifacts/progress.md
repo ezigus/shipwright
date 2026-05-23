@@ -15,16 +15,15 @@ Repeat count: 1
 - Status: complete
 
 ## Recent Commits
-19e2afe Revert "loop: iteration 1 — 6 files changed, 198 insertions(+), 425 deletions(-)"
-8a1f2cd loop: iteration 1 — 6 files changed, 198 insertions(+), 425 deletions(-)
-86f140c chore: heartbeat state snapshot for #635 [skip ci]
-6e199f3 docs: auto-sync documentation sections
-2e38e50 fix(build): stop injecting goal-agnostic memory on cold pipeline runs (#637)
+961b810 Revert "loop: iteration 1 — 5 files changed, 198 insertions(+), 168 deletions(-)"
+b8d3d98 loop: iteration 1 — 5 files changed, 198 insertions(+), 168 deletions(-)
+f5ee596 fix(resync): explicit env-var precedence and harden BASE_BRANCH guard
+29fa3bc chore: heartbeat state snapshot for #635 [skip ci]
+7f62bd7 chore: heartbeat state snapshot for #635 [skip ci]
 
 ## Changed Files
-config/defaults.json
 scripts/lib/pipeline-stages-delivery.sh
 scripts/sw-lib-pipeline-stages-test.sh
 
 ## Timestamp
-2026-05-22T23:32:25Z
+2026-05-23T03:58:02Z

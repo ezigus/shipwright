@@ -7,15 +7,15 @@ issue: "#635"
 branch: "shipwright/issue-635"
 template: ""
 current_stage: compound_quality
-outer_stage: compound_quality
-outer_stage_start_commit: 7f62bd727c8af08b0189dfea31e72d80475e68e4
-inner_stage: test
+outer_stage: 
+outer_stage_start_commit: 
+inner_stage: 
 current_stage_description: "Adversarial testing, E2E validation, DoD checklist"
 stage_progress: "intake:complete build:complete test:complete compound_quality:failed pr:pending"
 started_at: 2026-05-22T22:40:39Z
 pipeline_run_epoch: 1779489639
-updated_at: 2026-05-23T04:09:46Z
-elapsed: 1h 26m 16s
+updated_at: 2026-05-23T04:09:50Z
+elapsed: 1h 26m 20s
 test_cmd: "npm test"
 pr_number: 
 model: opus

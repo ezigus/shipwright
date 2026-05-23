@@ -120,18 +120,14 @@ function deduplicateById(entries) {
 function fingerprintContent(text) {
   if (typeof text !== 'string' || text.length === 0) return '0';
   const norm = text.replace(/\s+/g, ' ').trim().toLowerCase();
-  // FNV-1a 64-bit using BigInt so the 64-bit prime stays 64-bit. Do NOT
-  // attempt to use the 64-bit prime with Math.imul or 32-bit bitwise ops:
-  // JS will silently truncate it to its low 32 bits (decimal 435) and
-  // destroy hash quality. BigInt preserves all 64 bits through XOR + multiply.
-  const FNV_PRIME = 0x100000001b3n;
-  const FNV_OFFSET = 0xcbf29ce484222325n;
-  const MASK64 = 0xffffffffffffffffn;
-  let h = FNV_OFFSET;
+  // FNV-1a 64-bit (split into 32-bit halves to stay within Number safe int)
+  let h1 = 0x811c9dc5, h2 = 0xcbf29ce4;
   for (let i = 0; i < norm.length; i++) {
-    h = ((h ^ BigInt(norm.charCodeAt(i))) * FNV_PRIME) & MASK64;
+    const c = norm.charCodeAt(i);
+    h1 ^= c; h1 = Math.imul(h1, 0x01000193) >>> 0;
+    h2 ^= c; h2 = Math.imul(h2, 0x100000001b3 & 0xffffffff) >>> 0;
   }
-  return `${h.toString(16)}_${norm.length}`;
+  return `${h1.toString(16)}_${h2.toString(16)}_${norm.length}`;
 }
 
 function deduplicateByContent(entries) {
@@ -1009,7 +1005,7 @@ function stats(outputJson) {
   return report;
 }
 
-module.exports = { init, getContext, recordEdit, feedback, consolidate, stats, fingerprintContent };
+module.exports = { init, getContext, recordEdit, feedback, consolidate, stats };
 
 // ── CLI entrypoint ──────────────────────────────────────────────────────────
 if (require.main === module) {

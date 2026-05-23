@@ -18,8 +18,8 @@ resync_abort() {
 }
 
 # stage_resync — Sync WIP branch with origin/$BASE_BRANCH via git merge.
-# Scaffold for issue #624: basic merge, no conflict-resolution retry.
-# Issue #635: BASE_BRANCH guard + retry_budget read (loop body lands in Part 2).
+# Issues #624 + #635: BASE_BRANCH guard, retry budget, and conflict retry loop.
+# On conflict: aborts, re-fetches, and retries up to _RESYNC_RETRY_BUDGET times.
 # Success: HEAD merged with origin/$BASE_BRANCH (or no-op when remote absent).
 # Failure: merge aborted, working tree clean, mark_stage_failed("resync", ...) invoked.
 stage_resync() {
@@ -50,8 +50,8 @@ stage_resync() {
         esac
     fi
 
-    # Retry budget — held in _RESYNC_RETRY_BUDGET so Part 2's retry loop can read it
-    # without re-querying config every iteration. Precedence (highest first):
+    # Retry budget — held in _RESYNC_RETRY_BUDGET for the retry loop below.
+    # Precedence (highest first):
     #   1. SHIPWRIGHT_RESYNC_RETRY_BUDGET env var (explicit override)
     #   2. resync.retry_budget from config (daemon-config → policy → defaults.json)
     #   3. Hard fallback of 3 if both above are unset or malformed.
@@ -60,9 +60,14 @@ stage_resync() {
         retry_budget=$(_config_get_int "resync.retry_budget" "3" 2>/dev/null || echo 3)
     fi
     if [[ -z "$retry_budget" || ! "$retry_budget" =~ ^[0-9]+$ ]]; then
-        # Surface malformed config so future maintainers know the fallback fired.
         [[ -n "$retry_budget" ]] && warn "resync.retry_budget='${retry_budget}' is not an integer — falling back to 3"
         retry_budget=3
+    fi
+    # Cap to prevent runaway loops from operator typos or env var misuse.
+    local _max_budget=10
+    if [[ "$retry_budget" -gt "$_max_budget" ]]; then
+        warn "Capping resync.retry_budget from ${retry_budget} to ${_max_budget}"
+        retry_budget=$_max_budget
     fi
     _RESYNC_RETRY_BUDGET="$retry_budget"
 
@@ -85,38 +90,57 @@ stage_resync() {
     fi
 
     local merge_err_log="${ARTIFACTS_DIR:-/tmp}/merge-error.log"
-    if git merge "$merge_ref" --no-edit >/dev/null 2>"$merge_err_log"; then
-        success "Branch is current with ${merge_ref}"
-        emit_event "resync.complete" \
+
+    # Retry loop: re-fetch and retry on conflict up to _RESYNC_RETRY_BUDGET times.
+    # Handles races where base advanced between initial fetch and merge attempt.
+    # Conflict resolution itself remains a manual step; retries only help transient cases.
+    local _attempt=0
+    while true; do
+        if git merge "$merge_ref" --no-edit >/dev/null 2>"$merge_err_log"; then
+            local _retry_note=""
+            [[ $_attempt -gt 0 ]] && _retry_note=" (retry ${_attempt}/${retry_budget})"
+            success "Branch is current with ${merge_ref}${_retry_note}"
+            emit_event "resync.complete" \
+                "issue=${ISSUE_NUMBER:-0}" \
+                "base=${base}" 2>/dev/null || true
+            log_stage "resync" "merged ${merge_ref}" 2>/dev/null || true
+            return 0
+        fi
+
+        # Merge failed — collect conflicted file list before abort clears state.
+        local conflicted_files
+        conflicted_files=$(git diff --name-only --diff-filter=U 2>/dev/null || true)
+        resync_abort
+
+        if [[ $_attempt -lt $retry_budget ]]; then
+            _attempt=$(( _attempt + 1 ))
+            warn "Merge conflict on attempt ${_attempt}/${retry_budget} — re-fetching ${base} and retrying"
+            git fetch origin "$base" 2>/dev/null || true
+            if git rev-parse --verify "origin/${base}" >/dev/null 2>&1; then
+                merge_ref="origin/${base}"
+            fi
+            continue
+        fi
+
+        # All retries exhausted — report conflict details and fail.
+        error "Merge conflict against ${merge_ref} (${retry_budget} retry/retries exhausted)"
+        if [[ -n "$conflicted_files" ]]; then
+            error "Conflicted files (resolve manually, then run 'shipwright pipeline resume'):"
+            while IFS= read -r _cf; do
+                [[ -n "$_cf" ]] && error "  $_cf"
+            done <<< "$conflicted_files"
+            echo "$conflicted_files" > "${ARTIFACTS_DIR:-/tmp}/resync-conflicts.txt" 2>/dev/null || true
+        fi
+        if [[ -s "$merge_err_log" ]]; then
+            error "git merge output: $(cat "$merge_err_log")"
+        fi
+        error "To resolve: fix each conflicted file, run 'git add <file>', then 'git merge --continue', then 'shipwright pipeline resume'"
+        emit_event "resync.conflict" \
             "issue=${ISSUE_NUMBER:-0}" \
             "base=${base}" 2>/dev/null || true
-        log_stage "resync" "merged ${merge_ref}" 2>/dev/null || true
-        return 0
-    fi
-
-    # Merge failed — log conflicted files so operators know what to resolve.
-    local conflicted_files
-    conflicted_files=$(git diff --name-only --diff-filter=U 2>/dev/null || true)
-
-    error "Merge conflict against ${merge_ref}"
-    if [[ -n "$conflicted_files" ]]; then
-        error "Conflicted files (resolve manually, then run 'shipwright pipeline resume'):"
-        while IFS= read -r _cf; do
-            [[ -n "$_cf" ]] && error "  $_cf"
-        done <<< "$conflicted_files"
-        echo "$conflicted_files" > "${ARTIFACTS_DIR:-/tmp}/resync-conflicts.txt" 2>/dev/null || true
-    fi
-    if [[ -s "$merge_err_log" ]]; then
-        error "git merge output: $(cat "$merge_err_log")"
-    fi
-    error "To resolve: fix each conflicted file, run 'git add <file>', then 'git merge --continue', then 'shipwright pipeline resume'"
-
-    resync_abort
-    emit_event "resync.conflict" \
-        "issue=${ISSUE_NUMBER:-0}" \
-        "base=${base}" 2>/dev/null || true
-    mark_stage_failed "resync" "conflicts detected in ${conflicted_files:-unknown files} — resolve manually then resume" 2>/dev/null || true
-    return 1
+        mark_stage_failed "resync" "conflicts detected in ${conflicted_files:-unknown files} — resolve manually then resume" 2>/dev/null || true
+        return 1
+    done
 }
 
 stage_pr() {

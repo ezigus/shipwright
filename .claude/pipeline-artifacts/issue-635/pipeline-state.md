@@ -2,7 +2,7 @@
 pipeline: fast
 goal: "Pipeline: resync stage — function skeleton, retry budget config, BASE_BRANCH guard (1/2 of #625)"
 original_goal: "Pipeline: resync stage — function skeleton, retry budget config, BASE_BRANCH guard (1/2 of #625)"
-status: running
+status: failed
 issue: "#635"
 branch: "shipwright/issue-635"
 template: ""
@@ -14,8 +14,8 @@ current_stage_description: "Adversarial testing, E2E validation, DoD checklist"
 stage_progress: "intake:complete build:complete test:complete compound_quality:failed pr:pending"
 started_at: 2026-05-22T22:40:39Z
 pipeline_run_epoch: 1779489639
-updated_at: 2026-05-23T00:19:52Z
-elapsed: 26s
+updated_at: 2026-05-23T00:30:54Z
+elapsed: 11m 27s
 test_cmd: "npm test"
 pr_number: 
 model: opus
@@ -56,3 +56,9 @@ Quality gate failed: 58/60 after 1 cycles
 
 ### compound_quality (23:48:13)
 failed (3m 24s)
+### compound_quality (00:30:49)
+Quality gate failed: score below hard floor (40)
+
+### compound_quality (00:30:49)
+failed (10m 57s)
+

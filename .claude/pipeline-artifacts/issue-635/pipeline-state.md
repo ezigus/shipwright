@@ -7,15 +7,15 @@ issue: "#635"
 branch: "shipwright/issue-635"
 template: ""
 current_stage: compound_quality
-outer_stage: compound_quality
-outer_stage_start_commit: 20c4b361cbb8b035363ee2894dc2d46a2cc97d8d
-inner_stage: test
+outer_stage: 
+outer_stage_start_commit: 
+inner_stage: 
 current_stage_description: "Adversarial testing, E2E validation, DoD checklist"
 stage_progress: "intake:complete build:complete test:complete compound_quality:failed pr:pending"
 started_at: 2026-05-22T22:40:39Z
 pipeline_run_epoch: 1779489639
-updated_at: 2026-05-23T04:23:12Z
-elapsed: 1h 39m 42s
+updated_at: 2026-05-23T04:23:16Z
+elapsed: 1h 39m 46s
 test_cmd: "npm run test:smoke"
 pr_number: 
 model: sonnet

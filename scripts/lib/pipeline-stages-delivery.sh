@@ -28,20 +28,41 @@ stage_resync() {
 
     # Guard: refuse unsafe BASE_BRANCH values (option-injection, traversal, reserved chars).
     # Mirrors the --base CLI guard at sw-pipeline.sh:674 so env-only callers are covered too.
+    # _validate_ref lives in lib/helpers.sh, sourced by sw-pipeline.sh before this file.
+    # Inline-source as a fallback so direct callers (daemon-triage, tests) are also covered.
+    if ! declare -f _validate_ref >/dev/null 2>&1; then
+        local _helpers_sh="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/lib/helpers.sh"
+        [[ -f "$_helpers_sh" ]] && source "$_helpers_sh" 2>/dev/null || true
+    fi
     if declare -f _validate_ref >/dev/null 2>&1; then
         if ! _validate_ref "$base" "--base"; then
             mark_stage_failed "resync" "invalid BASE_BRANCH '${base}' — refusing to merge" 2>/dev/null || true
             return 1
         fi
+    else
+        # Hard-fail rather than silently skip when the validator can't be loaded —
+        # an unvalidated --evil base would otherwise reach git operations.
+        case "$base" in
+            -*|*..*|*' '*|*$'\t'*|*$'\n'*|*'~'*|*'^'*|*'?'*|*'*'*|*'['*|*'\\'*)
+                mark_stage_failed "resync" "invalid BASE_BRANCH '${base}' (validator unavailable; refusing on charset)" 2>/dev/null || true
+                return 1
+                ;;
+        esac
     fi
 
-    # Retry budget — read for Part 2 (retry loop body lands there). Held in
-    # _RESYNC_RETRY_BUDGET so follow-up loop helpers can pick it up without
-    # re-reading config on every iteration.
-    local retry_budget=3
-    if declare -f _config_get_int >/dev/null 2>&1; then
+    # Retry budget — held in _RESYNC_RETRY_BUDGET so Part 2's retry loop can read it
+    # without re-querying config every iteration. Precedence (highest first):
+    #   1. SHIPWRIGHT_RESYNC_RETRY_BUDGET env var (explicit override)
+    #   2. resync.retry_budget from config (daemon-config → policy → defaults.json)
+    #   3. Hard fallback of 3 if both above are unset or malformed.
+    local retry_budget="${SHIPWRIGHT_RESYNC_RETRY_BUDGET:-}"
+    if [[ -z "$retry_budget" ]] && declare -f _config_get_int >/dev/null 2>&1; then
         retry_budget=$(_config_get_int "resync.retry_budget" "3" 2>/dev/null || echo 3)
-        [[ -z "$retry_budget" || ! "$retry_budget" =~ ^[0-9]+$ ]] && retry_budget=3
+    fi
+    if [[ -z "$retry_budget" || ! "$retry_budget" =~ ^[0-9]+$ ]]; then
+        # Surface malformed config so future maintainers know the fallback fired.
+        [[ -n "$retry_budget" ]] && warn "resync.retry_budget='${retry_budget}' is not an integer — falling back to 3"
+        retry_budget=3
     fi
     _RESYNC_RETRY_BUDGET="$retry_budget"
 

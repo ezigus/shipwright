@@ -1448,6 +1448,27 @@ else
     assert_fail "stage_resync should pick up env override" "got: $_resync_budget_env"
 fi
 
+# Test 8 (issue #635): malformed env value falls back to 3 with a warning, not garbage.
+unset _RESYNC_RETRY_BUDGET
+_resync_budget_bad=$(
+    cd "$_resync_tmp1"
+    SHIPWRIGHT_RESYNC_RETRY_BUDGET="not-a-number" BASE_BRANCH=main stage_resync >/dev/null 2>&1 || true
+    echo "${_RESYNC_RETRY_BUDGET:-unset}"
+)
+if [[ "$_resync_budget_bad" == "3" ]]; then
+    assert_pass "stage_resync falls back to 3 on malformed retry_budget"
+else
+    assert_fail "stage_resync should fall back to 3 on malformed retry_budget" "got: $_resync_budget_bad"
+fi
+
+# Test 9 (issue #635): _validate_ref is provably callable in this scope (the guard
+# would silently skip otherwise and let unsafe BASE_BRANCH values through to git).
+if declare -f _validate_ref >/dev/null 2>&1; then
+    assert_pass "_validate_ref is in scope for stage_resync"
+else
+    assert_fail "_validate_ref must be defined for stage_resync's guard to be effective" "not defined"
+fi
+
 # ─── Tests: detect_task_type ────────────────────────────────────────────────
 print_test_section "detect_task_type"
 

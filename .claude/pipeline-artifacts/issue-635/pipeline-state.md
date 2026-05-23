@@ -2,7 +2,7 @@
 pipeline: fast
 goal: "Pipeline: resync stage — function skeleton, retry budget config, BASE_BRANCH guard (1/2 of #625)"
 original_goal: "Pipeline: resync stage — function skeleton, retry budget config, BASE_BRANCH guard (1/2 of #625)"
-status: running
+status: failed
 issue: "#635"
 branch: "shipwright/issue-635"
 template: ""
@@ -14,9 +14,9 @@ current_stage_description: "Adversarial testing, E2E validation, DoD checklist"
 stage_progress: "intake:complete build:complete test:complete compound_quality:failed pr:pending"
 started_at: 2026-05-22T22:40:39Z
 pipeline_run_epoch: 1779489639
-updated_at: 2026-05-23T04:23:16Z
-elapsed: 1h 39m 46s
-test_cmd: "npm run test:smoke"
+updated_at: 2026-05-23T04:29:11Z
+elapsed: 1h 45m 41s
+test_cmd: "npm test"
 pr_number: 
 model: sonnet
 progress_comment_id: 4523123305
@@ -101,4 +101,16 @@ Tests passed
 
 ### test (04:23:12)
 complete (17s)
+
+### compound_quality (04:23:16)
+rebuild cycle 3 finished
+
+### review (04:25:48)
+AI review complete (7 issues: 0 critical, 0 bugs, 7 suggestions)
+
+### compound_quality (04:29:02)
+Quality gate failed: 58/60 after 3 cycles
+
+### compound_quality (04:29:08)
+failed (1h 45m 12s)
 

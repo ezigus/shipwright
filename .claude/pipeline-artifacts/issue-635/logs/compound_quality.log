@@ -1,3 +1,155 @@
 [compound_quality EXIT at 2026-05-22T23:47:59Z]
 [compound_quality EXIT at 2026-05-23T00:30:49Z]
 [compound_quality EXIT at 2026-05-23T01:42:58Z]
+[compound_quality EXIT at 2026-05-23T04:29:02Z]
+# Quality Feedback — Issues to Fix
+
+## Blocking Issues (must fix before merge)
+
+1. **[Critical]** — **Incomplete Implementation: Part 2 Missing**   [source: negative — verify against current code]
+2. **[Critical]** — **Git Merge Conflict Resolution Not Implemented**   [source: negative — verify against current code]
+
+## Review Findings
+
+### Adversarial Review Findings
+created_at_commit: 38306e9
+# Adversarial Review (Intelligence-backed)
+
+Total findings: 0 (0 critical, 0 high)
+
+
+### Negative Prompting Concerns
+NOTE: These findings were generated against a PREVIOUS version of the code.
+Re-read the actual current source files before making changes.
+If a finding references code that has already been fixed, skip it.
+
+created_at_commit: 20c4b36
+# Code Review: BASE_BRANCH Guard + Retry Budget Read (Issue #635)
+
+## Critical Issues
+
+**[Critical]** — **Incomplete Implementation: Part 2 Missing**  
+The comment at line 22 (pipeline-stages-delivery.sh) states "loop body lands in Part 2" but the retry loop is never implemented in this diff or the file. The code reads `_RESYNC_RETRY_BUDGET` and stores it in a global variable, but there's zero consumer of that variable in the current diff. This is scaffolding for unfinished work.
+- **Impact**: If Part 2 is never merged, this code is dead code that will confuse future maintainers.
+- **What could break**: A merge conflict resolution retry loop that depends on `_RESYNC_RETRY_BUDGET` would have to be added later; if it's forgotten, stage_resync will silently have no retry capability.
+
+**[Critical]** — **Git Merge Conflict Resolution Not Implemented**  
+Lines 62–70 show the merge failure path, but there's no actual retry logic. The code aborts the merge and returns 1, but the comment claims this is "Part 2" scaffolding. If the pipeline is supposed to auto-retry on conflict, that behavior is missing.
+- **Impact**: Any merge conflict will halt the pipeline permanently rather than retry.
+- **What could break**: Race conditions where a base branch gets updated between fetch and merge would require manual intervention instead of auto-recovery.
+
+---
+
+## Concerns
+
+**[Concern]** — **Unsafe Fallback for `_validate_ref` Loader**  
+Lines 31–36 attempt to inline-source `lib/helpers.sh` if `_validate_ref` isn't already loaded. The path resolution uses `${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}`, but:
+- `SCRIPT_DIR` may be unset if called from certain contexts (e.g., daemon-triage, remote execution).
+- `dirname "${BASH_SOURCE[0]}"` depends on the sourcing chain and can resolve incorrectly for indirect callers.
+- Silent failure: if the path is wrong and `_validate_ref` remains undefined, the `declare -f` check at line 37 will silently skip validation and fall through to the charset fallback.
+  
+```bash
+# If this resolves to the wrong path, _validate_ref stays undefined but we don't error
+local _helpers_sh="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/lib/helpers.sh"
+[[ -f "$_helpers_sh" ]] && source "$_helpers_sh" 2>/dev/null || true  # Silent failure
+```
+- **What could break**: An unsafe BASE_BRANCH value like `--option` could bypass validation if `_validate_ref` fails to load but the inline fallback isn't triggered.
+
+**[Concern]** — **Retry Budget Has No Upper Bound or Range Validation**  
+Lines 59–62 validate that `retry_budget` is numeric but don't check that it's reasonable:
+```bash
+if [[ -z "$retry_budget" || ! "$retry_budget" =~ ^[0-9]+$ ]]; then
+    # Falls back to 3, but no check for sensible ranges
+    retry_budget=3
+fi
+```
+A user could set `SHIPWRIGHT_RESYNC_RETRY_BUDGET=999999` and the code would accept it. No ceiling check.
+- **What could break**: 
+  - DoS risk: `SHIPWRIGHT_RESYNC_RETRY_BUDGET=1000000` could cause an infinite retry loop (once Part 2 is added).
+  - Operator error: typo like `SHIPWRIGHT_RESYNC_RETRY_BUDGET=99999` silently accepted.
+
+**[Concern]** — **`mark_stage_failed()` Calls Suppress Errors**  
+Lines 41, 49, 70 all invoke `mark_stage_failed()` but silence failures:
+```bash
+mark_stage_failed "resync" "invalid BASE_BRANCH '${base}' — refusing to merge" 2>/dev/null || true
+```
+If `mark_stage_failed` is undefined (likely in unit tests, but possible in production if the module isn't sourced), the error is swallowed and the function still returns 1. Callers won't know the stage failure wasn't recorded.
+- **What could break**: Pipeline state may be inconsistent if mark_stage_failed is unavailable.
+
+**[Concern]** — **Config Read Failure Has Silent Fallback**  
+Line 54 calls `_config_get_int()` with no guarantee it's defined:
+```bash
+if [[ -z "$retry_budget" ]] && declare -f _config_get_int >/dev/null 2>&1; then
+    retry_budget=$(_config_get_int "resync.retry_budget" "3" 2>/dev/null || echo 3)
+fi
+```
+If `_config_get_int` hangs, crashes, or returns garbage, the `|| echo 3` fallback masks the error. The warning at line 60 only fires if `retry_budget` is non-empty, so a failed config read produces no output.
+- **What could break**: A broken config system would silently degrade to hardcoded retry_budget=3 with no diagnostic trail.
+
+**[Concern]** — **Charset Fallback Validation Is Brittle**  
+The hardcoded pattern at lines 45–47 is git ref validation via regex:
+```bash
+case "$base" in
+    -*|*..*|*' '*|*$'\t'*|*$'\n'*|*'~'*|*'^'*|*'?'*|*'*'*|*'['*|*'\\'*)
+        # reject
+        ;;
+esac
+```
+This is manually maintained and could drift from git's actual validation rules in future versions. Git has evolved ref validation (e.g., RFC 6531 rules) and future updates might accept/reject refs this code doesn't handle.
+- **What could break**: A ref that passes this check but fails at git operation time would cause an uncaught git error later.
+
+**[Concern]** — **Test 6 Uses Subshell to Capture Parent Variable**  
+In `scripts/sw-lib-pipeline-stages-test.sh`, test 6 (lines 1425–1438):
+```bash
+_resync_budget_out=$(
+    cd "$_resync_tmp1"
+    BASE_BRANCH=main stage_resync >/dev/null 2>&1 || true
+    echo "${_RESYNC_RETRY_BUDGET:-unset}"
+)
+```
+Subshells inherit variables but exports don't propagate back to the parent. If `stage_resync` sets `_RESYNC_RETRY_BUDGET` as a local variable (not exported), the subshell won't see it. The test might pass even if the value isn't actually being set.
+- **What could break**: The test could pass incorrectly if _RESYNC_RETRY_BUDGET is local-scoped.
+
+---
+
+## Minor Issues
+
+**[Minor]** — **Inline Fallback Validation Doesn't Verify _validate_ref Works**  
+Even if `_validate_ref` is successfully sourced, there's no check that it actually rejects dangerous refs. A stub implementation that always succeeds would pass the guard.
+- **Impact**: Low; the charset fallback provides a second line of defense, but the two mechanisms aren't coordinated.
+
+**[Minor]** — **No Logging of Chosen Retry Budget**  
+The code reads and validates `retry_budget` but never logs what value was chosen. If Part 2 (the retry loop) behaves unexpectedly, operators won't know if it retried 3 times or 5.
+- **What could break**: Debugging becomes harder; operators can't tell if a retry budget override is in effect without reading the code or env vars.
+
+**[Minor]** — **Config Schema Not Validated**  
+`config/defaults.json` adds `"resync.retry_budget": 3` but there's no JSON schema validation or tests that confirm the field type is always an integer, not a string.
+- **What could break**: If a deployment accidentally stores `"retry_budget": "three"` (string), the regex check would accept it and _config_get_int would return "three", then line 59 would reject it and fall back to 3. This is defensive but fragile.
+
+---
+
+## Pre-existing Issues (Not Blocking)
+
+**[Pre-existing]** — **`log_stage()` and `emit_event()` Functions May Not Exist**  
+Throughout the file, calls to `log_stage()`, `emit_event()`, `success()`, `error()`, `warn()`, and `info()` assume these are defined by prior sourcing. If a caller invokes `stage_resync()` without loading `lib/pipeline-state.sh` or output helpers, these will fail silently (due to `|| true` patterns).
+- **Recommendation**: Add a preamble check that required functions are loaded, similar to the `_validate_ref` loader.
+
+**[Pre-existing]** — **No Tests for BASE_BRANCH=main Success Path**  
+The test file includes tests for rejection (Test 5) and fallback behavior (Tests 6–8) but no positive test that a valid BASE_BRANCH actually merges successfully.
+- **Recommendation**: Add a test where BASE_BRANCH=main and the merge succeeds, confirming the happy path.
+
+---
+
+## Summary
+
+| Category | Count | Blocking? |
+|----------|-------|-----------|
+| Critical | 2 | **YES** — Part 2 missing; no retry loop implemented |
+| Concern | 6 | **CONDITIONAL** — Safe fallbacks mitigate but are fragile |
+| Minor | 3 | No |
+| Pre-existing | 2 | No |
+
+**Key Risk**: The diff scaffolds a BASE_BRANCH guard and retry budget config, but the actual retry loop (Part 2) is not present. If Part 2 is merged separately without coordinating with this code, or if it's never merged, the retry_budget reading becomes dead code or causes unexpected behavior.
+
+### DoD Audit Failures
+

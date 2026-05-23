@@ -7,18 +7,18 @@ issue: "#635"
 branch: "shipwright/issue-635"
 template: ""
 current_stage: compound_quality
-outer_stage: 
-outer_stage_start_commit: 
-inner_stage: 
+outer_stage: compound_quality
+outer_stage_start_commit: 20c4b361cbb8b035363ee2894dc2d46a2cc97d8d
+inner_stage: build
 current_stage_description: "Adversarial testing, E2E validation, DoD checklist"
 stage_progress: "intake:complete build:complete test:complete compound_quality:failed pr:pending"
 started_at: 2026-05-22T22:40:39Z
 pipeline_run_epoch: 1779489639
-updated_at: 2026-05-23T04:09:50Z
-elapsed: 1h 26m 20s
-test_cmd: "npm test"
+updated_at: 2026-05-23T04:22:51Z
+elapsed: 1h 39m 21s
+test_cmd: "npm run test:smoke"
 pr_number: 
-model: opus
+model: sonnet
 progress_comment_id: 4523123305
 stages:
   intake: complete
@@ -80,4 +80,19 @@ Tests passed
 
 ### test (04:09:46)
 complete (11m 22s)
+
+### compound_quality (04:09:50)
+rebuild cycle 2 finished
+
+### review (04:13:20)
+AI review complete (7 issues: 0 critical, 0 bugs, 7 suggestions)
+
+### compound_quality (04:16:03)
+rebuild cycle 3 starting
+
+### build (04:22:51)
+Build loop completed (21 commits)
+
+### build (04:22:51)
+complete (6m 47s)
 

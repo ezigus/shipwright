@@ -6434,3 +6434,6 @@
 {"ts":"2026-05-23T04:29:11Z","ts_epoch":1779510551,"type":"stage.failed","repo":"ezigus/shipwright","event_id":"evt-1779510551-3610599106","payload":"{\"stage\":\"compound_quality\",\"issue\":\"635\",\"timing\":\"1h 45m 12s\"}"}
 {"ts":"2026-05-23T04:29:11Z","ts_epoch":1779510551,"type":"stage.failed","repo":"ezigus/shipwright","issue":635,"stage":"compound_quality","duration_s":6315,"error":"  [38;2;0;212;255m▸[0m Invalid template errors correctly... [38;2;74;222;128m✓[0m","error_class":"unknown"}
 {"ts":"2026-05-23T04:29:11Z","ts_epoch":1779510551,"type":"vitals.snapshot","repo":"ezigus/shipwright","issue":635,"stage":"compound_quality","iteration":0,"diff_lines":0,"no_progress":0}
+{"ts":"2026-05-24T04:30:53Z","ts_epoch":1779597053,"type":"optimize.memory_pruned","repo":"ezigus/shipwright","pruned":0,"strengthened":2,"promoted":0}
+{"ts":"2026-05-24T04:30:53Z","ts_epoch":1779597053,"type":"optimize.context_recommendation","repo":"ezigus/shipwright","action":"decrease_budget","current":200000,"recommended":170000,"avg_utilization":6.5,"samples":11}
+{"ts":"2026-05-24T04:30:53Z","ts_epoch":1779597053,"type":"optimize.memory_pruned","repo":"ezigus/shipwright","pruned":0,"strengthened":2,"promoted":0}

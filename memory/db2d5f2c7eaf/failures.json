@@ -8,7 +8,8 @@
       "exit_code": 1,
       "seen_count": 4,
       "last_seen": "2026-05-19T01:31:20Z",
-      "category": "test_failure"
+      "category": "test_failure",
+      "weight": 2.25
     },
     {
       "stage": "test",
@@ -48,7 +49,8 @@
       "exit_code": 1,
       "seen_count": 6,
       "last_seen": "2026-05-23T03:09:25Z",
-      "category": "test_failure"
+      "category": "test_failure",
+      "weight": 2.25
     }
   ]
 }

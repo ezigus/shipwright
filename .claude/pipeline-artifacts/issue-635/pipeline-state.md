@@ -9,13 +9,13 @@ template: ""
 current_stage: compound_quality
 outer_stage: compound_quality
 outer_stage_start_commit: 776d7028282a9c57988b8aa80f5db955b3b0c3dc
-inner_stage: build
+inner_stage: test
 current_stage_description: "Adversarial testing, E2E validation, DoD checklist"
 stage_progress: "intake:complete build:complete test:complete compound_quality:failed pr:pending"
 started_at: 2026-05-22T22:40:39Z
 pipeline_run_epoch: 1779489639
-updated_at: 2026-05-24T13:59:58Z
-elapsed: 1h 19m 3s
+updated_at: 2026-05-24T14:00:01Z
+elapsed: 1h 19m 7s
 test_cmd: "npm test"
 pr_number: 
 model: opus

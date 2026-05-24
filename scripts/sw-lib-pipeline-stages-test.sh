@@ -1469,6 +1469,102 @@ else
     assert_fail "_validate_ref must be defined for stage_resync's guard to be effective" "not defined"
 fi
 
+# Test 10 (issue #635): retry loop actually executes — fetch + merge are
+# re-attempted up to retry_budget times before final failure.
+# Mirrors the push-retry instrumentation pattern: shim git to count fetch/merge
+# calls while delegating to real git so the conflict materializes naturally.
+print_test_section "stage_resync retry loop execution"
+
+_resync_retry_tmp="$TEST_TEMP_DIR/resync-retry"
+RESYNC_GIT_LOG="$TEST_TEMP_DIR/resync-git-log"
+mkdir -p "$_resync_retry_tmp"
+: > "$RESYNC_GIT_LOG"
+export RESYNC_GIT_LOG
+
+# Build a repo + a bare "origin" so `git fetch origin main` is a real fetch
+# (not a silent no-op), and both branches keep the conflicting line on retry.
+_resync_retry_origin="$TEST_TEMP_DIR/resync-retry-origin.git"
+(
+    cd "$_resync_retry_tmp"
+    git init -q -b main
+    git config user.email "t@t.com"
+    git config user.name "T"
+    printf 'base-v1\n' > shared.txt
+    git add shared.txt
+    git commit -qm "init"
+    git checkout -q -b shipwright/resync-retry
+    printf 'wip-changed\n' > shared.txt
+    git commit -qam "wip change"
+    git checkout -q main
+    printf 'base-changed\n' > shared.txt
+    git commit -qam "base change"
+    git clone -q --bare "$_resync_retry_tmp" "$_resync_retry_origin"
+    git remote add origin "$_resync_retry_origin"
+    git checkout -q shipwright/resync-retry
+) 2>/dev/null
+
+# Install git shim: count fetch/merge calls, delegate to real git for everything.
+REAL_GIT_BIN=$(PATH="${ORIG_PATH}" command -v git)
+cat > "$TEST_TEMP_DIR/bin/git" <<MOCKGIT
+#!/usr/bin/env bash
+case "\${1:-}" in
+    fetch) echo "fetch" >> "\${RESYNC_GIT_LOG:-/dev/null}" ;;
+    merge)
+        # Only count top-level merge invocations, not "merge --abort".
+        if [[ "\${2:-}" != "--abort" ]]; then
+            echo "merge" >> "\${RESYNC_GIT_LOG:-/dev/null}"
+        fi
+        ;;
+esac
+exec "${REAL_GIT_BIN}" "\$@"
+MOCKGIT
+chmod +x "$TEST_TEMP_DIR/bin/git"
+hash -r
+
+unset _RESYNC_RETRY_BUDGET
+rc=0
+(
+    cd "$_resync_retry_tmp"
+    SHIPWRIGHT_RESYNC_RETRY_BUDGET=2 BASE_BRANCH=main stage_resync >/dev/null 2>&1
+) || rc=$?
+
+# Capture invocation counts BEFORE removing the shim (shim writes are durable).
+_fetch_count=$(grep -c '^fetch$' "$RESYNC_GIT_LOG" 2>/dev/null || echo 0)
+_merge_count=$(grep -c '^merge$' "$RESYNC_GIT_LOG" 2>/dev/null || echo 0)
+
+# Restore real git before assertions so a fail message doesn't go through the shim.
+rm -f "$TEST_TEMP_DIR/bin/git"
+hash -r
+
+# Expected with retry_budget=2: initial attempt + 2 retries = 3 fetches, 3 merges.
+if [[ "$rc" -ne 0 ]]; then
+    assert_pass "stage_resync returns non-zero after retry budget exhausted"
+else
+    assert_fail "stage_resync should fail after retries exhausted" "got rc=$rc"
+fi
+
+if [[ "$_fetch_count" -ge 3 ]]; then
+    assert_pass "stage_resync re-fetches base on each retry (count=${_fetch_count}, expected >=3)"
+else
+    assert_fail "stage_resync should re-fetch on every retry" "fetch count=${_fetch_count}, expected >=3 (initial + 2 retries)"
+fi
+
+if [[ "$_merge_count" -eq 3 ]]; then
+    assert_pass "stage_resync attempts merge retry_budget+1 times (count=${_merge_count})"
+else
+    assert_fail "stage_resync should attempt merge initial+retry_budget times" "merge count=${_merge_count}, expected 3 (1 initial + 2 retries)"
+fi
+
+# Final state: working tree clean (resync_abort ran after each failure).
+_retry_porcelain=$(cd "$_resync_retry_tmp" && git status --porcelain 2>/dev/null || true)
+if [[ -z "$_retry_porcelain" ]]; then
+    assert_pass "stage_resync leaves working tree clean after exhausting retries"
+else
+    assert_fail "working tree should be clean after retry exhaustion" "porcelain: $_retry_porcelain"
+fi
+
+unset RESYNC_GIT_LOG
+
 # ─── Tests: detect_task_type ────────────────────────────────────────────────
 print_test_section "detect_task_type"
 

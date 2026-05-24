@@ -827,7 +827,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-lib-loop-restart-test.sh` | 490 | Unit tests for loop state |
 | `scripts/sw-lib-pipeline-detection-test.sh` | 497 | Unit tests for detection fns |
 | `scripts/sw-lib-pipeline-github-test.sh` | 366 | Unit tests for GitHub helpers |
-| `scripts/sw-lib-pipeline-intelligence-test.sh` | 1265 | Unit tests for intelligence |
+| `scripts/sw-lib-pipeline-intelligence-test.sh` | 1438 | Unit tests for intelligence |
 | `scripts/sw-lib-pipeline-quality-checks-test.sh` | 616 | Unit tests for quality |
 | `scripts/sw-lib-pipeline-stages-review-test.sh` | 589 | Unit tests for cross-stage drift detector |
 | `scripts/sw-lib-pipeline-stages-test.sh` | 2691 | Unit tests for stage functions |
@@ -856,7 +856,7 @@ All scripts are bash (except the dashboard server in TypeScript). Grouped by lay
 | `scripts/sw-prep-test.sh` | 636 | Validate repo preparation |
 | `scripts/sw-ps-test.sh` | 296 | Validate agent process status display |
 | `scripts/sw-public-dashboard-test.sh` | 165 | Validate public dashboard generation |
-| `scripts/sw-quality-test.sh` | 227 | Validate ruthless quality validation engine |
+| `scripts/sw-quality-test.sh` | 312 | Validate ruthless quality validation engine |
 | `scripts/sw-reaper-test.sh` | 232 | Validate automatic tmux pane cleanup |
 | `scripts/sw-recruit-test.sh` | 1399 | Test suite for AGI-level agent recruitment system |
 | `scripts/sw-regression-test.sh` | 265 | Validate regression detection pipeline |

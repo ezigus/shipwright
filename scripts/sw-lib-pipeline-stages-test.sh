@@ -1640,6 +1640,82 @@ else
     assert_fail "resync.retry events should include attempt=1 and attempt=2" "events: $(grep '"type":"resync.retry"' "$_resync_evt_file" 2>/dev/null || echo 'none')"
 fi
 
+# Test 12 (issue #635): non-conflict merge failure bails immediately — no retries.
+# A failure like "permission denied" or "disk full" is not retryable; the fix
+# checks that conflicted_files is non-empty before entering the retry loop.
+print_test_section "stage_resync non-conflict failure skips retry loop"
+
+_resync_nc_tmp="$TEST_TEMP_DIR/resync-nonconflict"
+RESYNC_NC_GIT_LOG="$TEST_TEMP_DIR/resync-nonconflict-git.log"
+mkdir -p "$_resync_nc_tmp"
+: > "$RESYNC_NC_GIT_LOG"
+export RESYNC_NC_GIT_LOG
+
+# Minimal repo with a known remote ref so stage_resync picks origin/main and
+# proceeds to the merge step — the shim will then simulate a non-conflict failure.
+_resync_nc_origin="$TEST_TEMP_DIR/resync-nonconflict-origin.git"
+(
+    cd "$_resync_nc_tmp"
+    git init -q -b main
+    git config user.email "t@t.com"
+    git config user.name "T"
+    printf 'v1\n' > file.txt
+    git add file.txt
+    git commit -qm "init"
+    git checkout -q -b shipwright/nc-test
+    printf 'wip\n' > other.txt
+    git add other.txt
+    git commit -qm "wip"
+    git clone -q --bare "$_resync_nc_tmp" "$_resync_nc_origin"
+    git remote add origin "$_resync_nc_origin"
+) 2>/dev/null
+
+: "${ORIG_PATH:=$PATH}"
+REAL_GIT_BIN_NC=$(PATH="${ORIG_PATH}" command -v git)
+# Shim: make every top-level "git merge" return exit 1 without creating any
+# conflict markers (simulates permission denied / disk full / I/O error).
+# All other git subcommands delegate to the real binary unchanged.
+cat > "$TEST_TEMP_DIR/bin/git" <<MOCKGIT_NC
+#!/usr/bin/env bash
+case "\${1:-}" in
+    merge)
+        if [[ "\${2:-}" != "--abort" ]]; then
+            echo "merge" >> "\${RESYNC_NC_GIT_LOG:-/dev/null}"
+            exit 1
+        fi
+        ;;
+esac
+exec "${REAL_GIT_BIN_NC}" "\$@"
+MOCKGIT_NC
+chmod +x "$TEST_TEMP_DIR/bin/git"
+export PATH="$TEST_TEMP_DIR/bin:$PATH"
+hash -r
+
+unset _RESYNC_RETRY_BUDGET
+_nc_rc=0
+(
+    cd "$_resync_nc_tmp"
+    SHIPWRIGHT_RESYNC_RETRY_BUDGET=3 BASE_BRANCH=main stage_resync >/dev/null 2>&1
+) || _nc_rc=$?
+
+_nc_merge_count=$(grep -c '^merge$' "$RESYNC_NC_GIT_LOG" 2>/dev/null || echo 0)
+
+rm -f "$TEST_TEMP_DIR/bin/git"
+hash -r
+unset RESYNC_NC_GIT_LOG
+
+if [[ "$_nc_rc" -ne 0 ]]; then
+    assert_pass "stage_resync fails immediately on non-conflict merge error (rc=${_nc_rc})"
+else
+    assert_fail "stage_resync should return non-zero on non-conflict merge failure" "rc=0"
+fi
+
+if [[ "${_nc_merge_count:-0}" -eq 1 ]]; then
+    assert_pass "stage_resync does not retry on non-conflict failure (merge_count=${_nc_merge_count})"
+else
+    assert_fail "stage_resync should attempt merge exactly once on non-conflict failure" "merge_count=${_nc_merge_count}, expected 1"
+fi
+
 # ─── Tests: detect_task_type ────────────────────────────────────────────────
 print_test_section "detect_task_type"
 

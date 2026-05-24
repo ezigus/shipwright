@@ -121,6 +121,18 @@ stage_resync() {
         conflicted_files=$(git diff --name-only --diff-filter=U 2>/dev/null || true)
         resync_abort
 
+        # Only retry on actual merge conflicts — a non-conflict failure (permission
+        # denied, disk full, corrupted object) will never resolve on retry and
+        # consuming the full budget only wastes time.
+        if [[ -z "$conflicted_files" ]]; then
+            error "Merge against ${merge_ref} failed for a non-conflict reason — not retrying"
+            if [[ -s "$merge_err_log" ]]; then
+                error "git merge output: $(cat "$merge_err_log")"
+            fi
+            mark_stage_failed "resync" "merge failed (non-conflict error; see log)" 2>/dev/null || true
+            return 1
+        fi
+
         if [[ $_attempt -lt $retry_budget ]]; then
             _attempt=$(( _attempt + 1 ))
             warn "Merge conflict on attempt ${_attempt}/${retry_budget} — re-fetching ${base} and retrying"

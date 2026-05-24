@@ -2,7 +2,7 @@
 pipeline: fast
 goal: "Pipeline: resync stage — function skeleton, retry budget config, BASE_BRANCH guard (1/2 of #625)"
 original_goal: "Pipeline: resync stage — function skeleton, retry budget config, BASE_BRANCH guard (1/2 of #625)"
-status: running
+status: failed
 issue: "#635"
 branch: "shipwright/issue-635"
 template: ""

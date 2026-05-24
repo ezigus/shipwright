@@ -1573,6 +1573,73 @@ fi
 
 unset RESYNC_GIT_LOG
 
+# Test 11 (issue #635): retry loop emits a resync.retry event for every retry
+# attempt — without per-attempt events a stalled loop would be invisible to
+# the dashboard / observer until the final resync.conflict 1-shot fires.
+print_test_section "stage_resync emits resync.retry events"
+
+_resync_evt_tmp="$TEST_TEMP_DIR/resync-retry-events"
+_resync_evt_origin="$TEST_TEMP_DIR/resync-retry-events-origin.git"
+_resync_evt_file="$TEST_TEMP_DIR/resync-retry-events.jsonl"
+mkdir -p "$_resync_evt_tmp"
+: > "$_resync_evt_file"
+
+(
+    cd "$_resync_evt_tmp"
+    git init -q -b main
+    git config user.email "t@t.com"
+    git config user.name "T"
+    printf 'base-v1\n' > shared.txt
+    git add shared.txt
+    git commit -qm "init"
+    git checkout -q -b shipwright/resync-evt
+    printf 'wip-changed\n' > shared.txt
+    git commit -qam "wip change"
+    git checkout -q main
+    printf 'base-changed\n' > shared.txt
+    git commit -qam "base change"
+    git clone -q --bare "$_resync_evt_tmp" "$_resync_evt_origin"
+    git remote add origin "$_resync_evt_origin"
+    git checkout -q shipwright/resync-evt
+) 2>/dev/null
+
+unset _RESYNC_RETRY_BUDGET
+(
+    cd "$_resync_evt_tmp"
+    EVENTS_FILE="$_resync_evt_file" \
+        SHIPWRIGHT_RESYNC_RETRY_BUDGET=2 \
+        BASE_BRANCH=main \
+        stage_resync >/dev/null 2>&1
+) || true
+
+_retry_evt_count=$(grep -c '"type":"resync.retry"' "$_resync_evt_file" 2>/dev/null || echo 0)
+_retry_evt_count=${_retry_evt_count//[^0-9]/}
+_conflict_evt_count=$(grep -c '"type":"resync.conflict"' "$_resync_evt_file" 2>/dev/null || echo 0)
+_conflict_evt_count=${_conflict_evt_count//[^0-9]/}
+
+# retry_budget=2 → 2 retries → exactly 2 resync.retry events.
+if [[ "${_retry_evt_count:-0}" -eq 2 ]]; then
+    assert_pass "stage_resync emits one resync.retry event per retry (count=${_retry_evt_count})"
+else
+    assert_fail "stage_resync should emit retry_budget resync.retry events" "count=${_retry_evt_count}, expected 2"
+fi
+
+# One final resync.conflict event when retries are exhausted.
+if [[ "${_conflict_evt_count:-0}" -eq 1 ]]; then
+    assert_pass "stage_resync emits exactly one resync.conflict event after exhaustion"
+else
+    assert_fail "stage_resync should emit one resync.conflict event" "count=${_conflict_evt_count}, expected 1"
+fi
+
+# Each resync.retry event carries an attempt counter so the observer can
+# tell a fresh retry apart from a re-emit / stuck loop.
+if grep -q '"attempt":1' "$_resync_evt_file" 2>/dev/null && \
+   grep -q '"attempt":2' "$_resync_evt_file" 2>/dev/null; then
+    assert_pass "resync.retry events include monotonically increasing attempt counter"
+else
+    assert_fail "resync.retry events should include attempt=1 and attempt=2" "events: $(grep '"type":"resync.retry"' "$_resync_evt_file" 2>/dev/null || echo 'none')"
+fi
+
 # ─── Tests: detect_task_type ────────────────────────────────────────────────
 print_test_section "detect_task_type"
 

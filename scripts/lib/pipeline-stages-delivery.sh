@@ -42,12 +42,21 @@ stage_resync() {
     else
         # Hard-fail rather than silently skip when the validator can't be loaded —
         # an unvalidated --evil base would otherwise reach git operations.
+        # Mirror _validate_ref's full bad-char set (including ':' which the prior
+        # fallback omitted — `evil:branch` would otherwise have slipped through).
         case "$base" in
-            -*|*..*|*' '*|*$'\t'*|*$'\n'*|*'~'*|*'^'*|*'?'*|*'*'*|*'['*|*'\\'*)
+            -*|*..*|*' '*|*$'\t'*|*$'\n'*|*'~'*|*'^'*|*':'*|*'?'*|*'*'*|*'['*|*'\\'*)
                 mark_stage_failed "resync" "invalid BASE_BRANCH '${base}' (validator unavailable; refusing on charset)" 2>/dev/null || true
                 return 1
                 ;;
         esac
+        # Positive charset check — matches _validate_ref's no-git fallback so a
+        # base with any other non-ref character (e.g. ';', '&', '|', backtick)
+        # is rejected rather than passed straight to git operations.
+        if ! [[ "$base" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            mark_stage_failed "resync" "invalid BASE_BRANCH '${base}' (validator unavailable; only [A-Za-z0-9._/-] allowed)" 2>/dev/null || true
+            return 1
+        fi
     fi
 
     # Retry budget — held in _RESYNC_RETRY_BUDGET for the retry loop below.
@@ -115,6 +124,13 @@ stage_resync() {
         if [[ $_attempt -lt $retry_budget ]]; then
             _attempt=$(( _attempt + 1 ))
             warn "Merge conflict on attempt ${_attempt}/${retry_budget} — re-fetching ${base} and retrying"
+            # Emit per-attempt event so a stalled loop is observable in the
+            # event stream (no event between attempts = silent stall).
+            emit_event "resync.retry" \
+                "issue=${ISSUE_NUMBER:-0}" \
+                "base=${base}" \
+                "attempt=${_attempt}" \
+                "budget=${retry_budget}" 2>/dev/null || true
             git fetch origin "$base" 2>/dev/null || true
             if git rev-parse --verify "origin/${base}" >/dev/null 2>&1; then
                 merge_ref="origin/${base}"

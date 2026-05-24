@@ -44,11 +44,11 @@
     {
       "stage": "test",
       "pattern": "Error Handling",
-      "root_cause": "intelligence.cjs is missing the fingerprintContent export and statusline.js/github-safe.js are missing the required @audit-suppress audit_1776853149979 directives",
-      "fix": "Export fingerprintContent from intelligence.cjs and add the @audit-suppress audit_1776853149979 directive to statusline.js and github-safe.js",
+      "root_cause": "fingerprintContent is not exported from intelligence.cjs and @audit-suppress audit_1776853149979 directives are missing from statusline.js and github-safe.js",
+      "fix": "Export fingerprintContent from intelligence.cjs and add the load-bearing @audit-suppress audit_1776853149979 directive to statusline.js and github-safe.js",
       "exit_code": 1,
-      "seen_count": 7,
-      "last_seen": "2026-05-24T11:32:21Z",
+      "seen_count": 8,
+      "last_seen": "2026-05-24T13:15:45Z",
       "category": "test_failure",
       "weight": 2.25
     }

@@ -1441,7 +1441,8 @@ _dedup_add_item() {
 # Collects critical/high-severity findings from available artifact sources into a
 # numbered list. Sources: adversarial-review.json (with .md fallback),
 # security-audit.log, negative-review.md [Critical] lines, dod-audit.md
-# unchecked items, and classified-findings.json needs_backtrack flag.
+# unchecked items, classified-findings.json needs_backtrack flag, and
+# compound-audit-findings.json critical/high findings.
 # Deduplicates by file:line fingerprint (best-effort, exact-line match).
 # Outputs to stdout; empty output means no blocking items found.
 #
@@ -1548,6 +1549,33 @@ _extract_blocking_items() {
         needs_backtrack=$(jq -r '.needs_backtrack // false' "$ARTIFACTS_DIR/classified-findings.json" 2>/dev/null || echo "false")
         if [[ "$needs_backtrack" == "true" ]]; then
             backtrack_note="> ⚠ Backtrack flagged by classifier — structural issues may require revisiting design"
+        fi
+    fi
+
+    # ── 6. compound-audit-findings.json — critical/high cascade findings ──
+    # Cascade audit produces structured findings (file, line, description,
+    # suggestion) that count toward gate severity but were previously not
+    # injected into the rebuild GOAL. Surface them here so the build agent
+    # gets the most actionable feedback the pipeline produces.
+    # gsub flattens embedded newlines so one finding == one line == one
+    # dedup entry; without it, multi-line .description/.suggestion would
+    # split into orphaned continuation lines that lose their file:line fp.
+    if [[ -f "$ARTIFACTS_DIR/compound-audit-findings.json" ]] && \
+       pipeline_artifact_is_current "$ARTIFACTS_DIR/compound-audit-findings.json" && \
+       jq -e . "$ARTIFACTS_DIR/compound-audit-findings.json" >/dev/null 2>&1; then
+        local cascade_lines
+        cascade_lines=$(jq -r '
+          def flat: gsub("[\r\n]+"; " ");
+          .[]
+          | select(.severity == "critical" or .severity == "high")
+          | "\(.file // "unknown"):\(.line // "?") \u2014 \((.description // "finding") | flat)"
+            + (if (.suggestion // "") != "" then " (suggestion: \((.suggestion) | flat))" else "" end)
+        ' "$ARTIFACTS_DIR/compound-audit-findings.json" 2>/dev/null || true)
+        if [[ -n "$cascade_lines" ]]; then
+            while IFS= read -r line; do
+                [[ -z "$line" ]] && continue
+                _dedup_add_item "$line" "compound-audit" "$tmp_fps" "$tmp_items"
+            done <<< "$cascade_lines"
         fi
     fi
 

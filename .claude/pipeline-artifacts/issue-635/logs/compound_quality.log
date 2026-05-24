@@ -153,3 +153,211 @@ The test file includes tests for rejection (Test 5) and fallback behavior (Tests
 
 ### DoD Audit Failures
 
+[compound_quality EXIT at 2026-05-24T14:38:48Z]
+# Quality Feedback — Issues to Fix
+
+## Blocking Issues (must fix before merge)
+
+1. ### [Critical] BASE_BRANCH Guard May Fail Silently with Incomplete Fallback [source: negative — verify against current code]
+2. ### [Critical] Retry Loop Retries on Any Merge Failure, Not Just Conflicts [source: negative — verify against current code]
+3. scripts/lib/pipeline-stages.sh:290 — show_stage_preview function not updated; resync case missing (suggestion: Add case statement: resync) echo "  Sync branch with base via git merge" ;;) [source: compound-audit]
+4. scripts/lib/pipeline-state.sh:188 — get_stage_description function not updated; resync case missing (suggestion: Add case statement: resync) echo "Syncing branch with base before PR" ;;) [source: compound-audit]
+5. templates/pipelines/autonomous.json:0 — Template file not modified; resync stage not added (suggestion: Patch all 11 templates with resync stage object (enabled: true/false per spec)) [source: compound-audit]
+6. templates/pipelines/cost-aware.json:0 — Template file not modified; resync stage not added (suggestion: Patch with resync stage enabled: true, placed between audit and pr) [source: compound-audit]
+7. templates/pipelines/fast.json:0 — Template file not modified; resync stage not added (suggestion: Patch with resync stage enabled: false, placed before pr per spec) [source: compound-audit]
+8. templates/pipelines/full.json:0 — Template file not modified; resync stage not added (suggestion: Insert resync stage between audit and pr (or before pr in templates without audit), with appropriate enabled flag) [source: compound-audit]
+9. templates/pipelines/standard.json:0 — Template file not modified; resync stage not added (suggestion: Patch with resync stage enabled: true, placed before pr) [source: compound-audit]
+
+## Review Findings
+
+### Adversarial Review Findings
+created_at_commit: 4249ce3
+# Adversarial Review (Intelligence-backed)
+
+Total findings: 0 (0 critical, 0 high)
+
+
+### Negative Prompting Concerns
+NOTE: These findings were generated against a PREVIOUS version of the code.
+Re-read the actual current source files before making changes.
+If a finding references code that has already been fixed, skip it.
+
+created_at_commit: 4249ce3
+I'm reviewing this diff for potential production issues, focusing on what was introduced by the changes.
+
+## Findings
+
+### [Critical] BASE_BRANCH Guard May Fail Silently with Incomplete Fallback
+
+scripts/lib/pipeline-stages-delivery.sh, lines 29-57
+
+The guard attempts to source `_validate_ref` from `lib/helpers.sh`, but the fallback charset check is weaker than the real validator:
+
+```bash
+if ! declare -f _validate_ref >/dev/null 2>&1; then
+    local _helpers_sh="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/lib/helpers.sh"
+    [[ -f "$_helpers_sh" ]] && source "$_helpers_sh" 2>/dev/null || true
+fi
+# ... fallback to manual charset check
+```
+
+**Problems:**
+- If `_helpers_sh` path is wrong (e.g., in daemon-triage or test contexts where `SCRIPT_DIR` isn't set), the source silently fails (`2>/dev/null || true`), and the fallback runs.
+- The fallback regex `^[A-Za-z0-9._/-]+$` is *more restrictive* than a comprehensive validator should be. It rejects valid git refs like `feature/my-branch:subref` but might not catch all dangerous patterns. For example, `$(malicious)` would pass this regex.
+- The hard-fail case list omits some injection vectors (e.g., backticks, `$()`, backticks are not in the case statement).
+
+**Impact:** In production, if `_validate_ref` unavailable and `SCRIPT_DIR` misconfigured, unsafe BASE_BRANCH values could reach git operations.
+
+---
+
+### [Critical] Retry Loop Retries on Any Merge Failure, Not Just Conflicts
+
+scripts/lib/pipeline-stages-delivery.sh, lines 108-155
+
+The retry logic treats all merge failures identically:
+
+```bash
+if git merge "$merge_ref" --no-edit >/dev/null 2>"$merge_err_log"; then
+    # success
+else
+    # Treat ANY failure as retryable
+    local conflicted_files=$(git diff --name-only --diff-filter=U 2>/dev/null || true)
+    resync_abort
+    if [[ $_attempt -lt $retry_budget ]]; then
+        _attempt=$(( _attempt + 1 ))
+        git fetch origin "$base" 2>/dev/null || true
+        # retry
+    fi
+```
+
+**Problems:**
+- The code doesn't distinguish between merge *conflicts* (retryable) and other failures (e.g., permission denied, corrupted object, disk full). Both trigger the retry loop.
+- A non-transient error (permission denied, network failure after fetch) will consume all retry budget before failing, wasting time.
+- `git diff --name-only --diff-filter=U` only lists conflicted files, but if the failure wasn't a conflict, it returns empty. Then the error message says "conflicts detected in unknown files" which is misleading.
+
+**Impact:** In production, a non-conflict merge failure (permission denied, corrupted object) will retry up to 10 times (capped budget) before failing, delaying the pipeline unnecessarily.
+
+---
+
+### [Concern] Ambiguous "retry_budget" Semantics — Operator Confusion Risk
+
+scripts/lib/pipeline-stages-delivery.sh, lines 62-80
+
+The code uses `retry_budget` to mean "number of retries AFTER the initial attempt," but comments are ambiguous:
+
+```bash
+# Retry budget — held in _RESYNC_RETRY_BUDGET for the retry loop below.
+# ... budget for retries ...
+if [[ $_attempt -lt $retry_budget ]]; then
+    _attempt=$(( _attempt + 1 ))
+```
+
+With `retry_budget=3`:
+- Initial attempt (attempt=0)
+- Retry 1 (attempt=1)
+- Retry 2 (attempt=2)
+- Retry 3 (attempt=3)
+- Total: 4 attempts
+
+**Problems:**
+- An operator setting `SHIPWRIGHT_RESYNC_RETRY_BUDGET=3` expecting 3 *total* attempts will get 4.
+- The comment "up to _RESYNC_RETRY_BUDGET times" is ambiguous — "up to 3 times" could mean 3 total or 3 retries.
+- Default value (3) and capped value (10) in code/config are not clearly explained as "retries after initial, not total attempts."
+
+**Impact:** Operators may set the budget incorrectly, either allowing too many or too few attempts.
+
+---
+
+### [Concern] SCRIPT_DIR Resolution Is Brittle
+
+scripts/lib/pipeline-stages-delivery.sh, line 32
+
+```bash
+local _helpers_sh="${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/lib/helpers.sh"
+```
+
+**Problems:**
+- If `SCRIPT_DIR` isn't exported (e.g., in daemon-triage context), the fallback `$(dirname "${BASH_SOURCE[0]}")` may be wrong depending on how the script is sourced.
+- In test contexts, `$BASH_SOURCE[0]` might point to the test wrapper, not the actual script.
+- No validation that the resulting path exists or is readable before sourcing.
+
+**Impact:** The guard might fail to load the validator in certain execution contexts (daemon, tests with unusual invocation), silently falling back to weaker charset checks.
+
+---
+
+### [Concern] Silent Failures in Event Emission
+
+scripts/lib/pipeline-stages-delivery.sh, lines 118, 126, 141, 151
+
+Events are emitted with `2>/dev/null || true`:
+
+```bash
+emit_event "resync.retry" "issue=${ISSUE_NUMBER:-0}" ... 2>/dev/null || true
+```
+
+**Problems:**
+- If `emit_event` fails (system broken, permissions denied, EVENTS_FILE not writable), the failure is silently ignored.
+- Dashboard observers monitoring the event stream will not see retry progress if events aren't emitted, making a stalled loop invisible.
+- Tests (Test 10, 11) assume events are emitted, but don't verify the function actually executed or verify event payload structure.
+
+**Impact:** In production, if event logging breaks, the retry loop becomes invisible to monitoring/dashboards.
+
+---
+
+### [Concern] New Config Section May Be Overlooked in Upgrades
+
+config/defaults.json, lines 94-96
+
+A new "resync" section is added to defaults, but:
+
+```json
+"resync": {
+  "retry_budget": 3
+}
+```
+
+**Problems:**
+- If an operator has a local `daemon-config.json` override, the new section won't be merged automatically.
+- If they delete the section from defaults.json during upgrade, the fallback to 3 happens silently.
+- No validation warning if the config is missing.
+
+**Impact:** Operators may not realize the new config exists or that their override is missing the section, leading to silent fallback behavior.
+
+---
+
+### [Minor] Conflicted Files Detection Fails Silently
+
+scripts/lib/pipeline-stages-delivery.sh, lines 109
+
+```bash
+conflicted_files=$(git diff --name-only --diff-filter=U 2>/dev/null || true)
+```
+
+**Problems:**
+- If `git diff` fails (e.g., repo corruption, permissions), `conflicted_files` is empty due to `|| true`.
+- Error message then says "conflicts detected in unknown files" rather than "failed to determine which files are conflicted."
+
+**Impact:** Misleading error messages if the repo is corrupted or permissions are wrong.
+
+---
+
+### [Minor] Test Coverage Assumes _validate_ref Is Available
+
+scripts/sw-lib-pipeline-stages-test.sh, line 1429
+
+Test 9 checks that `_validate_ref` is in scope, but tests 5-8 (BASE_BRANCH guard tests) all run in a context where `_validate_ref` is already sourced by the test harness. They don't test the fallback charset check.
+
+**Problems:**
+- The fallback fallback code path (charset check when `_validate_ref` unavailable) is not exercised in tests.
+- No test for the SCRIPT_DIR resolution or sourcing failure.
+
+**Impact:** Production might hit untested code paths in daemon-triage or tests with unusual invocation.
+
+---
+
+## Summary
+
+The diff adds well-intentioned retry logic and guards, but has three critical gaps: (1) the BASE_BRANCH guard's fallback is incomplete, (2) the retry loop is too broad (retries on any merge failure), and (3) operator confusion risk from ambiguous "retry_budget" semantics. Event failures are silent, and the SCRIPT_DIR resolution is fragile. Tests cover the happy path but not the fallback/error paths.
+
+### DoD Audit Failures
+

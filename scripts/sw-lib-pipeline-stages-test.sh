@@ -1504,6 +1504,10 @@ _resync_retry_origin="$TEST_TEMP_DIR/resync-retry-origin.git"
 ) 2>/dev/null
 
 # Install git shim: count fetch/merge calls, delegate to real git for everything.
+# Defensive: fall back to current PATH if ORIG_PATH wasn't preserved upstream
+# (test-helpers.sh:41 sets it, but locking it locally keeps the shim resilient
+# to harness refactors that might rename or stop exporting it).
+: "${ORIG_PATH:=$PATH}"
 REAL_GIT_BIN=$(PATH="${ORIG_PATH}" command -v git)
 cat > "$TEST_TEMP_DIR/bin/git" <<MOCKGIT
 #!/usr/bin/env bash
@@ -1519,6 +1523,10 @@ esac
 exec "${REAL_GIT_BIN}" "\$@"
 MOCKGIT
 chmod +x "$TEST_TEMP_DIR/bin/git"
+# Ensure the shim dir is on PATH ahead of the real git. setup_test_env adds it,
+# but exporting again here defends against intermediate tests that may have
+# mutated PATH between setup and this point.
+export PATH="$TEST_TEMP_DIR/bin:$PATH"
 hash -r
 
 unset _RESYNC_RETRY_BUDGET

@@ -3,27 +3,22 @@
 ## Goal
 Pipeline: resync stage — function skeleton, retry budget config, BASE_BRANCH guard (1/2 of #625)
 
-## Failure Diagnosis (Iteration 2)
-Classification: unknown
-Strategy: retry_with_context
-Repeat count: 1
-
 ## Status
-- Iteration: 2/10
+- Iteration: 1/10
 - Session restart: 0/0
 - Tests passing: true
 - Status: complete
 
 ## Recent Commits
-4c95bb7 fix(resync): close BASE_BRANCH guard fallback gap + emit retry events
-7dd2af8 loop: iteration 1 — 5 files changed, 200 insertions(+), 168 deletions(-)
-ca1468e test(resync): harden git-shim setup with explicit PATH/ORIG_PATH guards
-34a9743 chore: heartbeat state snapshot for #635 [skip ci]
-776d702 chore: heartbeat state snapshot for #635 [skip ci]
+6759cfb fix(resync): bail immediately on non-conflict merge failure, skip retry loop
+e336253 chore: heartbeat state snapshot for #635 [skip ci]
+4249ce3 chore: persist test artifacts for #635 [skip ci]
+acb237a chore: heartbeat state snapshot for #635 [skip ci]
+ec5c50e chore: persist build artifacts for #635 [skip ci]
 
 ## Changed Files
 scripts/lib/pipeline-stages-delivery.sh
 scripts/sw-lib-pipeline-stages-test.sh
 
 ## Timestamp
-2026-05-24T13:59:35Z
+2026-05-24T14:29:54Z

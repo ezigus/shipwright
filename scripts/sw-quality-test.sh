@@ -218,6 +218,91 @@ fi
 
 echo ""
 
+# ─── 10. _write_quality_feedback wiring: cascade findings reach quality-feedback.md ──
+# Integration-level: seed compound-audit-findings.json with a critical entry,
+# call _write_quality_feedback directly (sourced from pipeline-intelligence.sh),
+# and assert the "## Blocking Issues" section contains the expected file:line.
+# This catches wiring regressions that unit tests cannot catch.
+
+echo -e "${BOLD}  compound-audit-findings.json → quality-feedback.md wiring${RESET}"
+
+(
+    set -euo pipefail
+
+    _integ_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-qw-integ.XXXXXX")"
+    _integ_feedback="$_integ_dir/quality-feedback.md"
+
+    # Provide minimal stubs required by pipeline-intelligence.sh on source.
+    ARTIFACTS_DIR="$_integ_dir"
+    EVENTS_FILE="$_integ_dir/events.jsonl"
+    STATE_FILE="$_integ_dir/state.json"
+    BASE_BRANCH="main"
+    ISSUE_NUMBER="0"
+    ISSUE_LABELS=""
+    INTELLIGENCE_COMPLEXITY="5"
+    PIPELINE_CONFIG="$_integ_dir/pipeline-config.json"
+    PIPELINE_NAME="standard"
+    PROJECT_ROOT="$_integ_dir"
+    IGNORE_BUDGET="true"
+    OUTER_STAGE=""
+    INNER_STAGE=""
+    NO_GITHUB="true"
+    SCRIPT_DIR="$SCRIPT_DIR"
+
+    mkdir -p "$_integ_dir"
+    echo '{"stages":[{"id":"compound_quality","config":{"audit_intensity":"auto"}}]}' \
+        > "$_integ_dir/pipeline-config.json"
+
+    now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+    now_epoch() { date +%s; }
+    emit_event() { :; }
+    daemon_log() { :; }
+    info() { :; }
+    success() { :; }
+    warn() { :; }
+    error() { :; } >&2
+    rotate_jsonl() { :; }
+    log_stage() { :; }
+    write_state() { :; }
+    set_outer_stage() { OUTER_STAGE="${1:-}"; INNER_STAGE=""; write_state; }
+    clear_outer_stage() { OUTER_STAGE=""; INNER_STAGE=""; write_state; }
+
+    # Clear guard so we can re-source even if the lib was loaded in parent shell.
+    _PIPELINE_INTELLIGENCE_LOADED=""
+    source "$SCRIPT_DIR/lib/pipeline-intelligence.sh"
+
+    # Seed compound-audit-findings.json with a critical finding (no SHA stamp →
+    # pipeline_artifact_is_current treats it as current via pass-through).
+    cat > "$_integ_dir/compound-audit-findings.json" <<'EOINTEG'
+[{"severity":"critical","file":"wiring/check.sh","line":"99","description":"wiring regression detected","suggestion":"add guard"}]
+EOINTEG
+
+    # Call _write_quality_feedback; it will call _extract_blocking_items internally.
+    _write_quality_feedback "correctness" "$_integ_feedback"
+
+    _feedback_content="$(cat "$_integ_feedback" 2>/dev/null || true)"
+    rm -rf "$_integ_dir"
+
+    # Signal result to parent shell via exit code + printed sentinel.
+    if echo "$_feedback_content" | grep -qF "wiring/check.sh:99"; then
+        echo "INTEG_WIRING_PASS"
+    else
+        echo "INTEG_WIRING_FAIL"
+    fi
+) > /tmp/sw_qw_integ_result.txt 2>/dev/null || true
+
+_integ_result=$(cat /tmp/sw_qw_integ_result.txt 2>/dev/null || true)
+rm -f /tmp/sw_qw_integ_result.txt
+
+if [[ "$_integ_result" == "INTEG_WIRING_PASS" ]]; then
+    assert_pass "compound-audit-findings.json: critical entry reaches ## Blocking Issues in quality-feedback.md"
+else
+    assert_fail "compound-audit-findings.json: critical entry reaches ## Blocking Issues in quality-feedback.md" \
+        "expected wiring/check.sh:99 in Blocking Issues section"
+fi
+
+echo ""
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Results
 # ═══════════════════════════════════════════════════════════════════════════════

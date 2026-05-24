@@ -705,6 +705,179 @@ assert_eq "_extract_blocking_items: dod source in mixed result" "1" "${has_dod:-
 rm -f "$ARTIFACTS_DIR/adversarial-review.md" "$ARTIFACTS_DIR/negative-review.md" "$ARTIFACTS_DIR/dod-audit.md"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# compound-audit-findings.json source (source-6)
+# ═══════════════════════════════════════════════════════════════════════════════
+print_test_section "compound-audit-findings.json source"
+
+# Ensure all other artifact sources are absent so only source-6 is active.
+rm -f "$ARTIFACTS_DIR/adversarial-review.json" "$ARTIFACTS_DIR/adversarial-review.md" \
+      "$ARTIFACTS_DIR/negative-review.md" "$ARTIFACTS_DIR/dod-audit.md" \
+      "$ARTIFACTS_DIR/security-audit.log" "$ARTIFACTS_DIR/security-source-scan.log" \
+      "$ARTIFACTS_DIR/security-source-scan.json" "$ARTIFACTS_DIR/classified-findings.json" \
+      "$ARTIFACTS_DIR/compound-audit-findings.json"
+
+# ── Test 1: artifact absent — no output ──
+blocking_result=$(_extract_blocking_items)
+assert_eq "cascade artifact absent: no output" "" "$blocking_result"
+
+# ── Test 2: critical entry included ──
+_casc_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-casc-test.XXXXXX")"
+_orig_artifacts="$ARTIFACTS_DIR"
+ARTIFACTS_DIR="$_casc_dir"
+cat > "$_casc_dir/compound-audit-findings.json" <<'EOCASC'
+[{"severity":"critical","file":"src/auth.sh","line":"42","description":"null deref in auth","suggestion":""}]
+EOCASC
+blocking_result=$(_extract_blocking_items)
+has_cascade=$(echo "$blocking_result" | grep -c "src/auth.sh:42" 2>/dev/null || true)
+assert_eq "cascade critical entry: file:line in output" "1" "${has_cascade:-0}"
+ARTIFACTS_DIR="$_orig_artifacts"
+rm -rf "$_casc_dir"
+
+# ── Test 3: high entry included ──
+_casc_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-casc-test.XXXXXX")"
+ARTIFACTS_DIR="$_casc_dir"
+cat > "$_casc_dir/compound-audit-findings.json" <<'EOCASC'
+[{"severity":"high","file":"lib/parser.sh","line":"7","description":"unquoted variable expansion","suggestion":""}]
+EOCASC
+blocking_result=$(_extract_blocking_items)
+has_high=$(echo "$blocking_result" | grep -c "lib/parser.sh:7" 2>/dev/null || true)
+assert_eq "cascade high entry: file:line in output" "1" "${has_high:-0}"
+ARTIFACTS_DIR="$_orig_artifacts"
+rm -rf "$_casc_dir"
+
+# ── Test 4: medium/low excluded ──
+_casc_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-casc-test.XXXXXX")"
+ARTIFACTS_DIR="$_casc_dir"
+cat > "$_casc_dir/compound-audit-findings.json" <<'EOCASC'
+[
+  {"severity":"medium","file":"util.sh","line":"3","description":"medium concern","suggestion":""},
+  {"severity":"low","file":"util.sh","line":"9","description":"low concern","suggestion":""}
+]
+EOCASC
+blocking_result=$(_extract_blocking_items)
+assert_eq "cascade medium/low: no output" "" "$blocking_result"
+ARTIFACTS_DIR="$_orig_artifacts"
+rm -rf "$_casc_dir"
+
+# ── Test 5: dedup with adversarial-review.json — same file:line appears once ──
+_casc_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-casc-test.XXXXXX")"
+ARTIFACTS_DIR="$_casc_dir"
+# adversarial-review.json entry: location field used as fingerprint
+cat > "$_casc_dir/adversarial-review.json" <<'EOADV'
+[{"severity":"critical","location":"src/dup.sh:55","description":"first mention"}]
+EOADV
+# cascade entry: same file:line
+cat > "$_casc_dir/compound-audit-findings.json" <<'EOCASC'
+[{"severity":"critical","file":"src/dup.sh","line":"55","description":"second mention","suggestion":""}]
+EOCASC
+blocking_result=$(_extract_blocking_items)
+dup_count=$(echo "$blocking_result" | grep -c "dup.sh:55" 2>/dev/null || true)
+assert_eq "cascade dedup with adversarial: file:line appears once" "1" "${dup_count:-0}"
+ARTIFACTS_DIR="$_orig_artifacts"
+rm -rf "$_casc_dir"
+
+# ── Test 6: malformed JSON — no crash, empty output ──
+_casc_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-casc-test.XXXXXX")"
+ARTIFACTS_DIR="$_casc_dir"
+printf 'not-json\n' > "$_casc_dir/compound-audit-findings.json"
+blocking_result=$(_extract_blocking_items 2>/dev/null || true)
+assert_eq "cascade malformed JSON: no crash, empty output" "" "$blocking_result"
+ARTIFACTS_DIR="$_orig_artifacts"
+rm -rf "$_casc_dir"
+
+# ── Test 7: empty array — no items added ──
+_casc_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-casc-test.XXXXXX")"
+ARTIFACTS_DIR="$_casc_dir"
+printf '[]\n' > "$_casc_dir/compound-audit-findings.json"
+blocking_result=$(_extract_blocking_items)
+assert_eq "cascade empty array: no output" "" "$blocking_result"
+ARTIFACTS_DIR="$_orig_artifacts"
+rm -rf "$_casc_dir"
+
+# ── Test 8: stale artifact (SHA mismatch) — output is empty ──
+# pipeline_artifact_is_current reads .[0].created_at_commit from the array and
+# prefix-matches it against git rev-parse --short HEAD (which mock_git returns
+# as "/tmp/mock-repo"). Embedding a SHA of "deadbeef" ensures a mismatch and
+# the file is treated as stale, so no items are added.
+_casc_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-casc-test.XXXXXX")"
+ARTIFACTS_DIR="$_casc_dir"
+cat > "$_casc_dir/compound-audit-findings.json" <<'EOCASC'
+[{"severity":"critical","file":"stale.sh","line":"1","description":"stale finding","suggestion":"","created_at_commit":"deadbeef"}]
+EOCASC
+blocking_result=$(_extract_blocking_items)
+assert_eq "cascade stale artifact (SHA mismatch): output empty" "" "$blocking_result"
+ARTIFACTS_DIR="$_orig_artifacts"
+rm -rf "$_casc_dir"
+
+# ── Test 9: suggestion present — output contains (suggestion: fix it) ──
+_casc_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-casc-test.XXXXXX")"
+ARTIFACTS_DIR="$_casc_dir"
+cat > "$_casc_dir/compound-audit-findings.json" <<'EOCASC'
+[{"severity":"critical","file":"main.sh","line":"10","description":"some issue","suggestion":"fix it"}]
+EOCASC
+blocking_result=$(_extract_blocking_items)
+has_suggestion=$(echo "$blocking_result" | grep -c "(suggestion: fix it)" 2>/dev/null || true)
+assert_eq "cascade suggestion present: (suggestion: fix it) in output" "1" "${has_suggestion:-0}"
+ARTIFACTS_DIR="$_orig_artifacts"
+rm -rf "$_casc_dir"
+
+# ── Test 10: suggestion empty — output does NOT contain (suggestion: ) ──
+_casc_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-casc-test.XXXXXX")"
+ARTIFACTS_DIR="$_casc_dir"
+cat > "$_casc_dir/compound-audit-findings.json" <<'EOCASC'
+[{"severity":"critical","file":"main.sh","line":"10","description":"some issue","suggestion":""}]
+EOCASC
+blocking_result=$(_extract_blocking_items)
+has_empty_sugg=$(echo "$blocking_result" | grep -c "(suggestion: )" 2>/dev/null || true)
+assert_eq "cascade suggestion empty: no (suggestion: ) in output" "0" "${has_empty_sugg:-0}"
+ARTIFACTS_DIR="$_orig_artifacts"
+rm -rf "$_casc_dir"
+
+# ── Test 11: suggestion field missing — output does NOT contain (suggestion: ──
+_casc_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-casc-test.XXXXXX")"
+ARTIFACTS_DIR="$_casc_dir"
+cat > "$_casc_dir/compound-audit-findings.json" <<'EOCASC'
+[{"severity":"critical","file":"main.sh","line":"10","description":"some issue"}]
+EOCASC
+blocking_result=$(_extract_blocking_items)
+has_no_sugg=$(echo "$blocking_result" | grep -c "(suggestion:" 2>/dev/null || true)
+assert_eq "cascade suggestion missing: no (suggestion: in output" "0" "${has_no_sugg:-0}"
+ARTIFACTS_DIR="$_orig_artifacts"
+rm -rf "$_casc_dir"
+
+# ── Test 12: multi-line description — item appears as single numbered entry ──
+_casc_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-casc-test.XXXXXX")"
+ARTIFACTS_DIR="$_casc_dir"
+# Use jq to generate a fixture with a literal newline embedded in description.
+jq -n '[{"severity":"critical","file":"multi.sh","line":"5","description":"line one\nline two","suggestion":""}]' \
+    > "$_casc_dir/compound-audit-findings.json"
+blocking_result=$(_extract_blocking_items)
+item_count=$(echo "$blocking_result" | grep -c "^[0-9]*\." 2>/dev/null || true)
+assert_eq "cascade multi-line description: single numbered entry" "1" "${item_count:-0}"
+ARTIFACTS_DIR="$_orig_artifacts"
+rm -rf "$_casc_dir"
+
+# ── Test 13: mixed sources — cascade + adversarial + negative all present ──
+_casc_dir="$(mktemp -d "${TMPDIR:-/tmp}/sw-casc-test.XXXXXX")"
+ARTIFACTS_DIR="$_casc_dir"
+echo "- **[Critical]** a.sh:1 — adversarial finding" > "$_casc_dir/adversarial-review.md"
+echo "[Critical] b.sh:2 — negative finding" > "$_casc_dir/negative-review.md"
+cat > "$_casc_dir/compound-audit-findings.json" <<'EOCASC'
+[{"severity":"critical","file":"c.sh","line":"3","description":"cascade finding","suggestion":""}]
+EOCASC
+blocking_result=$(_extract_blocking_items)
+has_adv=$(echo "$blocking_result" | grep -c "adversarial finding" 2>/dev/null || true)
+has_neg=$(echo "$blocking_result" | grep -c "negative finding" 2>/dev/null || true)
+has_casc=$(echo "$blocking_result" | grep -c "c.sh:3" 2>/dev/null || true)
+total_items=$(echo "$blocking_result" | grep -c "^[0-9]*\." 2>/dev/null || true)
+assert_eq "mixed sources: adversarial entry present" "1" "${has_adv:-0}"
+assert_eq "mixed sources: negative entry present" "1" "${has_neg:-0}"
+assert_eq "mixed sources: cascade entry present" "1" "${has_casc:-0}"
+assert_eq "mixed sources: total item count is 3" "3" "${total_items:-0}"
+ARTIFACTS_DIR="$_orig_artifacts"
+rm -rf "$_casc_dir"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RETURN trap self-clearing in compound_rebuild_with_feedback
 # Regression for: original_goal unbound under set -u when trap re-fired in caller
 # ═══════════════════════════════════════════════════════════════════════════════

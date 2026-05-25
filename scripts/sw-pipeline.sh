@@ -55,6 +55,10 @@ fi
 [[ -f "$SCRIPT_DIR/lib/pipeline-detection.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-detection.sh"
 # shellcheck source=lib/pipeline-quality-checks.sh
 [[ -f "$SCRIPT_DIR/lib/pipeline-quality-checks.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-quality-checks.sh"
+# Source pipeline-stages-review.sh before pipeline-intelligence.sh so the canonical
+# stage_compound_quality definition in pipeline-stages-review.sh takes precedence.
+# shellcheck source=lib/pipeline-stages-review.sh
+[[ -f "$SCRIPT_DIR/lib/pipeline-stages-review.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-stages-review.sh"
 # shellcheck source=lib/pipeline-intelligence.sh
 [[ -f "$SCRIPT_DIR/lib/pipeline-intelligence.sh" ]] && source "$SCRIPT_DIR/lib/pipeline-intelligence.sh"
 # shellcheck source=lib/pipeline-stages.sh

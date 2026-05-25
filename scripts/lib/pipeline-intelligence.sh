@@ -1956,6 +1956,9 @@ pipeline_run_ruflo_cq_hive() {
     return 1
 }
 
+# pipeline-stages-review.sh provides the canonical stage_compound_quality;
+# this fallback definition is used only if that module was not sourced first.
+if ! type stage_compound_quality >/dev/null 2>&1; then
 stage_compound_quality() {
     CURRENT_STAGE_ID="compound_quality"
 
@@ -2970,5 +2973,6 @@ Quality issues remain. Check artifacts for details." 2>/dev/null || true
     _cleanup_cycle_files
     return 1
 }
+fi  # end fallback stage_compound_quality (pipeline-stages-review.sh is canonical)
 
 # ─── Error Classification ──────────────────────────────────────────────────

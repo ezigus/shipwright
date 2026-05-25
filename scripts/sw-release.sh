@@ -355,7 +355,7 @@ cmd_prepare() {
     local current_version
     current_version="$(get_latest_tag)"
 
-    if [[ -z "${SW_VERSION}_TYPE" ]]; then
+    if [[ -z "${VERSION_TYPE}" ]]; then
         # Auto-detect from commits
         info "Auto-detecting version bump from commits..."
         local next_version
@@ -363,7 +363,7 @@ cmd_prepare() {
         VERSION_TYPE="detected"
     else
         local next_version
-        next_version="$(bump_version "$current_version" "${SW_VERSION}_TYPE")"
+        next_version="$(bump_version "$current_version" "${VERSION_TYPE}")"
     fi
 
     echo ""
@@ -371,7 +371,7 @@ cmd_prepare() {
     echo ""
     echo -e "  Current version:     ${CYAN}${current_version}${RESET}"
     echo -e "  Next version:        ${CYAN}${next_version}${RESET}"
-    echo -e "  Bump type:           ${CYAN}${SW_VERSION}_TYPE}${RESET}"
+    echo -e "  Bump type:           ${CYAN}${VERSION_TYPE}${RESET}"
 
     if $DRY_RUN; then
         echo -e "  Mode:                ${YELLOW}DRY RUN${RESET}"

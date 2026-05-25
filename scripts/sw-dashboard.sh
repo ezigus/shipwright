@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Shared process-cleanup primitives ───────────────────────────────────────
@@ -55,7 +55,7 @@ dashboard_header() {
     echo ""
     echo -e "${CYAN}${BOLD}╭─────────────────────────────────────────╮${RESET}"
     echo -e "${CYAN}${BOLD}│${RESET}  ${BOLD}⚓ Shipwright Fleet Command Dashboard${RESET}  ${CYAN}${BOLD}│${RESET}"
-    echo -e "${CYAN}${BOLD}│${RESET}  ${DIM}v${VERSION}${RESET}                               ${CYAN}${BOLD}│${RESET}"
+    echo -e "${CYAN}${BOLD}│${RESET}  ${DIM}v${SW_VERSION}${RESET}                               ${CYAN}${BOLD}│${RESET}"
     echo -e "${CYAN}${BOLD}╰─────────────────────────────────────────╯${RESET}"
     echo ""
 }
@@ -483,7 +483,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --version|-v)
-            echo "shipwright dashboard v${VERSION}"
+            echo "shipwright dashboard v${SW_VERSION}"
             exit 0
             ;;
         *)

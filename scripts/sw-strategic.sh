@@ -7,7 +7,7 @@
 # When sourced, do NOT add set -euo pipefail — the parent handles that.
 # When run directly, main() sets up the error handling.
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 
 # ─── Paths (set defaults if not provided by parent) ──────────────────────────
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
@@ -881,7 +881,7 @@ strategic_outcomes() {
 
 # ─── Help ─────────────────────────────────────────────────────────────────────
 strategic_show_help() {
-    echo -e "${PURPLE}${BOLD}Shipwright Strategic Intelligence Agent${RESET} v${VERSION}\n"
+    echo -e "${PURPLE}${BOLD}Shipwright Strategic Intelligence Agent${RESET} v${SW_VERSION}\n"
     echo -e "Reads strategy, metrics, and codebase state to create high-impact improvement issues.\n"
     echo -e "${BOLD}Usage:${RESET}"
     echo -e "  sw-strategic.sh <command>\n"

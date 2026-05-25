@@ -7,7 +7,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/test-helpers.sh"
@@ -62,7 +62,7 @@ _test_cleanup_hook() { cleanup_test_env; }
 # ─── Setup ────────────────────────────────────────────────────────────────────
 setup_env
 
-print_test_header "pipeline-resume shell logic tests (v${VERSION})"
+print_test_header "pipeline-resume shell logic tests (v${SW_VERSION})"
 
 # ─── 1. Stage detection regex — basic happy path ─────────────────────────────
 echo -e "${BOLD}  1. Stage Detection Regex${RESET}"

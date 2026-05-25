@@ -12,7 +12,8 @@
 # ║      && source "$SCRIPT_DIR/lib/ruflo-adapter.sh" 2>/dev/null || true    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
-export VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/version.sh"
+export SW_VERSION
 
 # ─── Double-source guard ──────────────────────────────────────────────────────
 [[ -n "${_RUFLO_ADAPTER_LOADED:-}" ]] && return 0

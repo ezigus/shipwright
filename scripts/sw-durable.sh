@@ -7,7 +7,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -499,7 +499,7 @@ cmd_status() {
     active_locks="${active_locks:-0}"
 
     echo ""
-    echo -e "${CYAN}${BOLD}  Durable Workflow Status${RESET}  ${DIM}v${VERSION}${RESET}"
+    echo -e "${CYAN}${BOLD}  Durable Workflow Status${RESET}  ${DIM}v${SW_VERSION}${RESET}"
     echo -e "${DIM}  ══════════════════════════════════════════${RESET}"
     echo ""
     echo -e "  ${BOLD}Event Log${RESET}"
@@ -520,7 +520,7 @@ cmd_status() {
 # ─── Help ──────────────────────────────────────────────────────────────────
 show_help() {
     echo ""
-    echo -e "${CYAN}${BOLD}  Shipwright Durable Workflow Engine${RESET}  ${DIM}v${VERSION}${RESET}"
+    echo -e "${CYAN}${BOLD}  Shipwright Durable Workflow Engine${RESET}  ${DIM}v${SW_VERSION}${RESET}"
     echo -e "${DIM}  ════════════════════════════════════════════════════════${RESET}"
     echo ""
     echo -e "  ${BOLD}USAGE${RESET}"

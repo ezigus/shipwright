@@ -4,7 +4,7 @@
 # ║                                                                          ║
 # ║  Checks prerequisites, installed files, PATH, and common issues.        ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -44,7 +44,7 @@ for _arg in "$@"; do
     case "$_arg" in
         --skip-platform-scan) SKIP_PLATFORM_SCAN=true ;;
         --intelligence) INTELLIGENCE_ONLY=true ;;
-        --version|-V) echo "sw-doctor $VERSION"; exit 0 ;;
+        --version|-V) echo "sw-doctor ${SW_VERSION}"; exit 0 ;;
     esac
 done
 

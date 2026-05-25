@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _repo_dir_explicit="${REPO_DIR:+yes}"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
@@ -1399,7 +1399,7 @@ show_help() {
     echo -e "  Enable in ${DIM}.claude/daemon-config.json${RESET}:"
     echo -e "    ${DIM}{\"intelligence\": {\"enabled\": true}}${RESET}"
     echo ""
-    echo -e "${DIM}Version ${VERSION}${RESET}"
+    echo -e "${DIM}Version ${SW_VERSION}${RESET}"
 }
 
 cmd_status() {

@@ -13,7 +13,7 @@ unset CLAUDECODE 2>/dev/null || true
 trap '' HUP
 trap '' SIGPIPE
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -308,7 +308,7 @@ done
 # ─── Help ───────────────────────────────────────────────────────────────────
 
 show_help() {
-    echo -e "${CYAN}${BOLD}shipwright daemon${RESET} ${DIM}v${VERSION}${RESET} — Autonomous GitHub Issue Watcher"
+    echo -e "${CYAN}${BOLD}shipwright daemon${RESET} ${DIM}v${SW_VERSION}${RESET} — Autonomous GitHub Issue Watcher"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
     echo -e "  ${CYAN}shipwright daemon${RESET} <command> [options]"
@@ -711,7 +711,7 @@ cleanup_on_exit() {
 # ─── daemon start ───────────────────────────────────────────────────────────
 
 daemon_start() {
-    echo -e "${PURPLE}${BOLD}━━━ shipwright daemon v${VERSION} ━━━${RESET}"
+    echo -e "${PURPLE}${BOLD}━━━ shipwright daemon v${SW_VERSION} ━━━${RESET}"
     echo ""
 
     # Acquire exclusive lock to prevent concurrent daemon starts.

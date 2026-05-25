@@ -13,7 +13,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/version.sh"
 
 # Score an error message for actionability
 # Input: error message (string)

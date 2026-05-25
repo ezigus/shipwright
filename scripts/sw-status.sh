@@ -4,7 +4,7 @@
 # ║                                                                          ║
 # ║  Shows running teams, agent windows, and task progress.                  ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
@@ -240,7 +240,7 @@ if [[ "$JSON_OUTPUT" == "true" ]]; then
 
     # -- assemble and output --
     jq -n \
-        --arg version "$VERSION" \
+        --arg version "${SW_VERSION}" \
         --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --argjson tmux_windows "$WINDOWS_JSON" \
         --argjson teams "$TEAMS_JSON" \

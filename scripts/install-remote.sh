@@ -9,7 +9,7 @@ set -euo pipefail
 HOME="${HOME:-${USERPROFILE:-$(eval echo ~$(id -un 2>/dev/null || whoami 2>/dev/null))}}"
 [[ -z "$HOME" ]] && { echo "Error: could not determine HOME directory"; exit 1; }
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 REPO="${SHIPWRIGHT_GITHUB_REPO:-sethdford/shipwright}"
 INSTALL_DIR="${SHIPWRIGHT_INSTALL_DIR:-$HOME/.local/bin}"
 INSTALL_LIB="${SHIPWRIGHT_INSTALL_LIB:-$HOME/.local/lib/shipwright}"
@@ -39,7 +39,7 @@ fi
 # ─── Banner ────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${CYAN}${BOLD}  ╔═══════════════════════════════════════╗${RESET}"
-echo -e "${CYAN}${BOLD}  ║  ⚓ Shipwright Installer  v${VERSION}     ║${RESET}"
+echo -e "${CYAN}${BOLD}  ║  ⚓ Shipwright Installer  v${SW_VERSION}     ║${RESET}"
 echo -e "${CYAN}${BOLD}  ╚═══════════════════════════════════════╝${RESET}"
 echo ""
 
@@ -147,7 +147,7 @@ install() {
         bash "$INSTALL_LIB/scripts/install-completions.sh" 2>/dev/null || true
     fi
 
-    success "Installed Shipwright v${VERSION}"
+    success "Installed Shipwright v${SW_VERSION}"
 }
 
 # ─── Check PATH ────────────────────────────────────────────────────────────

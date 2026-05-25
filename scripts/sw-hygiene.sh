@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -44,7 +44,7 @@ JSON_OUTPUT=false
 # ─── Help ───────────────────────────────────────────────────────────────────
 
 show_help() {
-    echo -e "${CYAN}${BOLD}shipwright hygiene${RESET} ${DIM}v${VERSION}${RESET} — Repository cleanliness & structure enforcement"
+    echo -e "${CYAN}${BOLD}shipwright hygiene${RESET} ${DIM}v${SW_VERSION}${RESET} — Repository cleanliness & structure enforcement"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
     echo -e "  ${CYAN}shipwright hygiene${RESET} <subcommand> [options]"
@@ -612,7 +612,7 @@ generate_report() {
     report=$(jq -n \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --arg repo "$(basename "$REPO_DIR")" \
-        --arg ver "$VERSION" \
+        --arg ver "${SW_VERSION}" \
         --argjson platform "$platform_refactor" \
         '{timestamp:$ts,repository:$repo,version:$ver,sections:{dead_code:{},structure:{},dependencies:{},naming:{},branches:{},size:{}},platform_refactor:$platform}' 2>/dev/null)
     if [[ -z "$report" ]]; then
@@ -620,7 +620,7 @@ generate_report() {
 {
     "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
     "repository": "$(basename "$REPO_DIR")",
-    "version": "$VERSION",
+    "version": "${SW_VERSION}",
     "sections": {
         "dead_code": {},
         "structure": {},

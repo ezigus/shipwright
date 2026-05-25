@@ -5,7 +5,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DIST_DIR="$REPO_ROOT/dist"
@@ -40,7 +40,7 @@ if command -v jq >/dev/null 2>&1 && [[ -f "$REPO_ROOT/package.json" ]]; then
 fi
 
 echo ""
-echo -e "${CYAN}${BOLD}  ⚓ Shipwright Release Builder  v${VERSION}${RESET}"
+echo -e "${CYAN}${BOLD}  ⚓ Shipwright Release Builder  v${SW_VERSION}${RESET}"
 echo ""
 
 # ─── Prepare dist directory ───────────────────────────────────────────────

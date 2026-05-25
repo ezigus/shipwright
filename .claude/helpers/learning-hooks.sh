@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Claude Flow V3 - Learning Hooks
 # Integrates learning-service.mjs with session lifecycle
 

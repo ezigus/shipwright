@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Claude Flow V3 - Daemon Manager
 # Manages background services for real-time statusline updates
 

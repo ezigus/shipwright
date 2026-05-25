@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Claude Flow V3 - Real-time Swarm Activity Monitor
 # Continuously monitors and updates metrics based on running processes
 

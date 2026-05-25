@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Capture hook guidance for Claude visibility
 GUIDANCE_FILE=".claude-flow/last-guidance.txt"
 mkdir -p .claude-flow

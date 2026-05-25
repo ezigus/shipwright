@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Setup GitHub integration for Claude Flow
 
 echo "🔗 Setting up GitHub integration..."

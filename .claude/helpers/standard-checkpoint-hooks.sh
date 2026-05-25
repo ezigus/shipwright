@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Standard checkpoint hook functions for Claude settings.json (without GitHub features)
 
 # Function to handle pre-edit checkpoints

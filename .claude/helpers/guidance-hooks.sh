@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Guidance Hooks for Claude Flow V3
 # Provides context and routing for Claude Code operations
 

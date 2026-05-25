@@ -164,8 +164,8 @@ _audit_build_json() {
 
     # Count stages and iterations manually
     local stage_count iteration_count
-    stage_count=$(grep -c '"type":"stage.complete"' "$jsonl_file" || echo "0")
-    iteration_count=$(grep -c '"type":"loop.iteration_complete"' "$jsonl_file" || echo "0")
+    stage_count=$(grep -c '"type":"stage.complete"' "$jsonl_file" || true); stage_count=${stage_count:-0}
+    iteration_count=$(grep -c '"type":"loop.iteration_complete"' "$jsonl_file" || true); iteration_count=${iteration_count:-0}
 
     cat <<EOF
 {

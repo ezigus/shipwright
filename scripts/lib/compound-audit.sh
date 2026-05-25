@@ -563,7 +563,7 @@ compound_audit_run_cycle() {
         (
             local output
             output=$(echo "$prompt" | claude -p --model "$model" 2>/dev/null) || output='{"findings":[]}'
-            echo "$output" > "$temp_dir/${agent}.json"
+            local _ca_tmp; _ca_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-ca-agent.XXXXXX"); echo "$output" > "$_ca_tmp" && mv "$_ca_tmp" "$temp_dir/${agent}.json"
         ) 2>/dev/null &
         pids+=($!)
     done

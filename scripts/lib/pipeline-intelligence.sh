@@ -2290,7 +2290,7 @@ ${_cascade_test_tail}"
                     local sim_result
                     sim_result=$(simulation_review "$sim_diff" "${GOAL:-}" 2>/dev/null || echo "[]")
                     if [[ -n "$sim_result" && "$sim_result" != "[]" && "$sim_result" != *'"error"'* ]]; then
-                        echo "$sim_result" > "$ARTIFACTS_DIR/compound-simulation-review.json"
+                        local _pi_sim_tmp; _pi_sim_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-pi-sim.XXXXXX"); echo "$sim_result" > "$_pi_sim_tmp" && mv "$_pi_sim_tmp" "$ARTIFACTS_DIR/compound-simulation-review.json"
                         local sim_critical
                         sim_critical=$(echo "$sim_result" | jq '[.[] | select(.severity == "critical" or .severity == "high")] | length' 2>/dev/null || echo "0")
                         local sim_total
@@ -2335,7 +2335,7 @@ ${_cascade_test_tail}"
                     local arch_result
                     arch_result=$(architecture_validate_changes "$arch_diff" "" 2>/dev/null || echo "[]")
                     if [[ -n "$arch_result" && "$arch_result" != "[]" && "$arch_result" != *'"error"'* ]]; then
-                        echo "$arch_result" > "$ARTIFACTS_DIR/compound-architecture-validation.json"
+                        local _pi_arch_tmp; _pi_arch_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-pi-arch.XXXXXX"); echo "$arch_result" > "$_pi_arch_tmp" && mv "$_pi_arch_tmp" "$ARTIFACTS_DIR/compound-architecture-validation.json"
                         local arch_violations
                         arch_violations=$(echo "$arch_result" | jq '[.[] | select(.severity == "critical" or .severity == "high")] | length' 2>/dev/null || echo "0")
                         local arch_total
@@ -2502,7 +2502,7 @@ ${_cascade_test_tail}"
             fi
 
             # Save all findings to artifact
-            echo "$_cascade_all_findings" > "$ARTIFACTS_DIR/compound-audit-findings.json" 2>/dev/null || true
+            local _pi_findings_tmp; _pi_findings_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-pi-findings.XXXXXX"); echo "$_cascade_all_findings" > "$_pi_findings_tmp" && mv "$_pi_findings_tmp" "$ARTIFACTS_DIR/compound-audit-findings.json" || rm -f "$_pi_findings_tmp"
         fi
 
         # Propagate accumulated cascade findings into all_passed (handles converged cycles where

@@ -80,8 +80,9 @@ else
     assert_fail "Source guard pattern (if/then/fi)"
 fi
 
-_count=$(printf '%s\n' "$SRC_CONTENT" | grep -cE '^VERSION=' 2>/dev/null) || true
-if [[ "${_count:-0}" -gt 0 ]]; then
+# ADR-208: VERSION= is centralised in lib/version.sh; scripts source it and use SW_VERSION
+_ver_count=$(printf '%s\n' "$SRC_CONTENT" | grep -cE '(^VERSION=|SW_VERSION|version\.sh)' 2>/dev/null) || true
+if [[ "${_ver_count:-0}" -gt 0 ]]; then
     assert_pass "VERSION variable defined"
 else
     assert_fail "VERSION variable defined"

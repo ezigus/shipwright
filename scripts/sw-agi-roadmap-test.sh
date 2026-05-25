@@ -714,7 +714,8 @@ test_plan_hint_injection() {
 test_ci_integration_claude_job() {
     local workflow="$REPO_DIR/.github/workflows/test.yml"
     [[ -f "$workflow" ]] || { echo "CI workflow not found"; return 1; }
-    grep -q 'integration-claude:' "$workflow" || { echo "integration-claude job not in CI workflow"; return 1; }
+    # ADR-208: integration-claude was renamed to e2e-real; skip-validation job retained
+    grep -qE 'integration-claude:|e2e-real:' "$workflow" || { echo "integration-claude or e2e-real job not in CI workflow"; return 1; }
     grep -q 'integration-claude-skip:' "$workflow" || { echo "integration-claude-skip job not in CI workflow"; return 1; }
 }
 

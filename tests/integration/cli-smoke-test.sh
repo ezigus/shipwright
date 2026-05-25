@@ -18,6 +18,19 @@ pass=0
 fail=0
 failed_cmds=""
 
+# Portable timeout wrapper: uses 'timeout' (GNU coreutils), 'gtimeout' (macOS via
+# homebrew coreutils), or falls back to plain execution when neither is available.
+_run_timed() {
+    local secs="$1"; shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$secs" "$@"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        gtimeout "$secs" "$@"
+    else
+        "$@"
+    fi
+}
+
 # Find sw-*.sh files that have no corresponding -test.sh
 cd "$REPO_DIR/scripts"
 for f in sw-*.sh; do
@@ -31,7 +44,7 @@ for f in sw-*.sh; do
             assert_pass "${cmd_name} --help exits 0"
         else
             # Some commands may use -h or no --help flag; try bare invocation
-            if timeout 5 bash "$REPO_DIR/scripts/${f}" >/dev/null 2>&1; then
+            if _run_timed 5 bash "$REPO_DIR/scripts/${f}" >/dev/null 2>&1; then
                 pass=$(( pass + 1 ))
                 assert_pass "${cmd_name} runs without error"
             else

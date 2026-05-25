@@ -7,6 +7,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Default token permissions for all jobs — least privilege.
+permissions:
+  contents: read
+
 jobs:
   unit:
     name: Unit Tests
@@ -29,12 +33,6 @@ jobs:
 
       - name: Run unit tests
         run: bash scripts/run-tests.sh --tier unit
-
-      - name: Write unit job summary
-        if: always()
-        run: |
-          echo "## Unit Test Results (${{ matrix.os }})" >> "$GITHUB_STEP_SUMMARY"
-          bash scripts/run-tests.sh --tier unit 2>/dev/null | grep "^unit\|^Total" >> "$GITHUB_STEP_SUMMARY" || true
 
   integration:
     name: Integration Tests
@@ -61,12 +59,6 @@ jobs:
       - name: Run integration tests
         run: bash scripts/run-tests.sh --tier integration
 
-      - name: Write integration job summary
-        if: always()
-        run: |
-          echo "## Integration Test Results (${{ matrix.os }})" >> "$GITHUB_STEP_SUMMARY"
-          bash scripts/run-tests.sh --tier integration 2>/dev/null | grep "^integration\|^Total" >> "$GITHUB_STEP_SUMMARY" || true
-
   e2e-mocked:
     name: E2E Tests (Mocked)
     runs-on: ubuntu-latest
@@ -80,22 +72,17 @@ jobs:
       - name: Run mocked e2e tests (no secrets required)
         run: bash scripts/run-tests.sh --tier e2e
 
-      - name: Write e2e-mocked job summary
-        if: always()
-        run: |
-          echo "## E2E (Mocked) Test Results" >> "$GITHUB_STEP_SUMMARY"
-          bash scripts/run-tests.sh --tier e2e 2>/dev/null | grep "^e2e\|^Total" >> "$GITHUB_STEP_SUMMARY" || true
-
   e2e-real:
     name: E2E Tests (Real Claude)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Only run on non-fork PRs when secrets are available and budget allows
     if: |
-      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
       (
-        github.event_name == 'workflow_dispatch' ||
-        github.event_name == 'push'
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository
       )
     env:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -142,6 +129,7 @@ jobs:
   e2e-fork-gate:
     name: E2E Fork Gate
     runs-on: ubuntu-latest
+    permissions: {}
     if: |
       github.event.pull_request.head.repo.full_name != github.repository
     steps:

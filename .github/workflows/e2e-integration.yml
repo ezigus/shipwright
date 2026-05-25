@@ -4,9 +4,16 @@ on:
   workflow_dispatch: {}
   schedule:
     - cron: "0 2 * * 0" # Weekly Sunday 2am UTC (nightly drift detection)
-  # Fork PR label-based trigger (replaces SKIP_CLAUDE=true silent skip)
-  pull_request:
+  # Fork PR label-based trigger — pull_request_target gives access to repository secrets
+  # even for fork PRs. The checkout step always uses the base (trusted) ref to avoid
+  # running untrusted code with repository secrets.
+  pull_request_target:
     types: [labeled]
+
+# Restrict default token permissions for all jobs in this workflow.
+# pull_request_target runs with write permissions by default; pin to read-only.
+permissions:
+  contents: read
 
 concurrency:
   group: e2e-integration
@@ -18,7 +25,7 @@ jobs:
     timeout-minutes: 30
     # On PR label event: only run if label is 'safe-to-test-e2e'
     if: |
-      github.event_name != 'pull_request' ||
+      github.event_name != 'pull_request_target' ||
       github.event.label.name == 'safe-to-test-e2e'
     env:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -30,6 +37,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # For pull_request_target events, always check out the base branch (trusted code)
+          # to prevent untrusted PR code from running with repository secrets.
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -105,6 +115,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: integration
     if: always()
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUBTOKEN || secrets.GITHUB_TOKEN }}

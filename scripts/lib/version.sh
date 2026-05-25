@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Single source of truth for SW_VERSION. Sourced by all scripts; never hardcode version strings.
-set -euo pipefail
+# Do NOT add set -euo pipefail here — this file is sourced as a library and must not alter
+# the caller's shell options or hard-fail in environments without jq or package.json.
 # Already set (e.g. by a parent script or test harness) — use existing value.
 if [[ -n "${SW_VERSION:-}" ]]; then
     export SW_VERSION

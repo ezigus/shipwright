@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: unit
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  audit-trail test suite                                                  ║
 # ║  Tests audit logging, JSONL event emission, and report generation        ║

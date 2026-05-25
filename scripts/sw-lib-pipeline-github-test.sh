@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: unit
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright lib/pipeline-github test — Unit tests for GitHub helpers     ║
 # ║  Covers: _ensure_base_branch_ref (Bug 2: shallow-clone branch-diff fix)  ║

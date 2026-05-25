@@ -320,3 +320,52 @@ print_test_results() {
     echo ""
     exit "$FAIL"
 }
+
+# ─── Bridge Mocks ─────────────────────────────────────────────────────────────
+# Mock the ruflo bridge to prevent real MCP calls in unit/integration tests.
+mock_ruflo_bridge() {
+    local mock_dir="${TEST_MOCK_DIR:-${TEST_TEMP_DIR:-/tmp}/mocks}"
+    mkdir -p "$mock_dir"
+    # Create a mock ruflo-bridge stub that returns success with empty JSON
+    cat > "$mock_dir/ruflo-bridge" << 'MOCK_EOF'
+#!/usr/bin/env bash
+echo '{"status":"ok","result":{}}'
+exit 0
+MOCK_EOF
+    chmod +x "$mock_dir/ruflo-bridge"
+    export PATH="$mock_dir:$PATH"
+    export RUFLO_AVAILABLE=false  # Disable actual ruflo integration
+    export _RUFLO_MOCK=1
+}
+
+# Mock the MCP call helper to prevent real MCP calls.
+mock_mcp_call() {
+    local mock_dir="${TEST_MOCK_DIR:-${TEST_TEMP_DIR:-/tmp}/mocks}"
+    mkdir -p "$mock_dir"
+    cat > "$mock_dir/ruflo-mcp-call" << 'MOCK_EOF'
+#!/usr/bin/env bash
+echo '{"status":"ok","data":{}}'
+exit 0
+MOCK_EOF
+    chmod +x "$mock_dir/ruflo-mcp-call"
+    export PATH="$mock_dir:$PATH"
+}
+
+# Mock the Anthropic API by providing a fake claude binary.
+# Responds with a configurable message (default: empty JSON object).
+mock_anthropic_api() {
+    local response="${1:-{}}"
+    local mock_dir="${TEST_MOCK_DIR:-${TEST_TEMP_DIR:-/tmp}/mocks}"
+    mkdir -p "$mock_dir"
+    cat > "$mock_dir/mock-claude-api" << MOCK_EOF
+#!/usr/bin/env bash
+# Mock Anthropic API — returns fixed response
+cat << 'RESP_EOF'
+$response
+RESP_EOF
+exit 0
+MOCK_EOF
+    chmod +x "$mock_dir/mock-claude-api"
+    export ANTHROPIC_API_KEY="mock-key-for-testing"
+    export _MOCK_CLAUDE_API=1
+}

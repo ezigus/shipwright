@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: unit
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright detect_plan_drift — Unit tests for cross-stage drift detector ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝

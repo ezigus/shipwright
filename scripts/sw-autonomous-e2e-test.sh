@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: e2e
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  Shipwright — Autonomous Loop E2E Test                                   ║
 # ║  Tests multi-cycle autonomous analysis, daemon coordination,            ║

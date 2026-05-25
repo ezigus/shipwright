@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: integration
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright e2e smoke test — Pipeline orchestration without API keys    ║
 # ║  Mock binaries · No Claude/GitHub calls · Runs on every PR             ║

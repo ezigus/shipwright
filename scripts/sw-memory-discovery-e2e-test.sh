@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: e2e
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  Shipwright — Memory & Discovery E2E Test                                ║
 # ║  Tests the full memory capture → inject → fix → outcome cycle            ║

@@ -65,7 +65,7 @@ get_adaptive_cost_estimate() {
         return
     fi
 
-    local costs_file="$HOME/.shipwright/costs.json"
+    local costs_file="${SW_COSTS:-$HOME/.shipwright/costs.json}"
     if [[ ! -f "$costs_file" ]]; then
         echo "$EST_COST_PER_JOB"
         return
@@ -205,7 +205,7 @@ daemon_collect_snapshot() {
     local stage="" iteration=0 diff_lines=0 files_changed=0 last_error=""
 
     # Get stage and iteration from heartbeat (fastest source)
-    local heartbeat_dir="$HOME/.shipwright/heartbeats"
+    local heartbeat_dir="${SW_HEARTBEATS:-$HOME/.shipwright/heartbeats}"
     if [[ -d "$heartbeat_dir" ]]; then
         local hb_file
         for hb_file in "$heartbeat_dir"/*.json; do

@@ -6,8 +6,8 @@ _DAEMON_PATROL_LOADED=1
 # Ensure NO_GITHUB is set (parent sw-daemon.sh / sw-pipeline.sh normally sets it,
 # but under set -u bare references crash if this file is sourced standalone).
 NO_GITHUB="${NO_GITHUB:-false}"
-DAEMON_DIR="${DAEMON_DIR:-${HOME}/.shipwright}"
-EVENTS_FILE="${EVENTS_FILE:-${HOME}/.shipwright/events.jsonl}"
+DAEMON_DIR="${DAEMON_DIR:-${SW_HOME:-${HOME}/.shipwright}}"
+EVENTS_FILE="${EVENTS_FILE:-${SW_EVENTS:-${HOME}/.shipwright/events.jsonl}}"
 
 # Defaults for patrol configuration (normally set by sw-daemon.sh, but must be
 # safe under set -u when this file is sourced in other contexts like tests).

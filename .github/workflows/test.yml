@@ -110,8 +110,8 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Budget stub: allow by default until cost ledger is wired
-          # TODO: read cost ledger from SW_COSTS and compare against daily cap ($25)
+          # Budget stub: allow by default until cost ledger is wired.
+          # TODO(issue:ADR-208): read cost ledger from SW_COSTS and compare against daily cap ($25)
           echo "Credentials present — proceeding with real e2e tests"
           echo "skip=false" >> "$GITHUB_OUTPUT"
 

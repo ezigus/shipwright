@@ -85,7 +85,10 @@ record_stage_cost_end() {
         if [[ -n "$_line" ]]; then
             (
                 if command -v flock >/dev/null 2>&1; then
-                    flock -w 5 200 2>/dev/null || true
+                    if ! flock -w 5 200; then
+                        echo "ERROR: could not acquire cost lock — aborting to prevent data corruption" >&2
+                        exit 1
+                    fi
                 fi
                 echo "$_line" >> "$_sidecar" 2>/dev/null || true
             ) 200>"${_sidecar}.lock"

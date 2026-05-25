@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Handle subcommands ───────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ GENERATED_FILES=()
 # ─── Help ───────────────────────────────────────────────────────────────────
 
 show_help() {
-    echo -e "${CYAN}${BOLD}shipwright prep${RESET} ${DIM}v${VERSION}${RESET} — Prepare a repository for autonomous agent development"
+    echo -e "${CYAN}${BOLD}shipwright prep${RESET} ${DIM}v${SW_VERSION}${RESET} — Prepare a repository for autonomous agent development"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
     echo -e "  ${CYAN}shipwright prep${RESET} [options]"
@@ -1612,7 +1612,7 @@ prep_report() {
 
 main() {
     # Banner
-    echo -e "\n${CYAN}${BOLD}▸ shipwright prep${RESET} ${DIM}v${VERSION}${RESET}\n"
+    echo -e "\n${CYAN}${BOLD}▸ shipwright prep${RESET} ${DIM}v${SW_VERSION}${RESET}\n"
 
     # Init
     prep_init

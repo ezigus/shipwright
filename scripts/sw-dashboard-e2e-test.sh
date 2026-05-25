@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: e2e
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright dashboard e2e test — full live validation                    ║
 # ║  Starts server with mock data, validates all endpoints + WebSocket,     ║

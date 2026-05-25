@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: unit
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright lib/pipeline-detection test — Unit tests for detection fns   ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝

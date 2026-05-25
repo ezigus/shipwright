@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
@@ -429,7 +429,7 @@ show_help() {
     echo -e "  ${DIM}gh_checks_pipeline_start   Create runs for all pipeline stages${RESET}"
     echo -e "  ${DIM}gh_checks_stage_update     Update a stage's check run${RESET}"
     echo ""
-    echo -e "${DIM}Version ${VERSION}${RESET}"
+    echo -e "${DIM}Version ${SW_VERSION}${RESET}"
 }
 
 _checks_list_cli() {

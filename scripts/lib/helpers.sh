@@ -3,6 +3,8 @@
 #   shipwright shared helpers — Colors, output, events, timestamps
 #   Source this from any script: source "$SCRIPT_DIR/lib/helpers.sh"
 # ═══════════════════════════════════════════════════════════════════
+# shellcheck source=paths.sh
+[[ -n "${_SW_PATHS_LOADED:-}" ]] || { _SW_PATHS_LOADED=1; . "$(dirname "${BASH_SOURCE[0]}")/paths.sh"; }
 #
 # Exit code convention:
 #   0 — success / nothing to do
@@ -66,7 +68,7 @@ now_epoch() { date +%s; }
 
 # ─── Structured Event Log ────────────────────────────────────────
 # Appends JSON events to ~/.shipwright/events.jsonl for metrics/traceability
-EVENTS_FILE="${EVENTS_FILE:-${HOME}/.shipwright/events.jsonl}"
+EVENTS_FILE="${EVENTS_FILE:-${SW_EVENTS}}"
 
 # Memoized repo slug for emit_event. Assignment must happen outside subshells so the
 # cached value persists across calls within the same shell session.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: unit
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright lib/daemon-patrol test — Unit tests for all patrol functions  ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝

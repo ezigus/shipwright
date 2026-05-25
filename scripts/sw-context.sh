@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="${REPO_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
@@ -502,7 +502,7 @@ clear_context() {
 # ─── Help ──────────────────────────────────────────────────────────────────
 show_help() {
     cat <<EOF
-${CYAN}${BOLD}shipwright context${RESET} ${DIM}v${VERSION}${RESET} — Context gathering engine for pipeline stages
+${CYAN}${BOLD}shipwright context${RESET} ${DIM}v${SW_VERSION}${RESET} — Context gathering engine for pipeline stages
 
 ${BOLD}USAGE${RESET}
   ${CYAN}shipwright context${RESET} <command> [options]

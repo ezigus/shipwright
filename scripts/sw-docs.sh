@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -524,7 +524,7 @@ docs_wiki() {
 # Documentation freshness report
 docs_report() {
     echo ""
-    echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${VERSION}${RESET} — ${BOLD}Documentation Report${RESET}"
+    echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${SW_VERSION}${RESET} — ${BOLD}Documentation Report${RESET}"
     echo -e "${CYAN}═══════════════════════════════════════════════${RESET}"
     echo ""
 

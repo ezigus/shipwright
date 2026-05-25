@@ -109,7 +109,7 @@ LOOP_INNER_STAGE_COMMENTS="${LOOP_INNER_STAGE_COMMENTS:-$(_config_get "loop.inne
 SESSION_RESTART=false
 RESTART_COUNT=0
 REPO_OVERRIDE=""
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 
 LOOP_ABORT_FATAL=false   # Set true by DoD when a tooling failure makes retry futile
 
@@ -160,7 +160,7 @@ LOOP_CONTEXT_FILE="${LOOP_CONTEXT_FILE:-}"  # Sidecar with synthesized build con
 
 # ─── Parse Arguments ──────────────────────────────────────────────────────────
 show_help() {
-    echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${VERSION}${RESET} — ${BOLD}Continuous Loop${RESET}"
+    echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${SW_VERSION}${RESET} — ${BOLD}Continuous Loop${RESET}"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
     echo -e "  ${CYAN}shipwright loop${RESET} \"<goal>\" [options]"
@@ -2432,7 +2432,7 @@ PROMPT
 
 show_banner() {
     echo ""
-    echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${VERSION}${RESET} — ${BOLD}Continuous Loop${RESET}"
+    echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${SW_VERSION}${RESET} — ${BOLD}Continuous Loop${RESET}"
     echo -e "${CYAN}═══════════════════════════════════════════════${RESET}"
     echo ""
     echo -e "  ${BOLD}Goal:${RESET}  $GOAL"

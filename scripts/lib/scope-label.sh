@@ -5,7 +5,7 @@
 [[ -n "${_SCOPE_LABEL_LOADED:-}" ]] && return 0
 _SCOPE_LABEL_LOADED=1
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/version.sh"
 
 # Default values for variables read by scope_label.
 # These are no-ops when the caller already has the variables set.

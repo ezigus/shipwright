@@ -265,7 +265,7 @@ stage_pr() {
                 local sim_result
                 sim_result=$(simulation_review "$diff_for_sim" "${GOAL:-}" 2>/dev/null || echo "")
                 if [[ -n "$sim_result" && "$sim_result" != *'"error"'* ]]; then
-                    echo "$sim_result" > "$ARTIFACTS_DIR/simulation-review.json"
+                    local _sim_tmp; _sim_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-sim-review.XXXXXX"); echo "$sim_result" > "$_sim_tmp" && mv "$_sim_tmp" "$ARTIFACTS_DIR/simulation-review.json"
                     local sim_count
                     sim_count=$(echo "$sim_result" | jq 'length' 2>/dev/null || echo "0")
                     simulation_summary="**Developer simulation:** ${sim_count} reviewer concerns pre-addressed"
@@ -300,7 +300,7 @@ stage_pr() {
                 local arch_result
                 arch_result=$(architecture_validate_changes "$diff_for_arch" "" 2>/dev/null || echo "")
                 if [[ -n "$arch_result" && "$arch_result" != *'"error"'* ]]; then
-                    echo "$arch_result" > "$ARTIFACTS_DIR/architecture-validation.json"
+                    local _arch_tmp; _arch_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-arch-val.XXXXXX"); echo "$arch_result" > "$_arch_tmp" && mv "$_arch_tmp" "$ARTIFACTS_DIR/architecture-validation.json"
                     local violation_count
                     violation_count=$(echo "$arch_result" | jq '[.violations[]? | select(.severity == "critical" or .severity == "high")] | length' 2>/dev/null || echo "0")
                     arch_summary="**Architecture validation:** ${violation_count} violations"

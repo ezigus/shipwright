@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: unit
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright cost share test — Validate cross-machine cost merging         ║
 # ║  Issue #460 — cost-breakdown.json artifact upload/merge for optimization  ║

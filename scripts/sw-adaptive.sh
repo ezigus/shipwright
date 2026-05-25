@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -926,7 +926,7 @@ main() {
             cmd_help
             ;;
         version)
-            echo "sw-adaptive v${VERSION}"
+            echo "sw-adaptive v${SW_VERSION}"
             ;;
         *)
             error "Unknown command: $cmd"

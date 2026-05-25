@@ -8,7 +8,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -522,7 +522,7 @@ main() {
             cmd_help
             ;;
         version|--version|-v)
-            echo "Shipwright widgets v${VERSION}"
+            echo "Shipwright widgets v${SW_VERSION}"
             ;;
         *)
             error "Unknown command: $cmd"

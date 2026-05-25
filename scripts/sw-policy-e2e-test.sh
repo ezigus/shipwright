@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: e2e
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright policy e2e test — Verify config/policy.json is honored     ║
 # ║  Pipeline thresholds · Daemon defaults · Policy get · Schema          ║

@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 
 # ─── Script directory resolution ────────────────────────────────────────────
 SOURCE="${BASH_SOURCE[0]}"
@@ -358,7 +358,7 @@ cmd_report() {
     # Create report
     local report; report=$(jq -n \
         --arg ts "$(date -Iseconds)" \
-        --arg version "$VERSION" \
+        --arg version "${SW_VERSION}" \
         --argjson p "$pass" \
         --argjson f "$fail" \
         --argjson t "$timeout" \
@@ -464,7 +464,7 @@ ${BOLD}ENVIRONMENT${RESET}
   Results log: $RESULTS_LOG
   Report: $LATEST_REPORT
 
-${DIM}Version: $VERSION${RESET}
+${DIM}Version: ${SW_VERSION}${RESET}
 EOF
 }
 

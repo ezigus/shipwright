@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -50,7 +50,7 @@ ensure_pm_history() {
 
 # ─── Help ───────────────────────────────────────────────────────────────────
 show_help() {
-    echo -e "${CYAN}${BOLD}shipwright pm${RESET} ${DIM}v${VERSION}${RESET} — Autonomous PM agent for team orchestration"
+    echo -e "${CYAN}${BOLD}shipwright pm${RESET} ${DIM}v${SW_VERSION}${RESET} — Autonomous PM agent for team orchestration"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
     echo -e "  ${CYAN}shipwright pm${RESET} <subcommand> [options]"

@@ -8,7 +8,7 @@ trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 trap 'rm -f "${tmp_file:-}" "${tmp_changelog:-}"' EXIT
 
 # shellcheck disable=SC2034
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -355,7 +355,7 @@ cmd_prepare() {
     local current_version
     current_version="$(get_latest_tag)"
 
-    if [[ -z "$VERSION_TYPE" ]]; then
+    if [[ -z "${VERSION_TYPE}" ]]; then
         # Auto-detect from commits
         info "Auto-detecting version bump from commits..."
         local next_version
@@ -363,7 +363,7 @@ cmd_prepare() {
         VERSION_TYPE="detected"
     else
         local next_version
-        next_version="$(bump_version "$current_version" "$VERSION_TYPE")"
+        next_version="$(bump_version "$current_version" "${VERSION_TYPE}")"
     fi
 
     echo ""

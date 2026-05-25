@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -451,7 +451,7 @@ print_findings_summary() {
 # ─── Help ───────────────────────────────────────────────────────────────────
 
 show_help() {
-    echo -e "${CYAN}${BOLD}shipwright security-audit${RESET} ${DIM}v${VERSION}${RESET} — Comprehensive Security Auditing"
+    echo -e "${CYAN}${BOLD}shipwright security-audit${RESET} ${DIM}v${SW_VERSION}${RESET} — Comprehensive Security Auditing"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
     echo -e "  ${CYAN}shipwright security-audit${RESET} [command]"

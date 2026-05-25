@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -102,7 +102,7 @@ JSON_OUTPUT="${JSON_OUTPUT:-false}"
 
 show_help() {
     echo ""
-    echo -e "${PURPLE}${BOLD}━━━ shipwright fleet v${VERSION} ━━━${RESET}"
+    echo -e "${PURPLE}${BOLD}━━━ shipwright fleet v${SW_VERSION} ━━━${RESET}"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
     echo -e "  ${CYAN}shipwright fleet${RESET} <command> [options]"
@@ -745,7 +745,7 @@ fleet_distributed_loop() {
 # ─── Fleet Start ────────────────────────────────────────────────────────────
 
 fleet_start() {
-    echo -e "${PURPLE}${BOLD}━━━ shipwright fleet v${VERSION} — start ━━━${RESET}"
+    echo -e "${PURPLE}${BOLD}━━━ shipwright fleet v${SW_VERSION} — start ━━━${RESET}"
     echo ""
 
     if ! command -v tmux >/dev/null 2>&1; then
@@ -931,7 +931,7 @@ fleet_start() {
 # ─── Fleet Stop ─────────────────────────────────────────────────────────────
 
 fleet_stop() {
-    echo -e "${PURPLE}${BOLD}━━━ shipwright fleet v${VERSION} — stop ━━━${RESET}"
+    echo -e "${PURPLE}${BOLD}━━━ shipwright fleet v${SW_VERSION} — stop ━━━${RESET}"
     echo ""
 
     if [[ ! -f "$FLEET_STATE" ]]; then
@@ -1024,7 +1024,7 @@ fleet_stop() {
 
 fleet_status() {
     echo ""
-    echo -e "${PURPLE}${BOLD}━━━ shipwright fleet v${VERSION} — dashboard ━━━${RESET}"
+    echo -e "${PURPLE}${BOLD}━━━ shipwright fleet v${SW_VERSION} — dashboard ━━━${RESET}"
     echo -e "  ${DIM}$(now_iso)${RESET}"
     echo ""
 

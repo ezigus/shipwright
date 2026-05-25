@@ -18,7 +18,21 @@ _AUDIT_JSONL=""  # Updated by audit_init from current ARTIFACTS_DIR
 # ─── Helper: Build JSON with escaped values ──────────────────────────────────
 _audit_escape_json_value() {
   local value="$1"
-  # Escape backslashes first, then double quotes
+  # Use jq for proper JSON string escaping (handles backslashes, quotes, newlines, control chars).
+  # jq --arg produces a properly escaped JSON string; we use @json to get the raw escaped value.
+  # Fall back to manual escaping if jq is unavailable.
+  if command -v jq >/dev/null 2>&1; then
+    local escaped
+    escaped=$(jq -rn --arg v "$value" '$v | @json' 2>/dev/null) || escaped=""
+    if [[ -n "$escaped" ]]; then
+      # @json wraps in quotes: strip surrounding quotes
+      escaped="${escaped#\"}"
+      escaped="${escaped%\"}"
+      echo "$escaped"
+      return
+    fi
+  fi
+  # Manual escape fallback: backslashes first, then double quotes
   value="${value//\\/\\\\}"
   value="${value//\"/\\\"}"
   echo "$value"
@@ -164,8 +178,8 @@ _audit_build_json() {
 
     # Count stages and iterations manually
     local stage_count iteration_count
-    stage_count=$(grep -c '"type":"stage.complete"' "$jsonl_file" || echo "0")
-    iteration_count=$(grep -c '"type":"loop.iteration_complete"' "$jsonl_file" || echo "0")
+    stage_count=$(grep -c '"type":"stage.complete"' "$jsonl_file" || true); stage_count=${stage_count:-0}
+    iteration_count=$(grep -c '"type":"loop.iteration_complete"' "$jsonl_file" || true); iteration_count=${iteration_count:-0}
 
     cat <<EOF
 {

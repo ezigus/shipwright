@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -432,7 +432,7 @@ ${BOLD}STORAGE${RESET}
   Rollbacks: ${ARTIFACTS_DIR}/rollbacks.jsonl
 
 ${BOLD}VERSION${RESET}
-  $VERSION
+  ${SW_VERSION}
 EOF
 }
 

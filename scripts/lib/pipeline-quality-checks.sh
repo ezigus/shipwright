@@ -734,7 +734,7 @@ run_adversarial_review() {
         json_result=$(adversarial_review "$diff_content" "${GOAL:-}" 2>/dev/null || echo "[]")
 
         # Save raw JSON result
-        echo "$json_result" > "$ARTIFACTS_DIR/adversarial-review.json"
+        local _adv_raw_tmp; _adv_raw_tmp=$(mktemp "${TMPDIR:-/tmp}/sw-adv-raw.XXXXXX"); echo "$json_result" > "$_adv_raw_tmp" && mv "$_adv_raw_tmp" "$ARTIFACTS_DIR/adversarial-review.json"
 
         # Stamp each finding with current commit SHA (matches compound-audit.sh per-finding pattern)
         local _adv_json_sha

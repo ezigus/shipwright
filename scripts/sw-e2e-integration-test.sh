@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: integration
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright e2e integration test — Real Claude + Real GitHub            ║
 # ║  Requires: CLAUDE_CODE_OAUTH_TOKEN, GITHUB_TOKEN · Budget: $1.00       ║

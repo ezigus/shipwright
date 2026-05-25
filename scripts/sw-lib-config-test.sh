@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: unit
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright lib/config test — Unit tests for centralized config reader   ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝

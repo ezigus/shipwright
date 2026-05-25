@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Handle subcommands ───────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ REGRESSION_DB="$TESTGEN_DIR/regressions.json"
 
 # ─── Help ───────────────────────────────────────────────────────────────────
 show_help() {
-    echo -e "${CYAN}${BOLD}shipwright testgen${RESET} ${DIM}v${VERSION}${RESET} — Test generation and coverage maintenance"
+    echo -e "${CYAN}${BOLD}shipwright testgen${RESET} ${DIM}v${SW_VERSION}${RESET} — Test generation and coverage maintenance"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
     echo -e "  ${CYAN}shipwright testgen${RESET} <command> [options]"

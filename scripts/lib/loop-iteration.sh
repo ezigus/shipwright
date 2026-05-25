@@ -174,7 +174,7 @@ $(echo "$LOG_ENTRIES" | tail -15)"
         _commits="$(git -C "$PROJECT_ROOT" log --format='%h %s' "${LOOP_START_COMMIT}..HEAD" \
             2>/dev/null | head -10 || true)"
         local _commit_count
-        _commit_count=$(echo "$_commits" | grep -c . 2>/dev/null || echo 0)
+        _commit_count=$(echo "$_commits" | grep -c . 2>/dev/null || true); _commit_count=${_commit_count:-0}
         if [[ -n "$_commits" ]] && [[ "${_commit_count:-0}" -le "${MAX_ITERATIONS:-10}" ]]; then
             recent_commits_section="## Commits This Pipeline (ground truth — work that is done)
 ${_commits}

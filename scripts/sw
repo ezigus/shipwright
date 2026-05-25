@@ -5,7 +5,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 
 # Resolve symlinks (required for npm global install where bin/ symlinks to node_modules/)
 SOURCE="${BASH_SOURCE[0]}"
@@ -46,11 +46,8 @@ _sw_github_url() { echo "https://github.com/$(_sw_github_repo)"; }
 # shellcheck source=lib/compat.sh
 [[ -f "$SCRIPT_DIR/lib/compat.sh" ]] && source "$SCRIPT_DIR/lib/compat.sh"
 # ─── Helpers ─────────────────────────────────────────────────────────────────
-
-info()    { echo -e "${CYAN}${BOLD}▸${RESET} $*"; }
-success() { echo -e "${GREEN}${BOLD}✓${RESET} $*"; }
-warn()    { echo -e "${YELLOW}${BOLD}⚠${RESET} $*"; }
-error()   { echo -e "${RED}${BOLD}✗${RESET} $*" >&2; }
+# shellcheck source=lib/helpers.sh
+[[ -f "$SCRIPT_DIR/lib/helpers.sh" ]] && source "$SCRIPT_DIR/lib/helpers.sh"
 
 check_tmux() {
     if ! command -v tmux >/dev/null 2>&1; then
@@ -83,7 +80,7 @@ ensure_repo_setup() {
 }
 
 show_version() {
-    echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${VERSION}${RESET} — Orchestrate AI Coding Teams  ${DIM}(alias: sw)${RESET}"
+    echo -e "${CYAN}${BOLD}shipwright${RESET} ${DIM}v${SW_VERSION}${RESET} — Orchestrate AI Coding Teams  ${DIM}(alias: sw)${RESET}"
 }
 
 show_help() {
@@ -244,7 +241,7 @@ route_intel() {
 # ─── Welcome message helper ──────────────────────────────────────────────────
 show_welcome() {
     echo ""
-    echo -e "${CYAN}${BOLD}  Welcome to Shipwright v${VERSION}!${RESET}"
+    echo -e "${CYAN}${BOLD}  Welcome to Shipwright v${SW_VERSION}!${RESET}"
     echo -e "${DIM}  ════════════════════════════════════════════${RESET}"
     echo ""
     echo -e "  It looks like this repo hasn't been set up yet."

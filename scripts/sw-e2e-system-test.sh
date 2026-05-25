@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: integration
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright e2e system test — Proves full daemon→pipeline→loop→PR flow    ║
 # ║  Uses mocks for Claude/GitHub · Exercises REAL internal code paths         ║

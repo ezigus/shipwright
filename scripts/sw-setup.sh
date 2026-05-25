@@ -10,7 +10,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC2034
@@ -101,7 +101,7 @@ OS="$(detect_os)"
 echo ""
 echo -e "${CYAN}${BOLD}  ╔══════════════════════════════════════╗${RESET}"
 echo -e "${CYAN}${BOLD}  ║        Shipwright Setup              ║${RESET}"
-echo -e "${CYAN}${BOLD}  ║        v${VERSION}                        ║${RESET}"
+echo -e "${CYAN}${BOLD}  ║        v${SW_VERSION}                        ║${RESET}"
 echo -e "${CYAN}${BOLD}  ╚══════════════════════════════════════╝${RESET}"
 echo ""
 
@@ -372,5 +372,5 @@ echo -e "${CYAN}${BOLD}  ║${RESET}"
 echo -e "${CYAN}${BOLD}  ║  See more: ${DIM}shipwright --help${RESET} ${CYAN}${BOLD}║${RESET}"
 echo -e "${CYAN}${BOLD}  ╚════════════════════════════════════════════════════════════════╝${RESET}"
 echo ""
-success "Shipwright v${VERSION} setup complete — you're ready to orchestrate!"
+success "Shipwright v${SW_VERSION} setup complete — you're ready to orchestrate!"
 echo ""

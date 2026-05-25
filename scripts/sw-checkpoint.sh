@@ -8,7 +8,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # ─── Cross-platform compatibility ──────────────────────────────────────────
@@ -507,7 +507,7 @@ cmd_expire() {
 # ─── Help ────────────────────────────────────────────────────────────────────
 
 show_help() {
-    echo -e "${CYAN}${BOLD}shipwright checkpoint${RESET} ${DIM}v${VERSION}${RESET} — Save and restore agent state mid-stage"
+    echo -e "${CYAN}${BOLD}shipwright checkpoint${RESET} ${DIM}v${SW_VERSION}${RESET} — Save and restore agent state mid-stage"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
     echo -e "  ${CYAN}shipwright checkpoint${RESET} <command> [options]"

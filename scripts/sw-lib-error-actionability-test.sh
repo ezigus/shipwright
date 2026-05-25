@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: unit
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  error-actionability test suite                                          ║
 # ║  Tests scoring logic, enhancement, and edge cases                        ║

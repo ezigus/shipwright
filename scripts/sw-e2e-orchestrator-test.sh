@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: integration
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  shipwright e2e-orchestrator test — Test suite registry & execution      ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝

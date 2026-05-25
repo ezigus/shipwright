@@ -12,7 +12,8 @@
 # ║      && source "$SCRIPT_DIR/lib/ruflo-adapter.sh" 2>/dev/null || true    ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
-export VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/version.sh"
+export SW_VERSION
 
 # ─── Double-source guard ──────────────────────────────────────────────────────
 [[ -n "${_RUFLO_ADAPTER_LOADED:-}" ]] && return 0
@@ -319,12 +320,13 @@ ruflo_init() {
             # Fail-open: daemon remains available even if hive init fails
             emit_event "ruflo.hive_unavailable" "exit_code=$_hive_init_exit"
         fi
-        # Defensive EXIT trap: covers future callers that don't set their own cleanup.
-        # Only set when no trap exists — avoids overwriting sw-pipeline.sh's own trap.
+        # Defensive EXIT trap: chain with any existing trap to avoid overwriting callers'.
         local _existing_trap
-        _existing_trap=$(trap -p EXIT 2>/dev/null || true)
+        _existing_trap=$(trap -p EXIT 2>/dev/null | sed "s/^trap -- '//;s/' EXIT$//" || true)
         if [[ -z "$_existing_trap" ]]; then
             trap 'ruflo_cleanup 2>/dev/null || true' EXIT
+        else
+            trap "${_existing_trap}; ruflo_cleanup 2>/dev/null || true" EXIT
         fi
     fi
 

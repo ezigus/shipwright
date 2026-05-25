@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -348,7 +348,7 @@ show_export() {
 # ─── Help ──────────────────────────────────────────────────────────────────
 show_help() {
     echo ""
-    echo -e "${PURPLE}${BOLD}━━━ shipwright fleet-viz v${VERSION} ━━━${RESET}"
+    echo -e "${PURPLE}${BOLD}━━━ shipwright fleet-viz v${SW_VERSION} ━━━${RESET}"
     echo ""
     echo -e "${BOLD}USAGE${RESET}"
     echo -e "  ${CYAN}shipwright fleet-viz${RESET} <command> [options]"

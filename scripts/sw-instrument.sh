@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC2034
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -90,7 +90,7 @@ ensure_instrument_dirs() {
 # ─── Help ───────────────────────────────────────────────────────────────────
 show_help() {
     echo ""
-    echo -e "${CYAN}${BOLD}  Shipwright Instrumentation${RESET}  ${DIM}v${VERSION}${RESET}"
+    echo -e "${CYAN}${BOLD}  Shipwright Instrumentation${RESET}  ${DIM}v${SW_VERSION}${RESET}"
     echo -e "${DIM}  ══════════════════════════════════════════════════════════════${RESET}"
     echo ""
     echo -e "  ${BOLD}USAGE${RESET}"

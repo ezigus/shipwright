@@ -6,7 +6,7 @@
 set -euo pipefail
 trap 'echo "ERROR: $BASH_SOURCE:$LINENO exited with status $?" >&2' ERR
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -309,14 +309,14 @@ EOF
       "resource": {
         "attributes": {
           "service.name": "shipwright",
-          "service.version": "$VERSION"
+          "service.version": "${SW_VERSION}"
         }
       },
       "scopeSpans": [
         {
           "scope": {
             "name": "shipwright-tracer",
-            "version": "$VERSION"
+            "version": "${SW_VERSION}"
           },
           "spans": $spans
         }

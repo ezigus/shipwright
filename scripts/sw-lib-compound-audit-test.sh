@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: unit
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  compound-audit test suite                                              ║
 # ║  Tests adaptive cascade audit: agents, dedup, escalation, convergence   ║

@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Quick start guide for Claude Flow
 
 echo "🚀 Claude Flow Quick Start"

@@ -23,7 +23,7 @@
 # ║  Bash 3.2 compatible — no associative arrays, no `${var,,}`, no readarray.║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
-VERSION="3.6.1"
+. "$(dirname "${BASH_SOURCE[0]}")/version.sh"
 
 # ─── Double-source guard ────────────────────────────────────────────────────
 # Caller may pre-export RUFLO_BRIDGE_SOCK to point at a custom path; the guard

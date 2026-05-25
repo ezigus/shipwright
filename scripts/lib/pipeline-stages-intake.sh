@@ -1315,7 +1315,7 @@ $(printf '%s\n' "${INTELLIGENCE_INTAKE_CTX}")"
             fi
         else
             local _fence_file_count
-            _fence_file_count=$(printf '%s\n' "$_scope_fence_lines" | grep -c '[^[:space:]]' 2>/dev/null || echo "0")
+            _fence_file_count=$(printf '%s\n' "$_scope_fence_lines" | grep -c '[^[:space:]]' 2>/dev/null || true); _fence_file_count=${_fence_file_count:-0}
             emit_event "pipeline.scope_manifest_loaded" \
                 "stage=design" "issue=${ISSUE_NUMBER:-0}" "file_count=${_fence_file_count}" 2>/dev/null || true
             info "Scope fence loaded: ${_fence_file_count} entries — path redaction active"

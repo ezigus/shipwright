@@ -3,7 +3,10 @@ name: E2E Integration Tests
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "0 2 * * 0" # Weekly Sunday 2am UTC
+    - cron: "0 2 * * 0" # Weekly Sunday 2am UTC (nightly drift detection)
+  # Fork PR label-based trigger (replaces SKIP_CLAUDE=true silent skip)
+  pull_request:
+    types: [labeled]
 
 concurrency:
   group: e2e-integration
@@ -13,6 +16,10 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # On PR label event: only run if label is 'safe-to-test-e2e'
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.label.name == 'safe-to-test-e2e'
     env:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

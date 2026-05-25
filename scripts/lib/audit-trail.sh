@@ -18,10 +18,16 @@ _AUDIT_JSONL=""  # Updated by audit_init from current ARTIFACTS_DIR
 # ─── Helper: Build JSON with escaped values ──────────────────────────────────
 _audit_escape_json_value() {
   local value="$1"
-  # Escape backslashes first, then double quotes
-  value="${value//\\/\\\\}"
-  value="${value//\"/\\\"}"
-  echo "$value"
+  # Use jq for proper JSON string escaping (handles backslashes, quotes, newlines, control chars).
+  # Fall back to manual escaping if jq is unavailable.
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$value" | jq -Rs '.[0:-1]' 2>/dev/null || { value="${value//\\/\\\\}"; value="${value//\"/\\\"}"; echo "$value"; }
+  else
+    # Manual escape: backslashes first, then double quotes
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    echo "$value"
+  fi
 }
 
 # ─── audit_init — Initialize audit trail ────────────────────────────────────

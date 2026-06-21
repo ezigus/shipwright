@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "generated_at": "2026-06-14T04:34:06Z",
-  "sources": 8,
+  "generated_at": "2026-06-21T04:34:22Z",
+  "sources": 6,
   "summary": {
     "total_input_tokens": 0,
     "total_output_tokens": 0,
     "total_cost_usd": 0,
     "stage_count": 0,
-    "source_count": 8
+    "source_count": 6
   },
   "by_stage": []
 }

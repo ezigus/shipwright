@@ -8014,3 +8014,6 @@
 {"ts":"2026-06-14T04:34:06Z","ts_epoch":1781411646,"type":"optimize.memory_pruned","repo":"ezigus/shipwright","pruned":2,"strengthened":2,"promoted":0}
 {"ts":"2026-06-14T04:34:06Z","ts_epoch":1781411646,"type":"optimize.context_recommendation","repo":"ezigus/shipwright","action":"decrease_budget","current":200000,"recommended":170000,"avg_utilization":6.6,"samples":16}
 {"ts":"2026-06-14T04:34:06Z","ts_epoch":1781411646,"type":"optimize.memory_pruned","repo":"ezigus/shipwright","pruned":0,"strengthened":2,"promoted":0}
+{"ts":"2026-06-21T04:34:23Z","ts_epoch":1782016463,"type":"optimize.memory_pruned","repo":"ezigus/shipwright","pruned":5,"strengthened":1,"promoted":0}
+{"ts":"2026-06-21T04:34:23Z","ts_epoch":1782016463,"type":"optimize.context_recommendation","repo":"ezigus/shipwright","action":"decrease_budget","current":200000,"recommended":170000,"avg_utilization":6.6,"samples":16}
+{"ts":"2026-06-21T04:34:23Z","ts_epoch":1782016463,"type":"optimize.memory_pruned","repo":"ezigus/shipwright","pruned":0,"strengthened":1,"promoted":0}

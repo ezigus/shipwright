@@ -2,47 +2,6 @@
   "failures": [
     {
       "stage": "test",
-      "pattern": "▸ Loop: compose_prompt iter 1 includes pipeline_context_section... /home/runner/work/shipwright/shipwright/scripts/lib/loop-iteration.sh: line 240: compose_gate_findings_section: command not found",
-      "root_cause": "compose_gate_findings_section function is called at loop-iteration.sh:240 but is not defined or sourced, causing 'command not found' errors in all compose_prompt tests",
-      "fix": "Define compose_gate_findings_section in scripts/lib/loop-iteration.sh or source the file that contains it before line 240",
-      "exit_code": 1,
-      "seen_count": 4,
-      "last_seen": "2026-05-19T01:31:20Z",
-      "category": "test_failure",
-      "weight": 2.25
-    },
-    {
-      "stage": "test",
-      "pattern": "▸ Running tests: echo FAIL; exit 1",
-      "root_cause": "stage_review skips generating review.md when no diff is found, but the test unconditionally asserts the file exists, causing a missing file error",
-      "fix": "create an empty review.md even when skipping review (no diff), or update the test to conditionally check for the file only when a diff is present",
-      "exit_code": 1,
-      "seen_count": 1,
-      "last_seen": "2026-05-17T04:48:28Z",
-      "category": "test_failure"
-    },
-    {
-      "stage": "test",
-      "pattern": "✓ upload-artifact warns on missing files",
-      "root_cause": "Intake stage enters CI branch path even when WORKSPACE_BRANCH is unset, printing 'CI mode: using workspace branch' in local mode and bypassing git checkout -b",
-      "fix": "Fix the WORKSPACE_BRANCH guard condition in intake so it only activates the CI path when WORKSPACE_BRANCH is non-empty (e.g., [ -n \"${WORKSPACE_BRANCH:-}\" ])",
-      "exit_code": 1,
-      "seen_count": 1,
-      "last_seen": "2026-05-19T00:42:17Z",
-      "category": "test_failure"
-    },
-    {
-      "stage": "test",
-      "pattern": "✓ record on missing run exits non-zero",
-      "root_cause": "fingerprintContent function is not exported from intelligence.cjs, causing both the export test and the 435-truncation regression test to fail",
-      "fix": "Export the fingerprintContent function from intelligence.cjs so it is accessible for testing and external use",
-      "exit_code": 1,
-      "seen_count": 2,
-      "last_seen": "2026-05-21T12:55:50Z",
-      "category": "test_failure"
-    },
-    {
-      "stage": "test",
       "pattern": "Error Handling",
       "root_cause": "fingerprintContent is not exported from intelligence.cjs and @audit-suppress audit_1776853149979 directives are missing from statusline.js and github-safe.js",
       "fix": "Export fingerprintContent from intelligence.cjs and add the load-bearing @audit-suppress audit_1776853149979 directive to statusline.js and github-safe.js",
